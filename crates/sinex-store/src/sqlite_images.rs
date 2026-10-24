@@ -76,5 +76,79 @@ pub(crate) async fn guard_excision(
             "retained SQLite image {id} protects this database lineage; physical-image excision is not supported"
         )));
     }
+    for pending in crate::native_materials::pending_images(conn).await? {
+        let meta = match &pending.image {
+            Some(crate::native_materials::PendingImage::AwaitingCosts(image)) => &image.metadata,
+            None => {
+                &pending
+                    .progress
+                    .image
+                    .as_ref()
+                    .ok_or_else(|| Error::Invalid("pending image metadata unavailable".into()))?
+                    .metadata
+            }
+        };
+        let device = pending
+            .progress
+            .observation
+            .device
+            .and_then(|n| i64::try_from(n).ok());
+        let inode = pending
+            .progress
+            .observation
+            .inode
+            .and_then(|n| i64::try_from(n).ok());
+        let matches: bool = sqlx::query_scalar(r#"SELECT EXISTS (
+            SELECT 1 FROM raw.materials m JOIN raw.inputs i ON i.id=m.input_id
+            WHERE m.id=ANY($1) AND i.host=$2 AND (
+                i.locator=$3 OR i.locator=$4 OR m.manifest->>'sqlite_database'=$3
+                OR EXISTS (SELECT 1 FROM raw.observations o WHERE o.input_id=i.id
+                    AND o.device=$5 AND o.inode=$6 AND o.device IS NOT NULL AND o.inode IS NOT NULL)))"#)
+            .bind(materials).bind(&meta.host).bind(&meta.database).bind(&pending.progress.input.locator)
+            .bind(device).bind(inode).fetch_one(&mut *conn).await?;
+        if matches || materials.contains(&meta.material.0) {
+            return Err(Error::Invalid(format!(
+                "pending SQLite image {} protects this database lineage; physical-image excision is not supported",
+                meta.material
+            )));
+        }
+    }
+    Ok(())
+}
+
+/// Image-enabled acquisition cannot retain a different table's excluded bytes.
+/// Native reservation calls this before installation, and admission rechecks it.
+pub(crate) async fn guard_acquisition(
+    conn: &mut PgConnection,
+    input: &sinex_model::InputRef,
+    facts: &sinex_model::ObservationFacts,
+    image: &sinex_model::SqliteImageMeta,
+) -> Result<()> {
+    let device = facts.device.and_then(|n| i64::try_from(n).ok());
+    let inode = facts.inode.and_then(|n| i64::try_from(n).ok());
+    let sources: Vec<String> = sqlx::query_scalar(
+        r#"SELECT DISTINCT b.source FROM raw.inputs i JOIN raw.bindings b ON b.binding=i.binding
+        WHERE i.host=$1 AND (i.locator=$2 OR i.locator=$3 OR EXISTS (
+            SELECT 1 FROM raw.observations o WHERE o.input_id=i.id AND o.device=$4 AND o.inode=$5
+                AND o.device IS NOT NULL AND o.inode IS NOT NULL))"#,
+    )
+    .bind(&image.host)
+    .bind(&image.database)
+    .bind(&input.locator)
+    .bind(device)
+    .bind(inode)
+    .fetch_all(&mut *conn)
+    .await?;
+    for source in sources {
+        if crate::excision::operations_basis(conn, &source)
+            .await?
+            .count
+            != 0
+        {
+            return Err(Error::Invalid(
+                "physical image acquisition for an excluded database lineage is unavailable".into(),
+            ));
+        }
+    }
     Ok(())
 }

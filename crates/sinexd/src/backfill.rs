@@ -6,6 +6,7 @@
 //! binding is recorded with its settings (so a replay reads it the same way)
 //! and its driver state is rebuilt from the materials it stored, so a
 //! second run reads only what changed.
+mod native;
 use crate::one_shot::{OneShot, Sink};
 use crate::writer::{self, Priority};
 use sinex_model::RunId;
@@ -237,7 +238,8 @@ pub(crate) async fn drive(
     sink: &Sink,
     access: crate::sealed_access::Access<'_>,
     minimum_class: sinex_model::Class,
-    mut poll: impl FnMut(&serde_json::Value) -> Result<drivers::Acquired, drivers::DriverError>,
+    reader: &mut dyn sinex_sources::Reader,
+    stop: tokio::sync::watch::Receiver<bool>,
 ) -> Result<Totals, String> {
     let mut totals = Totals::default();
     let started = Instant::now();
@@ -263,14 +265,21 @@ pub(crate) async fn drive(
                 source.spec().name
             )
         })?;
-        Some(crate::one_shot::SealingSink::new(sink.0.clone(), recipient))
+        Some(crate::one_shot::SealingSink::staged(
+            sink.0.clone(),
+            recipient,
+        ))
     } else {
         None
     };
-    let material_sink: &dyn drivers::MaterialSink = match &sealing {
-        Some(s) => s,
-        None => sink,
-    };
+    let checked_stop = stop.clone();
+    let check: std::sync::Arc<dyn Fn() -> Result<(), String> + Send + Sync> =
+        std::sync::Arc::new(move || {
+            if *checked_stop.borrow() || sinex_protocol::private_mode::PrivateMode::default().on() {
+                return Err("native capture cancelled or private mode is on".into());
+            }
+            Ok(())
+        });
     loop {
         // Private mode: capture nothing, and say so rather than report a gap.
         if private.on() {
@@ -279,66 +288,170 @@ pub(crate) async fn drive(
                 private.path().display()
             ));
         }
-        let (cursor, carry) = positions::load(read_conn, binding)
-            .await
-            .map_err(|e| e.to_string())?
-            .unwrap_or((serde_json::Value::Null, serde_json::Value::Null));
-        let acquired = match poll(&cursor) {
+        if *stop.borrow() {
+            reader.cancel_pending();
+            return Err("native capture cancelled".into());
+        }
+        let mut stopping = stop.clone();
+        let mut guard = tokio::select! {
+            guard=handle.source_guard(source.spec().name)=>guard?,
+            _=stopping.wait_for(|stopped|*stopped)=>{reader.cancel_pending();return Err("native capture cancelled".into());}
+        };
+        let before = async {
+            let position = positions::load(guard.connection(), binding)
+                .await
+                .map_err(|e| e.to_string())?
+                .unwrap_or((serde_json::Value::Null, serde_json::Value::Null));
+            let policy = crate::source_excision::AcquisitionPolicy::load(
+                guard.connection(),
+                &sink.0,
+                source.spec().name,
+                access.authority,
+            )
+            .await?;
+            Ok::<_, String>((position, policy))
+        }
+        .await;
+        let ((cursor, carry), policy) = match before {
+            Ok(value) => value,
+            Err(error) => {
+                guard.release().await?;
+                return Err(error);
+            }
+        };
+        let base_carry = carry.clone();
+        let polled = async {
+            let pending_ids =
+                sinex_store::native_materials::binding_pending(guard.connection(), binding)
+                    .await
+                    .map_err(|e| e.to_string())?;
+            let pending_image = if let Some(id) = pending_ids.first() {
+                sinex_store::native_materials::load(guard.connection(), *id)
+                    .await
+                    .map_err(|e| e.to_string())?
+                    .filter(|p| p.progress.material.is_none())
+            } else {
+                None
+            };
+            let acquired = match pending_image {
+                Some(p) => Ok(drivers::Acquired {
+                    image: None,
+                    input: p.progress.input,
+                    observation: p.progress.observation,
+                    revision: p.progress.revision,
+                    material: None,
+                    cursor_unchanged: p.end_cursor,
+                }),
+                None => reader.poll(&cursor),
+            };
+            Ok::<_, String>((acquired, pending_ids))
+        }
+        .await;
+        let (polled, pending_ids) = match polled {
+            Ok(value) => value,
+            Err(error) => {
+                guard.release().await?;
+                return Err(error);
+            }
+        };
+        let acquired = match polled {
             Err(drivers::DriverError::Pending) => {
+                guard.release().await?;
                 tokio::task::yield_now().await;
                 continue;
             }
-            result => result.map_err(|e| e.to_string())?,
-        };
-        if let Some(authority) = access.authority {
-            authority.check()?;
-        }
-        if let (Some(sealing), Some(material)) = (&sealing, &acquired.material)
-            && let Some(drivers::StoredBytes::FramedReader(stored)) = &material.stored
-            && sink.0.is_sealed(&stored.blob).map_err(|e| e.to_string())?
-        {
-            let authority = access
-                .authority
-                .ok_or("retained sealed material requires explicit operator unlock")?;
-            let (reference, secrets) = authority.material_secrets(read_conn, material.id).await?;
-            sealing.restore_secrets(stored.blob.clone(), reference, secrets)?;
-        }
-        // A directory material contains independent files. A new bundle has
-        // no parser state from the preceding bundle; a resumed bundle keeps
-        // its committed carry and requires its original sealed key.
-        let fresh_directory = source.spec().driver == sinex_sources::Driver::DirSnapshot
-            && acquired
-                .material
-                .as_ref()
-                .is_some_and(|m| cursor["material"].as_str() != Some(m.id.to_string().as_str()));
-        let carry = if fresh_directory {
-            serde_json::Value::Null
-        } else if acquired.material.is_some() {
-            match &sealing {
-                Some(s) => s.open_carry(&carry)?,
-                None => carry,
+            Err(error) => {
+                guard.release().await?;
+                return Err(error.to_string());
             }
-        } else {
-            carry
+            Ok(acquired) => acquired,
         };
-        if let Some(reason) = &acquired.observation.unavailable {
-            return Err(format!("{binding}: {reason}"));
+        let prepared = async {
+            if let Some(image) = &acquired.image {
+                image.set_check(check.clone()).map_err(|e| e.to_string())?;
+            }
+            if let Some(authority) = access.authority {
+                authority.check()?;
+            }
+            if let (Some(sealing), Some(material)) = (&sealing, &acquired.material)
+                && !pending_ids.contains(&material.id)
+                && let Some(drivers::StoredBytes::FramedReader(stored)) = &material.stored
+                && sink.0.is_sealed(&stored.blob).map_err(|e| e.to_string())?
+            {
+                let authority = access
+                    .authority
+                    .ok_or("retained sealed material requires explicit operator unlock")?;
+                let (reference, secrets) =
+                    authority.material_secrets(read_conn, material.id).await?;
+                sealing.restore_secrets(stored.blob.clone(), reference, secrets)?;
+            }
+            // A directory material contains independent files. A new bundle has
+            // no parser state from the preceding bundle; a resumed bundle keeps
+            // its committed carry and requires its original sealed key.
+            let fresh_directory = source.spec().driver == sinex_sources::Driver::DirSnapshot
+                && acquired.material.as_ref().is_some_and(|m| {
+                    cursor["material"].as_str() != Some(m.id.to_string().as_str())
+                });
+            let carry = if fresh_directory {
+                serde_json::Value::Null
+            } else if acquired.material.is_some() {
+                match &sealing {
+                    Some(s) => {
+                        open_carry(
+                            read_conn,
+                            source,
+                            binding,
+                            &cursor,
+                            &carry,
+                            s,
+                            access.authority,
+                        )
+                        .await?
+                    }
+                    None => carry,
+                }
+            } else {
+                carry
+            };
+            if let Some(reason) = &acquired.observation.unavailable {
+                return Err(format!("{binding}: {reason}"));
+            }
+            Ok::<_, String>(carry)
         }
+        .await;
+        let carry = match prepared {
+            Ok(carry) => carry,
+            Err(error) => {
+                guard.release().await?;
+                return Err(error);
+            }
+        };
         let had_material = acquired.material.is_some();
-        submit(
-            handle,
-            run,
+        let pipeline = native::Pipeline {
+            writer: handle,
+            blobs: &sink.0,
             source,
             binding,
-            material_sink,
-            sealing.as_ref(),
-            access.authority,
-            effective_class,
-            acquired,
-            carry,
-            &mut totals,
-        )
-        .await?;
+            run,
+            class: effective_class,
+            sealing: sealing.as_ref(),
+            authority: access.authority,
+            check: check.clone(),
+        };
+        let published = pipeline
+            .submit(
+                guard,
+                policy,
+                cursor,
+                base_carry,
+                carry,
+                acquired,
+                &mut totals,
+            )
+            .await?;
+        if let Some(image) = published {
+            reader.restore_image(crate::sqlite_images::previous(&sink.0, &image)?);
+        }
         if !had_material {
             break;
         }
@@ -439,6 +552,17 @@ pub(crate) async fn submit(
 }
 
 impl Totals {
+    fn add_outcome(&mut self, out: sinex_store::Outcome) {
+        self.admitted += out.admitted;
+        self.repeats += out.repeats;
+        self.replaced += out.replaced;
+        self.older += out.older;
+        self.hidden += out.hidden;
+        self.superseded += out.superseded;
+        self.failures += out.failures;
+        self.dirty_keys += out.dirty_keys;
+    }
+
     pub(crate) fn finish(&mut self, started: Instant) {
         self.wall = started.elapsed();
     }
@@ -510,4 +634,44 @@ impl Totals {
         self.admit_time += o.admit_time;
         self.wall += o.wall;
     }
+}
+
+pub(crate) async fn open_carry(
+    conn: &mut PgConnection,
+    source: &dyn Source,
+    binding: &str,
+    cursor: &serde_json::Value,
+    carry: &serde_json::Value,
+    sealing: &crate::one_shot::SealingSink,
+    authority: Option<&crate::sealed_access::Authority>,
+) -> Result<serde_json::Value, String> {
+    use sinex_store::sealed::metadata;
+    if !metadata::is_carry(carry) {
+        if let Ok(value) = sealing.open_carry(carry) {
+            return Ok(value);
+        }
+        let reference = sinex_store::sealed::key_ref(carry).ok_or("invalid sealed parser carry")?;
+        let authority = authority.ok_or("sealed parser carry requires explicit operator unlock")?;
+        let material:uuid::Uuid=sqlx::query_scalar("SELECT k.material_id FROM privacy.material_keys k JOIN raw.materials m ON m.id=k.material_id JOIN raw.inputs i ON i.id=m.input_id WHERE k.key_ref=$1 AND i.binding=$2")
+            .bind(reference).bind(binding).fetch_optional(&mut *conn).await.map_err(|e|e.to_string())?.ok_or("sealed parser carry has no live binding-owned key")?;
+        let key = authority
+            .material_key(conn, sinex_model::MaterialId(material))
+            .await?;
+        let value =
+            sinex_store::sealed::unseal_payload(carry, &key.key).map_err(|e| e.to_string())?;
+        authority.check()?;
+        return Ok(value);
+    }
+    let authority =
+        authority.ok_or("class-owned parser carry requires explicit operator unlock")?;
+    let scope = metadata::Scope::Carry {
+        source: source.spec().name.into(),
+        binding: binding.into(),
+        parser: source.spec().parser.into(),
+        parser_version: i32::try_from(source.spec().parser_version)
+            .map_err(|_| "parser version exceeds i32")?,
+        cursor: cursor.clone(),
+    };
+    let ciphertext = metadata::carry_ciphertext(carry).map_err(|e| e.to_string())?;
+    authority.open_current_carry(ciphertext.as_slice(), &scope)
 }

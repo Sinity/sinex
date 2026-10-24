@@ -142,30 +142,33 @@ impl Pending {
                 previous_part: previous.material,
                 reading_order: super::reading_order(&self.manifest),
                 manifest: self.manifest.clone(),
-                cursor_at: Box::new(move |end| {
-                    let upto = ends
-                        .iter()
-                        .take_while(|(e, _)| *e <= end)
-                        .map(|(_, r)| *r)
-                        .max()
-                        .unwrap_or(previous.max_rowid);
-                    serde_json::to_value(Cursor {
-                        max_rowid: upto.max(previous.max_rowid),
-                        last_full_pass_ns: if end == length {
-                            scanned.last_full_pass_ns
-                        } else {
-                            previous.last_full_pass_ns
-                        },
-                        last_order: base.saturating_add(end as i64),
-                        open: if end == length {
-                            scanned.open.clone()
-                        } else {
-                            previous.open.clone()
-                        },
-                        through: end,
-                        ..scanned.clone()
-                    })
-                    .expect("cursor serializes")
+                cursor_at: Box::new({
+                    let cursor = move |end| {
+                        let upto = ends
+                            .iter()
+                            .take_while(|(e, _)| *e <= end)
+                            .map(|(_, r)| *r)
+                            .max()
+                            .unwrap_or(previous.max_rowid);
+                        serde_json::to_value(Cursor {
+                            max_rowid: upto.max(previous.max_rowid),
+                            last_full_pass_ns: if end == length {
+                                scanned.last_full_pass_ns
+                            } else {
+                                previous.last_full_pass_ns
+                            },
+                            last_order: base.saturating_add(end as i64),
+                            open: if end == length {
+                                scanned.open.clone()
+                            } else {
+                                previous.open.clone()
+                            },
+                            through: end,
+                            ..scanned.clone()
+                        })
+                        .expect("cursor serializes")
+                    };
+                    move |end| Ok(cursor(end))
                 }),
                 aligned: false,
                 vanished: Vec::new(),
@@ -213,14 +216,31 @@ impl RowState {
         stored: super::RetainedRecords,
         cursor: &Value,
     ) -> Result<(), DriverError> {
-        let current: Cursor = serde_json::from_value(cursor.clone())
-            .map_err(|e| DriverError::Cursor(e.to_string()))?;
-        if current.material != Some(reference.id) || current.through as u64 >= reference.length {
+        let current: Cursor = if cursor.is_null() {
+            Cursor::default()
+        } else {
+            serde_json::from_value(cursor.clone())
+                .map_err(|e| DriverError::Cursor(e.to_string()))?
+        };
+        if current.material == Some(reference.id) && current.through as u64 >= reference.length {
             return Ok(());
+        }
+        if !reference.manifest["row_format"].is_null()
+            && reference.manifest["row_format"] != 1
+            && reference.manifest["row_format"] != 2
+        {
+            return Err(DriverError::Cursor(
+                "unsupported stored SQLite row format".into(),
+            ));
         }
         let resume = &reference.manifest["row_resume"];
         let previous: Cursor = serde_json::from_value(resume["previous"].clone())
             .map_err(|e| DriverError::Cursor(e.to_string()))?;
+        if current.material != Some(reference.id) && current != previous {
+            return Err(DriverError::Cursor(
+                "stored SQLite predecessor cursor differs from reservation".into(),
+            ));
+        }
         let scanned: Cursor = serde_json::from_value(resume["scanned"].clone())
             .map_err(|e| DriverError::Cursor(e.to_string()))?;
         let ends: Vec<(usize, i64)> = serde_json::from_value(resume["ends"].clone())
@@ -244,6 +264,11 @@ impl RowState {
                     "stored SQLite row ranges are invalid".into(),
                 ));
             }
+            if stored.bodyless {
+                records.push((start, end));
+                start = end;
+                continue;
+            }
             let mut line = vec![0; end - start];
             stored
                 .bytes
@@ -253,6 +278,11 @@ impl RowState {
                 return Err(DriverError::Cursor(
                     "stored SQLite row has no delimiter".into(),
                 ));
+            }
+            if line.iter().all(|b| *b == b' ') {
+                records.push((start, end));
+                start = end;
+                continue;
             }
             let object: Value =
                 serde_json::from_slice(&line).map_err(|e| DriverError::Cursor(e.to_string()))?;

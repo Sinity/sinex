@@ -260,7 +260,7 @@ fn restart_finishes_a_part_with_its_original_material_id_and_anchors() {
             {
                 let m = acquired.material.as_ref().unwrap();
                 let first = m.records[0];
-                seen.cursors.insert(0, (m.cursor_at)(first.1));
+                seen.cursors.insert(0, (m.cursor_at)(first.1).unwrap());
                 let StoredBytes::Blob { name, length } = m.stored.as_ref().unwrap() else {
                     panic!("retained body")
                 };

@@ -518,13 +518,16 @@ impl LibraryScan {
                 previous_part: previous.material,
                 manifest,
                 reading_order: Box::new(move |_| ReadingOrder(read_at)),
-                cursor_at: Box::new(move |_| {
-                    serde_json::to_value(ScanCursor {
-                        material: Some(id),
-                        part_index,
-                        ..scanned.clone()
-                    })
-                    .expect("cursor serializes")
+                cursor_at: Box::new({
+                    let cursor = move |_| {
+                        serde_json::to_value(ScanCursor {
+                            material: Some(id),
+                            part_index,
+                            ..scanned.clone()
+                        })
+                        .expect("cursor serializes")
+                    };
+                    move |end| Ok(cursor(end))
                 }),
                 aligned: false,
                 vanished: Vec::new(),
@@ -939,7 +942,10 @@ pub fn request_material(
             previous_part: None,
             manifest,
             reading_order: Box::new(move |_| ReadingOrder(order)),
-            cursor_at: Box::new(|_| Value::Null),
+            cursor_at: Box::new({
+                let cursor = |_| Value::Null;
+                move |end| Ok(cursor(end))
+            }),
             aligned: false,
             vanished: Vec::new(),
         }),

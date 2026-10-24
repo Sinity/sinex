@@ -35,6 +35,7 @@ fn read(a: &Acquired, parser: &ScanParser) -> Vec<Acquisition> {
     let out = drain(
         parser,
         DrainInput {
+            erased: None,
             source: "library.scan",
             class: Class::Open,
             material: m.id,
@@ -245,6 +246,7 @@ fn requests_take_author_and_time_from_the_manifest() {
     let out = drain(
         &RequestParser,
         DrainInput {
+            erased: None,
             source: "library.request",
             class: Class::Open,
             material: m.id,

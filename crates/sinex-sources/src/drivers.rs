@@ -69,12 +69,14 @@ pub struct Acquired {
 }
 
 /// Bytes already retained independently from the current decoded records.
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub enum StoredBytes {
     File(std::path::PathBuf),
     /// Authoritative framed bytes, staged in an unnamed owned file. The
     /// decoded record body is read from this file, not `NewMaterial::bytes`.
     FramedFile(std::sync::Arc<std::fs::File>),
+    /// Owned decoded bytes retained across retries without copying the body.
+    FramedMemory(std::sync::Arc<Vec<u8>>),
     FramedReader(RetainedRecords),
     Blob {
         name: String,
@@ -82,8 +84,29 @@ pub enum StoredBytes {
     },
 }
 
+impl std::fmt::Debug for StoredBytes {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::File(path) => f.debug_tuple("File").field(path).finish(),
+            Self::FramedFile(file) => f.debug_tuple("FramedFile").field(file).finish(),
+            Self::FramedMemory(bytes) => f
+                .debug_struct("FramedMemory")
+                .field("length", &bytes.len())
+                .finish(),
+            Self::FramedReader(records) => f.debug_tuple("FramedReader").field(records).finish(),
+            Self::Blob { name, length } => f
+                .debug_struct("Blob")
+                .field("name", name)
+                .field("length", length)
+                .finish(),
+        }
+    }
+}
+
 #[derive(Clone)]
 pub struct RetainedRecords {
+    /// Only paired archive-authenticated whole-erasure transitions can drain this backing.
+    pub bodyless: bool,
     pub blob: String,
     pub bytes: std::sync::Arc<dyn crate::drain::RecordRead>,
 }
@@ -111,8 +134,9 @@ pub struct NewMaterial {
     pub manifest: Value,
     /// Which of two readings is newer, by the record's anchor.
     pub reading_order: Box<dyn Fn(usize) -> ReadingOrder + Send + Sync>,
-    /// The cursor after the record ending at the given byte of the material.
-    pub cursor_at: Box<dyn Fn(usize) -> Value + Send + Sync>,
+    /// The cursor after this record. Retained backing failures refuse the
+    /// batch before its progress or readings become visible.
+    pub cursor_at: Box<dyn Fn(usize) -> Result<Value, DriverError> + Send + Sync>,
     /// A rewrite aligned against the previous revision: `records` holds only
     /// the records not read before. Its records are admitted as one batch, so
     /// the cursor never stops inside it (a resumed read would take the
@@ -126,18 +150,25 @@ pub struct NewMaterial {
 impl NewMaterial {
     fn decoded_len(&self, retained_len: u64) -> usize {
         match self.stored {
-            Some(StoredBytes::FramedFile(_) | StoredBytes::FramedReader(_)) => {
-                retained_len as usize
-            }
+            Some(
+                StoredBytes::FramedFile(_)
+                | StoredBytes::FramedMemory(_)
+                | StoredBytes::FramedReader(_),
+            ) => retained_len as usize,
             _ => self.bytes.len(),
         }
     }
 
-    pub(crate) fn record_bytes(&self) -> crate::drain::RecordBytes<'_> {
+    pub fn record_bytes(&self) -> crate::drain::RecordBytes<'_> {
         match &self.stored {
             Some(StoredBytes::FramedFile(file)) => crate::drain::RecordBytes::File(file),
+            Some(StoredBytes::FramedMemory(bytes)) => bytes.as_slice().into(),
             Some(StoredBytes::FramedReader(retained)) => {
-                crate::drain::RecordBytes::Reader(retained.bytes.as_ref())
+                if retained.bodyless {
+                    crate::drain::RecordBytes::Erased(retained.bytes.length())
+                } else {
+                    crate::drain::RecordBytes::Reader(retained.bytes.as_ref())
+                }
             }
             _ => self.bytes.as_slice().into(),
         }
@@ -177,6 +208,9 @@ pub struct Prepared<'s> {
     material: Option<(NewMaterial, MaterialRef)>,
     image: Option<sinex_model::SqliteImagePublication>,
     image_revision: Option<sinex_model::RevisionId>,
+    basis: Option<sinex_model::ExcisionBasis>,
+    erased: Option<crate::drain::ErasedTransitions>,
+    erased_replay: Option<sinex_model::ErasedReplayPublication>,
 }
 
 /// Store the poll's material (if any) and return it ready to drain.
@@ -240,6 +274,10 @@ pub fn prepare<'s>(
                         std::path::PathBuf::from(format!("/proc/self/fd/{}", file.as_raw_fd()));
                     (sink.put_file(&path).map_err(DriverError::Store)?, length)
                 }
+                Some(StoredBytes::FramedMemory(bytes)) => (
+                    sink.put(bytes).map_err(DriverError::Store)?,
+                    bytes.len() as u64,
+                ),
                 Some(StoredBytes::FramedReader(retained)) => {
                     (retained.blob.clone(), retained.bytes.length())
                 }
@@ -276,10 +314,45 @@ pub fn prepare<'s>(
         material,
         image,
         image_revision,
+        basis: None,
+        erased: None,
+        erased_replay: None,
     })
 }
 
 impl Prepared<'_> {
+    pub fn with_image_revision(mut self, revision: sinex_model::RevisionId) -> Self {
+        self.image_revision = Some(revision);
+        self
+    }
+
+    pub fn with_excision_basis(mut self, basis: sinex_model::ExcisionBasis) -> Self {
+        self.basis = Some(basis);
+        self
+    }
+
+    /// The archive owner attaches only authenticated, read-back ciphertext.
+    pub fn with_erased(
+        mut self,
+        erased: crate::drain::ErasedTransitions,
+        publication: Option<sinex_model::ErasedReplayPublication>,
+    ) -> Result<Self, DriverError> {
+        if let Some(publication) = &publication
+            && (self
+                .material
+                .as_ref()
+                .is_none_or(|(_, m)| m.id != publication.material)
+                || publication.length == 0)
+        {
+            return Err(DriverError::InvalidMaterial(
+                "erased replay publication has no matching material".into(),
+            ));
+        }
+        self.erased = Some(erased);
+        self.erased_replay = publication;
+        Ok(self)
+    }
+
     pub fn image_meta(&self) -> Option<&sinex_model::SqliteImageMeta> {
         self.image.as_ref().map(|i| &i.metadata)
     }
@@ -301,6 +374,13 @@ impl Prepared<'_> {
         first: bool,
     ) -> BatchKind {
         BatchKind::Source(Box::new(SourceProgress {
+            native_pending: None,
+            erased_replay: if first {
+                self.erased_replay.clone()
+            } else {
+                None
+            },
+            excision_basis: self.basis.clone(),
             image: if first { self.image.clone() } else { None },
             image_revision: self.image_revision,
             material_keys: Vec::new(),
@@ -346,6 +426,7 @@ impl Prepared<'_> {
         let mut chunks = self
             .source
             .drainer(DrainInput {
+                erased: self.erased.as_ref(),
                 source: spec.name,
                 class: spec.class,
                 material: m.id,
@@ -362,10 +443,17 @@ impl Prepared<'_> {
         // taken.
         let last_end = m.records.last().map_or(0, |r| r.1);
         let mut first = true;
+        let mut failed = false;
         Ok(Box::new(std::iter::from_fn(move || {
+            if failed {
+                return None;
+            }
             let chunk = match chunks.next()? {
                 Ok(chunk) => chunk,
-                Err(error) => return Some(Err(DriverError::Io(error.to_string()))),
+                Err(error) => {
+                    failed = true;
+                    return Some(Err(DriverError::Io(error.to_string())));
+                }
             };
             // After the last chunk the whole material is read, records
             // skipped as already read included.
@@ -385,11 +473,18 @@ impl Prepared<'_> {
                     RevisionChange::Same,
                 )
             };
+            let cursor = match (m.cursor_at)(end) {
+                Ok(cursor) => cursor,
+                Err(error) => {
+                    failed = true;
+                    return Some(Err(error));
+                }
+            };
             let batch = Batch {
                 run: self.run,
                 kind: self.progress(
                     first.then(|| material.clone()),
-                    (m.cursor_at)(end),
+                    cursor,
                     chunk.carry,
                     observation,
                     revision,

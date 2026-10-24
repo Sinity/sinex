@@ -14,6 +14,7 @@ pub mod derivations;
 pub mod diagnostics;
 pub mod excision;
 pub mod material_bytes;
+pub mod native_materials;
 pub mod payloads;
 pub mod positions;
 pub mod privacy;

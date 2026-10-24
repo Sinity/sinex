@@ -17,6 +17,15 @@ pub enum SecretRole {
     RecordNamingOnly,
 }
 
+impl SecretRole {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::DataAndRecordNaming => "data-and-record-naming",
+            Self::RecordNamingOnly => "record-naming-only",
+        }
+    }
+}
+
 /// No serialization or debug representation: capabilities leave this type only
 /// through a class-wrapped envelope or an explicitly checked data-key request.
 pub struct MaterialSecrets {
@@ -63,6 +72,23 @@ impl MaterialSecrets {
             record_naming: copy_secret(&self.record_naming),
         }
     }
+    /// Scoped class holders retain candidate confirmation, even without data.
+    pub fn name_equivalence(&self, plain: &str) -> sinex_model::EquivalenceKey {
+        sinex_model::EquivalenceKey(format!(
+            "sealed:{}",
+            blake3::keyed_hash(self.record_naming(), plain.as_bytes()).to_hex()
+        ))
+    }
+    pub fn name_record_hash(&self, plain: &[u8; 32]) -> [u8; 32] {
+        *blake3::keyed_hash(self.record_naming(), plain).as_bytes()
+    }
+
+    /// Exact raw-record matching has a separate domain from event record hashes.
+    pub fn name_raw_record(&self, raw: &[u8]) -> [u8; 32] {
+        let key = blake3::derive_key("sinex 2026 sealed erased raw record", self.record_naming());
+        *blake3::keyed_hash(&key, raw).as_bytes()
+    }
+
     pub fn data_key(&self, key_ref: String) -> Result<DataKey> {
         Ok(DataKey {
             key_ref,

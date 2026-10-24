@@ -162,3 +162,165 @@ async fn only_one_connection_can_claim_the_writer() {
         "the lock is free once the first writer's connection is gone"
     );
 }
+
+#[tokio::test]
+async fn queued_native_checks_reject_revoked_authority_and_roll_back_before_commit() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    let (_db, url, connection) = crate::testdb::fresh().await;
+    let (handle, queues) = channels();
+    let authority = crate::sealed_access::Authority::new(
+        sinex_store::sealed::Identity::generate(),
+        std::time::Duration::from_secs(30),
+    )
+    .unwrap();
+    let check_authority = authority.clone();
+    let h = handle.clone();
+    let queued = tokio::spawn(async move {
+        h.submit_checked(
+            Priority::Bulk,
+            batch("revoked"),
+            Arc::new(move || check_authority.check()),
+        )
+        .await
+    });
+    tokio::time::timeout(std::time::Duration::from_secs(2), async {
+        while queues.bulk.len() != 1 {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .unwrap();
+    authority.revoke();
+    let writer = tokio::spawn(run(
+        url.clone(),
+        connection,
+        queues,
+        Arc::new(sinex_store::NoDerivations),
+    ));
+    assert!(matches!(queued.await.unwrap(), Err(WriteError::Refused(_))));
+    let calls = Arc::new(AtomicUsize::new(0));
+    let checked = calls.clone();
+    let result = handle
+        .submit_checked(
+            Priority::Bulk,
+            batch("cancel-before-commit"),
+            Arc::new(move || {
+                if checked.fetch_add(1, Ordering::SeqCst) == 0 {
+                    Ok(())
+                } else {
+                    Err("capture canceled before commit".into())
+                }
+            }),
+        )
+        .await;
+    assert!(matches!(result, Err(WriteError::Refused(_))));
+    assert_eq!(
+        calls.load(Ordering::SeqCst),
+        2,
+        "the second check is inside the admission transaction"
+    );
+    let mut conn = PgConnection::connect(&url).await.unwrap();
+    let count: i64 = sqlx::query_scalar("SELECT count(*) FROM core.events")
+        .fetch_one(&mut conn)
+        .await
+        .unwrap();
+    assert_eq!(
+        count, 0,
+        "revoked queued work and canceled uncommitted events remain absent"
+    );
+    assert_eq!(
+        handle
+            .submit(Priority::Live, batch("unrelated retry"))
+            .await
+            .unwrap()
+            .admitted,
+        1
+    );
+    drop(handle);
+    writer.await.unwrap();
+}
+
+#[tokio::test]
+async fn a_single_slot_planning_pool_keeps_queued_excision_custody_after_caller_cancellation() {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    let (_db, url, connection) = crate::testdb::fresh().await;
+    let pool = sqlx::postgres::PgPoolOptions::new()
+        .max_connections(1)
+        .connect(&url)
+        .await
+        .unwrap();
+    let guard = crate::excision::ExcisionGuard::acquire(
+        pool.acquire().await.unwrap(),
+        "synthetic-source".into(),
+    )
+    .await
+    .unwrap();
+    let (handle, queues) = channels_for(&url);
+    let directory = tempfile::tempdir().unwrap();
+    let cancelled = Arc::new(AtomicBool::new(false));
+    let h = handle.clone();
+    let canceled = cancelled.clone();
+    let caller = tokio::spawn(async move {
+        h.excise(Excision {
+            sealed: None,
+            authority: None,
+            guard: Some(guard),
+            cancelled: canceled,
+            target: Target::Material(MaterialId::new()),
+            plan: Plan::default(),
+            rewrites: Vec::new(),
+            operation: OperationId::new(),
+            actor: "synthetic".into(),
+            blobs: Blobs::open(directory.path()).unwrap(),
+        })
+        .await
+    });
+    tokio::time::timeout(std::time::Duration::from_secs(2), async {
+        while queues.live.len() != 1 {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .unwrap();
+    caller.abort();
+    assert!(caller.await.unwrap_err().is_cancelled());
+    cancelled.store(true, Ordering::Release);
+    assert!(
+        tokio::time::timeout(std::time::Duration::from_millis(20), pool.acquire())
+            .await
+            .is_err(),
+        "queued work must retain the original single pool slot"
+    );
+    let h = handle.clone();
+    let acquisition = tokio::spawn(async move { h.source_guard("synthetic-source").await });
+    tokio::task::yield_now().await;
+    assert!(
+        !acquisition.is_finished(),
+        "dropping the caller released queued source custody"
+    );
+    let writer = tokio::spawn(run(
+        url,
+        connection,
+        queues,
+        Arc::new(sinex_store::NoDerivations),
+    ));
+    let acquired = tokio::time::timeout(std::time::Duration::from_secs(2), acquisition)
+        .await
+        .unwrap()
+        .unwrap()
+        .unwrap();
+    acquired.release().await.unwrap();
+    let mut returned = tokio::time::timeout(std::time::Duration::from_secs(2), pool.acquire())
+        .await
+        .unwrap()
+        .unwrap();
+    let operations: i64 = sqlx::query_scalar("SELECT count(*) FROM core.operations")
+        .fetch_one(&mut *returned)
+        .await
+        .unwrap();
+    assert_eq!(operations, 0, "canceled queued apply changed the archive");
+    drop(returned);
+    drop(handle);
+    writer.await.unwrap();
+    pool.close().await;
+}

@@ -38,6 +38,10 @@ impl Harness {
             subjects.clone(),
             handle,
             PgConnection::connect(&url).await.unwrap(),
+            sqlx::postgres::PgPoolOptions::new()
+                .max_connections(1)
+                .connect_lazy(&url)
+                .unwrap(),
             blobs.clone(),
             "test-host".into(),
         )
@@ -531,3 +535,126 @@ async fn an_indirect_frame_is_handled_as_the_frame_it_names() {
 }
 
 mod retirement;
+
+#[tokio::test]
+async fn exclusion_guard_precedes_new_producer_registration_and_chunk_storage() {
+    use base64::Engine;
+    let h = Harness::start().await;
+    let mut conn = PgConnection::connect(&h.url).await.unwrap();
+    let mut guard = conn.begin().await.unwrap();
+    sinex_store::excision::lock_source(&mut guard, "new-node", false)
+        .await
+        .unwrap();
+    let bytes = b"synthetic private chunk";
+    let blob = format!("blake3:{}", blake3::hash(bytes).to_hex());
+    let frame = Ingress::Chunk {
+        frame: "late-chunk".into(),
+        blob: blob.clone(),
+        offset: 0,
+        total: bytes.len() as u64,
+        data: base64::engine::general_purpose::STANDARD.encode(bytes),
+    };
+    let mut acks = h
+        .client
+        .subscribe(h.subjects.ack("new-node"))
+        .await
+        .unwrap();
+    h.client.flush().await.unwrap();
+    let js = jetstream::new(h.client.clone());
+    js.publish(
+        h.subjects.ingress("new-node"),
+        serde_json::to_vec(&frame).unwrap().into(),
+    )
+    .await
+    .unwrap()
+    .await
+    .unwrap();
+    let mut observer = PgConnection::connect(&h.url).await.unwrap();
+    let mut waiting = false;
+    for _ in 0..500 {
+        waiting = sqlx::query_scalar::<_, bool>("SELECT EXISTS(SELECT 1 FROM pg_locks WHERE locktype='advisory' AND NOT granted AND database=(SELECT oid FROM pg_database WHERE datname=current_database()))")
+            .fetch_one(&mut observer).await.unwrap();
+        if waiting {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    assert!(
+        waiting,
+        "ingress must wait before registration and chunk writing"
+    );
+    assert_eq!(
+        h.count("SELECT count(*) FROM core.manifests WHERE name='new-node'")
+            .await,
+        0
+    );
+    assert!(!h.blobs.contains(&blob).unwrap());
+    sqlx::query(
+        "INSERT INTO core.operations(id,kind,actor,scope) VALUES($1,'excise','synthetic',$2)",
+    )
+    .bind(Uuid::now_v7())
+    .bind(json!({"sources":["new-node"]}))
+    .execute(&mut *guard)
+    .await
+    .unwrap();
+    guard.commit().await.unwrap();
+    let message = tokio::time::timeout(Duration::from_secs(5), acks.next())
+        .await
+        .unwrap()
+        .unwrap();
+    let ack: Acknowledgment = serde_json::from_slice(&message.payload).unwrap();
+    assert!(ack.refusal.unwrap().contains("permanent exclusions"));
+    assert!(!h.blobs.contains(&blob).unwrap());
+    assert_eq!(
+        h.count("SELECT count(*) FROM core.manifests WHERE name='new-node'")
+            .await,
+        0
+    );
+    assert!(!h.store_dir.join("incoming").exists());
+}
+
+#[tokio::test]
+async fn unsupported_ingress_custody_is_refused_without_deleting_a_partial_transfer() {
+    use base64::Engine;
+    let h = Harness::start().await;
+    let bytes = b"synthetic partial transfer";
+    let hex = blake3::hash(bytes).to_hex().to_string();
+    let blob = format!("blake3:{hex}");
+    let frame = |name: &str, start: usize, end: usize| Ingress::Chunk {
+        frame: name.into(),
+        blob: blob.clone(),
+        offset: start as u64,
+        total: bytes.len() as u64,
+        data: base64::engine::general_purpose::STANDARD.encode(&bytes[start..end]),
+    };
+    assert!(
+        h.send("existing-node", &frame("first", 0, 7))
+            .await
+            .refusal
+            .is_none()
+    );
+    let partial = h.store_dir.join("incoming").join(&hex);
+    let before = std::fs::read(&partial).unwrap();
+    let mut conn = PgConnection::connect(&h.url).await.unwrap();
+    assert!(
+        sinex_store::excision::unsupported_ingress(&mut conn, "existing-node")
+            .await
+            .unwrap()
+    );
+    // A policy arrival must not finish or discard unknown partial custody.
+    sqlx::query(
+        "INSERT INTO core.operations(id,kind,actor,scope) VALUES($1,'excise','synthetic',$2)",
+    )
+    .bind(Uuid::now_v7())
+    .bind(json!({"sources":["existing-node"]}))
+    .execute(&mut conn)
+    .await
+    .unwrap();
+    let ack = h
+        .send("existing-node", &frame("last", 7, bytes.len()))
+        .await;
+    assert!(ack.refusal.unwrap().contains("permanent exclusions"));
+    assert_eq!(std::fs::read(partial).unwrap(), before);
+    assert!(!h.blobs.contains(&blob).unwrap());
+    assert_eq!(h.have("existing-node", &["first"]).await.len(), 1);
+}

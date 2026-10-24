@@ -1,6 +1,7 @@
 //! The drain: everything around `Parser::parse`.
 use crate::{Parser, RecordError, RecordShape};
 use serde_json::Value;
+type NextRange<'a> = (usize, usize, Option<&'a Value>, bool);
 use sinex_model::{
     Class, MaterialId, Origin, Payloads, ReadingOrder, RecordLocation, RecordOutcome,
 };
@@ -35,6 +36,8 @@ pub enum RecordBytes<'a> {
     Slice(&'a [u8]),
     File(&'a std::fs::File),
     Reader(&'a dyn RecordRead),
+    /// Whole-erased backing has no decryptable body; archive transitions remain.
+    Erased(u64),
 }
 
 impl<'a> From<&'a [u8]> for RecordBytes<'a> {
@@ -44,8 +47,11 @@ impl<'a> From<&'a [u8]> for RecordBytes<'a> {
 }
 
 impl<'a> RecordBytes<'a> {
-    fn record(&self, start: usize, end: usize) -> std::io::Result<std::borrow::Cow<'a, [u8]>> {
+    pub fn record(&self, start: usize, end: usize) -> std::io::Result<std::borrow::Cow<'a, [u8]>> {
         match self {
+            Self::Erased(_) => Err(std::io::Error::other(
+                "erased material has no retained plaintext",
+            )),
             Self::Slice(bytes) => bytes
                 .get(start..end)
                 .map(std::borrow::Cow::Borrowed)
@@ -75,7 +81,83 @@ impl<'a> RecordBytes<'a> {
     }
 }
 
+struct ErasedSpan {
+    end: usize,
+    transition: Option<Value>,
+}
+
+/// Archive-owned transitions after scoped envelope authentication. Provider
+/// manifests have no conversion into this type; its fields are private.
+pub struct ErasedTransitions {
+    entries: std::collections::BTreeMap<usize, ErasedSpan>,
+    length: u64,
+    whole: bool,
+}
+impl ErasedTransitions {
+    /// Only the archive owner supplies authenticated coordinates and minimal
+    /// parser tokens after opening the purpose-bound encrypted envelope.
+    pub fn from_archive(
+        records: impl IntoIterator<Item = (usize, usize, Option<Value>)>,
+        length: u64,
+        whole: bool,
+    ) -> Result<Self, RecordError> {
+        usize::try_from(length)
+            .map_err(|_| RecordError::new("erased material exceeds address space"))?;
+        let mut entries = std::collections::BTreeMap::new();
+        for (start, end, transition) in records {
+            if start >= end
+                || end as u64 > length
+                || entries
+                    .insert(start, ErasedSpan { end, transition })
+                    .is_some()
+            {
+                return Err(RecordError::new("invalid erased-record coordinates"));
+            }
+        }
+        let mut through = 0;
+        for (&start, span) in &entries {
+            if start < through {
+                return Err(RecordError::new("overlapping erased-record coordinates"));
+            }
+            through = span.end;
+        }
+        Ok(Self {
+            entries,
+            length,
+            whole,
+        })
+    }
+    pub(crate) fn contains_record(&self, start: usize, end: usize) -> bool {
+        self.entries.get(&start).is_some_and(|span| span.end == end)
+    }
+
+    pub(crate) fn matches_whole_records(&self, records: &[(usize, usize)], length: u64) -> bool {
+        self.whole
+            && self.length == length
+            && self.entries.len() == records.len()
+            && self
+                .entries
+                .iter()
+                .zip(records)
+                .all(|((&start, span), range)| (start, span.end) == *range)
+    }
+
+    pub fn after(mut self, through: usize) -> Result<Self, RecordError> {
+        if through as u64 > self.length
+            || self
+                .entries
+                .iter()
+                .any(|(&start, span)| start < through && through < span.end)
+        {
+            return Err(RecordError::new("resume cuts an erased record"));
+        }
+        self.entries.retain(|&start, _| start >= through);
+        Ok(self)
+    }
+}
+
 pub struct DrainInput<'a> {
+    pub erased: Option<&'a ErasedTransitions>,
     pub source: &'a str,
     pub class: Class,
     pub material: MaterialId,
@@ -185,6 +267,8 @@ pub struct Drainer<'a, P: Parser> {
     parser: &'a P,
     input: DrainInput<'a>,
     next: usize,
+    erased_next:
+        Option<std::iter::Peekable<std::collections::btree_map::Iter<'a, usize, ErasedSpan>>>,
     carry: P::Carry,
     pending: Option<Pending<P::Carry>>,
     finished: bool,
@@ -200,7 +284,16 @@ impl<'a, P: Parser> Drainer<'a, P> {
                 .map_err(|e| RecordError::new(format!("staged material: {e}")))?
                 .len(),
             RecordBytes::Reader(reader) => reader.length(),
+            RecordBytes::Erased(length) => *length,
         };
+        if input.erased.is_some_and(|erased| erased.length != length)
+            || matches!(&input.bytes, RecordBytes::Erased(_))
+                && !input.erased.is_some_and(|erased| erased.whole)
+        {
+            return Err(RecordError::new(
+                "erased backing needs its authenticated archive transitions",
+            ));
+        }
         if input
             .records
             .iter()
@@ -218,6 +311,7 @@ impl<'a, P: Parser> Drainer<'a, P> {
         };
         Ok(Self {
             parser,
+            erased_next: input.erased.map(|erased| erased.entries.iter().peekable()),
             input,
             next: 0,
             carry,
@@ -225,6 +319,60 @@ impl<'a, P: Parser> Drainer<'a, P> {
             finished: false,
             emitted: false,
         })
+    }
+
+    fn next_range(&mut self) -> Result<Option<NextRange<'a>>, RecordError> {
+        let ordinary = self.input.records.get(self.next).copied();
+        let erased = self
+            .erased_next
+            .as_mut()
+            .and_then(|records| records.peek())
+            .map(|record| (*record.0, record.1.end, record.1.transition.as_ref()));
+        if let Some((start, end, transition)) = erased
+            && ordinary.is_none_or(|record| start <= record.0)
+        {
+            self.erased_next.as_mut().expect("erased iterator").next();
+            while let Some(&(record_start, record_end)) = self.input.records.get(self.next) {
+                if record_start >= end {
+                    break;
+                }
+                if record_start < start || record_end > end {
+                    return Err(RecordError::new("erased range overlaps a retained record"));
+                }
+                self.next += 1;
+            }
+            return Ok(Some((start, end, transition, true)));
+        }
+        if let Some((start, end)) = ordinary {
+            if erased.is_some_and(|record| record.0 < end) {
+                return Err(RecordError::new("erased range overlaps a retained record"));
+            }
+            self.next += 1;
+            return Ok(Some((start, end, None, false)));
+        }
+        Ok(None)
+    }
+
+    fn check_erased(&self, start: usize, end: usize) -> Result<(), RecordError> {
+        if matches!(&self.input.bytes, RecordBytes::Erased(_)) {
+            return Ok(());
+        }
+        let mut at = start;
+        while at < end {
+            let next = at.saturating_add(65536).min(end);
+            let bytes = self
+                .input
+                .bytes
+                .record(at, next)
+                .map_err(|error| RecordError::new(format!("read erased record: {error}")))?;
+            if !bytes.iter().all(|byte| *byte == b' ' || *byte == b'\n') {
+                return Err(RecordError::new(
+                    "archive transition does not cover erased bytes",
+                ));
+            }
+            at = next;
+        }
+        Ok(())
     }
 
     /// Parse one record into its outcome, advancing the carry on success.
@@ -243,10 +391,7 @@ impl<'a, P: Parser> Drainer<'a, P> {
                 self.carry = next;
                 // A record shape's own hash that panics falls back to the
                 // bytes' hash rather than stopping the run.
-                let hash = std::panic::catch_unwind(|| {
-                    <P::Record<'_> as RecordShape>::hash_context(raw, P::VOLATILE, &context)
-                })
-                .unwrap_or_else(|_| *blake3::hash(raw).as_bytes());
+                let hash = record_hash::<P>(raw, &context);
                 let order = (input.reading_order)(start);
                 let mut events = Vec::with_capacity(payloads.len());
                 let mut failure = None;
@@ -294,6 +439,14 @@ impl<'a, P: Parser> Drainer<'a, P> {
     }
 }
 
+/// Shared with acquisition exclusion matching, including records emitting no events.
+pub(crate) fn record_hash<P: Parser>(raw: &[u8], context: &RecordContext<'_>) -> [u8; 32] {
+    std::panic::catch_unwind(|| {
+        <P::Record<'_> as RecordShape>::hash_context(raw, P::VOLATILE, context)
+    })
+    .unwrap_or_else(|_| *blake3::hash(raw).as_bytes())
+}
+
 fn empty_chunk() -> DrainOutput {
     DrainOutput {
         outcomes: Vec::new(),
@@ -330,8 +483,37 @@ impl<P: Parser> Iterator for Drainer<'_, P> {
             bytes_in_chunk = p.size;
             chunk_carry = Some(p.carry_after);
         }
-        while let Some(&(start, end)) = self.input.records.get(self.next) {
-            self.next += 1;
+        loop {
+            let (start, end, transition, erased) = match self.next_range() {
+                Ok(Some(record)) => record,
+                Ok(None) => break,
+                Err(error) => {
+                    self.finished = true;
+                    return Some(Err(error));
+                }
+            };
+            if erased {
+                if let Err(error) = self.check_erased(start, end) {
+                    self.finished = true;
+                    return Some(Err(error));
+                }
+                if let Some(transition) = transition {
+                    let context = RecordContext {
+                        manifest: self.input.manifest,
+                        member: member_at(self.input.manifest, start),
+                    };
+                    self.carry = match self.parser.skip_erased(&self.carry, transition, &context) {
+                        Ok(carry) => carry,
+                        Err(error) => {
+                            self.finished = true;
+                            return Some(Err(error));
+                        }
+                    };
+                    chunk_carry = Some(self.carry.clone());
+                }
+                current.end = end;
+                continue;
+            }
             let raw = match self.input.bytes.record(start, end) {
                 Ok(raw) => raw,
                 Err(error) => {
@@ -377,6 +559,11 @@ impl<P: Parser> Iterator for Drainer<'_, P> {
             place(&mut current, outcome, events, end);
             chunk_carry = Some(self.carry.clone());
             bytes_in_chunk += size;
+        }
+        if let Some(erased) = self.input.erased
+            && erased.whole
+        {
+            current.end = usize::try_from(erased.length).expect("erased coordinates checked");
         }
         self.finished = true;
         if !current.outcomes.is_empty() || !self.emitted {

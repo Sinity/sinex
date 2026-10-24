@@ -9,6 +9,24 @@ use sinex_model::{InputId, ObservationId, RevisionChange, RevisionId, SourceProg
 /// Bytes are already in the content store, so they exist before any row refers
 /// to them.
 pub(super) async fn source(conn: &mut PgConnection, p: &SourceProgress) -> Result<()> {
+    if let Some(image) = &p.image {
+        crate::sqlite_images::guard_acquisition(conn, &p.input, &p.observation, &image.metadata)
+            .await?;
+    }
+    if let Some(replay) = &p.erased_replay
+        && (p.material.as_ref().is_none_or(|m| m.id != replay.material)
+            || p.excision_basis.as_ref().is_none_or(|b| b.count == 0)
+            || !p
+                .material_keys
+                .iter()
+                .any(|k| k.material == replay.material)
+            || replay.length == 0
+            || i64::try_from(replay.length).is_err())
+    {
+        return Err(Error::Invalid(
+            "erased replay publication lacks its material, key or excision basis".into(),
+        ));
+    }
     let input = sqlx::query_scalar!(
         r#"INSERT INTO raw.inputs (id, binding, kind, locator, host) VALUES ($1, $2, $3, $4, $5)
            ON CONFLICT (binding, locator, host) DO UPDATE SET kind = EXCLUDED.kind
@@ -158,6 +176,22 @@ pub(super) async fn source(conn: &mut PgConnection, p: &SourceProgress) -> Resul
 
     let Some(m) = &p.material else { return Ok(()) };
     material(conn, input, revision, m).await?;
+    if let Some(replay) = &p.erased_replay {
+        crate::sealed::metadata::register_blob(conn, &replay.blob, replay.length).await?;
+        sqlx::query("UPDATE raw.materials SET erased_replay_blob=$2 WHERE id=$1 AND erased_replay_blob IS NULL AND blob=$3 AND durable_bytes=$4 AND manifest=$5 AND parser=$6 AND parser_version=$7")
+            .bind(m.id.0).bind(&replay.blob).bind(&m.blob).bind(m.length as i64).bind(&m.manifest).bind(&m.parser).bind(m.parser_version as i32).execute(&mut *conn).await?;
+        let actual: Option<String> =
+            sqlx::query_scalar("SELECT erased_replay_blob FROM raw.materials WHERE id=$1")
+                .bind(m.id.0)
+                .fetch_one(&mut *conn)
+                .await?;
+        if actual.as_deref() != Some(replay.blob.as_str()) {
+            return Err(Error::Invalid(
+                "material replay metadata changed before admission".into(),
+            ));
+        }
+    }
+
     let role = sinex_model::MaterialRole::of(&m.manifest)
         .map_err(|e| Error::Invalid(format!("material {}: {e}", m.id)))?;
     // Decoded record parts retain parser coordinates, not additional input bytes.
@@ -191,7 +225,7 @@ async fn material(
         i64::try_from(m.length).map_err(|_| Error::Invalid("material length beyond i64".into()))?;
     sqlx::query!(
         r#"INSERT INTO core.blobs (hash, size, status) VALUES ($1, $2, 'present')
-           ON CONFLICT (hash) DO UPDATE SET status = 'present' WHERE core.blobs.status = 'deleting'"#,
+           ON CONFLICT (hash) DO UPDATE SET status = 'present' WHERE core.blobs.status IN ('reserved','deleting')"#,
         m.blob,
         length,
     )

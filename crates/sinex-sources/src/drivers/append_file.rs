@@ -18,6 +18,8 @@ use sinex_model::{InputRef, MaterialId, ObservationFacts, RecordLocation, Revisi
 use std::collections::HashMap;
 use std::io::{Read, Seek, SeekFrom};
 use std::path::PathBuf;
+mod erased;
+pub use erased::{ErasedMember, RawMatcher};
 
 /// Bytes before the offset whose hash proves the prefix is unchanged.
 const WINDOW: u64 = 4096;
@@ -39,8 +41,13 @@ pub struct Cursor {
     pub size: u64,
     pub mtime_ns: i128,
     pub inode: u64,
-    /// BLAKE3 of the up-to-`WINDOW` bytes before `offset`.
-    pub window: String,
+    /// BLAKE3 of the up-to-`WINDOW` bytes before `offset`. Unknown windows
+    /// resume through retained coordinates and cannot align a provider file.
+    #[serde(default)]
+    pub window: Option<String>,
+    /// A rewrite observed before its first complete record is retained.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pending_revision: Option<RevisionChange>,
     pub material: Option<MaterialId>,
     pub part_index: u32,
     /// How many bytes of `material` the stored readings cover. A restart
@@ -71,12 +78,13 @@ pub const STATE_RECORDS: usize = 40;
 /// life of the source task and rebuilt from the stored materials after a
 /// restart ([`AppendState::rebuild`]); bounded by [`STATE_TAIL`] and
 /// [`STATE_RECORDS`].
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Default, PartialEq, Eq)]
 pub struct AppendState {
-    records: HashMap<[u8; 32], Vec<RecordLocation>>,
+    records: HashMap<[u8; 32], std::collections::VecDeque<RecordLocation>>,
     /// Every held record in reading order, with its length, so the oldest
     /// is dropped first when the tail grows past a bound.
-    order: std::collections::VecDeque<([u8; 32], RecordLocation, usize)>,
+    order: std::collections::VecDeque<erased::Tail>,
+    erased: HashMap<(MaterialId, [u8; 32]), erased::Group>,
     bytes: usize,
 }
 
@@ -97,34 +105,37 @@ impl AppendState {
     }
 
     fn insert(&mut self, record: &[u8], material: MaterialId, anchor: usize) {
-        let hash = *blake3::hash(record).as_bytes();
+        self.insert_digest(
+            *blake3::hash(record).as_bytes(),
+            record.len(),
+            material,
+            anchor,
+        );
+    }
+
+    pub(crate) fn insert_digest(
+        &mut self,
+        hash: [u8; 32],
+        length: usize,
+        material: MaterialId,
+        anchor: usize,
+    ) {
         let location = RecordLocation {
             material,
             anchor: anchor as u64,
         };
-        self.records.entry(hash).or_default().push(location);
-        self.order.push_back((hash, location, record.len()));
-        self.bytes += record.len();
-        while self.order.len() > STATE_RECORDS || (self.bytes > STATE_TAIL && self.order.len() > 1)
-        {
-            let (hash, location, n) = self.order.pop_front().expect("not empty");
-            self.bytes -= n;
-            if let Some(held) = self.records.get_mut(&hash) {
-                if let Some(i) = held.iter().position(|l| *l == location) {
-                    held.remove(i);
-                }
-                if held.is_empty() {
-                    self.records.remove(&hash);
-                }
-            }
-        }
+        self.records.entry(hash).or_default().push_back(location);
+        self.order
+            .push_back(erased::Tail::Raw(hash, location, length));
+        self.bytes = self.bytes.saturating_add(length);
+        self.trim();
     }
 
     /// Whether an equal record was held, consuming one occurrence of it.
     fn take(&mut self, record: &[u8]) -> bool {
         match self.records.get_mut(blake3::hash(record).as_bytes()) {
             Some(held) if !held.is_empty() => {
-                held.remove(0);
+                held.pop_front();
                 true
             }
             _ => false,
@@ -134,13 +145,14 @@ impl AppendState {
     /// Where the records still held were read: after a rewrite is aligned,
     /// the ones it dropped.
     fn remaining(self) -> Vec<RecordLocation> {
-        let mut out: Vec<RecordLocation> = self.records.into_values().flatten().collect();
+        let mut out: Vec<RecordLocation> = self.erased_remaining().collect();
+        out.extend(self.records.into_values().flatten());
         out.sort_by_key(|l| (l.material, l.anchor));
         out
     }
 
     pub fn is_empty(&self) -> bool {
-        self.records.values().all(Vec::is_empty)
+        self.records.values().all(|locations| locations.is_empty()) && !self.has_erased()
     }
 }
 
@@ -170,6 +182,22 @@ impl AppendFile {
             serde_json::from_value(cursor.clone())
                 .map_err(|e| DriverError::Cursor(e.to_string()))?
         };
+        if previous.pending_revision.is_some_and(|kind| {
+            !matches!(
+                kind,
+                RevisionChange::Rewritten | RevisionChange::Replaced | RevisionChange::Truncated
+            )
+        }) {
+            return Err(DriverError::Cursor(
+                "invalid pending append revision kind".into(),
+            ));
+        }
+        if !cursor.is_null() && previous.window.is_none() {
+            return Err(DriverError::Cursor(
+                "append prefix window is unknown; authenticated retained resumption is required"
+                    .into(),
+            ));
+        }
         let facts = match file_facts(&self.path) {
             Ok(f) => f,
             Err(e) => {
@@ -214,11 +242,18 @@ impl AppendFile {
         let intact = !cursor.is_null()
             && previous.inode == inode
             && previous.offset <= size
-            && window_hash(&mut file, previous.offset)? == previous.window;
+            && Some(window_hash(&mut file, previous.offset)?) == previous.window;
         let (start, revision) = if cursor.is_null() {
             (0, RevisionChange::Appended)
         } else if intact {
-            (previous.offset, RevisionChange::Appended)
+            (
+                previous.offset,
+                previous
+                    .pending_revision
+                    .unwrap_or(RevisionChange::Appended),
+            )
+        } else if previous.inode != inode {
+            (0, RevisionChange::Replaced)
         } else if size < previous.offset {
             (0, RevisionChange::Truncated)
         } else {
@@ -260,17 +295,28 @@ impl AppendFile {
             size,
             mtime_ns: mtime,
             inode,
-            window: String::new(),
-            material: if restarted { None } else { previous.material },
-            part_index: if restarted { 0 } else { previous.part_index },
-            through: if restarted { 0 } else { previous.through },
+            window: None,
+            material: previous.material,
+            part_index: previous.part_index,
+            through: previous.through,
+            pending_revision: if restarted
+                && matches!(
+                    revision,
+                    RevisionChange::Rewritten
+                        | RevisionChange::Replaced
+                        | RevisionChange::Truncated
+                ) {
+                Some(revision)
+            } else {
+                previous.pending_revision
+            },
         };
         if consumed == 0 {
             // Nothing complete yet; keep the old offset and window, note the new facts.
             let window = if start == previous.offset {
                 previous.window.clone()
             } else {
-                blake3::hash(b"").to_hex().to_string()
+                Some(blake3::hash(b"").to_hex().to_string())
             };
             let unchanged = Cursor { window, ..base };
             return Ok(Acquired {
@@ -289,11 +335,12 @@ impl AppendFile {
         let restarted_records = start == 0 && !cursor.is_null();
         let id = MaterialId::new();
         let (records, aligned, vanished) = if restarted_records {
+            let alignment = state.prepare_alignment(&data, &records)?;
             let mut previous = std::mem::take(state);
             let aligning = !previous.is_empty();
             let mut fresh = Vec::new();
             for &(s, e) in &records {
-                if !previous.take(&data[s..e]) {
+                if !previous.take_aligned(&data[s..e], &alignment) {
                     fresh.push((s, e));
                 }
                 state.insert(&data[s..e], id, s);
@@ -350,14 +397,17 @@ impl AppendFile {
                 },
                 mtime_ns: mtime,
                 inode,
-                window: blake3::hash(w).to_hex().to_string(),
+                window: Some(blake3::hash(w).to_hex().to_string()),
                 material: Some(id),
                 part_index,
                 through: end,
+                pending_revision: None,
             })
             .expect("cursor serializes")
         };
         let mut manifest = json!({"path": self.path.display().to_string(), "host": self.host, "file_offset": start, "media_type": "text/plain"});
+        manifest["append_resume"] =
+            json!({"version":1,"start":cursor_at(0),"end":cursor_at(material_len)});
         if aligned {
             manifest["records"] = json!(records);
         }
@@ -375,7 +425,10 @@ impl AppendFile {
                 previous_part,
                 reading_order: super::reading_order(&manifest),
                 manifest,
-                cursor_at: Box::new(cursor_at),
+                cursor_at: Box::new({
+                    let cursor = cursor_at;
+                    move |end| Ok(cursor(end))
+                }),
                 aligned,
                 vanished,
             }),

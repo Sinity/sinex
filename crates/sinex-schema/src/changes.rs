@@ -61,6 +61,7 @@ async fn apply_locked(conn: &mut PgConnection) -> Result<Applied, Error> {
         match change.version {
             1 => archival_history(conn).await?,
             2 => notes::apply(conn).await?,
+            3 => sealed_erasure(conn).await?,
             _ => {
                 return Err(Error::Upgrade {
                     found,
@@ -123,3 +124,45 @@ async fn archival_history(conn: &mut PgConnection) -> Result<(), Error> {
 
 #[cfg(test)]
 mod tests;
+
+async fn sealed_erasure(conn: &mut PgConnection) -> Result<(), Error> {
+    // Catalog checked against the published notes version-2 native schema binary.
+    const VERSION_TWO_SHAPE: &str =
+        "44c6e0f632ee803dbd9db1e71e50667708cf748acce4f53ee38d6082f16062f2";
+    let shape = serde_json::to_vec(&catalog(conn).await?).expect("catalog strings serialize");
+    if blake3::hash(&shape).to_hex().as_str() != VERSION_TWO_SHAPE {
+        return Err(Error::Shape(2));
+    }
+    conn.execute("ALTER TABLE privacy.material_keys ADD COLUMN role text NOT NULL DEFAULT 'data-and-record-naming' CHECK (role IN ('data-and-record-naming','record-naming-only'))").await?;
+    conn.execute(
+        "ALTER TABLE raw.materials ADD COLUMN erased_replay_blob text REFERENCES core.blobs(hash)",
+    )
+    .await?;
+    conn.execute(tables::event_guard()).await?;
+    conn.execute("ALTER TABLE core.blobs DROP CONSTRAINT blobs_status_check; ALTER TABLE core.blobs ADD CONSTRAINT blobs_status_check CHECK(status IN ('reserved','present','quarantined','deleting'))").await?;
+    conn.execute(tables::pending_native_table()).await?;
+    conn.execute(tables::pending_native_blobs_table()).await?;
+    conn.execute("CREATE INDEX pending_native_blobs_blob ON raw.pending_native_blobs(blob)")
+        .await?;
+    conn.execute(
+        "CREATE INDEX pending_native_source ON raw.pending_native_materials(source, binding)",
+    )
+    .await?;
+    for statement in grants() {
+        conn.execute(statement.as_str()).await?;
+    }
+
+    Ok(())
+}
+
+#[cfg(test)]
+pub(super) async fn version_two(conn: &mut PgConnection) {
+    archival_history(conn).await.unwrap();
+    conn.execute("INSERT INTO sinex_schema.applied(version) VALUES(1)")
+        .await
+        .unwrap();
+    notes::apply(conn).await.unwrap();
+    conn.execute("INSERT INTO sinex_schema.applied(version) VALUES(2)")
+        .await
+        .unwrap();
+}

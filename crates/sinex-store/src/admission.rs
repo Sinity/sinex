@@ -93,8 +93,27 @@ pub async fn admit(
     // reading it repeats when suppressed. A derived batch's keys own these.
     let mut resolved: Vec<Option<Uuid>> = Vec::new();
 
+    if let BatchKind::Ingress(frame) = &batch.kind
+        && frame.material.as_ref().is_some_and(|p| {
+            p.native_pending.is_some()
+                || p.erased_replay.is_some()
+                || p.excision_basis.is_some()
+                || p.image.is_some()
+                || p.image_revision.is_some()
+                || !p.material_keys.is_empty()
+                || !p.carry.is_null()
+        })
+    {
+        return Err(crate::Error::Invalid(
+            "producer protocol does not authorize archive-owned source state".into(),
+        ));
+    }
+    crate::excision::validate_basis(conn, batch).await?;
     match &batch.kind {
-        BatchKind::Source(progress) => register::source(conn, progress).await?,
+        BatchKind::Source(progress) => {
+            crate::native_materials::validate(conn, progress, &batch.archive).await?;
+            register::source(conn, progress).await?;
+        }
         BatchKind::Ingress(frame) => {
             if let Some(progress) = &frame.material {
                 register::source(conn, progress).await?;
@@ -102,6 +121,7 @@ pub async fn admit(
         }
         BatchKind::Derived { .. } | BatchKind::Api { .. } | BatchKind::Replay { .. } => {}
     }
+    crate::sealed::validate_batch(conn, batch).await?;
     for request in &batch.archive {
         if let ArchiveRequest::Replay { scope, operation } = request {
             let (archived, dirty) = archive::replay_scope(conn, scope, *operation, keys).await?;
@@ -138,6 +158,7 @@ pub async fn admit(
     outcome.failures = write::record_failures(conn, batch).await?;
     if let BatchKind::Source(progress) = &batch.kind {
         write::save_position(conn, progress).await?;
+        crate::native_materials::complete(conn, progress).await?;
     }
     for request in &batch.archive {
         outcome.dirty_keys += archive::request(conn, request, keys).await?;

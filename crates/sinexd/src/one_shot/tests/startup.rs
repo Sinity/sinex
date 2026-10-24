@@ -1,9 +1,28 @@
 use super::*;
 use sqlx::Executor;
 
-// Version2 changes only this registry row and view. Restore the independently
-// captured v1 definitions, so explicit application really can upgrade it.
+// Restore the published predecessor representation and note definitions so
+// explicit application exercises the complete ordered upgrade.
 async fn predecessor(conn: &mut PgConnection) {
+    conn.execute("DROP TABLE raw.pending_native_blobs; DROP TABLE raw.pending_native_materials; ALTER TABLE core.blobs DROP CONSTRAINT blobs_status_check; ALTER TABLE core.blobs ADD CONSTRAINT blobs_status_check CHECK(status IN ('present','quarantined','deleting')); ALTER TABLE raw.materials DROP COLUMN erased_replay_blob; ALTER TABLE privacy.material_keys DROP COLUMN role; DELETE FROM sinex_schema.applied WHERE version=3").await.unwrap();
+    let old: Value = serde_json::from_str(include_str!(
+        "../../../../sinex-schema/src/tests/v0-declarations.json"
+    ))
+    .unwrap();
+    let guard = old["statements"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|v| v.as_str().unwrap())
+        .find(|s| s.contains("CREATE FUNCTION core.event_guard"))
+        .unwrap();
+    conn.execute(
+        guard
+            .replacen("CREATE FUNCTION", "CREATE OR REPLACE FUNCTION", 1)
+            .as_str(),
+    )
+    .await
+    .unwrap();
     let row: (String, Value, String, Vec<String>, String) = serde_json::from_str(include_str!(
         "../../../../sinex-schema/src/changes/notes/v1-registry.json"
     ))
@@ -60,7 +79,7 @@ async fn refuse_old(derive: bool) {
         sinex_schema::apply(&mut conn).await.unwrap(),
         sinex_schema::Applied::Upgraded {
             from: 1,
-            version: 2
+            version: sinex_schema::VERSION
         }
     );
     let ctx = OneShot::open(&url, store.path()).await.unwrap();
@@ -155,7 +174,9 @@ async fn empty_database_needs_explicit_initialization_before_ordinary_startup() 
     assert!(!exists);
     assert_eq!(
         sinex_schema::apply(&mut conn).await.unwrap(),
-        sinex_schema::Applied::Created { version: 2 }
+        sinex_schema::Applied::Created {
+            version: sinex_schema::VERSION
+        }
     );
     let ctx = OneShot::open(&url, store.path()).await.unwrap();
     ctx.close().await.unwrap();

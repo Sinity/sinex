@@ -27,8 +27,8 @@ fn a_cursor_between_two_batches_reads_on_though_the_file_is_unchanged() {
     let first = d.poll(&Value::Null, &mut AppendState::default()).unwrap();
     let m = first.material.unwrap();
     // The first batch (one record) committed; the process died before the next.
-    let between = (m.cursor_at)(2);
-    let after = (m.cursor_at)(m.bytes.len());
+    let between = (m.cursor_at)(2).unwrap();
+    let after = (m.cursor_at)(m.bytes.len()).unwrap();
     let again = d.poll(&between, &mut AppendState::default()).unwrap();
     assert_eq!(records(&again), vec!["b\n", "c\n"]);
     assert!(
@@ -53,7 +53,7 @@ fn appends_read_only_new_complete_records() {
     let first = d.poll(&Value::Null, &mut state).unwrap();
     assert_eq!(records(&first), vec!["a\n", "b\n"]);
     let m = first.material.as_ref().unwrap();
-    let cursor = (m.cursor_at)(m.bytes.len());
+    let cursor = (m.cursor_at)(m.bytes.len()).unwrap();
     assert_eq!(cursor["offset"], json!(4));
 
     // Unchanged stat: nothing read.
@@ -88,7 +88,7 @@ fn a_rewrite_reads_only_records_the_previous_revision_did_not_hold() {
     let mut state = AppendState::default();
     let first = d.poll(&Value::Null, &mut state).unwrap();
     let m = first.material.unwrap();
-    let cursor = (m.cursor_at)(m.bytes.len());
+    let cursor = (m.cursor_at)(m.bytes.len()).unwrap();
 
     // zsh expired the duplicate "b" and appended "dd": a rewrite.
     std::fs::write(&path, b"a\nc\ndd\n").unwrap();
@@ -103,7 +103,12 @@ fn a_rewrite_reads_only_records_the_previous_revision_did_not_hold() {
     assert_eq!(records(&again), vec!["dd\n"]);
     let n = again.material.as_ref().unwrap();
     assert!(n.aligned);
-    assert_eq!(n.part_index, 0, "a rewrite starts a new chain");
+    assert_eq!(
+        n.part_index,
+        m.part_index + 1,
+        "parser parts continue across physical revisions"
+    );
+    assert_eq!(n.previous_part, Some(m.id));
     assert_eq!(
         n.vanished,
         vec![RecordLocation {
@@ -118,7 +123,7 @@ fn a_rewrite_reads_only_records_the_previous_revision_did_not_hold() {
         vec![(4, 7)]
     );
     // The cursor covers the whole rewritten file, skipped records included.
-    let after = (n.cursor_at)(n.bytes.len());
+    let after = (n.cursor_at)(n.bytes.len()).unwrap();
     assert_eq!(after["offset"], json!(7));
     assert!(d.poll(&after, &mut rebuilt).unwrap().material.is_none());
 }
@@ -135,12 +140,14 @@ fn rewritten_prefix_is_read_again_as_a_new_revision() {
     let mut state = AppendState::default();
     let first = d.poll(&Value::Null, &mut state).unwrap();
     let m = first.material.unwrap();
-    let cursor = (m.cursor_at)(m.bytes.len());
+    let cursor = (m.cursor_at)(m.bytes.len()).unwrap();
     std::fs::write(&path, b"x\ny\nz\n").unwrap();
     let again = d.poll(&cursor, &mut state).unwrap();
     assert_eq!(again.revision, RevisionChange::Rewritten);
     assert_eq!(records(&again), vec!["x\n", "y\n", "z\n"]);
-    assert_eq!(again.material.unwrap().part_index, 0);
+    let n = again.material.unwrap();
+    assert_eq!(n.part_index, m.part_index + 1);
+    assert_eq!(n.previous_part, Some(m.id));
 }
 
 #[test]
@@ -186,7 +193,7 @@ fn a_file_larger_than_a_part_is_read_in_bounded_parts_covering_every_record() {
             "a part holds at most PART_SIZE bytes unless one record is longer"
         );
         read.extend(records(&a));
-        cursor = (m.cursor_at)(m.bytes.len());
+        cursor = (m.cursor_at)(m.bytes.len()).unwrap();
     }
     assert!(polls > 10, "read in parts, not at once ({polls})");
     assert_eq!(read.concat(), text);
@@ -217,7 +224,11 @@ fn the_memory_keeps_a_bounded_tail_of_the_newest_records() {
             .all(|l| l.material != first),
         "the oldest records are gone"
     );
-    let held: usize = state.records.values().map(Vec::len).sum();
+    let held: usize = state
+        .records
+        .values()
+        .map(|locations| locations.len())
+        .sum();
     assert_eq!(held, state.order.len());
 }
 
@@ -231,8 +242,78 @@ fn short_records_are_bounded_by_count_within_one_material() {
     // 1000 records of 2-4 bytes in one material: far under the byte tail,
     // held by count.
     assert_eq!(state.order.len(), STATE_RECORDS);
-    let held: usize = state.records.values().map(Vec::len).sum();
+    let held: usize = state
+        .records
+        .values()
+        .map(|locations| locations.len())
+        .sum();
     assert_eq!(held, STATE_RECORDS);
     assert!(state.take(b"999\n"), "the newest record is held");
     assert!(!state.take(b"0\n"), "the oldest is not");
+}
+
+#[test]
+fn rewrite_replace_and_truncate_keep_the_parser_predecessor_and_reset_byte_offsets() {
+    for change in [
+        RevisionChange::Rewritten,
+        RevisionChange::Replaced,
+        RevisionChange::Truncated,
+    ] {
+        let path = temp("history");
+        std::fs::write(&path, b"one-long-record\ntwo-long-record\n").unwrap();
+        let driver = AppendFile {
+            path: path.clone(),
+            host: "h".into(),
+            framer: Framer::incremental(lines),
+        };
+        let mut state = AppendState::default();
+        let first = driver.poll(&Value::Null, &mut state).unwrap();
+        let m = first.material.unwrap();
+        let cursor = (m.cursor_at)(m.bytes.len()).unwrap();
+        match change {
+            RevisionChange::Rewritten => {
+                std::fs::write(&path, b"two-long-record\none-long-record\nnew\n").unwrap()
+            }
+            RevisionChange::Replaced => {
+                let replacement = path.with_extension("new");
+                std::fs::write(&replacement, b"replacement\n").unwrap();
+                std::fs::rename(replacement, &path).unwrap();
+            }
+            RevisionChange::Truncated => std::fs::write(&path, b"short\n").unwrap(),
+            _ => unreachable!(),
+        }
+        let next = driver.poll(&cursor, &mut state).unwrap();
+        assert_eq!(next.revision, change);
+        let next = next.material.unwrap();
+        assert_eq!(next.previous_part, Some(m.id));
+        assert_eq!(next.part_index, m.part_index + 1);
+        assert_eq!(next.manifest["file_offset"], 0);
+    }
+}
+#[test]
+fn incomplete_rewrite_keeps_the_old_parser_cut_and_its_pending_physical_revision_kind() {
+    let path = temp("history");
+    std::fs::write(&path, b"old-long-record\n").unwrap();
+    let driver = AppendFile {
+        path: path.clone(),
+        host: "h".into(),
+        framer: Framer::incremental(lines),
+    };
+    let mut state = AppendState::default();
+    let first = driver.poll(&Value::Null, &mut state).unwrap();
+    let m = first.material.unwrap();
+    let cursor = (m.cursor_at)(m.bytes.len()).unwrap();
+    std::fs::write(&path, b"part").unwrap();
+    let pending = driver.poll(&cursor, &mut state).unwrap();
+    assert!(pending.material.is_none());
+    let checkpoint: Cursor = serde_json::from_value(pending.cursor_unchanged.clone()).unwrap();
+    assert_eq!(checkpoint.material, Some(m.id));
+    assert_eq!(checkpoint.through, m.bytes.len());
+    assert_eq!(checkpoint.pending_revision, Some(RevisionChange::Truncated));
+    std::fs::write(&path, b"part-completed\n").unwrap();
+    let next = driver.poll(&pending.cursor_unchanged, &mut state).unwrap();
+    assert_eq!(next.revision, RevisionChange::Truncated);
+    let next = next.material.unwrap();
+    assert_eq!(next.previous_part, Some(m.id));
+    assert_eq!(next.part_index, m.part_index + 1);
 }

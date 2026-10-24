@@ -102,6 +102,28 @@ keyed digests and no cross-image page reuse. Provider
 page readers feed encryption directly; sealed retained input is never staged as
 plaintext or opened with borrowed operator authority.
 
+Native publication custody uses `raw.pending_native_materials`, with blob
+references derived from its typed frozen publication. `core.blobs.status =
+'reserved'` means the named bytes may still be missing; it implements the
+specification's writing phase and is neither `present` nor quarantined. Reserve
+these rows before installing prepared CAS bytes. First admission completes the
+reservation with material and progress in one transaction. Cleanup locks each
+blob row and rechecks ready and pending references while holding the lock through
+unlink and row deletion. These native paths do not establish pre-admission
+custody for existing ingress, direct placement or library media puts; that gap
+still blocks enabling destructive excision for affected names. Unregistered
+legacy files are not repaired by native reservations.
+
+The native binding pipeline prepares plain or encrypted bodies privately, reserves
+custody and queue capacity, then installs and verifies the retained representation.
+The reservation freezes source facts, parser bytes, removal requests and cursor
+bounds. Failed first admission keeps that exact version for restart; provider edits
+do not substitute a new view. Image costs stay unresolved until the installed CAS
+representation passes page/map verification. Restart opens sealed pending bodies
+and images only with scoped class authority. The source guard stays with queued
+first admission, and live cancellation/authority checks run again before commit.
+Ready material keys are never republished by cached readers.
+
 Companion image material, immutable revision/extents, wrapped keys, row material
 and first-batch progress share the writer transaction. Later chunks name that
 fixed image revision. Independent bindings may retain immutable branches from
@@ -109,7 +131,9 @@ the same compatible predecessor; capture order stays distinct from late commit
 order. Generic replay skips image bodies and reinterprets retained logical rows.
 Excision currently refuses every row/image target in a retained database lineage
 across bindings before any event/blob/key mutation, including logical rows with
-no exact image pointer. Image-aware purge remains an open criterion. Physical
+no exact image pointer and images held by pending native reservations. Native
+image reservation and admission also refuse a database lineage with permanent
+exclusions from another recorded binding. Image-aware purge remains an open criterion. Physical
 images do not complete deletion-key evidence, open-part rotation or the broader
 SQLite source requirements.
 

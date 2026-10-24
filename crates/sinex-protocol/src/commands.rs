@@ -315,6 +315,11 @@ pub const COMMANDS: &[Command] = &[
                 ArgKind::Bool,
                 "report exactly what would be removed, and remove nothing",
             ),
+            opt(
+                "sealed",
+                ArgKind::Bool,
+                "rewrite sealed evidence using the operator's current scoped unlock",
+            ),
         ],
         access: Access::Operator,
         mcp: false,

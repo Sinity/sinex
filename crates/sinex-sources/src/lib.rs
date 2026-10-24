@@ -119,6 +119,13 @@ impl<'a> RecordShape<'a> for serde_json::Map<String, serde_json::Value> {
     }
 }
 
+/// A format's minimal state after erasing a record. Replay data must contain
+/// only irreversible identity/count information, never the erased content.
+pub struct Erased<C> {
+    pub carry: C,
+    pub replay: Option<serde_json::Value>,
+}
+
 /// A source's parser (architecture §5.2).
 pub trait Parser: Send + Sync + 'static {
     /// The framed record: a line, a JSON row, an archive member's record.
@@ -132,6 +139,31 @@ pub trait Parser: Send + Sync + 'static {
     /// Fields left out of the record hash because they change without the
     /// record changing (a last-seen time).
     const VOLATILE: &'static [&'static str] = &[];
+
+    /// Erase one record's contribution to current carry. Unsupported stateful
+    /// shapes refuse before any archive mutation.
+    fn erase_record(
+        &self,
+        _raw: &[u8],
+        _carry: &Self::Carry,
+        _context: &RecordContext<'_>,
+    ) -> Result<Erased<Self::Carry>, RecordError> {
+        Err(RecordError::new(
+            "this parser does not support carry erasure",
+        ))
+    }
+
+    /// Apply a format-owned minimal transition at an erased record's anchor.
+    fn skip_erased(
+        &self,
+        _carry: &Self::Carry,
+        _transition: &serde_json::Value,
+        _context: &RecordContext<'_>,
+    ) -> Result<Self::Carry, RecordError> {
+        Err(RecordError::new(
+            "this parser does not support erased-record replay",
+        ))
+    }
 
     /// Map one framed record to its events. `context` is the record's
     /// material: its manifest and, for a material made of several members

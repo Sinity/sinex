@@ -94,9 +94,13 @@ sinex_model::payload_enum! {
 }
 
 /// The window span still growing in each window bucket, carried between rows.
+/// Native app/title state stays Guarded; erased windows retain only matching
+/// digests and numeric coordinates, under the same carry classification.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct OpenSpans {
     pub spans: BTreeMap<String, OpenSpan>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    erased: BTreeMap<String, erasure::ErasedSpan>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -132,6 +136,24 @@ impl Parser for ActivityWatchParser {
     type Record<'a> = Map<String, Value>;
     type Carry = OpenSpans;
     type Payload = Activity;
+
+    fn erase_record(
+        &self,
+        raw: &[u8],
+        open: &OpenSpans,
+        context: &crate::RecordContext<'_>,
+    ) -> Result<crate::Erased<OpenSpans>, RecordError> {
+        erasure::erase(raw, open, context)
+    }
+
+    fn skip_erased(
+        &self,
+        open: &OpenSpans,
+        transition: &Value,
+        _context: &crate::RecordContext<'_>,
+    ) -> Result<OpenSpans, RecordError> {
+        erasure::skip(open, transition)
+    }
 
     fn parse(
         &self,
@@ -169,43 +191,12 @@ impl Parser for ActivityWatchParser {
         let is = |type_name: &str, prefix: &str| {
             bucket_type == type_name || (bucket_type.is_empty() && bucket.starts_with(prefix))
         };
+        erasure::validate(open)?;
         let mut next = open.clone();
         let event = if is("currentwindow", "aw-watcher-window") {
             let app = field("app");
             let title = corrected_title(&app, &field("title")).to_owned();
-            let span = match next.spans.get(&bucket) {
-                // The row the span ends with, extended in place.
-                Some(s) if s.last_row == id => OpenSpan {
-                    ended_ns: s.ended_ns.max(ended_ns),
-                    app,
-                    title,
-                    ..s.clone()
-                },
-                // The next event, same window, no real gap: one span.
-                Some(s)
-                    if id > s.last_row
-                        && s.app == app
-                        && s.title == title
-                        && started_ns - s.ended_ns <= i128::from(CORRECTIONS.merge_gap_ns) =>
-                {
-                    OpenSpan {
-                        last_row: id,
-                        ended_ns: s.ended_ns.max(ended_ns),
-                        merged: s.merged + 1,
-                        ..s.clone()
-                    }
-                }
-                // A new span; also where reading history again starts over.
-                _ => OpenSpan {
-                    span_id: id,
-                    last_row: id,
-                    started_ns,
-                    ended_ns,
-                    app,
-                    title,
-                    merged: 1,
-                },
-            };
+            let span = erasure::advance(&mut next, &bucket, id, started_ns, ended_ns, app, title)?;
             let event = Activity::Window(WindowSpan {
                 bucket: bucket.clone(),
                 span_id: span.span_id,
@@ -299,6 +290,8 @@ pub const KIND: crate::binding::InputKind = crate::binding::InputKind {
     }),
     capture: None,
 };
+
+mod erasure;
 
 #[cfg(test)]
 mod tests;

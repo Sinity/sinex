@@ -496,7 +496,7 @@ async fn an_explicit_consumed_prefix_restores_an_ignored_first_member_without_an
 }
 
 #[tokio::test]
-async fn a_cached_authorized_directory_read_cannot_republish_an_excised_material_key() {
+async fn a_cached_authorized_directory_read_cannot_republish_a_retired_material_key() {
     let (_db, url, _) = crate::testdb::fresh().await;
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path().join("vault");
@@ -575,7 +575,16 @@ async fn a_cached_authorized_directory_read_cannot_republish_an_excised_material
         .restore_secrets(reference.blob, key_ref, secrets)
         .unwrap();
     let carry = sealing.open_carry(&checkpoint.1).unwrap();
-    crate::excision::excise_with(
+    let position_before = sinex_store::positions::load(&mut ctx.read_conn, &binding.name)
+        .await
+        .unwrap();
+    let events_before: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM core.events WHERE material_id=$1")
+            .bind(material.0)
+            .fetch_one(&mut ctx.read_conn)
+            .await
+            .unwrap();
+    let refused = crate::excision::excise_with(
         &mut ctx.read_conn,
         &ctx.blobs,
         &ctx.writer,
@@ -583,7 +592,16 @@ async fn a_cached_authorized_directory_read_cannot_republish_an_excised_material
         "synthetic",
     )
     .await
-    .unwrap();
+    .unwrap_err();
+    assert!(refused.contains("scoped prepared key and body replacements"));
+    // Exercise a legacy retired capability directly. The old unprepared purge
+    // is unavailable; this control checks cached-reader key resurrection only.
+    sqlx::query("DELETE FROM privacy.material_keys WHERE material_id=$1")
+        .bind(material.0)
+        .execute(&mut ctx.read_conn)
+        .await
+        .unwrap();
+
     let exists: bool = sqlx::query_scalar(
         "SELECT EXISTS(SELECT 1 FROM privacy.material_keys WHERE material_id=$1)",
     )
@@ -593,7 +611,7 @@ async fn a_cached_authorized_directory_read_cannot_republish_an_excised_material
     .unwrap();
     assert!(!exists);
     let mut total = Totals::default();
-    crate::backfill::submit(
+    let rejected = crate::backfill::submit(
         &ctx.writer,
         RunId::new(),
         cached.source.as_ref(),
@@ -607,7 +625,18 @@ async fn a_cached_authorized_directory_read_cannot_republish_an_excised_material
         &mut total,
     )
     .await
-    .unwrap();
+    .unwrap_err();
+    assert!(
+        rejected.contains("key") || rejected.contains("capability"),
+        "{rejected}"
+    );
+    assert_eq!(
+        sinex_store::positions::load(&mut ctx.read_conn, &binding.name)
+            .await
+            .unwrap(),
+        position_before
+    );
+
     let exists: bool = sqlx::query_scalar(
         "SELECT EXISTS(SELECT 1 FROM privacy.material_keys WHERE material_id=$1)",
     )
@@ -625,8 +654,8 @@ async fn a_cached_authorized_directory_read_cannot_republish_an_excised_material
         .await
         .unwrap();
     assert_eq!(
-        events, 0,
-        "ordinary excision digests still suppress the cached readings"
+        events, events_before,
+        "a rejected cached read changed retained events"
     );
     assert_eq!(total.to_json()["admitted"], 0);
     ctx.close().await.unwrap();

@@ -200,9 +200,10 @@ async fn legacy_empty_tail_commits_with_its_shared_checkpoint_and_retries_exactl
             previous_part: None,
             manifest,
             reading_order: Box::new(|_| ReadingOrder(1)),
-            cursor_at: Box::new(
-                move |end| json!({"material":id,"part_index":0,"last_complete_scan_ns":1,"through":end}),
-            ),
+            cursor_at: Box::new({
+                let cursor = move |end| json!({"material":id,"part_index":0,"last_complete_scan_ns":1,"through":end});
+                move |end| Ok(cursor(end))
+            }),
             aligned: false,
             vanished: vec![],
         }),

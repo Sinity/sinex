@@ -33,7 +33,7 @@ async fn explicit_zero_upgrade_matches_fresh_definitions_and_preserves_legacy_da
     let fresh = catalog(&mut conn).await.unwrap();
     version_zero(&mut conn).await;
     conn.execute("INSERT INTO core.events(id,event_type,source,run_id,ts_quality,parents,commit_seq,payload,reading_order,record_hash) VALUES('019a1234-1234-7000-8000-000000000001','command.executed','fixture','00000000-0000-0000-0000-000000000002','unknown',ARRAY['019a1234-1234-7000-8000-000000000003'::uuid],1,'{\"command\":\"preserved exact text\"}',1,decode(repeat('ab',32),'hex')); INSERT INTO core.commit_log VALUES(1,'019a1234-1234-7000-8000-000000000001','command.executed'); INSERT INTO privacy.material_keys(material_id,key_ref,class,wrapped_key) VALUES('00000000-0000-0000-0000-000000000004','neutral-key','sealed',decode('00ff10','hex')); INSERT INTO core.blobs(hash,size,status) VALUES('blake3:0000000000000000000000000000000000000000000000000000000000000000',17,'present')").await.unwrap();
-    let exact_before: Vec<serde_json::Value> = sqlx::query_scalar("SELECT to_jsonb(e) FROM core.events e UNION ALL SELECT to_jsonb(k) FROM privacy.material_keys k UNION ALL SELECT to_jsonb(b) FROM core.blobs b UNION ALL SELECT to_jsonb(t) FROM registry.event_types t WHERE name <> 'note.document' ORDER BY 1")
+    let exact_before: Vec<serde_json::Value> = sqlx::query_scalar("SELECT to_jsonb(e) FROM core.events e UNION ALL SELECT to_jsonb(k)-'role' FROM privacy.material_keys k UNION ALL SELECT to_jsonb(b) FROM core.blobs b UNION ALL SELECT to_jsonb(t) FROM registry.event_types t WHERE name <> 'note.document' ORDER BY 1")
         .fetch_all(&mut conn).await.unwrap();
     // A materialless archived identifier is legal metadata, including after
     // its Event has been excised. Upgrading must not invent an Event for it.
@@ -59,7 +59,7 @@ async fn explicit_zero_upgrade_matches_fresh_definitions_and_preserves_legacy_da
         .await
         .unwrap();
     assert_eq!(after, before, "current metadata/notice identity stay exact");
-    let exact_after: Vec<serde_json::Value> = sqlx::query_scalar("SELECT to_jsonb(e) FROM core.events e UNION ALL SELECT to_jsonb(k) FROM privacy.material_keys k UNION ALL SELECT to_jsonb(b) FROM core.blobs b UNION ALL SELECT to_jsonb(t) FROM registry.event_types t WHERE name <> 'note.document' ORDER BY 1")
+    let exact_after: Vec<serde_json::Value> = sqlx::query_scalar("SELECT to_jsonb(e) FROM core.events e UNION ALL SELECT to_jsonb(k)-'role' FROM privacy.material_keys k UNION ALL SELECT to_jsonb(b) FROM core.blobs b UNION ALL SELECT to_jsonb(t) FROM registry.event_types t WHERE name <> 'note.document' ORDER BY 1")
         .fetch_all(&mut conn).await.unwrap();
     assert_eq!(
         exact_after, exact_before,
@@ -221,4 +221,70 @@ async fn failed_fresh_creation_releases_ddl_locks_before_the_connection_is_used_
             .await
             .unwrap();
     assert!(audit, "the pre-existing schema stays intact");
+}
+
+#[tokio::test]
+async fn explicit_two_to_three_upgrade_preserves_legacy_key_bytes_and_matches_fresh_schema() {
+    let db = devkit::pg::test_database().unwrap();
+    let mut conn = PgConnection::connect(&db.url(None)).await.unwrap();
+    let fresh = catalog(&mut conn).await.unwrap();
+    version_zero(&mut conn).await;
+    changes::version_two(&mut conn).await;
+    conn.execute("INSERT INTO privacy.material_keys(material_id,key_ref,class,wrapped_key) VALUES('00000000-0000-0000-0000-000000000004','legacy-key','sealed',decode(repeat('a1',32),'hex'))").await.unwrap();
+    let before: serde_json::Value =
+        sqlx::query_scalar("SELECT to_jsonb(k) FROM privacy.material_keys k")
+            .fetch_one(&mut conn)
+            .await
+            .unwrap();
+    assert!(matches!(
+        require_current(&mut conn).await,
+        Err(Error::Upgrade {
+            found: 2,
+            declared: 3
+        })
+    ));
+    assert_eq!(
+        apply(&mut conn).await.unwrap(),
+        Applied::Upgraded {
+            from: 2,
+            version: 3
+        }
+    );
+    assert_eq!(catalog(&mut conn).await.unwrap(), fresh);
+    let after: serde_json::Value =
+        sqlx::query_scalar("SELECT to_jsonb(k)-'role' FROM privacy.material_keys k")
+            .fetch_one(&mut conn)
+            .await
+            .unwrap();
+    assert_eq!(after, before);
+    let role: String = sqlx::query_scalar("SELECT role FROM privacy.material_keys")
+        .fetch_one(&mut conn)
+        .await
+        .unwrap();
+    assert_eq!(role, "data-and-record-naming");
+    assert_eq!(
+        apply(&mut conn).await.unwrap(),
+        Applied::Current { version: 3 }
+    );
+}
+
+#[tokio::test]
+async fn unknown_two_shape_refuses_before_any_key_or_replay_column_changes() {
+    let db = devkit::pg::test_database().unwrap();
+    let mut conn = PgConnection::connect(&db.url(None)).await.unwrap();
+    version_zero(&mut conn).await;
+    changes::version_two(&mut conn).await;
+    conn.execute("ALTER TABLE raw.positions ADD COLUMN unrecognized text")
+        .await
+        .unwrap();
+    let before = catalog(&mut conn).await.unwrap();
+    assert!(matches!(apply(&mut conn).await, Err(Error::Shape(2))));
+    assert_eq!(catalog(&mut conn).await.unwrap(), before);
+    assert_eq!(
+        sqlx::query_scalar::<_, i32>("SELECT max(version) FROM sinex_schema.applied")
+            .fetch_one(&mut conn)
+            .await
+            .unwrap(),
+        2
+    );
 }

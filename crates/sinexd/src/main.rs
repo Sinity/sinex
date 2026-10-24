@@ -22,6 +22,7 @@ mod retained;
 mod row_retirement;
 mod screen_text;
 mod sealed_access;
+mod source_excision;
 mod source_runner;
 mod sqlite_images;
 mod writer;
@@ -185,7 +186,7 @@ async fn local_driver(
         .await
         .map_err(|e| e.to_string())?;
     writer::claim(&mut writer_conn).await?;
-    let (handle, queues) = writer::channels();
+    let (handle, queues) = writer::channels_for(database);
     let task = tokio::spawn(writer::run(
         database.to_owned(),
         writer_conn,

@@ -147,6 +147,8 @@ pub struct Stored {
     pub previous: Option<Uuid>,
     pub part_index: i32,
     pub blob: String,
+    pub length: i64,
+    pub erased_replay_blob: Option<String>,
     pub parser: String,
     pub parser_version: i32,
     pub manifest: Value,
@@ -192,7 +194,7 @@ pub async fn chains(
     loose: &[Uuid],
 ) -> Result<Vec<Stored>> {
     Ok(sqlx::query!(
-        r#"SELECT m.id, m.input_id, m.previous_part_id, m.part_index, m.blob, m.parser, m.parser_version,
+        r#"SELECT m.id, m.input_id, m.previous_part_id, m.part_index, m.blob, m.durable_bytes, m.erased_replay_blob, m.parser, m.parser_version,
                   m.manifest, i.binding AS "binding?", i.host AS "host?"
            FROM raw.materials m LEFT JOIN raw.inputs i ON i.id = m.input_id
            WHERE m.input_id = ANY($1) OR m.id = ANY($2)
@@ -209,6 +211,8 @@ pub async fn chains(
         previous: r.previous_part_id,
         part_index: r.part_index,
         blob: r.blob,
+        length: r.durable_bytes,
+        erased_replay_blob: r.erased_replay_blob,
         parser: r.parser,
         parser_version: r.parser_version,
         manifest: r.manifest,
@@ -231,20 +235,36 @@ pub async fn inputs_of(conn: &mut PgConnection, materials: &[Uuid]) -> Result<Ve
 /// The stored bytes' names of the chain that ends at `last`, first part
 /// first: what a driver rebuilds its state from after a restart.
 pub async fn chain_ending(conn: &mut PgConnection, last: Uuid) -> Result<Vec<(Uuid, String)>> {
-    Ok(sqlx::query!(
-        r#"WITH RECURSIVE chain AS (
-             SELECT id, previous_part_id, blob, part_index FROM raw.materials WHERE id = $1
+    retained_chain(conn, last, false).await
+}
+
+/// Alignment remembers the current byte revision; parser replay follows its
+/// full causal predecessor chain across rewrites.
+pub async fn current_revision_chain_ending(
+    conn: &mut PgConnection,
+    last: Uuid,
+) -> Result<Vec<(Uuid, String)>> {
+    retained_chain(conn, last, true).await
+}
+async fn retained_chain(
+    conn: &mut PgConnection,
+    last: Uuid,
+    same_revision: bool,
+) -> Result<Vec<(Uuid, String)>> {
+    let rows=sqlx::query!(r#"WITH RECURSIVE chain AS (
+             SELECT id,previous_part_id,blob,revision_id,0 AS depth,ARRAY[id] AS path,false AS cycle FROM raw.materials WHERE id=$1
              UNION ALL
-             SELECT m.id, m.previous_part_id, m.blob, m.part_index
-             FROM raw.materials m JOIN chain c ON m.id = c.previous_part_id)
-           SELECT id AS "id!", blob AS "blob!" FROM chain ORDER BY part_index"#,
-        last
-    )
-    .fetch_all(&mut *conn)
-    .await?
-    .into_iter()
-    .map(|r| (r.id, r.blob))
-    .collect())
+             SELECT m.id,m.previous_part_id,m.blob,m.revision_id,c.depth+1,c.path||m.id,m.id=ANY(c.path)
+             FROM raw.materials m JOIN chain c ON m.id=c.previous_part_id
+             WHERE NOT c.cycle AND (NOT $2 OR m.revision_id IS NOT DISTINCT FROM c.revision_id))
+           SELECT id AS "id!",blob AS "blob!",cycle AS "cycle!" FROM chain ORDER BY depth DESC"#,last,same_revision)
+        .fetch_all(conn).await?;
+    if rows.iter().any(|row| row.cycle) {
+        return Err(crate::Error::Invalid(
+            "retained material predecessor cycle".into(),
+        ));
+    }
+    Ok(rows.into_iter().map(|row| (row.id, row.blob)).collect())
 }
 
 #[cfg(test)]

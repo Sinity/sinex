@@ -25,13 +25,13 @@ fn segments_are_stored_one_per_poll_in_order_and_removed_after() {
     let first = media.poll(&Value::Null).unwrap().material.unwrap();
     assert_eq!(first.bytes, b"a");
     assert_eq!(first.records, vec![(0, 1)]);
-    let cursor = (first.cursor_at)(1);
+    let cursor = (first.cursor_at)(1).unwrap();
     let second = media.poll(&cursor).unwrap().material.unwrap();
     assert_eq!(second.bytes, b"bb");
     assert_eq!(second.part_index, 1);
     assert!(
         media
-            .poll(&(second.cursor_at)(2))
+            .poll(&(second.cursor_at)(2).unwrap())
             .unwrap()
             .material
             .is_none()

@@ -276,7 +276,18 @@ async fn a_rewritten_history_file_is_aligned_and_replays_without_duplicates() {
     )
     .await
     .unwrap();
-    assert_eq!(report.chains, 2, "the first revision and the rewrite");
+    assert_eq!(
+        report.chains, 1,
+        "the aligned rewrite continues its parser predecessor"
+    );
+    let revisions: i64 = sqlx::query_scalar("SELECT count(*) FROM raw.revisions")
+        .fetch_one(&mut f.ctx.read_conn)
+        .await
+        .unwrap();
+    assert_eq!(
+        revisions, 2,
+        "byte revisions remain distinct from parser carry lineage"
+    );
     assert_eq!(
         (
             report.diff.unchanged,
@@ -382,4 +393,40 @@ async fn a_later_material_read_failure_rolls_back_the_entire_replay_chain() {
             .await
             .unwrap();
     assert_eq!((archived, operations), (0, 0));
+}
+
+mod sealed;
+
+#[tokio::test]
+async fn aligned_rewrite_replay_uses_the_same_predecessor_carry_as_native_capture() {
+    let mut f = fixture().await;
+    let path = history(
+        &f.dir,
+        ": 1700000000:0;duplicate\n: 1700000000:1;duplicate\n",
+    );
+    let mut state = AppendState::default();
+    ingest(&mut f.ctx, &path, &mut state).await;
+    std::fs::write(&path,"prefix-other\n: 1700000000:0;duplicate\n: 1700000000:1;duplicate\n: 1700000000:2;duplicate\n").unwrap();
+    ingest(&mut f.ctx, &path, &mut state).await;
+    let before:Vec<(String,Value,String,Vec<u8>)>=sqlx::query_as("SELECT e.source,e.payload,e.equivalence_key,e.record_hash FROM core.events e JOIN core.live_equivalence l ON l.event_id=e.id ORDER BY e.payload::text").fetch_all(&mut f.ctx.read_conn).await.unwrap();
+    let seen = before
+        .iter()
+        .filter(|(_, payload, _, _)| payload["command"] == "duplicate")
+        .map(|(_, payload, _, _)| payload["n"].as_u64().unwrap())
+        .collect::<Vec<_>>();
+    assert_eq!(seen, vec![0, 1, 2]);
+    let report = run(
+        &mut f.ctx.read_conn,
+        &f.ctx.blobs,
+        &f.ctx.writer,
+        options(whole_binding(), false),
+    )
+    .await
+    .unwrap();
+    assert_eq!(report.chains, 1);
+    let after:Vec<(String,Value,String,Vec<u8>)>=sqlx::query_as("SELECT e.source,e.payload,e.equivalence_key,e.record_hash FROM core.events e JOIN core.live_equivalence l ON l.event_id=e.id ORDER BY e.payload::text").fetch_all(&mut f.ctx.read_conn).await.unwrap();
+    assert_eq!(
+        after, before,
+        "a physical rewrite continues the same parser stream without duplicating or renumbering old occurrences"
+    );
 }

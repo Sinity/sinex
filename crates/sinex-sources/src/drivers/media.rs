@@ -122,8 +122,10 @@ impl Media {
                 previous_part: previous.material,
                 reading_order: super::reading_order(&manifest),
                 manifest,
-                cursor_at: Box::new(move |_| {
-                    serde_json::to_value(&next_cursor).expect("cursor serializes")
+                cursor_at: Box::new({
+                    let cursor =
+                        move |_| serde_json::to_value(&next_cursor).expect("cursor serializes");
+                    move |end| Ok(cursor(end))
                 }),
                 aligned: false,
                 vanished: Vec::new(),

@@ -80,11 +80,23 @@ pub async fn run(
     let run = runs::start(read_conn, &manifest, host)
         .await
         .map_err(|e| e.to_string())?;
-    let crawl = Crawl::new(todo, allow, pause, host.to_owned());
+    let mut crawl =
+        sinex_sources::binding::Stateless(Crawl::new(todo, allow, pause, host.to_owned()));
     let source = page_crawl::source();
     let sink = Sink(blobs.clone());
     // Each crawl is its own list, so its binding starts from the beginning.
     let binding = format!("page-crawl@{host}/{}", run.0);
+    sinex_store::bindings::save(
+        read_conn,
+        &sinex_store::bindings::Stored {
+            binding: binding.clone(),
+            source: sinex_sources::Source::spec(&source).name.into(),
+            input: "page-crawl".into(),
+            settings: serde_json::json!({"host":host}),
+        },
+    )
+    .await
+    .map_err(|e| e.to_string())?;
     let totals = drive(
         read_conn,
         writer,
@@ -94,7 +106,8 @@ pub async fn run(
         &sink,
         Default::default(),
         sinex_model::Class::Open,
-        |c| crawl.poll(c),
+        &mut crawl,
+        tokio::sync::watch::channel(false).1,
     )
     .await?;
     runs::end(read_conn, run).await.map_err(|e| e.to_string())?;

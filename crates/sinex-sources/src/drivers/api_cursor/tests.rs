@@ -33,9 +33,9 @@ fn each_answer_is_one_material_and_the_cursor_moves_only_at_its_end() {
     let first = d.poll(&Value::Null).unwrap();
     let m = first.material.as_ref().unwrap();
     assert_eq!(m.records.len(), 2);
-    let middle = (m.cursor_at)(m.records[0].1);
+    let middle = (m.cursor_at)(m.records[0].1).unwrap();
     assert_eq!(middle["api"], Value::Null, "half stored: ask again");
-    let end = (m.cursor_at)(m.bytes.len());
+    let end = (m.cursor_at)(m.bytes.len()).unwrap();
     assert_eq!(end["api"], json!(2));
 
     assert!(d.poll(&end).unwrap().material.is_none());

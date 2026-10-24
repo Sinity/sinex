@@ -14,6 +14,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sinex_model::MaterialId;
 use std::path::{Path, PathBuf};
+mod append_pending;
+pub use append_pending::{AppendResume, ArchivedAppendEnd};
 
 /// The zone named `name` (an IANA name such as `Europe/Warsaw`), or this
 /// system's zone.
@@ -135,6 +137,24 @@ pub trait Reader: Send {
     /// The export declaration, when this reader can share a physical archive traversal.
     fn export_archive(&self) -> Option<&crate::drivers::export_archive::ExportArchive> {
         None
+    }
+
+    fn remember_erased(
+        &mut self,
+        members: Vec<crate::drivers::append_file::ErasedMember>,
+    ) -> Result<(), DriverError> {
+        if !members.is_empty() {
+            return Err(DriverError::InvalidMaterial(
+                "reader does not support erased alignment membership".into(),
+            ));
+        }
+        Ok(())
+    }
+
+    fn restore_append(&mut self, _resume: AppendResume) -> Result<(), DriverError> {
+        Err(DriverError::InvalidMaterial(
+            "reader cannot restore pending append material".into(),
+        ))
     }
 
     fn restore_rows(
@@ -327,6 +347,7 @@ impl<A: crate::drivers::api_cursor::Api + Send + Sync + 'static> StatelessDriver
 /// An append-only file read with state about the records it stored, so a
 /// rewrite is aligned rather than read again.
 pub struct Appended {
+    pending: Option<append_pending::Pending>,
     driver: AppendFile,
     framer: Framer,
     state: AppendState,
@@ -334,6 +355,7 @@ pub struct Appended {
 
 pub fn appended(driver: AppendFile, framer: Framer) -> Box<dyn Reader> {
     Box::new(Appended {
+        pending: None,
         driver,
         framer,
         state: AppendState::default(),
@@ -341,6 +363,21 @@ pub fn appended(driver: AppendFile, framer: Framer) -> Box<dyn Reader> {
 }
 
 impl Reader for Appended {
+    fn remember_erased(
+        &mut self,
+        members: Vec<crate::drivers::append_file::ErasedMember>,
+    ) -> Result<(), DriverError> {
+        for member in members {
+            self.state.remember_erased(member)?;
+        }
+        Ok(())
+    }
+    fn restore_append(&mut self, resume: AppendResume) -> Result<(), DriverError> {
+        let pending = append_pending::Pending::restore(resume)?;
+        pending.prime(&mut self.state)?;
+        self.pending = Some(pending);
+        Ok(())
+    }
     fn remember(&mut self, stored: &[(MaterialId, Vec<u8>)]) {
         self.state = AppendState::rebuild(
             stored.iter().map(|(id, b)| (*id, b.as_slice())),
@@ -349,7 +386,23 @@ impl Reader for Appended {
     }
 
     fn poll(&mut self, cursor: &Value) -> Result<Acquired, DriverError> {
-        self.driver.poll(cursor, &mut self.state)
+        if let Some(pending) = &self.pending {
+            if !pending.complete(cursor)? {
+                return pending.acquired(cursor);
+            }
+            if !pending.can_align(&self.state) {
+                return Err(DriverError::InvalidMaterial("erased append tail requires scoped matching membership before provider alignment".into()));
+            }
+            self.pending = None;
+        }
+        let acquired = self.driver.poll(cursor, &mut self.state)?;
+        if acquired.material.is_none() {
+            return Ok(acquired);
+        }
+        let pending = append_pending::Pending::capture(acquired, cursor.clone())?;
+        let acquired = pending.acquired(cursor)?;
+        self.pending = Some(pending);
+        Ok(acquired)
     }
 }
 

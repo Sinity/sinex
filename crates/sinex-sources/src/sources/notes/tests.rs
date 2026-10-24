@@ -18,6 +18,7 @@ fn notes_and_their_removal() {
         let out = drain(
             &parser,
             DrainInput {
+                erased: None,
                 source: "t",
                 class: Class::Open,
                 material: MaterialId(uuid::Uuid::nil()),
@@ -40,7 +41,7 @@ fn notes_and_their_removal() {
     };
     let acquired = d.poll(&Value::Null, &mut state).unwrap();
     let m = acquired.material.as_ref().unwrap();
-    let cursor = (m.cursor_at)(m.records.last().unwrap().1);
+    let cursor = (m.cursor_at)(m.records.last().unwrap().1).unwrap();
     let first = run(&acquired);
     assert_eq!(first.len(), 1, ".obsidian is not a note");
     assert_eq!(first[0]["path"], "a.md");

@@ -69,3 +69,21 @@ fn sealed_retained_seek_rechecks_authority_even_for_a_cached_record() {
             .contains("revoked")
     );
 }
+
+#[test]
+fn blanked_seek_repeats_the_same_exact_transform_without_staging() {
+    use std::io::{Cursor, Read, Seek, SeekFrom};
+    let bytes = b"kept\nremove\nlast\n";
+    let mut reader = Blanked::new(Cursor::new(bytes), vec![(5, 12)]);
+    let mut first = Vec::new();
+    reader.read_to_end(&mut first).unwrap();
+    assert_eq!(first, b"kept\n      \nlast\n");
+    reader.rewind().unwrap();
+    let mut second = Vec::new();
+    reader.read_to_end(&mut second).unwrap();
+    assert_eq!(second, first);
+    reader.seek(SeekFrom::Start(8)).unwrap();
+    let mut suffix = Vec::new();
+    reader.read_to_end(&mut suffix).unwrap();
+    assert_eq!(suffix, first[8..]);
+}

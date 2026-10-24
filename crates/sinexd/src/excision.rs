@@ -6,6 +6,8 @@ use sinex_sources::sources;
 use sinex_store::Blobs;
 use sinex_store::excision::{self, Plan, Rewrite, Target};
 use sqlx::PgConnection;
+mod guard;
+pub(crate) use guard::ExcisionGuard;
 
 pub fn describe(plan: &Plan) -> String {
     let records: usize = plan.materials.iter().map(|m| m.anchors.len()).sum();
@@ -24,6 +26,7 @@ pub fn describe(plan: &Plan) -> String {
 /// Excise `target`: blank its records' bytes in new blobs, then remove every
 /// reading in one transaction; the old blob files go after commit. Takes a
 /// read connection, the content store and the writer.
+#[cfg(test)]
 pub async fn excise_with(
     read_conn: &mut PgConnection,
     blobs: &Blobs,
@@ -34,6 +37,120 @@ pub async fn excise_with(
     let plan = excision::plan(read_conn, target)
         .await
         .map_err(|e| e.to_string())?;
+    let source = source_scope(read_conn, &plan).await?;
+    let Some(source) = source else {
+        return Ok(
+            "excised events 0 | materials rewritten 0 | keys destroyed 0 | blob files deleted 0"
+                .into(),
+        );
+    };
+    let guard = writer.excision_guard(source).await?;
+    guarded(blobs, writer, target, actor, guard).await
+}
+
+/// API requests move their existing planning connection into the guard.
+pub(crate) async fn excise_pooled(
+    mut connection: sqlx::pool::PoolConnection<sqlx::Postgres>,
+    blobs: &Blobs,
+    writer: &WriterHandle,
+    target: Target,
+    actor: &str,
+) -> Result<String, String> {
+    let plan = excision::plan(&mut connection, target)
+        .await
+        .map_err(|e| e.to_string())?;
+    let Some(source) = source_scope(&mut connection, &plan).await? else {
+        return Ok(
+            "excised events 0 | materials rewritten 0 | keys destroyed 0 | blob files deleted 0"
+                .into(),
+        );
+    };
+    let guard = ExcisionGuard::acquire(connection, source).await?;
+    guarded(blobs, writer, target, actor, guard).await
+}
+
+async fn source_scope(conn: &mut PgConnection, plan: &Plan) -> Result<Option<String>, String> {
+    if plan.events.is_empty() && plan.materials.is_empty() {
+        return Ok(None);
+    }
+    let ids = plan.materials.iter().map(|m| m.id.0).collect::<Vec<_>>();
+    let mut sources:Vec<String>=sqlx::query_scalar("SELECT DISTINCT b.source FROM raw.materials m JOIN raw.inputs i ON i.id=m.input_id JOIN raw.bindings b ON b.binding=i.binding WHERE m.id=ANY($1) ORDER BY b.source")
+        .bind(&ids).fetch_all(&mut *conn).await.map_err(|e|e.to_string())?;
+    if sources.is_empty() {
+        sources = sqlx::query_scalar(
+            "SELECT DISTINCT source FROM core.events WHERE id=ANY($1) ORDER BY source",
+        )
+        .bind(&plan.seeds)
+        .fetch_all(conn)
+        .await
+        .map_err(|e| e.to_string())?;
+    }
+    if sources.len() != 1 {
+        return Err("excision needs one unambiguous native source namespace".into());
+    }
+    Ok(sources.pop())
+}
+struct Cancel(std::sync::Arc<std::sync::atomic::AtomicBool>);
+impl Drop for Cancel {
+    fn drop(&mut self) {
+        self.0.store(true, std::sync::atomic::Ordering::Release);
+    }
+}
+async fn guarded(
+    blobs: &Blobs,
+    writer: &WriterHandle,
+    target: Target,
+    actor: &str,
+    mut guard: ExcisionGuard,
+) -> Result<String, String> {
+    let result = async {
+        let plan = excision::plan(guard.connection(), target)
+            .await
+            .map_err(|e| e.to_string())?;
+        let source = source_scope(guard.connection(), &plan).await?;
+        if source.as_deref() != Some(guard.source()) {
+            return Err("excision source namespace changed while waiting; retry planning".into());
+        }
+        prepare_rewrites(guard.connection(), blobs, target).await
+    }
+    .await;
+    let (plan, rewrites) = match result {
+        Ok(value) => value,
+        Err(error) => {
+            guard.release().await?;
+            return Err(error);
+        }
+    };
+    let cancelled = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let _cancel = Cancel(cancelled.clone());
+    let done = writer
+        .excise(Excision {
+            sealed: None,
+            authority: None,
+            guard: Some(guard),
+            cancelled,
+            target,
+            plan,
+            rewrites,
+            operation: OperationId::new(),
+            actor: actor.into(),
+            blobs: blobs.clone(),
+        })
+        .await
+        .map_err(|e| e.to_string())?;
+    summary(done)
+}
+async fn prepare_rewrites(
+    conn: &mut PgConnection,
+    blobs: &Blobs,
+    target: Target,
+) -> Result<(Plan, Vec<Rewrite>), String> {
+    let plan = excision::plan(conn, target)
+        .await
+        .map_err(|e| e.to_string())?;
+    if plan.materials.iter().any(|m| m.sealed) {
+        return Err("sealed excision needs scoped prepared key and body replacements".into());
+    }
     let mut rewrites = Vec::new();
     for m in plan.materials.iter().filter(|m| !m.sealed) {
         let mut file = tempfile::tempfile().map_err(|e| e.to_string())?;
@@ -72,22 +189,15 @@ pub async fn excise_with(
         };
         let reader = crate::retained::Blanked::new(retained.into_reader()?, spans);
         rewrites.push(Rewrite {
+            manifest: None,
             material: m.id,
             blob: blobs.put_reader(reader).map_err(|e| e.to_string())?,
             length: length as u64,
         });
     }
-    let done = writer
-        .excise(Excision {
-            target,
-            plan,
-            rewrites,
-            operation: OperationId::new(),
-            actor: actor.to_owned(),
-            blobs: blobs.clone(),
-        })
-        .await
-        .map_err(|e| e.to_string())?;
+    Ok((plan, rewrites))
+}
+fn summary(done: crate::writer::Excised) -> Result<String, String> {
     let a = &done.applied;
     let mut out = format!(
         "excised events {} | materials rewritten {} | keys destroyed {} | blob files deleted {}",

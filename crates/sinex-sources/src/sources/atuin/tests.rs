@@ -51,3 +51,41 @@ fn wrong_types_fail_the_record() {
             .is_err()
     );
 }
+
+#[test]
+fn stateless_erasure_keeps_no_content_or_replay_token() {
+    let source = source();
+    let erased = crate::Source::erase_record(
+        &source,
+        b"synthetic removed secret",
+        &serde_json::Value::Null,
+        &crate::RecordContext::none(),
+    )
+    .unwrap();
+    assert!(erased.carry.is_null());
+    assert!(erased.replay.is_none());
+    assert!(
+        AtuinParser
+            .skip_erased(&(), &serde_json::Value::Null, &crate::RecordContext::none())
+            .is_ok()
+    );
+    assert!(
+        AtuinParser
+            .skip_erased(
+                &(),
+                &serde_json::json!({"command":"synthetic removed secret"}),
+                &crate::RecordContext::none()
+            )
+            .is_err()
+    );
+    let stateful = crate::sources::zsh::source("synthetic".into());
+    assert!(
+        crate::Source::erase_record(
+            &stateful,
+            b"synthetic removed secret",
+            &serde_json::Value::Null,
+            &crate::RecordContext::none()
+        )
+        .is_err()
+    );
+}

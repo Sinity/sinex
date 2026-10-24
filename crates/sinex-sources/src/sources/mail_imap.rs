@@ -414,12 +414,15 @@ impl ImapMail {
                 previous_part: previous.material,
                 reading_order: crate::drivers::reading_order(&manifest),
                 manifest,
-                cursor_at: Box::new(move |end| {
-                    let mut cursor = next.clone();
-                    if end < length {
-                        cursor.uid_next = start;
-                    }
-                    serde_json::to_value(cursor).expect("cursor serializes")
+                cursor_at: Box::new({
+                    let cursor = move |end| {
+                        let mut cursor = next.clone();
+                        if end < length {
+                            cursor.uid_next = start;
+                        }
+                        serde_json::to_value(cursor).expect("cursor serializes")
+                    };
+                    move |end| Ok(cursor(end))
                 }),
                 aligned: false,
                 vanished: Vec::new(),

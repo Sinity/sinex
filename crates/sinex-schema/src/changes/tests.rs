@@ -15,7 +15,7 @@ async fn version_one(conn: &mut PgConnection) {
 }
 
 async fn preserved(conn: &mut PgConnection) -> Vec<Value> {
-    sqlx::query_scalar("SELECT to_jsonb(e) FROM core.events e UNION ALL SELECT to_jsonb(m) FROM raw.materials m UNION ALL SELECT to_jsonb(k) FROM privacy.material_keys k UNION ALL SELECT to_jsonb(b) FROM core.blobs b UNION ALL SELECT to_jsonb(t) FROM registry.event_types t WHERE name <> 'note.document' ORDER BY 1")
+    sqlx::query_scalar("SELECT to_jsonb(e) FROM core.events e UNION ALL SELECT to_jsonb(m)-'erased_replay_blob' FROM raw.materials m UNION ALL SELECT to_jsonb(k)-'role' FROM privacy.material_keys k UNION ALL SELECT to_jsonb(b) FROM core.blobs b UNION ALL SELECT to_jsonb(t) FROM registry.event_types t WHERE name <> 'note.document' ORDER BY 1")
         .fetch_all(conn).await.unwrap()
 }
 

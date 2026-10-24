@@ -35,6 +35,8 @@ pub struct ZshParser {
 /// second, so only starts within a day of the latest are kept: a pair needs a
 /// second record with that exact start, and history lines are written within
 /// minutes of their start. The window decides numbering, never what is kept.
+/// Keys retain command digests, never the command text. They preserve occurrence
+/// numbering through erased records; they do not authorize access to a record.
 /// The map is persistent: the drain hands each record the carry and takes a
 /// new one back, so a clone must not copy the map.
 #[derive(Clone, Debug, Default, PartialEq, serde::Serialize, serde::Deserialize)]
@@ -42,36 +44,73 @@ pub struct Seen {
     latest: i64,
     /// Stored as a list: JSON object keys are strings only.
     #[serde(with = "pairs")]
-    counts: imbl::OrdMap<(i64, String), u32>,
+    counts: imbl::OrdMap<(i64, [u8; 32]), u32>,
 }
 
+// Old checkpoints stored command text. Decode it once into the same irreversible
+// key used for new records; subsequent checkpoints never serialize that text.
 mod pairs {
     use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum Key {
+        Digest([u8; 32]),
+        Legacy(String),
+    }
+
+    type Counts = imbl::OrdMap<(i64, [u8; 32]), u32>;
+
     pub fn serialize<S: Serializer>(
-        m: &imbl::OrdMap<(i64, String), u32>,
+        m: &imbl::OrdMap<(i64, [u8; 32]), u32>,
         s: S,
     ) -> Result<S::Ok, S::Error> {
         m.iter()
-            .map(|((start, command), n)| (start, command, n))
+            .map(|((start, key), n)| (start, key, n))
             .collect::<Vec<_>>()
             .serialize(s)
     }
 
-    pub fn deserialize<'de, D: Deserializer<'de>>(
-        d: D,
-    ) -> Result<imbl::OrdMap<(i64, String), u32>, D::Error> {
-        let list = Vec::<(i64, String, u32)>::deserialize(d)?;
-        Ok(list.into_iter().map(|(s, c, n)| ((s, c), n)).collect())
+    pub fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<Counts, D::Error> {
+        let list = Vec::<(i64, Key, u32)>::deserialize(d)?;
+        Ok(list
+            .into_iter()
+            .map(|(start, key, n)| {
+                let key = match key {
+                    Key::Digest(key) => key,
+                    Key::Legacy(command) => super::command_key(&command),
+                };
+                ((start, key), n)
+            })
+            .collect())
     }
+}
+
+fn command_key(command: &str) -> [u8; 32] {
+    *blake3::Hasher::new_derive_key("Sinex zsh command occurrence v1")
+        .update(command.as_bytes())
+        .finalize()
+        .as_bytes()
+}
+
+#[derive(serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ErasedOccurrence {
+    version: u8,
+    start: i64,
+    command_key: [u8; 32],
 }
 
 const SEEN_WINDOW_SECS: i64 = 86_400;
 
 impl Seen {
     fn next(&self, start: i64, command: &str) -> (u32, Self) {
+        self.next_key(start, command_key(command))
+    }
+
+    fn next_key(&self, start: i64, command_key: [u8; 32]) -> (u32, Self) {
         let mut seen = self.clone();
-        let key = (start, command.to_owned());
+        let key = (start, command_key);
         let n = seen.counts.get(&key).copied().unwrap_or(0);
         seen.counts.insert(key, n + 1);
         if start > seen.latest {
@@ -82,11 +121,7 @@ impl Seen {
                 if *oldest >= floor {
                     break;
                 }
-                let first = seen
-                    .counts
-                    .get_min()
-                    .map(|(k, _)| k.clone())
-                    .expect("checked");
+                let first = seen.counts.get_min().map(|(k, _)| *k).expect("checked");
                 seen.counts.remove(&first);
             }
         }
@@ -98,6 +133,50 @@ impl Parser for ZshParser {
     type Record<'a> = &'a [u8];
     type Carry = Seen;
     type Payload = CommandImported;
+
+    fn erase_record(
+        &self,
+        raw: &[u8],
+        carry: &Seen,
+        context: &crate::RecordContext<'_>,
+    ) -> Result<crate::Erased<Seen>, RecordError> {
+        let (events, _) = self.parse(&raw, &Seen::default(), context)?;
+        let replay = events
+            .first()
+            .and_then(|event| {
+                event.started_at.map(|start| ErasedOccurrence {
+                    version: 1,
+                    start: start.0.unix_timestamp(),
+                    command_key: command_key(&event.command),
+                })
+            })
+            .map(serde_json::to_value)
+            .transpose()
+            .map_err(|_| RecordError::new("zsh erased occurrence does not encode"))?;
+        // This checkpoint is already at or after the record: keep its count.
+        Ok(crate::Erased {
+            carry: carry.clone(),
+            replay,
+        })
+    }
+
+    fn skip_erased(
+        &self,
+        carry: &Seen,
+        transition: &serde_json::Value,
+        _: &crate::RecordContext<'_>,
+    ) -> Result<Seen, RecordError> {
+        let occurrence: ErasedOccurrence = serde_json::from_value(transition.clone())
+            .map_err(|_| RecordError::new("invalid zsh erased occurrence"))?;
+        if occurrence.version != 1 {
+            return Err(RecordError::new(
+                "unsupported zsh erased occurrence version",
+            ));
+        }
+        Timestamp::from_unix_secs(occurrence.start)
+            .map_err(|_| RecordError::new("zsh erased start time out of range"))?;
+        Ok(carry.next_key(occurrence.start, occurrence.command_key).1)
+    }
 
     fn parse(
         &self,

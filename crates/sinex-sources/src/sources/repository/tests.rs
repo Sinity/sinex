@@ -60,7 +60,7 @@ fn only_newly_reachable_commits_are_read() {
     );
 
     let m = first.material.as_ref().unwrap();
-    let cursor = (m.cursor_at)(m.bytes.len());
+    let cursor = (m.cursor_at)(m.bytes.len()).unwrap();
     assert!(d.poll(&cursor).unwrap().material.is_none());
 
     git(&dir, &["checkout", "-q", "-b", "side"]);

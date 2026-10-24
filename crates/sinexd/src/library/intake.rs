@@ -90,7 +90,13 @@ impl Library<'_> {
                     let next = a
                         .material
                         .as_ref()
-                        .map(|mat| ((mat.cursor_at)(mat.bytes.len()), mat.records.len()));
+                        .map(|mat| {
+                            Ok::<_, drivers::DriverError>((
+                                (mat.cursor_at)(mat.bytes.len())?,
+                                mat.records.len(),
+                            ))
+                        })
+                        .transpose()?;
                     let batches = drivers::batches(
                         &library_source::scan_source(),
                         &b,

@@ -72,6 +72,7 @@ fn run_case(parser: &str, dir: &Path) -> Value {
     let order = |anchor: usize| ReadingOrder(anchor as i64);
     let chunks = source
         .drain(DrainInput {
+            erased: None,
             source: source.spec().name,
             class: source.spec().class,
             material: MaterialId::new(),
