@@ -27,6 +27,9 @@ boundaries between capture, interpretation, admission and public interfaces.
   history, browsers, desktop and session capture, mail, chat, calendars,
   exports from Google, Samsung, Spotify, Reddit and others, git, the journal,
   file changes, the Sinnix capture lake, and Polylogue's archive.
+  Notes vaults preserve full Markdown text and expose YAML front matter,
+  derived titles, native string IDs, tags and wikilinks. Invalid or unsupported
+  headers retain the useful text with a structural diagnostic.
   Health records expose concrete Sleep as Android, Google Fit and known Samsung
   category fields. Their source-normalized `values`, identity and times retain
   the existing wire shape. Unrecognized categories carry `uninterpreted: true`;

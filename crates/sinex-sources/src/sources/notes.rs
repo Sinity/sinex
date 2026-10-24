@@ -4,8 +4,7 @@
 //!
 //! The vault's own folders (`.obsidian`, `.trash`, `.git`) are not notes. A
 //! note renamed in the vault is a removal and a new path; following an
-//! Obsidian note ID across renames (`on0h`) needs the ID in the note, which is
-//! not read yet.
+//! native note ID across renames is a separate identity decision.
 use crate::drain::RecordContext;
 use crate::drivers::dir_snapshot::DirSnapshot;
 use crate::registry::{DeclaredSource, Driver, SourceSpec};
@@ -15,13 +14,15 @@ use sinex_model::event_types::media::NoteDocument;
 use sinex_model::{Class, Timestamp};
 use std::path::PathBuf;
 
+mod metadata;
+
 pub const SPEC: SourceSpec = SourceSpec {
     name: "knowledge.notes-vault",
     driver: Driver::DirSnapshot,
     consumer: "note recall and the library",
     class: Class::Open,
     parser: "notes-vault",
-    parser_version: 2,
+    parser_version: 3,
     event_types: &["note.document"],
     framer: crate::Framer::export(
         crate::drivers::export_archive::frame_whole,
@@ -69,6 +70,16 @@ impl Parser for NotesParser {
                     .map_err(|_| RecordError::new(format!("{path} is not UTF-8 text")))?,
             )
         };
+        let metadata::Metadata {
+            title,
+            note_id,
+            tags,
+            wikilinks,
+            front_matter,
+        } = text
+            .as_deref()
+            .map(|text| metadata::parse(text, &path))
+            .unwrap_or_default();
         let payload = NoteDocument {
             vault: context
                 .manifest
@@ -82,6 +93,11 @@ impl Parser for NotesParser {
             text,
             modified_at: nanos(member, "mtime_ns"),
             vanished_at,
+            title,
+            note_id,
+            tags,
+            wikilinks,
+            front_matter,
         };
         Ok((vec![payload], ()))
     }
