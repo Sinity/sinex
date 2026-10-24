@@ -13,7 +13,7 @@ mod request;
 pub use commands::{Access, Arg, ArgKind, COMMANDS, Command, command};
 pub use nats::{
     Acknowledgment, ArchiveNotice, Confirmed, ConfirmedEvent, Have, Ingress, MaterialFrame,
-    ProducerEvent, ProducerFailure, RestoredNotice, RetireBatches, Retirement, Subjects, Withheld,
+    ProducerEvent, ProducerFailure, RestoredNotice, Subjects, Withheld,
 };
 pub use request::{Reply, Request};
 

@@ -226,7 +226,6 @@ async fn open(
         })
     };
     Ok(drivers::RetainedRecords {
-        bodyless: false,
         blob: reference.blob.clone(),
         bytes: Arc::new(retained),
     })

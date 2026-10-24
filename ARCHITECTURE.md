@@ -73,8 +73,7 @@ committed view. Changed rows stream into an unnamed staged JSONL material.
 Retries retain its identity, byte ranges and reading orders until its final
 admitted cursor confirms the changed-row hash cache. Partial cursors resume the
 retained snapshot before observing newer source values. Restart rebuilds hashes
-from admitted retained parts. Image-enabled readers restore a partial material's
-complete retained suffix and resume it before acquiring newer source values.
+from admitted retained parts.
 
 IMAP answers retain their original material and record coordinates until every
 record is admitted. Restart reads the verified remaining bytes before contacting
@@ -84,38 +83,7 @@ answers resume only from one positively accounted contiguous record prefix;
 without that proof they refuse rather than refetch over retained history. Since
 old answers lack the original sparse-window end, their next server poll rechecks
 from the highest retained UID plus one. Private retained answers require scoped
-read authority; missing or erased bodies do not authorize a replacement fetch.
-
-Optional `settings.options.sqlite_images` requires explicit `scope:
-"whole_database"`, `class` and positive `interval_secs`; `turn_pages` defaults to
-256 and `rebase_threshold` to 1.0. This grants retention of all database pages,
-including unselected tables, freelists and deleted cells. Configured source and
-field classes for that database are lower bounds. No configuration is enabled
-implicitly. A due image and its selected rows share one pinned read transaction;
-typed pending turns yield between page scans and cancellation discards unfinished
-scans without progress. A row between image captures remains logical evidence and
-cites no older image as its exact source. Image-enabled row envelopes preserve
-native fields separately from framework row IDs and optional `_from` references.
-
-Plain/guarded image materials hold full or changed-page payloads followed by a
-streamed dense 32-byte map entry per page (about 0.78% at 4 KiB before compression).
-Logical database length, evidence blob length and map offset/count remain distinct.
-Ordinary revision extents reconstruct database bytes only; publication verifies
-each reconstructed page and map entry against the pinned view. Each due image
-still reads every page, and extent verification/storage may reread those pages.
-Changed-page indices and extent plans also consume memory proportional to changed
-pages/spans. Rebase occurs after more than half of pages change, accumulated
-compressed patch cost exceeds the configured base multiple, or unique referenced
-compressed bytes exceed twice the compressed base. This footprint is not a
-measurement of decoder I/O. The shared v0.5.16 assembler retains at most four
-verified plain opens and their seek tables, with one decoded frame shared across
-them. Returning to a retained base reuses whole-name verification; alternating
-sources can still decode their selected frames repeatedly, and evicted sources
-are verified again. Referenced footprint and actual read/decode work therefore
-remain separate. Sealed images use fresh encrypted full bases at cadence with
-keyed digests and no cross-image page reuse. Provider
-page readers feed encryption directly; sealed retained input is never staged as
-plaintext or opened with borrowed operator authority.
+read authority; a missing body does not authorize a replacement fetch.
 
 Native publication custody uses `raw.pending_native_materials`, with blob
 references derived from its typed frozen publication. `core.blobs.status =
@@ -130,16 +98,15 @@ its authenticated producer namespace and final frame; material-body and indirect
 envelope roles stay distinct. Reservation precedes installation. Final admission
 marks its owner acknowledged in the same transaction as the immutable frame ack;
 private byte cleanup then retires that owner under its publication and blob locks.
-Unregistered legacy files are not repaired by these reservations. Destructive
-producer excision remains guarded until exclusion-aware acquisition is supported.
+Unregistered legacy files are not repaired by these reservations. Excision of a
+producer's records is refused.
 
 The native binding pipeline prepares plain or encrypted bodies privately, reserves
 custody and queue capacity, then installs and verifies the retained representation.
 The reservation freezes source facts, parser bytes, removal requests and cursor
 bounds. Failed first admission keeps that exact version for restart; provider edits
-do not substitute a new view. Image costs stay unresolved until the installed CAS
-representation passes page/map verification. Restart opens sealed pending bodies
-and images only with scoped class authority. The source guard stays with queued
+do not substitute a new view. Restart opens sealed pending bodies only with an
+operator unlock. The source guard stays with queued
 first admission, and live cancellation/authority checks run again before commit.
 Ready material keys are never republished by cached readers.
 
@@ -161,32 +128,15 @@ An authored retry first recovers its frozen prior publication as that prior
 request, then submits the fresh request independently. Replies report recovered
 material IDs separately; this supplies no client idempotency guarantee. Current
 authored adapters are stateless plain/guarded request or scan streams with one
-recorded reading order. Existing acquisition policy refuses matching excluded
-bodies before installation while allowing unrelated requests. Purge freezes
-source-bound cited media names and decoded sizes in its immutable operation
-scope before removing event references. Matching names remain excluded even
-under a fresh request or a different claimed size; other sources keep their
-own ownership. A complete empty list permits unrelated media, while missing
-historical facts leave citation-bearing acquisition unavailable. Sealed naming
-facts stay under their class boundary; these authored adapters currently refuse
-sealed publication. Each authored body commits in one transaction.
+recorded reading order. A request that matches an excised record is refused;
+unrelated requests are not. Excision records the stored media its events cited,
+by source, and later requests citing the same media for that source are refused
+whatever size they claim; other sources keep their own media. These authored
+adapters refuse sealed publication. Each authored body commits in one transaction.
 Library scans retain their existing per-poll media-byte budget (including one
 larger file), but metadata/event count and that transaction's size are not a
 new bounded-memory guarantee. A scan cursor now records its exact admitted byte
 cut; an absent legacy cut remains unknown.
-
-Companion image material, immutable revision/extents, wrapped keys, row material
-and first-batch progress share the writer transaction. Later chunks name that
-fixed image revision. Independent bindings may retain immutable branches from
-the same compatible predecessor; capture order stays distinct from late commit
-order. Generic replay skips image bodies and reinterprets retained logical rows.
-Excision currently refuses every row/image target in a retained database lineage
-across bindings before any event/blob/key mutation, including logical rows with
-no exact image pointer and images held by pending native reservations. Native
-image reservation and admission also refuse a database lineage with permanent
-exclusions from another recorded binding. Image-aware purge remains an open criterion. Physical
-images do not complete deletion-key evidence, open-part rotation or the broader
-SQLite source requirements.
 
 Directory snapshots stream changed files into an unnamed staged bundle. The
 version 2 bundle prefixes each record with one structural byte outside its source
@@ -384,98 +334,25 @@ generic error without the key and leaves stored values and cursors unchanged.
 Refusal reasons and follow-query errors pass through the same masker before
 encoding; their typed refusal flags stay intact.
 
-## Superseded producer rows and source bytes
+## Sealing and excision
 
-Polylogue requests physical row-batch retirement on its own NATS retirement
-subject, naming a confirmed archive, excision owner and immutable manifest
-digest. `sinexd/row_retirement.rs` interprets that producer's descriptor history;
-`sinex-store/retirement.rs` stages selection in temporary PostgreSQL tables and
-changes material references under the existing writer. The complete unit prefix
-and replacement coverage are checked before mutation. Original batches and older
-replacement batches and their source dependencies are candidates. Each candidate
-is resolved through its producer-owned acknowledged material frame. Missing
-source-frame evidence for an original confirmed descriptor refuses retirement;
-unpublished intermediate replacements remain optional candidates. Selected
-batches and source references across all producer/archive namespaces stay;
-retirement folds their confirmed metadata in bounded pages on every request.
-A dependency still selected by the same unit is not an obsolete cleanup
-candidate; sharing by another unit or archive is reported as retained backing.
-Selected batch bytes are read back and checked against their hashes before
-retirement changes backing references. Raw source references receive a presence
-check; this operation does not rehash the source corpus.
-Already completed requests resolve their descriptors and report cleanup without
-rereading live batch contents. A request that retries an owned deletion verifies
-again before cleanup.
+A sealed source encrypts each material under its own data key, wrapped for the
+sealed class key; its events carry their payloads encrypted under the same key,
+and their equivalence keys and record hashes are keyed hashes. Capture needs only
+the class key's public half. Reading sealed payloads, replaying sealed materials
+and resuming a sealed archive need an operator unlock.
 
-Retirement repoints eligible material/extent references to same-length blank
-bytes and preserves descriptor events and commit-log rows. Same-revision aliases,
-other event readings, sealed materials and descendant parts retain their backing.
-Other material, extent or event-blob aliases retain shared physical bytes. No
-original provider file is selected for removal. Existing durable
-`core.blobs` deletion recovery owns unlink retries; every request retries it and
-reports remaining owned files separately from retained shared files. The request
-proof also names an idempotent entry in the existing operations journal.
+Excision (`excise`) is a rare operator action. It removes every reading of a
+record with every derived event that descends from it, leaves a tombstone for
+each, and blanks the record's bytes in a new blob; the old blob goes once nothing
+refers to it. The request is recorded once in `core.operations` and applied by
+the writer in one transaction while the excision holds its source's lock.
+Running the same request again finds only what is left. Excision refuses sealed
+material, a producer's records, and records inside a stored original archive.
 
-A retired global source frame keeps its immutable acknowledgment in the database.
-Content-address interpretation requires the declared Polylogue material role;
-generic producer frame names retain their ordinary acknowledgment behavior.
-Have, Reserve and delivery retries return an unavailable refusal when that
-material no longer backs the advertised hash. New row and replacement source
-references are checked inside the writer transaction against producer-owned
-registered backing. An older manifest may cite an unpublished intermediate
-source only when a newer producer-owned acknowledged owner already supersedes
-that exact archive/unit. This exceptional check reads one matching descriptor;
-ordinary ready dependencies need no history query. An old acknowledgment cannot resurrect deleted bytes or
-authorize a later archive to cite them. These checks track registered backing,
-not a fresh physical verification of every source file.
-
-This producer grant performs cleanup of already confirmed excision metadata; it
-does not grant general material excision. Operator excision retains its existing
-access gate. Older servers have no retirement responder, allowing callers to
-report unsupported physical retirement immediately.
-
-Sealed material keys contain authenticated, versioned capability roles inside
-class-wrapped age envelopes. Exact 32-byte predecessor envelopes decode as data
-keys. Data-and-record-naming envelopes can decrypt content; record-naming-only
-envelopes cannot enter blob or payload decryption, including through legacy
-unwrap callers. Record naming and blob naming remain separate domains. Scoped
-class holders with a naming capability can test candidate equivalence keys and
-record hashes, but cannot decrypt old content with that capability. Replay and
-restart restore the retained naming capability rather than derive identities
-from a replacement data key.
-
-Explicit operator unlock and `excise --sealed` prepare supported logical record
-removal through the existing source drain. Native equivalence keys match retained
-versions across encryption epochs. Partial removal streams same-length blanking
-into fresh encrypted backing, preserving unrelated bytes and anchors. The Writer
-atomically revalidates the complete source candidate set, dependent ciphertext,
-carry, old envelopes and replacements before retiring old data capabilities.
-Unrelated readings retain their values, identities and observation facts.
-
-Whole removal makes the original body unavailable. The storage-owned excision
-operation authenticates that state independently of key role; provider manifests
-cannot declare it. Ordinary whole removal retains naming-only capability. When
-unrelated protected values survive, a fresh data capability retains those values
-while replay uses authenticated minimal transitions without reopening the body.
-Format-owned carry erasure removes selected private state. A later material that
-owns such carry can be rekeyed with its body unchanged. Replay and current-carry
-metadata have separate class-encrypted purposes and scopes.
-
-Completed append bindings rebuild their bounded alignment tail from scoped, verified
-retained records and authenticated erased membership. Plain bodies use an owned
-verified range reader; sealed reads keep their encrypted backing. A retained
-partially admitted append that lacks exact pending-resume facts refuses before
-reading the provider. Inactive rewrite-prefix copies require actual predecessor
-occurrences and unambiguous selected membership. Their encrypted physical-copy
-metadata preserves matching coordinates but never advances parser state. Missing
-or ambiguous predecessor evidence refuses before mutation.
-
-Preparation holds the current decoded record/value, carry and encrypted frame
-buffers. Candidate/range metadata grows with retained records and materials.
-Shared parser predecessors are reread for each branch rather than retaining a
-private carry for every material, so long shared prefixes add I/O. Mixed plain
-and sealed epochs, unsupported parser versions/state, original containers and
-physical SQLite image lineages refuse before mutation. The current carry-erasure
-adapters cover zsh, ActivityWatch and stateless Atuin. Matching permanent sealed
-exclusions during later capture requires scoped authority; locked excluded-source
-continuity remains operational scope, separate from fresh public-recipient capture.
+A source read again can meet an excised record (a shell history still holds the
+command). The excision's record keys and hashes are kept as the source's
+exclusions; `sinexd/src/excision/exclusions.rs` blanks matching records before
+the new bytes are stored, the way excision blanks stored ones. Admission
+compares the excisions a read applied with the source's current ones, so a read
+that overlapped an excision is read again.

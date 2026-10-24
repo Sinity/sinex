@@ -355,7 +355,6 @@ impl ImapMail {
                 ..previous
             };
             return Ok(Acquired {
-                image: None,
                 input: self.input(),
                 observation: ObservationFacts {
                     observed_at: Some(now),
@@ -403,7 +402,6 @@ impl ImapMail {
         let size = length as u64;
         let cursor_records = records.clone();
         Ok(Acquired {
-            image: None,
             input: self.input(),
             observation: ObservationFacts {
                 observed_at: Some(now),

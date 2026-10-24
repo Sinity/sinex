@@ -10,28 +10,8 @@ impl Api {
         reference: Option<&str>,
         material: Option<&str>,
         dry_run: bool,
-        sealed: bool,
         actor: &str,
     ) -> Reply {
-        let authority = if sealed {
-            if caller.actor != "operator"
-                || !caller.grants.split(',').any(|grant| grant == "sealed")
-            {
-                return refused(
-                    "sealed excision requires current operator unlock and explicit --sealed intent",
-                );
-            }
-            let unlocked = self.unlock.lock().await;
-            let Some(session) = unlocked.as_ref() else {
-                return refused("sealed excision is pending explicit operator unlock");
-            };
-            if let Err(error) = session.authority.check() {
-                return refused(error);
-            }
-            Some(session.authority.clone())
-        } else {
-            None
-        };
         let Some(writer) = &self.writer else {
             return refused("this daemon has no writer; writes go through `sinexd run`");
         };
@@ -57,39 +37,17 @@ impl Api {
             _ => return refused("excise needs exactly one of an event reference or --material"),
         };
         if dry_run {
-            let plan = if let Some(authority) = &authority {
-                crate::excision::sealed_plan(&mut conn, &self.blobs, target, authority).await
-            } else {
-                sinex_store::excision::plan(&mut conn, target)
-                    .await
-                    .map_err(|e| e.to_string())
-            };
-            return match plan {
-                Ok(plan)
-                    if authority.is_none()
-                        && plan.materials.iter().any(|material| material.sealed) =>
-                {
-                    refused(
-                        "sealed excision planning requires current operator unlock and explicit --sealed intent",
-                    )
-                }
+            return match sinex_store::excision::plan(&mut conn, target).await {
                 Ok(plan) => Reply::Ok {
                     result: json!({ "dry_run": true, "would_excise": crate::excision::describe(&plan) }),
                 },
                 Err(e) => refused(e.to_string()),
             };
         }
-        match crate::excision::excise_pooled(conn, &self.blobs, writer, target, actor, authority)
-            .await
-        {
-            Ok(summary) => {
-                if sealed && let Some(session) = self.unlock.lock().await.as_mut() {
-                    session.keys.clear();
-                }
-                Reply::Ok {
-                    result: json!({ "excised": summary }),
-                }
-            }
+        match crate::excision::excise_pooled(conn, &self.blobs, writer, target, actor).await {
+            Ok(summary) => Reply::Ok {
+                result: json!({ "excised": summary }),
+            },
             Err(e) => refused(e),
         }
     }

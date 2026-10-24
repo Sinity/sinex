@@ -18,18 +18,11 @@ pub mod export_archive;
 pub mod live_stream;
 pub mod media;
 pub mod producer;
-pub mod sqlite_image;
 pub mod sqlite_rows;
 
 /// Where drivers put a material's bytes: the content store. Implemented by the
 /// daemon over `sinex-store`'s `Blobs`, so this crate does no database IO.
 pub trait MaterialSink: Send + Sync {
-    fn put_image(
-        &self,
-        _image: &sqlite_image::Image,
-    ) -> Result<sinex_model::SqliteImagePublication, String> {
-        Err("sink does not support SQLite physical images".into())
-    }
     /// Store `bytes` and return their name, `blake3:<hex>`.
     fn put(&self, bytes: &[u8]) -> Result<String, String>;
 
@@ -39,8 +32,6 @@ pub trait MaterialSink: Send + Sync {
 
 #[derive(Debug, thiserror::Error)]
 pub enum DriverError {
-    #[error("capture has another cooperative turn")]
-    Pending,
     #[error("capture was cancelled")]
     Cancelled,
     #[error("material: {0}")]
@@ -91,7 +82,6 @@ pub fn accounted_prefix_end(
 
 /// What one poll of an input produced.
 pub struct Acquired {
-    pub image: Option<std::sync::Arc<sqlite_image::Image>>,
     pub input: InputRef,
     pub observation: ObservationFacts,
     pub revision: RevisionChange,
@@ -139,8 +129,6 @@ impl std::fmt::Debug for StoredBytes {
 
 #[derive(Clone)]
 pub struct RetainedRecords {
-    /// Only paired archive-authenticated whole-erasure transitions can drain this backing.
-    pub bodyless: bool,
     pub blob: String,
     pub bytes: std::sync::Arc<dyn crate::drain::RecordRead>,
 }
@@ -198,11 +186,7 @@ impl NewMaterial {
             Some(StoredBytes::FramedFile(file)) => crate::drain::RecordBytes::File(file),
             Some(StoredBytes::FramedMemory(bytes)) => bytes.as_slice().into(),
             Some(StoredBytes::FramedReader(retained)) => {
-                if retained.bodyless {
-                    crate::drain::RecordBytes::Erased(retained.bytes.length())
-                } else {
-                    crate::drain::RecordBytes::Reader(retained.bytes.as_ref())
-                }
+                crate::drain::RecordBytes::Reader(retained.bytes.as_ref())
             }
             _ => self.bytes.as_slice().into(),
         }
@@ -240,11 +224,7 @@ pub struct Prepared<'s> {
     carry: Value,
     limits: Limits,
     material: Option<(NewMaterial, MaterialRef)>,
-    image: Option<sinex_model::SqliteImagePublication>,
-    image_revision: Option<sinex_model::RevisionId>,
-    basis: Option<sinex_model::ExcisionBasis>,
-    erased: Option<crate::drain::ErasedTransitions>,
-    erased_replay: Option<sinex_model::ErasedReplayPublication>,
+    exclusions: Option<sinex_model::Exclusions>,
 }
 
 /// Store the poll's material (if any) and return it ready to drain.
@@ -258,26 +238,6 @@ pub fn prepare<'s>(
     limits: Limits,
 ) -> Result<Prepared<'s>, DriverError> {
     let spec = source.spec();
-    let image = acquired
-        .image
-        .as_ref()
-        .map(|image| {
-            if let Some(stored) = image.stored().map_err(DriverError::Store)? {
-                return Ok(stored);
-            }
-            let mut stored = sink.put_image(image).map_err(DriverError::Store)?;
-            stored.material.parser = spec.parser.to_owned();
-            stored.material.parser_version = spec.parser_version;
-            image.retain(stored.clone()).map_err(DriverError::Store)?;
-            Ok(stored)
-        })
-        .transpose()?;
-    let image_revision = image.as_ref().map(|i| i.metadata.revision).or_else(|| {
-        acquired
-            .material
-            .as_ref()
-            .and_then(|m| serde_json::from_value(m.manifest["image_revision"].clone()).ok())
-    });
     let reset = acquired
         .material
         .as_ref()
@@ -346,49 +306,14 @@ pub fn prepare<'s>(
         carry,
         limits,
         material,
-        image,
-        image_revision,
-        basis: None,
-        erased: None,
-        erased_replay: None,
+        exclusions: None,
     })
 }
 
 impl Prepared<'_> {
-    pub fn with_image_revision(mut self, revision: sinex_model::RevisionId) -> Self {
-        self.image_revision = Some(revision);
+    pub fn with_exclusions(mut self, exclusions: sinex_model::Exclusions) -> Self {
+        self.exclusions = Some(exclusions);
         self
-    }
-
-    pub fn with_excision_basis(mut self, basis: sinex_model::ExcisionBasis) -> Self {
-        self.basis = Some(basis);
-        self
-    }
-
-    /// The archive owner attaches only authenticated, read-back ciphertext.
-    pub fn with_erased(
-        mut self,
-        erased: crate::drain::ErasedTransitions,
-        publication: Option<sinex_model::ErasedReplayPublication>,
-    ) -> Result<Self, DriverError> {
-        if let Some(publication) = &publication
-            && (self
-                .material
-                .as_ref()
-                .is_none_or(|(_, m)| m.id != publication.material)
-                || publication.length == 0)
-        {
-            return Err(DriverError::InvalidMaterial(
-                "erased replay publication has no matching material".into(),
-            ));
-        }
-        self.erased = Some(erased);
-        self.erased_replay = publication;
-        Ok(self)
-    }
-
-    pub fn image_meta(&self) -> Option<&sinex_model::SqliteImageMeta> {
-        self.image.as_ref().map(|i| &i.metadata)
     }
 
     /// The decoded record body length, if the poll produced a material.
@@ -405,18 +330,10 @@ impl Prepared<'_> {
         carry: Value,
         observation: ObservationFacts,
         revision: RevisionChange,
-        first: bool,
     ) -> BatchKind {
         BatchKind::Source(Box::new(SourceProgress {
             native_pending: None,
-            erased_replay: if first {
-                self.erased_replay.clone()
-            } else {
-                None
-            },
-            excision_basis: self.basis.clone(),
-            image: if first { self.image.clone() } else { None },
-            image_revision: self.image_revision,
+            exclusions: self.exclusions.clone(),
             material_keys: Vec::new(),
             binding: self.binding.clone(),
             input: self.input.clone(),
@@ -441,7 +358,6 @@ impl Prepared<'_> {
                     self.carry.clone(),
                     self.observation.clone(),
                     self.revision,
-                    true,
                 ),
                 records: vec![],
                 archive: vec![],
@@ -460,7 +376,6 @@ impl Prepared<'_> {
         let mut chunks = self
             .source
             .drainer(DrainInput {
-                erased: self.erased.as_ref(),
                 source: spec.name,
                 class: spec.class,
                 material: m.id,
@@ -522,7 +437,6 @@ impl Prepared<'_> {
                     chunk.carry,
                     observation,
                     revision,
-                    first,
                 ),
                 records: chunk.outcomes,
                 archive: if first && !m.vanished.is_empty() {

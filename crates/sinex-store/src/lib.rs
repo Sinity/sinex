@@ -22,10 +22,8 @@ pub mod producer_bytes;
 pub mod query;
 pub mod read_models;
 pub mod replay;
-pub mod retirement;
 pub mod runs;
 pub mod sealed;
-pub mod sqlite_images;
 mod stage;
 
 pub use admission::{DerivedScope, DirtyKeys, KeyInput, KeyScope, NoDerivations, Outcome, admit};

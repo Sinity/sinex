@@ -4,20 +4,6 @@ use crate::Result;
 use sinex_model::MaterialId;
 use sqlx::PgConnection;
 
-/// Bodylessness is an archive operation fact, never a provider manifest grant
-/// and never inferred from the role of a remaining dependent-value capability.
-pub async fn bodyless(conn: &mut PgConnection, material: MaterialId) -> Result<bool> {
-    let row: (Option<String>, bool) = sqlx::query_as("SELECT m.manifest->>'excised_whole', EXISTS(SELECT 1 FROM core.operations o WHERE o.id::text=m.manifest->>'excised_whole' AND o.kind='excise' AND o.scope->>'material'=m.id::text AND o.scope->'materials' @> jsonb_build_array(m.id::text)) FROM raw.materials m WHERE m.id=$1")
-        .bind(material.0).fetch_one(conn).await?;
-    match row {
-        (None, _) => Ok(false),
-        (Some(_), true) => Ok(true),
-        _ => Err(crate::Error::Invalid(
-            "whole-removal marker lacks its archive operation".into(),
-        )),
-    }
-}
-
 /// The content-store name of `material`'s bytes, if it is stored.
 pub async fn material_blob(
     conn: &mut PgConnection,

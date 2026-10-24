@@ -127,7 +127,7 @@ impl Ingest {
     /// unavailable) and should be delivered again.
     pub async fn handle(&mut self, producer: &str, body: &[u8]) -> Result<Acknowledgment, String> {
         let mut guard =
-            Some(crate::source_excision::AcquisitionGuard::from_pool(&self.reads, producer).await?);
+            Some(crate::excision::AcquisitionGuard::from_pool(&self.reads, producer).await?);
         let result = self.handle_guarded(producer, body, &mut guard).await;
         if let Some(guard) = guard {
             guard.release().await?;
@@ -142,7 +142,7 @@ impl Ingest {
         &mut self,
         producer: &str,
         body: &[u8],
-        guard: &mut Option<crate::source_excision::AcquisitionGuard>,
+        guard: &mut Option<crate::excision::AcquisitionGuard>,
     ) -> Result<Acknowledgment, String> {
         let frame: Ingress = match serde_json::from_slice(body) {
             Ok(frame) => frame,
@@ -175,12 +175,12 @@ impl Ingest {
         {
             return Ok(acknowledgment(stored));
         }
-        let basis = sinex_store::excision::operations_basis(&mut self.conn, producer)
+        let exclusions = sinex_store::excision::exclusions::current(&mut self.conn, producer)
             .await
             .map_err(|e| e.to_string())?;
-        if basis.count != 0 {
+        if exclusions.count != 0 {
             return Ok(refused_unrecorded(
-                "producer namespace has permanent exclusions; scoped custody filtering is unavailable",
+                "this producer has excised records, and its frames cannot be checked against them yet",
             ));
         }
         let run = self.run(producer).await?;
@@ -285,19 +285,23 @@ impl Ingest {
         producer: &str,
         request: &Have,
     ) -> Result<Vec<Acknowledgment>, String> {
-        let mut frames = commit_log::frames(&mut self.conn, producer, &request.frames)
-            .await
-            .map_err(|e| e.to_string())?;
-        crate::row_retirement::availability(&mut self.conn, producer, &mut frames).await?;
-        Ok(frames.into_iter().map(acknowledgment).collect())
+        Ok(
+            commit_log::frames(&mut self.conn, producer, &request.frames)
+                .await
+                .map_err(|e| e.to_string())?
+                .into_iter()
+                .map(acknowledgment)
+                .collect(),
+        )
     }
 
     async fn stored(&mut self, producer: &str, frame: &str) -> Result<Option<StoredFrame>, String> {
-        let mut frames = commit_log::frames(&mut self.conn, producer, &[frame.to_owned()])
-            .await
-            .map_err(|e| e.to_string())?;
-        crate::row_retirement::availability(&mut self.conn, producer, &mut frames).await?;
-        Ok(frames.pop())
+        Ok(
+            commit_log::frames(&mut self.conn, producer, &[frame.to_owned()])
+                .await
+                .map_err(|e| e.to_string())?
+                .pop(),
+        )
     }
 
     /// One run per producer per daemon start: every event names its run.
@@ -342,10 +346,7 @@ impl Ingest {
         Ok((
             Some(SourceProgress {
                 native_pending: None,
-                erased_replay: None,
-                excision_basis: None,
-                image: None,
-                image_revision: None,
+                exclusions: None,
                 material_keys: Vec::new(),
                 binding: format!("ingress:{producer}"),
                 input: m.input.clone(),
@@ -529,10 +530,6 @@ pub async fn run(
         .subscribe(ingest.subjects.have_all())
         .await
         .map_err(|e| format!("have subscription: {e}"))?;
-    let mut retire = client
-        .subscribe(ingest.subjects.retire_all())
-        .await
-        .map_err(|e| format!("retirement subscription: {e}"))?;
     client.flush().await.map_err(|e| e.to_string())?;
     loop {
         tokio::select! {
@@ -562,16 +559,6 @@ pub async fn run(
                         let _ = message.ack_with(AckKind::Nak(Some(Duration::from_secs(5)))).await;
                     }
                 }
-            }
-            request = retire.next() => {
-                let Some(request)=request else {return Err("retirement subscription ended".into())};
-                let (Some(reply),Some(producer))=(request.reply.clone(),ingest.subjects.producer_of(&request.subject)) else {continue};
-                let result=match serde_json::from_slice::<sinex_protocol::RetireBatches>(&request.payload) {
-                    Ok(proof)=>ingest.writer.retire(producer.to_owned(),proof,ingest.blobs.clone()).await.map_err(|e|e.to_string()),
-                    Err(e)=>Err(format!("not a retirement proof: {e}")),
-                };
-                let answer=result.unwrap_or_else(|e|sinex_protocol::Retirement{refusal:Some(e),..Default::default()});
-                let _=client.publish(reply,serde_json::to_vec(&answer).map_err(|e|e.to_string())?.into()).await;
             }
             request = have.next() => {
                 let Some(request) = request else {

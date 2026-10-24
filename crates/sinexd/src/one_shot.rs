@@ -57,17 +57,6 @@ impl OneShot {
 pub struct Sink(pub Blobs);
 
 impl MaterialSink for Sink {
-    fn put_image(
-        &self,
-        image: &sinex_sources::drivers::sqlite_image::Image,
-    ) -> Result<sinex_model::SqliteImagePublication, String> {
-        let recipient = if image.metadata.class == sinex_model::Class::Sealed {
-            class_key()?
-        } else {
-            None
-        };
-        crate::sqlite_images::store(&self.0, image, recipient.as_ref())
-    }
     fn put(&self, bytes: &[u8]) -> Result<String, String> {
         self.0.put(bytes).map_err(|e| e.to_string())
     }
@@ -114,7 +103,6 @@ struct SealingState {
 #[derive(Clone)]
 struct SealingKey {
     data: sinex_store::sealed::DataKey,
-    secrets: sinex_store::sealed::MaterialSecrets,
     wrapped: Vec<u8>,
 }
 
@@ -143,15 +131,11 @@ impl SealingSink {
         }
     }
 
-    pub fn recipient(&self) -> &sinex_store::sealed::Recipient {
-        &self.recipient
-    }
-
     pub fn key(&self, blob: &str) -> Result<sinex_store::sealed::DataKey, String> {
-        Ok(self.capability(blob)?.data)
+        Ok(self.held(blob)?.data)
     }
 
-    fn capability(&self, blob: &str) -> Result<SealingKey, String> {
+    fn held(&self, blob: &str) -> Result<SealingKey, String> {
         let state = self.state.lock().expect("sealing state");
         state
             .pending
@@ -168,9 +152,6 @@ impl SealingSink {
     }
 
     pub fn open_carry(&self, value: &serde_json::Value) -> Result<serde_json::Value, String> {
-        if sinex_store::sealed::metadata::is_carry(value) {
-            return Err("class-owned parser carry requires scoped authority".into());
-        }
         let Some(reference) = sinex_store::sealed::key_ref(value) else {
             return Ok(value.clone());
         };
@@ -190,49 +171,38 @@ impl SealingSink {
         sinex_store::sealed::unseal_payload(value, &key.data.key).map_err(|e| e.to_string())
     }
 
-    fn remember_new_key(&self, blob: String, key: sinex_store::sealed::DataKey) {
-        let secrets = sinex_store::sealed::MaterialSecrets::from_data_key(&key);
-        self.restore_secrets(blob, key.key_ref, secrets)
-            .expect("freshly generated data capability");
-    }
-
-    pub fn restore_secrets(
+    /// Hold `key` for the material stored as `blob`, wrapped for the class.
+    pub fn restore_key(
         &self,
         blob: String,
-        key_ref: String,
-        secrets: sinex_store::sealed::MaterialSecrets,
+        key: sinex_store::sealed::DataKey,
     ) -> Result<(), String> {
-        let key = secrets.data_key(key_ref).map_err(|e| e.to_string())?;
-        let wrapped = sinex_store::sealed::wrap_secrets(&secrets, &self.recipient)
-            .map_err(|e| e.to_string())?;
-        self.state.lock().expect("sealing state").pending.insert(
-            blob,
-            SealingKey {
-                data: key,
-                secrets,
-                wrapped,
-            },
-        );
+        let wrapped =
+            sinex_store::sealed::wrap(&key, &self.recipient).map_err(|e| e.to_string())?;
+        self.state
+            .lock()
+            .expect("sealing state")
+            .pending
+            .insert(blob, SealingKey { data: key, wrapped });
         Ok(())
     }
 
-    /// The caller has opened this exact reserved envelope with scoped authority.
-    /// Keep its original ciphertext so retry cannot change publication identity.
+    /// The caller has opened this exact reserved key with scoped authority.
+    /// Keep its original wrapping so a retry stores the same key row.
     pub(crate) fn restore_reserved(
         &self,
         blob: String,
         key: &sinex_model::WrappedMaterialKey,
         authority: &crate::sealed_access::Authority,
     ) -> Result<(), String> {
-        let secrets = authority.unwrap_secrets(&key.wrapped)?;
-        let data = secrets
-            .data_key(key.key_ref.clone())
-            .map_err(|e| e.to_string())?;
+        let data = sinex_store::sealed::DataKey {
+            key_ref: key.key_ref.clone(),
+            key: authority.unwrap(&key.wrapped)?,
+        };
         self.state.lock().expect("sealing state").pending.insert(
             blob,
             SealingKey {
                 data,
-                secrets,
                 wrapped: key.wrapped.clone(),
             },
         );
@@ -243,21 +213,12 @@ impl SealingSink {
         &self,
         material: MaterialId,
         blob: String,
-        key_ref: String,
-        secrets: sinex_store::sealed::MaterialSecrets,
+        key: sinex_store::sealed::DataKey,
     ) -> Result<(), String> {
-        let key = secrets.data_key(key_ref).map_err(|e| e.to_string())?;
-        let wrapped = sinex_store::sealed::wrap_secrets(&secrets, &self.recipient)
-            .map_err(|e| e.to_string())?;
-        self.state.lock().expect("sealing state").current = Some((
-            material,
-            blob,
-            SealingKey {
-                data: key,
-                secrets,
-                wrapped,
-            },
-        ));
+        let wrapped =
+            sinex_store::sealed::wrap(&key, &self.recipient).map_err(|e| e.to_string())?;
+        self.state.lock().expect("sealing state").current =
+            Some((material, blob, SealingKey { data: key, wrapped }));
         Ok(())
     }
 
@@ -279,7 +240,7 @@ impl SealingSink {
                 .put_sealed_reader(reader, &key)
                 .map_err(|e| e.to_string())?
         };
-        self.remember_new_key(name.clone(), key);
+        self.restore_key(name.clone(), key)?;
         Ok(name)
     }
 
@@ -293,9 +254,9 @@ impl SealingSink {
             };
             let checkpoint = material.is_none() && batch.records.is_empty();
             if let Some(material) = material {
-                let capability = self.capability(&material.blob)?;
-                let key = &capability.data;
-                let wrapped = capability.wrapped.clone();
+                let held = self.held(&material.blob)?;
+                let key = &held.data;
+                let wrapped = held.wrapped.clone();
                 let wrapped = sinex_model::WrappedMaterialKey {
                     material: material.id,
                     key_ref: key.key_ref.clone(),
@@ -306,17 +267,15 @@ impl SealingSink {
                 }
                 let mut state = self.state.lock().expect("sealing state");
                 state.pending.remove(&material.blob);
-                state.current = Some((material.id, material.blob.clone(), capability));
+                state.current = Some((material.id, material.blob.clone(), held));
             }
             let current = self.state.lock().expect("sealing state").current.clone();
-            let Some((material, _, capability)) = current else {
+            let Some((material, _, held)) = current else {
                 let sinex_model::BatchKind::Source(progress) = &batch.kind else {
                     unreachable!()
                 };
                 if batch.records.is_empty()
-                    && (progress.carry.is_null()
-                        || sinex_store::sealed::is_sealed(&progress.carry)
-                        || sinex_store::sealed::metadata::is_carry(&progress.carry))
+                    && (progress.carry.is_null() || sinex_store::sealed::is_sealed(&progress.carry))
                 {
                     continue;
                 }
@@ -325,7 +284,7 @@ impl SealingSink {
                         .into(),
                 );
             };
-            let key = &capability.data;
+            let key = &held.data;
             for record in &mut batch.records {
                 match record {
                     sinex_model::RecordOutcome::Events { events, .. } => {
@@ -338,12 +297,8 @@ impl SealingSink {
                                     "sealed batch cites a different material than its key".into()
                                 );
                             }
-                            sinex_store::sealed::seal_event_with_secrets(
-                                event,
-                                key,
-                                &capability.secrets,
-                            )
-                            .map_err(|e| e.to_string())?;
+                            sinex_store::sealed::seal_event(event, key)
+                                .map_err(|e| e.to_string())?;
                         }
                     }
                     sinex_model::RecordOutcome::Failure { location, reason } => {
@@ -374,12 +329,6 @@ impl SealingSink {
 }
 
 impl MaterialSink for SealingSink {
-    fn put_image(
-        &self,
-        image: &sinex_sources::drivers::sqlite_image::Image,
-    ) -> Result<sinex_model::SqliteImagePublication, String> {
-        crate::sqlite_images::store(&self.blobs, image, Some(&self.recipient))
-    }
     fn put_file(&self, path: &std::path::Path) -> Result<String, String> {
         let file = std::fs::File::open(path).map_err(|e| e.to_string())?;
         self.put_reader(file)

@@ -41,12 +41,6 @@ impl RecordError {
 /// How a framed record's bytes become the parser's input.
 pub trait RecordShape<'a>: Sized {
     fn decode(raw: &'a [u8]) -> Result<Self, RecordError>;
-    fn decode_context(raw: &'a [u8], _context: &RecordContext<'_>) -> Result<Self, RecordError> {
-        Self::decode(raw)
-    }
-    fn hash_context(raw: &[u8], volatile: &[&str], _context: &RecordContext<'_>) -> [u8; 32] {
-        Self::hash(raw, volatile)
-    }
 
     /// BLAKE3 of the record as read, without the parser's declared volatile
     /// fields. Equal hashes make a later reading a repeat.
@@ -69,40 +63,6 @@ impl<'a> RecordShape<'a> for serde_json::Map<String, serde_json::Value> {
             .map_err(|e| RecordError::new(format!("record is not a JSON object: {e}")))
     }
 
-    fn decode_context(raw: &'a [u8], context: &RecordContext<'_>) -> Result<Self, RecordError> {
-        let mut object = Self::decode(raw)?;
-        if context.manifest["row_format"] == 2 {
-            object = object
-                .remove("row")
-                .and_then(|r| r.as_object().cloned())
-                .ok_or_else(|| RecordError::new("SQLite row envelope has no native row"))?;
-        }
-        Ok(object)
-    }
-    fn hash_context(raw: &[u8], volatile: &[&str], context: &RecordContext<'_>) -> [u8; 32] {
-        if context.manifest["row_format"] != 2 {
-            return Self::hash(raw, volatile);
-        }
-        let Ok(envelope) = serde_json::from_slice::<serde_json::Value>(raw) else {
-            return *blake3::hash(raw).as_bytes();
-        };
-        let Some(mut object) = envelope.get("row").and_then(|r| r.as_object().cloned()) else {
-            return *blake3::hash(raw).as_bytes();
-        };
-        for field in volatile {
-            object.remove(*field);
-        }
-        let identity = serde_json::from_slice::<serde_json::Value>(raw)
-            .ok()
-            .and_then(|v| v.get("_sinex_rowid").cloned());
-        *blake3::hash(
-            serde_json::json!({"row":object,"rowid":identity})
-                .to_string()
-                .as_bytes(),
-        )
-        .as_bytes()
-    }
-
     fn hash(raw: &[u8], volatile: &[&str]) -> [u8; 32] {
         if volatile.is_empty() {
             return *blake3::hash(raw).as_bytes();
@@ -119,13 +79,6 @@ impl<'a> RecordShape<'a> for serde_json::Map<String, serde_json::Value> {
     }
 }
 
-/// A format's minimal state after erasing a record. Replay data must contain
-/// only irreversible identity/count information, never the erased content.
-pub struct Erased<C> {
-    pub carry: C,
-    pub replay: Option<serde_json::Value>,
-}
-
 /// A source's parser (architecture §5.2).
 pub trait Parser: Send + Sync + 'static {
     /// The framed record: a line, a JSON row, an archive member's record.
@@ -139,31 +92,6 @@ pub trait Parser: Send + Sync + 'static {
     /// Fields left out of the record hash because they change without the
     /// record changing (a last-seen time).
     const VOLATILE: &'static [&'static str] = &[];
-
-    /// Erase one record's contribution to current carry. Unsupported stateful
-    /// shapes refuse before any archive mutation.
-    fn erase_record(
-        &self,
-        _raw: &[u8],
-        _carry: &Self::Carry,
-        _context: &RecordContext<'_>,
-    ) -> Result<Erased<Self::Carry>, RecordError> {
-        Err(RecordError::new(
-            "this parser does not support carry erasure",
-        ))
-    }
-
-    /// Apply a format-owned minimal transition at an erased record's anchor.
-    fn skip_erased(
-        &self,
-        _carry: &Self::Carry,
-        _transition: &serde_json::Value,
-        _context: &RecordContext<'_>,
-    ) -> Result<Self::Carry, RecordError> {
-        Err(RecordError::new(
-            "this parser does not support erased-record replay",
-        ))
-    }
 
     /// Map one framed record to its events. `context` is the record's
     /// material: its manifest and, for a material made of several members

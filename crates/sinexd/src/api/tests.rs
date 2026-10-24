@@ -672,88 +672,13 @@ async fn sealed_values_need_the_unlocked_operator_and_die_with_their_key() {
     assert_eq!(body["outcome"], json!("ok"), "{body}");
     let (_, open) = call(&w, Some(OPERATOR), query.clone()).await;
     assert!(first(&open).contains("diary"), "unlocked operator: {open}");
-    // A cached data key cannot survive replacement by a naming-only capability.
-    let naming = sealed::MaterialSecrets::from_data_key(&key).naming_only();
-    let wrapped = sealed::wrap_secrets(&naming, &identity.to_public()).unwrap();
-    sqlx::query("UPDATE privacy.material_keys SET wrapped_key=$1 WHERE material_id=$2")
-        .bind(wrapped)
-        .bind(material.0)
-        .execute(&w.reads)
-        .await
-        .unwrap();
-    let (_, retired) = call(&w, Some(OPERATOR), query.clone()).await;
-    assert_eq!(retired["outcome"], json!("refused"), "{retired}");
-    assert!(!retired.to_string().contains("diary"));
-    let wrapped = sealed::wrap(&key, &identity.to_public()).unwrap();
-    sqlx::query("UPDATE privacy.material_keys SET wrapped_key=$1 WHERE material_id=$2")
-        .bind(wrapped)
-        .bind(material.0)
-        .execute(&w.reads)
-        .await
-        .unwrap();
-    let (_, restored) = call(&w, Some(OPERATOR), query.clone()).await;
-    assert!(first(&restored).contains("diary"), "restored: {restored}");
-    let (_, unchanged) = call(&w, Some(OPERATOR), query.clone()).await;
-    assert!(
-        first(&unchanged).contains("diary"),
-        "unchanged: {unchanged}"
-    );
-    let mut fresh = sealed::new_key().unwrap();
-    fresh.key_ref = key.key_ref.clone();
-    let wrapped = sealed::wrap(&fresh, &identity.to_public()).unwrap();
-    sqlx::query("UPDATE privacy.material_keys SET wrapped_key=$1 WHERE material_id=$2")
-        .bind(wrapped)
-        .bind(material.0)
-        .execute(&w.reads)
-        .await
-        .unwrap();
-    let mut fresh_event = command("synthetic fresh protected value", 1);
-    fresh_event.origin = Origin::Record {
-        location: RecordLocation {
-            material,
-            anchor: 1,
-        },
-        ordinal: 0,
-    };
-    sealed::seal_event(&mut fresh_event, &fresh).unwrap();
-    admit_events(&w, vec![fresh_event]).await;
-    let (_, changed) = call(&w, Some(OPERATOR), query.clone()).await;
-    assert!(
-        changed["result"]["rows"]
-            .to_string()
-            .contains("synthetic fresh protected value"),
-        "fresh: {changed}"
-    );
-    assert!(
-        !changed["result"]["rows"].to_string().contains("diary"),
-        "old content remains encrypted: {changed}"
-    );
-    let wrapped = sealed::wrap(&key, &identity.to_public()).unwrap();
-    sqlx::query("UPDATE privacy.material_keys SET wrapped_key=$1 WHERE material_id=$2")
-        .bind(wrapped)
-        .bind(material.0)
-        .execute(&w.reads)
-        .await
-        .unwrap();
-    let (_, agent) = call(&w, Some(AGENT), query.clone()).await;
+    let (_, agent) = call(&w, Some(AGENT), query).await;
     assert!(
         !first(&agent).contains("diary"),
         "the agent never reads sealed: {agent}"
     );
     let (status, _) = call(&w, Some(AGENT), json!({"method": "lock"})).await;
     assert_eq!(status, StatusCode::FORBIDDEN);
-
-    // Destroying the key (what excision does) leaves nothing to unseal, even
-    // for an already unlocked operator with a cached key.
-    sqlx::query!(
-        "DELETE FROM privacy.material_keys WHERE material_id = $1",
-        material.0
-    )
-    .execute(&w.reads)
-    .await
-    .unwrap();
-    let (_, shredded) = call(&w, Some(OPERATOR), query).await;
-    assert!(!first(&shredded).contains("diary"), "shredded: {shredded}");
 }
 
 #[tokio::test]

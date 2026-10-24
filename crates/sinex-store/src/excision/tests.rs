@@ -170,7 +170,7 @@ async fn excise(conn: &mut PgConnection, store: &Store, target: Target) -> Resul
 /// The blanked bytes for each material a plan rewrites, stored.
 async fn rewrites_for(_conn: &mut PgConnection, store: &Store, plan: &Plan) -> Vec<Rewrite> {
     let mut rewrites = Vec::new();
-    for m in plan.materials.iter().filter(|m| !m.sealed) {
+    for m in &plan.materials {
         let mut bytes = store.blobs.read(&m.blob).unwrap();
         let spans: Vec<(usize, usize)> = if m.whole {
             vec![(0, bytes.len())]
@@ -185,7 +185,6 @@ async fn rewrites_for(_conn: &mut PgConnection, store: &Store, plan: &Plan) -> V
         };
         blank(&mut bytes, &spans);
         rewrites.push(Rewrite {
-            manifest: None,
             material: m.id,
             blob: store.blobs.put(&bytes).unwrap(),
             length: bytes.len() as u64,
@@ -411,7 +410,7 @@ async fn derived_descendants_go_with_their_parent() {
 }
 
 #[tokio::test]
-async fn sealed_whole_and_partial_excision_both_require_scoped_prepared_replacements() {
+async fn excision_of_sealed_material_is_refused_without_changes() {
     let (_db, mut conn) = testdb::fresh().await;
     let store = Store::new();
     let bytes = b"a\nb\n".to_vec();
@@ -423,24 +422,10 @@ async fn sealed_whole_and_partial_excision_both_require_scoped_prepared_replacem
     let a = keyed(m, &bytes, 0, "a", 1);
     admit_events(&mut conn, vec![a.clone(), keyed(m, &bytes, 2, "b", 1)]).await;
     for target in [Target::Event(a.id), Target::Material(m)] {
-        let selected = plan(&mut conn, target).await.unwrap();
-        let mut tx = conn.begin().await.unwrap();
-        let result = apply(
-            &mut tx,
-            target,
-            &selected,
-            &[],
-            OperationId::new(),
-            "operator",
-            &NoDerivations,
-        )
-        .await;
-        tx.rollback().await.unwrap();
+        let err = excise(&mut conn, &store, target).await.unwrap_err();
         assert!(
-            result
-                .unwrap_err()
-                .to_string()
-                .contains("scoped prepared key and body replacements")
+            err.to_string()
+                .contains("excision of sealed source material is not supported")
         );
     }
     assert_eq!(
@@ -547,5 +532,3 @@ async fn retained_archive_refuses_record_and_original_excision_without_changes()
         0
     );
 }
-
-mod sealed_rekey;

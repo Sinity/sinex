@@ -14,7 +14,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::path::{Path, PathBuf};
 mod append_pending;
-pub use append_pending::{AppendResume, ArchivedAppendEnd};
+pub use append_pending::AppendResume;
 
 /// The zone named `name` (an IANA name such as `Europe/Warsaw`), or this
 /// system's zone.
@@ -121,33 +121,9 @@ impl Binding {
 /// state rebuilt from the stored materials before the first poll, so a
 /// restart reads only what changed.
 pub trait Reader: Send {
-    fn configure(&mut self, settings: &Settings) -> Result<(), String> {
-        if settings.options.get("sqlite_images").is_some() {
-            return Err("SQLite image configuration requires a SQLite rows reader".into());
-        }
-        Ok(())
-    }
-    fn image_policy(&self) -> Option<&crate::drivers::sqlite_image::Policy> {
-        None
-    }
-    fn restore_image(&mut self, _previous: crate::drivers::sqlite_image::Previous) {}
-    fn cancel_pending(&mut self) {}
-
     /// The export declaration, when this reader can share a physical archive traversal.
     fn export_archive(&self) -> Option<&crate::drivers::export_archive::ExportArchive> {
         None
-    }
-
-    fn remember_erased(
-        &mut self,
-        members: Vec<crate::drivers::append_file::ErasedMember>,
-    ) -> Result<(), DriverError> {
-        if !members.is_empty() {
-            return Err(DriverError::InvalidMaterial(
-                "reader does not support erased alignment membership".into(),
-            ));
-        }
-        Ok(())
     }
 
     fn restore_append(&mut self, _resume: AppendResume) -> Result<(), DriverError> {
@@ -371,15 +347,6 @@ pub fn appended(driver: AppendFile) -> Box<dyn Reader> {
 }
 
 impl Reader for Appended {
-    fn remember_erased(
-        &mut self,
-        members: Vec<crate::drivers::append_file::ErasedMember>,
-    ) -> Result<(), DriverError> {
-        for member in members {
-            self.state.remember_erased(member)?;
-        }
-        Ok(())
-    }
     fn restore_append(&mut self, resume: AppendResume) -> Result<(), DriverError> {
         let pending = append_pending::Pending::restore(resume)?;
         pending.prime(&mut self.state)?;
@@ -398,9 +365,6 @@ impl Reader for Appended {
         if let Some(pending) = &self.pending {
             if !pending.complete(cursor)? {
                 return pending.acquired(cursor);
-            }
-            if !pending.can_align(&self.state) {
-                return Err(DriverError::InvalidMaterial("erased append tail requires scoped matching membership before provider alignment".into()));
             }
             self.pending = None;
         }
@@ -439,25 +403,6 @@ impl Reader for Rows {
         self.state
             .restore_pending(reference, stored, cursor)
             .map(|_| true)
-    }
-
-    fn configure(&mut self, settings: &Settings) -> Result<(), String> {
-        if let Some(value) = settings.options.get("sqlite_images") {
-            let policy: crate::drivers::sqlite_image::Policy =
-                serde_json::from_value(value.clone()).map_err(|e| e.to_string())?;
-            policy.validate()?;
-            self.state.image_policy = Some(policy);
-        }
-        Ok(())
-    }
-    fn image_policy(&self) -> Option<&crate::drivers::sqlite_image::Policy> {
-        self.state.image_policy.as_ref()
-    }
-    fn restore_image(&mut self, previous: crate::drivers::sqlite_image::Previous) {
-        self.state.previous_image = Some(previous);
-    }
-    fn cancel_pending(&mut self) {
-        self.state.cancel_scan();
     }
 
     fn poll(&mut self, cursor: &Value) -> Result<Acquired, DriverError> {

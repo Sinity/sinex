@@ -30,11 +30,9 @@ impl Bound {
         let reader = kind
             .reader
             .ok_or_else(|| format!("{} is not read by a driver", kind.name))?;
-        let mut reader = reader(&binding)?;
-        reader.configure(&binding.settings)?;
         Ok(Self {
             source: (kind.source)(&binding)?,
-            reader,
+            reader: reader(&binding)?,
             binding,
             remembered: false,
             history_floor: Class::Open,
@@ -70,24 +68,8 @@ pub(crate) async fn read(
 ) -> Vec<(String, Result<Totals, String>)> {
     let mut results = Vec::new();
     let mut archives: Vec<Archive> = Vec::new();
-    let mut known = match sinex_store::bindings::list(conn).await {
-        Ok(known) => known,
-        Err(e) => {
-            return bound
-                .iter()
-                .map(|b| (b.binding.source.clone(), Err(e.to_string())))
-                .collect();
-        }
-    };
-    known.extend(bound.iter().map(|b| sinex_store::bindings::Stored {
-        binding: b.binding.name.clone(),
-        source: b.binding.source.clone(),
-        input: b.binding.input.display().to_string(),
-        settings: serde_json::to_value(&b.binding.settings).expect("settings serialize"),
-    }));
     for (index, b) in bound.iter_mut().enumerate() {
         let init = async {
-            check_image_class(conn, b, &known).await?;
             if !b.remembered {
                 backfill::record(conn, &b.binding).await?;
                 let restored_pending = pending::restore(conn, blobs, writer, b, access).await?;
@@ -101,7 +83,7 @@ pub(crate) async fn read(
                     if b.source.spec().driver == sinex_sources::Driver::DirSnapshot {
                         directory::restore(conn, blobs, b, &cursor, access, stop.clone()).await?;
                     } else if b.source.spec().driver == sinex_sources::Driver::SqliteRows {
-                        restore_sqlite(conn, blobs, b, &cursor, access).await?;
+                        restore_material(conn, blobs, b, &cursor, access).await?;
                     } else if b.source.spec().driver == sinex_sources::Driver::AppendFile {
                         let tail = append::completed_tail(
                             conn,
@@ -243,110 +225,6 @@ pub(crate) async fn read(
     }
     results
 }
-async fn check_image_class(
-    conn: &mut PgConnection,
-    b: &mut Bound,
-    known: &[sinex_store::bindings::Stored],
-) -> Result<(), String> {
-    let Some(policy) = b.reader.image_policy() else {
-        return Ok(());
-    };
-    let mut classes = std::collections::HashMap::new();
-    for input in known {
-        let host = input.settings["host"].as_str().unwrap_or_default();
-        if host != b.binding.settings.host
-            || !same_database(&b.binding.input, std::path::Path::new(&input.input))
-        {
-            continue;
-        }
-        let class = sinex_sources::sources::spec(&input.source)
-            .map(|s| s.class)
-            .ok_or("configured database binding has no known source class")?;
-        classes
-            .entry(input.source.clone())
-            .and_modify(|c: &mut Class| *c = (*c).max(class))
-            .or_insert(class);
-    }
-    let rules = sinex_store::privacy::load(conn, classes.keys().map(String::as_str))
-        .await
-        .map_err(|e| e.to_string())?;
-    let class = classes
-        .into_iter()
-        .fold(b.source.spec().class, |c, (name, declared)| {
-            c.max(declared)
-                .max(rules.floors.get(&name).copied().unwrap_or_default())
-        });
-    let class = rules.rules.iter().fold(class, |c, r| c.max(r.class));
-    if policy.class < class {
-        return Err("whole-database image class is below a configured source/field class".into());
-    }
-    Ok(())
-}
-fn same_database(a: &std::path::Path, b: &std::path::Path) -> bool {
-    use std::os::unix::fs::MetadataExt;
-    if a == b {
-        return true;
-    }
-    if let (Ok(a), Ok(b)) = (a.metadata(), b.metadata()) {
-        return a.dev() == b.dev() && a.ino() == b.ino();
-    }
-    false
-}
-
-async fn restore_sqlite(
-    conn: &mut PgConnection,
-    blobs: &Blobs,
-    b: &mut Bound,
-    cursor: &Value,
-    access: Access<'_>,
-) -> Result<(), String> {
-    if b.reader.image_policy().is_some() {
-        let database = b
-            .binding
-            .input
-            .canonicalize()
-            .map_err(|e| e.to_string())?
-            .display()
-            .to_string();
-        if let Some(id) =
-            sinex_store::sqlite_images::latest(conn, &database, &b.binding.settings.host)
-                .await
-                .map_err(|e| e.to_string())?
-        {
-            let (metadata, extents, material) = sinex_store::sqlite_images::load(conn, id)
-                .await
-                .map_err(|e| e.to_string())?
-                .ok_or("retained SQLite image is missing")?;
-            let map = if metadata.class == Class::Sealed {
-                None
-            } else {
-                let mut file = tempfile::tempfile().map_err(|e| e.to_string())?;
-                let map = [sinex_model::ImageExtent {
-                    blob: material.blob,
-                    offset: metadata.map_offset,
-                    length: metadata.map_bytes,
-                }];
-                let copied = std::io::copy(
-                    &mut blobs.assemble(&map).map_err(|e| e.to_string())?,
-                    &mut file,
-                )
-                .map_err(|e| e.to_string())?;
-                if copied != metadata.map_bytes {
-                    return Err("retained SQLite page map is short".into());
-                }
-                Some(Arc::new(file))
-            };
-            b.reader.restore_image(drivers::sqlite_image::Previous {
-                metadata,
-                extents,
-                map,
-            });
-        }
-    }
-    restore_material(conn, blobs, b, cursor, access).await?;
-    Ok(())
-}
-
 async fn restore_material(
     conn: &mut PgConnection,
     blobs: &Blobs,
@@ -368,33 +246,9 @@ async fn restore_material(
     if cursor["through"].as_u64().unwrap_or(0) >= reference.length {
         return Ok(true);
     }
-    let opened =
-        crate::retained::open(conn, blobs, b.source.spec().name, id, access.authority).await?;
+    let opened = crate::retained::open(conn, blobs, id, access.authority).await?;
     if cursor["through"].as_u64().unwrap_or(0) >= opened.reference.length {
         return Ok(true);
-    }
-    if opened.body.is_none() && b.source.spec().driver == sinex_sources::Driver::SqliteRows {
-        let ends: Vec<(usize, i64)> =
-            serde_json::from_value(opened.reference.manifest["row_resume"]["ends"].clone())
-                .map_err(|_| "whole-erased SQLite resume coordinates are missing")?;
-        let mut start = 0;
-        let expected = ends
-            .into_iter()
-            .map(|(end, _)| {
-                let r = (start as u64, end as u64);
-                start = end;
-                r
-            })
-            .collect::<Vec<_>>();
-        if expected
-            != opened
-                .metadata
-                .iter()
-                .map(|r| (r.start, r.end))
-                .collect::<Vec<_>>()
-        {
-            return Err("SQLite resume ranges differ from authenticated erased coordinates".into());
-        }
     }
     let evidence = positions::accounted_records(conn, id)
         .await
@@ -402,7 +256,7 @@ async fn restore_material(
     if let Some(class) = evidence.class {
         b.history_floor = b.history_floor.max(class);
     }
-    if opened.secrets.is_some() {
+    if opened.key.is_some() {
         b.history_floor = b.history_floor.max(Class::Sealed);
     }
     let anchors = evidence
@@ -520,15 +374,15 @@ async fn read_archive(
                 let original = cursor
                     .original_material
                     .ok_or("sealed archive cursor has no original material")?;
-                let (key_ref, secrets) = authority.material_secrets(conn, original).await?;
-                sealing.restore_secrets(cursor.capture.blob.clone(), key_ref, secrets)?;
+                let key = authority.material_key(conn, original).await?;
+                sealing.restore_key(cursor.capture.blob.clone(), key)?;
                 if let Some(material) = cursor.material {
                     let reference = sinex_store::material_bytes::reference(conn, material)
                         .await
                         .map_err(|e| e.to_string())?
                         .ok_or("sealed cursor material is missing")?;
-                    let (key_ref, secrets) = authority.material_secrets(conn, material).await?;
-                    sealing.restore_current(material, reference.blob, key_ref, secrets)?;
+                    let key = authority.material_key(conn, material).await?;
+                    sealing.restore_current(material, reference.blob, key)?;
                 }
             }
             let pending = if let Some(id) = saved
@@ -696,7 +550,7 @@ async fn read_archive(
             if let Some(authority) = access.authority {
                 authority.check()?;
             }
-            let (cursor, carry) = positions::load(conn, &b.binding.name)
+            let (_, carry) = positions::load(conn, &b.binding.name)
                 .await
                 .map_err(|e| e.to_string())?
                 .unwrap_or((Value::Null, Value::Null));
@@ -711,9 +565,7 @@ async fn read_archive(
                     Some(sealing) => {
                         backfill::open_carry(
                             conn,
-                            b.source.as_ref(),
                             &b.binding.name,
-                            &cursor,
                             &carry,
                             sealing,
                             access.authority,

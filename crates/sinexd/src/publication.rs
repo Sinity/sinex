@@ -4,7 +4,7 @@
 mod authored;
 pub(crate) use authored::{resume_authored, submit_authored};
 
-use crate::source_excision::AcquisitionGuard;
+use crate::excision::AcquisitionGuard;
 use crate::writer::{NativePermit, WriteError};
 use sinex_model::{Batch, BatchKind};
 use sinex_sources::drivers::MaterialSink;
@@ -124,9 +124,7 @@ impl Verification {
                     .count()
                     != 1
             {
-                return Err(
-                    "local verification capability differs from its pending material".into(),
-                );
+                return Err("the verification key differs from its pending material".into());
             }
             let check = self.check.clone();
             let authority = self.authority.clone();
@@ -146,39 +144,7 @@ impl Verification {
                 )
                 .map_err(|e| e.to_string())?;
             std::io::copy(&mut body, &mut std::io::sink()).map_err(|e| e.to_string())?;
-            if let Some(replay) = &pending.progress.erased_replay {
-                let authority = self
-                    .authority
-                    .as_ref()
-                    .ok_or("replay verification requires scoped authority")?;
-                let scope = sinex_store::sealed::metadata::Scope::Replay {
-                    source: pending.source.clone(),
-                    material: material.id,
-                    parser: material.parser.clone(),
-                    parser_version: i32::try_from(material.parser_version)
-                        .map_err(|_| "parser version exceeds i32")?,
-                    length: material.length,
-                    whole: false,
-                    append_end: material
-                        .manifest
-                        .get("append_resume")
-                        .and_then(|r| r.get("end"))
-                        .cloned(),
-                };
-                let check = self.check.clone();
-                let scoped = authority.clone();
-                let body = blobs
-                    .read_plain(&replay.blob, Some(replay.length), move || {
-                        check().map_err(std::io::Error::other)?;
-                        scoped.check().map_err(std::io::Error::other)?;
-                        Ok(())
-                    })
-                    .map_err(|e| e.to_string())?;
-                authority.open_replay_metadata(body, &scope)?;
-            }
-        } else if blobs.is_sealed(&material.blob).map_err(|e| e.to_string())?
-            || pending.progress.erased_replay.is_some()
-        {
+        } else if blobs.is_sealed(&material.blob).map_err(|e| e.to_string())? {
             crate::retained::open_pending(blobs, pending, self.authority.as_ref())?;
         } else {
             let check = self.check.clone();
@@ -193,53 +159,9 @@ impl Verification {
     }
 }
 
-pub(crate) enum ImageVerification {
-    Pinned(crate::sqlite_images::PreparedImage),
-    Retained {
-        blobs: Blobs,
-        plan: native_materials::PendingImage,
-        previous: Option<sinex_model::SqliteImageMeta>,
-        authority: Option<crate::sealed_access::Authority>,
-        check: crate::writer::NativeCheck,
-    },
-}
-impl ImageVerification {
-    fn verify(self) -> Result<sinex_model::SqliteImagePublication, String> {
-        match self {
-            Self::Pinned(image) => image.verify(),
-            Self::Retained {
-                blobs,
-                plan,
-                previous,
-                authority,
-                check,
-            } => crate::sqlite_images::verify_retained_plan(
-                &blobs,
-                &plan,
-                previous.as_ref(),
-                authority.as_ref(),
-                check,
-            ),
-        }
-    }
-}
-
-pub(crate) struct Published {
-    pub outcome: Outcome,
-    pub image: Option<sinex_model::SqliteImagePublication>,
-}
-impl std::fmt::Debug for Published {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("Published")
-            .field("outcome", &self.outcome)
-            .finish_non_exhaustive()
-    }
-}
-
 pub(crate) struct Publication {
     pub pending: native_materials::Pending,
     pub stages: Vec<NativeStage>,
-    pub image: Option<ImageVerification>,
     pub verification: Verification,
     pub blobs: Blobs,
     pub batch: Batch,
@@ -247,10 +169,10 @@ pub(crate) struct Publication {
     pub guard: AcquisitionGuard,
 }
 impl Publication {
-    pub fn start(self) -> tokio::task::JoinHandle<Result<Published, WriteError>> {
+    pub fn start(self) -> tokio::task::JoinHandle<Result<Outcome, WriteError>> {
         tokio::spawn(self.publish())
     }
-    async fn publish(mut self) -> Result<Published, WriteError> {
+    async fn publish(mut self) -> Result<Outcome, WriteError> {
         let refuse = |e: &dyn std::fmt::Display| WriteError::Refused(e.to_string());
         if self.guard.source() != self.pending.source {
             let _ = self.guard.release().await;
@@ -290,7 +212,7 @@ impl Publication {
                 .await
                 .map_err(|e| refuse(&e))?;
             let result = async {
-                sinex_store::excision::validate_basis(&mut tx, &self.batch)
+                sinex_store::excision::exclusions::check(&mut tx, &self.batch)
                     .await
                     .map_err(|e| refuse(&e))?;
                 native_materials::reserve(&mut tx, &self.pending)
@@ -352,21 +274,6 @@ impl Publication {
             let _ = self.guard.release().await;
             return Err(WriteError::Refused(error));
         }
-        let completed = if let Some(image) = self.image.take() {
-            match tokio::task::spawn_blocking(move || image.verify()).await {
-                Ok(Ok(image)) => Some(image),
-                result => {
-                    let _ = self.guard.release().await;
-                    return Err(WriteError::Refused(match result {
-                        Ok(Err(error)) => error,
-                        Err(error) => error.to_string(),
-                        _ => unreachable!(),
-                    }));
-                }
-            }
-        } else {
-            None
-        };
         let installed = async {
             let mut tx = self
                 .guard
@@ -375,21 +282,6 @@ impl Publication {
                 .await
                 .map_err(|e| refuse(&e))?;
             let result = async {
-                if let Some(image) = &completed {
-                    if self.pending.image.is_some() {
-                        native_materials::finalize_image(
-                            &mut tx,
-                            self.pending.material,
-                            image.clone(),
-                        )
-                        .await
-                        .map_err(|e| refuse(&e))?;
-                    } else if self.pending.progress.image.as_ref() != Some(image) {
-                        return Err(WriteError::Refused(
-                            "verified retained image differs from frozen publication".into(),
-                        ));
-                    }
-                }
                 native_materials::installed(&mut tx, self.pending.material)
                     .await
                     .map_err(|e| refuse(&e))
@@ -419,16 +311,9 @@ impl Publication {
             ));
         };
         progress.native_pending = Some(self.pending.material);
-        let published_image = completed.clone().or_else(|| progress.image.clone());
-        progress.image = completed.or(progress.image.take());
-        let outcome = self
-            .permit
+        self.permit
             .admit(self.batch, self.guard, self.verification.queued_check())
-            .await?;
-        Ok(Published {
-            outcome,
-            image: published_image,
-        })
+            .await
     }
 }
 

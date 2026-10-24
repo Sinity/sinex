@@ -262,20 +262,8 @@ impl Source for SmallBatches {
     fn spec(&self) -> &sinex_sources::SourceSpec {
         self.0.spec()
     }
-    fn record_hash(
-        &self,
-        raw: &[u8],
-        context: &sinex_sources::RecordContext<'_>,
-    ) -> Result<[u8; 32], sinex_sources::RecordError> {
-        self.0.record_hash(raw, context)
-    }
-    fn erase_record(
-        &self,
-        raw: &[u8],
-        carry: &Value,
-        context: &sinex_sources::RecordContext<'_>,
-    ) -> Result<sinex_sources::Erased<Value>, sinex_sources::RecordError> {
-        self.0.erase_record(raw, carry, context)
+    fn record_hash(&self, raw: &[u8]) -> [u8; 32] {
+        self.0.record_hash(raw)
     }
     fn drainer<'a>(
         &'a self,
@@ -606,7 +594,5 @@ async fn live_events(conn: &mut PgConnection) -> Vec<EventFields> {
 }
 
 mod directory;
-
-mod sqlite_images;
 
 mod imap;

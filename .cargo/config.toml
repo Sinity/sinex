@@ -1,3 +1,0 @@
-[env]
-# Physical SQLite evidence must read the connection's committed page view.
-LIBSQLITE3_FLAGS = { value = "SQLITE_ENABLE_DBPAGE_VTAB", force = true }

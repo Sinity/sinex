@@ -38,7 +38,6 @@ fn requests_have_stable_wire_names() {
         reference: Some("sinex:ev/x".into()),
         material: None,
         dry_run: None,
-        sealed: None,
     };
     assert_eq!(
         serde_json::to_value(&r).unwrap(),

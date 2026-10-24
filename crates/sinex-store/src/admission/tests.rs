@@ -415,10 +415,7 @@ async fn events_and_progress_commit_together() {
     let (_db, mut conn) = testdb::fresh().await;
     let progress = |cursor: i64| SourceProgress {
         native_pending: None,
-        erased_replay: None,
-        excision_basis: None,
-        image: None,
-        image_revision: None,
+        exclusions: None,
         material_keys: Vec::new(),
         binding: "b".into(),
         input: InputRef {
@@ -624,5 +621,3 @@ async fn untimed_zsh_occurrences_coexist_and_only_same_locations_repeat() {
 }
 
 mod archive_history;
-
-mod erased_replay;

@@ -70,7 +70,6 @@ impl Media {
         let now = Timestamp::now();
         let Some((stem, path)) = next else {
             return Ok(Acquired {
-                image: None,
                 input: self.input.clone(),
                 observation: ObservationFacts {
                     observed_at: Some(now),
@@ -104,7 +103,6 @@ impl Media {
             part_index,
         };
         Ok(Acquired {
-            image: None,
             input: self.input.clone(),
             observation: ObservationFacts {
                 observed_at: Some(now),

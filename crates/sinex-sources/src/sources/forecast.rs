@@ -107,7 +107,6 @@ pub fn request_material(
     let length = bytes.len();
     let order = i64::try_from(at.unix_ns()).expect("current timestamp fits reading order");
     Acquired {
-        image: None,
         input: InputRef {
             kind: "forecast".into(),
             locator: "requests".into(),

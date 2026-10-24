@@ -22,31 +22,11 @@ pub struct Pending {
     pub progress: SourceProgress,
     pub removed: Vec<sinex_model::RecordLocation>,
     pub cited: Vec<sinex_model::Cited>,
-    pub image: Option<PendingImage>,
     pub base_cursor: Value,
     pub base_carry: Value,
     pub start_cursor: Value,
     pub end_cursor: Value,
     pub state: State,
-}
-
-/// A physical image's content/layout is fixed before CAS installation; the
-/// dedup winner's actual stored costs are known only after verification.
-#[derive(Clone)]
-pub enum PendingImage {
-    AwaitingCosts(sinex_model::SqliteImagePublication),
-}
-impl PendingImage {
-    pub fn awaiting(mut image: sinex_model::SqliteImagePublication) -> Result<Self> {
-        image.validate().map_err(Error::Invalid)?;
-        // These placeholders never enter ready SourceProgress or durable JSON.
-        image.metadata.base_stored_bytes = 0;
-        image.metadata.patch_stored_bytes = 0;
-        image.metadata.read_stored_bytes = 0;
-        image.material.manifest["sqlite_image"] = serde_json::to_value(&image.metadata)
-            .map_err(|_| invalid("image plan cannot encode"))?;
-        Ok(Self::AwaitingCosts(image))
-    }
 }
 
 impl Pending {
@@ -64,9 +44,6 @@ impl Pending {
     }
 
     pub fn first_progress(&self, cursor: Value, carry: Value) -> Result<SourceProgress> {
-        if self.image.is_some() {
-            return Err(invalid("native image costs are unresolved"));
-        }
         let mut progress = self.progress.clone();
         progress.cursor = cursor;
         progress.carry = carry;
@@ -85,11 +62,8 @@ struct Publication {
     observation: sinex_model::ObservationFacts,
     revision: sinex_model::RevisionChange,
     material: Option<Material>,
-    image: Option<Image>,
-    image_revision: Option<sinex_model::RevisionId>,
     keys: Vec<Key>,
-    erased_replay: Option<Replay>,
-    basis: Basis,
+    exclusions: ExclusionSet,
     removed: Vec<sinex_model::RecordLocation>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     cited: Vec<sinex_model::Cited>,
@@ -116,98 +90,9 @@ struct Key {
 }
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct Image {
-    metadata: Value,
-    costs: Option<Costs>,
-    material: Material,
-    extents: Vec<sinex_model::ImageExtent>,
-    key: Option<Key>,
-}
-#[derive(Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct Costs {
-    base_stored_bytes: u64,
-    patch_stored_bytes: u64,
-    read_stored_bytes: u64,
-}
-
-fn image(i: &sinex_model::SqliteImagePublication, resolved: bool) -> Result<Image> {
-    let mut metadata =
-        serde_json::to_value(&i.metadata).map_err(|_| invalid("image plan cannot encode"))?;
-    let object = metadata
-        .as_object_mut()
-        .ok_or_else(|| invalid("image metadata is not an object"))?;
-    for field in [
-        "base_stored_bytes",
-        "patch_stored_bytes",
-        "read_stored_bytes",
-    ] {
-        object.remove(field);
-    }
-    let mut m = material(&i.material);
-    m.manifest["sqlite_image"] = metadata.clone();
-    Ok(Image {
-        metadata,
-        costs: resolved.then_some(Costs {
-            base_stored_bytes: i.metadata.base_stored_bytes,
-            patch_stored_bytes: i.metadata.patch_stored_bytes,
-            read_stored_bytes: i.metadata.read_stored_bytes,
-        }),
-        material: m,
-        extents: i.extents.clone(),
-        key: i.key.as_ref().map(key),
-    })
-}
-fn unimage(i: Image) -> Result<(sinex_model::SqliteImagePublication, bool)> {
-    let resolved = i.costs.is_some();
-    let costs = i.costs.unwrap_or(Costs {
-        base_stored_bytes: 0,
-        patch_stored_bytes: 0,
-        read_stored_bytes: 0,
-    });
-    if i.material.manifest["sqlite_image"] != i.metadata {
-        return Err(invalid("pending image manifest differs from its facts"));
-    }
-    let mut metadata = i.metadata;
-    let fields = metadata
-        .as_object_mut()
-        .ok_or_else(|| invalid("invalid image metadata"))?;
-    for (name, value) in [
-        ("base_stored_bytes", costs.base_stored_bytes),
-        ("patch_stored_bytes", costs.patch_stored_bytes),
-        ("read_stored_bytes", costs.read_stored_bytes),
-    ] {
-        if fields.insert(name.into(), Value::from(value)).is_some() {
-            return Err(invalid("image plan duplicates storage costs"));
-        }
-    }
-    let metadata =
-        serde_json::from_value(metadata).map_err(|_| invalid("invalid image metadata"))?;
-    let mut material = unmaterial(i.material);
-    material.manifest["sqlite_image"] =
-        serde_json::to_value(&metadata).map_err(|_| invalid("invalid image metadata"))?;
-    let image = sinex_model::SqliteImagePublication {
-        metadata,
-        material,
-        extents: i.extents,
-        key: i.key.map(unkey),
-    };
-    image.validate().map_err(Error::Invalid)?;
-    Ok((image, resolved))
-}
-
-#[derive(Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct Replay {
-    material: MaterialId,
-    blob: String,
-    length: u64,
-}
-#[derive(Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct Basis {
+struct ExclusionSet {
     source: String,
-    operations: [u8; 32],
+    digest: [u8; 32],
     count: u64,
 }
 
@@ -256,9 +141,9 @@ fn unkey(k: Key) -> sinex_model::WrappedMaterialKey {
 }
 fn encode(p: &SourceProgress) -> Result<Value> {
     let b = p
-        .excision_basis
+        .exclusions
         .as_ref()
-        .ok_or_else(|| invalid("native publication needs its source excision basis"))?;
+        .ok_or_else(|| invalid("native publication needs its source exclusions"))?;
     let publication = Publication {
         version: 1,
         removed: Vec::new(),
@@ -267,17 +152,10 @@ fn encode(p: &SourceProgress) -> Result<Value> {
         observation: p.observation.clone(),
         revision: p.revision,
         material: p.material.as_ref().map(material),
-        image: p.image.as_ref().map(|i| image(i, true)).transpose()?,
-        image_revision: p.image_revision,
         keys: p.material_keys.iter().map(key).collect(),
-        erased_replay: p.erased_replay.as_ref().map(|r| Replay {
-            material: r.material,
-            blob: r.blob.clone(),
-            length: r.length,
-        }),
-        basis: Basis {
+        exclusions: ExclusionSet {
             source: b.source.clone(),
-            operations: b.operations,
+            digest: b.digest,
             count: b.count,
         },
     };
@@ -285,7 +163,6 @@ fn encode(p: &SourceProgress) -> Result<Value> {
 }
 struct Decoded {
     progress: SourceProgress,
-    image: Option<PendingImage>,
     removed: Vec<sinex_model::RecordLocation>,
     cited: Vec<sinex_model::Cited>,
 }
@@ -296,30 +173,15 @@ fn decode(v: Value, binding: &str, cursor: &Value, carry: &Value) -> Result<Deco
         return Err(invalid("unsupported native publication version"));
     }
     citation_set(&p.cited)?;
-    let image = p.image.map(unimage).transpose()?;
-    let pending_image = image
-        .as_ref()
-        .filter(|(_, resolved)| !*resolved)
-        .map(|(i, _)| PendingImage::AwaitingCosts(i.clone()));
-    let image = image.filter(|(_, resolved)| *resolved).map(|(i, _)| i);
     Ok(Decoded {
         progress: SourceProgress {
             native_pending: None,
-            erased_replay: p
-                .erased_replay
-                .map(|r| sinex_model::ErasedReplayPublication {
-                    material: r.material,
-                    blob: r.blob,
-                    length: r.length,
-                }),
-            excision_basis: Some(sinex_model::ExcisionBasis {
-                source: p.basis.source,
-                operations: p.basis.operations,
-                count: p.basis.count,
+            exclusions: Some(sinex_model::Exclusions {
+                source: p.exclusions.source,
+                digest: p.exclusions.digest,
+                count: p.exclusions.count,
             }),
             binding: binding.into(),
-            image,
-            image_revision: p.image_revision,
             material_keys: p.keys.into_iter().map(unkey).collect(),
             input: p.input,
             observation: p.observation,
@@ -328,7 +190,6 @@ fn decode(v: Value, binding: &str, cursor: &Value, carry: &Value) -> Result<Deco
             cursor: cursor.clone(),
             carry: carry.clone(),
         },
-        image: pending_image,
         removed: p.removed,
         cited: p.cited,
     })
@@ -342,29 +203,10 @@ fn encode_pending(p: &Pending) -> Result<Value> {
     }
     encoded["removed"] = serde_json::to_value(&p.removed)
         .map_err(|_| invalid("native removal plan cannot encode"))?;
-    if let Some(PendingImage::AwaitingCosts(i)) = &p.image {
-        if p.progress.image.is_some() {
-            return Err(invalid(
-                "native publication has both pending and ready image",
-            ));
-        }
-        encoded["image"] = serde_json::to_value(image(i, false)?)
-            .map_err(|_| invalid("image plan cannot encode"))?;
-    }
     Ok(encoded)
 }
-fn pending_primary(p: &Pending) -> Option<MaterialId> {
-    primary(&p.progress).or_else(|| {
-        p.image
-            .as_ref()
-            .map(|PendingImage::AwaitingCosts(i)| i.material.id)
-    })
-}
 fn primary(p: &SourceProgress) -> Option<MaterialId> {
-    p.material
-        .as_ref()
-        .map(|m| m.id)
-        .or_else(|| p.image.as_ref().map(|i| i.material.id))
+    p.material.as_ref().map(|m| m.id)
 }
 
 /// Native first admission supports only the driver's vanished-record plan.
@@ -418,15 +260,6 @@ fn blob_references(publication: Value) -> Result<BTreeMap<String, Option<i64>>> 
     };
     if let Some(m) = p.material {
         add(m.blob, Some(m.length))?;
-    }
-    if let Some(i) = p.image {
-        add(i.material.blob, Some(i.material.length))?;
-        for extent in i.extents {
-            add(extent.blob, None)?;
-        }
-    }
-    if let Some(replay) = p.erased_replay {
-        add(replay.blob, Some(replay.length))?;
     }
     if !matches!(p.version, 1 | 2) || (p.version == 1 && !p.cited.is_empty()) {
         return Err(invalid("unsupported native publication citation format"));
@@ -488,31 +321,17 @@ async fn validate_blob_references(conn: &mut PgConnection, pending: &Pending) ->
 pub async fn reserve(conn: &mut PgConnection, pending: &Pending) -> Result<()> {
     sinex_schema::require_current(conn).await?;
     citation_set(&pending.cited)?;
-    if pending_primary(pending) != Some(pending.material)
+    if primary(&pending.progress) != Some(pending.material)
         || pending.progress.binding != pending.binding
         || pending
             .progress
-            .excision_basis
+            .exclusions
             .as_ref()
             .is_none_or(|b| b.source != pending.source)
     {
         return Err(invalid(
             "native publication owner differs from its progress",
         ));
-    }
-    let image = pending
-        .image
-        .as_ref()
-        .map(|PendingImage::AwaitingCosts(i)| &i.metadata)
-        .or_else(|| pending.progress.image.as_ref().map(|i| &i.metadata));
-    if let Some(image) = image {
-        crate::sqlite_images::guard_acquisition(
-            conn,
-            &pending.progress.input,
-            &pending.progress.observation,
-            image,
-        )
-        .await?;
     }
     let source: Option<String> =
         sqlx::query_scalar("SELECT source FROM raw.bindings WHERE binding=$1 FOR UPDATE")
@@ -547,10 +366,7 @@ pub async fn reserve(conn: &mut PgConnection, pending: &Pending) -> Result<()> {
             .any(|k| k.material == m.id)
     {
         for carry in [&pending.progress.carry, &pending.base_carry] {
-            if !(carry.is_null()
-                || crate::sealed::is_sealed(carry)
-                || crate::sealed::metadata::is_carry(carry))
-            {
+            if !(carry.is_null() || crate::sealed::is_sealed(carry)) {
                 return Err(invalid(
                     "sealed pending publication contains unprotected carry",
                 ));
@@ -597,17 +413,12 @@ pub async fn load(conn: &mut PgConnection, material: MaterialId) -> Result<Optio
             )| {
                 let Decoded {
                     progress,
-                    image,
                     removed,
                     cited,
                 } = decode(publication, &binding, &start_cursor, &base_carry)?;
-                if primary(&progress).or_else(|| {
-                    image
-                        .as_ref()
-                        .map(|PendingImage::AwaitingCosts(i)| i.material.id)
-                }) != Some(material)
+                if primary(&progress) != Some(material)
                     || progress
-                        .excision_basis
+                        .exclusions
                         .as_ref()
                         .is_none_or(|b| b.source != source)
                 {
@@ -620,7 +431,6 @@ pub async fn load(conn: &mut PgConnection, material: MaterialId) -> Result<Optio
                     progress,
                     removed,
                     cited,
-                    image,
                     base_cursor,
                     base_carry,
                     start_cursor,
@@ -642,20 +452,6 @@ pub async fn load(conn: &mut PgConnection, material: MaterialId) -> Result<Optio
 pub async fn binding_pending(conn: &mut PgConnection, binding: &str) -> Result<Vec<MaterialId>> {
     Ok(sqlx::query_scalar::<_,uuid::Uuid>("SELECT material_id FROM raw.pending_native_materials WHERE binding=$1 ORDER BY reserved_at,material_id").bind(binding).fetch_all(conn).await?.into_iter().map(MaterialId).collect())
 }
-/// Image ownership includes unresolved and finalized reservations. Decode through
-/// the publication owner before using any input/layout facts for a lineage guard.
-pub async fn pending_images(conn: &mut PgConnection) -> Result<Vec<Pending>> {
-    let ids: Vec<uuid::Uuid> = sqlx::query_scalar("SELECT material_id FROM raw.pending_native_materials WHERE publication->'image' IS NOT NULL AND publication->'image'<>'null'::jsonb ORDER BY material_id")
-        .fetch_all(&mut *conn).await?;
-    let mut images = Vec::new();
-    for id in ids {
-        let pending = load(conn, MaterialId(id))
-            .await?
-            .ok_or_else(|| invalid("pending image disappeared"))?;
-        images.push(pending);
-    }
-    Ok(images)
-}
 pub async fn source_pending(conn: &mut PgConnection, source: &str) -> Result<bool> {
     Ok(sqlx::query_scalar(
         "SELECT EXISTS(SELECT 1 FROM raw.pending_native_materials WHERE source=$1)",
@@ -664,50 +460,7 @@ pub async fn source_pending(conn: &mut PgConnection, source: &str) -> Result<boo
     .fetch_one(conn)
     .await?)
 }
-/// Finish only the actual installed costs. Content, layout, keys and original
-/// source facts are compared with the reserved unpriced plan before replacement.
-pub async fn finalize_image(
-    conn: &mut PgConnection,
-    material: MaterialId,
-    completed: sinex_model::SqliteImagePublication,
-) -> Result<()> {
-    completed.validate().map_err(Error::Invalid)?;
-    let mut pending = load(conn, material)
-        .await?
-        .ok_or_else(|| invalid("image finalization has no native owner"))?;
-    let Some(PendingImage::AwaitingCosts(expected)) = pending.image.take() else {
-        return Err(invalid("native image costs already finalized or absent"));
-    };
-    if serde_json::to_value(image(&expected, false)?)
-        .map_err(|_| invalid("image plan cannot encode"))?
-        != serde_json::to_value(image(&completed, false)?)
-            .map_err(|_| invalid("image plan cannot encode"))?
-    {
-        return Err(invalid(
-            "installed image differs from reserved content/layout",
-        ));
-    }
-    let old = encode_pending(&Pending {
-        image: Some(PendingImage::AwaitingCosts(expected)),
-        ..pending.clone()
-    })?;
-    pending.progress.image = Some(completed);
-    let changed=sqlx::query("UPDATE raw.pending_native_materials SET publication=$1 WHERE material_id=$2 AND state='reserved' AND publication=$3")
-        .bind(encode_pending(&pending)?).bind(material.0).bind(old).execute(conn).await?;
-    if changed.rows_affected() != 1 {
-        return Err(invalid("native image plan changed before finalization"));
-    }
-    Ok(())
-}
 pub async fn installed(conn: &mut PgConnection, material: MaterialId) -> Result<()> {
-    if load(conn, material)
-        .await?
-        .is_none_or(|p| p.image.is_some())
-    {
-        return Err(invalid(
-            "native installation needs finalized image storage costs",
-        ));
-    }
     sqlx::query("UPDATE core.blobs b SET status='present' FROM raw.pending_native_blobs p WHERE p.material_id=$1 AND p.blob=b.hash AND b.status IN ('reserved','deleting')")
         .bind(material.0).execute(&mut *conn).await?;
     let changed = sqlx::query(

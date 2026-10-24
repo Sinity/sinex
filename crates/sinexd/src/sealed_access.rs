@@ -1,6 +1,6 @@
 //! Explicit, operation-scoped use of the operator's unlock authority.
 use sinex_model::MaterialId;
-use sinex_store::sealed::{DataKey, Identity, MaterialSecrets};
+use sinex_store::sealed::{DataKey, Identity};
 use sqlx::PgConnection;
 use std::sync::{
     Arc,
@@ -59,70 +59,25 @@ impl Authority {
         self.check()?;
         Ok(key)
     }
-    pub fn unwrap_secrets(&self, wrapped: &[u8]) -> Result<MaterialSecrets, String> {
-        self.check()?;
-        let secrets = sinex_store::sealed::unwrap_secrets(
-            wrapped,
-            &self.identity,
-            sinex_model::Class::Sealed,
-        )
-        .map_err(|e| e.to_string())?;
-        self.check()?;
-        Ok(secrets)
-    }
-    pub fn open_replay_metadata(
-        &self,
-        input: impl std::io::Read,
-        scope: &sinex_store::sealed::metadata::Scope,
-    ) -> Result<Vec<sinex_store::sealed::metadata::ErasedRecord>, String> {
-        sinex_store::sealed::metadata::open_replay(input, &self.identity, scope, || {
-            self.check().map_err(sinex_store::Error::Invalid)
-        })
-        .map_err(|e| e.to_string())
-    }
-    pub fn open_current_carry(
-        &self,
-        input: impl std::io::Read,
-        scope: &sinex_store::sealed::metadata::Scope,
-    ) -> Result<serde_json::Value, String> {
-        self.check()?;
-        let value = sinex_store::sealed::metadata::open_carry(input, &self.identity, scope)
-            .map_err(|e| e.to_string())?;
-        self.check()?;
-        Ok(value)
-    }
-    /// Call only for material IDs in the explicit operation's resolved scope.
-    pub async fn material_secrets(
-        &self,
-        conn: &mut PgConnection,
-        material: MaterialId,
-    ) -> Result<(String, MaterialSecrets), String> {
-        self.check()?;
-        let row = sqlx::query!(
-            "SELECT key_ref,class,wrapped_key,role FROM privacy.material_keys WHERE material_id=$1",
-            material.0
-        )
-        .fetch_optional(conn)
-        .await
-        .map_err(|e| e.to_string())?
-        .ok_or_else(|| format!("material {material}: sealed key unavailable or destroyed"))?;
-        if row.class != "sealed" {
-            return Err("wrapped capability belongs to a different material class".into());
-        }
-        let secrets = self.unwrap_secrets(&row.wrapped_key)?;
-        if secrets.role().as_str() != row.role {
-            return Err("wrapped capability role does not match material key metadata".into());
-        }
-        Ok((row.key_ref, secrets))
-    }
     /// Call only for material IDs in the explicit operation's resolved scope.
     pub async fn material_key(
         &self,
         conn: &mut PgConnection,
         material: MaterialId,
     ) -> Result<DataKey, String> {
-        let (reference, secrets) = self.material_secrets(conn, material).await?;
-        secrets.data_key(reference).map_err(|e| e.to_string())
+        self.check()?;
+        let row = sqlx::query!(
+            "SELECT key_ref,wrapped_key FROM privacy.material_keys WHERE material_id=$1",
+            material.0
+        )
+        .fetch_optional(conn)
+        .await
+        .map_err(|e| e.to_string())?
+        .ok_or_else(|| format!("material {material}: sealed key unavailable"))?;
+        Ok(DataKey {
+            key_ref: row.key_ref,
+            key: self.unwrap(&row.wrapped_key)?,
+        })
     }
 }
 

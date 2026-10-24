@@ -241,8 +241,7 @@ async fn queued_native_checks_reject_revoked_authority_and_roll_back_before_comm
 }
 
 #[tokio::test]
-async fn a_single_slot_planning_pool_keeps_queued_excision_custody_after_caller_cancellation() {
-    use std::sync::atomic::{AtomicBool, Ordering};
+async fn a_single_slot_planning_pool_keeps_the_queued_excision_lock_after_caller_cancellation() {
     let (_db, url, connection) = crate::testdb::fresh().await;
     let pool = sqlx::postgres::PgPoolOptions::new()
         .max_connections(1)
@@ -257,15 +256,10 @@ async fn a_single_slot_planning_pool_keeps_queued_excision_custody_after_caller_
     .unwrap();
     let (handle, queues) = channels_for(&url);
     let directory = tempfile::tempdir().unwrap();
-    let cancelled = Arc::new(AtomicBool::new(false));
     let h = handle.clone();
-    let canceled = cancelled.clone();
     let caller = tokio::spawn(async move {
         h.excise(Excision {
-            sealed: None,
-            authority: None,
             guard: Some(guard),
-            cancelled: canceled,
             target: Target::Material(MaterialId::new()),
             plan: Plan::default(),
             rewrites: Vec::new(),
@@ -284,7 +278,6 @@ async fn a_single_slot_planning_pool_keeps_queued_excision_custody_after_caller_
     .unwrap();
     caller.abort();
     assert!(caller.await.unwrap_err().is_cancelled());
-    cancelled.store(true, Ordering::Release);
     assert!(
         tokio::time::timeout(std::time::Duration::from_millis(20), pool.acquire())
             .await
@@ -296,7 +289,7 @@ async fn a_single_slot_planning_pool_keeps_queued_excision_custody_after_caller_
     tokio::task::yield_now().await;
     assert!(
         !acquisition.is_finished(),
-        "dropping the caller released queued source custody"
+        "dropping the caller released the queued source lock"
     );
     let writer = tokio::spawn(run(
         url,

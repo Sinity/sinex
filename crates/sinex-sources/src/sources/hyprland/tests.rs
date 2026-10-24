@@ -117,7 +117,6 @@ fn spooled_capture_drains_to_typed_events() {
     let m = acquired.material.unwrap();
     let chunks = source()
         .drain(DrainInput {
-            erased: None,
             source: SPEC.name,
             class: SPEC.class,
             material: MaterialId::new(),

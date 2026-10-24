@@ -634,8 +634,6 @@ async fn an_indirect_frame_is_handled_as_the_frame_it_names() {
     assert!(ack.refusal.unwrap().contains("only material and events"));
 }
 
-mod retirement;
-
 #[tokio::test]
 async fn exclusion_guard_precedes_new_producer_registration_and_chunk_storage() {
     use base64::Engine;
@@ -705,7 +703,7 @@ async fn exclusion_guard_precedes_new_producer_registration_and_chunk_storage() 
         .unwrap()
         .unwrap();
     let ack: Acknowledgment = serde_json::from_slice(&message.payload).unwrap();
-    assert!(ack.refusal.unwrap().contains("permanent exclusions"));
+    assert!(ack.refusal.unwrap().contains("excised records"));
     assert!(!h.blobs.contains(&blob).unwrap());
     assert_eq!(
         h.count("SELECT count(*) FROM core.manifests WHERE name='new-node'")
@@ -772,7 +770,7 @@ async fn unsupported_ingress_custody_is_refused_without_deleting_a_partial_trans
     let before = std::fs::read(&partial).unwrap();
     let mut conn = PgConnection::connect(&h.url).await.unwrap();
     assert!(
-        sinex_store::excision::unsupported_ingress(&mut conn, "existing-node")
+        sinex_store::excision::is_producer(&mut conn, "existing-node")
             .await
             .unwrap()
     );
@@ -788,7 +786,7 @@ async fn unsupported_ingress_custody_is_refused_without_deleting_a_partial_trans
     let ack = h
         .send("existing-node", &frame("last", 7, bytes.len()))
         .await;
-    assert!(ack.refusal.unwrap().contains("permanent exclusions"));
+    assert!(ack.refusal.unwrap().contains("excised records"));
     assert_eq!(std::fs::read(partial).unwrap(), before);
     assert!(!h.blobs.contains(&blob).unwrap());
     assert_eq!(h.have("existing-node", &["first"]).await.len(), 1);

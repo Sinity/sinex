@@ -19,15 +19,12 @@ async fn pending(conn: &mut PgConnection, source: &str, blob: &str, length: u64)
     let cursor = serde_json::json!({"material":material,"through":length});
     let progress = SourceProgress {
         native_pending: None,
-        erased_replay: None,
-        excision_basis: Some(
-            crate::excision::operations_basis(conn, source)
+        exclusions: Some(
+            crate::excision::exclusions::current(conn, source)
                 .await
                 .unwrap(),
         ),
         binding: source.into(),
-        image: None,
-        image_revision: None,
         material_keys: vec![],
         input: InputRef {
             kind: "file".into(),
@@ -60,7 +57,6 @@ async fn pending(conn: &mut PgConnection, source: &str, blob: &str, length: u64)
         progress,
         removed: Vec::new(),
         cited: Vec::new(),
-        image: None,
         base_cursor: Value::Null,
         base_carry: Value::Null,
         start_cursor: Value::Null,

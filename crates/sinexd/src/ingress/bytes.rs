@@ -105,7 +105,7 @@ impl Ingest {
         &mut self,
         producer: &str,
         chunk: &Ingress,
-        guard: &mut Option<crate::source_excision::AcquisitionGuard>,
+        guard: &mut Option<crate::excision::AcquisitionGuard>,
     ) -> Result<(), Check> {
         let Ingress::Chunk {
             publication,
@@ -169,7 +169,7 @@ impl Ingest {
         &mut self,
         producer: &str,
         frame: Ingress,
-        guard: &mut Option<crate::source_excision::AcquisitionGuard>,
+        guard: &mut Option<crate::excision::AcquisitionGuard>,
     ) -> Result<Ingress, Check> {
         if !matches!(frame, Ingress::Material { .. } | Ingress::Indirect { .. }) {
             return Ok(frame);

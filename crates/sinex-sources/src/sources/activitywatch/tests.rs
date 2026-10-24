@@ -2,8 +2,6 @@ use super::*;
 use crate::drivers::sqlite_rows::RowState;
 use serde_json::json;
 
-mod erasure;
-
 fn row(
     id: i64,
     bucket: &str,

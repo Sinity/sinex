@@ -97,10 +97,7 @@ pub async fn admit(
     if let BatchKind::Ingress(frame) = &batch.kind
         && frame.material.as_ref().is_some_and(|p| {
             p.native_pending.is_some()
-                || p.erased_replay.is_some()
-                || p.excision_basis.is_some()
-                || p.image.is_some()
-                || p.image_revision.is_some()
+                || p.exclusions.is_some()
                 || !p.material_keys.is_empty()
                 || !p.carry.is_null()
         })
@@ -109,7 +106,7 @@ pub async fn admit(
             "producer protocol does not authorize archive-owned source state".into(),
         ));
     }
-    crate::excision::validate_basis(conn, batch).await?;
+    crate::excision::exclusions::check(conn, batch).await?;
     match &batch.kind {
         BatchKind::Source(progress) => {
             crate::native_materials::validate(
@@ -132,7 +129,6 @@ pub async fn admit(
         }
         BatchKind::Derived { .. } | BatchKind::Api { .. } | BatchKind::Replay { .. } => {}
     }
-    crate::sealed::validate_batch(conn, batch).await?;
     for request in &batch.archive {
         if let ArchiveRequest::Replay { scope, operation } = request {
             let (archived, dirty) = archive::replay_scope(conn, scope, *operation, keys).await?;
@@ -143,14 +139,6 @@ pub async fn admit(
 
     let mut events: Vec<Event> = batch.events().cloned().collect();
     apply_privacy(conn, batch, &mut events).await?;
-    if let BatchKind::Source(p) = &batch.kind
-        && let Some(image) = &p.image
-        && events.iter().any(|e| e.class > image.metadata.class)
-    {
-        return Err(crate::Error::Invalid(
-            "whole-database image class is below its classified row event".into(),
-        ));
-    }
     removed_at_source(conn, batch, &mut events).await?;
 
     if !events.is_empty() {
@@ -233,15 +221,6 @@ async fn apply_privacy(conn: &mut PgConnection, batch: &Batch, events: &mut [Eve
 
 /// Records the source dropped: a newer reading of each live one, removed.
 /// Built from the stored reading, whose privacy rules already applied.
-/// A source-removal observation names the prior reading, including its sealed
-/// naming domain; it does not reinterpret the original record bytes.
-pub fn source_removal_hash(prior: &[u8; 32]) -> [u8; 32] {
-    let mut hash = blake3::Hasher::new();
-    hash.update(prior);
-    hash.update(b"removed at source");
-    *hash.finalize().as_bytes()
-}
-
 async fn removed_at_source(
     conn: &mut PgConnection,
     batch: &Batch,
@@ -256,7 +235,12 @@ async fn removed_at_source(
                 events.push(Event {
                     id: sinex_model::EventId::new(),
                     reading_order: ReadingOrder(live.reading_order.0.saturating_add(1)),
-                    record_hash: source_removal_hash(&live.record_hash),
+                    record_hash: {
+                        let mut hash = blake3::Hasher::new();
+                        hash.update(&live.record_hash);
+                        hash.update(b"removed at source");
+                        *hash.finalize().as_bytes()
+                    },
                     record_state: sinex_model::RecordState::Removed,
                     ..live
                 });

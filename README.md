@@ -57,21 +57,13 @@ boundaries between capture, interpretation, admission and public interfaces.
   Lock or expiry stops scoped reads; the background source reader never borrows an
   operator unlock. A privacy-class change captures a new
   revision; it does not erase previously captured bytes.
-  Excision refuses records backed by a retained original archive: cross-binding
-  archive rewriting is not implemented, and hiding does not delete those bytes.
 - **Derivations.** Fused shell commands, shell sessions, state intervals,
   presence, hourly and daily summaries, and text read from screen stills,
   recomputed per changed key as inputs arrive.
 - **Removal and replay.** Hide, unhide and excision, remembered across
-  re-imports; replay of stored materials with the current parsers. Supported
-  sealed logical removal uses explicit operator unlock and `excise --sealed`,
-  fresh body/value encryption and format-owned carry erasure. Whole removal
-  makes the original body unavailable while preserving unrelated values.
-  Mixed plain/sealed epochs, unsupported parser state, retained containers and
-  physical SQLite images still refuse. Completed append restart restores a bounded
-  retained alignment tail; partial append restart without exact retained resume
-  facts remains unavailable. Capturing a source with permanent sealed
-  exclusions requires scoped matching authority.
+  re-imports and re-reads of the source; replay of stored materials with the
+  current parsers. Excision refuses sealed material, a producer's records and
+  records inside a stored original archive.
 - **Privacy.** Versioned rules applied at admission, privacy classes, the
   sealed class with unlock sessions, and a private-mode switch.
 - **Reading.** One query language, search, recall, provenance and read-only

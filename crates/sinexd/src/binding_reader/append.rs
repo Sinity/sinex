@@ -1,4 +1,4 @@
-//! Complete append history hydrates alignment, not a pending acquisition.
+//! The alignment tail of an append input, rebuilt from its admitted history.
 use super::*;
 use sinex_model::{MaterialId, RecordLocation};
 use sinex_sources::drain::RecordRead;
@@ -30,9 +30,6 @@ pub(crate) async fn completed_tail(
         Ok(())
     });
     check()?;
-    let policy =
-        crate::source_excision::AcquisitionPolicy::load(conn, blobs, source.spec().name, authority)
-            .await?;
     let chain = sinex_store::replay::current_revision_chain_ending(conn, last)
         .await
         .map_err(|e| e.to_string())?;
@@ -45,15 +42,9 @@ pub(crate) async fn completed_tail(
     let mut full = false;
     for (id, _) in chain.into_iter().rev() {
         check()?;
-        let opened = crate::retained::open_checked(
-            conn,
-            blobs,
-            source.spec().name,
-            MaterialId(id),
-            authority,
-            check.clone(),
-        )
-        .await?;
+        let opened =
+            crate::retained::open_checked(conn, blobs, MaterialId(id), authority, check.clone())
+                .await?;
         let reference = &opened.reference;
         if reference.parser != source.spec().parser
             || reference.parser_version != source.spec().parser_version
@@ -82,25 +73,7 @@ pub(crate) async fn completed_tail(
         if cut > reference.length {
             return Err("append admitted cut exceeds its retained body".into());
         }
-        let records = match &opened.body {
-            Some(body) => body.records(&Value::Null, source.spec().framer)?,
-            None => opened
-                .metadata
-                .iter()
-                .map(|r| {
-                    Ok((
-                        usize::try_from(r.start)
-                            .map_err(|_| "append range exceeds address space")?,
-                        usize::try_from(r.end).map_err(|_| "append range exceeds address space")?,
-                    ))
-                })
-                .collect::<Result<Vec<_>, &str>>()?,
-        };
-        let members = policy
-            .append_members(&opened)?
-            .into_iter()
-            .map(|m| (m.location(), m))
-            .collect::<std::collections::BTreeMap<_, _>>();
+        let records = opened.body.records(&Value::Null, source.spec().framer)?;
         for (start, end) in records
             .into_iter()
             .rev()
@@ -114,19 +87,12 @@ pub(crate) async fn completed_tail(
                 material: reference.id,
                 anchor: start as u64,
             };
-            let accepted = if let Some(member) = members.get(&location) {
-                tail.push_erased(member.clone())
-            } else {
-                let mut raw = vec![0; end - start];
-                opened
-                    .body
-                    .as_ref()
-                    .ok_or("bodyless append lacks authenticated tail membership")?
-                    .read_exact_at(start as u64, &mut raw)
-                    .map_err(|e| e.to_string())?;
-                tail.push_raw(location, &raw).map_err(|e| e.to_string())?
-            };
-            if !accepted {
+            let mut raw = vec![0; end - start];
+            opened
+                .body
+                .read_exact_at(start as u64, &mut raw)
+                .map_err(|e| e.to_string())?;
+            if !tail.push_raw(location, &raw).map_err(|e| e.to_string())? {
                 full = true;
                 break;
             }
@@ -141,6 +107,5 @@ pub(crate) async fn completed_tail(
         return Err("append history lacks its earlier physical prefix".into());
     }
     check()?;
-    policy.revalidate(conn).await?;
     Ok(tail)
 }

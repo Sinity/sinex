@@ -18,8 +18,6 @@ use sinex_model::{InputRef, MaterialId, ObservationFacts, RecordLocation, Revisi
 use std::collections::HashMap;
 use std::io::{Read, Seek, SeekFrom};
 use std::path::PathBuf;
-mod erased;
-pub use erased::{ErasedMember, RawMatcher};
 
 /// Bytes before the offset whose hash proves the prefix is unchanged.
 const WINDOW: u64 = 4096;
@@ -80,13 +78,12 @@ pub const STATE_RECORDS: usize = 40;
 /// life of the source task and rebuilt from the stored materials after a
 /// restart ([`AppendState::rebuild`]); bounded by [`STATE_TAIL`] and
 /// [`STATE_RECORDS`].
-#[derive(Clone, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct AppendState {
     records: HashMap<[u8; 32], std::collections::VecDeque<RecordLocation>>,
     /// Every held record in reading order, with its length, so the oldest
     /// is dropped first when the tail grows past a bound.
-    order: std::collections::VecDeque<erased::Tail>,
-    erased: HashMap<(MaterialId, [u8; 32]), erased::Group>,
+    order: std::collections::VecDeque<([u8; 32], RecordLocation, usize)>,
     bytes: usize,
 }
 
@@ -127,10 +124,24 @@ impl AppendState {
             anchor: anchor as u64,
         };
         self.records.entry(hash).or_default().push_back(location);
-        self.order
-            .push_back(erased::Tail::Raw(hash, location, length));
+        self.order.push_back((hash, location, length));
         self.bytes = self.bytes.saturating_add(length);
-        self.trim();
+        while self.order.len() > STATE_RECORDS || (self.bytes > STATE_TAIL && self.order.len() > 1)
+        {
+            let (hash, location, n) = self.order.pop_front().expect("not empty");
+            self.bytes -= n;
+            if let Some(held) = self.records.get_mut(&hash) {
+                held.retain(|l| *l != location);
+                if held.is_empty() {
+                    self.records.remove(&hash);
+                }
+            }
+        }
+    }
+
+    /// Whether a record of `material` is held.
+    pub(crate) fn remembers_material(&self, material: MaterialId) -> bool {
+        self.order.iter().any(|(_, l, _)| l.material == material)
     }
 
     /// Whether an equal record was held, consuming one occurrence of it.
@@ -147,14 +158,13 @@ impl AppendState {
     /// Where the records still held were read: after a rewrite is aligned,
     /// the ones it dropped.
     fn remaining(self) -> Vec<RecordLocation> {
-        let mut out: Vec<RecordLocation> = self.erased_remaining().collect();
-        out.extend(self.records.into_values().flatten());
+        let mut out: Vec<RecordLocation> = self.records.into_values().flatten().collect();
         out.sort_by_key(|l| (l.material, l.anchor));
         out
     }
 
     pub fn is_empty(&self) -> bool {
-        self.records.values().all(|locations| locations.is_empty()) && !self.has_erased()
+        self.records.values().all(|locations| locations.is_empty())
     }
 }
 
@@ -204,7 +214,6 @@ impl AppendFile {
             Ok(f) => f,
             Err(e) => {
                 return Ok(Acquired {
-                    image: None,
                     input: self.input(),
                     observation: ObservationFacts {
                         unavailable: Some(format!("{}: {e}", self.path.display())),
@@ -228,7 +237,6 @@ impl AppendFile {
             && !cursor.is_null()
         {
             return Ok(Acquired {
-                image: None,
                 input: self.input(),
                 observation: ObservationFacts {
                     changed: false,
@@ -323,7 +331,6 @@ impl AppendFile {
             };
             let unchanged = Cursor { window, ..base };
             return Ok(Acquired {
-                image: None,
                 input: self.input(),
                 observation: facts,
                 revision: RevisionChange::Same,
@@ -338,12 +345,11 @@ impl AppendFile {
         let restarted_records = start == 0 && !cursor.is_null();
         let id = MaterialId::new();
         let (records, aligned, vanished) = if restarted_records {
-            let alignment = state.prepare_alignment(&data, &records)?;
             let mut previous = std::mem::take(state);
             let aligning = !previous.is_empty();
             let mut fresh = Vec::new();
             for &(s, e) in &records {
-                if !previous.take_aligned(&data[s..e], &alignment) {
+                if !previous.take(&data[s..e]) {
                     fresh.push((s, e));
                 }
                 state.insert(&data[s..e], id, s);
@@ -415,7 +421,6 @@ impl AppendFile {
             manifest["records"] = json!(records);
         }
         Ok(Acquired {
-            image: None,
             input: self.input(),
             observation: facts,
             revision,

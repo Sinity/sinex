@@ -427,7 +427,7 @@ async fn unrelated_authored_requests_continue_after_excision_while_matching_requ
     .write(vec![selected], "operator", "collection")
     .await
     .unwrap_err();
-    assert!(refused.contains("permanent exclusion"), "{refused}");
+    assert!(refused.contains("matches an excised record"), "{refused}");
     let live: Vec<String> = sqlx::query_scalar("SELECT e.payload->>'collection' FROM core.events e JOIN core.live_equivalence l ON l.event_id=e.id WHERE e.event_type='library.collection'").fetch_all(&mut w.conn).await.unwrap();
     assert_eq!(live, vec!["unrelated"]);
     let pending: i64 = sqlx::query_scalar("SELECT count(*) FROM raw.pending_native_materials")
@@ -499,7 +499,7 @@ async fn source_bound_media_exclusions_refuse_new_wrappers_but_preserve_unrelate
     .await
     .unwrap_err();
     assert!(
-        refused.contains("media matches a permanent exclusion"),
+        refused.contains("cited media was excised from this source"),
         "{refused}"
     );
     let fresh = b"unrelated new preview bytes";
@@ -519,16 +519,11 @@ async fn source_bound_media_exclusions_refuse_new_wrappers_but_preserve_unrelate
     .await
     .unwrap();
     assert_eq!(accepted["admitted"], 1);
-    let policy = crate::source_excision::AcquisitionPolicy::load(
-        &mut w.conn,
-        &w.blobs,
-        "library.request",
-        None,
-    )
-    .await
-    .unwrap();
+    let exclusions = crate::excision::exclusions::Exclusions::load(&mut w.conn, "library.request")
+        .await
+        .unwrap();
     assert!(
-        policy
+        exclusions
             .check_cited(&[sinex_model::Cited {
                 blob: name.clone(),
                 size: removed.len() as u64 + 1
@@ -536,14 +531,9 @@ async fn source_bound_media_exclusions_refuse_new_wrappers_but_preserve_unrelate
             .is_err(),
         "changed size bypassed source+hash exclusion"
     );
-    let other = crate::source_excision::AcquisitionPolicy::load(
-        &mut w.conn,
-        &w.blobs,
-        "library.scan",
-        None,
-    )
-    .await
-    .unwrap();
+    let other = crate::excision::exclusions::Exclusions::load(&mut w.conn, "library.scan")
+        .await
+        .unwrap();
     other
         .check_cited(&[sinex_model::Cited {
             blob: name.clone(),
@@ -551,222 +541,6 @@ async fn source_bound_media_exclusions_refuse_new_wrappers_but_preserve_unrelate
         }])
         .unwrap();
     let owners: i64 = sqlx::query_scalar("SELECT count(*) FROM core.event_blobs b JOIN core.events e ON e.id=b.event_id WHERE b.blob=$1 AND e.source='library.scan'").bind(&name).fetch_one(&mut w.conn).await.unwrap();
-    assert_eq!(owners, 1);
-}
-
-#[tokio::test]
-async fn complete_empty_media_facts_allow_new_media_but_missing_history_does_not_guess() {
-    use sinex_model::event_types::library::Collection;
-    let mut w = world().await;
-    let record = LibraryRecord::Collection(Collection {
-        collection: "no-media".into(),
-        name: "synthetic collection".into(),
-        saved_query: None,
-        frozen_from: None,
-        by: String::new(),
-        at: sinex_model::Timestamp::now(),
-        withdrawn_at: None,
-    });
-    Library {
-        writer: &w.writer,
-        blobs: &w.blobs,
-        host: "h",
-    }
-    .write(vec![record], "operator", "collection")
-    .await
-    .unwrap();
-    let id: uuid::Uuid =
-        sqlx::query_scalar("SELECT id FROM core.events WHERE event_type='library.collection'")
-            .fetch_one(&mut w.conn)
-            .await
-            .unwrap();
-    crate::excision::excise_with(
-        &mut w.conn,
-        &w.blobs,
-        &w.writer,
-        sinex_store::excision::Target::Event(sinex_model::EventId(id)),
-        "operator",
-    )
-    .await
-    .unwrap();
-    let scope: Value = sqlx::query_scalar("SELECT scope FROM core.operations WHERE kind='excise'")
-        .fetch_one(&mut w.conn)
-        .await
-        .unwrap();
-    assert_eq!(
-        sinex_store::excision::cited_media(&scope, "library.request").unwrap(),
-        Some(Vec::new())
-    );
-    let stage = w
-        .blobs
-        .prepare_plain(b"new known media".as_slice())
-        .unwrap();
-    let name = stage.name();
-    Library {
-        writer: &w.writer,
-        blobs: &w.blobs,
-        host: "h",
-    }
-    .write_staged(
-        vec![named_preview("new-media", name)],
-        "operator",
-        "preview",
-        vec![stage],
-    )
-    .await
-    .unwrap();
-    // A synthetic historical operation lacks media evidence; no old row is rewritten.
-    let mut historical = scope;
-    historical.as_object_mut().unwrap().remove("cited_media");
-    sqlx::query("INSERT INTO core.operations(id,kind,actor,scope) VALUES($1,'excise','synthetic-legacy',$2)").bind(uuid::Uuid::now_v7()).bind(historical).execute(&mut w.conn).await.unwrap();
-    let policy = crate::source_excision::AcquisitionPolicy::load(
-        &mut w.conn,
-        &w.blobs,
-        "library.request",
-        None,
-    )
-    .await
-    .unwrap();
-    policy.check_cited(&[]).unwrap();
-    let stage = w
-        .blobs
-        .prepare_plain(b"unproven after legacy".as_slice())
-        .unwrap();
-    let hash = stage.name();
-    let refused = Library {
-        writer: &w.writer,
-        blobs: &w.blobs,
-        host: "h",
-    }
-    .write_staged(
-        vec![named_preview("unknown-media", hash.clone())],
-        "operator",
-        "preview",
-        vec![stage],
-    )
-    .await
-    .unwrap_err();
-    assert!(refused.contains("historical cited media"), "{refused}");
-    assert!(!w.blobs.contains(&hash).unwrap());
-}
-
-#[tokio::test]
-async fn canceled_media_purge_rolls_back_facts_and_preserves_ready_bytes_and_policy() {
-    use sqlx::Connection;
-    use std::sync::atomic::{AtomicUsize, Ordering};
-    let mut w = world().await;
-    let bytes = b"synthetic retained media through rollback";
-    let stage = w.blobs.prepare_plain(bytes.as_slice()).unwrap();
-    let name = stage.name();
-    Library {
-        writer: &w.writer,
-        blobs: &w.blobs,
-        host: "h",
-    }
-    .write_staged(
-        vec![named_preview("cancel-target", name.clone())],
-        "operator",
-        "preview",
-        vec![stage],
-    )
-    .await
-    .unwrap();
-    let id: uuid::Uuid =
-        sqlx::query_scalar("SELECT id FROM core.events WHERE event_type='library.rendition'")
-            .fetch_one(&mut w.conn)
-            .await
-            .unwrap();
-    let target = sinex_store::excision::Target::Event(sinex_model::EventId(id));
-    let guard = w
-        .writer
-        .excision_guard("library.request".into())
-        .await
-        .unwrap();
-    let plan = sinex_store::excision::plan(&mut w.conn, target)
-        .await
-        .unwrap();
-    let mut rewrites = Vec::new();
-    for material in &plan.materials {
-        let mut raw = w.blobs.read(&material.blob).unwrap();
-        for byte in &mut raw {
-            if *byte != b'\n' {
-                *byte = b' ';
-            }
-        }
-        rewrites.push(sinex_store::excision::Rewrite {
-            material: material.id,
-            blob: w.blobs.put(&raw).unwrap(),
-            length: raw.len() as u64,
-            manifest: None,
-        });
-    }
-    let operation = sinex_model::OperationId::new();
-    let checks = AtomicUsize::new(0);
-    let check = || {
-        if checks.fetch_add(1, Ordering::SeqCst) == 0 {
-            Ok(())
-        } else {
-            Err(sinex_store::Error::Invalid(
-                "synthetic cancellation after media facts".into(),
-            ))
-        }
-    };
-    let mut tx = w.conn.begin().await.unwrap();
-    let error = sinex_store::excision::apply_prepared(
-        &mut tx,
-        target,
-        &plan,
-        &rewrites,
-        operation,
-        "operator",
-        &sinex_store::NoDerivations,
-        None,
-        &check,
-    )
-    .await
-    .unwrap_err();
-    assert!(error.to_string().contains("synthetic cancellation"));
-    let staged: Value = sqlx::query_scalar("SELECT scope FROM core.operations WHERE id=$1")
-        .bind(operation.0)
-        .fetch_one(&mut *tx)
-        .await
-        .unwrap();
-    assert_eq!(
-        sinex_store::excision::cited_media(&staged, "library.request").unwrap(),
-        Some(vec![sinex_model::Cited {
-            blob: name.clone(),
-            size: bytes.len() as u64
-        }])
-    );
-    tx.rollback().await.unwrap();
-    guard.release().await.unwrap();
-    let absent: bool =
-        sqlx::query_scalar("SELECT NOT EXISTS(SELECT 1 FROM core.operations WHERE id=$1)")
-            .bind(operation.0)
-            .fetch_one(&mut w.conn)
-            .await
-            .unwrap();
-    assert!(absent);
-    let policy = crate::source_excision::AcquisitionPolicy::load(
-        &mut w.conn,
-        &w.blobs,
-        "library.request",
-        None,
-    )
-    .await
-    .unwrap();
-    policy
-        .check_cited(&[sinex_model::Cited {
-            blob: name.clone(),
-            size: bytes.len() as u64,
-        }])
-        .unwrap();
-    assert_eq!(w.blobs.read(&name).unwrap(), bytes);
-    let owners: i64 = sqlx::query_scalar("SELECT count(*) FROM core.event_blobs WHERE blob=$1")
-        .bind(&name)
-        .fetch_one(&mut w.conn)
-        .await
-        .unwrap();
     assert_eq!(owners, 1);
 }
 

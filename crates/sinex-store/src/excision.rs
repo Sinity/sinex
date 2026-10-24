@@ -1,4 +1,4 @@
-//! Excision: the one true deletion (architecture §3.4; spec `storage.md` §9).
+//! Excision: the one true deletion.
 //! Operator only. It removes every reading of a record, live and archived,
 //! with every derived event that descends from them, and the record's bytes:
 //!
@@ -6,11 +6,8 @@
 //!   are blanked to spaces of the same length (the closing newline kept), so
 //!   every other record keeps its anchor; the old blob is deleted once nothing
 //!   refers to it;
-//! - scoped sealed preparation streams the same blanking into fresh encrypted
-//!   backing and rotates dependent values before retiring the old data key.
-//!   Whole removal leaves the original body unavailable; a fresh capability
-//!   may retain unrelated dependent values. Naming capability retains record
-//!   confirmation without granting old content decryption;
+//! - excision of sealed material is refused, since its bytes cannot be
+//!   rewritten without its key;
 //! - a tombstone (identity and time, no payload) remains for each event, the
 //!   record's key or location goes into `core.hidden_occurrences` as `excise`,
 //!   which nothing undoes, and its record hash into `core.excised_digests`, so
@@ -19,9 +16,13 @@
 //!   file the scan kept, `core.event_blobs`) are deleted once no other event
 //!   or material refers to them.
 //!
+//! Each excision is recorded once in `core.operations`; its record keys and
+//! hashes are the exclusions later acquisition applies ([`exclusions`]).
+//!
 //! Planning reads; the writer applies the plan in one transaction, checking
 //! that the readings it removes are still exactly the planned ones, and
-//! deletes the old blob files after commit.
+//! deletes the old blob files after commit. Running the same request again
+//! after a crash finds what is left and finishes it.
 use crate::admission::{DirtyKeys, mark_archived_dirty, remove_live};
 use crate::{Error, Result};
 use sinex_model::{EventId, MaterialId, OperationId};
@@ -49,7 +50,6 @@ pub struct Material {
     /// Anchors of the records to blank; empty when `whole`.
     pub anchors: BTreeSet<i64>,
     pub whole: bool,
-    pub sealed: bool,
 }
 
 /// What an excision removes, as planned.
@@ -57,11 +57,6 @@ pub struct Material {
 pub struct Plan {
     pub events: BTreeSet<Uuid>,
     pub materials: Vec<Material>,
-    pub seeds: Vec<Uuid>,
-    pub extra_records: BTreeMap<MaterialId, BTreeSet<i64>>,
-    pub candidate_source: Option<String>,
-    pub candidate_parser: Option<String>,
-    pub candidates: Vec<Candidate>,
 }
 
 /// A material's replacement bytes, written to the content store before the
@@ -71,7 +66,6 @@ pub struct Rewrite {
     pub material: MaterialId,
     pub blob: String,
     pub length: u64,
-    pub manifest: Option<serde_json::Value>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -79,7 +73,6 @@ pub struct Applied {
     pub events: usize,
     pub failures_removed: usize,
     pub materials_rewritten: usize,
-    pub keys_destroyed: usize,
     /// Stored bytes the excised events owned that nothing else refers to.
     pub blobs_deleted: usize,
     pub dirty_keys: usize,
@@ -88,13 +81,9 @@ pub struct Applied {
     pub delete_after_commit: Vec<String>,
 }
 
-mod basis;
-mod candidates;
-pub mod sealed;
-pub use candidates::{Candidate, KeyEnvelope, candidate_materials};
-mod source_guard;
-pub use basis::{cited_media, operation_set, operations_basis, validate_basis};
-pub use source_guard::{lock_source, lock_source_session, unsupported_ingress};
+pub mod exclusions;
+mod source_lock;
+pub use source_lock::{is_producer, lock_source, lock_source_session};
 
 /// Find every reading the excision of `target` removes. Read-only.
 pub async fn plan(conn: &mut PgConnection, target: Target) -> Result<Plan> {
@@ -131,20 +120,6 @@ pub async fn plan(conn: &mut PgConnection, target: Target) -> Result<Plan> {
             .await?
         }
     };
-    plan_records(conn, target, &seeds, &BTreeMap::new()).await
-}
-
-/// Native record selection is prepared by the source adapter; the Writer
-/// revalidates its immutable body/key candidates and event closure.
-pub async fn plan_records(
-    conn: &mut PgConnection,
-    target: Target,
-    seeds: &[Uuid],
-    extra_records: &BTreeMap<MaterialId, BTreeSet<i64>>,
-) -> Result<Plan> {
-    let mut seeds = seeds.to_vec();
-    seeds.sort_unstable();
-    seeds.dedup();
     // A record's bytes hold all its events, so every event read from the same
     // record goes too; then every derived event that descends from any of them.
     let events = sqlx::query_scalar!(
@@ -180,6 +155,9 @@ pub async fn plan_records(
     .await?;
     let mut materials: BTreeMap<Uuid, Material> = BTreeMap::new();
     for r in rows {
+        if r.sealed {
+            return Err(sealed(r.material));
+        }
         let m = materials.entry(r.material).or_insert_with(|| Material {
             id: MaterialId(r.material),
             blob: r.blob.clone(),
@@ -188,7 +166,6 @@ pub async fn plan_records(
             manifest: r.manifest.clone(),
             anchors: BTreeSet::new(),
             whole: matches!(target, Target::Material(t) if t.0 == r.material),
-            sealed: r.sealed,
         });
         if !m.whole {
             m.anchors.insert(r.anchor);
@@ -207,6 +184,9 @@ pub async fn plan_records(
         .fetch_optional(&mut *conn)
         .await?
         .ok_or_else(|| Error::Invalid(format!("no material {m}")))?;
+        if r.sealed {
+            return Err(sealed(m.0));
+        }
         materials.insert(
             m.0,
             Material {
@@ -217,40 +197,12 @@ pub async fn plan_records(
                 manifest: r.manifest,
                 anchors: BTreeSet::new(),
                 whole: true,
-                sealed: r.sealed,
             },
         );
-    }
-    for (id, anchors) in extra_records {
-        if let Some(material) = materials.get_mut(&id.0) {
-            if !material.whole {
-                material.anchors.extend(anchors);
-            }
-        } else {
-            let r = sqlx::query!(
-                r#"SELECT m.blob,m.parser,m.manifest,i.host AS "host?",(k.material_id IS NOT NULL) AS "sealed!"
-                   FROM raw.materials m LEFT JOIN raw.inputs i ON i.id=m.input_id
-                   LEFT JOIN privacy.material_keys k ON k.material_id=m.id WHERE m.id=$1"#, id.0
-            ).fetch_one(&mut *conn).await?;
-            materials.insert(
-                id.0,
-                Material {
-                    id: *id,
-                    blob: r.blob,
-                    parser: r.parser,
-                    host: r.host.unwrap_or_default(),
-                    manifest: r.manifest,
-                    anchors: anchors.clone(),
-                    whole: matches!(target,Target::Material(m) if m==*id),
-                    sealed: r.sealed,
-                },
-            );
-        }
     }
     // Record bodies do not replace their original archive. Blanking a decoded
     // part alone would leave the same private bytes in its captured ancestor.
     let material_ids: Vec<Uuid> = materials.keys().copied().collect();
-    crate::sqlite_images::guard_excision(conn, &material_ids).await?;
     let retained_archive = sqlx::query_scalar!(
         r#"WITH RECURSIVE ancestors AS (
              SELECT id, previous_part_id, manifest FROM raw.materials WHERE id = ANY($1)
@@ -270,12 +222,13 @@ pub async fn plan_records(
     Ok(Plan {
         events,
         materials: materials.into_values().collect(),
-        seeds,
-        extra_records: extra_records.clone(),
-        candidate_source: None,
-        candidate_parser: None,
-        candidates: Vec::new(),
     })
+}
+
+fn sealed(material: Uuid) -> Error {
+    Error::Invalid(format!(
+        "material {material} is sealed: excision of sealed source material is not supported"
+    ))
 }
 
 /// Blank records in `bytes`: every byte of each `(start, end)` span becomes a
@@ -293,7 +246,7 @@ pub fn blank(bytes: &mut [u8], spans: &[(usize, usize)]) {
 }
 
 /// Apply `plan` inside the writer's transaction. `rewrites` holds the new
-/// blob for every planned material that is not sealed.
+/// blob for every planned material.
 pub async fn apply(
     conn: &mut PgConnection,
     target: Target,
@@ -303,65 +256,11 @@ pub async fn apply(
     actor: &str,
     keys: &dyn DirtyKeys,
 ) -> Result<Applied> {
-    apply_prepared(
-        conn,
-        target,
-        plan,
-        rewrites,
-        operation,
-        actor,
-        keys,
-        None,
-        &|| Ok(()),
-    )
-    .await
-}
-
-#[allow(clippy::too_many_arguments)]
-pub async fn apply_prepared(
-    conn: &mut PgConnection,
-    target: Target,
-    plan: &Plan,
-    rewrites: &[Rewrite],
-    operation: OperationId,
-    actor: &str,
-    keys: &dyn DirtyKeys,
-    prepared: Option<&sealed::PreparedSealed>,
-    check: &(dyn Fn() -> Result<()> + Send + Sync),
-) -> Result<Applied> {
-    let mut current_seeds = self::plan(conn, target).await?.seeds;
-    current_seeds.extend(&plan.seeds);
-    let mut now = self::plan_records(conn, target, &current_seeds, &plan.extra_records).await?;
-    now.candidate_source = plan.candidate_source.clone();
-    now.candidate_parser = plan.candidate_parser.clone();
-    if let (Some(source), Some(parser)) = (&plan.candidate_source, &plan.candidate_parser) {
-        now.candidates = candidate_materials(conn, source, parser).await?;
-    }
-    if now != *plan {
+    if self::plan(conn, target).await? != *plan {
         return Err(Error::Invalid(
             "the readings to excise changed after planning; plan the excision again".into(),
         ));
     }
-    if let Some(prepared) = prepared {
-        if plan.candidate_source.as_deref() != Some(prepared.source.as_str())
-            || plan.candidate_parser.is_none()
-            || plan.candidates.is_empty()
-            || plan
-                .candidates
-                .iter()
-                .any(|candidate| candidate.sources.as_slice() != [prepared.source.as_str()])
-        {
-            return Err(Error::Invalid(
-                "sealed excision lacks a complete source-owned candidate set".into(),
-            ));
-        }
-        sealed::stage(conn, plan, prepared, check).await?;
-    } else if plan.materials.iter().any(|m| m.sealed) {
-        return Err(Error::Invalid(
-            "sealed excision needs scoped prepared key and body replacements".into(),
-        ));
-    }
-    check()?;
     let ids: Vec<Uuid> = plan.events.iter().copied().collect();
     let mut applied = Applied::default();
 
@@ -371,9 +270,6 @@ pub async fn apply_prepared(
     )
     .fetch_all(&mut *conn)
     .await?;
-    if let Some(source) = &plan.candidate_source {
-        sources.push(source.clone());
-    }
     let owners = plan.materials.iter().map(|m| m.id.0).collect::<Vec<_>>();
     let bound:Vec<String>=sqlx::query_scalar("SELECT DISTINCT b.source FROM raw.materials m JOIN raw.inputs i ON i.id=m.input_id JOIN raw.bindings b ON b.binding=i.binding WHERE m.id=ANY($1)").bind(&owners).fetch_all(&mut *conn).await?;
     sources.extend(bound);
@@ -381,7 +277,7 @@ pub async fn apply_prepared(
     sources.dedup();
     for source in &sources {
         if crate::native_materials::source_pending(conn, source).await? {
-            return Err(Error::Invalid("source has a pending native publication; its exact unadmitted version must be recovered before excision".into()));
+            return Err(Error::Invalid("the source has a material that is not admitted yet; let its capture finish before excising".into()));
         }
     }
 
@@ -391,21 +287,9 @@ pub async fn apply_prepared(
     };
     scope["sources"] = serde_json::json!(sources);
     scope["materials"] = serde_json::json!(plan.materials.iter().map(|m| m.id).collect::<Vec<_>>());
-    let mut domains = Vec::new();
-    for material in &plan.materials {
-        let source = if let Some(source) = &plan.candidate_source {
-            Some(source.clone())
-        } else {
-            let owned:Vec<String>=sqlx::query_scalar("SELECT DISTINCT source FROM (SELECT e.source FROM core.events e WHERE e.material_id=$1 UNION SELECT b.source FROM raw.materials m JOIN raw.inputs i ON i.id=m.input_id JOIN raw.bindings b ON b.binding=i.binding WHERE m.id=$1) owners ORDER BY source")
-                .bind(material.id.0).fetch_all(&mut *conn).await?;
-            (owned.len() == 1).then(|| owned[0].clone())
-        };
-        domains.push(serde_json::json!({"material":material.id,"naming":if material.sealed {"sealed"} else {"plain"},"source":source}));
-    }
-    scope["record_domains"] = serde_json::json!(domains);
-    scope["record_domains_version"] = serde_json::json!(1);
-    scope["cited_media"] =
-        basis::capture_cited_media(conn, &sources, &ids, &scope["record_domains"]).await?;
+    // Stored bytes the excised events cite are excluded from later capture
+    // of the same sources.
+    scope["cited_media"] = exclusions::cited_media_of(conn, &ids).await?;
     sqlx::query!(
         "INSERT INTO core.operations (id,kind,actor,scope) VALUES($1,'excise',$2,$3)",
         operation.0,
@@ -527,18 +411,6 @@ pub async fn apply_prepared(
         .execute(&mut *conn)
         .await?;
         applied.failures_removed += usize::try_from(removed.rows_affected()).unwrap_or(usize::MAX);
-        if m.sealed && m.whole {
-            let mut manifest = m.manifest.clone();
-            manifest["excised_whole"] = serde_json::json!(operation.0);
-            sqlx::query!(
-                "UPDATE raw.materials SET manifest=$2 WHERE id=$1",
-                m.id.0,
-                manifest
-            )
-            .execute(&mut *conn)
-            .await?;
-            continue;
-        }
         let rewrite = rewrites
             .iter()
             .find(|r| r.material == m.id)
@@ -562,10 +434,9 @@ pub async fn apply_prepared(
         .execute(&mut *conn)
         .await?;
         sqlx::query!(
-            "UPDATE raw.materials SET blob = $2, manifest=COALESCE($3,manifest) WHERE id = $1",
+            "UPDATE raw.materials SET blob = $2 WHERE id = $1",
             m.id.0,
             rewrite.blob,
-            rewrite.manifest.clone(),
         )
         .execute(&mut *conn)
         .await?;
@@ -582,23 +453,6 @@ pub async fn apply_prepared(
             applied.delete_after_commit.push(m.blob.clone());
         }
     }
-    check()?;
-    if let Some(prepared) = prepared {
-        applied.keys_destroyed = sealed::apply(conn, prepared, check).await?;
-        for replay in &prepared.replay {
-            if let Some(old) = &replay.old_blob
-                && old != &replay.blob
-                && unreferenced(conn, old).await?
-            {
-                sqlx::query("UPDATE core.blobs SET status='deleting' WHERE hash=$1")
-                    .bind(old)
-                    .execute(&mut *conn)
-                    .await?;
-                applied.delete_after_commit.push(old.clone());
-            }
-        }
-    }
-    check()?;
     sqlx::query!("SELECT set_config('sinex.excise_operation', '', true)")
         .fetch_one(&mut *conn)
         .await?;
@@ -608,7 +462,7 @@ pub async fn apply_prepared(
 /// Whether no material, revision extent or event refers to `blob` any more.
 pub(crate) async fn unreferenced(conn: &mut PgConnection, blob: &str) -> Result<bool> {
     Ok(sqlx::query_scalar!(
-        r#"SELECT NOT EXISTS (SELECT 1 FROM raw.materials WHERE blob = $1 OR erased_replay_blob=$1)
+        r#"SELECT NOT EXISTS (SELECT 1 FROM raw.materials WHERE blob = $1)
              AND NOT EXISTS (SELECT 1 FROM raw.revision_extents WHERE blob = $1)
              AND NOT EXISTS (SELECT 1 FROM core.event_blobs WHERE blob = $1)
              AND NOT EXISTS (SELECT 1 FROM raw.pending_native_blobs WHERE blob = $1)
@@ -643,7 +497,7 @@ pub async fn finish_deletions(
             // A fresh statement after the lock observes owners which committed
             // while it waited. FK references and reservations cannot pass this
             // lock until unlink and row deletion have completed together.
-            let owned: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM raw.materials WHERE blob=$1 OR erased_replay_blob=$1) OR EXISTS(SELECT 1 FROM raw.revision_extents WHERE blob=$1) OR EXISTS(SELECT 1 FROM core.event_blobs WHERE blob=$1) OR EXISTS(SELECT 1 FROM raw.pending_native_blobs WHERE blob=$1) OR EXISTS(SELECT 1 FROM raw.pending_producer_blobs WHERE blob=$1)")
+            let owned: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM raw.materials WHERE blob=$1) OR EXISTS(SELECT 1 FROM raw.revision_extents WHERE blob=$1) OR EXISTS(SELECT 1 FROM core.event_blobs WHERE blob=$1) OR EXISTS(SELECT 1 FROM raw.pending_native_blobs WHERE blob=$1) OR EXISTS(SELECT 1 FROM raw.pending_producer_blobs WHERE blob=$1)")
                 .bind(&name).fetch_one(&mut *tx).await?;
             if owned { return Ok(None); }
             if blobs.delete(&name).is_err() { return Ok(Some(false)); }

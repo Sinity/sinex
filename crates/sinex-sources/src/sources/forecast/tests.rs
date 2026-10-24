@@ -23,7 +23,6 @@ fn forecast_requests_keep_bytes_but_take_author_and_time_from_manifest() {
     let out = drain(
         &RequestParser,
         DrainInput {
-            erased: None,
             source: REQUEST.name,
             class: REQUEST.class,
             material: material.id,
@@ -66,7 +65,6 @@ fn forecast_unknown_resolution_keeps_unknown_outcome_and_time() {
     let out = drain(
         &RequestParser,
         DrainInput {
-            erased: None,
             source: REQUEST.name,
             class: REQUEST.class,
             material: material.id,

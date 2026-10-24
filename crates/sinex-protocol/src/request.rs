@@ -136,8 +136,6 @@ pub enum Request {
         material: Option<String>,
         #[serde(default, rename = "dry-run", skip_serializing_if = "Option::is_none")]
         dry_run: Option<bool>,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        sealed: Option<bool>,
     },
     Same {
         a: String,

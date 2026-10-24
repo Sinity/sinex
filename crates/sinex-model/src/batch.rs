@@ -77,11 +77,14 @@ pub enum RecordOutcome {
     },
 }
 
-/// The complete source-specific excision operation set used during acquisition.
+/// The excisions of a source that an acquisition applied as exclusions.
+/// Admission compares it with the current set, so an excision committed in
+/// between makes the acquisition read again rather than keep excluded bytes.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct ExcisionBasis {
+pub struct Exclusions {
     pub source: String,
-    pub operations: [u8; 32],
+    /// BLAKE3 of the source's excision operation IDs, in order.
+    pub digest: [u8; 32],
     pub count: u64,
 }
 
@@ -89,12 +92,10 @@ pub struct ExcisionBasis {
 #[derive(Clone, Debug)]
 pub struct SourceProgress {
     pub native_pending: Option<MaterialId>,
-    pub erased_replay: Option<ErasedReplayPublication>,
-    pub excision_basis: Option<ExcisionBasis>,
+    pub exclusions: Option<Exclusions>,
     pub binding: String,
-    pub image: Option<crate::SqliteImagePublication>,
-    pub image_revision: Option<crate::RevisionId>,
-    pub material_keys: Vec<crate::WrappedMaterialKey>,
+    /// Wrapped keys of sealed materials, stored with the material rows.
+    pub material_keys: Vec<WrappedMaterialKey>,
     pub input: InputRef,
     pub observation: ObservationFacts,
     pub revision: RevisionChange,
@@ -105,15 +106,6 @@ pub struct SourceProgress {
     pub cursor: Value,
     /// The parser's carried state at the cursor.
     pub carry: Value,
-}
-
-/// Purpose-bound class ciphertext retained with its redacted material.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct ErasedReplayPublication {
-    pub material: MaterialId,
-    pub blob: String,
-    /// Ciphertext length, distinct from the material's logical length.
-    pub length: u64,
 }
 
 /// The thing observed: a file path, a database, an API collection, a socket.
@@ -139,6 +131,23 @@ pub struct ObservationFacts {
     pub unavailable: Option<String>,
 }
 
+/// A sealed material's data key, wrapped for the sealed class.
+#[derive(Clone, PartialEq, Eq)]
+pub struct WrappedMaterialKey {
+    pub material: MaterialId,
+    pub key_ref: String,
+    pub wrapped: Vec<u8>,
+}
+
+impl std::fmt::Debug for WrappedMaterialKey {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("WrappedMaterialKey")
+            .field("material", &self.material)
+            .field("key_ref", &self.key_ref)
+            .finish_non_exhaustive()
+    }
+}
+
 /// How the input's content relates to its previous revision.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -158,7 +167,6 @@ pub enum RevisionChange {
 pub enum MaterialRole {
     Input,
     OriginalArchive,
-    SqliteImage,
     Records,
 }
 

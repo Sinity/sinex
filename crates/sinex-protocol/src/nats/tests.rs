@@ -22,23 +22,14 @@ fn subjects_and_streams_follow_the_root() {
 fn producer_permissions_name_only_its_own_subjects() {
     let s = Subjects::sinex();
     let (publish, subscribe) = s.producer_permissions("phone");
-    assert_eq!(
-        publish,
-        [
-            "sinex.ingress.phone",
-            "sinex.have.phone",
-            "sinex.retire.phone"
-        ]
-    );
+    assert_eq!(publish, ["sinex.ingress.phone", "sinex.have.phone"]);
     assert_eq!(subscribe, ["sinex.ack.phone", "_INBOX.>"]);
     let config = s.authorization(("sinexd", "pw"), &[("phone", "p\"w")]);
     assert!(
         config.contains(r#"user: "phone", password: "p\"w""#),
         "{config}"
     );
-    assert!(config.contains(
-        r#"publish: { allow: ["sinex.ingress.phone", "sinex.have.phone", "sinex.retire.phone"] }"#
-    ));
+    assert!(config.contains(r#"publish: { allow: ["sinex.ingress.phone", "sinex.have.phone"] }"#));
 }
 
 #[test]
