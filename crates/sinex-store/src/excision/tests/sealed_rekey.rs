@@ -144,6 +144,7 @@ async fn prepared_ciphertext_rekey_keeps_unrelated_facts_and_retires_the_old_cap
         &identity.to_public(),
         &metadata_scope,
         [crypto::metadata::ErasedRecord {
+            purpose: crate::sealed::metadata::RecordPurpose::Active,
             start: 0,
             end: kept as u64,
             raw_digest: crypto::MaterialSecrets::from_data_key(&old)

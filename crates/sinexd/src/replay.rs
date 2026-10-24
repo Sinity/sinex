@@ -500,6 +500,7 @@ fn read_chain_into(
             let records = authority.open_replay_metadata(input, &scope)?;
             let records = records
                 .into_iter()
+                .filter(|r| r.is_active())
                 .map(|r| {
                     Ok((
                         usize::try_from(r.start)

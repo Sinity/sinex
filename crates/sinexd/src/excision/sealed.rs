@@ -12,6 +12,7 @@ use sinex_store::sealed::{self as crypto, metadata};
 use std::collections::{BTreeMap, BTreeSet};
 use std::io::{Seek, Write};
 use std::sync::Arc;
+mod physical;
 mod values;
 mod walk;
 use walk::Archive;
@@ -21,13 +22,19 @@ pub(super) struct Prepared {
     pub rewrites: Vec<Rewrite>,
     pub sealed: PreparedSealed,
 }
+struct Selection {
+    archive: Archive,
+    positions: values::Positions,
+    plan: Plan,
+    copies: physical::Copies,
+}
 
 async fn select(
     conn: &mut PgConnection,
     blobs: &Blobs,
     target: Target,
     authority: &Authority,
-) -> Result<(Archive, values::Positions, Plan), String> {
+) -> Result<Selection, String> {
     authority.check()?;
     let initial = excision::plan(conn, target)
         .await
@@ -72,7 +79,7 @@ async fn select(
             })
             .await?;
     }
-    loop {
+    let copies = loop {
         let before = (
             selected.values().map(BTreeSet::len).sum::<usize>(),
             native_keys.len(),
@@ -99,15 +106,27 @@ async fn select(
                 })
                 .await?;
         }
+        let copies = physical::select(
+            conn,
+            blobs,
+            &archive,
+            &mut selected,
+            match target {
+                Target::Material(m) => Some(m),
+                _ => None,
+            },
+            authority,
+        )
+        .await?;
         if before
             == (
                 selected.values().map(BTreeSet::len).sum::<usize>(),
                 native_keys.len(),
             )
         {
-            break;
+            break copies;
         }
-    }
+    };
     let mut seeds = initial.seeds.clone();
     for (material, anchors) in &selected {
         let anchors = anchors.iter().copied().collect::<Vec<_>>();
@@ -135,7 +154,12 @@ async fn select(
     plan.candidate_source = Some(source.clone());
     plan.candidate_parser = Some(parser);
     plan.candidates = archive.candidates.clone();
-    Ok((archive, positions, plan))
+    Ok(Selection {
+        archive,
+        positions,
+        plan,
+        copies,
+    })
 }
 
 pub(crate) async fn plan(
@@ -144,7 +168,7 @@ pub(crate) async fn plan(
     target: Target,
     authority: &Authority,
 ) -> Result<Plan, String> {
-    Ok(select(conn, blobs, target, authority).await?.2)
+    Ok(select(conn, blobs, target, authority).await?.plan)
 }
 
 pub(super) async fn prepare(
@@ -153,7 +177,12 @@ pub(super) async fn prepare(
     target: Target,
     authority: &Authority,
 ) -> Result<Prepared, String> {
-    let (archive, positions, plan) = select(conn, blobs, target, authority).await?;
+    let Selection {
+        archive,
+        positions,
+        plan,
+        copies,
+    } = select(conn, blobs, target, authority).await?;
     let source = plan
         .candidate_source
         .clone()
@@ -219,6 +248,7 @@ pub(super) async fn prepare(
                             .replay
                     };
                     records.push(metadata::ErasedRecord {
+                        purpose: sinex_store::sealed::metadata::RecordPurpose::Active,
                         start: record.start as u64,
                         end: record.end as u64,
                         raw_digest: names.name_raw_record(record.raw),
@@ -228,6 +258,24 @@ pub(super) async fn prepare(
                 Ok(())
             })
             .await?;
+        if let Some(spans) = copies.get(&material.id) {
+            let body = opened
+                .body
+                .as_ref()
+                .ok_or("physical copy needs its retained body")?;
+            for (&start, &end) in spans {
+                let raw = sinex_sources::drain::RecordBytes::Reader(&**body)
+                    .record(start, end)
+                    .map_err(|_| "physical copy cannot be read")?;
+                records.push(metadata::ErasedRecord {
+                    purpose: metadata::RecordPurpose::PhysicalCopy,
+                    start: start as u64,
+                    end: end as u64,
+                    raw_digest: names.name_raw_record(&raw),
+                    transition: None,
+                });
+            }
+        }
         records.sort_by_key(|r| r.start);
         let scope = metadata::Scope::Replay {
             source: source.clone(),

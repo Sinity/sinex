@@ -26,6 +26,7 @@ async fn native_replay_ciphertext_pointer_keys_and_progress_share_admission_roll
         &identity.to_public(),
         &scope,
         [metadata::ErasedRecord {
+            purpose: crate::sealed::metadata::RecordPurpose::Active,
             start: 0,
             end: body.len() as u64,
             raw_digest: [8; 32],

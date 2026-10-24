@@ -26,6 +26,8 @@ const WINDOW: u64 = 4096;
 /// The most bytes one poll reads past its cursor (more only for a single
 /// record longer than this): a file of any size is read in bounded parts.
 pub const PART: u64 = 64 << 20;
+mod tail;
+pub use tail::AppendTail;
 
 pub use crate::registry::Framer;
 

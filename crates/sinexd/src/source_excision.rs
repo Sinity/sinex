@@ -632,7 +632,7 @@ impl AcquisitionPolicy {
                             .map_err(|e| e.to_string())?
                             .replay
                     };
-                    selected.push((start, end, token));
+                    selected.push((start, end, token, metadata::RecordPurpose::Active));
                 }
             }
         }
@@ -669,10 +669,10 @@ impl AcquisitionPolicy {
                             .into(),
                     );
                 }
-                selected.push((start, end, None));
+                selected.push((start, end, None, metadata::RecordPurpose::PhysicalCopy));
             }
         }
-        selected.sort_by_key(|(start, _, _)| *start);
+        selected.sort_by_key(|(start, _, _, _)| *start);
         if selected.is_empty() {
             return Ok(input);
         }
@@ -686,7 +686,7 @@ impl AcquisitionPolicy {
         }
         let spans = selected
             .iter()
-            .map(|(s, e, _)| (*s, *e))
+            .map(|(s, e, _, _)| (*s, *e))
             .collect::<Vec<_>>();
         let reader = crate::retained::Blanked::new(
             BorrowedBytes {
@@ -697,7 +697,7 @@ impl AcquisitionPolicy {
             spans,
         );
         if class != sinex_model::Class::Sealed {
-            if selected.iter().any(|(_, _, token)| token.is_some()) {
+            if selected.iter().any(|(_, _, token, _)| token.is_some()) {
                 return Err("stateful plain exclusion replay metadata is not available".into());
             }
             if let Some(drivers::StoredBytes::FramedReader(retained)) = &material.stored
@@ -736,9 +736,10 @@ impl AcquisitionPolicy {
             let names = MaterialSecrets::from_data_key(&key);
             let records = selected
                 .into_iter()
-                .map(|(start, end, transition)| {
+                .map(|(start, end, transition, purpose)| {
                     let raw = bytes.record(start, end).map_err(|e| e.to_string())?;
                     Ok(metadata::ErasedRecord {
+                        purpose,
                         start: start as u64,
                         end: end as u64,
                         raw_digest: names.name_raw_record(&raw),
@@ -789,6 +790,7 @@ impl AcquisitionPolicy {
                 sinex_sources::drain::ErasedTransitions::from_archive(
                     records
                         .into_iter()
+                        .filter(|r| r.is_active())
                         .map(|r| (r.start as usize, r.end as usize, r.transition)),
                     length,
                     false,

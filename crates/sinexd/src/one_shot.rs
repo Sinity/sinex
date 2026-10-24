@@ -390,52 +390,5 @@ impl MaterialSink for SealingSink {
     }
 }
 
-/// The stored bytes of the chain ending at the cursor's last material, for
-/// rebuilding a driver state after a restart; empty before the first read.
-/// Only the current byte revision's tail is read, newest material first, until it covers
-/// `sinex_sources::drivers::append_file::STATE_TAIL` bytes, so a restart
-/// costs bounded memory whatever the chain's length; the driver state
-/// holds no more than that tail either. The last material is cut at the
-/// cursor's `through`: bytes after it were stored but their readings never
-/// committed, so the driver must read them again.
-pub async fn stored_chain(
-    read_conn: &mut PgConnection,
-    blobs: &Blobs,
-    cursor: &serde_json::Value,
-) -> Result<Vec<(MaterialId, Vec<u8>)>, String> {
-    let Some(last) = cursor
-        .get("material")
-        .and_then(serde_json::Value::as_str)
-        .and_then(|s| uuid::Uuid::parse_str(s).ok())
-    else {
-        return Ok(Vec::new());
-    };
-    let names = sinex_store::replay::current_revision_chain_ending(read_conn, last)
-        .await
-        .map_err(|e| e.to_string())?;
-    let through = cursor
-        .get("through")
-        .and_then(serde_json::Value::as_u64)
-        .map(|t| usize::try_from(t).unwrap_or(usize::MAX));
-    let budget = sinex_sources::drivers::append_file::STATE_TAIL;
-    let mut chain = Vec::new();
-    let mut covered = 0usize;
-    for (i, (id, name)) in names.iter().enumerate().rev() {
-        let mut bytes = blobs.read(name).map_err(|e| e.to_string())?;
-        if i + 1 == names.len()
-            && let Some(through) = through
-        {
-            bytes.truncate(through);
-        }
-        covered += bytes.len();
-        chain.push((MaterialId(*id), bytes));
-        if covered >= budget {
-            break;
-        }
-    }
-    chain.reverse();
-    Ok(chain)
-}
-
 #[cfg(test)]
 mod tests;

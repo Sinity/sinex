@@ -475,9 +475,15 @@ async fn sealed_sqlite_image_and_row_keys_commit_together_without_plain_digests(
         .unwrap()
         .unwrap();
     assert!(
-        stored_chain(&mut ctx.read_conn, &ctx.blobs, &cursor)
-            .await
-            .is_err()
+        crate::retained::open(
+            &mut ctx.read_conn,
+            &ctx.blobs,
+            sinex_sources::sources::atuin::SPEC.name,
+            serde_json::from_value(cursor["material"].clone()).unwrap(),
+            None
+        )
+        .await
+        .is_err()
     );
     ctx.close().await.unwrap();
 }

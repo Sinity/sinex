@@ -471,6 +471,15 @@ Format-owned carry erasure removes selected private state. A later material that
 owns such carry can be rekeyed with its body unchanged. Replay and current-carry
 metadata have separate class-encrypted purposes and scopes.
 
+Completed append bindings rebuild their bounded alignment tail from scoped, verified
+retained records and authenticated erased membership. Plain bodies use an owned
+verified range reader; sealed reads keep their encrypted backing. A retained
+partially admitted append that lacks exact pending-resume facts refuses before
+reading the provider. Inactive rewrite-prefix copies require actual predecessor
+occurrences and unambiguous selected membership. Their encrypted physical-copy
+metadata preserves matching coordinates but never advances parser state. Missing
+or ambiguous predecessor evidence refuses before mutation.
+
 Preparation holds the current decoded record/value, carry and encrypted frame
 buffers. Candidate/range metadata grows with retained records and materials.
 Shared parser predecessors are reread for each branch rather than retaining a

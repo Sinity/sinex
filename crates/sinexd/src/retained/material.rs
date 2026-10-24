@@ -39,6 +39,7 @@ impl Opened {
         let records = self
             .metadata
             .into_iter()
+            .filter(|r| r.is_active())
             .map(|r| {
                 Ok((
                     usize::try_from(r.start).map_err(|_| "erased anchor exceeds address space")?,
@@ -77,6 +78,25 @@ pub(crate) async fn open(
     material: MaterialId,
     authority: Option<&Authority>,
 ) -> Result<Opened, String> {
+    open_checked(
+        conn,
+        blobs,
+        source,
+        material,
+        authority,
+        Arc::new(|| Ok(())),
+    )
+    .await
+}
+pub(crate) async fn open_checked(
+    conn: &mut PgConnection,
+    blobs: &Blobs,
+    source: &str,
+    material: MaterialId,
+    authority: Option<&Authority>,
+    check: super::ReadCheck,
+) -> Result<Opened, String> {
+    check()?;
     let reference = sinex_store::material_bytes::reference(conn, material)
         .await
         .map_err(|e| e.to_string())?
@@ -108,6 +128,7 @@ pub(crate) async fn open(
         secrets,
         authority,
         whole,
+        check,
     )
 }
 
@@ -182,6 +203,7 @@ pub(crate) fn open_pending(
         secrets,
         authority,
         false,
+        Arc::new(|| Ok(())),
     )
 }
 
@@ -193,7 +215,18 @@ fn open_owned(
     secrets: Option<(String, MaterialSecrets)>,
     authority: Option<&Authority>,
     whole: bool,
+    check: super::ReadCheck,
 ) -> Result<Opened, String> {
+    let caller_check = check;
+    let lease = authority.cloned();
+    let check: super::ReadCheck = Arc::new(move || {
+        caller_check()?;
+        if let Some(lease) = &lease {
+            lease.check()?;
+        }
+        Ok(())
+    });
+    check()?;
     let material = reference.id;
     if !whole
         && secrets
@@ -223,13 +256,13 @@ fn open_owned(
                 .and_then(|r| r.get("end"))
                 .cloned(),
         };
-        let check = authority.clone();
+        let unlock = authority.clone();
+        let cancel = Arc::clone(&check);
         let input = blobs
             .read_plain(&blob, expected_length, move || {
-                check
-                    .check()
-                    .map_err(std::io::Error::other)
-                    .map_err(Into::into)
+                cancel().map_err(std::io::Error::other)?;
+                unlock.check().map_err(std::io::Error::other)?;
+                Ok(())
             })
             .map_err(|e| e.to_string())?;
         let records = authority.open_replay_metadata(input, &scope)?;
@@ -254,6 +287,7 @@ fn open_owned(
         let authority = authority
             .ok_or("sealed read requires scoped authority")?
             .clone();
+        let cancel = Arc::clone(&check);
         let mut input = blobs
             .read_sealed(
                 &reference.blob,
@@ -261,33 +295,40 @@ fn open_owned(
                 &key,
                 crate::sealed_access::read_limits(reference.length)?,
                 move || {
-                    authority
-                        .check()
-                        .map_err(std::io::Error::other)
-                        .map_err(Into::into)
+                    cancel().map_err(std::io::Error::other)?;
+                    authority.check().map_err(std::io::Error::other)?;
+                    Ok(())
                 },
             )
             .map_err(|e| e.to_string())?;
         std::io::copy(&mut input, &mut std::io::sink()).map_err(|e| e.to_string())?;
         input.rewind().map_err(|e| e.to_string())?;
-        Some(Arc::new(Retained::new(input, reference.length)))
+        let cancel = Arc::clone(&check);
+        Some(Arc::new(Retained::checked(
+            input,
+            reference.length,
+            move || cancel().map_err(std::io::Error::other),
+        )))
     } else {
         let authority = authority.cloned();
-        let mut input = blobs
-            .read_plain(&reference.blob, Some(reference.length), move || {
+        let cancel = Arc::clone(&check);
+        let input = blobs
+            .read_plain_seek(&reference.blob, reference.length, move || {
+                cancel().map_err(std::io::Error::other)?;
                 if let Some(authority) = &authority {
                     authority.check().map_err(std::io::Error::other)?;
                 }
                 Ok(())
             })
             .map_err(|e| e.to_string())?;
-        let mut file = tempfile::tempfile().map_err(|e| e.to_string())?;
-        let copied = std::io::copy(&mut input, &mut file).map_err(|e| e.to_string())?;
-        if copied != reference.length {
-            return Err("retained material length differs".into());
-        }
-        Some(Arc::new(Retained::new(file, reference.length)))
+        let cancel = Arc::clone(&check);
+        Some(Arc::new(Retained::checked(
+            input,
+            reference.length,
+            move || cancel().map_err(std::io::Error::other),
+        )))
     };
+    check()?;
     Ok(Opened {
         reference,
         body,

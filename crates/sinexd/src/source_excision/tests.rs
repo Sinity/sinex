@@ -64,6 +64,7 @@ async fn old_naming_only_exclusions_match_new_epoch_keys_hashes_and_unparsed_byt
         &identity.to_public(),
         &scope,
         [metadata::ErasedRecord {
+            purpose: sinex_store::sealed::metadata::RecordPurpose::Active,
             start: 0,
             end: raw.len() as u64,
             raw_digest: names.name_raw_record(raw),

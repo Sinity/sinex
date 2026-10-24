@@ -254,13 +254,20 @@ async fn a_rewritten_history_file_is_aligned_and_replays_without_duplicates() {
         .unwrap()
         .unwrap()
         .0;
-    let chain = crate::one_shot::stored_chain(&mut f.ctx.read_conn, &f.ctx.blobs, &cursor)
-        .await
-        .unwrap();
-    let mut rebuilt = AppendState::rebuild(
-        chain.iter().map(|(id, b)| (*id, b.as_slice())),
-        zsh::SPEC.framer,
-    );
+    let source = zsh::source("h".into());
+    let (_stop, stop) = tokio::sync::watch::channel(false);
+    let mut rebuilt = crate::binding_reader::append::completed_tail(
+        &mut f.ctx.read_conn,
+        &f.ctx.blobs,
+        &source,
+        &cursor,
+        None,
+        stop,
+    )
+    .await
+    .unwrap()
+    .into_state()
+    .unwrap();
     assert_eq!(rebuilt, state);
     ingest(&mut f.ctx, &path, &mut rebuilt).await;
     assert_eq!(

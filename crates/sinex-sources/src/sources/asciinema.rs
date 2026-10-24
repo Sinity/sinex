@@ -409,10 +409,11 @@ pub const KIND: crate::binding::InputKind = crate::binding::InputKind {
     },
     reader: Some(|b| {
         let spec = if b.source == CAST.name { CAST } else { EVENTS };
-        Ok(crate::binding::appended(
-            driver(b.input.clone(), b.settings.host.clone(), &spec),
-            spec.framer,
-        ))
+        Ok(crate::binding::appended(driver(
+            b.input.clone(),
+            b.settings.host.clone(),
+            &spec,
+        )))
     }),
     capture: None,
 };

@@ -70,7 +70,9 @@ boundaries between capture, interpretation, admission and public interfaces.
   fresh body/value encryption and format-owned carry erasure. Whole removal
   makes the original body unavailable while preserving unrelated values.
   Mixed plain/sealed epochs, unsupported parser state, retained containers and
-  physical SQLite images still refuse. Capturing a source with permanent sealed
+  physical SQLite images still refuse. Completed append restart restores a bounded
+  retained alignment tail; partial append restart without exact retained resume
+  facts remains unavailable. Capturing a source with permanent sealed
   exclusions requires scoped matching authority.
 - **Privacy.** Versioned rules applied at admission, privacy classes, the
   sealed class with unlock sessions, and a private-mode switch.

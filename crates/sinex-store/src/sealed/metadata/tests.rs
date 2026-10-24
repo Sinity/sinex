@@ -17,6 +17,7 @@ fn class_replay_is_purpose_bound_and_fully_authenticated_before_release() {
     let identity = Identity::generate();
     let scope = scope();
     let record = || ErasedRecord {
+        purpose: crate::sealed::metadata::RecordPurpose::Active,
         start: 0,
         end: 10,
         raw_digest: [7; 32],
@@ -120,6 +121,7 @@ fn unknown_version_wrong_purpose_and_overlapping_coordinates_refuse() {
         assert!(open_replay(ciphertext.as_slice(), &identity, &scope, || Ok(())).is_err());
     }
     let r = |start, end| ErasedRecord {
+        purpose: crate::sealed::metadata::RecordPurpose::Active,
         start,
         end,
         raw_digest: [0; 32],
@@ -178,4 +180,71 @@ fn replay_scope_rejects_a_changed_frozen_append_endpoint_even_when_its_hash_look
         end["window"] = json!("b".repeat(64));
     }
     assert!(open_replay(ciphertext.as_slice(), &identity, &wrong, || Ok(())).is_err());
+}
+
+#[test]
+fn physical_copies_are_authenticated_without_a_parser_transition_and_old_decoders_refuse() {
+    let identity = Identity::generate();
+    let scope = scope();
+    let legacy = json!({"start":0,"end":10,"raw_digest":vec![7;32],"transition":null});
+    let active: ErasedRecord = serde_json::from_value(legacy.clone()).unwrap();
+    assert!(active.is_active());
+    let copy = ErasedRecord {
+        purpose: RecordPurpose::PhysicalCopy,
+        start: 0,
+        end: 10,
+        raw_digest: [7; 32],
+        transition: None,
+    };
+    let mut ciphertext = Vec::new();
+    seal_replay(
+        &mut ciphertext,
+        &identity.to_public(),
+        &scope,
+        [copy],
+        || Ok(()),
+    )
+    .unwrap();
+    let opened = open_replay(ciphertext.as_slice(), &identity, &scope, || Ok(())).unwrap();
+    assert_eq!(opened.len(), 1);
+    assert!(!opened[0].is_active());
+    assert!(opened[0].transition.is_none());
+
+    // The preceding format denied unknown fields. An explicit new purpose
+    // must not silently become an active record in an older reader.
+    #[derive(Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct LegacyRecord {
+        #[serde(rename = "start")]
+        _start: u64,
+        #[serde(rename = "end")]
+        _end: u64,
+        #[serde(rename = "raw_digest")]
+        _raw_digest: [u8; 32],
+        #[serde(rename = "transition")]
+        _transition: Option<Value>,
+    }
+    assert!(serde_json::from_value::<LegacyRecord>(legacy.clone()).is_ok());
+    assert!(
+        serde_json::from_value::<LegacyRecord>(serde_json::to_value(&opened[0]).unwrap()).is_err()
+    );
+    let mut unknown = legacy.clone();
+    unknown["purpose"] = json!("unknown");
+    assert!(serde_json::from_value::<ErasedRecord>(unknown).is_err());
+
+    let mut invalid_copy = serde_json::to_value(&opened[0]).unwrap();
+    invalid_copy["transition"] = json!({"count":1});
+    let record: ErasedRecord = serde_json::from_value(invalid_copy.clone()).unwrap();
+    assert!(
+        seal_replay(Vec::new(), &identity.to_public(), &scope, [record], || Ok(
+            ()
+        ))
+        .is_err()
+    );
+    // Even a complete class-authenticated stream cannot give a physical copy
+    // a parser effect. Exercise the decoder independently of the encoder.
+    let mut out = begin(Vec::new(), &identity.to_public(), &scope).unwrap();
+    line(&mut out, &invalid_copy).unwrap();
+    let forged = out.finish().unwrap();
+    assert!(open_replay(forged.as_slice(), &identity, &scope, || Ok(())).is_err());
 }

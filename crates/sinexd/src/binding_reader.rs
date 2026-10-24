@@ -1,8 +1,9 @@
 //! A binding owns its parser and cursor; compatible archives share physical traversal.
+pub(crate) mod append;
 mod directory;
 mod pending;
 use crate::backfill::{self, Totals};
-use crate::one_shot::{Sink, stored_chain};
+use crate::one_shot::Sink;
 use crate::writer::WriterHandle;
 use serde_json::Value;
 use sinex_model::{Class, ObservationFacts, RunId};
@@ -101,13 +102,21 @@ pub(crate) async fn read(
                         directory::restore(conn, blobs, b, &cursor, access, stop.clone()).await?;
                     } else if b.source.spec().driver == sinex_sources::Driver::SqliteRows {
                         restore_sqlite(conn, blobs, b, &cursor, access).await?;
+                    } else if b.source.spec().driver == sinex_sources::Driver::AppendFile {
+                        let tail = append::completed_tail(
+                            conn,
+                            blobs,
+                            &*b.source,
+                            &cursor,
+                            access.authority,
+                            stop.clone(),
+                        )
+                        .await?;
+                        b.reader.remember_append(tail).map_err(|e| e.to_string())?;
                     } else if b.source.spec().driver == sinex_sources::Driver::ApiCursor
                         && restore_material(conn, blobs, b, &cursor, access).await?
                     {
                         // The reader owns this exact retained answer until admission finishes.
-                    } else {
-                        b.reader
-                            .remember(&stored_chain(conn, blobs, &cursor).await?);
                     }
                 }
                 b.remembered = true;

@@ -109,3 +109,50 @@ fn checked_plain_copy_stops_after_its_consumer_cancels() {
 }
 
 mod group_readback;
+
+#[test]
+fn scoped_plain_seek_owns_verified_bytes_and_rechecks_cancellation_on_cached_reads() {
+    use std::io::{Read, Seek, SeekFrom};
+    use std::sync::atomic::{AtomicBool, Ordering};
+    let dir = std::env::temp_dir().join(format!("sinex-plain-seek-{}", uuid::Uuid::now_v7()));
+    let blobs = Blobs::open(&dir).unwrap();
+    let bytes = b"first record\nsecond record\nthird record\n";
+    let name = blobs.put(bytes).unwrap();
+    assert!(
+        blobs
+            .read_plain_seek(&name, bytes.len() as u64 + 1, || Ok(()))
+            .is_err()
+    );
+    let key = crate::sealed::new_key().unwrap();
+    let sealed = blobs.put_sealed(bytes, &key).unwrap();
+    assert!(
+        blobs
+            .read_plain_seek(&sealed, bytes.len() as u64, || Ok(()))
+            .is_err()
+    );
+    let cancelled = Arc::new(AtomicBool::new(false));
+    let check = cancelled.clone();
+    let mut reader = blobs
+        .read_plain_seek(&name, bytes.len() as u64, move || {
+            if check.load(Ordering::Relaxed) {
+                return Err(hashed_blobs::Error::Io(std::io::Error::other("cancelled")));
+            }
+            Ok(())
+        })
+        .unwrap();
+    drop(blobs);
+    reader.seek(SeekFrom::Start(13)).unwrap();
+    let mut record = [0; 14];
+    reader.read_exact(&mut record).unwrap();
+    assert_eq!(&record, b"second record\n");
+    reader.seek(SeekFrom::End(-13)).unwrap();
+    let mut end = Vec::new();
+    reader.read_to_end(&mut end).unwrap();
+    assert_eq!(end, b"third record\n");
+    assert!(reader.seek(SeekFrom::Start(0)).is_ok());
+    cancelled.store(true, Ordering::Relaxed);
+    assert!(reader.read(&mut record).is_err());
+    assert!(reader.seek(SeekFrom::Start(0)).is_err());
+    drop(reader);
+    std::fs::remove_dir_all(dir).unwrap();
+}

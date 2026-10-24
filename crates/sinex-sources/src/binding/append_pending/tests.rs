@@ -1,6 +1,8 @@
 use super::*;
+use crate::Framer;
 use crate::drain::RecordRead;
 use crate::drivers::append_file::{Cursor, lines};
+use sinex_model::MaterialId;
 use std::sync::atomic::{AtomicBool, Ordering};
 struct Body {
     bytes: Vec<u8>,
@@ -23,14 +25,11 @@ impl RecordRead for Body {
     }
 }
 fn reader(path: &Path) -> Box<dyn Reader> {
-    super::super::appended(
-        AppendFile {
-            path: path.to_owned(),
-            host: "h".into(),
-            framer: Framer::incremental(lines),
-        },
-        Framer::incremental(lines),
-    )
+    super::super::appended(AppendFile {
+        path: path.to_owned(),
+        host: "h".into(),
+        framer: Framer::incremental(lines),
+    })
 }
 fn resume(
     acquired: &Acquired,
