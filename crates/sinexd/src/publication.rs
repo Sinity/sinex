@@ -1,7 +1,10 @@
-//! One native material publication owns its private stages through installation
+//! One source material publication owns its private stages through installation
 //! and the first durable Writer response. Cancellation cannot strand readable
 //! bytes without the reservation that names their exact original version.
-use super::AcquisitionGuard;
+mod authored;
+pub(crate) use authored::{resume_authored, submit_authored};
+
+use crate::source_excision::AcquisitionGuard;
 use crate::writer::{NativePermit, WriteError};
 use sinex_model::{Batch, BatchKind};
 use sinex_sources::drivers::MaterialSink;
@@ -96,6 +99,18 @@ impl Verification {
     }
     fn body(&self, blobs: &Blobs, pending: &native_materials::Pending) -> Result<(), String> {
         self.check()?;
+        for (blob, length) in
+            native_materials::citation_set(&pending.cited).map_err(|e| e.to_string())?
+        {
+            let check = self.queued_check();
+            let mut body = blobs
+                .read_plain(&blob, Some(length), move || {
+                    check().map_err(std::io::Error::other).map_err(Into::into)
+                })
+                .map_err(|e| e.to_string())?;
+            std::io::copy(&mut body, &mut std::io::sink()).map_err(|e| e.to_string())?;
+            self.check()?;
+        }
         let Some(material) = &pending.progress.material else {
             return Ok(());
         };
@@ -246,6 +261,24 @@ impl Publication {
         if let Err(error) = self.verification.check() {
             let _ = self.guard.release().await;
             return Err(WriteError::Refused(error));
+        }
+        let cited = self
+            .batch
+            .events()
+            .flat_map(|event| event.cites.iter().cloned())
+            .collect::<Vec<_>>();
+        let citations = native_materials::citation_set(&cited).and_then(|actual| {
+            let expected = native_materials::citation_set(&self.pending.cited)?;
+            if actual != expected {
+                return Err(sinex_store::Error::Invalid(
+                    "prepared citations differ from frozen publication".into(),
+                ));
+            }
+            Ok(())
+        });
+        if let Err(error) = citations {
+            let _ = self.guard.release().await;
+            return Err(refuse(&error));
         }
         // Reserve with an awaited transaction end. A cancellation after this
         // point cannot drop the private handles: this owned task finishes them.

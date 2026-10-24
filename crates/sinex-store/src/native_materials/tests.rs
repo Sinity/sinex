@@ -59,6 +59,7 @@ async fn pending(conn: &mut PgConnection, source: &str, blob: &str, length: u64)
         binding: source.into(),
         progress,
         removed: Vec::new(),
+        cited: Vec::new(),
         image: None,
         base_cursor: Value::Null,
         base_carry: Value::Null,
@@ -270,4 +271,97 @@ async fn deletion_winning_before_reservation_leaves_explicit_missing_custody_unt
     reservation(&mut conn, &b).await;
     admission(&mut conn, &b).await.unwrap();
     assert_eq!(blobs.read(&name).unwrap(), bytes);
+}
+
+#[tokio::test]
+async fn citation_publication_versions_and_projection_fail_closed_without_changing_legacy_ownership()
+ {
+    let (_db, mut conn) = testdb::fresh().await;
+    let directory = tempfile::tempdir().unwrap();
+    let blobs = Blobs::open(directory.path()).unwrap();
+    let body = blobs.put(b"record\n").unwrap();
+    let mut current = pending(&mut conn, "current", &body, 7).await;
+    let media = format!("blake3:{}", blake3::hash(b"media"));
+    current.cited.push(sinex_model::Cited {
+        blob: media.clone(),
+        size: 5,
+    });
+    reservation(&mut conn, &current).await;
+    let frozen: Value = sqlx::query_scalar(
+        "SELECT publication FROM raw.pending_native_materials WHERE material_id=$1",
+    )
+    .bind(current.material.0)
+    .fetch_one(&mut conn)
+    .await
+    .unwrap();
+    assert_eq!(frozen["version"], 2);
+    assert_eq!(
+        load(&mut conn, current.material)
+            .await
+            .unwrap()
+            .unwrap()
+            .cited,
+        current.cited
+    );
+    for mutate in [
+        "unknown",
+        "legacy-citations",
+        "missing-citations",
+        "wrong-size",
+    ] {
+        let mut changed = frozen.clone();
+        match mutate {
+            "unknown" => changed["version"] = serde_json::json!(99),
+            "legacy-citations" => changed["version"] = serde_json::json!(1),
+            "missing-citations" => {
+                changed.as_object_mut().unwrap().remove("cited");
+            }
+            "wrong-size" => changed["cited"][0]["size"] = serde_json::json!(6),
+            _ => unreachable!(),
+        }
+        let mut tx = conn.begin().await.unwrap();
+        sqlx::query("UPDATE raw.pending_native_materials SET publication=$2 WHERE material_id=$1")
+            .bind(current.material.0)
+            .bind(changed)
+            .execute(&mut *tx)
+            .await
+            .unwrap();
+        assert!(
+            load(&mut tx, current.material).await.is_err(),
+            "accepted {mutate}"
+        );
+        tx.rollback().await.unwrap();
+    }
+    installed(&mut conn, current.material).await.unwrap();
+    assert!(
+        admission(&mut conn, &current).await.is_err(),
+        "first admission discarded frozen media citations"
+    );
+    assert!(load(&mut conn, current.material).await.unwrap().is_some());
+    let legacy = pending(&mut conn, "legacy", &body, 7).await;
+    reservation(&mut conn, &legacy).await;
+    let old: Value = sqlx::query_scalar(
+        "SELECT publication FROM raw.pending_native_materials WHERE material_id=$1",
+    )
+    .bind(legacy.material.0)
+    .fetch_one(&mut conn)
+    .await
+    .unwrap();
+    assert_eq!(old["version"], 1);
+    assert!(old.get("cited").is_none());
+    assert!(
+        load(&mut conn, legacy.material)
+            .await
+            .unwrap()
+            .unwrap()
+            .cited
+            .is_empty()
+    );
+    assert!(
+        citation_set(&[sinex_model::Cited {
+            blob: format!("blake3:{}", "é".repeat(32)),
+            size: 0
+        }])
+        .is_err()
+    );
 }

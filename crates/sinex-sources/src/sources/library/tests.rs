@@ -274,3 +274,85 @@ fn requests_take_author_and_time_from_the_manifest() {
     assert_eq!(events[1].event_type, "library.assignment");
     assert_eq!(events[1].record_state, RecordState::Removed);
 }
+
+#[test]
+fn request_citation_facts_preserve_payload_identity_and_refuse_supplied_invalid_evidence() {
+    let blob = format!("blake3:{}", blake3::hash(b"synthetic preview"));
+    let record = LibraryRecord::Rendition(Rendition {
+        rendition: "r".into(),
+        item: "i".into(),
+        revision: 1,
+        role: sinex_model::event_types::library::RenditionRole::Preview,
+        content: blob.clone(),
+        media_type: "image/webp".into(),
+        width: Some(1),
+        height: Some(1),
+        duration_ms: None,
+        made_from: None,
+        made_with: Default::default(),
+        by: String::new(),
+        at: Timestamp::from_unix_secs(1).unwrap(),
+        withdrawn_at: None,
+    });
+    let acquired = request_material(&[record], "operator", "h", "preview");
+    let material = acquired.material.unwrap();
+    let outcomes = |manifest: &Value| {
+        drain(
+            &RequestParser,
+            DrainInput {
+                erased: None,
+                source: REQUEST.name,
+                class: Class::Open,
+                material: material.id,
+                bytes: material.bytes.as_slice().into(),
+                records: &material.records,
+                carry: Value::Null,
+                reading_order: &*material.reading_order,
+                limits: Limits::default(),
+                manifest,
+            },
+        )
+        .unwrap()
+        .into_iter()
+        .flat_map(|chunk| chunk.outcomes)
+        .collect::<Vec<_>>()
+    };
+    let original = outcomes(&material.manifest);
+    let RecordOutcome::Events { events: old, .. } = &original[0] else {
+        panic!()
+    };
+    assert!(
+        old[0].cites.is_empty(),
+        "old absent facts do not invent media ownership"
+    );
+    let citation = sinex_model::Cited {
+        blob: blob.clone(),
+        size: 17,
+    };
+    let mut manifest = material.manifest.clone();
+    manifest["cited_blobs"] = json!([citation]);
+    let current = outcomes(&manifest);
+    let RecordOutcome::Events { events: new, .. } = &current[0] else {
+        panic!()
+    };
+    assert_eq!(new[0].cites, vec![citation]);
+    assert_eq!(new[0].payload, old[0].payload);
+    assert_eq!(new[0].equivalence_key, old[0].equivalence_key);
+    assert_eq!(new[0].record_hash, old[0].record_hash);
+    assert_eq!(new[0].reading_order, old[0].reading_order);
+    for invalid in [
+        Value::Null,
+        json!([]),
+        json!([{}]),
+        json!("opaque"),
+        json!([{"blob":blob,"size":17},{"blob":blob,"size":17}]),
+        json!([{"blob":"blake3:invalid","size":17}]),
+        json!([{"blob":format!("blake3:{}",blake3::hash(b"different")),"size":17}]),
+    ] {
+        manifest["cited_blobs"] = invalid;
+        assert!(matches!(
+            &outcomes(&manifest)[0],
+            RecordOutcome::Failure { .. }
+        ));
+    }
+}

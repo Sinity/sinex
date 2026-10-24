@@ -112,18 +112,22 @@ impl Library<'_> {
         let blobs = self.blobs.clone();
         let out = std::env::temp_dir().join(format!("sinex-preview-{}.webp", items::new_id()));
         let o = out.clone();
-        let (content, w, h) =
-            tokio::task::spawn_blocking(move || -> R<(String, Option<u32>, Option<u32>)> {
+        let (stage, w, h) = tokio::task::spawn_blocking(
+            move || -> R<(sinex_store::blobs::PreparedPlain, Option<u32>, Option<u32>)> {
                 render::make_preview(&input, &o)?;
                 let d = library_source::digest(&o).map_err(e)?;
                 let (w, h, _) = library_source::dimensions(&d.head, &d.media_type);
                 let file = std::fs::File::open(&o).map_err(e)?;
-                let name = blobs.put_reader(std::io::BufReader::new(file)).map_err(e)?;
+                let stage = blobs
+                    .prepare_plain(std::io::BufReader::new(file))
+                    .map_err(e)?;
                 let _ = std::fs::remove_file(&o);
-                Ok((name, w, h))
-            })
-            .await
-            .map_err(e)??;
+                Ok((stage, w, h))
+            },
+        )
+        .await
+        .map_err(e)??;
+        let content = stage.name();
         let r = Rendition {
             rendition: items::new_id(),
             item: item.to_owned(),
@@ -141,8 +145,13 @@ impl Library<'_> {
             withdrawn_at: None,
         };
         let id = r.rendition.clone();
-        self.write(vec![LibraryRecord::Rendition(r)], actor, "preview")
-            .await?;
+        self.write_staged(
+            vec![LibraryRecord::Rendition(r)],
+            actor,
+            "preview",
+            vec![stage],
+        )
+        .await?;
         Ok(json!({ "item": item, "rendition": id, "content": content, "width": w, "height": h }))
     }
 }

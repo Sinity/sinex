@@ -1,9 +1,7 @@
 //! One scoped native acquisition owns preparation, publication and first admission.
 use super::*;
-use crate::source_excision::{
-    AcquisitionGuard, AcquisitionPolicy, Filtered,
-    publication::{ImageVerification, NativeStage, Publication, StagingSink, Verification},
-};
+use crate::publication::{ImageVerification, NativeStage, Publication, StagingSink, Verification};
+use crate::source_excision::{AcquisitionGuard, AcquisitionPolicy, Filtered};
 use sinex_model::{BatchKind, Class};
 use sinex_store::native_materials::{self, Pending, PendingImage};
 use std::sync::Arc;
@@ -363,6 +361,7 @@ impl Pipeline<'_> {
                         progress: (**progress).clone(),
                         removed: native_materials::removal_plan(&batch.archive)
                             .map_err(|e| e.to_string())?,
+                        cited: Vec::new(),
                         image: image_plan.take(),
                         base_cursor: cursor.clone(),
                         base_carry: base_carry.clone(),

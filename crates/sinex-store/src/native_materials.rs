@@ -21,6 +21,7 @@ pub struct Pending {
     pub binding: String,
     pub progress: SourceProgress,
     pub removed: Vec<sinex_model::RecordLocation>,
+    pub cited: Vec<sinex_model::Cited>,
     pub image: Option<PendingImage>,
     pub base_cursor: Value,
     pub base_carry: Value,
@@ -90,6 +91,8 @@ struct Publication {
     erased_replay: Option<Replay>,
     basis: Basis,
     removed: Vec<sinex_model::RecordLocation>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    cited: Vec<sinex_model::Cited>,
 }
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -259,6 +262,7 @@ fn encode(p: &SourceProgress) -> Result<Value> {
     let publication = Publication {
         version: 1,
         removed: Vec::new(),
+        cited: Vec::new(),
         input: p.input.clone(),
         observation: p.observation.clone(),
         revision: p.revision,
@@ -279,29 +283,27 @@ fn encode(p: &SourceProgress) -> Result<Value> {
     };
     serde_json::to_value(publication).map_err(|_| invalid("native publication cannot encode"))
 }
-fn decode(
-    v: Value,
-    binding: &str,
-    cursor: &Value,
-    carry: &Value,
-) -> Result<(
-    SourceProgress,
-    Option<PendingImage>,
-    Vec<sinex_model::RecordLocation>,
-)> {
+struct Decoded {
+    progress: SourceProgress,
+    image: Option<PendingImage>,
+    removed: Vec<sinex_model::RecordLocation>,
+    cited: Vec<sinex_model::Cited>,
+}
+fn decode(v: Value, binding: &str, cursor: &Value, carry: &Value) -> Result<Decoded> {
     let p: Publication =
         serde_json::from_value(v).map_err(|_| invalid("invalid native publication format"))?;
-    if p.version != 1 {
+    if !matches!(p.version, 1 | 2) || (p.version == 1 && !p.cited.is_empty()) {
         return Err(invalid("unsupported native publication version"));
     }
+    citation_set(&p.cited)?;
     let image = p.image.map(unimage).transpose()?;
     let pending_image = image
         .as_ref()
         .filter(|(_, resolved)| !*resolved)
         .map(|(i, _)| PendingImage::AwaitingCosts(i.clone()));
     let image = image.filter(|(_, resolved)| *resolved).map(|(i, _)| i);
-    Ok((
-        SourceProgress {
+    Ok(Decoded {
+        progress: SourceProgress {
             native_pending: None,
             erased_replay: p
                 .erased_replay
@@ -326,12 +328,18 @@ fn decode(
             cursor: cursor.clone(),
             carry: carry.clone(),
         },
-        pending_image,
-        p.removed,
-    ))
+        image: pending_image,
+        removed: p.removed,
+        cited: p.cited,
+    })
 }
 fn encode_pending(p: &Pending) -> Result<Value> {
     let mut encoded = encode(&p.progress)?;
+    if !p.cited.is_empty() {
+        encoded["version"] = serde_json::json!(2);
+        encoded["cited"] = serde_json::to_value(&p.cited)
+            .map_err(|_| invalid("native citations cannot encode"))?;
+    }
     encoded["removed"] = serde_json::to_value(&p.removed)
         .map_err(|_| invalid("native removal plan cannot encode"))?;
     if let Some(PendingImage::AwaitingCosts(i)) = &p.image {
@@ -420,6 +428,12 @@ fn blob_references(publication: Value) -> Result<BTreeMap<String, Option<i64>>> 
     if let Some(replay) = p.erased_replay {
         add(replay.blob, Some(replay.length))?;
     }
+    if !matches!(p.version, 1 | 2) || (p.version == 1 && !p.cited.is_empty()) {
+        return Err(invalid("unsupported native publication citation format"));
+    }
+    for citation in p.cited {
+        add(citation.blob, Some(citation.size))?;
+    }
     Ok(refs)
 }
 
@@ -473,6 +487,7 @@ async fn validate_blob_references(conn: &mut PgConnection, pending: &Pending) ->
 /// prepared plain handles install any public CAS names.
 pub async fn reserve(conn: &mut PgConnection, pending: &Pending) -> Result<()> {
     sinex_schema::require_current(conn).await?;
+    citation_set(&pending.cited)?;
     if pending_primary(pending) != Some(pending.material)
         || pending.progress.binding != pending.binding
         || pending
@@ -580,8 +595,12 @@ pub async fn load(conn: &mut PgConnection, material: MaterialId) -> Result<Optio
                 end_cursor,
                 state,
             )| {
-                let (progress, image, removed) =
-                    decode(publication, &binding, &start_cursor, &base_carry)?;
+                let Decoded {
+                    progress,
+                    image,
+                    removed,
+                    cited,
+                } = decode(publication, &binding, &start_cursor, &base_carry)?;
                 if primary(&progress).or_else(|| {
                     image
                         .as_ref()
@@ -600,6 +619,7 @@ pub async fn load(conn: &mut PgConnection, material: MaterialId) -> Result<Optio
                     binding,
                     progress,
                     removed,
+                    cited,
                     image,
                     base_cursor,
                     base_carry,
@@ -706,6 +726,7 @@ pub(crate) async fn validate(
     conn: &mut PgConnection,
     p: &SourceProgress,
     archive: &[sinex_model::ArchiveRequest],
+    cited: &[sinex_model::Cited],
 ) -> Result<()> {
     let Some(id) = p.native_pending else {
         if sqlx::query_scalar::<_, bool>(
@@ -734,6 +755,7 @@ pub(crate) async fn validate(
         || pending.binding != p.binding
         || primary(p) != Some(id)
         || pending.removed != removal_plan(archive)?
+        || citation_set(&pending.cited)? != citation_set(cited)?
         || encode(&pending.progress)? != encode(p)?
     {
         return Err(invalid(
@@ -744,6 +766,18 @@ pub(crate) async fn validate(
 }
 pub(crate) async fn complete(conn: &mut PgConnection, p: &SourceProgress) -> Result<()> {
     if let Some(id) = p.native_pending {
+        let pending = load(conn, id)
+            .await?
+            .ok_or_else(|| invalid("native completion lost its publication"))?;
+        for blob in citation_set(&pending.cited)?.keys() {
+            let ready:bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM core.event_blobs WHERE blob=$1) OR EXISTS(SELECT 1 FROM raw.materials WHERE blob=$1 OR erased_replay_blob=$1) OR EXISTS(SELECT 1 FROM raw.revision_extents WHERE blob=$1)")
+                .bind(blob).fetch_one(&mut *conn).await?;
+            if !ready {
+                return Err(invalid(
+                    "cited media lacks ready ownership after admission; retain pending custody",
+                ));
+            }
+        }
         let rows=sqlx::query("DELETE FROM raw.pending_native_materials WHERE material_id=$1 AND binding=$2 AND state='installed'").bind(id.0).bind(&p.binding).execute(conn).await?;
         if rows.rows_affected() != 1 {
             return Err(invalid("native publication completion lost its owner"));
@@ -754,3 +788,20 @@ pub(crate) async fn complete(conn: &mut PgConnection, p: &SourceProgress) -> Res
 
 #[cfg(test)]
 mod tests;
+
+/// Citation custody freezes unique names and exact decoded lengths before install.
+pub fn citation_set(cited: &[sinex_model::Cited]) -> Result<BTreeMap<String, u64>> {
+    let mut result = BTreeMap::new();
+    for citation in cited {
+        if i64::try_from(citation.size).is_err() || crate::blobs::parse(&citation.blob).is_err() {
+            return Err(invalid("invalid native cited blob"));
+        }
+        if result
+            .insert(citation.blob.clone(), citation.size)
+            .is_some_and(|old| old != citation.size)
+        {
+            return Err(invalid("native citation lengths conflict"));
+        }
+    }
+    Ok(result)
+}

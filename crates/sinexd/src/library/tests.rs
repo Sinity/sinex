@@ -12,6 +12,8 @@ use std::sync::Arc;
 
 struct World {
     _db: devkit::pg::TestDatabase,
+    url: String,
+    task: tokio::task::JoinHandle<()>,
     conn: PgConnection,
     writer: writer::WriterHandle,
     blobs: Blobs,
@@ -19,9 +21,10 @@ struct World {
 }
 
 async fn world() -> World {
-    let (db, url, connection) = crate::testdb::fresh().await;
-    let (handle, queues) = writer::channels();
-    tokio::spawn(writer::run(
+    let (db, url, mut connection) = crate::testdb::fresh().await;
+    let (handle, queues) = writer::channels_for(&url);
+    writer::claim(&mut connection).await.unwrap();
+    let task = tokio::spawn(writer::run(
         url.clone(),
         connection,
         queues,
@@ -37,6 +40,8 @@ async fn world() -> World {
     let root = std::fs::canonicalize(root).unwrap();
     World {
         _db: db,
+        url,
+        task,
         conn,
         writer: handle,
         blobs: Blobs::open(&base.join("store")).unwrap(),
@@ -45,6 +50,44 @@ async fn world() -> World {
 }
 
 impl World {
+    async fn restart(self) -> Self {
+        let Self {
+            _db,
+            url,
+            task,
+            conn,
+            writer,
+            blobs,
+            root,
+        } = self;
+        drop(writer);
+        task.await.unwrap();
+        drop(conn);
+        let mut connection = <PgConnection as sqlx::Connection>::connect(&url)
+            .await
+            .unwrap();
+        writer::claim(&mut connection).await.unwrap();
+        let (writer, queues) = writer::channels_for(&url);
+        let task = tokio::spawn(writer::run(
+            url.clone(),
+            connection,
+            queues,
+            Arc::new(sinex_store::NoDerivations),
+        ));
+        let conn = <PgConnection as sqlx::Connection>::connect(&url)
+            .await
+            .unwrap();
+        Self {
+            _db,
+            url,
+            task,
+            conn,
+            writer,
+            blobs,
+            root,
+        }
+    }
+
     async fn run(&mut self, request: Request) -> Result<Value, String> {
         dispatch(
             &mut self.conn,
@@ -351,6 +394,14 @@ async fn the_library_end_to_end() {
 
     if ffmpeg() {
         let p = w.ok(Request::LibraryPreview { item: ia.clone() }).await;
+        let preview = p["content"].as_str().unwrap();
+        assert!(w.blobs.contains(preview).unwrap());
+        let owners: i64 = sqlx::query_scalar("SELECT count(*) FROM core.event_blobs WHERE blob=$1")
+            .bind(preview)
+            .fetch_one(&mut w.conn)
+            .await
+            .unwrap();
+        assert_eq!(owners, 1, "rendered preview has no retained owner");
         assert!(p["width"].as_u64().unwrap() <= 512);
         let view = w.ok(Request::LibraryItem { item: ia.clone() }).await;
         assert!(
@@ -558,3 +609,5 @@ async fn library_add_through_an_alias_keeps_one_canonical_acquisition() {
     assert_eq!(count, 1);
     std::fs::remove_dir_all(w.root.parent().unwrap()).unwrap();
 }
+
+mod custody;

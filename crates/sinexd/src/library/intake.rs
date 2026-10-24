@@ -1,14 +1,12 @@
 //! Intake: scanning a library root and making or continuing items from what
 //! the scan saw.
 use super::{INTAKE, Library, R, e};
-use crate::one_shot::Sink;
-use crate::writer::Priority;
 use serde_json::{Value, json};
 use sinex_library::{items, reads};
+use sinex_model::Timestamp;
 use sinex_model::event_types::library::{Acquisition, Item, LibraryRecord};
-use sinex_model::{RunId, Timestamp};
+use sinex_sources::drivers;
 use sinex_sources::sources::library as library_source;
-use sinex_sources::{Limits, drivers};
 use sqlx::PgConnection;
 use std::collections::HashMap;
 use std::path::Path;
@@ -34,6 +32,14 @@ impl Library<'_> {
             (parent, Some(name))
         };
         let root_text = root.display().to_string();
+        let binding = format!("library.scan:{root_text}@{}", self.host);
+        let recovered = crate::publication::resume_authored(
+            self.writer,
+            self.blobs,
+            std::sync::Arc::new(library_source::scan_source()),
+            &binding,
+        )
+        .await?;
         // Seed the scan's state from what is already admitted, so a second
         // add of the same root hashes only what changed.
         let known = reads::acquisitions(conn, self.host, &root_text)
@@ -58,7 +64,6 @@ impl Library<'_> {
                     ))
                 }),
         );
-        let binding = format!("library.scan:{root_text}@{}", self.host);
         let mut cursor = sinex_store::positions::load(conn, &binding)
             .await
             .ok()
@@ -79,8 +84,7 @@ impl Library<'_> {
             let s = scan.clone();
             let mut m = state.take().expect("state is returned each poll");
             let c = cursor.clone();
-            let sink = Sink(self.blobs.clone());
-            let b = binding.clone();
+            let sink = crate::publication::StagingSink::new(self.blobs.clone());
             let (m, out) = tokio::task::spawn_blocking(move || {
                 let acquired = s.poll(&c, &mut m, &sink);
                 let out = acquired.and_then(|a| {
@@ -97,27 +101,25 @@ impl Library<'_> {
                             ))
                         })
                         .transpose()?;
-                    let batches = drivers::batches(
-                        &library_source::scan_source(),
-                        &b,
-                        RunId::new(),
-                        a,
-                        Value::Null,
-                        &sink,
-                        Limits::default(),
-                    )?;
-                    Ok((next, batches))
+                    let stages = sink.take().map_err(drivers::DriverError::Store)?;
+                    Ok((next, a, stages))
                 });
                 (m, out)
             })
             .await
             .map_err(e)?;
             state = Some(m);
-            let (next, batches) = out.map_err(e)?;
-            for b in batches {
-                let o = self.writer.submit(Priority::Bulk, b).await.map_err(e)?;
-                seen += o.admitted + o.replaced;
-            }
+            let (next, acquired, stages) = out.map_err(e)?;
+            let published = crate::publication::submit_authored(
+                self.writer,
+                self.blobs,
+                std::sync::Arc::new(library_source::scan_source()),
+                &binding,
+                acquired,
+                stages,
+            )
+            .await?;
+            seen += published.outcome.admitted + published.outcome.replaced;
             match next {
                 Some((c, records)) => {
                     cursor = c;
@@ -179,6 +181,7 @@ impl Library<'_> {
         }
         Ok(json!({
             "root": root_text,
+            "recovered_prior": recovered,
             "stored_bytes": !reference,
             "files_described": files,
             "acquisitions_admitted": seen,

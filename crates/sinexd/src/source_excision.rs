@@ -1,6 +1,6 @@
 //! Source acquisition applies permanent exclusions before retaining readable bytes.
 mod guard;
-pub(crate) mod publication;
+use crate::publication;
 use crate::sealed_access::Authority;
 pub(crate) use guard::AcquisitionGuard;
 use sinex_model::{Event, ExcisionBasis, MaterialId};
@@ -24,6 +24,8 @@ pub(crate) struct AcquisitionPolicy {
     hashes: BTreeSet<(String, [u8; 32])>,
     locations: BTreeSet<(MaterialId, u64)>,
     authority: Option<Authority>,
+    media_complete: bool,
+    media: std::collections::BTreeMap<String, u64>,
 }
 impl AcquisitionPolicy {
     pub async fn load(
@@ -42,6 +44,8 @@ impl AcquisitionPolicy {
             hashes: BTreeSet::new(),
             locations: BTreeSet::new(),
             authority: authority.cloned(),
+            media_complete: true,
+            media: Default::default(),
         };
         if operations.is_empty() {
             return Ok(policy);
@@ -84,6 +88,22 @@ impl AcquisitionPolicy {
         let mut materials = BTreeSet::new();
         let mut plain = false;
         for (operation, scope) in scopes {
+            match excision::cited_media(&scope, source).map_err(|e| e.to_string())? {
+                None => policy.media_complete = false,
+                Some(cited) => {
+                    for (blob, size) in sinex_store::native_materials::citation_set(&cited)
+                        .map_err(|e| e.to_string())?
+                    {
+                        if policy
+                            .media
+                            .insert(blob, size)
+                            .is_some_and(|old| old != size)
+                        {
+                            return Err("excluded media has contradictory lengths".into());
+                        }
+                    }
+                }
+            }
             if scope["record_domains_version"] == 1 {
                 let domains = scope["record_domains"]
                     .as_array()
@@ -224,6 +244,26 @@ impl AcquisitionPolicy {
             .collect()
     }
 
+    pub fn check_cited(&self, cited: &[sinex_model::Cited]) -> Result<(), String> {
+        if cited.is_empty() {
+            return Ok(());
+        }
+        if !self.media_complete {
+            return Err(
+                "historical cited media exclusion evidence is unavailable for this source".into(),
+            );
+        }
+        for blob in sinex_store::native_materials::citation_set(cited)
+            .map_err(|e| e.to_string())?
+            .keys()
+        {
+            if self.media.contains_key(blob) {
+                return Err("cited media matches a permanent exclusion for this source".into());
+            }
+        }
+        Ok(())
+    }
+
     pub fn excludes(
         &self,
         material: MaterialId,
@@ -290,6 +330,7 @@ async fn verify_plain(
         sinex_sources::Driver::AppendFile
             | sinex_sources::Driver::SqliteRows
             | sinex_sources::Driver::DirSnapshot
+            | sinex_sources::Driver::ApiRequest
     ) || excision::unsupported_ingress(conn, source)
         .await
         .map_err(|e| e.to_string())?
@@ -546,6 +587,12 @@ impl AcquisitionPolicy {
                     RecordOutcome::Failure { location, .. } => (location, Vec::new(), true),
                     _ => return Err("native parser outcome lacks its exact record location".into()),
                 };
+                self.check_cited(
+                    &events
+                        .iter()
+                        .flat_map(|event| event.cites.iter().cloned())
+                        .collect::<Vec<_>>(),
+                )?;
                 let anchor = usize::try_from(location.anchor)
                     .map_err(|_| "record anchor exceeds address space")?;
                 let index = material
@@ -562,6 +609,9 @@ impl AcquisitionPolicy {
                     .record_hash(&raw, &context)
                     .map_err(|e| e.to_string())?;
                 if self.excludes(material.id, location.anchor, &raw, hash, &events)? {
+                    if source.spec().driver == sinex_sources::Driver::ApiRequest {
+                        return Err("authored request matches a permanent exclusion".into());
+                    }
                     if input.registered {
                         return Err("retained pending material still needs its authoritative exclusion replacement".into());
                     }
