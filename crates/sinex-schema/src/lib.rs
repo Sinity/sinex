@@ -271,15 +271,31 @@ pub async fn apply(connection: &mut PgConnection) -> Result<Applied, Error> {
         return Err(Error::Unversioned);
     }
     let mut tx = connection.begin().await?;
+    match create_schema(&mut tx).await {
+        Ok(()) => {
+            tx.commit().await?;
+            Ok(Applied::Created { version: VERSION })
+        }
+        Err(error) => {
+            // As with upgrades, release failed DDL locks before returning the
+            // borrowed connection, even if its caller performs no more IO.
+            tx.rollback().await?;
+            Err(error)
+        }
+    }
+}
+
+async fn create_schema(connection: &mut PgConnection) -> Result<(), Error> {
     for statement in declarations() {
-        tx.execute(statement.as_str())
+        connection
+            .execute(statement.as_str())
             .await
             .map_err(|e| sqlx::Error::Protocol(format!("{e}\nin statement: {statement}")))?;
     }
     for version in 0..=VERSION {
         sqlx::query("INSERT INTO sinex_schema.applied (version) VALUES ($1)")
             .bind(version)
-            .execute(&mut *tx)
+            .execute(&mut *connection)
             .await?;
     }
     for (name, schema, key_kind, fields, replace) in registry_rows() {
@@ -291,11 +307,10 @@ pub async fn apply(connection: &mut PgConnection) -> Result<Applied, Error> {
         .bind(key_kind)
         .bind(fields)
         .bind(replace)
-        .execute(&mut *tx)
+        .execute(&mut *connection)
         .await?;
     }
-    tx.commit().await?;
-    Ok(Applied::Created { version: VERSION })
+    Ok(())
 }
 
 /// The PostgreSQL schemas Sinex owns, in creation order.

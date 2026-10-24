@@ -1,3 +1,7 @@
+[profile.default]
+slow-timeout = { period = "30s", terminate-after = 4 }
+fail-fast = false
+
 # The crash harness runs whole backfills against the development PostgreSQL,
 # whose data lives on a few-GB tmpfs shared with other work; four at a time
 # keep its databases within that.
@@ -7,5 +11,3 @@ crash = { max-threads = 4 }
 [[profile.default.overrides]]
 filter = "binary(crash)"
 test-group = "crash"
-# Two or three whole debug-build backfills each: minutes on a busy host.
-slow-timeout = { period = "120s", terminate-after = 5 }

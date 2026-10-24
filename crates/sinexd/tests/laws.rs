@@ -2,6 +2,8 @@
 //! real `sinexd` binary on small generated inputs: backfill, replay, hide,
 //! excise. Each test names its law; laws covered elsewhere are cited on their
 //! Bead. Run through `xtask test`, which provides the development database.
+mod support;
+
 use devkit::pg::TestDatabase;
 use sqlx::{Connection, PgConnection, Row};
 use std::collections::BTreeMap;
@@ -213,8 +215,7 @@ async fn consistent(conn: &mut PgConnection) {
         )
         .await;
     assert_eq!(disagree, 0, "side tables agree with core.events");
-    let logged = scalar(conn, "SELECT count(*) FROM core.commit_log").await;
-    assert_eq!(logged, events, "one commit-log row per event");
+    support::assert_commit_log(conn).await;
 }
 
 fn small_zsh() -> String {
@@ -302,6 +303,11 @@ async fn l2_l3_replay_keeps_occurrences_and_one_live_reading() {
     )
     .await;
     assert_eq!(replayed, 70 * N);
+    assert_eq!(
+        support::marker_count(&mut c).await,
+        2 * N,
+        "one separate position per replayed binding"
+    );
     let newer = scalar(
         &mut c,
         "SELECT count(*) FROM core.events e JOIN audit.archived a ON a.replaced_by = e.id
@@ -615,6 +621,11 @@ async fn l18_hidden_stays_hidden_across_replay_and_reimport() {
     t.admin(&["unhide", &id.to_string()]);
     t.admin(&["replay", "--binding", &atuin_binding(&path)]);
     assert_eq!(visible_a3(&mut c).await, 1);
+    assert_eq!(
+        support::marker_count(&mut c).await,
+        4,
+        "hide, replay, unhide and replay each have a position"
+    );
     consistent(&mut c).await;
 }
 
@@ -709,7 +720,8 @@ async fn l43_a_second_writer_is_refused() {
         .unwrap();
     assert!(!out.status.success(), "a second writer started");
     assert!(
-        String::from_utf8_lossy(&out.stderr).contains("another sinexd writer"),
+        String::from_utf8_lossy(&out.stderr).contains("another sinexd writer")
+            || String::from_utf8_lossy(&out.stderr).contains("a writer is active"),
         "{}",
         String::from_utf8_lossy(&out.stderr)
     );

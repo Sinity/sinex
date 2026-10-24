@@ -9,6 +9,8 @@
 //! in the same state as a run that was never interrupted: the same live
 //! readings, no reading twice, every event live or archived, the commit log
 //! dense, every stored material's bytes present.
+mod support;
+
 use devkit::pg::TestDatabase;
 use sqlx::{Connection, PgConnection, Row};
 use std::collections::BTreeMap;
@@ -241,8 +243,7 @@ async fn consistent(target: &Target) {
     )
     .await;
     assert_eq!(dangling, 0, "live readings point at live events");
-    let logged = scalar(&mut c, "SELECT count(*) FROM core.commit_log").await;
-    assert_eq!(logged, events, "one commit-log row per event");
+    support::assert_commit_log(&mut c).await;
     let seq = scalar(
         &mut c,
         "SELECT value FROM core.counters WHERE name = 'commit_seq'",
@@ -438,6 +439,11 @@ async fn replay_survives(lock_sql: &str) {
     finish(&mut target.replay(&["--binding", &inputs.zsh_binding()]));
     consistent(&target).await;
     assert_eq!(state(&mut target.connect().await).await, expected);
+    assert_eq!(
+        support::marker_count(&mut target.connect().await).await,
+        1,
+        "the retried replay archives its chain once"
+    );
 }
 
 macro_rules! replay_steps {
@@ -479,6 +485,7 @@ async fn an_interrupted_replay_resumes_where_it_stopped() {
     )
     .await;
     consistent(&target).await;
+    assert_eq!(support::marker_count(&mut target.connect().await).await, 1);
     let mut c = target.connect().await;
     let operation: uuid::Uuid =
         sqlx::query_scalar("SELECT id FROM core.operations WHERE kind = 'replay'")
@@ -488,6 +495,7 @@ async fn an_interrupted_replay_resumes_where_it_stopped() {
     let out = finish(&mut target.replay(&["--resume", &operation.to_string()]));
     assert!(out.contains("chains 1 (skipped as done: 1)"), "{out}");
     consistent(&target).await;
+    assert_eq!(support::marker_count(&mut c).await, 2);
     let after = state(&mut target.connect().await).await;
     assert_eq!(after.live, before.live);
     assert_eq!(
