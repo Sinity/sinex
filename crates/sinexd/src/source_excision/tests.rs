@@ -56,6 +56,7 @@ async fn old_naming_only_exclusions_match_new_epoch_keys_hashes_and_unparsed_byt
         parser_version: 1,
         length: raw.len() as u64,
         whole: true,
+        append_end: None,
     };
     let mut ciphertext = Vec::new();
     metadata::seal_replay(

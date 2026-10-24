@@ -1,10 +1,29 @@
 //! Exact append-part custody; provider changes wait until its final cursor.
 use super::*;
 use crate::drivers::{NewMaterial, RetainedRecords, StoredBytes};
-use sinex_model::{InputRef, MaterialRef, ObservationFacts, RevisionChange};
+use sinex_model::{InputRef, MaterialRef, ObservationFacts, RecordLocation, RevisionChange};
 use std::sync::Arc;
 
 type CursorAt = Arc<dyn Fn(usize) -> Result<Value, DriverError> + Send + Sync>;
+
+/// Created only after the archive owner verifies the purpose-bound replay
+/// envelope. Provider manifest fields have no conversion into this value.
+#[derive(Clone)]
+pub struct ArchivedAppendEnd(Value);
+impl ArchivedAppendEnd {
+    pub fn from_archive(value: Value) -> Result<Self, DriverError> {
+        let end: crate::drivers::append_file::Cursor = serde_json::from_value(value)
+            .map_err(|_| invalid("invalid authenticated append end"))?;
+        if end
+            .window
+            .as_deref()
+            .is_none_or(|w| w.len() != 64 || !w.bytes().all(|b| b.is_ascii_hexdigit()))
+        {
+            return Err(invalid("authenticated final append window is unavailable"));
+        }
+        Ok(Self(serde_json::to_value(end).expect("cursor serializes")))
+    }
+}
 
 /// Archive-owned restoration supplies verified records and the transient short
 /// predecessor tail. The tail is never serialized into a manifest or cursor.
@@ -13,6 +32,8 @@ pub struct AppendResume {
     pub stored: RetainedRecords,
     pub records: Vec<(usize, usize)>,
     pub erased: Option<crate::drain::ErasedTransitions>,
+    pub archived_end: Option<ArchivedAppendEnd>,
+    pub erased_members: Vec<crate::drivers::append_file::ErasedMember>,
     pub base_cursor: Value,
     pub cursor: Value,
     pub head: Vec<u8>,
@@ -33,6 +54,9 @@ pub(super) struct Pending {
     revision: RevisionChange,
     aligned: bool,
     vanished: Vec<sinex_model::RecordLocation>,
+    erased_members: Vec<crate::drivers::append_file::ErasedMember>,
+    physical_records: Vec<(usize, usize)>,
+    erased_tail: Vec<RecordLocation>,
 }
 fn invalid(s: &str) -> DriverError {
     DriverError::Cursor(s.into())
@@ -60,6 +84,7 @@ impl Pending {
                 manifest: m.manifest,
             },
             stored: StoredBytes::FramedMemory(Arc::new(m.bytes)),
+            physical_records: m.records.clone(),
             records: m.records,
             cursor_at: Arc::from(m.cursor_at),
             end,
@@ -69,6 +94,8 @@ impl Pending {
             revision: acquired.revision,
             aligned: m.aligned,
             vanished: m.vanished,
+            erased_members: Vec::new(),
+            erased_tail: Vec::new(),
         })
     }
     pub fn restore(resume: AppendResume) -> Result<Self, DriverError> {
@@ -90,6 +117,26 @@ impl Pending {
         {
             return Err(invalid("stored final append window is unavailable"));
         }
+        let normalized_end = serde_json::to_value(&end).expect("cursor serializes");
+        if resume.stored.bodyless
+            && resume
+                .archived_end
+                .as_ref()
+                .is_none_or(|known| known.0 != normalized_end)
+        {
+            return Err(invalid(
+                "bodyless append final cursor lacks matching authenticated evidence",
+            ));
+        }
+        if resume
+            .archived_end
+            .as_ref()
+            .is_some_and(|known| known.0 != normalized_end)
+        {
+            return Err(invalid(
+                "append final cursor differs from authenticated evidence",
+            ));
+        }
         if resume.stored.bodyless
             && resume
                 .erased
@@ -108,6 +155,7 @@ impl Pending {
             || end.part_index != resume.reference.part_index
             || resume.stored.bytes.length() != resume.reference.length
             || resume.stored.blob != resume.reference.blob
+            || resume.reference.manifest["file_offset"].as_u64() != Some(start.offset)
         {
             return Err(invalid(
                 "append resume cursor differs from retained material",
@@ -124,6 +172,69 @@ impl Pending {
                 return Err(invalid("append resume record ranges are invalid"));
             }
             previous = e;
+        }
+        let physical = resume
+            .records
+            .iter()
+            .copied()
+            .collect::<std::collections::HashSet<_>>();
+        let mut seen = std::collections::BTreeSet::new();
+        for member in &resume.erased_members {
+            let (location, length) = member.coordinates();
+            let start = usize::try_from(location.anchor)
+                .map_err(|_| invalid("erased append anchor exceeds address space"))?;
+            let end = start
+                .checked_add(length)
+                .ok_or_else(|| invalid("erased append span overflow"))?;
+            if location.material != resume.reference.id
+                || !seen.insert(start)
+                || !physical.contains(&(start, end))
+                || resume
+                    .erased
+                    .as_ref()
+                    .is_none_or(|erased| !erased.contains_record(start, end))
+            {
+                return Err(invalid(
+                    "erased append membership differs from authenticated coordinates",
+                ));
+            }
+        }
+        let physical_records = resume.records;
+        let records = match resume.reference.manifest.get("records") {
+            Some(value) => serde_json::from_value::<Vec<(usize, usize)>>(value.clone())
+                .map_err(|_| invalid("invalid stored append reading ranges"))?,
+            None => physical_records.clone(),
+        };
+        let physical = physical_records
+            .iter()
+            .copied()
+            .collect::<std::collections::HashSet<_>>();
+        if records.iter().any(|record| !physical.contains(record)) {
+            return Err(invalid(
+                "append reading ranges differ from physical records",
+            ));
+        }
+        let mut erased_tail = Vec::new();
+        let mut tail_bytes = 0usize;
+        for (count, &(start, end)) in physical_records.iter().rev().enumerate() {
+            if count >= crate::drivers::append_file::STATE_RECORDS
+                || (tail_bytes > 0
+                    && tail_bytes.saturating_add(end - start)
+                        > crate::drivers::append_file::STATE_TAIL)
+            {
+                break;
+            }
+            tail_bytes = tail_bytes.saturating_add(end - start);
+            if resume
+                .erased
+                .as_ref()
+                .is_some_and(|entries| entries.contains_record(start, end))
+            {
+                erased_tail.push(RecordLocation {
+                    material: resume.reference.id,
+                    anchor: start as u64,
+                });
+            }
         }
         let stored = resume.stored.clone();
         let final_cursor = plan["end"].clone();
@@ -160,6 +271,7 @@ impl Pending {
                 material: Some(resume.reference.id),
                 part_index: resume.reference.part_index,
                 through,
+                pending_revision: None,
             })
             .expect("cursor serializes"))
         });
@@ -167,7 +279,9 @@ impl Pending {
         let pending = Self {
             reference: resume.reference,
             stored: StoredBytes::FramedReader(resume.stored),
-            records: resume.records,
+            records,
+            physical_records,
+            erased_tail,
             cursor_at,
             end: final_cursor,
             base: resume.base_cursor,
@@ -176,6 +290,7 @@ impl Pending {
             revision: resume.revision,
             aligned,
             vanished: Vec::new(),
+            erased_members: resume.erased_members,
         };
         pending.complete(&resume.cursor)?;
         Ok(pending)
@@ -193,7 +308,7 @@ impl Pending {
             return Err(invalid("final append cursor differs from frozen evidence"));
         }
         if self
-            .records
+            .physical_records
             .iter()
             .any(|&(start, end)| start < c.through && c.through < end)
         {
@@ -205,41 +320,78 @@ impl Pending {
         let StoredBytes::FramedReader(stored) = &self.stored else {
             return Ok(());
         };
-        if stored.bodyless {
+        if stored.bodyless && self.erased_members.is_empty() {
             return Ok(());
         }
         // Verify a bounded tail before mutating the reader's remembered state.
         let mut tail = Vec::new();
         let mut length = 0usize;
-        for &(start, end) in self.records.iter().rev() {
+        let members = self
+            .erased_members
+            .iter()
+            .map(|member| (member.coordinates().0.anchor, member))
+            .collect::<std::collections::HashMap<_, _>>();
+        for &(start, end) in self.physical_records.iter().rev() {
             if tail.len() >= crate::drivers::append_file::STATE_RECORDS
                 || (length > 0
                     && length.saturating_add(end - start) > crate::drivers::append_file::STATE_TAIL)
             {
                 break;
             }
-            let mut raw = vec![0; end - start];
-            stored
-                .bytes
-                .read_exact_at(start as u64, &mut raw)
-                .map_err(|e| DriverError::Io(e.to_string()))?;
-            tail.push((*blake3::hash(&raw).as_bytes(), raw.len(), start));
-            length = length.saturating_add(raw.len());
+            if let Some(member) = members.get(&(start as u64)) {
+                tail.push((None, Some((*member).clone()), end - start, start));
+            } else {
+                if stored.bodyless {
+                    return Err(invalid("bodyless alignment is missing erased membership"));
+                }
+                let mut raw = vec![0; end - start];
+                stored
+                    .bytes
+                    .read_exact_at(start as u64, &mut raw)
+                    .map_err(|e| DriverError::Io(e.to_string()))?;
+                tail.push((
+                    Some(*blake3::hash(&raw).as_bytes()),
+                    None,
+                    end - start,
+                    start,
+                ));
+            }
+            length = length.saturating_add(end - start);
         }
         if self.aligned
             || matches!(
                 self.revision,
-                RevisionChange::Rewritten | RevisionChange::Truncated
+                RevisionChange::Rewritten | RevisionChange::Truncated | RevisionChange::Replaced
             )
         {
             *state = AppendState::default();
         }
-        for (hash, length, anchor) in tail.into_iter().rev() {
-            state.insert_digest(hash, length, self.reference.id, anchor);
+        let material_known = state.remembers_material(self.reference.id);
+        for (hash, erased, length, anchor) in tail.into_iter().rev() {
+            if let Some(member) = erased {
+                if material_known {
+                    state.remember_erased(member)?;
+                } else {
+                    state.append_erased(member);
+                }
+            } else {
+                state.insert_digest(
+                    hash.expect("ordinary tail digest"),
+                    length,
+                    self.reference.id,
+                    anchor,
+                );
+            }
         }
         Ok(())
     }
 
+    pub fn can_align(&self, state: &AppendState) -> bool {
+        let known = state.erased_locations();
+        self.erased_tail
+            .iter()
+            .all(|location| known.contains(location))
+    }
     pub fn complete(&self, cursor: &Value) -> Result<bool, DriverError> {
         Ok(self.through(cursor)? as u64 == self.reference.length && cursor == &self.end)
     }

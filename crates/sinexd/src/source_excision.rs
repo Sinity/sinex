@@ -122,7 +122,7 @@ impl AcquisitionPolicy {
                 .ok_or("permanent sealed exclusions require explicit scoped unlock authority")?;
             authority.check()?;
             let (_, names) = authority.material_secrets(conn, material).await?;
-            let (parser,version,length,blob):(String,i32,i64,Option<String>)=sqlx::query_as("SELECT parser,parser_version,durable_bytes,erased_replay_blob FROM raw.materials WHERE id=$1")
+            let (parser,version,length,blob,manifest):(String,i32,i64,Option<String>,serde_json::Value)=sqlx::query_as("SELECT parser,parser_version,durable_bytes,erased_replay_blob,manifest FROM raw.materials WHERE id=$1")
                 .bind(material.0).fetch_one(&mut *conn).await.map_err(|e|e.to_string())?;
             let blob =
                 blob.ok_or("exclusion lacks authenticated exact raw-byte matching evidence")?;
@@ -133,6 +133,10 @@ impl AcquisitionPolicy {
                 parser_version: version,
                 length: u64::try_from(length).map_err(|_| "negative excluded material length")?,
                 whole: names.role() == sinex_store::sealed::SecretRole::RecordNamingOnly,
+                append_end: manifest
+                    .get("append_resume")
+                    .and_then(|r| r.get("end"))
+                    .cloned(),
             };
             let check = authority.clone();
             let reader = blobs
@@ -167,6 +171,58 @@ impl AcquisitionPolicy {
         }
         Ok(())
     }
+    pub fn append_members(
+        &self,
+        opened: &crate::retained::Opened,
+    ) -> Result<Vec<sinex_sources::drivers::append_file::ErasedMember>, String> {
+        if opened.metadata.is_empty() {
+            return Ok(Vec::new());
+        }
+        let authority = self
+            .authority
+            .as_ref()
+            .ok_or("erased append alignment requires scoped matching authority")?
+            .clone();
+        authority.check()?;
+        let names = opened
+            .secrets
+            .as_ref()
+            .map(|(_, secrets)| std::sync::Arc::new(secrets.naming_only()))
+            .ok_or("erased append matching has no retained naming capability")?;
+        let matching: sinex_sources::drivers::append_file::RawMatcher =
+            std::sync::Arc::new(move |raw| {
+                authority
+                    .check()
+                    .map_err(sinex_sources::drivers::DriverError::Io)?;
+                let hash = names.name_raw_record(raw);
+                authority
+                    .check()
+                    .map_err(sinex_sources::drivers::DriverError::Io)?;
+                Ok(hash)
+            });
+        opened
+            .metadata
+            .iter()
+            .map(|record| {
+                let length = record
+                    .end
+                    .checked_sub(record.start)
+                    .and_then(|n| usize::try_from(n).ok())
+                    .ok_or("erased append length exceeds address space")?;
+                sinex_sources::drivers::append_file::ErasedMember::from_archive(
+                    sinex_model::RecordLocation {
+                        material: opened.reference.id,
+                        anchor: record.start,
+                    },
+                    length,
+                    record.raw_digest,
+                    matching.clone(),
+                )
+                .map_err(|e| e.to_string())
+            })
+            .collect()
+    }
+
     pub fn excludes(
         &self,
         material: MaterialId,
@@ -624,6 +680,11 @@ impl AcquisitionPolicy {
                     .map_err(|_| "parser version exceeds i32")?,
                 length,
                 whole: false,
+                append_end: material
+                    .manifest
+                    .get("append_resume")
+                    .and_then(|r| r.get("end"))
+                    .cloned(),
             };
             let mut ciphertext = tempfile::tempfile().map_err(|e| e.to_string())?;
             metadata::seal_replay(

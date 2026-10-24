@@ -18,6 +18,7 @@ async fn native_replay_ciphertext_pointer_keys_and_progress_share_admission_roll
         parser_version: 1,
         length: body.len() as u64,
         whole: false,
+        append_end: None,
     };
     let mut ciphertext = Vec::new();
     metadata::seal_replay(

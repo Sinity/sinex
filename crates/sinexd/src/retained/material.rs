@@ -14,6 +14,7 @@ pub(crate) struct Opened {
     pub reference: MaterialRef,
     pub body: Option<Arc<Retained>>,
     pub metadata: Vec<metadata::ErasedRecord>,
+    pub append_end: Option<sinex_sources::binding::ArchivedAppendEnd>,
     pub secrets: Option<(String, MaterialSecrets)>,
 }
 impl Opened {
@@ -102,6 +103,7 @@ pub(crate) async fn open(
     if whole && replay.is_none() {
         return Err("whole-erased material lacks authenticated replay metadata".into());
     }
+    let mut append_end = None;
     let records = if let Some(blob) = replay {
         let authority =
             authority.ok_or("erased replay metadata requires explicit scoped unlock")?;
@@ -113,6 +115,11 @@ pub(crate) async fn open(
                 .map_err(|_| "stored parser version exceeds i32")?,
             length: reference.length,
             whole,
+            append_end: reference
+                .manifest
+                .get("append_resume")
+                .and_then(|r| r.get("end"))
+                .cloned(),
         };
         let check = authority.clone();
         let input = blobs
@@ -123,7 +130,18 @@ pub(crate) async fn open(
                     .map_err(Into::into)
             })
             .map_err(|e| e.to_string())?;
-        authority.open_replay_metadata(input, &scope)?
+        let records = authority.open_replay_metadata(input, &scope)?;
+        if let metadata::Scope::Replay {
+            append_end: Some(end),
+            ..
+        } = &scope
+        {
+            append_end = Some(
+                sinex_sources::binding::ArchivedAppendEnd::from_archive(end.clone())
+                    .map_err(|e| e.to_string())?,
+            );
+        }
+        records
     } else {
         Vec::new()
     };
@@ -172,6 +190,7 @@ pub(crate) async fn open(
         reference,
         body,
         metadata: records,
+        append_end,
         secrets,
     })
 }

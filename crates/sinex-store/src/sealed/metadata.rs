@@ -19,6 +19,8 @@ pub enum Scope {
         parser_version: i32,
         length: u64,
         whole: bool,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        append_end: Option<Value>,
     },
     #[serde(rename = "current-carry")]
     Carry {

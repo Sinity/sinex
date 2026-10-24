@@ -75,6 +75,10 @@ fn resume(
             bytes: backing,
         },
         records: m.records.clone(),
+        archived_end: bodyless.then(|| {
+            ArchivedAppendEnd::from_archive(m.manifest["append_resume"]["end"].clone()).unwrap()
+        }),
+        erased_members: Vec::new(),
         erased,
         base_cursor: Value::Null,
         cursor,
@@ -242,7 +246,7 @@ fn bodyless_intermediate_null_window_resumes_only_matching_erased_coordinates_an
         Some(erasures()),
         Arc::new(AtomicBool::new(false)),
     );
-    forged.reference.manifest["append_resume"]["end"]["window"] = Value::Null;
+    forged.reference.manifest["append_resume"]["end"]["window"] = serde_json::json!("f".repeat(64));
     assert!(reader(&path).restore_append(forged).is_err());
 }
 
@@ -291,6 +295,8 @@ fn large_bodyless_intermediate_checkpoint_survives_cancellation_and_restart_with
             bytes: Arc::new(NoBody(length as u64)),
         },
         records: ranges.clone(),
+        archived_end: Some(ArchivedAppendEnd::from_archive(end.clone()).unwrap()),
+        erased_members: Vec::new(),
         erased: Some(
             crate::drain::ErasedTransitions::from_archive(
                 ranges.iter().map(|&(s, e)| (s, e, None)),

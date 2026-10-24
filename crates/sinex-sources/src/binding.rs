@@ -15,7 +15,7 @@ use serde_json::Value;
 use sinex_model::MaterialId;
 use std::path::{Path, PathBuf};
 mod append_pending;
-pub use append_pending::AppendResume;
+pub use append_pending::{AppendResume, ArchivedAppendEnd};
 
 /// The zone named `name` (an IANA name such as `Europe/Warsaw`), or this
 /// system's zone.
@@ -137,6 +137,18 @@ pub trait Reader: Send {
     /// The export declaration, when this reader can share a physical archive traversal.
     fn export_archive(&self) -> Option<&crate::drivers::export_archive::ExportArchive> {
         None
+    }
+
+    fn remember_erased(
+        &mut self,
+        members: Vec<crate::drivers::append_file::ErasedMember>,
+    ) -> Result<(), DriverError> {
+        if !members.is_empty() {
+            return Err(DriverError::InvalidMaterial(
+                "reader does not support erased alignment membership".into(),
+            ));
+        }
+        Ok(())
     }
 
     fn restore_append(&mut self, _resume: AppendResume) -> Result<(), DriverError> {
@@ -351,6 +363,15 @@ pub fn appended(driver: AppendFile, framer: Framer) -> Box<dyn Reader> {
 }
 
 impl Reader for Appended {
+    fn remember_erased(
+        &mut self,
+        members: Vec<crate::drivers::append_file::ErasedMember>,
+    ) -> Result<(), DriverError> {
+        for member in members {
+            self.state.remember_erased(member)?;
+        }
+        Ok(())
+    }
     fn restore_append(&mut self, resume: AppendResume) -> Result<(), DriverError> {
         let pending = append_pending::Pending::restore(resume)?;
         pending.prime(&mut self.state)?;
@@ -368,6 +389,9 @@ impl Reader for Appended {
         if let Some(pending) = &self.pending {
             if !pending.complete(cursor)? {
                 return pending.acquired(cursor);
+            }
+            if !pending.can_align(&self.state) {
+                return Err(DriverError::InvalidMaterial("erased append tail requires scoped matching membership before provider alignment".into()));
             }
             self.pending = None;
         }

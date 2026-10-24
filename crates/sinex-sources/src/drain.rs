@@ -126,6 +126,10 @@ impl ErasedTransitions {
             whole,
         })
     }
+    pub(crate) fn contains_record(&self, start: usize, end: usize) -> bool {
+        self.entries.get(&start).is_some_and(|span| span.end == end)
+    }
+
     pub(crate) fn matches_whole_records(&self, records: &[(usize, usize)], length: u64) -> bool {
         self.whole
             && self.length == length

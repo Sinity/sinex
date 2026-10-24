@@ -369,7 +369,7 @@ impl MaterialSink for SealingSink {
 
 /// The stored bytes of the chain ending at the cursor's last material, for
 /// rebuilding a driver state after a restart; empty before the first read.
-/// Only the chain's tail is read, newest material first, until it covers
+/// Only the current byte revision's tail is read, newest material first, until it covers
 /// `sinex_sources::drivers::append_file::STATE_TAIL` bytes, so a restart
 /// costs bounded memory whatever the chain's length; the driver state
 /// holds no more than that tail either. The last material is cut at the
@@ -387,7 +387,7 @@ pub async fn stored_chain(
     else {
         return Ok(Vec::new());
     };
-    let names = sinex_store::replay::chain_ending(read_conn, last)
+    let names = sinex_store::replay::current_revision_chain_ending(read_conn, last)
         .await
         .map_err(|e| e.to_string())?;
     let through = cursor

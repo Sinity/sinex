@@ -9,6 +9,7 @@ fn scope() -> Scope {
         parser_version: 1,
         length: 100,
         whole: false,
+        append_end: None,
     }
 }
 #[test]
@@ -145,4 +146,36 @@ fn unknown_version_wrong_purpose_and_overlapping_coordinates_refuse() {
         names.name_raw_record(raw),
         super::super::MaterialSecrets::from_data_key(&key).name_raw_record(raw)
     );
+}
+
+#[test]
+fn replay_scope_rejects_a_changed_frozen_append_endpoint_even_when_its_hash_looks_valid() {
+    let identity = Identity::generate();
+    let mut expected = scope();
+    if let Scope::Replay { append_end, .. } = &mut expected {
+        *append_end = Some(json!({"material":"synthetic","through":100,"window":"a".repeat(64)}));
+    }
+    let mut ciphertext = Vec::new();
+    seal_replay(
+        &mut ciphertext,
+        &identity.to_public(),
+        &expected,
+        std::iter::empty(),
+        || Ok(()),
+    )
+    .unwrap();
+    assert!(
+        open_replay(ciphertext.as_slice(), &identity, &expected, || Ok(()))
+            .unwrap()
+            .is_empty()
+    );
+    let mut wrong = expected.clone();
+    if let Scope::Replay {
+        append_end: Some(end),
+        ..
+    } = &mut wrong
+    {
+        end["window"] = json!("b".repeat(64));
+    }
+    assert!(open_replay(ciphertext.as_slice(), &identity, &wrong, || Ok(())).is_err());
 }

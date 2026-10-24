@@ -485,6 +485,11 @@ fn read_chain_into(
                 parser_version: m.parser_version,
                 length,
                 whole: whole_erased,
+                append_end: m
+                    .manifest
+                    .get("append_resume")
+                    .and_then(|r| r.get("end"))
+                    .cloned(),
             };
             let records = authority.open_replay_metadata(input, &scope)?;
             let records = records

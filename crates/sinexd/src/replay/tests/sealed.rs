@@ -32,6 +32,7 @@ fn whole_erased_part_advances_replay_without_a_data_key_and_keeps_later_duplicat
         parser_version: source.spec().parser_version as i32,
         length: erased_raw.len() as u64,
         whole: true,
+        append_end: None,
     };
     let mut ciphertext = Vec::new();
     metadata::seal_replay(

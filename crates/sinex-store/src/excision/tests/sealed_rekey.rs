@@ -136,6 +136,7 @@ async fn prepared_ciphertext_rekey_keeps_unrelated_facts_and_retires_the_old_cap
         parser_version: 1,
         length: bytes.len() as u64,
         whole: false,
+        append_end: None,
     };
     let mut replay_ciphertext = Vec::new();
     crypto::metadata::seal_replay(
