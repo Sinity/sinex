@@ -181,7 +181,7 @@ pub struct Applied {
 /// The writer holds its transaction and is the only source of persistent
 /// mutations. Same-revision aliases are retained, before touching any extents.
 pub async fn apply(conn: &mut PgConnection, blobs: &Blobs) -> Result<Applied> {
-    sqlx::query("INSERT INTO retirement_hashes SELECT DISTINCT c.hash FROM retirement_candidates c JOIN retirement_current s ON s.identity=c.identity WHERE c.hash IS DISTINCT FROM s.hash").execute(&mut *conn).await?;
+    sqlx::query("INSERT INTO retirement_hashes SELECT DISTINCT c.hash FROM retirement_candidates c JOIN retirement_current s ON s.identity=c.identity WHERE c.hash IS DISTINCT FROM s.hash AND NOT(s.refs ? c.hash)").execute(&mut *conn).await?;
     // Verify before unlinking unreferenced old bytes, including pending retries.
     // Completed requests need no repeated scan of the live batch contents.
     let mut verified: bool = sqlx::query_scalar(

@@ -411,6 +411,8 @@ source-frame evidence for an original confirmed descriptor refuses retirement;
 unpublished intermediate replacements remain optional candidates. Selected
 batches and source references across all producer/archive namespaces stay;
 retirement folds their confirmed metadata in bounded pages on every request.
+A dependency still selected by the same unit is not an obsolete cleanup
+candidate; sharing by another unit or archive is reported as retained backing.
 Selected batch bytes are read back and checked against their hashes before
 retirement changes backing references. Raw source references receive a presence
 check; this operation does not rehash the source corpus.

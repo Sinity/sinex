@@ -1117,3 +1117,31 @@ async fn row_retirement_refuses_missing_original_source_acknowledgment() {
     }
     assert_eq!(h.count("SELECT count(*) FROM core.operations").await, 0);
 }
+
+#[tokio::test]
+async fn row_retirement_does_not_count_unchanged_source_dependencies_as_retained_cleanup() {
+    let h = Harness::start().await;
+    let (proof, _, old, current) = h.fixture().await;
+    let source = h.source_bytes("polylogue", b"unaffected source body").await;
+    let (material, batch) = h.batch(ARCHIVE, b"unaffected source rows\n").await;
+    h.row_with_sources(
+        ARCHIVE,
+        3,
+        &unit(3, "revision", "kept/1"),
+        material,
+        &batch,
+        std::slice::from_ref(&source),
+        None,
+    )
+    .await;
+    for _ in 0..2 {
+        let result = h.retire("polylogue", &proof).await;
+        assert_eq!(result.refusal, None);
+        assert_eq!(result.retained_files, 0);
+        assert_eq!(result.pending_files, 0);
+        assert!(!h.blobs.contains(&old).unwrap());
+        for hash in [&source, &current, &batch] {
+            assert!(h.blobs.contains(hash).unwrap());
+        }
+    }
+}
