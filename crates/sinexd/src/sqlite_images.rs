@@ -466,6 +466,34 @@ impl<R: Seek> Seek for ImageDigest<R> {
     }
 }
 
+pub(crate) fn previous(
+    blobs: &Blobs,
+    image: &SqliteImagePublication,
+) -> Result<sinex_sources::drivers::sqlite_image::Previous, String> {
+    image.validate()?;
+    let map = if image.metadata.class == Class::Sealed {
+        None
+    } else {
+        let mut file = tempfile::tempfile().map_err(err)?;
+        let extents = [sinex_model::ImageExtent {
+            blob: image.material.blob.clone(),
+            offset: image.metadata.map_offset,
+            length: image.metadata.map_bytes,
+        }];
+        let copied =
+            std::io::copy(&mut blobs.assemble(&extents).map_err(err)?, &mut file).map_err(err)?;
+        if copied != image.metadata.map_bytes {
+            return Err("retained image map length differs".into());
+        }
+        Some(Arc::new(file))
+    };
+    Ok(sinex_sources::drivers::sqlite_image::Previous {
+        metadata: image.metadata.clone(),
+        extents: image.extents.clone(),
+        map,
+    })
+}
+
 fn err(e: impl std::fmt::Display) -> String {
     e.to_string()
 }

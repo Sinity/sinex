@@ -70,7 +70,7 @@ impl Api {
                 Err(e) => refused(e.to_string()),
             };
         }
-        match crate::excision::excise_with(&mut conn, &self.blobs, writer, target, actor).await {
+        match crate::excision::excise_pooled(conn, &self.blobs, writer, target, actor).await {
             Ok(summary) => Reply::Ok {
                 result: json!({ "excised": summary }),
             },

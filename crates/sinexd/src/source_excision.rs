@@ -1,6 +1,6 @@
 //! Source acquisition applies permanent exclusions before retaining readable bytes.
 mod guard;
-mod publication;
+pub(crate) mod publication;
 use crate::sealed_access::Authority;
 pub(crate) use guard::AcquisitionGuard;
 use sinex_model::{Event, ExcisionBasis, MaterialId};
@@ -286,7 +286,9 @@ async fn verify_plain(
         .ok_or("legacy exclusion has no declared native source")?;
     if !matches!(
         spec.driver,
-        sinex_sources::Driver::AppendFile | sinex_sources::Driver::SqliteRows
+        sinex_sources::Driver::AppendFile
+            | sinex_sources::Driver::SqliteRows
+            | sinex_sources::Driver::DirSnapshot
     ) || excision::unsupported_ingress(conn, source)
         .await
         .map_err(|e| e.to_string())?
@@ -493,14 +495,6 @@ impl AcquisitionPolicy {
                 "physical image acquisition with permanent exclusions is unavailable".into(),
             );
         }
-        if !matches!(
-            source.spec().driver,
-            sinex_sources::Driver::AppendFile | sinex_sources::Driver::SqliteRows
-        ) {
-            return Err(
-                "this source acquisition shape cannot yet enforce permanent exclusions".into(),
-            );
-        }
         let Some(material) = &mut input.acquired.material else {
             return Ok(input);
         };
@@ -622,6 +616,14 @@ impl AcquisitionPolicy {
         selected.sort_by_key(|(start, _, _)| *start);
         if selected.is_empty() {
             return Ok(input);
+        }
+        if !matches!(
+            source.spec().driver,
+            sinex_sources::Driver::AppendFile | sinex_sources::Driver::SqliteRows
+        ) {
+            return Err(
+                "this source acquisition shape cannot yet enforce permanent exclusions".into(),
+            );
         }
         let spans = selected
             .iter()
@@ -759,7 +761,7 @@ impl AcquisitionPolicy {
     }
 }
 
-fn byte_length(bytes: &sinex_sources::drain::RecordBytes<'_>) -> Result<u64, String> {
+pub(crate) fn byte_length(bytes: &sinex_sources::drain::RecordBytes<'_>) -> Result<u64, String> {
     use sinex_sources::drain::RecordBytes;
     match bytes {
         RecordBytes::Slice(bytes) => Ok(bytes.len() as u64),

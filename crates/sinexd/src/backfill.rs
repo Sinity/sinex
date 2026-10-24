@@ -6,6 +6,7 @@
 //! binding is recorded with its settings (so a replay reads it the same way)
 //! and its driver state is rebuilt from the materials it stored, so a
 //! second run reads only what changed.
+mod native;
 use crate::one_shot::{OneShot, Sink};
 use crate::writer::{self, Priority};
 use sinex_model::RunId;
@@ -237,7 +238,8 @@ pub(crate) async fn drive(
     sink: &Sink,
     access: crate::sealed_access::Access<'_>,
     minimum_class: sinex_model::Class,
-    mut poll: impl FnMut(&serde_json::Value) -> Result<drivers::Acquired, drivers::DriverError>,
+    reader: &mut dyn sinex_sources::Reader,
+    stop: tokio::sync::watch::Receiver<bool>,
 ) -> Result<Totals, String> {
     let mut totals = Totals::default();
     let started = Instant::now();
@@ -263,14 +265,21 @@ pub(crate) async fn drive(
                 source.spec().name
             )
         })?;
-        Some(crate::one_shot::SealingSink::new(sink.0.clone(), recipient))
+        Some(crate::one_shot::SealingSink::staged(
+            sink.0.clone(),
+            recipient,
+        ))
     } else {
         None
     };
-    let material_sink: &dyn drivers::MaterialSink = match &sealing {
-        Some(s) => s,
-        None => sink,
-    };
+    let checked_stop = stop.clone();
+    let check: std::sync::Arc<dyn Fn() -> Result<(), String> + Send + Sync> =
+        std::sync::Arc::new(move || {
+            if *checked_stop.borrow() || sinex_protocol::private_mode::PrivateMode::default().on() {
+                return Err("native capture cancelled or private mode is on".into());
+            }
+            Ok(())
+        });
     loop {
         // Private mode: capture nothing, and say so rather than report a gap.
         if private.on() {
@@ -279,17 +288,76 @@ pub(crate) async fn drive(
                 private.path().display()
             ));
         }
-        let (cursor, carry) = positions::load(read_conn, binding)
-            .await
-            .map_err(|e| e.to_string())?
-            .unwrap_or((serde_json::Value::Null, serde_json::Value::Null));
-        let acquired = match poll(&cursor) {
+        if *stop.borrow() {
+            reader.cancel_pending();
+            return Err("native capture cancelled".into());
+        }
+        let mut stopping = stop.clone();
+        let mut guard = tokio::select! {
+            guard=handle.source_guard(source.spec().name)=>guard?,
+            _=stopping.wait_for(|stopped|*stopped)=>{reader.cancel_pending();return Err("native capture cancelled".into());}
+        };
+        let before = async {
+            let position = positions::load(guard.connection(), binding)
+                .await
+                .map_err(|e| e.to_string())?
+                .unwrap_or((serde_json::Value::Null, serde_json::Value::Null));
+            let policy = crate::source_excision::AcquisitionPolicy::load(
+                guard.connection(),
+                &sink.0,
+                source.spec().name,
+                access.authority,
+            )
+            .await?;
+            Ok::<_, String>((position, policy))
+        }
+        .await;
+        let ((cursor, carry), policy) = match before {
+            Ok(value) => value,
+            Err(error) => {
+                guard.release().await?;
+                return Err(error);
+            }
+        };
+        let base_carry = carry.clone();
+        let pending_ids =
+            sinex_store::native_materials::binding_pending(guard.connection(), binding)
+                .await
+                .map_err(|e| e.to_string())?;
+        let pending_image = if let Some(id) = pending_ids.first() {
+            sinex_store::native_materials::load(guard.connection(), *id)
+                .await
+                .map_err(|e| e.to_string())?
+                .filter(|p| p.progress.material.is_none())
+        } else {
+            None
+        };
+        let polled = match pending_image {
+            Some(p) => Ok(drivers::Acquired {
+                image: None,
+                input: p.progress.input,
+                observation: p.progress.observation,
+                revision: p.progress.revision,
+                material: None,
+                cursor_unchanged: p.end_cursor,
+            }),
+            None => reader.poll(&cursor),
+        };
+        let acquired = match polled {
             Err(drivers::DriverError::Pending) => {
+                guard.release().await?;
                 tokio::task::yield_now().await;
                 continue;
             }
-            result => result.map_err(|e| e.to_string())?,
+            Err(error) => {
+                guard.release().await?;
+                return Err(error.to_string());
+            }
+            Ok(acquired) => acquired,
         };
+        if let Some(image) = &acquired.image {
+            image.set_check(check.clone()).map_err(|e| e.to_string())?;
+        }
         if let Some(authority) = access.authority {
             authority.check()?;
         }
@@ -336,20 +404,31 @@ pub(crate) async fn drive(
             return Err(format!("{binding}: {reason}"));
         }
         let had_material = acquired.material.is_some();
-        submit(
-            handle,
-            run,
+        let pipeline = native::Pipeline {
+            writer: handle,
+            blobs: &sink.0,
             source,
             binding,
-            material_sink,
-            sealing.as_ref(),
-            access.authority,
-            effective_class,
-            acquired,
-            carry,
-            &mut totals,
-        )
-        .await?;
+            run,
+            class: effective_class,
+            sealing: sealing.as_ref(),
+            authority: access.authority,
+            check: check.clone(),
+        };
+        let published = pipeline
+            .submit(
+                guard,
+                policy,
+                cursor,
+                base_carry,
+                carry,
+                acquired,
+                &mut totals,
+            )
+            .await?;
+        if let Some(image) = published {
+            reader.restore_image(crate::sqlite_images::previous(&sink.0, &image)?);
+        }
         if !had_material {
             break;
         }
@@ -450,6 +529,17 @@ pub(crate) async fn submit(
 }
 
 impl Totals {
+    fn add_outcome(&mut self, out: sinex_store::Outcome) {
+        self.admitted += out.admitted;
+        self.repeats += out.repeats;
+        self.replaced += out.replaced;
+        self.older += out.older;
+        self.hidden += out.hidden;
+        self.superseded += out.superseded;
+        self.failures += out.failures;
+        self.dirty_keys += out.dirty_keys;
+    }
+
     pub(crate) fn finish(&mut self, started: Instant) {
         self.wall = started.elapsed();
     }

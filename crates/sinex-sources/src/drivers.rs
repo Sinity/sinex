@@ -321,6 +321,11 @@ pub fn prepare<'s>(
 }
 
 impl Prepared<'_> {
+    pub fn with_image_revision(mut self, revision: sinex_model::RevisionId) -> Self {
+        self.image_revision = Some(revision);
+        self
+    }
+
     pub fn with_excision_basis(mut self, basis: sinex_model::ExcisionBasis) -> Self {
         self.basis = Some(basis);
         self

@@ -1,5 +1,6 @@
 //! A binding owns its parser and cursor; compatible archives share physical traversal.
 mod directory;
+mod pending;
 use crate::backfill::{self, Totals};
 use crate::one_shot::{Sink, stored_chain};
 use crate::writer::WriterHandle;
@@ -88,8 +89,9 @@ pub(crate) async fn read(
             check_image_class(conn, b, &known).await?;
             if !b.remembered {
                 backfill::record(conn, &b.binding).await?;
+                let restored_pending = pending::restore(conn, blobs, writer, b, access).await?;
                 // Export drivers have no memory derived from old material bodies.
-                if b.reader.export_archive().is_none() {
+                if !restored_pending && b.reader.export_archive().is_none() {
                     let cursor = positions::load(conn, &b.binding.name)
                         .await
                         .map_err(|e| e.to_string())?
@@ -180,27 +182,8 @@ pub(crate) async fn read(
                 sink,
                 access,
                 b.history_floor,
-                |cursor| {
-                    if *stop.borrow() {
-                        b.reader.cancel_pending();
-                        return Err(drivers::DriverError::Cancelled);
-                    }
-                    let acquired = b.reader.poll(cursor)?;
-                    if let Some(image) = &acquired.image {
-                        let stop = stop.clone();
-                        image
-                            .set_check(Arc::new(move || {
-                                if *stop.borrow()
-                                    || sinex_protocol::private_mode::PrivateMode::default().on()
-                                {
-                                    return Err("SQLite image capture cancelled".into());
-                                }
-                                Ok(())
-                            }))
-                            .map_err(drivers::DriverError::Io)?;
-                    }
-                    Ok(acquired)
-                },
+                b.reader.as_mut(),
+                stop.clone(),
             )
             .await;
             let result = match result {

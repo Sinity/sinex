@@ -90,6 +90,8 @@ async fn failed_first_native_admission_keeps_exact_installed_custody_after_provi
             .map(NativeStage::Plain)
             .collect(),
         image: None,
+        verification: Verification::default(),
+        blobs: ctx.blobs.clone(),
         batch,
         permit,
         guard,
@@ -179,7 +181,7 @@ async fn failed_first_native_admission_keeps_exact_installed_custody_after_provi
         .reserve_native(crate::writer::Priority::Bulk)
         .await
         .unwrap()
-        .admit(batch, guard)
+        .admit(batch, guard, std::sync::Arc::new(|| Ok(())))
         .await
         .unwrap();
     assert!(
@@ -214,7 +216,7 @@ async fn queued_native_work_keeps_source_guard_after_waiter_cancellation_and_rel
         records: Vec::new(),
         archive: Vec::new(),
     };
-    let waiter = tokio::spawn(permit.admit(batch, guard));
+    let waiter = tokio::spawn(permit.admit(batch, guard, std::sync::Arc::new(|| Ok(()))));
     // Enqueue before cancelling the caller, with no Writer running yet.
     tokio::task::yield_now().await;
     waiter.abort();
@@ -342,6 +344,12 @@ async fn actual_sealed_append_first_chunk_and_restart_finish_original_bytes_and_
             .map(NativeStage::Sealed)
             .collect(),
         image: None,
+        verification: Verification {
+            key: Some(sealing.key(&material.blob).unwrap()),
+            authority: Some(authority.clone()),
+            ..Default::default()
+        },
+        blobs: ctx.blobs.clone(),
         batch: first,
         permit: ctx
             .writer
@@ -502,7 +510,11 @@ async fn actual_sealed_append_first_chunk_and_restart_finish_original_bytes_and_
             .reserve_native(crate::writer::Priority::Bulk)
             .await
             .unwrap()
-            .admit(batch, ctx.writer.source_guard(name).await.unwrap())
+            .admit(
+                batch,
+                ctx.writer.source_guard(name).await.unwrap(),
+                std::sync::Arc::new(|| Ok(())),
+            )
             .await
             .unwrap();
     }

@@ -11,7 +11,7 @@ impl AcquisitionGuard {
             .await
             .map_err(|e| e.to_string())?;
         if let Err(error) =
-            sinex_store::excision::lock_source_session(&mut connection, source).await
+            sinex_store::excision::lock_source_session(&mut connection, source, true).await
         {
             let _ = connection.close().await;
             return Err(error.to_string());

@@ -32,11 +32,19 @@ fn source_lock(source: &str) -> i64 {
 /// Only for an owned connection that is closed at the acquisition boundary.
 /// Session ownership permits a custody reservation transaction to commit while
 /// this same source remains protected through the queued first admission.
-pub async fn lock_source_session(conn: &mut PgConnection, source: &str) -> Result<()> {
-    sqlx::query("SELECT pg_advisory_lock_shared($1)")
-        .bind(source_lock(source))
-        .execute(conn)
-        .await?;
+pub async fn lock_source_session(
+    conn: &mut PgConnection,
+    source: &str,
+    shared: bool,
+) -> Result<()> {
+    sqlx::query(if shared {
+        "SELECT pg_advisory_lock_shared($1)"
+    } else {
+        "SELECT pg_advisory_lock($1)"
+    })
+    .bind(source_lock(source))
+    .execute(conn)
+    .await?;
     Ok(())
 }
 

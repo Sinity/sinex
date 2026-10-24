@@ -382,3 +382,12 @@ pub const KIND: crate::binding::InputKind = crate::binding::InputKind {
 
 #[cfg(test)]
 mod tests;
+
+impl crate::binding::StatelessDriver for Crawl {
+    fn poll_once(
+        &self,
+        cursor: &serde_json::Value,
+    ) -> Result<crate::drivers::Acquired, crate::drivers::DriverError> {
+        self.poll(cursor)
+    }
+}
