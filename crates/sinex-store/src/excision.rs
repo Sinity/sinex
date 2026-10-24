@@ -91,7 +91,7 @@ mod candidates;
 pub mod sealed;
 pub use candidates::{Candidate, KeyEnvelope, candidate_materials};
 mod source_guard;
-pub use basis::{operation_set, operations_basis, validate_basis};
+pub use basis::{cited_media, operation_set, operations_basis, validate_basis};
 pub use source_guard::{lock_source, lock_source_session, unsupported_ingress};
 
 /// Find every reading the excision of `target` removes. Read-only.
@@ -402,6 +402,8 @@ pub async fn apply_prepared(
     }
     scope["record_domains"] = serde_json::json!(domains);
     scope["record_domains_version"] = serde_json::json!(1);
+    scope["cited_media"] =
+        basis::capture_cited_media(conn, &sources, &ids, &scope["record_domains"]).await?;
     sqlx::query!(
         "INSERT INTO core.operations (id,kind,actor,scope) VALUES($1,'excise',$2,$3)",
         operation.0,

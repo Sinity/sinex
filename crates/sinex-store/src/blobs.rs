@@ -1,6 +1,7 @@
 //! The content store adapter over `hashed-blobs`: bytes named by BLAKE3, stored
-//! as seekable zstd. Drivers write a material's bytes here before the batch that
-//! registers it, so bytes always exist before any row refers to them.
+//! as seekable zstd. Prepared handles keep bytes private while application
+//! publication reserves custody, then install before ready material admission.
+//! Legacy ingress/direct placement still installs through its existing path.
 use crate::Result;
 pub use hashed_blobs::{DEFAULT_FRAME as BLOB_FRAME_BYTES, SealedReadLimits};
 use std::io::{Read, Seek, Write};

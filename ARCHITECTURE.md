@@ -109,10 +109,10 @@ specification's writing phase and is neither `present` nor quarantined. Reserve
 these rows before installing prepared CAS bytes. First admission completes the
 reservation with material and progress in one transaction. Cleanup locks each
 blob row and rechecks ready and pending references while holding the lock through
-unlink and row deletion. These native paths do not establish pre-admission
-custody for existing ingress, direct placement or library media puts; that gap
-still blocks enabling destructive excision for affected names. Unregistered
-legacy files are not repaired by native reservations.
+unlink and row deletion. Producer ingress and direct placement still lack
+pre-admission custody; that
+gap blocks enabling destructive excision for affected names. Unregistered legacy
+files are not repaired by source reservations.
 
 The native binding pipeline prepares plain or encrypted bodies privately, reserves
 custody and queue capacity, then installs and verifies the retained representation.
@@ -123,6 +123,34 @@ representation passes page/map verification. Restart opens sealed pending bodies
 and images only with scoped class authority. The source guard stays with queued
 first admission, and live cancellation/authority checks run again before commit.
 Ready material keys are never republished by cached readers.
+
+The application `publication` owner also retains authored/library requests and
+staged scan/preview media. Its version 2 pending format freezes cited blob names
+and decoded sizes alongside the body; body-only version 1 remains readable.
+Readers reject unknown versions and citation/projection mismatches. First
+admission validates the exact citations before replacing pending custody with
+ready event references. Library request manifests record prepared rendition
+citation facts, so replay reproduces ownership without changing the rendition
+payload or identity. Older requests without those facts acquire no inferred
+media ownership.
+
+An authored retry first recovers its frozen prior publication as that prior
+request, then submits the fresh request independently. Replies report recovered
+material IDs separately; this supplies no client idempotency guarantee. Current
+authored adapters are stateless plain/guarded request or scan streams with one
+recorded reading order. Existing acquisition policy refuses matching excluded
+bodies before installation while allowing unrelated requests. Purge freezes
+source-bound cited media names and decoded sizes in its immutable operation
+scope before removing event references. Matching names remain excluded even
+under a fresh request or a different claimed size; other sources keep their
+own ownership. A complete empty list permits unrelated media, while missing
+historical facts leave citation-bearing acquisition unavailable. Sealed naming
+facts stay under their class boundary; these authored adapters currently refuse
+sealed publication. Each authored body commits in one transaction.
+Library scans retain their existing per-poll media-byte budget (including one
+larger file), but metadata/event count and that transaction's size are not a
+new bounded-memory guarantee. A scan cursor now records its exact admitted byte
+cut; an absent legacy cut remains unknown.
 
 Companion image material, immutable revision/extents, wrapped keys, row material
 and first-batch progress share the writer transaction. Later chunks name that

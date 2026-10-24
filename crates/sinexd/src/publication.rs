@@ -1,4 +1,4 @@
-//! One native material publication owns its private stages through installation
+//! One source material publication owns its private stages through installation
 //! and the first durable Writer response. Cancellation cannot strand readable
 //! bytes without the reservation that names their exact original version.
 mod authored;
@@ -267,13 +267,18 @@ impl Publication {
             .events()
             .flat_map(|event| event.cites.iter().cloned())
             .collect::<Vec<_>>();
-        if native_materials::citation_set(&cited).map_err(|e| refuse(&e))?
-            != native_materials::citation_set(&self.pending.cited).map_err(|e| refuse(&e))?
-        {
+        let citations = native_materials::citation_set(&cited).and_then(|actual| {
+            let expected = native_materials::citation_set(&self.pending.cited)?;
+            if actual != expected {
+                return Err(sinex_store::Error::Invalid(
+                    "prepared citations differ from frozen publication".into(),
+                ));
+            }
+            Ok(())
+        });
+        if let Err(error) = citations {
             let _ = self.guard.release().await;
-            return Err(WriteError::Refused(
-                "prepared citations differ from frozen publication".into(),
-            ));
+            return Err(refuse(&error));
         }
         // Reserve with an awaited transaction end. A cancellation after this
         // point cannot drop the private handles: this owned task finishes them.

@@ -117,7 +117,15 @@ async fn resume_owned(
             }),
             cursor_unchanged: pending.end_cursor.clone(),
         };
-        prepare(source.clone(), binding.to_owned(), acquired, blobs.clone()).await
+        prepare(
+            source.clone(),
+            binding.to_owned(),
+            acquired,
+            blobs.clone(),
+            None,
+            source.spec().class,
+        )
+        .await
     }
     .await;
     let (mut batch, stages) = match recovery {
@@ -199,6 +207,27 @@ async fn submit_owned(
         if acquired.image.is_some() {
             return Err("authored publication cannot replace a physical image".into());
         }
+        if let Some(reason) = &acquired.observation.unavailable {
+            return Err(format!("authored acquisition unavailable: {reason}"));
+        }
+        if !matches!(
+            source.spec().driver,
+            sinex_sources::Driver::ApiRequest | sinex_sources::Driver::DirSnapshot
+        ) {
+            return Err("this driver has no authored publication contract".into());
+        }
+        if let Some(material) = &acquired.material {
+            let order = material.manifest["read_at_ns"]
+                .as_i64()
+                .ok_or("authored material lacks its recorded reading order")?;
+            if material
+                .records
+                .iter()
+                .any(|(start, _)| (material.reading_order)(*start).0 != order)
+            {
+                return Err("authored material has an unsupported per-record reading order".into());
+            }
+        }
         bindings::save(
             guard.as_mut().unwrap().connection(),
             &bindings::Stored {
@@ -217,12 +246,6 @@ async fn submit_owned(
             None,
         )
         .await?;
-        if policy.basis.count != 0 {
-            return Err(
-                "authored source has exclusions; unfiltered authored acquisition is unavailable"
-                    .into(),
-            );
-        }
         let privacy = sinex_store::privacy::load(
             guard.as_mut().unwrap().connection(),
             std::iter::once(source.spec().name),
@@ -250,7 +273,16 @@ async fn submit_owned(
         Ok(value) => value,
         Err(e) => return Err(e),
     };
-    let prepared = prepare(source.clone(), binding.into(), acquired, blobs.clone()).await;
+    let policy = Arc::new(policy);
+    let prepared = prepare(
+        source.clone(),
+        binding.into(),
+        acquired,
+        blobs.clone(),
+        Some(policy.clone()),
+        class,
+    )
+    .await;
     let (mut batch, mut stages) = match prepared {
         Ok(value) => value,
         Err(e) => return Err(e),
@@ -267,6 +299,14 @@ async fn submit_owned(
         .flat_map(|event| event.cites.iter().cloned())
         .collect::<Vec<_>>();
     let citations = native_materials::citation_set(&cited).map_err(error)?;
+    policy.check_cited(&cited)?;
+    if companions.iter().any(|stage| {
+        citations
+            .get(&stage.name())
+            .is_some_and(|size| *size != stage.length())
+    }) {
+        return Err("staged companion length differs from its recorded citation".into());
+    }
     stages.extend(
         companions
             .into_iter()
@@ -276,7 +316,7 @@ async fn submit_owned(
     let BatchKind::Source(progress) = &mut batch.kind else {
         unreachable!()
     };
-    progress.excision_basis = Some(policy.basis);
+    progress.excision_basis = Some(policy.basis.clone());
     let material = progress.material.as_ref().map(|m| m.id);
     let permit = writer.reserve_native(Priority::Live).await.map_err(error)?;
     let outcome = if let Some(id) = material {
@@ -327,9 +367,33 @@ async fn prepare(
     binding: String,
     acquired: drivers::Acquired,
     blobs: Blobs,
+    policy: Option<Arc<AcquisitionPolicy>>,
+    class: Class,
 ) -> R<(Batch, Vec<NativeStage>)> {
     tokio::task::spawn_blocking(move || {
-        let sink = StagingSink::new(blobs);
+        let sink = StagingSink::new(blobs.clone());
+        let acquired = match policy {
+            Some(policy) => {
+                policy
+                    .filter(
+                        &blobs,
+                        source.as_ref(),
+                        crate::source_excision::Filtered {
+                            acquired,
+                            erased: None,
+                            publication: None,
+                            registered: false,
+                            bodyless: false,
+                        },
+                        &Value::Null,
+                        class,
+                        None,
+                        &sink,
+                    )?
+                    .acquired
+            }
+            None => acquired,
+        };
         let prepared = drivers::prepare(
             source.as_ref(),
             &binding,
@@ -350,6 +414,9 @@ async fn prepare(
             .map_err(error)?;
         if batches.next().is_some() {
             return Err("authored publication must fit one atomic admission".into());
+        }
+        if matches!(&batch.kind, BatchKind::Source(progress) if !progress.carry.is_null()) {
+            return Err("authored publication requires stateless record interpretation".into());
         }
         if batch
             .records

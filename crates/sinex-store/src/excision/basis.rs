@@ -117,3 +117,95 @@ pub async fn validate_basis(conn: &mut PgConnection, batch: &Batch) -> Result<()
     }
     Ok(())
 }
+
+#[derive(serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct CitedMedia {
+    version: u32,
+    by_source: std::collections::BTreeMap<String, Vec<sinex_model::Cited>>,
+}
+
+/// Freeze only source-owned public/plain naming facts before removing their
+/// event references. A sealed source remains unknown to this plain matcher.
+pub(super) async fn capture_cited_media(
+    conn: &mut PgConnection,
+    sources: &[String],
+    events: &[uuid::Uuid],
+    domains: &serde_json::Value,
+) -> Result<serde_json::Value> {
+    let mut sealed: BTreeSet<String> = sqlx::query_scalar(
+        "SELECT DISTINCT source FROM core.events WHERE id=ANY($1) AND class='sealed'",
+    )
+    .bind(events)
+    .fetch_all(&mut *conn)
+    .await?
+    .into_iter()
+    .collect();
+    let domains = domains
+        .as_array()
+        .ok_or_else(|| Error::Invalid("missing record naming domains".into()))?;
+    let mut unknown = false;
+    for domain in domains {
+        if domain["naming"] == "sealed" {
+            match domain["source"].as_str() {
+                Some(source) => {
+                    sealed.insert(source.into());
+                }
+                None => unknown = true,
+            }
+        }
+    }
+    let mut by_source = sources
+        .iter()
+        .filter(|source| !unknown && !sealed.contains(*source))
+        .map(|source| (source.clone(), Vec::new()))
+        .collect::<std::collections::BTreeMap<_, _>>();
+    let cited: Vec<(String,String,i64)> = sqlx::query_as("SELECT DISTINCT e.source,b.blob,c.size FROM core.events e JOIN core.event_blobs b ON b.event_id=e.id JOIN core.blobs c ON c.hash=b.blob WHERE e.id=ANY($1) ORDER BY e.source,b.blob")
+        .bind(events).fetch_all(&mut *conn).await?;
+    for (source, blob, size) in cited {
+        if let Some(facts) = by_source.get_mut(&source) {
+            facts.push(sinex_model::Cited {
+                blob,
+                size: u64::try_from(size)
+                    .map_err(|_| Error::Invalid("negative cited media length".into()))?,
+            });
+        }
+    }
+    for facts in by_source.values() {
+        crate::native_materials::citation_set(facts)?;
+    }
+    serde_json::to_value(CitedMedia {
+        version: 1,
+        by_source,
+    })
+    .map_err(|_| Error::Invalid("cited media facts cannot encode".into()))
+}
+
+/// None is historical or class-protected absence, distinct from a complete
+/// empty list. No caller reconstructs missing past facts from current bytes.
+pub fn cited_media(
+    scope: &serde_json::Value,
+    source: &str,
+) -> Result<Option<Vec<sinex_model::Cited>>> {
+    let Some(value) = scope.get("cited_media") else {
+        return Ok(None);
+    };
+    let mut facts: CitedMedia = serde_json::from_value(value.clone())
+        .map_err(|_| Error::Invalid("invalid cited media exclusion facts".into()))?;
+    if facts.version != 1 {
+        return Err(Error::Invalid(
+            "unsupported cited media exclusion version".into(),
+        ));
+    }
+    let sources: BTreeSet<String> = serde_json::from_value(scope["sources"].clone())
+        .map_err(|_| Error::Invalid("cited media facts lack their source scope".into()))?;
+    for (name, cited) in &facts.by_source {
+        if name.is_empty() || !sources.contains(name) {
+            return Err(Error::Invalid(
+                "cited media facts differ from operation source scope".into(),
+            ));
+        }
+        crate::native_materials::citation_set(cited)?;
+    }
+    Ok(facts.by_source.remove(source))
+}
