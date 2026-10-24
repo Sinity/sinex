@@ -427,3 +427,5 @@ async fn retained_record_naming_survives_key_restore_and_actual_replay() {
     }
     ctx.close().await.unwrap();
 }
+
+mod startup;
