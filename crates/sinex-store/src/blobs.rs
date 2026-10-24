@@ -1,10 +1,12 @@
 //! The content store adapter over `hashed-blobs`: bytes named by BLAKE3, stored
-//! as seekable zstd. Prepared handles keep bytes private while application
-//! publication reserves custody, then install before ready material admission.
+//! as seekable zstd. Prepared handles keep bytes outside the published blob
+//! namespace while application publication reserves custody, then install before
+//! ready material admission.
 //! Producer transport keeps private spool bytes until durable custody exists.
 use crate::Result;
 pub use hashed_blobs::{DEFAULT_FRAME as BLOB_FRAME_BYTES, SealedReadLimits};
 use std::io::{Read, Seek};
+use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -19,8 +21,17 @@ impl Blobs {
     pub fn open(root: &Path) -> Result<Self> {
         std::fs::create_dir_all(root)
             .map_err(|e| crate::Error::Invalid(format!("{}: {e}", root.display())))?;
+        // The configured protected store shares new containers with its group.
+        // The writer's umask still applies; dedup never changes old file modes.
+        let metadata = std::fs::metadata(root)
+            .map_err(|e| crate::Error::Invalid(format!("{}: {e}", root.display())))?;
+        let mode = if metadata.permissions().mode() & 0o7777 == 0o2770 {
+            0o640
+        } else {
+            0o600
+        };
         Ok(Self(
-            Arc::new(hashed_blobs::Store::open(root, vec![], 0o600)?),
+            Arc::new(hashed_blobs::Store::open(root, vec![], mode)?),
             root.join("incoming"),
         ))
     }
@@ -31,8 +42,8 @@ impl Blobs {
         Ok(format!("blake3:{}", hash.hex()))
     }
 
-    /// Prepare the existing plain representation privately. Reserve native custody
-    /// from this handle's name and decoded length before installing it.
+    /// Prepare the existing plain representation without publishing its name.
+    /// Reserve native custody from its name and decoded length before installing it.
     pub fn prepare_plain(&self, reader: impl Read) -> Result<PreparedPlain> {
         Ok(PreparedPlain(self.0.prepare_plain(reader, 3)?))
     }
