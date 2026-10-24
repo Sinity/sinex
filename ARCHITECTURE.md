@@ -71,6 +71,16 @@ retained snapshot before observing newer source values. Restart rebuilds hashes
 from admitted retained parts. Image-enabled readers restore a partial material's
 complete retained suffix and resume it before acquiring newer source values.
 
+IMAP answers retain their original material and record coordinates until every
+record is admitted. Restart reads the verified remaining bytes before contacting
+the mailbox, even if messages were expunged or UIDVALIDITY changed. New answers
+record their examined UID boundary and exact admitted byte cut. Old partial
+answers resume only from one positively accounted contiguous record prefix;
+without that proof they refuse rather than refetch over retained history. Since
+old answers lack the original sparse-window end, their next server poll rechecks
+from the highest retained UID plus one. Private retained answers require scoped
+read authority; missing or erased bodies do not authorize a replacement fetch.
+
 Optional `settings.options.sqlite_images` requires explicit `scope:
 "whole_database"`, `class` and positive `interval_secs`; `turn_pages` defaults to
 256 and `rebase_threshold` to 1.0. This grants retention of all database pages,

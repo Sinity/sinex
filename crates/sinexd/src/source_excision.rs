@@ -465,12 +465,18 @@ impl AcquisitionPolicy {
             return Err("pending material uses an unsupported recorded parser version".into());
         }
         let through = if cursor["material"].as_str() == Some(material.id.to_string().as_str()) {
-            usize::try_from(
-                cursor["through"]
-                    .as_u64()
-                    .ok_or("pending cursor lacks its exact admitted byte boundary")?,
-            )
-            .map_err(|_| "pending cursor exceeds address space")?
+            match cursor.get("through") {
+                Some(value) => {
+                    usize::try_from(value.as_u64().ok_or("pending byte boundary is invalid")?)
+                        .map_err(|_| "pending cursor exceeds address space")?
+                }
+                None => {
+                    let accounted = sinex_store::positions::accounted_records(conn, material.id)
+                        .await
+                        .map_err(|e| e.to_string())?;
+                    legacy_through(&opened.reference, &material.records, &accounted.anchors)?
+                }
+            }
         } else {
             0
         };
@@ -932,4 +938,32 @@ impl std::io::Seek for OwnedBytes {
             u64::try_from(position).map_err(|_| std::io::Error::other("invalid source seek"))?;
         Ok(self.position)
     }
+}
+
+// A legacy cursor can omit its byte cut only when retained coordinates and
+// committed outcomes prove exactly the prefix preceding the offered suffix.
+fn legacy_through(
+    reference: &sinex_model::MaterialRef,
+    suffix: &[(usize, usize)],
+    anchors: &[i64],
+) -> Result<usize, String> {
+    let unavailable = "pending cursor lacks one proven admitted prefix";
+    let records: Vec<(usize, usize)> =
+        serde_json::from_value(reference.manifest["records"].clone()).map_err(|_| unavailable)?;
+    let anchors = anchors
+        .iter()
+        .map(|&n| usize::try_from(n).map_err(|_| unavailable))
+        .collect::<Result<Vec<_>, _>>()?;
+    let through =
+        sinex_sources::drivers::accounted_prefix_end(&records, reference.length, &anchors)
+            .map_err(|e| e.to_string())?;
+    if !records
+        .iter()
+        .copied()
+        .filter(|r| r.1 > through)
+        .eq(suffix.iter().copied())
+    {
+        return Err(unavailable.into());
+    }
+    Ok(through)
 }

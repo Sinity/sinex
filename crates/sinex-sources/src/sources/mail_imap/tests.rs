@@ -141,6 +141,7 @@ fn a_renumbered_mailbox_is_read_from_the_start() {
     let old = Cursor {
         uid_validity: Some(100),
         uid_next: 50,
+        through: None,
         material: None,
         part_index: 0,
     };
@@ -363,3 +364,5 @@ fn partial_admission_keeps_unfed_uids_available_for_retry() {
     assert_eq!(complete["uid_next"], 8);
     assert!(imap.poll(&complete).unwrap().material.is_none());
 }
+
+mod resume;

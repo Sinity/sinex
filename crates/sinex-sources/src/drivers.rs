@@ -55,6 +55,40 @@ pub enum DriverError {
     Carry(String),
 }
 
+/// Recover an old missing byte cut only from a complete record layout and one
+/// positively accounted, nonempty proper prefix. Later isolated outcomes are
+/// not evidence that earlier records were processed.
+pub fn accounted_prefix_end(
+    records: &[(usize, usize)],
+    length: u64,
+    anchors: &[usize],
+) -> Result<usize, DriverError> {
+    let unavailable =
+        || DriverError::Cursor("accounted records are not one proven partial prefix".into());
+    let mut end = 0;
+    for &(start, next) in records {
+        if start != end || next <= start || next as u64 > length {
+            return Err(unavailable());
+        }
+        end = next;
+    }
+    if end as u64 != length {
+        return Err(unavailable());
+    }
+    let anchors = anchors
+        .iter()
+        .copied()
+        .collect::<std::collections::BTreeSet<_>>();
+    let prefix = records
+        .iter()
+        .take_while(|r| anchors.contains(&r.0))
+        .count();
+    if prefix == 0 || prefix >= records.len() || prefix != anchors.len() {
+        return Err(unavailable());
+    }
+    Ok(records[prefix - 1].1)
+}
+
 /// What one poll of an input produced.
 pub struct Acquired {
     pub image: Option<std::sync::Arc<sqlite_image::Image>>,

@@ -64,10 +64,23 @@ async fn restore_locked(
         return Err("pending native parser version is unavailable".into());
     }
     match b.source.spec().driver {
-        sinex_sources::Driver::SqliteRows => b
-            .reader
-            .restore_rows(opened.reference.clone(), opened.records(), &p.base_cursor)
-            .map_err(|e| e.to_string())?,
+        sinex_sources::Driver::SqliteRows | sinex_sources::Driver::ApiCursor => {
+            if !b
+                .reader
+                .restore_material(
+                    opened.reference.clone(),
+                    opened.records(),
+                    &p.base_cursor,
+                    &[],
+                )
+                .map_err(|e| e.to_string())?
+            {
+                return Err("pending native driver cannot resume its retained material".into());
+            }
+            if opened.secrets.is_some() {
+                b.history_floor = b.history_floor.max(Class::Sealed);
+            }
+        }
         sinex_sources::Driver::AppendFile => {
             let records = opened
                 .body
