@@ -177,6 +177,8 @@ pub struct Prepared<'s> {
     material: Option<(NewMaterial, MaterialRef)>,
     image: Option<sinex_model::SqliteImagePublication>,
     image_revision: Option<sinex_model::RevisionId>,
+    erased: Option<crate::drain::ErasedTransitions>,
+    erased_replay: Option<sinex_model::ErasedReplayPublication>,
 }
 
 /// Store the poll's material (if any) and return it ready to drain.
@@ -276,10 +278,33 @@ pub fn prepare<'s>(
         material,
         image,
         image_revision,
+        erased: None,
+        erased_replay: None,
     })
 }
 
 impl Prepared<'_> {
+    /// The archive owner attaches only authenticated, read-back ciphertext.
+    pub fn with_erased(
+        mut self,
+        erased: crate::drain::ErasedTransitions,
+        publication: sinex_model::ErasedReplayPublication,
+    ) -> Result<Self, DriverError> {
+        if self
+            .material
+            .as_ref()
+            .is_none_or(|(_, m)| m.id != publication.material)
+            || publication.length == 0
+        {
+            return Err(DriverError::InvalidMaterial(
+                "erased replay publication has no matching material".into(),
+            ));
+        }
+        self.erased = Some(erased);
+        self.erased_replay = Some(publication);
+        Ok(self)
+    }
+
     pub fn image_meta(&self) -> Option<&sinex_model::SqliteImageMeta> {
         self.image.as_ref().map(|i| &i.metadata)
     }
@@ -301,6 +326,11 @@ impl Prepared<'_> {
         first: bool,
     ) -> BatchKind {
         BatchKind::Source(Box::new(SourceProgress {
+            erased_replay: if first {
+                self.erased_replay.clone()
+            } else {
+                None
+            },
             excision_basis: None,
             image: if first { self.image.clone() } else { None },
             image_revision: self.image_revision,
@@ -347,7 +377,7 @@ impl Prepared<'_> {
         let mut chunks = self
             .source
             .drainer(DrainInput {
-                erased: None,
+                erased: self.erased.as_ref(),
                 source: spec.name,
                 class: spec.class,
                 material: m.id,

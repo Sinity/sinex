@@ -204,3 +204,24 @@ pub fn carry_ciphertext(value: &Value) -> Result<Vec<u8>> {
         .decode(value["sealed_carry"].as_str().expect("checked string"))
         .map_err(|_| invalid())
 }
+
+pub(crate) async fn register_blob(
+    conn: &mut sqlx::PgConnection,
+    blob: &str,
+    length: u64,
+) -> Result<()> {
+    let length = i64::try_from(length).map_err(|_| invalid())?;
+    if length == 0 || blob.is_empty() {
+        return Err(invalid());
+    }
+    sqlx::query("INSERT INTO core.blobs(hash,size,status) VALUES($1,$2,'present') ON CONFLICT(hash) DO UPDATE SET status='present' WHERE core.blobs.status='deleting' AND core.blobs.size=EXCLUDED.size")
+        .bind(blob).bind(length).execute(&mut *conn).await?;
+    let actual: i64 = sqlx::query_scalar("SELECT size FROM core.blobs WHERE hash=$1")
+        .bind(blob)
+        .fetch_one(conn)
+        .await?;
+    if actual != length {
+        return Err(invalid());
+    }
+    Ok(())
+}

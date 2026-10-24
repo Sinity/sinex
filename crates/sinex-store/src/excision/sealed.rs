@@ -379,8 +379,7 @@ pub async fn apply(
 ) -> Result<usize> {
     for replay in &prepared.replay {
         check()?;
-        sqlx::query("INSERT INTO core.blobs(hash,size,status) VALUES($1,$2,'present') ON CONFLICT(hash) DO UPDATE SET status='present' WHERE core.blobs.status='deleting'")
-            .bind(&replay.blob).bind(i64::try_from(replay.length).map_err(|_| invalid("replay ciphertext exceeds i64"))?).execute(&mut *conn).await?;
+        sealed::metadata::register_blob(conn, &replay.blob, replay.length).await?;
         sqlx::query("UPDATE raw.materials SET erased_replay_blob=$2 WHERE id=$1")
             .bind(replay.material.0)
             .bind(&replay.blob)

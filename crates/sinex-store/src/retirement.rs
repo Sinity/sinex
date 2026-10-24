@@ -137,7 +137,7 @@ pub async fn apply(conn: &mut PgConnection, blobs: &Blobs) -> Result<Applied> {
     let mut verified: bool = sqlx::query_scalar(
         "SELECT EXISTS(
              SELECT 1 FROM retirement_hashes h JOIN core.blobs b ON b.hash=h.hash
-             WHERE NOT EXISTS(SELECT 1 FROM raw.materials m WHERE m.blob=b.hash)
+             WHERE NOT EXISTS(SELECT 1 FROM raw.materials m WHERE m.blob=b.hash OR m.erased_replay_blob=b.hash)
                AND NOT EXISTS(SELECT 1 FROM raw.revision_extents x WHERE x.blob=b.hash)
                AND NOT EXISTS(SELECT 1 FROM core.event_blobs e WHERE e.blob=b.hash)
          )",
@@ -192,7 +192,7 @@ pub async fn apply(conn: &mut PgConnection, blobs: &Blobs) -> Result<Applied> {
             done.retired += 1;
         }
     }
-    sqlx::query("UPDATE core.blobs b SET status='deleting' FROM retirement_hashes h WHERE b.hash=h.hash AND NOT EXISTS(SELECT 1 FROM raw.materials m WHERE m.blob=b.hash) AND NOT EXISTS(SELECT 1 FROM raw.revision_extents x WHERE x.blob=b.hash) AND NOT EXISTS(SELECT 1 FROM core.event_blobs e WHERE e.blob=b.hash)").execute(conn).await?;
+    sqlx::query("UPDATE core.blobs b SET status='deleting' FROM retirement_hashes h WHERE b.hash=h.hash AND NOT EXISTS(SELECT 1 FROM raw.materials m WHERE m.blob=b.hash OR m.erased_replay_blob=b.hash) AND NOT EXISTS(SELECT 1 FROM raw.revision_extents x WHERE x.blob=b.hash) AND NOT EXISTS(SELECT 1 FROM core.event_blobs e WHERE e.blob=b.hash)").execute(conn).await?;
     Ok(done)
 }
 

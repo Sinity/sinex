@@ -126,6 +126,13 @@ async fn archival_history(conn: &mut PgConnection) -> Result<(), Error> {
 mod tests;
 
 async fn sealed_erasure(conn: &mut PgConnection) -> Result<(), Error> {
+    // Catalog checked against the published version-1 native schema binary.
+    const VERSION_ONE_SHAPE: &str =
+        "a338afbdb751ef50caa793cd9bac0d35bb01bd748aef2f476e5bfe62f11ebd66";
+    let shape = serde_json::to_vec(&catalog(conn).await?).expect("catalog strings serialize");
+    if blake3::hash(&shape).to_hex().as_str() != VERSION_ONE_SHAPE {
+        return Err(Error::Shape(1));
+    }
     conn.execute("ALTER TABLE privacy.material_keys ADD COLUMN role text NOT NULL DEFAULT 'data-and-record-naming' CHECK (role IN ('data-and-record-naming','record-naming-only'))").await?;
     conn.execute(
         "ALTER TABLE raw.materials ADD COLUMN erased_replay_blob text REFERENCES core.blobs(hash)",
@@ -133,4 +140,12 @@ async fn sealed_erasure(conn: &mut PgConnection) -> Result<(), Error> {
     .await?;
     conn.execute(tables::event_guard()).await?;
     Ok(())
+}
+
+#[cfg(test)]
+pub(super) async fn version_one(conn: &mut PgConnection) {
+    archival_history(conn).await.unwrap();
+    conn.execute("INSERT INTO sinex_schema.applied(version) VALUES(1)")
+        .await
+        .unwrap();
 }

@@ -93,6 +93,20 @@ pub async fn admit(
     // reading it repeats when suppressed. A derived batch's keys own these.
     let mut resolved: Vec<Option<Uuid>> = Vec::new();
 
+    if let BatchKind::Ingress(frame) = &batch.kind
+        && frame.material.as_ref().is_some_and(|p| {
+            p.erased_replay.is_some()
+                || p.excision_basis.is_some()
+                || p.image.is_some()
+                || p.image_revision.is_some()
+                || !p.material_keys.is_empty()
+                || !p.carry.is_null()
+        })
+    {
+        return Err(crate::Error::Invalid(
+            "producer protocol does not authorize archive-owned source state".into(),
+        ));
+    }
     crate::excision::validate_basis(conn, batch).await?;
     match &batch.kind {
         BatchKind::Source(progress) => register::source(conn, progress).await?,

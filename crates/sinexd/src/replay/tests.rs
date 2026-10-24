@@ -383,3 +383,5 @@ async fn a_later_material_read_failure_rolls_back_the_entire_replay_chain() {
             .unwrap();
     assert_eq!((archived, operations), (0, 0));
 }
+
+mod sealed;

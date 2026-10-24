@@ -86,6 +86,7 @@ pub struct ExcisionBasis {
 /// Progress of one source binding, committed with the batch's events.
 #[derive(Clone, Debug)]
 pub struct SourceProgress {
+    pub erased_replay: Option<ErasedReplayPublication>,
     pub excision_basis: Option<ExcisionBasis>,
     pub binding: String,
     pub image: Option<crate::SqliteImagePublication>,
@@ -101,6 +102,15 @@ pub struct SourceProgress {
     pub cursor: Value,
     /// The parser's carried state at the cursor.
     pub carry: Value,
+}
+
+/// Purpose-bound class ciphertext retained with its redacted material.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ErasedReplayPublication {
+    pub material: MaterialId,
+    pub blob: String,
+    /// Ciphertext length, distinct from the material's logical length.
+    pub length: u64,
 }
 
 /// The thing observed: a file path, a database, an API collection, a socket.

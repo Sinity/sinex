@@ -409,9 +409,9 @@ pub(crate) fn tables(c: &Checks) -> Vec<String> {
   key_ref text NOT NULL UNIQUE,
   class text NOT NULL,
   wrapped_key bytea NOT NULL,
+  created_at timestamptz NOT NULL DEFAULT now(),
   role text NOT NULL DEFAULT 'data-and-record-naming'
-    CHECK (role IN ('data-and-record-naming', 'record-naming-only')),
-  created_at timestamptz NOT NULL DEFAULT now()
+    CHECK (role IN ('data-and-record-naming', 'record-naming-only'))
 )".into(),
         // Full-text search read model (spec `query.md` §5, `storage.md`
         // §3.11): each event's payload text, normalized (case-folded, NFC,
