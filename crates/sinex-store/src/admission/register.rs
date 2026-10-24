@@ -254,6 +254,11 @@ async fn material(
     revision: Uuid,
     m: &sinex_model::MaterialRef,
 ) -> Result<()> {
+    if m.manifest.get("excised_whole").is_some() {
+        return Err(Error::Invalid(
+            "provider material cannot assert archive whole removal".into(),
+        ));
+    }
     let length =
         i64::try_from(m.length).map_err(|_| Error::Invalid("material length beyond i64".into()))?;
     sqlx::query!(

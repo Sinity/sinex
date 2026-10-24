@@ -87,6 +87,9 @@ pub(crate) async fn open(
             .fetch_one(&mut *conn)
             .await
             .map_err(|e| e.to_string())?;
+    let whole = sinex_store::material_bytes::bodyless(conn, material)
+        .await
+        .map_err(|e| e.to_string())?;
     let secrets = if blobs
         .is_sealed(&reference.blob)
         .map_err(|e| e.to_string())?
@@ -104,6 +107,7 @@ pub(crate) async fn open(
         replay.map(|blob| (blob, None)),
         secrets,
         authority,
+        whole,
     )
 }
 
@@ -119,6 +123,9 @@ pub(crate) fn open_pending(
         .material
         .clone()
         .ok_or("pending publication has no row/record material")?;
+    if reference.manifest.get("excised_whole").is_some() {
+        return Err("pending provider material cannot assert archive bodylessness".into());
+    }
     if reference.id != pending.material
         || pending.progress.binding != pending.binding
         || pending
@@ -174,6 +181,7 @@ pub(crate) fn open_pending(
         replay,
         secrets,
         authority,
+        false,
     )
 }
 
@@ -184,11 +192,16 @@ fn open_owned(
     replay: Option<(String, Option<u64>)>,
     secrets: Option<(String, MaterialSecrets)>,
     authority: Option<&Authority>,
+    whole: bool,
 ) -> Result<Opened, String> {
     let material = reference.id;
-    let whole = secrets
-        .as_ref()
-        .is_some_and(|(_, s)| s.role() == sealed::SecretRole::RecordNamingOnly);
+    if !whole
+        && secrets
+            .as_ref()
+            .is_some_and(|(_, s)| s.role() == sealed::SecretRole::RecordNamingOnly)
+    {
+        return Err("naming-only material lacks an authorized whole-removal fact".into());
+    }
     if whole && replay.is_none() {
         return Err("whole-erased material lacks authenticated replay metadata".into());
     }

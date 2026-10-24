@@ -153,7 +153,9 @@ impl AcquisitionPolicy {
                 parser,
                 parser_version: version,
                 length: u64::try_from(length).map_err(|_| "negative excluded material length")?,
-                whole: names.role() == sinex_store::sealed::SecretRole::RecordNamingOnly,
+                whole: sinex_store::material_bytes::bodyless(conn, material)
+                    .await
+                    .map_err(|e| e.to_string())?,
                 append_end: manifest
                     .get("append_resume")
                     .and_then(|r| r.get("end"))

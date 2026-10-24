@@ -513,6 +513,39 @@ async fn excise(
             .ok_or_else(|| WriteError::Refused("sealed excision requires scoped authority".into()))?
             .check()
             .map_err(WriteError::Refused)?;
+        let authority = e.authority.as_ref().expect("checked scoped authority");
+        for rotation in &prepared.rotations {
+            let old = authority
+                .unwrap_secrets(&rotation.old.wrapped)
+                .map_err(WriteError::Refused)?;
+            let fresh = authority
+                .unwrap_secrets(&rotation.replacement.wrapped)
+                .map_err(WriteError::Refused)?;
+            if old.name_record_hash(&[0; 32]) != fresh.name_record_hash(&[0; 32]) {
+                return Err(WriteError::Refused(
+                    "sealed replacement changed its record-naming capability".into(),
+                ));
+            }
+            if let (Ok(old), Ok(fresh)) = (
+                old.data_key(rotation.old.reference.clone()),
+                fresh.data_key(rotation.replacement.reference.clone()),
+            ) && old.key == fresh.key
+            {
+                return Err(WriteError::Refused(
+                    "sealed replacement retained its retiring data secret".into(),
+                ));
+            }
+            for envelope in [&rotation.old, &rotation.replacement] {
+                let secrets = authority
+                    .unwrap_secrets(&envelope.wrapped)
+                    .map_err(WriteError::Refused)?;
+                if envelope.class != "sealed" || secrets.role().as_str() != envelope.role {
+                    return Err(WriteError::Refused(
+                        "sealed replacement capability role or class does not match".into(),
+                    ));
+                }
+            }
+        }
     }
     let authority = e.authority.as_ref();
     let cancelled = &e.cancelled;
