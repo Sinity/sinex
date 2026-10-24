@@ -426,6 +426,8 @@ reports remaining owned files separately from retained shared files. The request
 proof also names an idempotent entry in the existing operations journal.
 
 A retired global source frame keeps its immutable acknowledgment in the database.
+Content-address interpretation requires the declared Polylogue material role;
+generic producer frame names retain their ordinary acknowledgment behavior.
 Have, Reserve and delivery retries return an unavailable refusal when that
 material no longer backs the advertised hash. New row and replacement source
 references are checked inside the writer transaction against producer-owned

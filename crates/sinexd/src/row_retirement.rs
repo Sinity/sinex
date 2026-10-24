@@ -23,12 +23,28 @@ fn hash_hex(hash: &str) -> Result<&str, String> {
 fn frame(archive: &str, hash: &str) -> Result<String, String> {
     Ok(format!("batch:{archive}:{}", hash_hex(hash)?))
 }
+// Frame names alone are not a material role. Generic producers may use the
+// same symbolic names; only the declared Polylogue codec has this convention.
+fn source_backing(backing: &store::Backing) -> bool {
+    backing.kind == "polylogue" && backing.parser == "polylogue" && backing.parser_version == 1
+}
+
 async fn sources(
     conn: &mut PgConnection,
     producer: &str,
     key: &str,
     hashes: &[String],
 ) -> Result<(), String> {
+    let names = hashes
+        .iter()
+        .map(|hash| Ok(format!("blob:{}", hash_hex(hash)?)))
+        .collect::<Result<Vec<_>, String>>()?;
+    let backings = store::backings(conn, producer, &names)
+        .await
+        .map_err(|e| e.to_string())?;
+    if backings.iter().any(|backing| !source_backing(backing)) {
+        return Err("source dependency has no declared Polylogue material role".into());
+    }
     for hash in hashes {
         store::candidate(
             conn,
@@ -114,16 +130,27 @@ pub async fn availability(
         .iter()
         .filter(|f| f.refusal.is_none() && f.material_id.is_some())
         .filter_map(|f| {
-            f.frame
-                .strip_prefix("blob:")
-                .map(|hex| (f.frame.clone(), format!("blake3:{hex}")))
+            f.frame.strip_prefix("blob:").and_then(|hex| {
+                let hash = format!("blake3:{hex}");
+                hash_hex(&hash)
+                    .ok()
+                    .map(|_| (f.frame.clone(), hash.clone()))
+            })
         })
         .collect();
-    let missing = store::unavailable(conn, producer, &expected)
+    let names: Vec<_> = expected.iter().map(|(frame, _)| frame.clone()).collect();
+    let backings = store::backings(conn, producer, &names)
         .await
         .map_err(|e| e.to_string())?;
     for frame in frames {
-        if missing.contains(&frame.frame) {
+        if backings.iter().any(|b| {
+            source_backing(b)
+                && b.frame == frame.frame
+                && (!b.present
+                    || expected
+                        .iter()
+                        .any(|(name, hash)| name == &b.frame && hash != &b.hash))
+        }) {
             frame.refusal = Some("recorded source material backing is unavailable; historical acknowledgment is preserved".into());
         }
     }
@@ -151,10 +178,15 @@ pub async fn validate_sources(
             expected.push((format!("blob:{}", hash_hex(hash)?), hash.clone()));
         }
     }
-    let missing = store::unavailable(conn, &frame.producer, &expected)
+    let names: Vec<_> = expected.iter().map(|(frame, _)| frame.clone()).collect();
+    let backings = store::backings(conn, &frame.producer, &names)
         .await
         .map_err(|e| e.to_string())?;
-    if !missing.is_empty() {
+    if expected.iter().any(|(name, hash)| {
+        !backings
+            .iter()
+            .any(|b| source_backing(b) && &b.frame == name && &b.hash == hash && b.present)
+    }) {
         return Err("row descriptor cites unavailable producer source material".into());
     }
     Ok(())

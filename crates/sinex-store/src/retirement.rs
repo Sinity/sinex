@@ -135,19 +135,27 @@ pub async fn candidate(
     Ok(())
 }
 
-/// Resolve advertised content through its producer-owned acknowledged material.
-/// The acknowledgment remains historical after backing has been retired.
-pub async fn unavailable(
+/// Current backing of a material named by its producer-owned input locator.
+/// Other naming conventions remain ordinary historical frame acknowledgments.
+pub struct Backing {
+    pub frame: String,
+    pub hash: String,
+    pub present: bool,
+    pub kind: String,
+    pub parser: String,
+    pub parser_version: i32,
+}
+
+pub async fn backings(
     conn: &mut PgConnection,
     producer: &str,
-    expected: &[(String, String)],
-) -> Result<Vec<String>> {
-    if expected.is_empty() {
+    frames: &[String],
+) -> Result<Vec<Backing>> {
+    if frames.is_empty() {
         return Ok(vec![]);
     }
-    let (frames, hashes): (Vec<_>, Vec<_>) = expected.iter().cloned().unzip();
-    Ok(sqlx::query_scalar("SELECT r.frame FROM unnest($2::text[],$3::text[]) AS r(frame,hash) WHERE NOT EXISTS(SELECT 1 FROM core.ingress_frames f JOIN raw.materials m ON m.id=f.material_id JOIN raw.inputs i ON i.id=m.input_id JOIN core.blobs b ON b.hash=m.blob WHERE f.producer=$1 AND f.frame=r.frame AND f.refusal IS NULL AND i.binding='ingress:'||$1 AND i.locator=r.frame AND m.blob=r.hash AND b.status='present')")
-        .bind(producer).bind(frames).bind(hashes).fetch_all(conn).await?)
+    Ok(sqlx::query("SELECT f.frame,m.blob,b.status='present',i.kind,m.parser,m.parser_version FROM core.ingress_frames f JOIN raw.materials m ON m.id=f.material_id JOIN raw.inputs i ON i.id=m.input_id JOIN core.blobs b ON b.hash=m.blob WHERE f.producer=$1 AND f.frame=ANY($2) AND f.refusal IS NULL AND i.binding='ingress:'||$1 AND i.locator=f.frame")
+        .bind(producer).bind(frames).fetch_all(conn).await?.into_iter().map(|r|Backing { frame:r.get(0),hash:r.get(1),present:r.get(2),kind:r.get(3),parser:r.get(4),parser_version:r.get(5) }).collect())
 }
 
 pub async fn validate(conn: &mut PgConnection) -> Result<()> {

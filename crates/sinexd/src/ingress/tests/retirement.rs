@@ -566,6 +566,7 @@ impl Harness {
         let (_, mut frame) = self.material_frame(&name, bytes);
         if let Ingress::Material { material, .. } = &mut frame {
             material.input.locator = name;
+            material.input.kind = "polylogue".into();
             material.parser = "polylogue".into();
             material.manifest = json!({"archive":ARCHIVE,"media_type":"application/octet-stream"});
         }
@@ -991,4 +992,76 @@ async fn row_retirement_reclaims_sources_from_intermediate_replacements() {
         .await;
     assert_eq!(result.refusal, None);
     assert!(!h.blobs.contains(&rewritten).unwrap());
+}
+
+#[tokio::test]
+async fn source_availability_keeps_arbitrary_generic_material_frame_names() {
+    let h = Harness::start().await;
+    let addressed_name = format!("blob:{}", "a".repeat(64));
+    for name in ["blob:descriptive-name", addressed_name.as_str()] {
+        let (_, mut frame) = h.material_frame(name, b"ordinary producer material");
+        if let Ingress::Material { material, .. } = &mut frame {
+            material.input.locator = name.into();
+        }
+        let first = h.send("generic", &frame).await;
+        assert_eq!(first.refusal, None);
+        let retry = h.send("generic", &frame).await;
+        assert_eq!(retry, first);
+        let response = h
+            .client
+            .request(
+                h.subjects.have("generic"),
+                serde_json::to_vec(&sinex_protocol::Have {
+                    frames: vec![name.into()],
+                })
+                .unwrap()
+                .into(),
+            )
+            .await
+            .unwrap();
+        let have: Vec<Acknowledgment> = serde_json::from_slice(&response.payload).unwrap();
+        assert_eq!(have, vec![first]);
+    }
+}
+
+#[tokio::test]
+async fn row_descriptor_refuses_generic_material_roles_with_source_frame_names() {
+    let h = Harness::start().await;
+    let bytes = b"generic material sharing the source naming convention";
+    let hash = h.fixture_blob(bytes);
+    let name = format!("blob:{}", hash.strip_prefix("blake3:").unwrap());
+    let (_, mut frame) = h.material_frame(&name, bytes);
+    if let Ingress::Material { material, .. } = &mut frame {
+        material.input.locator = name;
+        material.parser = "polylogue".into();
+        // A parser name alone does not declare the input's Polylogue role.
+        assert_eq!(material.input.kind, "file");
+    }
+    assert_eq!(h.send("polylogue", &frame).await.refusal, None);
+    let (m, b) = h
+        .batch(ARCHIVE, b"rows with generic source material\n")
+        .await;
+    let ack = h
+        .send_row_with_sources(
+            ARCHIVE,
+            1,
+            &unit(1, "revision", "source/1"),
+            m,
+            &b,
+            std::slice::from_ref(&hash),
+            None,
+        )
+        .await;
+    assert!(
+        ack.refusal
+            .as_deref()
+            .unwrap()
+            .contains("unavailable producer source material")
+    );
+    assert!(h.blobs.contains(&hash).unwrap());
+    assert_eq!(
+        h.count("SELECT count(*) FROM core.events WHERE event_type='polylogue.rows'")
+            .await,
+        0
+    );
 }
