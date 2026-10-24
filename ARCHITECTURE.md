@@ -229,6 +229,13 @@ whole-document record or undecided append prefix can still be large. Legacy
 delta decoding remains a whole-body cost in the shared reader. Unsupported
 compressed export containers retain their explicit replay refusal.
 
+New blob containers in a protected 2770 store root use mode 0640, subject to the
+writer's umask (the daemon declares 0007). A distinct group client reads plain
+bytes through the read-only shared reader. Private roots retain 0600 files;
+deduplication never changes existing private files or directories. This does not
+repair inaccessible historical blobs. Encrypted containers still require their
+data keys; group access does not grant decryption.
+
 Outside producers freeze private bytes and exact declarations before sending a
 compact reservation. A local shared spool uses the configured store group: an
 exact 2770 root creates managed 2770 directories and completed 0640 sender files.

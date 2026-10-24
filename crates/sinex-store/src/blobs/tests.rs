@@ -107,3 +107,5 @@ fn checked_plain_copy_stops_after_its_consumer_cancels() {
     assert!(output.written > 0 && output.written < length);
     std::fs::remove_dir_all(dir).unwrap();
 }
+
+mod group_readback;
