@@ -124,7 +124,7 @@ async fn publishes_in_commit_order_masked_once() {
         .iter()
         .filter_map(|m| match m {
             Confirmed::Event(e) => Some(e.commit_seq),
-            Confirmed::Archived(_) | Confirmed::Excised { .. } => None,
+            Confirmed::Archived(_) | Confirmed::Restored(_) | Confirmed::Excised { .. } => None,
         })
         .collect();
     assert_eq!(seqs, [1, 2, 3]);
@@ -272,16 +272,31 @@ async fn excision_erases_the_published_message() {
     let (_db, url, mut conn) = crate::testdb::fresh().await;
     let secret = executed("1", "export TOKEN=hunter2", 1, Class::Open);
     let secret_id = secret.id;
-    admit(
-        &mut conn,
-        batch(vec![secret, executed("2", "ls", 2, Class::Open)], vec![]),
-    )
-    .await;
+    let sibling = executed("2", "ls", 2, Class::Open);
+    let sibling_id = sibling.id;
+    admit(&mut conn, batch(vec![secret, sibling], vec![])).await;
     let mut publisher_conn = PgConnection::connect(&url).await.unwrap();
     publish_pending(&mut publisher_conn, &js, &subjects)
         .await
         .unwrap();
     assert_eq!(read_all(&js, &subjects).await.len(), 2);
+    admit(
+        &mut conn,
+        batch(
+            vec![],
+            vec![
+                ArchiveRequest::Hide {
+                    target: secret_id,
+                    operation: OperationId::new(),
+                },
+                ArchiveRequest::Hide {
+                    target: sibling_id,
+                    operation: OperationId::new(),
+                },
+            ],
+        ),
+    )
+    .await;
 
     let target = sinex_store::excision::Target::Event(secret_id);
     let mut tx = conn.begin().await.unwrap();
@@ -299,6 +314,17 @@ async fn excision_erases_the_published_message() {
     .await
     .unwrap();
     tx.commit().await.unwrap();
+    let retained: Vec<uuid::Uuid> = sqlx::query_scalar(
+        "SELECT event_id FROM audit.archive_changes WHERE event_id IS NOT NULL ORDER BY event_id",
+    )
+    .fetch_all(&mut conn)
+    .await
+    .unwrap();
+    assert_eq!(
+        retained,
+        [sibling_id.0],
+        "excision erases the exact event's full visibility history and retains its sibling"
+    );
 
     let done = publish_pending(&mut publisher_conn, &js, &subjects)
         .await
@@ -327,4 +353,94 @@ async fn excision_erases_the_published_message() {
         .await
         .unwrap();
     assert_eq!(again, Published::default());
+}
+
+#[tokio::test]
+async fn archive_consumer_observes_hide_restore_hide_without_duplicate_events() {
+    let nats = devkit::nats::test_nats().unwrap();
+    let subjects = Subjects::new(nats.prefix());
+    let js = context(async_nats::connect(nats.url()).await.unwrap());
+    ensure_stream(&js, &subjects).await.unwrap();
+    let (_db, url, mut conn) = crate::testdb::fresh().await;
+    let event = executed("lifecycle", "pwd", 1, Class::Open);
+    let id = event.id;
+    admit(&mut conn, batch(vec![event], vec![])).await;
+    for hide in [true, false, true] {
+        let operation = OperationId::new();
+        let request = if hide {
+            ArchiveRequest::Hide {
+                target: id,
+                operation,
+            }
+        } else {
+            ArchiveRequest::Unhide {
+                target: id,
+                operation,
+            }
+        };
+        admit(&mut conn, batch(vec![], vec![request])).await;
+    }
+    let mut publisher_conn = PgConnection::connect(&url).await.unwrap();
+    let published = publish_pending(&mut publisher_conn, &js, &subjects)
+        .await
+        .unwrap();
+    assert_eq!(published.events, 1);
+    assert_eq!(published.notices, 3);
+    let messages = read_all(&js, &subjects).await;
+    let mut live = std::collections::BTreeSet::new();
+    let mut visibility = Vec::new();
+    for message in messages {
+        match message {
+            Confirmed::Event(e) => {
+                assert!(live.insert(e.id));
+            }
+            Confirmed::Archived(n) => {
+                assert_eq!(n.event, id);
+                live.remove(&n.event);
+                visibility.push((n.archived_seq, live.contains(&id)));
+            }
+            Confirmed::Restored(n) => {
+                assert_eq!(n.event, id);
+                live.insert(n.event);
+                visibility.push((n.restored_seq, live.contains(&id)));
+            }
+            Confirmed::Excised { .. } => panic!("no excision requested"),
+        }
+    }
+    assert_eq!(visibility, [(2, false), (3, true), (4, false)]);
+    assert_eq!(
+        publish_pending(&mut publisher_conn, &js, &subjects)
+            .await
+            .unwrap(),
+        Published::default()
+    );
+}
+
+#[test]
+fn legacy_pending_notice_keeps_original_metadata_and_states_known_history_start() {
+    let notice = Notice {
+        notice_seq: 7,
+        event_id: uuid::Uuid::nil(),
+        commit_seq: 12,
+        archived: true,
+        baseline: true,
+        archived_seq: 3,
+        reason: "hide".into(),
+        replaced_by: None,
+        operation_id: None,
+        recorded_at: time::OffsetDateTime::UNIX_EPOCH,
+    };
+    let message = notice_message(&notice);
+    assert_eq!(message.notice_seq, 7);
+    assert_eq!(message.archived_seq, 3);
+    assert_eq!(message.known_from, Some(12));
+    let value = serde_json::to_value(&message).unwrap();
+    let mut old = value.clone();
+    old.as_object_mut().unwrap().remove("known_from");
+    let decoded: ArchiveNotice = serde_json::from_value(old).unwrap();
+    assert_eq!(decoded.known_from, None);
+    assert_eq!(
+        serde_json::from_value::<ArchiveNotice>(value).unwrap(),
+        message
+    );
 }

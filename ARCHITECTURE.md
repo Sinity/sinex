@@ -177,6 +177,28 @@ sets through admission. Analysis methods similarly live apart from their store
 and application adapters. The commit reader and NATS publisher handle committed
 events separately from source acquisition.
 
+Writer positions cover both admitted Events and visibility changes. Hide and
+unhide update the current archival projection and append their history in the
+same transaction; unhide keeps the original Event. Commit-log markers carry no
+Event. Readers advance across those markers and excision gaps using one captured
+head. Historical time lookup uses retained Events and visibility history, so
+pruning the hot commit log does not erase its time basis. Permanent excision
+still removes the exact event's historical metadata.
+
+Schema upgrades run explicitly through `sinex-schema apply`, with the writer
+stopped, using one ordered Rust change list. Direct admission refuses an older
+version. The 0→1 upgrade preserves existing rows and archival notice IDs and
+seeds current visibility at a recorded cutover. Earlier visibility cannot be
+reconstructed after legacy unhide deleted its evidence; historical queries
+before that cutover refuse. Archive rows retain original archival metadata and
+expose `baseline` and `known_from` for this distinction.
+
+Archive-stream consumers receive `Restored` as well as `Archived` and `Excised`.
+Consumers decoding that subject must understand the added variant before an
+upgrade; event-type-only subscribers do not receive it. Existing notice IDs and
+saved consumer positions keep legacy pending notices retryable.
+
+
 ## Interfaces and shared code
 
 `sinex-model` owns identities and payloads; `sinex-protocol` declares public

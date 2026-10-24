@@ -20,7 +20,9 @@
 use async_nats::HeaderMap;
 use async_nats::jetstream::{self, stream};
 use sinex_model::{Class, EventId, OperationId, RecordLocation, RunId, Timestamp};
-use sinex_protocol::{ArchiveNotice, Confirmed, ConfirmedEvent, Subjects, Withheld};
+use sinex_protocol::{
+    ArchiveNotice, Confirmed, ConfirmedEvent, RestoredNotice, Subjects, Withheld,
+};
 use sinex_store::commit_log::{self, Committed, Notice};
 use sqlx::{Connection, PgConnection};
 use std::time::{Duration, Instant};
@@ -121,7 +123,7 @@ pub async fn publish_pending(
             .await
             .map_err(|e| e.to_string())?
             .into_iter()
-            .take_while(|n| n.archived_seq <= covered)
+            .take_while(|n| n.commit_seq <= covered)
             .collect();
         if page.up_to.is_none() && notices.is_empty() {
             total.excised += erase_excised(conn, js, subjects).await?;
@@ -142,7 +144,16 @@ pub async fn publish_pending(
             );
         }
         for n in &notices {
-            let message = Confirmed::Archived(notice_message(n));
+            let message = if n.archived {
+                Confirmed::Archived(notice_message(n))
+            } else {
+                Confirmed::Restored(RestoredNotice {
+                    notice_seq: n.notice_seq,
+                    event: sinex_model::EventId(n.event_id),
+                    restored_seq: n.commit_seq,
+                    operation: n.operation_id.map(sinex_model::OperationId),
+                })
+            };
             acks.push(
                 publish(
                     js,
@@ -309,6 +320,7 @@ fn notice_message(n: &Notice) -> ArchiveNotice {
         notice_seq: n.notice_seq,
         event: EventId(n.event_id),
         archived_seq: n.archived_seq,
+        known_from: n.baseline.then_some(n.commit_seq),
         reason: n.reason.clone(),
         replaced_by: n.replaced_by.map(EventId),
         operation: n.operation_id.map(OperationId),

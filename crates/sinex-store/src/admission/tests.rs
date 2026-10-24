@@ -465,7 +465,10 @@ async fn commit_seq_is_dense_and_in_batch_order() {
         .fetch_all(&mut conn)
         .await
         .unwrap();
-    let ids: Vec<_> = seqs.iter().map(|r| r.event_id).collect();
+    let ids: Vec<_> = seqs
+        .iter()
+        .map(|r| r.event_id.expect("admitted event entry"))
+        .collect();
     assert_eq!(ids, events.iter().map(|e| e.id.0).collect::<Vec<_>>());
 }
 
@@ -616,3 +619,5 @@ async fn untimed_zsh_occurrences_coexist_and_only_same_locations_repeat() {
             .unwrap();
     assert_eq!(timed, 1);
 }
+
+mod archive_history;

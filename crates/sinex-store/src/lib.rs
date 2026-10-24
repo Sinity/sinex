@@ -36,6 +36,8 @@ pub use sqlx::PgConnection as Connection;
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
     #[error(transparent)]
+    Schema(#[from] sinex_schema::Error),
+    #[error(transparent)]
     Database(#[from] sqlx::Error),
     #[error(transparent)]
     Blob(#[from] hashed_blobs::Error),

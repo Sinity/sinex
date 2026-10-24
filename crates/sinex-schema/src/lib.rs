@@ -1,7 +1,5 @@
-//! The schema, declared once in Rust (architecture §3.7). The never-deployed
-//! history is squashed into version 0: [`declarations`] creates the current
-//! schema in an empty database. Later changes a declaration cannot express
-//! (a rename, a type change) go in [`CHANGES`], in order.
+//! Current declarations create empty databases. Ordered [`CHANGES`] upgrade
+//! existing archives explicitly, in one transaction, before writers may resume.
 //!
 //! Enum CHECK lists come from the Rust enums (`DbCheck`), and the event-type
 //! registry rows and typed views come from `sinex_model::event_types::ALL`, so the
@@ -13,30 +11,39 @@
 use sinex_model::{Class, DbCheck, KeyKind, RecordState, ReplaceRule, TimeQuality, event_types};
 use sqlx::{Connection, Executor, PgConnection};
 
+mod changes;
 mod tables;
 
-/// The schema version a fresh database is created at.
-pub const VERSION: i32 = (CHANGES.len()) as i32;
+/// The single writer and explicit schema upgrade share this database lock.
+pub const WRITER_LOCK: i64 = 0x7369_6e65_7857_5254;
 
-/// A change applied to an existing database to bring it to the next version.
+/// One ordered upgrade step; application remains with the schema owner.
 pub struct Change {
     pub version: i32,
-    pub statements: &'static [&'static str],
+    pub name: &'static str,
 }
+pub const CHANGES: &[Change] = &[Change {
+    version: 1,
+    name: "archival history",
+}];
 
-/// Ordered changes after version 0. Empty until the first deployment.
-pub const CHANGES: &[Change] = &[];
+/// The schema version a fresh database is created at.
+pub const VERSION: i32 = CHANGES.len() as i32;
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
     #[error(transparent)]
     Database(#[from] sqlx::Error),
     #[error(
-        "database is at schema version {found}, this build declares {declared}; upgrading an existing database is not built yet (architecture §3.7)"
+        "database is at schema version {found}, this build declares {declared}; run sinex-schema apply explicitly before writing"
     )]
     Upgrade { found: i32, declared: i32 },
     #[error("database has Sinex objects but no schema version; refusing to guess")]
     Unversioned,
+    #[error("schema does not match the known version {0}; refusing an inferred upgrade")]
+    Shape(i32),
+    #[error("a writer is active; stop it before applying a schema upgrade")]
+    ActiveWriter,
 }
 
 /// What `apply` did.
@@ -44,11 +51,13 @@ pub enum Error {
 pub enum Applied {
     Created { version: i32 },
     Current { version: i32 },
+    Upgraded { from: i32, version: i32 },
 }
 
 impl std::fmt::Display for Applied {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            Applied::Upgraded { from, version } => write!(f, "upgraded schema {from} to {version}"),
             Applied::Created { version } => write!(f, "created schema version {version}"),
             Applied::Current { version } => write!(f, "schema version {version} is current"),
         }
@@ -67,6 +76,7 @@ pub fn declarations() -> Vec<String> {
     for schema in tables::SCHEMAS {
         statements.push(format!("CREATE SCHEMA {schema}"));
     }
+    statements.push("CREATE TABLE sinex_schema.applied (version integer PRIMARY KEY, applied_at timestamptz NOT NULL DEFAULT now())".into());
     statements.extend(tables::tables(&Checks::from_model()));
     statements.extend(tables::after_tables());
     statements.extend(visibility());
@@ -224,8 +234,26 @@ pub async fn apply_url(url: &str) -> Result<Applied, Error> {
     apply(&mut connection).await
 }
 
-/// Create the schema in an empty database, or confirm the database is at this
-/// build's version. Runs in one transaction.
+/// Check compatibility before writing. In the caller's transaction the shared
+/// version-row lock excludes schema application until admission commits.
+pub async fn require_current(connection: &mut PgConnection) -> Result<(), Error> {
+    let found: Option<i32> = sqlx::query_scalar(
+        "SELECT version FROM sinex_schema.applied ORDER BY version DESC LIMIT 1 FOR SHARE",
+    )
+    .fetch_optional(connection)
+    .await?;
+    match found {
+        Some(found) if found == VERSION => Ok(()),
+        Some(found) => Err(Error::Upgrade {
+            found,
+            declared: VERSION,
+        }),
+        None => Err(Error::Unversioned),
+    }
+}
+
+/// Create an empty database or explicitly apply its remaining ordered changes.
+/// Existing writers and unrecognized older shapes refuse; upgrades are atomic.
 pub async fn apply(connection: &mut PgConnection) -> Result<Applied, Error> {
     let has_version_table: bool = sqlx::query_scalar(
         "SELECT EXISTS (SELECT 1 FROM pg_tables WHERE schemaname='sinex_schema' AND tablename='applied')",
@@ -233,18 +261,7 @@ pub async fn apply(connection: &mut PgConnection) -> Result<Applied, Error> {
     .fetch_one(&mut *connection)
     .await?;
     if has_version_table {
-        let found: Option<i32> =
-            sqlx::query_scalar("SELECT max(version) FROM sinex_schema.applied")
-                .fetch_one(&mut *connection)
-                .await?;
-        return match found {
-            Some(found) if found == VERSION => Ok(Applied::Current { version: found }),
-            Some(found) => Err(Error::Upgrade {
-                found,
-                declared: VERSION,
-            }),
-            None => Err(Error::Unversioned),
-        };
+        return changes::apply(connection).await;
     }
     let has_core: bool =
         sqlx::query_scalar("SELECT EXISTS (SELECT 1 FROM pg_namespace WHERE nspname='core')")
@@ -259,8 +276,6 @@ pub async fn apply(connection: &mut PgConnection) -> Result<Applied, Error> {
             .await
             .map_err(|e| sqlx::Error::Protocol(format!("{e}\nin statement: {statement}")))?;
     }
-    tx.execute("CREATE TABLE sinex_schema.applied (version integer PRIMARY KEY, applied_at timestamptz NOT NULL DEFAULT now())")
-        .await?;
     for version in 0..=VERSION {
         sqlx::query("INSERT INTO sinex_schema.applied (version) VALUES ($1)")
             .bind(version)
@@ -293,7 +308,7 @@ pub fn schemas() -> &'static [&'static str] {
 pub async fn catalog(connection: &mut PgConnection) -> Result<Vec<String>, Error> {
     let schemas: Vec<String> = tables::SCHEMAS.iter().map(|s| s.to_string()).collect();
     let mut rows: Vec<String> = sqlx::query_scalar(
-        "SELECT table_schema||'.'||table_name||'.'||column_name||' '||data_type||' '||is_nullable||' '||coalesce(column_default,'') FROM information_schema.columns WHERE table_schema = ANY($1)",
+        "SELECT table_schema||'.'||table_name||'.'||column_name||' '||ordinal_position||' '||data_type||' '||is_nullable||' '||coalesce(column_default,'')||' generated='||coalesce(generation_expression,'')||' identity='||is_identity||':'||coalesce(identity_generation,'') FROM information_schema.columns WHERE table_schema = ANY($1)",
     )
     .bind(&schemas)
     .fetch_all(&mut *connection)
@@ -314,6 +329,19 @@ pub async fn catalog(connection: &mut PgConnection) -> Result<Vec<String>, Error
         .fetch_all(&mut *connection)
         .await?,
     );
+    for query in [
+        "SELECT schemaname||'.'||viewname||' '||definition FROM pg_views WHERE schemaname=ANY($1)",
+        "SELECT n.nspname||'.'||p.proname||' '||pg_get_functiondef(p.oid) FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace WHERE n.nspname=ANY($1) AND p.prokind='f'",
+        "SELECT n.nspname||'.'||c.relname||'.'||t.tgname||' '||t.tgenabled::text||' '||pg_get_triggerdef(t.oid) FROM pg_trigger t JOIN pg_class c ON c.oid=t.tgrelid JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname=ANY($1) AND NOT t.tgisinternal",
+        "SELECT 'dimension '||to_jsonb(d)::text FROM timescaledb_information.dimensions d WHERE hypertable_schema=ANY($1)",
+    ] {
+        rows.extend(
+            sqlx::query_scalar::<_, String>(query)
+                .bind(&schemas)
+                .fetch_all(&mut *connection)
+                .await?,
+        );
+    }
     rows.sort();
     Ok(rows)
 }

@@ -229,7 +229,7 @@ pub(crate) async fn recall_summary(
         r#"SELECT e.source, count(*) AS "events!", min(e.ts_orig) AS first, max(e.ts_orig) AS last
            FROM core.events e
            WHERE e.ts_orig >= $1 AND (e.ts_orig < $2 OR ($4 AND e.ts_orig = $2)) AND e.commit_seq <= $3
-           AND NOT EXISTS (SELECT 1 FROM audit.archived x WHERE x.event_id = e.id AND x.archived_seq <= $3)
+           AND NOT audit.is_archived_at(e.id, $3)
            GROUP BY e.source ORDER BY e.source"#,
         f,
         t,

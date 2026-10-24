@@ -138,6 +138,7 @@ pub async fn run(
             "as-of position is outside the known archive".into(),
         ));
     }
+    require_history(&mut tx, seq).await?;
     check_kinds(&mut tx, query).await?;
     if matches!(query.source, Source::Walk { .. })
         && (query.filter.is_some() || !query.stages.is_empty())
@@ -392,7 +393,11 @@ async fn seq_at(conn: &mut PgConnection, t: jiff::Timestamp) -> Result<i64> {
     let odt = time::OffsetDateTime::from_unix_timestamp_nanos(t.as_nanosecond())
         .map_err(|e| Error::Invalid(format!("time out of range: {e}")))?;
     Ok(sqlx::query_scalar!(
-        r#"SELECT coalesce(max(commit_seq), 0) AS "seq!" FROM core.events WHERE ts_persisted <= $1"#,
+        r#"SELECT coalesce(max(commit_seq), 0) AS "seq!" FROM (
+               SELECT commit_seq FROM core.events WHERE ts_persisted <= $1
+               UNION ALL
+               SELECT commit_seq FROM audit.archive_changes WHERE recorded_at <= $1
+           ) positions"#,
         odt
     )
     .fetch_one(&mut *conn)
@@ -441,3 +446,19 @@ fn collect_aliases(q: &Query, out: &mut Vec<&'static sinex_model::query::Alias>)
 
 #[cfg(test)]
 pub(crate) mod tests;
+
+/// Reject a historical interpretation whose old hide/unhide evidence did not
+/// survive the version-0 format. Call before reading even an empty relation.
+pub(crate) async fn require_history(conn: &mut PgConnection, seq: i64) -> Result<()> {
+    let known_from: i64 = sqlx::query_scalar(
+        "SELECT coalesce(max(commit_seq),0) FROM audit.archive_changes WHERE reason='baseline'",
+    )
+    .fetch_one(conn)
+    .await?;
+    if seq < known_from {
+        return Err(Error::Invalid(format!(
+            "visibility history before position {known_from} is unknown; the archive was upgraded at that position"
+        )));
+    }
+    Ok(())
+}

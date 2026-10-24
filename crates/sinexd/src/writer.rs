@@ -183,7 +183,7 @@ pub fn channels() -> (WriterHandle, Queues) {
 }
 
 /// The session advisory lock only the writer holds, per database.
-const WRITER_LOCK: i64 = 0x7369_6e65_7857_5254; // "sinexWRT"
+const WRITER_LOCK: i64 = sinex_schema::WRITER_LOCK;
 
 /// Claim `connection` as the database's one writer (architecture §4; law
 /// L43). A session advisory lock, so it lasts exactly as long as the
@@ -192,6 +192,9 @@ const WRITER_LOCK: i64 = 0x7369_6e65_7857_5254; // "sinexWRT"
 /// A writer that was just killed holds the lock until the server notices its
 /// backend is gone, so a restart waits up to [`CLAIM_WAIT`] before refusing.
 pub async fn claim(connection: &mut PgConnection) -> Result<(), String> {
+    sinex_schema::require_current(connection)
+        .await
+        .map_err(|error| error.to_string())?;
     let deadline = tokio::time::Instant::now() + CLAIM_WAIT;
     loop {
         let won: bool = sqlx::query_scalar("SELECT pg_try_advisory_lock($1)")
@@ -200,6 +203,15 @@ pub async fn claim(connection: &mut PgConnection) -> Result<(), String> {
             .await
             .map_err(|e| format!("database: {e}"))?;
         if won {
+            // An upgrade may have won the lock after the initial version read.
+            if let Err(error) = sinex_schema::require_current(connection).await {
+                sqlx::query("SELECT pg_advisory_unlock($1)")
+                    .bind(WRITER_LOCK)
+                    .execute(&mut *connection)
+                    .await
+                    .map_err(|e| e.to_string())?;
+                return Err(error.to_string());
+            }
             return Ok(());
         }
         if tokio::time::Instant::now() >= deadline {

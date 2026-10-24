@@ -31,13 +31,14 @@ pub async fn relation_rows(
     as_of: i64,
     fields: &[String],
 ) -> Result<Vec<EventRow>> {
+    crate::query::require_history(conn, as_of).await?;
     let rows = sqlx::query!(
         r#"SELECT e.id, e.source, e.ts_orig AS "ts_orig!",
                   (SELECT coalesce(jsonb_object_agg(k, e.payload -> k), '{}'::jsonb)
                    FROM unnest($5::text[]) AS k WHERE e.payload ? k) AS "payload!"
            FROM core.events e
            WHERE e.event_type = $1 AND e.ts_orig >= $2 AND e.ts_orig < $3 AND e.commit_seq <= $4
-             AND NOT EXISTS (SELECT 1 FROM audit.archived a WHERE a.event_id = e.id AND a.archived_seq <= $4)"#,
+             AND NOT audit.is_archived_at(e.id, $4)"#,
         relation,
         from,
         to,
@@ -78,11 +79,12 @@ pub async fn source_evidence(
     source: &str,
     as_of: i64,
 ) -> Result<SourceEvidence> {
+    crate::query::require_history(conn, as_of).await?;
     let bounds = sqlx::query!(
         r#"SELECT min(e.ts_orig) AS first, max(e.ts_orig) AS last
            FROM core.events e
            WHERE e.source = $1 AND e.ts_orig IS NOT NULL AND e.commit_seq <= $2
-             AND NOT EXISTS (SELECT 1 FROM audit.archived a WHERE a.event_id = e.id AND a.archived_seq <= $2)"#,
+             AND NOT audit.is_archived_at(e.id, $2)"#,
         source,
         as_of,
     )

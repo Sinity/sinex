@@ -87,17 +87,22 @@ pub(super) async fn insert_admitted(
 
     if !replaced.is_empty() {
         let (ords, live): (Vec<i32>, Vec<Uuid>) = replaced.iter().copied().unzip();
-        sqlx::query!(
-            r#"INSERT INTO audit.archived (event_id, archived_seq, reason, replaced_by)
-               SELECT r.live, $3, 'newer_reading', s.id
-               FROM unnest($1::int[], $2::uuid[]) AS r(ord, live)
-               JOIN core.admission_stage s ON s.ord = r.ord
-               ON CONFLICT (event_id) DO NOTHING"#,
-            &ords,
+        let mut replacements = Vec::with_capacity(ords.len());
+        for ord in &ords {
+            replacements.push(
+                events[usize::try_from(*ord).expect("non-negative event ordinal")]
+                    .id
+                    .0,
+            );
+        }
+        super::archive::archive_at(
+            conn,
             &live,
             last,
+            "newer_reading",
+            Some(&replacements),
+            None,
         )
-        .execute(&mut *conn)
         .await?;
         outcome.replaced = replaced.len();
         outcome.dirty_keys += mark_archived_dirty(conn, &live, last, keys).await?;

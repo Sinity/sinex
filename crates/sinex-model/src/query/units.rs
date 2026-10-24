@@ -78,6 +78,16 @@ macro_rules! event_fields {
 
 const EVENTS: &[Field] = event_fields!();
 const ARCHIVE: &[Field] = event_fields!(
+    f(
+        "baseline",
+        FieldType::Bool,
+        "visibility seeded during an upgrade"
+    ),
+    f(
+        "known_from",
+        FieldType::Integer,
+        "position from which this visibility is known"
+    ),
     f("archived", FieldType::Time, "time it left the live set"),
     f("reason", FieldType::Enum(ARCHIVE_REASONS), "archive reason"),
     f("operation", FieldType::Id, "operation"),
@@ -237,7 +247,15 @@ impl Unit {
         match self {
             Unit::Events => &["id", "kind", "source", "when", "payload"],
             Unit::Archive => &[
-                "id", "kind", "source", "when", "archived", "reason", "payload",
+                "id",
+                "kind",
+                "source",
+                "when",
+                "archived",
+                "reason",
+                "baseline",
+                "known_from",
+                "payload",
             ],
             Unit::Materials => &["id", "binding", "parser", "size", "staged", "events"],
             Unit::Runs => &[
