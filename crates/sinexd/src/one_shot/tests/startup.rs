@@ -1,48 +1,56 @@
 use super::*;
 use sqlx::Executor;
 
-// Restore the published predecessor representation and note definitions so
-// explicit application exercises the complete ordered upgrade.
+// Construct the complete published version-0 archive from its frozen native
+// declarations, views and registry, independently of current declarations.
 async fn predecessor(conn: &mut PgConnection) {
-    conn.execute("DROP TABLE raw.pending_native_blobs; DROP TABLE raw.pending_native_materials; ALTER TABLE core.blobs DROP CONSTRAINT blobs_status_check; ALTER TABLE core.blobs ADD CONSTRAINT blobs_status_check CHECK(status IN ('present','quarantined','deleting')); ALTER TABLE raw.materials DROP COLUMN erased_replay_blob; ALTER TABLE privacy.material_keys DROP COLUMN role; DELETE FROM sinex_schema.applied WHERE version=3").await.unwrap();
-    let old: Value = serde_json::from_str(include_str!(
+    let drop_all = format!("DROP SCHEMA {} CASCADE", sinex_schema::schemas().join(","));
+    conn.execute(drop_all.as_str()).await.unwrap();
+    let fixture: Value = serde_json::from_str(include_str!(
         "../../../../sinex-schema/src/tests/v0-declarations.json"
     ))
     .unwrap();
-    let guard = old["statements"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .map(|v| v.as_str().unwrap())
-        .find(|s| s.contains("CREATE FUNCTION core.event_guard"))
-        .unwrap();
-    conn.execute(
-        guard
-            .replacen("CREATE FUNCTION", "CREATE OR REPLACE FUNCTION", 1)
-            .as_str(),
-    )
-    .await
-    .unwrap();
-    let row: (String, Value, String, Vec<String>, String) = serde_json::from_str(include_str!(
-        "../../../../sinex-schema/src/changes/notes/v1-registry.json"
-    ))
-    .unwrap();
-    sqlx::query("UPDATE registry.event_types SET payload_schema=$1,key_kind=$2,key_fields=$3,replace_rule=$4 WHERE name=$5")
-        .bind(row.1).bind(row.2).bind(row.3).bind(row.4).bind(row.0)
-        .execute(&mut *conn).await.unwrap();
-    conn.execute("DROP VIEW event_types.note_document")
-        .await
-        .unwrap();
-    let view = include_str!("../../../../sinex-schema/src/changes/notes/v1-view.sql");
-    conn.execute(format!("CREATE VIEW event_types.note_document AS {view}").as_str())
-        .await
-        .unwrap();
-    conn.execute("GRANT SELECT ON event_types.note_document TO sinex_reader,sinex_writer; DELETE FROM sinex_schema.applied WHERE version=2; INSERT INTO core.blobs(hash,size,status) VALUES('blake3:0000000000000000000000000000000000000000000000000000000000000000',17,'present')").await.unwrap();
+    for sql in fixture["statements"].as_array().unwrap() {
+        conn.execute(sql.as_str().unwrap()).await.unwrap();
+    }
+    conn.execute("CREATE TABLE sinex_schema.applied(version integer PRIMARY KEY,applied_at timestamptz NOT NULL DEFAULT now()); INSERT INTO sinex_schema.applied(version) VALUES(0)").await.unwrap();
+    for row in fixture["registry"].as_array().unwrap() {
+        let fields: Vec<String> = serde_json::from_value(row[3].clone()).unwrap();
+        sqlx::query("INSERT INTO registry.event_types(name,payload_schema,key_kind,key_fields,replace_rule) VALUES($1,$2,$3,$4,$5)")
+            .bind(row[0].as_str().unwrap()).bind(&row[1]).bind(row[2].as_str().unwrap()).bind(fields).bind(row[4].as_str().unwrap())
+            .execute(&mut *conn).await.unwrap();
+    }
+    let versions: Vec<i32> =
+        sqlx::query_scalar("SELECT version FROM sinex_schema.applied ORDER BY version")
+            .fetch_all(&mut *conn)
+            .await
+            .unwrap();
+    assert_eq!(versions, [0]);
+    conn.execute("INSERT INTO core.blobs(hash,size,status) VALUES('blake3:0000000000000000000000000000000000000000000000000000000000000000',17,'present')").await.unwrap();
 }
 
-async fn state(conn: &mut PgConnection) -> Vec<Value> {
-    sqlx::query_scalar("SELECT to_jsonb(t) FROM sinex_schema.applied t UNION ALL SELECT to_jsonb(t) FROM registry.event_types t UNION ALL SELECT to_jsonb(t) FROM core.blobs t ORDER BY 1")
-        .fetch_all(conn).await.unwrap()
+async fn state(conn: &mut PgConnection) -> (Vec<String>, Vec<Value>) {
+    let catalog = sinex_schema::catalog(conn).await.unwrap();
+    let tables: Vec<(String,String)> = sqlx::query_as("SELECT table_schema,table_name FROM information_schema.tables WHERE table_schema=ANY($1) AND table_type='BASE TABLE' ORDER BY table_schema,table_name")
+        .bind(sinex_schema::schemas()).fetch_all(&mut *conn).await.unwrap();
+    let mut rows = Vec::new();
+    for (schema, table) in tables {
+        let relation = format!(
+            "\"{}\".\"{}\"",
+            schema.replace('"', "\"\""),
+            table.replace('"', "\"\"")
+        );
+        let sql = format!(
+            "SELECT jsonb_build_object('table',$1::text,'row',to_jsonb(t)) FROM {relation} t ORDER BY 1"
+        );
+        let data: Vec<Value> = sqlx::query_scalar(&sql)
+            .bind(relation)
+            .fetch_all(&mut *conn)
+            .await
+            .unwrap();
+        rows.extend(data);
+    }
+    (catalog, rows)
 }
 
 async fn refuse_old(derive: bool) {
@@ -71,14 +79,14 @@ async fn refuse_old(derive: bool) {
     assert!(
         error
             .as_deref()
-            .is_some_and(|e| e.contains("version 1") && e.contains("apply explicitly")),
+            .is_some_and(|e| e.contains("version 0") && e.contains("apply explicitly")),
         "ordinary startup must refuse the actual predecessor: {error:?}"
     );
     assert_eq!(state(&mut conn).await, before);
     assert_eq!(
         sinex_schema::apply(&mut conn).await.unwrap(),
         sinex_schema::Applied::Upgraded {
-            from: 1,
+            from: 0,
             version: sinex_schema::VERSION
         }
     );
