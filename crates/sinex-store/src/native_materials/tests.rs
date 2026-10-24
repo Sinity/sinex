@@ -1,0 +1,226 @@
+use super::*;
+use crate::{
+    Blobs,
+    admission::{NoDerivations, admit},
+    testdb,
+};
+use sinex_model::{Batch, BatchKind, InputRef, ObservationFacts, RevisionChange, RunId};
+use sqlx::{Connection, Executor};
+
+async fn pending(conn: &mut PgConnection, source: &str, blob: &str, length: u64) -> Pending {
+    sqlx::query(
+        "INSERT INTO raw.bindings(binding,source,input,settings) VALUES($1,$1,'synthetic','{}')",
+    )
+    .bind(source)
+    .execute(&mut *conn)
+    .await
+    .unwrap();
+    let material = MaterialId::new();
+    let cursor = serde_json::json!({"material":material,"through":length});
+    let progress = SourceProgress {
+        native_pending: None,
+        erased_replay: None,
+        excision_basis: Some(
+            crate::excision::operations_basis(conn, source)
+                .await
+                .unwrap(),
+        ),
+        binding: source.into(),
+        image: None,
+        image_revision: None,
+        material_keys: vec![],
+        input: InputRef {
+            kind: "file".into(),
+            locator: "synthetic".into(),
+            host: "h".into(),
+        },
+        observation: ObservationFacts {
+            changed: true,
+            ..Default::default()
+        },
+        revision: RevisionChange::Snapshot,
+        material: Some(MaterialRef {
+            id: material,
+            input: None,
+            blob: blob.into(),
+            length,
+            part_index: 0,
+            previous_part: None,
+            parser: "lines".into(),
+            parser_version: 1,
+            manifest: serde_json::json!({}),
+        }),
+        cursor: cursor.clone(),
+        carry: Value::Null,
+    };
+    Pending {
+        material,
+        source: source.into(),
+        binding: source.into(),
+        progress,
+        image: None,
+        base_cursor: Value::Null,
+        base_carry: Value::Null,
+        start_cursor: Value::Null,
+        end_cursor: cursor,
+        state: State::Reserved,
+    }
+}
+async fn reservation(conn: &mut PgConnection, p: &Pending) {
+    let mut tx = conn.begin().await.unwrap();
+    reserve(&mut tx, p).await.unwrap();
+    tx.commit().await.unwrap();
+}
+async fn admission(conn: &mut PgConnection, p: &Pending) -> Result<()> {
+    let batch = Batch {
+        run: RunId::new(),
+        kind: BatchKind::Source(Box::new(
+            p.first_progress(p.end_cursor.clone(), Value::Null)?,
+        )),
+        records: vec![],
+        archive: vec![],
+    };
+    let mut tx = conn.begin().await?;
+    match admit(&mut tx, &batch, &NoDerivations).await {
+        Ok(_) => tx.commit().await.map_err(Into::into),
+        Err(error) => {
+            tx.rollback().await?;
+            Err(error)
+        }
+    }
+}
+
+#[tokio::test]
+async fn two_sources_same_hash_reservation_survives_cleanup_refusal_and_first_admission_retry() {
+    let (db, mut conn) = testdb::fresh().await;
+    let dir = tempfile::tempdir().unwrap();
+    let blobs = Blobs::open(dir.path()).unwrap();
+    let bytes = b"unrelated exact pending version\n";
+    let stage = blobs.prepare_plain(bytes.as_slice()).unwrap();
+    let name = stage.name();
+    let a = pending(&mut conn, "source-a", &name, bytes.len() as u64).await;
+    let b = pending(&mut conn, "source-b", &name, bytes.len() as u64).await;
+    // A previously owned the same name. Its purge marked it for deletion.
+    blobs.put(bytes).unwrap();
+    sqlx::query("INSERT INTO core.blobs(hash,size,status) VALUES($1,$2,'deleting')")
+        .bind(&name)
+        .bind(bytes.len() as i64)
+        .execute(&mut conn)
+        .await
+        .unwrap();
+    let mut tx = conn.begin().await.unwrap();
+    reserve(&mut tx, &b).await.unwrap();
+    let mut cleanup = PgConnection::connect(&db.url(None)).await.unwrap();
+    cleanup.execute("SET lock_timeout='40ms'").await.unwrap();
+    assert!(
+        crate::excision::finish_deletions(&mut cleanup, &blobs)
+            .await
+            .is_err(),
+        "cleanup must wait for the pending owner's blob row lock"
+    );
+    assert_eq!(blobs.read(&name).unwrap(), bytes);
+    tx.commit().await.unwrap();
+    assert!(
+        crate::excision::finish_deletions(&mut cleanup, &blobs)
+            .await
+            .unwrap()
+            .0
+            .is_empty()
+    );
+    stage.install().unwrap();
+    installed(&mut conn, b.material).await.unwrap();
+    conn.execute("CREATE FUNCTION public.reject_pending() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'synthetic refusal'; END $$; CREATE TRIGGER reject_pending BEFORE INSERT ON raw.positions FOR EACH ROW EXECUTE FUNCTION public.reject_pending()").await.unwrap();
+    assert!(admission(&mut conn, &b).await.is_err());
+    assert!(load(&mut conn, b.material).await.unwrap().is_some());
+    assert!(
+        crate::excision::finish_deletions(&mut cleanup, &blobs)
+            .await
+            .unwrap()
+            .0
+            .is_empty()
+    );
+    conn.execute(
+        "DROP TRIGGER reject_pending ON raw.positions; DROP FUNCTION public.reject_pending()",
+    )
+    .await
+    .unwrap();
+    admission(&mut conn, &b).await.unwrap();
+    assert!(load(&mut conn, b.material).await.unwrap().is_none());
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>("SELECT count(*) FROM raw.pending_native_blobs")
+            .fetch_one(&mut conn)
+            .await
+            .unwrap(),
+        0
+    );
+    assert_eq!(blobs.read(&name).unwrap(), bytes);
+    assert!(
+        crate::positions::load(&mut conn, &a.binding)
+            .await
+            .unwrap()
+            .is_none()
+    );
+}
+
+#[tokio::test]
+async fn deletion_winning_before_reservation_leaves_explicit_missing_custody_until_exact_install() {
+    let (_db, mut conn) = testdb::fresh().await;
+    let dir = tempfile::tempdir().unwrap();
+    let blobs = Blobs::open(dir.path()).unwrap();
+    let bytes = b"exact source-b version\n";
+    let stage = blobs.prepare_plain(bytes.as_slice()).unwrap();
+    let name = stage.name();
+    let _a = pending(&mut conn, "source-a", &name, bytes.len() as u64).await;
+    let b = pending(&mut conn, "source-b", &name, bytes.len() as u64).await;
+    blobs.put(bytes).unwrap();
+    sqlx::query("INSERT INTO core.blobs(hash,size,status) VALUES($1,$2,'deleting')")
+        .bind(&name)
+        .bind(bytes.len() as i64)
+        .execute(&mut conn)
+        .await
+        .unwrap();
+    assert_eq!(
+        crate::excision::finish_deletions(&mut conn, &blobs)
+            .await
+            .unwrap()
+            .0,
+        vec![name.clone()]
+    );
+    reservation(&mut conn, &b).await;
+    assert!(!blobs.contains(&name).unwrap());
+    assert!(load(&mut conn, b.material).await.unwrap().unwrap().state == State::Reserved);
+    assert_eq!(
+        sqlx::query_scalar::<_, String>("SELECT status FROM core.blobs WHERE hash=$1")
+            .bind(&name)
+            .fetch_one(&mut conn)
+            .await
+            .unwrap(),
+        "reserved"
+    );
+    assert!(admission(&mut conn, &b).await.is_err());
+    assert!(
+        crate::positions::load(&mut conn, &b.binding)
+            .await
+            .unwrap()
+            .is_none()
+    );
+    assert!(
+        crate::excision::finish_deletions(&mut conn, &blobs)
+            .await
+            .unwrap()
+            .0
+            .is_empty()
+    );
+    stage.install().unwrap();
+    installed(&mut conn, b.material).await.unwrap();
+    // Derived references cannot be independently edited to authorize admission.
+    sqlx::query("DELETE FROM raw.pending_native_blobs WHERE material_id=$1")
+        .bind(b.material.0)
+        .execute(&mut conn)
+        .await
+        .unwrap();
+    assert!(load(&mut conn, b.material).await.is_err());
+    reservation(&mut conn, &b).await;
+    admission(&mut conn, &b).await.unwrap();
+    assert_eq!(blobs.read(&name).unwrap(), bytes);
+}

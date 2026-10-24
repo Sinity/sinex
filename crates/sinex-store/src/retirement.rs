@@ -177,7 +177,7 @@ pub async fn apply(conn: &mut PgConnection, blobs: &Blobs) -> Result<Applied> {
             }
             let blank =
                 blobs.put_reader(std::io::Read::take(std::io::repeat(b' '), length as u64))?;
-            sqlx::query("INSERT INTO core.blobs(hash,size,status) VALUES($1,$2,'present') ON CONFLICT(hash) DO UPDATE SET status='present' WHERE core.blobs.status='deleting'").bind(&blank).bind(length).execute(&mut *conn).await?;
+            sqlx::query("INSERT INTO core.blobs(hash,size,status) VALUES($1,$2,'present') ON CONFLICT(hash) DO UPDATE SET status='present' WHERE core.blobs.status IN ('reserved','deleting')").bind(&blank).bind(length).execute(&mut *conn).await?;
             sqlx::query("UPDATE raw.revision_extents SET blob=$2 WHERE revision_id=$1 AND blob=$3")
                 .bind(revision)
                 .bind(&blank)
@@ -192,7 +192,7 @@ pub async fn apply(conn: &mut PgConnection, blobs: &Blobs) -> Result<Applied> {
             done.retired += 1;
         }
     }
-    sqlx::query("UPDATE core.blobs b SET status='deleting' FROM retirement_hashes h WHERE b.hash=h.hash AND NOT EXISTS(SELECT 1 FROM raw.materials m WHERE m.blob=b.hash OR m.erased_replay_blob=b.hash) AND NOT EXISTS(SELECT 1 FROM raw.revision_extents x WHERE x.blob=b.hash) AND NOT EXISTS(SELECT 1 FROM core.event_blobs e WHERE e.blob=b.hash)").execute(conn).await?;
+    sqlx::query("UPDATE core.blobs b SET status='deleting' FROM retirement_hashes h WHERE b.hash=h.hash AND NOT EXISTS(SELECT 1 FROM raw.materials m WHERE m.blob=b.hash OR m.erased_replay_blob=b.hash) AND NOT EXISTS(SELECT 1 FROM raw.revision_extents x WHERE x.blob=b.hash) AND NOT EXISTS(SELECT 1 FROM core.event_blobs e WHERE e.blob=b.hash) AND NOT EXISTS(SELECT 1 FROM raw.pending_native_blobs p WHERE p.blob=b.hash)").execute(conn).await?;
     Ok(done)
 }
 

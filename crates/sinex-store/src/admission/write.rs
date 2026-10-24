@@ -204,7 +204,7 @@ async fn record_citations(conn: &mut PgConnection, events: &[Event], ords: &[i32
     sqlx::query!(
         r#"INSERT INTO core.blobs (hash, size, status)
            SELECT DISTINCT ON (b) b, s, 'present' FROM unnest($1::text[], $2::bigint[]) AS c(b, s)
-           ON CONFLICT (hash) DO UPDATE SET status = 'present' WHERE core.blobs.status = 'deleting'"#,
+           ON CONFLICT (hash) DO UPDATE SET status = 'present' WHERE core.blobs.status IN ('reserved','deleting')"#,
         &blobs,
         &sizes,
     )

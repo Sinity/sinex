@@ -4,7 +4,7 @@ use sqlx::Executor;
 // Restore the published predecessor representation and note definitions so
 // explicit application exercises the complete ordered upgrade.
 async fn predecessor(conn: &mut PgConnection) {
-    conn.execute("DROP TABLE raw.pending_native_materials; ALTER TABLE raw.materials DROP COLUMN erased_replay_blob; ALTER TABLE privacy.material_keys DROP COLUMN role; DELETE FROM sinex_schema.applied WHERE version=3").await.unwrap();
+    conn.execute("DROP TABLE raw.pending_native_blobs; DROP TABLE raw.pending_native_materials; ALTER TABLE core.blobs DROP CONSTRAINT blobs_status_check; ALTER TABLE core.blobs ADD CONSTRAINT blobs_status_check CHECK(status IN ('present','quarantined','deleting')); ALTER TABLE raw.materials DROP COLUMN erased_replay_blob; ALTER TABLE privacy.material_keys DROP COLUMN role; DELETE FROM sinex_schema.applied WHERE version=3").await.unwrap();
     let old: Value = serde_json::from_str(include_str!(
         "../../../../sinex-schema/src/tests/v0-declarations.json"
     ))

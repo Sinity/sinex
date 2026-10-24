@@ -139,7 +139,11 @@ async fn sealed_erasure(conn: &mut PgConnection) -> Result<(), Error> {
     )
     .await?;
     conn.execute(tables::event_guard()).await?;
+    conn.execute("ALTER TABLE core.blobs DROP CONSTRAINT blobs_status_check; ALTER TABLE core.blobs ADD CONSTRAINT blobs_status_check CHECK(status IN ('reserved','present','quarantined','deleting'))").await?;
     conn.execute(tables::pending_native_table()).await?;
+    conn.execute(tables::pending_native_blobs_table()).await?;
+    conn.execute("CREATE INDEX pending_native_blobs_blob ON raw.pending_native_blobs(blob)")
+        .await?;
     conn.execute(
         "CREATE INDEX pending_native_source ON raw.pending_native_materials(source, binding)",
     )

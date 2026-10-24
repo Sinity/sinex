@@ -108,6 +108,18 @@ async fn failed_first_native_admission_keeps_exact_installed_custody_after_provi
             .unwrap()
             .is_none()
     );
+    // Another source's purge may mark a shared name before this pending
+    // source's first admission. Its exact installed version still owns it.
+    sqlx::query("INSERT INTO core.blobs(hash,size,status) VALUES($1,$2,'deleting') ON CONFLICT(hash) DO UPDATE SET status='deleting'")
+        .bind(&material.blob).bind(material.length as i64).execute(&mut ctx.read_conn).await.unwrap();
+    let (removed, failed) = sinex_store::excision::finish_deletions(&mut ctx.read_conn, &ctx.blobs)
+        .await
+        .unwrap();
+    assert!(
+        removed.is_empty(),
+        "cleanup removed another source's pending version"
+    );
+    assert!(failed.is_empty());
     let original = ctx.blobs.read(&material.blob).unwrap();
     assert_eq!(
         ctx.blobs.put(&original).unwrap(),
@@ -362,6 +374,8 @@ async fn actual_sealed_append_first_chunk_and_restart_finish_original_bytes_and_
             stored: opened.records(),
             records,
             erased: None,
+            archived_end: None,
+            erased_members: Vec::new(),
             base_cursor: serde_json::Value::Null,
             cursor: first_cursor.clone(),
             head: Vec::new(),

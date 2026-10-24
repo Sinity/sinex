@@ -6,6 +6,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sinex_model::{MaterialId, MaterialRef, SourceProgress};
 use sqlx::PgConnection;
+use std::collections::BTreeMap;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum State {
@@ -338,6 +339,95 @@ fn primary(p: &SourceProgress) -> Option<MaterialId> {
         .or_else(|| p.image.as_ref().map(|i| i.material.id))
 }
 
+// The projection is derived exclusively from the frozen publication codec.
+// Extents may refer to an older full blob whose total length is not in the map.
+fn blob_references(publication: Value) -> Result<BTreeMap<String, Option<i64>>> {
+    let p: Publication =
+        serde_json::from_value(publication).map_err(|_| invalid("invalid native publication"))?;
+    let mut refs = BTreeMap::new();
+    let mut add = |name: String, length: Option<u64>| -> Result<()> {
+        let length = length
+            .map(i64::try_from)
+            .transpose()
+            .map_err(|_| invalid("native blob length beyond i64"))?;
+        match refs.entry(name) {
+            std::collections::btree_map::Entry::Vacant(e) => {
+                e.insert(length);
+            }
+            std::collections::btree_map::Entry::Occupied(mut e) => {
+                if let (Some(old), Some(new)) = (*e.get(), length) {
+                    if old != new {
+                        return Err(invalid("native blob has conflicting lengths"));
+                    }
+                }
+                if length.is_some() {
+                    e.insert(length);
+                }
+            }
+        }
+        Ok(())
+    };
+    if let Some(m) = p.material {
+        add(m.blob, Some(m.length))?;
+    }
+    if let Some(i) = p.image {
+        add(i.material.blob, Some(i.material.length))?;
+        for extent in i.extents {
+            add(extent.blob, None)?;
+        }
+    }
+    if let Some(replay) = p.erased_replay {
+        add(replay.blob, Some(replay.length))?;
+    }
+    Ok(refs)
+}
+
+async fn reserve_blobs(
+    conn: &mut PgConnection,
+    material: MaterialId,
+    publication: Value,
+) -> Result<()> {
+    for (name, length) in blob_references(publication)? {
+        if let Some(length) = length {
+            sqlx::query("INSERT INTO core.blobs(hash,size,status) VALUES($1,$2,'reserved') ON CONFLICT(hash) DO NOTHING")
+                .bind(&name).bind(length).execute(&mut *conn).await?;
+        }
+        // Reservation and deletion take the same row lock. If deletion won,
+        // the INSERT above reserved a new missing name before installation.
+        let actual: Option<i64> =
+            sqlx::query_scalar("SELECT size FROM core.blobs WHERE hash=$1 FOR UPDATE")
+                .bind(&name)
+                .fetch_optional(&mut *conn)
+                .await?;
+        if actual.is_none() || length.is_some_and(|length| actual != Some(length)) {
+            return Err(invalid(
+                "native blob reservation has missing or inconsistent length",
+            ));
+        }
+        sqlx::query("INSERT INTO raw.pending_native_blobs(material_id,blob) VALUES($1,$2) ON CONFLICT DO NOTHING")
+            .bind(material.0).bind(&name).execute(&mut *conn).await?;
+    }
+    Ok(())
+}
+
+async fn validate_blob_references(conn: &mut PgConnection, pending: &Pending) -> Result<()> {
+    let expected = blob_references(encode_pending(pending)?)?;
+    let actual: Vec<(String,i64)> = sqlx::query_as("SELECT p.blob,b.size FROM raw.pending_native_blobs p JOIN core.blobs b ON b.hash=p.blob WHERE p.material_id=$1 ORDER BY p.blob")
+        .bind(pending.material.0).fetch_all(conn).await?;
+    if actual.len() != expected.len()
+        || actual.iter().any(|(name, size)| {
+            expected
+                .get(name)
+                .is_none_or(|length| length.is_some_and(|length| length != *size))
+        })
+    {
+        return Err(invalid(
+            "native blob reference projection differs from frozen publication",
+        ));
+    }
+    Ok(())
+}
+
 /// Caller holds the source shared guard. Commit this reservation before the
 /// prepared plain handles install any public CAS names.
 pub async fn reserve(conn: &mut PgConnection, pending: &Pending) -> Result<()> {
@@ -401,6 +491,7 @@ pub async fn reserve(conn: &mut PgConnection, pending: &Pending) -> Result<()> {
     let publication = encode_pending(pending)?;
     sqlx::query("INSERT INTO raw.pending_native_materials(material_id,source,binding,publication,base_cursor,base_carry,start_cursor,end_cursor,state) VALUES($1,$2,$3,$4,$5,$6,$7,$8,'reserved') ON CONFLICT(material_id) DO NOTHING")
         .bind(pending.material.0).bind(&pending.source).bind(&pending.binding).bind(&publication).bind(&pending.base_cursor).bind(&pending.base_carry).bind(&pending.start_cursor).bind(&pending.end_cursor).execute(&mut *conn).await?;
+    reserve_blobs(conn, pending.material, publication.clone()).await?;
     let actual = load(conn, pending.material)
         .await?
         .ok_or_else(|| invalid("native publication reservation disappeared"))?;
@@ -421,50 +512,55 @@ pub async fn reserve(conn: &mut PgConnection, pending: &Pending) -> Result<()> {
 
 pub async fn load(conn: &mut PgConnection, material: MaterialId) -> Result<Option<Pending>> {
     let row:Option<(String,String,Value,Value,Value,Value,Value,String)>=sqlx::query_as("SELECT source,binding,publication,base_cursor,base_carry,start_cursor,end_cursor,state FROM raw.pending_native_materials WHERE material_id=$1")
-        .bind(material.0).fetch_optional(conn).await?;
-    row.map(
-        |(
-            source,
-            binding,
-            publication,
-            base_cursor,
-            base_carry,
-            start_cursor,
-            end_cursor,
-            state,
-        )| {
-            let (progress, image) = decode(publication, &binding, &start_cursor, &base_carry)?;
-            if primary(&progress).or_else(|| {
-                image
-                    .as_ref()
-                    .map(|PendingImage::AwaitingCosts(i)| i.material.id)
-            }) != Some(material)
-                || progress
-                    .excision_basis
-                    .as_ref()
-                    .is_none_or(|b| b.source != source)
-            {
-                return Err(invalid("native publication ownership metadata differs"));
-            }
-            Ok(Pending {
-                material,
+        .bind(material.0).fetch_optional(&mut *conn).await?;
+    let pending = row
+        .map(
+            |(
                 source,
                 binding,
-                progress,
-                image,
+                publication,
                 base_cursor,
                 base_carry,
                 start_cursor,
                 end_cursor,
-                state: match state.as_str() {
-                    "reserved" => State::Reserved,
-                    "installed" => State::Installed,
-                    _ => return Err(invalid("unknown native publication state")),
-                },
-            })
-        },
-    )
-    .transpose()
+                state,
+            )| {
+                let (progress, image) = decode(publication, &binding, &start_cursor, &base_carry)?;
+                if primary(&progress).or_else(|| {
+                    image
+                        .as_ref()
+                        .map(|PendingImage::AwaitingCosts(i)| i.material.id)
+                }) != Some(material)
+                    || progress
+                        .excision_basis
+                        .as_ref()
+                        .is_none_or(|b| b.source != source)
+                {
+                    return Err(invalid("native publication ownership metadata differs"));
+                }
+                Ok(Pending {
+                    material,
+                    source,
+                    binding,
+                    progress,
+                    image,
+                    base_cursor,
+                    base_carry,
+                    start_cursor,
+                    end_cursor,
+                    state: match state.as_str() {
+                        "reserved" => State::Reserved,
+                        "installed" => State::Installed,
+                        _ => return Err(invalid("unknown native publication state")),
+                    },
+                })
+            },
+        )
+        .transpose()?;
+    if let Some(pending) = &pending {
+        validate_blob_references(conn, pending).await?;
+    }
+    Ok(pending)
 }
 pub async fn binding_pending(conn: &mut PgConnection, binding: &str) -> Result<Vec<MaterialId>> {
     Ok(sqlx::query_scalar::<_,uuid::Uuid>("SELECT material_id FROM raw.pending_native_materials WHERE binding=$1 ORDER BY reserved_at,material_id").bind(binding).fetch_all(conn).await?.into_iter().map(MaterialId).collect())
@@ -521,6 +617,8 @@ pub async fn installed(conn: &mut PgConnection, material: MaterialId) -> Result<
             "native installation needs finalized image storage costs",
         ));
     }
+    sqlx::query("UPDATE core.blobs b SET status='present' FROM raw.pending_native_blobs p WHERE p.material_id=$1 AND p.blob=b.hash AND b.status IN ('reserved','deleting')")
+        .bind(material.0).execute(&mut *conn).await?;
     let changed = sqlx::query(
         "UPDATE raw.pending_native_materials SET state='installed' WHERE material_id=$1",
     )
@@ -577,3 +675,6 @@ pub(crate) async fn complete(conn: &mut PgConnection, p: &SourceProgress) -> Res
     }
     Ok(())
 }
+
+#[cfg(test)]
+mod tests;

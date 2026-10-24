@@ -102,6 +102,18 @@ keyed digests and no cross-image page reuse. Provider
 page readers feed encryption directly; sealed retained input is never staged as
 plaintext or opened with borrowed operator authority.
 
+Native publication custody uses `raw.pending_native_materials`, with blob
+references derived from its typed frozen publication. `core.blobs.status =
+'reserved'` means the named bytes may still be missing; it implements the
+specification's writing phase and is neither `present` nor quarantined. Reserve
+these rows before installing prepared CAS bytes. First admission completes the
+reservation with material and progress in one transaction. Cleanup locks each
+blob row and rechecks ready and pending references while holding the lock through
+unlink and row deletion. These native paths do not establish pre-admission
+custody for existing ingress, direct placement or library media puts; that gap
+still blocks enabling destructive excision for affected names. Unregistered
+legacy files are not repaired by native reservations.
+
 Companion image material, immutable revision/extents, wrapped keys, row material
 and first-batch progress share the writer transaction. Later chunks name that
 fixed image revision. Independent bindings may retain immutable branches from

@@ -216,7 +216,7 @@ pub(crate) async fn register_blob(
     if length == 0 || blob.is_empty() {
         return Err(invalid());
     }
-    sqlx::query("INSERT INTO core.blobs(hash,size,status) VALUES($1,$2,'present') ON CONFLICT(hash) DO UPDATE SET status='present' WHERE core.blobs.status='deleting' AND core.blobs.size=EXCLUDED.size")
+    sqlx::query("INSERT INTO core.blobs(hash,size,status) VALUES($1,$2,'present') ON CONFLICT(hash) DO UPDATE SET status='present' WHERE core.blobs.status IN ('reserved','deleting') AND core.blobs.size=EXCLUDED.size")
         .bind(blob).bind(length).execute(&mut *conn).await?;
     let actual: i64 = sqlx::query_scalar("SELECT size FROM core.blobs WHERE hash=$1")
         .bind(blob)

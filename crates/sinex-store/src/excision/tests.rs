@@ -411,43 +411,51 @@ async fn derived_descendants_go_with_their_parent() {
 }
 
 #[tokio::test]
-async fn a_sealed_material_is_shredded_whole_and_never_in_part() {
+async fn sealed_whole_and_partial_excision_both_require_scoped_prepared_replacements() {
     let (_db, mut conn) = testdb::fresh().await;
     let store = Store::new();
     let bytes = b"a\nb\n".to_vec();
     let (m, blob) = material(&mut conn, &store, &bytes).await;
     sqlx::query!(
         "INSERT INTO privacy.material_keys (material_id, key_ref, class, wrapped_key) VALUES ($1, $2, 'sealed', '\\x00')",
-        m.0,
-        m.0.to_string()
-    )
-    .execute(&mut conn)
-    .await
-    .unwrap();
+        m.0, m.0.to_string()
+    ).execute(&mut conn).await.unwrap();
     let a = keyed(m, &bytes, 0, "a", 1);
     admit_events(&mut conn, vec![a.clone(), keyed(m, &bytes, 2, "b", 1)]).await;
-    let refused = plan(&mut conn, Target::Event(a.id)).await.unwrap_err();
-    assert!(refused.to_string().contains("only the whole material"));
-
-    let applied = excise(&mut conn, &store, Target::Material(m))
-        .await
-        .unwrap();
-    assert_eq!(
-        (
-            applied.events,
-            applied.keys_destroyed,
-            applied.materials_rewritten
-        ),
-        (2, 1, 0)
-    );
-    assert!(
-        store.blobs.read(&blob).is_ok(),
-        "the ciphertext stays; its key is gone"
-    );
+    for target in [Target::Event(a.id), Target::Material(m)] {
+        let selected = plan(&mut conn, target).await.unwrap();
+        let mut tx = conn.begin().await.unwrap();
+        let result = apply(
+            &mut tx,
+            target,
+            &selected,
+            &[],
+            OperationId::new(),
+            "operator",
+            &NoDerivations,
+        )
+        .await;
+        tx.rollback().await.unwrap();
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("scoped prepared key and body replacements")
+        );
+    }
     assert_eq!(
         count(&mut conn, "SELECT count(*) FROM privacy.material_keys").await,
+        1
+    );
+    assert_eq!(
+        count(&mut conn, "SELECT count(*) FROM core.event_tombstones").await,
         0
     );
+    assert_eq!(
+        count(&mut conn, "SELECT count(*) FROM core.events").await,
+        2
+    );
+    assert_eq!(store.blobs.read(&blob).unwrap(), bytes);
 }
 
 #[tokio::test]

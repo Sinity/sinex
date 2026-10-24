@@ -23,7 +23,7 @@
 use crate::admission::{DirtyKeys, mark_archived_dirty, remove_live};
 use crate::{Error, Result};
 use sinex_model::{EventId, MaterialId, OperationId};
-use sqlx::PgConnection;
+use sqlx::{Connection, PgConnection};
 use std::collections::{BTreeMap, BTreeSet};
 use uuid::Uuid;
 
@@ -604,7 +604,8 @@ async fn unreferenced(conn: &mut PgConnection, blob: &str) -> Result<bool> {
     Ok(sqlx::query_scalar!(
         r#"SELECT NOT EXISTS (SELECT 1 FROM raw.materials WHERE blob = $1 OR erased_replay_blob=$1)
              AND NOT EXISTS (SELECT 1 FROM raw.revision_extents WHERE blob = $1)
-             AND NOT EXISTS (SELECT 1 FROM core.event_blobs WHERE blob = $1) AS "gone!""#,
+             AND NOT EXISTS (SELECT 1 FROM core.event_blobs WHERE blob = $1)
+             AND NOT EXISTS (SELECT 1 FROM raw.pending_native_blobs WHERE blob = $1) AS "gone!""#,
         blob
     )
     .fetch_one(&mut *conn)
@@ -620,26 +621,41 @@ pub async fn finish_deletions(
     conn: &mut PgConnection,
     blobs: &crate::Blobs,
 ) -> Result<(Vec<String>, Vec<String>)> {
-    let pending = sqlx::query_scalar!(
-        r#"SELECT hash FROM core.blobs b WHERE status = 'deleting'
-             AND NOT EXISTS (SELECT 1 FROM raw.materials WHERE blob = b.hash OR erased_replay_blob=b.hash)
-             AND NOT EXISTS (SELECT 1 FROM raw.revision_extents WHERE blob = b.hash)
-             AND NOT EXISTS (SELECT 1 FROM core.event_blobs WHERE blob = b.hash)"#
-    )
-    .fetch_all(&mut *conn)
-    .await?;
+    let pending: Vec<String> =
+        sqlx::query_scalar("SELECT hash FROM core.blobs WHERE status='deleting' ORDER BY hash")
+            .fetch_all(&mut *conn)
+            .await?;
     let (mut deleted, mut left) = (Vec::new(), Vec::new());
     for name in pending {
-        if blobs.delete(&name).is_ok() {
-            sqlx::query!(
-                "DELETE FROM core.blobs WHERE hash = $1 AND status = 'deleting'",
-                name
-            )
-            .execute(&mut *conn)
-            .await?;
-            deleted.push(name);
-        } else {
-            left.push(name);
+        let mut tx = conn.begin().await?;
+        let result = async {
+            let status: Option<String> = sqlx::query_scalar("SELECT status FROM core.blobs WHERE hash=$1 FOR UPDATE")
+                .bind(&name).fetch_optional(&mut *tx).await?;
+            if status.as_deref() != Some("deleting") { return Ok(None); }
+            // A fresh statement after the lock observes owners which committed
+            // while it waited. FK references and reservations cannot pass this
+            // lock until unlink and row deletion have completed together.
+            let owned: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM raw.materials WHERE blob=$1 OR erased_replay_blob=$1) OR EXISTS(SELECT 1 FROM raw.revision_extents WHERE blob=$1) OR EXISTS(SELECT 1 FROM core.event_blobs WHERE blob=$1) OR EXISTS(SELECT 1 FROM raw.pending_native_blobs WHERE blob=$1)")
+                .bind(&name).fetch_one(&mut *tx).await?;
+            if owned { return Ok(None); }
+            if blobs.delete(&name).is_err() { return Ok(Some(false)); }
+            sqlx::query("DELETE FROM core.blobs WHERE hash=$1 AND status='deleting'")
+                .bind(&name).execute(&mut *tx).await?;
+            Ok::<_, Error>(Some(true))
+        }.await;
+        match result {
+            Ok(result) => {
+                tx.commit().await?;
+                match result {
+                    Some(true) => deleted.push(name),
+                    Some(false) => left.push(name),
+                    None => {}
+                }
+            }
+            Err(error) => {
+                tx.rollback().await?;
+                return Err(error);
+            }
         }
     }
     Ok((deleted, left))

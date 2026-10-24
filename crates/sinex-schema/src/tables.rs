@@ -180,7 +180,7 @@ pub(crate) fn tables(c: &Checks) -> Vec<String> {
   -- `deleting`: no row refers to the bytes any more (an excision); the
   -- file is deleted after commit, then this row. A row left `deleting` by a
   -- crash is finished when the daemon starts.
-  status text NOT NULL CHECK (status IN ('present', 'quarantined', 'deleting')),
+  status text NOT NULL CHECK (status IN ('reserved', 'present', 'quarantined', 'deleting')),
   registered_at timestamptz NOT NULL DEFAULT now()
 )".into(),
         // Stored bytes an event owns beyond its material (a library file
@@ -272,6 +272,8 @@ pub(crate) fn tables(c: &Checks) -> Vec<String> {
   updated_at timestamptz NOT NULL DEFAULT now()
 )".into(),
         pending_native_table().into(),
+        pending_native_blobs_table().into(),
+        "CREATE INDEX pending_native_blobs_blob ON raw.pending_native_blobs(blob)".into(),
         "CREATE INDEX pending_native_source ON raw.pending_native_materials(source, binding)".into(),
         "CREATE TABLE raw.positions (
   binding text PRIMARY KEY,
@@ -655,5 +657,13 @@ pub(crate) fn pending_native_table() -> &'static str {
   end_cursor jsonb NOT NULL,
   state text NOT NULL CHECK (state IN ('reserved','installed')),
   reserved_at timestamptz NOT NULL DEFAULT now()
+)"
+}
+
+pub(crate) fn pending_native_blobs_table() -> &'static str {
+    "CREATE TABLE raw.pending_native_blobs (
+  material_id uuid NOT NULL REFERENCES raw.pending_native_materials(material_id) ON DELETE CASCADE,
+  blob text NOT NULL REFERENCES core.blobs(hash),
+  PRIMARY KEY (material_id, blob)
 )"
 }
