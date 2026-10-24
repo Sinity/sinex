@@ -137,6 +137,13 @@ inside owned scratch. Standalone Drop removes only its child; abrupt death has
 no external cleanup guarantee. PostgreSQL and NATS retain their existing separate
 lifecycle owners.
 
+AgentCTL forwards an explicit `CARGO_TARGET_DIR` from the caller at enqueue time. Select an absolute target with exclusive writer ownership; omitting it keeps the devshell's checkout-local target.
+
+```sh
+CARGO_TARGET_DIR=/realm/worktree/leased-build/target \
+  agentctl job start sinex focused --workspace /realm/worktree/sinex-edit -- -p sinex-sources -E 'test(session_socket)'
+```
+
 A first import of the operator's shell history:
 
 ```bash
