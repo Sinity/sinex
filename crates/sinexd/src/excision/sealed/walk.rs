@@ -149,21 +149,22 @@ impl Archive {
                 .find(|c| c.material.0 == stored.id)
                 .ok_or("sealed excision candidate disappeared")?;
             let source = &*self.parsers[index];
-            let rows: Vec<(i64, String, Option<String>, i16, Vec<u8>)> = if candidate.material
+            let rows: Vec<(i64, String, Option<String>, i16, Vec<u8>, String)> = if candidate
+                .material
                 == material
             {
-                sqlx::query_as("SELECT DISTINCT anchor,event_type,equivalence_key,ordinal,record_hash FROM core.events WHERE material_id=$1 ORDER BY anchor,event_type,ordinal")
+                sqlx::query_as("SELECT DISTINCT anchor,event_type,equivalence_key,ordinal,record_hash,record_state FROM core.events WHERE material_id=$1 ORDER BY anchor,event_type,ordinal")
                     .bind(material.0).fetch_all(&mut *conn).await.map_err(|e|e.to_string())?
             } else {
                 Vec::new()
             };
-            let mut expected: BTreeMap<i64, Vec<(String, Option<String>, i16, Vec<u8>)>> =
+            let mut expected: BTreeMap<i64, Vec<(String, Option<String>, i16, Vec<u8>, String)>> =
                 BTreeMap::new();
-            for (anchor, kind, key, ordinal, hash) in rows {
+            for (anchor, kind, key, ordinal, hash, state) in rows {
                 expected
                     .entry(anchor)
                     .or_default()
-                    .push((kind, key, ordinal, hash));
+                    .push((kind, key, ordinal, hash, state));
             }
             let mut verified_anchors = BTreeSet::new();
             let opened = crate::retained::open(
@@ -256,7 +257,7 @@ impl Archive {
                             .record(start, end)
                             .map_err(|_| "sealed record read failed")?;
                     let names = opened.secrets.as_ref().map(|(_, names)| names);
-                    for (kind, key, ordinal, hash) in
+                    for (kind, key, ordinal, hash, state) in
                         expected.get(&(start as i64)).into_iter().flatten()
                     {
                         if !events.iter().any(|event| {
@@ -265,33 +266,29 @@ impl Archive {
                                     Some(names) => names.name_equivalence(&key.0).0,
                                     None => key.0.clone(),
                                 });
-                            let actual_hash = match names {
-                                Some(names) => names.name_record_hash(&event.record_hash),
-                                None => event.record_hash,
+                            let actual_hash = names.map_or(event.record_hash, |n| {
+                                n.name_record_hash(&event.record_hash)
+                            });
+                            let native_state = match event.record_state {
+                                sinex_model::RecordState::Present => "present",
+                                sinex_model::RecordState::Removed => "removed",
                             };
+                            let same_reading =
+                                native_state == state && actual_hash.as_slice() == hash;
+                            let removal_observation = event.record_state
+                                == sinex_model::RecordState::Present
+                                && state == "removed"
+                                && sinex_store::admission::source_removal_hash(&actual_hash)
+                                    .as_slice()
+                                    == hash;
                             event.event_type == kind.as_str()
                                 && event
                                     .location()
                                     .is_some_and(|(_, n)| i32::from(n) == i32::from(*ordinal))
                                 && actual_key == *key
-                                && actual_hash.as_slice() == hash
+                                && (same_reading || removal_observation)
                         }) {
-                            let matching_hash = events.iter().any(|event| {
-                                let actual = names.map_or(event.record_hash, |n| {
-                                    n.name_record_hash(&event.record_hash)
-                                });
-                                actual.as_slice() == hash
-                            });
-                            let matching_key = events.iter().any(|event| {
-                                let actual = event.equivalence_key.as_ref().map(|k| {
-                                    names
-                                        .map_or_else(|| k.0.clone(), |n| n.name_equivalence(&k.0).0)
-                                });
-                                actual == *key
-                            });
-                            return Err(format!(
-                                "native record identity does not match its retained predecessor evidence (hash matches: {matching_hash}, key matches: {matching_key})"
-                            ));
+                            return Err("native record identity does not match its retained predecessor evidence".into());
                         }
                         verified_anchors.insert(start as i64);
                     }
