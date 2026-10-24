@@ -50,7 +50,7 @@ fn original_rows_without_excision_metadata_remain_readable() {
 
 #[test]
 fn independently_appended_facts_can_be_replaced_or_excised() {
-    for kind in ["observation", "delivery_event"] {
+    for kind in ["observation", "delivery_event", "extracted_blob"] {
         let value = manifest_for(kind);
         let decoded: ExcisionPublication = serde_json::from_value(value).unwrap();
         assert_eq!(decoded.replacements[0].unit.kind, kind);

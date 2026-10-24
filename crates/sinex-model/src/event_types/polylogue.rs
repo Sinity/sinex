@@ -27,7 +27,7 @@ pub struct PolylogueRows {
     /// The archive's write counter at the unit.
     pub local_seq: i64,
     /// `revision`, `note`, `excision`, `setting`, `delivery`,
-    /// `observation` or `delivery_event`.
+    /// `observation`, `delivery_event` or `extracted_blob`.
     pub unit: String,
     /// The unit's own key: `<input>/<number>` for a revision, the row ID
     /// otherwise; delivery events use their encoded compound key.
