@@ -93,7 +93,12 @@ in
     storeDir = mkOption {
       type = types.path;
       default = "${cfg.stateDir}/store";
-      description = "The content store: the exact bytes events are read from.";
+      description = ''
+        The content store: the exact bytes events are read from. Local producer
+        handoff uses its protected configured group. Existing private handoff
+        files or directories are refused: preserve the saved publication request
+        and bytes, then explicitly restage them under that group before retrying.
+      '';
     };
     noCow = mkOption {
       type = types.bool;
@@ -304,6 +309,10 @@ in
         "d ${cfg.stateDir} 0750 ${cfg.user} ${cfg.group} -"
         # Producers on this host write material bytes, so the group may write.
         "d ${cfg.storeDir} 2770 ${cfg.user} ${cfg.group} -"
+        # The session producer and daemon share only these protected handoff trees.
+        "d ${cfg.storeDir}/incoming 2770 ${cfg.user} ${cfg.group} -"
+        "d ${cfg.storeDir}/incoming/producers 2770 ${cfg.user} ${cfg.group} -"
+        "d ${cfg.storeDir}/incoming/producer-requests 2770 ${cfg.user} ${cfg.group} -"
         "d ${cfg.stateDir}/tokens 0750 ${cfg.user} ${cfg.group} -"
         "d ${cfg.stateDir}/nats 0750 ${cfg.user} ${cfg.group} -"
         "d ${cfg.stateDir}/spool 0750 ${cfg.user} ${cfg.group} -"
@@ -415,7 +424,7 @@ in
         # restart on every switch.
         restartIfChanged = false;
         # Tesseract reads text from screen segments (screen.text).
-        path = [ pkgs.tesseract ];
+        path = [ pkgs.tesseract pkgs.coreutils ];
         serviceConfig = restartPolicy // {
           User = cfg.user;
           Group = cfg.group;
@@ -424,7 +433,6 @@ in
           LoadCredential = [ "nats:${cfg.nats.daemonPasswordFile}" ];
           UMask = "0007";
         };
-        path = [ pkgs.coreutils ];
         preStart = ''
           # Tokens are made once; a missing file disables that level.
           for level in read agent operator; do

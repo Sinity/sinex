@@ -2,6 +2,8 @@
 //! copies and verifies a producer-writable file before it can install it.
 use sinex_protocol::Ingress;
 use sinex_protocol::producer_bytes::{Bytes, Material, Publication, Role, encode_frame, spool_key};
+mod permissions;
+
 use std::io::{Read, Seek, Write};
 use std::os::unix::fs::OpenOptionsExt;
 use std::path::{Path, PathBuf};
@@ -55,10 +57,12 @@ pub fn stage(
 ) -> Result<(), String> {
     let bytes = expected(publication, role)?;
     let dir = directory(root, producer, publication);
-    std::fs::create_dir_all(&dir).map_err(error)?;
+    let group = permissions::prepare_directory(root, &dir)?;
+    permissions::check_existing_file(&dir.join(role.name()), group)?;
     sync_directories(root, &dir)?;
     let mut staged = tempfile::NamedTempFile::new_in(&dir).map_err(error)?;
     copy_checked(input, &mut staged, bytes)?;
+    permissions::share_completed_file(staged.as_file(), group)?;
     staged.as_file().sync_all().map_err(error)?;
     staged.persist(dir.join(role.name())).map_err(error)?;
     std::fs::File::open(&dir)
@@ -103,7 +107,7 @@ pub fn receive(
         return Err("producer chunk exceeds frozen length".into());
     }
     let dir = directory(root, producer, publication);
-    std::fs::create_dir_all(&dir).map_err(error)?;
+    let _ = permissions::prepare_directory(root, &dir)?;
     sync_directories(root, &dir)?;
     if let Ok(mut ready) = std::fs::File::open(dir.join(role.name())) {
         if ready.metadata().map_err(error)?.len() != bytes.length {
@@ -363,13 +367,15 @@ pub fn freeze(root: &Path, producer: &str, frozen: &Frozen) -> Result<Frozen, St
     frozen.validate()?;
     let path = artifact_path(root, producer, &frozen.publication.frame);
     let dir = path.parent().expect("artifact has a parent");
-    std::fs::create_dir_all(dir).map_err(error)?;
+    let group = permissions::prepare_directory(root, dir)?;
+    permissions::check_existing_file(&path, group)?;
     sync_directories(root, dir)?;
     let mut staged = tempfile::Builder::new()
         .prefix(".producer-request-")
         .tempfile_in(dir)
         .map_err(error)?;
     serde_json::to_writer(&mut staged, frozen).map_err(error)?;
+    permissions::share_completed_file(staged.as_file(), group)?;
     staged.as_file().sync_all().map_err(error)?;
     match staged.persist_noclobber(&path) {
         Ok(_) => {}

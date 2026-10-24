@@ -241,3 +241,5 @@ fn pending_artifacts_are_producer_scoped_and_keep_payload_order_through_the_supp
     assert_eq!(pending(root.path(), "one").unwrap().count(), 0);
     assert_eq!(pending(root.path(), "two").unwrap().count(), 1);
 }
+
+mod group;
