@@ -42,7 +42,47 @@ impl Harness {
         hash: &str,
         publication: Option<ExcisionPublication>,
     ) {
-        let payload = json!({"archive":ARCHIVE,"position":position,"local_seq":unit.commit_seq,"unit":unit.kind,"key":unit.key,"batch":hash,"rows":1,"blobs":[],"excision":publication});
+        self.row_with_sources(ARCHIVE, position, unit, material, hash, &[], publication)
+            .await;
+    }
+    #[allow(clippy::too_many_arguments)]
+    async fn row_with_sources(
+        &self,
+        archive: &str,
+        position: u64,
+        unit: &ArchiveUnit,
+        material: MaterialId,
+        hash: &str,
+        sources: &[String],
+        publication: Option<ExcisionPublication>,
+    ) {
+        assert_eq!(
+            self.send_row_with_sources(
+                archive,
+                position,
+                unit,
+                material,
+                hash,
+                sources,
+                publication
+            )
+            .await
+            .refusal,
+            None
+        );
+    }
+    #[allow(clippy::too_many_arguments)]
+    async fn send_row_with_sources(
+        &self,
+        archive: &str,
+        position: u64,
+        unit: &ArchiveUnit,
+        material: MaterialId,
+        hash: &str,
+        sources: &[String],
+        publication: Option<ExcisionPublication>,
+    ) -> Acknowledgment {
+        let payload = json!({"archive":archive,"position":position,"local_seq":unit.commit_seq,"unit":unit.kind,"key":unit.key,"batch":hash,"rows":1,"blobs":sources,"excision":publication});
         let event = ProducerEvent {
             event_type: "polylogue.rows".into(),
             payload,
@@ -55,17 +95,15 @@ impl Harness {
             reading_order: position as i64,
             class: sinex_model::Class::Open,
         };
-        let ack = self
-            .send(
-                "polylogue",
-                &Ingress::Events {
-                    frame: format!("rows:{ARCHIVE}:{position}"),
-                    events: vec![event],
-                    failures: vec![],
-                },
-            )
-            .await;
-        assert_eq!(ack.refusal, None);
+        self.send(
+            "polylogue",
+            &Ingress::Events {
+                frame: format!("rows:{archive}:{position}"),
+                events: vec![event],
+                failures: vec![],
+            },
+        )
+        .await
     }
     async fn retire(&self, producer: &str, proof: &RetireBatches) -> Retirement {
         let reply = self
@@ -474,4 +512,483 @@ async fn row_retirement_refuses_unknown_unit_kind_without_removing_batches() {
         assert!(h.blobs.contains(hash).unwrap());
     }
     assert_eq!(h.count("SELECT count(*) FROM core.operations").await, 0);
+}
+
+#[tokio::test]
+async fn row_retirement_reclaims_original_and_member_source_bytes() {
+    let h = Harness::start().await;
+    let original = h.source_bytes("polylogue", b"synthetic original ZIP").await;
+    let member = h.source_bytes("polylogue", b"synthetic member").await;
+    let sources = vec![original.clone(), member.clone()];
+    let note = unit(1, "revision", "source/1");
+    let (m, batch) = h.batch(ARCHIVE, b"source rows\n").await;
+    h.row_with_sources(ARCHIVE, 1, &note, m, &batch, &sources, None)
+        .await;
+    let owner = unit(2, "excision", "remove-source");
+    let publication = manifest(vec![UnitReplacement {
+        unit: note,
+        batch: None,
+        bytes: 0,
+        rows: 0,
+        blobs: vec![],
+    }]);
+    let (m, batch) = h.batch(ARCHIVE, b"removal rows\n").await;
+    h.row(2, &owner, m, &batch, Some(publication.clone())).await;
+    let proof = RetireBatches {
+        archive: ARCHIVE.into(),
+        owner,
+        digest: publication.digest,
+    };
+    for _ in 0..2 {
+        let result = h.retire("polylogue", &proof).await;
+        assert_eq!(result.refusal, None);
+        assert_eq!(result.pending_files, 0);
+        assert_eq!(result.retained_files, 0);
+        for source in &sources {
+            assert!(
+                !h.blobs.contains(source).unwrap(),
+                "source still retained: {source}"
+            );
+        }
+        assert!(h.blobs.contains(&batch).unwrap());
+    }
+    assert_eq!(
+        h.count("SELECT count(*) FROM core.events WHERE event_type='polylogue.rows'")
+            .await,
+        2
+    );
+}
+
+impl Harness {
+    async fn source_bytes(&self, producer: &str, bytes: &[u8]) -> String {
+        let hash = self.fixture_blob(bytes);
+        let name = format!("blob:{}", hash.strip_prefix("blake3:").unwrap());
+        let (_, mut frame) = self.material_frame(&name, bytes);
+        if let Ingress::Material { material, .. } = &mut frame {
+            material.input.locator = name;
+            material.parser = "polylogue".into();
+            material.manifest = json!({"archive":ARCHIVE,"media_type":"application/octet-stream"});
+        }
+        assert_eq!(self.send(producer, &frame).await.refusal, None);
+        hash
+    }
+}
+
+#[tokio::test]
+async fn retired_global_source_ack_cannot_authorize_a_new_archive_dependency() {
+    let h = Harness::start().await;
+    let source = h
+        .source_bytes("polylogue", b"retire then reuse source")
+        .await;
+    let original = unit(1, "revision", "source/1");
+    let (m, b) = h.batch(ARCHIVE, b"original source rows\n").await;
+    h.row_with_sources(
+        ARCHIVE,
+        1,
+        &original,
+        m,
+        &b,
+        std::slice::from_ref(&source),
+        None,
+    )
+    .await;
+    let publication = manifest(vec![UnitReplacement {
+        unit: original,
+        batch: None,
+        bytes: 0,
+        rows: 0,
+        blobs: vec![],
+    }]);
+    let owner = unit(2, "excision", "erase");
+    let (m, b) = h.batch(ARCHIVE, b"erase source rows\n").await;
+    h.row(2, &owner, m, &b, Some(publication.clone())).await;
+    let proof = RetireBatches {
+        archive: ARCHIVE.into(),
+        owner,
+        digest: publication.digest,
+    };
+    assert_eq!(h.retire("polylogue", &proof).await.refusal, None);
+    assert!(!h.blobs.contains(&source).unwrap());
+    let reply = h
+        .client
+        .request(
+            h.subjects.have("polylogue"),
+            serde_json::to_vec(&sinex_protocol::Have {
+                frames: vec![format!("blob:{}", source.strip_prefix("blake3:").unwrap())],
+            })
+            .unwrap()
+            .into(),
+        )
+        .await
+        .unwrap();
+    let have: Vec<Acknowledgment> = serde_json::from_slice(&reply.payload).unwrap();
+    let (m, b) = h.batch("later-archive", b"later source rows\n").await;
+    let ack = h
+        .send_row_with_sources(
+            "later-archive",
+            1,
+            &unit(1, "revision", "source/1"),
+            m,
+            &b,
+            std::slice::from_ref(&source),
+            None,
+        )
+        .await;
+    assert!(
+        have[0].refusal.is_some() && ack.refusal.is_some(),
+        "retired dependency accepted: have={have:?} new row={ack:?}"
+    );
+    let (_, frame) = h.material_frame(&have[0].frame, b"retire then reuse source");
+    let Ingress::Material { material, .. } = frame else {
+        unreachable!()
+    };
+    let reserve = h
+        .send(
+            "polylogue",
+            &Ingress::Reserve {
+                frame: "reserve-retired-source".into(),
+                publication: Publication {
+                    version: 1,
+                    frame: have[0].frame.clone(),
+                    class: Default::default(),
+                    material: Some(Material::from_frame(&material)),
+                    envelope: None,
+                },
+            },
+        )
+        .await;
+    let complete: Acknowledgment =
+        serde_json::from_value(reserve.outcome["complete"].clone()).unwrap();
+    assert!(complete.refusal.is_some());
+    assert_eq!(complete.material, have[0].material);
+    assert_eq!(
+        h.count(
+            "SELECT count(*) FROM core.ingress_frames WHERE frame LIKE 'blob:%' AND refusal IS NULL"
+        )
+        .await,
+        1
+    );
+    assert!(!h.blobs.contains(&source).unwrap());
+}
+
+#[tokio::test]
+async fn row_retirement_preserves_latest_source_references_across_archives() {
+    for other_archive in [ARCHIVE, "archive-b"] {
+        let h = Harness::start().await;
+        let source = h.source_bytes("polylogue", b"shared original bytes").await;
+        let (m, b) = h.batch(ARCHIVE, b"original rows\n").await;
+        let original = unit(1, "revision", "source/1");
+        h.row_with_sources(
+            ARCHIVE,
+            1,
+            &original,
+            m,
+            &b,
+            std::slice::from_ref(&source),
+            None,
+        )
+        .await;
+        let (m, b) = h.batch(other_archive, b"shared rows\n").await;
+        let same_archive = other_archive == ARCHIVE;
+        let position = if same_archive { 2 } else { 1 };
+        let shared = unit(position as i64, "revision", "shared/1");
+        h.row_with_sources(
+            other_archive,
+            position,
+            &shared,
+            m,
+            &b,
+            std::slice::from_ref(&source),
+            None,
+        )
+        .await;
+        let publication = manifest(vec![UnitReplacement {
+            unit: original,
+            batch: None,
+            bytes: 0,
+            rows: 0,
+            blobs: vec![],
+        }]);
+        let owner = unit(3, "excision", "remove-original");
+        let (m, b) = h.batch(ARCHIVE, b"remove original\n").await;
+        h.row(
+            if same_archive { 3 } else { 2 },
+            &owner,
+            m,
+            &b,
+            Some(publication.clone()),
+        )
+        .await;
+        let proof = RetireBatches {
+            archive: ARCHIVE.into(),
+            owner,
+            digest: publication.digest,
+        };
+        let first = h.retire("polylogue", &proof).await;
+        assert_eq!(first.refusal, None);
+        assert!(
+            h.blobs.contains(&source).unwrap(),
+            "selected shared source removed"
+        );
+        let publication = manifest(vec![UnitReplacement {
+            unit: shared,
+            batch: None,
+            bytes: 0,
+            rows: 0,
+            blobs: vec![],
+        }]);
+        let owner = unit(4, "excision", "remove-shared");
+        let (m, b) = h.batch(other_archive, b"remove shared\n").await;
+        h.row_with_sources(
+            other_archive,
+            if same_archive { 4 } else { 2 },
+            &owner,
+            m,
+            &b,
+            &[],
+            Some(publication),
+        )
+        .await;
+        // The first archive's proof also sees the latest reference selection
+        // in the other namespace; no proof digest cache may keep stale refs.
+        let result = h.retire("polylogue", &proof).await;
+        assert_eq!(result.refusal, None);
+        assert!(!h.blobs.contains(&source).unwrap());
+    }
+}
+
+#[tokio::test]
+async fn row_retirement_preserves_foreign_material_with_the_same_source_hash() {
+    let h = Harness::start().await;
+    let source = h.source_bytes("polylogue", b"two producer copies").await;
+    assert_eq!(
+        source,
+        h.source_bytes("foreign", b"two producer copies").await
+    );
+    let original = unit(1, "revision", "source/1");
+    let (m, b) = h.batch(ARCHIVE, b"source rows\n").await;
+    h.row_with_sources(
+        ARCHIVE,
+        1,
+        &original,
+        m,
+        &b,
+        std::slice::from_ref(&source),
+        None,
+    )
+    .await;
+    let publication = manifest(vec![UnitReplacement {
+        unit: original,
+        batch: None,
+        bytes: 0,
+        rows: 0,
+        blobs: vec![],
+    }]);
+    let owner = unit(2, "excision", "erase");
+    let (m, b) = h.batch(ARCHIVE, b"remove source\n").await;
+    h.row(2, &owner, m, &b, Some(publication.clone())).await;
+    let result = h
+        .retire(
+            "polylogue",
+            &RetireBatches {
+                archive: ARCHIVE.into(),
+                owner,
+                digest: publication.digest,
+            },
+        )
+        .await;
+    assert_eq!(result.refusal, None);
+    assert!(h.blobs.contains(&source).unwrap());
+    assert_eq!(result.retained_files, 1);
+    assert_eq!(h.count("SELECT count(*) FROM raw.materials m JOIN raw.inputs i ON i.id=m.input_id WHERE i.binding='ingress:foreign' AND m.blob LIKE 'blake3:%'").await, 1);
+}
+
+#[tokio::test]
+async fn row_descriptor_refuses_foreign_only_and_replacement_source_dependencies() {
+    let h = Harness::start().await;
+    let foreign = h.source_bytes("foreign", b"foreign source only").await;
+    let (m, b) = h.batch(ARCHIVE, b"rows without owned source\n").await;
+    let ack = h
+        .send_row_with_sources(
+            ARCHIVE,
+            1,
+            &unit(1, "revision", "source/1"),
+            m,
+            &b,
+            std::slice::from_ref(&foreign),
+            None,
+        )
+        .await;
+    assert!(
+        ack.refusal
+            .as_deref()
+            .unwrap()
+            .contains("unavailable producer source material")
+    );
+    let publication = manifest(vec![UnitReplacement {
+        unit: unit(1, "revision", "source/1"),
+        batch: Some(b.clone()),
+        bytes: 26,
+        rows: 1,
+        blobs: vec![foreign],
+    }]);
+    let ack = h
+        .send_row_with_sources(
+            ARCHIVE,
+            2,
+            &unit(2, "excision", "rewrite"),
+            m,
+            &b,
+            &[],
+            Some(publication),
+        )
+        .await;
+    assert!(
+        ack.refusal
+            .as_deref()
+            .unwrap()
+            .contains("unavailable producer source material")
+    );
+    assert_eq!(
+        h.count("SELECT count(*) FROM core.events WHERE event_type='polylogue.rows'")
+            .await,
+        0
+    );
+}
+
+#[tokio::test]
+async fn row_retirement_keeps_source_bytes_reserved_by_a_later_publication() {
+    let h = Harness::start().await;
+    let bytes = b"late pending source copy";
+    let source = h.source_bytes("polylogue", bytes).await;
+    let original = unit(1, "revision", "source/1");
+    let (m, b) = h.batch(ARCHIVE, b"source rows\n").await;
+    h.row_with_sources(
+        ARCHIVE,
+        1,
+        &original,
+        m,
+        &b,
+        std::slice::from_ref(&source),
+        None,
+    )
+    .await;
+    let (_, late) = h.material_frame("late-source-copy", bytes);
+    let Ingress::Material { material, .. } = &late else {
+        unreachable!()
+    };
+    let declaration = Publication {
+        version: 1,
+        frame: late.frame().into(),
+        class: Default::default(),
+        material: Some(Material::from_frame(material)),
+        envelope: None,
+    };
+    spool::stage(
+        &h.store_dir,
+        "polylogue",
+        &declaration,
+        Role::Material,
+        bytes.as_slice(),
+    )
+    .unwrap();
+    let reserved = h
+        .send(
+            "polylogue",
+            &Ingress::Reserve {
+                frame: "reserve-late-source".into(),
+                publication: declaration,
+            },
+        )
+        .await;
+    assert_eq!(reserved.refusal, None);
+    assert!(reserved.outcome["complete"].is_null());
+    let publication = manifest(vec![UnitReplacement {
+        unit: original,
+        batch: None,
+        bytes: 0,
+        rows: 0,
+        blobs: vec![],
+    }]);
+    let owner = unit(2, "excision", "erase");
+    let (m, b) = h.batch(ARCHIVE, b"remove source\n").await;
+    h.row(2, &owner, m, &b, Some(publication.clone())).await;
+    let proof = RetireBatches {
+        archive: ARCHIVE.into(),
+        owner,
+        digest: publication.digest,
+    };
+    let result = h.retire("polylogue", &proof).await;
+    assert_eq!(result.refusal, None);
+    assert_eq!(result.retained_files, 1);
+    assert!(h.blobs.contains(&source).unwrap());
+    let completed = h.send("polylogue", &late).await;
+    assert_eq!(completed.refusal, None);
+    assert_eq!(h.retire("polylogue", &proof).await.refusal, None);
+    assert!(h.blobs.contains(&source).unwrap());
+}
+
+#[tokio::test]
+async fn row_retirement_reclaims_sources_from_intermediate_replacements() {
+    let h = Harness::start().await;
+    let original = h.source_bytes("polylogue", b"original source").await;
+    let rewritten = h.source_bytes("polylogue", b"rewritten source").await;
+    let target = unit(1, "revision", "source/1");
+    let (m, b) = h.batch(ARCHIVE, b"original source rows\n").await;
+    h.row_with_sources(
+        ARCHIVE,
+        1,
+        &target,
+        m,
+        &b,
+        std::slice::from_ref(&original),
+        None,
+    )
+    .await;
+    let (_, replacement) = h.batch(ARCHIVE, b"replacement source rows\n").await;
+    let publication = manifest(vec![UnitReplacement {
+        unit: target.clone(),
+        batch: Some(replacement),
+        bytes: 24,
+        rows: 1,
+        blobs: vec![rewritten.clone()],
+    }]);
+    let owner = unit(2, "excision", "rewrite");
+    let (m, b) = h.batch(ARCHIVE, b"rewrite descriptor rows\n").await;
+    h.row(2, &owner, m, &b, Some(publication.clone())).await;
+    let result = h
+        .retire(
+            "polylogue",
+            &RetireBatches {
+                archive: ARCHIVE.into(),
+                owner,
+                digest: publication.digest,
+            },
+        )
+        .await;
+    assert_eq!(result.refusal, None);
+    assert!(!h.blobs.contains(&original).unwrap());
+    assert!(h.blobs.contains(&rewritten).unwrap());
+    let publication = manifest(vec![UnitReplacement {
+        unit: target,
+        batch: None,
+        bytes: 0,
+        rows: 0,
+        blobs: vec![],
+    }]);
+    let owner = unit(3, "excision", "remove-replacement");
+    let (m, b) = h.batch(ARCHIVE, b"removal descriptor rows\n").await;
+    h.row(3, &owner, m, &b, Some(publication.clone())).await;
+    let result = h
+        .retire(
+            "polylogue",
+            &RetireBatches {
+                archive: ARCHIVE.into(),
+                owner,
+                digest: publication.digest,
+            },
+        )
+        .await;
+    assert_eq!(result.refusal, None);
+    assert!(!h.blobs.contains(&rewritten).unwrap());
 }
