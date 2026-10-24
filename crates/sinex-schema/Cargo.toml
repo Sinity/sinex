@@ -18,5 +18,8 @@ blake3.workspace = true
 name = "sinex-schema"
 path = "src/main.rs"
 
+[dev-dependencies]
+devkit.workspace = true
+
 [lints]
 workspace = true

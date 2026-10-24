@@ -107,20 +107,9 @@ pub(super) async fn settle(
             .await?;
             let mut dirty = 0;
             if !gone.is_empty() {
-                let seq = sqlx::query_scalar!(
-                    "SELECT value FROM core.counters WHERE name = 'commit_seq'"
-                )
-                .fetch_one(&mut *conn)
-                .await?;
+                let seq = super::archive::position(conn).await?;
                 dirty += mark_archived_dirty(conn, &gone, seq, keys).await?;
-                sqlx::query!(
-                    r#"INSERT INTO audit.archived (event_id, archived_seq, reason)
-                       SELECT id, $2, 'recomputed' FROM unnest($1::uuid[]) AS id ON CONFLICT (event_id) DO NOTHING"#,
-                    &gone,
-                    seq,
-                )
-                .execute(&mut *conn)
-                .await?;
+                super::archive::archive_at(conn, &gone, seq, "recomputed", None, None).await?;
                 remove_live(conn, &gone).await?;
             }
             sqlx::query!(

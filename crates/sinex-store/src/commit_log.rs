@@ -1,7 +1,8 @@
 //! Reading committed events in commit order (architecture §4.3): the
 //! commit-log reader and the confirmed-stream publisher page through
 //! `core.commit_log` from a saved position. Archive notices (a reading
-//! replaced or hidden) are ordered by `audit.archived.notice_seq`.
+//! replaced, hidden or restored) use the existing archival notice sequence;
+//! `audit.archive_changes` retains their committed history.
 //!
 //! An excision removes events and their commit-log rows, leaving gaps in the
 //! commit positions; pages read past gaps, and an event row missing behind a
@@ -53,18 +54,25 @@ pub struct Page {
 
 /// Up to `limit` commit-log entries after `after`, in commit order.
 pub async fn after(conn: &mut PgConnection, after: i64, limit: i64) -> Result<Page> {
+    if limit <= 0 {
+        return Err(Error::Invalid("commit page limit must be positive".into()));
+    }
     let rows = sqlx::query!(
-        r#"SELECT c.commit_seq AS "commit_seq!", e.id AS "id?", e.event_type AS "event_type?",
+        r#"SELECT head.value AS "head!", c.commit_seq AS "commit_seq?", e.id AS "id?", e.event_type AS "event_type?",
              e.source AS "source?", e.run_id AS "run_id?", e.material_id, e.anchor,
              e.ordinal AS "ordinal?", e.parents, e.ts_orig, e.ts_quality AS "ts_quality?",
              e.ts_coided, e.ts_persisted AS "ts_persisted?", e.payload AS "payload?",
              e.equivalence_key, e.reading_order AS "reading_order?",
              e.record_hash AS "record_hash?", e.record_state AS "record_state?", e.class AS "class?"
-           FROM core.commit_log c
+           FROM core.counters head
+           LEFT JOIN LATERAL (
+             SELECT c.commit_seq,c.event_id FROM core.commit_log c
+             WHERE c.commit_seq > $1 AND c.commit_seq <= head.value
+             ORDER BY c.commit_seq LIMIT $2
+           ) c ON true
            LEFT JOIN core.events e ON e.id = c.event_id
-           WHERE c.commit_seq > $1
-           ORDER BY c.commit_seq
-           LIMIT $2"#,
+           WHERE head.name='commit_seq'
+           ORDER BY c.commit_seq"#,
         after,
         limit,
     )
@@ -72,7 +80,13 @@ pub async fn after(conn: &mut PgConnection, after: i64, limit: i64) -> Result<Pa
     .await?;
     let mut page = Page::default();
     for row in rows {
-        page.up_to = Some(row.commit_seq);
+        let Some(position) = row.commit_seq else {
+            if row.head > after {
+                page.up_to = Some(row.head);
+            }
+            continue;
+        };
+        page.up_to = Some(position);
         // Excised: the content is gone, the position is not.
         let (Some(id), Some(event_type), Some(source), Some(run_id)) =
             (row.id, row.event_type, row.source, row.run_id)
@@ -80,7 +94,7 @@ pub async fn after(conn: &mut PgConnection, after: i64, limit: i64) -> Result<Pa
             continue;
         };
         page.events.push(Committed {
-            commit_seq: row.commit_seq,
+            commit_seq: position,
             id,
             event_type,
             source,
@@ -164,20 +178,24 @@ fn from_db<T: serde::de::DeserializeOwned>(text: &str) -> Result<T> {
 pub struct Notice {
     pub notice_seq: i64,
     pub event_id: Uuid,
-    /// The commit position at which it was archived.
+    /// The writer position at which availability changed.
+    pub commit_seq: i64,
+    pub archived: bool,
+    pub baseline: bool,
+    /// Original archival metadata, preserved when legacy visibility is seeded.
     pub archived_seq: i64,
     pub reason: String,
     pub replaced_by: Option<Uuid>,
     pub operation_id: Option<Uuid>,
-    pub archived_at: OffsetDateTime,
+    pub recorded_at: OffsetDateTime,
 }
 
 /// Up to `limit` archive notices after `after`, in the order they committed.
 pub async fn notices_after(conn: &mut PgConnection, after: i64, limit: i64) -> Result<Vec<Notice>> {
     Ok(sqlx::query_as!(
         Notice,
-        r#"SELECT notice_seq, event_id, archived_seq, reason, replaced_by, operation_id, archived_at
-           FROM audit.archived WHERE notice_seq > $1 ORDER BY notice_seq LIMIT $2"#,
+        r#"SELECT notice_seq, event_id AS "event_id!", commit_seq, archived, baseline, archived_seq, reason, replaced_by, operation_id, recorded_at
+           FROM audit.archive_changes WHERE event_id IS NOT NULL AND notice_seq > $1 ORDER BY notice_seq LIMIT $2"#,
         after,
         limit,
     )

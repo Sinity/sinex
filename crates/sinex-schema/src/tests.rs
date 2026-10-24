@@ -47,3 +47,5 @@ fn declarations_are_deterministic_and_named() {
     assert!(all.contains("'excise'"));
     assert!(all.contains("CREATE VIEW event_types.\"command_executed\""));
 }
+
+mod upgrades;

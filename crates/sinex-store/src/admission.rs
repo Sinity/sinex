@@ -24,6 +24,7 @@ use sqlx::PgConnection;
 use uuid::Uuid;
 
 mod archive;
+pub use archive::erase_archive_history;
 mod classify;
 mod derived;
 mod register;
@@ -86,6 +87,7 @@ pub async fn admit(
     batch: &Batch,
     keys: &dyn DirtyKeys,
 ) -> Result<Outcome> {
+    sinex_schema::require_current(conn).await?;
     let mut outcome = Outcome::default();
     // The live reading each offered event ends as: itself when admitted, the
     // reading it repeats when suppressed. A derived batch's keys own these.

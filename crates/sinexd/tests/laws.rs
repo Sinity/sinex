@@ -734,9 +734,9 @@ async fn l43_a_second_writer_is_refused() {
 
 /// L15. Schema round trip: a database created fresh from the declarations
 /// describes exactly the schema an existing database at this version has.
-/// With no change list yet (version 0), the "upgrade from the previous
-/// release" half has nothing to apply; the comparison runs on every change
-/// added to `sinex_schema::CHANGES`, which must keep this test passing.
+/// The previous-release upgrade half lives in sinex-schema tests/upgrades.rs,
+/// using independently frozen version-0 declarations. Both paths compare views,
+/// triggers and hypertable settings as well as columns and constraints.
 #[tokio::test]
 async fn l15_a_fresh_schema_matches_the_existing_one() {
     let dir = Dir::new();
@@ -777,7 +777,7 @@ async fn l15_a_fresh_schema_matches_the_existing_one() {
         existing == fresh,
         "schema descriptions differ: only existing {only_existing:#?}, only fresh {only_fresh:#?}"
     );
-    assert!(sinex_schema::CHANGES.is_empty() || sinex_schema::VERSION > 0);
+    sinex_schema::require_current(&mut c).await.unwrap();
 }
 
 impl Target {

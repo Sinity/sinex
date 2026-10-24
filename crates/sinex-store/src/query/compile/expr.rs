@@ -349,7 +349,7 @@ impl Compiler<'_> {
                 let mut f = Frag::text(Self::template(cols, "{t}.commit_seq <= "));
                 f.param(V::BigInt(Some(self.seq))).push(Self::template(
                     cols,
-                    " AND NOT EXISTS (SELECT 1 FROM audit.archived x WHERE x.event_id = {t}.id AND x.archived_seq <= ",
+                    " AND NOT audit.is_archived_at({t}.id, ",
                 ));
                 f.param(V::BigInt(Some(self.seq))).push(")");
                 out.push(f);
@@ -357,8 +357,10 @@ impl Compiler<'_> {
             Unit::Archive => {
                 let mut f = Frag::text(Self::template(cols, "{t}.commit_seq <= "));
                 f.param(V::BigInt(Some(self.seq)))
-                    .push(Self::template(cols, " AND {a}.archived_seq <= "))
-                    .param(V::BigInt(Some(self.seq)));
+                    .push(Self::template(cols, " AND {a}.archived AND {a}.commit_seq <= "))
+                    .param(V::BigInt(Some(self.seq)))
+                    .push(Self::template(cols, " AND NOT EXISTS (SELECT 1 FROM audit.archive_changes later WHERE later.event_id={t}.id AND later.commit_seq>{a}.commit_seq AND later.commit_seq <= "))
+                    .param(V::BigInt(Some(self.seq))).push(")");
                 out.push(f);
             }
             _ => {}

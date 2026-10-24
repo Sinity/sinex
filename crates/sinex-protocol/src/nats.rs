@@ -11,7 +11,7 @@
 //! | `<root>.have.<producer>` | the producer, as a request | [`Have`]: what Sinex recorded for these frames |
 //! | `<root>.retire.<producer>` | the producer, as a request | [`RetireBatches`]: retire superseded row batches from a confirmed excision proof |
 //! | `<root>.confirmed.event.<event type>` | `sinexd` | a [`Confirmed::Event`] |
-//! | `<root>.confirmed.archive` | `sinexd` | a [`Confirmed::Archived`] or [`Confirmed::Excised`] notice |
+//! | `<root>.confirmed.archive` | `sinexd` | a [`Confirmed::Archived`], [`Confirmed::Restored`] or [`Confirmed::Excised`] notice |
 //!
 //! Each producer's credentials allow only its own subjects
 //! ([`Subjects::producer_permissions`]), so the producer named in a subject is
@@ -311,6 +311,8 @@ pub struct Have {
 pub enum Confirmed {
     Event(Box<ConfirmedEvent>),
     Archived(ArchiveNotice),
+    /// A previously hidden interpretation is live again at a new position.
+    Restored(RestoredNotice),
     /// The event was excised: its message has been erased from the stream,
     /// and a consumer drops anything it kept of it.
     Excised {
@@ -363,9 +365,22 @@ pub struct ArchiveNotice {
     pub event: EventId,
     /// The commit position at which it was archived.
     pub archived_seq: i64,
+    /// Legacy metadata is preserved, but visibility is known only from this
+    /// upgrade position. Absent for transitions recorded in the current format.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub known_from: Option<i64>,
     /// `newer_reading`, `hide`, `excise`, `replay` or `version_change`.
     pub reason: String,
     pub replaced_by: Option<EventId>,
+    pub operation: Option<sinex_model::OperationId>,
+}
+
+/// Restoration changes visibility; it does not admit a second Event.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct RestoredNotice {
+    pub notice_seq: i64,
+    pub event: EventId,
+    pub restored_seq: i64,
     pub operation: Option<sinex_model::OperationId>,
 }
 

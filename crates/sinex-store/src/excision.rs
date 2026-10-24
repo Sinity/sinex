@@ -334,9 +334,7 @@ pub async fn apply(
     )
     .execute(&mut *conn)
     .await?;
-    sqlx::query!("DELETE FROM audit.archived WHERE event_id = ANY($1)", &ids)
-        .execute(&mut *conn)
-        .await?;
+    crate::admission::erase_archive_history(conn, &ids).await?;
     sqlx::query!("DELETE FROM core.commit_log WHERE event_id = ANY($1)", &ids)
         .execute(&mut *conn)
         .await?;

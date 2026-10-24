@@ -4,6 +4,10 @@ use super::*;
 use crate::Error;
 use sinex_model::{OperationId, ReplayScope};
 
+mod history;
+pub use history::erase_archive_history;
+pub(super) use history::{archive_at, position};
+
 /// Archive the live readings a replay re-reads: those read from the scope's
 /// materials (narrowed by type and time), and the live derived events that
 /// descend from them. Their keys become dirty, so derivations recompute. The
@@ -39,19 +43,9 @@ pub(super) async fn replay_scope(
     )
     .fetch_all(&mut *conn)
     .await?;
-    let seq = sqlx::query_scalar!("SELECT value FROM core.counters WHERE name = 'commit_seq'")
-        .fetch_one(&mut *conn)
-        .await?;
+    let seq = position(conn).await?;
     let dirty = mark_archived_dirty(conn, &live, seq, keys).await?;
-    sqlx::query!(
-        r#"INSERT INTO audit.archived (event_id, archived_seq, reason, operation_id)
-           SELECT id, $2, 'replay', $3 FROM unnest($1::uuid[]) AS id ON CONFLICT (event_id) DO NOTHING"#,
-        &live,
-        seq,
-        operation.0,
-    )
-    .execute(&mut *conn)
-    .await?;
+    archive_at(conn, &live, seq, "replay", None, Some(operation.0)).await?;
     remove_live(conn, &live).await?;
     if scope.event_types.is_none() && scope.from.is_none() && scope.until.is_none() {
         sqlx::query!(
@@ -71,9 +65,6 @@ pub(super) async fn request(
     request: &ArchiveRequest,
     keys: &dyn DirtyKeys,
 ) -> Result<usize> {
-    let seq = sqlx::query_scalar!("SELECT value FROM core.counters WHERE name = 'commit_seq'")
-        .fetch_one(&mut *conn)
-        .await?;
     match request {
         ArchiveRequest::Replay { .. } | ArchiveRequest::RemovedAtSource { .. } => Ok(0),
         ArchiveRequest::Hide { target, operation } => {
@@ -114,24 +105,13 @@ pub(super) async fn request(
                 event.ordinal,
             )
             .await?;
+            let seq = position(conn).await?;
             let dirty = mark_archived_dirty(conn, &live, seq, keys).await?;
-            sqlx::query!(
-                r#"INSERT INTO audit.archived (event_id, archived_seq, reason, operation_id)
-                   SELECT id, $2, $3, $4 FROM unnest($1::uuid[]) AS id ON CONFLICT (event_id) DO NOTHING"#,
-                &live,
-                seq,
-                kind,
-                operation.0,
-            )
-            .execute(&mut *conn)
-            .await?;
+            archive_at(conn, &live, seq, kind, None, Some(operation.0)).await?;
             remove_live(conn, &live).await?;
             Ok(dirty)
         }
-        ArchiveRequest::Unhide {
-            target,
-            operation: _,
-        } => {
+        ArchiveRequest::Unhide { target, operation } => {
             let event = sqlx::query!(
                 "SELECT source, event_type, equivalence_key, material_id, anchor, ordinal FROM core.events WHERE id = $1",
                 target.0
@@ -155,6 +135,7 @@ pub(super) async fn request(
             if removed.is_none() {
                 return Ok(0);
             }
+            let seq = position(conn).await?;
             // The newest archived-by-hide reading becomes live again.
             let restored = sqlx::query!(
                 r#"SELECT e.id, e.material_id, e.anchor, e.ordinal, e.reading_order, e.record_hash
@@ -172,9 +153,11 @@ pub(super) async fn request(
             .fetch_optional(&mut *conn)
             .await?;
             let Some(r) = restored else { return Ok(0) };
-            sqlx::query!("DELETE FROM audit.archived WHERE event_id = $1", r.id)
-                .execute(&mut *conn)
-                .await?;
+            if !history::restore_at(conn, r.id, seq, operation.0).await? {
+                return Err(Error::Invalid(
+                    "hidden reading changed before restoration".into(),
+                ));
+            }
             match &event.equivalence_key {
                 Some(key) => {
                     sqlx::query!(

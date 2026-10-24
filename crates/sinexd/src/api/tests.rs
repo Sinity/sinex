@@ -879,3 +879,5 @@ mod discovery;
 mod recall;
 
 mod cursor;
+
+mod archive_history;

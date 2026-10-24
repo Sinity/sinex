@@ -11,7 +11,9 @@ use sinex_model::query::Unit;
 pub(crate) fn from(unit: Unit) -> &'static str {
     match unit {
         Unit::Events => "core.visible_events {t}",
-        Unit::Archive => "core.visible_events {t} JOIN audit.archived {a} ON {a}.event_id = {t}.id",
+        Unit::Archive => {
+            "core.visible_events {t} JOIN audit.archive_changes {a} ON {a}.event_id = {t}.id"
+        }
         Unit::Materials => {
             "raw.materials {t} LEFT JOIN raw.inputs {t}_i ON {t}_i.id = {t}.input_id \
              LEFT JOIN raw.revisions {t}_v ON {t}_v.id = {t}.revision_id"
@@ -86,6 +88,8 @@ pub(crate) fn field(unit: Unit, name: &str) -> Option<String> {
             "operation" => "{a}.operation_id",
             "replaced_by" => "{a}.replaced_by",
             "archived_seq" => "{a}.archived_seq",
+            "known_from" => "{a}.commit_seq",
+            "baseline" => "{a}.baseline",
             _ => event(name)?,
         },
         Unit::Materials => match name {
