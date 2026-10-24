@@ -86,6 +86,7 @@ pub struct ExcisionBasis {
 /// Progress of one source binding, committed with the batch's events.
 #[derive(Clone, Debug)]
 pub struct SourceProgress {
+    pub native_pending: Option<MaterialId>,
     pub erased_replay: Option<ErasedReplayPublication>,
     pub excision_basis: Option<ExcisionBasis>,
     pub binding: String,

@@ -523,6 +523,43 @@ impl AcquisitionPolicy {
                 }
             }
         }
+        // An aligned rewrite retains old records too, even though only its
+        // newly interpreted ranges enter the drain. Match their actual bytes
+        // and declared hash without inventing a second interpretation/counter.
+        let active = material.records.iter().copied().collect::<BTreeSet<_>>();
+        let mut full = BorrowedBytes {
+            bytes: &bytes,
+            length,
+            position: 0,
+        };
+        for (start, end) in source
+            .spec()
+            .framer
+            .ranges(&mut full)
+            .map_err(|e| e.to_string())?
+        {
+            if active.contains(&(start, end)) {
+                continue;
+            }
+            let raw = bytes.record(start, end).map_err(|e| e.to_string())?;
+            let context = RecordContext {
+                manifest: &material.manifest,
+                member: sinex_sources::drain::member_at(&material.manifest, start),
+            };
+            let hash = source
+                .record_hash(&raw, &context)
+                .map_err(|e| e.to_string())?;
+            if self.excludes(material.id, start as u64, &raw, hash, &[])? {
+                if input.registered {
+                    return Err(
+                        "retained material still contains excluded bytes outside its pending drain"
+                            .into(),
+                    );
+                }
+                selected.push((start, end, None));
+            }
+        }
+        selected.sort_by_key(|(start, _, _)| *start);
         if selected.is_empty() {
             return Ok(input);
         }

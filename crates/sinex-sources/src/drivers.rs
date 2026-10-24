@@ -341,6 +341,7 @@ impl Prepared<'_> {
         first: bool,
     ) -> BatchKind {
         BatchKind::Source(Box::new(SourceProgress {
+            native_pending: None,
             erased_replay: if first {
                 self.erased_replay.clone()
             } else {

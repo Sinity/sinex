@@ -371,8 +371,17 @@ pub async fn apply_prepared(
     if let Some(source) = &plan.candidate_source {
         sources.push(source.clone());
     }
+    let owners = plan.materials.iter().map(|m| m.id.0).collect::<Vec<_>>();
+    let bound:Vec<String>=sqlx::query_scalar("SELECT DISTINCT b.source FROM raw.materials m JOIN raw.inputs i ON i.id=m.input_id JOIN raw.bindings b ON b.binding=i.binding WHERE m.id=ANY($1)").bind(&owners).fetch_all(&mut *conn).await?;
+    sources.extend(bound);
     sources.sort();
     sources.dedup();
+    for source in &sources {
+        if crate::native_materials::source_pending(conn, source).await? {
+            return Err(Error::Invalid("source has a pending native publication; its exact unadmitted version must be recovered before excision".into()));
+        }
+    }
+
     let mut scope = match target {
         Target::Event(e) => serde_json::json!({"event":e.0}),
         Target::Material(m) => serde_json::json!({"material":m.0}),

@@ -126,12 +126,12 @@ async fn archival_history(conn: &mut PgConnection) -> Result<(), Error> {
 mod tests;
 
 async fn sealed_erasure(conn: &mut PgConnection) -> Result<(), Error> {
-    // Catalog checked against the published version-1 native schema binary.
-    const VERSION_ONE_SHAPE: &str =
-        "a338afbdb751ef50caa793cd9bac0d35bb01bd748aef2f476e5bfe62f11ebd66";
+    // Catalog checked against the published notes version-2 native schema binary.
+    const VERSION_TWO_SHAPE: &str =
+        "44c6e0f632ee803dbd9db1e71e50667708cf748acce4f53ee38d6082f16062f2";
     let shape = serde_json::to_vec(&catalog(conn).await?).expect("catalog strings serialize");
-    if blake3::hash(&shape).to_hex().as_str() != VERSION_ONE_SHAPE {
-        return Err(Error::Shape(1));
+    if blake3::hash(&shape).to_hex().as_str() != VERSION_TWO_SHAPE {
+        return Err(Error::Shape(2));
     }
     conn.execute("ALTER TABLE privacy.material_keys ADD COLUMN role text NOT NULL DEFAULT 'data-and-record-naming' CHECK (role IN ('data-and-record-naming','record-naming-only'))").await?;
     conn.execute(
@@ -139,13 +139,26 @@ async fn sealed_erasure(conn: &mut PgConnection) -> Result<(), Error> {
     )
     .await?;
     conn.execute(tables::event_guard()).await?;
+    conn.execute(tables::pending_native_table()).await?;
+    conn.execute(
+        "CREATE INDEX pending_native_source ON raw.pending_native_materials(source, binding)",
+    )
+    .await?;
+    for statement in grants() {
+        conn.execute(statement.as_str()).await?;
+    }
+
     Ok(())
 }
 
 #[cfg(test)]
-pub(super) async fn version_one(conn: &mut PgConnection) {
+pub(super) async fn version_two(conn: &mut PgConnection) {
     archival_history(conn).await.unwrap();
     conn.execute("INSERT INTO sinex_schema.applied(version) VALUES(1)")
+        .await
+        .unwrap();
+    notes::apply(conn).await.unwrap();
+    conn.execute("INSERT INTO sinex_schema.applied(version) VALUES(2)")
         .await
         .unwrap();
 }

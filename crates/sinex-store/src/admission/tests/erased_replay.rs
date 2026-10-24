@@ -45,6 +45,7 @@ async fn native_replay_ciphertext_pointer_keys_and_progress_share_admission_roll
         .await
         .unwrap();
     let progress = SourceProgress {
+        native_pending: None,
         erased_replay: Some(sinex_model::ErasedReplayPublication {
             material,
             blob: replay_blob.clone(),

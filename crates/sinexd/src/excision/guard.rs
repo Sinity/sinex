@@ -14,17 +14,19 @@ impl ExcisionGuard {
         let mut transaction: Transaction<'static, Postgres> = Transaction::begin(connection, None)
             .await
             .map_err(|e| e.to_string())?;
-        sinex_store::excision::lock_source(&mut transaction, &source, false)
-            .await
-            .map_err(|e| e.to_string())?;
-        if sinex_store::excision::unsupported_ingress(&mut transaction, &source)
-            .await
-            .map_err(|e| e.to_string())?
-        {
-            return Err(
-                "source namespace has producer custody that sealed excision cannot account for"
-                    .into(),
-            );
+        let ready=async {
+            sinex_store::excision::lock_source(&mut transaction, &source, false).await.map_err(|e|e.to_string())?;
+            if sinex_store::excision::unsupported_ingress(&mut transaction, &source).await.map_err(|e|e.to_string())? {
+                return Err("source namespace has producer custody that excision cannot account for".to_owned());
+            }
+            if sinex_store::native_materials::source_pending(&mut transaction,&source).await.map_err(|e|e.to_string())? {
+                return Err("source has a pending native material publication; finish or recover that exact version before excision".to_owned());
+            }
+            Ok(())
+        }.await;
+        if let Err(error) = ready {
+            transaction.rollback().await.map_err(|e| e.to_string())?;
+            return Err(error);
         }
         Ok(Self {
             transaction,

@@ -95,7 +95,8 @@ pub async fn admit(
 
     if let BatchKind::Ingress(frame) = &batch.kind
         && frame.material.as_ref().is_some_and(|p| {
-            p.erased_replay.is_some()
+            p.native_pending.is_some()
+                || p.erased_replay.is_some()
                 || p.excision_basis.is_some()
                 || p.image.is_some()
                 || p.image_revision.is_some()
@@ -109,7 +110,10 @@ pub async fn admit(
     }
     crate::excision::validate_basis(conn, batch).await?;
     match &batch.kind {
-        BatchKind::Source(progress) => register::source(conn, progress).await?,
+        BatchKind::Source(progress) => {
+            crate::native_materials::validate(conn, progress).await?;
+            register::source(conn, progress).await?;
+        }
         BatchKind::Ingress(frame) => {
             if let Some(progress) = &frame.material {
                 register::source(conn, progress).await?;
@@ -154,6 +158,7 @@ pub async fn admit(
     outcome.failures = write::record_failures(conn, batch).await?;
     if let BatchKind::Source(progress) = &batch.kind {
         write::save_position(conn, progress).await?;
+        crate::native_materials::complete(conn, progress).await?;
     }
     for request in &batch.archive {
         outcome.dirty_keys += archive::request(conn, request, keys).await?;

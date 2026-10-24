@@ -224,12 +224,12 @@ async fn failed_fresh_creation_releases_ddl_locks_before_the_connection_is_used_
 }
 
 #[tokio::test]
-async fn explicit_one_to_two_upgrade_preserves_legacy_key_bytes_and_matches_fresh_schema() {
+async fn explicit_two_to_three_upgrade_preserves_legacy_key_bytes_and_matches_fresh_schema() {
     let db = devkit::pg::test_database().unwrap();
     let mut conn = PgConnection::connect(&db.url(None)).await.unwrap();
     let fresh = catalog(&mut conn).await.unwrap();
     version_zero(&mut conn).await;
-    changes::version_one(&mut conn).await;
+    changes::version_two(&mut conn).await;
     conn.execute("INSERT INTO privacy.material_keys(material_id,key_ref,class,wrapped_key) VALUES('00000000-0000-0000-0000-000000000004','legacy-key','sealed',decode(repeat('a1',32),'hex'))").await.unwrap();
     let before: serde_json::Value =
         sqlx::query_scalar("SELECT to_jsonb(k) FROM privacy.material_keys k")
@@ -239,15 +239,15 @@ async fn explicit_one_to_two_upgrade_preserves_legacy_key_bytes_and_matches_fres
     assert!(matches!(
         require_current(&mut conn).await,
         Err(Error::Upgrade {
-            found: 1,
-            declared: 2
+            found: 2,
+            declared: 3
         })
     ));
     assert_eq!(
         apply(&mut conn).await.unwrap(),
         Applied::Upgraded {
-            from: 1,
-            version: 2
+            from: 2,
+            version: 3
         }
     );
     assert_eq!(catalog(&mut conn).await.unwrap(), fresh);
@@ -264,27 +264,27 @@ async fn explicit_one_to_two_upgrade_preserves_legacy_key_bytes_and_matches_fres
     assert_eq!(role, "data-and-record-naming");
     assert_eq!(
         apply(&mut conn).await.unwrap(),
-        Applied::Current { version: 2 }
+        Applied::Current { version: 3 }
     );
 }
 
 #[tokio::test]
-async fn unknown_one_shape_refuses_before_any_key_or_replay_column_changes() {
+async fn unknown_two_shape_refuses_before_any_key_or_replay_column_changes() {
     let db = devkit::pg::test_database().unwrap();
     let mut conn = PgConnection::connect(&db.url(None)).await.unwrap();
     version_zero(&mut conn).await;
-    changes::version_one(&mut conn).await;
+    changes::version_two(&mut conn).await;
     conn.execute("ALTER TABLE raw.positions ADD COLUMN unrecognized text")
         .await
         .unwrap();
     let before = catalog(&mut conn).await.unwrap();
-    assert!(matches!(apply(&mut conn).await, Err(Error::Shape(1))));
+    assert!(matches!(apply(&mut conn).await, Err(Error::Shape(2))));
     assert_eq!(catalog(&mut conn).await.unwrap(), before);
     assert_eq!(
         sqlx::query_scalar::<_, i32>("SELECT max(version) FROM sinex_schema.applied")
             .fetch_one(&mut conn)
             .await
             .unwrap(),
-        1
+        2
     );
 }

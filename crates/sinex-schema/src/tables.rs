@@ -271,6 +271,8 @@ pub(crate) fn tables(c: &Checks) -> Vec<String> {
   settings jsonb NOT NULL,
   updated_at timestamptz NOT NULL DEFAULT now()
 )".into(),
+        pending_native_table().into(),
+        "CREATE INDEX pending_native_source ON raw.pending_native_materials(source, binding)".into(),
         "CREATE TABLE raw.positions (
   binding text PRIMARY KEY,
   cursor jsonb NOT NULL,
@@ -639,4 +641,19 @@ BEGIN
   END IF;
   RETURN OLD;
 END $$"
+}
+
+pub(crate) fn pending_native_table() -> &'static str {
+    "CREATE TABLE raw.pending_native_materials (
+  material_id uuid PRIMARY KEY,
+  source text NOT NULL,
+  binding text NOT NULL REFERENCES raw.bindings(binding),
+  publication jsonb NOT NULL CHECK (jsonb_typeof(publication)='object'),
+  base_cursor jsonb NOT NULL,
+  base_carry jsonb NOT NULL,
+  start_cursor jsonb NOT NULL,
+  end_cursor jsonb NOT NULL,
+  state text NOT NULL CHECK (state IN ('reserved','installed')),
+  reserved_at timestamptz NOT NULL DEFAULT now()
+)"
 }

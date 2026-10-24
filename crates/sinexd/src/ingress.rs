@@ -325,6 +325,7 @@ impl Ingest {
         }
         Ok((
             Some(SourceProgress {
+                native_pending: None,
                 erased_replay: None,
                 excision_basis: None,
                 image: None,
