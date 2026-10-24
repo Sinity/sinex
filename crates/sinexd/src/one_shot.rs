@@ -125,6 +125,10 @@ impl SealingSink {
         }
     }
 
+    pub fn recipient(&self) -> &sinex_store::sealed::Recipient {
+        &self.recipient
+    }
+
     pub fn key(&self, blob: &str) -> Result<sinex_store::sealed::DataKey, String> {
         Ok(self.capability(blob)?.data)
     }

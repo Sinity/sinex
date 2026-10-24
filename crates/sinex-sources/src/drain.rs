@@ -377,10 +377,7 @@ impl<'a, P: Parser> Drainer<'a, P> {
                 self.carry = next;
                 // A record shape's own hash that panics falls back to the
                 // bytes' hash rather than stopping the run.
-                let hash = std::panic::catch_unwind(|| {
-                    <P::Record<'_> as RecordShape>::hash_context(raw, P::VOLATILE, &context)
-                })
-                .unwrap_or_else(|_| *blake3::hash(raw).as_bytes());
+                let hash = record_hash::<P>(raw, &context);
                 let order = (input.reading_order)(start);
                 let mut events = Vec::with_capacity(payloads.len());
                 let mut failure = None;
@@ -426,6 +423,14 @@ impl<'a, P: Parser> Drainer<'a, P> {
             },
         }
     }
+}
+
+/// Shared with acquisition exclusion matching, including records emitting no events.
+pub(crate) fn record_hash<P: Parser>(raw: &[u8], context: &RecordContext<'_>) -> [u8; 32] {
+    std::panic::catch_unwind(|| {
+        <P::Record<'_> as RecordShape>::hash_context(raw, P::VOLATILE, context)
+    })
+    .unwrap_or_else(|_| *blake3::hash(raw).as_bytes())
 }
 
 fn empty_chunk() -> DrainOutput {

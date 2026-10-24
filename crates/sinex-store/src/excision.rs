@@ -379,14 +379,18 @@ pub async fn apply_prepared(
     };
     scope["sources"] = serde_json::json!(sources);
     scope["materials"] = serde_json::json!(plan.materials.iter().map(|m| m.id).collect::<Vec<_>>());
-    scope["record_domains"] = serde_json::json!(
-        plan.materials
-            .iter()
-            .map(|m| serde_json::json!({
-                "material":m.id,"naming":if m.sealed {"sealed"} else {"plain"},"source":plan.candidate_source
-            }))
-            .collect::<Vec<_>>()
-    );
+    let mut domains = Vec::new();
+    for material in &plan.materials {
+        let source = if let Some(source) = &plan.candidate_source {
+            Some(source.clone())
+        } else {
+            let owned:Vec<String>=sqlx::query_scalar("SELECT DISTINCT source FROM (SELECT e.source FROM core.events e WHERE e.material_id=$1 UNION SELECT b.source FROM raw.materials m JOIN raw.inputs i ON i.id=m.input_id JOIN raw.bindings b ON b.binding=i.binding WHERE m.id=$1) owners ORDER BY source")
+                .bind(material.id.0).fetch_all(&mut *conn).await?;
+            (owned.len() == 1).then(|| owned[0].clone())
+        };
+        domains.push(serde_json::json!({"material":material.id,"naming":if material.sealed {"sealed"} else {"plain"},"source":source}));
+    }
+    scope["record_domains"] = serde_json::json!(domains);
     scope["record_domains_version"] = serde_json::json!(1);
     sqlx::query!(
         "INSERT INTO core.operations (id,kind,actor,scope) VALUES($1,'excise',$2,$3)",

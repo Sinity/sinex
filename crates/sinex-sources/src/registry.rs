@@ -56,6 +56,16 @@ pub trait Source: Send + Sync {
         input: DrainInput<'a>,
     ) -> Result<Box<dyn Iterator<Item = Result<DrainOutput, RecordError>> + Send + 'a>, RecordError>;
 
+    fn record_hash(
+        &self,
+        _raw: &[u8],
+        _context: &RecordContext<'_>,
+    ) -> Result<[u8; 32], RecordError> {
+        Err(RecordError::new(
+            "this source has no declared record hash operation",
+        ))
+    }
+
     fn erase_record(
         &self,
         raw: &[u8],
@@ -76,6 +86,14 @@ pub trait Source: Send + Sync {
 impl<P: Parser> Source for DeclaredSource<P> {
     fn spec(&self) -> &SourceSpec {
         &self.spec
+    }
+
+    fn record_hash(
+        &self,
+        raw: &[u8],
+        context: &RecordContext<'_>,
+    ) -> Result<[u8; 32], RecordError> {
+        Ok(crate::drain::record_hash::<P>(raw, context))
     }
 
     fn erase_record(
