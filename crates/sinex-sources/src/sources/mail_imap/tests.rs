@@ -141,6 +141,7 @@ fn a_renumbered_mailbox_is_read_from_the_start() {
     let old = Cursor {
         uid_validity: Some(100),
         uid_next: 50,
+        through: None,
         material: None,
         part_index: 0,
     };

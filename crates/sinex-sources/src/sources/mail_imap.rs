@@ -27,6 +27,7 @@ use std::net::TcpStream;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
+mod pending;
 
 pub const SPEC: SourceSpec = SourceSpec {
     name: "communication.imap",
@@ -90,6 +91,9 @@ pub struct Cursor {
     pub uid_next: u32,
     pub material: Option<MaterialId>,
     pub part_index: u32,
+    /// Exact accounted byte end within the retained answer.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub through: Option<usize>,
 }
 
 trait Stream: Read + Write + Send {}
@@ -383,7 +387,10 @@ impl ImapMail {
         });
         let id = MaterialId::new();
         let part_index = if previous.material.is_some() {
-            previous.part_index + 1
+            previous
+                .part_index
+                .checked_add(1)
+                .ok_or_else(|| DriverError::Cursor("IMAP part index overflow".into()))?
         } else {
             0
         };
@@ -392,7 +399,10 @@ impl ImapMail {
             uid_next: examined_next.max(last_uid.saturating_add(1)),
             material: Some(id),
             part_index,
+            through: Some(bytes.len()),
         };
+        let mut manifest = manifest;
+        manifest["imap_resume"] = json!({"version":1,"previous":previous,"end":next});
         let length = bytes.len();
         let size = length as u64;
         Ok(Acquired {
@@ -417,6 +427,7 @@ impl ImapMail {
                 cursor_at: Box::new({
                     let cursor = move |end| {
                         let mut cursor = next.clone();
+                        cursor.through = Some(end);
                         if end < length {
                             cursor.uid_next = start;
                         }
@@ -455,10 +466,13 @@ pub const KIND: crate::binding::InputKind = crate::binding::InputKind {
     }),
     source: |_| Ok(Box::new(source())),
     reader: Some(|b| {
-        Ok(Box::new(ImapReader(ImapMail {
-            config: config(&b.input)?,
-            host: b.settings.host.clone(),
-        })))
+        Ok(Box::new(ImapReader {
+            mail: ImapMail {
+                config: config(&b.input)?,
+                host: b.settings.host.clone(),
+            },
+            pending: None,
+        }))
     }),
     capture: None,
 };
@@ -468,11 +482,44 @@ fn config(path: &std::path::Path) -> Result<ImapConfig, String> {
         .map_err(|e| format!("{}: {e}", path.display()))
 }
 
-struct ImapReader(ImapMail);
+struct ImapReader {
+    mail: ImapMail,
+    pending: Option<pending::Answer>,
+}
 
 impl crate::binding::Reader for ImapReader {
+    fn restore_material(
+        &mut self,
+        reference: sinex_model::MaterialRef,
+        stored: crate::drivers::RetainedRecords,
+        cursor: &Value,
+        accounted: &[usize],
+    ) -> Result<bool, DriverError> {
+        self.pending = Some(pending::Answer::restore(
+            reference,
+            stored,
+            cursor,
+            accounted,
+            &self.mail.config.mailbox,
+        )?);
+        Ok(true)
+    }
+
     fn poll(&mut self, cursor: &Value) -> Result<Acquired, DriverError> {
-        self.0.poll(cursor)
+        if let Some(answer) = &self.pending {
+            if !answer.complete(cursor)? {
+                return answer.acquired(self.mail.input(), cursor);
+            }
+            self.pending = None;
+        }
+        let acquired = self.mail.poll(cursor)?;
+        if acquired.material.is_none() {
+            return Ok(acquired);
+        }
+        let pending = pending::Answer::capture(acquired, cursor, &self.mail.config.mailbox)?;
+        let acquired = pending.acquired(self.mail.input(), cursor)?;
+        self.pending = Some(pending);
+        Ok(acquired)
     }
 }
 

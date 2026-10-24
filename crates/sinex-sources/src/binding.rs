@@ -157,13 +157,17 @@ pub trait Reader: Send {
         ))
     }
 
-    fn restore_rows(
+    /// Restore one archive-verified material before asking its provider again.
+    /// True means this reader owns the continuation; false keeps legacy memory
+    /// restoration. Accounted anchors are recorded outcomes, not source guesses.
+    fn restore_material(
         &mut self,
         _reference: sinex_model::MaterialRef,
         _stored: crate::drivers::RetainedRecords,
         _cursor: &Value,
-    ) -> Result<(), DriverError> {
-        Ok(())
+        _accounted: &[usize],
+    ) -> Result<bool, DriverError> {
+        Ok(false)
     }
 
     /// Directory membership uses exact accounted anchors; only the current
@@ -420,13 +424,16 @@ pub fn rows(driver: SqliteRows) -> Box<dyn Reader> {
 }
 
 impl Reader for Rows {
-    fn restore_rows(
+    fn restore_material(
         &mut self,
         reference: sinex_model::MaterialRef,
         stored: crate::drivers::RetainedRecords,
         cursor: &Value,
-    ) -> Result<(), DriverError> {
-        self.state.restore_pending(reference, stored, cursor)
+        _accounted: &[usize],
+    ) -> Result<bool, DriverError> {
+        self.state
+            .restore_pending(reference, stored, cursor)
+            .map(|_| true)
     }
 
     fn configure(&mut self, settings: &Settings) -> Result<(), String> {

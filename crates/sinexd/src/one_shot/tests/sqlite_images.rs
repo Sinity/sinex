@@ -196,7 +196,7 @@ async fn sqlite_physical_images_publish_atomically_and_retry_exact_pending_rows_
     let mut file = tempfile::tempfile().unwrap();
     ctx.blobs.copy_to(&reference.blob, &mut file).unwrap();
     resumed
-        .restore_rows(
+        .restore_material(
             reference.clone(),
             drivers::RetainedRecords {
                 bodyless: false,
@@ -204,6 +204,7 @@ async fn sqlite_physical_images_publish_atomically_and_retry_exact_pending_rows_
                 bytes: std::sync::Arc::new(crate::retained::Retained::new(file, reference.length)),
             },
             &cursor,
+            &[],
         )
         .unwrap();
     let acquired = poll(resumed.as_mut(), &cursor);

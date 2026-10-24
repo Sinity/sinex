@@ -101,6 +101,10 @@ pub(crate) async fn read(
                         directory::restore(conn, blobs, b, &cursor, access, stop.clone()).await?;
                     } else if b.source.spec().driver == sinex_sources::Driver::SqliteRows {
                         restore_sqlite(conn, blobs, b, &cursor, access).await?;
+                    } else if b.source.spec().driver == sinex_sources::Driver::ApiCursor
+                        && restore_material(conn, blobs, b, &cursor, access).await?
+                    {
+                        // The reader owns this exact retained answer until admission finishes.
                     } else {
                         b.reader
                             .remember(&stored_chain(conn, blobs, &cursor).await?);
@@ -332,26 +336,37 @@ async fn restore_sqlite(
             });
         }
     }
+    restore_material(conn, blobs, b, cursor, access).await?;
+    Ok(())
+}
+
+async fn restore_material(
+    conn: &mut PgConnection,
+    blobs: &Blobs,
+    b: &mut Bound,
+    cursor: &Value,
+    access: Access<'_>,
+) -> Result<bool, String> {
     let Some(id) = cursor
         .get("material")
         .and_then(Value::as_str)
         .and_then(|s| uuid::Uuid::parse_str(s).ok().map(sinex_model::MaterialId))
     else {
-        return Ok(());
+        return Ok(true);
     };
     let reference = sinex_store::material_bytes::reference(conn, id)
         .await
         .map_err(|e| e.to_string())?
-        .ok_or("SQLite cursor material is missing")?;
+        .ok_or("cursor material is missing")?;
     if cursor["through"].as_u64().unwrap_or(0) >= reference.length {
-        return Ok(());
+        return Ok(true);
     }
     let opened =
         crate::retained::open(conn, blobs, b.source.spec().name, id, access.authority).await?;
     if cursor["through"].as_u64().unwrap_or(0) >= opened.reference.length {
-        return Ok(());
+        return Ok(true);
     }
-    if opened.body.is_none() {
+    if opened.body.is_none() && b.source.spec().driver == sinex_sources::Driver::SqliteRows {
         let ends: Vec<(usize, i64)> =
             serde_json::from_value(opened.reference.manifest["row_resume"]["ends"].clone())
                 .map_err(|_| "whole-erased SQLite resume coordinates are missing")?;
@@ -374,9 +389,26 @@ async fn restore_sqlite(
             return Err("SQLite resume ranges differ from authenticated erased coordinates".into());
         }
     }
+    let evidence = positions::accounted_records(conn, id)
+        .await
+        .map_err(|e| e.to_string())?;
+    if let Some(class) = evidence.class {
+        b.history_floor = b.history_floor.max(class);
+    }
+    if opened.secrets.is_some() {
+        b.history_floor = b.history_floor.max(Class::Sealed);
+    }
+    let anchors = evidence
+        .anchors
+        .into_iter()
+        .map(|n| {
+            usize::try_from(n)
+                .map_err(|_| "retained record anchor exceeds address space".to_string())
+        })
+        .collect::<Result<Vec<_>, _>>()?;
     let retained = opened.records();
     b.reader
-        .restore_rows(opened.reference, retained, cursor)
+        .restore_material(opened.reference, retained, cursor, &anchors)
         .map_err(|e| e.to_string())
 }
 
