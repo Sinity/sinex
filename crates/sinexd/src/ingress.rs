@@ -285,23 +285,19 @@ impl Ingest {
         producer: &str,
         request: &Have,
     ) -> Result<Vec<Acknowledgment>, String> {
-        Ok(
-            commit_log::frames(&mut self.conn, producer, &request.frames)
-                .await
-                .map_err(|e| e.to_string())?
-                .into_iter()
-                .map(acknowledgment)
-                .collect(),
-        )
+        let mut frames = commit_log::frames(&mut self.conn, producer, &request.frames)
+            .await
+            .map_err(|e| e.to_string())?;
+        crate::row_retirement::availability(&mut self.conn, producer, &mut frames).await?;
+        Ok(frames.into_iter().map(acknowledgment).collect())
     }
 
     async fn stored(&mut self, producer: &str, frame: &str) -> Result<Option<StoredFrame>, String> {
-        Ok(
-            commit_log::frames(&mut self.conn, producer, &[frame.to_owned()])
-                .await
-                .map_err(|e| e.to_string())?
-                .pop(),
-        )
+        let mut frames = commit_log::frames(&mut self.conn, producer, &[frame.to_owned()])
+            .await
+            .map_err(|e| e.to_string())?;
+        crate::row_retirement::availability(&mut self.conn, producer, &mut frames).await?;
+        Ok(frames.pop())
     }
 
     /// One run per producer per daemon start: every event names its run.

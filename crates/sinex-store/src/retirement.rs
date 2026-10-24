@@ -8,12 +8,13 @@ use uuid::Uuid;
 
 pub async fn begin(conn: &mut PgConnection) -> Result<()> {
     for statement in [
-        "DROP TABLE IF EXISTS retirement_units,retirement_current,retirement_candidates,retirement_covered,retirement_hashes",
+        "DROP TABLE IF EXISTS retirement_units,retirement_current,retirement_candidates,retirement_covered,retirement_hashes,retirement_references",
         "CREATE TEMP TABLE retirement_units(identity text PRIMARY KEY, position bigint UNIQUE, rank bigint, subrank text COLLATE \"C\")",
         "CREATE TEMP TABLE retirement_current(identity text PRIMARY KEY, generation bigint, owner text, hash text, refs jsonb)",
         "CREATE TEMP TABLE retirement_candidates(identity text, hash text, material uuid, event uuid, PRIMARY KEY(identity,hash,material))",
         "CREATE TEMP TABLE retirement_covered(identity text PRIMARY KEY)",
         "CREATE TEMP TABLE retirement_hashes(hash text PRIMARY KEY)",
+        "CREATE TEMP TABLE retirement_references(namespace text,identity text,generation bigint,owner text,hash text,refs jsonb,PRIMARY KEY(namespace,identity))",
     ] {
         sqlx::query(statement).execute(&mut *conn).await?;
     }
@@ -32,6 +33,32 @@ pub async fn descriptors(
 ) -> Result<Vec<(i64, Uuid, Option<Uuid>, Value)>> {
     Ok(sqlx::query("SELECT c.commit_seq,e.id,e.material_id,e.payload FROM core.commit_log c JOIN core.events e ON e.id=c.event_id WHERE c.commit_seq>$1 AND e.source=$2 AND e.event_type=$3 AND e.payload->>$4=$5 AND EXISTS(SELECT 1 FROM core.ingress_frames f WHERE f.producer=$2 AND f.refusal IS NULL AND e.id=ANY(f.admitted)) ORDER BY c.commit_seq LIMIT 500")
         .bind(after).bind(producer).bind(kind).bind(field).bind(value).fetch_all(conn).await?.into_iter().map(|r|(r.get(0),r.get(1),r.get(2),r.get(3))).collect())
+}
+
+/// Page producer-authenticated descriptors across namespaces. Shared content
+/// cannot be reclaimed using only one archive's current reference set.
+pub async fn all_descriptors(
+    conn: &mut PgConnection,
+    kind: &str,
+    after: i64,
+) -> Result<Vec<(i64, String, Value)>> {
+    Ok(sqlx::query("SELECT c.commit_seq,e.source,e.payload FROM core.commit_log c JOIN core.events e ON e.id=c.event_id WHERE c.commit_seq>$1 AND e.event_type=$2 AND EXISTS(SELECT 1 FROM core.ingress_frames f WHERE f.producer=e.source AND f.refusal IS NULL AND e.id=ANY(f.admitted)) ORDER BY c.commit_seq LIMIT 500")
+        .bind(after).bind(kind).fetch_all(conn).await?.into_iter().map(|r|(r.get(0),r.get(1),r.get(2))).collect())
+}
+
+/// Keep the latest references per immutable identity within its namespace.
+pub async fn protect(
+    conn: &mut PgConnection,
+    namespace: &str,
+    identity: &str,
+    generation: i64,
+    owner: &str,
+    hash: Option<&str>,
+    refs: &[String],
+) -> Result<()> {
+    sqlx::query("INSERT INTO retirement_references VALUES($1,$2,$3,$4,$5,$6) ON CONFLICT(namespace,identity) DO UPDATE SET generation=excluded.generation,owner=excluded.owner,hash=excluded.hash,refs=excluded.refs WHERE (excluded.generation,excluded.owner COLLATE \"C\")>(retirement_references.generation,retirement_references.owner COLLATE \"C\")")
+        .bind(namespace).bind(identity).bind(generation).bind(owner).bind(hash).bind(serde_json::json!(refs)).execute(conn).await?;
+    Ok(())
 }
 
 pub async fn original(
@@ -102,10 +129,33 @@ pub async fn candidate(
         sqlx::query("INSERT INTO retirement_candidates VALUES($1,$2,$3,$4) ON CONFLICT(identity,hash,material) DO UPDATE SET event=COALESCE(retirement_candidates.event,excluded.event)").bind(identity).bind(hash).bind(material).bind(event).execute(conn).await?;
     } else if required {
         return Err(Error::Invalid(
-            "selected batch material was not confirmed by this producer".into(),
+            "selected material was not confirmed by this producer".into(),
         ));
     }
     Ok(())
+}
+
+/// Current backing of a material named by its producer-owned input locator.
+/// Other naming conventions remain ordinary historical frame acknowledgments.
+pub struct Backing {
+    pub frame: String,
+    pub hash: String,
+    pub present: bool,
+    pub kind: String,
+    pub parser: String,
+    pub parser_version: i32,
+}
+
+pub async fn backings(
+    conn: &mut PgConnection,
+    producer: &str,
+    frames: &[String],
+) -> Result<Vec<Backing>> {
+    if frames.is_empty() {
+        return Ok(vec![]);
+    }
+    Ok(sqlx::query("SELECT f.frame,m.blob,b.status='present',i.kind,m.parser,m.parser_version FROM core.ingress_frames f JOIN raw.materials m ON m.id=f.material_id JOIN raw.inputs i ON i.id=m.input_id JOIN core.blobs b ON b.hash=m.blob WHERE f.producer=$1 AND f.frame=ANY($2) AND f.refusal IS NULL AND i.binding='ingress:'||$1 AND i.locator=f.frame")
+        .bind(producer).bind(frames).fetch_all(conn).await?.into_iter().map(|r|Backing { frame:r.get(0),hash:r.get(1),present:r.get(2),kind:r.get(3),parser:r.get(4),parser_version:r.get(5) }).collect())
 }
 
 pub async fn validate(conn: &mut PgConnection) -> Result<()> {
@@ -131,7 +181,7 @@ pub struct Applied {
 /// The writer holds its transaction and is the only source of persistent
 /// mutations. Same-revision aliases are retained, before touching any extents.
 pub async fn apply(conn: &mut PgConnection, blobs: &Blobs) -> Result<Applied> {
-    sqlx::query("INSERT INTO retirement_hashes SELECT DISTINCT c.hash FROM retirement_candidates c JOIN retirement_current s ON s.identity=c.identity WHERE c.hash IS DISTINCT FROM s.hash").execute(&mut *conn).await?;
+    sqlx::query("INSERT INTO retirement_hashes SELECT DISTINCT c.hash FROM retirement_candidates c JOIN retirement_current s ON s.identity=c.identity WHERE c.hash IS DISTINCT FROM s.hash AND NOT(s.refs ? c.hash)").execute(&mut *conn).await?;
     // Verify before unlinking unreferenced old bytes, including pending retries.
     // Completed requests need no repeated scan of the live batch contents.
     let mut verified: bool = sqlx::query_scalar(
@@ -150,7 +200,7 @@ pub async fn apply(conn: &mut PgConnection, blobs: &Blobs) -> Result<Applied> {
     let mut done = Applied::default();
     let mut after = Uuid::nil();
     loop {
-        let rows=sqlx::query("SELECT DISTINCT c.material,c.hash,m.blob,m.durable_bytes,m.revision_id FROM retirement_candidates c JOIN retirement_hashes h ON h.hash=c.hash JOIN raw.materials m ON m.id=c.material WHERE c.material>$1 AND NOT EXISTS(SELECT 1 FROM retirement_current s WHERE s.hash=c.hash OR s.refs ? c.hash) ORDER BY c.material LIMIT 500").bind(after).fetch_all(&mut *conn).await?;
+        let rows=sqlx::query("SELECT DISTINCT c.material,c.hash,m.blob,m.durable_bytes,m.revision_id FROM retirement_candidates c JOIN retirement_hashes h ON h.hash=c.hash JOIN raw.materials m ON m.id=c.material WHERE c.material>$1 AND NOT EXISTS(SELECT 1 FROM retirement_current s WHERE s.hash=c.hash OR s.refs ? c.hash) AND NOT EXISTS(SELECT 1 FROM retirement_references s WHERE s.hash=c.hash OR s.refs ? c.hash) ORDER BY c.material LIMIT 500").bind(after).fetch_all(&mut *conn).await?;
         if rows.is_empty() {
             break;
         }

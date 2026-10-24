@@ -433,6 +433,9 @@ async fn admit_checked(
     let refuse = |e: &dyn std::fmt::Display| WriteError::Refused(e.to_string());
     check().map_err(WriteError::Refused)?;
     let mut tx = connection.begin().await.map_err(|e| refuse(&e))?;
+    crate::row_retirement::validate_sources(&mut tx, batch)
+        .await
+        .map_err(WriteError::Refused)?;
     match sinex_store::admit(&mut tx, batch, keys).await {
         Ok(outcome) => {
             if let Err(error) = check() {
