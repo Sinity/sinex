@@ -163,7 +163,19 @@ pub fn receive(
         return Ok(false);
     }
     file.rewind().map_err(error)?;
-    copy_checked(&mut file, std::io::sink(), bytes)?;
+    let mut hash = blake3::Hasher::new();
+    let length =
+        std::io::copy(&mut (&mut file).take(bytes.length + 1), &mut hash).map_err(error)?;
+    if length != bytes.length || format!("blake3:{}", hash.finalize().to_hex()) != bytes.blob {
+        // A completed attempt proved not to be the reserved bytes. Retire only
+        // its own partial file; a new attempt may resend the frozen original.
+        drop(file);
+        std::fs::remove_file(&path).map_err(error)?;
+        std::fs::File::open(&dir)
+            .and_then(|f| f.sync_all())
+            .map_err(error)?;
+        return Err("producer bytes differ from their frozen name or length".into());
+    }
     std::fs::rename(&path, dir.join(role.name())).map_err(error)?;
     std::fs::File::open(&dir)
         .and_then(|f| f.sync_all())
@@ -214,9 +226,73 @@ pub fn discard(root: &Path, producer: &str, publication: &Publication) -> Result
 }
 
 fn artifact_path(root: &Path, producer: &str, frame: &str) -> PathBuf {
+    artifact_directory(root, producer).join(format!("{}.json", super::spool_key(producer, frame)))
+}
+
+fn artifact_directory(root: &Path, producer: &str) -> PathBuf {
+    let mut hash = blake3::Hasher::new();
+    hash.update(b"sinex producer artifact directory 1\0");
+    hash.update(producer.as_bytes());
     root.join("incoming")
         .join("producer-requests")
-        .join(format!("{}.json", super::spool_key(producer, frame)))
+        .join(hash.finalize().to_hex().as_str())
+}
+
+/// Stream this producer's committed frozen artifacts, one whole typed frame at
+/// a time. Uncommitted private temporary files follow the existing tmp policy.
+pub struct Pending {
+    entries: Option<std::fs::ReadDir>,
+    root: PathBuf,
+    producer: String,
+}
+pub fn pending(root: &Path, producer: &str) -> Result<Pending, String> {
+    let entries = match std::fs::read_dir(artifact_directory(root, producer)) {
+        Ok(entries) => Some(entries),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
+        Err(e) => return Err(error(e)),
+    };
+    Ok(Pending {
+        entries,
+        root: root.to_owned(),
+        producer: producer.into(),
+    })
+}
+impl Iterator for Pending {
+    type Item = Result<Frozen, String>;
+    fn next(&mut self) -> Option<Self::Item> {
+        let entries = self.entries.as_mut()?;
+        loop {
+            let entry = match entries.next()? {
+                Ok(entry) => entry,
+                Err(e) => return Some(Err(error(e))),
+            };
+            if entry
+                .file_name()
+                .to_string_lossy()
+                .starts_with(".producer-request-")
+            {
+                continue;
+            }
+            let result = (|| {
+                if !entry.file_type().map_err(error)?.is_file() {
+                    return Err("producer artifact is not a regular file".into());
+                }
+                let frozen: Frozen =
+                    serde_json::from_reader(std::fs::File::open(entry.path()).map_err(error)?)
+                        .map_err(error)?;
+                frozen.validate()?;
+                if entry.path()
+                    != artifact_path(&self.root, &self.producer, &frozen.publication.frame)
+                {
+                    return Err(
+                        "producer artifact filename differs from its frozen identity".into(),
+                    );
+                }
+                Ok(frozen)
+            })();
+            return Some(result);
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
@@ -247,7 +323,7 @@ impl Frozen {
                 || envelope.blob != format!("blake3:{}", blake3::hash(&bytes).to_hex())
             {
                 return Err(
-                    "frozen producer envelope differs from its canonical typed frame".into(),
+                    "frozen producer envelope differs from its exact typed frame encoding".into(),
                 );
             }
         } else if self.frame.frame() != self.publication.frame {
@@ -289,7 +365,10 @@ pub fn freeze(root: &Path, producer: &str, frozen: &Frozen) -> Result<Frozen, St
     let dir = path.parent().expect("artifact has a parent");
     std::fs::create_dir_all(dir).map_err(error)?;
     sync_directories(root, dir)?;
-    let mut staged = tempfile::NamedTempFile::new_in(dir).map_err(error)?;
+    let mut staged = tempfile::Builder::new()
+        .prefix(".producer-request-")
+        .tempfile_in(dir)
+        .map_err(error)?;
     serde_json::to_writer(&mut staged, frozen).map_err(error)?;
     staged.as_file().sync_all().map_err(error)?;
     match staged.persist_noclobber(&path) {

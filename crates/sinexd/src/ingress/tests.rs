@@ -16,6 +16,7 @@ struct Harness {
     client: async_nats::Client,
     url: String,
     blobs: Blobs,
+    writer: WriterHandle,
     store_dir: std::path::PathBuf,
     stop: watch::Sender<bool>,
     _db: devkit::pg::TestDatabase,
@@ -38,7 +39,7 @@ impl Harness {
         let blobs = Blobs::open(&store_dir).unwrap();
         let ingest = Ingest::new(
             subjects.clone(),
-            handle,
+            handle.clone(),
             PgConnection::connect(&url).await.unwrap(),
             sqlx::postgres::PgPoolOptions::new()
                 .max_connections(1)
@@ -57,6 +58,7 @@ impl Harness {
             client,
             url,
             blobs,
+            writer: handle,
             store_dir,
             stop,
             _db: db,
@@ -791,3 +793,5 @@ async fn unsupported_ingress_custody_is_refused_without_deleting_a_partial_trans
     assert!(!h.blobs.contains(&blob).unwrap());
     assert_eq!(h.have("existing-node", &["first"]).await.len(), 1);
 }
+
+mod custody;

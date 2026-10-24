@@ -111,6 +111,7 @@ fn empty_and_wrong_named_uploads_do_not_publish_public_cas_bytes() {
             .join("envelope")
             .exists()
     );
+    assert!(receive(root.path(), "node", &wrong, Role::Envelope, 0, b"right").unwrap());
 }
 
 #[test]
@@ -184,4 +185,59 @@ fn frozen_sender_identity_survives_receiver_cleanup_and_differing_retry_refuses(
     discard(root.path(), "node", &frozen.publication).unwrap();
     discard(root.path(), "node", &frozen.publication).unwrap();
     assert!(load(root.path(), "node", "final").unwrap().is_none());
+}
+
+#[test]
+fn pending_artifacts_are_producer_scoped_and_keep_payload_order_through_the_supported_round_trip() {
+    let root = tempfile::tempdir().unwrap();
+    let frame = crate::Ingress::Events {
+        frame: "outer".into(),
+        failures: vec![],
+        events: vec![crate::ProducerEvent {
+            event_type: "fixture".into(),
+            payload: serde_json::from_str(r#"{"z":0,"a":{"z":3,"a":4}}"#).unwrap(),
+            location: None,
+            ordinal: 0,
+            parents: vec![],
+            reading_order: 0,
+            class: Class::Guarded,
+        }],
+    };
+    let encoded = super::super::encode_frame(&frame);
+    let frozen = Frozen {
+        publication: declaration(&encoded, "outer"),
+        frame,
+    };
+    freeze(root.path(), "one", &frozen).unwrap();
+    freeze(root.path(), "two", &frozen).unwrap();
+    let first = pending(root.path(), "one")
+        .unwrap()
+        .collect::<Result<Vec<_>, _>>()
+        .unwrap();
+    assert_eq!(first, vec![frozen.clone()]);
+    assert_eq!(super::super::encode_frame(&first[0].frame), encoded);
+    let crate::Ingress::Events { events, .. } = &first[0].frame else {
+        panic!("events")
+    };
+    assert_eq!(
+        serde_json::to_string(&events[0].payload).unwrap(),
+        r#"{"z":0,"a":{"z":3,"a":4}}"#
+    );
+    let malformed = artifact_directory(root.path(), "one").join(format!("{}.json", "0".repeat(64)));
+    std::fs::write(&malformed, b"{not-json").unwrap();
+    let entries = pending(root.path(), "one").unwrap().collect::<Vec<_>>();
+    assert_eq!(entries.len(), 2);
+    assert_eq!(entries.iter().filter(|e| e.is_err()).count(), 1);
+    assert_eq!(
+        pending(root.path(), "two")
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap(),
+        vec![frozen.clone()]
+    );
+    assert!(pending(root.path(), "absent").unwrap().next().is_none());
+    std::fs::remove_file(malformed).unwrap();
+    discard(root.path(), "one", &frozen.publication).unwrap();
+    assert_eq!(pending(root.path(), "one").unwrap().count(), 0);
+    assert_eq!(pending(root.path(), "two").unwrap().count(), 1);
 }

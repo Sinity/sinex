@@ -3,10 +3,10 @@ pub use sinex_model::producer_bytes::*;
 
 pub mod spool;
 
-/// Encode a typed indirect frame consistently across serde map configurations.
-/// Material body bytes are independent and never pass through this encoding.
+/// Preserve the producer's existing typed frame serialization. The declared
+/// serde_json preserve_order feature retains payload object order through a
+/// frozen-artifact round trip; ingress reading hashes depend on that order.
+/// Material descriptor commitments independently sort their metadata objects.
 pub fn encode_frame(frame: &crate::Ingress) -> Vec<u8> {
-    let mut value = serde_json::to_value(frame).expect("frame serializes");
-    value.sort_all_objects();
-    serde_json::to_vec(&value).expect("canonical frame serializes")
+    serde_json::to_vec(frame).expect("frame serializes")
 }

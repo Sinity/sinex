@@ -88,6 +88,8 @@ pub struct Ingest {
     pub host: String,
     validators: HashMap<&'static str, jsonschema::Validator>,
     runs: HashMap<String, RunId>,
+    #[cfg(test)]
+    byte_hook: Option<std::sync::Arc<dyn Fn(bytes::Point) + Send + Sync>>,
 }
 
 impl Ingest {
@@ -115,6 +117,8 @@ impl Ingest {
             host,
             validators,
             runs: HashMap::new(),
+            #[cfg(test)]
+            byte_hook: None,
         })
     }
 
@@ -214,25 +218,8 @@ impl Ingest {
                 .events(producer, &events, &failures)
                 .await
                 .map(|records| (None, records)),
-            Ok(Ingress::Chunk {
-                publication,
-                role,
-                blob,
-                offset,
-                total,
-                data,
-                ..
-            }) => self
-                .chunk_bytes(
-                    producer,
-                    &publication,
-                    role,
-                    &blob,
-                    offset,
-                    total,
-                    &data,
-                    guard,
-                )
+            Ok(chunk @ Ingress::Chunk { .. }) => self
+                .chunk_bytes(producer, &chunk, guard)
                 .await
                 .map(|()| (None, vec![])),
             Ok(Ingress::Indirect { .. } | Ingress::Reserve { .. }) => {

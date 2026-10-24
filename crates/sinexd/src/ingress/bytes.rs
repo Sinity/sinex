@@ -3,6 +3,14 @@ use sinex_model::producer_bytes::{Material, Publication, Role};
 use sinex_protocol::producer_bytes::spool;
 use sqlx::Connection;
 
+#[cfg(test)]
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(super) enum Point {
+    Received,
+    BeforeInstall,
+    Verified,
+}
+
 impl Ingest {
     pub(super) async fn cleanup_bytes(&mut self) -> Result<(), String> {
         loop {
@@ -96,14 +104,22 @@ impl Ingest {
     pub(super) async fn chunk_bytes(
         &mut self,
         producer: &str,
-        publication: &str,
-        role: Role,
-        blob: &str,
-        offset: u64,
-        total: u64,
-        data: &str,
+        chunk: &Ingress,
         guard: &mut Option<crate::source_excision::AcquisitionGuard>,
     ) -> Result<(), Check> {
+        let Ingress::Chunk {
+            publication,
+            role,
+            blob,
+            offset,
+            total,
+            data,
+            ..
+        } = chunk
+        else {
+            return Err(Check::Refused("expected a producer chunk".into()));
+        };
+        let (role, offset, total) = (*role, *offset, *total);
         let Some((declaration, _)) =
             sinex_store::producer_bytes::load(&mut self.conn, producer, publication)
                 .await
@@ -119,7 +135,7 @@ impl Ingest {
         else {
             return Err(Check::Refused("producer chunk role is not reserved".into()));
         };
-        if bytes.blob != blob || bytes.length != total {
+        if bytes.blob != *blob || bytes.length != total {
             return Err(Check::Refused(
                 "producer chunk differs from its exact reservation".into(),
             ));
@@ -132,9 +148,15 @@ impl Ingest {
             .map_err(|e| Check::Refused(format!("chunk data is not base64: {e}")))?;
         let root = self.blobs.root().to_owned();
         let producer = producer.to_owned();
+        #[cfg(test)]
+        let hook = self.byte_hook.clone();
         let owned = guard.take().expect("guard follows detached receive");
         let (owned, result) = tokio::task::spawn_blocking(move || {
             let result = spool::receive(&root, &producer, &declaration, role, offset, &data);
+            #[cfg(test)]
+            if let Some(hook) = hook {
+                hook(Point::Received);
+            }
             (owned, result)
         })
         .await
@@ -169,6 +191,8 @@ impl Ingest {
         let task_producer = producer.to_owned();
         let blobs = self.blobs.clone();
         let frozen = declaration.clone();
+        #[cfg(test)]
+        let hook = self.byte_hook.clone();
         let owned = guard.take().expect("guard follows detached install");
         let (owned,result)=tokio::task::spawn_blocking(move || {
             let result=(|| {
@@ -189,6 +213,8 @@ impl Ingest {
                         let mut bytes=spool::snapshot(&root,&task_producer,&frozen,Role::Material).map_err(Check::Unavailable)?;
                         let prepared=blobs.prepare_plain(&mut bytes).map_err(|e|Check::Unavailable(e.to_string()))?;
                         if prepared.name()!=material.blob || prepared.length()!=material.length {return Err(Check::Refused("prepared producer body differs".into()));}
+                        #[cfg(test)]
+                        if let Some(hook)=&hook {hook(Point::BeforeInstall);}
                         prepared.install().map_err(|e|Check::Unavailable(e.to_string()))?;
                     }
                     let mut verified=blobs.read_plain(&material.blob,Some(material.length),||Ok(())).map_err(|e|Check::Unavailable(e.to_string()))?;
@@ -197,6 +223,8 @@ impl Ingest {
                 Ingress::Events{..} if frozen.material.is_none() && frozen.envelope.is_some()=>{},
                 _=>return Err(Check::Refused("reserved producer descriptor differs; only material and events frames are supported".into())),
             }
+            #[cfg(test)]
+            if let Some(hook)=&hook {hook(Point::Verified);}
             Ok::<_,Check>(inner)
             })();
             (owned,result)

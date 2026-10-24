@@ -19,3 +19,6 @@ pub(super) async fn apply(conn: &mut PgConnection) -> Result<(), Error> {
     }
     Ok(())
 }
+
+#[cfg(test)]
+mod tests;

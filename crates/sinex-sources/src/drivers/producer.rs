@@ -4,8 +4,9 @@
 //!
 //! A poll goes through the same driver and drain `sinexd` uses. Then:
 //!
-//! 1. the material's bytes are placed in the content store this host shares
-//!    with `sinexd`, and a material frame registers them; the producer waits
+//! 1. material bytes and frame declarations freeze in a durable private spool;
+//!    Sinex reserves custody, verifies a receiver-owned copy and installs it;
+//!    a material frame registers that version, and the producer waits
 //!    for its acknowledgment before sending anything that cites it;
 //! 2. the events go in frames that each fit one NATS message;
 //! 3. only when every frame of a batch is acknowledged does the binding's
@@ -20,8 +21,8 @@
 //!
 //! A producer on another host, which does not share `sinexd`'s content store,
 //! sends a material's bytes in [`Ingress::Chunk`] frames first
-//! ([`Producer::upload_bytes`]). A frame too large for one message goes into
-//! the content store too, and an [`Ingress::Indirect`] frame names it.
+//! ([`Producer::upload_bytes`]). A frame too large for one message keeps a
+//! distinct private envelope role, named by an [`Ingress::Indirect`] frame.
 pub use sinex_protocol::producer_bytes::spool;
 mod staging;
 use sinex_protocol::producer_bytes::{Bytes, Material, Publication, Role};

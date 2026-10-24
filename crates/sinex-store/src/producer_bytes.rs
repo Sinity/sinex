@@ -236,3 +236,6 @@ pub async fn retire(conn: &mut PgConnection, producer: &str, frame: &str) -> Res
     }
     Ok(())
 }
+
+#[cfg(test)]
+mod tests;

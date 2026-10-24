@@ -1,4 +1,5 @@
 use super::*;
+use std::io::Write;
 
 #[test]
 fn put_then_read_range() {
@@ -19,7 +20,6 @@ fn put_then_read_range() {
     assert!(blobs.contains("sha256:00").is_err());
     std::fs::remove_dir_all(dir).unwrap();
 }
-
 
 #[test]
 fn plain_copy_and_retained_reader_keep_exact_bytes() {
