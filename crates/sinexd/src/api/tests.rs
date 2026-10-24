@@ -94,7 +94,7 @@ async fn admit_events(w: &World, events: Vec<Event>) {
 
 async fn world() -> World {
     let (db, url, connection) = crate::testdb::fresh().await;
-    let (handle, queues) = writer::channels();
+    let (handle, queues) = writer::channels_for(&url);
     tokio::spawn(writer::run(
         url.clone(),
         connection,
@@ -881,3 +881,5 @@ mod recall;
 mod cursor;
 
 mod archive_history;
+
+mod forecast;

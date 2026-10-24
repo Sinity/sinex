@@ -71,7 +71,9 @@ boundaries between capture, interpretation, admission and public interfaces.
   stream.
 - **Analysis.** Metrics per logical day with coverage, registered methods
   (correlations, trends, change points, deviations), stored results and a
-  daily brief.
+  daily brief. Binary probability forecasts can be issued and resolved as retained
+  authored events; `forecast-report` computes Brier score and ten fixed calibration
+  bins over visible resolved pairs.
 - **Library.** A media library on the same storage: items, renditions, tags,
   properties, collections, ratings and pairwise ranking.
 - **NixOS module.** `nix/` holds a NixOS module and its VM tests.
@@ -95,6 +97,39 @@ both endpoints; `observed_until` does not prove that activity ended. Unknown
 durations count as points. The broader activity `sessions` alias remains
 unsupported. If no matching timed group is known, recall says so without
 claiming that no observations exist.
+
+## Probability forecasts
+
+With an operator token or an agent token granted `guarded`, record a forecast
+with an explicit future horizon and information cutoff. Optional `--information`
+citations must already have been recorded by that cutoff. The issue response
+contains an event citation for resolution and ordinary `show`/`query` commands.
+
+```sh
+sinexctl forecast-issue 'The synthetic job finishes' 0.8 'A completion record exists' \
+  '2099-01-01T00:00:00Z' '2026-10-24T00:00:00Z'
+sinexctl forecast-resolve sinex:ev/ISSUED_EVENT true --evidence sinex:ev/EVIDENCE_EVENT
+sinexctl forecast-report
+```
+
+`forecast-resolve` accepts `true`, `false` or `unknown` and requires live visible
+evidence citations. Its optional `--at` records when the outcome occurred;
+omission leaves that time unknown. The authenticated transport role supplies
+`by` (`operator` or `agent`), and the daemon records when each act was submitted.
+The original request bytes and manifest are retained through ordinary admission.
+The information position records the visible archive head used at issuance;
+the supplied information citations describe its declared information set.
+
+The report is computed on each call at one archive position. It uses
+`mean((probability - outcome)^2)` over known outcomes. Unknown or withdrawn
+resolutions remain unresolved; no resolved pairs yields `not_estimable` and a
+null Brier score. Empty calibration bins have null means and frequencies.
+Hiding or excising an issue removes its pair; withdrawing its resolution or
+supporting evidence makes the outcome unavailable. Concurrent known resolutions
+for one forecast refuse scoring until an incorrect resolution is hidden.
+The report includes its input event IDs and counts withheld events and unavailable
+evidence separately. Forecasts use the guarded class floor. Sealed evidence and
+sealed authored request storage remain unavailable to these commands.
 
 ## Initialize and upgrade
 

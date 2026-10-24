@@ -87,6 +87,62 @@ const CURSOR: Arg = opt("cursor", ArgKind::Text, "the cursor from the previous p
 /// they cannot drift apart.
 pub const COMMANDS: &[Command] = &[
     Command {
+        name: "forecast-issue",
+        summary: "Record a binary probability forecast",
+        access: Access::Agent,
+        mcp: true,
+        args: &[
+            pos("target", ArgKind::Text, "the predicted proposition"),
+            pos("probability", ArgKind::Text, "probability from 0 to 1"),
+            pos("criteria", ArgKind::Text, "how the outcome will be decided"),
+            pos(
+                "horizon",
+                ArgKind::Text,
+                "future resolution horizon, RFC3339",
+            ),
+            pos("cutoff", ArgKind::Text, "information cutoff, RFC3339"),
+            opt(
+                "information",
+                ArgKind::List,
+                "event citations available at issuance",
+            ),
+        ],
+    },
+    Command {
+        name: "forecast-resolve",
+        summary: "Record an outcome and its evidence",
+        access: Access::Agent,
+        mcp: true,
+        args: &[
+            pos(
+                "forecast",
+                ArgKind::Reference,
+                "issued forecast event citation",
+            ),
+            pos("outcome", ArgKind::Text, "true, false or unknown"),
+            opt(
+                "at",
+                ArgKind::Text,
+                "when the outcome occurred, RFC3339; unknown if omitted",
+            ),
+            Arg {
+                required: true,
+                ..opt(
+                    "evidence",
+                    ArgKind::List,
+                    "event citations supporting the resolution",
+                )
+            },
+        ],
+    },
+    Command {
+        name: "forecast-report",
+        summary: "Brier score and calibration of visible resolved forecasts",
+        access: Access::Read,
+        mcp: true,
+        args: &[],
+    },
+    Command {
         name: "status",
         summary: "What Sinex holds: commit position, sources and their newest events, the search index.",
         args: &[],

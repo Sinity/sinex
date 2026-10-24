@@ -4,6 +4,7 @@
 use crate::{Applied, CHANGES, Error, VERSION, WRITER_LOCK, catalog, grants, tables};
 use sqlx::{Connection, Executor, PgConnection};
 
+mod forecasts;
 mod notes;
 
 pub(super) async fn apply(conn: &mut PgConnection) -> Result<Applied, Error> {
@@ -62,6 +63,7 @@ async fn apply_locked(conn: &mut PgConnection) -> Result<Applied, Error> {
             1 => archival_history(conn).await?,
             2 => notes::apply(conn).await?,
             3 => sealed_erasure(conn).await?,
+            4 => forecasts::apply(conn).await?,
             _ => {
                 return Err(Error::Upgrade {
                     found,

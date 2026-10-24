@@ -291,6 +291,15 @@ commands. CLI, MCP and HTTP adapt those commands. `sinex-diagnostics` supports
 the separate daemon-down diagnostic path. Schema declarations and application
 remain in `sinex-schema`; checked SQL compiles against that real schema.
 
+Forecast issuance and resolution are ordinary `forecast.request` source records.
+Their parser takes transport-role attribution and submission time from the retained
+manifest, preserving outcome time separately. Both command adapters use the shared
+application publication owner; forecast code neither installs blobs nor writes
+archive rows. Schema4 adds only their registry entries and typed reader views.
+The report reads currently visible, live issues, resolutions and resolution evidence
+in one repeatable-read transaction and supplies resolved probability pairs to pure
+`sinex-analysis` scoring. It stores no separate forecast state or cached score.
+
 Shared blob storage, credential masking and development tooling come from
 immutable `polylogue-sinex-common` releases. Prefer these existing owners to
 another local implementation. Change an interface with its callers and remove

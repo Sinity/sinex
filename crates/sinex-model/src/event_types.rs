@@ -9,6 +9,7 @@ pub mod code;
 pub mod communication;
 pub mod derived;
 pub mod desktop;
+pub mod forecast;
 pub mod health;
 pub mod library;
 pub mod machine;
@@ -75,6 +76,8 @@ fn build_from_json<P: EventPayload>(
 
 /// Every event type Sinex stores.
 pub const ALL: &[EventTypeInfo] = &[
+    info::<forecast::Issued>(),
+    info::<forecast::Resolved>(),
     info::<CommandExecuted>(),
     info::<CommandImported>(),
     info::<CommandFused>(),

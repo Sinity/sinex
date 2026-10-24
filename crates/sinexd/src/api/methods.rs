@@ -11,6 +11,7 @@ use sinex_store::query::{Answer, Page};
 use sqlx::PgPool;
 
 mod analysis;
+mod forecast;
 mod operations;
 mod privacy;
 
@@ -486,6 +487,12 @@ impl Api {
                 self.crawl(caller, allow, url, limit, pause.unwrap_or(2))
                     .await
             }
+            r @ (Request::ForecastIssue { .. }
+            | Request::ForecastResolve { .. }
+            | Request::ForecastReport) => match self.forecast(r, caller).await {
+                Ok(v) => data(v),
+                Err(e) => refused(e),
+            },
             Request::AnalysisCatalog
             | Request::AnalysisRun { .. }
             | Request::AnalysisPanel { .. }
