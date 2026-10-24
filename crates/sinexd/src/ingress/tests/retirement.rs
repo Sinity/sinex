@@ -1145,3 +1145,188 @@ async fn row_retirement_does_not_count_unchanged_source_dependencies_as_retained
         }
     }
 }
+
+#[tokio::test]
+async fn older_manifest_can_follow_confirmed_newer_owner_without_intermediate_source() {
+    let h = Harness::start().await;
+    let target = unit(1, "revision", "source/1");
+    let latest = unit(3, "excision", "latest");
+    let publication = manifest(vec![UnitReplacement {
+        unit: target.clone(),
+        batch: None,
+        bytes: 0,
+        rows: 0,
+        blobs: vec![],
+    }]);
+    let (material, batch) = h.batch(ARCHIVE, b"latest owner rows\n").await;
+    // The publisher sends the latest suffix first, before filling old gaps.
+    h.row(3, &latest, material, &batch, Some(publication.clone()))
+        .await;
+    let missing_source = h.fixture_blob(b"unpublished intermediate source");
+    let unpublished_batch = h.fixture_blob(b"unpublished intermediate rows\n");
+    let intermediate = manifest(vec![UnitReplacement {
+        unit: target.clone(),
+        batch: Some(unpublished_batch),
+        bytes: 30,
+        rows: 1,
+        blobs: vec![missing_source.clone()],
+    }]);
+    let older = unit(2, "excision", "intermediate");
+    let (material, batch) = h.batch(ARCHIVE, b"older owner rows\n").await;
+    let ack = h
+        .send_row_with_sources(
+            ARCHIVE,
+            2,
+            &older,
+            material,
+            &batch,
+            &[],
+            Some(intermediate.clone()),
+        )
+        .await;
+    assert_eq!(
+        ack.refusal, None,
+        "latest owner already supersedes this source"
+    );
+    let (original_material, original_batch) = h.batch(ARCHIVE, b"original rows\n").await;
+    h.row(1, &target, original_material, &original_batch, None)
+        .await;
+    let retired = h
+        .retire(
+            "polylogue",
+            &RetireBatches {
+                archive: ARCHIVE.into(),
+                owner: latest,
+                digest: publication.digest,
+            },
+        )
+        .await;
+    assert_eq!(retired.refusal, None);
+    assert_eq!(retired.pending_files, 0);
+    let retry = h
+        .send_row_with_sources(
+            ARCHIVE,
+            2,
+            &older,
+            material,
+            &batch,
+            &[],
+            Some(intermediate),
+        )
+        .await;
+    assert_eq!(retry, ack, "held acknowledgment changed after retirement");
+    assert!(!h.blobs.contains(&missing_source).unwrap());
+    assert_eq!(
+        h.count("SELECT count(*) FROM core.events WHERE event_type='polylogue.rows'")
+            .await,
+        3
+    );
+}
+
+#[tokio::test]
+async fn unavailable_replacement_needs_a_newer_matching_acknowledged_owner() {
+    for case in [
+        "absent",
+        "archive",
+        "unit",
+        "older",
+        "same",
+        "missing_ack",
+        "foreign",
+    ] {
+        let h = Harness::start().await;
+        let target = unit(1, "revision", "source/1");
+        let incoming = unit(3, "excision", "incoming");
+        if case != "absent" {
+            let owner = match case {
+                "older" => unit(2, "excision", "older"),
+                "same" => incoming.clone(),
+                _ => unit(4, "excision", "newer"),
+            };
+            let replaced = if case == "unit" {
+                unit(1, "revision", "other/1")
+            } else {
+                target.clone()
+            };
+            let publication = manifest(vec![UnitReplacement {
+                unit: replaced,
+                batch: None,
+                bytes: 0,
+                rows: 0,
+                blobs: vec![],
+            }]);
+            let archive = if case == "archive" {
+                "other-archive"
+            } else {
+                ARCHIVE
+            };
+            let (material, batch) = h.batch(archive, b"unrelated owner rows\n").await;
+            if case == "foreign" {
+                let event = ProducerEvent {
+                    event_type: "polylogue.rows".into(),
+                    payload: json!({"archive":archive,"position":4,"local_seq":owner.commit_seq,"unit":owner.kind,"key":owner.key,"batch":batch,"rows":1,"blobs":[],"excision":publication}),
+                    location: Some(RecordLocation {
+                        material,
+                        anchor: 0,
+                    }),
+                    ordinal: 0,
+                    parents: vec![],
+                    reading_order: 4,
+                    class: Default::default(),
+                };
+                assert_eq!(
+                    h.send(
+                        "foreign",
+                        &Ingress::Events {
+                            frame: "foreign-owner".into(),
+                            events: vec![event],
+                            failures: vec![]
+                        }
+                    )
+                    .await
+                    .refusal,
+                    None
+                );
+            } else {
+                h.row_with_sources(archive, 4, &owner, material, &batch, &[], Some(publication))
+                    .await;
+                if case == "missing_ack" {
+                    let mut conn = PgConnection::connect(&h.url).await.unwrap();
+                    sqlx::query(
+                        "DELETE FROM core.ingress_frames WHERE producer='polylogue' AND frame=$1",
+                    )
+                    .bind(format!("rows:{archive}:4"))
+                    .execute(&mut conn)
+                    .await
+                    .unwrap();
+                }
+            }
+        }
+        let source = h.fixture_blob(b"missing intermediate source");
+        let publication = manifest(vec![UnitReplacement {
+            unit: target,
+            batch: Some(h.fixture_blob(b"unpublished rows\n")),
+            bytes: 17,
+            rows: 1,
+            blobs: vec![source],
+        }]);
+        let (material, batch) = h.batch(ARCHIVE, b"incoming owner rows\n").await;
+        let ack = h
+            .send_row_with_sources(
+                ARCHIVE,
+                3,
+                &incoming,
+                material,
+                &batch,
+                &[],
+                Some(publication),
+            )
+            .await;
+        assert!(
+            ack.refusal
+                .as_deref()
+                .is_some_and(|r| r.contains("unavailable producer source material")),
+            "{case}: {ack:?}"
+        );
+    }
+}
