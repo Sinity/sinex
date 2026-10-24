@@ -6,14 +6,30 @@ use sqlx::{Connection, Executor, PgConnection};
 
 pub(super) async fn apply(conn: &mut PgConnection) -> Result<Applied, Error> {
     let mut tx = conn.begin().await?;
+    // This API returns the borrowed connection to its caller. Transaction Drop
+    // only queues rollback; await the end even for Current and refused changes
+    // so an idle caller cannot retain schema locks against the next writer.
+    match apply_locked(&mut tx).await {
+        Ok(applied) => {
+            tx.commit().await?;
+            Ok(applied)
+        }
+        Err(error) => {
+            tx.rollback().await?;
+            Err(error)
+        }
+    }
+}
+
+async fn apply_locked(conn: &mut PgConnection) -> Result<Applied, Error> {
     let available: bool = sqlx::query_scalar("SELECT pg_try_advisory_xact_lock($1)")
         .bind(WRITER_LOCK)
-        .fetch_one(&mut *tx)
+        .fetch_one(&mut *conn)
         .await?;
     if !available {
         return Err(Error::ActiveWriter);
     }
-    if let Err(error) = tx
+    if let Err(error) = conn
         .execute("LOCK TABLE sinex_schema.applied IN EXCLUSIVE MODE NOWAIT")
         .await
     {
@@ -27,7 +43,7 @@ pub(super) async fn apply(conn: &mut PgConnection) -> Result<Applied, Error> {
     }
     let versions: Vec<i32> =
         sqlx::query_scalar("SELECT version FROM sinex_schema.applied ORDER BY version")
-            .fetch_all(&mut *tx)
+            .fetch_all(&mut *conn)
             .await?;
     let found = versions.last().copied().ok_or(Error::Unversioned)?;
     if versions != (0..=found).collect::<Vec<_>>() || found > VERSION {
@@ -41,7 +57,7 @@ pub(super) async fn apply(conn: &mut PgConnection) -> Result<Applied, Error> {
     }
     for change in CHANGES.iter().filter(|change| change.version > found) {
         match change.version {
-            1 => archival_history(&mut tx).await?,
+            1 => archival_history(conn).await?,
             _ => {
                 return Err(Error::Upgrade {
                     found,
@@ -51,10 +67,9 @@ pub(super) async fn apply(conn: &mut PgConnection) -> Result<Applied, Error> {
         }
         sqlx::query("INSERT INTO sinex_schema.applied(version) VALUES($1)")
             .bind(change.version)
-            .execute(&mut *tx)
+            .execute(&mut *conn)
             .await?;
     }
-    tx.commit().await?;
     Ok(Applied::Upgraded {
         from: found,
         version: VERSION,
