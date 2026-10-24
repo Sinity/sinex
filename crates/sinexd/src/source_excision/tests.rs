@@ -264,6 +264,7 @@ async fn plain_native_exclusion_filters_reacquisition_and_replay_without_unlock(
             &serde_json::Value::Null,
             source.spec().class,
             None,
+            &publication::StagingSink::new(ctx.blobs.clone()),
         )
         .unwrap();
     assert!(

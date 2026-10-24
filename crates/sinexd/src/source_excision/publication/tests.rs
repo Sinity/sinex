@@ -83,7 +83,12 @@ async fn failed_first_native_admission_keeps_exact_installed_custody_after_provi
     ctx.read_conn.execute("CREATE FUNCTION public.reject_native_position() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'synthetic refusal'; END $$; CREATE TRIGGER reject_native_position BEFORE INSERT ON raw.positions FOR EACH ROW EXECUTE FUNCTION public.reject_native_position()").await.unwrap();
     let publication = Publication {
         pending,
-        stages: sink.take().unwrap(),
+        stages: sink
+            .take()
+            .unwrap()
+            .into_iter()
+            .map(NativeStage::Plain)
+            .collect(),
         image: None,
         batch,
         permit,
@@ -281,7 +286,7 @@ async fn actual_sealed_append_first_chunk_and_restart_finish_original_bytes_and_
     let identity = sinex_store::sealed::Identity::generate();
     let authority =
         crate::sealed_access::Authority::new(identity, std::time::Duration::from_secs(60)).unwrap();
-    let sealing = crate::one_shot::SealingSink::new(ctx.blobs.clone(), authority.recipient());
+    let sealing = crate::one_shot::SealingSink::staged(ctx.blobs.clone(), authority.recipient());
     let mut reader = binding::appended(zsh::driver(path.clone(), "h".into()), source.spec().framer);
     let acquired = reader.poll(&serde_json::Value::Null).unwrap();
     let m = acquired.material.as_ref().unwrap();
@@ -330,7 +335,12 @@ async fn actual_sealed_append_first_chunk_and_restart_finish_original_bytes_and_
             end_cursor: final_cursor.clone(),
             state: native_materials::State::Reserved,
         },
-        stages: Vec::new(),
+        stages: sealing
+            .take_stages()
+            .unwrap()
+            .into_iter()
+            .map(NativeStage::Sealed)
+            .collect(),
         image: None,
         batch: first,
         permit: ctx
@@ -340,6 +350,10 @@ async fn actual_sealed_append_first_chunk_and_restart_finish_original_bytes_and_
             .unwrap(),
         guard: ctx.writer.source_guard(name).await.unwrap(),
     };
+    assert!(
+        !ctx.blobs.contains(&material.blob).unwrap(),
+        "sealed preparation published before key custody"
+    );
     let mut tx = publication.guard.connection().begin().await.unwrap();
     native_materials::reserve(&mut tx, &publication.pending)
         .await
@@ -350,6 +364,13 @@ async fn actual_sealed_append_first_chunk_and_restart_finish_original_bytes_and_
         .unwrap()
         .unwrap();
     assert!(crate::retained::open_pending(&ctx.blobs, &frozen, None).is_err());
+    assert!(
+        crate::retained::open_pending(&ctx.blobs, &frozen, Some(&authority)).is_err(),
+        "reserved bytes are still explicitly missing"
+    );
+    for stage in std::mem::take(&mut publication.stages) {
+        stage.install().unwrap();
+    }
     let restored = crate::retained::open_pending(&ctx.blobs, &frozen, Some(&authority)).unwrap();
     let mut restored_bytes = vec![0; original.len()];
     restored

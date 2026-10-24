@@ -217,3 +217,80 @@ async fn native_image_costs_stay_unresolved_until_installed_verification_and_use
     assert_eq!(ready.progress.image.unwrap(), completed);
     guard.release().await.unwrap();
 }
+
+#[test]
+fn sealed_image_preparation_freezes_keyed_digest_and_wrapped_key_before_cas_install() {
+    let dir = tempfile::tempdir().unwrap();
+    let blobs = Blobs::open(&dir.path().join("store")).unwrap();
+    let connection = rusqlite::Connection::open_in_memory().unwrap();
+    connection.execute_batch("CREATE TABLE t(x); INSERT INTO t VALUES('synthetic keyed image'); BEGIN; SELECT count(*) FROM sqlite_master;").unwrap();
+    let mut scan = Scan::start(
+        connection,
+        Policy {
+            scope: "whole_database".into(),
+            class: Class::Sealed,
+            interval_secs: 3600,
+            turn_pages: 1,
+            rebase_threshold: 1.0,
+        },
+        None,
+        "synthetic".into(),
+        "h".into(),
+        sinex_model::Timestamp::now(),
+    )
+    .unwrap();
+    while !scan.turn().unwrap() {}
+    let image = scan.finish().unwrap();
+    let mut exact = Vec::new();
+    image
+        .reader(Arc::new(|h| *h), true)
+        .unwrap()
+        .take(image.metadata.image_bytes)
+        .read_to_end(&mut exact)
+        .unwrap();
+    let identity = sealed::Identity::generate();
+    let (prepared, stage) =
+        prepare_sealed(&blobs, image.clone(), "p", 1, &identity.to_public()).unwrap();
+    let key = prepared.key.as_ref().unwrap().clone();
+    let wrapped = prepared.expected.key.as_ref().unwrap().wrapped.clone();
+    let expected_hash = prepared.expected.metadata.image_hash.clone();
+    let naming = blake3::derive_key("sinex 2026 SQLite image naming key", &key.key);
+    assert_eq!(
+        expected_hash,
+        format!("blake3:{}", blake3::keyed_hash(&naming, &exact))
+    );
+    assert_ne!(expected_hash, format!("blake3:{}", blake3::hash(&exact)));
+    assert!(!blobs.contains(&stage.name()).unwrap());
+    stage.install().unwrap();
+    let completed = prepared.verify().unwrap();
+    assert_eq!(
+        completed.key.as_ref().unwrap().wrapped,
+        wrapped,
+        "verification changed the reserved capability envelope"
+    );
+    assert_eq!(completed.metadata.image_hash, expected_hash);
+    assert_eq!(completed.metadata.patch_stored_bytes, 0);
+    assert_eq!(
+        completed.metadata.base_stored_bytes,
+        blobs.stored_size(&completed.material.blob).unwrap()
+    );
+    let mut decoded = Vec::new();
+    blobs
+        .read_sealed(
+            &completed.material.blob,
+            Some(completed.material.length),
+            &key,
+            crate::sealed_access::read_limits(completed.material.length).unwrap(),
+            || Ok(()),
+        )
+        .unwrap()
+        .read_to_end(&mut decoded)
+        .unwrap();
+    assert_eq!(&decoded[..exact.len()], exact);
+    let page = &exact[..completed.metadata.page_size as usize];
+    let map = completed.metadata.map_offset as usize;
+    assert_eq!(
+        &decoded[map..map + 32],
+        blake3::keyed_hash(&naming, blake3::hash(page).as_bytes()).as_bytes()
+    );
+}

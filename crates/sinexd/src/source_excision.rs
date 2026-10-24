@@ -475,6 +475,7 @@ impl AcquisitionPolicy {
         carry: &serde_json::Value,
         class: sinex_model::Class,
         sealing: Option<&crate::one_shot::SealingSink>,
+        stages: &publication::StagingSink,
     ) -> Result<Filtered, String> {
         use sinex_model::RecordOutcome;
         use sinex_sources::{DrainInput, Limits, RecordContext, drivers};
@@ -710,19 +711,19 @@ impl AcquisitionPolicy {
             use std::io::Seek;
             let ciphertext_length = ciphertext.stream_position().map_err(|e| e.to_string())?;
             ciphertext.rewind().map_err(|e| e.to_string())?;
-            let replay_blob = blobs
-                .put_reader(&mut ciphertext)
-                .map_err(|e| e.to_string())?;
-            let check = authority.clone();
-            let replay_reader = blobs
-                .read_plain(&replay_blob, Some(ciphertext_length), move || {
-                    check
-                        .check()
-                        .map_err(std::io::Error::other)
-                        .map_err(Into::into)
+            let replay_blob = stages.prepare(&mut ciphertext)?;
+            ciphertext.rewind().map_err(|e| e.to_string())?;
+            let records = authority.open_replay_metadata(&mut ciphertext, &scope)?;
+            let blanked_spans = records
+                .iter()
+                .map(|r| {
+                    Ok((
+                        usize::try_from(r.start)
+                            .map_err(|_| "erased start exceeds address space")?,
+                        usize::try_from(r.end).map_err(|_| "erased end exceeds address space")?,
+                    ))
                 })
-                .map_err(|e| e.to_string())?;
-            let records = authority.open_replay_metadata(replay_reader, &scope)?;
+                .collect::<Result<Vec<_>, String>>()?;
             input.erased = Some(
                 sinex_sources::drain::ErasedTransitions::from_archive(
                     records
@@ -738,24 +739,13 @@ impl AcquisitionPolicy {
                 blob: replay_blob,
                 length: ciphertext_length,
             });
-            let check = authority.clone();
-            let mut reader = blobs
-                .read_sealed(
-                    &blob,
-                    Some(length),
-                    &key,
-                    crate::sealed_access::read_limits(length)?,
-                    move || {
-                        check
-                            .check()
-                            .map_err(std::io::Error::other)
-                            .map_err(Into::into)
-                    },
-                )
-                .map_err(|e| e.to_string())?;
-            std::io::copy(&mut reader, &mut std::io::sink()).map_err(|e| e.to_string())?;
-            reader.rewind().map_err(|e| e.to_string())?;
-            std::sync::Arc::new(crate::retained::Retained::new(reader, length))
+            // Draining uses a scoped blanked view of the existing owned source
+            // bytes. The encrypted private stage is verified after installation.
+            let original = OwnedBytes::take(material)?;
+            std::sync::Arc::new(crate::retained::Retained::new(
+                crate::retained::Blanked::new(original, blanked_spans),
+                length,
+            ))
         };
         material.stored = Some(drivers::StoredBytes::FramedReader(
             drivers::RetainedRecords {
@@ -811,6 +801,82 @@ impl std::io::Seek for BorrowedBytes<'_, '_> {
         };
         self.position =
             u64::try_from(position).map_err(|_| std::io::Error::other("invalid retained seek"))?;
+        Ok(self.position)
+    }
+}
+
+struct OwnedBytes {
+    source: OwnedSource,
+    length: u64,
+    position: u64,
+}
+enum OwnedSource {
+    Memory(std::sync::Arc<Vec<u8>>),
+    File(std::sync::Arc<std::fs::File>),
+    Reader(std::sync::Arc<dyn sinex_sources::drain::RecordRead>),
+}
+impl OwnedBytes {
+    fn take(material: &mut sinex_sources::drivers::NewMaterial) -> Result<Self, String> {
+        use sinex_sources::drivers::StoredBytes;
+        let source = match material.stored.take() {
+            None => OwnedSource::Memory(std::sync::Arc::new(std::mem::take(&mut material.bytes))),
+            Some(StoredBytes::FramedMemory(bytes)) => OwnedSource::Memory(bytes),
+            Some(StoredBytes::FramedFile(file)) => OwnedSource::File(file),
+            Some(StoredBytes::FramedReader(reader)) if !reader.bodyless => {
+                OwnedSource::Reader(reader.bytes)
+            }
+            _ => return Err("source cannot supply a scoped owned record view".into()),
+        };
+        let length = match &source {
+            OwnedSource::Memory(bytes) => bytes.len() as u64,
+            OwnedSource::File(file) => file.metadata().map_err(|e| e.to_string())?.len(),
+            OwnedSource::Reader(reader) => reader.length(),
+        };
+        Ok(Self {
+            source,
+            length,
+            position: 0,
+        })
+    }
+}
+impl std::io::Read for OwnedBytes {
+    fn read(&mut self, out: &mut [u8]) -> std::io::Result<usize> {
+        let n = (self.length.saturating_sub(self.position)).min(out.len() as u64) as usize;
+        if n == 0 {
+            return Ok(0);
+        }
+        match &self.source {
+            OwnedSource::Memory(bytes) => {
+                let start = usize::try_from(self.position)
+                    .map_err(|_| std::io::Error::other("record position exceeds address space"))?;
+                let end = start
+                    .checked_add(n)
+                    .ok_or_else(|| std::io::Error::other("record range overflow"))?;
+                out[..n].copy_from_slice(
+                    bytes.get(start..end).ok_or_else(|| {
+                        std::io::Error::other("source record range is unavailable")
+                    })?,
+                );
+            }
+            OwnedSource::File(file) => {
+                use std::os::unix::fs::FileExt;
+                file.read_exact_at(&mut out[..n], self.position)?;
+            }
+            OwnedSource::Reader(reader) => reader.read_exact_at(self.position, &mut out[..n])?,
+        }
+        self.position += n as u64;
+        Ok(n)
+    }
+}
+impl std::io::Seek for OwnedBytes {
+    fn seek(&mut self, from: std::io::SeekFrom) -> std::io::Result<u64> {
+        let position = match from {
+            std::io::SeekFrom::Start(n) => i128::from(n),
+            std::io::SeekFrom::Current(n) => i128::from(self.position) + i128::from(n),
+            std::io::SeekFrom::End(n) => i128::from(self.length) + i128::from(n),
+        };
+        self.position =
+            u64::try_from(position).map_err(|_| std::io::Error::other("invalid source seek"))?;
         Ok(self.position)
     }
 }

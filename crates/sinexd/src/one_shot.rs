@@ -102,6 +102,7 @@ pub struct SealingSink {
     blobs: Blobs,
     recipient: sinex_store::sealed::Recipient,
     state: std::sync::Mutex<SealingState>,
+    stages: Option<std::sync::Mutex<Vec<sinex_store::blobs::PreparedSealed>>>,
 }
 
 #[derive(Default)]
@@ -123,6 +124,22 @@ impl SealingSink {
             blobs,
             recipient,
             state: Default::default(),
+            stages: None,
+        }
+    }
+
+    pub(crate) fn staged(blobs: Blobs, recipient: sinex_store::sealed::Recipient) -> Self {
+        Self {
+            stages: Some(Default::default()),
+            ..Self::new(blobs, recipient)
+        }
+    }
+    pub(crate) fn take_stages(&self) -> Result<Vec<sinex_store::blobs::PreparedSealed>, String> {
+        match &self.stages {
+            Some(stages) => Ok(std::mem::take(
+                &mut *stages.lock().map_err(|_| "sealed staging poisoned")?,
+            )),
+            None => Ok(Vec::new()),
         }
     }
 
@@ -246,10 +263,22 @@ impl SealingSink {
 
     pub fn put_reader(&self, reader: impl std::io::Read + std::io::Seek) -> Result<String, String> {
         let key = sinex_store::sealed::new_key().map_err(|e| e.to_string())?;
-        let name = self
-            .blobs
-            .put_sealed_reader(reader, &key)
-            .map_err(|e| e.to_string())?;
+        let name = if let Some(stages) = &self.stages {
+            let stage = self
+                .blobs
+                .prepare_sealed(reader, &key)
+                .map_err(|e| e.to_string())?;
+            let name = stage.name();
+            stages
+                .lock()
+                .map_err(|_| "sealed staging poisoned")?
+                .push(stage);
+            name
+        } else {
+            self.blobs
+                .put_sealed_reader(reader, &key)
+                .map_err(|e| e.to_string())?
+        };
         self.remember_new_key(name.clone(), key);
         Ok(name)
     }
@@ -357,13 +386,7 @@ impl MaterialSink for SealingSink {
     }
 
     fn put(&self, bytes: &[u8]) -> Result<String, String> {
-        let key = sinex_store::sealed::new_key().map_err(|e| e.to_string())?;
-        let name = self
-            .blobs
-            .put_sealed(bytes, &key)
-            .map_err(|e| e.to_string())?;
-        self.remember_new_key(name.clone(), key);
-        Ok(name)
+        self.put_reader(std::io::Cursor::new(bytes))
     }
 }
 

@@ -108,6 +108,15 @@ impl Blobs {
         Ok(PreparedPlain(self.0.prepare_plain(reader, 3)?))
     }
 
+    /// Prepare the existing encrypted representation without publishing its name.
+    pub fn prepare_sealed(
+        &self,
+        reader: impl Read + Seek,
+        key: &crate::sealed::DataKey,
+    ) -> Result<PreparedSealed> {
+        Ok(PreparedSealed(self.0.prepare_sealed(reader, 3, key)?))
+    }
+
     /// Store bytes sealed under `key` (the sealed class): encrypted frames
     /// named by a keyed hash, so the store never confirms a known plaintext.
     pub fn put_sealed(&self, bytes: &[u8], key: &crate::sealed::DataKey) -> Result<String> {
@@ -253,6 +262,21 @@ impl Blobs {
 /// and deduplication; an ambiguous install error must retain its durable owner.
 pub struct PreparedPlain(hashed_blobs::PreparedPlain);
 impl PreparedPlain {
+    pub fn name(&self) -> String {
+        format!("blake3:{}", self.0.hash().hex())
+    }
+    pub fn length(&self) -> u64 {
+        self.0.decoded_len()
+    }
+    pub fn install(self) -> Result<String> {
+        Ok(format!("blake3:{}", self.0.install()?.hex()))
+    }
+}
+
+/// Encrypted private stage with its original store and authenticated dedup key.
+/// The publication must retain wrapped key custody before consuming install.
+pub struct PreparedSealed(hashed_blobs::PreparedSealed);
+impl PreparedSealed {
     pub fn name(&self) -> String {
         format!("blake3:{}", self.0.hash().hex())
     }

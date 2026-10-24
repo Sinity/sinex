@@ -276,6 +276,8 @@ pub(crate) struct PreparedImage {
     blobs: Blobs,
     image: Arc<Image>,
     expected: SqliteImagePublication,
+    key: Option<sealed::DataKey>,
+    recipient: Option<sealed::Recipient>,
 }
 impl PreparedImage {
     pub fn plan(&self) -> Result<sinex_store::native_materials::PendingImage, String> {
@@ -285,10 +287,14 @@ impl PreparedImage {
         let mut completed = verify_installed(
             &self.blobs,
             &self.image,
-            None,
-            None,
+            self.key.as_ref(),
+            self.recipient.as_ref(),
             &self.expected.material.blob,
         )?;
+        if completed.metadata.image_hash != self.expected.metadata.image_hash {
+            return Err("installed image digest differs from its prepared view".into());
+        }
+        completed.key = self.expected.key.clone();
         completed.material.parser = self.expected.material.parser.clone();
         completed.material.parser_version = self.expected.material.parser_version;
         self.image.retain(completed.clone())?;
@@ -338,9 +344,126 @@ pub(crate) fn prepare_plain(
             blobs: blobs.clone(),
             image,
             expected,
+            key: None,
+            recipient: None,
         },
         stage,
     ))
+}
+
+pub(crate) fn prepare_sealed(
+    blobs: &Blobs,
+    image: Arc<Image>,
+    parser: &str,
+    parser_version: u32,
+    recipient: &sealed::Recipient,
+) -> Result<(PreparedImage, sinex_store::blobs::PreparedSealed), String> {
+    if image.metadata.class != Class::Sealed || !image.metadata.full {
+        return Err("sealed image preparation requires a fresh full base".into());
+    }
+    let key = sealed::new_key().map_err(err)?;
+    let naming = blake3::derive_key("sinex 2026 SQLite image naming key", &key.key);
+    let page_hash: PageHash = Arc::new(move |h| *blake3::keyed_hash(&naming, h).as_bytes());
+    let digest = Arc::new(std::sync::Mutex::new(None));
+    let reader = ImageDigest {
+        reader: image.reader(page_hash, false).map_err(err)?,
+        hash: blake3::Hasher::new_keyed(&naming),
+        digest: digest.clone(),
+        length: image.metadata.image_bytes,
+        position: 0,
+        hashed: 0,
+    };
+    let stage = blobs.prepare_sealed(reader, &key).map_err(err)?;
+    if stage.length() != image.metadata.evidence_bytes {
+        return Err("prepared sealed image length differs".into());
+    }
+    let mut metadata = image.metadata.clone();
+    metadata.image_hash = digest
+        .lock()
+        .map_err(|_| "image digest poisoned")?
+        .take()
+        .ok_or("prepared image digest is incomplete")?;
+    metadata.base_stored_bytes = 0;
+    metadata.patch_stored_bytes = 0;
+    metadata.read_stored_bytes = 0;
+    let extents = image.extents(&stage.name())?;
+    let material = MaterialRef {
+        id: metadata.material,
+        input: None,
+        blob: stage.name(),
+        length: metadata.evidence_bytes,
+        part_index: 0,
+        previous_part: None,
+        parser: parser.into(),
+        parser_version,
+        manifest: serde_json::json!({"role":"sqlite-image","sqlite_database":metadata.database,"sqlite_image":metadata}),
+    };
+    let wrapped = WrappedMaterialKey {
+        material: metadata.material,
+        key_ref: key.key_ref.clone(),
+        wrapped: sealed::wrap(&key, recipient).map_err(err)?,
+    };
+    let expected = SqliteImagePublication {
+        metadata,
+        material,
+        extents,
+        key: Some(wrapped),
+    };
+    expected.validate()?;
+    Ok((
+        PreparedImage {
+            blobs: blobs.clone(),
+            image,
+            expected,
+            key: Some(key),
+            recipient: Some(recipient.clone()),
+        },
+        stage,
+    ))
+}
+
+// Capture the keyed DB digest during the existing first encryption pass. The
+// dense map is outside this prefix, and the second pass cannot change the plan.
+struct ImageDigest<R> {
+    reader: R,
+    hash: blake3::Hasher,
+    digest: Arc<std::sync::Mutex<Option<String>>>,
+    length: u64,
+    position: u64,
+    hashed: u64,
+}
+impl<R: Read> Read for ImageDigest<R> {
+    fn read(&mut self, out: &mut [u8]) -> std::io::Result<usize> {
+        if self.hashed < self.length && self.position != self.hashed {
+            return Err(std::io::Error::other(
+                "prepared image digest requires a complete first pass",
+            ));
+        }
+        let n = self.reader.read(out)?;
+        if self.hashed < self.length {
+            let take = (n as u64).min(self.length - self.hashed) as usize;
+            self.hash.update(&out[..take]);
+            self.hashed += take as u64;
+            if self.hashed == self.length {
+                *self
+                    .digest
+                    .lock()
+                    .map_err(|_| std::io::Error::other("image digest poisoned"))? =
+                    Some(format!("blake3:{}", self.hash.finalize().to_hex()));
+            }
+        }
+        self.position = self
+            .position
+            .checked_add(n as u64)
+            .ok_or_else(|| std::io::Error::other("image position overflow"))?;
+        Ok(n)
+    }
+}
+impl<R: Seek> Seek for ImageDigest<R> {
+    fn seek(&mut self, from: SeekFrom) -> std::io::Result<u64> {
+        self.position = self.reader.seek(from)?;
+        Ok(self.position)
+    }
 }
 
 fn err(e: impl std::fmt::Display) -> String {

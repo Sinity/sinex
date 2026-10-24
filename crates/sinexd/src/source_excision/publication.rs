@@ -20,7 +20,7 @@ impl StagingSink {
             stages: Mutex::new(Vec::new()),
         }
     }
-    fn prepare(&self, reader: impl std::io::Read) -> Result<String, String> {
+    pub fn prepare(&self, reader: impl std::io::Read) -> Result<String, String> {
         let prepared = self
             .blobs
             .prepare_plain(reader)
@@ -47,9 +47,23 @@ impl MaterialSink for StagingSink {
     }
 }
 
+pub(crate) enum NativeStage {
+    Plain(PreparedPlain),
+    Sealed(sinex_store::blobs::PreparedSealed),
+}
+impl NativeStage {
+    fn install(self) -> Result<String, String> {
+        match self {
+            Self::Plain(stage) => stage.install(),
+            Self::Sealed(stage) => stage.install(),
+        }
+        .map_err(|e| e.to_string())
+    }
+}
+
 pub(crate) struct Publication {
     pub pending: native_materials::Pending,
-    pub stages: Vec<PreparedPlain>,
+    pub stages: Vec<NativeStage>,
     pub image: Option<crate::sqlite_images::PreparedImage>,
     pub batch: Batch,
     pub permit: NativePermit,
