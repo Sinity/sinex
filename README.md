@@ -161,11 +161,17 @@ For a focused run through the normal job queue:
 
 ```bash
 agentctl job start sinex focused -- -p sinex-sources -E 'test(session_socket)'
+agentctl job start sinex focused -- -p sinexd --bin sinexd -E 'test(derivation_runner::tests)'
 ```
 
 `xtask test` passes arguments to `cargo nextest run`. `-p` / `--package`
 selects what Cargo builds; a name or `-E` filter alone selects tests after
 building the workspace. Existing `xtask test NAME` calls keep their behavior.
+Within a package, select the needed Cargo target too: `--lib` for library unit
+tests, `--bin sinexd` for internal daemon tests, or `--test shutdown` for that
+integration target. A name filter alone still builds the package's other test
+binaries, even when none of their tests will run. Use the broader package or
+workspace checks when the change needs those integration paths.
 Without arguments it still runs the full workspace. Package selection keeps
 the same schema database, per-test clones, shared NATS and tmpfs test storage.
 The declared test operations give that storage to AgentCTL, which removes it
