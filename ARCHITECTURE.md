@@ -132,7 +132,9 @@ admission validates the exact citations before replacing pending custody with
 ready event references. Library request manifests record prepared rendition
 citation facts, so replay reproduces ownership without changing the rendition
 payload or identity. Older requests without those facts acquire no inferred
-media ownership.
+media ownership. If a fresh request resolves to an old reading without a ready
+media owner, first admission refuses and keeps its pending custody; it never
+silently discards the prepared bytes or fabricates old ownership.
 
 An authored retry first recovers its frozen prior publication as that prior
 request, then submits the fresh request independently. Replies report recovered

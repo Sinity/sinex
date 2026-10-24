@@ -557,7 +557,6 @@ async fn source_bound_media_exclusions_refuse_new_wrappers_but_preserve_unrelate
 #[tokio::test]
 async fn complete_empty_media_facts_allow_new_media_but_missing_history_does_not_guess() {
     use sinex_model::event_types::library::Collection;
-    use sqlx::Executor;
     let mut w = world().await;
     let record = LibraryRecord::Collection(Collection {
         collection: "no-media".into(),
@@ -769,4 +768,63 @@ async fn canceled_media_purge_rolls_back_facts_and_preserves_ready_bytes_and_pol
         .await
         .unwrap();
     assert_eq!(owners, 1);
+}
+
+#[tokio::test]
+async fn a_legacy_repeat_without_media_ownership_cannot_discard_new_pending_custody() {
+    let mut w = world().await;
+    let bytes = b"legacy rendition bytes supplied by a fresh request";
+    let name = format!("blake3:{}", blake3::hash(bytes));
+    let record = preview(name.clone());
+    Library {
+        writer: &w.writer,
+        blobs: &w.blobs,
+        host: "h",
+    }
+    .write(vec![record.clone()], "operator", "legacy")
+    .await
+    .unwrap();
+    let before: Value =
+        sqlx::query_scalar("SELECT payload FROM core.events WHERE event_type='library.rendition'")
+            .fetch_one(&mut w.conn)
+            .await
+            .unwrap();
+    let stage = w.blobs.prepare_plain(bytes.as_slice()).unwrap();
+    let result = Library {
+        writer: &w.writer,
+        blobs: &w.blobs,
+        host: "h",
+    }
+    .write_staged(vec![record], "operator", "preview", vec![stage])
+    .await;
+    assert!(result.unwrap_err().contains("ready ownership"));
+    assert_eq!(w.blobs.read(&name).unwrap(), bytes);
+    let current: Value =
+        sqlx::query_scalar("SELECT payload FROM core.events WHERE event_type='library.rendition'")
+            .fetch_one(&mut w.conn)
+            .await
+            .unwrap();
+    assert_eq!(before, current, "legacy payload interpretation changed");
+    let owners: i64 = sqlx::query_scalar("SELECT count(*) FROM core.event_blobs WHERE blob=$1")
+        .bind(&name)
+        .fetch_one(&mut w.conn)
+        .await
+        .unwrap();
+    assert_eq!(owners, 0, "old unknown custody was fabricated");
+    let ids =
+        sinex_store::native_materials::binding_pending(&mut w.conn, "library.request:operator@h")
+            .await
+            .unwrap();
+    assert_eq!(ids.len(), 1);
+    assert_eq!(
+        sinex_store::native_materials::load(&mut w.conn, ids[0])
+            .await
+            .unwrap()
+            .unwrap()
+            .cited,
+        vec![sinex_model::Cited {
+            blob: name,
+            size: bytes.len() as u64
+        }]
+    );
 }
