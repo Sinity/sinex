@@ -313,7 +313,7 @@ impl<'a, P: Parser> Drainer<'a, P> {
             .erased_next
             .as_mut()
             .and_then(|records| records.peek())
-            .map(|(&start, span)| (start, span.end, span.transition.as_ref()));
+            .map(|record| (*record.0, record.1.end, record.1.transition.as_ref()));
         if let Some((start, end, transition)) = erased
             && ordinary.is_none_or(|record| start <= record.0)
         {
