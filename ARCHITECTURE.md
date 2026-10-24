@@ -217,6 +217,13 @@ reconstructed after legacy unhide deleted its evidence; historical queries
 before that cutover refuse. Archive rows retain original archival metadata and
 expose `baseline` and `known_from` for this distinction.
 
+The 1→2 upgrade updates only the persisted `note.document` payload schema and
+appends its structured metadata columns to `event_types.note_document`. The
+view keeps its identity, dependencies and existing grants. Old payloads keep
+their original values; absent additive fields read as SQL NULL. Replaying
+retained note material creates new interpretations with the current parser.
+A current-version apply does not refresh registry metadata or reinterpret notes.
+
 Archive-stream consumers receive `Restored` as well as `Archived` and `Excised`.
 Consumers decoding that subject must understand the added variant before an
 upgrade; event-type-only subscribers do not receive it. Existing notice IDs and
