@@ -69,17 +69,38 @@ pub struct Acquired {
 }
 
 /// Bytes already retained independently from the current decoded records.
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub enum StoredBytes {
     File(std::path::PathBuf),
     /// Authoritative framed bytes, staged in an unnamed owned file. The
     /// decoded record body is read from this file, not `NewMaterial::bytes`.
     FramedFile(std::sync::Arc<std::fs::File>),
+    /// Owned decoded bytes retained across retries without copying the body.
+    FramedMemory(std::sync::Arc<Vec<u8>>),
     FramedReader(RetainedRecords),
     Blob {
         name: String,
         length: u64,
     },
+}
+
+impl std::fmt::Debug for StoredBytes {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::File(path) => f.debug_tuple("File").field(path).finish(),
+            Self::FramedFile(file) => f.debug_tuple("FramedFile").field(file).finish(),
+            Self::FramedMemory(bytes) => f
+                .debug_struct("FramedMemory")
+                .field("length", &bytes.len())
+                .finish(),
+            Self::FramedReader(records) => f.debug_tuple("FramedReader").field(records).finish(),
+            Self::Blob { name, length } => f
+                .debug_struct("Blob")
+                .field("name", name)
+                .field("length", length)
+                .finish(),
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -113,8 +134,9 @@ pub struct NewMaterial {
     pub manifest: Value,
     /// Which of two readings is newer, by the record's anchor.
     pub reading_order: Box<dyn Fn(usize) -> ReadingOrder + Send + Sync>,
-    /// The cursor after the record ending at the given byte of the material.
-    pub cursor_at: Box<dyn Fn(usize) -> Value + Send + Sync>,
+    /// The cursor after this record. Retained backing failures refuse the
+    /// batch before its progress or readings become visible.
+    pub cursor_at: Box<dyn Fn(usize) -> Result<Value, DriverError> + Send + Sync>,
     /// A rewrite aligned against the previous revision: `records` holds only
     /// the records not read before. Its records are admitted as one batch, so
     /// the cursor never stops inside it (a resumed read would take the
@@ -128,9 +150,11 @@ pub struct NewMaterial {
 impl NewMaterial {
     fn decoded_len(&self, retained_len: u64) -> usize {
         match self.stored {
-            Some(StoredBytes::FramedFile(_) | StoredBytes::FramedReader(_)) => {
-                retained_len as usize
-            }
+            Some(
+                StoredBytes::FramedFile(_)
+                | StoredBytes::FramedMemory(_)
+                | StoredBytes::FramedReader(_),
+            ) => retained_len as usize,
             _ => self.bytes.len(),
         }
     }
@@ -138,6 +162,7 @@ impl NewMaterial {
     pub fn record_bytes(&self) -> crate::drain::RecordBytes<'_> {
         match &self.stored {
             Some(StoredBytes::FramedFile(file)) => crate::drain::RecordBytes::File(file),
+            Some(StoredBytes::FramedMemory(bytes)) => bytes.as_slice().into(),
             Some(StoredBytes::FramedReader(retained)) => {
                 if retained.bodyless {
                     crate::drain::RecordBytes::Erased(retained.bytes.length())
@@ -249,6 +274,10 @@ pub fn prepare<'s>(
                         std::path::PathBuf::from(format!("/proc/self/fd/{}", file.as_raw_fd()));
                     (sink.put_file(&path).map_err(DriverError::Store)?, length)
                 }
+                Some(StoredBytes::FramedMemory(bytes)) => (
+                    sink.put(bytes).map_err(DriverError::Store)?,
+                    bytes.len() as u64,
+                ),
                 Some(StoredBytes::FramedReader(retained)) => {
                     (retained.blob.clone(), retained.bytes.length())
                 }
@@ -410,10 +439,17 @@ impl Prepared<'_> {
         // taken.
         let last_end = m.records.last().map_or(0, |r| r.1);
         let mut first = true;
+        let mut failed = false;
         Ok(Box::new(std::iter::from_fn(move || {
+            if failed {
+                return None;
+            }
             let chunk = match chunks.next()? {
                 Ok(chunk) => chunk,
-                Err(error) => return Some(Err(DriverError::Io(error.to_string()))),
+                Err(error) => {
+                    failed = true;
+                    return Some(Err(DriverError::Io(error.to_string())));
+                }
             };
             // After the last chunk the whole material is read, records
             // skipped as already read included.
@@ -433,11 +469,18 @@ impl Prepared<'_> {
                     RevisionChange::Same,
                 )
             };
+            let cursor = match (m.cursor_at)(end) {
+                Ok(cursor) => cursor,
+                Err(error) => {
+                    failed = true;
+                    return Some(Err(error));
+                }
+            };
             let batch = Batch {
                 run: self.run,
                 kind: self.progress(
                     first.then(|| material.clone()),
-                    (m.cursor_at)(end),
+                    cursor,
                     chunk.carry,
                     observation,
                     revision,

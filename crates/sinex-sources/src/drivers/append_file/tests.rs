@@ -27,8 +27,8 @@ fn a_cursor_between_two_batches_reads_on_though_the_file_is_unchanged() {
     let first = d.poll(&Value::Null, &mut AppendState::default()).unwrap();
     let m = first.material.unwrap();
     // The first batch (one record) committed; the process died before the next.
-    let between = (m.cursor_at)(2);
-    let after = (m.cursor_at)(m.bytes.len());
+    let between = (m.cursor_at)(2).unwrap();
+    let after = (m.cursor_at)(m.bytes.len()).unwrap();
     let again = d.poll(&between, &mut AppendState::default()).unwrap();
     assert_eq!(records(&again), vec!["b\n", "c\n"]);
     assert!(
@@ -53,7 +53,7 @@ fn appends_read_only_new_complete_records() {
     let first = d.poll(&Value::Null, &mut state).unwrap();
     assert_eq!(records(&first), vec!["a\n", "b\n"]);
     let m = first.material.as_ref().unwrap();
-    let cursor = (m.cursor_at)(m.bytes.len());
+    let cursor = (m.cursor_at)(m.bytes.len()).unwrap();
     assert_eq!(cursor["offset"], json!(4));
 
     // Unchanged stat: nothing read.
@@ -88,7 +88,7 @@ fn a_rewrite_reads_only_records_the_previous_revision_did_not_hold() {
     let mut state = AppendState::default();
     let first = d.poll(&Value::Null, &mut state).unwrap();
     let m = first.material.unwrap();
-    let cursor = (m.cursor_at)(m.bytes.len());
+    let cursor = (m.cursor_at)(m.bytes.len()).unwrap();
 
     // zsh expired the duplicate "b" and appended "dd": a rewrite.
     std::fs::write(&path, b"a\nc\ndd\n").unwrap();
@@ -118,7 +118,7 @@ fn a_rewrite_reads_only_records_the_previous_revision_did_not_hold() {
         vec![(4, 7)]
     );
     // The cursor covers the whole rewritten file, skipped records included.
-    let after = (n.cursor_at)(n.bytes.len());
+    let after = (n.cursor_at)(n.bytes.len()).unwrap();
     assert_eq!(after["offset"], json!(7));
     assert!(d.poll(&after, &mut rebuilt).unwrap().material.is_none());
 }
@@ -135,7 +135,7 @@ fn rewritten_prefix_is_read_again_as_a_new_revision() {
     let mut state = AppendState::default();
     let first = d.poll(&Value::Null, &mut state).unwrap();
     let m = first.material.unwrap();
-    let cursor = (m.cursor_at)(m.bytes.len());
+    let cursor = (m.cursor_at)(m.bytes.len()).unwrap();
     std::fs::write(&path, b"x\ny\nz\n").unwrap();
     let again = d.poll(&cursor, &mut state).unwrap();
     assert_eq!(again.revision, RevisionChange::Rewritten);
@@ -186,7 +186,7 @@ fn a_file_larger_than_a_part_is_read_in_bounded_parts_covering_every_record() {
             "a part holds at most PART_SIZE bytes unless one record is longer"
         );
         read.extend(records(&a));
-        cursor = (m.cursor_at)(m.bytes.len());
+        cursor = (m.cursor_at)(m.bytes.len()).unwrap();
     }
     assert!(polls > 10, "read in parts, not at once ({polls})");
     assert_eq!(read.concat(), text);

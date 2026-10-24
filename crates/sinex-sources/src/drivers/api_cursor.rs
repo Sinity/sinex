@@ -118,7 +118,10 @@ impl<A: Api> ApiCursor<A> {
                 previous_part: previous.material,
                 reading_order: super::reading_order(&manifest),
                 manifest,
-                cursor_at: Box::new(cursor_at),
+                cursor_at: Box::new({
+                    let cursor = cursor_at;
+                    move |end| Ok(cursor(end))
+                }),
                 aligned: false,
                 vanished: Vec::new(),
             }),

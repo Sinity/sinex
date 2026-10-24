@@ -109,18 +109,21 @@ impl Pending {
                 previous_part: self.previous.material,
                 reading_order: super::reading_order(&self.manifest),
                 manifest: self.manifest.clone(),
-                cursor_at: Box::new(move |end| {
-                    serde_json::to_value(Cursor {
-                        material: Some(id),
-                        part_index,
-                        through: Some(end),
-                        last_complete_scan_ns: if end == length {
-                            scanned.last_complete_scan_ns
-                        } else {
-                            previous_scan
-                        },
-                    })
-                    .expect("cursor serializes")
+                cursor_at: Box::new({
+                    let cursor = move |end| {
+                        serde_json::to_value(Cursor {
+                            material: Some(id),
+                            part_index,
+                            through: Some(end),
+                            last_complete_scan_ns: if end == length {
+                                scanned.last_complete_scan_ns
+                            } else {
+                                previous_scan
+                            },
+                        })
+                        .expect("cursor serializes")
+                    };
+                    move |end| Ok(cursor(end))
                 }),
                 aligned: false,
                 vanished: Vec::new(),

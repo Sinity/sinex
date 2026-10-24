@@ -28,7 +28,7 @@ fn lines_of(a: &Acquired) -> Vec<String> {
 
 fn end_cursor(a: &Acquired) -> Value {
     let m = a.material.as_ref().unwrap();
-    (m.cursor_at)(m.bytes.len())
+    (m.cursor_at)(m.bytes.len()).unwrap()
 }
 
 #[test]

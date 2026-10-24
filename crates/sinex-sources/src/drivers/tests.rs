@@ -96,7 +96,10 @@ fn batches_are_drained_lazily() {
             previous_part: None,
             manifest: serde_json::json!({}),
             reading_order: Box::new(|a| ReadingOrder(a as i64)),
-            cursor_at: Box::new(move |end| serde_json::json!({"end": end})),
+            cursor_at: Box::new({
+                let cursor = move |end| serde_json::json!({"end": end});
+                move |end| Ok(cursor(end))
+            }),
             aligned: false,
             vanished: vec![],
         }),
@@ -272,7 +275,10 @@ fn retained_original_length_does_not_replace_decoded_record_coordinates() {
             previous_part: None,
             manifest: serde_json::json!({}),
             reading_order: Box::new(|a| ReadingOrder(a as i64)),
-            cursor_at: Box::new(|end| serde_json::json!({"end": end})),
+            cursor_at: Box::new({
+                let cursor = |end| serde_json::json!({"end": end});
+                move |end| Ok(cursor(end))
+            }),
             aligned: false,
             vanished: vec![],
         }),
@@ -298,4 +304,56 @@ fn retained_original_length_does_not_replace_decoded_record_coordinates() {
         progress.material.unwrap().length,
         b"synthetic retained archive envelope".len() as u64
     );
+}
+
+#[test]
+fn cursor_read_failure_is_reported_before_a_batch_and_stops_later_progress() {
+    let source = crate::sources::zsh::source("h".into());
+    let acquired = Acquired {
+        image: None,
+        input: InputRef {
+            kind: "file".into(),
+            locator: "synthetic".into(),
+            host: "h".into(),
+        },
+        observation: ObservationFacts::default(),
+        revision: RevisionChange::Appended,
+        cursor_unchanged: Value::Null,
+        material: Some(NewMaterial {
+            id: MaterialId::new(),
+            bytes: b"one\ntwo\n".to_vec(),
+            stored: None,
+            records: vec![(0, 4), (4, 8)],
+            part_index: 0,
+            previous_part: None,
+            manifest: serde_json::json!({}),
+            reading_order: Box::new(|_| sinex_model::ReadingOrder(1)),
+            cursor_at: Box::new(|_| Err(DriverError::Io("synthetic cursor read failure".into()))),
+            aligned: false,
+            vanished: Vec::new(),
+        }),
+    };
+    let prepared = prepare(
+        &source,
+        "b",
+        RunId::new(),
+        acquired,
+        Value::Null,
+        &Discard,
+        Limits {
+            max_events: 1,
+            max_bytes: 1024,
+        },
+    )
+    .unwrap();
+    let mut batches = prepared.batches().unwrap();
+    assert!(
+        batches
+            .next()
+            .unwrap()
+            .unwrap_err()
+            .to_string()
+            .contains("synthetic cursor read failure")
+    );
+    assert!(batches.next().is_none());
 }

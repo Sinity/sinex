@@ -395,10 +395,13 @@ impl Context<'_, '_> {
                 previous_part: pending.material.previous_part,
                 reading_order: crate::drivers::reading_order(&pending.material.manifest),
                 manifest: pending.material.manifest,
-                cursor_at: Box::new(move |end| {
-                    let mut cursor = cursor_base.clone();
-                    cursor.record = cursor.part_start + ends.partition_point(|&at| at <= end);
-                    json!(cursor)
+                cursor_at: Box::new({
+                    let cursor = move |end| {
+                        let mut cursor = cursor_base.clone();
+                        cursor.record = cursor.part_start + ends.partition_point(|&at| at <= end);
+                        json!(cursor)
+                    };
+                    move |end| Ok(cursor(end))
                 }),
                 aligned: false,
                 vanished: Vec::new(),
@@ -438,7 +441,10 @@ impl Context<'_, '_> {
                 previous_part: None,
                 reading_order: crate::drivers::reading_order(&manifest),
                 manifest,
-                cursor_at: Box::new(move |_| after.clone()),
+                cursor_at: Box::new({
+                    let cursor = move |_| after.clone();
+                    move |end| Ok(cursor(end))
+                }),
                 aligned: false,
                 vanished: Vec::new(),
             }),
@@ -646,10 +652,14 @@ impl Context<'_, '_> {
                     previous_part,
                     reading_order: crate::drivers::reading_order(&manifest),
                     manifest,
-                    cursor_at: Box::new(move |end| {
-                        let mut cursor = cursor_base.clone();
-                        cursor.record = cursor.part_start + ends.partition_point(|&at| at <= end);
-                        json!(cursor)
+                    cursor_at: Box::new({
+                        let cursor = move |end| {
+                            let mut cursor = cursor_base.clone();
+                            cursor.record =
+                                cursor.part_start + ends.partition_point(|&at| at <= end);
+                            json!(cursor)
+                        };
+                        move |end| Ok(cursor(end))
                     }),
                     aligned: false,
                     vanished: Vec::new(),

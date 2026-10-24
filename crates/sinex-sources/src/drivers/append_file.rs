@@ -39,8 +39,10 @@ pub struct Cursor {
     pub size: u64,
     pub mtime_ns: i128,
     pub inode: u64,
-    /// BLAKE3 of the up-to-`WINDOW` bytes before `offset`.
-    pub window: String,
+    /// BLAKE3 of the up-to-`WINDOW` bytes before `offset`. Unknown windows
+    /// resume through retained coordinates and cannot align a provider file.
+    #[serde(default)]
+    pub window: Option<String>,
     pub material: Option<MaterialId>,
     pub part_index: u32,
     /// How many bytes of `material` the stored readings cover. A restart
@@ -97,14 +99,28 @@ impl AppendState {
     }
 
     fn insert(&mut self, record: &[u8], material: MaterialId, anchor: usize) {
-        let hash = *blake3::hash(record).as_bytes();
+        self.insert_digest(
+            *blake3::hash(record).as_bytes(),
+            record.len(),
+            material,
+            anchor,
+        );
+    }
+
+    pub(crate) fn insert_digest(
+        &mut self,
+        hash: [u8; 32],
+        length: usize,
+        material: MaterialId,
+        anchor: usize,
+    ) {
         let location = RecordLocation {
             material,
             anchor: anchor as u64,
         };
         self.records.entry(hash).or_default().push(location);
-        self.order.push_back((hash, location, record.len()));
-        self.bytes += record.len();
+        self.order.push_back((hash, location, length));
+        self.bytes += length;
         while self.order.len() > STATE_RECORDS || (self.bytes > STATE_TAIL && self.order.len() > 1)
         {
             let (hash, location, n) = self.order.pop_front().expect("not empty");
@@ -170,6 +186,12 @@ impl AppendFile {
             serde_json::from_value(cursor.clone())
                 .map_err(|e| DriverError::Cursor(e.to_string()))?
         };
+        if !cursor.is_null() && previous.window.is_none() {
+            return Err(DriverError::Cursor(
+                "append prefix window is unknown; authenticated retained resumption is required"
+                    .into(),
+            ));
+        }
         let facts = match file_facts(&self.path) {
             Ok(f) => f,
             Err(e) => {
@@ -214,7 +236,7 @@ impl AppendFile {
         let intact = !cursor.is_null()
             && previous.inode == inode
             && previous.offset <= size
-            && window_hash(&mut file, previous.offset)? == previous.window;
+            && Some(window_hash(&mut file, previous.offset)?) == previous.window;
         let (start, revision) = if cursor.is_null() {
             (0, RevisionChange::Appended)
         } else if intact {
@@ -260,7 +282,7 @@ impl AppendFile {
             size,
             mtime_ns: mtime,
             inode,
-            window: String::new(),
+            window: None,
             material: if restarted { None } else { previous.material },
             part_index: if restarted { 0 } else { previous.part_index },
             through: if restarted { 0 } else { previous.through },
@@ -270,7 +292,7 @@ impl AppendFile {
             let window = if start == previous.offset {
                 previous.window.clone()
             } else {
-                blake3::hash(b"").to_hex().to_string()
+                Some(blake3::hash(b"").to_hex().to_string())
             };
             let unchanged = Cursor { window, ..base };
             return Ok(Acquired {
@@ -350,7 +372,7 @@ impl AppendFile {
                 },
                 mtime_ns: mtime,
                 inode,
-                window: blake3::hash(w).to_hex().to_string(),
+                window: Some(blake3::hash(w).to_hex().to_string()),
                 material: Some(id),
                 part_index,
                 through: end,
@@ -358,6 +380,8 @@ impl AppendFile {
             .expect("cursor serializes")
         };
         let mut manifest = json!({"path": self.path.display().to_string(), "host": self.host, "file_offset": start, "media_type": "text/plain"});
+        manifest["append_resume"] =
+            json!({"version":1,"start":cursor_at(0),"end":cursor_at(material_len)});
         if aligned {
             manifest["records"] = json!(records);
         }
@@ -375,7 +399,10 @@ impl AppendFile {
                 previous_part,
                 reading_order: super::reading_order(&manifest),
                 manifest,
-                cursor_at: Box::new(cursor_at),
+                cursor_at: Box::new({
+                    let cursor = cursor_at;
+                    move |end| Ok(cursor(end))
+                }),
                 aligned,
                 vanished,
             }),

@@ -304,7 +304,7 @@ fn appended_plain_records_keep_distinct_material_locations_on_replay() {
         .unwrap();
     assert_eq!(first.bytes, b"pwd\n: 10:0;pwd\n");
     let (_, carry) = observations(&first.bytes, 0, serde_json::Value::Null);
-    let cursor = (first.cursor_at)(first.bytes.len());
+    let cursor = (first.cursor_at)(first.bytes.len()).unwrap();
     let mut restarted = AppendState::rebuild([(first.id, first.bytes.as_slice())], SPEC.framer);
     std::fs::OpenOptions::new()
         .append(true)

@@ -194,7 +194,7 @@ fn the_driver_reads_the_join_and_sees_heartbeat_growth() {
         file.read_exact_at(&mut bytes, start as u64).unwrap();
         serde_json::from_slice(&bytes).unwrap()
     };
-    let cursor = (m.cursor_at)(m.records.last().unwrap().1);
+    let cursor = (m.cursor_at)(m.records.last().unwrap().1).unwrap();
     let r = read_row(m);
     assert_eq!(r["bucket"], json!("aw-watcher-window_h"));
     c.execute_batch(&format!(

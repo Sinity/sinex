@@ -35,8 +35,8 @@ async fn failed_first_native_admission_keeps_exact_installed_custody_after_provi
         }
     };
     let m = acquired.material.as_ref().unwrap();
-    let start_cursor = (m.cursor_at)(0);
-    let end_cursor = (m.cursor_at)(m.records.last().unwrap().1);
+    let start_cursor = (m.cursor_at)(0).unwrap();
+    let end_cursor = (m.cursor_at)(m.records.last().unwrap().1).unwrap();
     let sink = StagingSink::new(ctx.blobs.clone());
     let guard = ctx.writer.source_guard(atuin::SPEC.name).await.unwrap();
     let permit = ctx
@@ -243,4 +243,219 @@ async fn queued_native_work_keeps_source_guard_after_waiter_cancellation_and_rel
     .unwrap()
     .unwrap();
     exclusive.rollback().await.unwrap();
+}
+
+#[tokio::test]
+async fn actual_sealed_append_first_chunk_and_restart_finish_original_bytes_and_duplicate_identity()
+{
+    use sinex_sources::{Source, binding, sources::zsh};
+    let (_db, url, _) = crate::testdb::fresh().await;
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("history");
+    let original = b": 1700000000:0;duplicate\n: 1700000000:1;duplicate\n";
+    std::fs::write(&path, original).unwrap();
+    let mut ctx = crate::one_shot::OneShot::open(&url, &dir.path().join("store"))
+        .await
+        .unwrap();
+    let source = zsh::source("h".into());
+    let name = source.spec().name;
+    sinex_store::bindings::save(
+        &mut ctx.read_conn,
+        &sinex_store::bindings::Stored {
+            binding: "history@h".into(),
+            source: name.into(),
+            input: path.display().to_string(),
+            settings: serde_json::json!({"host":"h"}),
+        },
+    )
+    .await
+    .unwrap();
+    let identity = sinex_store::sealed::Identity::generate();
+    let authority =
+        crate::sealed_access::Authority::new(identity, std::time::Duration::from_secs(60)).unwrap();
+    let sealing = crate::one_shot::SealingSink::new(ctx.blobs.clone(), authority.recipient());
+    let mut reader = binding::appended(zsh::driver(path.clone(), "h".into()), source.spec().framer);
+    let acquired = reader.poll(&serde_json::Value::Null).unwrap();
+    let m = acquired.material.as_ref().unwrap();
+    let start = (m.cursor_at)(0).unwrap();
+    let final_cursor = (m.cursor_at)(original.len()).unwrap();
+    let observation = acquired.observation.clone();
+    let input = acquired.input.clone();
+    let revision = acquired.revision;
+    let basis = sinex_store::excision::operations_basis(&mut ctx.read_conn, name)
+        .await
+        .unwrap();
+    let prepared = drivers::prepare(
+        &source,
+        "history@h",
+        RunId::new(),
+        acquired,
+        serde_json::Value::Null,
+        &sealing,
+        sinex_sources::Limits {
+            max_events: 1,
+            max_bytes: 1024,
+        },
+    )
+    .unwrap()
+    .with_excision_basis(basis.clone());
+    let mut first = [prepared.batches().unwrap().next().unwrap().unwrap()];
+    sealing.seal(&mut first).unwrap();
+    let [first] = first;
+    let BatchKind::Source(progress) = &first.kind else {
+        panic!()
+    };
+    let material = progress.material.as_ref().unwrap().clone();
+    let first_cursor = progress.cursor.clone();
+    assert!(first_cursor["through"].as_u64().unwrap() < material.length);
+    let publication = Publication {
+        pending: native_materials::Pending {
+            material: material.id,
+            source: name.into(),
+            binding: "history@h".into(),
+            progress: (**progress).clone(),
+            image: None,
+            base_cursor: serde_json::Value::Null,
+            base_carry: serde_json::Value::Null,
+            start_cursor: start,
+            end_cursor: final_cursor.clone(),
+            state: native_materials::State::Reserved,
+        },
+        stages: Vec::new(),
+        image: None,
+        batch: first,
+        permit: ctx
+            .writer
+            .reserve_native(crate::writer::Priority::Bulk)
+            .await
+            .unwrap(),
+        guard: ctx.writer.source_guard(name).await.unwrap(),
+    };
+    publication.start().await.unwrap().unwrap();
+    drop(prepared);
+    drop(reader);
+    drop(sealing);
+    std::fs::write(&path, b": 1700000001:0;edited-provider-value\n").unwrap();
+    ctx.close().await.unwrap();
+    let mut ctx = crate::one_shot::OneShot::open(&url, &dir.path().join("store"))
+        .await
+        .unwrap();
+    let opened = crate::retained::open(
+        &mut ctx.read_conn,
+        &ctx.blobs,
+        name,
+        material.id,
+        Some(&authority),
+    )
+    .await
+    .unwrap();
+    let records = opened
+        .body
+        .as_ref()
+        .unwrap()
+        .records(&opened.reference.manifest, source.spec().framer)
+        .unwrap();
+    let mut reader = binding::appended(zsh::driver(path.clone(), "h".into()), source.spec().framer);
+    reader
+        .restore_append(binding::AppendResume {
+            reference: opened.reference.clone(),
+            stored: opened.records(),
+            records,
+            erased: None,
+            base_cursor: serde_json::Value::Null,
+            cursor: first_cursor.clone(),
+            head: Vec::new(),
+            input,
+            observation,
+            revision,
+        })
+        .unwrap();
+    let acquired = reader.poll(&first_cursor).unwrap();
+    assert_eq!(acquired.material.as_ref().unwrap().id, material.id);
+    let sealing = crate::one_shot::SealingSink::new(ctx.blobs.clone(), authority.recipient());
+    let wrapped = sqlx::query_as::<_, (String, Vec<u8>)>(
+        "SELECT key_ref,wrapped_key FROM privacy.material_keys WHERE material_id=$1",
+    )
+    .bind(material.id.0)
+    .fetch_one(&mut ctx.read_conn)
+    .await
+    .unwrap();
+    sealing
+        .restore_reserved(
+            material.blob.clone(),
+            &sinex_model::WrappedMaterialKey {
+                material: material.id,
+                key_ref: wrapped.0,
+                wrapped: wrapped.1,
+            },
+            &authority,
+        )
+        .unwrap();
+    let (_, carry) = sinex_store::positions::load(&mut ctx.read_conn, "history@h")
+        .await
+        .unwrap()
+        .unwrap();
+    let carry = crate::backfill::open_carry(
+        &mut ctx.read_conn,
+        &source,
+        "history@h",
+        &first_cursor,
+        &carry,
+        &sealing,
+        Some(&authority),
+    )
+    .await
+    .unwrap();
+    let prepared = drivers::prepare(
+        &source,
+        "history@h",
+        RunId::new(),
+        acquired,
+        carry,
+        &sealing,
+        sinex_sources::Limits::default(),
+    )
+    .unwrap()
+    .with_excision_basis(basis);
+    for batch in prepared.batches().unwrap() {
+        let mut batch = [batch.unwrap()];
+        sealing.seal(&mut batch).unwrap();
+        let BatchKind::Source(p) = &mut batch[0].kind else {
+            panic!()
+        };
+        p.material_keys.clear();
+        let [batch] = batch;
+        ctx.writer
+            .reserve_native(crate::writer::Priority::Bulk)
+            .await
+            .unwrap()
+            .admit(batch, ctx.writer.source_guard(name).await.unwrap())
+            .await
+            .unwrap();
+    }
+    let (cursor, _) = sinex_store::positions::load(&mut ctx.read_conn, "history@h")
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(cursor, final_cursor);
+    let key = authority
+        .material_key(&mut ctx.read_conn, material.id)
+        .await
+        .unwrap();
+    let encrypted: Vec<serde_json::Value> =
+        sqlx::query_scalar("SELECT payload FROM core.events ORDER BY anchor")
+            .fetch_all(&mut ctx.read_conn)
+            .await
+            .unwrap();
+    let decoded = encrypted
+        .iter()
+        .map(|v| sinex_store::sealed::unseal_payload(v, &key.key).unwrap())
+        .collect::<Vec<_>>();
+    assert_eq!(decoded.len(), 2);
+    assert_eq!(decoded[0]["n"], 0);
+    assert_eq!(decoded[1]["n"], 1);
+    assert!(decoded.iter().all(|v| v["command"] == "duplicate"));
+    let changed = reader.poll(&cursor).unwrap();
+    assert_ne!(changed.material.as_ref().unwrap().id, material.id);
+    ctx.close().await.unwrap();
 }

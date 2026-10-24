@@ -271,8 +271,10 @@ impl Crawl {
                     previous_part: previous.material,
                     reading_order: crate::drivers::reading_order(&manifest),
                     manifest,
-                    cursor_at: Box::new(move |_| {
-                        serde_json::to_value(&next).expect("cursor serializes")
+                    cursor_at: Box::new({
+                        let cursor =
+                            move |_| serde_json::to_value(&next).expect("cursor serializes");
+                        move |end| Ok(cursor(end))
                     }),
                     aligned: false,
                     vanished: Vec::new(),

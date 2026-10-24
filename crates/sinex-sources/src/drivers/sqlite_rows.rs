@@ -142,30 +142,33 @@ impl Pending {
                 previous_part: previous.material,
                 reading_order: super::reading_order(&self.manifest),
                 manifest: self.manifest.clone(),
-                cursor_at: Box::new(move |end| {
-                    let upto = ends
-                        .iter()
-                        .take_while(|(e, _)| *e <= end)
-                        .map(|(_, r)| *r)
-                        .max()
-                        .unwrap_or(previous.max_rowid);
-                    serde_json::to_value(Cursor {
-                        max_rowid: upto.max(previous.max_rowid),
-                        last_full_pass_ns: if end == length {
-                            scanned.last_full_pass_ns
-                        } else {
-                            previous.last_full_pass_ns
-                        },
-                        last_order: base.saturating_add(end as i64),
-                        open: if end == length {
-                            scanned.open.clone()
-                        } else {
-                            previous.open.clone()
-                        },
-                        through: end,
-                        ..scanned.clone()
-                    })
-                    .expect("cursor serializes")
+                cursor_at: Box::new({
+                    let cursor = move |end| {
+                        let upto = ends
+                            .iter()
+                            .take_while(|(e, _)| *e <= end)
+                            .map(|(_, r)| *r)
+                            .max()
+                            .unwrap_or(previous.max_rowid);
+                        serde_json::to_value(Cursor {
+                            max_rowid: upto.max(previous.max_rowid),
+                            last_full_pass_ns: if end == length {
+                                scanned.last_full_pass_ns
+                            } else {
+                                previous.last_full_pass_ns
+                            },
+                            last_order: base.saturating_add(end as i64),
+                            open: if end == length {
+                                scanned.open.clone()
+                            } else {
+                                previous.open.clone()
+                            },
+                            through: end,
+                            ..scanned.clone()
+                        })
+                        .expect("cursor serializes")
+                    };
+                    move |end| Ok(cursor(end))
                 }),
                 aligned: false,
                 vanished: Vec::new(),

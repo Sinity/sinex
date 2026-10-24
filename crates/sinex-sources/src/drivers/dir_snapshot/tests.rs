@@ -38,7 +38,7 @@ fn reads_changed_files_and_records_vanished_ones() {
     assert_eq!(paths(&first), vec!["a.md", "sub/b.md"]);
     let m = first.material.as_ref().unwrap();
     assert_eq!(record(m, 1), b"beta");
-    let cursor = (m.cursor_at)(m.records.last().unwrap().1);
+    let cursor = (m.cursor_at)(m.records.last().unwrap().1).unwrap();
 
     assert!(d.poll(&cursor, &mut state).unwrap().material.is_none());
 
@@ -65,7 +65,10 @@ fn a_walk_cut_by_the_part_size_does_not_record_vanished_files() {
     );
     let m = first.material.as_ref().unwrap();
     let second = small
-        .poll(&(m.cursor_at)(m.records.last().unwrap().1), &mut state)
+        .poll(
+            &(m.cursor_at)(m.records.last().unwrap().1).unwrap(),
+            &mut state,
+        )
         .unwrap();
     assert_eq!(paths(&second), vec!["sub/b.md"]);
 }
@@ -77,7 +80,7 @@ fn a_touched_but_unchanged_file_is_skipped() {
     let mut state = DirState::default();
     let first = d.poll(&Value::Null, &mut state).unwrap();
     let m = first.material.as_ref().unwrap();
-    let cursor = (m.cursor_at)(m.records.last().unwrap().1);
+    let cursor = (m.cursor_at)(m.records.last().unwrap().1).unwrap();
     let f = std::fs::File::options()
         .append(true)
         .open(root.join("a.md"))
@@ -369,7 +372,7 @@ fn failed_disappearance_is_retried_before_a_reappeared_file() {
     let mut state = DirState::default();
     let first = d.poll(&Value::Null, &mut state).unwrap();
     let m = first.material.as_ref().unwrap();
-    let cursor = (m.cursor_at)(m.records.last().unwrap().1);
+    let cursor = (m.cursor_at)(m.records.last().unwrap().1).unwrap();
     assert!(d.poll(&cursor, &mut state).unwrap().material.is_none());
     std::fs::remove_file(root.join("a.md")).unwrap();
     let gone = d.poll(&cursor, &mut state).unwrap();

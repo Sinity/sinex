@@ -299,17 +299,17 @@ impl LiveStream {
                 material.manifest["order_base"] = json!(base as i64);
                 material.reading_order = super::reading_order(&material.manifest);
                 let inner_cursor =
-                    std::mem::replace(&mut material.cursor_at, Box::new(|_| Value::Null));
+                    std::mem::replace(&mut material.cursor_at, Box::new(|_| Ok(Value::Null)));
                 let wrapped = state.clone();
                 let id = material.id;
                 material.cursor_at = Box::new(move |end| {
-                    let inner = inner_cursor(end);
-                    serde_json::to_value(Cursor {
+                    let inner = inner_cursor(end)?;
+                    Ok(serde_json::to_value(Cursor {
                         inner,
                         last_material: Some(id),
                         ..wrapped.clone()
                     })
-                    .expect("cursor serializes")
+                    .expect("cursor serializes"))
                 });
                 // A live stream only grows; a segment rewritten under capture
                 // would be a bug in capture, not a source revision.

@@ -51,7 +51,7 @@ fn reads_rows_then_only_new_and_changed_ones() {
     assert_eq!(rows.len(), 2);
     assert_eq!(rows[0]["b"], json!({"blob_hex": "00ff"}));
     let m = first.material.as_ref().unwrap();
-    let cursor = (m.cursor_at)(material_bytes(m).len());
+    let cursor = (m.cursor_at)(material_bytes(m).len()).unwrap();
     assert_eq!(cursor["max_rowid"], json!(2));
 
     let c = Connection::open(&path).unwrap();
@@ -73,7 +73,7 @@ fn a_restart_with_rebuilt_memory_stores_nothing_new() {
     let mut state = RowState::default();
     let first = d.poll(&Value::Null, &mut state).unwrap();
     let m = first.material.as_ref().unwrap();
-    let cursor = (m.cursor_at)(material_bytes(m).len());
+    let cursor = (m.cursor_at)(material_bytes(m).len()).unwrap();
     assert_eq!(
         cursor["open"],
         json!([2]),
@@ -98,7 +98,10 @@ fn a_restart_with_rebuilt_memory_stores_nothing_new() {
     let settled = d.poll(&again.cursor_unchanged, &mut rebuilt).unwrap();
     assert_eq!(lines(&settled)[0]["n"], json!(7));
     let s = settled.material.as_ref().unwrap();
-    assert_eq!((s.cursor_at)(material_bytes(s).len())["open"], Value::Null);
+    assert_eq!(
+        (s.cursor_at)(material_bytes(s).len()).unwrap()["open"],
+        Value::Null
+    );
 }
 
 /// L20: a finished row changed while Sinex was down (Atuin's soft
@@ -111,7 +114,7 @@ fn a_row_changed_while_down_is_read_after_the_restart() {
     let mut state = RowState::default();
     let first = d.poll(&Value::Null, &mut state).unwrap();
     let m = first.material.as_ref().unwrap();
-    let cursor = (m.cursor_at)(material_bytes(m).len());
+    let cursor = (m.cursor_at)(material_bytes(m).len()).unwrap();
     Connection::open(&path)
         .unwrap()
         .execute_batch("UPDATE t SET n = 9 WHERE id = 'a'")
@@ -130,7 +133,7 @@ fn a_row_changed_while_down_is_read_after_the_restart() {
                 .material
                 .as_ref()
                 .map_or(after.cursor_unchanged.clone(), |m| {
-                    (m.cursor_at)(material_bytes(m).len())
+                    (m.cursor_at)(material_bytes(m).len()).unwrap()
                 }),
             &mut rebuilt,
         )
@@ -150,7 +153,7 @@ fn reading_orders_only_grow() {
         (m.reading_order)(m.records[1].0),
     );
     assert!(b > a, "later in one snapshot is newer");
-    let cursor = (m.cursor_at)(material_bytes(m).len());
+    let cursor = (m.cursor_at)(material_bytes(m).len()).unwrap();
     let c = Connection::open(&path).unwrap();
     c.execute_batch("UPDATE t SET n = 7 WHERE id = 'a';")
         .unwrap();
@@ -215,7 +218,7 @@ fn failed_poll_retries_same_material_before_reading_source_changes() {
     assert_eq!(retry.material.as_ref().unwrap().id, first_material.id);
     assert_eq!(lines(&retry), original);
     let end = first_material.records.last().unwrap().1;
-    let committed = (first_material.cursor_at)(end);
+    let committed = (first_material.cursor_at)(end).unwrap();
     let changed = d.poll(&committed, &mut state).unwrap();
     assert!(lines(&changed).iter().all(|r| r["n"] == 99));
 }

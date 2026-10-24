@@ -126,6 +126,17 @@ impl ErasedTransitions {
             whole,
         })
     }
+    pub(crate) fn matches_whole_records(&self, records: &[(usize, usize)], length: u64) -> bool {
+        self.whole
+            && self.length == length
+            && self.entries.len() == records.len()
+            && self
+                .entries
+                .iter()
+                .zip(records)
+                .all(|((&start, span), range)| (start, span.end) == *range)
+    }
+
     pub fn after(mut self, through: usize) -> Result<Self, RecordError> {
         if through as u64 > self.length
             || self

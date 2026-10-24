@@ -104,7 +104,7 @@ fn new_messages_are_fetched_after_the_cursor_and_parse() {
     assert_eq!(m.records.len(), 2);
     assert_eq!(&m.bytes[m.records[0].0..m.records[0].1], M1.as_bytes());
     assert_eq!(m.manifest["uids"], json!([4, 7]));
-    let cursor: Cursor = serde_json::from_value((m.cursor_at)(m.bytes.len())).unwrap();
+    let cursor: Cursor = serde_json::from_value((m.cursor_at)(m.bytes.len()).unwrap()).unwrap();
     assert_eq!((cursor.uid_validity, cursor.uid_next), (Some(99), 8));
     let parsed =
         super::super::mail::parse_message(&m.bytes[m.records[1].0..m.records[1].1]).unwrap();
@@ -307,7 +307,10 @@ fn returned_uids_allow_progress_without_a_usable_uidnext() {
         let acquired = mail(port, Some("secret"), None).poll(&Value::Null).unwrap();
         let material = acquired.material.unwrap();
         assert_eq!(material.bytes, M1.as_bytes());
-        assert_eq!((material.cursor_at)(material.bytes.len())["uid_next"], 5);
+        assert_eq!(
+            (material.cursor_at)(material.bytes.len()).unwrap()["uid_next"],
+            5
+        );
         server.join().unwrap();
     }
 }
