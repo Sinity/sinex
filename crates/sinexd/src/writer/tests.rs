@@ -239,3 +239,88 @@ async fn queued_native_checks_reject_revoked_authority_and_roll_back_before_comm
     drop(handle);
     writer.await.unwrap();
 }
+
+#[tokio::test]
+async fn a_single_slot_planning_pool_keeps_queued_excision_custody_after_caller_cancellation() {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    let (_db, url, connection) = crate::testdb::fresh().await;
+    let pool = sqlx::postgres::PgPoolOptions::new()
+        .max_connections(1)
+        .connect(&url)
+        .await
+        .unwrap();
+    let guard = crate::excision::ExcisionGuard::acquire(
+        pool.acquire().await.unwrap(),
+        "synthetic-source".into(),
+    )
+    .await
+    .unwrap();
+    let (handle, queues) = channels_for(&url);
+    let directory = tempfile::tempdir().unwrap();
+    let cancelled = Arc::new(AtomicBool::new(false));
+    let h = handle.clone();
+    let canceled = cancelled.clone();
+    let caller = tokio::spawn(async move {
+        h.excise(Excision {
+            sealed: None,
+            authority: None,
+            guard: Some(guard),
+            cancelled: canceled,
+            target: Target::Material(MaterialId::new()),
+            plan: Plan::default(),
+            rewrites: Vec::new(),
+            operation: OperationId::new(),
+            actor: "synthetic".into(),
+            blobs: Blobs::open(directory.path()).unwrap(),
+        })
+        .await
+    });
+    tokio::time::timeout(std::time::Duration::from_secs(2), async {
+        while queues.live.len() != 1 {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .unwrap();
+    caller.abort();
+    assert!(caller.await.unwrap_err().is_cancelled());
+    cancelled.store(true, Ordering::Release);
+    assert!(
+        tokio::time::timeout(std::time::Duration::from_millis(20), pool.acquire())
+            .await
+            .is_err(),
+        "queued work must retain the original single pool slot"
+    );
+    let h = handle.clone();
+    let acquisition = tokio::spawn(async move { h.source_guard("synthetic-source").await });
+    tokio::task::yield_now().await;
+    assert!(
+        !acquisition.is_finished(),
+        "dropping the caller released queued source custody"
+    );
+    let writer = tokio::spawn(run(
+        url,
+        connection,
+        queues,
+        Arc::new(sinex_store::NoDerivations),
+    ));
+    let acquired = tokio::time::timeout(std::time::Duration::from_secs(2), acquisition)
+        .await
+        .unwrap()
+        .unwrap()
+        .unwrap();
+    acquired.release().await.unwrap();
+    let mut returned = tokio::time::timeout(std::time::Duration::from_secs(2), pool.acquire())
+        .await
+        .unwrap()
+        .unwrap();
+    let operations: i64 = sqlx::query_scalar("SELECT count(*) FROM core.operations")
+        .fetch_one(&mut *returned)
+        .await
+        .unwrap();
+    assert_eq!(operations, 0, "canceled queued apply changed the archive");
+    drop(returned);
+    drop(handle);
+    writer.await.unwrap();
+    pool.close().await;
+}

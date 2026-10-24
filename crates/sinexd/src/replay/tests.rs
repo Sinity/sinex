@@ -276,7 +276,18 @@ async fn a_rewritten_history_file_is_aligned_and_replays_without_duplicates() {
     )
     .await
     .unwrap();
-    assert_eq!(report.chains, 2, "the first revision and the rewrite");
+    assert_eq!(
+        report.chains, 1,
+        "the aligned rewrite continues its parser predecessor"
+    );
+    let revisions: i64 = sqlx::query_scalar("SELECT count(*) FROM raw.revisions")
+        .fetch_one(&mut f.ctx.read_conn)
+        .await
+        .unwrap();
+    assert_eq!(
+        revisions, 2,
+        "byte revisions remain distinct from parser carry lineage"
+    );
     assert_eq!(
         (
             report.diff.unchanged,

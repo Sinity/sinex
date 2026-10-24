@@ -75,7 +75,14 @@ async fn sealed_material_encrypts_every_chunk_in_the_actual_admission_pipeline()
         sinex_store::sealed::unseal_payload(&carry, &key).unwrap(),
         expected_carry
     );
-    assert!(expected_carry.to_string().contains("synthetic_secret"));
+    assert!(!expected_carry.to_string().contains("synthetic_secret"));
+    let counts = expected_carry["counts"].as_array().unwrap();
+    assert_eq!(counts.len(), 3);
+    assert!(
+        counts
+            .iter()
+            .all(|entry| entry[1].as_array().is_some_and(|key| key.len() == 32) && entry[2] == 1)
+    );
     assert!(
         sink.state.lock().unwrap().pending.is_empty(),
         "registered chunk keys are not retained indefinitely"
