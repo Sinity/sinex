@@ -1,5 +1,7 @@
 //! The planning connection carries its source lock through queued application.
-use sqlx::{Connection, PgConnection, Postgres, Transaction, pool::PoolConnection};
+#[cfg(test)]
+use sqlx::Connection;
+use sqlx::{PgConnection, Postgres, Transaction, pool::PoolConnection};
 
 pub(crate) struct ExcisionGuard {
     connection: Owned,

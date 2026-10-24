@@ -78,6 +78,19 @@ async fn restore_locked(
             let stored = opened.records();
             let reference = opened.reference.clone();
             let archived_end = opened.append_end.clone();
+            let policy = crate::source_excision::AcquisitionPolicy::load(
+                conn,
+                blobs,
+                b.source.spec().name,
+                access.authority,
+            )
+            .await?;
+            if p.progress.excision_basis.as_ref() != Some(&policy.basis) {
+                return Err(
+                    "pending append exclusion basis changed; reconcile before retry".into(),
+                );
+            }
+            let erased_members = policy.append_members(&opened)?;
             let erased = opened.transitions(0)?;
             b.reader
                 .restore_append(sinex_sources::binding::AppendResume {
@@ -86,7 +99,7 @@ async fn restore_locked(
                     records,
                     erased,
                     archived_end,
-                    erased_members: Vec::new(),
+                    erased_members,
                     base_cursor: p.base_cursor.clone(),
                     cursor: p.base_cursor.clone(),
                     head,

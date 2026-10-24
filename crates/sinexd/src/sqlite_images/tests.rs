@@ -221,8 +221,45 @@ async fn native_image_costs_stay_unresolved_until_installed_verification_and_use
         .unwrap()
         .unwrap();
     assert!(ready.image.is_none() && ready.state == State::Installed);
-    assert_eq!(ready.progress.image.unwrap(), completed);
+    assert_eq!(ready.progress.image.as_ref().unwrap(), &completed);
     guard.release().await.unwrap();
+    sinex_store::bindings::save(
+        &mut conn,
+        &sinex_store::bindings::Stored {
+            binding: "other-table".into(),
+            source: "other-table-source".into(),
+            input: "synthetic-db".into(),
+            settings: serde_json::json!({"host":"h"}),
+        },
+    )
+    .await
+    .unwrap();
+    sqlx::query("INSERT INTO raw.inputs(id,binding,kind,locator,host) VALUES($1,'other-table','sqlite','synthetic-db','h')")
+        .bind(uuid::Uuid::now_v7()).execute(&mut conn).await.unwrap();
+    sqlx::query(
+        "INSERT INTO core.operations(id,kind,actor,scope) VALUES($1,'excise','synthetic',$2)",
+    )
+    .bind(uuid::Uuid::now_v7())
+    .bind(serde_json::json!({"sources":["other-table-source"]}))
+    .execute(&mut conn)
+    .await
+    .unwrap();
+    let error = native_materials::reserve(&mut conn, &pending)
+        .await
+        .unwrap_err();
+    assert!(
+        error.to_string().contains("excluded database lineage"),
+        "{error}"
+    );
+    let retained = native_materials::load(&mut conn, pending.material)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        retained.progress.image.unwrap(),
+        completed,
+        "refusal replaced retained pending evidence"
+    );
 }
 
 #[test]

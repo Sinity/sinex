@@ -333,7 +333,7 @@ pub(crate) async fn drive(
             } else {
                 None
             };
-            Ok::<_, String>(match pending_image {
+            let acquired = match pending_image {
                 Some(p) => Ok(drivers::Acquired {
                     image: None,
                     input: p.progress.input,
@@ -343,10 +343,11 @@ pub(crate) async fn drive(
                     cursor_unchanged: p.end_cursor,
                 }),
                 None => reader.poll(&cursor),
-            })
+            };
+            Ok::<_, String>((acquired, pending_ids))
         }
         .await;
-        let polled = match polled {
+        let (polled, pending_ids) = match polled {
             Ok(value) => value,
             Err(error) => {
                 guard.release().await?;
@@ -373,6 +374,7 @@ pub(crate) async fn drive(
                 authority.check()?;
             }
             if let (Some(sealing), Some(material)) = (&sealing, &acquired.material)
+                && !pending_ids.contains(&material.id)
                 && let Some(drivers::StoredBytes::FramedReader(stored)) = &material.stored
                 && sink.0.is_sealed(&stored.blob).map_err(|e| e.to_string())?
             {

@@ -216,9 +216,13 @@ impl RowState {
         stored: super::RetainedRecords,
         cursor: &Value,
     ) -> Result<(), DriverError> {
-        let current: Cursor = serde_json::from_value(cursor.clone())
-            .map_err(|e| DriverError::Cursor(e.to_string()))?;
-        if current.material != Some(reference.id) || current.through as u64 >= reference.length {
+        let current: Cursor = if cursor.is_null() {
+            Cursor::default()
+        } else {
+            serde_json::from_value(cursor.clone())
+                .map_err(|e| DriverError::Cursor(e.to_string()))?
+        };
+        if current.material == Some(reference.id) && current.through as u64 >= reference.length {
             return Ok(());
         }
         if !reference.manifest["row_format"].is_null()
@@ -232,6 +236,11 @@ impl RowState {
         let resume = &reference.manifest["row_resume"];
         let previous: Cursor = serde_json::from_value(resume["previous"].clone())
             .map_err(|e| DriverError::Cursor(e.to_string()))?;
+        if current.material != Some(reference.id) && current != previous {
+            return Err(DriverError::Cursor(
+                "stored SQLite predecessor cursor differs from reservation".into(),
+            ));
+        }
         let scanned: Cursor = serde_json::from_value(resume["scanned"].clone())
             .map_err(|e| DriverError::Cursor(e.to_string()))?;
         let ends: Vec<(usize, i64)> = serde_json::from_value(resume["ends"].clone())

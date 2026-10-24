@@ -325,9 +325,19 @@ impl Pipeline<'_> {
                     progress.image = image_ready.take();
                 }
                 if let Some(p) = &frozen {
-                    **progress = p
-                        .first_progress(progress.cursor.clone(), progress.carry.clone())
-                        .map_err(|e| e.to_string())?;
+                    if p.image.is_some() {
+                        // The owned publisher must finalize this image before the
+                        // batch can reach admission. Its other facts stay frozen.
+                        let cursor = progress.cursor.clone();
+                        let carry = progress.carry.clone();
+                        **progress = p.progress.clone();
+                        progress.cursor = cursor;
+                        progress.carry = carry;
+                    } else {
+                        **progress = p
+                            .first_progress(progress.cursor.clone(), progress.carry.clone())
+                            .map_err(|e| e.to_string())?;
+                    }
                     batch.archive = p.first_archive();
                 }
                 let id = progress

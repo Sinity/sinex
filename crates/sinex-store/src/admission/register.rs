@@ -9,6 +9,10 @@ use sinex_model::{InputId, ObservationId, RevisionChange, RevisionId, SourceProg
 /// Bytes are already in the content store, so they exist before any row refers
 /// to them.
 pub(super) async fn source(conn: &mut PgConnection, p: &SourceProgress) -> Result<()> {
+    if let Some(image) = &p.image {
+        crate::sqlite_images::guard_acquisition(conn, &p.input, &p.observation, &image.metadata)
+            .await?;
+    }
     if let Some(replay) = &p.erased_replay {
         if p.material.as_ref().is_none_or(|m| m.id != replay.material)
             || p.excision_basis.as_ref().is_none_or(|b| b.count == 0)

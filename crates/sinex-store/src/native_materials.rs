@@ -485,6 +485,20 @@ pub async fn reserve(conn: &mut PgConnection, pending: &Pending) -> Result<()> {
             "native publication owner differs from its progress",
         ));
     }
+    let image = pending
+        .image
+        .as_ref()
+        .map(|PendingImage::AwaitingCosts(i)| &i.metadata)
+        .or_else(|| pending.progress.image.as_ref().map(|i| &i.metadata));
+    if let Some(image) = image {
+        crate::sqlite_images::guard_acquisition(
+            conn,
+            &pending.progress.input,
+            &pending.progress.observation,
+            image,
+        )
+        .await?;
+    }
     let source: Option<String> =
         sqlx::query_scalar("SELECT source FROM raw.bindings WHERE binding=$1 FOR UPDATE")
             .bind(&pending.binding)
@@ -607,6 +621,20 @@ pub async fn load(conn: &mut PgConnection, material: MaterialId) -> Result<Optio
 }
 pub async fn binding_pending(conn: &mut PgConnection, binding: &str) -> Result<Vec<MaterialId>> {
     Ok(sqlx::query_scalar::<_,uuid::Uuid>("SELECT material_id FROM raw.pending_native_materials WHERE binding=$1 ORDER BY reserved_at,material_id").bind(binding).fetch_all(conn).await?.into_iter().map(MaterialId).collect())
+}
+/// Image ownership includes unresolved and finalized reservations. Decode through
+/// the publication owner before using any input/layout facts for a lineage guard.
+pub async fn pending_images(conn: &mut PgConnection) -> Result<Vec<Pending>> {
+    let ids: Vec<uuid::Uuid> = sqlx::query_scalar("SELECT material_id FROM raw.pending_native_materials WHERE publication->'image' IS NOT NULL AND publication->'image'<>'null'::jsonb ORDER BY material_id")
+        .fetch_all(&mut *conn).await?;
+    let mut images = Vec::new();
+    for id in ids {
+        let pending = load(conn, MaterialId(id))
+            .await?
+            .ok_or_else(|| invalid("pending image disappeared"))?;
+        images.push(pending);
+    }
+    Ok(images)
 }
 pub async fn source_pending(conn: &mut PgConnection, source: &str) -> Result<bool> {
     Ok(sqlx::query_scalar(

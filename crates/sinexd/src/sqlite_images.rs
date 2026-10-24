@@ -119,10 +119,7 @@ fn verify_layout(
     // and each dense map entry against the corresponding page. Hashes alone do not
     // establish that a patch's extent layout selects the right bytes.
     if key.is_none() {
-        let check = match image {
-            Some(image) => image.checker()?,
-            None => Arc::new(|| Ok(())),
-        };
+        let check = check.clone();
         drop(
             blobs
                 .read_plain(&blob, Some(meta.evidence_bytes), move || {
