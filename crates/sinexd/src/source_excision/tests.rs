@@ -230,6 +230,11 @@ async fn plain_native_exclusion_filters_reacquisition_and_replay_without_unlock(
     )
     .await
     .unwrap();
+    db.execute(
+        "UPDATE history SET cwd='/updated-private-stage-control' WHERE id='native-2'",
+        [],
+    )
+    .unwrap();
     let policy = AcquisitionPolicy::load(&mut ctx.read_conn, &ctx.blobs, source.spec().name, None)
         .await
         .unwrap();
@@ -267,10 +272,16 @@ async fn plain_native_exclusion_filters_reacquisition_and_replay_without_unlock(
     );
     let material = filtered.acquired.material.as_ref().unwrap();
     let id = material.id;
-    let Some(drivers::StoredBytes::FramedReader(stored)) = &material.stored else {
-        panic!("filtered body was not verified");
+    let Some(drivers::StoredBytes::FramedFile(stored)) = &material.stored else {
+        panic!("filtered body must stay in private custody");
     };
-    let retained = ctx.blobs.read(&stored.blob).unwrap();
+    let mut retained = Vec::new();
+    std::io::Read::read_to_end(&mut &**stored, &mut retained).unwrap();
+    let name = format!("blake3:{}", blake3::hash(&retained));
+    assert!(
+        !ctx.blobs.contains(&name).unwrap(),
+        "filtering published a plain CAS name before reservation"
+    );
     assert!(!String::from_utf8_lossy(&retained).contains("synthetic removed value"));
     assert!(String::from_utf8_lossy(&retained).contains("synthetic retained value"));
     let prepared = drivers::prepare(

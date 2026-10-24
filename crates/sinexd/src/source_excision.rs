@@ -634,11 +634,7 @@ impl AcquisitionPolicy {
             },
             spans,
         );
-        let blob = if class == sinex_model::Class::Sealed {
-            sealing
-                .ok_or("sealed exclusion filtering requires its class recipient")?
-                .put_reader(reader)?
-        } else {
+        if class != sinex_model::Class::Sealed {
             if selected.iter().any(|(_, _, token)| token.is_some()) {
                 return Err("stateful plain exclusion replay metadata is not available".into());
             }
@@ -647,9 +643,25 @@ impl AcquisitionPolicy {
                     return Err("sealed retained input cannot stage plaintext".into());
                 }
             }
-            blobs.put_reader(reader).map_err(|e| e.to_string())?
-        };
-        let backing = if class == sinex_model::Class::Sealed {
+            // Plain filtering remains private until the owning publication has
+            // durably reserved its prepared name. No CAS put occurs here.
+            let mut reader = reader;
+            let mut file = tempfile::tempfile().map_err(|e| e.to_string())?;
+            let copied = std::io::copy(&mut reader, &mut file).map_err(|e| e.to_string())?;
+            if copied != length {
+                return Err("filtered source length changed".into());
+            }
+            drop(reader);
+            use std::io::Seek;
+            file.rewind().map_err(|e| e.to_string())?;
+            material.stored = Some(drivers::StoredBytes::FramedFile(std::sync::Arc::new(file)));
+            material.bytes.clear();
+            return Ok(input);
+        }
+        let blob = sealing
+            .ok_or("sealed exclusion filtering requires its class recipient")?
+            .put_reader(reader)?;
+        let backing = {
             let sealing = sealing.expect("checked sealing");
             let authority = self
                 .authority
@@ -744,13 +756,6 @@ impl AcquisitionPolicy {
             std::io::copy(&mut reader, &mut std::io::sink()).map_err(|e| e.to_string())?;
             reader.rewind().map_err(|e| e.to_string())?;
             std::sync::Arc::new(crate::retained::Retained::new(reader, length))
-        } else {
-            let mut file = tempfile::tempfile().map_err(|e| e.to_string())?;
-            let mut reader = blobs
-                .read_plain(&blob, Some(length), || Ok(()))
-                .map_err(|e| e.to_string())?;
-            std::io::copy(&mut reader, &mut file).map_err(|e| e.to_string())?;
-            std::sync::Arc::new(crate::retained::Retained::new(file, length))
         };
         material.stored = Some(drivers::StoredBytes::FramedReader(
             drivers::RetainedRecords {
