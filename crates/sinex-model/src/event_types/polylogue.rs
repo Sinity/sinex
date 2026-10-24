@@ -30,7 +30,8 @@ pub struct PolylogueRows {
     /// `observation`, `delivery_event` or `extracted_blob`.
     pub unit: String,
     /// The unit's own key: `<input>/<number>` for a revision, the row ID
-    /// otherwise; delivery events use their encoded compound key.
+    /// otherwise; delivery events and decoded-source associations use encoded
+    /// compound keys.
     pub key: String,
     /// `blake3:<hex>` of the record-batch material: the unit's rows as JSON
     /// lines, one `{"table": …, "row": {…}}` per line.
