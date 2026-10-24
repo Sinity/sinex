@@ -61,6 +61,11 @@ to the writer. A source cursor describes admitted progress; obtaining bytes
 alone does not mean their records were interpreted successfully. Archive
 capture and replay have additional open acceptance criteria in Beads.
 
+On shutdown, the derivation runner completes its active pass or maintenance
+step, then releases its writer handle. Idle waits observe the shared stop signal.
+The writer drains queued work after its producers release their handles; the
+supervisor retains its ten-second fallback for tasks that cannot finish.
+
 SQLite row snapshots use one read transaction across schema inspection and row
 selection, so SQLite supplies committed rollback-journal and WAL visibility.
 A locked source remains unavailable; stable main-file metadata cannot prove a

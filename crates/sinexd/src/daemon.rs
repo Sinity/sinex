@@ -121,10 +121,10 @@ pub async fn run(o: Options) -> Result<(), String> {
         METRICS_IDLE,
     ))]);
     let wake = Arc::new(Notify::new());
-    let (w, mut c) = (wake.clone(), commits.clone());
+    let (w, mut c, s) = (wake.clone(), commits.clone(), stop.clone());
     tasks.spawn(async move {
         tokio::select! {
-            result = driver.run(w.clone(), RUNNER_IDLE) => ("derivation runner", result),
+            result = driver.run(w.clone(), RUNNER_IDLE, s) => ("derivation runner", result),
             // Every commit wakes the driver.
             () = async move {
                 while c.changed().await.is_ok() {

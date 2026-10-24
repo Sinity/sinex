@@ -585,3 +585,5 @@ async fn windows_read_together_equal_windows_read_alone() {
     }
     assert_eq!(together[1].len(), 3, "the first hour's three zsh commands");
 }
+
+mod shutdown;

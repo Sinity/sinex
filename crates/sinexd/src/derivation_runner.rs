@@ -705,11 +705,23 @@ impl DerivationRunner {
         Ok(())
     }
 
-    /// The daemon's driver task: a pass whenever woken, or every `idle`. The
-    /// daemon signals `wake` after each commit.
-    pub async fn run(mut self, wake: Arc<Notify>, idle: Duration) -> Result<(), String> {
+    /// Finish the current pass or maintenance step on shutdown, then release
+    /// the writer handle. Already submitted batches retain their acknowledgements.
+    pub async fn run(
+        mut self,
+        wake: Arc<Notify>,
+        idle: Duration,
+        mut stop: tokio::sync::watch::Receiver<bool>,
+    ) -> Result<(), String> {
         loop {
-            if self.pass().await? == 0 {
+            if *stop.borrow() || stop.has_changed().is_err() {
+                break;
+            }
+            let work = self.pass().await?;
+            if *stop.borrow() || stop.has_changed().is_err() {
+                break;
+            }
+            if work == 0 {
                 let due = self
                     .last_maintained
                     .is_none_or(|t| t.elapsed() >= MAINTAIN_AT_MOST_EVERY);
@@ -719,9 +731,11 @@ impl DerivationRunner {
                 tokio::select! {
                     () = wake.notified() => {}
                     () = tokio::time::sleep(idle) => {}
+                    _ = stop.wait_for(|stopped| *stopped) => {}
                 }
             }
         }
+        self.end_runs().await
     }
 
     pub async fn end_runs(&mut self) -> Result<(), String> {
