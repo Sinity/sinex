@@ -4,7 +4,7 @@ use sinex_sources::{Framer, drivers};
 use std::io::{Read, Seek, SeekFrom};
 use std::sync::Mutex;
 mod material;
-pub(crate) use material::{Opened, open};
+pub(crate) use material::{Opened, open, open_pending};
 
 pub(crate) struct Retained {
     reader: Mutex<Box<dyn ReadSeek>>,

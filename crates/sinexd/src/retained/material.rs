@@ -97,6 +97,95 @@ pub(crate) async fn open(
     } else {
         None
     };
+    open_owned(
+        blobs,
+        source,
+        reference,
+        replay.map(|blob| (blob, None)),
+        secrets,
+        authority,
+    )
+}
+
+/// Only the frozen storage-owned publication supplies these facts. Missing
+/// installed bytes stay unavailable; this never observes the provider again.
+pub(crate) fn open_pending(
+    blobs: &Blobs,
+    pending: &sinex_store::native_materials::Pending,
+    authority: Option<&Authority>,
+) -> Result<Opened, String> {
+    let reference = pending
+        .progress
+        .material
+        .clone()
+        .ok_or("pending publication has no row/record material")?;
+    if reference.id != pending.material
+        || pending.progress.binding != pending.binding
+        || pending
+            .progress
+            .excision_basis
+            .as_ref()
+            .is_none_or(|b| b.source != pending.source)
+    {
+        return Err("pending material ownership differs".into());
+    }
+    let mut keys = pending
+        .progress
+        .material_keys
+        .iter()
+        .filter(|key| key.material == reference.id);
+    let key = keys.next();
+    if keys.next().is_some() {
+        return Err("pending material has multiple data capabilities".into());
+    }
+    let secrets = if blobs
+        .is_sealed(&reference.blob)
+        .map_err(|e| e.to_string())?
+    {
+        let key = key.ok_or("pending sealed material lacks its reserved data capability")?;
+        let authority =
+            authority.ok_or("pending sealed material requires explicit scoped unlock")?;
+        let secrets = authority.unwrap_secrets(&key.wrapped)?;
+        secrets
+            .data_key(key.key_ref.clone())
+            .map_err(|e| e.to_string())?;
+        Some((key.key_ref.clone(), secrets))
+    } else {
+        if key.is_some() {
+            return Err("pending data capability does not match a sealed body".into());
+        }
+        None
+    };
+    let replay = pending
+        .progress
+        .erased_replay
+        .as_ref()
+        .map(|replay| {
+            if replay.material != reference.id {
+                return Err("pending replay material differs".to_owned());
+            }
+            Ok((replay.blob.clone(), Some(replay.length)))
+        })
+        .transpose()?;
+    open_owned(
+        blobs,
+        &pending.source,
+        reference,
+        replay,
+        secrets,
+        authority,
+    )
+}
+
+fn open_owned(
+    blobs: &Blobs,
+    source: &str,
+    reference: MaterialRef,
+    replay: Option<(String, Option<u64>)>,
+    secrets: Option<(String, MaterialSecrets)>,
+    authority: Option<&Authority>,
+) -> Result<Opened, String> {
+    let material = reference.id;
     let whole = secrets
         .as_ref()
         .is_some_and(|(_, s)| s.role() == sealed::SecretRole::RecordNamingOnly);
@@ -104,7 +193,7 @@ pub(crate) async fn open(
         return Err("whole-erased material lacks authenticated replay metadata".into());
     }
     let mut append_end = None;
-    let records = if let Some(blob) = replay {
+    let records = if let Some((blob, expected_length)) = replay {
         let authority =
             authority.ok_or("erased replay metadata requires explicit scoped unlock")?;
         let scope = metadata::Scope::Replay {
@@ -123,7 +212,7 @@ pub(crate) async fn open(
         };
         let check = authority.clone();
         let input = blobs
-            .read_plain(&blob, None, move || {
+            .read_plain(&blob, expected_length, move || {
                 check
                     .check()
                     .map_err(std::io::Error::other)

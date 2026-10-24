@@ -142,13 +142,8 @@ async fn failed_first_native_admission_keeps_exact_installed_custody_after_provi
         .await
         .unwrap()
         .unwrap();
-    let mut file = tempfile::tempfile().unwrap();
-    ctx.blobs.copy_to(&material.blob, &mut file).unwrap();
-    let retained = drivers::RetainedRecords {
-        bodyless: false,
-        blob: material.blob.clone(),
-        bytes: std::sync::Arc::new(crate::retained::Retained::new(file, material.length)),
-    };
+    let opened = crate::retained::open_pending(&ctx.blobs, &pending, None).unwrap();
+    let retained = opened.records();
     let mut state = drivers::sqlite_rows::RowState::default();
     state
         .restore_pending(material.clone(), retained, &pending.start_cursor)
@@ -321,7 +316,7 @@ async fn actual_sealed_append_first_chunk_and_restart_finish_original_bytes_and_
     let material = progress.material.as_ref().unwrap().clone();
     let first_cursor = progress.cursor.clone();
     assert!(first_cursor["through"].as_u64().unwrap() < material.length);
-    let publication = Publication {
+    let mut publication = Publication {
         pending: native_materials::Pending {
             material: material.id,
             source: name.into(),
@@ -345,6 +340,47 @@ async fn actual_sealed_append_first_chunk_and_restart_finish_original_bytes_and_
             .unwrap(),
         guard: ctx.writer.source_guard(name).await.unwrap(),
     };
+    let mut tx = publication.guard.connection().begin().await.unwrap();
+    native_materials::reserve(&mut tx, &publication.pending)
+        .await
+        .unwrap();
+    tx.commit().await.unwrap();
+    let frozen = native_materials::load(&mut ctx.read_conn, material.id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(crate::retained::open_pending(&ctx.blobs, &frozen, None).is_err());
+    let restored = crate::retained::open_pending(&ctx.blobs, &frozen, Some(&authority)).unwrap();
+    let mut restored_bytes = vec![0; original.len()];
+    restored
+        .records()
+        .bytes
+        .read_exact_at(0, &mut restored_bytes)
+        .unwrap();
+    assert_eq!(restored_bytes, original);
+    let mut naming_only = frozen.clone();
+    let key = naming_only.progress.material_keys.first_mut().unwrap();
+    let names = authority
+        .unwrap_secrets(&key.wrapped)
+        .unwrap()
+        .naming_only();
+    key.wrapped = sinex_store::sealed::wrap_secrets(&names, &authority.recipient()).unwrap();
+    assert!(
+        crate::retained::open_pending(&ctx.blobs, &naming_only, Some(&authority)).is_err(),
+        "pending naming-only capability entered body decryption"
+    );
+    let expired = crate::sealed_access::Authority::new(
+        sinex_store::sealed::Identity::generate(),
+        std::time::Duration::ZERO,
+    )
+    .unwrap();
+    assert!(crate::retained::open_pending(&ctx.blobs, &frozen, Some(&expired)).is_err());
+    let wrong = crate::sealed_access::Authority::new(
+        sinex_store::sealed::Identity::generate(),
+        std::time::Duration::from_secs(60),
+    )
+    .unwrap();
+    assert!(crate::retained::open_pending(&ctx.blobs, &frozen, Some(&wrong)).is_err());
     publication.start().await.unwrap().unwrap();
     drop(prepared);
     drop(reader);
