@@ -23,7 +23,7 @@ impl OneShot {
         let mut read_conn = PgConnection::connect(database)
             .await
             .map_err(|e| e.to_string())?;
-        sinex_schema::apply(&mut read_conn)
+        sinex_schema::require_current(&mut read_conn)
             .await
             .map_err(|e| e.to_string())?;
         let blobs = Blobs::open(store).map_err(|e| e.to_string())?;

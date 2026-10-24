@@ -85,18 +85,30 @@ async fn derivation_refuses_an_upgradeable_predecessor_without_applying_it() {
 #[tokio::test]
 async fn derivation_claims_the_writer_for_its_entire_lifetime() {
     let (_db, url, mut competing) = crate::testdb::fresh().await;
-    let (driver, task) = crate::local_driver(&url, "startup-fixture", None).await.unwrap();
+    let (driver, task) = crate::local_driver(&url, "startup-fixture", None)
+        .await
+        .unwrap();
     let refused = writer::claim(&mut competing).await.is_err();
     drop(driver);
     task.await.unwrap();
-    assert!(refused, "the derivation writer must retain its advisory claim");
+    assert!(
+        refused,
+        "the derivation writer must retain its advisory claim"
+    );
     writer::claim(&mut competing).await.unwrap();
     let result = crate::local_driver(&url, "startup-fixture", None).await;
     let refused = match result {
         Err(error) => error.contains("another sinexd writer"),
-        Ok((driver, task)) => { drop(driver); task.await.unwrap(); false }
+        Ok((driver, task)) => {
+            drop(driver);
+            task.await.unwrap();
+            false
+        }
     };
-    assert!(refused, "an active writer must exclude standalone derivations");
+    assert!(
+        refused,
+        "an active writer must exclude standalone derivations"
+    );
 }
 
 #[tokio::test]
