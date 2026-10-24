@@ -1,9 +1,9 @@
 //! One scoped native acquisition owns preparation, publication and first admission.
 use super::*;
-use crate::publication::{ImageVerification, NativeStage, Publication, StagingSink, Verification};
-use crate::source_excision::{AcquisitionGuard, AcquisitionPolicy, Filtered};
+use crate::excision::{AcquisitionGuard, exclusions::Exclusions};
+use crate::publication::{NativeStage, Publication, StagingSink, Verification};
 use sinex_model::{BatchKind, Class};
-use sinex_store::native_materials::{self, Pending, PendingImage};
+use sinex_store::native_materials::{self, Pending};
 use std::sync::Arc;
 
 pub(super) struct Pipeline<'a> {
@@ -33,17 +33,17 @@ impl Pipeline<'_> {
     pub async fn submit(
         &self,
         guard: AcquisitionGuard,
-        policy: AcquisitionPolicy,
+        exclusions: Exclusions,
         cursor: serde_json::Value,
         base_carry: serde_json::Value,
         carry: serde_json::Value,
         acquired: drivers::Acquired,
         totals: &mut Totals,
-    ) -> Result<Option<sinex_model::SqliteImagePublication>, String> {
+    ) -> Result<(), String> {
         let mut guard = Some(guard);
         let result = self
             .submit_owned(
-                &mut guard, policy, cursor, base_carry, carry, acquired, totals,
+                &mut guard, exclusions, cursor, base_carry, carry, acquired, totals,
             )
             .await;
         if let Some(guard) = guard {
@@ -55,13 +55,13 @@ impl Pipeline<'_> {
     async fn submit_owned(
         &self,
         guard: &mut Option<AcquisitionGuard>,
-        policy: AcquisitionPolicy,
+        exclusions: Exclusions,
         cursor: serde_json::Value,
         base_carry: serde_json::Value,
         carry: serde_json::Value,
         mut acquired: drivers::Acquired,
         totals: &mut Totals,
-    ) -> Result<Option<sinex_model::SqliteImagePublication>, String> {
+    ) -> Result<(), String> {
         (self.check)()?;
         let ids =
             native_materials::binding_pending(guard.as_mut().unwrap().connection(), self.binding)
@@ -77,101 +77,56 @@ impl Pipeline<'_> {
             None => None,
         };
         let stages = StagingSink::new(self.blobs.clone());
-        let filtered = if let Some(p) = &frozen {
-            if p.progress.excision_basis.as_ref() != Some(&policy.basis) {
-                return Err("pending native exclusion basis changed; authoritative reconciliation is required".into());
+        let stored = if let Some(p) = &frozen {
+            if p.progress.exclusions.as_ref() != Some(exclusions.version()) {
+                return Err("the source was excised since this read; read it again".into());
             }
-            if p.progress.material.is_none() {
-                if acquired.material.is_some() {
-                    return Err("provider cannot replace a pending image-only publication".into());
-                }
-                Filtered {
-                    acquired,
-                    erased: None,
-                    publication: None,
-                    registered: false,
-                    bodyless: false,
-                }
-            } else {
-                let opened = crate::retained::open_pending(self.blobs, p, self.authority)?;
-                let material = acquired.material.as_mut().ok_or(
-                    "pending native material was not restored before provider acquisition",
+            let opened = crate::retained::open_pending(self.blobs, p, self.authority)?;
+            let material = acquired
+                .material
+                .as_mut()
+                .ok_or("pending native material was not restored before provider acquisition")?;
+            if material.id != p.material {
+                return Err("provider cannot replace the frozen pending native version".into());
+            }
+            if self.sealing.is_some() != opened.key.is_some() {
+                return Err("pending native class differs from current acquisition class".into());
+            }
+            if let Some(sealing) = self.sealing {
+                let key = p
+                    .progress
+                    .material_keys
+                    .iter()
+                    .find(|key| key.material == p.material)
+                    .ok_or("pending native data key is unavailable")?;
+                sealing.restore_reserved(
+                    opened.reference.blob.clone(),
+                    key,
+                    self.authority
+                        .ok_or("pending sealed material requires explicit unlock")?,
                 )?;
-                if material.id != p.material {
-                    return Err("provider cannot replace the frozen pending native version".into());
-                }
-                if self.sealing.is_some()
-                    != self
-                        .blobs
-                        .is_sealed(&opened.reference.blob)
-                        .map_err(|e| e.to_string())?
-                {
-                    return Err(
-                        "pending native class differs from current acquisition class".into(),
-                    );
-                }
-                if let Some(sealing) = self.sealing {
-                    let key = p
-                        .progress
-                        .material_keys
-                        .iter()
-                        .find(|key| key.material == p.material)
-                        .ok_or("pending native data capability is unavailable")?;
-                    sealing.restore_reserved(
-                        opened.reference.blob.clone(),
-                        key,
-                        self.authority
-                            .ok_or("pending sealed material requires scoped authority")?,
-                    )?;
-                }
-                material.stored = Some(drivers::StoredBytes::FramedReader(opened.records()));
-                material.bytes.clear();
-                material.manifest = opened.reference.manifest.clone();
-                let erased = opened.transitions(0)?;
-                Filtered {
-                    acquired,
-                    erased,
-                    publication: p.progress.erased_replay.clone(),
-                    registered: false,
-                    bodyless: false,
-                }
             }
+            material.stored = Some(drivers::StoredBytes::FramedReader(opened.records()));
+            material.bytes.clear();
+            material.manifest = opened.reference.manifest.clone();
+            false
         } else {
-            policy
-                .reconcile(
-                    guard.as_mut().unwrap().connection(),
-                    self.blobs,
-                    self.source,
-                    acquired,
-                    &cursor,
-                    self.sealing,
-                )
-                .await?
+            reopen_stored(
+                guard.as_mut().unwrap().connection(),
+                self.blobs,
+                self.source,
+                &mut acquired,
+                self.sealing,
+                self.authority,
+            )
+            .await?
         };
-        let registered = filtered.registered;
-        if registered
-            && self.source.spec().driver == sinex_sources::Driver::AppendFile
-            && filtered.erased.is_some()
-        {
-            return Err(
-                "erased append capture requires scoped cursor restoration before progress".into(),
-            );
-        }
-        let mut filtered = policy.filter(
-            self.blobs,
-            self.source,
-            filtered,
-            &carry,
-            self.class,
-            self.sealing,
-            &stages,
-        )?;
+        let filtered = exclusions.filter(self.source, acquired, &carry, self.class, stored)?;
         let endpoints = filtered
-            .acquired
             .material
             .as_ref()
             .map(|m| {
-                let length = crate::source_excision::byte_length(&m.record_bytes())?;
+                let length = crate::excision::exclusions::byte_length(&m.record_bytes())?;
                 let end =
                     usize::try_from(length).map_err(|_| "native material exceeds address space")?;
                 Ok::<_, String>((
@@ -180,121 +135,28 @@ impl Pipeline<'_> {
                 ))
             })
             .transpose()?;
-        let mut image = None;
-        let mut image_plan = None;
-        let mut image_ready = None;
         let mut extra_stages = Vec::new();
-        if let Some(p) = &frozen {
-            filtered.acquired.image = None;
-            let retained_plan = p
-                .image
-                .clone()
-                .or_else(|| p.progress.image.clone().map(PendingImage::AwaitingCosts));
-            if let Some(plan) = &retained_plan {
-                let PendingImage::AwaitingCosts(expected) = plan;
-                let previous = match expected.metadata.previous {
-                    Some(id) => {
-                        let material: Option<uuid::Uuid> = sqlx::query_scalar(
-                            "SELECT material_id FROM raw.sqlite_images WHERE revision_id=$1",
-                        )
-                        .bind(id.0)
-                        .fetch_optional(guard.as_mut().unwrap().connection())
-                        .await
-                        .map_err(|e| e.to_string())?;
-                        match material {
-                            Some(material) => sinex_store::sqlite_images::load(
-                                guard.as_mut().unwrap().connection(),
-                                sinex_model::MaterialId(material),
-                            )
-                            .await
-                            .map_err(|e| e.to_string())?
-                            .map(|(m, _, _)| m),
-                            None => return Err("pending image predecessor is unavailable".into()),
-                        }
-                    }
-                    None => None,
-                };
-                image = Some(ImageVerification::Retained {
-                    blobs: self.blobs.clone(),
-                    plan: plan.clone(),
-                    previous,
-                    authority: self.authority.cloned(),
-                    check: self.queued_check(),
-                });
-                image_plan = p.image.clone();
-            } else {
-                image_ready = p.progress.image.clone();
-            }
-        } else if let Some(view) = filtered.acquired.image.take() {
-            if let Some(ready) = view.stored().map_err(|e| e.to_string())? {
-                image_ready = Some(ready);
-            } else {
-                let prepared = if view.metadata.class == Class::Sealed {
-                    let recipient = self
-                        .sealing
-                        .ok_or("sealed image requires its configured recipient")?
-                        .recipient();
-                    let (prepared, stage) = crate::sqlite_images::prepare_sealed(
-                        self.blobs,
-                        view,
-                        self.source.spec().parser,
-                        self.source.spec().parser_version,
-                        recipient,
-                    )?;
-                    extra_stages.push(NativeStage::Sealed(stage));
-                    prepared
-                } else {
-                    let (prepared, stage) = crate::sqlite_images::prepare_plain(
-                        self.blobs,
-                        view,
-                        self.source.spec().parser,
-                        self.source.spec().parser_version,
-                    )?;
-                    extra_stages.push(NativeStage::Plain(stage));
-                    prepared
-                };
-                image_plan = Some(prepared.plan()?);
-                image = Some(ImageVerification::Pinned(prepared));
-            }
-        }
-        let image_revision = image_ready
-            .as_ref()
-            .map(|i| i.metadata.revision)
-            .or_else(|| {
-                image_plan
-                    .as_ref()
-                    .map(|PendingImage::AwaitingCosts(i)| i.metadata.revision)
-            });
         let sink: &dyn drivers::MaterialSink = match self.sealing {
             Some(sealing) => sealing,
             None => &stages,
         };
-        let mut prepared = drivers::prepare(
+        let prepared = drivers::prepare(
             self.source,
             self.binding,
             self.run,
-            filtered.acquired,
+            filtered,
             carry,
             sink,
             Limits::default(),
         )
         .map_err(|e| e.to_string())?
-        .with_excision_basis(policy.basis.clone());
-        if let Some(revision) = image_revision {
-            prepared = prepared.with_image_revision(revision);
-        }
-        if let Some(erased) = filtered.erased {
-            prepared = prepared
-                .with_erased(erased, filtered.publication)
-                .map_err(|e| e.to_string())?;
-        }
+        .with_exclusions(exclusions.version().clone());
         totals.polls += 1;
         if let Some(length) = prepared.material_len() {
             totals.materials += 1;
             totals.material_bytes += length;
         }
         let mut first = true;
-        let mut published_image = None;
         for batch in prepared.batches().map_err(|e| e.to_string())? {
             let mut batch = batch.map_err(|e| e.to_string())?;
             for record in &mut batch.records {
@@ -306,7 +168,7 @@ impl Pipeline<'_> {
             }
             if let Some(sealing) = self.sealing {
                 sealing.seal(std::slice::from_mut(&mut batch))?;
-                if registered && let BatchKind::Source(p) = &mut batch.kind {
+                if stored && let BatchKind::Source(p) = &mut batch.kind {
                     p.material_keys.clear();
                 }
             }
@@ -317,39 +179,17 @@ impl Pipeline<'_> {
             totals.batches += 1;
             totals.events_offered += batch.event_count();
             let started = Instant::now();
-            let out = if first && !registered {
+            let out = if first && !stored {
                 let BatchKind::Source(progress) = &mut batch.kind else {
                     return Err("native preparation did not produce source progress".into());
                 };
-                if image_ready.is_some() {
-                    progress.image = image_ready.take();
-                }
                 if let Some(p) = &frozen {
-                    if p.image.is_some() {
-                        // The owned publisher must finalize this image before the
-                        // batch can reach admission. Its other facts stay frozen.
-                        let cursor = progress.cursor.clone();
-                        let carry = progress.carry.clone();
-                        **progress = p.progress.clone();
-                        progress.cursor = cursor;
-                        progress.carry = carry;
-                    } else {
-                        **progress = p
-                            .first_progress(progress.cursor.clone(), progress.carry.clone())
-                            .map_err(|e| e.to_string())?;
-                    }
+                    **progress = p
+                        .first_progress(progress.cursor.clone(), progress.carry.clone())
+                        .map_err(|e| e.to_string())?;
                     batch.archive = p.first_archive();
                 }
-                let id = progress
-                    .material
-                    .as_ref()
-                    .map(|m| m.id)
-                    .or_else(|| progress.image.as_ref().map(|i| i.material.id))
-                    .or_else(|| {
-                        image_plan
-                            .as_ref()
-                            .map(|PendingImage::AwaitingCosts(i)| i.material.id)
-                    });
+                let id = progress.material.as_ref().map(|m| m.id);
                 if let Some(material) = id {
                     let (start_cursor, end_cursor) = endpoints
                         .clone()
@@ -362,7 +202,6 @@ impl Pipeline<'_> {
                         removed: native_materials::removal_plan(&batch.archive)
                             .map_err(|e| e.to_string())?,
                         cited: Vec::new(),
-                        image: image_plan.take(),
                         base_cursor: cursor.clone(),
                         base_carry: base_carry.clone(),
                         start_cursor,
@@ -386,7 +225,6 @@ impl Pipeline<'_> {
                     let publication = Publication {
                         pending,
                         stages: std::mem::take(&mut extra_stages),
-                        image: image.take(),
                         verification: Verification {
                             key,
                             authority: self.authority.cloned(),
@@ -397,13 +235,11 @@ impl Pipeline<'_> {
                         permit,
                         guard: guard.take().unwrap(),
                     };
-                    let published = publication
+                    publication
                         .start()
                         .await
                         .map_err(|e| e.to_string())?
-                        .map_err(|e| e.to_string())?;
-                    published_image = published.image;
-                    published.outcome
+                        .map_err(|e| e.to_string())?
                 } else {
                     self.writer
                         .submit_checked(Priority::Bulk, batch, self.queued_check())
@@ -420,12 +256,43 @@ impl Pipeline<'_> {
             totals.add_outcome(out);
             first = false;
         }
-        if let Some(image) = &published_image {
-            totals.physical_images += 1;
-            totals.physical_evidence_bytes += image.metadata.evidence_bytes;
-            totals.physical_database_bytes += image.metadata.image_bytes;
-            totals.physical_map_bytes += image.metadata.map_bytes;
-        }
-        Ok(published_image)
+        Ok(())
     }
+}
+
+/// A driver that offers a material already in the store (a restart before all
+/// of it was admitted) reads it from the store, not from the source again.
+/// True when it did.
+async fn reopen_stored(
+    conn: &mut PgConnection,
+    blobs: &sinex_store::Blobs,
+    source: &dyn Source,
+    acquired: &mut drivers::Acquired,
+    sealing: Option<&crate::one_shot::SealingSink>,
+    authority: Option<&crate::sealed_access::Authority>,
+) -> Result<bool, String> {
+    let Some(material) = &mut acquired.material else {
+        return Ok(false);
+    };
+    let exists: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM raw.materials WHERE id=$1)")
+        .bind(material.id.0)
+        .fetch_one(&mut *conn)
+        .await
+        .map_err(|e| e.to_string())?;
+    if !exists {
+        return Ok(false);
+    }
+    let opened = crate::retained::open(conn, blobs, material.id, authority).await?;
+    if opened.reference.parser != source.spec().parser
+        || opened.reference.parser_version != source.spec().parser_version
+    {
+        return Err("a stored material was read by another parser version".into());
+    }
+    if let (Some(sealing), Some(key)) = (sealing, &opened.key) {
+        sealing.restore_current(material.id, opened.reference.blob.clone(), key.clone())?;
+    }
+    material.stored = Some(drivers::StoredBytes::FramedReader(opened.records()));
+    material.bytes.clear();
+    material.manifest = opened.reference.manifest.clone();
+    Ok(true)
 }

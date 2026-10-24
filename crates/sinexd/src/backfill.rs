@@ -46,10 +46,6 @@ pub fn kind_names() -> Vec<&'static str> {
 pub(crate) struct Totals {
     polls: usize,
     materials: usize,
-    physical_images: u64,
-    physical_evidence_bytes: u64,
-    physical_database_bytes: u64,
-    physical_map_bytes: u64,
     material_bytes: usize,
     batches: usize,
     events_offered: usize,
@@ -290,30 +286,27 @@ pub(crate) async fn drive(
             ));
         }
         if *stop.borrow() {
-            reader.cancel_pending();
             return Err("native capture cancelled".into());
         }
         let mut stopping = stop.clone();
         let mut guard = tokio::select! {
             guard=handle.source_guard(source.spec().name)=>guard?,
-            _=stopping.wait_for(|stopped|*stopped)=>{reader.cancel_pending();return Err("native capture cancelled".into());}
+            _=stopping.wait_for(|stopped|*stopped)=>return Err("native capture cancelled".into()),
         };
         let before = async {
             let position = positions::load(guard.connection(), binding)
                 .await
                 .map_err(|e| e.to_string())?
                 .unwrap_or((serde_json::Value::Null, serde_json::Value::Null));
-            let policy = crate::source_excision::AcquisitionPolicy::load(
+            let exclusions = crate::excision::exclusions::Exclusions::load(
                 guard.connection(),
-                &sink.0,
                 source.spec().name,
-                access.authority,
             )
             .await?;
-            Ok::<_, String>((position, policy))
+            Ok::<_, String>((position, exclusions))
         }
         .await;
-        let ((cursor, carry), policy) = match before {
+        let ((cursor, carry), exclusions) = match before {
             Ok(value) => value,
             Err(error) => {
                 guard.release().await?;
@@ -326,25 +319,7 @@ pub(crate) async fn drive(
                 sinex_store::native_materials::binding_pending(guard.connection(), binding)
                     .await
                     .map_err(|e| e.to_string())?;
-            let pending_image = if let Some(id) = pending_ids.first() {
-                sinex_store::native_materials::load(guard.connection(), *id)
-                    .await
-                    .map_err(|e| e.to_string())?
-                    .filter(|p| p.progress.material.is_none())
-            } else {
-                None
-            };
-            let acquired = match pending_image {
-                Some(p) => Ok(drivers::Acquired {
-                    image: None,
-                    input: p.progress.input,
-                    observation: p.progress.observation,
-                    revision: p.progress.revision,
-                    material: None,
-                    cursor_unchanged: p.end_cursor,
-                }),
-                None => reader.poll(&cursor),
-            };
+            let acquired = reader.poll(&cursor);
             Ok::<_, String>((acquired, pending_ids))
         }
         .await;
@@ -356,11 +331,6 @@ pub(crate) async fn drive(
             }
         };
         let acquired = match polled {
-            Err(drivers::DriverError::Pending) => {
-                guard.release().await?;
-                tokio::task::yield_now().await;
-                continue;
-            }
             Err(error) => {
                 guard.release().await?;
                 return Err(error.to_string());
@@ -368,9 +338,6 @@ pub(crate) async fn drive(
             Ok(acquired) => acquired,
         };
         let prepared = async {
-            if let Some(image) = &acquired.image {
-                image.set_check(check.clone()).map_err(|e| e.to_string())?;
-            }
             if let Some(authority) = access.authority {
                 authority.check()?;
             }
@@ -382,9 +349,8 @@ pub(crate) async fn drive(
                 let authority = access
                     .authority
                     .ok_or("retained sealed material requires explicit operator unlock")?;
-                let (reference, secrets) =
-                    authority.material_secrets(read_conn, material.id).await?;
-                sealing.restore_secrets(stored.blob.clone(), reference, secrets)?;
+                let key = authority.material_key(read_conn, material.id).await?;
+                sealing.restore_key(stored.blob.clone(), key)?;
             }
             // A directory material contains independent files. A new bundle has
             // no parser state from the preceding bundle; a resumed bundle keeps
@@ -397,18 +363,7 @@ pub(crate) async fn drive(
                 serde_json::Value::Null
             } else if acquired.material.is_some() {
                 match &sealing {
-                    Some(s) => {
-                        open_carry(
-                            read_conn,
-                            source,
-                            binding,
-                            &cursor,
-                            &carry,
-                            s,
-                            access.authority,
-                        )
-                        .await?
-                    }
+                    Some(s) => open_carry(read_conn, binding, &carry, s, access.authority).await?,
                     None => carry,
                 }
             } else {
@@ -439,10 +394,10 @@ pub(crate) async fn drive(
             authority: access.authority,
             check: check.clone(),
         };
-        let published = pipeline
+        pipeline
             .submit(
                 guard,
-                policy,
+                exclusions,
                 cursor,
                 base_carry,
                 carry,
@@ -450,9 +405,6 @@ pub(crate) async fn drive(
                 &mut totals,
             )
             .await?;
-        if let Some(image) = published {
-            reader.restore_image(crate::sqlite_images::previous(&sink.0, &image)?);
-        }
         if !had_material {
             break;
         }
@@ -496,12 +448,6 @@ pub(crate) async fn submit(
         Limits::default(),
     )
     .map_err(|e| e.to_string())?;
-    if let Some(image) = prepared.image_meta() {
-        totals.physical_images += 1;
-        totals.physical_evidence_bytes += image.evidence_bytes;
-        totals.physical_database_bytes += image.image_bytes;
-        totals.physical_map_bytes += image.map_bytes;
-    }
     let had_material = prepared.material_len();
     if let Some(bytes) = had_material {
         totals.materials += 1;
@@ -587,10 +533,6 @@ impl Totals {
             "archive_decoded_bytes": self.archive_decoded_bytes,
             "archive_record_bytes": self.archive_record_bytes,
             "materials": self.materials,
-            "physical_images":self.physical_images,
-            "physical_evidence_bytes":self.physical_evidence_bytes,
-            "physical_database_bytes":self.physical_database_bytes,
-            "physical_map_bytes":self.physical_map_bytes,
             "material_bytes": self.material_bytes,
             "batches": self.batches,
             "events_offered": self.events_offered,
@@ -617,10 +559,6 @@ impl Totals {
         self.archive_decoded_bytes += o.archive_decoded_bytes;
         self.archive_record_bytes += o.archive_record_bytes;
         self.materials += o.materials;
-        self.physical_images += o.physical_images;
-        self.physical_evidence_bytes += o.physical_evidence_bytes;
-        self.physical_database_bytes += o.physical_database_bytes;
-        self.physical_map_bytes += o.physical_map_bytes;
         self.material_bytes += o.material_bytes;
         self.batches += o.batches;
         self.events_offered += o.events_offered;
@@ -639,40 +577,22 @@ impl Totals {
 
 pub(crate) async fn open_carry(
     conn: &mut PgConnection,
-    source: &dyn Source,
     binding: &str,
-    cursor: &serde_json::Value,
     carry: &serde_json::Value,
     sealing: &crate::one_shot::SealingSink,
     authority: Option<&crate::sealed_access::Authority>,
 ) -> Result<serde_json::Value, String> {
-    use sinex_store::sealed::metadata;
-    if !metadata::is_carry(carry) {
-        if let Ok(value) = sealing.open_carry(carry) {
-            return Ok(value);
-        }
-        let reference = sinex_store::sealed::key_ref(carry).ok_or("invalid sealed parser carry")?;
-        let authority = authority.ok_or("sealed parser carry requires explicit operator unlock")?;
-        let material:uuid::Uuid=sqlx::query_scalar("SELECT k.material_id FROM privacy.material_keys k JOIN raw.materials m ON m.id=k.material_id JOIN raw.inputs i ON i.id=m.input_id WHERE k.key_ref=$1 AND i.binding=$2")
-            .bind(reference).bind(binding).fetch_optional(&mut *conn).await.map_err(|e|e.to_string())?.ok_or("sealed parser carry has no live binding-owned key")?;
-        let key = authority
-            .material_key(conn, sinex_model::MaterialId(material))
-            .await?;
-        let value =
-            sinex_store::sealed::unseal_payload(carry, &key.key).map_err(|e| e.to_string())?;
-        authority.check()?;
+    if let Ok(value) = sealing.open_carry(carry) {
         return Ok(value);
     }
-    let authority =
-        authority.ok_or("class-owned parser carry requires explicit operator unlock")?;
-    let scope = metadata::Scope::Carry {
-        source: source.spec().name.into(),
-        binding: binding.into(),
-        parser: source.spec().parser.into(),
-        parser_version: i32::try_from(source.spec().parser_version)
-            .map_err(|_| "parser version exceeds i32")?,
-        cursor: cursor.clone(),
-    };
-    let ciphertext = metadata::carry_ciphertext(carry).map_err(|e| e.to_string())?;
-    authority.open_current_carry(ciphertext.as_slice(), &scope)
+    let reference = sinex_store::sealed::key_ref(carry).ok_or("invalid sealed parser carry")?;
+    let authority = authority.ok_or("sealed parser carry requires explicit operator unlock")?;
+    let material:uuid::Uuid=sqlx::query_scalar("SELECT k.material_id FROM privacy.material_keys k JOIN raw.materials m ON m.id=k.material_id JOIN raw.inputs i ON i.id=m.input_id WHERE k.key_ref=$1 AND i.binding=$2")
+        .bind(reference).bind(binding).fetch_optional(&mut *conn).await.map_err(|e|e.to_string())?.ok_or("sealed parser carry has no key of this binding")?;
+    let key = authority
+        .material_key(conn, sinex_model::MaterialId(material))
+        .await?;
+    let value = sinex_store::sealed::unseal_payload(carry, &key.key).map_err(|e| e.to_string())?;
+    authority.check()?;
+    Ok(value)
 }

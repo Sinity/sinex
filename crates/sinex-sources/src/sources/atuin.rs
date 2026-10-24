@@ -45,36 +45,11 @@ impl Parser for AtuinParser {
     type Carry = ();
     type Payload = CommandExecuted;
 
-    fn erase_record(
-        &self,
-        _raw: &[u8],
-        _: &(),
-        _: &crate::RecordContext<'_>,
-    ) -> Result<crate::Erased<()>, RecordError> {
-        Ok(crate::Erased {
-            carry: (),
-            replay: None,
-        })
-    }
-
-    fn skip_erased(
-        &self,
-        _: &(),
-        transition: &Value,
-        _: &crate::RecordContext<'_>,
-    ) -> Result<(), RecordError> {
-        if transition.is_null() {
-            Ok(())
-        } else {
-            Err(RecordError::new("stateless Atuin has no replay transition"))
-        }
-    }
-
     fn parse(
         &self,
         row: &Map<String, Value>,
         _: &(),
-        context: &crate::RecordContext<'_>,
+        _context: &crate::RecordContext<'_>,
     ) -> Result<(Vec<CommandExecuted>, ()), RecordError> {
         let text = |name: &str| -> Result<String, RecordError> {
             match row.get(name) {
@@ -104,10 +79,7 @@ impl Parser for AtuinParser {
         };
         let extra: Map<String, Value> = row
             .iter()
-            .filter(|(k, _)| {
-                !KNOWN.contains(&k.as_str())
-                    || (context.manifest["row_format"] == 2 && k.as_str() == "_rowid")
-            })
+            .filter(|(k, _)| !KNOWN.contains(&k.as_str()))
             .map(|(k, v)| (k.clone(), v.clone()))
             .collect();
         let payload = CommandExecuted {

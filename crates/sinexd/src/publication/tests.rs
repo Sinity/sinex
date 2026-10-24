@@ -28,12 +28,7 @@ async fn failed_first_native_admission_keeps_exact_installed_custody_after_provi
     let source = atuin::source();
     let driver = atuin::driver(path.clone(), "h".into());
     let mut state = drivers::sqlite_rows::RowState::default();
-    let acquired = loop {
-        match driver.poll(&serde_json::Value::Null, &mut state) {
-            Err(drivers::DriverError::Pending) => continue,
-            result => break result.unwrap(),
-        }
-    };
+    let acquired = driver.poll(&serde_json::Value::Null, &mut state).unwrap();
     let m = acquired.material.as_ref().unwrap();
     let start_cursor = (m.cursor_at)(0).unwrap();
     let end_cursor = (m.cursor_at)(m.records.last().unwrap().1).unwrap();
@@ -44,9 +39,10 @@ async fn failed_first_native_admission_keeps_exact_installed_custody_after_provi
         .reserve_native(crate::writer::Priority::Bulk)
         .await
         .unwrap();
-    let basis = sinex_store::excision::operations_basis(&mut ctx.read_conn, atuin::SPEC.name)
-        .await
-        .unwrap();
+    let exclusions =
+        sinex_store::excision::exclusions::current(&mut ctx.read_conn, atuin::SPEC.name)
+            .await
+            .unwrap();
     let prepared = drivers::prepare(
         &source,
         "atuin@h",
@@ -57,7 +53,7 @@ async fn failed_first_native_admission_keeps_exact_installed_custody_after_provi
         sinex_sources::Limits::default(),
     )
     .unwrap()
-    .with_excision_basis(basis);
+    .with_exclusions(exclusions);
     let batch = prepared.batches().unwrap().next().unwrap().unwrap();
     let BatchKind::Source(progress) = &batch.kind else {
         panic!()
@@ -74,7 +70,6 @@ async fn failed_first_native_admission_keeps_exact_installed_custody_after_provi
         progress: (**progress).clone(),
         removed: native_materials::removal_plan(&batch.archive).unwrap(),
         cited: Vec::new(),
-        image: None,
         base_cursor: serde_json::Value::Null,
         base_carry: serde_json::Value::Null,
         start_cursor,
@@ -90,7 +85,6 @@ async fn failed_first_native_admission_keeps_exact_installed_custody_after_provi
             .into_iter()
             .map(NativeStage::Plain)
             .collect(),
-        image: None,
         verification: Verification::default(),
         blobs: ctx.blobs.clone(),
         batch,
@@ -170,7 +164,7 @@ async fn failed_first_native_admission_keeps_exact_installed_custody_after_provi
         sinex_sources::Limits::default(),
     )
     .unwrap()
-    .with_excision_basis(pending.progress.excision_basis.clone().unwrap());
+    .with_exclusions(pending.progress.exclusions.clone().unwrap());
     let mut batch = prepared.batches().unwrap().next().unwrap().unwrap();
     if let BatchKind::Source(p) = &mut batch.kind {
         **p = pending
@@ -298,7 +292,7 @@ async fn actual_sealed_append_first_chunk_and_restart_finish_original_bytes_and_
     let observation = acquired.observation.clone();
     let input = acquired.input.clone();
     let revision = acquired.revision;
-    let basis = sinex_store::excision::operations_basis(&mut ctx.read_conn, name)
+    let exclusions = sinex_store::excision::exclusions::current(&mut ctx.read_conn, name)
         .await
         .unwrap();
     let prepared = drivers::prepare(
@@ -314,7 +308,7 @@ async fn actual_sealed_append_first_chunk_and_restart_finish_original_bytes_and_
         },
     )
     .unwrap()
-    .with_excision_basis(basis.clone());
+    .with_exclusions(exclusions.clone());
     let mut first = [prepared.batches().unwrap().next().unwrap().unwrap()];
     sealing.seal(&mut first).unwrap();
     let [first] = first;
@@ -332,7 +326,6 @@ async fn actual_sealed_append_first_chunk_and_restart_finish_original_bytes_and_
             progress: (**progress).clone(),
             removed: native_materials::removal_plan(&first.archive).unwrap(),
             cited: Vec::new(),
-            image: None,
             base_cursor: serde_json::Value::Null,
             base_carry: serde_json::Value::Null,
             start_cursor: start,
@@ -345,7 +338,6 @@ async fn actual_sealed_append_first_chunk_and_restart_finish_original_bytes_and_
             .into_iter()
             .map(NativeStage::Sealed)
             .collect(),
-        image: None,
         verification: Verification {
             key: Some(sealing.key(&material.blob).unwrap()),
             authority: Some(authority.clone()),
@@ -389,17 +381,6 @@ async fn actual_sealed_append_first_chunk_and_restart_finish_original_bytes_and_
         .read_exact_at(0, &mut restored_bytes)
         .unwrap();
     assert_eq!(restored_bytes, original);
-    let mut naming_only = frozen.clone();
-    let key = naming_only.progress.material_keys.first_mut().unwrap();
-    let names = authority
-        .unwrap_secrets(&key.wrapped)
-        .unwrap()
-        .naming_only();
-    key.wrapped = sinex_store::sealed::wrap_secrets(&names, &authority.recipient()).unwrap();
-    assert!(
-        crate::retained::open_pending(&ctx.blobs, &naming_only, Some(&authority)).is_err(),
-        "pending naming-only capability entered body decryption"
-    );
     let expired = crate::sealed_access::Authority::new(
         sinex_store::sealed::Identity::generate(),
         std::time::Duration::ZERO,
@@ -424,7 +405,6 @@ async fn actual_sealed_append_first_chunk_and_restart_finish_original_bytes_and_
     let opened = crate::retained::open(
         &mut ctx.read_conn,
         &ctx.blobs,
-        name,
         material.id,
         Some(&authority),
     )
@@ -432,8 +412,6 @@ async fn actual_sealed_append_first_chunk_and_restart_finish_original_bytes_and_
     .unwrap();
     let records = opened
         .body
-        .as_ref()
-        .unwrap()
         .records(&opened.reference.manifest, source.spec().framer)
         .unwrap();
     let mut reader = binding::appended(zsh::driver(path.clone(), "h".into()));
@@ -442,9 +420,6 @@ async fn actual_sealed_append_first_chunk_and_restart_finish_original_bytes_and_
             reference: opened.reference.clone(),
             stored: opened.records(),
             records,
-            erased: None,
-            archived_end: None,
-            erased_members: Vec::new(),
             base_cursor: serde_json::Value::Null,
             cursor: first_cursor.clone(),
             head: Vec::new(),
@@ -480,9 +455,7 @@ async fn actual_sealed_append_first_chunk_and_restart_finish_original_bytes_and_
         .unwrap();
     let carry = crate::backfill::open_carry(
         &mut ctx.read_conn,
-        &source,
         "history@h",
-        &first_cursor,
         &carry,
         &sealing,
         Some(&authority),
@@ -499,7 +472,7 @@ async fn actual_sealed_append_first_chunk_and_restart_finish_original_bytes_and_
         sinex_sources::Limits::default(),
     )
     .unwrap()
-    .with_excision_basis(basis);
+    .with_exclusions(exclusions);
     for batch in prepared.batches().unwrap() {
         let mut batch = [batch.unwrap()];
         sealing.seal(&mut batch).unwrap();

@@ -309,7 +309,6 @@ pub fn read_input(
         let state = &mut context.routes[index];
         state.cursor.done = true;
         let acquired = Acquired {
-            image: None,
             input: state.driver.input(),
             observation: ObservationFacts {
                 changed: false,
@@ -369,7 +368,6 @@ impl Context<'_, '_> {
         let ends: Vec<usize> = pending.records.iter().map(|&(_, end)| end).collect();
         let cursor_base = after.clone();
         let acquired = Acquired {
-            image: None,
             input: state.driver.input(),
             observation: ObservationFacts {
                 changed: false,
@@ -418,7 +416,6 @@ impl Context<'_, '_> {
         let manifest = json!({"role": "original-archive", "format_version": VERSION,
             "path": state.driver.path, "host": state.driver.host, "container": self.capture.container, "class": self.capture.class});
         let acquired = Acquired {
-            image: None,
             input: state.driver.input(),
             observation: self.facts.clone(),
             revision,
@@ -626,7 +623,6 @@ impl Context<'_, '_> {
                 "framing": state.driver.framing.name(), "records": records, "order_base": after.capture.reading_order_base.saturating_add(i64::try_from(after.order_offset.saturating_add(part_offset)).unwrap_or(i64::MAX)),
                 "members": [{"path": path, "stream_offset": 0, "length": bytes.len(), "record_start": after.part_start}]});
             let acquired = Acquired {
-                image: None,
                 input: state.driver.input(),
                 observation: ObservationFacts {
                     changed: false,

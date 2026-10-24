@@ -18,7 +18,6 @@ fn notes_and_their_removal() {
         let out = drain(
             &parser,
             DrainInput {
-                erased: None,
                 source: "t",
                 class: Class::Open,
                 material: MaterialId(uuid::Uuid::nil()),

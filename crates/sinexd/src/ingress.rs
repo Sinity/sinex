@@ -127,7 +127,7 @@ impl Ingest {
     /// unavailable) and should be delivered again.
     pub async fn handle(&mut self, producer: &str, body: &[u8]) -> Result<Acknowledgment, String> {
         let mut guard =
-            Some(crate::source_excision::AcquisitionGuard::from_pool(&self.reads, producer).await?);
+            Some(crate::excision::AcquisitionGuard::from_pool(&self.reads, producer).await?);
         let result = self.handle_guarded(producer, body, &mut guard).await;
         if let Some(guard) = guard {
             guard.release().await?;
@@ -142,7 +142,7 @@ impl Ingest {
         &mut self,
         producer: &str,
         body: &[u8],
-        guard: &mut Option<crate::source_excision::AcquisitionGuard>,
+        guard: &mut Option<crate::excision::AcquisitionGuard>,
     ) -> Result<Acknowledgment, String> {
         let frame: Ingress = match serde_json::from_slice(body) {
             Ok(frame) => frame,
@@ -175,12 +175,12 @@ impl Ingest {
         {
             return Ok(acknowledgment(stored));
         }
-        let basis = sinex_store::excision::operations_basis(&mut self.conn, producer)
+        let exclusions = sinex_store::excision::exclusions::current(&mut self.conn, producer)
             .await
             .map_err(|e| e.to_string())?;
-        if basis.count != 0 {
+        if exclusions.count != 0 {
             return Ok(refused_unrecorded(
-                "producer namespace has permanent exclusions; scoped custody filtering is unavailable",
+                "this producer has excised records, and its frames cannot be checked against them yet",
             ));
         }
         let run = self.run(producer).await?;
@@ -346,10 +346,7 @@ impl Ingest {
         Ok((
             Some(SourceProgress {
                 native_pending: None,
-                erased_replay: None,
-                excision_basis: None,
-                image: None,
-                image_revision: None,
+                exclusions: None,
                 material_keys: Vec::new(),
                 binding: format!("ingress:{producer}"),
                 input: m.input.clone(),

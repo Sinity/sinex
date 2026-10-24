@@ -7,20 +7,6 @@ impl Parser for Lines {
     type Record<'a> = &'a [u8];
     type Carry = u32;
     type Payload = CommandImported;
-    fn skip_erased(
-        &self,
-        carry: &u32,
-        transition: &Value,
-        _: &crate::RecordContext<'_>,
-    ) -> Result<u32, RecordError> {
-        let increment = transition
-            .as_u64()
-            .and_then(|n| u32::try_from(n).ok())
-            .ok_or_else(|| RecordError::new("counter token is not an increment"))?;
-        carry
-            .checked_add(increment)
-            .ok_or_else(|| RecordError::new("counter overflow"))
-    }
     fn parse(
         &self,
         record: &&[u8],
@@ -64,7 +50,6 @@ fn run(bytes: &[u8], carry: Value, limits: Limits) -> Vec<DrainOutput> {
     drain(
         &Lines,
         DrainInput {
-            erased: None,
             source: "t",
             class: Class::Open,
             material: MaterialId(uuid::Uuid::nil()),
@@ -208,7 +193,6 @@ fn staged_records_match_slice_hashes_locations_carry_and_limits() {
             let actual = drain(
                 &Lines,
                 DrainInput {
-                    erased: None,
                     source: "t",
                     class: Class::Open,
                     material: MaterialId(uuid::Uuid::nil()),
@@ -279,7 +263,6 @@ fn staged_read_failure_stops_before_a_false_progress_chunk() {
     let mut chunks = Drainer::new(
         &Lines,
         DrainInput {
-            erased: None,
             source: "t",
             class: Class::Open,
             material: MaterialId::new(),
@@ -309,7 +292,6 @@ fn invalid_staged_ranges_are_refused_before_record_allocation() {
         Drainer::new(
             &Lines,
             DrainInput {
-                erased: None,
                 source: "t",
                 class: Class::Open,
                 material: MaterialId::new(),
@@ -336,7 +318,6 @@ fn directory_bundles_keep_empty_members_at_distinct_anchors() {
         drain(
             &NotesParser,
             DrainInput {
-                erased: None,
                 source: "synthetic",
                 class: Class::Open,
                 material: MaterialId::new(),
@@ -404,7 +385,6 @@ fn retained_reader_holds_one_record_and_stops_at_a_backing_fault() {
     let mut chunks = Drainer::new(
         &Lines,
         DrainInput {
-            erased: None,
             source: "synthetic",
             class: Class::Open,
             material: MaterialId::new(),
@@ -432,14 +412,12 @@ fn retained_reader_holds_one_record_and_stops_at_a_backing_fault() {
 }
 
 #[test]
-fn provider_manifest_cannot_supply_erased_state_at_a_naturally_blank_record() {
+fn a_blank_record_is_no_record_and_leaves_the_carry_alone() {
     let bytes = b"  \nretained\n";
     let records = lines(bytes);
-    let manifest = serde_json::json!({"erase_transitions":{"0":99}});
     let chunks = drain(
         &Lines,
         DrainInput {
-            erased: None,
             source: "t",
             class: Class::Open,
             material: MaterialId::new(),
@@ -448,73 +426,10 @@ fn provider_manifest_cannot_supply_erased_state_at_a_naturally_blank_record() {
             carry: Value::Null,
             reading_order: &|a| ReadingOrder(a as i64),
             limits: Limits::default(),
-            manifest: &manifest,
+            manifest: &Value::Null,
         },
     )
     .unwrap();
     assert_eq!(commands(&chunks), vec![(3, "retained".into())]);
     assert_eq!(chunks.last().unwrap().carry, serde_json::json!(1));
-}
-
-#[test]
-fn authenticated_erased_coordinates_merge_blank_fragments_and_support_bodyless_whole_replay() {
-    let bytes = b"a\n \n \nb\n";
-    let records = lines(bytes);
-    let transitions = ErasedTransitions::from_archive(
-        [(2, 6, Some(serde_json::json!(2)))],
-        bytes.len() as u64,
-        false,
-    )
-    .unwrap();
-    let chunks = drain(
-        &Lines,
-        DrainInput {
-            erased: Some(&transitions),
-            source: "t",
-            class: Class::Sealed,
-            material: MaterialId::new(),
-            bytes: bytes.as_slice().into(),
-            records: &records,
-            carry: Value::Null,
-            reading_order: &|a| ReadingOrder(a as i64),
-            limits: Limits::default(),
-            manifest: &Value::Null,
-        },
-    )
-    .unwrap();
-    assert_eq!(commands(&chunks), vec![(0, "a".into()), (6, "b".into())]);
-    assert_eq!(chunks.last().unwrap().carry, serde_json::json!(4));
-    let whole =
-        ErasedTransitions::from_archive([(0, 8, Some(serde_json::json!(4)))], 8, true).unwrap();
-    let chunks = drain(
-        &Lines,
-        DrainInput {
-            erased: Some(&whole),
-            source: "t",
-            class: Class::Sealed,
-            material: MaterialId::new(),
-            bytes: RecordBytes::Erased(8),
-            records: &[],
-            carry: Value::Null,
-            reading_order: &|a| ReadingOrder(a as i64),
-            limits: Limits::default(),
-            manifest: &Value::Null,
-        },
-    )
-    .unwrap();
-    assert_eq!(
-        (
-            chunks.last().unwrap().end,
-            chunks.last().unwrap().carry.clone()
-        ),
-        (8, serde_json::json!(4))
-    );
-    assert!(commands(&chunks).is_empty());
-    assert!(
-        ErasedTransitions::from_archive([(0, 8, None)], 8, true)
-            .unwrap()
-            .after(3)
-            .is_err()
-    );
-    assert!(ErasedTransitions::from_archive([(0, 5, None), (4, 8, None)], 8, false).is_err());
 }

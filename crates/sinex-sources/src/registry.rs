@@ -1,7 +1,7 @@
 //! Declaring a source (architecture §5.4). A source is a parser plus a
 //! declaration, registered in one list; the registry generates the NixOS
 //! options, the source catalog rows and the status view.
-use crate::{DrainInput, DrainOutput, Erased, Parser, RecordContext, RecordError};
+use crate::{DrainInput, DrainOutput, Parser, RecordError};
 use sinex_model::Class;
 
 /// The input shape a source reads, which picks its driver (architecture §5.3).
@@ -56,27 +56,8 @@ pub trait Source: Send + Sync {
         input: DrainInput<'a>,
     ) -> Result<Box<dyn Iterator<Item = Result<DrainOutput, RecordError>> + Send + 'a>, RecordError>;
 
-    fn record_hash(
-        &self,
-        _raw: &[u8],
-        _context: &RecordContext<'_>,
-    ) -> Result<[u8; 32], RecordError> {
-        Err(RecordError::new(
-            "this source has no declared record hash operation",
-        ))
-    }
-
-    fn erase_record(
-        &self,
-        raw: &[u8],
-        carry: &serde_json::Value,
-        context: &RecordContext<'_>,
-    ) -> Result<Erased<serde_json::Value>, RecordError> {
-        let _ = (raw, carry, context);
-        Err(RecordError::new(
-            "this source does not support carry erasure",
-        ))
-    }
+    /// The record hash the drain gives a record's events.
+    fn record_hash(&self, raw: &[u8]) -> [u8; 32];
 
     fn drain(&self, input: DrainInput<'_>) -> Result<Vec<DrainOutput>, RecordError> {
         self.drainer(input)?.collect()
@@ -88,32 +69,8 @@ impl<P: Parser> Source for DeclaredSource<P> {
         &self.spec
     }
 
-    fn record_hash(
-        &self,
-        raw: &[u8],
-        context: &RecordContext<'_>,
-    ) -> Result<[u8; 32], RecordError> {
-        Ok(crate::drain::record_hash::<P>(raw, context))
-    }
-
-    fn erase_record(
-        &self,
-        raw: &[u8],
-        carry: &serde_json::Value,
-        context: &RecordContext<'_>,
-    ) -> Result<Erased<serde_json::Value>, RecordError> {
-        let carry = if carry.is_null() {
-            P::Carry::default()
-        } else {
-            serde_json::from_value(carry.clone())
-                .map_err(|_| RecordError::new("stored carry does not decode for erasure"))?
-        };
-        let erased = self.parser.erase_record(raw, &carry, context)?;
-        Ok(Erased {
-            carry: serde_json::to_value(erased.carry)
-                .map_err(|_| RecordError::new("erased carry does not encode"))?,
-            replay: erased.replay,
-        })
+    fn record_hash(&self, raw: &[u8]) -> [u8; 32] {
+        crate::drain::record_hash::<P>(raw)
     }
 
     fn drainer<'a>(

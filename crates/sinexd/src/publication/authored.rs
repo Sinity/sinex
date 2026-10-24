@@ -1,6 +1,6 @@
 //! Authored records and their cited bytes use the same publication owner as capture.
 use super::*;
-use crate::source_excision::AcquisitionPolicy;
+use crate::excision::exclusions::Exclusions;
 use crate::writer::{Priority, WriterHandle};
 use serde_json::Value;
 use sinex_model::{Class, MaterialId, ReadingOrder, RunId};
@@ -60,45 +60,29 @@ async fn resume_owned(
         Err(e) => return Err(e),
     };
     let recovery = async {
-        if pending.source != source.spec().name
-            || pending.binding != binding
-            || pending.image.is_some()
-            || pending.progress.image.is_some()
-        {
-            return Err("pending authored publication has a different source or image role".into());
+        if pending.source != source.spec().name || pending.binding != binding {
+            return Err("pending authored publication has a different source or binding".into());
         }
-        let policy = AcquisitionPolicy::load(
-            guard.as_mut().unwrap().connection(),
-            blobs,
-            source.spec().name,
-            None,
-        )
-        .await?;
-        if pending.progress.excision_basis.as_ref() != Some(&policy.basis) {
-            return Err(
-                "pending authored exclusion basis changed; reconcile original custody before retry"
-                    .into(),
-            );
+        let exclusions =
+            Exclusions::load(guard.as_mut().unwrap().connection(), source.spec().name).await?;
+        if pending.progress.exclusions.as_ref() != Some(exclusions.version()) {
+            return Err("the source was excised since this request; send it again".into());
         }
         let opened = crate::retained::open_pending(blobs, &pending, None)?;
         let reference = &opened.reference;
         if reference.parser != source.spec().parser
             || reference.parser_version != source.spec().parser_version
-            || !opened.metadata.is_empty()
         {
-            return Err("pending authored parser or replay shape is unavailable".into());
+            return Err("pending authored material was read by another parser version".into());
         }
         let order = reference.manifest["read_at_ns"]
             .as_i64()
             .ok_or("authored material lacks its recorded reading order")?;
         let records = opened
             .body
-            .as_ref()
-            .ok_or("pending authored body is unavailable")?
             .records(&reference.manifest, source.spec().framer)?;
         let end = pending.end_cursor.clone();
         let acquired = drivers::Acquired {
-            image: None,
             input: pending.progress.input.clone(),
             observation: pending.progress.observation.clone(),
             revision: pending.progress.revision,
@@ -144,7 +128,6 @@ async fn resume_owned(
     Publication {
         pending,
         stages,
-        image: None,
         verification: Verification::default(),
         blobs: blobs.clone(),
         batch,
@@ -204,9 +187,6 @@ async fn submit_owned(
     guard: &mut Option<AcquisitionGuard>,
 ) -> R<AuthoredOutcome> {
     let preflight = async {
-        if acquired.image.is_some() {
-            return Err("authored publication cannot replace a physical image".into());
-        }
         if let Some(reason) = &acquired.observation.unavailable {
             return Err(format!("authored acquisition unavailable: {reason}"));
         }
@@ -239,13 +219,8 @@ async fn submit_owned(
         )
         .await
         .map_err(error)?;
-        let policy = AcquisitionPolicy::load(
-            guard.as_mut().unwrap().connection(),
-            blobs,
-            source.spec().name,
-            None,
-        )
-        .await?;
+        let exclusions =
+            Exclusions::load(guard.as_mut().unwrap().connection(), source.spec().name).await?;
         let privacy = sinex_store::privacy::load(
             guard.as_mut().unwrap().connection(),
             std::iter::once(source.spec().name),
@@ -266,20 +241,20 @@ async fn submit_owned(
             .await
             .map_err(error)?
             .unwrap_or((Value::Null, Value::Null));
-        Ok((policy, base, class))
+        Ok((exclusions, base, class))
     }
     .await;
-    let (policy, (base_cursor, base_carry), class) = match preflight {
+    let (exclusions, (base_cursor, base_carry), class) = match preflight {
         Ok(value) => value,
         Err(e) => return Err(e),
     };
-    let policy = Arc::new(policy);
+    let exclusions = Arc::new(exclusions);
     let prepared = prepare(
         source.clone(),
         binding.into(),
         acquired,
         blobs.clone(),
-        Some(policy.clone()),
+        Some(exclusions.clone()),
         class,
     )
     .await;
@@ -299,7 +274,7 @@ async fn submit_owned(
         .flat_map(|event| event.cites.iter().cloned())
         .collect::<Vec<_>>();
     let citations = native_materials::citation_set(&cited).map_err(error)?;
-    policy.check_cited(&cited)?;
+    exclusions.check_cited(&cited)?;
     if companions.iter().any(|stage| {
         citations
             .get(&stage.name())
@@ -316,7 +291,7 @@ async fn submit_owned(
     let BatchKind::Source(progress) = &mut batch.kind else {
         unreachable!()
     };
-    progress.excision_basis = Some(policy.basis.clone());
+    progress.exclusions = Some(exclusions.version().clone());
     let material = progress.material.as_ref().map(|m| m.id);
     let permit = writer.reserve_native(Priority::Live).await.map_err(error)?;
     let outcome = if let Some(id) = material {
@@ -327,7 +302,6 @@ async fn submit_owned(
             progress: (**progress).clone(),
             removed: native_materials::removal_plan(&batch.archive).map_err(error)?,
             cited,
-            image: None,
             base_cursor,
             base_carry,
             start_cursor: Value::Null,
@@ -337,7 +311,6 @@ async fn submit_owned(
         Publication {
             pending,
             stages,
-            image: None,
             verification: Verification::default(),
             blobs: blobs.clone(),
             batch,
@@ -348,7 +321,6 @@ async fn submit_owned(
         .await
         .map_err(error)?
         .map_err(error)?
-        .outcome
     } else {
         permit
             .admit(batch, guard.take().unwrap(), Arc::new(|| Ok(())))
@@ -367,30 +339,14 @@ async fn prepare(
     binding: String,
     acquired: drivers::Acquired,
     blobs: Blobs,
-    policy: Option<Arc<AcquisitionPolicy>>,
+    exclusions: Option<Arc<Exclusions>>,
     class: Class,
 ) -> R<(Batch, Vec<NativeStage>)> {
     tokio::task::spawn_blocking(move || {
         let sink = StagingSink::new(blobs.clone());
-        let acquired = match policy {
-            Some(policy) => {
-                policy
-                    .filter(
-                        &blobs,
-                        source.as_ref(),
-                        crate::source_excision::Filtered {
-                            acquired,
-                            erased: None,
-                            publication: None,
-                            registered: false,
-                            bodyless: false,
-                        },
-                        &Value::Null,
-                        class,
-                        None,
-                        &sink,
-                    )?
-                    .acquired
+        let acquired = match exclusions {
+            Some(exclusions) => {
+                exclusions.filter(source.as_ref(), acquired, &Value::Null, class, false)?
             }
             None => acquired,
         };

@@ -37,12 +37,7 @@ pub struct Api {
 /// expires, and the data keys it has unwrapped.
 pub struct Unlocked {
     authority: crate::sealed_access::Authority,
-    keys: std::collections::HashMap<String, CachedDataKey>,
-}
-
-struct CachedDataKey {
-    envelope: [u8; 32],
-    key: age::secrecy::zeroize::Zeroizing<[u8; 32]>,
+    keys: std::collections::HashMap<String, age::secrecy::zeroize::Zeroizing<[u8; 32]>>,
 }
 
 impl Drop for Unlocked {
@@ -109,10 +104,13 @@ fn collect_sealed(value: &Value, out: &mut Vec<String>) {
     }
 }
 
-fn unseal_in(value: &mut Value, keys: &std::collections::HashMap<String, CachedDataKey>) {
+fn unseal_in(
+    value: &mut Value,
+    keys: &std::collections::HashMap<String, age::secrecy::zeroize::Zeroizing<[u8; 32]>>,
+) {
     if let Some(r) = sinex_store::sealed::key_ref(value) {
         if let Some(key) = keys.get(r)
-            && let Ok(plain) = sinex_store::sealed::unseal_payload(value, &key.key)
+            && let Ok(plain) = sinex_store::sealed::unseal_payload(value, key)
         {
             *value = plain;
         }
@@ -211,7 +209,7 @@ impl Api {
     }
 
     /// Replace every sealed payload in `value` with its plaintext, unwrapping
-    /// each data key once per session. An excised key leaves the value sealed.
+    /// each data key once per session.
     async fn unseal(&self, value: &mut Value) -> Result<(), String> {
         let mut refs = Vec::new();
         collect_sealed(value, &mut refs);
@@ -225,28 +223,15 @@ impl Api {
         s.authority.check()?;
         let mut conn = self.reads.acquire().await.map_err(|e| e.to_string())?;
         for r in refs {
+            if s.keys.contains_key(&r) {
+                continue;
+            }
             if let Some(wrapped) = sinex_store::sealed::wrapped_key(&mut conn, &r)
                 .await
                 .map_err(|e| e.to_string())?
             {
-                let envelope = *blake3::hash(&wrapped).as_bytes();
-                if s.keys
-                    .get(&r)
-                    .is_none_or(|cached| cached.envelope != envelope)
-                {
-                    // Retire cached data before checking a replacement's role.
-                    s.keys.remove(&r);
-                    let key = s.authority.unwrap(&wrapped)?;
-                    s.keys.insert(
-                        r,
-                        CachedDataKey {
-                            envelope,
-                            key: age::secrecy::zeroize::Zeroizing::new(key),
-                        },
-                    );
-                }
-            } else {
-                s.keys.remove(&r);
+                let key = s.authority.unwrap(&wrapped)?;
+                s.keys.insert(r, age::secrecy::zeroize::Zeroizing::new(key));
             }
         }
         s.authority.check()?;
@@ -354,14 +339,12 @@ impl Api {
                 reference,
                 material,
                 dry_run,
-                sealed,
             } => {
                 self.excise(
                     caller,
                     reference.as_deref(),
                     material.as_deref(),
                     dry_run.unwrap_or(false),
-                    sealed.unwrap_or(false),
                     actor,
                 )
                 .await

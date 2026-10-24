@@ -253,18 +253,9 @@ pub(crate) fn tables(c: &Checks) -> Vec<String> {
   durable_bytes bigint NOT NULL CHECK (durable_bytes >= 0),
   manifest jsonb NOT NULL,
   parser text NOT NULL,
-  parser_version integer NOT NULL,
-  erased_replay_blob text REFERENCES core.blobs(hash)
+  parser_version integer NOT NULL
 )".into(),
         "CREATE INDEX materials_input ON raw.materials (input_id, part_index)".into(),
-        "CREATE TABLE raw.sqlite_images (
-  revision_id uuid PRIMARY KEY REFERENCES raw.revisions(id),
-  material_id uuid UNIQUE NOT NULL REFERENCES raw.materials(id),
-  database text NOT NULL,
-  host text NOT NULL,
-  metadata jsonb NOT NULL
-)".into(),
-        "CREATE INDEX sqlite_images_lineage ON raw.sqlite_images (host, database)".into(),
         // One row per record a parser could not read; the bytes stay in the
         // material, so a retry is a replay of exactly those bytes.
         "CREATE TABLE raw.failures (
@@ -422,16 +413,13 @@ pub(crate) fn tables(c: &Checks) -> Vec<String> {
   id boolean PRIMARY KEY CHECK (id),
   hash_key bytea NOT NULL CHECK (length(hash_key) = 32)
 )".into(),
-        // A sealed material's data key, wrapped with the class key's public
-        // half; deleting the row is the excision of everything it sealed.
+        // A sealed material's data key, wrapped with the class key's public half.
         "CREATE TABLE privacy.material_keys (
   material_id uuid PRIMARY KEY,
   key_ref text NOT NULL UNIQUE,
   class text NOT NULL,
   wrapped_key bytea NOT NULL,
-  created_at timestamptz NOT NULL DEFAULT now(),
-  role text NOT NULL DEFAULT 'data-and-record-naming'
-    CHECK (role IN ('data-and-record-naming', 'record-naming-only'))
+  created_at timestamptz NOT NULL DEFAULT now()
 )".into(),
         // Full-text search read model (spec `query.md` §5, `storage.md`
         // §3.11): each event's payload text, normalized (case-folded, NFC,
@@ -594,41 +582,8 @@ $$"
 
 pub(crate) fn event_guard() -> &'static str {
     "CREATE OR REPLACE FUNCTION core.event_guard() RETURNS trigger LANGUAGE plpgsql AS $$
-DECLARE
-  operation text;
-  canonical text;
 BEGIN
-  operation := nullif(current_setting('sinex.excise_operation', true), '');
   IF TG_OP = 'UPDATE' THEN
-    IF operation IS NOT NULL AND to_regclass('pg_temp.excision_rekeys') IS NOT NULL
-       AND to_regclass('pg_temp.excision_rekey_keys') IS NOT NULL THEN
-      canonical := CASE
-        WHEN TG_RELID='core.events'::regclass OR EXISTS(
-          SELECT 1 FROM pg_inherits WHERE inhrelid=TG_RELID AND inhparent='core.events'::regclass)
-          THEN 'core.events'
-        WHEN TG_RELID='telemetry.events'::regclass OR EXISTS(
-          SELECT 1 FROM pg_inherits WHERE inhrelid=TG_RELID AND inhparent='telemetry.events'::regclass)
-          THEN 'telemetry.events'
-        ELSE NULL END;
-      -- ts_coided is generated after BEFORE triggers from the unchanged ID.
-      IF canonical IS NOT NULL AND OLD.class='sealed' AND NEW.class='sealed'
-         AND (to_jsonb(NEW)-'payload'-'ts_coided')=(to_jsonb(OLD)-'payload'-'ts_coided') THEN
-        IF EXISTS(
-          SELECT 1 FROM pg_temp.excision_rekeys s
-          JOIN pg_temp.excision_rekey_keys r ON r.old_ref=OLD.payload->>'key'
-          JOIN privacy.material_keys k ON k.material_id=r.material_id AND k.key_ref=r.replacement_ref
-          JOIN core.operations o ON o.id::text=operation AND o.kind='excise'
-          WHERE s.kind=canonical AND s.row_id=OLD.id::text
-            AND s.material_id IS NOT DISTINCT FROM OLD.material_id
-            AND s.old_value=OLD.payload AND s.replacement=NEW.payload
-            AND NEW.payload->>'key'=r.replacement_ref
-            AND k.class='sealed' AND k.role='data-and-record-naming'
-            AND r.replacement_role='data-and-record-naming' AND r.old_role='data-and-record-naming'
-        ) THEN
-          RETURN NEW;
-        END IF;
-      END IF;
-    END IF;
     RAISE EXCEPTION 'event rows are immutable' USING ERRCODE = '23514';
   END IF;
   IF TG_OP = 'DELETE' AND nullif(current_setting('sinex.excise_operation', true), '') IS NULL THEN

@@ -1,31 +1,25 @@
-//! The sealed class (architecture §3.5; spec `privacy.md` §4). A sealed
+//! The sealed class. A sealed
 //! material's bytes are encrypted in the content store under a fresh data key;
 //! the events read from it carry their payload encrypted under the same key,
 //! with the envelope (type, time, source, provenance) left readable. Equivalence
 //! keys and record hashes of sealed events are keyed hashes under a naming key
-//! normally derived from the data key. A replacement data key can retain the
-//! existing record-naming capability without retaining old decryption keys.
+//! derived from the data key, so equal values still deduplicate without
+//! revealing them.
 //!
 //! Data keys are wrapped with the class key's public half (an age X25519
 //! recipient), which the daemon holds, so capture never needs the secret. The
-//! operator's identity unwraps them only during an unlock session. Excision
-//! destroys the data capability: the bytes and sealed fields become unreadable
-//! everywhere they were copied. Naming-only capabilities cannot decrypt content.
+//! operator's identity unwraps them only during an unlock session.
 use crate::{Error, Result};
 use base64::Engine;
 use chacha20poly1305::aead::{Aead, KeyInit};
 use chacha20poly1305::{XChaCha20Poly1305, XNonce};
 use serde_json::{Value, json};
-use sinex_model::{Class, Event, MaterialId};
+use sinex_model::{Class, EquivalenceKey, Event, MaterialId};
 use sqlx::PgConnection;
+use std::io::{Read, Write};
 
 pub use age::x25519::{Identity, Recipient};
 pub use hashed_blobs::DataKey;
-pub mod metadata;
-mod secrets;
-mod validation;
-pub use secrets::{MaterialSecrets, SecretRole, unwrap_secrets, wrap_secrets};
-pub(crate) use validation::validate_batch;
 
 /// A fresh data key, named by a new key reference.
 pub fn new_key() -> Result<DataKey> {
@@ -54,14 +48,35 @@ pub fn parse_identity(text: &str) -> Result<age::x25519::Identity> {
         .map_err(|e| Error::Invalid(format!("identity: {e}")))
 }
 
-/// Wrap a data key and its record-naming capability for the sealed class.
-pub fn wrap(key: &DataKey, recipient: &Recipient) -> Result<Vec<u8>> {
-    wrap_secrets(&MaterialSecrets::from_data_key(key), recipient)
+/// Wrap a data key for storage: age-encrypted to the class key.
+pub fn wrap(key: &DataKey, recipient: &age::x25519::Recipient) -> Result<Vec<u8>> {
+    let encryptor =
+        age::Encryptor::with_recipients(std::iter::once(recipient as &dyn age::Recipient))
+            .map_err(|e| Error::Invalid(format!("wrap: {e}")))?;
+    let mut out = Vec::new();
+    let mut writer = encryptor
+        .wrap_output(&mut out)
+        .map_err(|e| Error::Invalid(format!("wrap: {e}")))?;
+    writer
+        .write_all(&key.key)
+        .and_then(|()| writer.finish().map(drop))
+        .map_err(|e| Error::Invalid(format!("wrap: {e}")))?;
+    Ok(out)
 }
 
-/// Unwrap only a data capability. Naming-only envelopes are never data keys.
-pub fn unwrap(wrapped: &[u8], identity: &Identity) -> Result<[u8; 32]> {
-    unwrap_secrets(wrapped, identity, Class::Sealed)?.data_bytes()
+/// Unwrap a stored data key with the operator's identity.
+pub fn unwrap(wrapped: &[u8], identity: &age::x25519::Identity) -> Result<[u8; 32]> {
+    let decryptor =
+        age::Decryptor::new(wrapped).map_err(|e| Error::Invalid(format!("unwrap: {e}")))?;
+    let mut reader = decryptor
+        .decrypt(std::iter::once(identity as &dyn age::Identity))
+        .map_err(|e| Error::Invalid(format!("unwrap: {e}")))?;
+    let mut key = Vec::new();
+    reader
+        .read_to_end(&mut key)
+        .map_err(|e| Error::Invalid(format!("unwrap: {e}")))?;
+    key.try_into()
+        .map_err(|_| Error::Invalid("unwrapped key is not 32 bytes".into()))
 }
 
 fn naming_key(key: &[u8; 32]) -> [u8; 32] {
@@ -91,21 +106,15 @@ pub fn key_ref(payload: &Value) -> Option<&str> {
 /// Seal an event read from a sealed material: encrypt its payload, key its
 /// equivalence key and record hash, and set its class.
 pub fn seal_event(event: &mut Event, key: &DataKey) -> Result<()> {
-    seal_event_with_secrets(event, key, &MaterialSecrets::from_data_key(key))
-}
-
-/// Encrypt with the current data key while retaining the material's record identities.
-pub fn seal_event_with_secrets(
-    event: &mut Event,
-    key: &DataKey,
-    secrets: &MaterialSecrets,
-) -> Result<()> {
-    secrets.require_data_key(key)?;
     event.payload = seal_value(&event.payload, key)?;
+    let naming = naming_key(&key.key);
     if let Some(k) = &event.equivalence_key {
-        event.equivalence_key = Some(secrets.name_equivalence(&k.0));
+        event.equivalence_key = Some(EquivalenceKey(format!(
+            "sealed:{}",
+            blake3::keyed_hash(&naming, k.0.as_bytes()).to_hex()
+        )));
     }
-    event.record_hash = secrets.name_record_hash(&event.record_hash);
+    event.record_hash = *blake3::keyed_hash(&naming, &event.record_hash).as_bytes();
     event.class = Class::Sealed;
     Ok(())
 }
@@ -170,13 +179,13 @@ pub async fn store_key(
     )
     .execute(&mut *conn)
     .await?;
-    let actual = sqlx::query!(
-        "SELECT key_ref,role FROM privacy.material_keys WHERE material_id=$1",
+    let actual = sqlx::query_scalar!(
+        "SELECT key_ref FROM privacy.material_keys WHERE material_id=$1",
         material.0
     )
     .fetch_one(conn)
     .await?;
-    if actual.key_ref != key_ref || actual.role != SecretRole::DataAndRecordNaming.as_str() {
+    if actual != key_ref {
         return Err(Error::Invalid(
             "material is already bound to a different sealed key".into(),
         ));
@@ -187,7 +196,7 @@ pub async fn store_key(
 /// A wrapped key by its reference; `None` once excised.
 pub async fn wrapped_key(conn: &mut PgConnection, key_ref: &str) -> Result<Option<Vec<u8>>> {
     Ok(sqlx::query_scalar!(
-        "SELECT wrapped_key FROM privacy.material_keys WHERE key_ref = $1 AND class = 'sealed' AND role = 'data-and-record-naming'",
+        "SELECT wrapped_key FROM privacy.material_keys WHERE key_ref = $1",
         key_ref
     )
     .fetch_optional(&mut *conn)

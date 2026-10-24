@@ -4,7 +4,7 @@ use sinex_sources::{Framer, drivers};
 use std::io::{Read, Seek, SeekFrom};
 use std::sync::Mutex;
 mod material;
-pub(crate) use material::{Opened, open, open_checked, open_pending};
+pub(crate) use material::{open, open_checked, open_pending};
 pub(crate) type ReadCheck = std::sync::Arc<dyn Fn() -> Result<(), String> + Send + Sync>;
 
 pub(crate) struct Retained {

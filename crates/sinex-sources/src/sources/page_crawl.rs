@@ -253,7 +253,6 @@ impl Crawl {
             };
             let size = body.len() as u64;
             return Ok(Acquired {
-                image: None,
                 input: self.input(),
                 observation: ObservationFacts {
                     observed_at: Some(fetched_at),
@@ -283,7 +282,6 @@ impl Crawl {
             });
         }
         Ok(Acquired {
-            image: None,
             input: self.input(),
             observation: ObservationFacts {
                 observed_at: Some(Timestamp::now()),

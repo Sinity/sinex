@@ -17,9 +17,9 @@ pub mod producer_bytes;
 pub mod query;
 
 pub use batch::{
-    ArchiveRequest, Batch, BatchKind, ErasedReplayPublication, ExcisionBasis, IngressFrame,
-    InputRef, MaterialRef, MaterialRole, ObservationFacts, RecordOutcome, ReplayScope,
-    RevisionChange, SourceProgress,
+    ArchiveRequest, Batch, BatchKind, Exclusions, IngressFrame, InputRef, MaterialRef,
+    MaterialRole, ObservationFacts, RecordOutcome, ReplayScope, RevisionChange, SourceProgress,
+    WrappedMaterialKey,
 };
 pub use clock::{TimeQuality, Timestamp, TsOrig};
 pub use event::{BuildError, Event, Origin, ReadingOrder, RecordLocation, RecordState};
@@ -34,6 +34,3 @@ pub mod __private {
     pub use schemars;
     pub use serde_json;
 }
-
-pub mod sqlite_image;
-pub use sqlite_image::{ImageExtent, SqliteImageMeta, SqliteImagePublication, WrappedMaterialKey};

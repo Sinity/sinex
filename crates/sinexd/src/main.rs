@@ -22,9 +22,7 @@ mod replay;
 mod retained;
 mod screen_text;
 mod sealed_access;
-mod source_excision;
 mod source_runner;
-mod sqlite_images;
 mod writer;
 
 #[cfg(test)]

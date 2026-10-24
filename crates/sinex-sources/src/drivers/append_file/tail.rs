@@ -1,4 +1,5 @@
-//! Completed history carries digests and scoped erased membership, never bodies.
+//! The tail a restart rebuilds from completed history: record digests and
+//! where each was read, never the record bodies.
 use super::*;
 
 #[derive(Default)]
@@ -6,9 +7,10 @@ pub struct AppendTail {
     newest_first: Vec<Member>,
     bytes: usize,
 }
-enum Member {
-    Raw(RecordLocation, usize, [u8; 32]),
-    Erased(ErasedMember),
+struct Member {
+    location: RecordLocation,
+    length: usize,
+    digest: [u8; 32],
 }
 impl AppendTail {
     fn accepts(&self, length: usize) -> bool {
@@ -25,37 +27,25 @@ impl AppendTail {
         if !self.accepts(raw.len()) {
             return Ok(false);
         }
-        self.newest_first.push(Member::Raw(
+        self.newest_first.push(Member {
             location,
-            raw.len(),
-            *blake3::hash(raw).as_bytes(),
-        ));
+            length: raw.len(),
+            digest: *blake3::hash(raw).as_bytes(),
+        });
         self.bytes = self.bytes.saturating_add(raw.len());
         Ok(true)
-    }
-    pub fn push_erased(&mut self, member: ErasedMember) -> bool {
-        let length = member.coordinates().1;
-        if !self.accepts(length) {
-            return false;
-        }
-        self.newest_first.push(Member::Erased(member));
-        self.bytes = self.bytes.saturating_add(length);
-        true
     }
     pub fn into_state(self) -> Result<AppendState, DriverError> {
         let mut state = AppendState::default();
         for member in self.newest_first.into_iter().rev() {
-            match member {
-                Member::Raw(location, length, digest) => state.insert_digest(
-                    digest,
-                    length,
-                    location.material,
-                    usize::try_from(location.anchor).map_err(|_| {
-                        DriverError::InvalidMaterial("append anchor exceeds address space".into())
-                    })?,
-                ),
-                Member::Erased(member) => state.remember_erased(member)?,
-            }
+            state.insert_digest(
+                member.digest,
+                member.length,
+                member.location.material,
+                usize::try_from(member.location.anchor).map_err(|_| {
+                    DriverError::InvalidMaterial("append anchor exceeds address space".into())
+                })?,
+            );
         }
         Ok(state)
     }

@@ -62,10 +62,7 @@ impl Answer {
         accounted: &[usize],
         mailbox: &str,
     ) -> Result<Self, DriverError> {
-        if stored.bodyless
-            || stored.bytes.length() != reference.length
-            || stored.blob != reference.blob
-        {
+        if stored.bytes.length() != reference.length || stored.blob != reference.blob {
             return Err(invalid("original retained IMAP answer is unavailable"));
         }
         Self::new(
@@ -162,7 +159,6 @@ impl Answer {
         let partial = self.partial_uid;
         let bounds = self.records.clone();
         Ok(Acquired {
-            image: None,
             input,
             observation: self.observation.clone(),
             revision: RevisionChange::Snapshot,

@@ -402,8 +402,6 @@ async fn a_later_material_read_failure_rolls_back_the_entire_replay_chain() {
     assert_eq!((archived, operations), (0, 0));
 }
 
-mod sealed;
-
 #[tokio::test]
 async fn aligned_rewrite_replay_uses_the_same_predecessor_carry_as_native_capture() {
     let mut f = fixture().await;

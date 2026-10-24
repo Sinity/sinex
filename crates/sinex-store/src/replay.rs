@@ -148,7 +148,6 @@ pub struct Stored {
     pub part_index: i32,
     pub blob: String,
     pub length: i64,
-    pub erased_replay_blob: Option<String>,
     pub parser: String,
     pub parser_version: i32,
     pub manifest: Value,
@@ -194,7 +193,7 @@ pub async fn chains(
     loose: &[Uuid],
 ) -> Result<Vec<Stored>> {
     Ok(sqlx::query!(
-        r#"SELECT m.id, m.input_id, m.previous_part_id, m.part_index, m.blob, m.durable_bytes, m.erased_replay_blob, m.parser, m.parser_version,
+        r#"SELECT m.id, m.input_id, m.previous_part_id, m.part_index, m.blob, m.durable_bytes, m.parser, m.parser_version,
                   m.manifest, i.binding AS "binding?", i.host AS "host?"
            FROM raw.materials m LEFT JOIN raw.inputs i ON i.id = m.input_id
            WHERE m.input_id = ANY($1) OR m.id = ANY($2)
@@ -212,7 +211,6 @@ pub async fn chains(
         part_index: r.part_index,
         blob: r.blob,
         length: r.durable_bytes,
-        erased_replay_blob: r.erased_replay_blob,
         parser: r.parser,
         parser_version: r.parser_version,
         manifest: r.manifest,

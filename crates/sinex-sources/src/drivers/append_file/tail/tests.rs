@@ -1,27 +1,15 @@
 use super::*;
 
 #[test]
-fn newest_first_tail_preserves_duplicate_locations_and_erased_members() {
+fn newest_first_tail_preserves_duplicate_locations() {
     let material = MaterialId::new();
     let location = |anchor| RecordLocation { material, anchor };
     let mut tail = AppendTail::default();
     assert!(tail.push_raw(location(8), b"same").unwrap());
-    let member = ErasedMember::from_archive(
-        location(4),
-        4,
-        [7; 32],
-        std::sync::Arc::new(|_| Ok([7; 32])),
-    )
-    .unwrap();
-    assert!(tail.push_erased(member));
     assert!(tail.push_raw(location(0), b"same").unwrap());
     let mut state = tail.into_state().unwrap();
     let expected = std::collections::VecDeque::from([location(0), location(8)]);
     assert_eq!(state.records[blake3::hash(b"same").as_bytes()], expected);
-    assert_eq!(
-        state.erased_remaining().collect::<Vec<_>>(),
-        vec![location(4)]
-    );
     assert!(state.take(b"same"));
     assert!(state.take(b"same"));
     assert!(!state.take(b"same"));

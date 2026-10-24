@@ -76,20 +76,6 @@ const VISIT_KNOWN: &[&str] = &[
     "_title",
 ];
 
-fn row_extra(
-    row: &Map<String, Value>,
-    known: &[&str],
-    context: &RecordContext<'_>,
-) -> Map<String, Value> {
-    let mut extra = fields::extra(row, known);
-    if context.manifest["row_format"] == 2
-        && let Some(value) = row.get("_rowid")
-    {
-        extra.insert("_rowid".into(), value.clone());
-    }
-    extra
-}
-
 pub struct VisitParser;
 
 impl Parser for VisitParser {
@@ -117,7 +103,7 @@ impl Parser for VisitParser {
             from_visit: (from_visit != 0).then_some(from_visit),
             transition: fields::int(row, "transition")?,
             duration_us: (duration > 0).then_some(duration),
-            extra: row_extra(row, VISIT_KNOWN, context),
+            extra: fields::extra(row, VISIT_KNOWN),
         };
         Ok((vec![payload], ()))
     }
@@ -161,7 +147,7 @@ impl Parser for UrlParser {
                 Some(fields::from_webkit_us(last)?)
             },
             hidden: fields::int(row, "hidden")? != 0,
-            extra: row_extra(row, URL_KNOWN, context),
+            extra: fields::extra(row, URL_KNOWN),
         };
         Ok((vec![payload], ()))
     }

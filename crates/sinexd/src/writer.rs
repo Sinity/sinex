@@ -51,10 +51,7 @@ pub struct ReplayChain {
 
 /// An excision, planned and with its replacement bytes already stored.
 pub struct Excision {
-    pub sealed: Option<excision::sealed::PreparedSealed>,
-    pub authority: Option<crate::sealed_access::Authority>,
     pub guard: Option<crate::excision::ExcisionGuard>,
-    pub cancelled: Arc<std::sync::atomic::AtomicBool>,
     pub target: Target,
     pub plan: Plan,
     pub rewrites: Vec<Rewrite>,
@@ -74,7 +71,7 @@ pub struct Excised {
 
 enum Work {
     Admit(Batch),
-    Native(Batch, crate::source_excision::AcquisitionGuard, NativeCheck),
+    Native(Batch, crate::excision::AcquisitionGuard, NativeCheck),
     Checked(Batch, NativeCheck),
     Replay(ReplayChain),
     Excise(Box<Excision>),
@@ -109,7 +106,7 @@ impl NativePermit {
     pub async fn admit(
         self,
         batch: Batch,
-        guard: crate::source_excision::AcquisitionGuard,
+        guard: crate::excision::AcquisitionGuard,
         check: NativeCheck,
     ) -> Result<Outcome, WriteError> {
         let (reply, answer) = oneshot::channel();
@@ -139,12 +136,12 @@ impl WriterHandle {
     pub(crate) async fn source_guard(
         &self,
         source: &str,
-    ) -> Result<crate::source_excision::AcquisitionGuard, String> {
+    ) -> Result<crate::excision::AcquisitionGuard, String> {
         let database = self
             .source_database
             .as_deref()
             .ok_or("writer has no native acquisition connection configuration")?;
-        crate::source_excision::AcquisitionGuard::acquire(database, source).await
+        crate::excision::AcquisitionGuard::acquire(database, source).await
     }
     #[cfg(test)]
     pub(crate) async fn excision_guard(
@@ -326,7 +323,7 @@ pub async fn run_notifying(
                 let result = async {
                     let source = match &batch.kind {
                         sinex_model::BatchKind::Source(progress) => {
-                            progress.excision_basis.as_ref().map(|b| b.source.as_str())
+                            progress.exclusions.as_ref().map(|b| b.source.as_str())
                         }
                         sinex_model::BatchKind::Ingress(frame) => Some(frame.producer.as_str()),
                         _ => None,
@@ -463,72 +460,9 @@ async fn excise(
     if let Some(guard) = e.guard.as_mut() {
         guard.check().await.map_err(WriteError::Refused)?;
     }
-    if let Some(prepared) = &e.sealed {
-        let guard = e.guard.as_mut().ok_or_else(|| {
-            WriteError::Refused("sealed excision has no owned source guard".into())
-        })?;
-        if guard.source() != prepared.source {
-            return Err(WriteError::Refused(
-                "sealed excision source guard does not match preparation".into(),
-            ));
-        }
-        guard.check().await.map_err(WriteError::Refused)?;
-        e.authority
-            .as_ref()
-            .ok_or_else(|| WriteError::Refused("sealed excision requires scoped authority".into()))?
-            .check()
-            .map_err(WriteError::Refused)?;
-        let authority = e.authority.as_ref().expect("checked scoped authority");
-        for rotation in &prepared.rotations {
-            let old = authority
-                .unwrap_secrets(&rotation.old.wrapped)
-                .map_err(WriteError::Refused)?;
-            let fresh = authority
-                .unwrap_secrets(&rotation.replacement.wrapped)
-                .map_err(WriteError::Refused)?;
-            if old.name_record_hash(&[0; 32]) != fresh.name_record_hash(&[0; 32]) {
-                return Err(WriteError::Refused(
-                    "sealed replacement changed its record-naming capability".into(),
-                ));
-            }
-            if let (Ok(old), Ok(fresh)) = (
-                old.data_key(rotation.old.reference.clone()),
-                fresh.data_key(rotation.replacement.reference.clone()),
-            ) && old.key == fresh.key
-            {
-                return Err(WriteError::Refused(
-                    "sealed replacement retained its retiring data secret".into(),
-                ));
-            }
-            for envelope in [&rotation.old, &rotation.replacement] {
-                let secrets = authority
-                    .unwrap_secrets(&envelope.wrapped)
-                    .map_err(WriteError::Refused)?;
-                if envelope.class != "sealed" || secrets.role().as_str() != envelope.role {
-                    return Err(WriteError::Refused(
-                        "sealed replacement capability role or class does not match".into(),
-                    ));
-                }
-            }
-        }
-    }
-    let authority = e.authority.as_ref();
-    let cancelled = &e.cancelled;
-    let check = || {
-        if cancelled.load(std::sync::atomic::Ordering::Acquire) {
-            return Err(sinex_store::Error::Invalid(
-                "sealed excision was cancelled".into(),
-            ));
-        }
-        if let Some(authority) = authority {
-            authority.check().map_err(sinex_store::Error::Invalid)?;
-        }
-        Ok(())
-    };
-    check().map_err(|e| refuse(&e))?;
     let mut tx = connection.begin().await.map_err(|e| refuse(&e))?;
     let result = async {
-        let applied = excision::apply_prepared(
+        let applied = excision::apply(
             &mut tx,
             e.target,
             &e.plan,
@@ -536,12 +470,9 @@ async fn excise(
             e.operation,
             &e.actor,
             keys,
-            e.sealed.as_ref(),
-            &check,
         )
         .await
         .map_err(|e| refuse(&e))?;
-        check().map_err(|e| refuse(&e))?;
         if let Some(guard) = e.guard.as_mut() {
             guard.check().await.map_err(WriteError::Refused)?;
         }

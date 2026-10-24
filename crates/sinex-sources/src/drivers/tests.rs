@@ -79,7 +79,6 @@ fn batches_are_drained_lazily() {
     let (framed, _) = lines(&bytes);
     let total = bytes.len();
     let acquired = Acquired {
-        image: None,
         input: InputRef {
             kind: "file".into(),
             locator: "/t".into(),
@@ -258,7 +257,6 @@ fn retained_original_length_does_not_replace_decoded_record_coordinates() {
     let bytes = b"decoded\n".to_vec();
     let decoded_len = bytes.len();
     let acquired = Acquired {
-        image: None,
         input: InputRef {
             kind: "file".into(),
             locator: "/t".into(),
@@ -310,7 +308,6 @@ fn retained_original_length_does_not_replace_decoded_record_coordinates() {
 fn cursor_read_failure_is_reported_before_a_batch_and_stops_later_progress() {
     let source = crate::sources::zsh::source("h".into());
     let acquired = Acquired {
-        image: None,
         input: InputRef {
             kind: "file".into(),
             locator: "synthetic".into(),

@@ -16,7 +16,6 @@
 //! travel in the cursor, and the row hashes are rebuilt from the stored parts
 //! ([`RowState::rebuild`]), so a restart does not read and store every row
 //! again.
-use super::sqlite_image::{Image, Policy, Previous, Scan, View};
 use super::{Acquired, DriverError, NewMaterial, StoredBytes, file_facts};
 use rusqlite::{Connection, OpenFlags, types::ValueRef};
 use serde::{Deserialize, Serialize};
@@ -49,8 +48,6 @@ pub struct SqliteRows {
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Cursor {
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub image: Option<ImageCursor>,
     pub max_rowid: i64,
     pub last_full_pass_ns: i64,
     /// The highest reading order given out, so every later reading is newer:
@@ -70,22 +67,12 @@ pub struct Cursor {
     pub through: usize,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ImageCursor {
-    pub material: MaterialId,
-    pub revision: sinex_model::RevisionId,
-    pub at_ns: i64,
-}
-
 /// What this driver already stored: the hash of each row's stored line, by
 /// rowid. Kept for the life of the source task and rebuilt from the stored
 /// parts after a restart. An empty state (no stored parts yet) triggers a
 /// full pass, whose repeats admission suppresses.
 #[derive(Debug, Default)]
 pub struct RowState {
-    pub image_policy: Option<Policy>,
-    pub previous_image: Option<Previous>,
-    scan: Option<(Scan, ObservationFacts)>,
     hashes: HashMap<i64, [u8; 32]>,
     /// Whether this process has polled since the state was made: the first
     /// poll after a start is a full pass even when the hashes were rebuilt,
@@ -96,7 +83,6 @@ pub struct RowState {
 
 #[derive(Debug)]
 struct Pending {
-    image: Option<Arc<Image>>,
     stored: StoredBytes,
     length: usize,
     records: Vec<(usize, usize)>,
@@ -129,7 +115,6 @@ impl Pending {
         let base = self.base;
         let length = self.length;
         Acquired {
-            image: self.image.clone(),
             input,
             observation: self.observation.clone(),
             revision: RevisionChange::Snapshot,
@@ -179,10 +164,6 @@ impl Pending {
 }
 
 impl RowState {
-    pub fn cancel_scan(&mut self) {
-        self.scan = None;
-    }
-
     /// The state after the stored rows parts `materials`, in order: the
     /// last stored line of each row wins.
     pub fn rebuild<'a>(materials: impl IntoIterator<Item = &'a [u8]>) -> Self {
@@ -192,17 +173,8 @@ impl RowState {
                 let Ok(row) = serde_json::from_slice::<Map<String, Value>>(line) else {
                     continue;
                 };
-                let rowid = row
-                    .get("_sinex_rowid")
-                    .or_else(|| row.get("_rowid"))
-                    .and_then(Value::as_i64);
-                if let Some(rowid) = rowid {
-                    let hash = if let Some(native) = row.get("row") {
-                        blake3::hash(native.to_string().as_bytes())
-                    } else {
-                        blake3::hash(line)
-                    };
-                    state.hashes.insert(rowid, *hash.as_bytes());
+                if let Some(rowid) = row.get("_rowid").and_then(Value::as_i64) {
+                    state.hashes.insert(rowid, *blake3::hash(line).as_bytes());
                 }
             }
         }
@@ -224,14 +196,6 @@ impl RowState {
         };
         if current.material == Some(reference.id) && current.through as u64 >= reference.length {
             return Ok(());
-        }
-        if !reference.manifest["row_format"].is_null()
-            && reference.manifest["row_format"] != 1
-            && reference.manifest["row_format"] != 2
-        {
-            return Err(DriverError::Cursor(
-                "unsupported stored SQLite row format".into(),
-            ));
         }
         let resume = &reference.manifest["row_resume"];
         let previous: Cursor = serde_json::from_value(resume["previous"].clone())
@@ -264,11 +228,6 @@ impl RowState {
                     "stored SQLite row ranges are invalid".into(),
                 ));
             }
-            if stored.bodyless {
-                records.push((start, end));
-                start = end;
-                continue;
-            }
             let mut line = vec![0; end - start];
             stored
                 .bytes
@@ -284,22 +243,11 @@ impl RowState {
                 start = end;
                 continue;
             }
-            let object: Value =
-                serde_json::from_slice(&line).map_err(|e| DriverError::Cursor(e.to_string()))?;
-            let native = if reference.manifest["row_format"] == 2 {
-                object
-                    .get("row")
-                    .ok_or_else(|| DriverError::Cursor("missing native SQLite row".into()))?
-                    .to_string()
-            } else {
-                String::from_utf8(line).map_err(|e| DriverError::Cursor(e.to_string()))?
-            };
-            hashes.push((rowid, *blake3::hash(native.as_bytes()).as_bytes()));
+            hashes.push((rowid, *blake3::hash(&line).as_bytes()));
             records.push((start, end));
             start = end;
         }
         self.pending = Some(Pending {
-            image: None,
             stored: StoredBytes::FramedReader(stored),
             length,
             records,
@@ -340,17 +288,6 @@ impl SqliteRows {
         };
         if let Some(pending) = state.pending.take() {
             if previous == pending.scanned {
-                if let Some(image) = &pending.image {
-                    let published =
-                        image.stored().map_err(DriverError::Store)?.ok_or_else(|| {
-                            DriverError::Store("admitted image has no stored publication".into())
-                        })?;
-                    state.previous_image = Some(Previous {
-                        metadata: published.metadata,
-                        extents: published.extents,
-                        map: image.map.clone(),
-                    });
-                }
                 state.hashes.extend(pending.hashes);
                 state.polled = true;
             } else {
@@ -360,7 +297,6 @@ impl SqliteRows {
             }
         }
         let unavailable = |reason: String| Acquired {
-            image: None,
             input: self.input(),
             observation: ObservationFacts {
                 unavailable: Some(reason),
@@ -377,70 +313,14 @@ impl SqliteRows {
         };
         let now = Timestamp::now();
         let now_ns = i64::try_from(now.unix_ns()).unwrap_or(i64::MAX);
-        let image_due = state.image_policy.as_ref().is_some_and(|p| {
-            previous.image.as_ref().is_none_or(|i| {
-                now_ns.saturating_sub(i.at_ns)
-                    >= i64::try_from(p.interval_secs)
-                        .unwrap_or(i64::MAX)
-                        .saturating_mul(1_000_000_000)
-            })
-        });
-        let (view, image, facts) = if image_due || state.scan.is_some() {
-            let (mut scan, facts) = match state.scan.take() {
-                Some(pending) => pending,
-                None => {
-                    let connection = match open_for_read(&self.path) {
-                        Ok(c) => c,
-                        Err(e) => return Ok(unavailable(e)),
-                    };
-                    let database = self
-                        .path
-                        .canonicalize()
-                        .map_err(|e| DriverError::Io(e.to_string()))?
-                        .display()
-                        .to_string();
-                    (
-                        Scan::start(
-                            connection,
-                            state.image_policy.clone().expect("configured image policy"),
-                            state.previous_image.clone(),
-                            database,
-                            self.host.clone(),
-                            now,
-                        )?,
-                        facts,
-                    )
-                }
-            };
-            if !scan.turn()? {
-                state.scan = Some((scan, facts));
-                return Err(DriverError::Pending);
-            }
-            let image = scan.finish()?;
-            (image.view()?, Some(image), facts)
-        } else {
-            let connection = match open_for_read(&self.path) {
-                Ok(c) => c,
-                Err(e) => return Ok(unavailable(e)),
-            };
-            (
-                Arc::new(View(std::sync::Mutex::new(connection))),
-                None,
-                facts,
-            )
+        let connection = match open_for_read(&self.path) {
+            Ok(c) => c,
+            Err(e) => return Ok(unavailable(e)),
         };
-        let now_ns = image
-            .as_ref()
-            .map(|i| i64::try_from(i.metadata.captured_at.unix_ns()).unwrap_or(i64::MAX))
-            .unwrap_or(now_ns);
         let full = !state.polled
             || now_ns.saturating_sub(previous.last_full_pass_ns)
                 >= self.full_pass_secs.saturating_mul(1_000_000_000);
 
-        let connection = view
-            .0
-            .lock()
-            .map_err(|_| DriverError::Io("SQLite view poisoned".into()))?;
         let columns: Vec<String> = {
             let mut stmt = connection
                 .prepare(&format!(
@@ -502,11 +382,7 @@ impl SqliteRows {
                 let mut object = Map::new();
                 let is_open: i64 = row.get(0).unwrap_or(0);
                 let rowid: i64 = row.get(1).map_err(|e| DriverError::Io(e.to_string()))?;
-                for (i, name) in names
-                    .iter()
-                    .enumerate()
-                    .skip(if state.image_policy.is_some() { 2 } else { 1 })
-                {
+                for (i, name) in names.iter().enumerate().skip(1) {
                     let value = match row.get_ref(i).map_err(|e| DriverError::Io(e.to_string()))? {
                         ValueRef::Null => Value::Null,
                         ValueRef::Integer(n) => json!(n),
@@ -525,21 +401,12 @@ impl SqliteRows {
                 } else {
                     open.remove(&rowid);
                 }
-                let native = Value::Object(object);
-                let hash = *blake3::hash(native.to_string().as_bytes()).as_bytes();
+                let line = Value::Object(object).to_string();
+                let hash = *blake3::hash(line.as_bytes()).as_bytes();
                 if state.hashes.get(&rowid) == Some(&hash) {
                     continue;
                 }
                 hashes.push((rowid, hash));
-                let line = if state.image_policy.is_some() {
-                    let mut envelope = json!({"_sinex_rowid":rowid,"row":native});
-                    if let Some(image) = &image {
-                        envelope["_from"] = json!({"snapshot":image.metadata.material,"revision":image.metadata.revision,"table":self.table,"rowid":rowid});
-                    }
-                    envelope.to_string()
-                } else {
-                    native.to_string()
-                };
                 let start = length;
                 staged
                     .write_all(line.as_bytes())
@@ -553,8 +420,7 @@ impl SqliteRows {
             }
         }
         drop(stmt);
-        drop(connection);
-        drop(view);
+        connection.execute_batch("COMMIT").ok();
 
         let last_full = if full {
             now_ns
@@ -562,7 +428,7 @@ impl SqliteRows {
             previous.last_full_pass_ns
         };
         let open: Vec<i64> = open.into_iter().collect();
-        if records.is_empty() && image.is_none() {
+        if records.is_empty() {
             state.polled = true;
             let unchanged = Cursor {
                 max_rowid,
@@ -571,7 +437,6 @@ impl SqliteRows {
                 ..previous
             };
             return Ok(Acquired {
-                image: None,
                 input: self.input(),
                 observation: ObservationFacts {
                     changed: false,
@@ -589,35 +454,12 @@ impl SqliteRows {
         let base = now_ns.max(previous.last_order.saturating_add(1));
         let mut manifest = json!({"path": self.path.display().to_string(), "host": self.host, "table": self.table, "from": self.from, "media_type": "application/x-ndjson", "full_pass": full, "read_at_ns": now_ns, "order_base": base, "read_from": "database"});
         manifest["role"] = json!("records");
-        manifest["sqlite_database"] = json!(
-            self.path
-                .canonicalize()
-                .map_err(|e| DriverError::Io(e.to_string()))?
-                .display()
-                .to_string()
-        );
-        if state.image_policy.is_some() {
-            manifest["row_format"] = json!(2);
-        }
-        if let Some(image) = &image {
-            manifest["image_revision"] = json!(image.metadata.revision);
-        }
-        let image_cursor = image
-            .as_ref()
-            .map(|i| ImageCursor {
-                material: i.metadata.material,
-                revision: i.metadata.revision,
-                at_ns: i64::try_from(i.metadata.captured_at.unix_ns()).unwrap_or(i64::MAX),
-            })
-            .or_else(|| previous.image.clone());
         let part_index = if previous.material.is_some() {
             previous.part_index + 1
         } else {
             0
         };
-        let records_empty = records.is_empty();
         let pending = Pending {
-            image,
             stored: StoredBytes::FramedFile(Arc::new(staged)),
             length,
             records,
@@ -626,26 +468,13 @@ impl SqliteRows {
             id,
             previous: previous.clone(),
             scanned: Cursor {
-                image: image_cursor,
                 max_rowid,
                 last_full_pass_ns: last_full,
                 last_order: base.saturating_add(length as i64),
-                material: if records_empty {
-                    previous.material
-                } else {
-                    Some(id)
-                },
-                part_index: if records_empty {
-                    previous.part_index
-                } else {
-                    part_index
-                },
+                material: Some(id),
+                part_index,
                 open,
-                through: if records_empty {
-                    previous.through
-                } else {
-                    length
-                },
+                through: length,
             },
             base,
             manifest,

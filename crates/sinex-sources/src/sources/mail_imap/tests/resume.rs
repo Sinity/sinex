@@ -36,7 +36,6 @@ fn retained() -> (MaterialRef, RetainedRecords, Value, Value) {
         manifest: material.manifest,
     };
     let stored = RetainedRecords {
-        bodyless: false,
         blob,
         bytes: Arc::new(Memory(material.bytes)),
     };
@@ -196,11 +195,4 @@ fn wrong_identity_epoch_bounds_and_unknown_versions_refuse_before_provider() {
             "{field}"
         );
     }
-    let mut no_body = stored;
-    no_body.bodyless = true;
-    assert!(
-        offline()
-            .restore_material(reference, no_body, &partial, &[])
-            .is_err()
-    );
 }

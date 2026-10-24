@@ -1,6 +1,7 @@
 //! Restore the exact storage-owned native version before consulting its provider.
 use super::*;
 use sinex_model::MaterialId;
+use sinex_sources::drain::RecordRead;
 use sinex_store::native_materials;
 
 pub(super) async fn restore(
@@ -77,42 +78,28 @@ async fn restore_locked(
             {
                 return Err("pending native driver cannot resume its retained material".into());
             }
-            if opened.secrets.is_some() {
+            if opened.key.is_some() {
                 b.history_floor = b.history_floor.max(Class::Sealed);
             }
         }
         sinex_sources::Driver::AppendFile => {
             let records = opened
                 .body
-                .as_ref()
-                .ok_or("pending append body is unavailable")?
                 .records(&opened.reference.manifest, b.source.spec().framer)?;
-            let head = predecessor_head(conn, blobs, b.source.spec().name, &p, access).await?;
+            let head = predecessor_head(conn, blobs, &p, access).await?;
             let stored = opened.records();
             let reference = opened.reference.clone();
-            let archived_end = opened.append_end.clone();
-            let policy = crate::source_excision::AcquisitionPolicy::load(
-                conn,
-                blobs,
-                b.source.spec().name,
-                access.authority,
-            )
-            .await?;
-            if p.progress.excision_basis.as_ref() != Some(&policy.basis) {
-                return Err(
-                    "pending append exclusion basis changed; reconcile before retry".into(),
-                );
+            let exclusions = sinex_store::excision::exclusions::current(conn, b.source.spec().name)
+                .await
+                .map_err(|e| e.to_string())?;
+            if p.progress.exclusions.as_ref() != Some(&exclusions) {
+                return Err("the source was excised since this read; read it again".into());
             }
-            let erased_members = policy.append_members(&opened)?;
-            let erased = opened.transitions(0)?;
             b.reader
                 .restore_append(sinex_sources::binding::AppendResume {
                     reference,
                     stored,
                     records,
-                    erased,
-                    archived_end,
-                    erased_members,
                     base_cursor: p.base_cursor.clone(),
                     cursor: p.base_cursor.clone(),
                     head,
@@ -130,7 +117,6 @@ async fn restore_locked(
 async fn predecessor_head(
     conn: &mut PgConnection,
     blobs: &Blobs,
-    source: &str,
     p: &native_materials::Pending,
     access: Access<'_>,
 ) -> Result<Vec<u8>, String> {
@@ -162,8 +148,7 @@ async fn predecessor_head(
     let mut pieces = Vec::new();
     let mut remaining = wanted;
     for (id, _) in chain.into_iter().rev() {
-        let opened =
-            crate::retained::open(conn, blobs, source, MaterialId(id), access.authority).await?;
+        let opened = crate::retained::open(conn, blobs, MaterialId(id), access.authority).await?;
         let end = if id == last.0 {
             cut
         } else {
@@ -176,13 +161,8 @@ async fn predecessor_head(
             usize::try_from(end).map_err(|_| "append predecessor length exceeds address space")?,
         );
         let mut bytes = vec![0; take];
-        let body = opened.records();
-        if body.bodyless {
-            return Err(
-                "erased append predecessor cannot provide the original cursor window".into(),
-            );
-        }
-        body.bytes
+        opened
+            .body
             .read_exact_at(end - take as u64, &mut bytes)
             .map_err(|e| e.to_string())?;
         pieces.push(bytes);

@@ -24,7 +24,6 @@ fn a_stored_segment_drains_to_one_event_from_its_manifest() {
         .unwrap();
     let chunks = source()
         .drain(DrainInput {
-            erased: None,
             source: SPEC.name,
             class: SPEC.class,
             material: MaterialId::new(),

@@ -2,7 +2,6 @@ use super::*;
 use crate::Framer;
 use crate::drain::RecordRead;
 use crate::drivers::append_file::{Cursor, lines};
-use sinex_model::MaterialId;
 use std::sync::atomic::{AtomicBool, Ordering};
 struct Body {
     bytes: Vec<u8>,
@@ -31,31 +30,18 @@ fn reader(path: &Path) -> Box<dyn Reader> {
         framer: Framer::incremental(lines),
     })
 }
-fn resume(
-    acquired: &Acquired,
-    cursor: Value,
-    bodyless: bool,
-    erased: Option<crate::drain::ErasedTransitions>,
-    fail: Arc<AtomicBool>,
-) -> AppendResume {
+fn resume(acquired: &Acquired, cursor: Value, fail: Arc<AtomicBool>) -> AppendResume {
     let m = acquired.material.as_ref().unwrap();
     let length = m.manifest["append_resume"]["end"]["through"]
         .as_u64()
         .unwrap();
-    let bytes = if bodyless {
-        Vec::new()
-    } else {
-        m.record_bytes()
-            .record(0, length as usize)
-            .unwrap()
-            .into_owned()
-    };
+    let bytes = m
+        .record_bytes()
+        .record(0, length as usize)
+        .unwrap()
+        .into_owned();
     let blob = format!("blake3:{}", blake3::hash(&bytes).to_hex());
-    let backing: Arc<dyn RecordRead> = if bodyless {
-        Arc::new(NoBody(length))
-    } else {
-        Arc::new(Body { bytes, fail })
-    };
+    let backing: Arc<dyn RecordRead> = Arc::new(Body { bytes, fail });
     AppendResume {
         reference: MaterialRef {
             id: m.id,
@@ -69,31 +55,16 @@ fn resume(
             manifest: m.manifest.clone(),
         },
         stored: RetainedRecords {
-            bodyless,
             blob,
             bytes: backing,
         },
         records: m.records.clone(),
-        archived_end: bodyless.then(|| {
-            ArchivedAppendEnd::from_archive(m.manifest["append_resume"]["end"].clone()).unwrap()
-        }),
-        erased_members: Vec::new(),
-        erased,
         base_cursor: Value::Null,
         cursor,
         head: Vec::new(),
         input: acquired.input.clone(),
         observation: acquired.observation.clone(),
         revision: acquired.revision,
-    }
-}
-struct NoBody(u64);
-impl RecordRead for NoBody {
-    fn length(&self) -> u64 {
-        self.0
-    }
-    fn read_exact_at(&self, _: u64, _: &mut [u8]) -> std::io::Result<()> {
-        panic!("bodyless resume must not read or fabricate original plaintext")
     }
 }
 #[test]
@@ -115,8 +86,6 @@ fn pending_append_retries_and_restart_finish_the_original_part_before_reading_an
         .restore_append(resume(
             &acquired,
             first.clone(),
-            false,
-            None,
             Arc::new(AtomicBool::new(false)),
         ))
         .unwrap();
@@ -154,15 +123,13 @@ fn append_restore_rejects_an_interior_framed_record_cut_and_propagates_late_wind
             .restore_append(resume(
                 &acquired,
                 serde_json::to_value(cut).unwrap(),
-                false,
-                None,
                 Arc::new(AtomicBool::new(false))
             ))
             .is_err()
     );
     let fail = Arc::new(AtomicBool::new(false));
     restored
-        .restore_append(resume(&acquired, first.clone(), false, None, fail.clone()))
+        .restore_append(resume(&acquired, first.clone(), fail.clone()))
         .unwrap();
     fail.store(true, Ordering::Release);
     let acquired = restored.poll(&first).unwrap();
@@ -172,172 +139,4 @@ fn append_restore_rejects_an_interior_framed_record_cut_and_propagates_late_wind
             .to_string()
             .contains("synthetic retained read failure")
     );
-}
-#[test]
-fn bodyless_intermediate_null_window_resumes_only_matching_erased_coordinates_and_keeps_known_final_window()
- {
-    let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join("input");
-    std::fs::write(&path, b"one\ntwo\nthree\n").unwrap();
-    let mut original = reader(&path);
-    let acquired = original.poll(&Value::Null).unwrap();
-    let m = acquired.material.as_ref().unwrap();
-    let first = (m.cursor_at)(4).unwrap();
-    let final_cursor = (m.cursor_at)(14).unwrap();
-    let records = m.records.clone();
-    let erasures = || {
-        crate::drain::ErasedTransitions::from_archive(
-            records.iter().map(|&(s, e)| (s, e, None)),
-            14,
-            true,
-        )
-        .unwrap()
-    };
-    let mut restored = reader(&path);
-    assert!(
-        restored
-            .restore_append(resume(
-                &acquired,
-                first.clone(),
-                true,
-                None,
-                Arc::new(AtomicBool::new(false))
-            ))
-            .is_err()
-    );
-    restored
-        .restore_append(resume(
-            &acquired,
-            first.clone(),
-            true,
-            Some(erasures()),
-            Arc::new(AtomicBool::new(false)),
-        ))
-        .unwrap();
-    let captured = restored.poll(&first).unwrap();
-    let middle = (captured.material.as_ref().unwrap().cursor_at)(8).unwrap();
-    assert!(middle["window"].is_null());
-    let mut unbacked = reader(&path);
-    assert!(
-        unbacked.poll(&middle).is_err(),
-        "null window must not authorize provider alignment"
-    );
-    drop(restored);
-    std::fs::write(&path, b"edited provider\n").unwrap();
-    let mut restarted = reader(&path);
-    restarted
-        .restore_append(resume(
-            &acquired,
-            middle.clone(),
-            true,
-            Some(erasures()),
-            Arc::new(AtomicBool::new(false)),
-        ))
-        .unwrap();
-    let remaining = restarted.poll(&middle).unwrap();
-    let m = remaining.material.as_ref().unwrap();
-    assert_eq!(m.records, vec![(8, 14)]);
-    assert_eq!((m.cursor_at)(14).unwrap(), final_cursor);
-    let mut forged = resume(
-        &acquired,
-        middle,
-        true,
-        Some(erasures()),
-        Arc::new(AtomicBool::new(false)),
-    );
-    forged.reference.manifest["append_resume"]["end"]["window"] = serde_json::json!("f".repeat(64));
-    assert!(reader(&path).restore_append(forged).is_err());
-}
-
-#[test]
-fn large_bodyless_intermediate_checkpoint_survives_cancellation_and_restart_without_original_reads()
-{
-    // Three virtual long lines. Only the final short window is needed to
-    // describe the original final cursor; the erased body is never allocated.
-    let part = 8usize << 20;
-    let length = part * 3;
-    let id = MaterialId::new();
-    let mut last_window = vec![b'a'; 4096];
-    *last_window.last_mut().unwrap() = b'\n';
-    let start = Cursor {
-        material: Some(id),
-        window: Some(blake3::hash(b"").to_hex().to_string()),
-        ..Default::default()
-    };
-    let end = Cursor {
-        material: Some(id),
-        offset: length as u64,
-        through: length,
-        size: length as u64,
-        mtime_ns: 1,
-        inode: 1,
-        window: Some(blake3::hash(&last_window).to_hex().to_string()),
-        ..Default::default()
-    };
-    let end = serde_json::to_value(end).unwrap();
-    let ranges = vec![(0, part), (part, part * 2), (part * 2, length)];
-    let resume = |cursor: Value| AppendResume {
-        reference: MaterialRef {
-            id,
-            input: None,
-            blob: format!("blake3:{}", "0".repeat(64)),
-            length: length as u64,
-            part_index: 0,
-            previous_part: None,
-            parser: "synthetic".into(),
-            parser_version: 1,
-            manifest: serde_json::json!({"file_offset":0,"append_resume":{"version":1,"start":start,"end":end}}),
-        },
-        stored: RetainedRecords {
-            bodyless: true,
-            blob: format!("blake3:{}", "0".repeat(64)),
-            bytes: Arc::new(NoBody(length as u64)),
-        },
-        records: ranges.clone(),
-        archived_end: Some(ArchivedAppendEnd::from_archive(end.clone()).unwrap()),
-        erased_members: Vec::new(),
-        erased: Some(
-            crate::drain::ErasedTransitions::from_archive(
-                ranges.iter().map(|&(s, e)| (s, e, None)),
-                length as u64,
-                true,
-            )
-            .unwrap(),
-        ),
-        base_cursor: Value::Null,
-        cursor,
-        head: Vec::new(),
-        input: InputRef {
-            kind: "file".into(),
-            locator: "synthetic".into(),
-            host: "h".into(),
-        },
-        observation: ObservationFacts {
-            size: Some(length as u64),
-            ..Default::default()
-        },
-        revision: RevisionChange::Appended,
-    };
-    let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join("provider");
-    std::fs::write(&path, b"edited provider\n").unwrap();
-    let mut first = reader(&path);
-    first.restore_append(resume(Value::Null)).unwrap();
-    let acquired = first.poll(&Value::Null).unwrap();
-    let cursor = (acquired.material.as_ref().unwrap().cursor_at)(part).unwrap();
-    assert!(cursor["window"].is_null());
-    drop(first);
-    drop(acquired);
-    assert!(reader(&path).poll(&cursor).is_err());
-    let mut restarted = reader(&path);
-    restarted.restore_append(resume(cursor.clone())).unwrap();
-    let acquired = restarted.poll(&cursor).unwrap();
-    assert_eq!(acquired.material.as_ref().unwrap().records, ranges[1..]);
-    let next = (acquired.material.unwrap().cursor_at)(part * 2).unwrap();
-    assert!(next["window"].is_null());
-    drop(restarted);
-    let mut final_reader = reader(&path);
-    final_reader.restore_append(resume(next.clone())).unwrap();
-    let acquired = final_reader.poll(&next).unwrap();
-    assert_eq!((acquired.material.unwrap().cursor_at)(length).unwrap(), end);
 }
