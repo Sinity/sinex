@@ -86,8 +86,10 @@ impl Api {
                 if sealed && let Some(session) = self.unlock.lock().await.as_mut() {
                     session.keys.clear();
                 }
-                Reply::Ok { result: json!({ "excised": summary }) }
-            },
+                Reply::Ok {
+                    result: json!({ "excised": summary }),
+                }
+            }
             Err(e) => refused(e),
         }
     }
