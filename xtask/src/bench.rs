@@ -20,7 +20,9 @@
 //! (one process per input, so each has its own peak memory), runs every
 //! derivation once, and records periodic host-load observations. Full-input
 //! estimates explicitly assume linear work per input byte; one sample does
-//! not calibrate backfill or derivation. Every command it runs
+//! not calibrate backfill or derivation. Failed commands remain in the output,
+//! but only complete runs enter benchmark history, under `completed-backfill`.
+//! Earlier `backfill` records did not check completeness. Every command it runs
 //! runs inside its AgentCTL job and holds the real-data lock.
 use devkit::bench::{self, Candidate, LoadMonitor, Manifest};
 use devkit::history::Store;
@@ -515,6 +517,7 @@ fn run(storage: &str, memory_max: &str) -> Result<(), String> {
         ],
     );
     let scale = shape["scale"].as_f64();
+    let derive_complete = derive.is_ok();
     let derive = match derive {
         Ok(value) => {
             estimates.push(bench::linear_estimate(
@@ -533,7 +536,9 @@ fn run(storage: &str, memory_max: &str) -> Result<(), String> {
             json!({"error": error})
         }
     };
+    let complete = benchmark_complete(&inputs_out, derive_complete);
     let metrics = json!({
+        "complete": complete,
         "inputs": inputs_out,
         "derive": derive,
         "database_mb": cluster.database_mb(),
@@ -544,19 +549,25 @@ fn run(storage: &str, memory_max: &str) -> Result<(), String> {
     });
     drop(cluster);
     let load = load.finish()?;
-    let store = Store::open().map_err(|e| e.to_string())?;
-    let checkout = env::current_dir().unwrap_or_default();
-    let id = bench::record(
-        &store,
-        &checkout,
-        "sinex",
-        "backfill",
-        &manifest.id(),
-        &out,
-        &load,
-        &metrics,
-    )
-    .map_err(|e| e.to_string())?;
+    let id = if complete {
+        let store = Store::open().map_err(|e| e.to_string())?;
+        let checkout = env::current_dir().map_err(|e| e.to_string())?;
+        Some(
+            bench::record(
+                &store,
+                &checkout,
+                "sinex",
+                "completed-backfill",
+                &manifest.id(),
+                &out,
+                &load,
+                &metrics,
+            )
+            .map_err(|e| e.to_string())?,
+        )
+    } else {
+        None
+    };
     println!(
         "{}",
         json!({"run": id, "storage": bench::storage_of(&out),
@@ -565,7 +576,15 @@ fn run(storage: &str, memory_max: &str) -> Result<(), String> {
     if storage == "memory" {
         let _ = fs::remove_dir_all(&out);
     }
-    Ok(())
+    if complete {
+        Ok(())
+    } else {
+        Err("benchmark incomplete: no completed-run record was saved; see inputs and derive results".into())
+    }
+}
+
+fn benchmark_complete(inputs: &serde_json::Map<String, Value>, derive_complete: bool) -> bool {
+    derive_complete && !inputs.is_empty() && inputs.values().all(|input| input["ok"] == true)
 }
 
 /// Sum only when every successful source reported a finite wall time.

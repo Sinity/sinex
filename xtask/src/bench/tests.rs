@@ -27,3 +27,19 @@ fn an_unavailable_component_leaves_the_total_unknown() {
     assert!(combined_estimate(&[known, unknown])["estimated_seconds"].is_null());
     assert!(combined_estimate(&[])["estimated_seconds"].is_null());
 }
+
+#[test]
+fn failed_or_absent_work_never_counts_as_a_completed_benchmark() {
+    let completed = json!({"notes": {"ok": true}, "shell": {"ok": true}});
+    let inputs = completed.as_object().unwrap();
+    assert!(benchmark_complete(inputs, true));
+    assert!(!benchmark_complete(inputs, false));
+    for incomplete in [
+        json!({}),
+        json!({"notes": {"ok": true}, "shell": {"ok": false, "error": "child failed"}}),
+        json!({"notes": {"wall_s": 2.0}}),
+        json!({"notes": {"ok": "true"}}),
+    ] {
+        assert!(!benchmark_complete(incomplete.as_object().unwrap(), true));
+    }
+}
