@@ -83,7 +83,7 @@ pub struct Applied {
 
 pub mod exclusions;
 mod source_lock;
-pub use source_lock::{lock_source, lock_source_session, unsupported_ingress};
+pub use source_lock::{is_producer, lock_source, lock_source_session};
 
 /// Find every reading the excision of `target` removes. Read-only.
 pub async fn plan(conn: &mut PgConnection, target: Target) -> Result<Plan> {

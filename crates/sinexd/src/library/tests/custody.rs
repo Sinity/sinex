@@ -427,7 +427,7 @@ async fn unrelated_authored_requests_continue_after_excision_while_matching_requ
     .write(vec![selected], "operator", "collection")
     .await
     .unwrap_err();
-    assert!(refused.contains("permanent exclusion"), "{refused}");
+    assert!(refused.contains("matches an excised record"), "{refused}");
     let live: Vec<String> = sqlx::query_scalar("SELECT e.payload->>'collection' FROM core.events e JOIN core.live_equivalence l ON l.event_id=e.id WHERE e.event_type='library.collection'").fetch_all(&mut w.conn).await.unwrap();
     assert_eq!(live, vec!["unrelated"]);
     let pending: i64 = sqlx::query_scalar("SELECT count(*) FROM raw.pending_native_materials")
@@ -499,7 +499,7 @@ async fn source_bound_media_exclusions_refuse_new_wrappers_but_preserve_unrelate
     .await
     .unwrap_err();
     assert!(
-        refused.contains("media matches a permanent exclusion"),
+        refused.contains("cited media was excised from this source"),
         "{refused}"
     );
     let fresh = b"unrelated new preview bytes";

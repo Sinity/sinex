@@ -77,10 +77,10 @@ async fn source_of(conn: &mut PgConnection, plan: &Plan) -> Result<Option<String
     .await
     .map_err(|e| e.to_string())?;
     if sources.is_empty() {
-        // Events read from no material (derived, or written through the API).
+        // No binding: the planned events no other planned event derives from.
         let events = plan.events.iter().copied().collect::<Vec<_>>();
         sources = sqlx::query_scalar(
-            "SELECT DISTINCT source FROM core.events WHERE id=ANY($1) AND NOT parents && $1 ORDER BY 1",
+            "SELECT DISTINCT source FROM core.events WHERE id=ANY($1) AND (parents IS NULL OR NOT parents && $1) ORDER BY 1",
         )
         .bind(&events)
         .fetch_all(conn)

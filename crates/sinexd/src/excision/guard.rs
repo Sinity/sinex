@@ -87,7 +87,7 @@ async fn check_ready(conn: &mut PgConnection, source: &str) -> Result<(), String
     check_ready_unlocked(conn, source).await
 }
 async fn check_ready_unlocked(conn: &mut PgConnection, source: &str) -> Result<(), String> {
-    if sinex_store::excision::unsupported_ingress(conn, source)
+    if sinex_store::excision::is_producer(conn, source)
         .await
         .map_err(|e| e.to_string())?
     {

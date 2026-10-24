@@ -1,4 +1,4 @@
-//! Direct source-namespace serialization for ingress custody and sealed excision.
+//! A lock per source, shared by acquisitions and held alone by an excision.
 use crate::Result;
 use sqlx::PgConnection;
 
@@ -48,7 +48,8 @@ pub async fn lock_source_session(
     Ok(())
 }
 
-pub async fn unsupported_ingress(conn: &mut PgConnection, source: &str) -> Result<bool> {
+/// Whether `source` names an outside producer.
+pub async fn is_producer(conn: &mut PgConnection, source: &str) -> Result<bool> {
     Ok(sqlx::query_scalar!(
         r#"SELECT EXISTS(SELECT 1 FROM core.manifests WHERE name=$1 AND kind='producer')
              OR EXISTS(SELECT 1 FROM core.ingress_frames WHERE producer=$1)
