@@ -184,6 +184,8 @@ pub(crate) enum ImageVerification {
         blobs: Blobs,
         plan: native_materials::PendingImage,
         previous: Option<sinex_model::SqliteImageMeta>,
+        authority: Option<crate::sealed_access::Authority>,
+        check: crate::writer::NativeCheck,
     },
 }
 impl ImageVerification {
@@ -194,7 +196,15 @@ impl ImageVerification {
                 blobs,
                 plan,
                 previous,
-            } => crate::sqlite_images::verify_retained_plan(&blobs, &plan, previous.as_ref()),
+                authority,
+                check,
+            } => crate::sqlite_images::verify_retained_plan(
+                &blobs,
+                &plan,
+                previous.as_ref(),
+                authority.as_ref(),
+                check,
+            ),
         }
     }
 }

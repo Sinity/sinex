@@ -186,7 +186,11 @@ impl Pipeline<'_> {
         let mut extra_stages = Vec::new();
         if let Some(p) = &frozen {
             filtered.acquired.image = None;
-            if let Some(plan) = &p.image {
+            let retained_plan = p
+                .image
+                .clone()
+                .or_else(|| p.progress.image.clone().map(PendingImage::AwaitingCosts));
+            if let Some(plan) = &retained_plan {
                 let PendingImage::AwaitingCosts(expected) = plan;
                 let previous = match expected.metadata.previous {
                     Some(id) => {
@@ -214,8 +218,10 @@ impl Pipeline<'_> {
                     blobs: self.blobs.clone(),
                     plan: plan.clone(),
                     previous,
+                    authority: self.authority.cloned(),
+                    check: self.queued_check(),
                 });
-                image_plan = Some(plan.clone());
+                image_plan = p.image.clone();
             } else {
                 image_ready = p.progress.image.clone();
             }

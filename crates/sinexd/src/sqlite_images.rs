@@ -5,6 +5,8 @@ use sinex_store::{Blobs, sealed};
 use std::io::{Read, Seek, SeekFrom};
 use std::sync::Arc;
 
+type Check = Arc<dyn Fn() -> Result<(), String> + Send + Sync>;
+
 type PageHash = Arc<dyn Fn(&[u8; 32]) -> [u8; 32] + Send + Sync>;
 
 pub(crate) fn store(
@@ -61,6 +63,7 @@ fn verify_installed(
         Some(image),
         page_hash,
         naming,
+        image.checker()?,
     )?;
     fill_costs(
         blobs,
@@ -109,7 +112,9 @@ fn verify_layout(
     image: Option<&Image>,
     page_hash: PageHash,
     naming: Option<[u8; 32]>,
+    check: Check,
 ) -> Result<String, String> {
+    check()?;
     // Verify exact reconstructed pages against the still-pinned acquisition view,
     // and each dense map entry against the corresponding page. Hashes alone do not
     // establish that a patch's extent layout selects the right bytes.
@@ -140,7 +145,10 @@ fn verify_layout(
                         Some(meta.evidence_bytes),
                         k,
                         crate::sealed_access::read_limits(meta.evidence_bytes)?,
-                        || Ok(()),
+                        {
+                            let check = check.clone();
+                            move || check().map_err(std::io::Error::other).map_err(Into::into)
+                        },
                     )
                     .map_err(err)?,
             ),
@@ -164,7 +172,10 @@ fn verify_layout(
                     Some(meta.evidence_bytes),
                     k,
                     crate::sealed_access::read_limits(meta.evidence_bytes)?,
-                    || Ok(()),
+                    {
+                        let check = check.clone();
+                        move || check().map_err(std::io::Error::other).map_err(Into::into)
+                    },
                 )
                 .map_err(err)?,
         ),
@@ -173,6 +184,7 @@ fn verify_layout(
     let mut expected = vec![0; meta.page_size as usize];
     let mut actual = vec![0; meta.page_size as usize];
     for _ in 0..meta.page_count {
+        check()?;
         full.read_exact(&mut actual).map_err(err)?;
         if let Some(source) = &mut source {
             source.read_exact(&mut expected).map_err(err)?;
@@ -191,6 +203,7 @@ fn verify_layout(
     if key.is_none() && meta.image_hash != hash {
         return Err("SQLite image digest differs after storage".into());
     }
+    check()?;
     Ok(hash)
 }
 fn fill_costs(
@@ -237,22 +250,51 @@ pub(crate) fn verify_retained_plan(
     blobs: &Blobs,
     plan: &sinex_store::native_materials::PendingImage,
     previous: Option<&sinex_model::SqliteImageMeta>,
+    authority: Option<&crate::sealed_access::Authority>,
+    check: Check,
 ) -> Result<SqliteImagePublication, String> {
     let sinex_store::native_materials::PendingImage::AwaitingCosts(expected) = plan;
     expected.validate()?;
-    if expected.metadata.class == Class::Sealed {
-        return Err("unpriced sealed image is unsupported".into());
-    }
+    let key = if expected.metadata.class == Class::Sealed {
+        let authority =
+            authority.ok_or("retained sealed image requires scoped unlock authority")?;
+        let wrapped = expected
+            .key
+            .as_ref()
+            .ok_or("sealed image has no reserved capability")?;
+        Some(sealed::DataKey {
+            key_ref: wrapped.key_ref.clone(),
+            key: authority.unwrap(&wrapped.wrapped)?,
+        })
+    } else {
+        None
+    };
+    let authority = authority.cloned();
+    let check: Check = Arc::new(move || {
+        check()?;
+        if let Some(authority) = &authority {
+            authority.check()?;
+        }
+        Ok(())
+    });
+    let naming = key
+        .as_ref()
+        .map(|k| blake3::derive_key("sinex 2026 SQLite image naming key", &k.key));
+    let page_hash: PageHash = match naming {
+        Some(k) => Arc::new(move |h| *blake3::keyed_hash(&k, h).as_bytes()),
+        None => Arc::new(|h| *h),
+    };
     let mut completed = expected.clone();
     let hash = verify_layout(
         blobs,
         &completed.metadata,
         &completed.extents,
         &completed.material.blob,
+        key.as_ref(),
         None,
-        None,
-        Arc::new(|h| *h),
-        None,
+        page_hash,
+        naming,
+        check,
     )?;
     if hash != completed.metadata.image_hash {
         return Err("reserved SQLite image digest differs after restart".into());

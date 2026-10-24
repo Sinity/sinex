@@ -171,7 +171,14 @@ async fn native_image_costs_stay_unresolved_until_installed_verification_and_use
         .await
         .unwrap()
         .unwrap();
-    let replayed = verify_retained_plan(&blobs, restored.image.as_ref().unwrap(), None).unwrap();
+    let replayed = verify_retained_plan(
+        &blobs,
+        restored.image.as_ref().unwrap(),
+        None,
+        None,
+        Arc::new(|| Ok(())),
+    )
+    .unwrap();
     assert_eq!(
         replayed, completed,
         "lost pinned view recovers exact frozen image, without reopening provider"
@@ -251,6 +258,7 @@ fn sealed_image_preparation_freezes_keyed_digest_and_wrapped_key_before_cas_inst
     let identity = sealed::Identity::generate();
     let (prepared, stage) =
         prepare_sealed(&blobs, image.clone(), "p", 1, &identity.to_public()).unwrap();
+    let plan = prepared.plan().unwrap();
     let key = prepared.key.as_ref().unwrap().clone();
     let wrapped = prepared.expected.key.as_ref().unwrap().wrapped.clone();
     let expected_hash = prepared.expected.metadata.image_hash.clone();
@@ -268,6 +276,36 @@ fn sealed_image_preparation_freezes_keyed_digest_and_wrapped_key_before_cas_inst
         wrapped,
         "verification changed the reserved capability envelope"
     );
+    let authority =
+        crate::sealed_access::Authority::new(identity, std::time::Duration::from_secs(30)).unwrap();
+    let restart = |authority: Option<&crate::sealed_access::Authority>| {
+        verify_retained_plan(&blobs, &plan, None, authority, Arc::new(|| Ok(())))
+    };
+    assert!(restart(None).is_err());
+    let wrong = crate::sealed_access::Authority::new(
+        sealed::Identity::generate(),
+        std::time::Duration::from_secs(30),
+    )
+    .unwrap();
+    assert!(restart(Some(&wrong)).is_err());
+    assert_eq!(restart(Some(&authority)).unwrap(), completed);
+    let priced = sinex_store::native_materials::PendingImage::AwaitingCosts(completed.clone());
+    assert_eq!(
+        verify_retained_plan(&blobs, &priced, None, Some(&authority), Arc::new(|| Ok(()))).unwrap(),
+        completed
+    );
+    assert!(
+        verify_retained_plan(
+            &blobs,
+            &plan,
+            None,
+            Some(&authority),
+            Arc::new(|| Err("capture canceled".into()))
+        )
+        .is_err()
+    );
+    authority.revoke();
+    assert!(restart(Some(&authority)).is_err());
     assert_eq!(completed.metadata.image_hash, expected_hash);
     assert_eq!(completed.metadata.patch_stored_bytes, 0);
     assert_eq!(
