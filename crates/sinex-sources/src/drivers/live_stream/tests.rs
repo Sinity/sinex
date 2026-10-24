@@ -146,3 +146,22 @@ fn empty_spool_is_unchanged_not_an_error() {
     let missing = stream(&dir()).poll(&Value::Null).unwrap();
     assert!(missing.material.is_none() && missing.observation.unavailable.is_none());
 }
+
+#[test]
+fn first_capture_after_an_empty_segment_poll_survives_restart() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut writer = SpoolWriter::open(dir.path(), Rotation::default()).unwrap();
+    let live = stream(dir.path());
+    let first = live.poll(&Value::Null).unwrap();
+    assert!(first.material.is_none());
+    let saved: Value =
+        serde_json::from_slice(&serde_json::to_vec(&first.cursor_unchanged).unwrap()).unwrap();
+    assert!(live.poll(&saved).unwrap().material.is_none());
+    writer
+        .append(Timestamp::now(), b"first synthetic line")
+        .unwrap();
+    writer.sync().unwrap();
+    let next = live.poll(&saved).unwrap();
+    assert_eq!(lines_of(&next), ["first synthetic line"]);
+    assert!(live.poll(&end_cursor(&next)).unwrap().material.is_none());
+}

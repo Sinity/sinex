@@ -61,6 +61,10 @@ if [ "$FAKE_EMIT" = 1 ]; then printf '%s\n' '{"selection":"clipboard","types":[]
 (while :; do printf x >> "$FAKE_HEARTBEAT"; sleep 0.01; done) &
 printf '%s\n' "$!" >> "$FAKE_DESCENDANTS"
 while [ ! -s "$FAKE_HEARTBEAT" ]; do sleep 0.01; done
+if [ -n "$FAKE_DELAYED_EMIT" ]; then
+    while [ ! -e "$FAKE_DELAYED_EMIT" ]; do sleep 0.01; done
+    printf '%s\n' '{"selection":"clipboard","types":[],"secret":false,"text":"synthetic capture"}'
+fi
 exec sleep 30
 "#,
             ),
@@ -264,6 +268,51 @@ fn a_producer_error_stops_already_running_capture_children() {
         child: Some(fixture.run(&nats).env("FAKE_EMIT", "1").spawn().unwrap()),
     }
     .finish();
+    assert!(!output.status.success());
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("no stream found for given subject"),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    fixture.all_reaped();
+}
+
+#[test]
+fn a_first_record_after_saved_empty_polls_reaches_transport_and_reaps_children() {
+    let nats = devkit::nats::test_nats().unwrap();
+    let fixture = Fixture::new();
+    let release = fixture.root.join("emit");
+    let session = Session {
+        child: Some(
+            fixture
+                .run(&nats)
+                .env("FAKE_DELAYED_EMIT", &release)
+                .spawn()
+                .unwrap(),
+        ),
+    };
+    fixture.started(2);
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        let positions = std::fs::read_dir(fixture.root.join("state/positions"))
+            .into_iter()
+            .flatten()
+            .filter_map(Result::ok)
+            .filter_map(|entry| std::fs::read(entry.path()).ok())
+            .filter_map(|bytes| serde_json::from_slice::<serde_json::Value>(&bytes).ok())
+            .filter(|position| position["cursor"]["inner"]["offset"] == 0)
+            .count();
+        if positions == 2 {
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "both empty spool polls were not saved"
+        );
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    std::fs::write(release, b"emit").unwrap();
+    let output = session.finish();
     assert!(!output.status.success());
     assert!(
         String::from_utf8_lossy(&output.stderr).contains("no stream found for given subject"),

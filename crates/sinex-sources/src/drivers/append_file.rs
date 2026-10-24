@@ -312,8 +312,9 @@ impl AppendFile {
             },
         };
         if consumed == 0 {
-            // Nothing complete yet; keep the old offset and window, note the new facts.
-            let window = if start == previous.offset {
+            // A fresh poll has covered a known empty prefix, even when the file
+            // contains only a partial record.
+            let window = if !cursor.is_null() && start == previous.offset {
                 previous.window.clone()
             } else {
                 Some(blake3::hash(b"").to_hex().to_string())

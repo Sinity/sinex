@@ -317,3 +317,87 @@ fn incomplete_rewrite_keeps_the_old_parser_cut_and_its_pending_physical_revision
     assert_eq!(next.previous_part, Some(m.id));
     assert_eq!(next.part_index, m.part_index + 1);
 }
+
+#[test]
+fn fresh_incomplete_files_emit_reusable_empty_prefix_cursors() {
+    for initial in [b"".as_slice(), b"part"] {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("history");
+        std::fs::write(&path, initial).unwrap();
+        let driver = AppendFile {
+            path: path.clone(),
+            host: "h".into(),
+            framer: Framer::incremental(lines),
+        };
+        let first = driver
+            .poll(&Value::Null, &mut AppendState::default())
+            .unwrap();
+        assert!(first.material.is_none());
+        let saved: Value =
+            serde_json::from_slice(&serde_json::to_vec(&first.cursor_unchanged).unwrap()).unwrap();
+        assert_eq!(saved["offset"], 0);
+        assert_eq!(saved["window"], blake3::hash(b"").to_hex().as_str());
+        let unchanged = driver.poll(&saved, &mut AppendState::default()).unwrap();
+        assert!(unchanged.material.is_none());
+        std::fs::OpenOptions::new()
+            .append(true)
+            .open(&path)
+            .unwrap()
+            .write_all(b"-complete\n")
+            .unwrap();
+        let next = driver.poll(&saved, &mut AppendState::default()).unwrap();
+        let mut expected = initial.to_vec();
+        expected.extend_from_slice(b"-complete\n");
+        assert_eq!(next.material.as_ref().unwrap().bytes, expected);
+        assert_eq!(next.revision, RevisionChange::Appended);
+        assert_eq!(next.material.as_ref().unwrap().part_index, 0);
+        assert!(next.material.as_ref().unwrap().previous_part.is_none());
+        let material = next.material.unwrap();
+        let saved = (material.cursor_at)(material.bytes.len()).unwrap();
+        assert!(
+            driver
+                .poll(&saved, &mut AppendState::default())
+                .unwrap()
+                .material
+                .is_none()
+        );
+    }
+}
+
+#[test]
+fn saved_unknown_prefixes_refuse_even_when_the_offset_is_zero() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("history");
+    std::fs::write(&path, b"a\n").unwrap();
+    let driver = AppendFile {
+        path,
+        host: "h".into(),
+        framer: Framer::incremental(lines),
+    };
+    let first = driver
+        .poll(&Value::Null, &mut AppendState::default())
+        .unwrap();
+    let material = first.material.unwrap();
+    let saved = (material.cursor_at)(material.bytes.len()).unwrap();
+    for offset in [0, 2] {
+        for missing in [false, true] {
+            let mut unknown = saved.clone();
+            unknown["offset"] = offset.into();
+            if missing {
+                unknown.as_object_mut().unwrap().remove("window");
+            } else {
+                unknown["window"] = Value::Null;
+            }
+            let error = driver
+                .poll(&unknown, &mut AppendState::default())
+                .err()
+                .unwrap();
+            assert!(matches!(error, DriverError::Cursor(_)));
+            assert!(
+                error
+                    .to_string()
+                    .contains("authenticated retained resumption is required")
+            );
+        }
+    }
+}
