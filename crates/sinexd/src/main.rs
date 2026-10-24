@@ -16,6 +16,7 @@ mod excision;
 mod ingress;
 mod library;
 mod one_shot;
+mod publication;
 mod publisher;
 mod replay;
 mod retained;

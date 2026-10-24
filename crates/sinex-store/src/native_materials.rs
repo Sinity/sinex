@@ -21,6 +21,7 @@ pub struct Pending {
     pub binding: String,
     pub progress: SourceProgress,
     pub removed: Vec<sinex_model::RecordLocation>,
+    pub cited: Vec<sinex_model::Cited>,
     pub image: Option<PendingImage>,
     pub base_cursor: Value,
     pub base_carry: Value,
@@ -90,6 +91,8 @@ struct Publication {
     erased_replay: Option<Replay>,
     basis: Basis,
     removed: Vec<sinex_model::RecordLocation>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    cited: Vec<sinex_model::Cited>,
 }
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -259,6 +262,7 @@ fn encode(p: &SourceProgress) -> Result<Value> {
     let publication = Publication {
         version: 1,
         removed: Vec::new(),
+        cited: Vec::new(),
         input: p.input.clone(),
         observation: p.observation.clone(),
         revision: p.revision,
@@ -288,12 +292,14 @@ fn decode(
     SourceProgress,
     Option<PendingImage>,
     Vec<sinex_model::RecordLocation>,
+    Vec<sinex_model::Cited>,
 )> {
     let p: Publication =
         serde_json::from_value(v).map_err(|_| invalid("invalid native publication format"))?;
-    if p.version != 1 {
+    if !matches!(p.version, 1 | 2) || (p.version == 1 && !p.cited.is_empty()) {
         return Err(invalid("unsupported native publication version"));
     }
+    citation_set(&p.cited)?;
     let image = p.image.map(unimage).transpose()?;
     let pending_image = image
         .as_ref()
@@ -328,10 +334,16 @@ fn decode(
         },
         pending_image,
         p.removed,
+        p.cited,
     ))
 }
 fn encode_pending(p: &Pending) -> Result<Value> {
     let mut encoded = encode(&p.progress)?;
+    if !p.cited.is_empty() {
+        encoded["version"] = serde_json::json!(2);
+        encoded["cited"] = serde_json::to_value(&p.cited)
+            .map_err(|_| invalid("native citations cannot encode"))?;
+    }
     encoded["removed"] = serde_json::to_value(&p.removed)
         .map_err(|_| invalid("native removal plan cannot encode"))?;
     if let Some(PendingImage::AwaitingCosts(i)) = &p.image {
@@ -420,6 +432,12 @@ fn blob_references(publication: Value) -> Result<BTreeMap<String, Option<i64>>> 
     if let Some(replay) = p.erased_replay {
         add(replay.blob, Some(replay.length))?;
     }
+    if !matches!(p.version, 1 | 2) || (p.version == 1 && !p.cited.is_empty()) {
+        return Err(invalid("unsupported native publication citation format"));
+    }
+    for citation in p.cited {
+        add(citation.blob, Some(citation.size))?;
+    }
     Ok(refs)
 }
 
@@ -473,6 +491,7 @@ async fn validate_blob_references(conn: &mut PgConnection, pending: &Pending) ->
 /// prepared plain handles install any public CAS names.
 pub async fn reserve(conn: &mut PgConnection, pending: &Pending) -> Result<()> {
     sinex_schema::require_current(conn).await?;
+    citation_set(&pending.cited)?;
     if pending_primary(pending) != Some(pending.material)
         || pending.progress.binding != pending.binding
         || pending
@@ -580,7 +599,7 @@ pub async fn load(conn: &mut PgConnection, material: MaterialId) -> Result<Optio
                 end_cursor,
                 state,
             )| {
-                let (progress, image, removed) =
+                let (progress, image, removed, cited) =
                     decode(publication, &binding, &start_cursor, &base_carry)?;
                 if primary(&progress).or_else(|| {
                     image
@@ -600,6 +619,7 @@ pub async fn load(conn: &mut PgConnection, material: MaterialId) -> Result<Optio
                     binding,
                     progress,
                     removed,
+                    cited,
                     image,
                     base_cursor,
                     base_carry,
@@ -706,6 +726,7 @@ pub(crate) async fn validate(
     conn: &mut PgConnection,
     p: &SourceProgress,
     archive: &[sinex_model::ArchiveRequest],
+    cited: &[sinex_model::Cited],
 ) -> Result<()> {
     let Some(id) = p.native_pending else {
         if sqlx::query_scalar::<_, bool>(
@@ -734,6 +755,7 @@ pub(crate) async fn validate(
         || pending.binding != p.binding
         || primary(p) != Some(id)
         || pending.removed != removal_plan(archive)?
+        || citation_set(&pending.cited)? != citation_set(cited)?
         || encode(&pending.progress)? != encode(p)?
     {
         return Err(invalid(
@@ -754,3 +776,20 @@ pub(crate) async fn complete(conn: &mut PgConnection, p: &SourceProgress) -> Res
 
 #[cfg(test)]
 mod tests;
+
+/// Citation custody freezes unique names and exact decoded lengths before install.
+pub fn citation_set(cited: &[sinex_model::Cited]) -> Result<BTreeMap<String, u64>> {
+    let mut result = BTreeMap::new();
+    for citation in cited {
+        if i64::try_from(citation.size).is_err() || crate::blobs::parse(&citation.blob).is_err() {
+            return Err(invalid("invalid native cited blob"));
+        }
+        if result
+            .insert(citation.blob.clone(), citation.size)
+            .is_some_and(|old| old != citation.size)
+        {
+            return Err(invalid("native citation lengths conflict"));
+        }
+    }
+    Ok(result)
+}

@@ -207,6 +207,9 @@ impl ScanState {
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ScanCursor {
+    /// Exact admitted byte cut. Older scan cursors leave this unknown.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub through: Option<u64>,
     pub material: Option<MaterialId>,
     pub part_index: u32,
     pub last_complete_walk_ns: Option<String>,
@@ -519,8 +522,9 @@ impl LibraryScan {
                 manifest,
                 reading_order: Box::new(move |_| ReadingOrder(read_at)),
                 cursor_at: Box::new({
-                    let cursor = move |_| {
+                    let cursor = move |end: usize| {
                         serde_json::to_value(ScanCursor {
+                            through: Some(end as u64),
                             material: Some(id),
                             part_index,
                             ..scanned.clone()
@@ -850,19 +854,40 @@ pub fn request_manifest(actor: &str, host: &str, at: Timestamp, action: &str) ->
     })
 }
 
+/// Payload bytes stay the registered library shape. A request's frozen
+/// acquisition facts additionally retain ownership of a prepared rendition.
+pub struct RequestPayload {
+    record: LibraryRecord,
+    citation: Option<sinex_model::Cited>,
+}
+impl sinex_model::Payloads for RequestPayload {
+    fn build(
+        &self,
+        source: &str,
+        origin: sinex_model::Origin,
+        order: ReadingOrder,
+        hash: [u8; 32],
+        class: Class,
+    ) -> Result<sinex_model::Event, sinex_model::BuildError> {
+        let mut event = self.record.build(source, origin, order, hash, class)?;
+        event.cites.extend(self.citation.clone());
+        Ok(event)
+    }
+}
+
 pub struct RequestParser;
 
 impl Parser for RequestParser {
     type Record<'a> = Map<String, Value>;
     type Carry = ();
-    type Payload = LibraryRecord;
+    type Payload = RequestPayload;
 
     fn parse(
         &self,
         record: &Map<String, Value>,
         _: &(),
         context: &RecordContext<'_>,
-    ) -> Result<(Vec<LibraryRecord>, ()), RecordError> {
+    ) -> Result<(Vec<RequestPayload>, ()), RecordError> {
         let by = context
             .manifest
             .get("actor")
@@ -897,7 +922,40 @@ impl Parser for RequestParser {
             Line::View(x) => LibraryRecord::View(x),
             Line::Dismissal(x) => LibraryRecord::Dismissal(x),
         };
-        Ok((vec![record], ()))
+        let citation = match context.manifest.get("cited_blobs") {
+            None => None,
+            Some(facts) => {
+                let facts: Vec<sinex_model::Cited> = serde_json::from_value(facts.clone())
+                    .map_err(|_| RecordError::new("invalid library request citation facts"))?;
+                let mut seen = std::collections::BTreeSet::new();
+                if facts.is_empty()
+                    || facts.iter().any(|fact| {
+                        !seen.insert(fact.blob.clone())
+                            || i64::try_from(fact.size).is_err()
+                            || fact
+                                .blob
+                                .strip_prefix("blake3:")
+                                .is_none_or(|hash| blake3::Hash::from_hex(hash).is_err())
+                    })
+                {
+                    return Err(RecordError::new(
+                        "invalid or duplicate library request citation facts",
+                    ));
+                }
+                match &record {
+                    LibraryRecord::Rendition(rendition) => Some(
+                        facts
+                            .into_iter()
+                            .find(|fact| fact.blob == rendition.content)
+                            .ok_or_else(|| {
+                                RecordError::new("rendition content differs from prepared citation")
+                            })?,
+                    ),
+                    _ => None,
+                }
+            }
+        };
+        Ok((vec![RequestPayload { record, citation }], ()))
     }
 }
 

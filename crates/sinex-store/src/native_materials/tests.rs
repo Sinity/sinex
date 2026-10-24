@@ -59,6 +59,7 @@ async fn pending(conn: &mut PgConnection, source: &str, blob: &str, length: u64)
         binding: source.into(),
         progress,
         removed: Vec::new(),
+        cited: Vec::new(),
         image: None,
         base_cursor: Value::Null,
         base_carry: Value::Null,

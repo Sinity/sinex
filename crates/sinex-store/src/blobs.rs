@@ -288,10 +288,10 @@ impl PreparedSealed {
     }
 }
 
-fn parse(name: &str) -> Result<hashed_blobs::Hash> {
+pub(crate) fn parse(name: &str) -> Result<hashed_blobs::Hash> {
     let invalid = || crate::Error::Invalid(format!("invalid blob name {name}"));
     let hex = name.strip_prefix("blake3:").ok_or_else(invalid)?;
-    if hex.len() != 64 {
+    if hex.len() != 64 || !hex.is_ascii() {
         return Err(invalid());
     }
     let mut raw = [0u8; 32];

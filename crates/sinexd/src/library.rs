@@ -3,15 +3,13 @@
 //! are stored as the request's own bytes and admitted through the one writer
 //! (`sinex-sources`'s `library.request`), attributed to the caller. Reads
 //! come from live events through `sinex_library::reads`.
-use crate::one_shot::Sink;
-use crate::writer::{Priority, WriterHandle};
+use crate::writer::WriterHandle;
 use serde_json::{Value, json};
 use sinex_library::{items, reads};
+use sinex_model::Timestamp;
 use sinex_model::event_types::library::{Assignment, Item, Level, LibraryRecord, Target};
-use sinex_model::{RunId, Timestamp};
 use sinex_protocol::Request;
 use sinex_sources::sources::library as library_source;
-use sinex_sources::{Limits, drivers};
 use sinex_store::Blobs;
 use sqlx::PgConnection;
 
@@ -42,46 +40,55 @@ impl Library<'_> {
     /// Store and admit one library request. All its records commit together
     /// or none do (one material, admitted in one batch when it fits).
     pub async fn write(&self, records: Vec<LibraryRecord>, actor: &str, action: &str) -> R<Value> {
+        self.write_staged(records, actor, action, Vec::new()).await
+    }
+
+    async fn write_staged(
+        &self,
+        records: Vec<LibraryRecord>,
+        actor: &str,
+        action: &str,
+        companions: Vec<sinex_store::blobs::PreparedPlain>,
+    ) -> R<Value> {
         if records.is_empty() {
-            return Ok(json!({ "records": 0 }));
+            return Ok(json!({"records":0}));
         }
         let n = records.len();
-        let host = self.host.to_owned();
-        let binding = format!("library.request:{actor}@{host}");
-        let sink = Sink(self.blobs.clone());
-        let actor_owned = actor.to_owned();
-        let action = action.to_owned();
-        let batches = tokio::task::spawn_blocking(move || {
-            let acquired = library_source::request_material(&records, &actor_owned, &host, &action);
-            drivers::batches(
-                &library_source::request_source(),
-                &binding,
-                RunId::new(),
-                acquired,
-                Value::Null,
-                &sink,
-                Limits {
-                    max_events: usize::MAX,
-                    max_bytes: usize::MAX,
-                },
-            )
-        })
-        .await
-        .map_err(e)?
-        .map_err(e)?;
-        let (mut admitted, mut replaced, mut failures) = (0, 0, 0);
-        for b in batches {
-            let o = self.writer.submit(Priority::Live, b).await.map_err(e)?;
-            admitted += o.admitted;
-            replaced += o.replaced;
-            failures += o.failures;
+        let binding = format!("library.request:{actor}@{}", self.host);
+        let mut acquired = library_source::request_material(&records, actor, self.host, action);
+        if !companions.is_empty() {
+            let citations = companions
+                .iter()
+                .map(|stage| sinex_model::Cited {
+                    blob: stage.name(),
+                    size: stage.length(),
+                })
+                .collect::<Vec<_>>();
+            acquired
+                .material
+                .as_mut()
+                .expect("request has material")
+                .manifest["cited_blobs"] = serde_json::to_value(citations).map_err(e)?;
         }
-        if failures > 0 {
+        let result = crate::publication::submit_authored(
+            self.writer,
+            self.blobs,
+            std::sync::Arc::new(library_source::request_source()),
+            &binding,
+            acquired,
+            companions,
+        )
+        .await?;
+        if result.outcome.failures > 0 {
             return Err(format!(
-                "{failures} of {n} library records failed to read back"
+                "{} of {n} library records failed to read back",
+                result.outcome.failures
             ));
         }
-        Ok(json!({ "records": n, "admitted": admitted, "replaced": replaced }))
+        Ok(
+            json!({"records":n, "admitted":result.outcome.admitted, "replaced":result.outcome.replaced,
+            "material":result.material, "recovered_prior":result.recovered}),
+        )
     }
 
     async fn item_or(&self, conn: &mut PgConnection, item: &str) -> R<Item> {

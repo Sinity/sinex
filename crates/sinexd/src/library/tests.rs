@@ -20,7 +20,7 @@ struct World {
 
 async fn world() -> World {
     let (db, url, connection) = crate::testdb::fresh().await;
-    let (handle, queues) = writer::channels();
+    let (handle, queues) = writer::channels_for(&url);
     tokio::spawn(writer::run(
         url.clone(),
         connection,
@@ -558,3 +558,5 @@ async fn library_add_through_an_alias_keeps_one_canonical_acquisition() {
     assert_eq!(count, 1);
     std::fs::remove_dir_all(w.root.parent().unwrap()).unwrap();
 }
+
+mod custody;
