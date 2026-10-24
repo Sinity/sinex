@@ -1,6 +1,24 @@
 #!/usr/bin/env bash
-# Seconds-long checks only; `xtask check` and `xtask test` are run separately.
+# Only Rust build inputs need formatting and crate-boundary checks.
 set -euo pipefail
-nix develop --command cargo fmt --all -- --check
-nix develop --command cargo run --locked --offline --quiet -p xtask -- boundaries
+build_inputs=(Cargo.toml Cargo.lock flake.nix flake.lock rust-toolchain
+    rust-toolchain.toml rustfmt.toml .rustfmt.toml .cargo build.rs crates xtask)
+check_build=false
+while read -r _local_ref local_sha _remote_ref remote_sha; do
+    [[ "$local_sha" =~ ^0+$ ]] && continue
+    base="$remote_sha"
+    if [[ "$base" =~ ^0+$ ]]; then
+        base=$(git merge-base "$local_sha" refs/remotes/origin/master) || base=""
+    fi
+    if [[ -z "$base" || "$local_sha" != "$(git rev-parse HEAD)" ]] ||
+        ! git diff --quiet "$base" "$local_sha" -- "${build_inputs[@]}"; then
+        check_build=true
+    fi
+done
+if $check_build; then
+    nix develop --command cargo fmt --all -- --check
+    nix develop --command cargo run --locked --offline --quiet -p xtask -- boundaries
+else
+    echo "pre-push: no Rust build inputs changed; skipping the fast check."
+fi
 git diff --check
