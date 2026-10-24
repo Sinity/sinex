@@ -14,6 +14,7 @@ exec = ["cargo", "run", "--locked", "--quiet", "-p", "xtask", "--", "check"]
 pool = "normal"
 result = "exit"
 timeout_seconds = 1800
+scratch = "nvme"
 cache = "none"
 
 [operations.test]
@@ -41,6 +42,7 @@ exec = ["nix", "build", "--no-link", ".#default", "--print-build-logs", "--max-j
 pool = "bulk"
 result = "exit"
 timeout_seconds = 2400
+scratch = "nvme"
 cache = "none"
 
 [operations.fmt]
@@ -49,6 +51,7 @@ exec = ["cargo", "fmt", "--all"]
 pool = "normal"
 result = "exit"
 timeout_seconds = 300
+scratch = "nvme"
 cache = "none"
 
 [operations.lock]
@@ -58,6 +61,7 @@ arguments = "required"
 pool = "normal"
 result = "exit"
 timeout_seconds = 300
+scratch = "nvme"
 cache = "none"
 
 [operations.exec]
@@ -87,4 +91,5 @@ arguments = "required"
 pool = "normal"
 result = "exit"
 timeout_seconds = 1800
+scratch = "nvme"
 cache = "none"
