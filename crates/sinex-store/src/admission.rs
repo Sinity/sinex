@@ -28,6 +28,7 @@ pub use archive::erase_archive_history;
 mod classify;
 mod derived;
 mod register;
+pub(crate) use register::material_matches;
 mod write;
 
 pub(crate) use archive::remove_live;

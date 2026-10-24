@@ -561,3 +561,64 @@ async fn inline_and_indirect_event_frames_keep_the_original_payload_order_and_re
         .fetch_all(&mut conn).await.unwrap();
     assert_eq!(hashes, vec![expected.to_vec(), expected.to_vec()]);
 }
+
+#[tokio::test]
+async fn colliding_material_identity_refuses_another_source_body_and_preserves_genuine_repeat() {
+    let h = Harness::start().await;
+    let original = b"original source body\n";
+    let replacement = b"other producer frozen body\n";
+    let (id, frame) = h.material_frame("owner-final", original);
+    let original_blob = publication(&frame).material.unwrap().bytes.blob;
+    assert_eq!(h.send("original-node", &frame).await.material, Some(id));
+    let (_, mut collision) = h.material_frame("collision-final", replacement);
+    if let Ingress::Material { material, .. } = &mut collision {
+        material.id = id;
+    }
+    let pending = publication(&collision);
+    let mut ingest = receiver(&h).await;
+    reserve(&mut ingest, "other-node", &pending).await;
+    spool::stage(
+        &h.store_dir,
+        "other-node",
+        &pending,
+        Role::Material,
+        replacement.as_slice(),
+    )
+    .unwrap();
+    let refused = ingest
+        .handle("other-node", &serde_json::to_vec(&collision).unwrap())
+        .await
+        .unwrap();
+    assert!(
+        refused
+            .refusal
+            .as_deref()
+            .is_some_and(|r| r.contains("different retained facts")),
+        "{refused:?}"
+    );
+    let mut conn = PgConnection::connect(&h.url).await.unwrap();
+    assert_eq!(
+        sqlx::query_scalar::<_, String>("SELECT blob FROM raw.materials WHERE id=$1")
+            .bind(id.0)
+            .fetch_one(&mut conn)
+            .await
+            .unwrap(),
+        original_blob
+    );
+    assert_eq!(h.blobs.read(&original_blob).unwrap(), original);
+    assert_eq!(
+        h.blobs
+            .read(&pending.material.as_ref().unwrap().bytes.blob)
+            .unwrap(),
+        replacement
+    );
+    assert_eq!(h.count("SELECT count(*) FROM raw.pending_producer_bytes WHERE producer='other-node' AND installed AND NOT acknowledged").await,1);
+    let mut repeat = frame.clone();
+    if let Ingress::Material { frame, .. } = &mut repeat {
+        *frame = "same-material-repeat".into();
+    }
+    let ack = h.send("original-node", &repeat).await;
+    assert!(ack.refusal.is_none(), "{ack:?}");
+    assert_eq!(ack.material, Some(id));
+    assert_eq!(h.count("SELECT count(*) FROM raw.materials").await, 1);
+}

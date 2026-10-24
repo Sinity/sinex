@@ -12,7 +12,9 @@ use std::sync::Arc;
 pub struct Blobs(Arc<hashed_blobs::Store>, PathBuf);
 
 impl Blobs {
-    pub fn root(&self) -> &Path { self.1.parent().expect("incoming has a store root") }
+    pub fn root(&self) -> &Path {
+        self.1.parent().expect("incoming has a store root")
+    }
 
     pub fn open(root: &Path) -> Result<Self> {
         std::fs::create_dir_all(root)

@@ -5,8 +5,8 @@ use crate::{Applied, CHANGES, Error, VERSION, WRITER_LOCK, catalog, grants, tabl
 use sqlx::{Connection, Executor, PgConnection};
 
 mod forecasts;
-mod producer_bytes;
 mod notes;
+mod producer_bytes;
 
 pub(super) async fn apply(conn: &mut PgConnection) -> Result<Applied, Error> {
     let mut tx = conn.begin().await?;

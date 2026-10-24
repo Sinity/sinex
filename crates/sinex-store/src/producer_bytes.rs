@@ -158,6 +158,20 @@ pub(crate) async fn complete(
         return Ok(());
     }
     validate(conn, frame).await?;
+    if let Some(progress) = &frame.material {
+        let material = progress
+            .material
+            .as_ref()
+            .ok_or_else(|| invalid("producer final material is missing"))?;
+        if crate::admission::material_matches(conn, &progress.binding, &progress.input, material)
+            .await?
+            != Some(true)
+        {
+            return Err(invalid(
+                "producer publication has no exact ready material owner",
+            ));
+        }
+    }
     sqlx::query(
         "UPDATE raw.pending_producer_bytes SET acknowledged=true WHERE producer=$1 AND frame=$2 AND installed",
     )

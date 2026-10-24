@@ -230,7 +230,11 @@ delta decoding remains a whole-body cost in the shared reader. Unsupported
 compressed export containers retain their explicit replay refusal.
 
 Outside producers freeze private bytes and exact declarations before sending a
-compact reservation. Material metadata is committed with recursively sorted JSON
+compact reservation. Local placement currently requires same-UID private-spool access; the declared
+2770 store group alone does not grant access to 0600 roles across distinct UIDs.
+Protected group handoff remains a source/configuration obligation. Separately
+rooted remote upload does not need shared-filesystem access.
+Material metadata is committed with recursively sorted JSON
 objects, independent of map insertion order. Indirect frame encoding preserves
 payload object order and existing reading hashes; the protocol explicitly enables
 `serde_json/preserve_order` for its Rust consumers. A large Material frame reserves

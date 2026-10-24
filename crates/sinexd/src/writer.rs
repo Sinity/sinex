@@ -350,13 +350,17 @@ pub async fn run_notifying(
             }
             Work::Native(batch, mut guard, check) => {
                 let result = async {
-                    let source=match &batch.kind {
-                        sinex_model::BatchKind::Source(progress)=>progress.excision_basis.as_ref().map(|b|b.source.as_str()),
-                        sinex_model::BatchKind::Ingress(frame)=>Some(frame.producer.as_str()),
-                        _=>None,
+                    let source = match &batch.kind {
+                        sinex_model::BatchKind::Source(progress) => {
+                            progress.excision_basis.as_ref().map(|b| b.source.as_str())
+                        }
+                        sinex_model::BatchKind::Ingress(frame) => Some(frame.producer.as_str()),
+                        _ => None,
                     };
-                    if source!=Some(guard.source()) {
-                        return Err(WriteError::Refused("publication source differs from its acquisition guard".into()));
+                    if source != Some(guard.source()) {
+                        return Err(WriteError::Refused(
+                            "publication source differs from its acquisition guard".into(),
+                        ));
                     }
                     guard.check().await.map_err(WriteError::Refused)?;
                     admit_checked(&mut connection, &batch, keys.as_ref(), &*check)

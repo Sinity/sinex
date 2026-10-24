@@ -1,17 +1,16 @@
 //! Wire types: one command table for the CLI, the API methods and the MCP
 //! tools, the requests and replies they carry, and the producer protocol for
-//! the NATS ingress. Depends only on `sinex-model` and serde; the `cli`
-//! feature adds the command-line parsers both `sinexctl` and `sinexd admin`
-//! build from the table. The one IO here is reading the private-mode switch,
-//! a file every capturing process checks.
+//! the NATS ingress. Domain types live in `sinex-model`; the `cli` feature
+//! adds the parsers both `sinexctl` and `sinexd admin` build from the table.
+//! Shared IO covers the private-mode switch and frozen private producer spools.
 #[cfg(feature = "cli")]
 pub mod cli;
 mod commands;
 pub mod nats;
-pub mod producer_bytes;
 /// The private-mode switch is part of the contract between processes: every
 /// capturing process checks it the same way.
 pub mod private_mode;
+pub mod producer_bytes;
 mod request;
 
 pub use commands::{Access, Arg, ArgKind, COMMANDS, Command, command};
