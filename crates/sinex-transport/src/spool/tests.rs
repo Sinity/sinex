@@ -1,6 +1,6 @@
 use super::*;
-use crate::producer_bytes::{Material, MaterialFrame};
 use sinex_model::{Class, InputRef, MaterialId};
+use sinex_protocol::producer_bytes::{Material, MaterialFrame};
 
 fn declaration(bytes: &[u8], frame: &str) -> Publication {
     Publication {
@@ -133,13 +133,13 @@ fn frozen_sender_identity_survives_receiver_cleanup_and_differing_retry_refuses(
         previous_part: None,
         manifest: serde_json::from_str(r#"{"z":0,"a":{"z":3,"a":4}}"#).unwrap(),
     };
-    let inner = crate::Ingress::Material {
+    let inner = Ingress::Material {
         frame: "inner".into(),
         material: Box::new(frame),
     };
-    let envelope = super::super::encode_frame(&inner);
+    let envelope = encode_frame(&inner);
     let mut publication = declaration(&envelope, "final");
-    if let crate::Ingress::Material { material, .. } = &inner {
+    if let Ingress::Material { material, .. } = &inner {
         publication.material = Some(Material::from_frame(material));
     }
     let frozen = Frozen {
@@ -168,11 +168,11 @@ fn frozen_sender_identity_survives_receiver_cleanup_and_differing_retry_refuses(
     );
     assert!(snapshot(root.path(), "node", &frozen.publication, Role::Material).is_err());
     let mut different = frozen.clone();
-    if let crate::Ingress::Material { material, .. } = &mut different.frame {
+    if let Ingress::Material { material, .. } = &mut different.frame {
         material.id = MaterialId::new();
         different.publication.material = Some(Material::from_frame(material));
     }
-    let bytes = super::super::encode_frame(&different.frame);
+    let bytes = encode_frame(&different.frame);
     different.publication.envelope = Some(Bytes {
         blob: format!("blake3:{}", blake3::hash(&bytes).to_hex()),
         length: bytes.len() as u64,
@@ -190,10 +190,10 @@ fn frozen_sender_identity_survives_receiver_cleanup_and_differing_retry_refuses(
 #[test]
 fn pending_artifacts_are_producer_scoped_and_keep_payload_order_through_the_supported_round_trip() {
     let root = tempfile::tempdir().unwrap();
-    let frame = crate::Ingress::Events {
+    let frame = Ingress::Events {
         frame: "outer".into(),
         failures: vec![],
-        events: vec![crate::ProducerEvent {
+        events: vec![sinex_protocol::ProducerEvent {
             event_type: "fixture".into(),
             payload: serde_json::from_str(r#"{"z":0,"a":{"z":3,"a":4}}"#).unwrap(),
             location: None,
@@ -203,7 +203,7 @@ fn pending_artifacts_are_producer_scoped_and_keep_payload_order_through_the_supp
             class: Class::Guarded,
         }],
     };
-    let encoded = super::super::encode_frame(&frame);
+    let encoded = encode_frame(&frame);
     let frozen = Frozen {
         publication: declaration(&encoded, "outer"),
         frame,
@@ -215,8 +215,8 @@ fn pending_artifacts_are_producer_scoped_and_keep_payload_order_through_the_supp
         .collect::<Result<Vec<_>, _>>()
         .unwrap();
     assert_eq!(first, vec![frozen.clone()]);
-    assert_eq!(super::super::encode_frame(&first[0].frame), encoded);
-    let crate::Ingress::Events { events, .. } = &first[0].frame else {
+    assert_eq!(encode_frame(&first[0].frame), encoded);
+    let Ingress::Events { events, .. } = &first[0].frame else {
         panic!("events")
     };
     assert_eq!(

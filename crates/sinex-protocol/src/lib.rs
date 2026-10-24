@@ -2,14 +2,11 @@
 //! tools, the requests and replies they carry, and the producer protocol for
 //! the NATS ingress. Domain types live in `sinex-model`; the `cli` feature
 //! adds the parsers both `sinexctl` and `sinexd admin` build from the table.
-//! Shared IO covers the private-mode switch and frozen private producer spools.
+//! This crate does no IO. Filesystem helpers live in sinex-transport.
 #[cfg(feature = "cli")]
 pub mod cli;
 mod commands;
 pub mod nats;
-/// The private-mode switch is part of the contract between processes: every
-/// capturing process checks it the same way.
-pub mod private_mode;
 pub mod producer_bytes;
 mod request;
 

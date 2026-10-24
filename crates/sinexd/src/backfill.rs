@@ -243,7 +243,7 @@ pub(crate) async fn drive(
 ) -> Result<Totals, String> {
     let mut totals = Totals::default();
     let started = Instant::now();
-    let private = sinex_protocol::private_mode::PrivateMode::default();
+    let private = sinex_transport::private_mode::PrivateMode::default();
     // The source's class: its declaration, raised by the operator's floor.
     // A sealed source seals each material and its events as they are read.
     let floor = sinex_store::privacy::load(read_conn, std::iter::once(source.spec().name))
@@ -275,7 +275,7 @@ pub(crate) async fn drive(
     let checked_stop = stop.clone();
     let check: std::sync::Arc<dyn Fn() -> Result<(), String> + Send + Sync> =
         std::sync::Arc::new(move || {
-            if *checked_stop.borrow() || sinex_protocol::private_mode::PrivateMode::default().on() {
+            if *checked_stop.borrow() || sinex_transport::private_mode::PrivateMode::default().on() {
                 return Err("native capture cancelled or private mode is on".into());
             }
             Ok(())

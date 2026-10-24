@@ -4220,12 +4220,10 @@ dependencies = [
 name = "sinex-protocol"
 version = "0.1.0"
 dependencies = [
- "blake3",
  "clap",
  "serde",
  "serde_json",
  "sinex-model",
- "tempfile",
  "uuid",
 ]
 
@@ -4287,6 +4285,7 @@ dependencies = [
  "sha2 0.10.9",
  "sinex-model",
  "sinex-protocol",
+ "sinex-transport",
  "tar",
  "tempfile",
  "thiserror 2.0.21",
@@ -4327,6 +4326,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "sinex-transport"
+version = "0.1.0"
+dependencies = [
+ "blake3",
+ "serde",
+ "serde_json",
+ "sinex-model",
+ "sinex-protocol",
+ "tempfile",
+]
+
+[[package]]
 name = "sinexctl"
 version = "0.1.0"
 dependencies = [
@@ -4339,6 +4350,7 @@ dependencies = [
  "serde_json",
  "sinex-diagnostics",
  "sinex-protocol",
+ "sinex-transport",
  "tokio",
 ]
 
@@ -4371,6 +4383,7 @@ dependencies = [
  "sinex-schema",
  "sinex-sources",
  "sinex-store",
+ "sinex-transport",
  "sqlx",
  "tar",
  "tempfile",

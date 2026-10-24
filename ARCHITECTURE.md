@@ -257,7 +257,7 @@ refuses before creating a new local plaintext spool when that class is known.
 Transport buffers are bounded; snapshot copies and whole-name verification still
 read each complete role. A driver record, material manifest, frozen typed frame and
 indirect JSON decode retain their existing one-value memory costs. The shared
-spool iterator reads one sender artifact at a time and reports malformed/unreadable
+transport spool iterator reads one sender artifact at a time and reports malformed/unreadable
 artifacts explicitly; it supplies no queue, cursor or resend controller.
 
 The outside producers use `sinex-sources::live::run` to start capture threads
@@ -317,7 +317,11 @@ saved consumer positions keep legacy pending notices retryable.
 ## Interfaces and shared code
 
 `sinex-model` owns identities and payloads; `sinex-protocol` declares public
-commands. CLI, MCP and HTTP adapt those commands. `sinex-diagnostics` supports
+commands, wire types and pure encoding without IO. `sinex-transport` owns the
+shared filesystem private-mode switch and frozen producer spool. The daemon,
+source drivers and CLI use that small library without putting filesystem access
+in wire definitions or making outside publishers depend on source parsers.
+CLI, MCP and HTTP adapt the public commands. `sinex-diagnostics` supports
 the separate daemon-down diagnostic path. Schema declarations and application
 remain in `sinex-schema`; checked SQL compiles against that real schema.
 

@@ -7,6 +7,7 @@ publish.workspace = true
 license.workspace = true
 
 [dependencies]
+sinex-transport.workspace = true
 sinex-protocol = { workspace = true, features = ["cli"] }
 sinex-diagnostics.workspace = true
 clap.workspace = true

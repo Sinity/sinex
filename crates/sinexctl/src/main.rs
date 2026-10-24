@@ -243,7 +243,7 @@ async fn main() -> ExitCode {
             };
         }
         "private" => {
-            let mode = sinex_protocol::private_mode::PrivateMode::default();
+            let mode = sinex_transport::private_mode::PrivateMode::default();
             let state = sub
                 .get_one::<String>("state")
                 .map_or("status", String::as_str);

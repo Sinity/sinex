@@ -126,7 +126,7 @@ pub async fn run(
         .await
         .map_err(|e| e.to_string())?;
     let sink = Sink(blobs.clone());
-    let private = sinex_protocol::private_mode::PrivateMode::default();
+    let private = sinex_transport::private_mode::PrivateMode::default();
     eprintln!("sinexd: reading {} bindings", bound.len());
     loop {
         if !private.on() {

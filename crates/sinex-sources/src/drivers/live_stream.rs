@@ -48,7 +48,7 @@ pub struct SpoolWriter {
     unsynced: usize,
     /// Private mode, checked at most every quarter second; lines that arrive
     /// while it is on are dropped, never written.
-    private: sinex_protocol::private_mode::Cached,
+    private: sinex_transport::private_mode::Cached,
     /// Lines dropped because private mode was on.
     pub dropped: u64,
 }
@@ -107,8 +107,8 @@ impl SpoolWriter {
             .append(true)
             .open(segment_path(&dir, index))?;
         Ok(Self {
-            private: sinex_protocol::private_mode::Cached::new(
-                sinex_protocol::private_mode::PrivateMode::default(),
+            private: sinex_transport::private_mode::Cached::new(
+                sinex_transport::private_mode::PrivateMode::default(),
                 Duration::from_millis(250),
             ),
             dropped: 0,
@@ -161,8 +161,8 @@ impl SpoolWriter {
     }
 
     /// Use this switch instead of the default (tests, a configured path).
-    pub fn with_private_mode(mut self, mode: sinex_protocol::private_mode::PrivateMode) -> Self {
-        self.private = sinex_protocol::private_mode::Cached::new(mode, Duration::from_millis(250));
+    pub fn with_private_mode(mut self, mode: sinex_transport::private_mode::PrivateMode) -> Self {
+        self.private = sinex_transport::private_mode::Cached::new(mode, Duration::from_millis(250));
         self
     }
 

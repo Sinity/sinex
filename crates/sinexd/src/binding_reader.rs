@@ -406,7 +406,7 @@ struct Checked<R> {
 impl<R: Read> Read for Checked<R> {
     fn read(&mut self, bytes: &mut [u8]) -> std::io::Result<usize> {
         if self.stop.load(Ordering::Relaxed)
-            || sinex_protocol::private_mode::PrivateMode::default().on()
+            || sinex_transport::private_mode::PrivateMode::default().on()
         {
             return Err(std::io::Error::other("archive capture cancelled"));
         }
@@ -580,7 +580,7 @@ async fn read_archive(
         let verify_stop = Arc::clone(&cancelled);
         let check = move || {
             if verify_stop.load(Ordering::Relaxed)
-                || sinex_protocol::private_mode::PrivateMode::default().on()
+                || sinex_transport::private_mode::PrivateMode::default().on()
             {
                 return Err(std::io::Error::other("archive verification cancelled").into());
             }
@@ -651,7 +651,7 @@ async fn read_archive(
         let b = &mut bound[index];
         let result = async {
             let acquired = delivery.acquired.map_err(|e| e.to_string())?;
-            if sinex_protocol::private_mode::PrivateMode::default().on() {
+            if sinex_transport::private_mode::PrivateMode::default().on() {
                 return Err("private mode is on; archive admission stopped".into());
             }
             if let Some(authority) = access.authority {

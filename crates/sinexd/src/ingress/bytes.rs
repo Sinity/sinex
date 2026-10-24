@@ -1,6 +1,6 @@
 use super::*;
 use sinex_model::producer_bytes::{Material, Publication, Role};
-use sinex_protocol::producer_bytes::spool;
+use sinex_transport::spool;
 use sqlx::Connection;
 
 #[cfg(test)]

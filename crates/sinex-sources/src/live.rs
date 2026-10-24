@@ -139,7 +139,7 @@ async fn produce_spools(
     lives: &mut [Live],
     every: Duration,
 ) -> Result<(), String> {
-    let private = sinex_protocol::private_mode::PrivateMode::default();
+    let private = sinex_transport::private_mode::PrivateMode::default();
     loop {
         if private.on() {
             tokio::time::sleep(Duration::from_secs(1)).await;

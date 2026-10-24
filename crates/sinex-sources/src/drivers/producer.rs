@@ -23,7 +23,7 @@
 //! sends a material's bytes in [`Ingress::Chunk`] frames first
 //! ([`Producer::upload_bytes`]). A frame too large for one message keeps a
 //! distinct private envelope role, named by an [`Ingress::Indirect`] frame.
-pub use sinex_protocol::producer_bytes::spool;
+use sinex_transport::spool;
 mod staging;
 use sinex_protocol::producer_bytes::{Bytes, Material, Publication, Role};
 use staging::Snapshots;

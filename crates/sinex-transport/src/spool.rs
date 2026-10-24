@@ -1,6 +1,7 @@
 //! Frozen producer queue bytes, separate from public CAS. A receiver always
 //! copies and verifies a producer-writable file before it can install it.
-use super::{Bytes, Publication, Role};
+use sinex_protocol::Ingress;
+use sinex_protocol::producer_bytes::{Bytes, Material, Publication, Role, encode_frame, spool_key};
 use std::io::{Read, Seek, Write};
 use std::os::unix::fs::OpenOptionsExt;
 use std::path::{Path, PathBuf};
@@ -226,7 +227,7 @@ pub fn discard(root: &Path, producer: &str, publication: &Publication) -> Result
 }
 
 fn artifact_path(root: &Path, producer: &str, frame: &str) -> PathBuf {
-    artifact_directory(root, producer).join(format!("{}.json", super::spool_key(producer, frame)))
+    artifact_directory(root, producer).join(format!("{}.json", spool_key(producer, frame)))
 }
 
 fn artifact_directory(root: &Path, producer: &str) -> PathBuf {
@@ -300,16 +301,15 @@ impl Iterator for Pending {
 pub struct Frozen {
     pub publication: Publication,
     /// Exact typed inner frame. wire_frame adds the declared indirect wrapper.
-    pub frame: crate::Ingress,
+    pub frame: Ingress,
 }
 impl Frozen {
     pub fn validate(&self) -> Result<(), String> {
         self.publication.validate()?;
         match &self.frame {
-            crate::Ingress::Material { material, .. }
-                if self.publication.material.as_ref()
-                    == Some(&super::Material::from_frame(material)) => {}
-            crate::Ingress::Events { .. }
+            Ingress::Material { material, .. }
+                if self.publication.material.as_ref() == Some(&Material::from_frame(material)) => {}
+            Ingress::Events { .. }
                 if self.publication.material.is_none() && self.publication.envelope.is_some() => {}
             _ => {
                 return Err(
@@ -318,7 +318,7 @@ impl Frozen {
             }
         }
         if let Some(envelope) = &self.publication.envelope {
-            let bytes = super::encode_frame(&self.frame);
+            let bytes = encode_frame(&self.frame);
             if envelope.length != bytes.len() as u64
                 || envelope.blob != format!("blake3:{}", blake3::hash(&bytes).to_hex())
             {
@@ -331,9 +331,9 @@ impl Frozen {
         }
         Ok(())
     }
-    pub fn wire_frame(&self) -> crate::Ingress {
+    pub fn wire_frame(&self) -> Ingress {
         if let Some(envelope) = &self.publication.envelope {
-            crate::Ingress::Indirect {
+            Ingress::Indirect {
                 frame: self.publication.frame.clone(),
                 blob: envelope.blob.clone(),
             }

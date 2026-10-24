@@ -4,7 +4,7 @@ use serde_json::json;
 use sinex_model::producer_bytes::{Bytes, Material, Publication, Role};
 use sinex_model::{InputRef, MaterialId, RecordLocation};
 use sinex_protocol::Confirmed;
-use sinex_sources::drivers::producer::spool;
+use sinex_transport::spool;
 use sqlx::Connection;
 use std::sync::Arc;
 

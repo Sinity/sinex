@@ -121,7 +121,7 @@ fn outputs_with_control(control: &crate::capture::Control) -> Vec<(String, u32, 
 }
 
 fn private_on() -> bool {
-    sinex_protocol::private_mode::PrivateMode::default().on()
+    sinex_transport::private_mode::PrivateMode::default().on()
 }
 
 /// Take a still of every output each `every`, until capture stops. Returns the stills written.
