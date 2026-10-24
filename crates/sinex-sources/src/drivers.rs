@@ -347,6 +347,7 @@ impl Prepared<'_> {
         let mut chunks = self
             .source
             .drainer(DrainInput {
+                erased: None,
                 source: spec.name,
                 class: spec.class,
                 material: m.id,

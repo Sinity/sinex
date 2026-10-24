@@ -512,6 +512,7 @@ fn read_chain_into(
         // the carry it passes on.
         let chunks = source
             .drainer(DrainInput {
+                erased: None,
                 source: source.spec().name,
                 class: source.spec().class,
                 material: MaterialId(m.id),

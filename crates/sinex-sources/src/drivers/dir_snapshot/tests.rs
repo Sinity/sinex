@@ -293,6 +293,7 @@ fn empty_and_nonempty_members_keep_exact_body_ranges_in_every_order() {
         let chunks = drain(
             &notes::NotesParser,
             crate::DrainInput {
+                erased: None,
                 source: "synthetic",
                 class: Class::Open,
                 material: m.id,

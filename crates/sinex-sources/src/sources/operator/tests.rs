@@ -114,6 +114,7 @@ fn unknown_steering_shapes_are_accounted_without_losing_later_coordinates() {
     let outputs = steering("commitments")
         .unwrap()
         .drain(DrainInput {
+            erased: None,
             source: "operator.steering",
             class: Class::Open,
             material,

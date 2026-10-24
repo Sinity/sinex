@@ -76,6 +76,7 @@ fn commands(bytes: &[u8], base: usize) -> Vec<(usize, String)> {
     let out = drain(
         &ZshParser { host: "h".into() },
         DrainInput {
+            erased: None,
             manifest: &serde_json::Value::Null,
             source: SPEC.name,
             class: Class::Open,
@@ -189,20 +190,37 @@ fn observations(
     base: usize,
     carry: serde_json::Value,
 ) -> (Vec<serde_json::Value>, serde_json::Value) {
-    observations_with_manifest(bytes, base, carry, &serde_json::Value::Null)
+    observations_with_transitions(bytes, base, carry, &serde_json::Value::Null)
 }
 
-fn observations_with_manifest(
+fn observations_with_transitions(
     bytes: &[u8],
     base: usize,
     carry: serde_json::Value,
-    manifest: &serde_json::Value,
+    transitions: &serde_json::Value,
 ) -> (Vec<serde_json::Value>, serde_json::Value) {
     let (records, _) = frame(bytes);
+    let erased = if let Some(entries) = transitions.as_object() {
+        Some(
+            crate::drain::ErasedTransitions::from_archive(
+                entries.iter().filter_map(|(start, entry)| {
+                    let start: usize = start.parse().unwrap();
+                    let end = entry["end"].as_u64().unwrap() as usize;
+                    (end <= bytes.len()).then(|| (start, end, Some(entry["token"].clone())))
+                }),
+                bytes.len() as u64,
+                false,
+            )
+            .unwrap(),
+        )
+    } else {
+        None
+    };
     let chunks = drain(
         &ZshParser { host: "h".into() },
         DrainInput {
-            manifest,
+            erased: erased.as_ref(),
+            manifest: &serde_json::Value::Null,
             source: SPEC.name,
             class: Class::Open,
             material: MaterialId(uuid::Uuid::nil()),
@@ -390,30 +408,32 @@ fn erasure_replay_and_every_restart_keep_retained_occurrences_and_keys() {
         blank(&mut rewritten[start..end]);
         let mut transitions = serde_json::Map::new();
         if let Some(token) = erased.replay {
-            transitions.insert(start.to_string(), token);
+            transitions.insert(
+                start.to_string(),
+                serde_json::json!({"end":end,"token":token}),
+            );
         }
-        let manifest = serde_json::json!({"erase_transitions": transitions});
+        let transitions = serde_json::Value::Object(transitions);
         let expected: Vec<_> = whole
             .iter()
             .filter(|row| row[0] != start)
             .cloned()
             .collect();
         let (actual, carry) =
-            observations_with_manifest(&rewritten, 0, serde_json::Value::Null, &manifest);
+            observations_with_transitions(&rewritten, 0, serde_json::Value::Null, &transitions);
         assert_eq!(actual, expected, "erased anchor {start}");
         assert_eq!(carry, original_carry);
         // Restart at each accounted record boundary, using only serialized state.
-        for (_, cut) in frame(&rewritten).0 {
-            let (mut prefix, carry) = observations_with_manifest(
+        for (_, cut) in frame(file).0 {
+            let (mut prefix, carry) = observations_with_transitions(
                 &rewritten[..cut],
                 0,
                 serde_json::Value::Null,
-                &manifest,
+                &transitions,
             );
-            let tail_manifest = serde_json::json!({"erase_transitions":
-                transitions_for_suffix(&manifest, cut)});
+            let tail_transitions = transitions_for_suffix(&transitions, cut);
             let (tail, carry) =
-                observations_with_manifest(&rewritten[cut..], cut, carry, &tail_manifest);
+                observations_with_transitions(&rewritten[cut..], cut, carry, &tail_transitions);
             prefix.extend(tail);
             assert_eq!(prefix, expected, "erased {start}, restart {cut}");
             assert_eq!(carry, original_carry);
@@ -421,16 +441,15 @@ fn erasure_replay_and_every_restart_keep_retained_occurrences_and_keys() {
     }
 }
 
-fn transitions_for_suffix(manifest: &serde_json::Value, cut: usize) -> serde_json::Value {
-    manifest["erase_transitions"]
-        .as_object()
+fn transitions_for_suffix(transitions: &serde_json::Value, cut: usize) -> serde_json::Value {
+    transitions.as_object()
         .unwrap()
         .iter()
         .filter_map(|(anchor, token)| {
             let anchor: usize = anchor.parse().unwrap();
             anchor
                 .checked_sub(cut)
-                .map(|anchor| (anchor.to_string(), token.clone()))
+                .map(|anchor| (anchor.to_string(), serde_json::json!({"end":token["end"].as_u64().unwrap() as usize-cut,"token":token["token"]})))
         })
         .collect::<serde_json::Map<_, _>>()
         .into()
