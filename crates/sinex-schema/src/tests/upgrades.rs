@@ -141,3 +141,28 @@ async fn declared_writer_role_can_hold_the_schema_version_lock_before_admission(
     conn.execute("SET ROLE sinex_writer").await.unwrap();
     require_current(&mut conn).await.unwrap();
 }
+
+#[tokio::test]
+async fn current_schema_apply_releases_its_locks_before_the_connection_is_used_again() {
+    let db = devkit::pg::test_database().unwrap();
+    let mut idle_owner = PgConnection::connect(&db.url(None)).await.unwrap();
+    let mut next_writer = PgConnection::connect(&db.url(None)).await.unwrap();
+    assert_eq!(apply(&mut idle_owner).await.unwrap(), Applied::Current { version: VERSION });
+    // No more IO on idle_owner: SQLx's queued rollback on Drop is not enough.
+    tokio::time::timeout(std::time::Duration::from_secs(2), require_current(&mut next_writer))
+        .await.expect("schema apply returned while still blocking the next writer").unwrap();
+}
+
+#[tokio::test]
+async fn refused_schema_apply_releases_its_locks_before_the_connection_is_used_again() {
+    let db = devkit::pg::test_database().unwrap();
+    let mut idle_owner = PgConnection::connect(&db.url(None)).await.unwrap();
+    version_zero(&mut idle_owner).await;
+    idle_owner.execute("ALTER TABLE core.counters ADD COLUMN unrecognized text").await.unwrap();
+    let mut next_writer = PgConnection::connect(&db.url(None)).await.unwrap();
+    assert!(matches!(apply(&mut idle_owner).await, Err(Error::Shape(0))));
+    let version: i32 = tokio::time::timeout(std::time::Duration::from_secs(2),
+        sqlx::query_scalar("SELECT version FROM sinex_schema.applied ORDER BY version DESC LIMIT 1 FOR SHARE").fetch_one(&mut next_writer))
+        .await.expect("refused schema apply retained its transaction locks").unwrap();
+    assert_eq!(version, 0);
+}
