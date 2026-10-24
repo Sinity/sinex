@@ -50,7 +50,7 @@ async fn capture_scoped(
         result?;
     }
     let id: uuid::Uuid = sqlx::query_scalar(
-        "SELECT m.id FROM raw.materials m JOIN raw.inputs i ON i.id=m.input_id WHERE i.locator=$1",
+        "SELECT m.id FROM raw.materials m JOIN raw.inputs i ON i.id=m.input_id WHERE i.locator=$1 ORDER BY m.part_index DESC,m.id DESC LIMIT 1",
     )
     .bind(path.to_string_lossy().to_string())
     .fetch_one(&mut ctx.read_conn)
@@ -322,3 +322,5 @@ async fn whole_sealed_purge_retains_minimal_replay_and_sanitized_carry_without_o
 }
 
 mod dependents;
+mod security;
+mod activitywatch;

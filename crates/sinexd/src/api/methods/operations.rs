@@ -82,8 +82,11 @@ impl Api {
         match crate::excision::excise_pooled(conn, &self.blobs, writer, target, actor, authority)
             .await
         {
-            Ok(summary) => Reply::Ok {
-                result: json!({ "excised": summary }),
+            Ok(summary) => {
+                if sealed && let Some(session) = self.unlock.lock().await.as_mut() {
+                    session.keys.clear();
+                }
+                Reply::Ok { result: json!({ "excised": summary }) }
             },
             Err(e) => refused(e),
         }
