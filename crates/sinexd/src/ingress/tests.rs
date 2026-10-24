@@ -634,7 +634,6 @@ async fn an_indirect_frame_is_handled_as_the_frame_it_names() {
     assert!(ack.refusal.unwrap().contains("only material and events"));
 }
 
-mod retirement;
 
 #[tokio::test]
 async fn exclusion_guard_precedes_new_producer_registration_and_chunk_storage() {

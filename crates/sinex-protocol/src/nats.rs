@@ -9,7 +9,6 @@
 //! | `<root>.ingress.<producer>` | the producer | an [`Ingress`] frame, into the ingress stream |
 //! | `<root>.ack.<producer>` | `sinexd` | the [`Acknowledgment`] of each frame |
 //! | `<root>.have.<producer>` | the producer, as a request | [`Have`]: what Sinex recorded for these frames |
-//! | `<root>.retire.<producer>` | the producer, as a request | [`RetireBatches`]: retire superseded row batches from a confirmed excision proof |
 //! | `<root>.confirmed.event.<event type>` | `sinexd` | a [`Confirmed::Event`] |
 //! | `<root>.confirmed.archive` | `sinexd` | a [`Confirmed::Archived`], [`Confirmed::Restored`] or [`Confirmed::Excised`] notice |
 //!
@@ -94,13 +93,6 @@ impl Subjects {
         format!("{}.have.{producer}", self.root)
     }
 
-    pub fn retire(&self, producer: &str) -> String {
-        format!("{}.retire.{producer}", self.root)
-    }
-    pub fn retire_all(&self) -> String {
-        format!("{}.retire.*", self.root)
-    }
-
     pub fn have_all(&self) -> String {
         format!("{}.have.*", self.root)
     }
@@ -113,20 +105,15 @@ impl Subjects {
             .strip_prefix('.')?;
         let producer = rest
             .strip_prefix("ingress.")
-            .or_else(|| rest.strip_prefix("have."))
-            .or_else(|| rest.strip_prefix("retire."))?;
+            .or_else(|| rest.strip_prefix("have."))?;
         valid_producer(producer).then_some(producer)
     }
 
     /// What a producer's NATS user may publish and subscribe to: its own
-    /// ingress, have and retirement subjects, its acknowledgments, and reply inboxes.
+    /// ingress and have subjects, its acknowledgments, and reply inboxes.
     pub fn producer_permissions(&self, producer: &str) -> (Vec<String>, Vec<String>) {
         (
-            vec![
-                self.ingress(producer),
-                self.have(producer),
-                self.retire(producer),
-            ],
+            vec![self.ingress(producer), self.have(producer)],
             vec![self.ack(producer), "_INBOX.>".into()],
         )
     }
@@ -374,23 +361,6 @@ pub struct RestoredNotice {
     pub event: EventId,
     pub restored_seq: i64,
     pub operation: Option<sinex_model::OperationId>,
-}
-
-/// Immutable confirmed proof; never a caller-supplied deletion hash list.
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(deny_unknown_fields)]
-pub struct RetireBatches {
-    pub archive: String,
-    pub owner: sinex_model::event_types::polylogue::ArchiveUnit,
-    pub digest: String,
-}
-#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
-pub struct Retirement {
-    pub retired_materials: u64,
-    pub retained_materials: u64,
-    pub pending_files: u64,
-    pub retained_files: u64,
-    pub refusal: Option<String>,
 }
 
 #[cfg(test)]

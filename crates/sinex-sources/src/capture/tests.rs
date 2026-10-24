@@ -62,7 +62,7 @@ fn stop_escalates_when_the_capture_ignores_interrupts() {
 }
 
 #[test]
-fn dropping_control_stops_a_still_owned_process_and_retires_the_timer() {
+fn dropping_control_stops_a_still_owned_process_and_drops_the_timer() {
     let control = Control::new(Some(Duration::from_secs(30)));
     let mut child = shell(&control, "echo $$; exec sleep 30");
     let pid = pid(&mut child);

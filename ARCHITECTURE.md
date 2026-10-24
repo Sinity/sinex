@@ -384,56 +384,6 @@ generic error without the key and leaves stored values and cursors unchanged.
 Refusal reasons and follow-query errors pass through the same masker before
 encoding; their typed refusal flags stay intact.
 
-## Superseded producer rows and source bytes
-
-Polylogue requests physical row-batch retirement on its own NATS retirement
-subject, naming a confirmed archive, excision owner and immutable manifest
-digest. `sinexd/row_retirement.rs` interprets that producer's descriptor history;
-`sinex-store/retirement.rs` stages selection in temporary PostgreSQL tables and
-changes material references under the existing writer. The complete unit prefix
-and replacement coverage are checked before mutation. Original batches and older
-replacement batches and their source dependencies are candidates. Each candidate
-is resolved through its producer-owned acknowledged material frame. Missing
-source-frame evidence for an original confirmed descriptor refuses retirement;
-unpublished intermediate replacements remain optional candidates. Selected
-batches and source references across all producer/archive namespaces stay;
-retirement folds their confirmed metadata in bounded pages on every request.
-A dependency still selected by the same unit is not an obsolete cleanup
-candidate; sharing by another unit or archive is reported as retained backing.
-Selected batch bytes are read back and checked against their hashes before
-retirement changes backing references. Raw source references receive a presence
-check; this operation does not rehash the source corpus.
-Already completed requests resolve their descriptors and report cleanup without
-rereading live batch contents. A request that retries an owned deletion verifies
-again before cleanup.
-
-Retirement repoints eligible material/extent references to same-length blank
-bytes and preserves descriptor events and commit-log rows. Same-revision aliases,
-other event readings, sealed materials and descendant parts retain their backing.
-Other material, extent or event-blob aliases retain shared physical bytes. No
-original provider file is selected for removal. Existing durable
-`core.blobs` deletion recovery owns unlink retries; every request retries it and
-reports remaining owned files separately from retained shared files. The request
-proof also names an idempotent entry in the existing operations journal.
-
-A retired global source frame keeps its immutable acknowledgment in the database.
-Content-address interpretation requires the declared Polylogue material role;
-generic producer frame names retain their ordinary acknowledgment behavior.
-Have, Reserve and delivery retries return an unavailable refusal when that
-material no longer backs the advertised hash. New row and replacement source
-references are checked inside the writer transaction against producer-owned
-registered backing. An older manifest may cite an unpublished intermediate
-source only when a newer producer-owned acknowledged owner already supersedes
-that exact archive/unit. This exceptional check reads one matching descriptor;
-ordinary ready dependencies need no history query. An old acknowledgment cannot resurrect deleted bytes or
-authorize a later archive to cite them. These checks track registered backing,
-not a fresh physical verification of every source file.
-
-This producer grant performs cleanup of already confirmed excision metadata; it
-does not grant general material excision. Operator excision retains its existing
-access gate. Older servers have no retirement responder, allowing callers to
-report unsupported physical retirement immediately.
-
 Sealed material keys contain authenticated, versioned capability roles inside
 class-wrapped age envelopes. Exact 32-byte predecessor envelopes decode as data
 keys. Data-and-record-naming envelopes can decrypt content; record-naming-only

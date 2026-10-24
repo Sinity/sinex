@@ -20,7 +20,6 @@ mod publication;
 mod publisher;
 mod replay;
 mod retained;
-mod row_retirement;
 mod screen_text;
 mod sealed_access;
 mod source_excision;
