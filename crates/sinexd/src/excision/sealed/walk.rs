@@ -276,7 +276,22 @@ impl Archive {
                                 && actual_key == *key
                                 && actual_hash.as_slice() == hash
                         }) {
-                            return Err("native record identity does not match its retained predecessor evidence".into());
+                            let matching_hash = events.iter().any(|event| {
+                                let actual = names.map_or(event.record_hash, |n| {
+                                    n.name_record_hash(&event.record_hash)
+                                });
+                                actual.as_slice() == hash
+                            });
+                            let matching_key = events.iter().any(|event| {
+                                let actual = event.equivalence_key.as_ref().map(|k| {
+                                    names
+                                        .map_or_else(|| k.0.clone(), |n| n.name_equivalence(&k.0).0)
+                                });
+                                actual == *key
+                            });
+                            return Err(format!(
+                                "native record identity does not match its retained predecessor evidence (hash matches: {matching_hash}, key matches: {matching_key})"
+                            ));
                         }
                         verified_anchors.insert(start as i64);
                     }
