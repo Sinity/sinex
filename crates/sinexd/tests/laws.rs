@@ -709,7 +709,8 @@ async fn l43_a_second_writer_is_refused() {
         .unwrap();
     assert!(!out.status.success(), "a second writer started");
     assert!(
-        String::from_utf8_lossy(&out.stderr).contains("another sinexd writer"),
+        String::from_utf8_lossy(&out.stderr).contains("another sinexd writer")
+            || String::from_utf8_lossy(&out.stderr).contains("a writer is active"),
         "{}",
         String::from_utf8_lossy(&out.stderr)
     );

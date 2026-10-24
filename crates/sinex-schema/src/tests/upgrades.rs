@@ -184,3 +184,40 @@ async fn refused_schema_apply_releases_its_locks_before_the_connection_is_used_a
     .unwrap();
     assert_eq!(version, 0);
 }
+
+#[tokio::test]
+async fn failed_fresh_creation_releases_ddl_locks_before_the_connection_is_used_again() {
+    let db = devkit::pg::test_database().unwrap();
+    let mut idle_owner = PgConnection::connect(&db.url(None)).await.unwrap();
+    let drop_all = format!(
+        "DROP SCHEMA {} CASCADE",
+        schemas()
+            .iter()
+            .map(|s| quote_ident(s))
+            .collect::<Vec<_>>()
+            .join(",")
+    );
+    idle_owner.execute(drop_all.as_str()).await.unwrap();
+    // Existing audit makes creation fail after core was created in its tx.
+    idle_owner.execute("CREATE SCHEMA audit").await.unwrap();
+    let mut next_creator = PgConnection::connect(&db.url(None)).await.unwrap();
+    let error = apply(&mut idle_owner).await.unwrap_err();
+    assert!(
+        matches!(&error, Error::Database(_))
+            && error.to_string().contains("schema \"audit\" already exists"),
+        "{error}"
+    );
+    tokio::time::timeout(
+        std::time::Duration::from_secs(2),
+        next_creator.execute("CREATE SCHEMA core"),
+    )
+    .await
+    .expect("failed creation retained its uncommitted schema locks")
+    .unwrap();
+    let audit: bool =
+        sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM pg_namespace WHERE nspname='audit')")
+            .fetch_one(&mut next_creator)
+            .await
+            .unwrap();
+    assert!(audit, "the pre-existing schema stays intact");
+}
