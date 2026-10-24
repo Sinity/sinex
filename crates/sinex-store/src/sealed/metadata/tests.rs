@@ -8,6 +8,7 @@ fn scope() -> Scope {
         parser: "test".into(),
         parser_version: 1,
         length: 100,
+        whole: false,
     }
 }
 #[test]

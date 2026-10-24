@@ -659,11 +659,10 @@ async fn read_archive(
             if let Some(authority) = access.authority {
                 authority.check()?;
             }
-            let carry = positions::load(conn, &b.binding.name)
+            let (cursor, carry) = positions::load(conn, &b.binding.name)
                 .await
                 .map_err(|e| e.to_string())?
-                .map(|(_, carry)| carry)
-                .unwrap_or(Value::Null);
+                .unwrap_or((Value::Null, Value::Null));
             let carry = if acquired
                 .material
                 .as_ref()
@@ -672,7 +671,14 @@ async fn read_archive(
                 Value::Null
             } else if acquired.material.is_some() {
                 match &sealing {
-                    Some(sealing) => sealing.open_carry(&carry)?,
+                    Some(sealing) => backfill::open_carry(
+                        b.source.as_ref(),
+                        &b.binding.name,
+                        &cursor,
+                        &carry,
+                        sealing,
+                        access.authority,
+                    )?,
                     None => carry,
                 }
             } else {

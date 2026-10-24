@@ -25,3 +25,41 @@ fn naming_only_authority_never_becomes_a_legacy_decryption_key() {
     authority.revoke();
     assert!(authority.unwrap_secrets(&wrapped).is_err());
 }
+
+#[test]
+fn class_owned_metadata_requires_current_scoped_authority() {
+    use sinex_store::sealed::metadata;
+    let identity = Identity::generate();
+    let scope = metadata::Scope::Carry {
+        source: "s".into(),
+        binding: "b".into(),
+        parser: "p".into(),
+        parser_version: 1,
+        cursor: serde_json::json!({"through": 10}),
+    };
+    let ciphertext = metadata::seal_carry(
+        &serde_json::json!({"unrelated": 3}),
+        &identity.to_public(),
+        &scope,
+    )
+    .unwrap();
+    let authority = Authority::new(identity.clone(), Duration::from_secs(60)).unwrap();
+    assert_eq!(
+        authority
+            .open_current_carry(ciphertext.as_slice(), &scope)
+            .unwrap(),
+        serde_json::json!({"unrelated": 3})
+    );
+    authority.revoke();
+    assert!(
+        authority
+            .open_current_carry(ciphertext.as_slice(), &scope)
+            .is_err()
+    );
+    let expired = Authority::new(identity, Duration::ZERO).unwrap();
+    assert!(
+        expired
+            .open_current_carry(ciphertext.as_slice(), &scope)
+            .is_err()
+    );
+}

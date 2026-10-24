@@ -146,6 +146,9 @@ impl SealingSink {
     }
 
     pub fn open_carry(&self, value: &serde_json::Value) -> Result<serde_json::Value, String> {
+        if sinex_store::sealed::metadata::is_carry(value) {
+            return Err("class-owned parser carry requires scoped authority".into());
+        }
         let Some(reference) = sinex_store::sealed::key_ref(value) else {
             return Ok(value.clone());
         };
@@ -242,7 +245,9 @@ impl SealingSink {
                     unreachable!()
                 };
                 if batch.records.is_empty()
-                    && (progress.carry.is_null() || sinex_store::sealed::is_sealed(&progress.carry))
+                    && (progress.carry.is_null()
+                        || sinex_store::sealed::is_sealed(&progress.carry)
+                        || sinex_store::sealed::metadata::is_carry(&progress.carry))
                 {
                     continue;
                 }

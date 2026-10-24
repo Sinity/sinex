@@ -567,6 +567,17 @@ pub async fn apply_prepared(
     check()?;
     if let Some(prepared) = prepared {
         applied.keys_destroyed = sealed::apply(conn, prepared, check).await?;
+        for replay in &prepared.replay {
+            if let Some(old) = &replay.old_blob {
+                if old != &replay.blob && unreferenced(conn, old).await? {
+                    sqlx::query("UPDATE core.blobs SET status='deleting' WHERE hash=$1")
+                        .bind(old)
+                        .execute(&mut *conn)
+                        .await?;
+                    applied.delete_after_commit.push(old.clone());
+                }
+            }
+        }
     }
     check()?;
     sqlx::query!("SELECT set_config('sinex.excise_operation', '', true)")
@@ -578,7 +589,7 @@ pub async fn apply_prepared(
 /// Whether no material, revision extent or event refers to `blob` any more.
 async fn unreferenced(conn: &mut PgConnection, blob: &str) -> Result<bool> {
     Ok(sqlx::query_scalar!(
-        r#"SELECT NOT EXISTS (SELECT 1 FROM raw.materials WHERE blob = $1)
+        r#"SELECT NOT EXISTS (SELECT 1 FROM raw.materials WHERE blob = $1 OR erased_replay_blob=$1)
              AND NOT EXISTS (SELECT 1 FROM raw.revision_extents WHERE blob = $1)
              AND NOT EXISTS (SELECT 1 FROM core.event_blobs WHERE blob = $1) AS "gone!""#,
         blob
@@ -598,7 +609,7 @@ pub async fn finish_deletions(
 ) -> Result<(Vec<String>, Vec<String>)> {
     let pending = sqlx::query_scalar!(
         r#"SELECT hash FROM core.blobs b WHERE status = 'deleting'
-             AND NOT EXISTS (SELECT 1 FROM raw.materials WHERE blob = b.hash)
+             AND NOT EXISTS (SELECT 1 FROM raw.materials WHERE blob = b.hash OR erased_replay_blob=b.hash)
              AND NOT EXISTS (SELECT 1 FROM raw.revision_extents WHERE blob = b.hash)
              AND NOT EXISTS (SELECT 1 FROM core.event_blobs WHERE blob = b.hash)"#
     )

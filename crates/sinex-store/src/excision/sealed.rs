@@ -17,9 +17,19 @@ pub struct KeyRotation {
 }
 
 #[derive(Clone)]
+pub struct ReplayReplacement {
+    pub material: MaterialId,
+    pub old_blob: Option<String>,
+    pub blob: String,
+    /// Ciphertext evidence length, not original material length.
+    pub length: u64,
+}
+
+#[derive(Clone)]
 pub struct PreparedSealed {
     pub source: String,
     pub rotations: Vec<KeyRotation>,
+    pub replay: Vec<ReplayReplacement>,
     /// Anonymous, operation-owned ciphertext stream. No decoded private values.
     pub changes: Arc<std::fs::File>,
 }
@@ -135,6 +145,33 @@ pub async fn stage(
             .execute(&mut *conn)
             .await?;
     }
+    if prepared.replay.len() != prepared.rotations.len() {
+        return Err(invalid("sealed replay replacements differ from key owners"));
+    }
+    let mut seen = std::collections::BTreeSet::new();
+    for replay in &prepared.replay {
+        check()?;
+        if !seen.insert(replay.material)
+            || !prepared
+                .rotations
+                .iter()
+                .any(|r| r.material == replay.material)
+        {
+            return Err(invalid("duplicate or unowned sealed replay replacement"));
+        }
+        let current: Option<String> =
+            sqlx::query_scalar("SELECT erased_replay_blob FROM raw.materials WHERE id=$1")
+                .bind(replay.material.0)
+                .fetch_one(&mut *conn)
+                .await?;
+        if current != replay.old_blob
+            || replay.blob.is_empty()
+            || replay.length == 0
+            || i64::try_from(replay.length).is_err()
+        {
+            return Err(invalid("sealed replay metadata changed after preparation"));
+        }
+    }
     let mut file = &*prepared.changes;
     file.rewind()
         .map_err(|_| invalid("prepared ciphertext stream cannot rewind"))?;
@@ -231,8 +268,10 @@ pub async fn stage(
                 old,
                 replacement,
             } => {
-                if !(old.is_null() || sealed::is_sealed(&old))
-                    || !(replacement.is_null() || sealed::is_sealed(&replacement))
+                if !(old.is_null() || sealed::is_sealed(&old) || sealed::metadata::is_carry(&old))
+                    || !(replacement.is_null()
+                        || sealed::is_sealed(&replacement)
+                        || sealed::metadata::is_carry(&replacement))
                 {
                     return Err(invalid(
                         "prepared parser carry contains unprotected content",
@@ -247,7 +286,7 @@ pub async fn stage(
                         let matches = if rotation.replacement.role
                             == sealed::SecretRole::RecordNamingOnly.as_str()
                         {
-                            replacement.is_null()
+                            replacement.is_null() || sealed::metadata::is_carry(&replacement)
                         } else {
                             sealed::key_ref(&replacement)
                                 == Some(rotation.replacement.reference.as_str())
@@ -260,6 +299,20 @@ pub async fn stage(
                     } else if replacement != old {
                         return Err(invalid(
                             "prepared carry changes an unowned content capability",
+                        ));
+                    }
+                } else if sealed::metadata::is_carry(&old) {
+                    if !(sealed::metadata::is_carry(&replacement)
+                        || sealed::key_ref(&replacement).is_some_and(|key| {
+                            prepared.rotations.iter().any(|r| {
+                                r.replacement.reference == key
+                                    && r.replacement.role
+                                        == sealed::SecretRole::DataAndRecordNaming.as_str()
+                            })
+                        }))
+                    {
+                        return Err(invalid(
+                            "class-owned carry replacement is unprotected or unowned",
                         ));
                     }
                 } else if replacement != old {
@@ -324,6 +377,16 @@ pub async fn apply(
     prepared: &PreparedSealed,
     check: &(dyn Fn() -> Result<()> + Send + Sync),
 ) -> Result<usize> {
+    for replay in &prepared.replay {
+        check()?;
+        sqlx::query("INSERT INTO core.blobs(hash,size,status) VALUES($1,$2,'present') ON CONFLICT(hash) DO UPDATE SET status='present' WHERE core.blobs.status='deleting'")
+            .bind(&replay.blob).bind(i64::try_from(replay.length).map_err(|_| invalid("replay ciphertext exceeds i64"))?).execute(&mut *conn).await?;
+        sqlx::query("UPDATE raw.materials SET erased_replay_blob=$2 WHERE id=$1")
+            .bind(replay.material.0)
+            .bind(&replay.blob)
+            .execute(&mut *conn)
+            .await?;
+    }
     for rotation in &prepared.rotations {
         check()?;
         let rows = sqlx::query(

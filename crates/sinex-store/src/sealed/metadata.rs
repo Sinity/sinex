@@ -2,6 +2,7 @@
 //! representation is a material secret or a public manifest/cursor value.
 use super::{Identity, Recipient};
 use crate::{Error, Result};
+use base64::Engine;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sinex_model::MaterialId;
@@ -17,6 +18,7 @@ pub enum Scope {
         parser: String,
         parser_version: i32,
         length: u64,
+        whole: bool,
     },
     #[serde(rename = "current-carry")]
     Carry {
@@ -184,3 +186,21 @@ fn io(_: std::io::Error) -> Error {
 
 #[cfg(test)]
 mod tests;
+
+/// The database position contains only ciphertext. This is not a payload or key.
+pub fn carry_envelope(ciphertext: &[u8]) -> Value {
+    serde_json::json!({"sealed_carry": base64::engine::general_purpose::STANDARD.encode(ciphertext)})
+}
+pub fn is_carry(value: &Value) -> bool {
+    value
+        .as_object()
+        .is_some_and(|o| o.len() == 1 && o.get("sealed_carry").is_some_and(Value::is_string))
+}
+pub fn carry_ciphertext(value: &Value) -> Result<Vec<u8>> {
+    if !is_carry(value) {
+        return Err(invalid());
+    }
+    base64::engine::general_purpose::STANDARD
+        .decode(value["sealed_carry"].as_str().expect("checked string"))
+        .map_err(|_| invalid())
+}

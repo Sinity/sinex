@@ -61,6 +61,7 @@ async fn apply_locked(conn: &mut PgConnection) -> Result<Applied, Error> {
         match change.version {
             1 => archival_history(conn).await?,
             2 => notes::apply(conn).await?,
+            3 => sealed_erasure(conn).await?,
             _ => {
                 return Err(Error::Upgrade {
                     found,
@@ -123,3 +124,13 @@ async fn archival_history(conn: &mut PgConnection) -> Result<(), Error> {
 
 #[cfg(test)]
 mod tests;
+
+async fn sealed_erasure(conn: &mut PgConnection) -> Result<(), Error> {
+    conn.execute("ALTER TABLE privacy.material_keys ADD COLUMN role text NOT NULL DEFAULT 'data-and-record-naming' CHECK (role IN ('data-and-record-naming','record-naming-only'))").await?;
+    conn.execute(
+        "ALTER TABLE raw.materials ADD COLUMN erased_replay_blob text REFERENCES core.blobs(hash)",
+    )
+    .await?;
+    conn.execute(tables::event_guard()).await?;
+    Ok(())
+}

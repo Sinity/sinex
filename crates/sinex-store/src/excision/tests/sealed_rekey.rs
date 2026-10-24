@@ -129,7 +129,37 @@ async fn prepared_ciphertext_rekey_keeps_unrelated_facts_and_retires_the_old_cap
         serde_json::to_writer(&mut file, &change).unwrap();
         file.write_all(b"\n").unwrap();
     }
+    let metadata_scope = crypto::metadata::Scope::Replay {
+        source: "s".into(),
+        material,
+        parser: "lines".into(),
+        parser_version: 1,
+        length: bytes.len() as u64,
+        whole: false,
+    };
+    let mut replay_ciphertext = Vec::new();
+    crypto::metadata::seal_replay(
+        &mut replay_ciphertext,
+        &identity.to_public(),
+        &metadata_scope,
+        [crypto::metadata::ErasedRecord {
+            start: 0,
+            end: kept as u64,
+            raw_digest: crypto::MaterialSecrets::from_data_key(&old)
+                .name_raw_record(&bytes[..kept]),
+            transition: None,
+        }],
+        || Ok(()),
+    )
+    .unwrap();
+    let metadata_blob = store.blobs.put(&replay_ciphertext).unwrap();
     let prepared = PreparedSealed {
+        replay: vec![super::super::sealed::ReplayReplacement {
+            material,
+            old_blob: None,
+            blob: metadata_blob.clone(),
+            length: replay_ciphertext.len() as u64,
+        }],
         source: "s".into(),
         rotations: vec![KeyRotation {
             material,
@@ -147,6 +177,58 @@ async fn prepared_ciphertext_rekey_keeps_unrelated_facts_and_retires_the_old_cap
         length: bytes.len() as u64,
         manifest: None,
     }];
+    // Fail after material and key repointing, when the final dependent carry
+    // UPDATE executes. Retrying uses the same prepared ciphertext custody.
+    let mut failed = conn.begin().await.unwrap();
+    sqlx::query("CREATE FUNCTION pg_temp.reject_rekey_position() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'synthetic final dependent failure'; END $$").execute(&mut *failed).await.unwrap();
+    sqlx::query("CREATE TRIGGER reject_rekey_position BEFORE UPDATE ON raw.positions FOR EACH ROW EXECUTE FUNCTION pg_temp.reject_rekey_position()").execute(&mut *failed).await.unwrap();
+    assert!(
+        apply_prepared(
+            &mut failed,
+            target,
+            &selected,
+            &rewrites,
+            OperationId::new(),
+            "synthetic",
+            &NoDerivations,
+            Some(&prepared),
+            &|| Ok(())
+        )
+        .await
+        .is_err()
+    );
+    failed.rollback().await.unwrap();
+    assert_eq!(
+        candidate_materials(&mut conn, "s", "lines").await.unwrap(),
+        selected.candidates
+    );
+    let unchanged_payload: serde_json::Value =
+        sqlx::query_scalar("SELECT payload FROM core.events WHERE id=$1")
+            .bind(retained.id.0)
+            .fetch_one(&mut conn)
+            .await
+            .unwrap();
+    assert_eq!(unchanged_payload, retained.payload);
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>("SELECT count(*) FROM raw.failures WHERE material_id=$1")
+            .bind(material.0)
+            .fetch_one(&mut conn)
+            .await
+            .unwrap(),
+        2
+    );
+    assert!(
+        crypto::wrapped_key(&mut conn, &fresh.key_ref)
+            .await
+            .unwrap()
+            .is_none()
+    );
+    assert!(
+        crypto::wrapped_key(&mut conn, &old.key_ref)
+            .await
+            .unwrap()
+            .is_some()
+    );
     let mut tx = conn.begin().await.unwrap();
     let applied = apply_prepared(
         &mut tx,
@@ -169,6 +251,25 @@ async fn prepared_ciphertext_rekey_keeps_unrelated_facts_and_retires_the_old_cap
             applied.keys_destroyed
         ),
         (1, 1, 1)
+    );
+    let stored_replay: String =
+        sqlx::query_scalar("SELECT erased_replay_blob FROM raw.materials WHERE id=$1")
+            .bind(material.0)
+            .fetch_one(&mut conn)
+            .await
+            .unwrap();
+    assert_eq!(stored_replay, metadata_blob);
+    let records = crypto::metadata::open_replay(
+        store.blobs.read(&stored_replay).unwrap().as_slice(),
+        &identity,
+        &metadata_scope,
+        || Ok(()),
+    )
+    .unwrap();
+    assert_eq!(records.len(), 1);
+    assert_eq!(
+        records[0].raw_digest,
+        crypto::MaterialSecrets::from_data_key(&old).name_raw_record(&bytes[..kept])
     );
     let after: serde_json::Value =
         sqlx::query_scalar("SELECT to_jsonb(e)-'payload' FROM core.events e WHERE id=$1")

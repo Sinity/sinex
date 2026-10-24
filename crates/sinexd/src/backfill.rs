@@ -315,7 +315,7 @@ pub(crate) async fn drive(
             serde_json::Value::Null
         } else if acquired.material.is_some() {
             match &sealing {
-                Some(s) => s.open_carry(&carry)?,
+                Some(s) => open_carry(source, binding, &cursor, &carry, s, access.authority)?,
                 None => carry,
             }
         } else {
@@ -510,4 +510,30 @@ impl Totals {
         self.admit_time += o.admit_time;
         self.wall += o.wall;
     }
+}
+
+pub(crate) fn open_carry(
+    source: &dyn Source,
+    binding: &str,
+    cursor: &serde_json::Value,
+    carry: &serde_json::Value,
+    sealing: &crate::one_shot::SealingSink,
+    authority: Option<&crate::sealed_access::Authority>,
+) -> Result<serde_json::Value, String> {
+    use sinex_store::sealed::metadata;
+    if !metadata::is_carry(carry) {
+        return sealing.open_carry(carry);
+    }
+    let authority =
+        authority.ok_or("class-owned parser carry requires explicit operator unlock")?;
+    let scope = metadata::Scope::Carry {
+        source: source.spec().name.into(),
+        binding: binding.into(),
+        parser: source.spec().parser.into(),
+        parser_version: i32::try_from(source.spec().parser_version)
+            .map_err(|_| "parser version exceeds i32")?,
+        cursor: cursor.clone(),
+    };
+    let ciphertext = metadata::carry_ciphertext(carry).map_err(|e| e.to_string())?;
+    authority.open_current_carry(ciphertext.as_slice(), &scope)
 }

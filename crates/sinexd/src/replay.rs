@@ -208,7 +208,17 @@ pub async fn run(
                 let (key_ref, secrets) = authority
                     .material_secrets(read_conn, MaterialId(material.id))
                     .await?;
-                let key = secrets.data_key(key_ref).map_err(|e| e.to_string())?;
+                let key = match secrets.role() {
+                    sinex_store::sealed::SecretRole::DataAndRecordNaming => {
+                        Some(secrets.data_key(key_ref).map_err(|e| e.to_string())?)
+                    }
+                    sinex_store::sealed::SecretRole::RecordNamingOnly
+                        if material.erased_replay_blob.is_some() =>
+                    {
+                        None
+                    }
+                    _ => return Err("bodyless sealed replay metadata is unavailable".into()),
+                };
                 keys.insert(material.id, (key, reference.length, secrets));
             }
         }
@@ -366,7 +376,7 @@ fn read_chain(
     keys: &HashMap<
         Uuid,
         (
-            sinex_store::sealed::DataKey,
+            Option<sinex_store::sealed::DataKey>,
             u64,
             sinex_store::sealed::MaterialSecrets,
         ),
@@ -396,7 +406,7 @@ fn read_chain_into(
     keys: &HashMap<
         Uuid,
         (
-            sinex_store::sealed::DataKey,
+            Option<sinex_store::sealed::DataKey>,
             u64,
             sinex_store::sealed::MaterialSecrets,
         ),
@@ -454,39 +464,13 @@ fn read_chain_into(
             ));
         }
         let key = keys.get(&m.id);
-        let retained = if let Some((key, length, _)) = key {
-            use std::io::Seek;
-            let authority = authority
-                .ok_or("sealed replay requires scoped authority")?
-                .clone();
+        let whole_erased = key.is_some_and(|(data, _, _)| data.is_none());
+        let length = u64::try_from(m.length).map_err(|_| "negative stored material length")?;
+        let erased = if let Some(blob) = &m.erased_replay_blob {
+            let authority = authority.ok_or("erased replay metadata requires scoped authority")?;
             let sender = out.clone();
-            let mut reader = blobs
-                .read_sealed(
-                    &m.blob,
-                    Some(*length),
-                    key,
-                    crate::sealed_access::read_limits(*length)?,
-                    move || {
-                        authority.check().map_err(std::io::Error::other)?;
-                        if sender.is_closed() {
-                            return Err(std::io::Error::other(
-                                "the writer stopped reading the chain",
-                            )
-                            .into());
-                        }
-                        Ok(())
-                    },
-                )
-                .map_err(|e| e.to_string())?;
-            // Authenticate even bytes outside declared ranges before accepting this material.
-            std::io::copy(&mut reader, &mut std::io::sink()).map_err(|e| e.to_string())?;
-            reader.rewind().map_err(|e| e.to_string())?;
-            crate::retained::Retained::new(reader, *length)
-        } else {
-            let mut file = tempfile::tempfile().map_err(|e| e.to_string())?;
-            let sender = out.clone();
-            let length = blobs
-                .copy_to_checked(&m.blob, &mut file, move || {
+            let input = blobs
+                .read_plain(blob, None, move || {
                     if sender.is_closed() {
                         Err(std::io::Error::other("the writer stopped reading the chain").into())
                     } else {
@@ -494,29 +478,116 @@ fn read_chain_into(
                     }
                 })
                 .map_err(|e| e.to_string())?;
-            let sender = out.clone();
-            crate::retained::Retained::checked(file, length, move || {
-                if sender.is_closed() {
-                    Err(std::io::Error::other(
-                        "the writer stopped reading the chain",
+            let scope = sinex_store::sealed::metadata::Scope::Replay {
+                source: source.spec().name.into(),
+                material: MaterialId(m.id),
+                parser: m.parser.clone(),
+                parser_version: m.parser_version,
+                length,
+                whole: whole_erased,
+            };
+            let records = authority.open_replay_metadata(input, &scope)?;
+            let records = records
+                .into_iter()
+                .map(|r| {
+                    Ok((
+                        usize::try_from(r.start)
+                            .map_err(|_| "erased anchor exceeds address space")?,
+                        usize::try_from(r.end).map_err(|_| "erased end exceeds address space")?,
+                        r.transition,
                     ))
-                } else {
-                    Ok(())
-                }
+                })
+                .collect::<Result<Vec<_>, String>>()?;
+            Some(
+                sinex_sources::drain::ErasedTransitions::from_archive(
+                    records,
+                    length,
+                    whole_erased,
+                )
+                .map_err(|e| e.to_string())?,
+            )
+        } else {
+            None
+        };
+        let retained = if whole_erased {
+            if erased.is_none() {
+                return Err("bodyless sealed replay metadata is unavailable".into());
+            }
+            None
+        } else {
+            Some(if let Some((Some(key), length, _)) = key {
+                use std::io::Seek;
+                let authority = authority
+                    .ok_or("sealed replay requires scoped authority")?
+                    .clone();
+                let sender = out.clone();
+                let mut reader = blobs
+                    .read_sealed(
+                        &m.blob,
+                        Some(*length),
+                        key,
+                        crate::sealed_access::read_limits(*length)?,
+                        move || {
+                            authority.check().map_err(std::io::Error::other)?;
+                            if sender.is_closed() {
+                                return Err(std::io::Error::other(
+                                    "the writer stopped reading the chain",
+                                )
+                                .into());
+                            }
+                            Ok(())
+                        },
+                    )
+                    .map_err(|e| e.to_string())?;
+                // Authenticate even bytes outside declared ranges before accepting this material.
+                std::io::copy(&mut reader, &mut std::io::sink()).map_err(|e| e.to_string())?;
+                reader.rewind().map_err(|e| e.to_string())?;
+                crate::retained::Retained::new(reader, *length)
+            } else {
+                let mut file = tempfile::tempfile().map_err(|e| e.to_string())?;
+                let sender = out.clone();
+                let length = blobs
+                    .copy_to_checked(&m.blob, &mut file, move || {
+                        if sender.is_closed() {
+                            Err(
+                                std::io::Error::other("the writer stopped reading the chain")
+                                    .into(),
+                            )
+                        } else {
+                            Ok(())
+                        }
+                    })
+                    .map_err(|e| e.to_string())?;
+                let sender = out.clone();
+                crate::retained::Retained::checked(file, length, move || {
+                    if sender.is_closed() {
+                        Err(std::io::Error::other(
+                            "the writer stopped reading the chain",
+                        ))
+                    } else {
+                        Ok(())
+                    }
+                })
             })
         };
-        let records = retained.records(&m.manifest, source.spec().framer)?;
+        let records = match &retained {
+            Some(retained) => retained.records(&m.manifest, source.spec().framer)?,
+            None => Vec::new(),
+        };
         let order = drivers::reading_order(&m.manifest);
         // Chunks are drained one at a time, so a material's events are never
         // all in memory at once. A material out of scope is still read for
         // the carry it passes on.
         let chunks = source
             .drainer(DrainInput {
-                erased: None,
+                erased: erased.as_ref(),
                 source: source.spec().name,
                 class: source.spec().class,
                 material: MaterialId(m.id),
-                bytes: sinex_sources::drain::RecordBytes::Reader(&retained),
+                bytes: match &retained {
+                    Some(retained) => sinex_sources::drain::RecordBytes::Reader(retained),
+                    None => sinex_sources::drain::RecordBytes::Erased(length),
+                },
                 records: &records,
                 carry: carry.clone(),
                 reading_order: &*order,
@@ -554,7 +625,10 @@ fn read_chain_into(
             if records.is_empty() {
                 continue;
             }
-            if let Some((key, _, secrets)) = key {
+            if let Some((data, _, secrets)) = key {
+                let key = data
+                    .as_ref()
+                    .ok_or("bodyless material unexpectedly produced readings")?;
                 for record in &mut records {
                     match record {
                         RecordOutcome::Events { events, .. } => {

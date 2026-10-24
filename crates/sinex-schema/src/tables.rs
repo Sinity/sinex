@@ -240,7 +240,8 @@ pub(crate) fn tables(c: &Checks) -> Vec<String> {
   durable_bytes bigint NOT NULL CHECK (durable_bytes >= 0),
   manifest jsonb NOT NULL,
   parser text NOT NULL,
-  parser_version integer NOT NULL
+  parser_version integer NOT NULL,
+  erased_replay_blob text REFERENCES core.blobs(hash)
 )".into(),
         "CREATE INDEX materials_input ON raw.materials (input_id, part_index)".into(),
         "CREATE TABLE raw.sqlite_images (
@@ -541,53 +542,7 @@ pub(crate) fn tables(c: &Checks) -> Vec<String> {
 /// `ts_orig` can be unknown and historical imports put old times in new chunks
 /// (spec `storage.md` §3.1).
 pub(crate) fn after_tables() -> Vec<String> {
-    let mut out = vec![
-        archive_history_function().into(),
-        "CREATE FUNCTION core.event_guard() RETURNS trigger LANGUAGE plpgsql AS $$
-DECLARE
-  operation text;
-  canonical text;
-BEGIN
-  operation := nullif(current_setting('sinex.excise_operation', true), '');
-  IF TG_OP = 'UPDATE' THEN
-    IF operation IS NOT NULL AND to_regclass('pg_temp.excision_rekeys') IS NOT NULL
-       AND to_regclass('pg_temp.excision_rekey_keys') IS NOT NULL THEN
-      canonical := CASE
-        WHEN TG_RELID='core.events'::regclass OR EXISTS(
-          SELECT 1 FROM pg_inherits WHERE inhrelid=TG_RELID AND inhparent='core.events'::regclass)
-          THEN 'core.events'
-        WHEN TG_RELID='telemetry.events'::regclass OR EXISTS(
-          SELECT 1 FROM pg_inherits WHERE inhrelid=TG_RELID AND inhparent='telemetry.events'::regclass)
-          THEN 'telemetry.events'
-        ELSE NULL END;
-      -- ts_coided is generated after BEFORE triggers from the unchanged ID.
-      IF canonical IS NOT NULL AND OLD.class='sealed' AND NEW.class='sealed'
-         AND (to_jsonb(NEW)-'payload'-'ts_coided')=(to_jsonb(OLD)-'payload'-'ts_coided') THEN
-        IF EXISTS(
-          SELECT 1 FROM pg_temp.excision_rekeys s
-          JOIN pg_temp.excision_rekey_keys r ON r.old_ref=OLD.payload->>'key'
-          JOIN privacy.material_keys k ON k.material_id=r.material_id AND k.key_ref=r.replacement_ref
-          JOIN core.operations o ON o.id::text=operation AND o.kind='excise'
-          WHERE s.kind=canonical AND s.row_id=OLD.id::text
-            AND s.material_id IS NOT DISTINCT FROM OLD.material_id
-            AND s.old_value=OLD.payload AND s.replacement=NEW.payload
-            AND NEW.payload->>'key'=r.replacement_ref
-            AND k.class='sealed' AND k.role='data-and-record-naming'
-            AND r.replacement_role='data-and-record-naming' AND r.old_role='data-and-record-naming'
-        ) THEN
-          RETURN NEW;
-        END IF;
-      END IF;
-    END IF;
-    RAISE EXCEPTION 'event rows are immutable' USING ERRCODE = '23514';
-  END IF;
-  IF TG_OP = 'DELETE' AND nullif(current_setting('sinex.excise_operation', true), '') IS NULL THEN
-    RAISE EXCEPTION 'events are deleted only by an excision' USING ERRCODE = '23514';
-  END IF;
-  RETURN OLD;
-END $$"
-            .to_string(),
-    ];
+    let mut out = vec![archive_history_function().into(), event_guard().into()];
     for table in ["core.events", "telemetry.events"] {
         for template in [
             "SELECT create_hypertable('$T', by_range('id', INTERVAL '1 day'), create_default_indexes => false)",
@@ -638,4 +593,50 @@ pub(crate) fn archive_history_function() -> &'static str {
 SELECT coalesce((SELECT archived FROM audit.archive_changes
   WHERE event_id = target_event AND commit_seq <= at_seq ORDER BY commit_seq DESC LIMIT 1), false)
 $$"
+}
+
+pub(crate) fn event_guard() -> &'static str {
+    "CREATE OR REPLACE FUNCTION core.event_guard() RETURNS trigger LANGUAGE plpgsql AS $$
+DECLARE
+  operation text;
+  canonical text;
+BEGIN
+  operation := nullif(current_setting('sinex.excise_operation', true), '');
+  IF TG_OP = 'UPDATE' THEN
+    IF operation IS NOT NULL AND to_regclass('pg_temp.excision_rekeys') IS NOT NULL
+       AND to_regclass('pg_temp.excision_rekey_keys') IS NOT NULL THEN
+      canonical := CASE
+        WHEN TG_RELID='core.events'::regclass OR EXISTS(
+          SELECT 1 FROM pg_inherits WHERE inhrelid=TG_RELID AND inhparent='core.events'::regclass)
+          THEN 'core.events'
+        WHEN TG_RELID='telemetry.events'::regclass OR EXISTS(
+          SELECT 1 FROM pg_inherits WHERE inhrelid=TG_RELID AND inhparent='telemetry.events'::regclass)
+          THEN 'telemetry.events'
+        ELSE NULL END;
+      -- ts_coided is generated after BEFORE triggers from the unchanged ID.
+      IF canonical IS NOT NULL AND OLD.class='sealed' AND NEW.class='sealed'
+         AND (to_jsonb(NEW)-'payload'-'ts_coided')=(to_jsonb(OLD)-'payload'-'ts_coided') THEN
+        IF EXISTS(
+          SELECT 1 FROM pg_temp.excision_rekeys s
+          JOIN pg_temp.excision_rekey_keys r ON r.old_ref=OLD.payload->>'key'
+          JOIN privacy.material_keys k ON k.material_id=r.material_id AND k.key_ref=r.replacement_ref
+          JOIN core.operations o ON o.id::text=operation AND o.kind='excise'
+          WHERE s.kind=canonical AND s.row_id=OLD.id::text
+            AND s.material_id IS NOT DISTINCT FROM OLD.material_id
+            AND s.old_value=OLD.payload AND s.replacement=NEW.payload
+            AND NEW.payload->>'key'=r.replacement_ref
+            AND k.class='sealed' AND k.role='data-and-record-naming'
+            AND r.replacement_role='data-and-record-naming' AND r.old_role='data-and-record-naming'
+        ) THEN
+          RETURN NEW;
+        END IF;
+      END IF;
+    END IF;
+    RAISE EXCEPTION 'event rows are immutable' USING ERRCODE = '23514';
+  END IF;
+  IF TG_OP = 'DELETE' AND nullif(current_setting('sinex.excise_operation', true), '') IS NULL THEN
+    RAISE EXCEPTION 'events are deleted only by an excision' USING ERRCODE = '23514';
+  END IF;
+  RETURN OLD;
+END $$"
 }
