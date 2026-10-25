@@ -90,7 +90,6 @@ pub struct RowState {
     held: Option<(super::held::HeldMaterial, Vec<(i64, [u8; 32])>)>,
 }
 
-
 impl RowState {
     /// Remember the rows of one stored part. Parts are offered newest
     /// first, so a row already remembered keeps its newer line.
@@ -332,7 +331,9 @@ impl SqliteRows {
         // never below what earlier polls gave out, so a row read again later
         // (in this poll or a later one) is always newer.
         let base = now_ns.max(previous.last_order.saturating_add(1));
-        let manifest = sinex_model::Manifest::from_json(json!({"role": "records", "path": self.path.display().to_string(), "host": self.host, "table": self.table, "from": self.from, "media_type": "application/x-ndjson", "full_pass": full, "read_at_ns": now_ns, "order_base": base, "read_from": "database"}));
+        let manifest = sinex_model::Manifest::from_json(
+            json!({"role": "records", "path": self.path.display().to_string(), "host": self.host, "table": self.table, "from": self.from, "media_type": "application/x-ndjson", "full_pass": full, "read_at_ns": now_ns, "order_base": base, "read_from": "database"}),
+        );
         let part_index = if previous.material.is_some() {
             previous.part_index + 1
         } else {

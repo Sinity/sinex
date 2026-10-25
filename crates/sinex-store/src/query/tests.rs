@@ -578,7 +578,11 @@ async fn interval_and_day_aliases_read_what_the_derivations_write(db: devkit::pg
     let now = ask(&mut conn, "now").await;
     assert_eq!(now.total, 1);
     assert_eq!(column(&now, "subject"), vec![json!("b window")]);
-    let closed = ask(&mut conn, "intervals where open = false fields duration, state").await;
+    let closed = ask(
+        &mut conn,
+        "intervals where open = false fields duration, state",
+    )
+    .await;
     assert_eq!(closed.total, 1);
     assert_eq!(column(&closed, "state"), vec![json!("desktop.focus")]);
     let days = ask(&mut conn, "days fields day, commands").await;

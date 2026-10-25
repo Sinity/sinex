@@ -35,8 +35,8 @@ use sinex_model::{
     RecordOutcome, RevisionChange, RunId, SourceProgress, Timestamp, event_types,
 };
 use sinex_protocol::{
-    Acknowledgment, Excise, ExciseReply, ProducerMaterial, Ingress, MaterialFrame, Materials,
-    ProducerEvent, ProducerFailure, RecordedQuery, Subjects,
+    Acknowledgment, Excise, ExciseReply, Ingress, MaterialFrame, Materials, ProducerEvent,
+    ProducerFailure, ProducerMaterial, RecordedQuery, Subjects,
 };
 use sinex_store::commit_log::{self, StoredFrame};
 use sinex_store::{Blobs, runs};

@@ -66,7 +66,10 @@ pub struct Cursor {
 pub struct DirState {
     files: HashMap<String, Option<(u64, i128, [u8; 32])>>,
     /// The newest bundle and the file facts it records once admitted.
-    held: Option<(super::held::HeldMaterial, HashMap<String, Option<(u64, i128, [u8; 32])>>)>,
+    held: Option<(
+        super::held::HeldMaterial,
+        HashMap<String, Option<(u64, i128, [u8; 32])>>,
+    )>,
     /// Paths a restart has already decided from a newer bundle.
     remembered: HashSet<String>,
 }

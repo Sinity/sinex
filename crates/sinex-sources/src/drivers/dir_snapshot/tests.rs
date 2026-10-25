@@ -55,7 +55,12 @@ fn a_walk_cut_by_the_part_size_does_not_record_removed_files() {
     let first = small.poll(&Value::Null, &mut state).unwrap();
     assert_eq!(paths(&first), vec!["a.md"]);
     assert_eq!(
-        first.material.as_ref().unwrap().manifest.detail("scan_complete"),
+        first
+            .material
+            .as_ref()
+            .unwrap()
+            .manifest
+            .detail("scan_complete"),
         &json!(false)
     );
     let m = first.material.as_ref().unwrap();

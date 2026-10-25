@@ -16,7 +16,10 @@ fn known_fields_are_typed_and_the_rest_kept() {
     assert_eq!(manifest.members[0].details["removed_at_ns"], json!("1"));
     assert_eq!(manifest.detail("host"), &json!("h"));
     assert_eq!(serde_json::to_value(&manifest).unwrap(), value);
-    assert_eq!(serde_json::to_value(Manifest::default()).unwrap(), json!({}));
+    assert_eq!(
+        serde_json::to_value(Manifest::default()).unwrap(),
+        json!({})
+    );
 }
 
 #[devkit::test]

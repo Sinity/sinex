@@ -56,7 +56,8 @@ fn notes_and_their_removal() {
 
 fn note(text: &str, path: &str) -> NoteDocument {
     let manifest = sinex_model::Manifest::from_json(serde_json::json!({"path":"/vault/MyVault"}));
-    let member = serde_json::from_value::<sinex_model::Member>(serde_json::json!({"path":path})).unwrap();
+    let member =
+        serde_json::from_value::<sinex_model::Member>(serde_json::json!({"path":path})).unwrap();
     let context = RecordContext {
         manifest: &manifest,
         member: Some(&member),
@@ -241,7 +242,10 @@ fn payloads_without_metadata_and_removed_notes_do_not_claim_metadata() {
     assert_eq!(payload.tags, None);
     assert_eq!(serde_json::to_value(payload).unwrap(), old);
     let manifest = sinex_model::Manifest::from_json(serde_json::json!({"path":"/vault/v"}));
-    let member = serde_json::from_value::<sinex_model::Member>(serde_json::json!({"path":"a.md","removed_at_ns":"1700000000000000000"})).unwrap();
+    let member = serde_json::from_value::<sinex_model::Member>(
+        serde_json::json!({"path":"a.md","removed_at_ns":"1700000000000000000"}),
+    )
+    .unwrap();
     let context = RecordContext {
         manifest: &manifest,
         member: Some(&member),

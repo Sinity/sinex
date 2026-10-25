@@ -73,7 +73,10 @@ impl Library<'_> {
                 .expect("request has material")
                 .manifest
                 .details
-                .insert("owned_blobs".into(), serde_json::to_value(cited).map_err(e)?);
+                .insert(
+                    "owned_blobs".into(),
+                    serde_json::to_value(cited).map_err(e)?,
+                );
         }
         let result = crate::authored::submit(
             conn,

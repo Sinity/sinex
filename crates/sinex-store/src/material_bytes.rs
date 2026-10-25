@@ -52,9 +52,8 @@ pub async fn reference(
         previous_part: row.previous_part_id.map(MaterialId),
         parser: row.parser,
         parser_version: u32::try_from(row.parser_version).map_err(|_| invalid())?,
-        manifest: serde_json::from_value(row.manifest).map_err(|e| {
-            crate::Error::Invalid(format!("material {material}: manifest: {e}"))
-        })?,
+        manifest: serde_json::from_value(row.manifest)
+            .map_err(|e| crate::Error::Invalid(format!("material {material}: manifest: {e}")))?,
     }))
 }
 

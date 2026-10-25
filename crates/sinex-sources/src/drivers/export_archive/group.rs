@@ -11,7 +11,6 @@ use std::sync::{
     atomic::{AtomicBool, AtomicU64, Ordering},
 };
 
-
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Capture {
     pub class: Class,

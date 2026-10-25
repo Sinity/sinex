@@ -841,12 +841,7 @@ fn request_bytes(records: &[LibraryRecord]) -> (Vec<u8>, Vec<(usize, usize)>) {
 }
 
 /// The manifest of a request material: who wrote it and when.
-fn request_manifest(
-    actor: &str,
-    host: &str,
-    at: Timestamp,
-    action: &str,
-) -> sinex_model::Manifest {
+fn request_manifest(actor: &str, host: &str, at: Timestamp, action: &str) -> sinex_model::Manifest {
     sinex_model::Manifest::from_json(json!({
         "path": "library",
         "host": host,

@@ -356,7 +356,11 @@ pub const ALIASES: &[Alias] = &[
             f("commands", FieldType::Integer, "commands"),
             f("failed_commands", FieldType::Integer, "failed commands"),
             f("sessions", FieldType::Integer, "shell sessions"),
-            f("session_seconds", FieldType::Number, "seconds in shell sessions"),
+            f(
+                "session_seconds",
+                FieldType::Number,
+                "seconds in shell sessions",
+            ),
         ],
         spans: false,
         only: Some(("grain", "day")),

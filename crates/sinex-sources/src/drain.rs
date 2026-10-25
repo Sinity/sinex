@@ -2,7 +2,8 @@
 use crate::{Parser, RecordError, RecordShape};
 use serde_json::Value;
 use sinex_model::{
-    Class, Manifest, MaterialId, Member, Origin, Payloads, ReadingOrder, RecordLocation, RecordOutcome,
+    Class, Manifest, MaterialId, Member, Origin, Payloads, ReadingOrder, RecordLocation,
+    RecordOutcome,
 };
 
 /// Batch size bounds. Batches are sized by events and bytes; a record too large

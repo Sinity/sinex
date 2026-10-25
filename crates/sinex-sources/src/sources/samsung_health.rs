@@ -228,10 +228,12 @@ impl Parser for AttachmentParser {
     ) -> Result<(Vec<HealthRecord>, ()), RecordError> {
         let path = context.path().unwrap_or_default();
         let (category, row, column) = attachment_of(path).ok_or_else(|| {
-            RecordError::new(format!("{path}: not a jsons/<type>/<x>/<datauuid>.<column>.json member"))
+            RecordError::new(format!(
+                "{path}: not a jsons/<type>/<x>/<datauuid>.<column>.json member"
+            ))
         })?;
-        let value: Value = serde_json::from_slice(record)
-            .map_err(|e| RecordError::new(format!("{path}: {e}")))?;
+        let value: Value =
+            serde_json::from_slice(record).map_err(|e| RecordError::new(format!("{path}: {e}")))?;
         let category = format!("{category}.{column}");
         let millis = |v: &Map<String, Value>, name: &str| {
             v.get(name)

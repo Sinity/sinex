@@ -202,9 +202,8 @@ pub async fn plan(conn: &mut PgConnection, target: Target) -> Result<Plan> {
             binding: r.binding,
             source: r.source,
             parser: r.parser,
-            manifest: serde_json::from_value(r.manifest).map_err(|e| {
-                Error::Invalid(format!("material {}: manifest: {e}", r.id))
-            })?,
+            manifest: serde_json::from_value(r.manifest)
+                .map_err(|e| Error::Invalid(format!("material {}: manifest: {e}", r.id)))?,
             anchors: if is_whole {
                 BTreeSet::new()
             } else {

@@ -95,10 +95,9 @@ impl Manifest {
         let start = member.stream_offset as usize;
         if member.length == 0 && anchor == start {
             // Equal zero-length members at one byte offset have no unique context.
-            if members[..i - 1]
-                .last()
-                .is_some_and(|previous| previous.stream_offset as usize == anchor && previous.length == 0)
-            {
+            if members[..i - 1].last().is_some_and(|previous| {
+                previous.stream_offset as usize == anchor && previous.length == 0
+            }) {
                 return None;
             }
             return Some(member);

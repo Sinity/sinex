@@ -89,7 +89,9 @@ fn health_unknown_columns_and_categories_remain_captured() {
 
 #[devkit::test]
 fn malformed_known_health_fields_are_record_failures() {
-    let manifest = sinex_model::Manifest::from_json(json!({"path":"/x/samsungcloud_gk1/Step Count/Step Count.csv"}));
+    let manifest = sinex_model::Manifest::from_json(
+        json!({"path":"/x/samsungcloud_gk1/Step Count/Step Count.csv"}),
+    );
     let context = RecordContext {
         manifest: &manifest,
         member: None,

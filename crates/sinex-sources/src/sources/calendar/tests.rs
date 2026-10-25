@@ -5,7 +5,8 @@ const ICS: &str = "BEGIN:VEVENT\r\nDTSTART;TZID=Europe/Warsaw:20110128T150000\r\
 
 fn read(ics: &str) -> CalendarEvent {
     let ev = <VEvent as RecordShape>::decode(ics.as_bytes()).unwrap();
-    let manifest = sinex_model::Manifest::from_json(json!({"path": "Takeout/Calendar/me@example.org.ics"}));
+    let manifest =
+        sinex_model::Manifest::from_json(json!({"path": "Takeout/Calendar/me@example.org.ics"}));
     let ctx = RecordContext {
         manifest: &manifest,
         member: None,
