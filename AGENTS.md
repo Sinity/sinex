@@ -80,8 +80,13 @@ Optimize for fast integration.
 ## Code
 
 - Rust, four-space indent, `rustfmt`.
-- Comments state constraints and reasons, briefly. No status, history or spec
-  narration in code; Git and Beads hold those.
+- A name says what the thing is in ordinary words, local variables included.
+  [docs/vocabulary.md](docs/vocabulary.md) lists the concepts and their one
+  name each; use those names in code, SQL, wire keys, errors, comments and
+  docs, and add a concept there before naming it anywhere else.
+- Comments state constraints and reasons, briefly. No status, history, Bead
+  IDs, spec or architecture section references in code; Git and Beads hold
+  those.
 - Tests live in their own files, never inline: a module's unit tests in
   `<module>/tests.rs` declared with `#[cfg(test)] mod tests;`, integration
   tests under the crate's `tests/`. A test that needs PostgreSQL calls `devkit::pg::test_database()`
