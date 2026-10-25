@@ -25,21 +25,24 @@ fn point(data_type: &str, start: i64, values: Value) -> Value {
         "fitValue": values, "modifiedTimeMillis": 1, "originDataSourceId": "synthetic"})
 }
 
-/// A Fit file read through the archive driver in `zone`: each record's bytes
-/// and the events the parser makes of it.
-fn read(document: &Value, zone: &str, part_bytes: usize) -> Vec<(Vec<u8>, HealthRecord)> {
-    let member = serde_json::to_vec(document).unwrap();
+/// Fit files, by name, read through the archive driver in `zone`: each
+/// record's bytes and the event the parser makes of it, the carry passed from
+/// record to record as the drain does.
+fn read(files: &[(&str, &Value)], zone: &str, part_bytes: usize) -> Vec<(Vec<u8>, HealthRecord)> {
     let mut tar = tar::Builder::new(Vec::new());
-    let mut header = tar::Header::new_gnu();
-    header.set_size(member.len() as u64);
-    header.set_mode(0o600);
-    header.set_cksum();
-    tar.append_data(
-        &mut header,
-        "Takeout/Fit/All Data/derived_steps_synthetic.json",
-        member.as_slice(),
-    )
-    .unwrap();
+    for (name, document) in files {
+        let member = serde_json::to_vec(document).unwrap();
+        let mut header = tar::Header::new_gnu();
+        header.set_size(member.len() as u64);
+        header.set_mode(0o600);
+        header.set_cksum();
+        tar.append_data(
+            &mut header,
+            format!("Takeout/Fit/All Data/{name}.json"),
+            member.as_slice(),
+        )
+        .unwrap();
+    }
     let raw = tar.into_inner().unwrap();
     let zone = TimeZone::get(zone).unwrap();
     let mut driver = driver(
@@ -49,6 +52,7 @@ fn read(document: &Value, zone: &str, part_bytes: usize) -> Vec<(Vec<u8>, Health
     );
     driver.part_bytes = part_bytes;
     let parser = FitParser { zone };
+    let mut carry = Carry::default();
     let mut out = Vec::new();
     group::read(
         Box::new(std::io::Cursor::new(raw.clone())),
@@ -76,7 +80,8 @@ fn read(document: &Value, zone: &str, part_bytes: usize) -> Vec<(Vec<u8>, Health
             };
             for &(start, end) in &material.records {
                 let bytes = &material.bytes[start..end];
-                let (mut events, ()) = parser.parse(&bytes, &(), &context).unwrap();
+                let (mut events, next) = parser.parse(&bytes, &carry, &context).unwrap();
+                carry = next;
                 assert_eq!(events.len(), 1);
                 out.push((bytes.to_vec(), events.remove(0)));
             }
@@ -124,7 +129,11 @@ fn points_make_one_record_per_data_type_and_local_day() {
     ];
     let document = json!({"Data Source": "derived:synthetic", "Data Points": exported});
     // A small part size forces several parts; a day still stays one record.
-    let records = read(&document, "Europe/Warsaw", 200);
+    let records = read(
+        &[("derived_steps_synthetic", &document)],
+        "Europe/Warsaw",
+        200,
+    );
     let rows: Vec<Value> = records
         .iter()
         .map(|(_, record)| serde_json::to_value(record).unwrap())
@@ -133,25 +142,24 @@ fn points_make_one_record_per_data_type_and_local_day() {
         rows,
         vec![
             json!({"provider": "google-fit", "category": "synthetic.steps",
-                "native_id": "derived_steps_synthetic:2026-01-01",
+                "native_id": "derived_steps_synthetic:2026-01-01:0",
                 "start": "2026-01-01T22:30:00Z", "end": "2026-01-01T22:31:00Z", "offset_minutes": 60,
-                "values": {"day": "2026-01-01", "zone": "Europe/Warsaw", "points": 1,
-                    "fields": [{"count": 1, "sum": 5.0, "min": 5, "max": 5, "mean": 5.0}]}}),
+                "values": {"day": "2026-01-01", "zone": "Europe/Warsaw", "run": 0, "points": 1,
+                    "fields": [{"count": 1, "sum": 5.0, "min": 5, "max": 5}]}}),
             json!({"provider": "google-fit", "category": "synthetic.steps",
-                "native_id": "derived_steps_synthetic:2026-01-02",
+                "native_id": "derived_steps_synthetic:2026-01-02:0",
                 "start": "2026-01-01T23:30:00Z", "end": "2026-01-02T07:01:00Z", "offset_minutes": 60,
-                "values": {"day": "2026-01-02", "zone": "Europe/Warsaw", "points": 3,
+                "values": {"day": "2026-01-02", "zone": "Europe/Warsaw", "run": 0, "points": 3,
                     "fields": [{"count": 3, "sum": 9007199254740993_f64 - 3.0 + 2.5,
-                        "min": -3, "max": 9007199254740993_i64,
-                        "mean": (9007199254740993_f64 - 3.0 + 2.5) / 3.0}]}}),
+                        "min": -3, "max": 9007199254740993_i64}]}}),
             json!({"provider": "google-fit", "category": "synthetic.location",
-                "native_id": "derived_steps_synthetic:2026-01-02",
+                "native_id": "derived_steps_synthetic:2026-01-02:0",
                 "start": "2026-01-02T08:00:00Z", "end": "2026-01-02T09:01:00Z", "offset_minutes": 60,
-                "values": {"day": "2026-01-02", "zone": "Europe/Warsaw", "points": 2,
+                "values": {"day": "2026-01-02", "zone": "Europe/Warsaw", "run": 0, "points": 2,
                     "fields": [
-                        {"count": 2, "sum": 104.75, "min": 52.25, "max": 52.5, "mean": 52.375},
-                        {"count": 0, "sum": 0.0, "min": null, "max": null, "mean": null},
-                        {"count": 0, "sum": 0.0, "min": null, "max": null, "mean": null}]}}),
+                        {"count": 2, "sum": 104.75, "min": 52.25, "max": 52.5},
+                        {"count": 0, "sum": 0.0, "min": null, "max": null},
+                        {"count": 0, "sum": 0.0, "min": null, "max": null}]}}),
         ]
     );
     // The same points in UTC fall on other days.
@@ -168,7 +176,7 @@ fn points_make_one_record_per_data_type_and_local_day() {
 }
 
 fn read_days(document: &Value, zone: &str) -> Vec<String> {
-    read(document, zone, 1 << 20)
+    read(&[("synthetic", document)], zone, 1 << 20)
         .into_iter()
         .map(|(_, record)| {
             serde_json::to_value(record).unwrap()["values"]["day"]
@@ -209,7 +217,7 @@ fn a_point_that_cannot_be_read_fails_alone() {
     let parser = FitParser { zone };
     let (s, e) = ranges[1];
     let error = parser
-        .parse(&&member[s..e], &(), &RecordContext::none())
+        .parse(&&member[s..e], &Carry::default(), &RecordContext::none())
         .unwrap_err();
     assert!(error.to_string().contains("not a number"), "{error}");
 }
@@ -222,11 +230,15 @@ fn points_without_a_start_are_undated_and_points_of_two_days_are_refused() {
         &json!({"dataTypeName": "synthetic.steps", "fitValue": [{"intVal": 4}]}),
     )
     .unwrap();
-    let (events, ()) = parser
-        .parse(&undated.as_slice(), &(), &RecordContext::none())
+    let (events, _) = parser
+        .parse(
+            &undated.as_slice(),
+            &Carry::default(),
+            &RecordContext::none(),
+        )
         .unwrap();
     let row = serde_json::to_value(&events[0]).unwrap();
-    assert_eq!(row["native_id"], ":undated");
+    assert_eq!(row["native_id"], ":undated:0");
     assert_eq!(row["start"], Value::Null);
     assert_eq!(row["values"]["day"], Value::Null);
     let mut two_days = serde_json::to_vec(&point("synthetic.steps", JAN_1, json!([]))).unwrap();
@@ -235,7 +247,105 @@ fn points_without_a_start_are_undated_and_points_of_two_days_are_refused() {
     );
     assert!(
         parser
-            .parse(&two_days.as_slice(), &(), &RecordContext::none())
+            .parse(
+                &two_days.as_slice(),
+                &Carry::default(),
+                &RecordContext::none()
+            )
             .is_err()
     );
+}
+
+#[devkit::test]
+fn interleaved_and_unsorted_days_keep_every_point_in_numbered_runs() {
+    // Two days of one data type, interleaved and out of time order, so each
+    // day arrives in several runs; a second file repeats the days.
+    let days = [JAN_1, JAN_1 + 24 * HOUR];
+    let order = [1, 1, 0, 1, 0, 0, 1, 0, 1, 1, 0];
+    let exported: Vec<Value> = order
+        .iter()
+        .enumerate()
+        .map(|(i, &day)| {
+            let at = days[day] + (20 - i as i64) * HOUR / 2;
+            point("synthetic.steps", at, json!([{"intVal": i * 10 + day}]))
+        })
+        .collect();
+    let first = json!({"Data Points": exported});
+    let second = json!({"Data Points": exported[..3]});
+    let records = read(&[("a", &first), ("b", &second)], "UTC", 300);
+    let rows: Vec<Value> = records
+        .iter()
+        .map(|(_, record)| serde_json::to_value(record).unwrap())
+        .collect();
+    let ids: Vec<&str> = rows
+        .iter()
+        .map(|row| row["native_id"].as_str().unwrap())
+        .collect();
+    assert_eq!(
+        ids,
+        [
+            "a:2026-01-02:0",
+            "a:2026-01-01:0",
+            "a:2026-01-02:1",
+            "a:2026-01-01:1",
+            "a:2026-01-02:2",
+            "a:2026-01-01:2",
+            "a:2026-01-02:3",
+            "a:2026-01-01:3",
+            "b:2026-01-02:0",
+            "b:2026-01-01:0",
+        ]
+    );
+    // Each day's runs add up to exactly its points.
+    for (file, points_of) in [("a", &exported[..]), ("b", &exported[..3])] {
+        for (day, name) in [(0, "2026-01-01"), (1, "2026-01-02")] {
+            let values: Vec<i64> = points_of
+                .iter()
+                .filter(|p| p["fitValue"][0]["intVal"].as_i64().unwrap() % 10 == day)
+                .map(|p| p["fitValue"][0]["intVal"].as_i64().unwrap())
+                .collect();
+            let runs: Vec<&Value> = rows
+                .iter()
+                .filter(|row| {
+                    row["native_id"]
+                        .as_str()
+                        .unwrap()
+                        .starts_with(&format!("{file}:{name}:"))
+                })
+                .map(|row| &row["values"])
+                .collect();
+            let count: u64 = runs.iter().map(|v| v["points"].as_u64().unwrap()).sum();
+            let sum: f64 = runs
+                .iter()
+                .map(|v| v["fields"][0]["sum"].as_f64().unwrap())
+                .sum();
+            let min = runs
+                .iter()
+                .map(|v| v["fields"][0]["min"].as_i64().unwrap())
+                .min();
+            let max = runs
+                .iter()
+                .map(|v| v["fields"][0]["max"].as_i64().unwrap())
+                .max();
+            assert_eq!(count, values.len() as u64, "{file} {name}");
+            assert_eq!(sum, values.iter().sum::<i64>() as f64, "{file} {name}");
+            assert_eq!(min, values.iter().copied().min(), "{file} {name}");
+            assert_eq!(max, values.iter().copied().max(), "{file} {name}");
+        }
+    }
+    // A split day is the one with a run 1.
+    let split: Vec<&str> = rows
+        .iter()
+        .filter(|row| row["values"]["run"] == 1)
+        .map(|row| row["values"]["day"].as_str().unwrap())
+        .collect();
+    assert_eq!(split, ["2026-01-02", "2026-01-01"]);
+    // Every point reads back, in file order, exactly as exported.
+    let back: Vec<Value> = records
+        .iter()
+        .flat_map(|(bytes, _)| points(bytes).map(|p| Value::Object(p.unwrap())))
+        .collect();
+    let mut all = exported.clone();
+    all.extend_from_slice(&exported[..3]);
+    assert_eq!(back, all);
 }
