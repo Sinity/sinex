@@ -77,7 +77,7 @@ impl Library<'_> {
             let s = scan.clone();
             let mut m = state.take().expect("state is returned each poll");
             let c = cursor.clone();
-            let sink = crate::one_shot::Sink(self.blobs.clone());
+            let sink = crate::material_sink::Sink(self.blobs.clone());
             let (m, out) = tokio::task::spawn_blocking(move || {
                 let acquired = s.poll(&c, &mut m, &sink);
                 let out = acquired.and_then(|a| {

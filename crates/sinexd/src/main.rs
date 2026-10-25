@@ -16,6 +16,7 @@ mod dirty_keys;
 mod excision;
 mod ingress;
 mod library;
+mod material_sink;
 mod one_shot;
 mod publisher;
 mod replay;

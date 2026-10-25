@@ -1,6 +1,6 @@
 //! A binding owns its parser and cursor; compatible archives share physical traversal.
 use crate::backfill::{self, Totals};
-use crate::one_shot::Sink;
+use crate::material_sink::Sink;
 use crate::writer::WriterHandle;
 use serde_json::Value;
 use sinex_model::{Class, ObservationFacts, RunId};
@@ -332,7 +332,7 @@ async fn read_archive(
     let cancel = Cancel(Arc::new(AtomicBool::new(false)));
     let sealing = if archive.class == Class::Sealed {
         let configured = if access.recipient.is_none() {
-            crate::one_shot::class_key()?
+            crate::material_sink::class_key()?
         } else {
             None
         };
@@ -342,7 +342,7 @@ async fn read_archive(
             .or(configured)
             .or_else(|| access.unlock.map(|a| a.recipient()))
             .ok_or("sealed archive capture requires the class key's public recipient")?;
-        Some(Arc::new(crate::one_shot::SealingSink::new(
+        Some(Arc::new(crate::material_sink::SealingSink::new(
             blobs.clone(),
             recipient,
         )))

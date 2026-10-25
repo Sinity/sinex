@@ -87,7 +87,7 @@ async fn prefix(
     ctx: &mut OneShot,
     b: &mut Bound,
     sink: &dyn drivers::MaterialSink,
-    sealing: Option<&crate::one_shot::SealingSink>,
+    sealing: Option<&crate::material_sink::SealingSink>,
 ) -> MaterialRef {
     crate::backfill::record(&mut ctx.read_conn, &b.binding)
         .await

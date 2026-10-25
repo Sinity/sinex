@@ -1,4 +1,5 @@
 use super::*;
+use crate::material_sink::{SealingSink, Sink};
 use serde_json::Value;
 use sinex_sources::{Limits, drivers, sources::zsh};
 

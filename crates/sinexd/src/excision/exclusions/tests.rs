@@ -28,7 +28,7 @@ async fn a_reread_source_leaves_the_excised_record_out_of_its_new_bytes(
     let driver = sinex_sources::sources::atuin::driver(path, "h".into());
     let mut state = drivers::sqlite_rows::RowState::default();
     let acquired = driver.poll(&serde_json::Value::Null, &mut state).unwrap();
-    let sink = crate::one_shot::Sink(ctx.blobs.clone());
+    let sink = crate::material_sink::Sink(ctx.blobs.clone());
     for batch in drivers::batches(
         &source,
         &binding.name,

@@ -7,7 +7,8 @@
 //! and its driver state is rebuilt from the materials it stored, so a
 //! second run reads only what changed.
 mod pipeline;
-use crate::one_shot::{OneShot, Sink};
+use crate::material_sink::Sink;
+use crate::one_shot::OneShot;
 use crate::writer::{self, Priority};
 use sinex_model::RunId;
 use sinex_sources::{Binding, InputKind, Limits, Settings, Source, drivers, sources};
@@ -253,7 +254,7 @@ pub(crate) async fn drive(
     let sealing = if effective_class == sinex_model::Class::Sealed {
         let recipient = match access.recipient {
             Some(recipient) => Some(recipient.clone()),
-            None => crate::one_shot::class_key()?,
+            None => crate::material_sink::class_key()?,
         };
         let recipient = recipient.ok_or_else(|| {
             format!(
@@ -261,7 +262,7 @@ pub(crate) async fn drive(
                 source.spec().name
             )
         })?;
-        Some(crate::one_shot::SealingSink::new(sink.0.clone(), recipient))
+        Some(crate::material_sink::SealingSink::new(sink.0.clone(), recipient))
     } else {
         None
     };
@@ -392,7 +393,7 @@ pub(crate) async fn submit(
     source: &dyn Source,
     binding: &str,
     material_sink: &dyn drivers::MaterialSink,
-    sealing: Option<&crate::one_shot::SealingSink>,
+    sealing: Option<&crate::material_sink::SealingSink>,
     unlock: Option<&crate::sealed_access::Unlock>,
     minimum_class: sinex_model::Class,
     acquired: drivers::Acquired,
@@ -550,7 +551,7 @@ pub(crate) async fn open_carry(
     conn: &mut PgConnection,
     binding: &str,
     carry: &serde_json::Value,
-    sealing: &crate::one_shot::SealingSink,
+    sealing: &crate::material_sink::SealingSink,
     unlock: Option<&crate::sealed_access::Unlock>,
 ) -> Result<serde_json::Value, String> {
     if let Ok(value) = sealing.open_carry(carry) {

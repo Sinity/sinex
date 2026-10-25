@@ -14,7 +14,7 @@ pub(super) struct Pipeline<'a> {
     pub binding: &'a str,
     pub run: RunId,
     pub class: Class,
-    pub sealing: Option<&'a crate::one_shot::SealingSink>,
+    pub sealing: Option<&'a crate::material_sink::SealingSink>,
     pub unlock: Option<&'a crate::sealed_access::Unlock>,
     pub check: Arc<dyn Fn() -> Result<(), String> + Send + Sync>,
 }
@@ -68,7 +68,7 @@ impl Pipeline<'_> {
         )
         .await?;
         let filtered = exclusions.filter(self.source, acquired, &carry, self.class, stored)?;
-        let plain = crate::one_shot::Sink(self.blobs.clone());
+        let plain = crate::material_sink::Sink(self.blobs.clone());
         let sink: &dyn drivers::MaterialSink = match self.sealing {
             Some(sealing) => sealing,
             None => &plain,
@@ -143,7 +143,7 @@ async fn reopen_stored(
     blobs: &sinex_store::Blobs,
     source: &dyn Source,
     acquired: &mut drivers::Acquired,
-    sealing: Option<&crate::one_shot::SealingSink>,
+    sealing: Option<&crate::material_sink::SealingSink>,
     unlock: Option<&crate::sealed_access::Unlock>,
 ) -> Result<bool, String> {
     let Some(material) = &mut acquired.material else {

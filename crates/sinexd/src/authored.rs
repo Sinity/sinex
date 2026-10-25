@@ -124,7 +124,7 @@ fn prepare(
         RunId::new(),
         acquired,
         Value::Null,
-        &crate::one_shot::Sink(blobs.clone()),
+        &crate::material_sink::Sink(blobs.clone()),
         Limits {
             max_events: usize::MAX,
             max_bytes: usize::MAX,
