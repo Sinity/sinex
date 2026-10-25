@@ -2,18 +2,24 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Number;
 
-/// One local day of a Google Fit data source's points of one data type. The
-/// points themselves stay in the stored material, where the record's byte
-/// range finds them.
+/// One run of a Google Fit data source's consecutive points of one data type
+/// on one local day. A day whose points the file interleaves with other days
+/// has several runs; its figures are the runs' combined: counts and sums
+/// add, the minimum and maximum are the runs' extremes, and a mean is the sum
+/// over the count. The points stay in the stored material, where the
+/// record's byte range finds them.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
-pub struct FitDay {
+pub struct FitRun {
     /// The day the points start on, `YYYY-MM-DD` in `zone`; null for points
     /// without a start time.
     pub day: Option<String>,
     /// The IANA zone the day is reckoned in.
     pub zone: String,
-    /// How many points the day has.
+    /// How many runs of the same data type and day came earlier in the file:
+    /// 0 for the first, so a day that arrived split has a run 1.
+    pub run: u32,
+    /// How many points the run has.
     pub points: u64,
     /// The numbers at each position of the points' `fitValue`, in order.
     pub fields: Vec<FitField>,
@@ -21,7 +27,7 @@ pub struct FitDay {
 
 /// The numeric values (`intVal` or `fpVal`) at one `fitValue` position.
 /// A position holding only text or maps has a count of zero and no
-/// minimum, maximum or mean.
+/// minimum or maximum.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct FitField {
@@ -31,7 +37,6 @@ pub struct FitField {
     pub min: Option<Number>,
     #[schemars(with = "Option<f64>")]
     pub max: Option<Number>,
-    pub mean: Option<f64>,
 }
 
 impl FitField {
@@ -47,6 +52,5 @@ impl FitField {
         if self.max.as_ref().is_none_or(|m| x > number(m)) {
             self.max = Some(value.clone());
         }
-        self.mean = Some(self.sum / self.count as f64);
     }
 }

@@ -1,14 +1,17 @@
 //! Google Fit (`Fit/All Data/<data source>.json`), on `ExportArchive`: each
 //! file is one data source, and its `Data Points` are its samples. The
 //! driver joins consecutive points of one data type that start on the same
-//! local day into one record, and each record is one `health.record` of
+//! local day into one record, a run, and each run is one `health.record` of
 //! provider `google-fit`: the category is the data type, the native ID the
-//! file (the data source) and the day, and the values the day's point count
-//! and, for each `fitValue` position, the count, sum, minimum, maximum and
-//! mean of its numbers. Its start and end are the earliest point start and
-//! the latest point end. Points of one day that are not consecutive in the
-//! file make two records with one native ID, and the later replaces the
-//! earlier.
+//! file (the data source), the day and the run's number among that day's
+//! runs in the file, and the values the run's point count and, for each
+//! `fitValue` position, the count, sum, minimum and maximum of its numbers.
+//! Its start and end are the earliest point start and the latest point end.
+//!
+//! Fit files are not always in time order, and a day's points can come back
+//! after another day's, so a day can have several runs. The carry counts the
+//! runs of each day seen so far in the file, which numbers them the same way
+//! on every read of the same file; no point is replaced by another run's.
 //!
 //! The points stay in the stored material as exported; [`points`] reads a
 //! record's points back. Fit's points carry no zone, so the day is reckoned in
@@ -18,10 +21,12 @@ use crate::registry::{DeclaredSource, Driver, SourceSpec};
 use crate::sources::fields;
 use crate::{Parser, RecordContext, RecordError};
 use jiff::tz::TimeZone;
+use serde::{Deserialize, Serialize};
 use serde_json::{Map, Number, Value};
 use sinex_model::event_types::health::HealthRecord;
-use sinex_model::event_types::health::fit::{FitDay, FitField};
+use sinex_model::event_types::health::fit::{FitField, FitRun};
 use sinex_model::{Class, Timestamp};
+use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 pub const SPEC: SourceSpec = SourceSpec {
@@ -30,7 +35,7 @@ pub const SPEC: SourceSpec = SourceSpec {
     consumer: "daily steps, activity, heart and location figures Fit recorded",
     class: Class::Open,
     parser: "google-fit",
-    parser_version: 3,
+    parser_version: 4,
     event_types: &["health.record"],
     framer: crate::Framer::export(
         frame,
@@ -42,17 +47,26 @@ pub struct FitParser {
     pub zone: TimeZone,
 }
 
+/// The runs read so far in the current file.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct Carry {
+    /// The part the last record came from (its manifest's `order_base`).
+    part: Option<i64>,
+    /// How many runs of each data type and day the file has had.
+    runs: BTreeMap<String, u32>,
+}
+
 impl Parser for FitParser {
     type Record<'a> = &'a [u8];
-    type Carry = ();
+    type Carry = Carry;
     type Payload = HealthRecord;
 
     fn parse(
         &self,
         record: &&[u8],
-        _: &(),
+        carry: &Carry,
         context: &RecordContext<'_>,
-    ) -> Result<(Vec<HealthRecord>, ()), RecordError> {
+    ) -> Result<(Vec<HealthRecord>, Carry), RecordError> {
         let file = context
             .path()
             .and_then(|p| p.rsplit('/').next())
@@ -94,22 +108,39 @@ impl Parser for FitParser {
         let Some(data_type) = data_type else {
             return Err(RecordError::new("a Fit record without points"));
         };
+        // A part that starts at a file's first record starts a new file.
+        let mut carry = carry.clone();
+        let part = context.manifest.get("order_base").and_then(Value::as_i64);
+        if part != carry.part {
+            let record_start = context
+                .member
+                .and_then(|m| m.get("record_start"))
+                .and_then(Value::as_u64);
+            if record_start == Some(0) {
+                carry.runs.clear();
+            }
+            carry.part = part;
+        }
+        let earlier = carry.runs.entry(run_key(&data_type, day)).or_default();
+        let run = *earlier;
+        *earlier += 1;
         let offset_minutes = start
             .and_then(|ns| jiff::Timestamp::from_nanosecond(i128::from(ns)).ok())
             .map(|at| self.zone.to_offset(at).seconds() / 60);
-        let values = FitDay {
+        let values = FitRun {
             day: day.map(|d| d.to_string()),
             zone: self.zone.iana_name().unwrap_or_default().to_owned(),
+            run,
             points: count,
             fields,
         };
-        let Value::Object(values) = serde_json::to_value(values).expect("a Fit day serializes")
+        let Value::Object(values) = serde_json::to_value(values).expect("a Fit run serializes")
         else {
-            unreachable!("a Fit day is an object")
+            unreachable!("a Fit run is an object")
         };
         let native_id = match day {
-            Some(day) => format!("{file}:{day}"),
-            None => format!("{file}:undated"),
+            Some(day) => format!("{file}:{day}:{run}"),
+            None => format!("{file}:undated:{run}"),
         };
         let record = HealthRecord::new(
             "google-fit".into(),
@@ -122,7 +153,7 @@ impl Parser for FitParser {
             vec![],
         )
         .map_err(|error| RecordError::new(error.to_string()))?;
-        Ok((vec![record], ()))
+        Ok((vec![record], carry))
     }
 }
 
@@ -180,10 +211,15 @@ impl Point {
 
     /// The key the driver joins points by.
     fn key(&self) -> String {
-        match self.day {
-            Some(day) => format!("{}\n{day}", self.data_type),
-            None => format!("{}\n", self.data_type),
-        }
+        run_key(&self.data_type, self.day)
+    }
+}
+
+/// What the points of one run share: their data type and day.
+fn run_key(data_type: &str, day: Option<jiff::civil::Date>) -> String {
+    match day {
+        Some(day) => format!("{data_type}\n{day}"),
+        None => format!("{data_type}\n"),
     }
 }
 

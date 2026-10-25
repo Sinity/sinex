@@ -32,7 +32,7 @@ fn decode<T: serde::de::DeserializeOwned>(value: Value) -> Result<T, serde_json:
 pub enum HealthValues {
     SleepSession(Box<sleep::SleepSession>),
     SleepNoise(Box<sleep::SleepNoise>),
-    FitDay(Box<fit::FitDay>),
+    FitRun(Box<fit::FitRun>),
     Stress(Box<samsung::Stress>),
     Steps(Box<samsung::Steps>),
     Hrv(Box<samsung::Hrv>),
@@ -62,7 +62,7 @@ impl HealthValues {
             ("sleep-as-android", "sleep-noise") => {
                 decode(value).map(Box::new).map(Self::SleepNoise)
             }
-            ("google-fit", _) => decode(value).map(Box::new).map(Self::FitDay),
+            ("google-fit", _) => decode(value).map(Box::new).map(Self::FitRun),
             ("samsung-health" | "samsung-health-cloud", category) => match category {
                 "stress" | "Stress Internal Data" => decode(value).map(Box::new).map(Self::Stress),
                 "step_daily_trend" | "Step Count" => decode(value).map(Box::new).map(Self::Steps),
@@ -125,7 +125,7 @@ impl HealthValues {
             Self::ActivityDay(row) => &row.unknown,
             Self::Calories(row) => &row.unknown,
             Self::Ecg(row) => &row.unknown,
-            Self::FitDay(_) | Self::Unknown(_) => return vec![],
+            Self::FitRun(_) | Self::Unknown(_) => return vec![],
         };
         let mut fields: Vec<String> = extra
             .keys()
