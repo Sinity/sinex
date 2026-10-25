@@ -310,13 +310,14 @@ pub(crate) async fn drive(
                 return Err(error);
             }
         };
-        let acquired = match reader.poll(&cursor) {
+        let mut acquired = match reader.poll(&cursor) {
             Err(error) => {
                 guard.release().await?;
                 return Err(error.to_string());
             }
             Ok(acquired) => acquired,
         };
+        drivers::note_previous_through(&cursor, &mut acquired);
         let prepared = async {
             if let Some(unlock) = access.unlock {
                 unlock.check()?;

@@ -40,6 +40,8 @@ pub struct Cursor {
     pub done: bool,
     /// The record of `member` the current part starts at.
     pub part_start: usize,
+    /// How many bytes of the current part were admitted.
+    pub through: usize,
 }
 
 impl Cursor {
@@ -193,6 +195,7 @@ pub fn read_input(
                 original_material: None,
                 done: false,
                 part_start: 0,
+                through: 0,
             }
         };
         cursor.size = context.facts.size.unwrap_or(0);
@@ -478,6 +481,7 @@ impl Context<'_, '_> {
             after.member = member;
             after.record = start + ranges.len();
             after.part_start = start + skip;
+            after.through = bytes.len();
             let ends: Vec<usize> = records.iter().map(|&(_, end)| end).collect();
             let cursor_base = after.clone();
             let path = if self.capture.container == Container::Gzip {
@@ -514,6 +518,7 @@ impl Context<'_, '_> {
                             let mut cursor = cursor_base.clone();
                             cursor.record =
                                 cursor.part_start + ends.partition_point(|&at| at <= end);
+                            cursor.through = end;
                             json!(cursor)
                         };
                         move |end| Ok(cursor(end))

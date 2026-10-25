@@ -423,7 +423,13 @@ fn read_chain_into(
         }],
     })?;
     let mut carry = Value::Null;
-    for (m, source) in chain.iter().zip(parsers) {
+    for (position, (m, source)) in chain.iter().zip(parsers).enumerate() {
+        // A later part read again what the reader had not admitted of this one.
+        let admitted = chain
+            .get(position + 1)
+            .filter(|next| next.previous == Some(m.id))
+            .and_then(|next| next.manifest.get("previous_through"))
+            .and_then(Value::as_u64);
         let role = sinex_model::MaterialRole::of(&m.manifest)
             .map_err(|e| format!("material {}: {e}", m.id))?;
         if role == sinex_model::MaterialRole::OriginalArchive {
@@ -491,7 +497,10 @@ fn read_chain_into(
                 }
             })
         };
-        let records = stored.records(&m.manifest, source.spec().framer)?;
+        let mut records = stored.records(&m.manifest, source.spec().framer)?;
+        if let Some(admitted) = admitted {
+            records.retain(|&(_, end)| end as u64 <= admitted);
+        }
         let order = drivers::reading_order(&m.manifest);
         // Chunks are drained one at a time, so a material's events are never
         // all in memory at once. A material out of scope is still read for

@@ -490,6 +490,32 @@ pub fn physical_records(
     framer.ranges(&mut Sequential { bytes, at: 0 })
 }
 
+/// The material a committed cursor names and how much of it was admitted, for
+/// drivers whose cursors carry `material` and `through`.
+pub fn cursor_material(cursor: &Value) -> Option<(MaterialId, Option<u64>)> {
+    let material = cursor
+        .get("material")
+        .and_then(Value::as_str)
+        .and_then(|s| s.parse::<uuid::Uuid>().ok())
+        .map(MaterialId)?;
+    Some((material, cursor.get("through").and_then(Value::as_u64)))
+}
+
+/// When the committed cursor stopped inside the part before a new one, record
+/// in the new part's manifest how much of that part was admitted
+/// (`previous_through`). The rest was read again into the new part, so a
+/// replay reads the earlier part only that far.
+pub fn note_previous_through(cursor: &Value, acquired: &mut Acquired) {
+    let Some(material) = acquired.material.as_mut() else {
+        return;
+    };
+    if let Some((previous, Some(through))) = cursor_material(cursor)
+        && material.previous_part == Some(previous)
+    {
+        material.manifest["previous_through"] = through.into();
+    }
+}
+
 /// File facts for an observation.
 pub fn file_facts(path: &std::path::Path) -> std::io::Result<ObservationFacts> {
     use std::os::unix::fs::MetadataExt;

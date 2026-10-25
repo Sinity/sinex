@@ -163,17 +163,6 @@ pub trait Reader: Send {
     }
 }
 
-/// The material a committed cursor names and how much of it was admitted, for
-/// drivers whose cursors carry `material` and `through`.
-fn cursor_material(cursor: &Value) -> Option<(sinex_model::MaterialId, Option<u64>)> {
-    let material = cursor
-        .get("material")
-        .and_then(Value::as_str)
-        .and_then(|s| s.parse::<uuid::Uuid>().ok())
-        .map(sinex_model::MaterialId)?;
-    Some((material, cursor.get("through").and_then(Value::as_u64)))
-}
-
 /// How a kind finds its inputs: the bindings for `input`.
 pub type Plan = fn(&Path, &Settings) -> Result<Vec<Binding>, String>;
 /// The parser of one binding.
@@ -352,7 +341,7 @@ pub fn appended(driver: AppendFile) -> Box<dyn Reader> {
 
 impl Reader for Appended {
     fn history_from(&self, cursor: &Value) -> Option<sinex_model::MaterialId> {
-        cursor_material(cursor).map(|(material, _)| material)
+        crate::drivers::cursor_material(cursor).map(|(material, _)| material)
     }
 
     fn restore(&mut self, cursor: &Value, material: StoredMaterial) -> Result<bool, DriverError> {
@@ -361,7 +350,7 @@ impl Reader for Appended {
         }
         let reference = &material.reference;
         // Only the admitted part of the newest material counts as read.
-        let admitted = match cursor_material(cursor) {
+        let admitted = match crate::drivers::cursor_material(cursor) {
             Some((id, Some(through))) if id == reference.id => through.min(reference.length),
             _ => reference.length,
         };
@@ -429,12 +418,12 @@ pub fn rows(driver: SqliteRows) -> Box<dyn Reader> {
 
 impl Reader for Rows {
     fn history_from(&self, cursor: &Value) -> Option<sinex_model::MaterialId> {
-        cursor_material(cursor).map(|(material, _)| material)
+        crate::drivers::cursor_material(cursor).map(|(material, _)| material)
     }
 
     fn restore(&mut self, cursor: &Value, material: StoredMaterial) -> Result<bool, DriverError> {
         let reference = &material.reference;
-        let admitted = match cursor_material(cursor) {
+        let admitted = match crate::drivers::cursor_material(cursor) {
             Some((id, Some(through))) if id == reference.id => through.min(reference.length),
             _ => reference.length,
         };
@@ -475,12 +464,12 @@ pub fn walked(driver: DirSnapshot) -> Box<dyn Reader> {
 
 impl Reader for Walked {
     fn history_from(&self, cursor: &Value) -> Option<sinex_model::MaterialId> {
-        cursor_material(cursor).map(|(material, _)| material)
+        crate::drivers::cursor_material(cursor).map(|(material, _)| material)
     }
 
     fn restore(&mut self, cursor: &Value, material: StoredMaterial) -> Result<bool, DriverError> {
         let reference = &material.reference;
-        let admitted = match cursor_material(cursor) {
+        let admitted = match crate::drivers::cursor_material(cursor) {
             Some((id, through)) if id == reference.id => through
                 .ok_or_else(|| DriverError::Cursor("directory cursor has no processed end".into()))?
                 .min(reference.length),

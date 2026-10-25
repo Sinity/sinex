@@ -497,17 +497,18 @@ async fn read_archive(
         let index = archive.indices[slot];
         let b = &mut bound[index];
         let result = async {
-            let acquired = delivery.acquired.map_err(|e| e.to_string())?;
+            let mut acquired = delivery.acquired.map_err(|e| e.to_string())?;
             if sinex_transport::private_mode::PrivateMode::default().on() {
                 return Err("private mode is on; archive admission stopped".into());
             }
             if let Some(unlock) = access.unlock {
                 unlock.check()?;
             }
-            let (_, carry) = positions::load(conn, &b.binding.name)
+            let (cursor, carry) = positions::load(conn, &b.binding.name)
                 .await
                 .map_err(|e| e.to_string())?
                 .unwrap_or((Value::Null, Value::Null));
+            drivers::note_previous_through(&cursor, &mut acquired);
             let carry = if acquired
                 .material
                 .as_ref()
