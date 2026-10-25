@@ -11,7 +11,7 @@ use crate::drivers::live_stream::{self, LiveStream, Rotation, SpoolWriter};
 use crate::registry::{DeclaredSource, Driver, SourceSpec};
 use crate::{Parser, RecordError};
 use serde_json::{Map, Value};
-use sinex_model::event_types::session::{EditorEvent, TerminalEvent};
+use sinex_model::event_types::session::{EditorReport, TerminalReport};
 use sinex_model::{Class, InputRef, Timestamp};
 use std::io::{BufRead, BufReader};
 use std::net::Shutdown;
@@ -21,23 +21,23 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 pub const SPEC: SourceSpec = SourceSpec {
-    name: "session.producers",
+    name: "session.integrations",
     driver: Driver::LiveStream,
     excisable: true,
-    consumer: "recall: files edited, commands run in the terminal",
+    purpose: "recall: files edited, commands run in the terminal",
     // Paths and command lines.
     class: Class::Guarded,
     parser: "session-socket",
     parser_version: 1,
-    event_types: &["editor.event", "terminal.event"],
+    event_types: &["editor.reported", "terminal.reported"],
     framer: crate::Framer::incremental(crate::drivers::append_file::lines),
 };
 
 sinex_model::payload_enum! {
     #[derive(Clone, Debug, PartialEq)]
     pub enum Produced {
-        Editor(EditorEvent),
-        Terminal(TerminalEvent),
+        Editor(EditorReport),
+        Terminal(TerminalReport),
     }
 }
 
@@ -57,13 +57,13 @@ pub fn default_path() -> Option<PathBuf> {
 /// `seconds` pass (forever otherwise). Stopping closes reception on accepted
 /// connections and drains their queued bytes before returning the lines captured.
 pub fn capture(socket: &Path, spool: &Path, seconds: Option<Duration>) -> std::io::Result<u64> {
-    capture_with_control(socket, spool, &crate::capture::Control::new(seconds))
+    capture_until(socket, spool, &crate::capture::CaptureStop::new(seconds))
 }
 
-fn capture_with_control(
+fn capture_until(
     socket: &Path,
     spool: &Path,
-    control: &crate::capture::Control,
+    stop: &crate::capture::CaptureStop,
 ) -> std::io::Result<u64> {
     if let Some(dir) = socket.parent() {
         std::fs::create_dir_all(dir)?;
@@ -75,7 +75,7 @@ fn capture_with_control(
         use std::os::unix::fs::PermissionsExt;
         std::fs::set_permissions(socket, std::fs::Permissions::from_mode(0o600))?;
         let writer = Arc::new(Mutex::new(SpoolWriter::open(spool, Rotation::default())?));
-        capture_connections(listener, writer, || control.stopped())
+        capture_connections(listener, writer, || stop.stopped())
     })();
     let cleanup = std::fs::remove_file(socket);
     match result {
@@ -101,8 +101,8 @@ fn capture_connections(
         for _ in 0..ACCEPT_BATCH {
             match listener.accept() {
                 Ok((stream, _)) => {
-                    let control = match stream.try_clone() {
-                        Ok(control) => control,
+                    let stop = match stream.try_clone() {
+                        Ok(stop) => stop,
                         Err(error) => {
                             failure = Some(error);
                             break;
@@ -112,7 +112,7 @@ fn capture_connections(
                     match std::thread::Builder::new()
                         .spawn(move || capture_connection(stream, &writer))
                     {
-                        Ok(handler) => handlers.push((control, handler)),
+                        Ok(handler) => handlers.push((stop, handler)),
                         Err(error) => {
                             failure = Some(error);
                             break;
@@ -149,8 +149,8 @@ fn capture_connections(
     drop(listener);
     // Shut down reception before joining: queued bytes remain readable up
     // to EOF, while idle peers wake and future writes cannot extend the drain.
-    for (control, _) in &handlers {
-        if let Err(error) = control.shutdown(Shutdown::Read)
+    for (stop, _) in &handlers {
+        if let Err(error) = stop.shutdown(Shutdown::Read)
             && error.kind() != std::io::ErrorKind::NotConnected
         {
             failure.get_or_insert(error);
@@ -177,7 +177,7 @@ fn capture_connections(
 fn join_connection(handler: std::thread::JoinHandle<std::io::Result<u64>>) -> std::io::Result<u64> {
     handler
         .join()
-        .map_err(|_| std::io::Error::other("producer socket reader panicked"))?
+        .map_err(|_| std::io::Error::other("integration socket reader panicked"))?
 }
 
 fn capture_connection(stream: UnixStream, writer: &Mutex<SpoolWriter>) -> std::io::Result<u64> {
@@ -214,7 +214,7 @@ pub fn driver(spool: PathBuf, host: String) -> LiveStream {
         spool,
         input: InputRef {
             kind: "socket".into(),
-            locator: "sinex-session:producers".into(),
+            locator: "sinex-session:integrations".into(),
             host,
         },
     }
@@ -255,7 +255,7 @@ impl Parser for SessionSocketParser {
         let source = take_str(&mut m, "source").ok_or_else(|| RecordError::new("no `source`"))?;
         let event = take_str(&mut m, "event").ok_or_else(|| RecordError::new("no `event`"))?;
         let out = match source.as_str() {
-            "neovim" | "vim" => Produced::Editor(EditorEvent {
+            "neovim" | "vim" => Produced::Editor(EditorReport {
                 received_at,
                 editor: source,
                 event,
@@ -265,7 +265,7 @@ impl Parser for SessionSocketParser {
                 pid: take_i64(&mut m, "pid").and_then(|p| u32::try_from(p).ok()),
                 extra: m,
             }),
-            "kitty" => Produced::Terminal(TerminalEvent {
+            "kitty" => Produced::Terminal(TerminalReport {
                 received_at,
                 terminal: source,
                 event,
@@ -289,11 +289,11 @@ pub fn source() -> DeclaredSource<SessionSocketParser> {
     }
 }
 
-/// `--source producers=SPOOL`: lines the editor and terminal integrations
-/// write to the producer socket (the `socket` option, or the default path),
+/// `--read integration-socket=SPOOL`: lines the editor and terminal
+/// integrations write to the integration socket (the `socket` option, or the default path),
 /// captured into SPOOL.
-pub const KIND: crate::binding::InputKind = crate::binding::InputKind {
-    name: "producers",
+pub const FORMAT: crate::binding::InputFormat = crate::binding::InputFormat {
+    name: "integration-socket",
     specs: || vec![&SPEC],
     plan: Some(|spool, settings| Ok(crate::binding::single(&SPEC, spool, settings))),
     source: |_| Ok(Box::new(source())),
@@ -309,8 +309,8 @@ pub const KIND: crate::binding::InputKind = crate::binding::InputKind {
             .option("socket")
             .map(PathBuf::from)
             .or_else(default_path)
-            .ok_or("no producer socket path (XDG_RUNTIME_DIR unset)")?;
-        capture_with_control(&socket, &b.input, stop).map_err(|e| e.to_string())
+            .ok_or("no integration socket path (XDG_RUNTIME_DIR unset)")?;
+        capture_until(&socket, &b.input, stop).map_err(|e| e.to_string())
     }),
 };
 

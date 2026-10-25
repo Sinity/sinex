@@ -24,7 +24,7 @@ pub const SPEC: SourceSpec = SourceSpec {
     name: "health.samsung-export",
     driver: Driver::ExportArchive,
     excisable: false,
-    consumer: "sleep, heart, activity and body measurements",
+    purpose: "sleep, heart, activity and body measurements",
     class: Class::Open,
     parser: "samsung-health-export",
     parser_version: 2,
@@ -212,8 +212,8 @@ pub fn driver(path: PathBuf, host: String) -> ExportArchive {
     }
 }
 
-/// `--source samsung-health=PATH`: each Samsung Health export ZIP under PATH.
-pub const KIND: crate::binding::InputKind = crate::binding::InputKind {
+/// `--read samsung-health=PATH`: each Samsung Health export ZIP under PATH.
+pub const FORMAT: crate::binding::InputFormat = crate::binding::InputFormat {
     name: "samsung-health",
     specs: || vec![&SPEC],
     plan: Some(|input, settings| {

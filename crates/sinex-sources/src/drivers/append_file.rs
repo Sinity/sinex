@@ -231,7 +231,7 @@ impl AppendFile {
                     },
                     revision: RevisionChange::Same,
                     material: None,
-                    cursor_unchanged: cursor.clone(),
+                    cursor_without_material: cursor.clone(),
                 });
             }
         };
@@ -252,7 +252,7 @@ impl AppendFile {
                 },
                 revision: RevisionChange::Same,
                 material: None,
-                cursor_unchanged: cursor.clone(),
+                cursor_without_material: cursor.clone(),
             });
         }
         let mut file =
@@ -283,7 +283,7 @@ impl AppendFile {
         // so a file of any size is read in bounded state. A record longer
         // than a part grows the read until it completes; no record is
         // refused. A rewrite is read whole: aligning it against the previous
-        // revision needs every record to tell which ones vanished.
+        // revision needs every record to tell which ones removed.
         let restart = start == 0 && !cursor.is_null();
         let available = size - start;
         let mut want = if restart {
@@ -343,7 +343,7 @@ impl AppendFile {
                 observation: facts,
                 revision: RevisionChange::Same,
                 material: None,
-                cursor_unchanged: serde_json::to_value(unchanged).expect("cursor serializes"),
+                cursor_without_material: serde_json::to_value(unchanged).expect("cursor serializes"),
             });
         }
         data.truncate(consumed);
@@ -352,7 +352,7 @@ impl AppendFile {
         // the new revision's records.
         let restarted_records = start == 0 && !cursor.is_null();
         let id = MaterialId::new();
-        let (records, aligned, vanished) = if restarted_records {
+        let (records, aligned, removed) = if restarted_records {
             let mut previous = std::mem::take(state);
             let aligning = !previous.is_empty();
             let mut fresh = Vec::new();
@@ -444,10 +444,10 @@ impl AppendFile {
                     move |end| Ok(cursor(end))
                 }),
                 aligned,
-                vanished,
+                removed,
                 memory: None,
             }),
-            cursor_unchanged: Value::Null,
+            cursor_without_material: Value::Null,
         })
     }
 }

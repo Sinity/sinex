@@ -27,7 +27,7 @@ pub enum Admin {
     /// are read from files, so they never pass through the Nix store.
     NatsAuthorization {
         #[arg(long, default_value = "sinex")]
-        subjects: String,
+        subject_root: String,
         #[arg(long, default_value = "sinexd")]
         daemon_user: String,
         #[arg(long)]
@@ -66,7 +66,7 @@ pub async fn run(command: Admin) -> Result<(), String> {
             Ok(())
         }
         Admin::NatsAuthorization {
-            subjects,
+            subject_root,
             daemon_user,
             daemon_password_file,
             producers,
@@ -93,7 +93,7 @@ pub async fn run(command: Admin) -> Result<(), String> {
                 .collect();
             println!(
                 "{}",
-                sinex_protocol::Subjects::new(subjects)
+                sinex_protocol::Subjects::new(subject_root)
                     .authorization((&daemon_user, &daemon_password), &users)
             );
             Ok(())

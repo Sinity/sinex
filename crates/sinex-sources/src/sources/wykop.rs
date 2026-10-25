@@ -28,7 +28,7 @@ pub const SPEC: SourceSpec = SourceSpec {
     name: "social.wykop",
     driver: Driver::ExportArchive,
     excisable: false,
-    consumer: "what the operator wrote and voted on at Wykop",
+    purpose: "what the operator wrote and voted on at Wykop",
     class: Class::Open,
     parser: "wykop",
     parser_version: 2,
@@ -471,8 +471,8 @@ pub fn driver(path: PathBuf, host: String) -> ExportArchive {
     }
 }
 
-/// `--source wykop=PATH`: each of the account's own Wykop export files in PATH.
-pub const KIND: crate::binding::InputKind = crate::binding::InputKind {
+/// `--read wykop=PATH`: each of the account's own Wykop export files in PATH.
+pub const FORMAT: crate::binding::InputFormat = crate::binding::InputFormat {
     name: "wykop",
     specs: || vec![&SPEC],
     plan: Some(|input, settings| {

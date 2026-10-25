@@ -8,11 +8,11 @@
 //! |---|---|---|
 //! | `<root>.ingress.<producer>` | the producer | an [`Ingress`] frame, into the ingress stream |
 //! | `<root>.ack.<producer>` | `sinexd` | the [`Acknowledgment`] of each frame |
-//! | `<root>.have.<producer>` | the producer, as a request | [`Have`]: what Sinex recorded for these frames |
+//! | `<root>.recorded.<producer>` | the producer, as a request | [`RecordedQuery`]: what Sinex recorded for these frames |
 //! | `<root>.materials.<producer>` | the producer, as a request | [`Materials`]: a page of the materials it registered |
 //! | `<root>.excise.<producer>` | the producer, as a request | [`Excise`]: excise whole materials it registered |
 //! | `<root>.confirmed.event.<event type>` | `sinexd` | a [`Confirmed::Event`] |
-//! | `<root>.confirmed.archive` | `sinexd` | a [`Confirmed::Archived`], [`Confirmed::Restored`] or [`Confirmed::Excised`] notice |
+//! | `<root>.confirmed.archive` | `sinexd` | a [`Confirmed::Archived`], [`Confirmed::Unhidden`] or [`Confirmed::Excised`] notice |
 //!
 //! Each producer's credentials allow only its own subjects
 //! ([`Subjects::producer_permissions`]), so the producer named in a subject is
@@ -91,12 +91,12 @@ impl Subjects {
         format!("{}.ack.{producer}", self.root)
     }
 
-    pub fn have(&self, producer: &str) -> String {
-        format!("{}.have.{producer}", self.root)
+    pub fn recorded(&self, producer: &str) -> String {
+        format!("{}.recorded.{producer}", self.root)
     }
 
-    pub fn have_all(&self) -> String {
-        format!("{}.have.*", self.root)
+    pub fn recorded_all(&self) -> String {
+        format!("{}.recorded.*", self.root)
     }
 
     pub fn materials(&self, producer: &str) -> String {
@@ -123,7 +123,7 @@ impl Subjects {
             .strip_prefix('.')?;
         let producer = rest
             .strip_prefix("ingress.")
-            .or_else(|| rest.strip_prefix("have."))
+            .or_else(|| rest.strip_prefix("recorded."))
             .or_else(|| rest.strip_prefix("materials."))
             .or_else(|| rest.strip_prefix("excise."))?;
         valid_producer(producer).then_some(producer)
@@ -136,7 +136,7 @@ impl Subjects {
         (
             vec![
                 self.ingress(producer),
-                self.have(producer),
+                self.recorded(producer),
                 self.materials(producer),
                 self.excise(producer),
             ],
@@ -192,15 +192,15 @@ pub fn valid_producer(name: &str) -> bool {
 /// acknowledgment instead of admitting anything twice.
 ///
 /// A frame is one NATS message, so it fits the server's `max_payload`. Bytes
-/// of any size reach Sinex through the frame's spool directory: written there
+/// of any size reach Sinex through the frame's directory: written there
 /// by a producer on the same host, or sent in [`Ingress::Chunk`]s by one that
 /// is not. A producer splits many events across frames, and sends a frame too
-/// large for one message as an [`Ingress::Indirect`].
+/// large for one message as an [`Ingress::LargeFrame`].
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum Ingress {
     /// Register a material. Its bytes are in the content store already, or
-    /// in this frame's spool directory, from where Sinex stores them before
+    /// in this frame's directory, from where Sinex stores them before
     /// admitting the frame. Send it, and wait for its acknowledgment, before
     /// events that cite it.
     Material {
@@ -217,7 +217,7 @@ pub enum Ingress {
     },
     /// Part of the bytes named `blob`, base64 in `data`, starting at `offset`
     /// of `total`, for the frame named `for_frame`: how a producer on another
-    /// host fills that frame's spool directory. Chunks are sent in order;
+    /// host fills that frame's directory. Chunks are sent in order;
     /// Sinex keeps what it has by offset and checks the bytes against their
     /// name when the last arrives, so chunks sent again under new frame names
     /// (a new attempt) change nothing they already delivered.
@@ -230,9 +230,9 @@ pub enum Ingress {
         data: String,
     },
     /// A material or events frame too large for one message, written to this
-    /// frame's spool directory as the bytes named `blob` (its JSON). Sinex
+    /// frame's directory as the bytes named `blob` (its JSON). Sinex
     /// handles it as that frame and records it under this frame's name.
-    Indirect {
+    LargeFrame {
         frame: String,
         blob: String,
         length: u64,
@@ -245,7 +245,7 @@ impl Ingress {
             Ingress::Material { frame, .. }
             | Ingress::Events { frame, .. }
             | Ingress::Chunk { frame, .. }
-            | Ingress::Indirect { frame, .. } => frame,
+            | Ingress::LargeFrame { frame, .. } => frame,
         }
     }
 }
@@ -291,7 +291,7 @@ pub struct ProducerEvent {
     pub location: Option<RecordLocation>,
     /// Output number when one record yields several events.
     #[serde(default)]
-    pub ordinal: u16,
+    pub output_index: u16,
     #[serde(default)]
     pub parents: Vec<EventId>,
     /// Which of two readings of one record is newer; only a newer reading
@@ -320,11 +320,11 @@ pub struct Acknowledgment {
     pub commit_seq: Option<i64>,
 }
 
-/// A request on `<root>.have.<producer>`: which of these frames Sinex has
+/// A request on `<root>.recorded.<producer>`: which of these frames Sinex has
 /// recorded. The reply is a JSON array of [`Acknowledgment`]s, one per
 /// recorded frame; a frame missing from it was not received.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
-pub struct Have {
+pub struct RecordedQuery {
     pub frames: Vec<String>,
 }
 
@@ -374,9 +374,9 @@ pub struct ExciseReply {
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum Confirmed {
     Event(Box<ConfirmedEvent>),
-    Archived(ArchiveNotice),
+    Archived(Archived),
     /// A previously hidden reading is live again at a new position.
-    Restored(RestoredNotice),
+    Unhidden(Unhidden),
     /// The event was excised: its message has been erased from the stream,
     /// and a consumer drops anything it kept of it.
     Excised {
@@ -395,7 +395,7 @@ pub struct ConfirmedEvent {
     pub source: String,
     pub run: RunId,
     pub location: Option<RecordLocation>,
-    pub ordinal: u16,
+    pub output_index: u16,
     pub parents: Vec<EventId>,
     pub ts_orig: Option<Timestamp>,
     pub ts_quality: String,
@@ -424,8 +424,8 @@ pub enum Withheld {
 
 /// A reading taken out of the live set.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
-pub struct ArchiveNotice {
-    pub notice_seq: i64,
+pub struct Archived {
+    pub change_seq: i64,
     pub event: EventId,
     /// The commit position at which it was archived.
     pub archived_seq: i64,
@@ -436,10 +436,10 @@ pub struct ArchiveNotice {
 
 /// Restoration changes visibility; it does not admit a second Event.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
-pub struct RestoredNotice {
-    pub notice_seq: i64,
+pub struct Unhidden {
+    pub change_seq: i64,
     pub event: EventId,
-    pub restored_seq: i64,
+    pub unhidden_seq: i64,
     pub operation: Option<sinex_model::OperationId>,
 }
 

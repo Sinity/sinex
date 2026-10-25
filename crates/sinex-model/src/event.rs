@@ -39,7 +39,7 @@ pub enum Origin {
     Record {
         location: RecordLocation,
         /// Output number when one record yields several events.
-        ordinal: u16,
+        output_index: u16,
     },
     Derived {
         parents: Vec<EventId>,
@@ -76,11 +76,9 @@ pub struct Event {
     pub record_hash: [u8; 32],
     pub record_state: RecordState,
     pub class: Class,
-    /// How strongly each kind of evidence backs a derived event.
-    pub support: Option<Value>,
     /// Stored bytes the payload owns beyond the material (excision deletes
     /// them with the event). Set at build; not read back from the store.
-    pub cites: Vec<crate::Cited>,
+    pub owned_blobs: Vec<crate::OwnedBlob>,
 }
 
 impl Event {
@@ -124,14 +122,16 @@ impl Event {
             record_hash,
             record_state: payload.record_state(),
             class: class.max(P::CLASS),
-            support: None,
-            cites: payload.cited_blobs(),
+            owned_blobs: payload.owned_blobs(),
         })
     }
 
     pub fn location(&self) -> Option<(RecordLocation, u16)> {
         match self.origin {
-            Origin::Record { location, ordinal } => Some((location, ordinal)),
+            Origin::Record {
+                location,
+                output_index,
+            } => Some((location, output_index)),
             Origin::Derived { .. } => None,
         }
     }

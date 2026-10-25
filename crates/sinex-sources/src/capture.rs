@@ -9,7 +9,7 @@ mod process;
 pub use process::Child;
 use process::Registration;
 
-pub struct Control {
+pub struct CaptureStop {
     state: Arc<State>,
     deadline: Option<JoinHandle<()>>,
 }
@@ -26,7 +26,7 @@ struct Inner {
     readers: Vec<std::os::unix::net::UnixStream>,
 }
 
-impl Control {
+impl CaptureStop {
     pub fn new(duration: Option<Duration>) -> Self {
         let state = Arc::new(State {
             inner: Mutex::new(Inner::default()),
@@ -110,7 +110,7 @@ impl Control {
     }
 }
 
-impl Drop for Control {
+impl Drop for CaptureStop {
     fn drop(&mut self) {
         self.stop();
         if let Some(deadline) = self.deadline.take() {

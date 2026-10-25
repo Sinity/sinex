@@ -68,7 +68,7 @@ impl World {
     }
 
     async fn item_at(&mut self, path: &Path) -> String {
-        let key = sinex_library::acquisition_key("h", &path.display().to_string());
+        let key = sinex_library::copy_key("h", &path.display().to_string());
         let holders = sinex_library::reads::items_at(&mut self.conn, &[key])
             .await
             .unwrap();
@@ -458,12 +458,12 @@ async fn the_library_end_to_end(db: devkit::pg::TestDatabase) {
     std::fs::remove_dir_all(w.root.parent().unwrap()).unwrap();
 }
 
-/// The live library acquisition at `path`: its event and the bytes it names.
-async fn acquisition(conn: &mut PgConnection, path: &Path) -> (uuid::Uuid, String) {
+/// The live library copy at `path`: its event and the bytes it names.
+async fn copy(conn: &mut PgConnection, path: &Path) -> (uuid::Uuid, String) {
     let row: (uuid::Uuid, String) = sqlx::query_as(
         "SELECT e.id, e.payload->>'content' FROM core.events e
          JOIN core.live_equivalence l ON l.event_id = e.id
-         WHERE e.event_type = 'library.acquisition' AND e.payload->>'path' = $1",
+         WHERE e.event_type = 'library.copy' AND e.payload->>'path' = $1",
     )
     .bind(path.display().to_string())
     .fetch_one(conn)
@@ -492,7 +492,7 @@ async fn excision_of_a_scanned_file_is_refused(db: devkit::pg::TestDatabase) {
         reference: None,
     })
     .await;
-    let (event, bytes) = acquisition(&mut w.conn, &file).await;
+    let (event, bytes) = copy(&mut w.conn, &file).await;
     let refused = crate::excision::excise(
         &mut w.conn,
         &w.blobs.clone(),
@@ -514,7 +514,7 @@ async fn excision_of_a_scanned_file_is_refused(db: devkit::pg::TestDatabase) {
 }
 
 #[devkit::test]
-async fn library_add_through_an_alias_keeps_one_acquisition(db: devkit::pg::TestDatabase) {
+async fn library_add_through_an_alias_keeps_one_copy(db: devkit::pg::TestDatabase) {
     let mut w = world(db).await;
     let file = w.root.join("note.txt");
     std::fs::write(&file, "synthetic library content").unwrap();
@@ -530,7 +530,7 @@ async fn library_add_through_an_alias_keeps_one_acquisition(db: devkit::pg::Test
     assert_eq!(added["files_described"], 1);
     assert_eq!(added["root"], w.root.display().to_string());
     let first_item = w.item_at(&file).await;
-    let (_, blob) = acquisition(&mut w.conn, &file).await;
+    let (_, blob) = copy(&mut w.conn, &file).await;
     assert_eq!(w.blobs.read(&blob).unwrap(), b"synthetic library content");
     let again = w
         .ok(Request::LibraryAdd {
@@ -542,7 +542,7 @@ async fn library_add_through_an_alias_keeps_one_acquisition(db: devkit::pg::Test
     assert_eq!(again["library_records_written"], 0);
     assert_eq!(w.item_at(&file).await, first_item);
     let count: i64 = sqlx::query_scalar(
-        "SELECT count(*) FROM core.live_equivalence WHERE event_type='library.acquisition'",
+        "SELECT count(*) FROM core.live_equivalence WHERE event_type='library.copy'",
     )
     .fetch_one(&mut w.conn)
     .await

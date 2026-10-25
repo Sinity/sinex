@@ -118,7 +118,7 @@ exec sleep 30
                 "run",
                 "--nats",
                 nats.url(),
-                "--subjects",
+                "--subject-root",
                 &nats.prefix(),
                 "--producer",
                 "fixture",

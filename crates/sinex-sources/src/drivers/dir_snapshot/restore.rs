@@ -21,7 +21,7 @@ impl DirState {
             if !self.remembered.insert(path.to_owned()) {
                 continue;
             }
-            if !vanished(member)? {
+            if !removed(member)? {
                 self.files.insert(path.to_owned(), facts(member)?);
             }
         }
@@ -129,8 +129,8 @@ fn records(manifest: &Value) -> Result<Vec<(usize, usize)>, DriverError> {
     Ok(records)
 }
 
-fn vanished(member: &Value) -> Result<bool, DriverError> {
-    match member.get("vanished_at_ns") {
+fn removed(member: &Value) -> Result<bool, DriverError> {
+    match member.get("removed_at_ns") {
         None => Ok(false),
         Some(value)
             if value

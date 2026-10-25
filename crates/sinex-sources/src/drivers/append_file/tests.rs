@@ -112,11 +112,11 @@ fn a_rewrite_reads_only_records_the_previous_revision_did_not_hold() {
     assert_eq!(
         n.part_index,
         m.part_index + 1,
-        "parser parts continue across physical revisions"
+        "parser parts continue across file revisions"
     );
     assert_eq!(n.previous_part, Some(m.id));
     assert_eq!(
-        n.vanished,
+        n.removed,
         vec![RecordLocation {
             material: m.id,
             anchor: 2
@@ -312,7 +312,8 @@ fn incomplete_rewrite_keeps_the_old_parser_cut_and_its_unrecorded_rewrite_kind()
     std::fs::write(&path, b"part").unwrap();
     let pending = driver.poll(&cursor, &mut state).unwrap();
     assert!(pending.material.is_none());
-    let checkpoint: Cursor = serde_json::from_value(pending.cursor_unchanged.clone()).unwrap();
+    let checkpoint: Cursor =
+        serde_json::from_value(pending.cursor_without_material.clone()).unwrap();
     assert_eq!(checkpoint.material, Some(m.id));
     assert_eq!(checkpoint.through, m.bytes.len());
     assert_eq!(
@@ -320,7 +321,9 @@ fn incomplete_rewrite_keeps_the_old_parser_cut_and_its_unrecorded_rewrite_kind()
         Some(RevisionChange::Truncated)
     );
     std::fs::write(&path, b"part-completed\n").unwrap();
-    let next = driver.poll(&pending.cursor_unchanged, &mut state).unwrap();
+    let next = driver
+        .poll(&pending.cursor_without_material, &mut state)
+        .unwrap();
     assert_eq!(next.revision, RevisionChange::Truncated);
     let next = next.material.unwrap();
     assert_eq!(next.previous_part, Some(m.id));
@@ -343,7 +346,8 @@ fn fresh_incomplete_files_emit_reusable_empty_prefix_cursors() {
             .unwrap();
         assert!(first.material.is_none());
         let saved: Value =
-            serde_json::from_slice(&serde_json::to_vec(&first.cursor_unchanged).unwrap()).unwrap();
+            serde_json::from_slice(&serde_json::to_vec(&first.cursor_without_material).unwrap())
+                .unwrap();
         assert_eq!(saved["offset"], 0);
         assert_eq!(saved["window"], blake3::hash(b"").to_hex().as_str());
         let unchanged = driver.poll(&saved, &mut AppendState::default()).unwrap();

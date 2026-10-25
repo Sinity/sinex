@@ -13,7 +13,7 @@ pub enum DerivedScope {
     /// record per key in the same order. Outputs a key produced before and no
     /// longer produces are archived; each dirty mark clears unless the key
     /// was dirtied again since.
-    Keys { keys: Vec<KeyScope> },
+    Keys { keys: Vec<ComputedKey> },
     /// A per-event derivation's outputs for committed events up to `position`.
     Position { position: i64 },
     /// Recompute these keys (a version change, `sinexctl recompute`). Carries
@@ -23,7 +23,7 @@ pub enum DerivedScope {
 
 /// One key of a [`DerivedScope::Keys`] batch.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
-pub struct KeyScope {
+pub struct ComputedKey {
     pub key: Value,
     /// The dirty mark the computation saw; a later mark survives.
     pub dirty_seq: i64,
@@ -37,10 +37,10 @@ impl DerivedScope {
     }
 }
 
-/// Settle a derived batch: replace each key's output set, clear its dirty
+/// Apply a derived batch: replace each key's output set, clear its dirty
 /// mark, record whether it waits; or advance a per-event position. Set-based
 /// over the batch's keys, so a batch of many keys costs a few statements.
-pub(super) async fn settle(
+pub(super) async fn apply_derived(
     conn: &mut PgConnection,
     derivation: &str,
     scope: &Value,
@@ -146,10 +146,10 @@ pub(super) async fn settle(
             )
             .execute(&mut *conn)
             .await?;
-            let (waiting, settled): (Vec<&KeyScope>, Vec<&KeyScope>) =
+            let (waiting, done): (Vec<&ComputedKey>, Vec<&ComputedKey>) =
                 scoped.iter().partition(|s| s.waiting);
             let waiting: Vec<Value> = waiting.into_iter().map(|s| s.key.clone()).collect();
-            let settled: Vec<Value> = settled.into_iter().map(|s| s.key.clone()).collect();
+            let done: Vec<Value> = done.into_iter().map(|s| s.key.clone()).collect();
             sqlx::query!(
                 r#"INSERT INTO derivation.waiting (derivation, key)
                    SELECT $1, k FROM unnest($2::jsonb[]) AS k ON CONFLICT DO NOTHING"#,
@@ -161,7 +161,7 @@ pub(super) async fn settle(
             sqlx::query!(
                 "DELETE FROM derivation.waiting WHERE derivation = $1 AND key = ANY($2)",
                 derivation,
-                &settled,
+                &done,
             )
             .execute(&mut *conn)
             .await?;

@@ -26,8 +26,8 @@ fn bare_words_search_events() {
     let query = q("tide offset");
     assert_eq!(
         query.source,
-        Source::Unit {
-            unit: Unit::Events,
+        Source::Table {
+            table: Table::Events,
             alias: None
         }
     );
@@ -58,13 +58,13 @@ fn a_command_word_is_never_a_search() {
 }
 
 #[devkit::test]
-fn a_misspelled_unit_is_refused_with_a_suggestion() {
+fn a_misspelled_table_is_refused_with_a_suggestion() {
     let e = err("comands since 7d");
     assert!(e.message.contains("commands"), "{e}");
 }
 
 #[devkit::test]
-fn unit_with_filter_and_clauses() {
+fn table_with_filter_and_clauses() {
     let query = q("commands where exit_code != 0 and cwd ^ /src/tide sort when desc limit 20");
     assert_eq!(query.source.alias().unwrap().name, "commands");
     let Some(Expr::And(a, b)) = &query.filter else {
@@ -97,7 +97,7 @@ fn field_colon_value_means_equals() {
 
 #[devkit::test]
 fn and_binds_tighter_than_or_and_both_bounds_are_kept() {
-    let query = q("events where source = a or source = b and kind = c");
+    let query = q("events where source = a or source = b and event_type = c");
     let Some(Expr::Or(_, right)) = query.filter else {
         panic!("or at the top")
     };
@@ -209,7 +209,7 @@ fn payload_paths_take_their_type_from_the_literal() {
 #[devkit::test]
 fn lists_and_exists() {
     let query =
-        q("events where kind = [command.executed, command.imported] and not material exists");
+        q("events where event_type = [command.executed, command.imported] and not material exists");
     let Some(Expr::And(a, b)) = query.filter else {
         panic!()
     };
@@ -317,17 +317,17 @@ fn walks_and_references() {
             ..
         }
     ));
-    let r = parse_reference(&format!("sinex:occ/{id}/120/command.executed/0")).unwrap();
+    let r = parse_reference(&format!("sinex:record/{id}/120/command.executed/0")).unwrap();
     assert!(matches!(
         r,
-        Reference::Occurrence {
-            anchor: 120,
-            ordinal: Some(0),
+        Reference::Record {
+            offset: 120,
+            output: Some(0),
             ..
         }
     ));
-    let r = parse_reference("sinex:eq/terminal.atuin/command.executed/a/b").unwrap();
-    assert!(matches!(r, Reference::Equivalence { ref key, .. } if key == "a/b"));
+    let r = parse_reference("sinex:key/terminal.atuin/command.executed/a/b").unwrap();
+    assert!(matches!(r, Reference::Key { ref key, .. } if key == "a/b"));
     assert!(
         parse_reference("sinex:at/2026-09-14/session")
             .unwrap_err()
@@ -389,17 +389,17 @@ fn errors_render_with_a_caret() {
 }
 
 #[devkit::test]
-fn every_field_name_is_unique_within_its_unit() {
-    for unit in Unit::ALL {
-        let mut names: Vec<&str> = unit.fields().iter().map(|f| f.name).collect();
+fn every_field_name_is_unique_within_its_table() {
+    for table in Table::ALL {
+        let mut names: Vec<&str> = table.fields().iter().map(|f| f.name).collect();
         names.sort_unstable();
         let before = names.len();
         names.dedup();
-        assert_eq!(before, names.len(), "{}", unit.name());
-        for d in unit.default_fields() {
-            assert!(unit.field(d).is_some(), "{}: default {d}", unit.name());
+        assert_eq!(before, names.len(), "{}", table.name());
+        for d in table.default_fields() {
+            assert!(table.field(d).is_some(), "{}: default {d}", table.name());
         }
-        assert!(unit.field(unit.main_time()).is_some());
+        assert!(table.field(table.main_time()).is_some());
     }
 }
 

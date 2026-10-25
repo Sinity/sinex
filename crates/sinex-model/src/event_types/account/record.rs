@@ -8,13 +8,13 @@ use serde_json::{Map, Value};
 /// A fallback for account-export tables with no declared field types.
 #[derive(Clone, Debug, PartialEq, Deserialize, crate::EventPayload)]
 #[event(
-    type = "account.record",
+    type = "account.row",
     key = ["service", "table", "native_id"],
     replace = newer,
     time = at,
     quality = intrinsic
 )]
-pub struct AccountRecord {
+pub struct AccountRow {
     pub service: String,
     pub table: String,
     pub native_id: String,
@@ -39,7 +39,7 @@ struct AccountRecordView<'a> {
 fn untyped() -> bool {
     true
 }
-impl Serialize for AccountRecord {
+impl Serialize for AccountRow {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         AccountRecordView {
             service: &self.service,
@@ -52,9 +52,9 @@ impl Serialize for AccountRecord {
         .serialize(serializer)
     }
 }
-impl JsonSchema for AccountRecord {
+impl JsonSchema for AccountRow {
     fn schema_name() -> std::borrow::Cow<'static, str> {
-        "AccountRecord".into()
+        "AccountRow".into()
     }
     fn json_schema(generator: &mut schemars::SchemaGenerator) -> schemars::Schema {
         AccountRecordView::json_schema(generator)

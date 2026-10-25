@@ -1,6 +1,6 @@
-//! The producer spool: bytes an outside producer gives Sinex for one frame, in
+//! Frame bytes: the bytes an outside producer gives Sinex for one frame, in
 //! that frame's directory under the store root, each file named by the BLAKE3
-//! hash of its bytes. A producer on the same host writes them with [`stage`];
+//! hash of its bytes. A producer on the same host writes them with [`write`];
 //! one on another host sends chunks that the receiver collects with
 //! [`receive`]. The receiver reads a verified copy with [`snapshot`], stores
 //! it, and removes the directory with [`discard`] once the frame is recorded.
@@ -11,10 +11,10 @@ use std::os::unix::fs::OpenOptionsExt;
 use std::path::{Path, PathBuf};
 
 /// The directory holding the bytes for `producer`'s frame `frame`. The name is
-/// a hash, so no producer-supplied text can leave the spool root.
+/// a hash, so no producer-supplied text can leave the frame root.
 pub fn directory(root: &Path, producer: &str, frame: &str) -> PathBuf {
     let mut hash = blake3::Hasher::new();
-    hash.update(b"sinex producer spool\0");
+    hash.update(b"sinex frame bytes\0");
     hash.update(producer.as_bytes());
     hash.update(&[0]);
     hash.update(frame.as_bytes());
@@ -68,7 +68,7 @@ fn copy_checked(
 }
 
 /// Write the bytes named `blob` for `frame`, as the producer.
-pub fn stage(
+pub fn write(
     root: &Path,
     producer: &str,
     frame: &str,
@@ -231,7 +231,7 @@ pub fn discard(root: &Path, producer: &str, frame: &str) -> Result<(), String> {
             ) => {}
         Err(e) => return Err(error(e)),
     }
-    sync_directory(dir.parent().expect("spool directory has a parent"))
+    sync_directory(dir.parent().expect("frame directory has a parent"))
 }
 
 fn sync_directory(dir: &Path) -> Result<(), String> {
@@ -247,7 +247,9 @@ fn sync_directories(root: &Path, leaf: &Path) -> Result<(), String> {
         if at == root {
             return Ok(());
         }
-        at = at.parent().ok_or("producer spool left the store root")?;
+        at = at
+            .parent()
+            .ok_or("producer frame directory left the store root")?;
     }
 }
 

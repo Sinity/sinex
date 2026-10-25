@@ -174,7 +174,7 @@ async fn forecast_report_refuses_conflicting_visible_resolution_records(
                         material: MaterialId::new(),
                         anchor: 0,
                     },
-                    ordinal: 0,
+                    output_index: 0,
                 },
                 ReadingOrder(1),
                 *blake3::hash(format!("{outcome}").as_bytes()).as_bytes(),

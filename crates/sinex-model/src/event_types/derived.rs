@@ -5,7 +5,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 /// A span during which some state held: a focused window, a workspace, an
-/// ActivityWatch bout, a running systemd unit. Lifted from transitions by the
+/// ActivityWatch bout. Derived from transitions by the
 /// interval derivation. Identified by its start evidence; the end may still
 /// be unknown (`ended_at` is `None` while the state holds).
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]

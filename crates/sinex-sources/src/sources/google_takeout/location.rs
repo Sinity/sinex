@@ -17,7 +17,7 @@ pub const SPEC: SourceSpec = SourceSpec {
     name: "google.location-history",
     driver: Driver::ExportArchive,
     excisable: false,
-    consumer: "where the operator was",
+    purpose: "where the operator was",
     class: Class::Open,
     parser: "google-location-history",
     parser_version: 1,

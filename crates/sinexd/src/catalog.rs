@@ -5,19 +5,7 @@
 use serde_json::{Value, json};
 
 pub fn catalog() -> Value {
-    let sources: Vec<Value> = sinex_sources::sources::specs()
-        .into_iter()
-        .map(|s| {
-            json!({
-                "name": s.name,
-                "kind": sinex_sources::sources::input_kind_of(s.name).map(|k| k.name),
-                "driver": s.driver.name(),
-                "consumer": s.consumer,
-                "class": s.class,
-                "eventTypes": s.event_types,
-            })
-        })
-        .collect();
+    let sources: Vec<Value> = sources().into_iter().map(|s| s.to_json()).collect();
     let keyed = sinex_derivations::keyed().into_iter().map(|d| {
         json!({
             "name": d.name(),
@@ -40,16 +28,84 @@ pub fn catalog() -> Value {
     })
 }
 
+/// One catalog entry: every declaration that shares a source name (one per
+/// table it reads, or one per format that can read it), as one option.
+struct CatalogSource {
+    name: &'static str,
+    formats: Vec<&'static str>,
+    drivers: Vec<&'static str>,
+    purpose: &'static str,
+    class: sinex_model::Class,
+    /// The newest parser version among its declarations.
+    version: u32,
+    event_types: Vec<&'static str>,
+}
+
+impl CatalogSource {
+    fn to_json(&self) -> Value {
+        json!({
+            "name": self.name,
+            "formats": self.formats,
+            "drivers": self.drivers,
+            "purpose": self.purpose,
+            "class": self.class,
+            "eventTypes": self.event_types,
+        })
+    }
+}
+
+fn sources() -> Vec<CatalogSource> {
+    let mut out: Vec<CatalogSource> = Vec::new();
+    for format in sinex_sources::sources::formats() {
+        for spec in (format.specs)() {
+            let at = match out.iter().position(|s| s.name == spec.name) {
+                Some(at) => at,
+                None => {
+                    out.push(CatalogSource {
+                        name: spec.name,
+                        formats: Vec::new(),
+                        drivers: Vec::new(),
+                        purpose: spec.purpose,
+                        class: spec.class,
+                        version: spec.parser_version,
+                        event_types: Vec::new(),
+                    });
+                    out.len() - 1
+                }
+            };
+            let entry = &mut out[at];
+            entry.version = entry.version.max(spec.parser_version);
+            // A source read several ways is as private as its most private
+            // declaration.
+            entry.class = entry.class.max(spec.class);
+            for (list, value) in [
+                (&mut entry.formats, format.name),
+                (&mut entry.drivers, spec.driver.name()),
+            ] {
+                if !list.contains(&value) {
+                    list.push(value);
+                }
+            }
+            for event_type in spec.event_types {
+                if !entry.event_types.contains(event_type) {
+                    entry.event_types.push(event_type);
+                }
+            }
+        }
+    }
+    out
+}
+
 /// The sources as `registry.sources` rows.
 pub fn registry_sources() -> Vec<sinex_store::registry::Source> {
-    sinex_sources::sources::specs()
+    sources()
         .into_iter()
         .map(|s| sinex_store::registry::Source {
             name: s.name.to_owned(),
-            driver: s.driver.name().to_owned(),
-            version: i32::try_from(s.parser_version).unwrap_or(i32::MAX),
+            driver: s.drivers.join(", "),
+            version: i32::try_from(s.version).unwrap_or(i32::MAX),
             event_types: s.event_types.iter().map(|t| (*t).to_owned()).collect(),
-            consumer: s.consumer.to_owned(),
+            purpose: s.purpose.to_owned(),
         })
         .collect()
 }

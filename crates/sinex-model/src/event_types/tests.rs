@@ -56,7 +56,7 @@ fn json_payloads_build_through_the_rust_type() {
             material: crate::MaterialId::new(),
             anchor: 0,
         },
-        ordinal: 0,
+        output_index: 0,
     };
     let payload = serde_json::to_value(atuin(true)).unwrap();
     let event = (kind.build)(

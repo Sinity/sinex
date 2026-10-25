@@ -4,7 +4,7 @@ use super::reference::parse_id;
 use super::*;
 
 impl Parser<'_> {
-    pub(super) fn unit_filter(&mut self, scope: &Scope) -> Result<Option<Expr>, QueryError> {
+    pub(super) fn table_filter(&mut self, scope: &Scope) -> Result<Option<Expr>, QueryError> {
         if self.take_word("where") {
             Ok(Some(self.filter(scope)?))
         } else {
@@ -153,7 +153,7 @@ impl Parser<'_> {
                 }
             }
             Scope::Rows {
-                unit,
+                table,
                 alias,
                 columns,
             } => {
@@ -161,10 +161,10 @@ impl Parser<'_> {
                     return Ok(FieldRef::Group(name.to_string()));
                 }
                 if let Some(path) = name.strip_prefix("payload.") {
-                    if !unit.is_events() {
+                    if !table.is_events() {
                         return Err(QueryError::at(
                             at,
-                            format!("{} have no payload", unit.name()),
+                            format!("{} have no payload", table.name()),
                         ));
                     }
                     let path: Vec<String> = path.split('.').map(str::to_string).collect();
@@ -178,15 +178,15 @@ impl Parser<'_> {
                 }
                 if let Some(f) = alias
                     .and_then(|a| a.field(name))
-                    .or_else(|| unit.field(name))
+                    .or_else(|| table.field(name))
                 {
                     return Ok(FieldRef::Field(f));
                 }
                 let mut names: Vec<&str> = alias
                     .map(|a| a.fields.iter().map(|f| f.name).collect())
                     .unwrap_or_default();
-                names.extend(unit.fields().iter().map(|f| f.name));
-                let what = alias.map_or(unit.name(), |a| a.name);
+                names.extend(table.fields().iter().map(|f| f.name));
+                let what = alias.map_or(table.name(), |a| a.name);
                 Err(QueryError::at(
                     at,
                     format!(
@@ -219,12 +219,13 @@ impl Parser<'_> {
         }
     }
 
-    /// The unit's main time, for `since`, `until` and `in` without a field.
+    /// The table's main time, for `since`, `until` and `in` without a field.
     pub(super) fn main_time(&self, scope: &Scope, at: usize) -> Result<FieldRef, QueryError> {
         match scope {
-            Scope::Rows { unit, .. } => Ok(FieldRef::Field(
-                unit.field(unit.main_time())
-                    .expect("every unit's main time is one of its fields"),
+            Scope::Rows { table, .. } => Ok(FieldRef::Field(
+                table
+                    .field(table.main_time())
+                    .expect("every table's main time is one of its fields"),
             )),
             Scope::Grouped(_) => Err(QueryError::at(
                 at,
@@ -380,7 +381,7 @@ impl Parser<'_> {
                         if values.contains(&raw.as_str()) {
                             Ok(Value::Text(raw))
                         } else {
-                            let elsewhere = units_accepting(&raw);
+                            let elsewhere = tables_accepting(&raw);
                             let hint = if elsewhere.is_empty() {
                                 String::new()
                             } else {

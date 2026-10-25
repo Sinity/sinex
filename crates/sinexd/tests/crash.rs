@@ -42,7 +42,7 @@ impl Inputs {
     }
 
     // Three admission batches per source (10,000 events per batch), so a
-    // kill can land between commits, replay chains or publisher pages.
+    // kill can land between commits, replay sequences or publisher pages.
     fn multiple_batches() -> Self {
         Self::new(22_000, 21_000)
     }
@@ -131,9 +131,9 @@ impl Target {
 
     fn backfill(&self, inputs: &Inputs) -> Command {
         let mut c = self.sinexd(&["backfill", "--host", HOST]);
-        c.arg("--source")
+        c.arg("--read")
             .arg(format!("atuin={}", inputs.atuin.display()))
-            .arg("--source")
+            .arg("--read")
             .arg(format!("zsh={}", inputs.zsh.display()));
         c
     }
@@ -150,7 +150,7 @@ impl Target {
 
     fn backfill_clipboard(&self, spool: &Path) -> Command {
         let mut c = self.sinexd(&["backfill", "--host", HOST]);
-        c.arg("--source")
+        c.arg("--read")
             .arg(format!("clipboard={}", spool.display()));
         c
     }
@@ -164,7 +164,7 @@ impl Target {
             "run",
             "--nats",
             nats.url(),
-            "--subjects",
+            "--subject-root",
             nats.prefix(),
             "--host",
             HOST,
@@ -433,7 +433,7 @@ backfill_steps! { Inputs::first_transaction();
     backfill_killed_registering_the_material: None, lock("raw.inputs");
     backfill_killed_loading_privacy_rules: None, read_lock("privacy.rules");
     backfill_killed_staging: None, lock("core.admission_stage");
-    backfill_killed_classifying: None, read_lock("core.hidden_occurrences");
+    backfill_killed_classifying: None, read_lock("core.hidden_records");
     backfill_killed_allocating_commit_seq: None, lock("core.counters");
     backfill_killed_inserting_events: None, lock("core.events");
     backfill_killed_writing_the_commit_log: None, lock("core.commit_log");
@@ -480,7 +480,7 @@ async fn replay_survives(lock_sql: &str) {
     assert_eq!(
         state(&mut target.connect().await).await,
         before,
-        "a killed chain changed nothing"
+        "a killed sequence changed nothing"
     );
     finish(&mut target.replay(&["--binding", &inputs.zsh_binding()]));
     consistent(&target).await;
@@ -488,7 +488,7 @@ async fn replay_survives(lock_sql: &str) {
     assert_eq!(
         support::marker_count(&mut target.connect().await).await,
         1,
-        "the retried replay archives its chain once"
+        "the retried replay archives its sequence once"
     );
 }
 
@@ -505,17 +505,17 @@ replay_steps! {
     replay_killed_recording_the_operation: lock("core.operations");
     replay_killed_archiving_what_it_rereads: lock("audit.archived");
     replay_killed_admitting_new_readings: lock("core.events");
-    replay_killed_journaling_the_chain: lock("core.replay_chains");
+    replay_killed_journaling_the_chain: lock("core.replayed_sequences");
 }
 
-/// A replay of two chains killed after the first committed resumes with the
+/// A replay of two sequences killed after the first committed resumes with the
 /// second only.
 #[devkit::test]
 async fn an_interrupted_replay_resumes_where_it_stopped() {
     let inputs = Inputs::multiple_batches();
     let target = Target::new(&inputs);
     finish(&mut target.backfill(&inputs));
-    // Two chains: the zsh history and the Atuin rows.
+    // Two sequences: the zsh history and the Atuin rows.
     let scope = [
         "--event-type",
         "command.imported",
@@ -526,8 +526,8 @@ async fn an_interrupted_replay_resumes_where_it_stopped() {
     kill_at(
         &target,
         &mut target.replay(&scope),
-        Some("SELECT EXISTS (SELECT 1 FROM core.replay_chains)"),
-        &lock("core.replay_chains"),
+        Some("SELECT EXISTS (SELECT 1 FROM core.replayed_sequences)"),
+        &lock("core.replayed_sequences"),
     )
     .await;
     consistent(&target).await;
@@ -539,13 +539,13 @@ async fn an_interrupted_replay_resumes_where_it_stopped() {
             .await
             .unwrap();
     let out = finish(&mut target.replay(&["--resume", &operation.to_string()]));
-    assert!(out.contains("chains 1 (skipped as done: 1)"), "{out}");
+    assert!(out.contains("sequences 1 (skipped as done: 1)"), "{out}");
     consistent(&target).await;
     assert_eq!(support::marker_count(&mut c).await, 2);
     let after = state(&mut target.connect().await).await;
     assert_eq!(after.live, before.live);
     assert_eq!(
-        scalar(&mut c, "SELECT count(*) FROM core.replay_chains").await,
+        scalar(&mut c, "SELECT count(*) FROM core.replayed_sequences").await,
         2
     );
 }

@@ -34,7 +34,7 @@ fn declarations_are_deterministic_and_named() {
         "core.events",
         "core.live_locations",
         "core.live_equivalence",
-        "core.hidden_occurrences",
+        "core.hidden_records",
         "core.commit_log",
         "audit.archived",
         "raw.materials",

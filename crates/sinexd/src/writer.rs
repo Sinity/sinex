@@ -4,7 +4,7 @@
 //! transaction.
 //!
 //! Besides single batches it runs two kinds of work that need one
-//! transaction around more than one admission: a replay chain (archive what
+//! transaction around more than one admission: a replay sequence (archive what
 //! is re-read, admit the new readings; in compare mode, read the difference
 //! and roll back), and an excision (rewrite bytes, remove readings; delete the
 //! freed blob files after commit).
@@ -35,16 +35,16 @@ pub enum WriteError {
     Stopped,
 }
 
-/// One replay chain: its batches run in one transaction, admitted as they
+/// One replay sequence: its batches run in one transaction, admitted as they
 /// arrive, so only a few are held at a time. A batch arriving as an error
-/// (the chain could not be read) rolls the chain back.
-pub struct ReplayChain {
+/// (the sequence could not be read) rolls the sequence back.
+pub struct ReplaySequence {
     pub operation: OperationId,
     pub actor: String,
     pub scope: Value,
-    /// The chain's first material, journaled when the chain commits.
+    /// The sequence's first material, journaled when the sequence commits.
     pub root: uuid::Uuid,
-    /// Roll back after reading the difference: the comparison lane.
+    /// Roll back after reading the difference: a comparison.
     pub compare: bool,
     pub batches: tokio::sync::mpsc::Receiver<Result<Batch, String>>,
 }
@@ -71,7 +71,7 @@ pub struct Excised {
 enum Work {
     Admit(Batch),
     Checked(Batch, AdmissionCheck),
-    Replay(ReplayChain),
+    Replay(ReplaySequence),
     Excise(Box<Excision>),
 }
 
@@ -118,9 +118,12 @@ impl WriterHandle {
         }
     }
 
-    /// Replay one chain in one transaction; in compare mode nothing is kept.
-    pub async fn replay(&self, chain: ReplayChain) -> Result<(Vec<Outcome>, Diff), WriteError> {
-        match self.send(Priority::Derived, Work::Replay(chain)).await? {
+    /// Replay one sequence in one transaction; in compare mode nothing is kept.
+    pub async fn replay(
+        &self,
+        sequence: ReplaySequence,
+    ) -> Result<(Vec<Outcome>, Diff), WriteError> {
+        match self.send(Priority::Derived, Work::Replay(sequence)).await? {
             Done::Replayed(outcomes, diff) => Ok((outcomes, diff)),
             _ => unreachable!("a replay answers with its outcomes"),
         }
@@ -258,9 +261,11 @@ pub async fn run_notifying(
                     .await
                     .map(Done::Admitted)
             }
-            Work::Replay(mut chain) => replay_chain(&mut connection, &mut chain, keys.as_ref())
-                .await
-                .map(|(o, d)| Done::Replayed(o, d)),
+            Work::Replay(mut sequence) => {
+                replay_sequence(&mut connection, &mut sequence, keys.as_ref())
+                    .await
+                    .map(|(o, d)| Done::Replayed(o, d))
+            }
             Work::Excise(excision) => excise(&mut connection, &excision, keys.as_ref())
                 .await
                 .map(Done::Excised),
@@ -321,18 +326,23 @@ async fn admit_checked(
     }
 }
 
-async fn replay_chain(
+async fn replay_sequence(
     connection: &mut PgConnection,
-    chain: &mut ReplayChain,
+    sequence: &mut ReplaySequence,
     keys: &dyn DirtyKeys,
 ) -> Result<(Vec<Outcome>, Diff), WriteError> {
     let refuse = |e: &dyn std::fmt::Display| WriteError::Refused(e.to_string());
     let mut tx = connection.begin().await.map_err(|e| refuse(&e))?;
-    replay::begin(&mut tx, chain.operation, &chain.actor, &chain.scope)
-        .await
-        .map_err(|e| refuse(&e))?;
+    replay::begin(
+        &mut tx,
+        sequence.operation,
+        &sequence.actor,
+        &sequence.scope,
+    )
+    .await
+    .map_err(|e| refuse(&e))?;
     let mut outcomes = Vec::new();
-    while let Some(batch) = chain.batches.recv().await {
+    while let Some(batch) = sequence.batches.recv().await {
         let batch = batch.map_err(|e| refuse(&e))?;
         outcomes.push(
             sinex_store::admit(&mut tx, &batch, keys)
@@ -344,13 +354,13 @@ async fn replay_chain(
         .iter()
         .flat_map(|o| o.admitted_ids.iter().map(|id| id.0))
         .collect();
-    let diff = replay::diff(&mut tx, chain.operation, &admitted)
+    let diff = replay::diff(&mut tx, sequence.operation, &admitted)
         .await
         .map_err(|e| refuse(&e))?;
-    if chain.compare {
+    if sequence.compare {
         tx.rollback().await.map_err(|e| refuse(&e))?;
     } else {
-        replay::chain_done(&mut tx, chain.operation, chain.root)
+        replay::sequence_done(&mut tx, sequence.operation, sequence.root)
             .await
             .map_err(|e| refuse(&e))?;
         tx.commit().await.map_err(|e| refuse(&e))?;

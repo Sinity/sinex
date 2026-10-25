@@ -1,7 +1,7 @@
 use super::*;
 
-fn acq(path: &str, content: &str) -> Acquisition {
-    Acquisition {
+fn acq(path: &str, content: &str) -> FileCopy {
+    FileCopy {
         host: "h".into(),
         root: "/r".into(),
         path: path.into(),
@@ -42,7 +42,7 @@ fn a_new_copy_is_a_new_item_with_its_original() {
     assert_eq!(r.len(), 2);
     let i = items(&r)[0];
     assert_eq!(i.revision, 1);
-    assert_eq!(i.acquisitions, ["h:/r/a.png"]);
+    assert_eq!(i.copies, ["h:/r/a.png"]);
     assert_eq!(i.label.as_deref(), Some("a.png"));
     assert!(
         matches!(&r[1], LibraryRecord::Rendition(x) if x.role == RenditionRole::Original && x.content == "blake3:a")
@@ -63,7 +63,7 @@ fn equal_bytes_at_an_unrelated_path_are_another_item() {
 }
 
 #[devkit::test]
-fn a_rename_moves_the_acquisition_and_an_edit_makes_a_revision() {
+fn a_rename_moves_the_copy_and_an_edit_makes_a_revision() {
     let first = records_for(&acq("/r/a.png", "blake3:a"), |_| None, "intake", at());
     let existing = items(&first)[0].clone();
     let mut moved = acq("/r/b.png", "blake3:a");
@@ -76,7 +76,7 @@ fn a_rename_moves_the_acquisition_and_an_edit_makes_a_revision() {
     );
     let i = items(&r)[0];
     assert_eq!(i.item, existing.item);
-    assert_eq!(i.acquisitions, ["h:/r/b.png"]);
+    assert_eq!(i.copies, ["h:/r/b.png"]);
     assert_eq!(i.revision, 1);
 
     let mut edited = acq("/r/a.png", "blake3:a2");
@@ -103,7 +103,7 @@ fn a_rename_moves_the_acquisition_and_an_edit_makes_a_revision() {
     );
     let is = items(&r);
     assert_eq!(is[0].item, existing.item);
-    assert!(is[0].acquisitions.is_empty());
+    assert!(is[0].copies.is_empty());
     assert_ne!(is[1].item, existing.item);
 
     // Unchanged and vanished copies change nothing.

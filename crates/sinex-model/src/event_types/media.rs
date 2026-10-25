@@ -89,19 +89,19 @@ pub struct BookmarkSaved {
     replace = newer,
     time = modified_at,
     quality = file_mtime,
-    removed_when = vanished_at
+    removed_when = removed_at
 )]
 pub struct NoteDocument {
     pub vault: String,
     /// Relative to the vault root.
     pub path: String,
-    /// The file's text; `None` for a vanished file.
+    /// The file's text; `None` for a removed file.
     pub text: Option<String>,
     pub size: u64,
     pub modified_at: Option<Timestamp>,
     /// When a completed scan first found the file gone.
-    pub vanished_at: Option<Timestamp>,
-    /// Absent for a vanished file and for a note without one.
+    pub removed_at: Option<Timestamp>,
+    /// Absent for a removed file and for a note without one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub title: Option<String>,
     /// The exact front-matter string, including an explicitly empty ID.
@@ -147,13 +147,13 @@ pub enum NoteFrontMatterError {
 /// so these serve long-horizon interest, not daily behaviour.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
 #[event(
-    type = "book.event",
+    type = "book.status",
     key = ["service", "book_id", "action"],
     replace = newer,
     time = at,
     quality = intrinsic
 )]
-pub struct BookEvent {
+pub struct BookStatus {
     pub service: String,
     pub book_id: String,
     /// `shelved` (added) or `read` (finished).

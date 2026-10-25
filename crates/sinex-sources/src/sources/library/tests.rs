@@ -30,7 +30,7 @@ fn png(w: u32, h: u32) -> Vec<u8> {
     b
 }
 
-fn read(a: &Acquired, parser: &ScanParser) -> Vec<Acquisition> {
+fn read(a: &Acquired, parser: &ScanParser) -> Vec<FileCopy> {
     let m = a.material.as_ref().expect("a material");
     let out = drain(
         parser,
@@ -54,8 +54,8 @@ fn read(a: &Acquired, parser: &ScanParser) -> Vec<Acquisition> {
             RecordOutcome::Failure { reason, .. } => panic!("{reason}"),
         })
         .map(|e| {
-            assert_eq!(e.event_type, "library.acquisition");
-            e.payload_as::<Acquisition>().unwrap()
+            assert_eq!(e.event_type, "library.copy");
+            e.payload_as::<FileCopy>().unwrap()
         })
         .collect()
 }
@@ -215,7 +215,7 @@ fn requests_take_author_and_time_from_the_manifest() {
         replaces: None,
         content: "blake3:x".into(),
         media_type: "image/png".into(),
-        acquisitions: vec!["h:/r/a.png".into()],
+        copies: vec!["h:/r/a.png".into()],
         label: Some("a.png".into()),
         by: "forged".into(),
         at: Timestamp::from_unix_secs(1).unwrap(),
@@ -319,20 +319,20 @@ fn request_citation_facts_preserve_payload_identity_and_refuse_supplied_invalid_
         panic!()
     };
     assert!(
-        old[0].cites.is_empty(),
+        old[0].owned_blobs.is_empty(),
         "old absent facts do not invent media ownership"
     );
-    let citation = sinex_model::Cited {
+    let citation = sinex_model::OwnedBlob {
         blob: blob.clone(),
         size: 17,
     };
     let mut manifest = material.manifest.clone();
-    manifest["cited_blobs"] = json!([citation]);
+    manifest["owned_blobs"] = json!([citation]);
     let current = outcomes(&manifest);
     let RecordOutcome::Events { events: new, .. } = &current[0] else {
         panic!()
     };
-    assert_eq!(new[0].cites, vec![citation]);
+    assert_eq!(new[0].owned_blobs, vec![citation]);
     assert_eq!(new[0].payload, old[0].payload);
     assert_eq!(new[0].equivalence_key, old[0].equivalence_key);
     assert_eq!(new[0].record_hash, old[0].record_hash);
@@ -346,7 +346,7 @@ fn request_citation_facts_preserve_payload_identity_and_refuse_supplied_invalid_
         json!([{"blob":"blake3:invalid","size":17}]),
         json!([{"blob":format!("blake3:{}",blake3::hash(b"different")),"size":17}]),
     ] {
-        manifest["cited_blobs"] = invalid;
+        manifest["owned_blobs"] = invalid;
         assert!(matches!(
             &outcomes(&manifest)[0],
             RecordOutcome::Failure { .. }

@@ -2,7 +2,7 @@
 //! rates. The same driver, drain and admission path the daemon uses; only the
 //! scheduling differs (read until caught up, then stop).
 //!
-//! Every `--source KIND=PATH` is planned by its kind into bindings; each
+//! Every `--read FORMAT=PATH` is planned by its format into bindings; each
 //! binding is recorded with its settings (so a replay reads it the same way)
 //! and its driver state is rebuilt from the materials it stored, so a
 //! second run reads only what changed.
@@ -11,7 +11,7 @@ use crate::material_sink::Sink;
 use crate::one_shot::OneShot;
 use crate::writer::{self, Priority};
 use sinex_model::RunId;
-use sinex_sources::{Binding, InputKind, Limits, Settings, Source, drivers, sources};
+use sinex_sources::{Binding, InputFormat, Limits, Settings, Source, drivers, sources};
 use sinex_store::{bindings, positions, runs};
 use sqlx::PgConnection;
 use std::path::PathBuf;
@@ -20,8 +20,8 @@ use std::time::{Duration, Instant};
 pub struct Options {
     pub database: String,
     pub store: PathBuf,
-    /// `kind=path`, one per input; see [`sources::input_kinds`].
-    pub sources: Vec<String>,
+    /// `format=path`, one per input; see [`sources::formats`].
+    pub reads: Vec<String>,
     /// The zone sources with local times were written in (IANA name); the
     /// system zone when unset. Recorded with each binding.
     pub zone: Option<String>,
@@ -34,9 +34,9 @@ pub struct Options {
     pub identity_file: Option<PathBuf>,
 }
 
-/// The kinds `--source KIND=PATH` accepts.
-fn kind_names() -> Vec<&'static str> {
-    sources::input_kinds()
+/// The formats `--read FORMAT=PATH` accepts.
+fn format_names() -> Vec<&'static str> {
+    sources::formats()
         .iter()
         .filter(|k| k.plan.is_some())
         .map(|k| k.name)
@@ -113,22 +113,22 @@ pub async fn run(o: Options) -> Result<(), String> {
     let mut settings = Settings::new(o.host.clone());
     settings.zone = o.zone.clone();
     settings.options = sinex_sources::live::options(&o.options)?;
-    let mut planned: Vec<(&'static InputKind, Binding)> = Vec::new();
-    for spec in &o.sources {
+    let mut planned: Vec<(&'static InputFormat, Binding)> = Vec::new();
+    for spec in &o.reads {
         let (name, path) = spec
             .split_once('=')
-            .ok_or_else(|| format!("--source {spec}: expected kind=path"))?;
-        let kind = sources::input_kind(name).ok_or_else(|| {
+            .ok_or_else(|| format!("--read {spec}: expected format=path"))?;
+        let format = sources::format(name).ok_or_else(|| {
             format!(
-                "unknown source kind {name}; one of {}",
-                kind_names().join(", ")
+                "unknown format {name}; one of {}",
+                format_names().join(", ")
             )
         })?;
-        let plan = kind
+        let plan = format
             .plan
             .ok_or_else(|| format!("{name} is not read from a path"))?;
         for b in plan(&PathBuf::from(path), &settings)? {
-            planned.push((kind, b));
+            planned.push((format, b));
         }
     }
     let mut ctx = OneShot::open(&o.database, &o.store).await?;
@@ -136,7 +136,7 @@ pub async fn run(o: Options) -> Result<(), String> {
     let emits: Vec<&'static str> = {
         let mut types: Vec<&'static str> = planned
             .iter()
-            .filter_map(|(kind, b)| (kind.specs)().into_iter().find(|s| s.parser == b.parser))
+            .filter_map(|(format, b)| (format.specs)().into_iter().find(|s| s.parser == b.parser))
             .flat_map(|s| s.event_types.iter().copied())
             .collect();
         types.sort_unstable();
@@ -157,7 +157,7 @@ pub async fn run(o: Options) -> Result<(), String> {
     let mut per_source: Vec<(String, Totals)> = Vec::new();
     let mut bound = planned
         .into_iter()
-        .map(|(kind, b)| crate::binding_reader::Bound::new(kind, b))
+        .map(|(format, b)| crate::binding_reader::Bound::new(format, b))
         .collect::<Result<Vec<_>, _>>()?;
     let (_stop, stop) = tokio::sync::watch::channel(false);
     let results = crate::binding_reader::read(
@@ -312,7 +312,7 @@ pub(crate) async fn drive(
             let unlock = access
                 .unlock
                 .ok_or("stored sealed material needs an operator unlock")?;
-            let key = unlock.material_key(read_conn, material.id).await?;
+            let key = unlock.data_key(read_conn, material.id).await?;
             sealing.restore_key(stored.blob.clone(), key)?;
         }
         let carry = match (&sealing, acquired.material.is_some()) {
@@ -401,9 +401,7 @@ pub(crate) async fn submit(
             {
                 // Admission already owned this key. An authorized cached read
                 // cannot publish it again after excision destroyed it.
-                progress
-                    .material_keys
-                    .retain(|key| key.material != material);
+                progress.data_keys.retain(|key| key.material != material);
             }
         }
         if let Some(unlock) = unlock {
@@ -516,7 +514,7 @@ pub(crate) async fn open_carry(
         .await
         .map_err(|e| e.to_string())?
         .ok_or("sealed parser carry has no key of this binding")?;
-    let key = unlock.material_key(conn, material).await?;
+    let key = unlock.data_key(conn, material).await?;
     let value = sinex_store::sealed::unseal_payload(carry, &key.key).map_err(|e| e.to_string())?;
     unlock.check()?;
     Ok(value)

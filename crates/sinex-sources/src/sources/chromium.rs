@@ -22,7 +22,7 @@ pub const VISITS: SourceSpec = SourceSpec {
     name: "browser.chromium-visits",
     driver: Driver::SqliteRows,
     excisable: false,
-    consumer: "browsing recall and the attention stream",
+    purpose: "browsing recall and the attention stream",
     class: Class::Open,
     parser: "chromium-visits",
     parser_version: 1,
@@ -34,7 +34,7 @@ pub const URLS: SourceSpec = SourceSpec {
     name: "browser.chromium-urls",
     driver: Driver::SqliteRows,
     excisable: false,
-    consumer: "browsing recall and page titles",
+    purpose: "browsing recall and page titles",
     class: Class::Open,
     parser: "chromium-urls",
     parser_version: 1,
@@ -234,9 +234,9 @@ fn profiles(user_data: &Path) -> Vec<(String, PathBuf)> {
     out
 }
 
-/// `--source chromium=PATH`: every profile under a browser's user-data
+/// `--read chromium=PATH`: every profile under a browser's user-data
 /// directory, its visits and its URLs each a binding.
-pub const KIND: crate::binding::InputKind = crate::binding::InputKind {
+pub const FORMAT: crate::binding::InputFormat = crate::binding::InputFormat {
     name: "chromium",
     specs: || vec![&VISITS, &URLS],
     plan: Some(|input, settings| {

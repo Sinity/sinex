@@ -1,5 +1,5 @@
-//! The driver against a real database: keys dirtied by admission, outputs
-//! replacing the key's previous set, waiting keys, the comparison lane.
+//! The runner against a real database: keys dirtied by admission, outputs
+//! replacing the key's previous set, waiting keys, a comparison.
 use super::*;
 use crate::dirty_keys::Registered as Keys;
 use crate::writer;
@@ -23,7 +23,7 @@ fn location(anchor: u64) -> Origin {
             material: MaterialId::new(),
             anchor,
         },
-        ordinal: 0,
+        output_index: 0,
     }
 }
 
@@ -141,7 +141,7 @@ impl World {
         self.handle.submit(Priority::Live, batch).await.unwrap();
     }
 
-    async fn driver(&self) -> DerivationRunner {
+    async fn runner(&self) -> DerivationRunner {
         self.driver_with(sinex_derivations::keyed(), vec![]).await
     }
 
@@ -188,8 +188,8 @@ async fn commands_fuse_into_sessions_and_summaries(db: devkit::pg::TestDatabase)
         zsh("ls", 2000, 30),
     ])
     .await;
-    let mut d = w.driver().await;
-    d.settle().await.unwrap();
+    let mut d = w.runner().await;
+    d.catch_up().await.unwrap();
 
     let fused: Vec<CommandFused> = w.live().await;
     assert_eq!(fused.len(), 3, "{fused:?}");
@@ -205,12 +205,12 @@ async fn commands_fuse_into_sessions_and_summaries(db: devkit::pg::TestDatabase)
         )
         .await;
     assert_eq!(daily, 1);
-    // Metric days stay dirty for the analysis maintainer, not the driver.
+    // Metric days stay dirty for the analysis maintainer, not the runner.
     assert_eq!(
         w.count("SELECT count(*) FROM derivation.dirty WHERE derivation NOT LIKE 'metric:%'")
             .await,
         0,
-        "every derivation settled"
+        "every derivation done"
     );
     // Every derived event cites parents.
     assert_eq!(
@@ -224,13 +224,13 @@ async fn commands_fuse_into_sessions_and_summaries(db: devkit::pg::TestDatabase)
 async fn a_changed_input_replaces_outputs_downstream(db: devkit::pg::TestDatabase) {
     let w = World::new(db).await;
     w.admit(vec![atuin("1", "make", 0, 0, 1)]).await;
-    let mut d = w.driver().await;
-    d.settle().await.unwrap();
+    let mut d = w.runner().await;
+    d.catch_up().await.unwrap();
     assert_eq!(w.live::<ShellSession>().await[0].failed, 0);
 
     // Atuin rewrote the row: the command failed after all.
     w.admit(vec![atuin("1", "make", 0, 2, 2)]).await;
-    d.settle().await.unwrap();
+    d.catch_up().await.unwrap();
     let fused: Vec<CommandFused> = w.live().await;
     assert_eq!(fused.len(), 1, "replaced, not duplicated");
     assert_eq!(fused[0].exit_code, Some(2));
@@ -243,8 +243,8 @@ async fn an_output_no_longer_produced_is_archived(db: devkit::pg::TestDatabase) 
     let a = atuin("1", "make", 0, 0, 1);
     let a_id = a.id;
     w.admit(vec![a, zsh("make", 1, 10)]).await;
-    let mut d = w.driver().await;
-    d.settle().await.unwrap();
+    let mut d = w.runner().await;
+    d.catch_up().await.unwrap();
     assert_eq!(w.live::<CommandFused>().await[0].observed_by.len(), 2);
 
     // Hiding the Atuin reading leaves zsh alone: the two-source fused command
@@ -257,7 +257,7 @@ async fn an_output_no_longer_produced_is_archived(db: devkit::pg::TestDatabase) 
         }],
     )
     .await;
-    d.settle().await.unwrap();
+    d.catch_up().await.unwrap();
     let fused: Vec<CommandFused> = w.live().await;
     assert_eq!(fused.len(), 1);
     assert_eq!(fused[0].observed_by, vec!["terminal.zsh"]);
@@ -274,8 +274,8 @@ async fn an_output_no_longer_produced_is_archived(db: devkit::pg::TestDatabase) 
 async fn an_open_interval_waits_and_closes_on_the_next_transition(db: devkit::pg::TestDatabase) {
     let w = World::new(db).await;
     w.admit(vec![focus("0xa", 0)]).await;
-    let mut d = w.driver().await;
-    d.settle().await.unwrap();
+    let mut d = w.runner().await;
+    d.catch_up().await.unwrap();
     let open: Vec<StateInterval> = w.live().await;
     assert_eq!(open.len(), 1);
     assert_eq!(open[0].ended_at, None);
@@ -284,7 +284,7 @@ async fn an_open_interval_waits_and_closes_on_the_next_transition(db: devkit::pg
     // The next focus arrives three days later: a different day's key, which
     // runs the derivation and so recomputes the waiting one.
     w.admit(vec![focus("0xb", 3 * 86_400)]).await;
-    d.settle().await.unwrap();
+    d.catch_up().await.unwrap();
     let intervals: Vec<StateInterval> = w.live().await;
     assert_eq!(intervals.len(), 2, "{intervals:?}");
     assert_eq!(intervals[0].ended_at, Some(at(3 * 86_400)));
@@ -342,13 +342,13 @@ async fn a_waiting_key_stops_waiting_past_the_horizon(db: devkit::pg::TestDataba
     let waiting = "SELECT count(*) FROM derivation.waiting";
     w.admit(vec![zsh("a", 0, 1)]).await;
     let mut d = w.driver_with(vec![Box::new(Waiting)], vec![]).await;
-    d.settle().await.unwrap();
+    d.catch_up().await.unwrap();
     assert_eq!(w.count(waiting).await, 1);
 
     // An old window alone does not stop a wait: the next run, which
     // refreshes waiting keys, keeps "a" waiting.
     w.admit(vec![zsh("b", 10, 2)]).await;
-    d.settle().await.unwrap();
+    d.catch_up().await.unwrap();
     assert_eq!(w.count(waiting).await, 2);
 
     // Once they have waited past the horizon, the next run leaves their last
@@ -357,7 +357,7 @@ async fn a_waiting_key_stops_waiting_past_the_horizon(db: devkit::pg::TestDataba
         Timestamp::now().0 + WAITING_HORIZON + time::Duration::days(1),
     ));
     w.admit(vec![zsh("c", 20, 3)]).await;
-    d.settle().await.unwrap();
+    d.catch_up().await.unwrap();
     assert_eq!(w.count(waiting).await, 1);
     let out: Vec<CommandFused> = w.live().await;
     assert_eq!(out.len(), 3, "{out:?}");
@@ -407,7 +407,7 @@ async fn a_key_dirtied_again_stays_dirty(db: devkit::pg::TestDatabase) {
         kind: BatchKind::Derived {
             derivation: "command.fusion".into(),
             scope: DerivedScope::Keys {
-                keys: vec![sinex_store::KeyScope {
+                keys: vec![sinex_store::ComputedKey {
                     key: key.clone(),
                     dirty_seq: 0,
                     waiting: false,
@@ -426,7 +426,7 @@ async fn a_key_dirtied_again_stays_dirty(db: devkit::pg::TestDatabase) {
 }
 
 /// A keyed derivation whose output depends on a version, to exercise the
-/// comparison lane and version changes.
+/// comparison and version changes.
 struct Count<const V: u32>;
 
 impl<const V: u32> Keyed for Count<V> {
@@ -472,7 +472,7 @@ async fn compare_shows_a_version_change_before_switching(db: devkit::pg::TestDat
     let w = World::new(db).await;
     w.admit(vec![zsh("a", 0, 1), zsh("b", 10, 2)]).await;
     let mut v1 = w.driver_with(vec![Box::new(Count::<1>)], vec![]).await;
-    v1.settle().await.unwrap();
+    v1.catch_up().await.unwrap();
     let same = v1.compare("test.count", None, 3).await.unwrap();
     assert_eq!((same.keys, same.same, same.changed), (1, 1, 0));
 
@@ -491,7 +491,7 @@ async fn compare_shows_a_version_change_before_switching(db: devkit::pg::TestDat
     assert_eq!((kept[0].version, kept[0].changed), (2, 1));
     assert_eq!(kept[0].examples[0]["kind"], "changed");
     // Starting version 2 queued its recompute; settling switches.
-    v2.settle().await.unwrap();
+    v2.catch_up().await.unwrap();
     let out: Vec<CommandFused> = w.live().await;
     assert!(out.iter().any(|f| f.command == "v2:2"), "{out:?}");
     assert!(!out.iter().any(|f| f.command == "v1:2"));
@@ -532,9 +532,9 @@ async fn per_event_derivations_read_in_commit_order_and_keep_their_place(
     let w = World::new(db).await;
     w.admit(vec![zsh("a", 0, 1), zsh("b", 10, 2)]).await;
     let mut d = w.driver_with(vec![], vec![Box::new(Echo)]).await;
-    d.settle().await.unwrap();
+    d.catch_up().await.unwrap();
     w.admit(vec![zsh("c", 20, 3)]).await;
-    d.settle().await.unwrap();
+    d.catch_up().await.unwrap();
     let out: Vec<CommandFused> = w.live().await;
     let commands: Vec<&str> = out.iter().map(|f| f.command.as_str()).collect();
     assert_eq!(commands, vec!["A", "B", "C"]);

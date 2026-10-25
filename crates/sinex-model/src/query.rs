@@ -6,15 +6,15 @@ mod ast;
 mod lex;
 mod parse;
 mod read_as;
+pub mod tables;
 pub mod text;
 pub mod time;
-pub mod units;
 
 pub use ast::*;
 pub use parse::{bind, parse_reference};
 pub use read_as::read_as;
+pub use tables::{ALIASES, Alias, Field, FieldType, Table};
 pub use time::Context;
-pub use units::{ALIASES, Alias, Field, FieldType, Unit};
 
 /// Why a query was refused.
 #[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]

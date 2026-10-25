@@ -1,4 +1,4 @@
-//! Recall selects its shell anchor through the same compiler and commit view
+//! Recall selects its shell session through the same compiler and commit view
 //! as ordinary queries. Its bounds describe recorded extent, not a proven end.
 use super::*;
 use sinex_model::query::{Alias, Op, SortBy, SortKey, Value};
@@ -8,7 +8,7 @@ pub(super) enum Selection {
         from: jiff::Timestamp,
         to: jiff::Timestamp,
         inclusive: bool,
-        anchor: Option<Json>,
+        session: Option<Json>,
     },
     NoKnownSession,
 }
@@ -24,19 +24,19 @@ pub(super) async fn select(
             from: *from,
             to: *to,
             inclusive: false,
-            anchor: None,
+            session: None,
         }),
         Source::RecallLast { filter } => {
-            let Some(anchor) = latest(conn, filter.clone(), ctx, seq).await? else {
+            let Some(session) = latest(conn, filter.clone(), ctx, seq).await? else {
                 return Ok(Selection::NoKnownSession);
             };
             let time = |field: &str| -> Result<jiff::Timestamp> {
-                anchor[field]
+                session[field]
                     .as_str()
                     .and_then(|s| s.parse().ok())
                     .ok_or_else(|| {
                         Error::Invalid(
-                            "selected shell group's observed bounds are unavailable to this caller"
+                            "the selected shell session's times are unavailable to this caller"
                                 .into(),
                         )
                     })
@@ -45,7 +45,7 @@ pub(super) async fn select(
                 from: time("start")?,
                 to: time("observed_until")?,
                 inclusive: true,
-                anchor: Some(anchor),
+                session: Some(session),
             })
         }
         _ => unreachable!("recall reader takes a recall source"),
@@ -56,7 +56,7 @@ impl Selection {
     pub(super) fn filter(&self) -> Expr {
         let when = || {
             Operand::Field(FieldRef::Field(
-                Unit::Events.field("when").expect("when declared"),
+                Table::Events.field("when").expect("when declared"),
             ))
         };
         match self {
@@ -86,18 +86,19 @@ impl Selection {
     pub(super) async fn account(&self, conn: &mut PgConnection, seq: i64) -> Result<Json> {
         match self {
             Self::NoKnownSession => Ok(serde_json::json!({
-                "anchor": null, "status": "no_known_timed_shell_session",
-                "reason": "No matching recorded shell group; untimed observations or pending derivations may still exist."
+                "session": null, "status": "no_known_timed_shell_session",
+                "reason": "No matching recorded shell session; untimed observations or pending derivations may still exist."
             })),
             Self::Window {
                 from,
                 to,
                 inclusive,
-                anchor,
+                session,
             } => {
                 let mut account = walk::recall_summary(conn, *from, *to, seq, *inclusive).await?;
-                if let Some(anchor) = anchor {
-                    account["anchor"] = serde_json::json!({"kind":"shell_group","bounds":"observed_envelope","row":anchor});
+                if let Some(session) = session {
+                    account["session"] =
+                        serde_json::json!({"bounds":"recorded_commands","row":session});
                 }
                 Ok(account)
             }
@@ -113,15 +114,15 @@ async fn latest(
 ) -> Result<Option<Json>> {
     let alias = Alias::from_name("shell-sessions").expect("shell sessions declared");
     let selector = Query {
-        source: Source::Unit {
-            unit: Unit::Events,
+        source: Source::Table {
+            table: Table::Events,
             alias: Some(alias),
         },
         filter,
         stages: vec![
             Stage::Sort(vec![SortKey {
                 key: SortBy::Operand(Operand::Field(FieldRef::Field(
-                    Unit::Events.field("when").expect("when declared"),
+                    Table::Events.field("when").expect("when declared"),
                 ))),
                 descending: true,
             }]),
@@ -137,12 +138,12 @@ async fn latest(
         .await?)
 }
 
-/// A shell group can consist of one point, or end at its last untimed-duration
-/// command. Both recorded endpoints belong to this observed envelope.
+/// A shell session can consist of one point, or end at its last command of
+/// unknown duration. Both recorded ends belong to the window.
 fn observed_window(from: jiff::Timestamp, to: jiff::Timestamp) -> Expr {
     let when = || {
         Operand::Field(FieldRef::Field(
-            Unit::Events.field("when").expect("when declared"),
+            Table::Events.field("when").expect("when declared"),
         ))
     };
     Expr::And(

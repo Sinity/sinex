@@ -105,7 +105,7 @@ pub(super) async fn read_shared(
         let material = stored
             .material
             .ok_or("a sealed stored copy names no material")?;
-        let key = unlock.material_key(conn, material).await?;
+        let key = unlock.data_key(conn, material).await?;
         sealing.restore_key(stored.blob.clone(), key)?;
     }
     let stored_copy = pass
@@ -210,7 +210,7 @@ pub(super) async fn read_shared(
                 stop: Arc::clone(&cancelled),
             })),
         };
-        let physical_sink: &dyn drivers::MaterialSink = match &worker_sealing {
+        let archive_sink: &dyn drivers::MaterialSink = match &worker_sealing {
             Some(sealing) => sealing.as_ref(),
             None => &material_sink,
         };
@@ -221,7 +221,7 @@ pub(super) async fn read_shared(
             facts,
             cancelled,
             routes,
-            physical_sink,
+            archive_sink,
             &mut |index, acquired| {
                 let (ack, answer) = std::sync::mpsc::sync_channel(0);
                 send.blocking_send(Delivery {
@@ -273,7 +273,7 @@ pub(super) async fn read_shared(
             } else {
                 carry
             };
-            let physical_sink: &dyn drivers::MaterialSink = match &sealing {
+            let archive_sink: &dyn drivers::MaterialSink = match &sealing {
                 Some(sealing) => sealing.as_ref(),
                 None => sink,
             };
@@ -283,7 +283,7 @@ pub(super) async fn read_shared(
                 run,
                 b.source.as_ref(),
                 &b.binding.name,
-                physical_sink,
+                archive_sink,
                 sealing.as_deref(),
                 access.unlock,
                 pass.class,

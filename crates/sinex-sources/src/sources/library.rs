@@ -4,7 +4,7 @@
 //! file is hashed once (BLAKE3, SHA-256, MD5), its type sniffed from its
 //! bytes, its bytes streamed into the content store unless the root is
 //! indexed by reference only, and described by one JSON line. The material is
-//! those lines; one line is one `library.acquisition`. A file that left its
+//! those lines; one line is one `library.copy`. A file that left its
 //! path but whose device and inode turned up at a new path with the same bytes
 //! is a rename (`moved_from`); a file whose bytes changed in place names the
 //! bytes it held (`previous_content`). A file gone from a completed walk, and
@@ -22,7 +22,7 @@ use crate::{Parser, RecordError};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 use sinex_model::event_types::library::{
-    Acquisition, Assignment, Collection, Comparison, Dismissal, Entry, Item, LibraryRecord, Rating,
+    FileCopy, Assignment, Collection, Comparison, Dismissal, Entry, Item, LibraryRecord, Rating,
     Rendition, View,
 };
 use sinex_model::{
@@ -36,11 +36,11 @@ pub const SCAN: SourceSpec = SourceSpec {
     name: "library.scan",
     driver: Driver::DirSnapshot,
     excisable: false,
-    consumer: "the media library",
+    purpose: "the media library",
     class: Class::Open,
     parser: "library-scan",
     parser_version: 1,
-    event_types: &["library.acquisition"],
+    event_types: &["library.copy"],
     framer: crate::Framer::export(
         crate::drivers::export_archive::frame_lines,
         crate::drivers::export_archive::Framing::Lines,
@@ -51,7 +51,7 @@ pub const REQUEST: SourceSpec = SourceSpec {
     name: "library.request",
     driver: Driver::ApiRequest,
     excisable: false,
-    consumer: "the media library",
+    purpose: "the media library",
     class: Class::Open,
     parser: "library-request",
     parser_version: 1,
@@ -67,7 +67,7 @@ pub const REQUEST: SourceSpec = SourceSpec {
 
 /// One scanned file as the driver describes it: the stored record.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
-struct Described {
+struct ScannedFile {
     pub host: String,
     pub root: String,
     pub path: String,
@@ -100,7 +100,7 @@ pub struct ScanParser;
 impl Parser for ScanParser {
     type Record<'a> = Map<String, Value>;
     type Carry = ();
-    type Payload = Acquisition;
+    type Payload = FileCopy;
 
     /// Where a file is and how it was found are left out of the record hash,
     /// so equal bytes hash equal at any path: a rescan of an unchanged file is
@@ -123,10 +123,10 @@ impl Parser for ScanParser {
         record: &Map<String, Value>,
         _: &(),
         _context: &crate::RecordContext<'_>,
-    ) -> Result<(Vec<Acquisition>, ()), RecordError> {
-        let d: Described = serde_json::from_value(Value::Object(record.clone()))
+    ) -> Result<(Vec<FileCopy>, ()), RecordError> {
+        let d: ScannedFile = serde_json::from_value(Value::Object(record.clone()))
             .map_err(|e| RecordError::new(format!("not a library scan line: {e}")))?;
-        let payload = Acquisition {
+        let payload = FileCopy {
             modified_at: nanos(&d.mtime_ns),
             vanished_at: nanos(&d.vanished_at_ns),
             host: d.host,
@@ -187,7 +187,7 @@ pub struct Known {
 type Pending = (String, u64, i128, Option<u64>, Option<u64>);
 
 /// The scan's state: the files read, by path, and the work left from the
-/// current walk. Seeded from the live acquisitions after a restart, so a
+/// current walk. Seeded from the live copies after a restart, so a
 /// restart does not hash the whole library again.
 #[derive(Default)]
 pub struct ScanState {
@@ -331,7 +331,7 @@ impl LibraryScan {
                     },
                     revision: RevisionChange::Same,
                     material: None,
-                    cursor_unchanged: cursor.clone(),
+                    cursor_without_material: cursor.clone(),
                 });
             }
         };
@@ -415,7 +415,7 @@ impl LibraryScan {
                 height = height.or(p.1);
                 duration_ms = duration_ms.or(p.2);
             }
-            let line = Described {
+            let line = ScannedFile {
                 host: self.host.clone(),
                 root: root.clone(),
                 path: full.display().to_string(),
@@ -458,7 +458,7 @@ impl LibraryScan {
         {
             for (relative, known) in gone {
                 state.files.remove(&relative);
-                let line = Described {
+                let line = ScannedFile {
                     host: self.host.clone(),
                     root: root.clone(),
                     path: self.root.join(&relative).display().to_string(),
@@ -489,7 +489,7 @@ impl LibraryScan {
                 observation: facts,
                 revision: RevisionChange::Same,
                 material: None,
-                cursor_unchanged: serde_json::to_value(scanned).expect("cursor serializes"),
+                cursor_without_material: serde_json::to_value(scanned).expect("cursor serializes"),
             });
         }
         let read_at = i64::try_from(now.unix_ns()).unwrap_or(i64::MAX);
@@ -533,10 +533,10 @@ impl LibraryScan {
                     move |end| Ok(cursor(end))
                 }),
                 aligned: false,
-                vanished: Vec::new(),
+                removed: Vec::new(),
                 memory: None,
             }),
-            cursor_unchanged: Value::Null,
+            cursor_without_material: Value::Null,
         })
     }
 
@@ -547,7 +547,7 @@ impl LibraryScan {
     }
 }
 
-fn push_line(lines: &mut Vec<u8>, records: &mut Vec<(usize, usize)>, line: &Described) {
+fn push_line(lines: &mut Vec<u8>, records: &mut Vec<(usize, usize)>, line: &ScannedFile) {
     let start = lines.len();
     serde_json::to_writer(&mut *lines, line).expect("scan lines serialize");
     lines.push(b'\n');
@@ -853,11 +853,11 @@ fn request_manifest(actor: &str, host: &str, at: Timestamp, action: &str) -> Val
     })
 }
 
-/// Payload bytes stay the registered library shape. A request's acquisition
+/// Payload bytes stay the registered library shape. A request's copy
 /// facts also make its event cite the prepared rendition.
 pub struct RequestPayload {
     record: LibraryRecord,
-    citation: Option<sinex_model::Cited>,
+    citation: Option<sinex_model::OwnedBlob>,
 }
 impl sinex_model::Payloads for RequestPayload {
     fn build(
@@ -869,7 +869,7 @@ impl sinex_model::Payloads for RequestPayload {
         class: Class,
     ) -> Result<sinex_model::Event, sinex_model::BuildError> {
         let mut event = self.record.build(source, origin, order, hash, class)?;
-        event.cites.extend(self.citation.clone());
+        event.owned_blobs.extend(self.citation.clone());
         Ok(event)
     }
 }
@@ -921,10 +921,10 @@ impl Parser for RequestParser {
             Line::View(x) => LibraryRecord::View(x),
             Line::Dismissal(x) => LibraryRecord::Dismissal(x),
         };
-        let citation = match context.manifest.get("cited_blobs") {
+        let citation = match context.manifest.get("owned_blobs") {
             None => None,
             Some(facts) => {
-                let facts: Vec<sinex_model::Cited> = serde_json::from_value(facts.clone())
+                let facts: Vec<sinex_model::OwnedBlob> = serde_json::from_value(facts.clone())
                     .map_err(|_| RecordError::new("invalid library request citation facts"))?;
                 let mut seen = std::collections::BTreeSet::new();
                 if facts.is_empty()
@@ -1003,16 +1003,16 @@ pub fn request_material(
                 move |end| Ok(cursor(end))
             }),
             aligned: false,
-            vanished: Vec::new(),
+            removed: Vec::new(),
             memory: None,
         }),
-        cursor_unchanged: Value::Null,
+        cursor_without_material: Value::Null,
     }
 }
 
 /// The library's sources: scans of library roots and library requests,
 /// written through `library-add` and the API rather than read from a path.
-pub const KIND: crate::binding::InputKind = crate::binding::InputKind {
+pub const FORMAT: crate::binding::InputFormat = crate::binding::InputFormat {
     name: "library",
     specs: || vec![&SCAN, &REQUEST],
     plan: None,

@@ -65,7 +65,7 @@ pub(super) async fn source(conn: &mut PgConnection, p: &SourceProgress) -> Resul
     )
     .fetch_optional(&mut *conn)
     .await?;
-    for key in &p.material_keys {
+    for key in &p.data_keys {
         crate::sealed::store_key(conn, key.material, &key.key_ref, &key.wrapped).await?;
     }
     let revision = match (p.revision, current) {
@@ -93,23 +93,6 @@ pub(super) async fn source(conn: &mut PgConnection, p: &SourceProgress) -> Resul
     let Some(m) = &p.material else { return Ok(()) };
     material(conn, input, revision, m).await?;
 
-    let role = sinex_model::MaterialRole::of(&m.manifest)
-        .map_err(|e| Error::Invalid(format!("material {}: {e}", m.id)))?;
-    // Decoded record parts keep parser coordinates, not additional input bytes.
-    if role == sinex_model::MaterialRole::Records {
-        return Ok(());
-    }
-    let length =
-        i64::try_from(m.length).map_err(|_| Error::Invalid("material length beyond i64".into()))?;
-    sqlx::query!(
-        r#"INSERT INTO raw.revision_extents (revision_id, position, blob, blob_offset, length)
-           VALUES ($1, (SELECT coalesce(max(position) + 1, 0) FROM raw.revision_extents WHERE revision_id = $1), $2, 0, $3)"#,
-        revision,
-        m.blob,
-        length,
-    )
-    .execute(&mut *conn)
-    .await?;
     Ok(())
 }
 
@@ -128,7 +111,7 @@ async fn material_matches(
     let version = i32::try_from(material.parser_version)
         .map_err(|_| Error::Invalid("material parser version beyond i32".into()))?;
     Ok(sqlx::query_scalar!(
-        r#"SELECT (m.blob = $2 AND m.durable_bytes = $3 AND m.part_index = $4
+        r#"SELECT (m.blob = $2 AND m.length = $3 AND m.part_index = $4
                    AND m.previous_part_id IS NOT DISTINCT FROM $5
                    AND m.parser = $6 AND m.parser_version = $7 AND m.manifest = $8
                    AND i.binding = $9 AND i.kind = $10 AND i.locator = $11 AND i.host = $12) AS "matches!"
@@ -167,7 +150,7 @@ async fn material(
     .execute(&mut *conn)
     .await?;
     sqlx::query!(
-        r#"INSERT INTO raw.materials (id, input_id, revision_id, part_index, previous_part_id, blob, durable_bytes, manifest, parser, parser_version)
+        r#"INSERT INTO raw.materials (id, input_id, revision_id, part_index, previous_part_id, blob, length, manifest, parser, parser_version)
            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) ON CONFLICT (id) DO NOTHING"#,
         m.id.0,
         input,

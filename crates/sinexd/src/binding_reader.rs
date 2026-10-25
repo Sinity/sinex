@@ -5,7 +5,7 @@ use crate::writer::WriterHandle;
 use serde_json::Value;
 use sinex_model::{Class, RunId};
 use sinex_sources::shared_pass::Resume;
-use sinex_sources::{Binding, InputKind, Reader, Reading, Source, drivers};
+use sinex_sources::{Binding, InputFormat, Reader, Reading, Source, drivers};
 use sinex_store::{Blobs, positions};
 use sqlx::PgConnection;
 use std::sync::Arc;
@@ -19,7 +19,7 @@ pub(crate) struct Bound {
     history_floor: Class,
 }
 impl Bound {
-    pub fn new(kind: &InputKind, binding: Binding) -> Result<Self, String> {
+    pub fn new(kind: &InputFormat, binding: Binding) -> Result<Self, String> {
         let reader = kind
             .reader
             .ok_or_else(|| format!("{} is not read by a driver", kind.name))?;

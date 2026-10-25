@@ -29,7 +29,7 @@ fn executed(native_id: &str, command: &str, order: i64, class: Class) -> Event {
                 material: MaterialId(uuid::Uuid::from_u128(order as u128)),
                 anchor: 0,
             },
-            ordinal: 0,
+            output_index: 0,
         },
         ReadingOrder(order),
         *blake3::hash(command.as_bytes()).as_bytes(),
@@ -99,7 +99,7 @@ async fn publishes_in_commit_order_masked_once(db: devkit::pg::TestDatabase) {
         ),
     )
     .await;
-    // A newer reading of "1" replaces it: an archive notice at the same commit.
+    // A newer reading of "1" replaces it: an archive change at the same commit.
     let newer = executed("1", "ls -la", 2, Class::Open);
     let newer_id = newer.id;
     admit(&mut conn, batch(vec![newer], vec![])).await;
@@ -112,7 +112,7 @@ async fn publishes_in_commit_order_masked_once(db: devkit::pg::TestDatabase) {
         done,
         Published {
             events: 3,
-            notices: 1,
+            changes: 1,
             ..Published::default()
         }
     );
@@ -128,7 +128,7 @@ async fn publishes_in_commit_order_masked_once(db: devkit::pg::TestDatabase) {
         .iter()
         .filter_map(|m| match m {
             Confirmed::Event(e) => Some(e.commit_seq),
-            Confirmed::Archived(_) | Confirmed::Restored(_) | Confirmed::Excised { .. } => None,
+            Confirmed::Archived(_) | Confirmed::Unhidden(_) | Confirmed::Excised { .. } => None,
         })
         .collect();
     assert_eq!(seqs, [1, 2, 3]);
@@ -142,12 +142,12 @@ async fn publishes_in_commit_order_masked_once(db: devkit::pg::TestDatabase) {
         panic!("event")
     };
     assert_eq!(open.payload.as_ref().unwrap()["command"], "ls");
-    let Confirmed::Archived(notice) = &messages[3] else {
-        panic!("the notice follows the event that caused it")
+    let Confirmed::Archived(change) = &messages[3] else {
+        panic!("the change follows the event that caused it")
     };
-    assert_eq!(notice.event, first_id);
-    assert_eq!(notice.replaced_by, Some(newer_id));
-    assert_eq!(notice.reason, sinex_model::ArchiveReason::NewerReading);
+    assert_eq!(change.event, first_id);
+    assert_eq!(change.replaced_by, Some(newer_id));
+    assert_eq!(change.reason, sinex_model::ArchiveReason::NewerReading);
 }
 
 /// Found on real data: one Atuin command of 4 MB. The event goes out,
@@ -245,7 +245,7 @@ async fn hide_after_publishing_sends_a_notice(db: devkit::pg::TestDatabase) {
     publish_pending(&mut publisher_conn, &js, &subjects)
         .await
         .unwrap();
-    // A hide commits no new event; its notice still goes out.
+    // A hide commits no new event; its change still goes out.
     admit(
         &mut conn,
         batch(
@@ -263,16 +263,16 @@ async fn hide_after_publishing_sends_a_notice(db: devkit::pg::TestDatabase) {
     assert_eq!(
         done,
         Published {
-            notices: 1,
+            changes: 1,
             ..Published::default()
         }
     );
     let messages = read_all(&js, &subjects).await;
-    let Confirmed::Archived(notice) = messages.last().unwrap() else {
-        panic!("notice")
+    let Confirmed::Archived(change) = messages.last().unwrap() else {
+        panic!("change")
     };
     assert_eq!(
-        (notice.event, notice.reason),
+        (change.event, change.reason),
         (id, sinex_model::ArchiveReason::Hide)
     );
 }
@@ -409,7 +409,7 @@ async fn archive_consumer_observes_hide_restore_hide_without_duplicate_events(
         .await
         .unwrap();
     assert_eq!(published.events, 1);
-    assert_eq!(published.notices, 3);
+    assert_eq!(published.changes, 3);
     let messages = read_all(&js, &subjects).await;
     let mut live = std::collections::BTreeSet::new();
     let mut visibility = Vec::new();
@@ -423,10 +423,10 @@ async fn archive_consumer_observes_hide_restore_hide_without_duplicate_events(
                 live.remove(&n.event);
                 visibility.push((n.archived_seq, live.contains(&id)));
             }
-            Confirmed::Restored(n) => {
+            Confirmed::Unhidden(n) => {
                 assert_eq!(n.event, id);
                 live.insert(n.event);
-                visibility.push((n.restored_seq, live.contains(&id)));
+                visibility.push((n.unhidden_seq, live.contains(&id)));
             }
             Confirmed::Excised { .. } => panic!("no excision requested"),
         }

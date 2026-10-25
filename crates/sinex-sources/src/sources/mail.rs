@@ -13,7 +13,7 @@
 //! material.
 //!
 //! A message deleted from a Maildir is not recorded as removed yet: the
-//! vanished file's marker names only its path, not its Message-ID.
+//! removed file's marker names only its path, not its Message-ID.
 use crate::drain::RecordContext;
 use crate::drivers::dir_snapshot::DirSnapshot;
 use crate::drivers::export_archive::{ExportArchive, Framing, PART_BYTES};
@@ -28,7 +28,7 @@ pub const MBOX: SourceSpec = SourceSpec {
     name: "communication.mbox",
     driver: Driver::ExportArchive,
     excisable: false,
-    consumer: "mail recall and correspondence history",
+    purpose: "mail recall and correspondence history",
     class: Class::Open,
     parser: "rfc5322-mail",
     parser_version: 1,
@@ -43,7 +43,7 @@ pub const MAILDIR: SourceSpec = SourceSpec {
     name: "communication.maildir",
     driver: Driver::DirSnapshot,
     excisable: false,
-    consumer: "mail recall and correspondence history",
+    purpose: "mail recall and correspondence history",
     class: Class::Open,
     parser: "rfc5322-mail",
     parser_version: 2,
@@ -67,10 +67,10 @@ impl Parser for MailParser {
         _: &(),
         context: &RecordContext<'_>,
     ) -> Result<(Vec<MailMessage>, ()), RecordError> {
-        // A vanished Maildir file: nothing to read (see the module note).
+        // A removed Maildir file: nothing to read (see the module note).
         if context
             .member
-            .is_some_and(|m| m.get("vanished_at_ns").is_some())
+            .is_some_and(|m| m.get("removed_at_ns").is_some())
         {
             return Ok((vec![], ()));
         }
@@ -260,8 +260,8 @@ pub fn maildir_driver(root: PathBuf, host: String) -> DirSnapshot {
     }
 }
 
-/// `--source mbox=PATH`: each mbox file in PATH.
-pub const MBOX_KIND: crate::binding::InputKind = crate::binding::InputKind {
+/// `--read mbox=PATH`: each mbox file in PATH.
+pub const MBOX_FORMAT: crate::binding::InputFormat = crate::binding::InputFormat {
     name: "mbox",
     specs: || vec![&MBOX],
     plan: Some(|input, settings| {
@@ -283,8 +283,8 @@ pub const MBOX_KIND: crate::binding::InputKind = crate::binding::InputKind {
     capture: None,
 };
 
-/// `--source maildir=PATH`: the Maildir at PATH, walked as one directory.
-pub const MAILDIR_KIND: crate::binding::InputKind = crate::binding::InputKind {
+/// `--read maildir=PATH`: the Maildir at PATH, walked as one directory.
+pub const MAILDIR_FORMAT: crate::binding::InputFormat = crate::binding::InputFormat {
     name: "maildir",
     specs: || vec![&MAILDIR],
     plan: Some(|input, settings| Ok(crate::binding::single(&MAILDIR, input, settings))),

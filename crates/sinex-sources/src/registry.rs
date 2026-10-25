@@ -50,8 +50,8 @@ pub struct SourceSpec {
     /// or new export brings it back) and no record repeats under a key in a
     /// later material. Excision refuses records of every other source.
     pub excisable: bool,
-    /// Every source names its consumer: what reads its events.
-    pub consumer: &'static str,
+    /// What the source's events are for.
+    pub purpose: &'static str,
     pub class: Class,
     pub parser: &'static str,
     pub parser_version: u32,

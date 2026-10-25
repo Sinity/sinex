@@ -7,7 +7,7 @@ use sqlx::PgConnection;
 use uuid::Uuid;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum State {
+enum Classification {
     New,
     Repeat,
     Newer,
@@ -46,7 +46,7 @@ pub(super) async fn stage_and_classify(
              SELECT st.*,
                row_number() OVER (
                  PARTITION BY st.source, st.event_type,
-                   coalesce(st.equivalence_key, st.material_id::text || ':' || st.anchor || ':' || st.ordinal)
+                   coalesce(st.equivalence_key, st.material_id::text || ':' || st.anchor || ':' || st.output_index)
                  -- Equal reading orders with different content: the
                  -- greater content hash wins, here and against the live
                  -- reading below, so arrival never decides.
@@ -71,19 +71,19 @@ pub(super) async fn stage_and_classify(
              END AS "state!",
              coalesce(le.event_id, lc.event_id) AS live_id
            FROM s
-           LEFT JOIN core.hidden_occurrences hk
+           LEFT JOIN core.hidden_records hk
              ON s.equivalence_key IS NOT NULL AND hk.source = s.source
              AND hk.event_type = s.event_type AND hk.equivalence_key = s.equivalence_key
-           LEFT JOIN core.hidden_occurrences hl
+           LEFT JOIN core.hidden_records hl
              ON s.equivalence_key IS NULL AND hl.material_id = s.material_id
-             AND hl.anchor = s.anchor AND hl.event_type = s.event_type AND hl.ordinal = s.ordinal
+             AND hl.anchor = s.anchor AND hl.event_type = s.event_type AND hl.output_index = s.output_index
            LEFT JOIN core.live_equivalence le
              ON s.equivalence_key IS NOT NULL AND le.source = s.source
              AND le.event_type = s.event_type AND le.equivalence_key = s.equivalence_key
            LEFT JOIN core.live_locations lc
              ON s.equivalence_key IS NULL AND s.material_id IS NOT NULL
              AND lc.material_id = s.material_id AND lc.anchor = s.anchor
-             AND lc.event_type = s.event_type AND lc.ordinal = s.ordinal
+             AND lc.event_type = s.event_type AND lc.output_index = s.output_index
            ORDER BY s.ord"#
     )
     .fetch_all(&mut *conn)
@@ -94,35 +94,35 @@ pub(super) async fn stage_and_classify(
     let mut replaced: Vec<(i32, Uuid)> = Vec::new();
     for row in rows {
         let state = match row.state.as_str() {
-            "new" => State::New,
-            "repeat" => State::Repeat,
-            "newer" => State::Newer,
-            "older" => State::Older,
-            "hidden" => State::Hidden,
-            "superseded" => State::Superseded,
+            "new" => Classification::New,
+            "repeat" => Classification::Repeat,
+            "newer" => Classification::Newer,
+            "older" => Classification::Older,
+            "hidden" => Classification::Hidden,
+            "superseded" => Classification::Superseded,
             other => return Err(Error::Invalid(format!("unknown admission state {other}"))),
         };
         let at = usize::try_from(row.ord).expect("ord is an index");
         match state {
-            State::New => {
+            Classification::New => {
                 admit_ords.push(row.ord);
                 resolved[at] = Some(events[at].id.0);
             }
-            State::Newer => {
+            Classification::Newer => {
                 admit_ords.push(row.ord);
                 resolved[at] = Some(events[at].id.0);
                 replaced.push((row.ord, row.live_id.expect("newer has a live reading")));
             }
-            State::Repeat => {
+            Classification::Repeat => {
                 outcome.repeats += 1;
                 resolved[at] = row.live_id;
             }
-            State::Older => {
+            Classification::Older => {
                 outcome.older += 1;
                 resolved[at] = row.live_id;
             }
-            State::Hidden => outcome.hidden += 1,
-            State::Superseded => outcome.superseded += 1,
+            Classification::Hidden => outcome.hidden += 1,
+            Classification::Superseded => outcome.superseded += 1,
         }
     }
     Ok(Classified {

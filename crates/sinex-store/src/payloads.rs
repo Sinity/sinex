@@ -8,16 +8,16 @@ use sqlx::PgConnection;
 
 /// Which live readings to read.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum State {
+pub enum RecordStates {
     /// Only records present at their source (not removed or withdrawn).
     Present,
     /// Present or removed.
     Any,
 }
 
-impl State {
+impl RecordStates {
     fn present_only(self) -> bool {
-        self == State::Present
+        self == RecordStates::Present
     }
 }
 
@@ -32,7 +32,7 @@ pub async fn live_where(
     event_type: &str,
     field: &[&str],
     values: &[String],
-    state: State,
+    state: RecordStates,
 ) -> Result<Vec<Value>> {
     Ok(sqlx::query_scalar!(
         r#"SELECT e.payload AS "payload!"
@@ -56,7 +56,7 @@ pub async fn live_containing(
     event_type: &str,
     field: &[&str],
     values: &[String],
-    state: State,
+    state: RecordStates,
 ) -> Result<Vec<Value>> {
     Ok(sqlx::query_scalar!(
         r#"SELECT e.payload AS "payload!"
@@ -77,7 +77,7 @@ pub async fn live_containing(
 pub async fn live_all(
     conn: &mut PgConnection,
     event_type: &str,
-    state: State,
+    state: RecordStates,
 ) -> Result<Vec<Value>> {
     Ok(sqlx::query_scalar!(
         r#"SELECT e.payload AS "payload!"

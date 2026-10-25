@@ -49,7 +49,7 @@ pub(crate) async fn admit_commands(
                     material: MaterialId::new(),
                     anchor: 0,
                 },
-                ordinal: 0,
+                output_index: 0,
             },
             ReadingOrder(1),
             *blake3::hash(command.as_bytes()).as_bytes(),
@@ -408,7 +408,7 @@ async fn walks_follow_provenance(db: devkit::pg::TestDatabase) {
         .await
         .unwrap();
     assert_eq!(shown["state"], json!("live"));
-    assert_eq!(shown["kind"], json!("command.fused"));
+    assert_eq!(shown["event_type"], json!("command.fused"));
 }
 
 #[devkit::test]
@@ -489,7 +489,7 @@ async fn payload_paths_compare_by_the_literal_type(db: devkit::pg::TestDatabase)
     assert_eq!(a.total, 5);
     let a = ask(
         &mut conn,
-        "events where kind = command.fused fields id, payload.cwd",
+        "events where event_type = command.fused fields id, payload.cwd",
     )
     .await;
     assert_eq!(a.columns, ["id", "payload.cwd"]);

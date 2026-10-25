@@ -1,4 +1,4 @@
-//! Admission laws: one live reading per location and key; newer replaces, older
+//! Admission rules: one live reading per location and key; newer replaces, older
 //! suppresses; hidden stays hidden across re-admission; events and progress
 //! commit together. Run against a real database.
 use super::*;
@@ -37,7 +37,7 @@ fn keyed(source: &str, key: u8, content: u8, order: i64) -> Event {
                 material: MaterialId::new(),
                 anchor: 0,
             },
-            ordinal: 0,
+            output_index: 0,
         },
         ReadingOrder(order),
         *blake3::hash(command.as_bytes()).as_bytes(),
@@ -262,7 +262,7 @@ fn watched(title: Option<&str>, order: i64) -> Event {
                 material: MaterialId::new(),
                 anchor: 0,
             },
-            ordinal: 0,
+            output_index: 0,
         },
         ReadingOrder(order),
         *blake3::hash(format!("{title:?}{order}").as_bytes()).as_bytes(),
@@ -320,7 +320,7 @@ async fn location_keyed_records_are_one_live_reading_and_never_replaced(
             "file-watch",
             Origin::Record {
                 location: RecordLocation { material, anchor },
-                ordinal: 0,
+                output_index: 0,
             },
             ReadingOrder(order),
             *blake3::hash(change.as_bytes()).as_bytes(),
@@ -392,7 +392,7 @@ async fn a_dropped_record_gets_a_removed_reading_once(db: devkit::pg::TestDataba
         "terminal.zsh",
         Origin::Record {
             location,
-            ordinal: 0,
+            output_index: 0,
         },
         ReadingOrder(2),
         *blake3::hash(b"b").as_bytes(),
@@ -434,7 +434,7 @@ async fn events_and_progress_commit_together(db: devkit::pg::TestDatabase) {
         .await
         .unwrap();
     let progress = |cursor: i64| SourceProgress {
-        material_keys: Vec::new(),
+        data_keys: Vec::new(),
         binding: "b".into(),
         input: InputRef {
             kind: "file".into(),
@@ -604,7 +604,7 @@ async fn untimed_zsh_occurrences_coexist_and_only_same_locations_repeat(
             "zsh",
             Origin::Record {
                 location: RecordLocation { material, anchor },
-                ordinal: 0,
+                output_index: 0,
             },
             ReadingOrder(anchor as i64),
             [1; 32],

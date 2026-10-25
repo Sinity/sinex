@@ -64,7 +64,7 @@ fn batches_are_drained_lazily() {
             name: "test.counting",
             driver: Driver::AppendFile,
             excisable: false,
-            consumer: "test",
+            purpose: "test",
             class: Class::Open,
             parser: "counting",
             parser_version: 1,
@@ -101,10 +101,10 @@ fn batches_are_drained_lazily() {
                 move |end| Ok(cursor(end))
             }),
             aligned: false,
-            vanished: vec![],
+            removed: vec![],
             memory: None,
         }),
-        cursor_unchanged: Value::Null,
+        cursor_without_material: Value::Null,
     };
     let limits = Limits {
         max_events: 1_000,
@@ -175,7 +175,7 @@ fn backfill_of_a_large_file_peaks_well_under_its_size() {
             name: "test.counting",
             driver: Driver::AppendFile,
             excisable: false,
-            consumer: "test",
+            purpose: "test",
             class: Class::Open,
             parser: "counting",
             parser_version: 1,
@@ -248,7 +248,7 @@ fn stored_original_length_does_not_replace_decoded_record_coordinates() {
             name: "test.counting",
             driver: Driver::ExportArchive,
             excisable: false,
-            consumer: "test",
+            purpose: "test",
             class: Class::Open,
             parser: "counting",
             parser_version: 1,
@@ -259,7 +259,7 @@ fn stored_original_length_does_not_replace_decoded_record_coordinates() {
     };
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("original");
-    std::fs::write(&path, b"synthetic stored archive envelope").unwrap();
+    std::fs::write(&path, b"synthetic stored archive bytes").unwrap();
     let bytes = b"decoded\n".to_vec();
     let decoded_len = bytes.len();
     let acquired = Acquired {
@@ -284,10 +284,10 @@ fn stored_original_length_does_not_replace_decoded_record_coordinates() {
                 move |end| Ok(cursor(end))
             }),
             aligned: false,
-            vanished: vec![],
+            removed: vec![],
             memory: None,
         }),
-        cursor_unchanged: Value::Null,
+        cursor_without_material: Value::Null,
     };
     let prepared = prepare(
         &source,
@@ -307,7 +307,7 @@ fn stored_original_length_does_not_replace_decoded_record_coordinates() {
     assert_eq!(progress.cursor["end"], decoded_len);
     assert_eq!(
         progress.material.unwrap().length,
-        b"synthetic stored archive envelope".len() as u64
+        b"synthetic stored archive bytes".len() as u64
     );
 }
 
@@ -322,7 +322,7 @@ fn cursor_read_failure_is_reported_before_a_batch_and_stops_later_progress() {
         },
         observation: ObservationFacts::default(),
         revision: RevisionChange::Appended,
-        cursor_unchanged: Value::Null,
+        cursor_without_material: Value::Null,
         material: Some(NewMaterial {
             id: MaterialId::new(),
             bytes: b"one\ntwo\n".to_vec(),
@@ -334,7 +334,7 @@ fn cursor_read_failure_is_reported_before_a_batch_and_stops_later_progress() {
             reading_order: Box::new(|_| sinex_model::ReadingOrder(1)),
             cursor_at: Box::new(|_| Err(DriverError::Io("synthetic cursor read failure".into()))),
             aligned: false,
-            vanished: Vec::new(),
+            removed: Vec::new(),
             memory: None,
         }),
     };

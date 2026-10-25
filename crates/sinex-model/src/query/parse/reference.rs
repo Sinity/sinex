@@ -1,5 +1,5 @@
-//! Citations: an event ID, `sinex:ev/<id>`, `sinex:occ/...` or
-//! `sinex:eq/...`.
+//! Citations: an event ID, `sinex:ev/<id>`, `sinex:record/...` or
+//! `sinex:key/...`.
 use super::*;
 
 pub(super) fn parse_id(raw: &str) -> Option<Uuid> {
@@ -7,48 +7,48 @@ pub(super) fn parse_id(raw: &str) -> Option<Uuid> {
     Uuid::parse_str(raw).ok()
 }
 
-/// A citation: `sinex:ev/<id>`, a bare event ID, `sinex:occ/...` or
-/// `sinex:eq/...`.
+/// A citation: `sinex:ev/<id>`, a bare event ID, `sinex:record/...` or
+/// `sinex:key/...`.
 pub fn parse_reference(raw: &str) -> Result<Reference, QueryError> {
     if let Some(id) = parse_id(raw) {
         return Ok(Reference::Event(id));
     }
-    if let Some(rest) = raw.strip_prefix("sinex:occ/") {
+    if let Some(rest) = raw.strip_prefix("sinex:record/") {
         let parts: Vec<&str> = rest.split('/').collect();
         if !(2..=4).contains(&parts.len()) {
             return Err(QueryError::new(
-                "sinex:occ/<material>/<anchor>[/<event type>[/<ordinal>]]",
+                "sinex:record/<material>/<offset>[/<event type>[/<output>]]",
             ));
         }
         let material = Uuid::parse_str(parts[0])
-            .map_err(|_| QueryError::new("the material in sinex:occ is not an ID"))?;
-        let anchor = parts[1]
+            .map_err(|_| QueryError::new("the material in sinex:record is not an ID"))?;
+        let offset = parts[1]
             .parse()
-            .map_err(|_| QueryError::new("the anchor in sinex:occ is not a byte offset"))?;
-        let ordinal = parts
+            .map_err(|_| QueryError::new("the offset in sinex:record is not a byte offset"))?;
+        let output = parts
             .get(3)
             .map(|o| {
                 o.parse()
-                    .map_err(|_| QueryError::new("the ordinal in sinex:occ is not a number"))
+                    .map_err(|_| QueryError::new("the output in sinex:record is not a number"))
             })
             .transpose()?;
-        return Ok(Reference::Occurrence {
+        return Ok(Reference::Record {
             material,
-            anchor,
+            offset,
             event_type: parts.get(2).map(|s| s.to_string()),
-            ordinal,
+            output,
         });
     }
-    if let Some(rest) = raw.strip_prefix("sinex:eq/") {
+    if let Some(rest) = raw.strip_prefix("sinex:key/") {
         let mut parts = rest.splitn(3, '/');
         let (Some(source), Some(event_type), Some(key)) =
             (parts.next(), parts.next(), parts.next())
         else {
             return Err(QueryError::new(
-                "sinex:eq/<source>/<event type>/<equivalence key>",
+                "sinex:key/<source>/<event type>/<equivalence key>",
             ));
         };
-        return Ok(Reference::Equivalence {
+        return Ok(Reference::Key {
             source: source.to_string(),
             event_type: event_type.to_string(),
             key: key.to_string(),
@@ -61,6 +61,6 @@ pub fn parse_reference(raw: &str) -> Result<Reference, QueryError> {
         });
     }
     Err(QueryError::new(format!(
-        "`{raw}` is not a reference; use an event ID, sinex:ev/<id>, sinex:occ/... or sinex:eq/..."
+        "`{raw}` is not a reference; use an event ID, sinex:ev/<id>, sinex:record/... or sinex:key/..."
     )))
 }

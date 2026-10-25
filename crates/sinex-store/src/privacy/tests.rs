@@ -20,7 +20,7 @@ fn event(command: &str) -> Event {
                 material: MaterialId::new(),
                 anchor: 0,
             },
-            ordinal: 0,
+            output_index: 0,
         },
         ReadingOrder(0),
         [0; 32],

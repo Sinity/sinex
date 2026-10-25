@@ -1,4 +1,4 @@
-"""Sinex: report kitty events to `sinex-session`'s producer socket.
+"""Sinex: report kitty events to `sinex-session`'s integration socket.
 
 In kitty.conf:
 

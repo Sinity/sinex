@@ -33,7 +33,7 @@ fn origin() -> Origin {
             material: MaterialId::new(),
             anchor: 0,
         },
-        ordinal: 0,
+        output_index: 0,
     }
 }
 

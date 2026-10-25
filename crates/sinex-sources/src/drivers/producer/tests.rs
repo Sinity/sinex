@@ -6,7 +6,7 @@ fn event(n: usize) -> ProducerEvent {
         event_type: "window.focused".into(),
         payload: json!({"title": "x".repeat(n)}),
         location: None,
-        ordinal: 0,
+        output_index: 0,
         parents: vec![],
         reading_order: 0,
         class: Default::default(),
@@ -75,7 +75,7 @@ async fn standin_with_refusal(
                     None,
                     events.iter().map(|_| sinex_model::EventId::new()).collect(),
                 ),
-                Ingress::Chunk { .. } | Ingress::Indirect { .. } => (None, vec![]),
+                Ingress::Chunk { .. } | Ingress::LargeFrame { .. } => (None, vec![]),
             };
             let refusal = match &frame {
                 Ingress::Chunk { offset, .. } if refuse_offset == Some(*offset) => {
@@ -108,7 +108,7 @@ async fn standin_with_refusal(
 
 /// A batch a stop left unacknowledged before its position was saved is sent
 /// again on the next start, with its bytes uploaded in chunks; a frame larger
-/// than one message travels indirectly.
+/// than one message travels as a large frame.
 #[devkit::test(multi_thread)]
 async fn an_unacknowledged_batch_is_resent_with_uploaded_bytes() {
     let nats = devkit::nats::test_nats().unwrap();
@@ -149,7 +149,7 @@ async fn an_unacknowledged_batch_is_resent_with_uploaded_bytes() {
             failures: vec![],
         },
     ];
-    spool::stage(
+    frame_bytes::write(
         &store.0,
         "node-test",
         "b/material",
@@ -158,7 +158,7 @@ async fn an_unacknowledged_batch_is_resent_with_uploaded_bytes() {
         bytes.as_slice(),
     )
     .unwrap();
-    Sending {
+    UnacknowledgedFrames {
         frames,
         position: Position {
             cursor: json!({"segment": 7}),
@@ -176,7 +176,7 @@ async fn an_unacknowledged_batch_is_resent_with_uploaded_bytes() {
         producer.position("b", &state, &store).await,
         Err(Error::Refused { .. })
     ));
-    assert!(Sending::load(&state, "b").unwrap().is_some());
+    assert!(UnacknowledgedFrames::load(&state, "b").unwrap().is_some());
     assert!(Position::load(&state, "b").unwrap().cursor.is_null());
     let first_attempt = received.lock().unwrap().clone();
     assert_eq!(first_attempt.len(), 2);
@@ -187,7 +187,7 @@ async fn an_unacknowledged_batch_is_resent_with_uploaded_bytes() {
     assert_ne!(first_attempt[0].frame(), second_attempt[0].frame());
     assert_chunks(&second_attempt[..2], &bytes);
     assert_eq!(position.cursor, json!({"segment": 7}));
-    assert!(Sending::load(&state, "b").unwrap().is_none());
+    assert!(UnacknowledgedFrames::load(&state, "b").unwrap().is_none());
     let kinds = |frames: &[Ingress]| -> Vec<String> {
         frames
             .iter()
@@ -215,10 +215,10 @@ async fn an_unacknowledged_batch_is_resent_with_uploaded_bytes() {
         failures: vec![],
     };
     let prepared = producer.prepare(big, &snapshots, &store).unwrap();
-    assert!(matches!(&prepared, Ingress::Indirect { frame, .. } if frame == "b/big/indirect"));
+    assert!(matches!(&prepared, Ingress::LargeFrame { frame, .. } if frame == "b/big/large"));
     producer.deliver(prepared, &store).await.unwrap();
     let got = kinds(&received.lock().unwrap());
-    assert_eq!(got.last().map(String::as_str), Some("b/big/indirect"));
+    assert_eq!(got.last().map(String::as_str), Some("b/big/large"));
     assert!(got.len() >= 3, "uploaded in chunks first: {got:?}");
     let _ = std::fs::remove_dir_all(dir);
 }
@@ -371,7 +371,7 @@ async fn damaged_producer_material_sends_no_chunks() {
     let store = Store::open(dir.path()).unwrap();
     let bytes = b"synthetic stored material";
     let blob = spooled(&store, "damaged", bytes, "damaged-frame");
-    let path = spool::directory(dir.path(), "damaged", "damaged-frame").join(&blob[7..]);
+    let path = frame_bytes::directory(dir.path(), "damaged", "damaged-frame").join(&blob[7..]);
     std::fs::write(&path, b"damaged").unwrap();
     let mut producer = Producer::connect(nats.url(), subjects, "damaged")
         .await
@@ -397,7 +397,7 @@ fn malformed_producer_blob_names_are_errors() {
         format!("sha256:{}", "a".repeat(64)),
     ] {
         assert!(
-            spool::snapshot(&store.0, "invalid", "frame", &name, 1).is_err(),
+            frame_bytes::snapshot(&store.0, "invalid", "frame", &name, 1).is_err(),
             "{name}"
         );
     }
@@ -406,6 +406,6 @@ fn malformed_producer_blob_names_are_errors() {
 /// Write `bytes` to the spool of `frame` and return their name.
 fn spooled(store: &Store, producer: &str, bytes: &[u8], frame: &str) -> String {
     let blob = format!("blake3:{}", blake3::hash(bytes).to_hex());
-    spool::stage(&store.0, producer, frame, &blob, bytes.len() as u64, bytes).unwrap();
+    frame_bytes::write(&store.0, producer, frame, &blob, bytes.len() as u64, bytes).unwrap();
     blob
 }

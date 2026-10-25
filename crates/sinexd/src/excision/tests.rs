@@ -53,7 +53,7 @@ pub(crate) async fn register(
     .await
     .unwrap();
     sqlx::query(
-        "INSERT INTO raw.materials (id, input_id, blob, durable_bytes, manifest, parser, parser_version)
+        "INSERT INTO raw.materials (id, input_id, blob, length, manifest, parser, parser_version)
          VALUES ($1, $2, $3, $4, '{}', $5, $6)",
     )
     .bind(id.0)
@@ -331,7 +331,7 @@ async fn records_of_sources_that_read_again_are_refused_without_changes(
                     material,
                     anchor: 0,
                 },
-                ordinal: 0,
+                output_index: 0,
             },
             ReadingOrder(0),
             [0; 32],

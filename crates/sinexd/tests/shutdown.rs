@@ -56,7 +56,7 @@ async fn sigterm_finishes_empty_source_daemon_and_releases_writer_for_restart() 
     )
     .unwrap();
     let backfill = run(&database, &store, &["backfill", "--host", "shutdown"])
-        .arg("--source")
+        .arg("--read")
         .arg(format!("zsh={}", history.display()))
         .output()
         .unwrap();
@@ -83,7 +83,7 @@ async fn sigterm_finishes_empty_source_daemon_and_releases_writer_for_restart() 
                 "run",
                 "--nats",
                 nats.url(),
-                "--subjects",
+                "--subject-root",
                 nats.prefix(),
                 "--host",
                 "shutdown",

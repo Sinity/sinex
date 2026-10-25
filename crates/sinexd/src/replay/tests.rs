@@ -151,7 +151,7 @@ async fn replay_reads_every_record_again_with_new_ids_and_the_same_content(
     .unwrap();
     assert_eq!(
         (
-            compared.chains,
+            compared.sequences,
             compared.materials,
             compared.archived,
             compared.admitted
@@ -198,7 +198,7 @@ async fn replay_reads_every_record_again_with_new_ids_and_the_same_content(
     .unwrap();
     assert_eq!(archived, 3);
 
-    // Resuming the finished operation skips its chain.
+    // Resuming the finished operation skips its sequence.
     let resumed = run(
         &mut f.ctx.read_conn,
         &f.ctx.blobs,
@@ -210,7 +210,7 @@ async fn replay_reads_every_record_again_with_new_ids_and_the_same_content(
     )
     .await
     .unwrap();
-    assert_eq!((resumed.chains, resumed.chains_skipped), (0, 1));
+    assert_eq!((resumed.sequences, resumed.sequences_skipped), (0, 1));
 }
 
 #[devkit::test]
@@ -289,8 +289,8 @@ async fn a_rewritten_history_file_is_aligned_and_replays_without_duplicates(
     .await
     .unwrap();
     assert_eq!(
-        report.chains, 1,
-        "the aligned rewrite continues the previous revision's parser chain"
+        report.sequences, 1,
+        "the aligned rewrite continues the previous revision's parser sequence"
     );
     let revisions: i64 = sqlx::query_scalar("SELECT count(*) FROM raw.revisions")
         .fetch_one(&mut f.ctx.read_conn)
@@ -298,7 +298,7 @@ async fn a_rewritten_history_file_is_aligned_and_replays_without_duplicates(
         .unwrap();
     assert_eq!(
         revisions, 2,
-        "byte revisions stay distinct from the parser carry chain"
+        "byte revisions stay distinct from the parser carry sequence"
     );
     assert_eq!(
         (
@@ -312,7 +312,7 @@ async fn a_rewritten_history_file_is_aligned_and_replays_without_duplicates(
 }
 
 #[devkit::test]
-async fn a_later_material_read_failure_rolls_back_the_entire_replay_chain(
+async fn a_later_material_read_failure_rolls_back_the_entire_replay_sequence(
     db: devkit::pg::TestDatabase,
 ) {
     let mut f = fixture(db).await;
@@ -387,7 +387,7 @@ async fn aligned_rewrite_replay_uses_the_same_previous_carry_as_capture(
     )
     .await
     .unwrap();
-    assert_eq!(report.chains, 1);
+    assert_eq!(report.sequences, 1);
     let after:Vec<(String,Value,String,Vec<u8>)>=sqlx::query_as("SELECT e.source,e.payload,e.equivalence_key,e.record_hash FROM core.events e JOIN core.live_equivalence l ON l.event_id=e.id ORDER BY e.payload::text").fetch_all(&mut f.ctx.read_conn).await.unwrap();
     assert_eq!(
         after, before,

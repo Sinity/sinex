@@ -60,13 +60,13 @@ impl Unlock {
         Ok(key)
     }
     /// Call only for material IDs in the explicit operation's resolved scope.
-    pub async fn material_key(
+    pub async fn data_key(
         &self,
         conn: &mut PgConnection,
         material: MaterialId,
     ) -> Result<DataKey, String> {
         self.check()?;
-        let (key_ref, wrapped) = sinex_store::sealed::material_key(conn, material)
+        let (key_ref, wrapped) = sinex_store::sealed::data_key(conn, material)
             .await
             .map_err(|e| e.to_string())?
             .ok_or_else(|| format!("material {material}: sealed key unavailable"))?;

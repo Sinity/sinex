@@ -155,7 +155,7 @@ fn unknown_steering_shapes_are_accounted_without_losing_later_coordinates() {
                     events[0].origin,
                     Origin::Record {
                         location,
-                        ordinal: 0
+                        output_index: 0
                     }
                 );
                 assert_eq!(

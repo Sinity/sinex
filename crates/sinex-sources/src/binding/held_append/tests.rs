@@ -90,7 +90,7 @@ fn a_restart_remembers_the_admitted_records_for_aligning_a_rewrite() {
     let m = rewritten.material.as_ref().unwrap();
     assert!(m.aligned);
     assert_eq!(m.records, vec![(11, 17)], "only the new record is read");
-    assert!(m.vanished.is_empty());
+    assert!(m.removed.is_empty());
 }
 
 #[devkit::test]

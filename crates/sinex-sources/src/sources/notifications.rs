@@ -21,7 +21,7 @@ pub const SPEC: SourceSpec = SourceSpec {
     name: "desktop.notifications",
     driver: Driver::LiveStream,
     excisable: true,
-    consumer: "recall and the day's interruptions",
+    purpose: "recall and the day's interruptions",
     // Message bodies are anything any program chose to show.
     class: Class::Guarded,
     parser: "dbus-notifications",
@@ -150,13 +150,13 @@ pub fn driver(spool: PathBuf, host: String) -> LiveStream {
     dbus::driver(spool, host, "dbus:session:org.freedesktop.Notifications")
 }
 
-pub fn capture(spool: &Path, control: &crate::capture::Control) -> std::io::Result<u64> {
-    dbus::capture(MATCHES, &[], spool, control)
+pub fn capture(spool: &Path, stop: &crate::capture::CaptureStop) -> std::io::Result<u64> {
+    dbus::capture(MATCHES, &[], spool, stop)
 }
 
-/// `--source notifications=SPOOL`: desktop notifications on the session
+/// `--read notifications=SPOOL`: desktop notifications on the session
 /// bus, captured into SPOOL.
-pub const KIND: crate::binding::InputKind = crate::binding::InputKind {
+pub const FORMAT: crate::binding::InputFormat = crate::binding::InputFormat {
     name: "notifications",
     specs: || vec![&SPEC],
     plan: Some(|spool, settings| Ok(crate::binding::single(&SPEC, spool, settings))),

@@ -1,5 +1,5 @@
 use super::*;
-use crate::drivers::dir_snapshot::{DirState, vanished_marker};
+use crate::drivers::dir_snapshot::{DirState, removed_marker};
 use crate::{DrainInput, Limits, drain};
 use sinex_model::{MaterialId, ReadingOrder, RecordOutcome};
 
@@ -49,9 +49,9 @@ fn notes_and_their_removal() {
     std::fs::remove_file(root.join("a.md")).unwrap();
     let second = run(&d.poll(&cursor, &mut state).unwrap());
     assert_eq!(second[0]["path"], "a.md");
-    assert!(second[0]["vanished_at"].is_string());
+    assert!(second[0]["removed_at"].is_string());
     assert!(second[0]["text"].is_null());
-    assert!(!vanished_marker("a.md").is_empty());
+    assert!(!removed_marker("a.md").is_empty());
 }
 
 fn note(text: &str, path: &str) -> NoteDocument {
@@ -234,14 +234,14 @@ fn unsupported_yaml_values_and_expansion_keep_text_with_structural_diagnostics()
 }
 
 #[devkit::test]
-fn payloads_without_metadata_and_vanished_notes_do_not_claim_metadata() {
-    let old = serde_json::json!({"vault":"v","path":"a.md","text":"","size":0,"modified_at":null,"vanished_at":null});
+fn payloads_without_metadata_and_removed_notes_do_not_claim_metadata() {
+    let old = serde_json::json!({"vault":"v","path":"a.md","text":"","size":0,"modified_at":null,"removed_at":null});
     let payload: NoteDocument = serde_json::from_value(old.clone()).unwrap();
     assert_eq!(payload.front_matter, None);
     assert_eq!(payload.tags, None);
     assert_eq!(serde_json::to_value(payload).unwrap(), old);
     let manifest = serde_json::json!({"path":"/vault/v"});
-    let member = serde_json::json!({"path":"a.md","vanished_at_ns":"1700000000000000000"});
+    let member = serde_json::json!({"path":"a.md","removed_at_ns":"1700000000000000000"});
     let context = RecordContext {
         manifest: &manifest,
         member: Some(&member),

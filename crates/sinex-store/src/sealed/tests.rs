@@ -28,7 +28,7 @@ fn wrap_unwrap_and_seal_round_trip() {
                 material: MaterialId::new(),
                 anchor: 0,
             },
-            ordinal: 0,
+            output_index: 0,
         },
         ReadingOrder(0),
         [1; 32],

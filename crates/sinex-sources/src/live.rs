@@ -1,10 +1,10 @@
 //! Live sources run by an outside producer (`sinex-session`, a satellite's
 //! `sinex-capture`): each source's capture writes its spool on its own
 //! thread, and one loop produces what the spools hold to `sinexd` over the
-//! NATS ingress. Both programs build their sources from the registry's kinds
+//! NATS ingress. Both programs build their sources from the registry's formats
 //! and share this loop.
-use crate::binding::{Binding, InputKind, Reader, Settings};
-use crate::capture::Control;
+use crate::binding::{Binding, InputFormat, Reader, Settings};
+use crate::capture::CaptureStop;
 use crate::drivers::producer::{Position, Producer, Store};
 use crate::{Source, sources};
 use serde_json::Value;
@@ -21,13 +21,13 @@ struct Live {
 }
 
 struct CaptureTask {
-    control: Arc<Control>,
+    stop: Arc<CaptureStop>,
     thread: Option<std::thread::JoinHandle<()>>,
 }
 
 impl CaptureTask {
     fn stop(&mut self) {
-        self.control.stop();
+        self.stop.stop();
         if let Some(thread) = self.thread.take() {
             let _ = thread.join();
         }
@@ -40,45 +40,47 @@ impl Drop for CaptureTask {
     }
 }
 
-/// The binding of the live source `kind` on `spool`.
+/// The binding of the live format `format` on `spool`.
 pub fn binding(
-    kind: &str,
+    format: &str,
     spool: &Path,
     host: &str,
     options: Value,
-) -> Result<(&'static InputKind, Binding), String> {
-    let k = sources::input_kind(kind)
+) -> Result<(&'static InputFormat, Binding), String> {
+    let k = sources::format(format)
         .filter(|k| k.capture.is_some())
-        .ok_or_else(|| format!("{kind}: not a live source"))?;
+        .ok_or_else(|| format!("{format}: not a live source"))?;
     let settings = Settings {
         options,
         ..Settings::new(host)
     };
-    let plan = k.plan.ok_or_else(|| format!("{kind}: no spool binding"))?;
+    let plan = k
+        .plan
+        .ok_or_else(|| format!("{format}: no spool binding"))?;
     let binding = plan(spool, &settings)?
         .into_iter()
         .next()
-        .ok_or_else(|| format!("{kind}: no binding"))?;
+        .ok_or_else(|| format!("{format}: no binding"))?;
     Ok((k, binding))
 }
 
-/// Start capturing `kind` into `spool` on its own thread, and return how it
+/// Start capturing `format` into `spool` on its own thread, and return how it
 /// is produced. A capture that ends is reported; production of what it
 /// already spooled goes on.
-fn start(k: &'static InputKind, binding: Binding) -> Result<Live, String> {
-    let capture = k.capture.expect("live kinds capture");
+fn start(k: &'static InputFormat, binding: Binding) -> Result<Live, String> {
+    let capture = k.capture.expect("live formats capture");
     // Construct fallible readers before starting a capture that must be joined.
     let reader = (k
         .reader
         .ok_or_else(|| format!("{}: no spool reader", k.name))?)(&binding)?
     .into_polled()?;
     let source = (k.source)(&binding)?;
-    let control = Arc::new(Control::new(None));
+    let stop = Arc::new(CaptureStop::new(None));
     let b = binding.clone();
-    let stop = control.clone();
+    let thread_stop = stop.clone();
     let thread = std::thread::Builder::new()
         .spawn(move || {
-            if let Err(e) = capture(&b, &stop) {
+            if let Err(e) = capture(&b, &thread_stop) {
                 eprintln!("{} capture: {e}", b.name);
             }
         })
@@ -88,7 +90,7 @@ fn start(k: &'static InputKind, binding: Binding) -> Result<Live, String> {
         binding,
         reader,
         capture: CaptureTask {
-            control,
+            stop,
             thread: Some(thread),
         },
     })
@@ -100,7 +102,7 @@ pub async fn run(
     producer: &mut Producer,
     store: &Store,
     positions: &Path,
-    bindings: Vec<(&'static InputKind, Binding)>,
+    bindings: Vec<(&'static InputFormat, Binding)>,
     every: Duration,
     until: Option<Instant>,
 ) -> Result<(), String> {
@@ -108,7 +110,7 @@ pub async fn run(
     let shutdown = crate::capture::shutdown_signal().map_err(|e| e.to_string())?;
     let mut lives = bindings
         .into_iter()
-        .map(|(kind, binding)| start(kind, binding))
+        .map(|(format, binding)| start(format, binding))
         .collect::<Result<Vec<_>, _>>()?;
     let deadline = async {
         match until {
@@ -125,7 +127,7 @@ pub async fn run(
     };
     // Interrupt every source before joining any one blocked reader.
     for live in &lives {
-        live.capture.control.stop();
+        live.capture.stop.stop();
     }
     for live in &mut lives {
         live.capture.stop();

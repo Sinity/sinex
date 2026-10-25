@@ -6,7 +6,7 @@ use crate::material_sink::Sink;
 use crate::writer::WriterHandle;
 use sinex_sources::sources::page_crawl::{self, Crawl};
 use sinex_store::Blobs;
-use sinex_store::payloads::{self, State};
+use sinex_store::payloads::{self, RecordStates};
 use sinex_store::runs;
 use sqlx::PgConnection;
 use std::collections::BTreeSet;
@@ -17,7 +17,7 @@ async fn history_urls(read_conn: &mut PgConnection) -> Result<Vec<String>, Strin
     let mut out = Vec::new();
     let mut seen = BTreeSet::new();
     for event_type in ["browser.url", "browser.history_entry", "browser.visit"] {
-        let rows = payloads::live_all(read_conn, event_type, State::Present)
+        let rows = payloads::live_all(read_conn, event_type, RecordStates::Present)
             .await
             .map_err(|e| e.to_string())?;
         for p in rows {
@@ -46,16 +46,17 @@ pub async fn run(
     if allow.is_empty() {
         return Err("nothing is crawled without an allow list (--allow DOMAIN)".into());
     }
-    let fetched: BTreeSet<String> = payloads::live_all(read_conn, "page.fetched", State::Any)
-        .await
-        .map_err(|e| e.to_string())?
-        .into_iter()
-        .filter_map(|p| {
-            p.get("url")
-                .and_then(serde_json::Value::as_str)
-                .map(str::to_owned)
-        })
-        .collect();
+    let fetched: BTreeSet<String> =
+        payloads::live_all(read_conn, "page.fetched", RecordStates::Any)
+            .await
+            .map_err(|e| e.to_string())?
+            .into_iter()
+            .filter_map(|p| {
+                p.get("url")
+                    .and_then(serde_json::Value::as_str)
+                    .map(str::to_owned)
+            })
+            .collect();
     let wanted = if urls.is_empty() {
         history_urls(read_conn).await?
     } else {

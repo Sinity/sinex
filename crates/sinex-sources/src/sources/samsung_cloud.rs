@@ -10,7 +10,7 @@
 //!   Times are `YYYY-MM-DD HH:MM`, UTC as Samsung Health stores them;
 //!   `time_offset` is the local offset in milliseconds.
 //! - Any other table (alarms, settings, backups, store and membership
-//!   records) is an `account.record` of its service and table, every column
+//!   records) is an `account.row` of its service and table, every column
 //!   kept, a JSON column decoded. These tables stay explicitly untyped
 //!   until a declared table schema is implemented. `KEY`, `_id` or `id` identifies the
 //!   row, else a hash of it; `CREATETIME`, `TIMESTAMP` or `create_time` dates
@@ -26,7 +26,7 @@ use crate::sources::samsung_health::typed;
 use crate::{Parser, RecordContext, RecordError};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
-use sinex_model::event_types::account::AccountRecord;
+use sinex_model::event_types::account::AccountRow;
 use sinex_model::event_types::health::HealthRecord;
 use sinex_model::{Class, Timestamp};
 use std::path::{Path, PathBuf};
@@ -35,11 +35,11 @@ pub const SPEC: SourceSpec = SourceSpec {
     name: "account.samsung",
     driver: Driver::ExportArchive,
     excisable: false,
-    consumer: "what the operator's Samsung account kept: health sync, settings, backups",
+    purpose: "what the operator's Samsung account kept: health sync, settings, backups",
     class: Class::Open,
     parser: "samsung-account-export",
     parser_version: 4,
-    event_types: &["health.record", "account.record"],
+    event_types: &["health.record", "account.row"],
     framer: crate::Framer::export(frame, crate::drivers::export_archive::Framing::Csv),
 };
 
@@ -47,7 +47,7 @@ sinex_model::payload_enum! {
     #[derive(Clone, Debug, PartialEq)]
     pub enum SamsungEvent {
         Health(HealthRecord),
-        Account(AccountRecord),
+        Account(AccountRow),
     }
 }
 
@@ -146,7 +146,7 @@ impl Parser for SamsungCloudParser {
             .iter()
             .find_map(|k| values.get(*k).and_then(time_of));
         Ok((
-            vec![SamsungEvent::Account(AccountRecord {
+            vec![SamsungEvent::Account(AccountRow {
                 service,
                 table,
                 native_id,
@@ -259,8 +259,8 @@ pub fn driver(path: PathBuf, host: String) -> ExportArchive {
     }
 }
 
-/// `--source samsung-account=PATH`: each table of a Samsung account export under PATH.
-pub const KIND: crate::binding::InputKind = crate::binding::InputKind {
+/// `--read samsung-account=PATH`: each table of a Samsung account export under PATH.
+pub const FORMAT: crate::binding::InputFormat = crate::binding::InputFormat {
     name: "samsung-account",
     specs: || vec![&SPEC],
     plan: Some(|input, settings| {

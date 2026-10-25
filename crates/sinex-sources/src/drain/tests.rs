@@ -177,7 +177,7 @@ fn nul_payloads_become_failures() {
 }
 
 #[devkit::test]
-fn staged_records_match_slice_hashes_locations_carry_and_limits() {
+fn temporary_file_records_match_slice_hashes_locations_carry_and_limits() {
     use std::io::Write;
     let bytes = b"alpha\nbad\n \nthird\npanic\nlast\n";
     let mut file = tempfile::tempfile().unwrap();
@@ -254,7 +254,7 @@ fn staged_records_match_slice_hashes_locations_carry_and_limits() {
 }
 
 #[devkit::test]
-fn staged_read_failure_stops_before_a_false_progress_chunk() {
+fn temporary_file_read_failure_stops_before_a_false_progress_chunk() {
     use std::io::Write;
     let bytes = b"alpha\nbeta\ngamma\ndelta\n";
     let mut file = tempfile::tempfile().unwrap();

@@ -2,9 +2,9 @@ use super::*;
 
 #[devkit::test]
 fn placeholders_number_in_text_order_across_nesting() {
-    let mut inner = Frag::text("x = ");
+    let mut inner = SqlFragment::text("x = ");
     inner.param(1i64);
-    let mut outer = Frag::text("SELECT ");
+    let mut outer = SqlFragment::text("SELECT ");
     outer
         .param("a")
         .push(" WHERE ")

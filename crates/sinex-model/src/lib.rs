@@ -18,12 +18,12 @@ pub mod query;
 pub use batch::{
     ArchiveReason, ArchiveRequest, Batch, BatchKind, IngressFrame, InputRef, MaterialRef,
     MaterialRole, ObservationFacts, ReaderMemory, RecordOutcome, ReplayScope, RevisionChange,
-    SourceProgress, WrappedMaterialKey,
+    SourceProgress, WrappedDataKey,
 };
 pub use clock::{TimeQuality, Timestamp, TsOrig};
 pub use event::{BuildError, Event, Origin, ReadingOrder, RecordLocation, RecordState};
 pub use id::{EventId, InputId, MaterialId, ObservationId, OperationId, RevisionId, RunId};
-pub use payload::{Cited, DbCheck, EquivalenceKey, EventPayload, KeyKind, Payloads, ReplaceRule};
+pub use payload::{OwnedBlob, DbCheck, EquivalenceKey, EventPayload, KeyKind, Payloads, ReplaceRule};
 pub use privacy::Class;
 pub use sinex_macros::{DbCheck, EventPayload};
 

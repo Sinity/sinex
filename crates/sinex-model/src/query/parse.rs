@@ -1,13 +1,13 @@
 //! Parsing and binding: one pass that reads the tokens, checks every field
-//! against its unit's table, and resolves every time against the context. A
+//! against its table's table, and resolves every time against the context. A
 //! query that cannot mean what it says is refused with the reason; nothing
 //! falls back silently.
 use super::QueryError;
 use super::ast::*;
 use super::lex::{Kind, Token, tokens};
+use super::tables::{Alias, COMMAND_WORDS, FieldType, Table, table_like_words, tables_accepting};
 use super::text::words;
 use super::time::{self, Context};
-use super::units::{Alias, COMMAND_WORDS, FieldType, Unit, unit_like_words, units_accepting};
 use jiff::{SignedDuration, Timestamp};
 use uuid::Uuid;
 
@@ -103,7 +103,7 @@ pub fn bind(text: &str, ctx: &Context) -> Result<Query, QueryError> {
 #[derive(Clone)]
 enum Scope {
     Rows {
-        unit: Unit,
+        table: Table,
         alias: Option<&'static Alias>,
         /// Columns time joins add: `near`, `offset`, `during`, `containing`.
         columns: Vec<String>,
@@ -113,9 +113,9 @@ enum Scope {
 }
 
 impl Scope {
-    fn rows(unit: Unit, alias: Option<&'static Alias>) -> Scope {
+    fn rows(table: Table, alias: Option<&'static Alias>) -> Scope {
         Scope::Rows {
-            unit,
+            table,
             alias,
             columns: Vec::new(),
         }
@@ -243,17 +243,17 @@ impl Parser<'_> {
                         "`{word}` is a command that is not built yet; quote it to search for the word"
                     ),
                 ));
-            } else if let Some(unit) = Unit::from_name(&word) {
+            } else if let Some(table) = Table::from_name(&word) {
                 self.at += 1;
-                let filter = self.unit_filter(&Scope::rows(unit, None))?;
-                (Source::Unit { unit, alias: None }, filter)
+                let filter = self.table_filter(&Scope::rows(table, None))?;
+                (Source::Table { table, alias: None }, filter)
             } else if let Some(alias) = Alias::from_name(&word) {
                 self.at += 1;
-                let scope = Scope::rows(Unit::Events, Some(alias));
-                let filter = self.unit_filter(&scope)?;
+                let scope = Scope::rows(Table::Events, Some(alias));
+                let filter = self.table_filter(&scope)?;
                 (
-                    Source::Unit {
-                        unit: Unit::Events,
+                    Source::Table {
+                        table: Table::Events,
                         alias: Some(alias),
                     },
                     filter,
@@ -268,22 +268,22 @@ impl Parser<'_> {
                     ));
                 }
                 // Bare words: a full-text search over events.
-                let scope = Scope::rows(Unit::Events, None);
+                let scope = Scope::rows(Table::Events, None);
                 let filter = self.filter(&scope)?;
                 (
-                    Source::Unit {
-                        unit: Unit::Events,
+                    Source::Table {
+                        table: Table::Events,
                         alias: None,
                     },
                     Some(filter),
                 )
             }
         } else if first.kind == Kind::Quoted {
-            let scope = Scope::rows(Unit::Events, None);
+            let scope = Scope::rows(Table::Events, None);
             let filter = self.filter(&scope)?;
             (
-                Source::Unit {
-                    unit: Unit::Events,
+                Source::Table {
+                    table: Table::Events,
                     alias: None,
                 },
                 Some(filter),
@@ -291,13 +291,13 @@ impl Parser<'_> {
         } else {
             return Err(QueryError::at(
                 first.at,
-                format!("a query starts with a unit or words, not `{}`", first.text),
+                format!("a query starts with a table or words, not `{}`", first.text),
             ));
         };
         if filter.as_ref().is_some_and(has_words) {
             ranked = true;
         }
-        let mut scope = Scope::rows(source.unit(), source.alias());
+        let mut scope = Scope::rows(source.table(), source.alias());
         let mut stages = Vec::new();
         while !self.at_end_of_query(nested) {
             let stage = self.clause(&mut scope)?;

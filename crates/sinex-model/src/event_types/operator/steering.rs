@@ -153,15 +153,15 @@ enum Table {
 /// values.
 #[derive(Clone, Debug, PartialEq, Serialize, JsonSchema, crate::EventPayload)]
 #[serde(deny_unknown_fields)]
-#[event(type = "steering.record", key = ["table", "record_id"], replace = newer, time = at, quality = intrinsic)]
-pub struct SteeringRecord {
+#[event(type = "steering.row", key = ["table", "record_id"], replace = newer, time = at, quality = intrinsic)]
+pub struct SteeringRow {
     table: Table,
     record_id: String,
     at: Option<Timestamp>,
     values: SteeringValues,
 }
 
-impl SteeringRecord {
+impl SteeringRow {
     /// Decode the row using its declared table, keeping missing and null
     /// fields.
     pub fn from_row(table: &str, values: Value) -> Result<Self, String> {
@@ -210,7 +210,7 @@ impl SteeringRecord {
     }
 }
 
-impl<'de> Deserialize<'de> for SteeringRecord {
+impl<'de> Deserialize<'de> for SteeringRow {
     fn deserialize<D: Deserializer<'de>>(de: D) -> Result<Self, D::Error> {
         #[derive(Deserialize)]
         #[serde(deny_unknown_fields)]

@@ -80,7 +80,7 @@ pub struct DrainInput<'a> {
     pub source: &'a str,
     pub class: Class,
     pub material: MaterialId,
-    /// Record bytes borrowed from memory or an owned staged file.
+    /// Record bytes borrowed from memory or an owned temporary file.
     pub bytes: RecordBytes<'a>,
     /// Framed records: byte ranges within `bytes`, in order.
     pub records: &'a [(usize, usize)],
@@ -198,7 +198,7 @@ impl<'a, P: Parser> Drainer<'a, P> {
             RecordBytes::Slice(bytes) => bytes.len() as u64,
             RecordBytes::File(file) => file
                 .metadata()
-                .map_err(|e| RecordError::new(format!("staged material: {e}")))?
+                .map_err(|e| RecordError::new(format!("temporary material file: {e}")))?
                 .len(),
             RecordBytes::Reader(reader) => reader.length(),
         };
@@ -249,7 +249,7 @@ impl<'a, P: Parser> Drainer<'a, P> {
                 let mut events = Vec::with_capacity(payloads.len());
                 let mut failure = None;
                 for (i, payload) in payloads.iter().enumerate() {
-                    let ordinal = match u16::try_from(i) {
+                    let output_index = match u16::try_from(i) {
                         Ok(o) => o,
                         Err(_) => {
                             failure = Some("record produced more than 65535 events".to_string());
@@ -258,7 +258,10 @@ impl<'a, P: Parser> Drainer<'a, P> {
                     };
                     match payload.build(
                         input.source,
-                        Origin::Record { location, ordinal },
+                        Origin::Record {
+                            location,
+                            output_index,
+                        },
                         order,
                         hash,
                         input.class,

@@ -13,7 +13,7 @@ use crate::drivers::sqlite_rows::SqliteRows;
 use crate::registry::{DeclaredSource, Driver, SourceSpec};
 use crate::{Parser, RecordError};
 use serde_json::{Map, Value};
-use sinex_model::event_types::operator::{LogEntry, SteeringRecord};
+use sinex_model::event_types::operator::{LogEntry, SteeringRow};
 use sinex_model::{Class, Timestamp};
 use std::path::PathBuf;
 
@@ -21,11 +21,11 @@ pub const RAW_LOG: SourceSpec = SourceSpec {
     name: "operator.raw-log",
     driver: Driver::AppendFile,
     excisable: false,
-    consumer: "the operator's quick notes, as primary data",
+    purpose: "the operator's quick notes, as primary data",
     class: Class::Open,
     parser: "operator-raw-log",
     parser_version: 2,
-    event_types: &["operator.log.entry"],
+    event_types: &["operator_log.entry"],
     framer: crate::Framer::incremental(frame_log),
 };
 
@@ -148,11 +148,11 @@ const fn steering_spec(parser: &'static str) -> SourceSpec {
         name: "operator.steering",
         driver: Driver::SqliteRows,
         excisable: false,
-        consumer: "commitments, forecasts and reviews the operator keeps",
+        purpose: "commitments, forecasts and reviews the operator keeps",
         class: Class::Open,
         parser,
         parser_version: 2,
-        event_types: &["steering.record"],
+        event_types: &["steering.row"],
         framer: crate::Framer::incremental(crate::drivers::append_file::lines),
     }
 }
@@ -164,18 +164,18 @@ pub struct SteeringParser {
 impl Parser for SteeringParser {
     type Record<'a> = Map<String, Value>;
     type Carry = ();
-    type Payload = SteeringRecord;
+    type Payload = SteeringRow;
 
     fn parse(
         &self,
         row: &Map<String, Value>,
         _: &(),
         _context: &crate::RecordContext<'_>,
-    ) -> Result<(Vec<SteeringRecord>, ()), RecordError> {
+    ) -> Result<(Vec<SteeringRow>, ()), RecordError> {
         let mut values = row.clone();
         values.remove("rowid");
-        let payload = SteeringRecord::from_row(self.table, Value::Object(values))
-            .map_err(RecordError::new)?;
+        let payload =
+            SteeringRow::from_row(self.table, Value::Object(values)).map_err(RecordError::new)?;
         Ok((vec![payload], ()))
     }
 }
@@ -204,9 +204,9 @@ pub fn steering_driver(path: PathBuf, host: String, table: &'static str) -> Sqli
     }
 }
 
-/// `--source raw-log=PATH`: the operator's raw log, read in the binding's
+/// `--read raw-log=PATH`: the operator's raw log, read in the binding's
 /// zone, recorded when it is planned.
-pub const RAW_LOG_KIND: crate::binding::InputKind = crate::binding::InputKind {
+pub const RAW_LOG_FORMAT: crate::binding::InputFormat = crate::binding::InputFormat {
     name: "raw-log",
     specs: || vec![&RAW_LOG],
     plan: Some(|input, settings| {
@@ -234,8 +234,8 @@ fn steering_table(b: &crate::binding::Binding) -> Result<&'static str, String> {
         .ok_or_else(|| format!("{}: not a steering table", b.parser))
 }
 
-/// `--source steering=PATH`: the steering store's three tables.
-pub const STEERING_KIND: crate::binding::InputKind = crate::binding::InputKind {
+/// `--read steering=PATH`: the steering store's three tables.
+pub const STEERING_FORMAT: crate::binding::InputFormat = crate::binding::InputFormat {
     name: "steering",
     specs: || STEERING.iter().collect(),
     plan: Some(|input, settings| {

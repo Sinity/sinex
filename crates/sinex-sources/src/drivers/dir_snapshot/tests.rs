@@ -30,7 +30,7 @@ fn paths(a: &Acquired) -> Vec<String> {
 }
 
 #[devkit::test]
-fn reads_changed_files_and_records_vanished_ones() {
+fn reads_changed_files_and_records_removed_ones() {
     let root = vault();
     let d = driver(root.clone(), 1 << 20);
     let mut state = DirState::default();
@@ -47,13 +47,13 @@ fn reads_changed_files_and_records_vanished_ones() {
     let next = d.poll(&cursor, &mut state).unwrap();
     assert_eq!(paths(&next), vec!["a.md", "sub/b.md"]);
     let m = next.material.as_ref().unwrap();
-    assert_eq!(record(m, 1), &vanished_marker("sub/b.md")[..]);
-    assert!(m.manifest["members"][1].get("vanished_at_ns").is_some());
+    assert_eq!(record(m, 1), &removed_marker("sub/b.md")[..]);
+    assert!(m.manifest["members"][1].get("removed_at_ns").is_some());
     assert_eq!(m.manifest["records"].as_array().unwrap().len(), 2);
 }
 
 #[devkit::test]
-fn a_walk_cut_by_the_part_size_does_not_record_vanished_files() {
+fn a_walk_cut_by_the_part_size_does_not_record_removed_files() {
     let root = vault();
     let mut state = DirState::default();
     let small = driver(root.clone(), 6);
@@ -93,7 +93,7 @@ fn a_touched_but_unchanged_file_is_skipped() {
 fn record(m: &NewMaterial, index: usize) -> Vec<u8> {
     use std::os::unix::fs::FileExt;
     let Some(StoredBytes::FramedFile(file)) = &m.stored else {
-        panic!("not staged")
+        panic!("not in a temporary file")
     };
     let (start, end) = m.records[index];
     let mut bytes = vec![0; end - start];
@@ -130,7 +130,7 @@ fn failed_storage_retries_the_same_unnamed_capture_before_new_source_changes() {
     assert_eq!(
         file.metadata().unwrap().nlink(),
         0,
-        "staging has no crash-leaking name"
+        "the temporary bundle has no name a crash could leave behind"
     );
     assert!(m.bytes.is_empty());
     assert!(
@@ -259,7 +259,7 @@ fn missing_directory_is_unavailable_and_accessible_empty_is_not() {
     let empty = d.poll(&Value::Null, &mut DirState::default()).unwrap();
     assert!(empty.observation.unavailable.is_none());
     assert!(empty.material.is_none());
-    assert!(empty.cursor_unchanged["last_complete_scan_ns"].is_number());
+    assert!(empty.cursor_without_material["last_complete_scan_ns"].is_number());
 }
 
 #[devkit::test]
@@ -348,7 +348,7 @@ fn a_restart_remembers_the_files_of_admitted_records_only() {
     assert_eq!(restored.files.get("a.md"), Some(&empty));
     assert!(!restored.files.contains_key("sub/b.md"));
     let mut malformed = material.manifest.clone();
-    malformed["members"][0]["vanished_at_ns"] = Value::Null;
+    malformed["members"][0]["removed_at_ns"] = Value::Null;
     assert!(
         DirState::default()
             .remember_members(&malformed, u64::MAX)
@@ -392,7 +392,7 @@ fn a_newer_bundle_decides_a_path_before_an_older_one() {
         .unwrap();
     assert!(
         !restored.files.contains_key("sub/b.md"),
-        "the newer bundle records the file as vanished"
+        "the newer bundle records the file as removed"
     );
 }
 
@@ -430,7 +430,7 @@ fn failed_disappearance_is_retried_before_a_reappeared_file() {
     assert_eq!(retry.material.as_ref().unwrap().id, id);
     assert_eq!(
         record(retry.material.as_ref().unwrap(), 0),
-        vanished_marker("a.md")
+        removed_marker("a.md")
     );
     let dir = tempfile::tempdir().unwrap();
     let sink = FixtureSink::open(dir.path()).unwrap();

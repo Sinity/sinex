@@ -135,7 +135,7 @@ impl Api {
                 evidence,
             } => {
                 let event = visible(&mut tx, &forecast).await?;
-                if event["kind"] != "forecast.issued" {
+                if event["event_type"] != "forecast.issued" {
                     return Err("forecast must cite a forecast.issued event".into());
                 }
                 let issued: Issued =

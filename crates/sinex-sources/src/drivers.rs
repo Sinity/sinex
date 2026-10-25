@@ -55,7 +55,7 @@ pub struct Acquired {
     pub material: Option<NewMaterial>,
     /// The cursor when no material was produced (an unchanged look, or only a
     /// partial record so far).
-    pub cursor_unchanged: Value,
+    pub cursor_without_material: Value,
 }
 
 impl Acquired {
@@ -76,7 +76,7 @@ impl Acquired {
 #[derive(Clone)]
 pub enum StoredBytes {
     File(std::path::PathBuf),
-    /// The framed bytes, staged in an unnamed owned file. The
+    /// The framed bytes, in an unnamed temporary file. The
     /// decoded record body is read from this file, not `NewMaterial::bytes`.
     FramedFile(std::sync::Arc<std::fs::File>),
     /// Owned decoded bytes kept across retries without copying the body.
@@ -146,7 +146,7 @@ pub struct NewMaterial {
     pub aligned: bool,
     /// Records the previous revision held that a rewrite dropped, by where
     /// they were read: each becomes a removed-at-source reading.
-    pub vanished: Vec<sinex_model::RecordLocation>,
+    pub removed: Vec<sinex_model::RecordLocation>,
     /// What the reader remembers once this material is fully admitted, when
     /// it saves its memory at this part ([`memory_due`]). It is committed
     /// with the cursor at the material's end.
@@ -223,7 +223,7 @@ pub struct Prepared<'s> {
     input: InputRef,
     observation: ObservationFacts,
     revision: RevisionChange,
-    cursor_unchanged: Value,
+    cursor_without_material: Value,
     carry: Value,
     limits: Limits,
     material: Option<(NewMaterial, MaterialRef)>,
@@ -301,7 +301,7 @@ pub fn prepare<'s>(
         input: acquired.input,
         observation: acquired.observation,
         revision: acquired.revision,
-        cursor_unchanged: acquired.cursor_unchanged,
+        cursor_without_material: acquired.cursor_without_material,
         carry,
         limits,
         material,
@@ -326,7 +326,7 @@ impl Prepared<'_> {
         memory: Option<sinex_model::ReaderMemory>,
     ) -> BatchKind {
         BatchKind::Source(Box::new(SourceProgress {
-            material_keys: Vec::new(),
+            data_keys: Vec::new(),
             binding: self.binding.clone(),
             input: self.input.clone(),
             observation,
@@ -347,7 +347,7 @@ impl Prepared<'_> {
                 run: self.run,
                 kind: self.progress(
                     None,
-                    self.cursor_unchanged.clone(),
+                    self.cursor_without_material.clone(),
                     self.carry.clone(),
                     self.observation.clone(),
                     self.revision,
@@ -443,9 +443,9 @@ impl Prepared<'_> {
                     memory,
                 ),
                 records: chunk.outcomes,
-                archive: if first && !m.vanished.is_empty() {
+                archive: if first && !m.removed.is_empty() {
                     vec![sinex_model::ArchiveRequest::RemovedAtSource {
-                        locations: m.vanished.clone(),
+                        locations: m.removed.clone(),
                     }]
                 } else {
                     vec![]
@@ -509,7 +509,7 @@ pub fn stored_records_from(
 
 /// The records framing finds in stored bytes, read in order without holding
 /// them all in memory.
-pub fn physical_records(
+pub fn record_ranges(
     bytes: &dyn crate::drain::RecordRead,
     framer: crate::Framer,
 ) -> std::io::Result<Vec<(usize, usize)>> {

@@ -15,7 +15,7 @@ use axum::routing::{get, post};
 use axum::{Json, Router};
 use serde::Deserialize;
 use serde_json::{Value, json};
-use sinex_model::query::{self, Expr, FieldRef, Op, Operand, Source, Stage, Unit};
+use sinex_model::query::{self, Expr, FieldRef, Op, Operand, Source, Stage, Table};
 use sinex_protocol::{Access, COMMANDS, DATA_NOTICE, Reply, Request};
 use sinex_store::query::Page;
 use std::net::SocketAddr;
@@ -249,8 +249,8 @@ async fn follow(
     };
     let follows_rows = matches!(
         bound.source,
-        Source::Unit {
-            unit: Unit::Events,
+        Source::Table {
+            table: Table::Events,
             ..
         }
     ) && !bound
@@ -295,7 +295,7 @@ async fn follow(
             let mut q = bound.clone();
             let after = Expr::Compare {
                 lhs: Operand::Field(FieldRef::Field(
-                    Unit::Events
+                    Table::Events
                         .field("commit_seq")
                         .expect("events have commit_seq"),
                 )),
@@ -308,7 +308,7 @@ async fn follow(
             });
             q.stages.push(Stage::Sort(vec![query::SortKey {
                 key: query::SortBy::Operand(Operand::Field(FieldRef::Field(
-                    Unit::Events
+                    Table::Events
                         .field("commit_seq")
                         .expect("events have commit_seq"),
                 ))),

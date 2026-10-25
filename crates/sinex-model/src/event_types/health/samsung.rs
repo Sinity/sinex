@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
-pub struct Common {
+pub struct SamsungFields {
     #[serde(default, deserialize_with = "supplied")]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub start_time: Option<Option<Scalar>>,
@@ -28,7 +28,7 @@ pub struct Common {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct Stress {
     #[serde(flatten)]
-    pub common: Common,
+    pub common: SamsungFields,
     #[serde(default, deserialize_with = "supplied")]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub max_score: Option<Option<Scalar>>,
@@ -51,7 +51,7 @@ pub struct Stress {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct Steps {
     #[serde(flatten)]
-    pub common: Common,
+    pub common: SamsungFields,
     #[serde(default, deserialize_with = "supplied")]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub count: Option<Option<Scalar>>,
@@ -68,7 +68,7 @@ pub struct Steps {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct Hrv {
     #[serde(flatten)]
-    pub common: Common,
+    pub common: SamsungFields,
     #[serde(default, deserialize_with = "supplied")]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub score: Option<Option<Scalar>>,
@@ -82,7 +82,7 @@ pub struct Hrv {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct HeartRate {
     #[serde(flatten)]
-    pub common: Common,
+    pub common: SamsungFields,
     #[serde(default, deserialize_with = "supplied")]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub heart_rate: Option<Option<Scalar>>,
@@ -105,7 +105,7 @@ pub struct HeartRate {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct Oxygen {
     #[serde(flatten)]
-    pub common: Common,
+    pub common: SamsungFields,
     #[serde(default, deserialize_with = "supplied")]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub spo2: Option<Option<Scalar>>,
@@ -125,7 +125,7 @@ pub struct Oxygen {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct Respiratory {
     #[serde(flatten)]
-    pub common: Common,
+    pub common: SamsungFields,
     #[serde(default, deserialize_with = "supplied")]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub average: Option<Option<Scalar>>,
@@ -145,7 +145,7 @@ pub struct Respiratory {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct SkinTemperature {
     #[serde(flatten)]
-    pub common: Common,
+    pub common: SamsungFields,
     #[serde(default, deserialize_with = "supplied")]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub temperature: Option<Option<Scalar>>,
@@ -165,7 +165,7 @@ pub struct SkinTemperature {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct Sleep {
     #[serde(flatten)]
-    pub common: Common,
+    pub common: SamsungFields,
     #[serde(default, deserialize_with = "supplied")]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub deviceuuid: Option<Option<Scalar>>,
@@ -197,7 +197,7 @@ pub struct Sleep {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct SleepCombined {
     #[serde(flatten)]
-    pub common: Common,
+    pub common: SamsungFields,
     #[serde(default, deserialize_with = "supplied")]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub deviceuuid: Option<Option<Scalar>>,
@@ -244,7 +244,7 @@ pub struct SleepCombined {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct SleepStage {
     #[serde(flatten)]
-    pub common: Common,
+    pub common: SamsungFields,
     #[serde(default, deserialize_with = "supplied")]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub stage: Option<Option<Scalar>>,
@@ -258,7 +258,7 @@ pub struct SleepStage {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct Snoring {
     #[serde(flatten)]
-    pub common: Common,
+    pub common: SamsungFields,
     #[serde(default, deserialize_with = "supplied")]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub duration: Option<Option<Scalar>>,
@@ -269,7 +269,7 @@ pub struct Snoring {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct Movement {
     #[serde(flatten)]
-    pub common: Common,
+    pub common: SamsungFields,
     #[serde(default, deserialize_with = "supplied")]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub binning_data: Option<Option<Binning>>,
@@ -280,7 +280,7 @@ pub struct Movement {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct Nap {
     #[serde(flatten)]
-    pub common: Common,
+    pub common: SamsungFields,
     #[serde(default, deserialize_with = "supplied")]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub score_before: Option<Option<Scalar>>,
@@ -297,7 +297,7 @@ pub struct Nap {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct Vitality {
     #[serde(flatten)]
-    pub common: Common,
+    pub common: SamsungFields,
     #[serde(default, deserialize_with = "supplied")]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub activity_score: Option<Option<Scalar>>,
@@ -323,7 +323,7 @@ pub struct Vitality {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct Weight {
     #[serde(flatten)]
-    pub common: Common,
+    pub common: SamsungFields,
     #[serde(default, deserialize_with = "supplied")]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub weight: Option<Option<Scalar>>,
@@ -355,7 +355,7 @@ pub struct Weight {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct Floors {
     #[serde(flatten)]
-    pub common: Common,
+    pub common: SamsungFields,
     #[serde(default, deserialize_with = "supplied")]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub floor: Option<Option<Scalar>>,
@@ -366,7 +366,7 @@ pub struct Floors {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct Mood {
     #[serde(flatten)]
-    pub common: Common,
+    pub common: SamsungFields,
     #[serde(default, deserialize_with = "supplied")]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub mood_type: Option<Option<Scalar>>,
@@ -386,7 +386,7 @@ pub struct Mood {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct ActivityDay {
     #[serde(flatten)]
-    pub common: Common,
+    pub common: SamsungFields,
     #[serde(default, deserialize_with = "supplied")]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub active_time: Option<Option<Scalar>>,
@@ -418,7 +418,7 @@ pub struct ActivityDay {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct Calories {
     #[serde(flatten)]
-    pub common: Common,
+    pub common: SamsungFields,
     #[serde(default, deserialize_with = "supplied")]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub active_calorie: Option<Option<Scalar>>,
@@ -438,7 +438,7 @@ pub struct Calories {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct Ecg {
     #[serde(flatten)]
-    pub common: Common,
+    pub common: SamsungFields,
     #[serde(default, deserialize_with = "supplied")]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub mean_heart_rate: Option<Option<Scalar>>,

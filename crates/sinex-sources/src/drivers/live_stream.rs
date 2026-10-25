@@ -269,7 +269,7 @@ impl LiveStream {
                 },
                 revision: RevisionChange::Same,
                 material: None,
-                cursor_unchanged: cursor.clone(),
+                cursor_without_material: cursor.clone(),
             });
         };
         if cursor.is_null() {
@@ -313,15 +313,15 @@ impl LiveStream {
                 // A live stream only grows; a segment rewritten under capture
                 // would be a bug in capture, not a source revision.
                 acquired.revision = RevisionChange::Appended;
-                acquired.cursor_unchanged = Value::Null;
+                acquired.cursor_without_material = Value::Null;
                 return Ok(acquired);
             }
             // Nothing new here. If capture has moved on to a later segment,
             // this one is closed: continue with the next.
             let Some(next) = present.iter().copied().find(|s| *s > state.segment) else {
-                let inner = acquired.cursor_unchanged.clone();
+                let inner = acquired.cursor_without_material.clone();
                 acquired.input = self.input.clone();
-                acquired.cursor_unchanged =
+                acquired.cursor_without_material =
                     serde_json::to_value(Cursor { inner, ..state }).expect("cursor serializes");
                 return Ok(acquired);
             };

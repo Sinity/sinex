@@ -1,22 +1,20 @@
-//! Which item an acquisition belongs to. An acquisition is one copy of a file
+//! Which item a copy belongs to. A copy is one copy of a file
 //! the library scan saw at a path; an item is the continuing thing those
 //! copies are of. Equal bytes never merge items by themselves, and a path
 //! alone never shows continuity:
 //!
-//! - an acquisition that already belongs to an item, with the bytes the item
+//! - a copy that already belongs to an item, with the bytes the item
 //!   holds, changes nothing;
 //! - a rename (the scan saw the same file, device and inode, with the same
-//!   bytes at the old path) moves the item's acquisition to the new path;
+//!   bytes at the old path) moves the item's copy to the new path;
 //! - the same file changing in place (`previous_content` is the item's
 //!   bytes) is a new revision of that item;
 //! - anything else is a new item, with its original rendition.
 use sinex_model::Timestamp;
-use sinex_model::event_types::library::{
-    Acquisition, Item, LibraryRecord, Rendition, RenditionRole,
-};
+use sinex_model::event_types::library::{FileCopy, Item, LibraryRecord, Rendition, RenditionRole};
 
-/// An acquisition's key in an item's `acquisitions`.
-pub fn acquisition_key(host: &str, path: &str) -> String {
+/// A copy's key in an item's `copies`.
+pub fn copy_key(host: &str, path: &str) -> String {
     format!("{host}:{path}")
 }
 
@@ -32,7 +30,7 @@ fn label(path: &str) -> Option<String> {
         .map(str::to_owned)
 }
 
-fn original(item: &Item, a: &Acquisition, actor: &str, at: Timestamp) -> Rendition {
+fn original(item: &Item, a: &FileCopy, actor: &str, at: Timestamp) -> Rendition {
     Rendition {
         rendition: new_id(),
         item: item.item.clone(),
@@ -51,20 +49,20 @@ fn original(item: &Item, a: &Acquisition, actor: &str, at: Timestamp) -> Renditi
     }
 }
 
-/// The library records an acquisition calls for. `item_at` finds the item an
-/// acquisition key (`host:path`) belongs to, if any.
+/// The library records a copy calls for. `item_at` finds the item an
+/// copy key (`host:path`) belongs to, if any.
 pub fn records_for(
-    a: &Acquisition,
+    a: &FileCopy,
     item_at: impl Fn(&str) -> Option<Item>,
     actor: &str,
     at: Timestamp,
 ) -> Vec<LibraryRecord> {
     if a.vanished_at.is_some() {
-        // Availability is read from acquisitions; a missing copy changes no
+        // Availability is read from copies; a missing copy changes no
         // item, and an inaccessible root never means deletion.
         return Vec::new();
     }
-    let here = acquisition_key(&a.host, &a.path);
+    let here = copy_key(&a.host, &a.path);
     if let Some(existing) = item_at(&here) {
         if existing.content == a.content {
             return Vec::new();
@@ -86,7 +84,7 @@ pub fn records_for(
         // the old item no longer has a copy here, and these bytes are a new
         // item.
         let mut old = existing.clone();
-        old.acquisitions.retain(|k| *k != here);
+        old.copies.retain(|k| *k != here);
         old.by = actor.to_owned();
         old.at = at;
         let mut out = vec![LibraryRecord::Item(old)];
@@ -94,13 +92,13 @@ pub fn records_for(
         return out;
     }
     if let Some(from) = &a.moved_from
-        && let Some(existing) = item_at(&acquisition_key(&a.host, from))
+        && let Some(existing) = item_at(&copy_key(&a.host, from))
         && existing.content == a.content
     {
         let mut item = existing.clone();
-        let old = acquisition_key(&a.host, from);
-        item.acquisitions.retain(|k| *k != old);
-        item.acquisitions.push(here);
+        let old = copy_key(&a.host, from);
+        item.copies.retain(|k| *k != old);
+        item.copies.push(here);
         item.by = actor.to_owned();
         item.at = at;
         return vec![LibraryRecord::Item(item)];
@@ -108,14 +106,14 @@ pub fn records_for(
     new_item(a, actor, at)
 }
 
-fn new_item(a: &Acquisition, actor: &str, at: Timestamp) -> Vec<LibraryRecord> {
+fn new_item(a: &FileCopy, actor: &str, at: Timestamp) -> Vec<LibraryRecord> {
     let item = Item {
         item: new_id(),
         revision: 1,
         replaces: None,
         content: a.content.clone(),
         media_type: a.media_type.clone(),
-        acquisitions: vec![acquisition_key(&a.host, &a.path)],
+        copies: vec![copy_key(&a.host, &a.path)],
         label: label(&a.path),
         by: actor.to_owned(),
         at,

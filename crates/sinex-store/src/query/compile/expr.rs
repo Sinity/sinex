@@ -4,21 +4,21 @@ use super::*;
 
 impl Compiler<'_> {
     /// The SQL of a field, and what kind of value it is.
-    pub(super) fn field(&self, cols: &Cols, f: &FieldRef) -> Result<(Frag, Kind)> {
+    pub(super) fn field(&self, cols: &Cols, f: &FieldRef) -> Result<(SqlFragment, Kind)> {
         match (cols, f) {
-            (Cols::Base { unit, alias, .. }, FieldRef::Field(field)) => {
+            (Cols::Base { table, alias, .. }, FieldRef::Field(field)) => {
                 let sql = alias
                     .filter(|a| a.field(field.name).is_some())
                     .and_then(|a| fields::alias_field(a.name, field.name))
-                    .or_else(|| fields::field(*unit, field.name))
+                    .or_else(|| fields::field(*table, field.name))
                     .ok_or_else(|| invalid(format!("no SQL for field {}", field.name)))?;
                 Ok((
-                    Frag::text(Self::template(cols, &sql)),
+                    SqlFragment::text(Self::template(cols, &sql)),
                     Kind::Typed(field.ty),
                 ))
             }
             (Cols::Base { .. }, FieldRef::Payload(path)) => {
-                let mut f = Frag::text(Self::template(cols, "({t}.payload #> "));
+                let mut f = SqlFragment::text(Self::template(cols, "({t}.payload #> "));
                 f.param(V::String(Some(text_array(path)))).push("::text[])");
                 Ok((f, Kind::Json))
             }
@@ -26,28 +26,29 @@ impl Compiler<'_> {
                 "`{name}` names a group column outside a grouping"
             ))),
             // A group column, or a column a time join added.
-            (Cols::Named { r, .. }, FieldRef::Group(name)) => {
-                Ok((Frag::text(format!("{r}.{}", quote(name))), Kind::Untyped))
-            }
+            (Cols::Named { r, .. }, FieldRef::Group(name)) => Ok((
+                SqlFragment::text(format!("{r}.{}", quote(name))),
+                Kind::Untyped,
+            )),
             (Cols::Named { r, .. }, FieldRef::Field(field)) => Ok((
-                Frag::text(format!("{r}.{}", quote(field.name))),
+                SqlFragment::text(format!("{r}.{}", quote(field.name))),
                 Kind::Typed(field.ty),
             )),
             (Cols::Named { r, .. }, FieldRef::Payload(_)) => Ok((
-                Frag::text(format!("{r}.{}", quote(&column_name(f)))),
+                SqlFragment::text(format!("{r}.{}", quote(&column_name(f)))),
                 Kind::Json,
             )),
         }
     }
 
-    pub(super) fn time_fn(&self, func: TimeFn, t: Frag) -> Frag {
-        let mut local = Frag::text("(");
+    pub(super) fn time_fn(&self, func: TimeFn, t: SqlFragment) -> SqlFragment {
+        let mut local = SqlFragment::text("(");
         local
             .append(t)
             .push(" AT TIME ZONE ")
             .param(V::String(Some(self.ctx.zone_name())))
             .push(")");
-        let mut shifted = Frag::text("(");
+        let mut shifted = SqlFragment::text("(");
         shifted
             .append(local.clone())
             .push(" - ")
@@ -57,7 +58,7 @@ impl Compiler<'_> {
                 self.ctx.day_start.minute()
             ))))
             .push("::interval)");
-        let mut out = Frag::new();
+        let mut out = SqlFragment::new();
         match func {
             TimeFn::Hour => {
                 out.push("extract(hour from ")
@@ -85,7 +86,7 @@ impl Compiler<'_> {
         out
     }
 
-    pub(super) fn operand(&self, cols: &Cols, o: &Operand) -> Result<(Frag, Kind)> {
+    pub(super) fn operand(&self, cols: &Cols, o: &Operand) -> Result<(SqlFragment, Kind)> {
         match o {
             Operand::Field(f) => self.field(cols, f),
             Operand::TimeFn(func, f) => {
@@ -96,8 +97,8 @@ impl Compiler<'_> {
     }
 
     /// A payload JSON value read as the type of `v`.
-    pub(super) fn json_as(j: Frag, v: &Value) -> Frag {
-        let mut out = Frag::new();
+    pub(super) fn json_as(j: SqlFragment, v: &Value) -> SqlFragment {
+        let mut out = SqlFragment::new();
         match v {
             Value::Integer(_) | Value::Number(_) => {
                 out.push("(CASE WHEN jsonb_typeof(")
@@ -120,7 +121,13 @@ impl Compiler<'_> {
         out
     }
 
-    pub(super) fn compare(&self, lhs: Frag, kind: Kind, op: Op, v: &Value) -> Result<Frag> {
+    pub(super) fn compare(
+        &self,
+        lhs: SqlFragment,
+        kind: Kind,
+        op: Op,
+        v: &Value,
+    ) -> Result<SqlFragment> {
         if let Value::List(items) = v {
             let parts = items
                 .iter()
@@ -128,19 +135,19 @@ impl Compiler<'_> {
                 .collect::<Result<Vec<_>>>()?;
             // `= [a, b]` is any of; `!= [a, b]` is none of.
             let sep = if op == Op::Ne { " AND " } else { " OR " };
-            return Ok(Frag::join(parts, sep).parenthesized());
+            return Ok(SqlFragment::join(parts, sep).parenthesized());
         }
         if kind == Kind::Typed(FieldType::PathList) {
             if !matches!(op, Op::Eq | Op::Ne | Op::Prefix) {
                 return Err(invalid("path lists compare with = != or ^"));
             }
             let comparison = self.compare(
-                Frag::text("member.path"),
+                SqlFragment::text("member.path"),
                 Kind::Typed(FieldType::Path),
                 if op == Op::Ne { Op::Eq } else { op },
                 v,
             )?;
-            let mut out = Frag::text("(CASE WHEN ");
+            let mut out = SqlFragment::text("(CASE WHEN ");
             out.append(lhs.clone()).push(" IS NULL THEN NULL ELSE ");
             if op == Op::Ne {
                 out.push("NOT ");
@@ -157,7 +164,7 @@ impl Compiler<'_> {
         } else {
             lhs
         };
-        let mut out = Frag::text("(");
+        let mut out = SqlFragment::text("(");
         match (op, v, kind) {
             (Op::Eq | Op::Ne, Value::Glob(g), _) => {
                 let pattern = like_escape(g).replace('*', "%");
@@ -226,26 +233,27 @@ impl Compiler<'_> {
         Ok(out)
     }
 
-    pub(super) fn id_of(cols: &Cols) -> Result<Frag> {
+    pub(super) fn id_of(cols: &Cols) -> Result<SqlFragment> {
         match cols {
-            Cols::Base { unit, .. } if unit.is_events() => {
-                Ok(Frag::text(Self::template(cols, "{t}.id")))
+            Cols::Base { table, .. } if table.is_events() => {
+                Ok(SqlFragment::text(Self::template(cols, "{t}.id")))
             }
             Cols::Named {
                 r,
-                unit,
+                table,
                 grouped: false,
-            } if unit.is_events() => Ok(Frag::text(format!("{r}.\"_id\""))),
+            } if table.is_events() => Ok(SqlFragment::text(format!("{r}.\"_id\""))),
             _ => Err(invalid(
                 "full-text words search events; this relation has no event rows",
             )),
         }
     }
 
-    pub(super) fn words(&self, cols: &Cols, w: &Words) -> Result<Frag> {
+    pub(super) fn words(&self, cols: &Cols, w: &Words) -> Result<SqlFragment> {
         let id = Self::id_of(cols)?;
-        let mut out =
-            Frag::text("EXISTS (SELECT 1 FROM core.visible_search_text s WHERE s.event_id = ");
+        let mut out = SqlFragment::text(
+            "EXISTS (SELECT 1 FROM core.visible_search_text s WHERE s.event_id = ",
+        );
         out.append(id).push(" AND ");
         if w.prefix {
             let mut pattern = String::from("(^| )");
@@ -265,10 +273,10 @@ impl Compiler<'_> {
         Ok(out)
     }
 
-    pub(super) fn expr(&self, cols: &Cols, e: &Expr) -> Result<Frag> {
+    pub(super) fn expr(&self, cols: &Cols, e: &Expr) -> Result<SqlFragment> {
         Ok(match e {
             Expr::And(a, b) => {
-                let mut f = Frag::text("(");
+                let mut f = SqlFragment::text("(");
                 f.append(self.expr(cols, a)?)
                     .push(" AND ")
                     .append(self.expr(cols, b)?)
@@ -276,7 +284,7 @@ impl Compiler<'_> {
                 f
             }
             Expr::Or(a, b) => {
-                let mut f = Frag::text("(");
+                let mut f = SqlFragment::text("(");
                 f.append(self.expr(cols, a)?)
                     .push(" OR ")
                     .append(self.expr(cols, b)?)
@@ -284,7 +292,7 @@ impl Compiler<'_> {
                 f
             }
             Expr::Not(a) => {
-                let mut f = Frag::text("(NOT ");
+                let mut f = SqlFragment::text("(NOT ");
                 f.append(self.expr(cols, a)?).push(")");
                 f
             }
@@ -294,7 +302,7 @@ impl Compiler<'_> {
             }
             Expr::Exists(o) => {
                 let (l, kind) = self.operand(cols, o)?;
-                let mut f = Frag::text("(");
+                let mut f = SqlFragment::text("(");
                 if kind == Kind::Json {
                     f.append(l.clone())
                         .push(" IS NOT NULL AND jsonb_typeof(")
@@ -309,7 +317,7 @@ impl Compiler<'_> {
             Expr::Words(w) => self.words(cols, w)?,
             Expr::Within { lhs, from, to } => {
                 let (l, _) = self.operand(cols, lhs)?;
-                let mut f = Frag::text("(");
+                let mut f = SqlFragment::text("(");
                 f.append(l.clone())
                     .push(" >= ")
                     .param(time_value(*from)?)
@@ -323,7 +331,7 @@ impl Compiler<'_> {
             Expr::TimeDiff { a, b, op, seconds } => {
                 let (a, _) = self.field(cols, a)?;
                 let (b, _) = self.field(cols, b)?;
-                let mut f = Frag::text("(extract(epoch from (");
+                let mut f = SqlFragment::text("(extract(epoch from (");
                 f.append(a)
                     .push(" - ")
                     .append(b)
@@ -339,14 +347,14 @@ impl Compiler<'_> {
 
     /// The conditions every base relation carries: live at the commit
     /// position, and the alias's kinds.
-    pub(super) fn base_conditions(&self, cols: &Cols) -> Vec<Frag> {
-        let Cols::Base { unit, alias, .. } = cols else {
+    pub(super) fn base_conditions(&self, cols: &Cols) -> Vec<SqlFragment> {
+        let Cols::Base { table, alias, .. } = cols else {
             return Vec::new();
         };
         let mut out = Vec::new();
-        match unit {
-            Unit::Events => {
-                let mut f = Frag::text(Self::template(cols, "{t}.commit_seq <= "));
+        match table {
+            Table::Events => {
+                let mut f = SqlFragment::text(Self::template(cols, "{t}.commit_seq <= "));
                 f.param(V::BigInt(Some(self.seq))).push(Self::template(
                     cols,
                     " AND NOT audit.is_archived_at({t}.id, ",
@@ -354,8 +362,8 @@ impl Compiler<'_> {
                 f.param(V::BigInt(Some(self.seq))).push(")");
                 out.push(f);
             }
-            Unit::Archive => {
-                let mut f = Frag::text(Self::template(cols, "{t}.commit_seq <= "));
+            Table::Archive => {
+                let mut f = SqlFragment::text(Self::template(cols, "{t}.commit_seq <= "));
                 f.param(V::BigInt(Some(self.seq)))
                     .push(Self::template(cols, " AND {a}.archived AND {a}.commit_seq <= "))
                     .param(V::BigInt(Some(self.seq)))
@@ -366,7 +374,7 @@ impl Compiler<'_> {
             _ => {}
         }
         if let Some(a) = alias {
-            let mut f = Frag::text(Self::template(cols, "{t}.event_type = ANY("));
+            let mut f = SqlFragment::text(Self::template(cols, "{t}.event_type = ANY("));
             let kinds: Vec<String> = a.kinds.iter().map(|k| k.to_string()).collect();
             f.param(V::String(Some(text_array(&kinds))))
                 .push("::text[])");
@@ -374,7 +382,7 @@ impl Compiler<'_> {
             if a.open_only
                 && let Some(open) = fields::alias_field(a.name, "open")
             {
-                out.push(Frag::text(format!(
+                out.push(SqlFragment::text(format!(
                     "({} IS TRUE)",
                     Self::template(cols, &open)
                 )));
@@ -383,28 +391,28 @@ impl Compiler<'_> {
         out
     }
 
-    pub(super) fn main_time(&self, cols: &Cols) -> Result<Frag> {
-        let unit = Self::unit_of(cols);
-        let field = unit
-            .field(unit.main_time())
-            .expect("every unit's main time is a field");
+    pub(super) fn main_time(&self, cols: &Cols) -> Result<SqlFragment> {
+        let table = Self::table_of(cols);
+        let field = table
+            .field(table.main_time())
+            .expect("every table's main time is a field");
         Ok(self.field(cols, &FieldRef::Field(field))?.0)
     }
 
-    pub(super) fn span(&self, cols: &Cols) -> Option<(Frag, Frag, bool)> {
-        let Cols::Base { unit, alias, .. } = cols else {
+    pub(super) fn span(&self, cols: &Cols) -> Option<(SqlFragment, SqlFragment, bool)> {
+        let Cols::Base { table, alias, .. } = cols else {
             return None;
         };
-        let (s, e, inclusive) = fields::span(*unit, alias.map(|a| a.name))?;
+        let (s, e, inclusive) = fields::span(*table, alias.map(|a| a.name))?;
         Some((
-            Frag::text(Self::template(cols, &s)),
-            Frag::text(Self::template(cols, &e)),
+            SqlFragment::text(Self::template(cols, &s)),
+            SqlFragment::text(Self::template(cols, &e)),
             inclusive,
         ))
     }
 
-    pub(super) fn rank(&self, cols: &Cols, words: &[String]) -> Frag {
-        let mut f = Frag::text(Self::template(
+    pub(super) fn rank(&self, cols: &Cols, words: &[String]) -> SqlFragment {
+        let mut f = SqlFragment::text(Self::template(
             cols,
             "(SELECT ts_rank(s.tsv, plainto_tsquery('simple', ",
         ));
@@ -416,8 +424,9 @@ impl Compiler<'_> {
         f
     }
 
-    pub(super) fn snippet(&self, cols: &Cols, words: &[String]) -> Frag {
-        let mut f = Frag::text("(SELECT ts_headline('simple', s.text, plainto_tsquery('simple', ");
+    pub(super) fn snippet(&self, cols: &Cols, words: &[String]) -> SqlFragment {
+        let mut f =
+            SqlFragment::text("(SELECT ts_headline('simple', s.text, plainto_tsquery('simple', ");
         f.param(V::String(Some(words.join(" ")))).push(Self::template(
             cols,
             "), 'MaxFragments=2, MaxWords=24, MinWords=6, StartSel=[, StopSel=]') FROM core.visible_search_text s WHERE s.event_id = {t}.id)",

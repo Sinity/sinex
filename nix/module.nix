@@ -44,7 +44,7 @@ let
   };
 
   sourceOption = spec: {
-    enable = mkEnableOption "the ${spec.name} source (${spec.driver}; read by ${spec.consumer})";
+    enable = mkEnableOption "the ${spec.name} source (${concatStringsSep ", " spec.drivers}; for ${spec.purpose})";
     paths = mkOption {
       type = types.listOf types.str;
       default = [ ];
@@ -55,10 +55,10 @@ let
       default = spec.class;
       description = "Privacy class of ${spec.name}'s events.";
     };
-    kind = mkOption {
+    format = mkOption {
       type = types.nullOr types.str;
       default = null;
-      description = "The kind to read ${spec.name} with when several kinds read it (`sinnix-lake` for a lake lane); the first registered when null.";
+      description = "The format to read ${spec.name} with: one of ${concatStringsSep ", " spec.formats}; the first when null.";
     };
     zone = mkOption {
       type = types.nullOr types.str;
@@ -92,7 +92,7 @@ in
       default = "${cfg.stateDir}/store";
       description = ''
         The content store: the exact bytes events are read from. Producers on
-        this host write their spool under it through the store's group; spool
+        this host write their frame bytes under it through the store's group; frame
         files or directories with other ownership or modes are refused.
       '';
     };
@@ -142,7 +142,7 @@ in
         description = "Where NATS listens. A satellite capture node needs an address it can reach (a tailnet address).";
       };
       port = mkOption { type = types.port; default = 4222; };
-      subjects = mkOption { type = types.str; default = "sinex"; };
+      subjectRoot = mkOption { type = types.str; default = "sinex"; description = "The token every NATS subject starts with."; };
       daemonPasswordFile = mkOption {
         type = types.path;
         description = "The daemon user's NATS password (an agenix secret readable by the sinex user).";
@@ -200,10 +200,10 @@ in
         default = false;
         description = "Capture the clipboard and primary selection (content marked secret by its owner is not read).";
       };
-      producers = mkOption {
+      integrations = mkOption {
         type = types.bool;
         default = false;
-        description = "Listen on the producer socket for the Neovim and kitty integrations.";
+        description = "Listen on the integration socket for the Neovim and kitty integrations.";
       };
       screenEvery = mkOption {
         type = types.nullOr types.ints.positive;
@@ -256,7 +256,7 @@ in
       example = "sinex-host.tailnet:4222";
       description = "The main host's NATS address.";
     };
-    subjects = mkOption { type = types.str; default = "sinex"; };
+    subjectRoot = mkOption { type = types.str; default = "sinex"; description = "The token every NATS subject starts with."; };
     producer = mkOption { type = types.str; default = "capture-${config.networking.hostName}"; };
     passwordFile = mkOption { type = types.path; };
     user = mkOption {
@@ -323,7 +323,7 @@ in
       systemd.tmpfiles.rules = [
         "d ${cfg.stateDir} 0750 ${cfg.user} ${cfg.group} -"
         # Group mode 2770 marks the store root as shared with producers on this
-        # host; they write only under incoming/producers (the spool).
+        # host; they write only under incoming/producers (frame directories).
         "d ${cfg.storeDir} 2770 ${cfg.user} ${cfg.group} -"
         "d ${cfg.storeDir}/incoming 2770 ${cfg.user} ${cfg.group} -"
         "d ${cfg.storeDir}/incoming/producers 2770 ${cfg.user} ${cfg.group} -"
@@ -413,7 +413,7 @@ in
               echo 'tls { cert_file: "${cfg.nats.tls.certFile}", key_file: "${cfg.nats.tls.keyFile}" }'
             ''}
             ${cfg.package}/bin/sinexd admin nats-authorization \
-              --subjects ${escapeShellArg cfg.nats.subjects} \
+              --subject-root ${escapeShellArg cfg.nats.subjectRoot} \
               --daemon-password-file "$CREDENTIALS_DIRECTORY/daemon" \
               ${concatMapStringsSep " " (name: "--producer ${escapeShellArg name}=\"$CREDENTIALS_DIRECTORY/producer-${name}\"") (lib.attrNames producers)}
           } > "$conf"
@@ -456,7 +456,7 @@ in
             --database ${escapeShellArg dbUrl} \
             --store ${escapeShellArg cfg.storeDir} \
             --nats "$nats_url" \
-            --subjects ${escapeShellArg cfg.nats.subjects} \
+            --subject-root ${escapeShellArg cfg.nats.subjectRoot} \
             --host ${escapeShellArg cfg.host} \
             --socket ${escapeShellArg cfg.api.socket} \
             ${optionalString (cfg.api.listen != null) "--listen ${escapeShellArg cfg.api.listen}"} \
@@ -498,7 +498,7 @@ in
           ${natsUrlScript { user = cfg.session.producer; passwordFile = cfg.session.passwordFile; address = natsListen; }}
           exec ${cfg.package}/bin/sinex-session run \
             --nats "$nats_url" \
-            --subjects ${escapeShellArg cfg.nats.subjects} \
+            --subject-root ${escapeShellArg cfg.nats.subjectRoot} \
             --producer ${escapeShellArg cfg.session.producer} \
             --store ${escapeShellArg cfg.storeDir} \
             --state "$HOME/.local/state/sinex-session" \
@@ -507,7 +507,7 @@ in
             ${optionalString cfg.session.notifications "--notifications"} \
             ${optionalString cfg.session.players "--players"} \
             ${optionalString cfg.session.clipboard "--clipboard"} \
-            ${optionalString cfg.session.producers "--producers"} \
+            ${optionalString cfg.session.integrations "--integrations"} \
             ${optionalString (cfg.session.screenEvery != null) "--screen-every ${toString cfg.session.screenEvery}"} \
             ${optionalString (cfg.session.audioSegment != null) "--audio-segment ${toString cfg.session.audioSegment}"} \
             ${concatMapStringsSep " " (d: "--watch ${escapeShellArg d}") cfg.session.watch}
@@ -522,12 +522,12 @@ in
         startAt = cfg.backup.startAt;
         serviceConfig = { Type = "oneshot"; User = cfg.user; Group = cfg.group; UMask = "0077"; };
         script = ''
-          ${postgres}/bin/pg_dump -d sinex -Fc --exclude-table-data=privacy.material_keys \
+          ${postgres}/bin/pg_dump -d sinex -Fc --exclude-table-data=privacy.data_keys \
             -f ${cfg.backup.dumpDir}/sinex.dump.tmp
           mv ${cfg.backup.dumpDir}/sinex.dump.tmp ${cfg.backup.dumpDir}/sinex.dump
-          ${postgres}/bin/pg_dump -d sinex -Fc --data-only -t privacy.material_keys \
-            -f ${cfg.backup.keysDir}/material-keys.dump.tmp
-          mv ${cfg.backup.keysDir}/material-keys.dump.tmp ${cfg.backup.keysDir}/material-keys.dump
+          ${postgres}/bin/pg_dump -d sinex -Fc --data-only -t privacy.data_keys \
+            -f ${cfg.backup.keysDir}/data-keys.dump.tmp
+          mv ${cfg.backup.keysDir}/data-keys.dump.tmp ${cfg.backup.keysDir}/data-keys.dump
         '';
       };
 
@@ -578,7 +578,7 @@ in
           ${natsUrlScript { user = node.producer; passwordFile = node.passwordFile; address = node.nats; }}
           exec ${node.package}/bin/sinex-capture \
             --nats "$nats_url" \
-            --subjects ${escapeShellArg node.subjects} \
+            --subject-root ${escapeShellArg node.subjectRoot} \
             --producer ${escapeShellArg node.producer} \
             --store ${escapeShellArg node.store} \
             --state ${escapeShellArg node.stateDir} \

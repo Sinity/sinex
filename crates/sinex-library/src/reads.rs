@@ -5,10 +5,10 @@
 //! library's event types and fields.
 use serde::de::DeserializeOwned;
 use sinex_model::event_types::library::{
-    Acquisition, Assignment, Collection, Comparison, Entry, Item, Rating, Rendition, View,
+    Assignment, Collection, Comparison, Entry, FileCopy, Item, Rating, Rendition, View,
 };
 use sinex_store::Connection as Conn;
-use sinex_store::payloads::{self, State};
+use sinex_store::payloads::{self, RecordStates};
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
@@ -27,57 +27,58 @@ fn decode<T: DeserializeOwned>(kind: &'static str, rows: Vec<serde_json::Value>)
 }
 
 const ITEM: &str = "library.item";
-const ACQUISITION: &str = "library.acquisition";
+const COPY: &str = "library.copy";
 
-/// Live items holding any of the acquisition `keys` (`host:path`), present
+/// Live items holding any of the copy `keys` (`host:path`), present
 /// (not withdrawn).
 pub async fn items_at(conn: &mut Conn, keys: &[String]) -> Result<Vec<Item>> {
     let rows =
-        payloads::live_containing(conn, ITEM, &["acquisitions"], keys, State::Present).await?;
+        payloads::live_containing(conn, ITEM, &["copies"], keys, RecordStates::Present).await?;
     decode(ITEM, rows)
 }
 
-/// Live acquisitions under a root, present or vanished.
-pub async fn acquisitions(conn: &mut Conn, host: &str, root: &str) -> Result<Vec<Acquisition>> {
+/// Live copies under a root, present or vanished.
+pub async fn copies(conn: &mut Conn, host: &str, root: &str) -> Result<Vec<FileCopy>> {
     let rows =
-        payloads::live_where(conn, ACQUISITION, &["root"], &[root.to_owned()], State::Any).await?;
-    Ok(decode::<Acquisition>(ACQUISITION, rows)?
+        payloads::live_where(conn, COPY, &["root"], &[root.to_owned()], RecordStates::Any).await?;
+    Ok(decode::<FileCopy>(COPY, rows)?
         .into_iter()
         .filter(|a| a.host == host)
         .collect())
 }
 
-/// Live acquisitions at these `host:path` keys.
-pub async fn acquisitions_at(conn: &mut Conn, keys: &[String]) -> Result<Vec<Acquisition>> {
+/// Live copies at these `host:path` keys.
+pub async fn copies_at(conn: &mut Conn, keys: &[String]) -> Result<Vec<FileCopy>> {
     let paths: Vec<String> = keys
         .iter()
         .filter_map(|k| k.split_once(':').map(|(_, p)| p.to_owned()))
         .collect();
-    let rows = payloads::live_where(conn, ACQUISITION, &["path"], &paths, State::Any).await?;
-    Ok(decode::<Acquisition>(ACQUISITION, rows)?
+    let rows = payloads::live_where(conn, COPY, &["path"], &paths, RecordStates::Any).await?;
+    Ok(decode::<FileCopy>(COPY, rows)?
         .into_iter()
         .filter(|a| keys.contains(&format!("{}:{}", a.host, a.path)))
         .collect())
 }
 
-/// Live acquisitions of these bytes anywhere, present ones first.
-pub async fn acquisitions_of(conn: &mut Conn, content: &str) -> Result<Vec<Acquisition>> {
+/// Live copies of these bytes anywhere, present ones first.
+pub async fn copies_of(conn: &mut Conn, content: &str) -> Result<Vec<FileCopy>> {
     let rows = payloads::live_where(
         conn,
-        ACQUISITION,
+        COPY,
         &["content"],
         &[content.to_owned()],
-        State::Any,
+        RecordStates::Any,
     )
     .await?;
-    let mut all: Vec<Acquisition> = decode(ACQUISITION, rows)?;
+    let mut all: Vec<FileCopy> = decode(COPY, rows)?;
     all.sort_by_key(|a| a.vanished_at.is_some());
     Ok(all)
 }
 
 /// The current revision of an item, withdrawn or not.
 pub async fn item(conn: &mut Conn, item: &str) -> Result<Option<Item>> {
-    let rows = payloads::live_where(conn, ITEM, &["item"], &[item.to_owned()], State::Any).await?;
+    let rows =
+        payloads::live_where(conn, ITEM, &["item"], &[item.to_owned()], RecordStates::Any).await?;
     Ok(decode(ITEM, rows)?.into_iter().next())
 }
 
@@ -88,7 +89,7 @@ pub async fn items_with(conn: &mut Conn, content: &str) -> Result<Vec<Item>> {
         ITEM,
         &["content"],
         &[content.to_owned()],
-        State::Present,
+        RecordStates::Present,
     )
     .await?;
     decode(ITEM, rows)
@@ -108,7 +109,8 @@ async fn about<T: DeserializeOwned>(
     field: &[&str],
     item: &str,
 ) -> Result<Vec<T>> {
-    let rows = payloads::live_where(conn, kind, field, &[item.to_owned()], State::Any).await?;
+    let rows =
+        payloads::live_where(conn, kind, field, &[item.to_owned()], RecordStates::Any).await?;
     decode(kind, rows)
 }
 
@@ -144,7 +146,7 @@ pub async fn collection_named(conn: &mut Conn, name: &str) -> Result<Option<Coll
         "library.collection",
         &["name"],
         &[name.to_owned()],
-        State::Present,
+        RecordStates::Present,
     )
     .await?;
     Ok(decode("library.collection", rows)?.into_iter().next())
@@ -157,7 +159,7 @@ pub async fn entries(conn: &mut Conn, collection: &str) -> Result<Vec<Entry>> {
         "library.entry",
         &["collection"],
         &[collection.to_owned()],
-        State::Present,
+        RecordStates::Present,
     )
     .await?;
     let mut all: Vec<Entry> = decode("library.entry", rows)?;
@@ -171,7 +173,7 @@ pub async fn entries(conn: &mut Conn, collection: &str) -> Result<Vec<Entry>> {
 
 /// Present collections, by name.
 pub async fn collections(conn: &mut Conn) -> Result<Vec<Collection>> {
-    let rows = payloads::live_all(conn, "library.collection", State::Present).await?;
+    let rows = payloads::live_all(conn, "library.collection", RecordStates::Present).await?;
     let mut all: Vec<Collection> = decode("library.collection", rows)?;
     all.sort_by(|a, b| a.name.cmp(&b.name));
     Ok(all)
@@ -184,7 +186,7 @@ pub async fn comparisons(conn: &mut Conn, scale: &str) -> Result<Vec<Comparison>
         "library.comparison",
         &["scale"],
         &[scale.to_owned()],
-        State::Present,
+        RecordStates::Present,
     )
     .await?;
     decode("library.comparison", rows)

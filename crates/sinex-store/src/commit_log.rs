@@ -29,7 +29,7 @@ pub struct Committed {
     pub run_id: Uuid,
     pub material_id: Option<Uuid>,
     pub anchor: Option<i64>,
-    pub ordinal: i16,
+    pub output_index: i16,
     pub parents: Option<Vec<Uuid>>,
     pub ts_orig: Option<OffsetDateTime>,
     pub ts_quality: String,
@@ -60,7 +60,7 @@ pub async fn after(conn: &mut PgConnection, after: i64, limit: i64) -> Result<Pa
     let rows = sqlx::query!(
         r#"SELECT head.value AS "head!", c.commit_seq AS "commit_seq?", e.id AS "id?", e.event_type AS "event_type?",
              e.source AS "source?", e.run_id AS "run_id?", e.material_id, e.anchor,
-             e.ordinal AS "ordinal?", e.parents, e.ts_orig, e.ts_quality AS "ts_quality?",
+             e.output_index AS "output_index?", e.parents, e.ts_orig, e.ts_quality AS "ts_quality?",
              e.ts_coided, e.ts_persisted AS "ts_persisted?", e.payload AS "payload?",
              e.equivalence_key, e.reading_order AS "reading_order?",
              e.record_hash AS "record_hash?", e.record_state AS "record_state?", e.class AS "class?"
@@ -101,7 +101,7 @@ pub async fn after(conn: &mut PgConnection, after: i64, limit: i64) -> Result<Pa
             run_id,
             material_id: row.material_id,
             anchor: row.anchor,
-            ordinal: row.ordinal.unwrap_or(0),
+            output_index: row.output_index.unwrap_or(0),
             parents: row.parents,
             ts_orig: row.ts_orig,
             ts_quality: row.ts_quality.unwrap_or_default(),
@@ -132,8 +132,8 @@ impl Committed {
                     anchor: u64::try_from(anchor)
                         .map_err(|_| Error::Invalid(format!("negative anchor on {}", self.id)))?,
                 },
-                ordinal: u16::try_from(self.ordinal)
-                    .map_err(|_| Error::Invalid(format!("negative ordinal on {}", self.id)))?,
+                output_index: u16::try_from(self.output_index)
+                    .map_err(|_| Error::Invalid(format!("negative output_index on {}", self.id)))?,
             },
             (_, _, Some(parents)) => Origin::Derived {
                 parents: parents.iter().map(|p| EventId(*p)).collect(),
@@ -161,8 +161,7 @@ impl Committed {
             record_hash,
             record_state: from_db::<RecordState>(&self.record_state)?,
             class: from_db::<Class>(&self.class)?,
-            support: None,
-            cites: Vec::new(),
+            owned_blobs: Vec::new(),
         }))
     }
 }
@@ -175,8 +174,8 @@ fn from_db<T: serde::de::DeserializeOwned>(text: &str) -> Result<T> {
 /// A reading taken out of the live set: replaced by a newer reading, hidden or
 /// excised.
 #[derive(Clone, Debug, PartialEq)]
-pub struct Notice {
-    pub notice_seq: i64,
+pub struct ArchiveChange {
+    pub change_seq: i64,
     pub event_id: Uuid,
     /// The writer position at which availability changed.
     pub commit_seq: i64,
@@ -187,12 +186,16 @@ pub struct Notice {
     pub recorded_at: OffsetDateTime,
 }
 
-/// Up to `limit` archive notices after `after`, in the order they committed.
-pub async fn notices_after(conn: &mut PgConnection, after: i64, limit: i64) -> Result<Vec<Notice>> {
+/// Up to `limit` archive changes after `after`, in the order they committed.
+pub async fn changes_after(
+    conn: &mut PgConnection,
+    after: i64,
+    limit: i64,
+) -> Result<Vec<ArchiveChange>> {
     Ok(sqlx::query_as!(
-        Notice,
-        r#"SELECT notice_seq, event_id, commit_seq, archived, reason, replaced_by, operation_id, recorded_at
-           FROM audit.archive_changes WHERE notice_seq > $1 ORDER BY notice_seq LIMIT $2"#,
+        ArchiveChange,
+        r#"SELECT change_seq, event_id, commit_seq, archived, reason, replaced_by, operation_id, recorded_at
+           FROM audit.archive_changes WHERE change_seq > $1 ORDER BY change_seq LIMIT $2"#,
         after,
         limit,
     )
@@ -209,15 +212,15 @@ pub async fn latest(conn: &mut PgConnection) -> Result<i64> {
     )
 }
 
-/// A non-derivation consumer's saved position: (commit_seq, notice_seq).
+/// A non-derivation consumer's saved position: (commit_seq, change_seq).
 pub async fn consumer_position(conn: &mut PgConnection, consumer: &str) -> Result<(i64, i64)> {
     Ok(sqlx::query!(
-        "SELECT commit_seq, notice_seq FROM core.consumer_positions WHERE consumer = $1",
+        "SELECT commit_seq, change_seq FROM core.consumer_positions WHERE consumer = $1",
         consumer
     )
     .fetch_optional(&mut *conn)
     .await?
-    .map_or((0, 0), |r| (r.commit_seq, r.notice_seq)))
+    .map_or((0, 0), |r| (r.commit_seq, r.change_seq)))
 }
 
 /// Save a consumer's position. Positions only move forward.
@@ -225,17 +228,17 @@ pub async fn set_consumer_position(
     conn: &mut PgConnection,
     consumer: &str,
     commit_seq: i64,
-    notice_seq: i64,
+    change_seq: i64,
 ) -> Result<()> {
     sqlx::query!(
-        r#"INSERT INTO core.consumer_positions (consumer, commit_seq, notice_seq) VALUES ($1, $2, $3)
+        r#"INSERT INTO core.consumer_positions (consumer, commit_seq, change_seq) VALUES ($1, $2, $3)
            ON CONFLICT (consumer) DO UPDATE SET
              commit_seq = greatest(core.consumer_positions.commit_seq, EXCLUDED.commit_seq),
-             notice_seq = greatest(core.consumer_positions.notice_seq, EXCLUDED.notice_seq),
+             change_seq = greatest(core.consumer_positions.change_seq, EXCLUDED.change_seq),
              updated_at = now()"#,
         consumer,
         commit_seq,
-        notice_seq,
+        change_seq,
     )
     .execute(&mut *conn)
     .await?;
@@ -302,7 +305,7 @@ pub async fn producer_materials(
     Ok(sqlx::query_as!(
         ProducerMaterial,
         r#"SELECT f.number AS "number!", f.frame, m.id AS material_id, i.kind, i.locator, i.host,
-                  m.blob, m.durable_bytes AS length, m.part_index, m.previous_part_id AS previous_part,
+                  m.blob, m.length AS length, m.part_index, m.previous_part_id AS previous_part,
                   m.parser, m.parser_version, m.manifest
            FROM core.ingress_frames f
            JOIN raw.materials m ON m.id = f.material_id

@@ -58,7 +58,7 @@ pub struct CommandImported {
     /// discriminator is zero and unused for them.
     /// With host, start and command it identifies the timed record
     /// wherever it is read from, so a re-read from the start (a lost position,
-    /// re-staged bytes) is a repeat, not a new command.
+    /// bytes stored again) is a repeat, not a new command.
     pub n: u32,
 }
 

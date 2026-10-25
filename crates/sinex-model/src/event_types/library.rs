@@ -6,7 +6,7 @@
 //! Identity follows the library's rules: exact bytes are named by their content
 //! hash; an item is a continuing object with an opaque ID, never inferred from
 //! a path or from equal bytes alone; a copy of the bytes seen at a path is an
-//! acquisition.
+//! copy.
 use crate::Timestamp;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -18,15 +18,15 @@ use serde_json::{Map, Value};
 /// scan kept them.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
 #[event(
-    type = "library.acquisition",
+    type = "library.copy",
     key = ["host", "path"],
     replace = newer,
     time = modified_at,
     quality = file_mtime,
     removed_when = vanished_at,
-    cites(field = content, size = size, when = stored)
+    owns(field = content, size = size, when = stored)
 )]
-pub struct Acquisition {
+pub struct FileCopy {
     pub host: String,
     /// The library root the scan walked.
     pub root: String,
@@ -82,8 +82,8 @@ pub struct Item {
     /// The original rendition's bytes, `blake3:<hex>`.
     pub content: String,
     pub media_type: String,
-    /// Acquisitions that belong to the item, as `host:path`.
-    pub acquisitions: Vec<String>,
+    /// Copies that belong to the item, as `host:path`.
+    pub copies: Vec<String>,
     /// A human label; the file name at intake when nothing better is known.
     pub label: Option<String>,
     pub by: String,

@@ -15,7 +15,7 @@ pub const SPEC: SourceSpec = SourceSpec {
     name: "google.keep",
     driver: Driver::ExportArchive,
     excisable: false,
-    consumer: "notes and checklists kept in Keep",
+    purpose: "notes and checklists kept in Keep",
     class: Class::Open,
     parser: "google-keep",
     parser_version: 1,

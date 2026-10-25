@@ -6,7 +6,7 @@ fn source(name: &str, version: i32) -> Source {
         driver: "append-file".into(),
         version,
         event_types: vec!["command.imported".into()],
-        consumer: "shell recall".into(),
+        purpose: "shell recall".into(),
     }
 }
 

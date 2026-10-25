@@ -20,7 +20,7 @@ pub const SPEC: SourceSpec = SourceSpec {
     name: "media.mpris",
     driver: Driver::LiveStream,
     excisable: true,
-    consumer: "listening and watching history, attention",
+    purpose: "listening and watching history, attention",
     // Titles and URLs of what is playing.
     class: Class::Guarded,
     parser: "dbus-mpris",
@@ -156,16 +156,16 @@ pub fn driver(spool: PathBuf, host: String) -> LiveStream {
 
 /// One snapshot line per player on the bus now.
 pub fn snapshot() -> Vec<Vec<u8>> {
-    snapshot_with_control(&crate::capture::Control::new(None))
+    snapshot_until(&crate::capture::CaptureStop::new(None))
 }
 
-fn snapshot_with_control(control: &crate::capture::Control) -> Vec<Vec<u8>> {
-    dbus::names_with_control(control)
+fn snapshot_until(stop: &crate::capture::CaptureStop) -> Vec<Vec<u8>> {
+    dbus::names_until(stop)
         .into_iter()
         .filter(|n| n.starts_with(PREFIX))
         .filter_map(|name| {
-            let owner = dbus::call_with_control(
-                control,
+            let owner = dbus::call_until(
+                stop,
                 "org.freedesktop.DBus",
                 "/org/freedesktop/DBus",
                 "org.freedesktop.DBus",
@@ -173,8 +173,8 @@ fn snapshot_with_control(control: &crate::capture::Control) -> Vec<Vec<u8>> {
                 &["s", &name],
             )
             .and_then(|v| v.get(0).and_then(Value::as_str).map(str::to_owned))?;
-            let properties = dbus::call_with_control(
-                control,
+            let properties = dbus::call_until(
+                stop,
                 &name,
                 "/org/mpris/MediaPlayer2",
                 "org.freedesktop.DBus.Properties",
@@ -191,12 +191,12 @@ fn snapshot_with_control(control: &crate::capture::Control) -> Vec<Vec<u8>> {
         .collect()
 }
 
-pub fn capture(spool: &Path, control: &crate::capture::Control) -> std::io::Result<u64> {
-    dbus::capture(MATCHES, &snapshot_with_control(control), spool, control)
+pub fn capture(spool: &Path, stop: &crate::capture::CaptureStop) -> std::io::Result<u64> {
+    dbus::capture(MATCHES, &snapshot_until(stop), spool, stop)
 }
 
-/// `--source players=SPOOL`: media players (MPRIS), captured into SPOOL.
-pub const KIND: crate::binding::InputKind = crate::binding::InputKind {
+/// `--read players=SPOOL`: media players (MPRIS), captured into SPOOL.
+pub const FORMAT: crate::binding::InputFormat = crate::binding::InputFormat {
     name: "players",
     specs: || vec![&SPEC],
     plan: Some(|spool, settings| Ok(crate::binding::single(&SPEC, spool, settings))),

@@ -1,11 +1,11 @@
-//! Bytes a producer hands over for a frame, through the spool
-//! (`sinex_transport::spool`): stored before the frame is admitted, and
-//! removed from the spool once the frame is recorded.
+//! Bytes a producer hands over for a frame, through its frame directory
+//! (`sinex_transport::frame_bytes`): stored before the frame is admitted, and
+//! removed once the frame is recorded.
 use super::*;
-use sinex_transport::spool;
+use sinex_transport::frame_bytes;
 
 impl Ingest {
-    /// Add one chunk to the spool directory of the frame it is for.
+    /// Add one chunk to the frame directory of the frame it is for.
     pub(super) async fn receive_chunk(&self, producer: &str, chunk: &Ingress) -> Result<(), Check> {
         let Ingress::Chunk {
             for_frame,
@@ -30,7 +30,7 @@ impl Ingest {
             *total,
         );
         tokio::task::spawn_blocking(move || {
-            spool::receive(&root, &producer, &for_frame, &blob, total, offset, &data)
+            frame_bytes::receive(&root, &producer, &for_frame, &blob, total, offset, &data)
         })
         .await
         .map_err(|e| Check::Unavailable(e.to_string()))?
@@ -38,13 +38,13 @@ impl Ingest {
         .map_err(Check::Refused)
     }
 
-    /// The frame an indirect frame stands for, read from its spool directory.
-    pub(super) async fn unwrap_indirect(
+    /// The frame a large frame stands for, read from its frame directory.
+    pub(super) async fn unwrap_large_frame(
         &self,
         producer: &str,
         frame: Ingress,
     ) -> Result<Ingress, Check> {
-        let Ingress::Indirect {
+        let Ingress::LargeFrame {
             frame: name,
             blob,
             length,
@@ -55,22 +55,22 @@ impl Ingest {
         let root = self.blobs.root().to_owned();
         let producer = producer.to_owned();
         let inner = tokio::task::spawn_blocking(move || {
-            let file =
-                spool::snapshot(&root, &producer, &name, &blob, length).map_err(Check::Refused)?;
+            let file = frame_bytes::snapshot(&root, &producer, &name, &blob, length)
+                .map_err(Check::Refused)?;
             serde_json::from_reader::<_, Ingress>(std::io::BufReader::new(file))
-                .map_err(|e| Check::Refused(format!("indirect bytes are not a frame: {e}")))
+                .map_err(|e| Check::Refused(format!("large-frame bytes are not a frame: {e}")))
         })
         .await
         .map_err(|e| Check::Unavailable(e.to_string()))??;
         match inner {
             Ingress::Material { .. } | Ingress::Events { .. } => Ok(inner),
             _ => Err(Check::Refused(
-                "an indirect frame stands for a material or events frame".into(),
+                "a large frame stands for a material or events frame".into(),
             )),
         }
     }
 
-    /// Store a material's bytes from the spool directory of `frame`, unless the
+    /// Store a material's bytes from the frame directory of `frame`, unless the
     /// content store already holds them.
     pub(super) async fn store_material(
         &self,
@@ -94,9 +94,9 @@ impl Ingest {
             material.length,
         );
         tokio::task::spawn_blocking(move || {
-            let file = spool::snapshot(&root, &producer, &frame, &blob, length).map_err(|e| {
+            let file = frame_bytes::snapshot(&root, &producer, &frame, &blob, length).map_err(|e| {
                 Check::Refused(format!(
-                    "the bytes {blob} are neither in the content store nor in this frame's spool: {e}"
+                    "the bytes {blob} are neither in the content store nor in this frame's directory: {e}"
                 ))
             })?;
             let stored = blobs
@@ -104,7 +104,7 @@ impl Ingest {
                 .map_err(|e| Check::Unavailable(e.to_string()))?;
             if stored != blob {
                 return Err(Check::Refused(format!(
-                    "the spooled bytes are {stored}, not {blob}"
+                    "the frame bytes are {stored}, not {blob}"
                 )));
             }
             Ok(())
@@ -128,10 +128,10 @@ impl Ingest {
         )
     }
 
-    /// Remove the spool directory of a recorded frame.
+    /// Remove the frame directory of a recorded frame.
     pub(super) fn discard(&self, producer: &str, frame: &str) {
-        if let Err(error) = spool::discard(self.blobs.root(), producer, frame) {
-            eprintln!("sinexd: removing the spool of frame {frame} from {producer}: {error}");
+        if let Err(error) = frame_bytes::discard(self.blobs.root(), producer, frame) {
+            eprintln!("sinexd: removing the directory of frame {frame} from {producer}: {error}");
         }
     }
 }

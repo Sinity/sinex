@@ -1,4 +1,4 @@
-//! The source framework. Every source goes through the same four steps: stage
+//! The source framework. Every source goes through the same four steps: plan
 //! (what to read, with which parser), acquire (store exact bytes as materials),
 //! parse (bytes to events with record locations), admit.
 //!
@@ -19,7 +19,7 @@ pub mod registry;
 pub mod shared_pass;
 pub mod sources;
 
-pub use binding::{Binding, InputKind, Reader, Reading, Settings, StoredMaterial};
+pub use binding::{Binding, InputFormat, Reader, Reading, Settings, StoredMaterial};
 pub use drain::{DrainInput, DrainOutput, Drainer, Limits, RecordContext, drain};
 pub use drivers::{Acquired, DriverError, MaterialSink};
 pub use registry::{DeclaredSource, Driver, Framer, Source, SourceSpec};

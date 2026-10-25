@@ -28,7 +28,7 @@ pub const SPEC: SourceSpec = SourceSpec {
     name: "desktop.hyprland",
     driver: Driver::LiveStream,
     excisable: true,
-    consumer: "focus intervals, attention and recall",
+    purpose: "focus intervals, attention and recall",
     // Window titles are free text that can contain anything.
     class: Class::Guarded,
     parser: "hyprland-socket2",
@@ -263,22 +263,22 @@ pub fn driver(spool: PathBuf, host: String) -> LiveStream {
 /// Capture the socket into `spool` until the socket closes (Hyprland exited).
 /// Returns the number of lines captured.
 pub fn capture(socket: &Path, spool: &Path) -> std::io::Result<u64> {
-    capture_with_control(socket, spool, &crate::capture::Control::new(None))
+    capture_until(socket, spool, &crate::capture::CaptureStop::new(None))
 }
 
-fn capture_with_control(
+fn capture_until(
     socket: &Path,
     spool: &Path,
-    control: &crate::capture::Control,
+    stop: &crate::capture::CaptureStop,
 ) -> std::io::Result<u64> {
     let stream = UnixStream::connect(socket)?;
-    control.shutdown_on_stop(&stream)?;
+    stop.shutdown_on_stop(&stream)?;
     let mut writer = SpoolWriter::open(spool, Rotation::default())?;
     live_stream::capture_lines(BufReader::new(stream), &mut writer, Duration::from_secs(1))
 }
 
-/// `--source hyprland=SPOOL`: Hyprland's event socket, captured into SPOOL.
-pub const KIND: crate::binding::InputKind = crate::binding::InputKind {
+/// `--read hyprland=SPOOL`: Hyprland's event socket, captured into SPOOL.
+pub const FORMAT: crate::binding::InputFormat = crate::binding::InputFormat {
     name: "hyprland",
     specs: || vec![&SPEC],
     plan: Some(|spool, settings| Ok(crate::binding::single(&SPEC, spool, settings))),
@@ -293,7 +293,7 @@ pub const KIND: crate::binding::InputKind = crate::binding::InputKind {
         let socket = socket_path().ok_or(
             "no Hyprland instance in this environment (HYPRLAND_INSTANCE_SIGNATURE or XDG_RUNTIME_DIR unset)",
         )?;
-        capture_with_control(&socket, &b.input, stop).map_err(|e| e.to_string())
+        capture_until(&socket, &b.input, stop).map_err(|e| e.to_string())
     }),
 };
 

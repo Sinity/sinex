@@ -34,7 +34,7 @@ pub const SPEC: SourceSpec = SourceSpec {
     name: "desktop.arbtt",
     driver: Driver::AppendFile,
     excisable: false,
-    consumer: "which window was in use, sampled every interval",
+    purpose: "which window was in use, sampled every interval",
     class: Class::Open,
     parser: "arbtt-timelog-v1",
     parser_version: 1,
@@ -267,8 +267,8 @@ pub fn driver(path: PathBuf, host: String) -> AppendFile {
     }
 }
 
-/// `--source arbtt=PATH`: each ARBTT `capture.log` under PATH.
-pub const KIND: crate::binding::InputKind = crate::binding::InputKind {
+/// `--read arbtt=PATH`: each ARBTT `capture.log` under PATH.
+pub const FORMAT: crate::binding::InputFormat = crate::binding::InputFormat {
     name: "arbtt",
     specs: || vec![&SPEC],
     plan: Some(|input, settings| {

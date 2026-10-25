@@ -1,6 +1,6 @@
 //! Text read from screen segments (`screen.text`): a per-event derivation over
 //! `media.segment` events that reads each screen still's stored bytes with a
-//! local OCR engine (Tesseract). It runs in the derivation driver like any
+//! local OCR engine (Tesseract). It runs in the derivation runner like any
 //! other derivation; it lives here rather than in `sinex-derivations` because it
 //! runs a local tool. Without the engine it is not registered, and the daemon
 //! says so once.
@@ -95,7 +95,7 @@ impl PerEvent for ScreenText {
             Origin::Derived {
                 parents: vec![segment.id],
             },
-            // The driver sets the reading order from the version and the
+            // The runner sets the reading order from the version and the
             // input's commit position.
             ReadingOrder(0),
             *hasher.finalize().as_bytes(),

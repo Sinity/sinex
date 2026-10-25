@@ -13,7 +13,7 @@ batch. Anything specific to one provider lives here, not in the store or the
 daemon.
 
 `sinexd` runs the sources: `backfill` reads them to the end, and the daemon's
-source tasks read them continuously. Both hand batches to the writer. A cursor
+binding runner reads them continuously. Both hand batches to the writer. A cursor
 records admitted progress; bytes being stored does not mean their records were
 read.
 
@@ -44,8 +44,8 @@ Each reader rebuilds what it remembers through the `Reader` trait: it names
 the material its committed cursor points at, and the daemon offers it that
 material and the parts before it, newest first, until the reader has enough.
 The parts are read a page at a time, so a reader that stops early reads no
-more of the chain. The append reader keeps the tail of the current revision's
-records, to align a rewrite.
+more of the part sequence. The append reader keeps the tail of the current
+revision's records, to align a rewrite.
 
 The SQLite-row reader keeps each row's newest hash and the directory reader
 each file's size, modification time and content hash. Both save this reader
@@ -96,20 +96,20 @@ type chosen by their table, lane or category before their fields are read. A
 malformed known field is a record failure with its bytes kept. Fields the type
 does not know are kept, and the event lists their JSON pointers in
 `unknown_fields`; a category with no type at all is marked `untyped: true`.
-Samsung account tables other than health stay generic `account.record` rows,
+Samsung account tables other than health stay generic `account.row` rows,
 always marked `untyped`.
 
 ### Outside producers
 
 `sinex-session`, `sinex-capture` and Polylogue send frames over the NATS
-ingress. The bytes a frame needs go in that frame's spool directory under the
-content store root (`sinex_transport::spool`): a producer on the same host
+ingress. The bytes a frame needs go in that frame's directory under the
+content store root (`sinex_transport::frame_bytes`): a producer on the same host
 writes them there, and one elsewhere sends them in chunk frames. Sinex copies
 the bytes, checks them against their name, stores them, admits the frame and
-records its acknowledgment in one transaction, then removes the spool
+records its acknowledgment in one transaction, then removes the frame
 directory. A frame sent again is answered from that record. A producer keeps a
 batch's frames and the position after them until every frame is acknowledged,
-and sends them again after a restart. In a store root with mode 2770, spool
+and sends them again after a restart. In a store root with mode 2770, frame
 directories are 2770 and finished files 0640, so a producer running as another
 user in the store's group can hand over bytes without write access to the
 content store. Producer bytes are never stored sealed. A producer pages
@@ -130,7 +130,7 @@ asks for. Sinex has no AI-chat parser of its own.
 
 The outside producers start their capture threads with `sinex-sources::live`,
 which registers signal handlers first and stops every capture before joining
-it. `capture::Control` owns interruptible waits, socket shutdown and child
+it. `capture::CaptureStop` owns interruptible waits, socket shutdown and child
 process groups: it interrupts a group, escalates after 250 ms, and reaps its
 children, including descendants adopted through Linux subreaper support.
 
@@ -151,7 +151,7 @@ replacement). Hide and unhide change what is live and append to the visibility
 history in one transaction. Readers move past positions an excision left
 empty. Time lookups use stored events and the visibility history, so pruning
 the commit log loses nothing. The publisher sends committed events on the
-confirmed stream, with `Archived`, `Restored` and `Excised` notices.
+confirmed stream, with `Archived`, `Unhidden` and `Excised` messages.
 
 On shutdown the derivation runner finishes its current pass and releases its
 writer handle; the writer drains queued work once every producer has released
@@ -194,7 +194,7 @@ keys by hour.
 
 `sinex-model` holds identities and payloads. `sinex-protocol` declares the
 public commands and wire types without IO. `sinex-transport` holds the
-private-mode switch and the producer spool, so the daemon, drivers and CLI
+private-mode switch and the frame directories, so the daemon, drivers and CLI
 share them without the wire types touching the filesystem. CLI, MCP and HTTP
 are generated from the command table. `sinex-diagnostics` works while the
 daemon is down.

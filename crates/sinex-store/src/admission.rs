@@ -32,7 +32,7 @@ mod write;
 
 pub(crate) use archive::remove_live;
 pub(crate) use derived::mark_archived_dirty;
-pub use derived::{DerivedScope, KeyScope};
+pub use derived::{ComputedKey, DerivedScope};
 
 /// What a keyed derivation's key function sees of an admitted or archived event.
 #[derive(Clone, Debug)]
@@ -96,7 +96,7 @@ pub async fn admit(
         && frame
             .material
             .as_ref()
-            .is_some_and(|p| !p.material_keys.is_empty() || !p.carry.is_null())
+            .is_some_and(|p| !p.data_keys.is_empty() || !p.carry.is_null())
     {
         return Err(crate::Error::Invalid(
             "producer protocol does not authorize archive-owned source state".into(),
@@ -134,7 +134,7 @@ pub async fn admit(
 
     if let BatchKind::Derived { derivation, scope } = &batch.kind {
         outcome.dirty_keys +=
-            derived::settle(conn, derivation, scope, batch, &resolved, keys).await?;
+            derived::apply_derived(conn, derivation, scope, batch, &resolved, keys).await?;
     }
     outcome.failures = write::record_failures(conn, batch).await?;
     if let BatchKind::Source(progress) = &batch.kind {

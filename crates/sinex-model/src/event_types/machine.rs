@@ -55,7 +55,7 @@ pub struct FileChanged {
 }
 
 pub mod capture;
-pub use capture::{CaptureObserved, CapturePayload};
+pub use capture::{CapturePayload, LakeObservation};
 
 /// A terminal recording's session (asciinema): its start, size, command and
 /// environment, from the recording's header. The recording's place is its

@@ -12,7 +12,7 @@
 //!     removed_when = deleted_at,   // optional `Option<_>` field: Some means removed at source
 //!     keep_known = ["title"],      // optional fields a newer reading does not erase
 //!     class = guarded,             // optional: the least class its events are stored under
-//!     cites(field = content, size = size, when = stored), // optional: stored bytes the event owns
+//!     owns(field = content, size = size, when = stored), // optional: stored bytes the event owns
 //! )]
 //! ```
 //!
@@ -76,7 +76,7 @@ fn expand_event_payload(input: &DeriveInput) -> syn::Result<proc_macro2::TokenSt
     let mut quality: Option<Ident> = None;
     let mut removed_when: Option<Ident> = None;
     let mut keep_known: Vec<LitStr> = Vec::new();
-    let mut cites: Option<(Ident, Ident, Option<Ident>)> = None;
+    let mut owns: Option<(Ident, Ident, Option<Ident>)> = None;
     let mut class: Option<Ident> = None;
     for attr in input.attrs.iter().filter(|a| a.path().is_ident("event")) {
         attr.parse_nested_meta(|meta| {
@@ -115,7 +115,7 @@ fn expand_event_payload(input: &DeriveInput) -> syn::Result<proc_macro2::TokenSt
                 keep_known = list.into_iter().collect();
             } else if meta.path.is_ident("class") {
                 class = Some(meta.value()?.parse()?);
-            } else if meta.path.is_ident("cites") {
+            } else if meta.path.is_ident("owns") {
                 let (mut field, mut size, mut when) = (None, None, None);
                 meta.parse_nested_meta(|inner| {
                     if inner.path.is_ident("field") {
@@ -125,13 +125,13 @@ fn expand_event_payload(input: &DeriveInput) -> syn::Result<proc_macro2::TokenSt
                     } else if inner.path.is_ident("when") {
                         when = Some(inner.value()?.parse::<Ident>()?);
                     } else {
-                        return Err(inner.error("cites takes `field`, `size` and optional `when`"));
+                        return Err(inner.error("owns takes `field`, `size` and optional `when`"));
                     }
                     Ok(())
                 })?;
-                let field = field.ok_or_else(|| meta.error("cites needs `field`"))?;
-                let size = size.ok_or_else(|| meta.error("cites needs `size`"))?;
-                cites = Some((field, size, when));
+                let field = field.ok_or_else(|| meta.error("owns needs `field`"))?;
+                let size = size.ok_or_else(|| meta.error("owns needs `size`"))?;
+                owns = Some((field, size, when));
             } else {
                 return Err(meta.error("unknown event attribute"));
             }
@@ -214,7 +214,7 @@ fn expand_event_payload(input: &DeriveInput) -> syn::Result<proc_macro2::TokenSt
         }
     });
 
-    let cites_tokens = match &cites {
+    let owns_tokens = match &owns {
         None => None,
         Some((field, size, when)) => {
             field_type(field)?;
@@ -227,9 +227,9 @@ fn expand_event_payload(input: &DeriveInput) -> syn::Result<proc_macro2::TokenSt
                 None => quote!(),
             };
             Some(quote! {
-                fn cited_blobs(&self) -> ::std::vec::Vec<::sinex_model::Cited> {
+                fn owned_blobs(&self) -> ::std::vec::Vec<::sinex_model::OwnedBlob> {
                     #guard
-                    ::std::vec![::sinex_model::Cited {
+                    ::std::vec![::sinex_model::OwnedBlob {
                         blob: self.#field.clone(),
                         size: self.#size,
                     }]
@@ -252,7 +252,7 @@ fn expand_event_payload(input: &DeriveInput) -> syn::Result<proc_macro2::TokenSt
 
             #removed_tokens
 
-            #cites_tokens
+            #owns_tokens
 
             fn payload_schema() -> ::sinex_model::__private::serde_json::Value {
                 ::sinex_model::__private::serde_json::to_value(

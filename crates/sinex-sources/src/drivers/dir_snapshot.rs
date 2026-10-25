@@ -2,7 +2,7 @@
 //! Maildir).
 //!
 //! Each poll walks the tree comparing file facts with what was already read.
-//! New and changed files stream into an unnamed staged bundle, stored as one
+//! New and changed files stream into an unnamed temporary bundle, stored as one
 //! material: one framing byte precedes each record, outside its exact source
 //! byte range. The prefix gives even empty files distinct anchors and cursor
 //! ends. A manifest member describes each file
@@ -11,7 +11,7 @@
 //! needs its complete decoded record in memory. Unchanged content is skipped.
 //!
 //! When a walk completes without reaching the part size, files read before but
-//! not seen now are recorded as vanished: a member holding a short marker line,
+//! not seen now are recorded as removed: a member holding a short marker line,
 //! so each has its own record location and the parser reads the removal.
 //!
 //! The admitted cursor confirms cached file facts. Until its final byte commits,
@@ -20,7 +20,7 @@
 //! with the cursor on the cadence of [`super::memory_due`]. A restart takes
 //! the facts from that saved memory and the bundles after it, so an unchanged
 //! file is not read or stored again and a file removed while Sinex was down is
-//! still recorded as vanished.
+//! still recorded as removed.
 use super::{Acquired, DriverError, NewMaterial, StoredBytes, file_facts};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -56,7 +56,7 @@ pub struct Cursor {
     /// The part at whose end the reader last saved its memory.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub memory_part: Option<u32>,
-    /// Files stored or recorded as vanished since that part.
+    /// Files stored or recorded as removed since that part.
     #[serde(default)]
     pub changed_since_memory: u64,
 }
@@ -149,17 +149,17 @@ impl Held {
                     move |end| Ok(cursor(end))
                 }),
                 aligned: false,
-                vanished: Vec::new(),
+                removed: Vec::new(),
                 memory: self.memory.clone(),
             }),
-            cursor_unchanged: Value::Null,
+            cursor_without_material: Value::Null,
         }
     }
 }
 
-/// The marker a vanished file's member holds.
-pub fn vanished_marker(path: &str) -> Vec<u8> {
-    let mut line = json!({"vanished": path}).to_string().into_bytes();
+/// The marker a removed file's member holds.
+pub fn removed_marker(path: &str) -> Vec<u8> {
+    let mut line = json!({"removed": path}).to_string().into_bytes();
     line.push(b'\n');
     line
 }
@@ -202,7 +202,7 @@ impl DirSnapshot {
                     },
                     revision: RevisionChange::Same,
                     material: None,
-                    cursor_unchanged: cursor.clone(),
+                    cursor_without_material: cursor.clone(),
                 });
             }
         };
@@ -211,7 +211,7 @@ impl DirSnapshot {
         let mut found = BTreeMap::new();
         walk(&self.root, &self.root, self.select, &mut found)?;
 
-        let mut staged = tempfile::tempfile().map_err(io)?;
+        let mut bundle = tempfile::tempfile().map_err(io)?;
         let mut length = 0usize;
         let mut next_files = state.files.clone();
         let mut records = Vec::new();
@@ -235,8 +235,8 @@ impl DirSnapshot {
             let mut file = File::open(self.root.join(relative))
                 .map_err(|error| DriverError::Io(format!("{relative}: {error}")))?;
             let before = file.metadata().map_err(io)?;
-            staged.write_all(&[format::PREFIX]).map_err(io)?;
-            let (actual_size, hash) = stage(&mut file, &mut staged).map_err(io)?;
+            bundle.write_all(&[format::PREFIX]).map_err(io)?;
+            let (actual_size, hash) = copy_hashed(&mut file, &mut bundle).map_err(io)?;
             let after = file.metadata().map_err(io)?;
             if !same_file(&before, &after)
                 || actual_size != *size
@@ -252,8 +252,8 @@ impl DirSnapshot {
                 .is_some_and(|facts| facts.as_ref().is_some_and(|(_, _, h)| *h == hash));
             next_files.insert(relative.clone(), Some((*size, *mtime, hash)));
             if same {
-                staged.set_len(length as u64).map_err(io)?;
-                staged
+                bundle.set_len(length as u64).map_err(io)?;
+                bundle
                     .seek(std::io::SeekFrom::Start(length as u64))
                     .map_err(io)?;
                 continue;
@@ -288,17 +288,17 @@ impl DirSnapshot {
             gone.sort();
             for relative in gone {
                 next_files.remove(&relative);
-                let marker = vanished_marker(&relative);
-                staged.write_all(&[format::PREFIX]).map_err(io)?;
+                let marker = removed_marker(&relative);
+                bundle.write_all(&[format::PREFIX]).map_err(io)?;
                 let offset = length + 1;
                 members.push(json!({
                     "path": relative,
                     "stream_offset": offset,
                     "length": marker.len(),
-                    "vanished_at_ns": now.unix_ns().to_string(),
+                    "removed_at_ns": now.unix_ns().to_string(),
                 }));
                 records.push((offset, offset + marker.len()));
-                staged.write_all(&marker).map_err(io)?;
+                bundle.write_all(&marker).map_err(io)?;
                 length = offset + marker.len();
             }
         }
@@ -318,7 +318,7 @@ impl DirSnapshot {
                 observation: facts,
                 revision: RevisionChange::Same,
                 material: None,
-                cursor_unchanged: serde_json::to_value(scanned).expect("cursor serializes"),
+                cursor_without_material: serde_json::to_value(scanned).expect("cursor serializes"),
             });
         }
         // Every file read by one walk is as new as the walk; the records are
@@ -356,7 +356,7 @@ impl DirSnapshot {
         scanned.changed_since_memory = if due { 0 } else { changed };
         let memory = due.then(|| restore::memory_of(&next_files));
         let held = Held {
-            stored: StoredBytes::FramedFile(Arc::new(staged)),
+            stored: StoredBytes::FramedFile(Arc::new(bundle)),
             length,
             records,
             manifest,
@@ -378,7 +378,7 @@ fn io(error: std::io::Error) -> DriverError {
     DriverError::Io(error.to_string())
 }
 
-fn stage(input: &mut File, output: &mut File) -> std::io::Result<(u64, [u8; 32])> {
+fn copy_hashed(input: &mut File, output: &mut File) -> std::io::Result<(u64, [u8; 32])> {
     let mut hash = blake3::Hasher::new();
     let mut length = 0u64;
     let mut bytes = [0; 64 * 1024];

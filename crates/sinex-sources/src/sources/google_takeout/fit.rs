@@ -18,7 +18,7 @@ pub const SPEC: SourceSpec = SourceSpec {
     name: "google.fit",
     driver: Driver::ExportArchive,
     excisable: false,
-    consumer: "steps, activity, heart and location samples Fit recorded",
+    purpose: "steps, activity, heart and location samples Fit recorded",
     class: Class::Open,
     parser: "google-fit",
     parser_version: 4,

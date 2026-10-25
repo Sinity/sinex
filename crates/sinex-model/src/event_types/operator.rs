@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 /// log; an edit to it is a newer reading.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
 #[event(
-    type = "operator.log.entry",
+    type = "operator_log.entry",
     key = location,
     replace = newer,
     time = written_at,
@@ -27,6 +27,6 @@ pub struct LogEntry {
 
 mod steering;
 pub use steering::{
-    Activity, ActivityKind, Commitment, CommitmentStatus, EnergyTier, Review, SteeringRecord,
+    Activity, ActivityKind, Commitment, CommitmentStatus, EnergyTier, Review, SteeringRow,
     SteeringValues,
 };

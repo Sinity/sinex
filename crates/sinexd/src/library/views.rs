@@ -19,9 +19,7 @@ pub async fn item_view(conn: &mut PgConnection, item: &str) -> R<Value> {
     let ratings = reads::ratings(conn, item).await.map_err(e)?;
     let views = reads::views(conn, item).await.map_err(e)?;
     let entries = reads::entries_of(conn, item).await.map_err(e)?;
-    let copies = reads::acquisitions_at(conn, &it.acquisitions)
-        .await
-        .map_err(e)?;
+    let copies = reads::copies_at(conn, &it.copies).await.map_err(e)?;
     let mut fields: HashMap<&str, Vec<Assignment>> = HashMap::new();
     for a in &assignments {
         if a.field != "tag" {

@@ -31,7 +31,7 @@ pub const SPEC: SourceSpec = SourceSpec {
     name: "machine.file-watch",
     driver: Driver::LiveStream,
     excisable: true,
-    consumer: "work episodes, project attribution and recall",
+    purpose: "work episodes, project attribution and recall",
     // Paths name projects, people and documents.
     class: Class::Guarded,
     parser: "file-watch",
@@ -129,16 +129,16 @@ fn spool_line(spool: &mut SpoolWriter, line: &Value) -> std::io::Result<()> {
     spool.append(Timestamp::now(), line.to_string().as_bytes())
 }
 
-/// Watch `roots` and spool every change until `stop` elapses (forever when
+/// Watch `roots` and spool every change until `duration` elapses (forever when
 /// `None`). Returns the number of records spooled.
-pub fn capture(roots: &Roots, spool: &Path, stop: Option<Duration>) -> std::io::Result<u64> {
-    capture_with_control(roots, spool, &crate::capture::Control::new(stop))
+pub fn capture(roots: &Roots, spool: &Path, duration: Option<Duration>) -> std::io::Result<u64> {
+    capture_until(roots, spool, &crate::capture::CaptureStop::new(duration))
 }
 
-fn capture_with_control(
+fn capture_until(
     roots: &Roots,
     spool: &Path,
-    stop: &crate::capture::Control,
+    stop: &crate::capture::CaptureStop,
 ) -> std::io::Result<u64> {
     let (tx, rx) = mpsc::channel::<notify::Result<notify::Event>>();
     let mut watcher = notify::recommended_watcher(tx).map_err(std::io::Error::other)?;
@@ -313,9 +313,9 @@ pub fn driver(spool: PathBuf, host: String) -> LiveStream {
     }
 }
 
-/// `--source file-watch=SPOOL`: changes under the directories in the
+/// `--read file-watch=SPOOL`: changes under the directories in the
 /// `roots` option (and not under `skip` names), captured into SPOOL.
-pub const KIND: crate::binding::InputKind = crate::binding::InputKind {
+pub const FORMAT: crate::binding::InputFormat = crate::binding::InputFormat {
     name: "file-watch",
     specs: || vec![&SPEC],
     plan: Some(|spool, settings| Ok(crate::binding::single(&SPEC, spool, settings))),
@@ -351,7 +351,7 @@ pub const KIND: crate::binding::InputKind = crate::binding::InputKind {
         if roots.roots.is_empty() {
             return Err("file-watch: no `roots` to watch".into());
         }
-        capture_with_control(&roots, &b.input, stop).map_err(|e| e.to_string())
+        capture_until(&roots, &b.input, stop).map_err(|e| e.to_string())
     }),
 };
 

@@ -1,8 +1,8 @@
 //! The sealed class. A sealed
 //! material's bytes are encrypted in the content store under a fresh data key;
 //! the events read from it carry their payload encrypted under the same key,
-//! with the envelope (type, time, source, provenance) left readable. Equivalence
-//! keys and record hashes of sealed events are keyed hashes under a naming key
+//! with the event's metadata (type, time, source, provenance) left readable. Equivalence
+//! keys and record hashes of sealed events are keyed hashes under a hash key
 //! derived from the data key, so equal values still deduplicate without
 //! revealing them.
 //!
@@ -79,7 +79,7 @@ pub fn unwrap(wrapped: &[u8], identity: &age::x25519::Identity) -> Result<[u8; 3
         .map_err(|_| Error::Invalid("unwrapped key is not 32 bytes".into()))
 }
 
-fn naming_key(key: &[u8; 32]) -> [u8; 32] {
+fn hash_key_for(key: &[u8; 32]) -> [u8; 32] {
     blake3::derive_key("sinex 2026 sealed naming key", key)
 }
 
@@ -107,14 +107,14 @@ pub fn key_ref(payload: &Value) -> Option<&str> {
 /// equivalence key and record hash, and set its class.
 pub fn seal_event(event: &mut Event, key: &DataKey) -> Result<()> {
     event.payload = seal_value(&event.payload, key)?;
-    let naming = naming_key(&key.key);
+    let hash_key = hash_key_for(&key.key);
     if let Some(k) = &event.equivalence_key {
         event.equivalence_key = Some(EquivalenceKey(format!(
             "sealed:{}",
-            blake3::keyed_hash(&naming, k.0.as_bytes()).to_hex()
+            blake3::keyed_hash(&hash_key, k.0.as_bytes()).to_hex()
         )));
     }
-    event.record_hash = *blake3::keyed_hash(&naming, &event.record_hash).as_bytes();
+    event.record_hash = *blake3::keyed_hash(&hash_key, &event.record_hash).as_bytes();
     event.class = Class::Sealed;
     Ok(())
 }
@@ -172,7 +172,7 @@ pub async fn store_key(
     wrapped: &[u8],
 ) -> Result<()> {
     sqlx::query!(
-        "INSERT INTO privacy.material_keys (material_id, key_ref, class, wrapped_key)
+        "INSERT INTO privacy.data_keys (material_id, key_ref, class, wrapped_key)
          VALUES ($1, $2, 'sealed', $3) ON CONFLICT (material_id) DO NOTHING",
         material.0,
         key_ref,
@@ -181,7 +181,7 @@ pub async fn store_key(
     .execute(&mut *conn)
     .await?;
     let actual = sqlx::query_scalar!(
-        "SELECT key_ref FROM privacy.material_keys WHERE material_id=$1",
+        "SELECT key_ref FROM privacy.data_keys WHERE material_id=$1",
         material.0
     )
     .fetch_one(conn)
@@ -197,7 +197,7 @@ pub async fn store_key(
 /// A wrapped key by its reference; `None` once excised.
 pub async fn wrapped_key(conn: &mut PgConnection, key_ref: &str) -> Result<Option<Vec<u8>>> {
     Ok(sqlx::query_scalar!(
-        "SELECT wrapped_key FROM privacy.material_keys WHERE key_ref = $1",
+        "SELECT wrapped_key FROM privacy.data_keys WHERE key_ref = $1",
         key_ref
     )
     .fetch_optional(&mut *conn)
@@ -205,12 +205,12 @@ pub async fn wrapped_key(conn: &mut PgConnection, key_ref: &str) -> Result<Optio
 }
 
 /// A material's wrapped data key and its reference.
-pub async fn material_key(
+pub async fn data_key(
     conn: &mut PgConnection,
     material: MaterialId,
 ) -> Result<Option<(String, Vec<u8>)>> {
     Ok(sqlx::query!(
-        "SELECT key_ref, wrapped_key FROM privacy.material_keys WHERE material_id = $1",
+        "SELECT key_ref, wrapped_key FROM privacy.data_keys WHERE material_id = $1",
         material.0
     )
     .fetch_optional(&mut *conn)
@@ -225,7 +225,7 @@ pub async fn material_of_key(
     binding: &str,
 ) -> Result<Option<MaterialId>> {
     Ok(sqlx::query_scalar!(
-        "SELECT k.material_id FROM privacy.material_keys k
+        "SELECT k.material_id FROM privacy.data_keys k
          JOIN raw.materials m ON m.id = k.material_id
          JOIN raw.inputs i ON i.id = m.input_id
          WHERE k.key_ref = $1 AND i.binding = $2",

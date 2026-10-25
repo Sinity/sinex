@@ -24,7 +24,7 @@ pub const PST: SourceSpec = SourceSpec {
     name: "communication.outlook",
     driver: Driver::ExportArchive,
     excisable: false,
-    consumer: "mail recall and correspondence history",
+    purpose: "mail recall and correspondence history",
     class: Class::Open,
     parser: "rfc5322-mail",
     parser_version: 1,
@@ -39,7 +39,7 @@ pub const CSV: SourceSpec = SourceSpec {
     name: "communication.outlook-csv",
     driver: Driver::ExportArchive,
     excisable: false,
-    consumer: "mail recall and correspondence history",
+    purpose: "mail recall and correspondence history",
     class: Class::Open,
     parser: "outlook-csv",
     parser_version: 1,
@@ -219,9 +219,9 @@ fn staging() -> PathBuf {
     std::env::temp_dir().join("sinex-outlook")
 }
 
-/// `--source outlook=PATH`: each `.pst` under PATH, converted with `readpst`
+/// `--read outlook=PATH`: each `.pst` under PATH, converted with `readpst`
 /// to one mbox per folder, each folder its own binding.
-pub const KIND: crate::binding::InputKind = crate::binding::InputKind {
+pub const FORMAT: crate::binding::InputFormat = crate::binding::InputFormat {
     name: "outlook",
     specs: || vec![&PST],
     plan: Some(|input, settings| {
@@ -246,8 +246,8 @@ pub const KIND: crate::binding::InputKind = crate::binding::InputKind {
     capture: None,
 };
 
-/// `--source outlook-csv=PATH`: each Outlook CSV export under PATH.
-pub const CSV_KIND: crate::binding::InputKind = crate::binding::InputKind {
+/// `--read outlook-csv=PATH`: each Outlook CSV export under PATH.
+pub const CSV_FORMAT: crate::binding::InputFormat = crate::binding::InputFormat {
     name: "outlook-csv",
     specs: || vec![&CSV],
     plan: Some(|input, settings| {
