@@ -156,7 +156,7 @@ async fn sealed_history_needs_no_private_key_and_keeps_the_binding_sealed(
         &mut bounds,
         Access {
             recipient: Some(&recipient),
-            authority: None,
+            unlock: None,
         },
     )
     .await
@@ -169,7 +169,7 @@ async fn sealed_history_needs_no_private_key_and_keeps_the_binding_sealed(
         &mut restarted,
         Access {
             recipient: Some(&recipient),
-            authority: None,
+            unlock: None,
         },
     )
     .await
@@ -199,7 +199,7 @@ async fn sealed_history_needs_no_private_key_and_keeps_the_binding_sealed(
         &mut lowered,
         Access {
             recipient: Some(&recipient),
-            authority: None,
+            unlock: None,
         },
     )
     .await

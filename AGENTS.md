@@ -8,10 +8,8 @@ history for reference.
 
 ## Structure
 
-Read [ARCHITECTURE.md](ARCHITECTURE.md) for current ownership boundaries.
-The workspace follows the target architecture
-(`/realm/project/sinex/analysis/architecture-20261018/sinex-architecture.md`
-§2).
+Read [ARCHITECTURE.md](ARCHITECTURE.md) for how the crates divide the work
+and [docs/vocabulary.md](docs/vocabulary.md) for the names of things.
 
 - `crates/sinex-macros`: the `EventPayload` and `DbCheck` derives.
 - `crates/sinex-model`: identifiers, the three clocks, record locations,
