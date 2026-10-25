@@ -124,6 +124,7 @@ impl<A: Api> ApiCursor<A> {
                 aligned: false,
                 removed: Vec::new(),
                 memory: None,
+                owned_files: Vec::new(),
             }),
             cursor_without_material: Value::Null,
         })

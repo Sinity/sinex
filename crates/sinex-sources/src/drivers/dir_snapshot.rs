@@ -313,6 +313,7 @@ impl DirSnapshot {
                 aligned: false,
                 removed: Vec::new(),
                 memory,
+                owned_files: Vec::new(),
             }),
             cursor_without_material: Value::Null,
         };

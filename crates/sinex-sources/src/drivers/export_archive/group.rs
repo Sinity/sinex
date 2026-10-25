@@ -323,6 +323,7 @@ impl Context<'_, '_> {
                 aligned: false,
                 removed: Vec::new(),
                 memory: None,
+                owned_files: Vec::new(),
             }),
             cursor_without_material: Value::Null,
         };
@@ -539,6 +540,7 @@ impl Context<'_, '_> {
                     aligned: false,
                     removed: Vec::new(),
                     memory: None,
+                    owned_files: Vec::new(),
                 }),
                 cursor_without_material: Value::Null,
             };

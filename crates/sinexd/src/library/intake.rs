@@ -5,7 +5,7 @@ use serde_json::{Value, json};
 use sinex_library::{items, reads};
 use sinex_model::Timestamp;
 use sinex_model::event_types::library::{FileCopy, Item, LibraryRecord};
-use sinex_sources::drivers;
+use sinex_sources::{Reader, drivers};
 use sinex_sources::sources::library as library_source;
 use sqlx::PgConnection;
 use std::collections::HashMap;
@@ -33,37 +33,7 @@ impl Library<'_> {
         };
         let root_text = root.display().to_string();
         let binding = format!("library.scan:{root_text}@{}", self.host);
-        // Seed the scan's state from what is already admitted, so a second
-        // add of the same root hashes only what changed.
-        let known = reads::copies(conn, self.host, &root_text)
-            .await
-            .map_err(e)?;
-        let state = library_source::ScanState::seed(
-            known
-                .iter()
-                .filter(|a| a.vanished_at.is_none())
-                .filter_map(|a| {
-                    let relative = Path::new(&a.path).strip_prefix(&root).ok()?;
-                    let mtime_ns = a.modified_at.map(|t| t.unix_ns())?;
-                    Some((
-                        relative.to_string_lossy().into_owned(),
-                        library_source::Known {
-                            size: a.size,
-                            mtime_ns,
-                            device: a.device,
-                            inode: a.inode,
-                            content: a.content.clone(),
-                        },
-                    ))
-                }),
-        );
-        let mut cursor = sinex_store::positions::load(conn, &binding)
-            .await
-            .ok()
-            .flatten()
-            .map(|(c, _)| c)
-            .unwrap_or(Value::Null);
-        let scan = std::sync::Arc::new(library_source::LibraryScan {
+        let mut reader = library_source::LibraryReader::new(library_source::LibraryScan {
             root: root.clone(),
             host: self.host.to_owned(),
             keep_bytes: !reference,
@@ -71,36 +41,44 @@ impl Library<'_> {
             bytes_per_poll: 1 << 30,
             only,
         });
-        let mut state = Some(state);
+        // What the scan knew when it last stopped, so a second add of the
+        // same root hashes only what changed.
+        let (_stop, stop) = tokio::sync::watch::channel(false);
+        crate::binding_reader::restore_reader(conn, self.blobs, &mut reader, &binding, None, &stop)
+            .await?;
+        let mut cursor = sinex_store::positions::load(conn, &binding)
+            .await
+            .map_err(e)?
+            .map(|(c, _)| c)
+            .unwrap_or(Value::Null);
+        let mut reader = Some(reader);
         let (mut files, mut seen) = (0usize, 0usize);
         loop {
-            let s = scan.clone();
-            let mut m = state.take().expect("state is returned each poll");
+            let mut r = reader.take().expect("the reader is returned each poll");
             let c = cursor.clone();
-            let sink = crate::material_sink::Sink(self.blobs.clone());
-            let (m, out) = tokio::task::spawn_blocking(move || {
-                let acquired = s.poll(&c, &mut m, &sink);
-                let out = acquired.and_then(|a| {
+            let (r, out) = tokio::task::spawn_blocking(move || {
+                let out = r.poll(&c).and_then(|a| {
                     if let Some(reason) = &a.observation.unavailable {
                         return Err(drivers::DriverError::Io(reason.clone()));
                     }
                     let next = a
                         .material
                         .as_ref()
-                        .map(|mat| {
-                            Ok::<_, drivers::DriverError>((
-                                (mat.cursor_at)(mat.bytes.len())?,
-                                mat.records.len(),
-                            ))
+                        .map(|m| {
+                            let length = match &m.stored {
+                                Some(drivers::StoredBytes::FramedMemory(bytes)) => bytes.len(),
+                                _ => m.bytes.len(),
+                            };
+                            Ok::<_, drivers::DriverError>(((m.cursor_at)(length)?, m.records.len()))
                         })
                         .transpose()?;
                     Ok((next, a))
                 });
-                (m, out)
+                (r, out)
             })
             .await
             .map_err(e)?;
-            state = Some(m);
+            reader = Some(r);
             let (next, acquired) = out.map_err(e)?;
             let admitted = crate::authored::submit(
                 conn,

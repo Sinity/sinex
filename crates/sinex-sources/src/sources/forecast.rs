@@ -136,6 +136,7 @@ pub fn request_material(
             aligned: false,
             removed: vec![],
             memory: None,
+            owned_files: Vec::new(),
         }),
         cursor_without_material: Value::Null,
     }
