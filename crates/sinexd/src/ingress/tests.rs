@@ -680,8 +680,8 @@ async fn an_indirect_frame_is_handled_as_the_frame_it_names(db: devkit::pg::Test
     assert_eq!(ack.refusal, None, "{ack:?}");
     assert_eq!(ack.frame, "e-big");
     assert_eq!(ack.admitted.len(), 1);
-    // Bytes not in the spool, or an indirect frame standing for another
-    // indirect frame, are refused.
+    // Bytes not in the frame's directory, or a large frame standing for
+    // another large frame, are refused.
     let missing = Ingress::LargeFrame {
         frame: "e-missing".into(),
         blob: format!("blake3:{}", blake3::hash(b"absent").to_hex()),

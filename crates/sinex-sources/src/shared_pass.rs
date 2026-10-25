@@ -7,7 +7,7 @@ use serde_json::Value;
 use sinex_model::{Class, MaterialId, ObservationFacts};
 use std::path::Path;
 
-pub use crate::drivers::export_archive::group::{Input, ReadSeek, Route, Work, read_input as read};
+pub use crate::drivers::export_archive::group::{Input, ReadSeek, Route, ArchivePassStats, read_input as read};
 
 /// A binding read in a shared pass over one file.
 pub trait SharedPass: Send + Sync {

@@ -105,7 +105,7 @@ pub struct Route {
 }
 
 #[derive(Debug, Default)]
-pub struct Work {
+pub struct ArchivePassStats {
     /// Bytes read from the decoded tar/gzip stream or selected ZIP members.
     pub decoded_bytes: u64,
     pub zip_staging_bytes: u64,
@@ -136,9 +136,9 @@ pub fn read_input(
     routes: Vec<Route>,
     sink: &dyn MaterialSink,
     emit: &mut Emit<'_>,
-) -> Result<Work, DriverError> {
+) -> Result<ArchivePassStats, DriverError> {
     if routes.is_empty() {
-        return Ok(Work::default());
+        return Ok(ArchivePassStats::default());
     }
     if routes.iter().any(|r| r.class == Class::Sealed) && routes.len() != 1 {
         return Err(DriverError::InvalidMaterial(
@@ -178,7 +178,7 @@ pub fn read_input(
         routes: Vec::new(),
         sink,
         emit,
-        work: Work::default(),
+        work: ArchivePassStats::default(),
         stop: Arc::clone(&stop),
     };
     for route in routes {
@@ -220,7 +220,7 @@ pub fn read_input(
         } else {
             RevisionChange::Replaced
         };
-        context.routes.push(State {
+        context.routes.push(RouteState {
             driver: route.driver,
             cursor,
             active: true,
@@ -276,7 +276,7 @@ pub fn read_input(
     Ok(context.work)
 }
 
-struct State {
+struct RouteState {
     driver: ExportArchive,
     cursor: Cursor,
     active: bool,
@@ -284,10 +284,10 @@ struct State {
 struct Context<'a, 'b> {
     capture: Capture,
     facts: ObservationFacts,
-    routes: Vec<State>,
+    routes: Vec<RouteState>,
     sink: &'a dyn MaterialSink,
     emit: &'a mut Emit<'b>,
-    work: Work,
+    work: ArchivePassStats,
     stop: Arc<AtomicBool>,
 }
 

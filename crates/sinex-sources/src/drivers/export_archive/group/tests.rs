@@ -16,7 +16,7 @@ fn read(
     routes: Vec<Route>,
     sink: &dyn MaterialSink,
     emit: &mut Emit<'_>,
-) -> Result<Work, DriverError> {
+) -> Result<ArchivePassStats, DriverError> {
     read_input(
         Input::Sequential(reader),
         blob,

@@ -68,7 +68,7 @@ pub(crate) struct Excised {
     pub files_left: Vec<String>,
 }
 
-enum Work {
+enum WriterJob {
     Admit(Batch),
     Checked(Batch, AdmissionCheck),
     Replay(ReplaySequence),
@@ -82,7 +82,7 @@ enum Done {
 }
 
 struct Job {
-    work: Work,
+    work: WriterJob,
     reply: oneshot::Sender<Result<Done, WriteError>>,
 }
 
@@ -105,7 +105,7 @@ impl WriterHandle {
         batch: Batch,
         check: AdmissionCheck,
     ) -> Result<Outcome, WriteError> {
-        match self.send(priority, Work::Checked(batch, check)).await? {
+        match self.send(priority, WriterJob::Checked(batch, check)).await? {
             Done::Admitted(outcome) => Ok(outcome),
             _ => unreachable!("checked admission returns its outcome"),
         }
@@ -116,7 +116,7 @@ impl WriterHandle {
         priority: Priority,
         batch: Batch,
     ) -> Result<Outcome, WriteError> {
-        match self.send(priority, Work::Admit(batch)).await? {
+        match self.send(priority, WriterJob::Admit(batch)).await? {
             Done::Admitted(outcome) => Ok(outcome),
             _ => unreachable!("an admission answers with its outcome"),
         }
@@ -127,7 +127,7 @@ impl WriterHandle {
         &self,
         sequence: ReplaySequence,
     ) -> Result<(Vec<Outcome>, Diff), WriteError> {
-        match self.send(Priority::Derived, Work::Replay(sequence)).await? {
+        match self.send(Priority::Derived, WriterJob::Replay(sequence)).await? {
             Done::Replayed(outcomes, diff) => Ok((outcomes, diff)),
             _ => unreachable!("a replay answers with its outcomes"),
         }
@@ -135,7 +135,7 @@ impl WriterHandle {
 
     pub(crate) async fn excise(&self, excision: Excision) -> Result<Excised, WriteError> {
         match self
-            .send(Priority::Live, Work::Excise(Box::new(excision)))
+            .send(Priority::Live, WriterJob::Excise(Box::new(excision)))
             .await?
         {
             Done::Excised(done) => Ok(done),
@@ -143,7 +143,7 @@ impl WriterHandle {
         }
     }
 
-    async fn send(&self, priority: Priority, work: Work) -> Result<Done, WriteError> {
+    async fn send(&self, priority: Priority, work: WriterJob) -> Result<Done, WriteError> {
         let (reply, answer) = oneshot::channel();
         let channel = match priority {
             Priority::Live => &self.live,
@@ -255,22 +255,22 @@ pub(crate) async fn run_notifying(
             else => return,
         };
         let result = match job.work {
-            Work::Admit(batch) => {
+            WriterJob::Admit(batch) => {
                 admit_checked(&mut connection, &batch, keys.as_ref(), store, &|| Ok(()))
                     .await
                     .map(Done::Admitted)
             }
-            Work::Checked(batch, check) => {
+            WriterJob::Checked(batch, check) => {
                 admit_checked(&mut connection, &batch, keys.as_ref(), store, &*check)
                     .await
                     .map(Done::Admitted)
             }
-            Work::Replay(mut sequence) => {
+            WriterJob::Replay(mut sequence) => {
                 replay_sequence(&mut connection, &mut sequence, keys.as_ref())
                     .await
                     .map(|(o, d)| Done::Replayed(o, d))
             }
-            Work::Excise(excision) => excise(&mut connection, &excision, keys.as_ref())
+            WriterJob::Excise(excision) => excise(&mut connection, &excision, keys.as_ref())
                 .await
                 .map(Done::Excised),
         };
