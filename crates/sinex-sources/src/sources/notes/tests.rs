@@ -259,6 +259,7 @@ fn payloads_without_metadata_and_vanished_notes_do_not_claim_metadata() {
 
 #[devkit::test]
 fn front_matter_of_any_size_is_parsed() {
+    use sinex_model::event_types::media::NoteFrontMatter;
     let text = format!("---\nbody: \"{}\"\n---\ntext\n", "x".repeat(2 << 20));
     assert!(matches!(
         note(&text, "large.md").front_matter,

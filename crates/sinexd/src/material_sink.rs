@@ -241,3 +241,6 @@ impl MaterialSink for SealingSink {
         self.put_reader(std::io::Cursor::new(bytes))
     }
 }
+
+#[cfg(test)]
+mod tests;
