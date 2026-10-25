@@ -93,12 +93,6 @@ async fn check_ready_unlocked(conn: &mut PgConnection, source: &str) -> Result<(
     {
         return Err("excision of a producer's records is not supported yet".into());
     }
-    if sinex_store::native_materials::source_pending(conn, source)
-        .await
-        .map_err(|e| e.to_string())?
-    {
-        return Err("the source has a material that is not admitted yet; let its capture finish before excising".into());
-    }
     let partial:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM raw.positions p JOIN raw.bindings b ON b.binding=p.binding JOIN raw.materials m ON m.id::text=p.cursor->>'material' WHERE b.source=$1 AND CASE WHEN jsonb_typeof(p.cursor->'through')='number' AND p.cursor->>'through' ~ '^[0-9]+$' THEN (p.cursor->>'through')::numeric<>m.durable_bytes ELSE true END)")
         .bind(source).fetch_one(conn).await.map_err(|e|e.to_string())?;
     if partial {

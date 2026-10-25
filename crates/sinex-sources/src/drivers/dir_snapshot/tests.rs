@@ -329,7 +329,7 @@ fn empty_and_nonempty_members_keep_exact_body_ranges_in_every_order() {
 }
 
 #[test]
-fn an_isolated_accounted_member_does_not_confirm_the_preceding_empty_member() {
+fn a_restart_remembers_the_files_of_admitted_records_only() {
     let root = vault();
     std::fs::write(root.join("a.md"), b"").unwrap();
     let d = driver(root.clone(), 1 << 20);
@@ -338,26 +338,51 @@ fn an_isolated_accounted_member_does_not_confirm_the_preceding_empty_member() {
     let material = acquired.material.as_ref().unwrap();
     let mut restored = DirState::default();
     restored
-        .remember_members(&material.manifest, &[material.records[1].0])
+        .remember_members(&material.manifest, material.records[0].1 as u64)
         .unwrap();
+    assert_eq!(restored.files.get("a.md"), Some(&None));
+    assert!(!restored.files.contains_key("sub/b.md"));
     let mut malformed = material.manifest.clone();
     malformed["members"][0]["vanished_at_ns"] = Value::Null;
     assert!(
         DirState::default()
-            .remember_members(&malformed, &[material.records[0].0])
+            .remember_members(&malformed, u64::MAX)
             .is_err()
     );
-    assert!(!restored.files.contains_key("a.md"));
+    restored.finish_remembering();
+    restored
+        .remember_members(&material.manifest, u64::MAX)
+        .unwrap();
     assert_eq!(restored.files.get("sub/b.md"), Some(&None));
-    // An explicit consumed prefix, unlike one later outcome, includes even a
-    // record whose parser produced nothing.
-    let all: Vec<_> = material.records.iter().map(|r| r.0).collect();
-    restored.remember_members(&material.manifest, &all).unwrap();
-    assert_eq!(restored.files.get("a.md"), Some(&None));
     assert_eq!(
         paths(&d.poll(&Value::Null, &mut restored).unwrap()),
         vec!["a.md", "sub/b.md"],
-        "known membership must not suppress unverified current bytes"
+        "remembered files are read again: their fingerprints are not kept"
+    );
+}
+
+#[test]
+fn a_newer_bundle_decides_a_path_before_an_older_one() {
+    let root = vault();
+    let d = driver(root.clone(), 1 << 20);
+    let mut state = DirState::default();
+    let older = d.poll(&Value::Null, &mut state).unwrap();
+    let older = older.material.unwrap();
+    let cursor = (older.cursor_at)(older.records.last().unwrap().1).unwrap();
+    let _ = d.poll(&cursor, &mut state).unwrap();
+    std::fs::remove_file(root.join("sub/b.md")).unwrap();
+    let newer = d.poll(&cursor, &mut state).unwrap();
+    let newer = newer.material.unwrap();
+    let mut restored = DirState::default();
+    restored
+        .remember_members(&newer.manifest, u64::MAX)
+        .unwrap();
+    restored
+        .remember_members(&older.manifest, u64::MAX)
+        .unwrap();
+    assert!(
+        !restored.files.contains_key("sub/b.md"),
+        "the newer bundle records the file as vanished"
     );
 }
 

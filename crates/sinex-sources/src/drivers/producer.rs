@@ -4,10 +4,11 @@
 //!
 //! A poll goes through the same driver and drain `sinexd` uses. Then:
 //!
-//! 1. material bytes and frame declarations freeze in a durable private spool;
-//!    Sinex reserves custody, verifies a receiver-owned copy and installs it;
-//!    a material frame registers that version, and the producer waits
-//!    for its acknowledgment before sending anything that cites it;
+//! 1. the material's bytes are written to the material frame's spool
+//!    directory under the content store this host shares with `sinexd`
+//!    (`sinex_transport::spool`); Sinex stores them and registers the
+//!    material, and the producer waits for the acknowledgment before sending
+//!    anything that cites it;
 //! 2. the events go in frames that each fit one NATS message;
 //! 3. only when every frame of a batch is acknowledged does the binding's
 //!    cursor (and parser carry) advance, in a state file next to the spool.
@@ -21,11 +22,10 @@
 //!
 //! A producer on another host, which does not share `sinexd`'s content store,
 //! sends a material's bytes in [`Ingress::Chunk`] frames first
-//! ([`Producer::upload_bytes`]). A frame too large for one message keeps a
-//! distinct private envelope role, named by an [`Ingress::Indirect`] frame.
+//! ([`Producer::upload_bytes`]). A frame too large for one message is written
+//! to the spool as its JSON, and an [`Ingress::Indirect`] frame names it.
 use sinex_transport::spool;
 mod staging;
-use sinex_protocol::producer_bytes::{Bytes, Material, Publication, Role};
 use staging::Snapshots;
 
 use crate::drivers::{self, Acquired, DriverError, MaterialSink};
@@ -70,8 +70,9 @@ fn nats(e: impl std::fmt::Display) -> Error {
     Error::Nats(e.to_string())
 }
 
-/// Root shared with Sinex, or a remote producer's local private queue root.
-/// This adapter never installs a public CAS object.
+/// The content store root shared with Sinex, whose spool receives the bytes;
+/// or, for a producer on another host, a local root whose spool holds them
+/// until they are sent in chunks.
 pub struct Store(PathBuf);
 impl Store {
     pub fn open(root: &Path) -> std::io::Result<Self> {
@@ -127,8 +128,6 @@ impl Position {
 /// saved.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 struct Pending {
-    version: u32,
-    publications: Vec<Option<Publication>>,
     frames: Vec<Ingress>,
     position: Position,
 }
@@ -141,17 +140,9 @@ impl Pending {
     fn load(dir: &Path, binding: &str) -> Result<Option<Self>, Error> {
         let path = Self::path(dir, binding);
         match std::fs::read(&path) {
-            Ok(bytes) => {
-                let pending: Self = serde_json::from_slice(&bytes)
-                    .map_err(|e| Error::State(path.clone(), e.to_string()))?;
-                if pending.version != 1 || pending.frames.len() != pending.publications.len() {
-                    return Err(Error::State(
-                        path,
-                        "unsupported producer Pending custody format".into(),
-                    ));
-                }
-                Ok(Some(pending))
-            }
+            Ok(bytes) => serde_json::from_slice(&bytes)
+                .map(Some)
+                .map_err(|e| Error::State(path, e.to_string())),
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
             Err(e) => Err(Error::State(path, e.to_string())),
         }
@@ -251,170 +242,120 @@ impl Producer {
         store: &Store,
     ) -> Result<Position, Error> {
         if let Some(pending) = Pending::load(state, binding)? {
-            for (frame, publication) in pending.frames.iter().zip(&pending.publications) {
-                self.deliver(frame.clone(), publication.as_ref(), store)
-                    .await?;
+            for frame in &pending.frames {
+                self.deliver(frame.clone(), store).await?;
             }
             pending.position.save(state, binding)?;
-            self.clear_spool(&pending.publications, store)?;
+            self.clear_spool(&pending.frames, store)?;
             Pending::clear(state, binding)?;
         }
         Position::load(state, binding)
     }
 
-    fn clear_spool(
-        &self,
-        publications: &[Option<Publication>],
-        shared: &Store,
-    ) -> Result<(), Error> {
-        let store = self.upload.as_ref().unwrap_or(shared);
-        for publication in publications.iter().flatten() {
-            spool::discard(&store.0, &self.name, publication).map_err(Error::Nats)?;
+    /// The root whose spool holds this producer's bytes.
+    fn spool_root<'a>(&'a self, shared: &'a Store) -> &'a Path {
+        &self.upload.as_ref().unwrap_or(shared).0
+    }
+
+    fn clear_spool(&self, frames: &[Ingress], shared: &Store) -> Result<(), Error> {
+        for frame in frames {
+            if matches!(frame, Ingress::Material { .. } | Ingress::Indirect { .. }) {
+                spool::discard(self.spool_root(shared), &self.name, frame.frame())
+                    .map_err(Error::Nats)?;
+            }
         }
         Ok(())
     }
 
+    /// Write the bytes `frame` needs to its spool directory: a material's
+    /// bytes, and the frame itself when it is too large for one message, in
+    /// which case an indirect frame takes its place.
     fn prepare(
         &self,
         frame: Ingress,
         snapshots: &Snapshots,
         shared: &Store,
-        class: sinex_model::Class,
-    ) -> Result<(Ingress, Option<Publication>), Error> {
-        if class == sinex_model::Class::Sealed {
-            return Err(Error::Nats("sealed producer storage is unsupported".into()));
-        }
+    ) -> Result<Ingress, Error> {
+        let body = serde_json::to_vec(&frame).expect("frame serializes");
         let material = match &frame {
-            Ingress::Material { material, .. } => Some(Material::from_frame(material)),
+            Ingress::Material { material, .. } => Some(material.as_ref().clone()),
             _ => None,
         };
-        let body = sinex_protocol::producer_bytes::encode_frame(&frame);
-        let envelope = (body.len() + 4096 > self.max_message).then(|| Bytes {
-            blob: format!("blake3:{}", blake3::hash(&body).to_hex()),
-            length: body.len() as u64,
-        });
-        let frame = if let Some(envelope) = &envelope {
+        let frame = if body.len() + 4096 > self.max_message {
             Ingress::Indirect {
                 frame: format!("{}/indirect", frame.frame()),
-                blob: envelope.blob.clone(),
+                blob: format!("blake3:{}", blake3::hash(&body).to_hex()),
+                length: body.len() as u64,
             }
         } else {
             frame
         };
-        if material.is_none() && envelope.is_none() {
-            return Ok((frame, None));
-        }
-        let publication = Publication {
-            version: 1,
-            frame: frame.frame().to_owned(),
-            class,
-            material,
-            envelope,
-        };
-        publication.validate().map_err(Error::Nats)?;
-        let store = self.upload.as_ref().unwrap_or(shared);
-        if let Some(material) = &publication.material {
+        let root = self.spool_root(shared);
+        if let Some(material) = material {
             spool::stage(
-                &store.0,
+                root,
                 &self.name,
-                &publication,
-                Role::Material,
-                snapshots.open(&material.bytes.blob)?,
+                frame.frame(),
+                &material.blob,
+                material.length,
+                snapshots.open(&material.blob)?,
             )
             .map_err(Error::Nats)?;
         }
-        if publication.envelope.is_some() {
+        if let Ingress::Indirect { blob, length, .. } = &frame {
             spool::stage(
-                &store.0,
+                root,
                 &self.name,
-                &publication,
-                Role::Envelope,
+                frame.frame(),
+                blob,
+                *length,
                 body.as_slice(),
             )
             .map_err(Error::Nats)?;
         }
-        Ok((frame, Some(publication)))
+        Ok(frame)
     }
 
-    async fn deliver(
-        &mut self,
-        frame: Ingress,
-        publication: Option<&Publication>,
-        shared: &Store,
-    ) -> Result<Acknowledgment, Error> {
-        if let Some(publication) = publication {
-            let reservation = Ingress::Reserve {
-                frame: format!("{}/reserve/{}", publication.frame, uuid::Uuid::now_v7()),
-                publication: publication.clone(),
-            };
-            if serde_json::to_vec(&reservation)
-                .expect("reservation serializes")
-                .len()
-                + 4096
-                > self.max_message
-            {
-                return Err(Error::Nats(
-                    "producer reservation exceeds negotiated NATS payload".into(),
-                ));
-            }
-            let reserved = self.send(reservation).await?;
-            if reserved.outcome["producer_bytes"] != 1 {
-                return Err(Error::Nats(
-                    "receiver does not support durable producer byte custody".into(),
-                ));
-            }
-            if !reserved.outcome["complete"].is_null() {
-                let done: Acknowledgment =
-                    serde_json::from_value(reserved.outcome["complete"].clone()).map_err(nats)?;
-                if done.frame != publication.frame {
-                    return Err(Error::Nats(
-                        "reservation answered for a different publication".into(),
-                    ));
+    /// Send `frame`, after uploading its spooled bytes in chunks when Sinex
+    /// does not share this host's spool.
+    async fn deliver(&mut self, frame: Ingress, shared: &Store) -> Result<Acknowledgment, Error> {
+        if let Some(store) = &self.upload {
+            let root = store.0.clone();
+            let dir = spool::directory(&root, &self.name, frame.frame());
+            if dir.exists() {
+                let mut names = Vec::new();
+                for entry in std::fs::read_dir(&dir).map_err(nats)? {
+                    let entry = entry.map_err(nats)?;
+                    let name = entry.file_name().to_string_lossy().into_owned();
+                    if blake3::Hash::from_hex(&name).is_ok() {
+                        names.push((
+                            format!("blake3:{name}"),
+                            entry.metadata().map_err(nats)?.len(),
+                        ));
+                    }
                 }
-                if let Some(reason) = done.refusal.clone() {
-                    return Err(Error::Refused {
-                        frame: done.frame,
-                        reason,
-                    });
+                for (blob, length) in names {
+                    self.upload(frame.frame(), &blob, length, &root).await?;
                 }
-                if done.material != publication.material.as_ref().map(|m| m.id) {
-                    return Err(Error::Nats(
-                        "completed publication has a different material identity".into(),
-                    ));
-                }
-                return Ok(done);
-            }
-            if let Some(store) = &self.upload {
-                let root = store.0.clone();
-                for (role, _) in publication.roles() {
-                    self.upload_role(publication, role, &root).await?;
-                }
-            } else {
-                // Shared placement is private and durable, never a public CAS put.
-                let _ = shared;
             }
         }
+        let _ = shared;
         self.send(frame).await
     }
 
-    /// Send the bytes named `blob` from the uploading store, in order, as
-    /// chunk frames. Each attempt names its frames afresh: Sinex keeps the
-    /// bytes it already has by offset, so a repeated upload costs only the
-    /// sending, and a refused attempt never blocks the next one.
-    async fn upload_role(
+    /// Send the bytes named `blob` from the uploading store's spool, in
+    /// order, as chunk frames. Each attempt names its frames afresh: Sinex
+    /// keeps the bytes it already has by offset, so a repeated upload costs
+    /// only the sending, and a refused attempt never blocks the next one.
+    async fn upload(
         &mut self,
-        publication: &Publication,
-        role: Role,
+        for_frame: &str,
+        blob: &str,
+        total: u64,
         root: &Path,
     ) -> Result<(), Error> {
         let mut reader =
-            spool::snapshot(root, &self.name, publication, role).map_err(Error::Nats)?;
-        let (_, bytes) = publication
-            .roles()
-            .find(|(r, _)| *r == role)
-            .expect("declared role");
-        let total = bytes.length;
-        let blob = &bytes.blob;
+            spool::snapshot(root, &self.name, for_frame, blob, total).map_err(Error::Nats)?;
         let attempt = uuid::Uuid::now_v7();
         let mut offset = 0u64;
         let mut bytes = vec![0; total.min(CHUNK_BYTES as u64) as usize];
@@ -422,9 +363,8 @@ impl Producer {
             let count = (total - offset).min(CHUNK_BYTES as u64) as usize;
             reader.read_exact(&mut bytes[..count]).map_err(nats)?;
             self.send(Ingress::Chunk {
-                publication: publication.frame.clone(),
-                role,
                 frame: format!("{blob}/{attempt}/{offset}"),
+                for_frame: for_frame.to_owned(),
                 blob: blob.to_owned(),
                 offset,
                 total,
@@ -445,7 +385,7 @@ impl Producer {
         // JetStream drops a duplicate within its window; the ingress also
         // answers a resent frame from its record.
         headers.insert("Nats-Msg-Id", id.as_str());
-        let body = sinex_protocol::producer_bytes::encode_frame(&frame);
+        let body = serde_json::to_vec(&frame).expect("frame serializes");
         self.js
             .publish_with_headers(self.subjects.ingress(&self.name), headers, body.into())
             .await
@@ -606,28 +546,31 @@ impl Producer {
             let class = batch
                 .events()
                 .fold(source.spec().class, |class, event| class.max(event.class));
-            let prepared = frames
+            if class == sinex_model::Class::Sealed {
+                return Err(Error::Nats("sealed producer storage is unsupported".into()));
+            }
+            let events_frames: Vec<bool> = frames
+                .iter()
+                .map(|f| matches!(f, Ingress::Events { .. }))
+                .collect();
+            let frames = frames
                 .into_iter()
-                .map(|f| self.prepare(f, &snapshots, sink, class))
+                .map(|f| self.prepare(f, &snapshots, sink))
                 .collect::<Result<Vec<_>, _>>()?;
-            let (frames, publications): (Vec<_>, Vec<_>) = prepared.into_iter().unzip();
             Pending {
-                version: 1,
-                publications: publications.clone(),
                 frames: frames.clone(),
                 position: after.clone(),
             }
             .save(state, binding)?;
-            for (frame, publication) in frames.into_iter().zip(&publications) {
-                let is_events = matches!(frame, Ingress::Events { .. } | Ingress::Indirect { .. });
-                let ack = self.deliver(frame, publication.as_ref(), sink).await?;
+            for (frame, is_events) in frames.iter().zip(events_frames) {
+                let ack = self.deliver(frame.clone(), sink).await?;
                 if is_events {
                     sent.admitted += ack.admitted.len();
                     sent.frames += 1;
                 }
             }
             after.save(state, binding)?;
-            self.clear_spool(&publications, sink)?;
+            self.clear_spool(&frames, sink)?;
             Pending::clear(state, binding)?;
         }
         Ok(sent)

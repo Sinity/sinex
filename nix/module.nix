@@ -307,12 +307,11 @@ in
 
       systemd.tmpfiles.rules = [
         "d ${cfg.stateDir} 0750 ${cfg.user} ${cfg.group} -"
-        # Producers on this host write material bytes, so the group may write.
+        # Group mode 2770 marks the store root as shared with producers on this
+        # host; they write only under incoming/producers (the spool).
         "d ${cfg.storeDir} 2770 ${cfg.user} ${cfg.group} -"
-        # The session producer and daemon share only these protected handoff trees.
         "d ${cfg.storeDir}/incoming 2770 ${cfg.user} ${cfg.group} -"
         "d ${cfg.storeDir}/incoming/producers 2770 ${cfg.user} ${cfg.group} -"
-        "d ${cfg.storeDir}/incoming/producer-requests 2770 ${cfg.user} ${cfg.group} -"
         "d ${cfg.stateDir}/tokens 0750 ${cfg.user} ${cfg.group} -"
         "d ${cfg.stateDir}/nats 0750 ${cfg.user} ${cfg.group} -"
         "d ${cfg.stateDir}/spool 0750 ${cfg.user} ${cfg.group} -"

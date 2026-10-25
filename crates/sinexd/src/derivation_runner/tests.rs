@@ -109,6 +109,7 @@ impl World {
             connection,
             queues,
             Arc::new(Keys::new(keyed)),
+            None,
         ));
         Self {
             _db: db,

@@ -1,7 +1,6 @@
 use super::*;
 use crate::writer;
 use serde_json::json;
-use sinex_model::producer_bytes::{Bytes, Material, Publication, Role};
 use sinex_model::{InputRef, MaterialId, RecordLocation};
 use sinex_protocol::Confirmed;
 use sinex_transport::spool;
@@ -16,7 +15,6 @@ struct Harness {
     client: async_nats::Client,
     url: String,
     blobs: Blobs,
-    writer: WriterHandle,
     store_dir: std::path::PathBuf,
     stop: watch::Sender<bool>,
     _db: devkit::pg::TestDatabase,
@@ -28,18 +26,19 @@ impl Harness {
         let subjects = Subjects::new(nats.prefix());
         let client = async_nats::connect(nats.url()).await.unwrap();
         let (db, url, connection) = crate::testdb::fresh().await;
+        let store_dir = std::env::temp_dir().join(format!("sinex-ingress-{}", Uuid::now_v7()));
+        let blobs = Blobs::open(&store_dir).unwrap();
         let (handle, queues) = writer::channels();
         tokio::spawn(writer::run(
             url.clone(),
             connection,
             queues,
             Arc::new(sinex_store::NoDerivations),
+            Some(blobs.clone()),
         ));
-        let store_dir = std::env::temp_dir().join(format!("sinex-ingress-{}", Uuid::now_v7()));
-        let blobs = Blobs::open(&store_dir).unwrap();
         let ingest = Ingest::new(
             subjects.clone(),
-            handle.clone(),
+            handle,
             PgConnection::connect(&url).await.unwrap(),
             sqlx::postgres::PgPoolOptions::new()
                 .max_connections(1)
@@ -58,7 +57,6 @@ impl Harness {
             client,
             url,
             blobs,
-            writer: handle,
             store_dir,
             stop,
             _db: db,
@@ -79,62 +77,40 @@ impl Harness {
         panic!("ingress stream was not created");
     }
 
-    /// Send a frame as `producer` and wait for its acknowledgment.
+    /// Send a frame as `producer` and wait for its acknowledgment, after
+    /// writing the fixture bytes it names to its spool directory, as a
+    /// producer on this host does.
     async fn send(&self, producer: &str, frame: &Ingress) -> Acknowledgment {
-        let publication = match frame {
-            Ingress::Material { material, .. } if self.fixture_path(&material.blob).exists() => {
-                Some(Publication {
-                    version: 1,
-                    frame: frame.frame().into(),
-                    class: Default::default(),
-                    material: Some(Material::from_frame(material)),
-                    envelope: None,
-                })
-            }
-            Ingress::Indirect { blob, .. } if self.fixture_path(blob).exists() => {
-                let bytes = std::fs::read(self.fixture_path(blob)).unwrap();
-                let material = match serde_json::from_slice::<Ingress>(&bytes) {
-                    Ok(Ingress::Material { material, .. }) => Some(Material::from_frame(&material)),
-                    _ => None,
-                };
-                Some(Publication {
-                    version: 1,
-                    frame: frame.frame().into(),
-                    class: Default::default(),
-                    material,
-                    envelope: Some(Bytes {
-                        blob: blob.clone(),
-                        length: bytes.len() as u64,
-                    }),
-                })
-            }
-            _ => None,
-        };
-        if let Some(publication) = publication {
-            for (role, bytes) in publication.roles() {
-                let input = std::fs::File::open(self.fixture_path(&bytes.blob)).unwrap();
-                if let Err(reason) =
-                    spool::stage(&self.store_dir, producer, &publication, role, input)
+        let mut spooled = Vec::new();
+        match frame {
+            Ingress::Material { material, .. } => spooled.push(material.blob.clone()),
+            Ingress::Indirect { blob, .. } => {
+                spooled.push(blob.clone());
+                if let Ok(bytes) = std::fs::read(self.fixture_path(blob))
+                    && let Ok(Ingress::Material { material, .. }) = serde_json::from_slice(&bytes)
                 {
-                    return Acknowledgment {
-                        frame: frame.frame().into(),
-                        refusal: Some(reason),
-                        ..refused_unrecorded("")
-                    };
+                    spooled.push(material.blob.clone());
                 }
             }
-            let ack = self
-                .send_raw(
-                    producer,
-                    serde_json::to_vec(&Ingress::Reserve {
-                        frame: format!("reserve/{}", Uuid::now_v7()),
-                        publication,
-                    })
-                    .unwrap(),
-                )
-                .await;
-            if ack.refusal.is_some() {
-                return ack;
+            _ => {}
+        }
+        for blob in spooled {
+            let Ok(bytes) = std::fs::read(self.fixture_path(&blob)) else {
+                continue;
+            };
+            if let Err(reason) = spool::stage(
+                &self.store_dir,
+                producer,
+                frame.frame(),
+                &blob,
+                bytes.len() as u64,
+                bytes.as_slice(),
+            ) {
+                return Acknowledgment {
+                    frame: frame.frame().into(),
+                    refusal: Some(reason),
+                    ..refused_unrecorded("")
+                };
             }
         }
         self.send_raw(producer, serde_json::to_vec(frame).unwrap())
@@ -405,7 +381,11 @@ async fn invalid_frames_are_refused_and_recorded() {
         }),
     };
     let ack = h.send("kitty", &missing_bytes).await;
-    assert!(ack.refusal.unwrap().contains("durable byte reservation"));
+    assert!(
+        ack.refusal
+            .unwrap()
+            .contains("neither in the content store nor in this frame's spool")
+    );
 
     // Refusals are recorded: asking again gets the same answer.
     let have = h.have("kitty", &["f-type", "m-missing"]).await;
@@ -525,31 +505,8 @@ async fn bytes_sent_in_chunks_register_a_material_and_failures_are_recorded() {
         material.blob = blob.clone();
         material.length = total;
     }
-    let declaration = match &frame {
-        Ingress::Material { material, .. } => Publication {
-            version: 1,
-            frame: "m-up".into(),
-            class: Default::default(),
-            material: Some(Material::from_frame(material)),
-            envelope: None,
-        },
-        _ => unreachable!(),
-    };
-    assert!(
-        h.send(
-            "node",
-            &Ingress::Reserve {
-                frame: "reserve-upload".into(),
-                publication: declaration
-            }
-        )
-        .await
-        .refusal
-        .is_none()
-    );
     let chunk = |attempt: &str, offset: usize, end: usize| Ingress::Chunk {
-        publication: "m-up".into(),
-        role: Role::Material,
+        for_frame: "m-up".into(),
         frame: format!("{blob}/{attempt}/{offset}"),
         blob: blob.clone(),
         offset: offset as u64,
@@ -565,11 +522,16 @@ async fn bytes_sent_in_chunks_register_a_material_and_failures_are_recorded() {
     }
     assert!(
         !h.blobs.contains(&blob).unwrap(),
-        "complete chunks are still private until material admission"
+        "chunks wait in the spool until their material frame"
     );
 
     let ack = h.send("node", &frame).await;
     assert_eq!(ack.refusal, None, "{ack:?}");
+    assert!(h.blobs.contains(&blob).unwrap());
+    assert!(
+        !spool::directory(&h.store_dir, "node", "m-up").exists(),
+        "a recorded frame's spool is removed"
+    );
 
     let ack = h
         .send(
@@ -606,32 +568,38 @@ async fn an_indirect_frame_is_handled_as_the_frame_it_names() {
         events: vec![imported(material, 0, "ls")],
         failures: vec![],
     };
-    let blob = h.fixture_blob(&serde_json::to_vec(&inner).unwrap());
+    let body = serde_json::to_vec(&inner).unwrap();
+    let blob = h.fixture_blob(&body);
     let outer = Ingress::Indirect {
         frame: "e-big".into(),
         blob: blob.clone(),
+        length: body.len() as u64,
     };
     let ack = h.send("kitty", &outer).await;
     assert_eq!(ack.refusal, None, "{ack:?}");
     assert_eq!(ack.frame, "e-big");
     assert_eq!(ack.admitted.len(), 1);
-    // Bytes not in the store, or a stored chunk frame, are refused.
+    // Bytes not in the spool, or an indirect frame standing for another
+    // indirect frame, are refused.
     let missing = Ingress::Indirect {
         frame: "e-missing".into(),
         blob: format!("blake3:{}", blake3::hash(b"absent").to_hex()),
+        length: 6,
     };
     assert!(h.send("kitty", &missing).await.refusal.is_some());
-    let nested = h.fixture_blob(&serde_json::to_vec(&outer).unwrap());
+    let nested_body = serde_json::to_vec(&outer).unwrap();
+    let nested = h.fixture_blob(&nested_body);
     let ack = h
         .send(
             "kitty",
             &Ingress::Indirect {
                 frame: "e-nested".into(),
                 blob: nested,
+                length: nested_body.len() as u64,
             },
         )
         .await;
-    assert!(ack.refusal.unwrap().contains("only material and events"));
+    assert!(ack.refusal.unwrap().contains("material or events frame"));
 }
 
 #[tokio::test]
@@ -646,8 +614,7 @@ async fn exclusion_guard_precedes_new_producer_registration_and_chunk_storage() 
     let bytes = b"synthetic private chunk";
     let blob = format!("blake3:{}", blake3::hash(bytes).to_hex());
     let frame = Ingress::Chunk {
-        publication: "late-material".into(),
-        role: Role::Material,
+        for_frame: "late-material".into(),
         frame: "late-chunk".into(),
         blob: blob.clone(),
         offset: 0,
@@ -712,84 +679,3 @@ async fn exclusion_guard_precedes_new_producer_registration_and_chunk_storage() 
     );
     assert!(!h.store_dir.join("incoming").exists());
 }
-
-#[tokio::test]
-async fn unsupported_ingress_custody_is_refused_without_deleting_a_partial_transfer() {
-    use base64::Engine;
-    let h = Harness::start().await;
-    let bytes = b"synthetic partial transfer";
-    let hex = blake3::hash(bytes).to_hex().to_string();
-    let blob = format!("blake3:{hex}");
-    let frame = |name: &str, start: usize, end: usize| Ingress::Chunk {
-        publication: "partial-material".into(),
-        role: Role::Material,
-        frame: name.into(),
-        blob: blob.clone(),
-        offset: start as u64,
-        total: bytes.len() as u64,
-        data: base64::engine::general_purpose::STANDARD.encode(&bytes[start..end]),
-    };
-    let declaration = Publication {
-        version: 1,
-        frame: "partial-material".into(),
-        class: Default::default(),
-        material: None,
-        envelope: Some(Bytes {
-            blob: blob.clone(),
-            length: bytes.len() as u64,
-        }),
-    };
-    // Use the envelope role for this transport-only partial custody witness.
-    let frame = |name: &str, start: usize, end: usize| {
-        let mut frame = frame(name, start, end);
-        if let Ingress::Chunk { role, .. } = &mut frame {
-            *role = Role::Envelope;
-        }
-        frame
-    };
-    assert!(
-        h.send(
-            "existing-node",
-            &Ingress::Reserve {
-                frame: "partial-reserve".into(),
-                publication: declaration.clone()
-            }
-        )
-        .await
-        .refusal
-        .is_none()
-    );
-    assert!(
-        h.send("existing-node", &frame("first", 0, 7))
-            .await
-            .refusal
-            .is_none()
-    );
-    let partial =
-        spool::directory(&h.store_dir, "existing-node", &declaration).join("envelope.partial");
-    let before = std::fs::read(&partial).unwrap();
-    let mut conn = PgConnection::connect(&h.url).await.unwrap();
-    assert!(
-        sinex_store::excision::is_producer(&mut conn, "existing-node")
-            .await
-            .unwrap()
-    );
-    // A policy arrival must not finish or discard unknown partial custody.
-    sqlx::query(
-        "INSERT INTO core.operations(id,kind,actor,scope) VALUES($1,'excise','synthetic',$2)",
-    )
-    .bind(Uuid::now_v7())
-    .bind(json!({"sources":["existing-node"]}))
-    .execute(&mut conn)
-    .await
-    .unwrap();
-    let ack = h
-        .send("existing-node", &frame("last", 7, bytes.len()))
-        .await;
-    assert!(ack.refusal.unwrap().contains("excised records"));
-    assert_eq!(std::fs::read(partial).unwrap(), before);
-    assert!(!h.blobs.contains(&blob).unwrap());
-    assert_eq!(h.have("existing-node", &["first"]).await.len(), 1);
-}
-
-mod custody;

@@ -92,12 +92,14 @@ pub async fn run(o: Options) -> Result<(), String> {
         );
     }
     let url = o.database.clone();
+    let writer_store = blobs.clone();
     tasks.spawn(async move {
         writer::run_notifying(
             url,
             writer_conn,
             queues,
             Arc::new(Registered::new(sinex_derivations::keyed())),
+            Some(writer_store),
             commits_tx,
         )
         .await;

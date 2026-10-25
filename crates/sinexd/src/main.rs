@@ -4,6 +4,7 @@
 mod admin;
 mod analysis;
 mod api;
+mod authored;
 mod backfill;
 mod binding_reader;
 mod catalog;
@@ -16,7 +17,6 @@ mod excision;
 mod ingress;
 mod library;
 mod one_shot;
-mod publication;
 mod publisher;
 mod replay;
 mod retained;
@@ -184,12 +184,17 @@ async fn local_driver(
         .await
         .map_err(|e| e.to_string())?;
     writer::claim(&mut writer_conn).await?;
+    let blobs = store
+        .map(sinex_store::blobs::Blobs::open)
+        .transpose()
+        .map_err(|e| e.to_string())?;
     let (handle, queues) = writer::channels_for(database);
     let task = tokio::spawn(writer::run(
         database.to_owned(),
         writer_conn,
         queues,
         std::sync::Arc::new(dirty_keys::Registered::new(sinex_derivations::keyed())),
+        blobs.clone(),
     ));
     let read = sqlx::PgConnection::connect(database)
         .await
@@ -202,9 +207,8 @@ async fn local_driver(
         host,
     )
     .await?;
-    if let Some(store) = store {
-        driver =
-            driver.with_blobs(sinex_store::blobs::Blobs::open(store).map_err(|e| e.to_string())?);
+    if let Some(blobs) = blobs {
+        driver = driver.with_blobs(blobs);
     }
     Ok((driver, task))
 }

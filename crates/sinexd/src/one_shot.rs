@@ -37,6 +37,7 @@ impl OneShot {
             writer_conn,
             queues,
             Arc::new(Registered::new(sinex_derivations::keyed())),
+            Some(blobs.clone()),
         ));
         Ok(Self {
             read_conn,
@@ -91,7 +92,6 @@ pub struct SealingSink {
     blobs: Blobs,
     recipient: sinex_store::sealed::Recipient,
     state: std::sync::Mutex<SealingState>,
-    stages: Option<std::sync::Mutex<Vec<sinex_store::blobs::PreparedSealed>>>,
 }
 
 #[derive(Default)]
@@ -112,22 +112,6 @@ impl SealingSink {
             blobs,
             recipient,
             state: Default::default(),
-            stages: None,
-        }
-    }
-
-    pub(crate) fn staged(blobs: Blobs, recipient: sinex_store::sealed::Recipient) -> Self {
-        Self {
-            stages: Some(Default::default()),
-            ..Self::new(blobs, recipient)
-        }
-    }
-    pub(crate) fn take_stages(&self) -> Result<Vec<sinex_store::blobs::PreparedSealed>, String> {
-        match &self.stages {
-            Some(stages) => Ok(std::mem::take(
-                &mut *stages.lock().map_err(|_| "sealed staging poisoned")?,
-            )),
-            None => Ok(Vec::new()),
         }
     }
 
@@ -187,28 +171,6 @@ impl SealingSink {
         Ok(())
     }
 
-    /// The caller has opened this exact reserved key with scoped authority.
-    /// Keep its original wrapping so a retry stores the same key row.
-    pub(crate) fn restore_reserved(
-        &self,
-        blob: String,
-        key: &sinex_model::WrappedMaterialKey,
-        authority: &crate::sealed_access::Authority,
-    ) -> Result<(), String> {
-        let data = sinex_store::sealed::DataKey {
-            key_ref: key.key_ref.clone(),
-            key: authority.unwrap(&key.wrapped)?,
-        };
-        self.state.lock().expect("sealing state").pending.insert(
-            blob,
-            SealingKey {
-                data,
-                wrapped: key.wrapped.clone(),
-            },
-        );
-        Ok(())
-    }
-
     pub fn restore_current(
         &self,
         material: MaterialId,
@@ -224,22 +186,10 @@ impl SealingSink {
 
     pub fn put_reader(&self, reader: impl std::io::Read + std::io::Seek) -> Result<String, String> {
         let key = sinex_store::sealed::new_key().map_err(|e| e.to_string())?;
-        let name = if let Some(stages) = &self.stages {
-            let stage = self
-                .blobs
-                .prepare_sealed(reader, &key)
-                .map_err(|e| e.to_string())?;
-            let name = stage.name();
-            stages
-                .lock()
-                .map_err(|_| "sealed staging poisoned")?
-                .push(stage);
-            name
-        } else {
-            self.blobs
-                .put_sealed_reader(reader, &key)
-                .map_err(|e| e.to_string())?
-        };
+        let name = self
+            .blobs
+            .put_sealed_reader(reader, &key)
+            .map_err(|e| e.to_string())?;
         self.restore_key(name.clone(), key)?;
         Ok(name)
     }
@@ -315,10 +265,12 @@ impl SealingSink {
                 }
             }
             if let sinex_model::BatchKind::Source(progress) = &mut batch.kind {
-                let retained = checkpoint
+                let already_sealed = checkpoint
                     && sinex_store::sealed::key_ref(&progress.carry) == Some(key.key_ref.as_str())
                     && sinex_store::sealed::unseal_payload(&progress.carry, &key.key).is_ok();
-                if !retained {
+                // An empty carry says nothing; sealing it would make a later
+                // material of a stateless parser need this material's key.
+                if !already_sealed && !progress.carry.is_null() {
                     progress.carry = sinex_store::sealed::seal_value(&progress.carry, key)
                         .map_err(|e| e.to_string())?;
                 }

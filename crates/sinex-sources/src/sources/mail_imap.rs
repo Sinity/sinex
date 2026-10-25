@@ -91,7 +91,7 @@ pub struct Cursor {
     pub uid_next: u32,
     pub material: Option<MaterialId>,
     pub part_index: u32,
-    /// Exact accounted byte end within the retained answer.
+    /// How many bytes of `material` were admitted.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub through: Option<usize>,
 }
@@ -396,8 +396,6 @@ impl ImapMail {
             part_index,
             through: Some(bytes.len()),
         };
-        let mut manifest = manifest;
-        manifest["imap_resume"] = json!({"version":1,"previous":previous,"end":next});
         let length = bytes.len();
         let size = length as u64;
         let cursor_records = records.clone();
@@ -476,23 +474,6 @@ struct ImapReader {
 }
 
 impl crate::binding::Reader for ImapReader {
-    fn restore_material(
-        &mut self,
-        reference: sinex_model::MaterialRef,
-        stored: crate::drivers::RetainedRecords,
-        cursor: &Value,
-        accounted: &[usize],
-    ) -> Result<bool, DriverError> {
-        self.pending = Some(pending::Answer::restore(
-            reference,
-            stored,
-            cursor,
-            accounted,
-            &self.mail.config.mailbox,
-        )?);
-        Ok(true)
-    }
-
     fn poll(&mut self, cursor: &Value) -> Result<Acquired, DriverError> {
         if let Some(answer) = &self.pending {
             if !answer.complete(cursor)? {
@@ -504,7 +485,7 @@ impl crate::binding::Reader for ImapReader {
         if acquired.material.is_none() {
             return Ok(acquired);
         }
-        let pending = pending::Answer::capture(acquired, cursor, &self.mail.config.mailbox)?;
+        let pending = pending::Answer::capture(acquired, cursor)?;
         let acquired = pending.acquired(self.mail.input(), cursor)?;
         self.pending = Some(pending);
         Ok(acquired)

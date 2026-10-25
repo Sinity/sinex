@@ -48,15 +48,19 @@ async fn fixture() -> Fixture {
 
 /// Read `path` through the zsh driver to the end, as backfill does.
 async fn ingest(ctx: &mut OneShot, path: &Path, state: &mut AppendState) {
-    let source = zsh::source("h".into());
     let driver = zsh::driver(path.to_owned(), "h".into());
+    ingest_with(ctx, |cursor| driver.poll(cursor, state).unwrap()).await;
+}
+
+async fn ingest_with(ctx: &mut OneShot, mut poll: impl FnMut(&Value) -> drivers::Acquired) {
+    let source = zsh::source("h".into());
     let sink = Sink(ctx.blobs.clone());
     loop {
         let (cursor, carry) = positions::load(&mut ctx.read_conn, "zsh@h")
             .await
             .unwrap()
             .unwrap_or((Value::Null, Value::Null));
-        let acquired = driver.poll(&cursor, state).unwrap();
+        let acquired = poll(&cursor);
         let more = acquired.material.is_some();
         for batch in drivers::batches(
             &source,
@@ -249,27 +253,19 @@ async fn a_rewritten_history_file_is_aligned_and_replays_without_duplicates() {
     // zsh expires the older duplicate and appends a new command.
     std::fs::write(&path, ": 2:0;b\n: 3:0;a\n: 4:0;c\n").unwrap();
     // The driver restarts: its state comes back from the stored bytes.
-    let cursor = positions::load(&mut f.ctx.read_conn, "zsh@h")
-        .await
-        .unwrap()
-        .unwrap()
-        .0;
-    let source = zsh::source("h".into());
+    let mut restarted = sinex_sources::binding::appended(zsh::driver(path.clone(), "h".into()));
     let (_stop, stop) = tokio::sync::watch::channel(false);
-    let mut rebuilt = crate::binding_reader::append::completed_tail(
+    crate::binding_reader::restore_reader(
         &mut f.ctx.read_conn,
         &f.ctx.blobs,
-        &source,
-        &cursor,
+        restarted.as_mut(),
+        "zsh@h",
         None,
-        stop,
+        &stop,
     )
     .await
-    .unwrap()
-    .into_state()
     .unwrap();
-    assert_eq!(rebuilt, state);
-    ingest(&mut f.ctx, &path, &mut rebuilt).await;
+    ingest_with(&mut f.ctx, |cursor| restarted.poll(cursor).unwrap()).await;
     assert_eq!(
         live_commands(&mut f.ctx.read_conn).await,
         vec!["a", "b", "a", "c"],

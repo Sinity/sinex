@@ -7,7 +7,6 @@
 pub mod cli;
 mod commands;
 pub mod nats;
-pub mod producer_bytes;
 mod request;
 
 pub use commands::{Access, Arg, ArgKind, COMMANDS, Command, command};

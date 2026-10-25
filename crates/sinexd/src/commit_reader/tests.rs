@@ -116,6 +116,7 @@ async fn read_models_get_every_event_once_across_restarts() {
         connection,
         queues,
         Arc::new(sinex_store::NoDerivations),
+        None,
         commits_tx,
     ));
     submit(&handle, 0..3).await;

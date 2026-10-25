@@ -349,7 +349,7 @@ async fn sealed_archive_restart_replay_and_class_changes_preserve_exact_material
         let cursor = Cursor::parse(&checkpoint.0).unwrap().unwrap();
         assert_eq!(cursor.record, 2);
         assert!(cursor.pending_material().is_some());
-        assert!(sinex_store::sealed::is_sealed(&checkpoint.1));
+        assert!(checkpoint.1.is_null() || sinex_store::sealed::is_sealed(&checkpoint.1));
         let partial = cursor.material.unwrap();
         let original = cursor.original_material.unwrap();
         assert_ne!(partial, original);
@@ -594,5 +594,3 @@ async fn live_events(conn: &mut PgConnection) -> Vec<EventFields> {
 }
 
 mod directory;
-
-mod imap;

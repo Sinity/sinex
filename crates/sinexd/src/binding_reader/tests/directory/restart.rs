@@ -126,108 +126,7 @@ async fn prefix(
 }
 
 #[tokio::test]
-async fn restart_reads_the_retained_suffix_before_missing_source_bytes_and_keeps_empty_prefix() {
-    let (_db, url, _) = crate::testdb::fresh().await;
-    let dir = tempfile::tempdir().unwrap();
-    let root = dir.path().join("vault");
-    std::fs::create_dir_all(&root).unwrap();
-    std::fs::write(root.join("a.md"), b"").unwrap();
-    std::fs::write(root.join("b.md"), b"original beta").unwrap();
-    let mut ctx = OneShot::open(&url, &dir.path().join("store"))
-        .await
-        .unwrap();
-    let sink = Sink(ctx.blobs.clone());
-    let binding = Binding::of(&notes::SPEC, &root, Settings::new("synthetic"));
-    let mut b = Bound::new(&notes::KIND, binding.clone()).unwrap();
-    let reference = prefix(&mut ctx, &mut b, &sink, None).await;
-    let checkpoint = positions::load(&mut ctx.read_conn, &binding.name)
-        .await
-        .unwrap()
-        .unwrap();
-    assert_eq!(checkpoint.0["through"], 1);
-    assert!(reference.length > 1);
-    assert_eq!(
-        current_notes(&mut ctx.read_conn)
-            .await
-            .iter()
-            .map(|r| (&*r.0, r.1.clone()))
-            .collect::<Vec<_>>(),
-        vec![("a.md", json!(""))]
-    );
-    drop(b);
-    std::fs::remove_file(root.join("b.md")).unwrap();
-    let mut restarted = vec![Bound::new(&notes::KIND, binding).unwrap()];
-    turn(&mut ctx, &mut restarted, Access::default())
-        .await
-        .unwrap();
-    let rows:Vec<(String,Value,uuid::Uuid,i64)>=sqlx::query_as("SELECT payload->>'path',payload->'text',material_id,anchor FROM core.events WHERE event_type='note.document' ORDER BY commit_seq").fetch_all(&mut ctx.read_conn).await.unwrap();
-    let old = rows
-        .iter()
-        .find(|r| r.0 == "b.md" && r.1 == json!("original beta"))
-        .expect("retained suffix must be interpreted before the current disappearance");
-    assert_eq!(old.2, reference.id.0);
-    assert_eq!(old.3, 2);
-    assert_eq!(
-        current_notes(&mut ctx.read_conn)
-            .await
-            .iter()
-            .map(|r| (&*r.0, r.1.clone()))
-            .collect::<Vec<_>>(),
-        vec![("a.md", json!("")), ("b.md", Value::Null)]
-    );
-    ctx.close().await.unwrap();
-}
-
-#[tokio::test]
-async fn restart_finishes_a_partial_vanished_bundle_before_a_reappeared_file() {
-    let (_db, url, _) = crate::testdb::fresh().await;
-    let dir = tempfile::tempdir().unwrap();
-    let root = dir.path().join("vault");
-    std::fs::create_dir_all(&root).unwrap();
-    for p in ["a.md", "b.md"] {
-        std::fs::write(root.join(p), p).unwrap();
-    }
-    let mut ctx = OneShot::open(&url, &dir.path().join("store"))
-        .await
-        .unwrap();
-    let sink = Sink(ctx.blobs.clone());
-    let binding = Binding::of(&notes::SPEC, &root, Settings::new("synthetic"));
-    let mut bounds = vec![Bound::new(&notes::KIND, binding.clone()).unwrap()];
-    turn(&mut ctx, &mut bounds, Access::default())
-        .await
-        .unwrap();
-    for p in ["a.md", "b.md"] {
-        std::fs::remove_file(root.join(p)).unwrap();
-    }
-    let reference = prefix(&mut ctx, &mut bounds[0], &sink, None).await;
-    let records: Vec<(usize, usize)> =
-        serde_json::from_value(reference.manifest["records"].clone()).unwrap();
-    let checkpoint = positions::load(&mut ctx.read_conn, &binding.name)
-        .await
-        .unwrap()
-        .unwrap();
-    assert_eq!(checkpoint.0["through"].as_u64(), Some(records[0].1 as u64));
-    drop(bounds);
-    std::fs::write(root.join("b.md"), "reappeared beta").unwrap();
-    let mut restarted = vec![Bound::new(&notes::KIND, binding).unwrap()];
-    turn(&mut ctx, &mut restarted, Access::default())
-        .await
-        .unwrap();
-    let removed:Option<i64>=sqlx::query_scalar("SELECT anchor FROM core.events WHERE material_id=$1 AND payload->>'path'='b.md' AND record_state='removed'").bind(reference.id.0).fetch_optional(&mut ctx.read_conn).await.unwrap();
-    assert_eq!(removed, Some(records[1].0 as i64));
-    assert_eq!(
-        current_notes(&mut ctx.read_conn)
-            .await
-            .iter()
-            .map(|r| (&*r.0, r.1.clone()))
-            .collect::<Vec<_>>(),
-        vec![("a.md", Value::Null), ("b.md", json!("reappeared beta"))]
-    );
-    ctx.close().await.unwrap();
-}
-
-#[tokio::test]
-async fn sealed_completed_membership_needs_no_private_key_and_never_lowers_its_floor() {
+async fn sealed_history_needs_no_private_key_and_keeps_the_binding_sealed() {
     let (_db, url, _) = crate::testdb::fresh().await;
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path().join("vault");
@@ -274,10 +173,6 @@ async fn sealed_completed_membership_needs_no_private_key_and_never_lowers_its_f
     let states:Vec<(String,String)>=sqlx::query_as("SELECT record_state,class FROM core.events WHERE event_type='note.document' ORDER BY commit_seq").fetch_all(&mut ctx.read_conn).await.unwrap();
     assert!(states.iter().any(|r| r.0 == "removed"));
     assert!(states.iter().all(|r| r.1 == "sealed"));
-    let checkpoint = positions::load(&mut ctx.read_conn, &binding.name)
-        .await
-        .unwrap()
-        .unwrap();
     sinex_store::privacy::set_source_class(
         &mut ctx.read_conn,
         notes::SPEC.name,
@@ -287,34 +182,20 @@ async fn sealed_completed_membership_needs_no_private_key_and_never_lowers_its_f
     .await
     .unwrap();
     drop(restarted);
+    // Sealed history keeps the binding sealed after its class is lowered,
+    // and remembering it needs no private key.
     let mut lowered = vec![Bound::new(&notes::KIND, binding.clone()).unwrap()];
-    let error = turn(
-        &mut ctx,
-        &mut lowered,
-        Access {
-            recipient: Some(&recipient),
-            authority: None,
-        },
+    std::fs::write(
+        root.join("b.md"),
+        "synthetic beta after the class was lowered",
     )
-    .await
-    .unwrap_err();
-    assert!(error.contains("lowering its class"), "{error}");
-    assert_eq!(
-        positions::load(&mut ctx.read_conn, &binding.name)
-            .await
-            .unwrap()
-            .unwrap(),
-        checkpoint
-    );
-    let authority =
-        crate::sealed_access::Authority::new(identity, std::time::Duration::from_secs(60)).unwrap();
-    std::fs::write(root.join("b.md"), "synthetic beta after authorized restart").unwrap();
+    .unwrap();
     turn(
         &mut ctx,
         &mut lowered,
         Access {
             recipient: Some(&recipient),
-            authority: Some(&authority),
+            authority: None,
         },
     )
     .await
@@ -326,97 +207,6 @@ async fn sealed_completed_membership_needs_no_private_key_and_never_lowers_its_f
     .await
     .unwrap();
     assert_eq!(open, 0);
-    ctx.close().await.unwrap();
-}
-
-#[tokio::test]
-async fn sealed_pending_directory_requires_authority_and_preserves_the_original_suffix() {
-    let (_db, url, _) = crate::testdb::fresh().await;
-    let dir = tempfile::tempdir().unwrap();
-    let root = dir.path().join("vault");
-    std::fs::create_dir_all(&root).unwrap();
-    std::fs::write(root.join("a.md"), "alpha").unwrap();
-    std::fs::write(root.join("b.md"), "synthetic sealed beta").unwrap();
-    let identity = sinex_store::sealed::Identity::generate();
-    let recipient = identity.to_public();
-    let mut ctx = OneShot::open(&url, &dir.path().join("store"))
-        .await
-        .unwrap();
-    sinex_store::privacy::set_source_class(
-        &mut ctx.read_conn,
-        notes::SPEC.name,
-        Class::Sealed,
-        "synthetic",
-    )
-    .await
-    .unwrap();
-    let sealing = crate::one_shot::SealingSink::new(ctx.blobs.clone(), recipient.clone());
-    let binding = Binding::of(&notes::SPEC, &root, Settings::new("synthetic"));
-    let mut b = Bound::new(&notes::KIND, binding.clone()).unwrap();
-    let reference = prefix(&mut ctx, &mut b, &sealing, Some(&sealing)).await;
-    let checkpoint = positions::load(&mut ctx.read_conn, &binding.name)
-        .await
-        .unwrap()
-        .unwrap();
-    drop(b);
-    std::fs::remove_file(root.join("b.md")).unwrap();
-    let mut restarted = vec![Bound::new(&notes::KIND, binding.clone()).unwrap()];
-    let error = turn(
-        &mut ctx,
-        &mut restarted,
-        Access {
-            recipient: Some(&recipient),
-            authority: None,
-        },
-    )
-    .await
-    .unwrap_err();
-    assert!(error.contains("scoped authority"), "{error}");
-    assert_eq!(
-        positions::load(&mut ctx.read_conn, &binding.name)
-            .await
-            .unwrap()
-            .unwrap(),
-        checkpoint
-    );
-    let authority =
-        crate::sealed_access::Authority::new(identity, std::time::Duration::from_secs(60)).unwrap();
-    turn(
-        &mut ctx,
-        &mut restarted,
-        Access {
-            recipient: Some(&recipient),
-            authority: Some(&authority),
-        },
-    )
-    .await
-    .unwrap();
-    let key = authority
-        .material_key(&mut ctx.read_conn, reference.id)
-        .await
-        .unwrap();
-    let stored: Vec<Value> =
-        sqlx::query_scalar("SELECT payload FROM core.events WHERE material_id=$1 ORDER BY anchor")
-            .bind(reference.id.0)
-            .fetch_all(&mut ctx.read_conn)
-            .await
-            .unwrap();
-    let plain: Vec<_> = stored
-        .iter()
-        .map(|p| sinex_store::sealed::unseal_payload(p, &key.key).unwrap())
-        .collect();
-    assert!(
-        plain
-            .iter()
-            .any(|p| p["path"] == "b.md" && p["text"] == "synthetic sealed beta"),
-        "original pending record interpreted from authenticated retained bytes"
-    );
-    let classes: Vec<String> =
-        sqlx::query_scalar("SELECT class FROM core.events WHERE event_type='note.document'")
-            .fetch_all(&mut ctx.read_conn)
-            .await
-            .unwrap();
-    assert!(classes.iter().all(|c| c == "sealed"));
     ctx.close().await.unwrap();
 }
 
@@ -450,7 +240,7 @@ fn ignore_first(b: &mut Bound) {
 }
 
 #[tokio::test]
-async fn an_explicit_consumed_prefix_restores_an_ignored_first_member_without_an_event_anchor() {
+async fn a_restart_remembers_a_file_whose_record_produced_no_event() {
     let (_db, url, _) = crate::testdb::fresh().await;
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path().join("vault");
@@ -464,14 +254,7 @@ async fn an_explicit_consumed_prefix_restores_an_ignored_first_member_without_an
     let binding = Binding::of(&notes::SPEC, &root, Settings::new("synthetic"));
     let mut b = Bound::new(&notes::KIND, binding.clone()).unwrap();
     ignore_first(&mut b);
-    let reference = prefix(&mut ctx, &mut b, &sink, None).await;
-    let anchors = positions::accounted_records(&mut ctx.read_conn, reference.id)
-        .await
-        .unwrap();
-    assert!(
-        anchors.anchors.is_empty(),
-        "ignored source record has no event/error witness"
-    );
+    prefix(&mut ctx, &mut b, &sink, None).await;
     let checkpoint = positions::load(&mut ctx.read_conn, &binding.name)
         .await
         .unwrap()

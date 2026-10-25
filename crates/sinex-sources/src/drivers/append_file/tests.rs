@@ -393,11 +393,7 @@ fn saved_unknown_prefixes_refuse_even_when_the_offset_is_zero() {
                 .err()
                 .unwrap();
             assert!(matches!(error, DriverError::Cursor(_)));
-            assert!(
-                error
-                    .to_string()
-                    .contains("authenticated retained resumption is required")
-            );
+            assert!(error.to_string().contains("window"), "{error}");
         }
     }
 }

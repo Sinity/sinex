@@ -14,7 +14,6 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::path::{Path, PathBuf};
 mod append_pending;
-pub use append_pending::AppendResume;
 
 /// The zone named `name` (an IANA name such as `Europe/Warsaw`), or this
 /// system's zone.
@@ -117,53 +116,43 @@ impl Binding {
     }
 }
 
-/// How a binding is read. Drivers that remember what they stored have that
-/// state rebuilt from the stored materials before the first poll, so a
-/// restart reads only what changed.
+/// A material the binding stored, offered to a reader rebuilding what it
+/// remembers after a restart.
+pub struct StoredMaterial {
+    pub reference: sinex_model::MaterialRef,
+    /// Its bytes, read from the content store when asked for.
+    pub bytes: std::sync::Arc<dyn crate::drain::RecordRead>,
+    /// Whether it belongs to the same revision of the input as the newest
+    /// material offered.
+    pub same_revision: bool,
+}
+
+/// How a binding is read. A reader that remembers what it read rebuilds that
+/// memory from the stored materials before its first poll, so a restart
+/// reads only what changed. A material only partly admitted when the process
+/// stopped is not resumed: the reader reads on from the committed cursor.
 pub trait Reader: Send {
     /// The export declaration, when this reader can share a physical archive traversal.
     fn export_archive(&self) -> Option<&crate::drivers::export_archive::ExportArchive> {
         None
     }
 
-    fn restore_append(&mut self, _resume: AppendResume) -> Result<(), DriverError> {
-        Err(DriverError::InvalidMaterial(
-            "reader cannot restore pending append material".into(),
-        ))
+    /// The newest material of the stored history this reader rebuilds its
+    /// memory from, given the committed cursor; `None` when it remembers
+    /// nothing.
+    fn history_from(&self, _cursor: &Value) -> Option<sinex_model::MaterialId> {
+        None
     }
 
-    /// Restore one archive-verified material before asking its provider again.
-    /// True means this reader owns the continuation; false keeps legacy memory
-    /// restoration. Accounted anchors are recorded outcomes, not source guesses.
-    fn restore_material(
-        &mut self,
-        _reference: sinex_model::MaterialRef,
-        _stored: crate::drivers::RetainedRecords,
-        _cursor: &Value,
-        _accounted: &[usize],
-    ) -> Result<bool, DriverError> {
+    /// One stored material, newest first along its chain of parts. Returns
+    /// whether to go on with the one before it.
+    fn restore(&mut self, _cursor: &Value, _material: StoredMaterial) -> Result<bool, DriverError> {
         Ok(false)
     }
 
-    /// Directory membership uses exact accounted anchors; only the current
-    /// incomplete material supplies a retained body for resumption.
-    fn restore_directory(
-        &mut self,
-        _reference: sinex_model::MaterialRef,
-        _admitted: &[usize],
-        _pending: Option<crate::drivers::RetainedRecords>,
-        _cursor: Option<&Value>,
-    ) -> Result<(), DriverError> {
+    /// Called once the history has been offered.
+    fn restored(&mut self) -> Result<(), DriverError> {
         Ok(())
-    }
-
-    fn remember_append(
-        &mut self,
-        _tail: crate::drivers::append_file::AppendTail,
-    ) -> Result<(), DriverError> {
-        Err(DriverError::InvalidMaterial(
-            "reader does not support completed append history".into(),
-        ))
     }
 
     fn poll(&mut self, cursor: &Value) -> Result<Acquired, DriverError>;
@@ -172,6 +161,17 @@ pub trait Reader: Send {
     fn remove_passed(&self, _committed: &Value) -> Result<usize, DriverError> {
         Ok(0)
     }
+}
+
+/// The material a committed cursor names and how much of it was admitted, for
+/// drivers whose cursors carry `material` and `through`.
+fn cursor_material(cursor: &Value) -> Option<(sinex_model::MaterialId, Option<u64>)> {
+    let material = cursor
+        .get("material")
+        .and_then(Value::as_str)
+        .and_then(|s| s.parse::<uuid::Uuid>().ok())
+        .map(sinex_model::MaterialId)?;
+    Some((material, cursor.get("through").and_then(Value::as_u64)))
 }
 
 /// How a kind finds its inputs: the bindings for `input`.
@@ -331,11 +331,14 @@ impl<A: crate::drivers::api_cursor::Api + Send + Sync + 'static> StatelessDriver
 }
 
 /// An append-only file read with state about the records it stored, so a
-/// rewrite is aligned rather than read again.
+/// rewrite is aligned rather than read again. The newest material is held
+/// until all of it is admitted, so a failed admission retries the same bytes.
 pub struct Appended {
     pending: Option<append_pending::Pending>,
     driver: AppendFile,
     state: AppendState,
+    /// The tail rebuilt during a restart, newest record first.
+    tail: Option<crate::drivers::append_file::AppendTail>,
 }
 
 pub fn appended(driver: AppendFile) -> Box<dyn Reader> {
@@ -343,21 +346,53 @@ pub fn appended(driver: AppendFile) -> Box<dyn Reader> {
         pending: None,
         driver,
         state: AppendState::default(),
+        tail: None,
     })
 }
 
 impl Reader for Appended {
-    fn restore_append(&mut self, resume: AppendResume) -> Result<(), DriverError> {
-        let pending = append_pending::Pending::restore(resume)?;
-        pending.prime(&mut self.state)?;
-        self.pending = Some(pending);
-        Ok(())
+    fn history_from(&self, cursor: &Value) -> Option<sinex_model::MaterialId> {
+        cursor_material(cursor).map(|(material, _)| material)
     }
-    fn remember_append(
-        &mut self,
-        tail: crate::drivers::append_file::AppendTail,
-    ) -> Result<(), DriverError> {
-        self.state = tail.into_state()?;
+
+    fn restore(&mut self, cursor: &Value, material: StoredMaterial) -> Result<bool, DriverError> {
+        if !material.same_revision {
+            return Ok(false);
+        }
+        let reference = &material.reference;
+        // Only the admitted part of the newest material counts as read.
+        let admitted = match cursor_material(cursor) {
+            Some((id, Some(through))) if id == reference.id => through.min(reference.length),
+            _ => reference.length,
+        };
+        let records = crate::drivers::physical_records(material.bytes.as_ref(), self.driver.framer)
+            .map_err(|e| DriverError::Io(e.to_string()))?;
+        let tail = self.tail.get_or_insert_with(Default::default);
+        for (start, end) in records
+            .into_iter()
+            .rev()
+            .filter(|&(_, end)| end as u64 <= admitted)
+        {
+            let mut raw = vec![0; end - start];
+            material
+                .bytes
+                .read_exact_at(start as u64, &mut raw)
+                .map_err(|e| DriverError::Io(e.to_string()))?;
+            let location = sinex_model::RecordLocation {
+                material: reference.id,
+                anchor: start as u64,
+            };
+            if !tail.push_raw(location, &raw)? {
+                return Ok(false);
+            }
+        }
+        Ok(true)
+    }
+
+    fn restored(&mut self) -> Result<(), DriverError> {
+        if let Some(tail) = self.tail.take() {
+            self.state = tail.into_state()?;
+        }
         Ok(())
     }
 
@@ -393,16 +428,28 @@ pub fn rows(driver: SqliteRows) -> Box<dyn Reader> {
 }
 
 impl Reader for Rows {
-    fn restore_material(
-        &mut self,
-        reference: sinex_model::MaterialRef,
-        stored: crate::drivers::RetainedRecords,
-        cursor: &Value,
-        _accounted: &[usize],
-    ) -> Result<bool, DriverError> {
-        self.state
-            .restore_pending(reference, stored, cursor)
-            .map(|_| true)
+    fn history_from(&self, cursor: &Value) -> Option<sinex_model::MaterialId> {
+        cursor_material(cursor).map(|(material, _)| material)
+    }
+
+    fn restore(&mut self, cursor: &Value, material: StoredMaterial) -> Result<bool, DriverError> {
+        let reference = &material.reference;
+        let admitted = match cursor_material(cursor) {
+            Some((id, Some(through))) if id == reference.id => through.min(reference.length),
+            _ => reference.length,
+        };
+        let mut bytes = vec![
+            0;
+            usize::try_from(admitted).map_err(|_| {
+                DriverError::Io("a stored row part exceeds the address space".into())
+            })?
+        ];
+        material
+            .bytes
+            .read_exact_at(0, &mut bytes)
+            .map_err(|e| DriverError::Io(e.to_string()))?;
+        self.state.remember_rows(&bytes);
+        Ok(true)
     }
 
     fn poll(&mut self, cursor: &Value) -> Result<Acquired, DriverError> {
@@ -410,10 +457,10 @@ impl Reader for Rows {
     }
 }
 
-/// A directory walked snapshot by snapshot. The supplied committed cursor
-/// confirms file-cache updates; an unfinished bundle is retained for retry.
-/// Restart restores accounted member paths and completes the retained pending
-/// bundle first. Present files are then reread; admission suppresses repeats.
+/// A directory walked snapshot by snapshot. The committed cursor confirms
+/// what the reader remembers of each walk; an unfinished bundle is held for
+/// retry. A restart remembers which files the admitted bundles hold, and the
+/// next walk reads them again; admission suppresses the repeats.
 pub struct Walked {
     driver: DirSnapshot,
     state: DirState,
@@ -427,24 +474,25 @@ pub fn walked(driver: DirSnapshot) -> Box<dyn Reader> {
 }
 
 impl Reader for Walked {
-    fn restore_directory(
-        &mut self,
-        reference: sinex_model::MaterialRef,
-        admitted: &[usize],
-        pending: Option<crate::drivers::RetainedRecords>,
-        cursor: Option<&Value>,
-    ) -> Result<(), DriverError> {
-        if reference.previous_part.is_none() {
-            self.state = DirState::default();
-        }
+    fn history_from(&self, cursor: &Value) -> Option<sinex_model::MaterialId> {
+        cursor_material(cursor).map(|(material, _)| material)
+    }
+
+    fn restore(&mut self, cursor: &Value, material: StoredMaterial) -> Result<bool, DriverError> {
+        let reference = &material.reference;
+        let admitted = match cursor_material(cursor) {
+            Some((id, through)) if id == reference.id => through
+                .ok_or_else(|| DriverError::Cursor("directory cursor has no processed end".into()))?
+                .min(reference.length),
+            _ => reference.length,
+        };
         self.state.remember_members(&reference.manifest, admitted)?;
-        match (pending, cursor) {
-            (Some(pending), Some(cursor)) => self.state.restore_pending(reference, pending, cursor),
-            (None, None) => Ok(()),
-            _ => Err(DriverError::Cursor(
-                "directory pending body and cursor must agree".into(),
-            )),
-        }
+        Ok(true)
+    }
+
+    fn restored(&mut self) -> Result<(), DriverError> {
+        self.state.finish_remembering();
+        Ok(())
     }
 
     fn poll(&mut self, cursor: &Value) -> Result<Acquired, DriverError> {

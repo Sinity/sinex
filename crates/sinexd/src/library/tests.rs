@@ -12,8 +12,6 @@ use std::sync::Arc;
 
 struct World {
     _db: devkit::pg::TestDatabase,
-    url: String,
-    task: tokio::task::JoinHandle<()>,
     conn: PgConnection,
     writer: writer::WriterHandle,
     blobs: Blobs,
@@ -22,72 +20,34 @@ struct World {
 
 async fn world() -> World {
     let (db, url, mut connection) = crate::testdb::fresh().await;
+    let base = std::env::temp_dir().join(format!("sinexd-library-{}", uuid::Uuid::now_v7()));
+    let blobs = Blobs::open(&base.join("store")).unwrap();
     let (handle, queues) = writer::channels_for(&url);
     writer::claim(&mut connection).await.unwrap();
-    let task = tokio::spawn(writer::run(
+    tokio::spawn(writer::run(
         url.clone(),
         connection,
         queues,
         Arc::new(sinex_store::NoDerivations),
+        Some(blobs.clone()),
     ));
     let conn = <PgConnection as sqlx::Connection>::connect(&url)
         .await
         .unwrap();
-    let base = std::env::temp_dir().join(format!("sinexd-library-{}", uuid::Uuid::now_v7()));
     let root = base.join("library");
     std::fs::create_dir_all(root.join("sub")).unwrap();
     // Intake records canonical paths; TMPDIR may be a borrowed /proc/fd alias.
     let root = std::fs::canonicalize(root).unwrap();
     World {
         _db: db,
-        url,
-        task,
         conn,
         writer: handle,
-        blobs: Blobs::open(&base.join("store")).unwrap(),
+        blobs,
         root,
     }
 }
 
 impl World {
-    async fn restart(self) -> Self {
-        let Self {
-            _db,
-            url,
-            task,
-            conn,
-            writer,
-            blobs,
-            root,
-        } = self;
-        drop(writer);
-        task.await.unwrap();
-        drop(conn);
-        let mut connection = <PgConnection as sqlx::Connection>::connect(&url)
-            .await
-            .unwrap();
-        writer::claim(&mut connection).await.unwrap();
-        let (writer, queues) = writer::channels_for(&url);
-        let task = tokio::spawn(writer::run(
-            url.clone(),
-            connection,
-            queues,
-            Arc::new(sinex_store::NoDerivations),
-        ));
-        let conn = <PgConnection as sqlx::Connection>::connect(&url)
-            .await
-            .unwrap();
-        Self {
-            _db,
-            url,
-            task,
-            conn,
-            writer,
-            blobs,
-            root,
-        }
-    }
-
     async fn run(&mut self, request: Request) -> Result<Value, String> {
         dispatch(
             &mut self.conn,
@@ -610,4 +570,4 @@ async fn library_add_through_an_alias_keeps_one_canonical_acquisition() {
     std::fs::remove_dir_all(w.root.parent().unwrap()).unwrap();
 }
 
-mod custody;
+mod exclusions;

@@ -230,40 +230,5 @@ pub async fn inputs_of(conn: &mut PgConnection, materials: &[Uuid]) -> Result<Ve
     .await?)
 }
 
-/// The stored bytes' names of the chain that ends at `last`, first part
-/// first: what a driver rebuilds its state from after a restart.
-pub async fn chain_ending(conn: &mut PgConnection, last: Uuid) -> Result<Vec<(Uuid, String)>> {
-    retained_chain(conn, last, false).await
-}
-
-/// Alignment remembers the current byte revision; parser replay follows its
-/// full causal predecessor chain across rewrites.
-pub async fn current_revision_chain_ending(
-    conn: &mut PgConnection,
-    last: Uuid,
-) -> Result<Vec<(Uuid, String)>> {
-    retained_chain(conn, last, true).await
-}
-async fn retained_chain(
-    conn: &mut PgConnection,
-    last: Uuid,
-    same_revision: bool,
-) -> Result<Vec<(Uuid, String)>> {
-    let rows=sqlx::query!(r#"WITH RECURSIVE chain AS (
-             SELECT id,previous_part_id,blob,revision_id,0 AS depth,ARRAY[id] AS path,false AS cycle FROM raw.materials WHERE id=$1
-             UNION ALL
-             SELECT m.id,m.previous_part_id,m.blob,m.revision_id,c.depth+1,c.path||m.id,m.id=ANY(c.path)
-             FROM raw.materials m JOIN chain c ON m.id=c.previous_part_id
-             WHERE NOT c.cycle AND (NOT $2 OR m.revision_id IS NOT DISTINCT FROM c.revision_id))
-           SELECT id AS "id!",blob AS "blob!",cycle AS "cycle!" FROM chain ORDER BY depth DESC"#,last,same_revision)
-        .fetch_all(conn).await?;
-    if rows.iter().any(|row| row.cycle) {
-        return Err(crate::Error::Invalid(
-            "retained material predecessor cycle".into(),
-        ));
-    }
-    Ok(rows.into_iter().map(|row| (row.id, row.blob)).collect())
-}
-
 #[cfg(test)]
 mod tests;

@@ -29,9 +29,9 @@ fn source_lock(source: &str) -> i64 {
     )
 }
 
-/// Only for an owned connection that is closed at the acquisition boundary.
-/// Session ownership permits a custody reservation transaction to commit while
-/// this same source remains protected through the queued first admission.
+/// Only for an owned connection that is closed when the acquisition ends: the
+/// lock lasts for the session, from the exclusions read through the queued
+/// admission.
 pub async fn lock_source_session(
     conn: &mut PgConnection,
     source: &str,
@@ -52,8 +52,7 @@ pub async fn lock_source_session(
 pub async fn is_producer(conn: &mut PgConnection, source: &str) -> Result<bool> {
     Ok(sqlx::query_scalar!(
         r#"SELECT EXISTS(SELECT 1 FROM core.manifests WHERE name=$1 AND kind='producer')
-             OR EXISTS(SELECT 1 FROM core.ingress_frames WHERE producer=$1)
-             OR EXISTS(SELECT 1 FROM raw.pending_producer_bytes WHERE producer=$1) AS "present!""#,
+             OR EXISTS(SELECT 1 FROM core.ingress_frames WHERE producer=$1) AS "present!""#,
         source
     )
     .fetch_one(conn)

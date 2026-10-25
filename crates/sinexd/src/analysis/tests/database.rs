@@ -72,6 +72,7 @@ impl World {
             connection,
             queues,
             Arc::new(Keys::new(sinex_derivations::keyed())),
+            None,
         ));
         Self {
             _db: db,

@@ -41,9 +41,7 @@ pub struct Cursor {
     pub size: u64,
     pub mtime_ns: i128,
     pub inode: u64,
-    /// BLAKE3 of the up-to-`WINDOW` bytes before `offset`. Unknown windows
-    /// resume through retained coordinates and cannot align a provider file.
-    #[serde(default)]
+    /// BLAKE3 of the up-to-`WINDOW` bytes before `offset`.
     pub window: Option<String>,
     /// A rewrite observed before its first complete record is retained.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -139,11 +137,6 @@ impl AppendState {
         }
     }
 
-    /// Whether a record of `material` is held.
-    pub(crate) fn remembers_material(&self, material: MaterialId) -> bool {
-        self.order.iter().any(|(_, l, _)| l.material == material)
-    }
-
     /// Whether an equal record was held, consuming one occurrence of it.
     fn take(&mut self, record: &[u8]) -> bool {
         match self.records.get_mut(blake3::hash(record).as_bytes()) {
@@ -206,8 +199,7 @@ impl AppendFile {
         }
         if !cursor.is_null() && previous.window.is_none() {
             return Err(DriverError::Cursor(
-                "append prefix window is unknown; authenticated retained resumption is required"
-                    .into(),
+                "the append cursor has no prefix window".into(),
             ));
         }
         let facts = match file_facts(&self.path) {
@@ -415,8 +407,6 @@ impl AppendFile {
             .expect("cursor serializes")
         };
         let mut manifest = json!({"path": self.path.display().to_string(), "host": self.host, "file_offset": start, "media_type": "text/plain"});
-        manifest["append_resume"] =
-            json!({"version":1,"start":cursor_at(0),"end":cursor_at(material_len)});
         if aligned {
             manifest["records"] = json!(records);
         }

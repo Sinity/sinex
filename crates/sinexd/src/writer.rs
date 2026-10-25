@@ -71,8 +71,8 @@ pub struct Excised {
 
 enum Work {
     Admit(Batch),
-    Native(Batch, crate::excision::AcquisitionGuard, NativeCheck),
-    Checked(Batch, NativeCheck),
+    Guarded(Batch, crate::excision::AcquisitionGuard, AdmissionCheck),
+    Checked(Batch, AdmissionCheck),
     Replay(ReplayChain),
     Excise(Box<Excision>),
 }
@@ -97,26 +97,28 @@ pub struct WriterHandle {
     source_database: Option<Arc<str>>,
 }
 
-/// Capacity is acquired before any readable native blob is published. Dropping
-/// the API receiver after send does not release the queued work's source guard.
-pub(crate) type NativeCheck = Arc<dyn Fn() -> Result<(), String> + Send + Sync>;
+/// A check run just before and after the admission (cancellation, unlock
+/// expiry); an error refuses the batch.
+pub(crate) type AdmissionCheck = Arc<dyn Fn() -> Result<(), String> + Send + Sync>;
 
-pub(crate) struct NativePermit(mpsc::OwnedPermit<Job>);
-impl NativePermit {
+/// A place in a writer queue, for a batch admitted under a source guard. The
+/// queued work owns the guard, so dropping the caller does not release it.
+pub(crate) struct GuardedSlot(mpsc::OwnedPermit<Job>);
+impl GuardedSlot {
     pub async fn admit(
         self,
         batch: Batch,
         guard: crate::excision::AcquisitionGuard,
-        check: NativeCheck,
+        check: AdmissionCheck,
     ) -> Result<Outcome, WriteError> {
         let (reply, answer) = oneshot::channel();
         self.0.send(Job {
-            work: Work::Native(batch, guard, check),
+            work: Work::Guarded(batch, guard, check),
             reply,
         });
         match answer.await.map_err(|_| WriteError::Stopped)?? {
             Done::Admitted(outcome) => Ok(outcome),
-            _ => unreachable!("native admission answers with its outcome"),
+            _ => unreachable!("a guarded admission answers with its outcome"),
         }
     }
 }
@@ -126,7 +128,7 @@ impl WriterHandle {
         &self,
         priority: Priority,
         batch: Batch,
-        check: NativeCheck,
+        check: AdmissionCheck,
     ) -> Result<Outcome, WriteError> {
         match self.send(priority, Work::Checked(batch, check)).await? {
             Done::Admitted(outcome) => Ok(outcome),
@@ -140,7 +142,7 @@ impl WriterHandle {
         let database = self
             .source_database
             .as_deref()
-            .ok_or("writer has no native acquisition connection configuration")?;
+            .ok_or("the writer has no database to take source guards on")?;
         crate::excision::AcquisitionGuard::acquire(database, source).await
     }
     #[cfg(test)]
@@ -154,16 +156,13 @@ impl WriterHandle {
             .ok_or("writer has no source connection configuration")?;
         crate::excision::ExcisionGuard::connect(database, source).await
     }
-    pub(crate) async fn reserve_native(
-        &self,
-        priority: Priority,
-    ) -> Result<NativePermit, WriteError> {
+    pub(crate) async fn guarded_slot(&self, priority: Priority) -> Result<GuardedSlot, WriteError> {
         let channel = match priority {
             Priority::Live => &self.live,
             Priority::Derived => &self.derived,
             Priority::Bulk => &self.bulk,
         };
-        Ok(NativePermit(
+        Ok(GuardedSlot(
             channel
                 .clone()
                 .reserve_owned()
@@ -289,8 +288,20 @@ const CLAIM_WAIT: std::time::Duration = std::time::Duration::from_secs(5);
 /// Run the writer until every handle is dropped. A failed batch is rolled back
 /// and refused; the writer continues with the next. If the connection is lost
 /// it reconnects to `url` before the next batch.
-pub async fn run(url: String, connection: PgConnection, queues: Queues, keys: Arc<dyn DirtyKeys>) {
-    run_notifying(url, connection, queues, keys, watch::channel(0).0).await;
+///
+/// `store` is the content store the batches' bytes are in. The writer admits a
+/// batch only while every file it registers is there; it also deletes the
+/// files an excision freed. Both happen here, one after the other, so bytes
+/// checked before an admission cannot be deleted before it commits. A writer
+/// without a store admits only batches that register no bytes.
+pub async fn run(
+    url: String,
+    connection: PgConnection,
+    queues: Queues,
+    keys: Arc<dyn DirtyKeys>,
+    store: Option<Blobs>,
+) {
+    run_notifying(url, connection, queues, keys, store, watch::channel(0).0).await;
 }
 
 /// [`run`], also counting committed batches on `commits`, which wakes the
@@ -300,8 +311,10 @@ pub async fn run_notifying(
     mut connection: PgConnection,
     mut queues: Queues,
     keys: Arc<dyn DirtyKeys>,
+    store: Option<Blobs>,
     commits: watch::Sender<u64>,
 ) {
+    let store = store.as_ref();
     loop {
         let job = tokio::select! {
             biased;
@@ -311,15 +324,17 @@ pub async fn run_notifying(
             else => return,
         };
         let result = match job.work {
-            Work::Admit(batch) => admit(&mut connection, &batch, keys.as_ref())
-                .await
-                .map(Done::Admitted),
-            Work::Checked(batch, check) => {
-                admit_checked(&mut connection, &batch, keys.as_ref(), &*check)
+            Work::Admit(batch) => {
+                admit_checked(&mut connection, &batch, keys.as_ref(), store, &|| Ok(()))
                     .await
                     .map(Done::Admitted)
             }
-            Work::Native(batch, mut guard, check) => {
+            Work::Checked(batch, check) => {
+                admit_checked(&mut connection, &batch, keys.as_ref(), store, &*check)
+                    .await
+                    .map(Done::Admitted)
+            }
+            Work::Guarded(batch, mut guard, check) => {
                 let result = async {
                     let source = match &batch.kind {
                         sinex_model::BatchKind::Source(progress) => {
@@ -330,11 +345,11 @@ pub async fn run_notifying(
                     };
                     if source != Some(guard.source()) {
                         return Err(WriteError::Refused(
-                            "publication source differs from its acquisition guard".into(),
+                            "the batch's source differs from its source guard".into(),
                         ));
                     }
                     guard.check().await.map_err(WriteError::Refused)?;
-                    admit_checked(&mut connection, &batch, keys.as_ref(), &*check)
+                    admit_checked(&mut connection, &batch, keys.as_ref(), store, &*check)
                         .await
                         .map(Done::Admitted)
                 }
@@ -343,7 +358,7 @@ pub async fn run_notifying(
                 // connection fails. The owned connection is never returned to a pool.
                 let released = guard.release().await;
                 if let Err(error) = released {
-                    eprintln!("sinexd: closing native source guard: {error}");
+                    eprintln!("sinexd: closing the source guard: {error}");
                 }
                 result
             }
@@ -382,21 +397,26 @@ pub async fn run_notifying(
     }
 }
 
-async fn admit(
-    connection: &mut PgConnection,
-    batch: &Batch,
-    keys: &dyn DirtyKeys,
-) -> Result<Outcome, WriteError> {
-    admit_checked(connection, batch, keys, &|| Ok(())).await
-}
 async fn admit_checked(
     connection: &mut PgConnection,
     batch: &Batch,
     keys: &dyn DirtyKeys,
+    store: Option<&Blobs>,
     check: &(dyn Fn() -> Result<(), String> + Send + Sync),
 ) -> Result<Outcome, WriteError> {
     let refuse = |e: &dyn std::fmt::Display| WriteError::Refused(e.to_string());
     check().map_err(WriteError::Refused)?;
+    for name in batch.stored_bytes() {
+        let present = match store {
+            Some(store) => store.contains(name).map_err(|e| refuse(&e))?,
+            None => false,
+        };
+        if !present {
+            return Err(WriteError::Refused(format!(
+                "the content store does not hold {name}; store the bytes again and resubmit"
+            )));
+        }
+    }
     let mut tx = connection.begin().await.map_err(|e| refuse(&e))?;
     match sinex_store::admit(&mut tx, batch, keys).await {
         Ok(outcome) => {

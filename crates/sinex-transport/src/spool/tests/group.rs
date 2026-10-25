@@ -9,50 +9,16 @@ const RECEIVER: u32 = 60002;
 const OUTSIDER: u32 = 60003;
 const GROUP: u32 = 60010;
 
-fn frozen() -> Frozen {
-    let material = MaterialFrame {
-        id: MaterialId(uuid::Uuid::from_u128(42)),
-        input: InputRef {
-            kind: "file".into(),
-            locator: "synthetic".into(),
-            host: "fixture".into(),
-        },
-        blob: format!("blake3:{}", blake3::hash(BODY).to_hex()),
-        length: BODY.len() as u64,
-        parser: "synthetic".into(),
-        parser_version: 1,
-        part_index: 0,
-        previous_part: None,
-        manifest: serde_json::json!({}),
-    };
-    let frame = Ingress::Material {
-        frame: "inner".into(),
-        material: Box::new(material),
-    };
-    let mut publication = declaration(
-        &sinex_protocol::producer_bytes::encode_frame(&frame),
-        "final",
-    );
-    let Ingress::Material { material, .. } = &frame else {
-        unreachable!()
-    };
-    publication.material = Some(Material::from_frame(material));
-    Frozen { publication, frame }
+fn blob() -> String {
+    format!("blake3:{}", blake3::hash(BODY).to_hex())
 }
 
 fn stage_all(root: &Path, producer: &str) {
-    let frozen = frozen();
-    assert_eq!(freeze(root, producer, &frozen).unwrap(), frozen);
-    let envelope = sinex_protocol::producer_bytes::encode_frame(&frozen.frame);
-    stage(root, producer, &frozen.publication, Role::Material, BODY).unwrap();
-    stage(
-        root,
-        producer,
-        &frozen.publication,
-        Role::Envelope,
-        envelope.as_slice(),
-    )
-    .unwrap();
+    stage(root, producer, "frame", &blob(), BODY.len() as u64, BODY).unwrap();
+}
+
+fn file(root: &Path, producer: &str) -> std::path::PathBuf {
+    directory(root, producer, "frame").join(&blob()[7..])
 }
 
 fn mode(path: &Path) -> u32 {
@@ -64,36 +30,24 @@ fn configured_group_files_are_readable_without_writable_sender_inodes() {
     let root = tempfile::tempdir().unwrap();
     std::fs::set_permissions(root.path(), std::fs::Permissions::from_mode(0o2770)).unwrap();
     stage_all(root.path(), "node");
-    let frozen = frozen();
-    for (role, _) in frozen.publication.roles() {
-        let path = directory(root.path(), "node", &frozen.publication).join(role.name());
-        assert_eq!(mode(&path), 0o640);
-        assert_eq!(
-            std::fs::metadata(path).unwrap().gid(),
-            std::fs::metadata(root.path()).unwrap().gid()
-        );
-    }
-    assert_eq!(mode(&artifact_path(root.path(), "node", "final")), 0o640);
+    let path = file(root.path(), "node");
+    assert_eq!(mode(&path), 0o640);
     assert_eq!(
-        mode(&directory(root.path(), "node", &frozen.publication)),
-        0o2770
+        std::fs::metadata(path).unwrap().gid(),
+        std::fs::metadata(root.path()).unwrap().gid()
     );
+    assert_eq!(mode(&directory(root.path(), "node", "frame")), 0o2770);
 }
 
 #[test]
 fn private_roots_keep_private_files_and_existing_directories_are_not_adopted() {
     let root = tempfile::tempdir().unwrap();
     stage_all(root.path(), "node");
-    let frozen = frozen();
-    assert_eq!(mode(&artifact_path(root.path(), "node", "final")), 0o600);
+    assert_eq!(mode(&file(root.path(), "node")), 0o600);
+    let upload = format!("blake3:{}", blake3::hash(b"upload").to_hex());
+    assert!(receive(root.path(), "remote", "frame", &upload, 6, 0, b"upload").unwrap());
     assert_eq!(
-        mode(&directory(root.path(), "node", &frozen.publication).join("material")),
-        0o600
-    );
-    let upload = declaration(b"upload", "upload");
-    assert!(receive(root.path(), "remote", &upload, Role::Envelope, 0, b"upload").unwrap());
-    assert_eq!(
-        mode(&directory(root.path(), "remote", &upload).join("envelope")),
+        mode(&directory(root.path(), "remote", "frame").join(&upload[7..])),
         0o600
     );
     let shared = tempfile::tempdir().unwrap();
@@ -101,37 +55,40 @@ fn private_roots_keep_private_files_and_existing_directories_are_not_adopted() {
     let private = shared.path().join("incoming");
     std::fs::create_dir(&private).unwrap();
     std::fs::set_permissions(&private, std::fs::Permissions::from_mode(0o700)).unwrap();
-    assert!(freeze(shared.path(), "node", &frozen).is_err());
-    assert_eq!(mode(&private), 0o700);
-}
-
-#[test]
-fn existing_private_handoff_files_refuse_without_changing_their_bytes_or_modes() {
-    let root = tempfile::tempdir().unwrap();
-    std::fs::set_permissions(root.path(), std::fs::Permissions::from_mode(0o2770)).unwrap();
-    stage_all(root.path(), "node");
-    let frozen = frozen();
-    let artifact = artifact_path(root.path(), "node", "final");
-    let material = directory(root.path(), "node", &frozen.publication).join("material");
-    for path in [&artifact, &material] {
-        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600)).unwrap();
-    }
-    let before = std::fs::read(&artifact).unwrap();
-    assert!(freeze(root.path(), "node", &frozen).is_err());
     assert!(
         stage(
-            root.path(),
+            shared.path(),
             "node",
-            &frozen.publication,
-            Role::Material,
+            "frame",
+            &blob(),
+            BODY.len() as u64,
             BODY
         )
         .is_err()
     );
-    assert_eq!(std::fs::read(&artifact).unwrap(), before);
-    assert_eq!(std::fs::read(&material).unwrap(), BODY);
-    assert_eq!(mode(&artifact), 0o600);
-    assert_eq!(mode(&material), 0o600);
+    assert_eq!(mode(&private), 0o700);
+}
+
+#[test]
+fn existing_private_handoff_files_are_refused_without_changing_their_bytes_or_modes() {
+    let root = tempfile::tempdir().unwrap();
+    std::fs::set_permissions(root.path(), std::fs::Permissions::from_mode(0o2770)).unwrap();
+    stage_all(root.path(), "node");
+    let path = file(root.path(), "node");
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).unwrap();
+    assert!(
+        stage(
+            root.path(),
+            "node",
+            "frame",
+            &blob(),
+            BODY.len() as u64,
+            BODY
+        )
+        .is_err()
+    );
+    assert_eq!(std::fs::read(&path).unwrap(), BODY);
+    assert_eq!(mode(&path), 0o600);
 }
 
 fn actor(operation: &str) {
@@ -160,7 +117,7 @@ fn actor(operation: &str) {
     );
     let shared = Path::new("/proc/self/fd/0/shared");
     let private = Path::new("/proc/self/fd/0/private");
-    let frozen = frozen();
+    let length = BODY.len() as u64;
     match operation {
         "stage" => {
             stage_all(shared, "node");
@@ -168,57 +125,31 @@ fn actor(operation: &str) {
             stage_all(private, "node");
         }
         "denied" => {
-            assert!(snapshot(shared, "node", &frozen.publication, Role::Material).is_err());
-            assert!(load(shared, "node", "final").is_err());
-            assert!(stage(shared, "node", &frozen.publication, Role::Material, BODY).is_err());
+            assert!(snapshot(shared, "node", "frame", &blob(), length).is_err());
+            assert!(stage(shared, "node", "frame", &blob(), length, BODY).is_err());
         }
         "receiver" => {
-            let mut snapshots = Vec::new();
-            for (role, bytes) in frozen.publication.roles() {
-                let file = snapshot(shared, "node", &frozen.publication, role).unwrap();
-                assert!(
-                    std::fs::OpenOptions::new()
-                        .write(true)
-                        .open(directory(shared, "node", &frozen.publication).join(role.name()))
-                        .is_err(),
-                    "receiver group read access does not grant writes to sender inodes"
-                );
-                assert_eq!(file.metadata().unwrap().uid(), RECEIVER);
-                assert_eq!(file.metadata().unwrap().mode() & 0o777, 0o600);
-                snapshots.push((file, bytes.blob.clone()));
-            }
-            discard_bytes(shared, "node", &frozen.publication).unwrap();
-            for (mut file, name) in snapshots {
-                let mut bytes = Vec::new();
-                file.read_to_end(&mut bytes).unwrap();
-                assert_eq!(format!("blake3:{}", blake3::hash(&bytes).to_hex()), name);
-            }
-            assert_eq!(
-                load(shared, "node", "final").unwrap(),
-                Some(frozen.clone()),
-                "role cleanup cannot retire the sender's lost-ack artifact"
+            let mut copy = snapshot(shared, "node", "frame", &blob(), length).unwrap();
+            assert!(
+                std::fs::OpenOptions::new()
+                    .write(true)
+                    .open(file(shared, "node"))
+                    .is_err(),
+                "group read access does not let the receiver write the sender's file"
             );
-            assert!(snapshot(shared, "other", &frozen.publication, Role::Material).is_ok());
-            assert!(snapshot(private, "node", &frozen.publication, Role::Material).is_err());
-            assert!(load(private, "node", "final").is_err());
+            assert_eq!(copy.metadata().unwrap().uid(), RECEIVER);
+            assert_eq!(copy.metadata().unwrap().mode() & 0o777, 0o600);
+            discard(shared, "node", "frame").unwrap();
+            let mut bytes = Vec::new();
+            copy.read_to_end(&mut bytes).unwrap();
+            assert_eq!(bytes, BODY);
+            assert!(snapshot(shared, "other", "frame", &blob(), length).is_ok());
+            assert!(snapshot(private, "node", "frame", &blob(), length).is_err());
         }
         "retry" => {
-            assert_eq!(load(shared, "node", "final").unwrap(), Some(frozen.clone()));
-            assert!(snapshot(shared, "node", &frozen.publication, Role::Material).is_err());
+            assert!(snapshot(shared, "node", "frame", &blob(), length).is_err());
             stage_all(shared, "node");
-            assert_eq!(
-                pending(shared, "node")
-                    .unwrap()
-                    .collect::<Result<Vec<_>, _>>()
-                    .unwrap(),
-                [frozen]
-            );
-        }
-        "finish" => {
-            discard(shared, "node", &frozen.publication).unwrap();
-            assert!(load(shared, "node", "final").unwrap().is_none());
-            assert!(snapshot(shared, "other", &frozen.publication, Role::Material).is_ok());
-            assert_eq!(mode(&artifact_path(private, "node", "final")), 0o600);
+            assert!(snapshot(shared, "node", "frame", &blob(), length).is_ok());
         }
         _ => panic!("unknown synthetic actor operation"),
     }
@@ -301,13 +232,9 @@ fn configured_group_handoff_between_distinct_users() {
         std::os::unix::fs::chown(&path, Some(uid), Some(gid)).unwrap();
         std::fs::set_permissions(path, std::fs::Permissions::from_mode(permissions)).unwrap();
     }
-    // Mirror the configured tmpfiles parents; leaf publication directories are
+    // Mirror the configured tmpfiles parents; leaf frame directories are
     // created by the actual helper under the sender's restrictive umask.
-    for relative in [
-        "incoming",
-        "incoming/producers",
-        "incoming/producer-requests",
-    ] {
+    for relative in ["incoming", "incoming/producers"] {
         let path = root.path().join("shared").join(relative);
         std::fs::create_dir(&path).unwrap();
         std::os::unix::fs::chown(&path, Some(RECEIVER), Some(GROUP)).unwrap();
@@ -317,5 +244,4 @@ fn configured_group_handoff_between_distinct_users() {
     run_actor(root.path(), "denied", OUTSIDER, OUTSIDER);
     run_actor(root.path(), "receiver", RECEIVER, GROUP);
     run_actor(root.path(), "retry", SENDER, SENDER);
-    run_actor(root.path(), "finish", SENDER, SENDER);
 }

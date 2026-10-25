@@ -94,23 +94,25 @@ async fn admit_events(w: &World, events: Vec<Event>) {
 
 async fn world() -> World {
     let (db, url, connection) = crate::testdb::fresh().await;
+    let store = std::env::temp_dir().join(format!("sinexd-api-{}", uuid::Uuid::now_v7()));
+    let blobs = sinex_store::Blobs::open(&store).unwrap();
     let (handle, queues) = writer::channels_for(&url);
     tokio::spawn(writer::run(
         url.clone(),
         connection,
         queues,
         Arc::new(sinex_store::NoDerivations),
+        Some(blobs.clone()),
     ));
     let reads = PgPoolOptions::new()
         .max_connections(4)
         .connect(&url)
         .await
         .unwrap();
-    let store = std::env::temp_dir().join(format!("sinexd-api-{}", uuid::Uuid::now_v7()));
     let api = Api {
         reads: reads.clone(),
         writer: Some(handle.clone()),
-        blobs: sinex_store::Blobs::open(&store).unwrap(),
+        blobs,
         zone: jiff::tz::TimeZone::UTC,
         day_start: jiff::civil::Time::constant(4, 0, 0, 0),
         agent_grants: vec![],

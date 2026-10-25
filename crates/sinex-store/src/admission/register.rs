@@ -113,10 +113,9 @@ pub(super) async fn source(conn: &mut PgConnection, p: &SourceProgress) -> Resul
     Ok(())
 }
 
-/// Immutable material identity excludes the run/observation/revision attempt.
-/// Check the existing input before its current kind can be upserted, and reuse
-/// this comparison when a pending publication releases its last byte owner.
-pub(crate) async fn material_matches(
+/// Whether a registered material with this ID has these facts; `None` when no
+/// material has the ID. Checked before the input's kind is upserted.
+async fn material_matches(
     conn: &mut PgConnection,
     binding: &str,
     input: &sinex_model::InputRef,
@@ -144,7 +143,7 @@ async fn material(
         i64::try_from(m.length).map_err(|_| Error::Invalid("material length beyond i64".into()))?;
     sqlx::query!(
         r#"INSERT INTO core.blobs (hash, size, status) VALUES ($1, $2, 'present')
-           ON CONFLICT (hash) DO UPDATE SET status = 'present' WHERE core.blobs.status IN ('reserved','deleting')"#,
+           ON CONFLICT (hash) DO UPDATE SET status = 'present' WHERE core.blobs.status = 'deleting'"#,
         m.blob,
         length,
     )

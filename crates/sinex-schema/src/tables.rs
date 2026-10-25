@@ -190,10 +190,11 @@ pub(crate) fn tables(c: &Checks) -> Vec<String> {
         "CREATE TABLE core.blobs (
   hash text PRIMARY KEY CHECK (hash ~ '^blake3:[0-9a-f]{64}$'),
   size bigint NOT NULL CHECK (size >= 0),
-  -- `deleting`: no row refers to the bytes any more (an excision); the
-  -- file is deleted after commit, then this row. A row left `deleting` by a
-  -- crash is finished when the daemon starts.
-  status text NOT NULL CHECK (status IN ('reserved', 'present', 'quarantined', 'deleting')),
+  -- The file is written before the admission that inserts this row.
+  -- `deleting`: an excision left the bytes unreferenced; the writer deletes
+  -- the file under this row's lock, then the row, after commit or when the
+  -- daemon starts. The writer admits no row whose file is missing.
+  status text NOT NULL CHECK (status IN ('present', 'deleting')),
   registered_at timestamptz NOT NULL DEFAULT now()
 )".into(),
         // Stored bytes an event owns beyond its material (a library file
@@ -275,13 +276,6 @@ pub(crate) fn tables(c: &Checks) -> Vec<String> {
   settings jsonb NOT NULL,
   updated_at timestamptz NOT NULL DEFAULT now()
 )".into(),
-        pending_native_table().into(),
-        pending_producer_table().into(),
-        pending_producer_blobs_table().into(),
-        "CREATE INDEX pending_producer_blob ON raw.pending_producer_blobs(blob)".into(),
-        pending_native_blobs_table().into(),
-        "CREATE INDEX pending_native_blobs_blob ON raw.pending_native_blobs(blob)".into(),
-        "CREATE INDEX pending_native_source ON raw.pending_native_materials(source, binding)".into(),
         "CREATE TABLE raw.positions (
   binding text PRIMARY KEY,
   cursor jsonb NOT NULL,
@@ -591,50 +585,4 @@ BEGIN
   END IF;
   RETURN OLD;
 END $$"
-}
-
-pub(crate) fn pending_native_table() -> &'static str {
-    "CREATE TABLE raw.pending_native_materials (
-  material_id uuid PRIMARY KEY,
-  source text NOT NULL,
-  binding text NOT NULL REFERENCES raw.bindings(binding),
-  publication jsonb NOT NULL CHECK (jsonb_typeof(publication)='object'),
-  base_cursor jsonb NOT NULL,
-  base_carry jsonb NOT NULL,
-  start_cursor jsonb NOT NULL,
-  end_cursor jsonb NOT NULL,
-  state text NOT NULL CHECK (state IN ('reserved','installed')),
-  reserved_at timestamptz NOT NULL DEFAULT now()
-)"
-}
-
-pub(crate) fn pending_native_blobs_table() -> &'static str {
-    "CREATE TABLE raw.pending_native_blobs (
-  material_id uuid NOT NULL REFERENCES raw.pending_native_materials(material_id) ON DELETE CASCADE,
-  blob text NOT NULL REFERENCES core.blobs(hash),
-  PRIMARY KEY (material_id, blob)
-)"
-}
-
-// Byte roles are derived from the frozen typed declaration by the custody owner.
-pub(crate) fn pending_producer_table() -> &'static str {
-    "CREATE TABLE raw.pending_producer_bytes (
-  producer text NOT NULL,
-  frame text NOT NULL,
-  declaration jsonb NOT NULL CHECK(jsonb_typeof(declaration)='object'),
-  installed boolean NOT NULL DEFAULT false,
-  acknowledged boolean NOT NULL DEFAULT false CHECK(NOT acknowledged OR installed),
-  reserved_at timestamptz NOT NULL DEFAULT now(),
-  PRIMARY KEY(producer,frame)
-)"
-}
-pub(crate) fn pending_producer_blobs_table() -> &'static str {
-    "CREATE TABLE raw.pending_producer_blobs (
-  producer text NOT NULL,
-  frame text NOT NULL,
-  role text NOT NULL CHECK(role IN ('material','envelope')),
-  blob text NOT NULL REFERENCES core.blobs(hash),
-  PRIMARY KEY(producer,frame,role),
-  FOREIGN KEY(producer,frame) REFERENCES raw.pending_producer_bytes(producer,frame) ON DELETE CASCADE
-)"
 }

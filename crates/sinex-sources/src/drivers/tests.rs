@@ -354,23 +354,3 @@ fn cursor_read_failure_is_reported_before_a_batch_and_stops_later_progress() {
     );
     assert!(batches.next().is_none());
 }
-
-#[test]
-fn missing_legacy_cut_requires_exact_accounted_partial_prefix() {
-    let records = [(0, 4), (4, 9), (9, 12)];
-    assert_eq!(super::accounted_prefix_end(&records, 12, &[0]).unwrap(), 4);
-    assert_eq!(
-        super::accounted_prefix_end(&records, 12, &[0, 4]).unwrap(),
-        9
-    );
-    for anchors in [vec![], vec![4], vec![0, 9], vec![0, 4, 9], vec![0, 123]] {
-        assert!(super::accounted_prefix_end(&records, 12, &anchors).is_err());
-    }
-    for records in [
-        vec![(0, 4), (5, 12)],
-        vec![(0, 0), (0, 12)],
-        vec![(0, 4), (4, 13)],
-    ] {
-        assert!(super::accounted_prefix_end(&records, 12, &[0]).is_err());
-    }
-}

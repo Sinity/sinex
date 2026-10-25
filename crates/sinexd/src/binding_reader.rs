@@ -1,7 +1,4 @@
 //! A binding owns its parser and cursor; compatible archives share physical traversal.
-pub(crate) mod append;
-mod directory;
-mod pending;
 use crate::backfill::{self, Totals};
 use crate::one_shot::Sink;
 use crate::writer::WriterHandle;
@@ -72,35 +69,7 @@ pub(crate) async fn read(
         let init = async {
             if !b.remembered {
                 backfill::record(conn, &b.binding).await?;
-                let restored_pending = pending::restore(conn, blobs, writer, b, access).await?;
-                // Export drivers have no memory derived from old material bodies.
-                if !restored_pending && b.reader.export_archive().is_none() {
-                    let cursor = positions::load(conn, &b.binding.name)
-                        .await
-                        .map_err(|e| e.to_string())?
-                        .map(|(cursor, _)| cursor)
-                        .unwrap_or(Value::Null);
-                    if b.source.spec().driver == sinex_sources::Driver::DirSnapshot {
-                        directory::restore(conn, blobs, b, &cursor, access, stop.clone()).await?;
-                    } else if b.source.spec().driver == sinex_sources::Driver::SqliteRows {
-                        restore_material(conn, blobs, b, &cursor, access).await?;
-                    } else if b.source.spec().driver == sinex_sources::Driver::AppendFile {
-                        let tail = append::completed_tail(
-                            conn,
-                            blobs,
-                            &*b.source,
-                            &cursor,
-                            access.authority,
-                            stop.clone(),
-                        )
-                        .await?;
-                        b.reader.remember_append(tail).map_err(|e| e.to_string())?;
-                    } else if b.source.spec().driver == sinex_sources::Driver::ApiCursor
-                        && restore_material(conn, blobs, b, &cursor, access).await?
-                    {
-                        // The reader owns this exact retained answer until admission finishes.
-                    }
-                }
+                restore(conn, blobs, b, access, &stop).await?;
                 b.remembered = true;
             }
             Ok::<_, String>(())
@@ -225,52 +194,79 @@ pub(crate) async fn read(
     }
     results
 }
-async fn restore_material(
+/// Offer the reader the stored history it rebuilds its memory from. A sealed
+/// part raises the binding's class to sealed.
+async fn restore(
     conn: &mut PgConnection,
     blobs: &Blobs,
     b: &mut Bound,
-    cursor: &Value,
     access: Access<'_>,
-) -> Result<bool, String> {
-    let Some(id) = cursor
-        .get("material")
-        .and_then(Value::as_str)
-        .and_then(|s| uuid::Uuid::parse_str(s).ok().map(sinex_model::MaterialId))
-    else {
-        return Ok(true);
-    };
-    let reference = sinex_store::material_bytes::reference(conn, id)
-        .await
-        .map_err(|e| e.to_string())?
-        .ok_or("cursor material is missing")?;
-    if cursor["through"].as_u64().unwrap_or(0) >= reference.length {
-        return Ok(true);
-    }
-    let opened = crate::retained::open(conn, blobs, id, access.authority).await?;
-    if cursor["through"].as_u64().unwrap_or(0) >= opened.reference.length {
-        return Ok(true);
-    }
-    let evidence = positions::accounted_records(conn, id)
-        .await
-        .map_err(|e| e.to_string())?;
-    if let Some(class) = evidence.class {
-        b.history_floor = b.history_floor.max(class);
-    }
-    if opened.key.is_some() {
+    stop: &watch::Receiver<bool>,
+) -> Result<(), String> {
+    let sealed = restore_reader(
+        conn,
+        blobs,
+        b.reader.as_mut(),
+        &b.binding.name,
+        access.authority,
+        stop,
+    )
+    .await?;
+    if sealed {
         b.history_floor = b.history_floor.max(Class::Sealed);
     }
-    let anchors = evidence
-        .anchors
-        .into_iter()
-        .map(|n| {
-            usize::try_from(n)
-                .map_err(|_| "retained record anchor exceeds address space".to_string())
-        })
-        .collect::<Result<Vec<_>, _>>()?;
-    let retained = opened.records();
-    b.reader
-        .restore_material(opened.reference, retained, cursor, &anchors)
-        .map_err(|e| e.to_string())
+    Ok(())
+}
+
+/// Offer `reader` the committed cursor's material and the parts before it,
+/// newest first, until it has what it needs. True when a part was sealed.
+pub(crate) async fn restore_reader(
+    conn: &mut PgConnection,
+    blobs: &Blobs,
+    reader: &mut dyn Reader,
+    binding: &str,
+    authority: Option<&crate::sealed_access::Authority>,
+    stop: &watch::Receiver<bool>,
+) -> Result<bool, String> {
+    let cursor = positions::load(conn, binding)
+        .await
+        .map_err(|e| e.to_string())?
+        .map(|(cursor, _)| cursor)
+        .unwrap_or(Value::Null);
+    let Some(last) = reader.history_from(&cursor) else {
+        return Ok(false);
+    };
+    let parts = sinex_store::material_bytes::parts_ending(conn, last)
+        .await
+        .map_err(|e| e.to_string())?;
+    let newest_revision = parts.first().and_then(|(_, revision)| *revision);
+    let mut sealed = false;
+    for (material, revision) in parts {
+        if *stop.borrow() {
+            return Err("restoring the reader's memory was cancelled".into());
+        }
+        let reference = sinex_store::material_bytes::reference(conn, material)
+            .await
+            .map_err(|e| e.to_string())?
+            .ok_or("a stored part is missing")?;
+        let bytes = crate::retained::Lazy::new(conn, blobs, reference.clone(), authority).await?;
+        sealed |= bytes.sealed();
+        let more = reader
+            .restore(
+                &cursor,
+                sinex_sources::StoredMaterial {
+                    reference,
+                    bytes: Arc::new(bytes),
+                    same_revision: revision == newest_revision,
+                },
+            )
+            .map_err(|e| e.to_string())?;
+        if !more {
+            break;
+        }
+    }
+    reader.restored().map_err(|e| e.to_string())?;
+    Ok(sealed)
 }
 
 fn same_file(a: &ObservationFacts, b: &ObservationFacts) -> bool {
