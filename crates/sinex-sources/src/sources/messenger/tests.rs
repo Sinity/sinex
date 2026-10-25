@@ -1,7 +1,7 @@
 use super::*;
 use serde_json::json;
 
-#[test]
+#[devkit::test]
 fn gdpr_threads_key_by_participants() {
     let doc = json!({"participants": ["B", "A"], "threadName": "B_4", "messages": [
         {"senderName": "A", "text": "hi", "timestamp": 1_723_458_102_017i64, "type": "text",
@@ -19,7 +19,7 @@ fn gdpr_threads_key_by_participants() {
     assert_eq!(out[1].text, None);
 }
 
-#[test]
+#[devkit::test]
 fn legacy_threads_are_repaired() {
     let doc = json!({"participants": [{"name": "Micha\u{00c5}\u{0082}"}, {"name": "B"}],
         "title": "B", "messages": [{"sender_name": "Micha\u{00c5}\u{0082}",

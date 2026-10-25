@@ -37,9 +37,12 @@ fn batch(tag: &str) -> Batch {
     }
 }
 
-#[tokio::test]
-async fn live_batches_go_before_queued_bulk_work() {
-    let (_db, url, connection) = crate::testdb::fresh().await;
+#[devkit::test]
+async fn live_batches_go_before_queued_bulk_work(db: devkit::pg::TestDatabase) {
+    let url = db.url(None);
+    let connection = <sqlx::PgConnection as sqlx::Connection>::connect(&url)
+        .await
+        .unwrap();
     let (handle, queues) = channels();
     let mut waits = Vec::new();
     for i in 0..5 {
@@ -70,9 +73,12 @@ async fn live_batches_go_before_queued_bulk_work() {
     writer.await.unwrap();
 }
 
-#[tokio::test]
-async fn a_refused_batch_does_not_stop_the_writer() {
-    let (_db, url, connection) = crate::testdb::fresh().await;
+#[devkit::test]
+async fn a_refused_batch_does_not_stop_the_writer(db: devkit::pg::TestDatabase) {
+    let url = db.url(None);
+    let connection = <sqlx::PgConnection as sqlx::Connection>::connect(&url)
+        .await
+        .unwrap();
     let (handle, queues) = channels();
     let writer = tokio::spawn(run(
         url,
@@ -104,9 +110,12 @@ async fn a_refused_batch_does_not_stop_the_writer() {
 /// L12. No silent loss under backpressure: with the writer stalled, far
 /// more batches than the queues hold are handed over; producers wait
 /// rather than drop, and once the writer runs each is admitted once.
-#[tokio::test]
-async fn a_stalled_writer_makes_producers_wait_and_loses_nothing() {
-    let (_db, url, connection) = crate::testdb::fresh().await;
+#[devkit::test]
+async fn a_stalled_writer_makes_producers_wait_and_loses_nothing(db: devkit::pg::TestDatabase) {
+    let url = db.url(None);
+    let connection = <sqlx::PgConnection as sqlx::Connection>::connect(&url)
+        .await
+        .unwrap();
     let (handle, queues) = channels();
     let n = DEPTH * 10;
     let waits: Vec<_> = (0..n)
@@ -143,9 +152,12 @@ async fn a_stalled_writer_makes_producers_wait_and_loses_nothing() {
 
 /// L43. One writer per database: a second claim is refused while the
 /// first connection lives, and granted once it is gone.
-#[tokio::test]
-async fn only_one_connection_can_claim_the_writer() {
-    let (_db, url, mut first) = crate::testdb::fresh().await;
+#[devkit::test]
+async fn only_one_connection_can_claim_the_writer(db: devkit::pg::TestDatabase) {
+    let url = db.url(None);
+    let mut first = <sqlx::PgConnection as sqlx::Connection>::connect(&url)
+        .await
+        .unwrap();
     claim(&mut first).await.unwrap();
     let mut second = PgConnection::connect(&url).await.unwrap();
     assert!(claim(&mut second).await.is_err());
@@ -166,10 +178,15 @@ async fn only_one_connection_can_claim_the_writer() {
     );
 }
 
-#[tokio::test]
-async fn queued_native_checks_reject_revoked_authority_and_roll_back_before_commit() {
+#[devkit::test]
+async fn queued_native_checks_reject_revoked_authority_and_roll_back_before_commit(
+    db: devkit::pg::TestDatabase,
+) {
     use std::sync::atomic::{AtomicUsize, Ordering};
-    let (_db, url, connection) = crate::testdb::fresh().await;
+    let url = db.url(None);
+    let connection = <sqlx::PgConnection as sqlx::Connection>::connect(&url)
+        .await
+        .unwrap();
     let (handle, queues) = channels();
     let authority = crate::sealed_access::Authority::new(
         sinex_store::sealed::Identity::generate(),
@@ -244,9 +261,14 @@ async fn queued_native_checks_reject_revoked_authority_and_roll_back_before_comm
     writer.await.unwrap();
 }
 
-#[tokio::test]
-async fn a_single_slot_planning_pool_keeps_the_queued_excision_lock_after_caller_cancellation() {
-    let (_db, url, connection) = crate::testdb::fresh().await;
+#[devkit::test]
+async fn a_single_slot_planning_pool_keeps_the_queued_excision_lock_after_caller_cancellation(
+    db: devkit::pg::TestDatabase,
+) {
+    let url = db.url(None);
+    let connection = <sqlx::PgConnection as sqlx::Connection>::connect(&url)
+        .await
+        .unwrap();
     let pool = sqlx::postgres::PgPoolOptions::new()
         .max_connections(1)
         .connect(&url)
@@ -325,9 +347,12 @@ async fn a_single_slot_planning_pool_keeps_the_queued_excision_lock_after_caller
 
 /// A capture that stored its bytes before an excision deleted the same bytes
 /// is refused, rather than registering a material whose file is gone.
-#[tokio::test]
-async fn a_batch_whose_bytes_are_not_stored_is_refused() {
-    let (_db, url, connection) = crate::testdb::fresh().await;
+#[devkit::test]
+async fn a_batch_whose_bytes_are_not_stored_is_refused(db: devkit::pg::TestDatabase) {
+    let url = db.url(None);
+    let connection = <sqlx::PgConnection as sqlx::Connection>::connect(&url)
+        .await
+        .unwrap();
     let dir = tempfile::tempdir().unwrap();
     let blobs = Blobs::open(dir.path()).unwrap();
     let (handle, queues) = channels();

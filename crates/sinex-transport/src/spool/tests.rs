@@ -4,7 +4,7 @@ fn name(bytes: &[u8]) -> String {
     format!("blake3:{}", blake3::hash(bytes).to_hex())
 }
 
-#[test]
+#[devkit::test]
 fn chunks_survive_reopen_and_conflicting_or_overflowing_resends_are_refused() {
     let root = tempfile::tempdir().unwrap();
     let bytes = b"exact bytes across a restart";
@@ -36,7 +36,7 @@ fn chunks_survive_reopen_and_conflicting_or_overflowing_resends_are_refused() {
     assert!(!directory(root.path(), "node", "frame").exists());
 }
 
-#[test]
+#[devkit::test]
 fn frames_and_producers_have_separate_directories() {
     let root = tempfile::tempdir().unwrap();
     let body = b"material bytes";
@@ -51,7 +51,7 @@ fn frames_and_producers_have_separate_directories() {
     assert!(snapshot(root.path(), "other", "one", &blob, length).is_ok());
 }
 
-#[test]
+#[devkit::test]
 fn staged_bytes_must_match_their_name_and_length() {
     let root = tempfile::tempdir().unwrap();
     let body = b"right";
@@ -101,7 +101,7 @@ fn staged_bytes_must_match_their_name_and_length() {
     );
 }
 
-#[test]
+#[devkit::test]
 fn empty_and_wrong_uploads_leave_no_complete_file() {
     let root = tempfile::tempdir().unwrap();
     assert!(receive(root.path(), "node", "empty", &name(b""), 0, 0, b"").unwrap());
@@ -115,7 +115,7 @@ fn empty_and_wrong_uploads_leave_no_complete_file() {
     assert!(receive(root.path(), "node", "wrong", &right, 5, 0, b"right").unwrap());
 }
 
-#[test]
+#[devkit::test]
 fn discard_leaves_files_it_did_not_put_there() {
     let root = tempfile::tempdir().unwrap();
     let body = b"bytes";

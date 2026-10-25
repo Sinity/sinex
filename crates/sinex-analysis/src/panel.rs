@@ -66,7 +66,7 @@ pub fn units(civil: &Civil, grain: UnitGrain, from: Span) -> Result<Vec<Unit>, C
 
 /// The spans a metric's coverage rule gives, and whether any of the coverage
 /// is of unknown completeness (which makes recorded rows lower bounds).
-pub fn covered_spans(rule: &CoverageRule, rows: &[Coverage]) -> (SpanSet, bool) {
+fn covered_spans(rule: &CoverageRule, rows: &[Coverage]) -> (SpanSet, bool) {
     let per_source = |src: &str, known: bool| {
         SpanSet::from_spans(
             rows.iter()

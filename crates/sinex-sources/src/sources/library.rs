@@ -65,7 +65,7 @@ pub const REQUEST: SourceSpec = SourceSpec {
 
 /// One scanned file as the driver describes it: the stored record.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
-pub struct Described {
+struct Described {
     pub host: String,
     pub root: String,
     pub path: String,
@@ -206,7 +206,7 @@ impl ScanState {
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ScanCursor {
+struct ScanCursor {
     /// Exact admitted byte cut. Older scan cursors leave this unknown.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub through: Option<u64>,
@@ -229,7 +229,7 @@ pub fn skipped(relative: &str) -> bool {
 /// sidecars), or `<stem>.json` beside `<stem>.<ext>` (gallery-dl's
 /// `--write-metadata` with a filename format). `stems` holds the paths of
 /// the other files without their extension.
-pub fn is_sidecar(
+fn is_sidecar(
     relative: &str,
     exists: impl Fn(&str) -> bool,
     stems: &std::collections::BTreeSet<String>,
@@ -637,7 +637,7 @@ fn hex(bytes: &[u8]) -> String {
 
 /// The media type from a file's first bytes. Names are never trusted: a
 /// `.jpg` that is a PNG is a PNG.
-pub fn sniff(head: &[u8]) -> &'static str {
+fn sniff(head: &[u8]) -> &'static str {
     let starts = |magic: &[u8]| head.starts_with(magic);
     let at = |offset: usize, magic: &[u8]| head.get(offset..offset + magic.len()) == Some(magic);
     if starts(b"\xFF\xD8\xFF") {
@@ -758,7 +758,7 @@ pub fn dimensions(head: &[u8], media_type: &str) -> (Option<u32>, Option<u32>, O
 
 /// Width, height and duration from `ffprobe`, when it is installed. Media
 /// decoding uses existing implementations (spec `library.md` §1).
-pub fn ffprobe(path: &Path) -> Option<(Option<u32>, Option<u32>, Option<u64>)> {
+fn ffprobe(path: &Path) -> Option<(Option<u32>, Option<u32>, Option<u64>)> {
     let out = std::process::Command::new("ffprobe")
         .args([
             "-v",
@@ -815,7 +815,7 @@ enum Line {
 
 /// The bytes of a request: one JSON line per record, in order. Admission
 /// stores them as the request's material.
-pub fn request_bytes(records: &[LibraryRecord]) -> (Vec<u8>, Vec<(usize, usize)>) {
+fn request_bytes(records: &[LibraryRecord]) -> (Vec<u8>, Vec<(usize, usize)>) {
     let mut bytes = Vec::new();
     let mut spans = Vec::new();
     for r in records {
@@ -839,7 +839,7 @@ pub fn request_bytes(records: &[LibraryRecord]) -> (Vec<u8>, Vec<(usize, usize)>
 }
 
 /// The manifest of a request material: who wrote it and when.
-pub fn request_manifest(actor: &str, host: &str, at: Timestamp, action: &str) -> Value {
+fn request_manifest(actor: &str, host: &str, at: Timestamp, action: &str) -> Value {
     json!({
         "path": "library",
         "host": host,

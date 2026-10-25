@@ -15,7 +15,7 @@ fn records(a: &Acquired) -> Vec<String> {
         .collect()
 }
 
-#[test]
+#[devkit::test]
 fn a_cursor_between_two_batches_reads_on_though_the_file_is_unchanged() {
     let path = temp("h");
     std::fs::write(&path, b"a\nb\nc\n").unwrap();
@@ -40,7 +40,7 @@ fn a_cursor_between_two_batches_reads_on_though_the_file_is_unchanged() {
     );
 }
 
-#[test]
+#[devkit::test]
 fn appends_read_only_new_complete_records() {
     let path = temp("h");
     std::fs::write(&path, b"a\nb\npart").unwrap();
@@ -76,7 +76,7 @@ fn appends_read_only_new_complete_records() {
     assert!(!n.aligned);
 }
 
-#[test]
+#[devkit::test]
 fn a_rewrite_reads_only_records_the_previous_revision_did_not_hold() {
     let path = temp("h");
     std::fs::write(&path, b"a\nb\nc\n").unwrap();
@@ -128,7 +128,7 @@ fn a_rewrite_reads_only_records_the_previous_revision_did_not_hold() {
     assert!(d.poll(&after, &mut rebuilt).unwrap().material.is_none());
 }
 
-#[test]
+#[devkit::test]
 fn rewritten_prefix_is_read_again_as_a_new_revision() {
     let path = temp("h");
     std::fs::write(&path, b"a\nb\n").unwrap();
@@ -150,7 +150,7 @@ fn rewritten_prefix_is_read_again_as_a_new_revision() {
     assert_eq!(n.previous_part, Some(m.id));
 }
 
-#[test]
+#[devkit::test]
 fn missing_file_is_unavailable_not_empty() {
     let d = AppendFile {
         path: temp("absent"),
@@ -165,7 +165,7 @@ fn missing_file_is_unavailable_not_empty() {
 /// A small part, so a small file spans many.
 const PART_SIZE: u64 = 4096;
 
-#[test]
+#[devkit::test]
 fn a_file_larger_than_a_part_is_read_in_bounded_parts_covering_every_record() {
     let path = temp("h");
     let mut text = String::new();
@@ -199,7 +199,7 @@ fn a_file_larger_than_a_part_is_read_in_bounded_parts_covering_every_record() {
     assert_eq!(read.concat(), text);
 }
 
-#[test]
+#[devkit::test]
 fn the_memory_keeps_a_bounded_tail_of_the_newest_records() {
     let mut state = AppendState::default();
     let mut first = None;
@@ -232,7 +232,7 @@ fn the_memory_keeps_a_bounded_tail_of_the_newest_records() {
     assert_eq!(held, state.order.len());
 }
 
-#[test]
+#[devkit::test]
 fn short_records_are_bounded_by_count_within_one_material() {
     let mut state = AppendState::default();
     let id = MaterialId::new();
@@ -252,7 +252,7 @@ fn short_records_are_bounded_by_count_within_one_material() {
     assert!(!state.take(b"0\n"), "the oldest is not");
 }
 
-#[test]
+#[devkit::test]
 fn rewrite_replace_and_truncate_keep_the_parser_predecessor_and_reset_byte_offsets() {
     for change in [
         RevisionChange::Rewritten,
@@ -290,7 +290,7 @@ fn rewrite_replace_and_truncate_keep_the_parser_predecessor_and_reset_byte_offse
         assert_eq!(next.manifest["file_offset"], 0);
     }
 }
-#[test]
+#[devkit::test]
 fn incomplete_rewrite_keeps_the_old_parser_cut_and_its_pending_physical_revision_kind() {
     let path = temp("history");
     std::fs::write(&path, b"old-long-record\n").unwrap();
@@ -318,7 +318,7 @@ fn incomplete_rewrite_keeps_the_old_parser_cut_and_its_pending_physical_revision
     assert_eq!(next.part_index, m.part_index + 1);
 }
 
-#[test]
+#[devkit::test]
 fn fresh_incomplete_files_emit_reusable_empty_prefix_cursors() {
     for initial in [b"".as_slice(), b"part"] {
         let dir = tempfile::tempdir().unwrap();
@@ -364,7 +364,7 @@ fn fresh_incomplete_files_emit_reusable_empty_prefix_cursors() {
     }
 }
 
-#[test]
+#[devkit::test]
 fn saved_unknown_prefixes_refuse_even_when_the_offset_is_zero() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("history");

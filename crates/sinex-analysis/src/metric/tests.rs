@@ -41,7 +41,7 @@ fn rows(payloads: &[Value]) -> Vec<(Row<'_>, Span)> {
         .collect()
 }
 
-#[test]
+#[devkit::test]
 fn ratios_pool_numerators_and_denominators() {
     let law = AggLaw::Ratio {
         num: Term::Count {
@@ -67,14 +67,14 @@ fn ratios_pool_numerators_and_denominators() {
     assert_eq!(combine(&d, &[a, b]).unwrap(), Some(0.25));
 }
 
-#[test]
+#[devkit::test]
 fn an_unknown_exit_code_is_not_a_failure() {
     assert!(!EXIT_NONZERO.matches(&json!({"exit_code": null})));
     assert!(!EXIT_NONZERO.matches(&json!({})));
     assert!(EXIT_NONZERO.matches(&json!({"exit_code": 127})));
 }
 
-#[test]
+#[devkit::test]
 fn a_zero_denominator_is_undefined_not_zero() {
     let law = AggLaw::Ratio {
         num: Term::Count { filter: None },
@@ -86,7 +86,7 @@ fn a_zero_denominator_is_undefined_not_zero() {
     assert_eq!(aggregate(&def(AggLaw::Count), &[]).unwrap().value, 0.0);
 }
 
-#[test]
+#[devkit::test]
 fn overlapping_intervals_are_unioned() {
     let mut d = def(AggLaw::UnionDuration);
     d.interval = Some(IntervalShape::EndField { field: "ended_at" });
@@ -112,7 +112,7 @@ fn overlapping_intervals_are_unioned() {
     assert_eq!(aggregate(&d, &allocated).unwrap().value, 12.0);
 }
 
-#[test]
+#[devkit::test]
 fn quantiles_refuse_to_combine() {
     let d = def(AggLaw::Quantile { field: "x", q: 0.5 });
     let a = aggregate(&d, &rows(&[json!({"x": 1}), json!({"x": 3})])).unwrap();
@@ -121,7 +121,7 @@ fn quantiles_refuse_to_combine() {
     assert_eq!(quantile_sorted(&[1.0, 2.0, 3.0, 4.0], 0.25), 1.75);
 }
 
-#[test]
+#[devkit::test]
 fn assign_to_end_credits_the_unit_the_interval_ends_in() {
     let mut d = def(AggLaw::Count);
     d.interval = Some(IntervalShape::Length {

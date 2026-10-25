@@ -2,8 +2,8 @@
 //! bytes are blanked in a new blob with every other anchor unchanged, and
 //! neither re-admission nor re-staging the same bytes brings the record back.
 use super::*;
+use crate::Blobs;
 use crate::admission::{NoDerivations, admit};
-use crate::{Blobs, testdb};
 use sinex_model::event_types::{CommandExecuted, CommandFused};
 use sinex_model::{
     Batch, BatchKind, Class, Event, Origin, ReadingOrder, RecordLocation, RecordOutcome, RunId,
@@ -200,7 +200,7 @@ async fn count(conn: &mut PgConnection, sql: &str) -> i64 {
         .unwrap()
 }
 
-#[test]
+#[devkit::test]
 fn blank_keeps_length_framing_and_neighbours() {
     let mut b = b"one\ntwo two\nthree\n".to_vec();
     blank(&mut b, &[(4, 12)]);
@@ -213,9 +213,11 @@ fn blank_keeps_length_framing_and_neighbours() {
     );
 }
 
-#[tokio::test]
-async fn deletions_a_stop_left_are_finished_and_reused_bytes_kept() {
-    let (_db, mut conn) = testdb::fresh().await;
+#[devkit::test]
+async fn deletions_a_stop_left_are_finished_and_reused_bytes_kept(db: devkit::pg::TestDatabase) {
+    let mut conn = <sqlx::PgConnection as sqlx::Connection>::connect(&db.url(None))
+        .await
+        .unwrap();
     let store = Store::new();
     let first = b"keep-1\nsecret v1\n".to_vec();
     let (m1, blob1) = material(&mut conn, &store, &first).await;
@@ -279,9 +281,11 @@ async fn deletions_a_stop_left_are_finished_and_reused_bytes_kept() {
     assert!(store.blobs.read(&blob2).is_ok());
 }
 
-#[tokio::test]
-async fn every_reading_goes_and_its_bytes_are_blanked_in_place() {
-    let (_db, mut conn) = testdb::fresh().await;
+#[devkit::test]
+async fn every_reading_goes_and_its_bytes_are_blanked_in_place(db: devkit::pg::TestDatabase) {
+    let mut conn = <sqlx::PgConnection as sqlx::Connection>::connect(&db.url(None))
+        .await
+        .unwrap();
     let store = Store::new();
     let first = b"keep-1\nsecret v1\n".to_vec();
     let second = b"secret v2\nkeep-2\n".to_vec();
@@ -344,9 +348,13 @@ async fn every_reading_goes_and_its_bytes_are_blanked_in_place() {
     assert_eq!(again.hidden, 1);
 }
 
-#[tokio::test]
-async fn restaging_the_same_bytes_does_not_bring_a_keyless_record_back() {
-    let (_db, mut conn) = testdb::fresh().await;
+#[devkit::test]
+async fn restaging_the_same_bytes_does_not_bring_a_keyless_record_back(
+    db: devkit::pg::TestDatabase,
+) {
+    let mut conn = <sqlx::PgConnection as sqlx::Connection>::connect(&db.url(None))
+        .await
+        .unwrap();
     let store = Store::new();
     let bytes = b"ls\nrm -rf secret\n".to_vec();
     let (m, _) = material(&mut conn, &store, &bytes).await;
@@ -365,9 +373,11 @@ async fn restaging_the_same_bytes_does_not_bring_a_keyless_record_back() {
     assert_eq!((out.admitted, out.hidden), (1, 1));
 }
 
-#[tokio::test]
-async fn derived_descendants_go_with_their_parent() {
-    let (_db, mut conn) = testdb::fresh().await;
+#[devkit::test]
+async fn derived_descendants_go_with_their_parent(db: devkit::pg::TestDatabase) {
+    let mut conn = <sqlx::PgConnection as sqlx::Connection>::connect(&db.url(None))
+        .await
+        .unwrap();
     let store = Store::new();
     let bytes = b"make\n".to_vec();
     let (m, _) = material(&mut conn, &store, &bytes).await;
@@ -409,9 +419,11 @@ async fn derived_descendants_go_with_their_parent() {
     assert_eq!(tombstoned, expected);
 }
 
-#[tokio::test]
-async fn excision_of_sealed_material_is_refused_without_changes() {
-    let (_db, mut conn) = testdb::fresh().await;
+#[devkit::test]
+async fn excision_of_sealed_material_is_refused_without_changes(db: devkit::pg::TestDatabase) {
+    let mut conn = <sqlx::PgConnection as sqlx::Connection>::connect(&db.url(None))
+        .await
+        .unwrap();
     let store = Store::new();
     let bytes = b"a\nb\n".to_vec();
     let (m, blob) = material(&mut conn, &store, &bytes).await;
@@ -443,9 +455,11 @@ async fn excision_of_sealed_material_is_refused_without_changes() {
     assert_eq!(store.blobs.read(&blob).unwrap(), bytes);
 }
 
-#[tokio::test]
-async fn a_plan_that_went_stale_is_refused() {
-    let (_db, mut conn) = testdb::fresh().await;
+#[devkit::test]
+async fn a_plan_that_went_stale_is_refused(db: devkit::pg::TestDatabase) {
+    let mut conn = <sqlx::PgConnection as sqlx::Connection>::connect(&db.url(None))
+        .await
+        .unwrap();
     let store = Store::new();
     let bytes = b"x\n".to_vec();
     let (m, _) = material(&mut conn, &store, &bytes).await;
@@ -470,9 +484,13 @@ async fn a_plan_that_went_stale_is_refused() {
     assert!(err.to_string().contains("plan the excision again"));
 }
 
-#[tokio::test]
-async fn retained_archive_refuses_record_and_original_excision_without_changes() {
-    let (_db, mut conn) = testdb::fresh().await;
+#[devkit::test]
+async fn retained_archive_refuses_record_and_original_excision_without_changes(
+    db: devkit::pg::TestDatabase,
+) {
+    let mut conn = <sqlx::PgConnection as sqlx::Connection>::connect(&db.url(None))
+        .await
+        .unwrap();
     let store = Store::new();
     let original_bytes = b"synthetic captured archive bytes";
     let records = b"one\ntwo\n";

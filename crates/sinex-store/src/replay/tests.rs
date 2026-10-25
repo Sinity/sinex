@@ -1,7 +1,6 @@
 //! The replay diff: archived readings against the new live readings.
 use super::*;
 use crate::admission::{NoDerivations, admit};
-use crate::testdb;
 use sinex_model::event_types::CommandExecuted;
 use sinex_model::{
     ArchiveRequest, Batch, BatchKind, Class, Event, MaterialId, Origin, ReadingOrder,
@@ -53,9 +52,11 @@ fn batch(events: Vec<Event>, archive: Vec<ArchiveRequest>, operation: OperationI
     }
 }
 
-#[tokio::test]
-async fn diff_names_changed_added_removed_and_counts_unchanged() {
-    let (_db, mut conn) = testdb::fresh().await;
+#[devkit::test]
+async fn diff_names_changed_added_removed_and_counts_unchanged(db: devkit::pg::TestDatabase) {
+    let mut conn = <sqlx::PgConnection as sqlx::Connection>::connect(&db.url(None))
+        .await
+        .unwrap();
     let m = MaterialId::new();
     let first = OperationId::new();
     let mut tx = conn.begin().await.unwrap();

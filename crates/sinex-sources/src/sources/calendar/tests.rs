@@ -16,7 +16,7 @@ fn read(ics: &str) -> CalendarEvent {
     parser.parse(&ev, &(), &ctx).unwrap().0.remove(0)
 }
 
-#[test]
+#[devkit::test]
 fn reads_a_recurring_zoned_event() {
     let e = read(ICS);
     assert_eq!(e.calendar, "me@example.org");
@@ -46,7 +46,7 @@ fn reads_a_recurring_zoned_event() {
     assert!(!e.extra.contains_key("DTSTAMP"));
 }
 
-#[test]
+#[devkit::test]
 fn whole_days_floating_times_durations_and_cancellations() {
     let ics = "BEGIN:VEVENT\nUID:d\nDTSTART;VALUE=DATE:20240301\nDURATION:P1D\nSTATUS:CANCELLED\nLAST-MODIFIED:20240302T000000Z\nEND:VEVENT\n";
     let e = read(ics);
@@ -61,7 +61,7 @@ fn whole_days_floating_times_durations_and_cancellations() {
     assert_eq!(floating.zone, "floating");
 }
 
-#[test]
+#[devkit::test]
 fn the_export_stamp_does_not_revise_an_event() {
     let later = ICS.replace("DTSTAMP:20260508T144252Z", "DTSTAMP:20270101T000000Z");
     assert_eq!(
@@ -70,7 +70,7 @@ fn the_export_stamp_does_not_revise_an_event() {
     );
 }
 
-#[test]
+#[devkit::test]
 fn frames_one_record_per_event() {
     let doc = format!(
         "BEGIN:VCALENDAR\nX-WR-CALNAME:Me\n{ICS}{}",

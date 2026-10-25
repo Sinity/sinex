@@ -8,7 +8,7 @@ fn ctx() -> Context {
     )
 }
 
-#[test]
+#[devkit::test]
 fn logical_days_start_at_four() {
     let c = ctx();
     // 01:30 local on the 14th belongs to the 13th.
@@ -19,7 +19,7 @@ fn logical_days_start_at_four() {
     assert_eq!(end.to_string(), "2026-09-15T02:00:00Z");
 }
 
-#[test]
+#[devkit::test]
 fn days_across_a_change_of_offset_have_their_real_length() {
     let c = ctx();
     // Europe/Warsaw leaves summer time at 03:00 on 2026-10-25, before the
@@ -28,7 +28,7 @@ fn days_across_a_change_of_offset_have_their_real_length() {
     assert_eq!(end.duration_since(start).as_secs(), 25 * 3600);
 }
 
-#[test]
+#[devkit::test]
 fn parses_words() {
     assert_eq!(duration("5m"), Some(300.0));
     assert_eq!(duration("3d"), Some(259_200.0));
@@ -47,7 +47,7 @@ fn parses_words() {
     );
 }
 
-#[test]
+#[devkit::test]
 fn weeks_start_on_monday() {
     let c = ctx();
     let (start, _) = c.week_of("2026-09-17".parse().unwrap()).unwrap();

@@ -91,7 +91,7 @@ fn known_samples() -> Vec<(&'static str, Value)> {
     ]
 }
 
-#[test]
+#[devkit::test]
 fn every_declared_event_lane_uses_concrete_fields_and_exact_wire_values() {
     for (lane, payload) in known_samples() {
         let original = row(lane, payload);
@@ -104,7 +104,7 @@ fn every_declared_event_lane_uses_concrete_fields_and_exact_wire_values() {
     }
 }
 
-#[test]
+#[devkit::test]
 fn missing_null_large_numbers_and_unicode_remain_distinct() {
     let original = row(
         "clipboard",
@@ -119,7 +119,7 @@ fn missing_null_large_numbers_and_unicode_remain_distinct() {
     assert_eq!(serde_json::to_value(decoded).unwrap(), original);
 }
 
-#[test]
+#[devkit::test]
 fn malformed_known_fields_do_not_fall_through_to_unknown() {
     for (lane, payload) in [
         ("clipboard", json!({"text":4})),
@@ -160,7 +160,7 @@ fn malformed_known_fields_do_not_fall_through_to_unknown() {
     }
 }
 
-#[test]
+#[devkit::test]
 fn unknown_lanes_and_representation_kinds_remain_explicit() {
     for (lane, payload) in [
         ("future-lane", json!([null, 4, {}])),
@@ -183,7 +183,7 @@ fn unknown_lanes_and_representation_kinds_remain_explicit() {
     }
 }
 
-#[test]
+#[devkit::test]
 fn unknown_fields_and_open_hint_values_have_exact_output_pointers() {
     for (lane, payload, paths) in [
         (
@@ -227,7 +227,7 @@ fn unknown_fields_and_open_hint_values_have_exact_output_pointers() {
     }
 }
 
-#[test]
+#[devkit::test]
 fn interpretation_markers_do_not_override_source_values() {
     let mut original = row("monitor", json!({"brightness":50}));
     original["uninterpreted"] = json!(true);
@@ -238,7 +238,7 @@ fn interpretation_markers_do_not_override_source_values() {
     assert!(output.get("uninterpreted_fields").is_none());
 }
 
-#[test]
+#[devkit::test]
 fn registration_retains_location_identity_repeat_rule_and_capture_time() {
     use crate::{EventPayload, KeyKind, ReplaceRule, TimeQuality};
     assert_eq!(CaptureObserved::KEY, KeyKind::Location);

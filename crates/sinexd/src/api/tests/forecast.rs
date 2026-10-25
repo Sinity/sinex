@@ -10,9 +10,11 @@ async fn score(w: &World, token: &str) -> Value {
     assert_eq!(body["outcome"], "ok", "{body}");
     body["result"].clone()
 }
-#[tokio::test]
-async fn forecast_public_workflow_withdraws_hidden_and_excised_inputs() {
-    let w = world().await;
+#[devkit::test]
+async fn forecast_public_workflow_withdraws_hidden_and_excised_inputs(
+    db: devkit::pg::TestDatabase,
+) {
+    let w = world(db).await;
     let empty = score(&w, OPERATOR).await;
     assert_eq!(empty["report"]["status"], "not_estimable");
     assert!(empty["report"]["brier"].is_null());
@@ -73,9 +75,11 @@ async fn forecast_public_workflow_withdraws_hidden_and_excised_inputs() {
     assert_eq!(excised["outcome"], "ok", "{excised}");
     assert_eq!(score(&w, OPERATOR).await["report"]["issued"], 0);
 }
-#[tokio::test]
-async fn forecast_public_commands_refuse_invalid_inputs_and_ungranted_authors() {
-    let w = world().await;
+#[devkit::test]
+async fn forecast_public_commands_refuse_invalid_inputs_and_ungranted_authors(
+    db: devkit::pg::TestDatabase,
+) {
+    let w = world(db).await;
     for p in ["NaN", "inf", "-0.1", "1.01"] {
         let (_,body)=call(&w,Some(OPERATOR),json!({"method":"forecast-issue","target":"synthetic","probability":p,"criteria":"evidence","horizon":"2099-01-01T00:00:00Z","cutoff":"2026-01-01T00:00:00Z"})).await;
         assert_eq!(body["outcome"], "refused", "{body}");
@@ -84,9 +88,11 @@ async fn forecast_public_commands_refuse_invalid_inputs_and_ungranted_authors() 
     assert_eq!(body["outcome"], "refused", "{body}");
 }
 
-#[tokio::test]
-async fn forecast_new_authoring_continues_after_an_unrelated_forecast_is_excised() {
-    let w = world().await;
+#[devkit::test]
+async fn forecast_new_authoring_continues_after_an_unrelated_forecast_is_excised(
+    db: devkit::pg::TestDatabase,
+) {
+    let w = world(db).await;
     let first = issue(&w, "0.2").await;
     let (_, body) = call(
         &w,
@@ -100,9 +106,9 @@ async fn forecast_new_authoring_continues_after_an_unrelated_forecast_is_excised
     assert_eq!(score(&w, OPERATOR).await["report"]["issued"], 1);
 }
 
-#[tokio::test]
-async fn forecast_commands_preserve_temporal_and_evidence_boundaries() {
-    let w = world().await;
+#[devkit::test]
+async fn forecast_commands_preserve_temporal_and_evidence_boundaries(db: devkit::pg::TestDatabase) {
+    let w = world(db).await;
     let evidence = command("synthetic cutoff evidence", 0);
     let evidence_id = evidence.id.0.to_string();
     admit_events(&w, vec![evidence]).await;
@@ -140,9 +146,11 @@ async fn forecast_commands_preserve_temporal_and_evidence_boundaries() {
     assert_eq!(score(&w, OPERATOR).await["report"]["unresolved"], 1);
 }
 
-#[tokio::test]
-async fn forecast_report_refuses_conflicting_visible_resolution_records() {
-    let w = world().await;
+#[devkit::test]
+async fn forecast_report_refuses_conflicting_visible_resolution_records(
+    db: devkit::pg::TestDatabase,
+) {
+    let w = world(db).await;
     let issued = issue(&w, "0.8").await;
     let evidence = command("synthetic evidence for conflicting resolutions", 0);
     let evidence_id = evidence.id.0.to_string();

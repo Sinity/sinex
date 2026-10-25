@@ -41,7 +41,7 @@ fn material_bytes(m: &NewMaterial) -> Vec<u8> {
     }
 }
 
-#[test]
+#[devkit::test]
 fn reads_rows_then_only_new_and_changed_ones() {
     let path = db();
     let d = driver(path.clone());
@@ -66,7 +66,7 @@ fn reads_rows_then_only_new_and_changed_ones() {
     );
 }
 
-#[test]
+#[devkit::test]
 fn a_restart_with_rebuilt_memory_stores_nothing_new() {
     let path = db();
     let d = driver(path.clone());
@@ -108,7 +108,7 @@ fn a_restart_with_rebuilt_memory_stores_nothing_new() {
 /// L20: a finished row changed while Sinex was down (Atuin's soft
 /// delete) is read on the first poll after the restart, though the
 /// rebuilt state is not empty and the row is outside the open window.
-#[test]
+#[devkit::test]
 fn a_row_changed_while_down_is_read_after_the_restart() {
     let path = db();
     let d = driver(path.clone());
@@ -143,7 +143,7 @@ fn a_row_changed_while_down_is_read_after_the_restart() {
     assert!(quiet.material.is_none(), "later polls are not full passes");
 }
 
-#[test]
+#[devkit::test]
 fn reading_orders_only_grow() {
     let path = db();
     let d = driver(path.clone());
@@ -168,7 +168,7 @@ fn reading_orders_only_grow() {
     );
 }
 
-#[test]
+#[devkit::test]
 fn locked_rollback_spill_is_unavailable_until_rollback() {
     let path = db();
     let holder = Connection::open(&path).unwrap();
@@ -197,7 +197,7 @@ fn locked_rollback_spill_is_unavailable_until_rollback() {
     assert!(rows.iter().all(|r| r["id"] == "committed"));
 }
 
-#[test]
+#[devkit::test]
 fn failed_poll_retries_same_material_before_reading_source_changes() {
     let path = db();
     let mut d = driver(path.clone());
@@ -225,7 +225,7 @@ fn failed_poll_retries_same_material_before_reading_source_changes() {
     assert!(lines(&changed).iter().all(|r| r["n"] == 99));
 }
 
-#[test]
+#[devkit::test]
 fn missing_column_is_named() {
     let mut d = driver(db());
     d.required = &["id", "nope"];
@@ -236,7 +236,7 @@ fn missing_column_is_named() {
     );
 }
 
-#[test]
+#[devkit::test]
 fn wal_reads_committed_rows_while_writer_has_uncommitted_changes() {
     let path = db();
     let writer = Connection::open(&path).unwrap();
@@ -251,7 +251,7 @@ fn wal_reads_committed_rows_while_writer_has_uncommitted_changes() {
     writer.execute_batch("ROLLBACK").unwrap();
 }
 
-#[test]
+#[devkit::test]
 fn missing_database_stays_unavailable_without_creating_a_file() {
     let path = db().with_file_name("absent.db");
     let a = driver(path.clone())
@@ -263,7 +263,7 @@ fn missing_database_stays_unavailable_without_creating_a_file() {
     assert!(!path.exists());
 }
 
-#[test]
+#[devkit::test]
 fn a_read_stays_on_its_committed_view_and_the_next_read_sees_wal_commits() {
     let path = db();
     let writer = Connection::open(&path).unwrap();

@@ -66,9 +66,11 @@ async fn events(conn: &mut PgConnection) -> Vec<EventFields> {
         .fetch_all(conn).await.unwrap()
 }
 
-#[tokio::test]
-async fn archive_acquisition_restart_replay_and_privacy_use_real_admission() {
-    let (_db, url, _) = crate::testdb::fresh().await;
+#[devkit::test]
+async fn archive_acquisition_restart_replay_and_privacy_use_real_admission(
+    db: devkit::pg::TestDatabase,
+) {
+    let url = db.url(None);
     let dir = std::env::temp_dir().join(format!("sinex-archive-{}", uuid::Uuid::now_v7()));
     std::fs::create_dir_all(&dir).unwrap();
     let path = dir.join("export.tgz");
@@ -170,9 +172,9 @@ async fn archive_acquisition_restart_replay_and_privacy_use_real_admission() {
     std::fs::remove_dir_all(&dir).unwrap();
 }
 
-#[tokio::test]
-async fn archive_acquisition_separates_effective_privacy_classes() {
-    let (_db, url, _) = crate::testdb::fresh().await;
+#[devkit::test]
+async fn archive_acquisition_separates_effective_privacy_classes(db: devkit::pg::TestDatabase) {
+    let url = db.url(None);
     let dir = std::env::temp_dir().join(format!("sinex-archive-privacy-{}", uuid::Uuid::now_v7()));
     std::fs::create_dir_all(&dir).unwrap();
     let path = dir.join("export.tgz");
@@ -209,9 +211,9 @@ async fn archive_acquisition_separates_effective_privacy_classes() {
     std::fs::remove_dir_all(&dir).unwrap();
 }
 
-#[tokio::test]
-async fn cancelled_archive_worker_joins_and_restart_catches_up() {
-    let (_db, url, _) = crate::testdb::fresh().await;
+#[devkit::test]
+async fn cancelled_archive_worker_joins_and_restart_catches_up(db: devkit::pg::TestDatabase) {
+    let url = db.url(None);
     let dir = std::env::temp_dir().join(format!("sinex-archive-cancel-{}", uuid::Uuid::now_v7()));
     std::fs::create_dir_all(&dir).unwrap();
     let path = dir.join("export.tgz");
@@ -281,10 +283,12 @@ impl Source for SmallBatches {
     }
 }
 
-#[tokio::test]
+#[devkit::test]
 async fn sealed_archive_restart_replay_and_class_changes_preserve_exact_materials() {
     for zip in [false, true] {
-        let (_db, url, _) = crate::testdb::fresh().await;
+        // Each container kind gets its own database.
+        let db = devkit::pg::test_database().unwrap();
+        let url = db.url(None);
         let dir =
             std::env::temp_dir().join(format!("sinex-sealed-archive-{}", uuid::Uuid::now_v7()));
         std::fs::create_dir_all(&dir).unwrap();
@@ -550,9 +554,11 @@ async fn sealed_archive_restart_replay_and_class_changes_preserve_exact_material
     }
 }
 
-#[tokio::test]
-async fn sealed_bindings_never_share_material_keys_or_original_blob_names() {
-    let (_db, url, _) = crate::testdb::fresh().await;
+#[devkit::test]
+async fn sealed_bindings_never_share_material_keys_or_original_blob_names(
+    db: devkit::pg::TestDatabase,
+) {
+    let url = db.url(None);
     let dir = std::env::temp_dir().join(format!("sinex-sealed-bindings-{}", uuid::Uuid::now_v7()));
     std::fs::create_dir_all(&dir).unwrap();
     let path = dir.join("export.tgz");

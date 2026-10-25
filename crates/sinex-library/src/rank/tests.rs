@@ -4,7 +4,7 @@ fn j(w: &str, l: &str) -> (String, String) {
     (w.into(), l.into())
 }
 
-#[test]
+#[devkit::test]
 fn a_consistent_order_is_recovered() {
     let judgements = vec![
         j("a", "b"),
@@ -22,7 +22,7 @@ fn a_consistent_order_is_recovered() {
     assert_eq!(r[3].losses, 2);
 }
 
-#[test]
+#[devkit::test]
 fn an_unbeaten_item_stays_finite_and_ties_are_repeatable() {
     let r = bradley_terry(&[j("x", "y")]);
     assert_eq!(r[0].item, "x");
@@ -33,7 +33,7 @@ fn an_unbeaten_item_stays_finite_and_ties_are_repeatable() {
     assert!(bradley_terry(&[]).is_empty());
 }
 
-#[test]
+#[devkit::test]
 fn the_next_pair_is_the_least_compared_neighbours() {
     let judgements = vec![j("a", "b"), j("a", "b"), j("b", "c")];
     let r = bradley_terry(&judgements);

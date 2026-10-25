@@ -225,7 +225,7 @@ fn small_zsh() -> String {
 }
 
 /// L1. Provenance XOR, enforced by the database whatever writes the row.
-#[tokio::test]
+#[devkit::test]
 async fn l1_an_event_has_exactly_one_origin() {
     let dir = Dir::new();
     let t = Target::new(&dir);
@@ -257,7 +257,7 @@ async fn l1_an_event_has_exactly_one_origin() {
 /// L2 and L3. Replay keeps occurrences and stated times, mints new IDs, and
 /// each replay leaves one live reading per occurrence with the earlier ones
 /// archived; the side tables agree with the events.
-#[tokio::test]
+#[devkit::test]
 async fn l2_l3_replay_keeps_occurrences_and_one_live_reading() {
     let dir = Dir::new();
     let t = Target::new(&dir);
@@ -321,7 +321,7 @@ async fn l2_l3_replay_keeps_occurrences_and_one_live_reading() {
 /// L6. Duplicate delivery is harmless: forget every source position (as if
 /// progress were lost after the batches committed) and deliver everything
 /// again.
-#[tokio::test]
+#[devkit::test]
 async fn l6_delivering_everything_twice_changes_nothing() {
     let dir = Dir::new();
     let t = Target::new(&dir);
@@ -357,7 +357,7 @@ async fn l6_delivering_everything_twice_changes_nothing() {
 
 /// L7 and L28. Re-staging the same export, and the same bytes under a new
 /// name, registers new material but admits nothing new.
-#[tokio::test]
+#[devkit::test]
 async fn l7_l28_restaging_the_same_bytes_admits_nothing_new() {
     let dir = Dir::new();
     let t = Target::new(&dir);
@@ -396,7 +396,7 @@ async fn l7_l28_restaging_the_same_bytes_admits_nothing_new() {
 /// L11 and L51. Clocks are honest: `ts_coided` is the ID's minting time, the
 /// stated time is kept as stated (1970 and 2200 included), never the run
 /// time, and never refused for its value.
-#[tokio::test]
+#[devkit::test]
 async fn l11_l51_stated_times_are_kept_whatever_their_value() {
     let dir = Dir::new();
     let t = Target::new(&dir);
@@ -461,7 +461,7 @@ async fn chrono_now(c: &mut PgConnection) -> String {
 
 /// L14. Large materials stay large: a long history is a handful of parts,
 /// never one material per record.
-#[tokio::test]
+#[devkit::test]
 async fn l14_a_long_history_is_a_few_materials() {
     let dir = Dir::new();
     let t = Target::new(&dir);
@@ -486,7 +486,7 @@ async fn l14_a_long_history_is_a_few_materials() {
 /// reading archived; a soft-deleted row's newest reading is "removed at
 /// source", stays out of the live counts' ordinary state but is never an
 /// exclusion; a replay keeps the final readings.
-#[tokio::test]
+#[devkit::test]
 async fn l20_l47_rows_that_change_are_read_to_their_final_values() {
     let dir = Dir::new();
     let t = Target::new(&dir);
@@ -551,7 +551,7 @@ async fn l20_l47_rows_that_change_are_read_to_their_final_values() {
 /// L21. Progress never ahead of storage: a bad record between two good ones
 /// is a failure row with its bytes; both good records are stored and the
 /// source keeps reading.
-#[tokio::test]
+#[devkit::test]
 async fn l21_a_bad_record_is_a_failure_and_its_neighbours_are_stored() {
     let dir = Dir::new();
     let t = Target::new(&dir);
@@ -571,7 +571,7 @@ async fn l21_a_bad_record_is_a_failure_and_its_neighbours_are_stored() {
 
 /// L34 and L48. Repeats are separate occurrences: the same command typed 500
 /// times, twice within one second included, is 500 commands.
-#[tokio::test]
+#[devkit::test]
 async fn l34_l48_repeated_commands_are_kept() {
     let dir = Dir::new();
     let t = Target::new(&dir);
@@ -594,7 +594,7 @@ async fn l34_l48_repeated_commands_are_kept() {
 
 /// L18. A hidden record stays hidden across replay and re-import, and comes
 /// back once unhidden and read again.
-#[tokio::test]
+#[devkit::test]
 async fn l18_hidden_stays_hidden_across_replay_and_reimport() {
     let dir = Dir::new();
     let t = Target::new(&dir);
@@ -639,7 +639,7 @@ async fn visible_a3(c: &mut PgConnection) -> i64 {
 
 /// L23. Dry runs change nothing, and bytes two materials share survive the
 /// excision of one of them.
-#[tokio::test]
+#[devkit::test]
 async fn l23_dry_runs_change_nothing_and_shared_bytes_survive() {
     let dir = Dir::new();
     let t = Target::new(&dir);
@@ -695,7 +695,7 @@ async fn l23_dry_runs_change_nothing_and_shared_bytes_survive() {
 
 /// L43. One writer per database: a second writer is refused while the first
 /// holds the database, and allowed once it is gone.
-#[tokio::test]
+#[devkit::test]
 async fn l43_a_second_writer_is_refused() {
     let dir = Dir::new();
     let t = Target::new(&dir);
@@ -747,7 +747,7 @@ async fn l43_a_second_writer_is_refused() {
 /// L15. Schema round trip: a database created fresh from the declarations
 /// describes exactly the schema an existing database at this version has,
 /// including views, triggers and hypertable settings.
-#[tokio::test]
+#[devkit::test]
 async fn l15_a_fresh_schema_matches_the_existing_one() {
     let dir = Dir::new();
     let t = Target::new(&dir);
@@ -871,7 +871,7 @@ fn derivation_inputs(dir: &Dir) -> (PathBuf, PathBuf) {
 /// L4 and L5. Derivations do not depend on arrival order or on when they
 /// start: deriving after both sources (one ingest order) equals deriving
 /// between the two sources and again after (the other order, live).
-#[tokio::test]
+#[devkit::test]
 async fn l4_l5_derived_results_do_not_depend_on_arrival_order() {
     let dir = Dir::new();
     let (zsh, atuin) = derivation_inputs(&dir);
@@ -914,7 +914,7 @@ async fn l4_l5_derived_results_do_not_depend_on_arrival_order() {
 /// L10. Provenance closure: every derived event's parents resolve, live or
 /// archived, down to material events, and every parent committed before its
 /// child.
-#[tokio::test]
+#[devkit::test]
 async fn l10_every_parent_resolves_and_committed_first() {
     let dir = Dir::new();
     let (zsh, atuin) = derivation_inputs(&dir);

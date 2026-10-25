@@ -1,6 +1,6 @@
 use super::*;
 
-#[test]
+#[devkit::test]
 fn matches_the_textbook_procedure() {
     let p = [0.01, 0.04, 0.03, 0.005];
     let q: Vec<f64> = bh_qvalues(&p.map(Some))
@@ -13,7 +13,7 @@ fn matches_the_textbook_procedure() {
     }
 }
 
-#[test]
+#[devkit::test]
 fn non_estimable_cells_keep_the_family_size() {
     let q = bh_qvalues(&[Some(0.01), None]);
     assert!((q[0].unwrap() - 0.02).abs() < 1e-12);

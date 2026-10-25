@@ -1,6 +1,6 @@
 use super::*;
 
-#[test]
+#[devkit::test]
 fn missing_or_invalid_source_times_never_become_zero() {
     assert_eq!(
         source_wall_seconds(&json!({"sources": {"a": {"wall_s": 2.0}, "b": {"wall_s": 3.0}}})),
@@ -17,7 +17,7 @@ fn missing_or_invalid_source_times_never_become_zero() {
     }
 }
 
-#[test]
+#[devkit::test]
 fn an_unavailable_component_leaves_the_total_unknown() {
     let known = bench::linear_estimate(Some(2.0), &std::collections::BTreeMap::new(), Some(10.0));
     let unknown = bench::linear_estimate(None, &std::collections::BTreeMap::new(), Some(10.0));
@@ -28,7 +28,7 @@ fn an_unavailable_component_leaves_the_total_unknown() {
     assert!(combined_estimate(&[])["estimated_seconds"].is_null());
 }
 
-#[test]
+#[devkit::test]
 fn failed_or_absent_work_never_counts_as_a_completed_benchmark() {
     let completed = json!({"notes": {"ok": true}, "shell": {"ok": true}});
     let inputs = completed.as_object().unwrap();

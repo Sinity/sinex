@@ -15,7 +15,7 @@ fn origin() -> Origin {
     }
 }
 
-#[test]
+#[devkit::test]
 fn timed_imports_keep_the_original_wire_key() {
     let old = json!({"command":"pwd", "hostname":"h", "started_at":"2023-11-14T22:13:20Z", "header_elapsed":0, "n":1});
     let payload: CommandImported = serde_json::from_value(old.clone()).unwrap();
@@ -40,7 +40,7 @@ fn timed_imports_keep_the_original_wire_key() {
     assert_eq!(event.ts_orig.quality, TimeQuality::Intrinsic);
 }
 
-#[test]
+#[devkit::test]
 fn untimed_ingress_uses_locations_and_unknown_time() {
     let kind = crate::event_types::find("command.imported").unwrap();
     assert_eq!(kind.key, CommandImported::KEY);

@@ -34,7 +34,7 @@ pub struct Options {
 }
 
 /// The kinds `--source KIND=PATH` accepts.
-pub fn kind_names() -> Vec<&'static str> {
+fn kind_names() -> Vec<&'static str> {
     sources::input_kinds()
         .iter()
         .filter(|k| k.plan.is_some())

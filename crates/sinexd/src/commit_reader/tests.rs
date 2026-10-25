@@ -100,9 +100,12 @@ async fn submit(handle: &WriterHandle, range: std::ops::Range<u64>) {
     }
 }
 
-#[tokio::test]
-async fn read_models_get_every_event_once_across_restarts() {
-    let (_db, url, connection) = crate::testdb::fresh().await;
+#[devkit::test]
+async fn read_models_get_every_event_once_across_restarts(db: devkit::pg::TestDatabase) {
+    let url = db.url(None);
+    let connection = <sqlx::PgConnection as sqlx::Connection>::connect(&url)
+        .await
+        .unwrap();
     let mut check = PgConnection::connect(&url).await.unwrap();
     // The primary key makes a second application of an event fail.
     sqlx::query("CREATE TABLE test_counter (seq bigint PRIMARY KEY, command text)")
@@ -163,9 +166,12 @@ async fn read_models_get_every_event_once_across_restarts() {
     writer.await.unwrap();
 }
 
-#[tokio::test]
-async fn excised_events_never_reach_consumers() {
-    let (_db, url, mut connection) = crate::testdb::fresh().await;
+#[devkit::test]
+async fn excised_events_never_reach_consumers(db: devkit::pg::TestDatabase) {
+    let url = db.url(None);
+    let mut connection = <sqlx::PgConnection as sqlx::Connection>::connect(&url)
+        .await
+        .unwrap();
     let secret = imported("secret", 0);
     let keep = imported("keep", 1);
     let excise_target = secret.id;

@@ -10,7 +10,7 @@ fn parse(line: &str) -> ChatMessage {
         .remove(0)
 }
 
-#[test]
+#[devkit::test]
 fn local_times_use_the_configured_zone() {
     let m = parse("2024-07-01 12:00:00\t@op\thello\n");
     assert_eq!(
@@ -33,7 +33,7 @@ fn local_times_use_the_configured_zone() {
     assert_eq!(r.sent_at, Timestamp::from_unix_secs(1_729_989_000).unwrap());
 }
 
-#[test]
+#[devkit::test]
 fn line_kinds() {
     assert_eq!(
         parse("2024-09-18 23:30:12\t-->\tsinity (~s@h) has joined #c\n").kind,
@@ -63,7 +63,7 @@ fn line_kinds() {
     );
 }
 
-#[test]
+#[devkit::test]
 fn empty_lines_are_not_messages() {
     let p = WeeChatParser {
         zone: jiff::tz::TimeZone::UTC,

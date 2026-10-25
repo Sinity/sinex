@@ -1,6 +1,6 @@
 use super::*;
 
-#[test]
+#[devkit::test]
 fn delimited_records_start_at_each_delimiter_and_hold_back_the_last() {
     let bytes = b"<head>css</head><c>one</c><c>two</c><c>thr";
     let (records, covered) = Framing::Delimited(b"<c>").frame(bytes, false);
@@ -17,7 +17,7 @@ fn delimited_records_start_at_each_delimiter_and_hold_back_the_last() {
     );
 }
 
-#[test]
+#[devkit::test]
 fn json_array_inside_an_object() {
     let doc = br#"{"Browser History": [ {"a": 1}, {"b": [2, 3]} ], "x": 0}"#;
     let (r, _) = Framing::JsonArray("/Browser History").frame(doc, true);
@@ -25,7 +25,7 @@ fn json_array_inside_an_object() {
     assert_eq!(items, vec![&br#"{"a": 1}"#[..], br#"{"b": [2, 3]}"#]);
 }
 
-#[test]
+#[devkit::test]
 fn csv_keeps_quoted_newlines_in_one_row_and_holds_back_a_cut_row() {
     let data = b"id,note\n1,\"two\nlines\"\n2,x\n3,cut";
     let (r, consumed) = Framing::Csv.frame(data, false);
@@ -35,7 +35,7 @@ fn csv_keeps_quoted_newlines_in_one_row_and_holds_back_a_cut_row() {
     assert_eq!(Framing::Csv.frame(data, true).0.len(), 4);
 }
 
-#[test]
+#[devkit::test]
 fn mbox_splits_at_from_lines_only() {
     let data =
         b"From a@b Mon\nSubject: one\n\n>From quoted\nbody\nFrom c@d Tue\nSubject: two\n\nx\n";

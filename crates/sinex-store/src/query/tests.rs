@@ -2,7 +2,7 @@
 //! observation and the fused command derived from it) and reads them back.
 use super::*;
 use crate::read_models::catch_up_search_text;
-use crate::{NoDerivations, admit, testdb};
+use crate::{NoDerivations, admit};
 use serde_json::json;
 use sinex_model::event_types::{CommandExecuted, CommandFused};
 use sinex_model::query::{Context, bind};
@@ -143,9 +143,11 @@ async fn world(conn: &mut PgConnection) -> Vec<(Uuid, Uuid)> {
     ids
 }
 
-#[tokio::test]
-async fn aliases_filter_on_promoted_fields_with_unknown_kept_unknown() {
-    let (_db, mut conn) = testdb::fresh().await;
+#[devkit::test]
+async fn aliases_filter_on_promoted_fields_with_unknown_kept_unknown(db: devkit::pg::TestDatabase) {
+    let mut conn = <sqlx::PgConnection as sqlx::Connection>::connect(&db.url(None))
+        .await
+        .unwrap();
     world(&mut conn).await;
     let a = ask(&mut conn, "commands").await;
     assert_eq!(a.total, 5);
@@ -159,9 +161,11 @@ async fn aliases_filter_on_promoted_fields_with_unknown_kept_unknown() {
     assert_eq!(column(&a, "command"), [json!("cargo build")]);
 }
 
-#[tokio::test]
-async fn path_prefix_matches_whole_components() {
-    let (_db, mut conn) = testdb::fresh().await;
+#[devkit::test]
+async fn path_prefix_matches_whole_components(db: devkit::pg::TestDatabase) {
+    let mut conn = <sqlx::PgConnection as sqlx::Connection>::connect(&db.url(None))
+        .await
+        .unwrap();
     world(&mut conn).await;
     let a = ask(&mut conn, "commands where cwd ^ /src/tide").await;
     assert_eq!(a.total, 3, "{:?}", column(&a, "cwd"));
@@ -170,9 +174,11 @@ async fn path_prefix_matches_whole_components() {
     assert_eq!(a.total, 3);
 }
 
-#[tokio::test]
-async fn two_conditions_on_one_field_are_both_required() {
-    let (_db, mut conn) = testdb::fresh().await;
+#[devkit::test]
+async fn two_conditions_on_one_field_are_both_required(db: devkit::pg::TestDatabase) {
+    let mut conn = <sqlx::PgConnection as sqlx::Connection>::connect(&db.url(None))
+        .await
+        .unwrap();
     world(&mut conn).await;
     let a = ask(
         &mut conn,
@@ -190,9 +196,11 @@ async fn two_conditions_on_one_field_are_both_required() {
     assert_eq!(a.total, 5);
 }
 
-#[tokio::test]
-async fn words_search_ranks_and_marks_snippets() {
-    let (_db, mut conn) = testdb::fresh().await;
+#[devkit::test]
+async fn words_search_ranks_and_marks_snippets(db: devkit::pg::TestDatabase) {
+    let mut conn = <sqlx::PgConnection as sqlx::Connection>::connect(&db.url(None))
+        .await
+        .unwrap();
     world(&mut conn).await;
     // Each command is an observation and a fused command: both match.
     let a = ask(&mut conn, "cargo test").await;
@@ -208,9 +216,11 @@ async fn words_search_ranks_and_marks_snippets() {
     assert_eq!(a.total, 3);
 }
 
-#[tokio::test]
-async fn pages_read_one_answer_at_one_commit_position() {
-    let (_db, mut conn) = testdb::fresh().await;
+#[devkit::test]
+async fn pages_read_one_answer_at_one_commit_position(db: devkit::pg::TestDatabase) {
+    let mut conn = <sqlx::PgConnection as sqlx::Connection>::connect(&db.url(None))
+        .await
+        .unwrap();
     world(&mut conn).await;
     let first = ask_page(
         &mut conn,
@@ -248,9 +258,11 @@ async fn pages_read_one_answer_at_one_commit_position() {
     assert_eq!(ask(&mut conn, "commands").await.total, 6);
 }
 
-#[tokio::test]
-async fn limit_is_part_of_the_answer() {
-    let (_db, mut conn) = testdb::fresh().await;
+#[devkit::test]
+async fn limit_is_part_of_the_answer(db: devkit::pg::TestDatabase) {
+    let mut conn = <sqlx::PgConnection as sqlx::Connection>::connect(&db.url(None))
+        .await
+        .unwrap();
     world(&mut conn).await;
     let a = ask(&mut conn, "commands sort when limit 2").await;
     assert_eq!(a.total, 2);
@@ -263,9 +275,11 @@ async fn limit_is_part_of_the_answer() {
     );
 }
 
-#[tokio::test]
-async fn grouping_makes_rows_of_groups() {
-    let (_db, mut conn) = testdb::fresh().await;
+#[devkit::test]
+async fn grouping_makes_rows_of_groups(db: devkit::pg::TestDatabase) {
+    let mut conn = <sqlx::PgConnection as sqlx::Connection>::connect(&db.url(None))
+        .await
+        .unwrap();
     world(&mut conn).await;
     let a = ask(
         &mut conn,
@@ -291,9 +305,11 @@ async fn grouping_makes_rows_of_groups() {
     );
 }
 
-#[tokio::test]
-async fn as_of_reads_what_was_live_at_a_commit_position() {
-    let (_db, mut conn) = testdb::fresh().await;
+#[devkit::test]
+async fn as_of_reads_what_was_live_at_a_commit_position(db: devkit::pg::TestDatabase) {
+    let mut conn = <sqlx::PgConnection as sqlx::Connection>::connect(&db.url(None))
+        .await
+        .unwrap();
     let ids = world(&mut conn).await;
     let before = current_seq(&mut conn).await.unwrap();
     let hide = Batch {
@@ -332,9 +348,11 @@ async fn as_of_reads_what_was_live_at_a_commit_position() {
     assert_eq!(archive.total, 1);
 }
 
-#[tokio::test]
-async fn near_joins_pick_the_nearest_match_once() {
-    let (_db, mut conn) = testdb::fresh().await;
+#[devkit::test]
+async fn near_joins_pick_the_nearest_match_once(db: devkit::pg::TestDatabase) {
+    let mut conn = <sqlx::PgConnection as sqlx::Connection>::connect(&db.url(None))
+        .await
+        .unwrap();
     world(&mut conn).await;
     // Observations within 90 s of a failing command (08:01, 08:03): all five
     // observations, a minute apart, each once.
@@ -370,9 +388,11 @@ async fn near_joins_pick_the_nearest_match_once() {
     assert_eq!(offsets, sorted);
 }
 
-#[tokio::test]
-async fn walks_follow_provenance() {
-    let (_db, mut conn) = testdb::fresh().await;
+#[devkit::test]
+async fn walks_follow_provenance(db: devkit::pg::TestDatabase) {
+    let mut conn = <sqlx::PgConnection as sqlx::Connection>::connect(&db.url(None))
+        .await
+        .unwrap();
     let ids = world(&mut conn).await;
     let (fused, observed) = ids[0];
     let a = ask(&mut conn, &format!("trace {fused}")).await;
@@ -391,9 +411,11 @@ async fn walks_follow_provenance() {
     assert_eq!(shown["kind"], json!("command.fused"));
 }
 
-#[tokio::test]
-async fn recall_reports_every_source_and_says_no_data() {
-    let (_db, mut conn) = testdb::fresh().await;
+#[devkit::test]
+async fn recall_reports_every_source_and_says_no_data(db: devkit::pg::TestDatabase) {
+    let mut conn = <sqlx::PgConnection as sqlx::Connection>::connect(&db.url(None))
+        .await
+        .unwrap();
     world(&mut conn).await;
     let a = ask(&mut conn, "recall 2026-09-14T08:02:00Z ±90s").await;
     // Commands at 08:01, 08:02 and 08:03, each observed and fused.
@@ -408,17 +430,21 @@ async fn recall_reports_every_source_and_says_no_data() {
     );
 }
 
-#[tokio::test]
-async fn an_alias_nothing_produces_is_refused() {
-    let (_db, mut conn) = testdb::fresh().await;
+#[devkit::test]
+async fn an_alias_nothing_produces_is_refused(db: devkit::pg::TestDatabase) {
+    let mut conn = <sqlx::PgConnection as sqlx::Connection>::connect(&db.url(None))
+        .await
+        .unwrap();
     world(&mut conn).await;
     let e = refused(&mut conn, "sessions").await;
     assert!(e.contains("no source or derivation produces"), "{e}");
 }
 
-#[tokio::test]
-async fn sources_lists_every_source_with_events() {
-    let (_db, mut conn) = testdb::fresh().await;
+#[devkit::test]
+async fn sources_lists_every_source_with_events(db: devkit::pg::TestDatabase) {
+    let mut conn = <sqlx::PgConnection as sqlx::Connection>::connect(&db.url(None))
+        .await
+        .unwrap();
     world(&mut conn).await;
     let a = ask(&mut conn, "sources sort binding").await;
     assert_eq!(
@@ -428,9 +454,11 @@ async fn sources_lists_every_source_with_events() {
     assert_eq!(a.rows[0]["events"], json!(5));
 }
 
-#[tokio::test]
-async fn time_functions_bucket_in_the_zone_with_logical_days() {
-    let (_db, mut conn) = testdb::fresh().await;
+#[devkit::test]
+async fn time_functions_bucket_in_the_zone_with_logical_days(db: devkit::pg::TestDatabase) {
+    let mut conn = <sqlx::PgConnection as sqlx::Connection>::connect(&db.url(None))
+        .await
+        .unwrap();
     world(&mut conn).await;
     let a = ask(&mut conn, "commands where hour(when) = 8").await;
     assert_eq!(a.total, 5);
@@ -449,9 +477,11 @@ async fn time_functions_bucket_in_the_zone_with_logical_days() {
     assert_eq!(a.total, 0);
 }
 
-#[tokio::test]
-async fn payload_paths_compare_by_the_literal_type() {
-    let (_db, mut conn) = testdb::fresh().await;
+#[devkit::test]
+async fn payload_paths_compare_by_the_literal_type(db: devkit::pg::TestDatabase) {
+    let mut conn = <sqlx::PgConnection as sqlx::Connection>::connect(&db.url(None))
+        .await
+        .unwrap();
     world(&mut conn).await;
     let a = ask(&mut conn, "events where payload.exit_code >= 1").await;
     assert_eq!(a.total, 4);
@@ -466,9 +496,11 @@ async fn payload_paths_compare_by_the_literal_type() {
     assert_eq!(a.rows[0]["payload.cwd"], json!("/src/tide"));
 }
 
-#[tokio::test]
-async fn read_only_sql_reads_and_cannot_write() {
-    let (_db, mut conn) = testdb::fresh().await;
+#[devkit::test]
+async fn read_only_sql_reads_and_cannot_write(db: devkit::pg::TestDatabase) {
+    let mut conn = <sqlx::PgConnection as sqlx::Connection>::connect(&db.url(None))
+        .await
+        .unwrap();
     world(&mut conn).await;
     let rows = read_sql::run(
         &mut conn,
@@ -489,10 +521,12 @@ async fn read_only_sql_reads_and_cannot_write() {
     );
 }
 
-#[tokio::test]
-async fn excision_removes_search_text() {
+#[devkit::test]
+async fn excision_removes_search_text(db: devkit::pg::TestDatabase) {
     use crate::excision::{Target, apply, plan};
-    let (_db, mut conn) = testdb::fresh().await;
+    let mut conn = <sqlx::PgConnection as sqlx::Connection>::connect(&db.url(None))
+        .await
+        .unwrap();
     let ids = world(&mut conn).await;
     let target = Target::Event(EventId(ids[0].1));
     let plan = plan(&mut conn, target).await.unwrap();

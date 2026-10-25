@@ -71,7 +71,7 @@ pub fn split(url: &str) -> Option<(String, String, String)> {
 /// `robots.txt` rules for any agent (`*`) and for `sinex-crawl`: path
 /// prefixes allowed and disallowed, the longest match winning.
 #[derive(Clone, Debug, Default, PartialEq)]
-pub struct Robots {
+struct Robots {
     rules: Vec<(bool, String)>,
 }
 

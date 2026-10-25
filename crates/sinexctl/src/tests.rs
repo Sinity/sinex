@@ -1,6 +1,6 @@
 use super::*;
 
-#[test]
+#[devkit::test]
 fn the_cli_is_generated_from_the_table() {
     let app = cli();
     app.clone().debug_assert();
@@ -50,7 +50,7 @@ fn the_cli_is_generated_from_the_table() {
     );
 }
 
-#[test]
+#[devkit::test]
 fn cli_discovery_omits_unimplemented_operations_and_keeps_recall() {
     for name in ["stage", "same", "distinct", "mark"] {
         assert!(cli().find_subcommand(name).is_none(), "{name}");
@@ -77,7 +77,7 @@ fn cli_discovery_omits_unimplemented_operations_and_keeps_recall() {
     );
 }
 
-#[test]
+#[devkit::test]
 fn recall_cwd_can_follow_last_and_preserves_path_text() {
     let path = "/src/tide (notes) \" where cwds = /else";
     for words in [

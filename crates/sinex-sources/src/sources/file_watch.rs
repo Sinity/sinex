@@ -40,7 +40,7 @@ pub const SPEC: SourceSpec = SourceSpec {
 };
 
 /// Directory names skipped by default.
-pub const SKIP: &[&str] = &[".git", "target", "node_modules", ".direnv", "__pycache__"];
+const SKIP: &[&str] = &[".git", "target", "node_modules", ".direnv", "__pycache__"];
 
 pub struct Roots {
     pub roots: Vec<PathBuf>,

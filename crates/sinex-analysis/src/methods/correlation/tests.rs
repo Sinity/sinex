@@ -18,7 +18,7 @@ fn params(lag: i32) -> CorrelationParams {
     }
 }
 
-#[test]
+#[devkit::test]
 fn r_matches_the_direct_formula_and_lag_shifts_pairs() {
     let x: Vec<f64> = (0..20).map(|i| f64::from(i % 7)).collect();
     // y at t+1 equals x at t.
@@ -33,7 +33,7 @@ fn r_matches_the_direct_formula_and_lag_shifts_pairs() {
     assert_eq!(r1.n, 19);
 }
 
-#[test]
+#[devkit::test]
 fn missing_units_are_excluded_by_reason_never_zero_filled() {
     let mut x = observed(&(0..14).map(f64::from).collect::<Vec<_>>());
     let y = observed(&(0..14).map(|v| f64::from(v * v)).collect::<Vec<_>>());
@@ -51,7 +51,7 @@ fn missing_units_are_excluded_by_reason_never_zero_filled() {
     assert_eq!(res.diagnostics["series_breaks"], 1);
 }
 
-#[test]
+#[devkit::test]
 fn too_few_pairs_is_an_answer_not_an_error() {
     let i = input(observed(&[1.0, 2.0, 3.0]), observed(&[1.0, 3.0, 2.0]));
     let e = LaggedCorrelation::run(&params(0), &i).unwrap_err();
@@ -61,7 +61,7 @@ fn too_few_pairs_is_an_answer_not_an_error() {
 
 /// The deliberately faulty variant (naive n for autocorrelated series)
 /// must disagree: two trending series get a larger, honest p.
-#[test]
+#[devkit::test]
 fn autocorrelated_series_use_the_effective_n() {
     let x: Vec<f64> = (0..40).map(|i| f64::from(i) + f64::from(i % 3)).collect();
     let y: Vec<f64> = (0..40)
@@ -73,7 +73,7 @@ fn autocorrelated_series_use_the_effective_n() {
     assert!(res.output["p"].as_f64().unwrap() > res.output["p_naive"].as_f64().unwrap());
 }
 
-#[test]
+#[devkit::test]
 fn spearman_is_rank_based() {
     let x: Vec<f64> = (1..=12).map(f64::from).collect();
     let y: Vec<f64> = x.iter().map(|v| v.powi(3)).collect();

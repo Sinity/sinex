@@ -11,7 +11,7 @@ fn dir() -> PathBuf {
     d
 }
 
-#[test]
+#[devkit::test]
 fn switch_on_and_off() {
     let m = PrivateMode::new(dir().join("private-mode"));
     assert!(!m.on());
@@ -22,7 +22,7 @@ fn switch_on_and_off() {
     m.set(false).unwrap();
 }
 
-#[test]
+#[devkit::test]
 fn an_uncheckable_switch_means_on() {
     // A directory that cannot be created: its parent is a file.
     let file = dir().join("file");
@@ -31,7 +31,7 @@ fn an_uncheckable_switch_means_on() {
     assert!(m.on(), "a switch that cannot be checked counts as on");
 }
 
-#[test]
+#[devkit::test]
 fn cached_rechecks_after_the_interval() {
     let m = PrivateMode::new(dir().join("private-mode"));
     let mut c = Cached::new(m.clone(), Duration::from_millis(0));

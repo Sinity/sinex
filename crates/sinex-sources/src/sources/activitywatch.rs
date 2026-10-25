@@ -68,7 +68,7 @@ pub const CORRECTIONS: Corrections = Corrections {
 };
 
 /// The title without a leading spinner frame.
-pub fn corrected_title<'a>(app: &str, title: &'a str) -> &'a str {
+fn corrected_title<'a>(app: &str, title: &'a str) -> &'a str {
     if !CORRECTIONS
         .spinner_apps
         .iter()

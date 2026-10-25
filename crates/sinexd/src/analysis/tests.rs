@@ -1,6 +1,6 @@
 use super::*;
 
-#[test]
+#[devkit::test]
 fn day_settings_parse_and_label() {
     let s = Settings::new("Europe/Warsaw", "04:00").unwrap();
     assert_eq!(s.label, "04:00 Europe/Warsaw");

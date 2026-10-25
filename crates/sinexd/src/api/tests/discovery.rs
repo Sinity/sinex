@@ -1,9 +1,11 @@
 //! Public command discovery and implemented recall shapes.
 use super::*;
 
-#[tokio::test]
-async fn discovery_omits_unimplemented_commands_and_reserved_calls_refuse_explicitly() {
-    let w = world().await;
+#[devkit::test]
+async fn discovery_omits_unimplemented_commands_and_reserved_calls_refuse_explicitly(
+    db: devkit::pg::TestDatabase,
+) {
+    let w = world(db).await;
     let response = w
         .app
         .clone()
@@ -46,9 +48,9 @@ async fn discovery_omits_unimplemented_commands_and_reserved_calls_refuse_explic
     assert_eq!(events, 0);
 }
 
-#[tokio::test]
-async fn recall_time_and_day_work_while_mark_refuses() {
-    let w = world().await;
+#[devkit::test]
+async fn recall_time_and_day_work_while_mark_refuses(db: devkit::pg::TestDatabase) {
+    let w = world(db).await;
     admit_events(
         &w,
         vec![

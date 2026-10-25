@@ -2,9 +2,11 @@ use super::*;
 use serde_json::Value;
 use sinex_sources::{Limits, drivers, sources::zsh};
 
-#[tokio::test]
-async fn sealed_material_encrypts_every_chunk_in_the_actual_admission_pipeline() {
-    let (_db, url, _) = crate::testdb::fresh().await;
+#[devkit::test]
+async fn sealed_material_encrypts_every_chunk_in_the_actual_admission_pipeline(
+    db: devkit::pg::TestDatabase,
+) {
+    let url = db.url(None);
     let dir = std::env::temp_dir().join(format!("sinex-sealed-chunks-{}", uuid::Uuid::now_v7()));
     std::fs::create_dir_all(&dir).unwrap();
     let path = dir.join("history");
@@ -91,9 +93,11 @@ async fn sealed_material_encrypts_every_chunk_in_the_actual_admission_pipeline()
     std::fs::remove_dir_all(&dir).unwrap();
 }
 
-#[tokio::test]
-async fn sealed_failure_details_are_encrypted_and_exactly_recoverable() {
-    let (_db, url, _) = crate::testdb::fresh().await;
+#[devkit::test]
+async fn sealed_failure_details_are_encrypted_and_exactly_recoverable(
+    db: devkit::pg::TestDatabase,
+) {
+    let url = db.url(None);
     let dir = std::env::temp_dir().join(format!("sinex-sealed-failure-{}", uuid::Uuid::now_v7()));
     std::fs::create_dir_all(&dir).unwrap();
     let path = dir.join("history");
@@ -166,9 +170,9 @@ async fn sealed_failure_details_are_encrypted_and_exactly_recoverable() {
     std::fs::remove_dir_all(&dir).unwrap();
 }
 
-#[tokio::test]
-async fn sealed_material_cannot_silently_switch_its_wrapped_key() {
-    let (_db, url, _) = crate::testdb::fresh().await;
+#[devkit::test]
+async fn sealed_material_cannot_silently_switch_its_wrapped_key(db: devkit::pg::TestDatabase) {
+    let url = db.url(None);
     let mut conn = sqlx::Connection::connect(&url).await.unwrap();
     let identity = sinex_store::sealed::Identity::generate();
     let material = sinex_model::MaterialId::new();
@@ -195,11 +199,13 @@ async fn sealed_material_cannot_silently_switch_its_wrapped_key() {
     );
 }
 
-#[tokio::test]
-async fn staged_directory_resumes_from_actual_admitted_cursor_with_original_bytes() {
+#[devkit::test]
+async fn staged_directory_resumes_from_actual_admitted_cursor_with_original_bytes(
+    db: devkit::pg::TestDatabase,
+) {
     use sinex_model::{BatchKind, RunId};
     use sinex_sources::{binding, sources::notes};
-    let (_db, url, _) = crate::testdb::fresh().await;
+    let url = db.url(None);
     let dir = std::env::temp_dir().join(format!("sinex-directory-{}", uuid::Uuid::now_v7()));
     std::fs::create_dir(&dir).unwrap();
     let root = dir.join("vault");

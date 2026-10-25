@@ -1,6 +1,6 @@
 use super::*;
 
-#[test]
+#[devkit::test]
 fn ts_coided_is_the_minting_time() {
     let before = time::OffsetDateTime::now_utc();
     let id = EventId::new();
@@ -11,7 +11,7 @@ fn ts_coided_is_the_minting_time() {
     assert!(coided <= after);
 }
 
-#[test]
+#[devkit::test]
 fn ids_serialize_as_bare_uuids() {
     let id = RunId::new();
     assert_eq!(

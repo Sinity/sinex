@@ -46,7 +46,7 @@ fn set(rules: Vec<Rule>) -> RuleSet {
     RuleSet::new(rules, HashMap::new(), [7; 32])
 }
 
-#[test]
+#[devkit::test]
 fn masks_only_the_matched_span_and_raises_class() {
     let mut e = event("export TOKEN=hunter2 && ls");
     let r = rule(
@@ -67,7 +67,7 @@ fn masks_only_the_matched_span_and_raises_class() {
     assert_eq!(e.class, Class::Guarded);
 }
 
-#[test]
+#[devkit::test]
 fn hashes_join_without_revealing() {
     let mut a = event("ssh alice@host");
     let mut b = event("ssh alice@host");
@@ -80,7 +80,7 @@ fn hashes_join_without_revealing() {
     assert_eq!(a.payload, b.payload);
 }
 
-#[test]
+#[devkit::test]
 fn drop_field_removes_it_and_rekeys() {
     let mut e = event("pass show bank");
     let before = e.equivalence_key.clone();
@@ -98,14 +98,14 @@ fn drop_field_removes_it_and_rekeys() {
     }
 }
 
-#[test]
+#[devkit::test]
 fn terms_are_whole_words_without_case() {
     let m = Matcher::parse("terms", Some("Secret, pass")).unwrap();
     assert_eq!(m.spans("my SECRET plan").len(), 1);
     assert!(m.spans("secretary passport").is_empty());
 }
 
-#[test]
+#[devkit::test]
 fn structural_detectors() {
     let luhn = Matcher::Luhn;
     assert_eq!(luhn.spans("card 4111 1111 1111 1111 ok").len(), 1);
@@ -115,7 +115,7 @@ fn structural_detectors() {
     assert!(iban.spans("GB82 WEST 1234 5698 7654 33").is_empty());
 }
 
-#[test]
+#[devkit::test]
 fn floors_raise_and_other_sources_untouched() {
     let mut e = event("ls");
     let mut floors = HashMap::new();
@@ -129,7 +129,7 @@ fn floors_raise_and_other_sources_untouched() {
     assert_eq!(e.class, Class::Open);
 }
 
-#[test]
+#[devkit::test]
 fn an_unsealed_event_of_a_sealed_class_fails_closed() {
     let mut e = event("ls");
     let r = rule(None, Matcher::All, Class::Sealed, Action::Classify);

@@ -49,7 +49,7 @@ fn stored(acquired: &Acquired) -> StoredMaterial {
     }
 }
 
-#[test]
+#[devkit::test]
 fn a_failed_admission_retries_the_same_bytes_until_the_final_cursor() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("input");
@@ -72,7 +72,7 @@ fn a_failed_admission_retries_the_same_bytes_until_the_final_cursor() {
     );
 }
 
-#[test]
+#[devkit::test]
 fn a_restart_remembers_the_admitted_records_for_aligning_a_rewrite() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("input");
@@ -91,7 +91,7 @@ fn a_restart_remembers_the_admitted_records_for_aligning_a_rewrite() {
     assert!(m.vanished.is_empty());
 }
 
-#[test]
+#[devkit::test]
 fn a_restart_inside_a_material_reads_on_from_the_file() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("input");

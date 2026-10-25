@@ -1,7 +1,7 @@
 use super::*;
 use serde_json::json;
 
-#[test]
+#[devkit::test]
 fn variants_decode_to_their_data() {
     let v = json!({"urgency": {"type": "y", "data": 1}, "list": {"type": "as", "data": ["a"]},
                    "nested": {"type": "a{sv}", "data": {"k": {"type": "s", "data": "v"}}}});
@@ -11,7 +11,7 @@ fn variants_decode_to_their_data() {
     );
 }
 
-#[test]
+#[devkit::test]
 fn a_monitored_call_parses() {
     let line = br#"{"type":"method_call","sender":":1.2","path":"/org/freedesktop/Notifications","interface":"org.freedesktop.Notifications","member":"Notify","payload":{"type":"susssasa{sv}i","data":["app",0,"","s","b",[],{"urgency":{"type":"y","data":1}},1500]}}"#;
     let m = Message::parse(line).unwrap();

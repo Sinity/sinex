@@ -265,7 +265,7 @@ pub struct Row<'a> {
 
 impl MetricDef {
     /// The row's interval, when the metric's relation has interval rows.
-    pub fn span_of(&self, row: &Row<'_>) -> Span {
+    fn span_of(&self, row: &Row<'_>) -> Span {
         match self.interval {
             None => Span::new(row.at, row.at),
             Some(IntervalShape::EndField { field }) => {
@@ -467,7 +467,7 @@ fn term(t: Term, rows: &[(Row<'_>, Span)]) -> f64 {
 }
 
 /// Linear-interpolation quantile (type 7) of a sorted, non-empty slice.
-pub fn quantile_sorted(v: &[f64], q: f64) -> f64 {
+fn quantile_sorted(v: &[f64], q: f64) -> f64 {
     let h = (v.len() - 1) as f64 * q.clamp(0.0, 1.0);
     let lo = h.floor() as usize;
     let hi = h.ceil() as usize;
@@ -499,7 +499,7 @@ pub fn combine(def: &MetricDef, parts: &[Aggregate]) -> Result<Option<f64>, &'st
 }
 
 /// Parse an RFC 3339 timestamp into microseconds since the epoch.
-pub fn parse_rfc3339_micros(s: &str) -> Option<i64> {
+fn parse_rfc3339_micros(s: &str) -> Option<i64> {
     let t = time::OffsetDateTime::parse(s, &time::format_description::well_known::Rfc3339).ok()?;
     i64::try_from(t.unix_timestamp_nanos() / 1000).ok()
 }

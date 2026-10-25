@@ -8,7 +8,7 @@ fn series(x: &[f64]) -> MethodInput {
     input
 }
 
-#[test]
+#[devkit::test]
 fn prior_only_baseline_ignores_the_unit_and_later_ones() {
     let mut x: Vec<f64> = (0..30).map(|i| 10.0 + f64::from(i % 3)).collect();
     x[29] = 1000.0;
@@ -23,7 +23,7 @@ fn prior_only_baseline_ignores_the_unit_and_later_ones() {
     assert_eq!(res.n, 28);
 }
 
-#[test]
+#[devkit::test]
 fn the_minimum_counts_observed_units_not_calendar_units() {
     let mut points = observed(&[5.0; 28]);
     for p in points.iter_mut().take(20) {
@@ -43,7 +43,7 @@ fn the_minimum_counts_observed_units_not_calendar_units() {
     assert_eq!(e.reason, "8 observed units in the window, 14 needed");
 }
 
-#[test]
+#[devkit::test]
 fn a_spike_is_flagged_against_its_prior_window() {
     let mut x: Vec<f64> = (0..40).map(|i| 10.0 + f64::from(i % 4)).collect();
     x[35] = 40.0;

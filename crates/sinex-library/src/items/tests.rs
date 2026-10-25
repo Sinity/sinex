@@ -36,7 +36,7 @@ fn items(r: &[LibraryRecord]) -> Vec<&Item> {
         .collect()
 }
 
-#[test]
+#[devkit::test]
 fn a_new_copy_is_a_new_item_with_its_original() {
     let r = records_for(&acq("/r/a.png", "blake3:a"), |_| None, "intake", at());
     assert_eq!(r.len(), 2);
@@ -49,7 +49,7 @@ fn a_new_copy_is_a_new_item_with_its_original() {
     );
 }
 
-#[test]
+#[devkit::test]
 fn equal_bytes_at_an_unrelated_path_are_another_item() {
     let first = records_for(&acq("/r/a.png", "blake3:a"), |_| None, "intake", at());
     let existing = items(&first)[0].clone();
@@ -62,7 +62,7 @@ fn equal_bytes_at_an_unrelated_path_are_another_item() {
     assert_ne!(items(&r)[0].item, existing.item);
 }
 
-#[test]
+#[devkit::test]
 fn a_rename_moves_the_acquisition_and_an_edit_makes_a_revision() {
     let first = records_for(&acq("/r/a.png", "blake3:a"), |_| None, "intake", at());
     let existing = items(&first)[0].clone();

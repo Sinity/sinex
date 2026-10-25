@@ -1,6 +1,6 @@
 use super::*;
 
-#[test]
+#[devkit::test]
 fn double_encoded_values() {
     let (_, header) = SmsParser
         .parse(

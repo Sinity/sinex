@@ -31,7 +31,7 @@ fn at(ns: i128) -> Timestamp {
     Timestamp::from_unix_ns(ns).unwrap()
 }
 
-#[test]
+#[devkit::test]
 fn focus_halves_merge_and_keep_the_first_halfs_time() {
     let out = parse_all(&["activewindow>>kitty,~/src", "activewindowv2>>55aa"]);
     assert_eq!(
@@ -45,7 +45,7 @@ fn focus_halves_merge_and_keep_the_first_halfs_time() {
     );
 }
 
-#[test]
+#[devkit::test]
 fn a_lone_first_half_is_kept_when_something_else_arrives() {
     let out = parse_all(&["activewindow>>kitty,t", "closewindow>>55aa"]);
     assert_eq!(out.len(), 2);
@@ -55,7 +55,7 @@ fn a_lone_first_half_is_kept_when_something_else_arrives() {
     assert!(matches!(&out[1], Desktop::Closed(c) if c.window == "55aa"));
 }
 
-#[test]
+#[devkit::test]
 fn duplicate_forms_are_read_once() {
     let out = parse_all(&[
         "windowtitle>>55aa",
@@ -78,14 +78,14 @@ fn duplicate_forms_are_read_once() {
     assert!(matches!(&out[3], Desktop::Moved(m) if m.workspace_id == Some(3)));
 }
 
-#[test]
+#[devkit::test]
 fn openwindow_title_may_contain_commas() {
     let out = parse_all(&["openwindow>>55aa,1,firefox,a, b, c"]);
     assert!(matches!(&out[0], Desktop::Opened(o)
         if o.window == "55aa" && o.workspace_name == "1" && o.class == "firefox" && o.title == "a, b, c"));
 }
 
-#[test]
+#[devkit::test]
 fn unknown_and_malformed_lines_are_kept_whole() {
     let out = parse_all(&["screencastv2>>1,monitor,DP-3", "garbage"]);
     assert!(
@@ -94,7 +94,7 @@ fn unknown_and_malformed_lines_are_kept_whole() {
     assert!(matches!(&out[1], Desktop::Other(o) if o.name.is_empty() && o.data == "garbage"));
 }
 
-#[test]
+#[devkit::test]
 fn named_workspaces_do_not_fail() {
     // The old reader required workspace ids to be integers and refused
     // named ones; workspacev2 carries both, so a name never fails.
@@ -102,7 +102,7 @@ fn named_workspaces_do_not_fail() {
     assert!(matches!(&out[0], Desktop::Workspace(w) if w.workspace_id == Some(-98)));
 }
 
-#[test]
+#[devkit::test]
 fn spooled_capture_drains_to_typed_events() {
     let spool = std::env::temp_dir().join(format!("sinex-hypr-{}", uuid::Uuid::now_v7()));
     let mut w = SpoolWriter::open(&spool, Rotation::default()).unwrap();

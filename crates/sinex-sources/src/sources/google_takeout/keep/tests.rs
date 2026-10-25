@@ -1,7 +1,7 @@
 use super::*;
 use serde_json::json;
 
-#[test]
+#[devkit::test]
 fn notes_lists_and_trash() {
     let note = json!({"color": "DEFAULT", "isTrashed": true, "isPinned": false, "isArchived": false,
         "title": "Shopping", "createdTimestampUsec": 1_739_887_192_500_000i64,

@@ -45,12 +45,12 @@ fn workspace(protocol_deps: Vec<Value>) -> Metadata {
     ])
 }
 
-#[test]
+#[devkit::test]
 fn allowed_graph_passes() {
     assert!(validate(workspace(vec![dep("sinex-model", None)])).is_ok());
 }
 
-#[test]
+#[devkit::test]
 fn internal_edge_is_refused_for_every_dependency_kind() {
     for kind in [None, Some("dev"), Some("build")] {
         let error = validate(workspace(vec![dep("sinex-store", kind)])).unwrap_err();
@@ -58,7 +58,7 @@ fn internal_edge_is_refused_for_every_dependency_kind() {
     }
 }
 
-#[test]
+#[devkit::test]
 fn pure_crates_refuse_io_dependencies_directly_and_transitively() {
     assert!(validate(workspace(vec![dep("tokio", None)])).is_err());
     let wrapped = metadata(&[("sinex-model", vec![dep("wrapper", None)], vec!["wrapper"])]);
@@ -68,7 +68,7 @@ fn pure_crates_refuse_io_dependencies_directly_and_transitively() {
     );
 }
 
-#[test]
+#[devkit::test]
 fn an_optional_dependency_counts_only_when_a_feature_enables_it() {
     let graph = |features: Vec<&str>| -> Metadata {
         serde_json::from_value(json!({
@@ -96,7 +96,7 @@ fn an_optional_dependency_counts_only_when_a_feature_enables_it() {
     );
 }
 
-#[test]
+#[devkit::test]
 fn only_store_schema_and_daemon_use_sqlx() {
     for client in ["sinexctl", "sinex-sources", "sinex-library"] {
         assert!(
@@ -112,7 +112,7 @@ fn only_store_schema_and_daemon_use_sqlx() {
     }
 }
 
-#[test]
+#[devkit::test]
 fn unknown_workspace_member_is_refused() {
     assert_eq!(
         validate(metadata(&[("sinex-surprise", vec![], vec![])])).unwrap_err(),
@@ -120,19 +120,19 @@ fn unknown_workspace_member_is_refused() {
     );
 }
 
-#[test]
+#[devkit::test]
 fn malformed_metadata_is_an_error() {
     for input in ["{}", r#"{"packages":[],"workspace_members":[]}"#] {
         assert!(serde_json::from_str::<Metadata>(input).is_err());
     }
 }
 
-#[test]
+#[devkit::test]
 fn this_workspace_passes() {
     check(Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap()).unwrap();
 }
 
-#[test]
+#[devkit::test]
 fn transport_owns_io_but_cannot_return_through_a_pure_protocol_edge() {
     let graph = metadata(&[
         ("sinex-model", vec![], vec![]),
@@ -155,7 +155,7 @@ fn transport_owns_io_but_cannot_return_through_a_pure_protocol_edge() {
     }
 }
 
-#[test]
+#[devkit::test]
 fn a_pure_wrapper_cannot_hide_transport_io() {
     let mut graph = metadata(&[
         (

@@ -255,7 +255,7 @@ fn strip_escapes(data: &str, out: &mut String) {
 }
 
 /// The most cast bytes in one span.
-pub const SPAN_BYTES: usize = 64 << 10;
+const SPAN_BYTES: usize = 64 << 10;
 
 /// Frame a cast into records: the header line alone, then spans of complete
 /// event lines of at most `SPAN_BYTES` (a longer single line is a span
@@ -353,7 +353,7 @@ impl Parser for EventsParser {
 }
 
 /// Complete lines only: a recording still being written ends mid-line.
-pub fn complete_lines(bytes: &[u8]) -> (Vec<(usize, usize)>, usize) {
+fn complete_lines(bytes: &[u8]) -> (Vec<(usize, usize)>, usize) {
     crate::drivers::export_archive::Framing::Lines.frame(bytes, false)
 }
 

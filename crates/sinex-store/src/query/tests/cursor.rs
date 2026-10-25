@@ -6,9 +6,13 @@ async fn ask_at(conn: &mut PgConnection, text: &str, ctx: &Context, page: Page) 
     run(conn, text, &bound, &fixed, &page).await
 }
 
-#[tokio::test]
-async fn continuation_keeps_relative_time_at_the_original_logical_day() {
-    let (_db, mut conn) = testdb::fresh().await;
+#[devkit::test]
+async fn continuation_keeps_relative_time_at_the_original_logical_day(
+    db: devkit::pg::TestDatabase,
+) {
+    let mut conn = <sqlx::PgConnection as sqlx::Connection>::connect(&db.url(None))
+        .await
+        .unwrap();
     world(&mut conn).await;
     let before = Context::utc("2026-09-14T12:00:00Z".parse().unwrap());
     let after = Context::utc("2026-09-15T12:00:00Z".parse().unwrap());
@@ -46,9 +50,13 @@ async fn continuation_keeps_relative_time_at_the_original_logical_day() {
     assert_eq!(fresh.total, 0);
 }
 
-#[tokio::test]
-async fn continuation_refuses_changed_time_settings_and_a_different_bound_ast() {
-    let (_db, mut conn) = testdb::fresh().await;
+#[devkit::test]
+async fn continuation_refuses_changed_time_settings_and_a_different_bound_ast(
+    db: devkit::pg::TestDatabase,
+) {
+    let mut conn = <sqlx::PgConnection as sqlx::Connection>::connect(&db.url(None))
+        .await
+        .unwrap();
     world(&mut conn).await;
     let ctx = ctx();
     let text = "commands sort when";
@@ -119,9 +127,13 @@ async fn runs(conn: &mut PgConnection) -> Vec<RunId> {
     ids
 }
 
-#[tokio::test]
-async fn duplicate_projected_rows_cannot_cancel_the_view_change_check() {
-    let (_db, mut conn) = testdb::fresh().await;
+#[devkit::test]
+async fn duplicate_projected_rows_cannot_cancel_the_view_change_check(
+    db: devkit::pg::TestDatabase,
+) {
+    let mut conn = <sqlx::PgConnection as sqlx::Connection>::connect(&db.url(None))
+        .await
+        .unwrap();
     let ids = runs(&mut conn).await;
     let text = "runs sort started fields status";
     let first = ask_at(
@@ -154,9 +166,11 @@ async fn duplicate_projected_rows_cannot_cancel_the_view_change_check() {
     assert!(matches!(next, Err(Error::StaleCursor)));
 }
 
-#[tokio::test]
-async fn walk_pages_use_the_same_question_and_visible_result_checks() {
-    let (_db, mut conn) = testdb::fresh().await;
+#[devkit::test]
+async fn walk_pages_use_the_same_question_and_visible_result_checks(db: devkit::pg::TestDatabase) {
+    let mut conn = <sqlx::PgConnection as sqlx::Connection>::connect(&db.url(None))
+        .await
+        .unwrap();
     let ids = world(&mut conn).await;
     let text = format!("trace {}", ids[0].0);
     let first = ask_at(
@@ -202,10 +216,14 @@ async fn walk_pages_use_the_same_question_and_visible_result_checks() {
     );
 }
 
-#[tokio::test]
-async fn cursor_sizes_and_offsets_are_checked_before_integer_conversion() {
+#[devkit::test]
+async fn cursor_sizes_and_offsets_are_checked_before_integer_conversion(
+    db: devkit::pg::TestDatabase,
+) {
     use base64::Engine as _;
-    let (_db, mut conn) = testdb::fresh().await;
+    let mut conn = <sqlx::PgConnection as sqlx::Connection>::connect(&db.url(None))
+        .await
+        .unwrap();
     world(&mut conn).await;
     let first = ask_at(
         &mut conn,
@@ -257,10 +275,14 @@ async fn cursor_sizes_and_offsets_are_checked_before_integer_conversion() {
     );
 }
 
-#[tokio::test]
-async fn page_count_and_rows_keep_one_snapshot_across_concurrent_run_completion() {
+#[devkit::test]
+async fn page_count_and_rows_keep_one_snapshot_across_concurrent_run_completion(
+    db: devkit::pg::TestDatabase,
+) {
     use std::time::{Duration, Instant};
-    let (db, mut conn) = testdb::fresh().await;
+    let mut conn = <sqlx::PgConnection as sqlx::Connection>::connect(&db.url(None))
+        .await
+        .unwrap();
     world(&mut conn).await;
     let run = runs(&mut conn).await[0];
     // Align this synthetic run with the fixed event fixture without changing runtime clocks.
@@ -342,9 +364,11 @@ async fn page_count_and_rows_keep_one_snapshot_across_concurrent_run_completion(
     );
 }
 
-#[tokio::test]
-async fn provenance_walks_refuse_stages_the_reader_does_not_execute() {
-    let (_db, mut conn) = testdb::fresh().await;
+#[devkit::test]
+async fn provenance_walks_refuse_stages_the_reader_does_not_execute(db: devkit::pg::TestDatabase) {
+    let mut conn = <sqlx::PgConnection as sqlx::Connection>::connect(&db.url(None))
+        .await
+        .unwrap();
     let ids = world(&mut conn).await;
     let text = format!("trace {} limit 1", ids[0].0);
     let error = ask_at(&mut conn, &text, &ctx(), Page::default())

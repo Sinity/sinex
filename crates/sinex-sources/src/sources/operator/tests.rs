@@ -4,7 +4,7 @@ use serde_json::json;
 
 const LOG: &[u8] = b"---\nid: logs.raw-log\n---\n\n- **2025-04-15 23:33:35** hello, world\n- **2025-04-15 23:34:10** another one\n  continued here\n- **2025-04-15 23:40:13** [mood] fine\n";
 
-#[test]
+#[devkit::test]
 fn entries_with_continuations() {
     let (records, covered) = frame_log(LOG);
     assert_eq!(records.len(), 3);
@@ -63,7 +63,7 @@ fn entries_with_continuations() {
     );
 }
 
-#[test]
+#[devkit::test]
 fn a_half_written_line_waits() {
     let cut = &LOG[..LOG.len() - 5];
     let (records, covered) = frame_log(cut);
@@ -71,7 +71,7 @@ fn a_half_written_line_waits() {
     assert!(covered < cut.len());
 }
 
-#[test]
+#[devkit::test]
 fn steering_rows_take_their_tables_time() {
     let p = SteeringParser {
         table: "commitments",
@@ -103,7 +103,7 @@ fn steering_rows_take_their_tables_time() {
     );
 }
 
-#[test]
+#[devkit::test]
 fn unknown_steering_shapes_are_accounted_without_losing_later_coordinates() {
     use crate::{DrainInput, Limits, Source};
     use sinex_model::{MaterialId, Origin, ReadingOrder, RecordLocation, RecordOutcome};

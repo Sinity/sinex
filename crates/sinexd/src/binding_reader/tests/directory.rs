@@ -8,10 +8,12 @@ async fn current_notes(conn: &mut PgConnection) -> NoteReadings {
         .fetch_all(conn).await.unwrap()
 }
 
-#[tokio::test]
-async fn empty_directory_files_keep_distinct_paths_bytes_and_locations_through_replay() {
+#[devkit::test]
+async fn empty_directory_files_keep_distinct_paths_bytes_and_locations_through_replay(
+    db: devkit::pg::TestDatabase,
+) {
     use sinex_sources::sources::notes;
-    let (_db, url, _) = crate::testdb::fresh().await;
+    let url = db.url(None);
     let dir = std::env::temp_dir().join(format!("sinex-empty-notes-{}", uuid::Uuid::now_v7()));
     let root = dir.join("vault");
     std::fs::create_dir_all(&root).unwrap();

@@ -1,6 +1,6 @@
 use super::*;
 
-#[test]
+#[devkit::test]
 fn placeholders_number_in_text_order_across_nesting() {
     let mut inner = Frag::text("x = ");
     inner.param(1i64);

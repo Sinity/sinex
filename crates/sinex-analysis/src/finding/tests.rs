@@ -21,7 +21,7 @@ fn cell(c: Cell<f64>) -> PanelCell {
     }
 }
 
-#[test]
+#[devkit::test]
 fn a_missing_day_is_rendered_as_unknown_never_zero() {
     let f = from_cell(
         &cell(Cell::Missing {
@@ -38,7 +38,7 @@ fn a_missing_day_is_rendered_as_unknown_never_zero() {
     assert_eq!(f.status, Support::Unknown);
 }
 
-#[test]
+#[devkit::test]
 fn caveats_render_with_their_claim() {
     let f = from_cell(
         &cell(Cell::Partial {

@@ -57,7 +57,7 @@ fn lines(bytes: &[u8]) -> (Vec<(usize, usize)>, usize) {
 /// Batches are produced as they are taken: taking the first parses about
 /// two chunks' records, not the material's, so memory holds a bounded
 /// number of batches whatever the material's size.
-#[test]
+#[devkit::test]
 fn batches_are_drained_lazily() {
     let source = DeclaredSource {
         spec: SourceSpec {
@@ -149,7 +149,7 @@ fn peak_rss() -> usize {
 /// batch, not the file and not a part's events (about 95k here, some 250 MiB
 /// if collected). nextest runs each test in its own process, so the peak is
 /// this test's.
-#[test]
+#[devkit::test]
 fn backfill_of_a_large_file_peaks_well_under_its_size() {
     use super::append_file::{AppendFile, AppendState};
     use std::io::Write;
@@ -236,7 +236,7 @@ fn backfill_of_a_large_file_peaks_well_under_its_size() {
     );
 }
 
-#[test]
+#[devkit::test]
 fn retained_original_length_does_not_replace_decoded_record_coordinates() {
     let source = DeclaredSource {
         spec: SourceSpec {
@@ -304,7 +304,7 @@ fn retained_original_length_does_not_replace_decoded_record_coordinates() {
     );
 }
 
-#[test]
+#[devkit::test]
 fn cursor_read_failure_is_reported_before_a_batch_and_stops_later_progress() {
     let source = crate::sources::zsh::source("h".into());
     let acquired = Acquired {

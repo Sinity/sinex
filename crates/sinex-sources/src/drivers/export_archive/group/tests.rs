@@ -149,7 +149,7 @@ impl Seen {
     }
 }
 
-#[test]
+#[devkit::test]
 fn one_forward_decode_and_record_write_serve_distinct_logical_sources() {
     for gzip in [false, true] {
         let raw = tar(
@@ -230,7 +230,7 @@ fn one_forward_decode_and_record_write_serve_distinct_logical_sources() {
     }
 }
 
-#[test]
+#[devkit::test]
 fn restart_finishes_a_part_with_its_original_material_id_and_anchors() {
     let raw = tar(&[("Takeout/Fit/All Data/a.json", points(40))], true);
     let sink = Sink::default();
@@ -318,7 +318,7 @@ fn restart_finishes_a_part_with_its_original_material_id_and_anchors() {
     assert_eq!(seen.cursors[&0]["done"], true);
 }
 
-#[test]
+#[devkit::test]
 fn invalid_record_is_accounted_and_valid_suffix_is_still_admitted() {
     let good: Value = serde_json::from_slice(&points(2)).unwrap();
     let doc = serde_json::to_vec(&json!({"Data Points":[good["Data Points"][0], {"unknown":"shape"}, good["Data Points"][1]]})).unwrap();
@@ -347,7 +347,7 @@ fn invalid_record_is_accounted_and_valid_suffix_is_still_admitted() {
     assert!(orders[0] < orders[1], "later parts keep source order");
 }
 
-#[test]
+#[devkit::test]
 fn incompatible_framing_stages_one_member_and_failure_stays_with_its_route() {
     let mut document: Value = serde_json::from_slice(&points(3)).unwrap();
     document["Data Points"][1]["large"] = json!("x".repeat(1_000_000));
@@ -376,7 +376,7 @@ fn incompatible_framing_stages_one_member_and_failure_stays_with_its_route() {
     assert_eq!(work.member_staging_bytes, doc.len() as u64);
 }
 
-#[test]
+#[devkit::test]
 fn cancellation_stops_decoding_before_an_unused_large_suffix() {
     let raw = tar(
         &[
@@ -413,7 +413,7 @@ fn cancellation_stops_decoding_before_an_unused_large_suffix() {
     assert_ne!(seen.cursors[&0]["done"], true);
 }
 
-#[test]
+#[devkit::test]
 fn sealed_zip_uses_supplied_seek_without_plaintext_staging() {
     use std::io::Write;
     let mut zip = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
@@ -456,7 +456,7 @@ fn sealed_zip_uses_supplied_seek_without_plaintext_staging() {
     assert!(error.to_string().contains("plaintext staging is forbidden"));
 }
 
-#[test]
+#[devkit::test]
 fn zip_members_keep_exact_ranges_and_long_plain_records_stay_whole() {
     use std::io::Write;
     let mut zip = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
@@ -549,7 +549,7 @@ fn zip_members_keep_exact_ranges_and_long_plain_records_stay_whole() {
     );
 }
 
-#[test]
+#[devkit::test]
 fn identical_captured_content_keeps_completed_material_identity_when_file_facts_change() {
     let raw = points(4);
     let sink = Sink::default();

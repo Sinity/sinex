@@ -104,7 +104,7 @@ fn lift(state: &str, events: &[Event]) -> Vec<StateInterval> {
     out
 }
 
-#[test]
+#[devkit::test]
 fn next_focus_closes_the_previous_one() {
     let out = lift(
         "desktop.focus",
@@ -118,7 +118,7 @@ fn next_focus_closes_the_previous_one() {
     assert_eq!(out[1].ended_at, None, "the last focus is still open");
 }
 
-#[test]
+#[devkit::test]
 fn a_focus_without_an_address_is_its_class() {
     let e = input(
         "window.focused",
@@ -130,7 +130,7 @@ fn a_focus_without_an_address_is_its_class() {
     assert_eq!(out[0].label.as_deref(), Some("firefox"));
 }
 
-#[test]
+#[devkit::test]
 fn identity_is_the_start_record_not_the_end() {
     let a = focus(0, "0xa", "vim");
     let first = lift("desktop.focus", &[a.clone(), focus(60, "0xb", "web")]);
@@ -139,7 +139,7 @@ fn identity_is_the_start_record_not_the_end() {
     assert_ne!(first[0].ended_at, later[0].ended_at);
 }
 
-#[test]
+#[devkit::test]
 fn same_focus_again_updates_without_closing() {
     let out = lift(
         "desktop.focus",
@@ -154,7 +154,7 @@ fn same_focus_again_updates_without_closing() {
     assert_eq!(out[0].ended_at, Some(at(60)));
 }
 
-#[test]
+#[devkit::test]
 fn arrival_order_does_not_matter() {
     let events = vec![
         focus(0, "0xa", "a"),
@@ -169,7 +169,7 @@ fn arrival_order_does_not_matter() {
     );
 }
 
-#[test]
+#[devkit::test]
 fn a_tie_takes_the_open_state_in_place() {
     let out = lift(
         "desktop.focus",
@@ -183,7 +183,7 @@ fn a_tie_takes_the_open_state_in_place() {
     assert_eq!(out[0].subject_id.as_deref(), Some("0xb"));
 }
 
-#[test]
+#[devkit::test]
 fn next_workspace_closes_the_previous_one_and_same_one_does_not() {
     let out = lift(
         "desktop.workspace",
@@ -195,7 +195,7 @@ fn next_workspace_closes_the_previous_one_and_same_one_does_not() {
     assert_eq!(out[0].ended_at, Some(at(50)));
 }
 
-#[test]
+#[devkit::test]
 fn each_activitywatch_span_is_its_own_interval() {
     let out = lift(
         "desktop.activitywatch.window",
@@ -211,7 +211,7 @@ fn each_activitywatch_span_is_its_own_interval() {
     assert_eq!(out[0].subject_id.as_deref(), Some("app:firefox|title:docs"));
 }
 
-#[test]
+#[devkit::test]
 fn presence_spans_lift_and_not_afk_is_its_own_status() {
     let out = lift(
         "desktop.activitywatch.afk",
@@ -223,7 +223,7 @@ fn presence_spans_lift_and_not_afk_is_its_own_status() {
     assert_eq!(out[1].ended_at, Some(at(90)));
 }
 
-#[test]
+#[devkit::test]
 fn a_span_ending_before_its_start_is_zero_length() {
     let out = lift(
         "desktop.activitywatch.window",
@@ -232,7 +232,7 @@ fn a_span_ending_before_its_start_is_zero_length() {
     assert_eq!(out[0].ended_at, Some(at(10)));
 }
 
-#[test]
+#[devkit::test]
 fn a_unit_stop_closes_its_start() {
     let out = lift(
         "system.systemd.unit",
@@ -249,7 +249,7 @@ fn a_unit_stop_closes_its_start() {
     assert_eq!(out[1].ended_at, None);
 }
 
-#[test]
+#[devkit::test]
 fn a_second_start_closes_the_first() {
     let out = lift(
         "system.systemd.unit",
@@ -263,7 +263,7 @@ fn a_second_start_closes_the_first() {
     assert_eq!(out[0].end_event_type.as_deref(), Some("unit.started"));
 }
 
-#[test]
+#[devkit::test]
 fn a_stop_with_no_start_closes_nothing() {
     assert!(
         lift(
@@ -274,7 +274,7 @@ fn a_stop_with_no_start_closes_nothing() {
     );
 }
 
-#[test]
+#[devkit::test]
 fn a_stop_at_its_start_is_zero_length() {
     let out = lift(
         "system.systemd.unit",
@@ -286,7 +286,7 @@ fn a_stop_at_its_start_is_zero_length() {
     assert_eq!(out[0].started_at, out[0].ended_at.unwrap());
 }
 
-#[test]
+#[devkit::test]
 fn a_suspend_interrupts_focus() {
     let out = lift(
         "desktop.focus",
@@ -314,7 +314,7 @@ fn a_suspend_interrupts_focus() {
     assert_eq!(out[0].ended_at, Some(at(200)));
 }
 
-#[test]
+#[devkit::test]
 fn going_afk_interrupts_focus_and_is_an_interval_itself() {
     let events = [focus(0, "0xa", "vim"), presence(50, 650, "afk")];
     let f = lift("desktop.focus", &events);
@@ -324,7 +324,7 @@ fn going_afk_interrupts_focus_and_is_an_interval_itself() {
     assert_eq!(a[0].ended_at, Some(at(650)));
 }
 
-#[test]
+#[devkit::test]
 fn a_suspend_cuts_a_window_span_but_afk_does_not() {
     let out = lift(
         "desktop.activitywatch.window",
@@ -345,7 +345,7 @@ fn key(state: &str) -> Value {
     json!({"state": state, "day": "2024-06-15"})
 }
 
-#[test]
+#[devkit::test]
 fn a_key_emits_what_starts_in_its_day_and_waits_on_open_states() {
     let env = Env::at(at(100_000));
     // Logical day 2024-06-15 runs 04:00 to 04:00 CEST: T-6h .. T+18h.
@@ -374,7 +374,7 @@ fn a_key_emits_what_starts_in_its_day_and_waits_on_open_states() {
     assert!(open.waiting, "the late focus has no end yet");
 }
 
-#[test]
+#[devkit::test]
 fn inputs_ask_for_the_transitions_after_the_day() {
     let env = Env::at(at(0));
     let q = StateIntervals.inputs(&key("desktop.focus"), &env).unwrap();
@@ -392,7 +392,7 @@ fn inputs_ask_for_the_transitions_after_the_day() {
     assert_eq!(q.after[0].per, Some("unit_name"));
 }
 
-#[test]
+#[devkit::test]
 fn keys_cover_the_rules_a_fence_ends() {
     let env = Env::at(at(0));
     let view = |e: &Event| {

@@ -2,10 +2,12 @@ use super::*;
 use sinex_model::{BatchKind, MaterialRef};
 use sinex_sources::{Limits, sources::notes};
 
-#[tokio::test]
-async fn restarted_directory_reader_observes_files_removed_after_its_committed_capture() {
+#[devkit::test]
+async fn restarted_directory_reader_observes_files_removed_after_its_committed_capture(
+    db: devkit::pg::TestDatabase,
+) {
     use sinex_sources::sources::notes;
-    let (_db, url, _) = crate::testdb::fresh().await;
+    let url = db.url(None);
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path().join("vault");
     std::fs::create_dir_all(&root).unwrap();
@@ -125,9 +127,11 @@ async fn prefix(
     reference
 }
 
-#[tokio::test]
-async fn sealed_history_needs_no_private_key_and_keeps_the_binding_sealed() {
-    let (_db, url, _) = crate::testdb::fresh().await;
+#[devkit::test]
+async fn sealed_history_needs_no_private_key_and_keeps_the_binding_sealed(
+    db: devkit::pg::TestDatabase,
+) {
+    let url = db.url(None);
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path().join("vault");
     std::fs::create_dir_all(&root).unwrap();
@@ -239,9 +243,9 @@ fn ignore_first(b: &mut Bound) {
     });
 }
 
-#[tokio::test]
-async fn a_restart_remembers_a_file_whose_record_produced_no_event() {
-    let (_db, url, _) = crate::testdb::fresh().await;
+#[devkit::test]
+async fn a_restart_remembers_a_file_whose_record_produced_no_event(db: devkit::pg::TestDatabase) {
+    let url = db.url(None);
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path().join("vault");
     std::fs::create_dir_all(&root).unwrap();
@@ -278,9 +282,9 @@ async fn a_restart_remembers_a_file_whose_record_produced_no_event() {
     ctx.close().await.unwrap();
 }
 
-#[tokio::test]
-async fn stopped_directory_restore_keeps_progress_and_can_be_retried() {
-    let (_db, url, _) = crate::testdb::fresh().await;
+#[devkit::test]
+async fn stopped_directory_restore_keeps_progress_and_can_be_retried(db: devkit::pg::TestDatabase) {
+    let url = db.url(None);
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path().join("vault");
     std::fs::create_dir_all(&root).unwrap();
@@ -328,9 +332,11 @@ async fn stopped_directory_restore_keeps_progress_and_can_be_retried() {
     ctx.close().await.unwrap();
 }
 
-#[tokio::test]
-async fn a_vanished_guarded_member_keeps_its_class_after_the_source_floor_is_lowered() {
-    let (_db, url, _) = crate::testdb::fresh().await;
+#[devkit::test]
+async fn a_vanished_guarded_member_keeps_its_class_after_the_source_floor_is_lowered(
+    db: devkit::pg::TestDatabase,
+) {
+    let url = db.url(None);
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path().join("vault");
     std::fs::create_dir_all(&root).unwrap();

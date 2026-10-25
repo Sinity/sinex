@@ -19,7 +19,7 @@ fn request() -> Request {
     }
 }
 
-#[test]
+#[devkit::test]
 fn canonical_bytes_sort_keys_and_stringify_numbers() {
     assert_eq!(
         canonical(&json!({"b": 1, "a": [2.5, null, "x"]})),
@@ -27,7 +27,7 @@ fn canonical_bytes_sort_keys_and_stringify_numbers() {
     );
 }
 
-#[test]
+#[devkit::test]
 fn identity_depends_on_content_not_on_key_order() {
     let a = request();
     let mut b = request();
@@ -42,7 +42,7 @@ fn identity_depends_on_content_not_on_key_order() {
     assert_ne!(a.id(), d.id());
 }
 
-#[test]
+#[devkit::test]
 fn inputs_read_digest_ignores_row_order_and_counts_empty_reads() {
     let plan = &request().plans[0];
     let r1 = InputsRead::new(plan, 7, vec!["b".into(), "a".into()], vec![]);

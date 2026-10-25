@@ -1,5 +1,5 @@
 use super::*;
-#[test]
+#[devkit::test]
 fn operation_grants_expire_and_lock_revokes_existing_clones() {
     let grant = Authority::new(Identity::generate(), Duration::from_secs(60)).unwrap();
     let operation = grant.clone();

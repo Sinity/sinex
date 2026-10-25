@@ -141,7 +141,7 @@ impl Parser for MessengerParser {
 /// Facebook's older export writes each UTF-8 byte as its own `\u00XX` code
 /// point. Text made only of such code points is re-read as UTF-8; anything
 /// else is left as it is.
-pub fn repair(s: &str) -> String {
+fn repair(s: &str) -> String {
     if s.chars().all(|c| (c as u32) < 0x100) {
         let bytes: Vec<u8> = s.chars().map(|c| c as u8).collect();
         if let Ok(fixed) = String::from_utf8(bytes) {

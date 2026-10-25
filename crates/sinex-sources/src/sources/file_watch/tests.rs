@@ -14,7 +14,7 @@ fn rec(v: Value) -> Map<String, Value> {
     .unwrap()
 }
 
-#[test]
+#[devkit::test]
 fn directories_skip_declared_names_and_symlinks() {
     let root = temp();
     std::fs::create_dir_all(root.join("a/b")).unwrap();
@@ -32,7 +32,7 @@ fn directories_skip_declared_names_and_symlinks() {
     );
 }
 
-#[test]
+#[devkit::test]
 fn renames_keep_both_ends_and_odd_paths_survive() {
     let (out, ()) = FileWatchParser
         .parse(
@@ -60,7 +60,7 @@ fn renames_keep_both_ends_and_odd_paths_survive() {
     assert_eq!(out[0].note.as_deref(), Some("inotify watch limit reached"));
 }
 
-#[test]
+#[devkit::test]
 fn capture_sees_changes_including_in_new_directories() {
     let root = temp();
     let spool = temp().join("spool");

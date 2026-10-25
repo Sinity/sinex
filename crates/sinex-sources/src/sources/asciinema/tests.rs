@@ -22,7 +22,7 @@ fn run(lines: &[&str]) -> Vec<CastEvent> {
     out
 }
 
-#[test]
+#[devkit::test]
 fn a_cast_is_one_session_and_spans_with_v3_intervals_accumulating() {
     let out = run(&[
         r#"{"version":3,"term":{"cols":80,"rows":24},"timestamp":1791129020,"command":"zsh"}"#,
@@ -56,7 +56,7 @@ fn a_cast_is_one_session_and_spans_with_v3_intervals_accumulating() {
     assert_eq!(o.output, "after");
 }
 
-#[test]
+#[devkit::test]
 fn v2_offsets_do_not_accumulate() {
     let out = run(&[
         r#"{"version":2,"width":80,"height":24,"timestamp":100,"env":{"SINNIX_CAPTURE_SESSION_ID":"x"}}"#,
@@ -73,7 +73,7 @@ fn v2_offsets_do_not_accumulate() {
     assert_eq!((o.session.as_str(), o.output.as_str()), ("x", "ab"));
 }
 
-#[test]
+#[devkit::test]
 fn spans_are_bounded_and_cover_every_complete_line() {
     let line = format!("[0.1, \"o\", \"{}\"]\n", "x".repeat(1000));
     let mut cast = String::from("{\"version\":3,\"timestamp\":1}\n");

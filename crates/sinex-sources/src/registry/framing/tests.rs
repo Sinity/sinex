@@ -9,7 +9,7 @@ impl<R: Read> Read for Tiny<R> {
     }
 }
 
-#[test]
+#[devkit::test]
 fn reader_framing_keeps_exact_legacy_ranges_across_boundaries() {
     use crate::drivers::export_archive::{frame_csv, frame_lines, frame_mbox};
     use crate::sources::{asciinema, operator, zsh};
@@ -54,7 +54,7 @@ fn reader_framing_keeps_exact_legacy_ranges_across_boundaries() {
     }
 }
 
-#[test]
+#[devkit::test]
 fn streamed_json_ranges_keep_raw_offsets_and_malformed_document_fallback() {
     use crate::drivers::export_archive::frame_json_array;
     use crate::sources::takeout_chrome;
@@ -109,7 +109,7 @@ fn streamed_json_ranges_keep_raw_offsets_and_malformed_document_fallback() {
     }
 }
 
-#[test]
+#[devkit::test]
 fn custom_append_framing_keeps_only_an_undecided_record_window() {
     use std::sync::atomic::{AtomicUsize, Ordering};
     static PEAK: AtomicUsize = AtomicUsize::new(0);
@@ -127,7 +127,7 @@ fn custom_append_framing_keeps_only_an_undecided_record_window() {
     assert!(body.len() > 10 * PEAK.load(Ordering::Relaxed));
 }
 
-#[test]
+#[devkit::test]
 fn whole_reader_keeps_each_declarations_empty_record_semantics() {
     use crate::drivers::{export_archive::frame_whole, media};
     for slice in [frame_whole as SliceFramer, media::whole] {

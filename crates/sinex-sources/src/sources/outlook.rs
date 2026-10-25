@@ -54,7 +54,7 @@ pub fn pst_source() -> DeclaredSource<mail::MailParser> {
 
 /// Convert `pst` into one mbox file per folder under `out`, returning them in
 /// a stable order. The files are named `<pst stem>/<folder path>.mbox`.
-pub fn stage_pst(pst: &Path, out: &Path) -> Result<Vec<PathBuf>, String> {
+fn stage_pst(pst: &Path, out: &Path) -> Result<Vec<PathBuf>, String> {
     let stem = pst
         .file_stem()
         .and_then(|s| s.to_str())

@@ -6,7 +6,6 @@
 use super::*;
 use crate::privacy::{self, Action, NewRule};
 use crate::read_models::catch_up_search_text;
-use crate::testdb;
 use sinex_model::event_types::{CommandExecuted, CommandImported};
 use sinex_model::{Class, MaterialId, Origin, ReadingOrder, RecordLocation, RunId};
 use sinex_model::{RecordOutcome, Timestamp};
@@ -87,9 +86,11 @@ async fn payload_count(conn: &mut PgConnection, needle: &str) -> i64 {
     .unwrap()
 }
 
-#[tokio::test]
-async fn l9_one_privacy_point_covers_source_and_derived_events() {
-    let (_db, mut conn) = testdb::fresh().await;
+#[devkit::test]
+async fn l9_one_privacy_point_covers_source_and_derived_events(db: devkit::pg::TestDatabase) {
+    let mut conn = <sqlx::PgConnection as sqlx::Connection>::connect(&db.url(None))
+        .await
+        .unwrap();
     privacy::add_rule(
         &mut conn,
         &rule(
@@ -182,9 +183,11 @@ async fn l9_one_privacy_point_covers_source_and_derived_events() {
     );
 }
 
-#[tokio::test]
-async fn guarded_values_leave_only_with_the_grant() {
-    let (_db, mut conn) = testdb::fresh().await;
+#[devkit::test]
+async fn guarded_values_leave_only_with_the_grant(db: devkit::pg::TestDatabase) {
+    let mut conn = <sqlx::PgConnection as sqlx::Connection>::connect(&db.url(None))
+        .await
+        .unwrap();
     privacy::set_source_class(&mut conn, "terminal.zsh-history", Class::Guarded, "test")
         .await
         .unwrap();
@@ -249,9 +252,11 @@ async fn guarded_values_leave_only_with_the_grant() {
     );
 }
 
-#[tokio::test]
-async fn class_verification_finds_events_below_a_raised_floor() {
-    let (_db, mut conn) = testdb::fresh().await;
+#[devkit::test]
+async fn class_verification_finds_events_below_a_raised_floor(db: devkit::pg::TestDatabase) {
+    let mut conn = <sqlx::PgConnection as sqlx::Connection>::connect(&db.url(None))
+        .await
+        .unwrap();
     let e = imported("terminal.zsh-history", "ls", record());
     admit_one(&mut conn, &batch(RunId::new(), vec![e])).await;
     let before = privacy::verify_classes(&mut conn).await.unwrap();
@@ -277,9 +282,11 @@ async fn class_verification_finds_events_below_a_raised_floor() {
     );
 }
 
-#[tokio::test]
-async fn rules_are_insert_only_versions() {
-    let (_db, mut conn) = testdb::fresh().await;
+#[devkit::test]
+async fn rules_are_insert_only_versions(db: devkit::pg::TestDatabase) {
+    let mut conn = <sqlx::PgConnection as sqlx::Connection>::connect(&db.url(None))
+        .await
+        .unwrap();
     privacy::add_rule(
         &mut conn,
         &rule("a", "s", Class::Open, Action::Mask, Some("x")),

@@ -66,12 +66,12 @@ type KeyWork = (Value, i64, bool);
 /// Keys marked dirty per recompute request.
 const KEYS_PER_REQUEST: usize = 5_000;
 /// One pass in this many works every rank, not only the lowest with work.
-pub const EVERY_LEVEL_EVERY: u32 = 8;
+const EVERY_LEVEL_EVERY: u32 = 8;
 /// While the daemon runs, maintained tables are brought up to date at most
 /// this often.
-pub const MAINTAIN_AT_MOST_EVERY: Duration = Duration::from_secs(30);
+const MAINTAIN_AT_MOST_EVERY: Duration = Duration::from_secs(30);
 /// A key that has waited this long stops waiting.
-pub const WAITING_HORIZON: time::Duration = time::Duration::days(14);
+const WAITING_HORIZON: time::Duration = time::Duration::days(14);
 
 /// A derivation that keeps store rows (not events) equal to a function of its
 /// inputs, driven by dirty keys admission marks under its own names.

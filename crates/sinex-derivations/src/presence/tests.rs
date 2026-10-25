@@ -72,7 +72,7 @@ fn intervals(of: Timestamp, inputs: &[Event]) -> Vec<PresenceInterval> {
         .collect()
 }
 
-#[test]
+#[devkit::test]
 fn a_long_not_afk_night_with_no_input_is_uncertain() {
     let d = "2026-08-22";
     let out = intervals(
@@ -83,7 +83,7 @@ fn a_long_not_afk_night_with_no_input_is_uncertain() {
     assert_eq!((out[0].state.as_str(), out[0].evidence), ("uncertain", 0));
 }
 
-#[test]
+#[devkit::test]
 fn a_long_night_with_a_few_commands_is_present_and_sparse() {
     let d = "2026-08-20";
     // 343 minutes with 12 real commands.
@@ -109,7 +109,7 @@ fn a_long_night_with_a_few_commands_is_present_and_sparse() {
     );
 }
 
-#[test]
+#[devkit::test]
 fn short_spans_are_taken_as_reported_and_afk_is_absent() {
     let d = "2026-08-21";
     let out = intervals(
@@ -123,7 +123,7 @@ fn short_spans_are_taken_as_reported_and_afk_is_absent() {
     assert_eq!(states, ["present", "absent"]);
 }
 
-#[test]
+#[devkit::test]
 fn a_span_is_cut_at_logical_day_boundaries() {
     // 02:00 on the 22nd to 06:00 on the 23rd crosses two day starts.
     let s = span(

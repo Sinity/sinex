@@ -10,5 +10,8 @@ license.workspace = true
 blake3.workspace = true
 tempfile = "3"
 
+[dev-dependencies]
+devkit.workspace = true
+
 [lints]
 workspace = true

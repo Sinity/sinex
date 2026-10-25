@@ -9,7 +9,7 @@ fn one(v: Value) -> PurchaseObserved {
         .remove(0)
 }
 
-#[test]
+#[devkit::test]
 fn every_wrapper_reads_its_own_time() {
     let i = one(
         json!({"install": {"doc": {"documentType": "Android Apps", "title": "Facebook"},
@@ -31,7 +31,7 @@ fn every_wrapper_reads_its_own_time() {
     assert!(s.native_id.starts_with("blake3:"));
 }
 
-#[test]
+#[devkit::test]
 fn order_files() {
     let o = one(
         json!({"merchantOrderId": "1049", "creationTime": {"usecSinceEpochUtc": "1565375213000000",

@@ -42,7 +42,7 @@ const fn spec(name: &'static str, parser: &'static str, consumer: &'static str) 
 /// Every envelope lane the reader knows. The non-envelope lanes (keyboard,
 /// terminal sessions, scrollback, IRC, media files, transcripts, telemetry,
 /// audit, phone) have their own formats and readers.
-pub const LANES: &[Lane] = &[
+const LANES: &[Lane] = &[
     Lane {
         spec: spec(
             "desktop.clipboard",
@@ -272,7 +272,7 @@ pub fn source(lane: &'static Lane) -> DeclaredSource<EnvelopeParser> {
 
 /// The lane's day files (`L-YYYYMMDD.jsonl`) under `root`, in name order. The
 /// index, sequence, lock and high-water files are not material.
-pub fn day_files(root: &Path, lane: &Lane) -> Vec<PathBuf> {
+fn day_files(root: &Path, lane: &Lane) -> Vec<PathBuf> {
     let mut out = Vec::new();
     for dir in lane.dirs {
         for entry in std::fs::read_dir(root.join(dir))

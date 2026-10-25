@@ -92,8 +92,11 @@ async fn admit_events(w: &World, events: Vec<Event>) {
     w.commits.send_replace(seq as u64);
 }
 
-async fn world() -> World {
-    let (db, url, connection) = crate::testdb::fresh().await;
+async fn world(db: devkit::pg::TestDatabase) -> World {
+    let url = db.url(None);
+    let connection = <sqlx::PgConnection as sqlx::Connection>::connect(&url)
+        .await
+        .unwrap();
     let store = std::env::temp_dir().join(format!("sinexd-api-{}", uuid::Uuid::now_v7()));
     let blobs = sinex_store::Blobs::open(&store).unwrap();
     let (handle, queues) = writer::channels_for(&url);
@@ -146,9 +149,9 @@ async fn call(w: &World, token: Option<&str>, body: Value) -> (StatusCode, Value
     (status, serde_json::from_slice(&bytes).unwrap())
 }
 
-#[tokio::test]
-async fn tokens_grant_levels() {
-    let w = world().await;
+#[devkit::test]
+async fn tokens_grant_levels(db: devkit::pg::TestDatabase) {
+    let w = world(db).await;
     let (status, _) = call(&w, None, json!({"method": "status"})).await;
     assert_eq!(status, StatusCode::UNAUTHORIZED);
     let (status, _) = call(&w, Some("wrong"), json!({"method": "status"})).await;
@@ -168,9 +171,11 @@ async fn tokens_grant_levels() {
     assert_eq!(status, StatusCode::FORBIDDEN);
 }
 
-#[tokio::test]
-async fn crossing_quoted_credentials_are_masked_in_refusals_and_follow_query_errors() {
-    let w = world().await;
+#[devkit::test]
+async fn crossing_quoted_credentials_are_masked_in_refusals_and_follow_query_errors(
+    db: devkit::pg::TestDatabase,
+) {
+    let w = world(db).await;
     for quote in ['"', '\''] {
         let text =
             format!("--secret={quote}unfinished --token={quote}synthetic-error-value{quote} tail");
@@ -220,10 +225,11 @@ async fn crossing_quoted_credentials_are_masked_in_refusals_and_follow_query_err
     assert_eq!(body["not_built"], true, "{body}");
 }
 
-#[tokio::test]
-async fn nested_credential_keys_refuse_replies_and_complete_follow_pages_without_advancing_cursors()
-{
-    let w = world().await;
+#[devkit::test]
+async fn nested_credential_keys_refuse_replies_and_complete_follow_pages_without_advancing_cursors(
+    db: devkit::pg::TestDatabase,
+) {
+    let w = world(db).await;
     let req = HttpRequest::get("/v1/follow?query=events%20sort%20when")
         .header("authorization", format!("Bearer {READ}"))
         .body(Body::empty())
@@ -282,9 +288,11 @@ async fn nested_credential_keys_refuse_replies_and_complete_follow_pages_without
     assert_eq!(stored, original);
 }
 
-#[tokio::test]
-async fn crossing_quoted_credentials_are_masked_in_queries_and_follow_but_not_storage() {
-    let w = world().await;
+#[devkit::test]
+async fn crossing_quoted_credentials_are_masked_in_queries_and_follow_but_not_storage(
+    db: devkit::pg::TestDatabase,
+) {
+    let w = world(db).await;
     let req = HttpRequest::get("/v1/follow?query=events")
         .header("authorization", format!("Bearer {READ}"))
         .body(Body::empty())
@@ -327,9 +335,9 @@ async fn crossing_quoted_credentials_are_masked_in_queries_and_follow_but_not_st
     }
 }
 
-#[tokio::test]
-async fn queries_come_back_masked_with_the_data_notice() {
-    let w = world().await;
+#[devkit::test]
+async fn queries_come_back_masked_with_the_data_notice(db: devkit::pg::TestDatabase) {
+    let w = world(db).await;
     let secret = format!("ghp_{}", "b".repeat(36));
     admit(
         &w,
@@ -361,9 +369,9 @@ async fn queries_come_back_masked_with_the_data_notice() {
     assert_eq!(body["result"]["total"], json!(1), "{body}");
 }
 
-#[tokio::test]
-async fn bad_queries_are_refused_with_the_place() {
-    let w = world().await;
+#[devkit::test]
+async fn bad_queries_are_refused_with_the_place(db: devkit::pg::TestDatabase) {
+    let w = world(db).await;
     let (_, body) = call(
         &w,
         Some(READ),
@@ -381,9 +389,9 @@ async fn bad_queries_are_refused_with_the_place() {
     assert_eq!(body["not_built"], json!(true));
 }
 
-#[tokio::test]
-async fn replay_is_offered_through_the_api() {
-    let w = world().await;
+#[devkit::test]
+async fn replay_is_offered_through_the_api(db: devkit::pg::TestDatabase) {
+    let w = world(db).await;
     let (_, body) = call(
         &w,
         Some(AGENT),
@@ -427,9 +435,9 @@ async fn replay_is_offered_through_the_api() {
     assert_eq!(body["outcome"], "ok", "{body}");
 }
 
-#[tokio::test]
-async fn hide_and_unhide_go_through_the_writer() {
-    let w = world().await;
+#[devkit::test]
+async fn hide_and_unhide_go_through_the_writer(db: devkit::pg::TestDatabase) {
+    let w = world(db).await;
     admit(&w, &["ls", "pwd"], 0).await;
     let (_, body) = call(
         &w,
@@ -473,9 +481,9 @@ async fn hide_and_unhide_go_through_the_writer() {
     assert_eq!(body["result"]["total"], json!(2));
 }
 
-#[tokio::test]
-async fn sql_reads_as_the_reader_role() {
-    let w = world().await;
+#[devkit::test]
+async fn sql_reads_as_the_reader_role(db: devkit::pg::TestDatabase) {
+    let w = world(db).await;
     admit(&w, &["ls"], 0).await;
     let (_, body) = call(
         &w,
@@ -508,9 +516,9 @@ async fn read_until(body: &mut Body, seen: &mut String, needle: &str) {
         .unwrap_or_else(|_| panic!("`{needle}` did not arrive"));
 }
 
-#[tokio::test]
-async fn follow_streams_new_matching_events_once() {
-    let w = world().await;
+#[devkit::test]
+async fn follow_streams_new_matching_events_once(db: devkit::pg::TestDatabase) {
+    let w = world(db).await;
     admit(&w, &["before"], 0).await;
     let req = HttpRequest::get("/v1/follow?query=events%20where%20cargo")
         .header("authorization", format!("Bearer {READ}"))
@@ -527,9 +535,9 @@ async fn follow_streams_new_matching_events_once() {
     assert_eq!(seen.matches("cargo build").count(), 1);
 }
 
-#[tokio::test]
-async fn guarded_values_follow_the_token() {
-    let w = world().await;
+#[devkit::test]
+async fn guarded_values_follow_the_token(db: devkit::pg::TestDatabase) {
+    let w = world(db).await;
     // An agent may raise a floor.
     let (_, body) = call(
         &w,
@@ -614,10 +622,12 @@ async fn guarded_values_follow_the_token() {
 /// Sealed values: unreadable at rest and while locked, readable to the
 /// operator while unlocked, and gone everywhere once their key is destroyed
 /// (vh0 AC2).
-#[tokio::test]
-async fn sealed_values_need_the_unlocked_operator_and_die_with_their_key() {
+#[devkit::test]
+async fn sealed_values_need_the_unlocked_operator_and_die_with_their_key(
+    db: devkit::pg::TestDatabase,
+) {
     use sinex_store::sealed;
-    let w = world().await;
+    let w = world(db).await;
     let identity = sealed::Identity::generate();
     let key = sealed::new_key().unwrap();
     let material = MaterialId::new();
@@ -683,9 +693,9 @@ async fn sealed_values_need_the_unlocked_operator_and_die_with_their_key() {
     assert_eq!(status, StatusCode::FORBIDDEN);
 }
 
-#[tokio::test]
-async fn analysis_calls_run_store_and_brief_through_the_api() {
-    let w = world().await;
+#[devkit::test]
+async fn analysis_calls_run_store_and_brief_through_the_api(db: devkit::pg::TestDatabase) {
+    let w = world(db).await;
     let (status, body) = call(&w, Some(READ), json!({"method": "analysis-catalog"})).await;
     assert_eq!(status, StatusCode::OK, "{body}");
     assert!(
@@ -745,9 +755,9 @@ async fn analysis_calls_run_store_and_brief_through_the_api() {
     );
 }
 
-#[tokio::test]
-async fn analysis_panel_why_and_results_answer_through_the_api() {
-    let w = world().await;
+#[devkit::test]
+async fn analysis_panel_why_and_results_answer_through_the_api(db: devkit::pg::TestDatabase) {
+    let w = world(db).await;
     let (status, body) = call(
         &w,
         Some(READ),

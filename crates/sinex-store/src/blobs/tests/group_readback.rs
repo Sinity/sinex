@@ -30,7 +30,7 @@ fn read(root: &Path, bytes: &[u8]) -> hashed_blobs::Result<Vec<u8>> {
     Ok(out)
 }
 
-#[test]
+#[devkit::test]
 fn protected_group_mode_keeps_plain_encoding_and_sealed_key_checks() {
     let shared = tempfile::tempdir().unwrap();
     let private = tempfile::tempdir().unwrap();
@@ -89,7 +89,7 @@ fn protected_group_mode_keeps_plain_encoding_and_sealed_key_checks() {
     assert_eq!(bytes, BODY);
 }
 
-#[test]
+#[devkit::test]
 fn existing_private_dedup_destination_is_never_chmodded_or_rewritten() {
     let root = tempfile::tempdir().unwrap();
     let before = Blobs::open(root.path()).unwrap().put(BODY).unwrap();
@@ -217,7 +217,7 @@ fn run_actor(root: &Path, operation: &str, uid: u32, gid: u32) {
     );
 }
 
-#[test]
+#[devkit::test]
 #[ignore = "requires root for isolated numeric-UID/group filesystem controls"]
 fn configured_group_plain_readback_between_distinct_users() {
     if let Ok(operation) = std::env::var("SINEX_FIXTURE_ACTOR") {

@@ -1,6 +1,6 @@
 use super::*;
 
-#[test]
+#[devkit::test]
 fn type_line_header_and_rows() {
     let manifest = json!({"path": "com.samsung.health.hrv.20260807162074.csv"});
     let ctx = RecordContext {
@@ -41,7 +41,7 @@ fn type_line_header_and_rows() {
     assert_eq!(serde_json::to_value(r.values()).unwrap()["score"], json!(7));
 }
 
-#[test]
+#[devkit::test]
 fn categories_and_values() {
     assert_eq!(
         category_of("com.samsung.shealth.tracker.heart_rate"),

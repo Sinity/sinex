@@ -60,7 +60,7 @@ fn hour(inputs: &[Event], now: i64) -> Option<ActivitySummary> {
         .find(|s| s.period_start == Timestamp::from_unix_secs(T).unwrap())
 }
 
-#[test]
+#[devkit::test]
 fn an_hour_counts_its_commands_and_state_time_inside_it() {
     let s = hour(
         &[
@@ -91,7 +91,7 @@ fn an_hour_counts_its_commands_and_state_time_inside_it() {
     );
 }
 
-#[test]
+#[devkit::test]
 fn a_day_key_emits_only_its_busy_hours() {
     let out = summaries(
         &HourlySummary,
@@ -105,13 +105,13 @@ fn a_day_key_emits_only_its_busy_hours() {
     );
 }
 
-#[test]
+#[devkit::test]
 fn open_states_count_up_to_now() {
     let s = hour(&[interval("desktop.focus", "vim", 0, None)], 900).unwrap();
     assert_eq!(s.state_seconds.get("desktop.focus"), Some(&900));
 }
 
-#[test]
+#[devkit::test]
 fn an_old_open_state_stops_counting_at_its_day_end() {
     // Opened at 10:00 two years ago and never ended: it covers that day
     // until 04:00 the next morning, not every day until today.
@@ -130,7 +130,7 @@ fn an_old_open_state_stops_counting_at_its_day_end() {
     assert_eq!(s[0].state_seconds.get("desktop.focus"), Some(&(18 * 3600)));
 }
 
-#[test]
+#[devkit::test]
 fn a_long_state_dirties_every_day_it_covers_and_units_none() {
     let env = Env::at(Timestamp::from_unix_secs(T + 100_000).unwrap());
     let e = interval("desktop.focus", "vim", 0, Some(2 * 86_400));
@@ -149,7 +149,7 @@ fn a_long_state_dirties_every_day_it_covers_and_units_none() {
     assert!(HourlySummary.keys_for(&view, &env).is_empty());
 }
 
-#[test]
+#[devkit::test]
 fn a_day_asks_for_the_last_state_of_each_kind_before_it() {
     let env = Env::at(Timestamp::now());
     let q = DailySummary
@@ -159,7 +159,7 @@ fn a_day_asks_for_the_last_state_of_each_kind_before_it() {
     assert!(q.before.iter().all(|n| n.count == 1));
 }
 
-#[test]
+#[devkit::test]
 fn a_day_is_the_logical_day() {
     let out = summaries(
         &DailySummary,

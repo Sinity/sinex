@@ -454,7 +454,7 @@ pub fn frame(bytes: &[u8]) -> (Vec<(usize, usize)>, usize) {
 }
 
 /// The operator's own activity files; the observer feeds are other people's.
-pub fn is_own(path: &std::path::Path) -> bool {
+fn is_own(path: &std::path::Path) -> bool {
     path.file_name().and_then(|n| n.to_str()).is_some_and(|n| {
         n.starts_with("wykop_") && n.ends_with(".jsonl") && !n.contains("observed")
     })

@@ -157,7 +157,7 @@ fn kind_view(kind: &event_types::EventTypeInfo) -> String {
 }
 
 /// Registry rows for event types, written from the Rust catalog.
-pub fn registry_rows() -> Vec<(
+fn registry_rows() -> Vec<(
     String,
     serde_json::Value,
     &'static str,

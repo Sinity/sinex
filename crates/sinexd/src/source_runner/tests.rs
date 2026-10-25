@@ -4,7 +4,7 @@ fn config(json: Value) -> Config {
     serde_json::from_value(json).unwrap()
 }
 
-#[test]
+#[devkit::test]
 fn plans_the_enabled_sources_bindings_from_their_paths() {
     let dir = std::env::temp_dir().join(format!("sinex-runner-{}", uuid::Uuid::now_v7()));
     std::fs::create_dir_all(&dir).unwrap();
@@ -29,7 +29,7 @@ fn plans_the_enabled_sources_bindings_from_their_paths() {
     std::fs::remove_dir_all(&dir).unwrap();
 }
 
-#[test]
+#[devkit::test]
 fn keeps_only_the_named_source_of_a_kind_reading_several() {
     // Chromium's kind plans visits and URLs; enabling one source keeps one.
     let dir = std::env::temp_dir().join(format!("sinex-runner-{}", uuid::Uuid::now_v7()));
@@ -47,7 +47,7 @@ fn keeps_only_the_named_source_of_a_kind_reading_several() {
     std::fs::remove_dir_all(&dir).unwrap();
 }
 
-#[test]
+#[devkit::test]
 fn an_unknown_source_is_refused_by_name() {
     let Err(e) = plan(
         &config(serde_json::json!({"sources": {"no.such": {"enable": true, "paths": ["/x"]}}})),
@@ -58,7 +58,7 @@ fn an_unknown_source_is_refused_by_name() {
     assert!(e.contains("no.such"), "{e}");
 }
 
-#[test]
+#[devkit::test]
 fn a_configured_kind_chooses_among_kinds_sharing_a_name() {
     let dir = std::env::temp_dir().join(format!("sinex-runner-{}", uuid::Uuid::now_v7()));
     std::fs::create_dir_all(&dir).unwrap();

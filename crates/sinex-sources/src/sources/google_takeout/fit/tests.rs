@@ -1,7 +1,7 @@
 use super::*;
 use serde_json::json;
 
-#[test]
+#[devkit::test]
 fn points_are_records_of_their_data_source() {
     let manifest = json!({"path": "Takeout/Fit/All Data/derived_com.google.active_minutes_x.json"});
     let context = RecordContext {
@@ -33,7 +33,7 @@ fn points_are_records_of_their_data_source() {
     );
 }
 
-#[test]
+#[devkit::test]
 fn direct_fit_values_keep_large_integers_and_extensions() {
     let manifest = json!({"path":"Takeout/Fit/All Data/synthetic.json"});
     let context = RecordContext {

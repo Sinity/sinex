@@ -71,7 +71,7 @@ fn scan(root: &Path) -> LibraryScan {
     }
 }
 
-#[test]
+#[devkit::test]
 fn sidecars_named_by_stem_are_not_items() {
     let root = tmp();
     std::fs::write(root.join("pic.png"), png(10, 10)).unwrap();
@@ -90,7 +90,7 @@ fn sidecars_named_by_stem_are_not_items() {
     assert_eq!(paths, ["notes.json", "pic.png"]);
 }
 
-#[test]
+#[devkit::test]
 fn a_single_file_scan_reads_and_misses_nothing_else() {
     let root = tmp();
     std::fs::write(root.join("one.png"), png(10, 10)).unwrap();
@@ -115,7 +115,7 @@ fn a_single_file_scan_reads_and_misses_nothing_else() {
     assert!(seen[0].vanished_at.is_none());
 }
 
-#[test]
+#[devkit::test]
 fn scan_describes_stores_and_follows_renames_edits_and_removals() {
     let root = tmp();
     std::fs::create_dir_all(root.join("a")).unwrap();
@@ -178,7 +178,7 @@ fn scan_describes_stores_and_follows_renames_edits_and_removals() {
     std::fs::remove_dir_all(&root).unwrap();
 }
 
-#[test]
+#[devkit::test]
 fn equal_bytes_hash_equal_wherever_they_are() {
     let a = json!({"host": "h", "root": "/r", "path": "/r/a", "content": "blake3:x", "size": 1,
         "sha256": "s", "md5": "m", "media_type": "image/png", "stored": true});
@@ -193,7 +193,7 @@ fn equal_bytes_hash_equal_wherever_they_are() {
     assert_eq!(hash(&a), hash(&b));
 }
 
-#[test]
+#[devkit::test]
 fn sniffs_types_from_bytes_not_names() {
     assert_eq!(sniff(b"\xFF\xD8\xFF\xE0"), "image/jpeg");
     assert_eq!(sniff(b"GIF89a.."), "image/gif");
@@ -207,7 +207,7 @@ fn sniffs_types_from_bytes_not_names() {
     assert_eq!(dimensions(gif, "image/gif").1, Some(240));
 }
 
-#[test]
+#[devkit::test]
 fn requests_take_author_and_time_from_the_manifest() {
     let item = Item {
         item: "i1".into(),
@@ -273,7 +273,7 @@ fn requests_take_author_and_time_from_the_manifest() {
     assert_eq!(events[1].record_state, RecordState::Removed);
 }
 
-#[test]
+#[devkit::test]
 fn request_citation_facts_preserve_payload_identity_and_refuse_supplied_invalid_evidence() {
     let blob = format!("blake3:{}", blake3::hash(b"synthetic preview"));
     let record = LibraryRecord::Rendition(Rendition {

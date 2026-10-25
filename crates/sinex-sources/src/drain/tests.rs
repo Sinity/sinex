@@ -78,7 +78,7 @@ fn commands(chunks: &[DrainOutput]) -> Vec<(u64, String)> {
         .collect()
 }
 
-#[test]
+#[devkit::test]
 fn panics_and_errors_fail_only_their_record() {
     let out = run(b"a\npanic\nbad\nb\n", Value::Null, Limits::default());
     assert_eq!(commands(&out), vec![(0, "a".into()), (12, "b".into())]);
@@ -99,7 +99,7 @@ fn panics_and_errors_fail_only_their_record() {
     );
 }
 
-#[test]
+#[devkit::test]
 fn chunks_respect_limits_and_carry_continues() {
     let bytes = b"a\nb\nc\nd\ne\n";
     let out = run(
@@ -129,7 +129,7 @@ fn chunks_respect_limits_and_carry_continues() {
     assert_eq!(times, vec![2, 3, 4]);
 }
 
-#[test]
+#[devkit::test]
 fn oversized_record_goes_alone() {
     let big = format!("{}\n", "x".repeat(100));
     let bytes = format!("a\n{big}b\n");
@@ -147,7 +147,7 @@ fn oversized_record_goes_alone() {
     );
 }
 
-#[test]
+#[devkit::test]
 fn blanked_records_are_skipped_not_failed() {
     let out = run(b"a\n     \nb\n", Value::Null, Limits::default());
     assert_eq!(commands(&out), vec![(0, "a".into()), (8, "b".into())]);
@@ -155,7 +155,7 @@ fn blanked_records_are_skipped_not_failed() {
     assert_eq!(out[0].end, 10);
 }
 
-#[test]
+#[devkit::test]
 fn records_find_their_member() {
     let manifest = serde_json::json!({"members": [
         {"path": "a", "stream_offset": 0, "length": 4},
@@ -170,13 +170,13 @@ fn records_find_their_member() {
     assert_eq!(member_at(&Value::Null, 0), None);
 }
 
-#[test]
+#[devkit::test]
 fn nul_payloads_become_failures() {
     let out = run(b"a\0b\n", Value::Null, Limits::default());
     assert!(matches!(out[0].outcomes[0], RecordOutcome::Failure { .. }));
 }
 
-#[test]
+#[devkit::test]
 fn staged_records_match_slice_hashes_locations_carry_and_limits() {
     use std::io::Write;
     let bytes = b"alpha\nbad\n \nthird\npanic\nlast\n";
@@ -253,7 +253,7 @@ fn staged_records_match_slice_hashes_locations_carry_and_limits() {
     }
 }
 
-#[test]
+#[devkit::test]
 fn staged_read_failure_stops_before_a_false_progress_chunk() {
     use std::io::Write;
     let bytes = b"alpha\nbeta\ngamma\ndelta\n";
@@ -285,7 +285,7 @@ fn staged_read_failure_stops_before_a_false_progress_chunk() {
     assert!(chunks.next().is_none());
 }
 
-#[test]
+#[devkit::test]
 fn invalid_staged_ranges_are_refused_before_record_allocation() {
     let file = tempfile::tempfile().unwrap();
     assert!(
@@ -307,7 +307,7 @@ fn invalid_staged_ranges_are_refused_before_record_allocation() {
     );
 }
 
-#[test]
+#[devkit::test]
 fn directory_bundles_keep_empty_members_at_distinct_anchors() {
     use crate::sources::notes::NotesParser;
     let manifest = serde_json::json!({
@@ -356,7 +356,7 @@ fn directory_bundles_keep_empty_members_at_distinct_anchors() {
     }
 }
 
-#[test]
+#[devkit::test]
 fn retained_reader_holds_one_record_and_stops_at_a_backing_fault() {
     use std::sync::atomic::{AtomicUsize, Ordering};
     struct Backing {
@@ -411,7 +411,7 @@ fn retained_reader_holds_one_record_and_stops_at_a_backing_fault() {
     assert_eq!(backing.calls.load(Ordering::Relaxed), 3);
 }
 
-#[test]
+#[devkit::test]
 fn a_blank_record_is_no_record_and_leaves_the_carry_alone() {
     let bytes = b"  \nretained\n";
     let records = lines(bytes);

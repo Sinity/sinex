@@ -8,7 +8,7 @@ fn cell(service: &str, body: &str, time: &str) -> Cell {
     cells::parse(&html).unwrap()
 }
 
-#[test]
+#[devkit::test]
 fn linked_and_unlinked_actions() {
     let c = cell(
         "Search",
@@ -37,7 +37,7 @@ fn linked_and_unlinked_actions() {
     );
 }
 
-#[test]
+#[devkit::test]
 fn watches_keep_unknown_titles_unknown() {
     let c = cell(
         "YouTube",
@@ -81,7 +81,7 @@ fn watches_keep_unknown_titles_unknown() {
     assert_eq!(w.details[0], "Watched a video that has been removed");
 }
 
-#[test]
+#[devkit::test]
 fn video_ids_from_every_url_form() {
     assert_eq!(
         video_id("https://www.youtube.com/watch?v=x1&t=3").as_deref(),
@@ -95,7 +95,7 @@ fn video_ids_from_every_url_form() {
     assert_eq!(video_id("https://example.org/"), None);
 }
 
-#[test]
+#[devkit::test]
 fn selects_members() {
     assert!(select_my_activity(
         "Takeout/My Activity/Search/MyActivity.html"

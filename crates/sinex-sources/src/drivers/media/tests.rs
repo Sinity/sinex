@@ -1,6 +1,6 @@
 use super::*;
 
-#[test]
+#[devkit::test]
 fn segments_are_stored_one_per_poll_in_order_and_removed_after() {
     let dir = std::env::temp_dir().join(format!("sinex-media-{}", uuid::Uuid::now_v7()));
     std::fs::create_dir_all(&dir).unwrap();

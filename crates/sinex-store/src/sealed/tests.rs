@@ -1,7 +1,7 @@
 use super::*;
 use sinex_model::{Origin, ReadingOrder, RecordLocation, Timestamp, event_types::CommandImported};
 
-#[test]
+#[devkit::test]
 fn wrap_unwrap_and_seal_round_trip() {
     let identity = age::x25519::Identity::generate();
     let recipient = identity.to_public();
@@ -45,7 +45,7 @@ fn wrap_unwrap_and_seal_round_trip() {
     assert!(unseal_payload(&e.payload, &[0; 32]).is_err());
 }
 
-#[test]
+#[devkit::test]
 fn parse_identity_from_a_key_file() {
     let identity = age::x25519::Identity::generate();
     use age::secrecy::ExposeSecret;

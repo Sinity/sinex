@@ -21,7 +21,7 @@ fn ts(s: &str) -> Timestamp {
     s.parse().unwrap()
 }
 
-#[test]
+#[devkit::test]
 fn bare_words_search_events() {
     let query = q("tide offset");
     assert_eq!(
@@ -39,7 +39,7 @@ fn bare_words_search_events() {
     assert!(matches!(*b, Expr::Words(ref w) if w.words == ["offset"]));
 }
 
-#[test]
+#[devkit::test]
 fn quoted_phrases_and_prefixes() {
     let query = q(r#""cargo test" deploy*"#);
     let Some(Expr::And(a, b)) = query.filter else {
@@ -49,7 +49,7 @@ fn quoted_phrases_and_prefixes() {
     assert!(matches!(*b, Expr::Words(ref w) if w.prefix && w.words == ["deploy"]));
 }
 
-#[test]
+#[devkit::test]
 fn a_command_word_is_never_a_search() {
     let e = err("related sinex:ev/0190");
     assert!(e.not_built, "{e}");
@@ -57,13 +57,13 @@ fn a_command_word_is_never_a_search() {
     assert!(matches!(q(r#""related""#).filter, Some(Expr::Words(_))));
 }
 
-#[test]
+#[devkit::test]
 fn a_misspelled_unit_is_refused_with_a_suggestion() {
     let e = err("comands since 7d");
     assert!(e.message.contains("commands"), "{e}");
 }
 
-#[test]
+#[devkit::test]
 fn unit_with_filter_and_clauses() {
     let query = q("commands where exit_code != 0 and cwd ^ /src/tide sort when desc limit 20");
     assert_eq!(query.source.alias().unwrap().name, "commands");
@@ -86,7 +86,7 @@ fn unit_with_filter_and_clauses() {
     assert_eq!(query.stages[1], Stage::Limit(20));
 }
 
-#[test]
+#[devkit::test]
 fn field_colon_value_means_equals() {
     let query = q("events where source:terminal.*");
     assert!(matches!(
@@ -95,7 +95,7 @@ fn field_colon_value_means_equals() {
     ));
 }
 
-#[test]
+#[devkit::test]
 fn and_binds_tighter_than_or_and_both_bounds_are_kept() {
     let query = q("events where source = a or source = b and kind = c");
     let Some(Expr::Or(_, right)) = query.filter else {
@@ -107,20 +107,20 @@ fn and_binds_tighter_than_or_and_both_bounds_are_kept() {
     assert!(matches!(query.filter, Some(Expr::And(..))));
 }
 
-#[test]
+#[devkit::test]
 fn unknown_fields_are_refused_listing_the_fields() {
     let e = err("commands where exit_cod = 0");
     assert!(e.message.contains("exit_code"), "{e}");
     assert!(e.at.is_some());
 }
 
-#[test]
+#[devkit::test]
 fn closed_sets_refuse_outside_values_naming_where_they_belong() {
     let e = err("runs where status = hide");
     assert!(e.message.contains("archive.reason"), "{e}");
 }
 
-#[test]
+#[devkit::test]
 fn times_resolve_once_against_the_context() {
     // since 7d is [now - 7d, ...).
     let query = q("events since 7d");
@@ -147,7 +147,7 @@ fn times_resolve_once_against_the_context() {
     ));
 }
 
-#[test]
+#[devkit::test]
 fn ranges_are_half_open_logical_days() {
     let query = q("events where when in yesterday");
     let Some(Expr::Within { from, to, .. }) = query.filter else {
@@ -168,13 +168,13 @@ fn ranges_are_half_open_logical_days() {
     assert_eq!(from, ts("2026-08-01T02:00:00Z"));
 }
 
-#[test]
+#[devkit::test]
 fn a_bare_duration_with_an_ordering_is_refused() {
     let e = err("events where when > 7d");
     assert!(e.message.contains("since 7d"), "{e}");
 }
 
-#[test]
+#[devkit::test]
 fn payload_paths_take_their_type_from_the_literal() {
     let query = q("events where payload.exit_code > 0 and payload.url ~ github");
     let Some(Expr::And(a, b)) = query.filter else {
@@ -198,7 +198,7 @@ fn payload_paths_take_their_type_from_the_literal() {
     );
 }
 
-#[test]
+#[devkit::test]
 fn lists_and_exists() {
     let query =
         q("events where kind = [command.executed, command.imported] and not material exists");
@@ -209,7 +209,7 @@ fn lists_and_exists() {
     assert!(matches!(*b, Expr::Not(ref inner) if matches!(**inner, Expr::Exists(_))));
 }
 
-#[test]
+#[devkit::test]
 fn time_functions_and_differences() {
     let query = q("events where hour(when) >= 1 and weekday(when) = Saturday and seen - when > 1d");
     let Some(Expr::And(left, diff)) = query.filter else {
@@ -230,7 +230,7 @@ fn time_functions_and_differences() {
     assert!(matches!(*weekday, Expr::Compare { rhs: Value::Text(ref d), .. } if d == "sat"));
 }
 
-#[test]
+#[devkit::test]
 fn joins_take_an_inner_query() {
     let query = q(
         r#"events where source != terminal.* near (commands where command ~ "cargo test") within 5m"#,
@@ -257,7 +257,7 @@ fn joins_take_an_inner_query() {
     );
 }
 
-#[test]
+#[devkit::test]
 fn grouping_makes_a_relation_of_groups() {
     let query = q("commands group by cwd count where count > 1 sort count desc limit 5");
     assert!(matches!(&query.stages[0], Stage::Group(g) if g.keys.len() == 1));
@@ -279,7 +279,7 @@ fn grouping_makes_a_relation_of_groups() {
     assert!(matches!(&query.stages[0], Stage::Group(g) if g.keys.is_empty()));
 }
 
-#[test]
+#[devkit::test]
 fn as_of_takes_a_time_or_a_commit_position() {
     let query = q("commands where when > 2026-02-01 as of 2026-03-01");
     assert!(matches!(
@@ -290,7 +290,7 @@ fn as_of_takes_a_time_or_a_commit_position() {
     assert_eq!(query.stages.last(), Some(&Stage::AsOf(AsOf::Seq(42))));
 }
 
-#[test]
+#[devkit::test]
 fn walks_and_references() {
     let id = "0190a0b0-0000-7000-8000-000000000001";
     let query = q(&format!("trace sinex:ev/{id}"));
@@ -327,7 +327,7 @@ fn walks_and_references() {
     );
 }
 
-#[test]
+#[devkit::test]
 fn recall_windows() {
     let query = q("recall 2026-03-02 14:05 ±20m");
     let Source::Recall { from, to } = query.source else {
@@ -352,13 +352,13 @@ fn recall_windows() {
     assert!(err("recall mark").not_built);
 }
 
-#[test]
+#[devkit::test]
 fn reserved_words_must_be_quoted_to_search() {
     assert!(err("sort algorithm").message.contains("quote"));
     assert!(q(r#""sort" algorithm"#).ranked);
 }
 
-#[test]
+#[devkit::test]
 fn reads_back_as_a_sentence() {
     let s = read_as(&q("commands where exit_code != 0 sort when desc limit 5"));
     assert_eq!(
@@ -369,7 +369,7 @@ fn reads_back_as_a_sentence() {
     assert!(s.contains("most relevant first"), "{s}");
 }
 
-#[test]
+#[devkit::test]
 fn errors_render_with_a_caret() {
     let text = "commands where exit_cod = 0";
     let e = err(text);
@@ -380,7 +380,7 @@ fn errors_render_with_a_caret() {
     );
 }
 
-#[test]
+#[devkit::test]
 fn every_field_name_is_unique_within_its_unit() {
     for unit in Unit::ALL {
         let mut names: Vec<&str> = unit.fields().iter().map(|f| f.name).collect();

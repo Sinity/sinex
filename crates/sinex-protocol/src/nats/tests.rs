@@ -1,6 +1,6 @@
 use super::*;
 
-#[test]
+#[devkit::test]
 fn subjects_and_streams_follow_the_root() {
     let s = Subjects::sinex();
     assert_eq!(s.ingress("kitty"), "sinex.ingress.kitty");
@@ -18,7 +18,7 @@ fn subjects_and_streams_follow_the_root() {
     assert_eq!(t.producer_of("t123x9f.ack.kitty"), None);
 }
 
-#[test]
+#[devkit::test]
 fn producer_permissions_name_only_its_own_subjects() {
     let s = Subjects::sinex();
     let (publish, subscribe) = s.producer_permissions("phone");
@@ -32,7 +32,7 @@ fn producer_permissions_name_only_its_own_subjects() {
     assert!(config.contains(r#"publish: { allow: ["sinex.ingress.phone", "sinex.have.phone"] }"#));
 }
 
-#[test]
+#[devkit::test]
 fn frames_round_trip_with_defaults() {
     let json = serde_json::json!({
         "kind": "events",

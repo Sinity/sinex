@@ -12,9 +12,11 @@ impl drivers::MaterialSink for FailedSink {
     }
 }
 
-#[tokio::test]
-async fn sqlite_rows_keep_failed_and_partial_snapshots_until_writer_commits() {
-    let (_db, url, _) = crate::testdb::fresh().await;
+#[devkit::test]
+async fn sqlite_rows_keep_failed_and_partial_snapshots_until_writer_commits(
+    db: devkit::pg::TestDatabase,
+) {
+    let url = db.url(None);
     let dir = std::env::temp_dir().join(format!("sinex-row-retry-{}", uuid::Uuid::now_v7()));
     std::fs::create_dir(&dir).unwrap();
     let path = dir.join("history.db");

@@ -18,8 +18,11 @@ struct World {
     root: PathBuf,
 }
 
-async fn world() -> World {
-    let (db, url, mut connection) = crate::testdb::fresh().await;
+async fn world(db: devkit::pg::TestDatabase) -> World {
+    let url = db.url(None);
+    let mut connection = <sqlx::PgConnection as sqlx::Connection>::connect(&url)
+        .await
+        .unwrap();
     let base = std::env::temp_dir().join(format!("sinexd-library-{}", uuid::Uuid::now_v7()));
     let blobs = Blobs::open(&base.join("store")).unwrap();
     let (handle, queues) = writer::channels_for(&url);
@@ -124,9 +127,9 @@ fn image(path: &Path, colour: &str) {
     }
 }
 
-#[tokio::test]
-async fn the_library_end_to_end() {
-    let mut w = world().await;
+#[devkit::test]
+async fn the_library_end_to_end(db: devkit::pg::TestDatabase) {
+    let mut w = world(db).await;
     let a = w.root.join("a.png");
     let b = w.root.join("sub/b.png");
     image(&a, "red");
@@ -478,9 +481,9 @@ async fn blob_row(conn: &mut PgConnection, blob: &str) -> bool {
 
 /// Excising a library file deletes the media bytes the scan kept, unless
 /// another file (an unrelated copy at another path) still names them.
-#[tokio::test]
-async fn excision_deletes_the_stored_media_bytes() {
-    let mut w = world().await;
+#[devkit::test]
+async fn excision_deletes_the_stored_media_bytes(db: devkit::pg::TestDatabase) {
+    let mut w = world(db).await;
     let (a, b, c) = (
         w.root.join("a.png"),
         w.root.join("sub/b.png"),
@@ -532,9 +535,11 @@ async fn excision_deletes_the_stored_media_bytes() {
     );
 }
 
-#[tokio::test]
-async fn library_add_through_an_alias_keeps_one_canonical_acquisition() {
-    let mut w = world().await;
+#[devkit::test]
+async fn library_add_through_an_alias_keeps_one_canonical_acquisition(
+    db: devkit::pg::TestDatabase,
+) {
+    let mut w = world(db).await;
     let file = w.root.join("note.txt");
     std::fs::write(&file, "synthetic library content").unwrap();
     let alias = w.root.parent().unwrap().join("alias");

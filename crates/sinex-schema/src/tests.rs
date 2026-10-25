@@ -2,7 +2,7 @@ use super::*;
 
 /// A payload field named like one of the view's event columns makes the
 /// kind's view, and so the whole schema, fail to apply.
-#[test]
+#[devkit::test]
 fn no_payload_field_shadows_an_event_column() {
     let reserved = [
         "id",
@@ -25,7 +25,7 @@ fn no_payload_field_shadows_an_event_column() {
     }
 }
 
-#[test]
+#[devkit::test]
 fn declarations_are_deterministic_and_named() {
     assert_eq!(declarations(), declarations());
     assert_eq!(declaration_hash().len(), 16);

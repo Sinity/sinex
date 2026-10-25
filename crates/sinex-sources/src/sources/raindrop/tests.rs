@@ -1,7 +1,7 @@
 use super::*;
 use serde_json::json;
 
-#[test]
+#[devkit::test]
 fn csv_header_is_carried_then_rows_read() {
     let (none, header) = RaindropParser
         .parse(
@@ -21,7 +21,7 @@ fn csv_header_is_carried_then_rows_read() {
     assert_eq!(p[0].note, None);
 }
 
-#[test]
+#[devkit::test]
 fn api_lines_and_the_trash() {
     let row = json!({"_id": 1302755715, "link": "https://a/", "title": "A", "excerpt": "", "note": "",
         "tags": ["ai"], "important": false, "removed": false, "created": "2026-10-11T06:10:25.715Z",
