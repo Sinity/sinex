@@ -82,6 +82,7 @@ pub fn driver(path: PathBuf, host: String) -> ExportArchive {
         select,
         framing: Framing::JsonArray("/Browser History"),
         part_bytes: PART_BYTES,
+        join: None,
     }
 }
 

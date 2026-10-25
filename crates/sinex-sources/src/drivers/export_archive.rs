@@ -83,7 +83,15 @@ pub struct ExportArchive {
     pub framing: Framing,
     /// Target bytes per decoded record part.
     pub part_bytes: usize,
+    /// Joins consecutive framed records into one; `None` reads each alone.
+    pub join: Option<Join>,
 }
+
+/// The key of a framed record: consecutive records with the same key are read
+/// as one record (Fit's points of one data type and local day). A record
+/// without a key stays alone. A joined record is never split across parts.
+#[derive(Clone)]
+pub struct Join(pub std::sync::Arc<dyn Fn(&[u8]) -> Option<String> + Send + Sync>);
 
 /// Default target size for decoded record parts. One record can exceed it.
 pub const PART_BYTES: usize = 64 << 20;

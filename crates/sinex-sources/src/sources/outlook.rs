@@ -208,6 +208,7 @@ pub fn csv_driver(path: PathBuf, host: String) -> ExportArchive {
         select: |m| m.to_ascii_lowercase().ends_with(".csv"),
         framing: Framing::Csv,
         part_bytes: PART_BYTES,
+        join: None,
     }
 }
 

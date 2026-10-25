@@ -8,8 +8,12 @@ use sinex_sources::{
 };
 use std::io::Write;
 
+/// Fit joins points of one local day, so each synthetic point gets its own day
+/// to stay one record.
+const DAY: i64 = 86_400_000_000_000;
+
 fn archive(path: &std::path::Path) -> usize {
-    let fit = json!({"Data Points": (0..40).map(|i| json!({"dataTypeName":"synthetic.steps", "startTimeNanos":i+1,"endTimeNanos":i+2,"fitValue":[{"intVal":i}]})).collect::<Vec<_>>()});
+    let fit = json!({"Data Points": (0..40).map(|i| json!({"dataTypeName":"synthetic.steps", "startTimeNanos":(i as i64+1)*DAY,"endTimeNanos":(i as i64+1)*DAY+1,"fitValue":[{"intVal":i}]})).collect::<Vec<_>>()});
     let tasks = json!({"items":[{"id":"list", "items":[{"id":"task", "title":"synthetic task"}]}]});
     let mut tar = tar::Builder::new(Vec::new());
     for (name, bytes) in [
@@ -300,7 +304,7 @@ async fn sealed_archive_restart_replay_and_class_changes_preserve_exact_material
                 zip::write::SimpleFileOptions::default(),
             )
             .unwrap();
-            file.write_all(&serde_json::to_vec(&json!({"Data Points":(0..40).map(|i|json!({"dataTypeName":"synthetic.steps","startTimeNanos":i+1,"endTimeNanos":i+2,"fitValue":[{"intVal":i}]})).collect::<Vec<_>>()})).unwrap()).unwrap();
+            file.write_all(&serde_json::to_vec(&json!({"Data Points":(0..40).map(|i|json!({"dataTypeName":"synthetic.steps","startTimeNanos":(i as i64+1)*DAY,"endTimeNanos":(i as i64+1)*DAY+1,"fitValue":[{"intVal":i}]})).collect::<Vec<_>>()})).unwrap()).unwrap();
             std::fs::write(&path, file.finish().unwrap().into_inner()).unwrap();
         } else {
             archive(&path);
@@ -320,7 +324,7 @@ async fn sealed_archive_restart_replay_and_class_changes_preserve_exact_material
             b.reader = stateless(driver);
             b.source = Box::new(SmallBatches(std::mem::replace(
                 &mut b.source,
-                Box::new(fit::source()),
+                Box::new(fit::source(jiff::tz::TimeZone::UTC)),
             )));
             bindings
         };

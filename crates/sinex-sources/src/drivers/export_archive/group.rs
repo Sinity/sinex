@@ -1,5 +1,5 @@
 //! One forward archive traversal shared by compatible logical bindings.
-use super::{Container, DriverError, ExportArchive, Framing, file_name, io, is_tar, records};
+use super::{Container, DriverError, ExportArchive, file_name, io, is_tar, records};
 use crate::drivers::{Acquired, MaterialSink, NewMaterial, StoredBytes};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -342,28 +342,30 @@ impl Context<'_, '_> {
         if indices.is_empty() {
             return Ok(());
         }
-        let mut framings = Vec::new();
+        // Routes with the same framing share one reading of the member; a route
+        // that joins records reads alone.
+        let mut groups: Vec<Vec<usize>> = Vec::new();
         for &index in &indices {
-            let framing = self.routes[index].driver.framing;
-            if !framings.contains(&framing) {
-                framings.push(framing);
+            let driver = &self.routes[index].driver;
+            let shared = groups.iter_mut().find(|group| {
+                let first = &self.routes[group[0]].driver;
+                driver.join.is_none() && first.join.is_none() && first.framing == driver.framing
+            });
+            match shared {
+                Some(group) => group.push(index),
+                None => groups.push(vec![index]),
             }
         }
-        if framings.len() == 1 {
-            return self.framed(member, &name, reader, &indices, framings[0]);
+        if groups.len() == 1 {
+            return self.framed(member, &name, reader, &groups[0]);
         }
-        // Only overlapping selectors with different framers need independent readers.
+        // Only overlapping selectors with different framing need independent readers.
         // Keep one private, unlinked member file; its decoded bytes are never re-extracted.
         let mut staged = tempfile::tempfile().map_err(io)?;
         self.work.member_staging_bytes += std::io::copy(reader, &mut staged).map_err(io)?;
-        for framing in framings {
+        for group in groups {
             staged.rewind().map_err(io)?;
-            let selected: Vec<usize> = indices
-                .iter()
-                .copied()
-                .filter(|&i| self.routes[i].driver.framing == framing)
-                .collect();
-            self.framed(member, &name, &mut staged, &selected, framing)?;
+            self.framed(member, &name, &mut staged, &group)?;
         }
         Ok(())
     }
@@ -374,8 +376,9 @@ impl Context<'_, '_> {
         name: &str,
         reader: &mut dyn Read,
         indices: &[usize],
-        framing: Framing,
     ) -> Result<(), DriverError> {
+        let framing = self.routes[indices[0]].driver.framing;
+        let join = self.routes[indices[0]].driver.join.clone();
         let budget = indices
             .iter()
             .map(|&i| self.routes[i].driver.part_bytes.max(1))
@@ -387,23 +390,35 @@ impl Context<'_, '_> {
         let mut start = 0;
         let mut byte_position = 0u64;
         let mut part_offset = 0u64;
+        let mut last_key = None;
         let result = records::visit(reader, framing, budget, &mut |record| {
             if self.stop.load(Ordering::Relaxed) {
                 return Err(DriverError::Cancelled);
+            }
+            let key = join.as_ref().and_then(|join| (join.0)(&record));
+            let joined = key.is_some() && key == last_key && !ranges.is_empty();
+            last_key = key;
+            // A part ends before a record that starts a new one, so a joined
+            // record stays whole.
+            if !joined
+                && (bytes.len() >= budget || ranges.len() >= crate::Limits::default().max_events)
+            {
+                self.part(member, name, indices, start, part_offset, &bytes, &ranges)?;
+                bytes.clear();
+                ranges.clear();
+                start = ordinal;
+                part_offset = byte_position;
             }
             byte_position = byte_position
                 .checked_add(record.len() as u64)
                 .ok_or_else(|| DriverError::Cursor("archive reading order exceeds u64".into()))?;
             let begin = bytes.len();
             bytes.extend_from_slice(&record);
-            ranges.push((begin, bytes.len()));
-            ordinal += 1;
-            if bytes.len() >= budget || ranges.len() >= crate::Limits::default().max_events {
-                self.part(member, name, indices, start, part_offset, &bytes, &ranges)?;
-                bytes.clear();
-                ranges.clear();
-                start = ordinal;
-                part_offset = byte_position;
+            if joined {
+                ranges.last_mut().expect("a joined record follows one").1 = bytes.len();
+            } else {
+                ranges.push((begin, bytes.len()));
+                ordinal += 1;
             }
             Ok(())
         });

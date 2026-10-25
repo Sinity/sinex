@@ -194,6 +194,7 @@ pub fn play_store_driver(path: PathBuf, host: String) -> ExportArchive {
         select: select_play_store,
         framing: Framing::JsonArray(""),
         part_bytes: PART_BYTES,
+        join: None,
     }
 }
 
@@ -204,6 +205,7 @@ pub fn purchases_driver(path: PathBuf, host: String) -> ExportArchive {
         select: select_purchases,
         framing: Framing::Whole,
         part_bytes: PART_BYTES,
+        join: None,
     }
 }
 
