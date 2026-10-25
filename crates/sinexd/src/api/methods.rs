@@ -167,12 +167,7 @@ impl Api {
     /// views read `sinex.grants`).
     pub async fn acquire(&self, caller: &Caller) -> Result<Conn, sqlx::Error> {
         let mut conn = self.reads.acquire().await?;
-        sqlx::query_scalar!(
-            "SELECT set_config('sinex.grants', $1, false)",
-            caller.grants
-        )
-        .fetch_one(&mut *conn)
-        .await?;
+        sinex_store::query::set_grants(&mut conn, &caller.grants).await?;
         Ok(conn)
     }
 
@@ -594,17 +589,11 @@ impl Api {
         }
     }
 
-    async fn status(&self, caller: &Caller) -> Result<Value, sqlx::Error> {
-        let mut conn = self.acquire(caller).await?;
-        let row = sqlx::query!(
-            r#"SELECT
-                 (SELECT value FROM core.counters WHERE name = 'commit_seq') AS "commit_seq!",
-                 (SELECT commit_seq FROM core.consumer_positions WHERE consumer = $1) AS search_position,
-                 (SELECT max(version) FROM sinex_schema.applied) AS schema_version"#,
-            sinex_store::read_models::SEARCH_TEXT
-        )
-        .fetch_one(&mut *conn)
-        .await?;
+    async fn status(&self, caller: &Caller) -> Result<Value, String> {
+        let mut conn = self.acquire(caller).await.map_err(|e| e.to_string())?;
+        let row = sinex_store::diagnostics::positions(&mut conn)
+            .await
+            .map_err(|e| e.to_string())?;
         drop(conn);
         let sources = match self
             .query(

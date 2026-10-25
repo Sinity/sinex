@@ -33,8 +33,8 @@ pub async fn snapshot(conn: &mut PgConnection) -> Result<Snapshot> {
     sqlx::query!("SET TRANSACTION READ ONLY")
         .execute(&mut *tx)
         .await?;
-    let has_schema: bool = sqlx::query_scalar(
-        "SELECT EXISTS (SELECT 1 FROM pg_tables WHERE schemaname = 'sinex_schema' AND tablename = 'applied')",
+    let has_schema = sqlx::query_scalar!(
+        r#"SELECT EXISTS (SELECT 1 FROM pg_tables WHERE schemaname = 'sinex_schema' AND tablename = 'applied') AS "exists!""#,
     )
     .fetch_one(&mut *tx)
     .await?;
@@ -48,14 +48,11 @@ pub async fn snapshot(conn: &mut PgConnection) -> Result<Snapshot> {
             sources: Vec::new(),
         });
     }
+    let positions = positions(&mut tx).await?;
     let row = sqlx::query!(
         r#"SELECT
-             (SELECT value FROM core.counters WHERE name = 'commit_seq') AS "commit_seq!",
-             (SELECT max(version) FROM sinex_schema.applied) AS schema_version,
-             (SELECT commit_seq FROM core.consumer_positions WHERE consumer = $1) AS search_position,
              (SELECT count(*) FROM raw.failures WHERE failed_at > now() - interval '24 hours') AS "failures_24h!",
              (SELECT count(*) FROM core.blobs WHERE status = 'present') AS "blobs!""#,
-        crate::read_models::SEARCH_TEXT
     )
     .fetch_one(&mut *tx)
     .await?;
@@ -83,13 +80,33 @@ pub async fn snapshot(conn: &mut PgConnection) -> Result<Snapshot> {
     .collect();
     tx.rollback().await?;
     Ok(Snapshot {
-        commit_seq: row.commit_seq,
-        schema_version: row.schema_version,
-        search_position: row.search_position,
+        commit_seq: positions.commit_seq,
+        schema_version: positions.schema_version,
+        search_position: positions.search_position,
         failures_24h: row.failures_24h,
         blobs: row.blobs,
         sources,
     })
+}
+
+/// How far commits, the schema and the search index are.
+pub struct Positions {
+    pub commit_seq: i64,
+    pub schema_version: Option<i32>,
+    pub search_position: Option<i64>,
+}
+
+pub async fn positions(conn: &mut PgConnection) -> Result<Positions> {
+    Ok(sqlx::query_as!(
+        Positions,
+        r#"SELECT
+             (SELECT value FROM core.counters WHERE name = 'commit_seq') AS "commit_seq!",
+             (SELECT max(version) FROM sinex_schema.applied) AS schema_version,
+             (SELECT commit_seq FROM core.consumer_positions WHERE consumer = $1) AS search_position"#,
+        crate::read_models::SEARCH_TEXT
+    )
+    .fetch_one(&mut *conn)
+    .await?)
 }
 
 /// The names of every blob the database says is stored.

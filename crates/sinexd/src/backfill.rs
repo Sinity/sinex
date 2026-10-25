@@ -550,11 +550,11 @@ pub(crate) async fn open_carry(
     }
     let reference = sinex_store::sealed::key_ref(carry).ok_or("invalid sealed parser carry")?;
     let unlock = unlock.ok_or("sealed parser carry requires explicit operator unlock")?;
-    let material:uuid::Uuid=sqlx::query_scalar("SELECT k.material_id FROM privacy.material_keys k JOIN raw.materials m ON m.id=k.material_id JOIN raw.inputs i ON i.id=m.input_id WHERE k.key_ref=$1 AND i.binding=$2")
-        .bind(reference).bind(binding).fetch_optional(&mut *conn).await.map_err(|e|e.to_string())?.ok_or("sealed parser carry has no key of this binding")?;
-    let key = unlock
-        .material_key(conn, sinex_model::MaterialId(material))
-        .await?;
+    let material = sinex_store::sealed::material_of_key(conn, reference, binding)
+        .await
+        .map_err(|e| e.to_string())?
+        .ok_or("sealed parser carry has no key of this binding")?;
+    let key = unlock.material_key(conn, material).await?;
     let value = sinex_store::sealed::unseal_payload(carry, &key.key).map_err(|e| e.to_string())?;
     unlock.check()?;
     Ok(value)

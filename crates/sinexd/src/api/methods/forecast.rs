@@ -51,8 +51,9 @@ async fn available_evidence(conn: &mut PgConnection, refs: &[String]) -> Result<
     for reference in refs {
         let id = uuid::Uuid::parse_str(reference)
             .map_err(|_| "resolution has an invalid evidence ID")?;
-        let row: Option<(String, Option<Value>)> = sqlx::query_as("SELECT e.class,e.payload FROM core.visible_events e WHERE e.id=$1 AND NOT EXISTS (SELECT 1 FROM audit.archived a WHERE a.event_id=e.id)")
-            .bind(id).fetch_optional(&mut *conn).await.map_err(error)?;
+        let row = sinex_store::live::class_and_payload(conn, id)
+            .await
+            .map_err(error)?;
         if !row.is_some_and(|(class, payload)| {
             class != "sealed"
                 && payload.is_some_and(|p| p.is_object() && p.get("withheld").is_none())
@@ -71,8 +72,7 @@ impl Api {
     ) -> Result<Value, String> {
         let mut conn = self.acquire(caller).await.map_err(error)?;
         let mut tx = conn.begin().await.map_err(error)?;
-        sqlx::query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY")
-            .execute(&mut *tx)
+        sinex_store::query::read_one_snapshot(&mut tx)
             .await
             .map_err(error)?;
         if matches!(request, Request::ForecastReport) {
@@ -155,8 +155,15 @@ impl Api {
                 }
                 let evidence = references(&mut tx, &evidence, None).await?;
                 if outcome.is_some() {
-                    let count: i64 = sqlx::query_scalar("SELECT count(*) FROM core.visible_events e WHERE e.event_type='forecast.resolved' AND e.payload->>'forecast'=$1 AND e.payload->'outcome' IN ('true'::jsonb,'false'::jsonb) AND NOT EXISTS (SELECT 1 FROM audit.archived a WHERE a.event_id=e.id)").bind(&issued.forecast).fetch_one(&mut *tx).await.map_err(error)?;
-                    if count > 0 {
+                    let resolutions =
+                        sinex_store::live::of_types(&mut tx, &["forecast.resolved".into()])
+                            .await
+                            .map_err(error)?;
+                    if resolutions.iter().any(|r| {
+                        r.payload.as_ref().is_some_and(|p| {
+                            p["forecast"] == issued.forecast.as_str() && p["outcome"].is_boolean()
+                        })
+                    }) {
                         return Err("forecast already has a visible known resolution".into());
                     }
                 }
@@ -202,8 +209,16 @@ impl Api {
             ));
         }
         let material = done.material.ok_or("forecast admission has no material")?;
-        let id: Option<uuid::Uuid> = sqlx::query_scalar("SELECT e.id FROM core.visible_events e WHERE e.material_id=$1 AND e.source='forecast.request' AND e.anchor=0 AND e.ordinal=0 AND NOT EXISTS (SELECT 1 FROM audit.archived a WHERE a.event_id=e.id)")
-            .bind(material.0).fetch_optional(&mut *conn).await.map_err(error)?;
+        let id = sinex_store::live::at(
+            &mut conn,
+            sinex_model::RecordLocation {
+                material,
+                anchor: 0,
+            },
+            0,
+        )
+        .await
+        .map_err(error)?;
         let id = id.ok_or("forecast event was withdrawn before its response")?;
         Ok(
             json!({"forecast":forecast, "event":id, "citation":format!("sinex:ev/{id}"), "material":material}),
@@ -213,11 +228,21 @@ impl Api {
 
 async fn report(conn: &mut PgConnection) -> Result<Value, String> {
     let position = sinex_store::query::current_seq(conn).await.map_err(error)?;
-    let rows: Vec<(uuid::Uuid,String,Option<Value>)> = sqlx::query_as("SELECT e.id,e.event_type,e.payload FROM core.visible_events e WHERE e.event_type IN ('forecast.issued','forecast.resolved') AND NOT EXISTS (SELECT 1 FROM audit.archived a WHERE a.event_id=e.id) ORDER BY e.commit_seq,e.id").fetch_all(&mut *conn).await.map_err(error)?;
+    let rows = sinex_store::live::of_types(
+        conn,
+        &["forecast.issued".into(), "forecast.resolved".into()],
+    )
+    .await
+    .map_err(error)?;
     let mut issued = BTreeMap::new();
     let mut resolutions: BTreeMap<String, Vec<(String, Resolved)>> = BTreeMap::new();
     let mut withheld = 0;
-    for (id, kind, payload) in rows {
+    for sinex_store::live::LiveEvent {
+        id,
+        event_type: kind,
+        payload,
+    } in rows
+    {
         let Some(payload) = payload.filter(|p| p.is_object() && p.get("withheld").is_none()) else {
             withheld += 1;
             continue;

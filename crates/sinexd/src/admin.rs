@@ -14,13 +14,6 @@ pub enum Admin {
     /// Print every source and derivation as JSON, for the NixOS module's
     /// generated options (`nix/catalog.json`).
     Catalog,
-    /// Sequence gaps in the Sinnix capture lake's lanes: numbers between the
-    /// first and last seen with no record. Facts about Sinnix's capture, not
-    /// errors here.
-    SequenceGaps {
-        #[arg(long)]
-        database: String,
-    },
     /// Print the NATS server `authorization` block: the daemon user with full
     /// access and one user per producer limited to its own subjects. Passwords
     /// are read from files, so they never pass through the Nix store.
@@ -55,7 +48,6 @@ pub async fn run(command: Admin) -> Result<(), String> {
             print!("{}", catalog::render());
             Ok(())
         }
-        Admin::SequenceGaps { database } => sequence_gaps(&database).await,
         Admin::NatsAuthorization {
             subjects,
             daemon_user,
@@ -198,32 +190,3 @@ async fn admin_table(args: Vec<String>) -> Result<(), String> {
     }
 }
 
-async fn sequence_gaps(database: &str) -> Result<(), String> {
-    use sqlx::Connection;
-    let mut c = sqlx::PgConnection::connect(database)
-        .await
-        .map_err(|e| e.to_string())?;
-    let gaps = sqlx::query!(
-        r#"SELECT payload->>'lane' AS "lane!", payload->>'host' AS "host!",
-                  count(DISTINCT (payload->>'seq')::bigint) AS "seen!",
-                  min((payload->>'seq')::bigint) AS "first!",
-                  max((payload->>'seq')::bigint) AS "last!"
-           FROM core.events WHERE event_type = 'capture.observed'
-           GROUP BY 1, 2 ORDER BY 1, 2"#
-    )
-    .fetch_all(&mut c)
-    .await
-    .map_err(|e| e.to_string())?;
-    for g in gaps {
-        println!(
-            "{}@{}: {} seen in {}..={}, {} numbers without a record",
-            g.lane,
-            g.host,
-            g.seen,
-            g.first,
-            g.last,
-            (g.last - g.first + 1) - g.seen
-        );
-    }
-    Ok(())
-}

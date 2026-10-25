@@ -252,9 +252,6 @@ fn channels_with_database(source_database: Option<Arc<str>>) -> (WriterHandle, Q
     )
 }
 
-/// The session advisory lock only the writer holds, per database.
-const WRITER_LOCK: i64 = sinex_schema::WRITER_LOCK;
-
 /// Claim `connection` as the database's one writer. A session advisory lock, so
 /// it lasts exactly as long as the connection: a killed writer frees it, a
 /// second one is refused.
@@ -267,9 +264,7 @@ pub async fn claim(connection: &mut PgConnection) -> Result<(), String> {
         .map_err(|error| error.to_string())?;
     let deadline = tokio::time::Instant::now() + CLAIM_WAIT;
     loop {
-        let won: bool = sqlx::query_scalar("SELECT pg_try_advisory_lock($1)")
-            .bind(WRITER_LOCK)
-            .fetch_one(&mut *connection)
+        let won = sinex_store::writer_lock::try_claim(connection)
             .await
             .map_err(|e| format!("database: {e}"))?;
         if won {

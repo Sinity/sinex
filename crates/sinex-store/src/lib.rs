@@ -12,6 +12,7 @@ pub mod commit_log;
 pub mod derivations;
 pub mod diagnostics;
 pub mod excision;
+pub mod live;
 pub mod material_bytes;
 pub mod payloads;
 pub mod positions;
@@ -22,6 +23,7 @@ pub mod replay;
 pub mod runs;
 pub mod sealed;
 mod stage;
+pub mod writer_lock;
 
 pub use admission::{DerivedScope, DirtyKeys, KeyInput, KeyScope, NoDerivations, Outcome, admit};
 pub use blobs::Blobs;

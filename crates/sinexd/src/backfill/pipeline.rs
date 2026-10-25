@@ -149,12 +149,10 @@ async fn reopen_stored(
     let Some(material) = &mut acquired.material else {
         return Ok(false);
     };
-    let exists: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM raw.materials WHERE id=$1)")
-        .bind(material.id.0)
-        .fetch_one(&mut *conn)
+    let registered = sinex_store::material_bytes::registered(conn, &[material.id.0])
         .await
         .map_err(|e| e.to_string())?;
-    if !exists {
+    if registered.is_empty() {
         return Ok(false);
     }
     let opened = crate::stored::open(conn, blobs, material.id, unlock).await?;

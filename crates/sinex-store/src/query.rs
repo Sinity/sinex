@@ -80,6 +80,24 @@ pub async fn current_seq(conn: &mut PgConnection) -> Result<i64> {
     )
 }
 
+/// Let this session see the classes in `grants` (comma-separated) through the
+/// visibility views.
+pub async fn set_grants(conn: &mut PgConnection, grants: &str) -> sqlx::Result<()> {
+    sqlx::query_scalar!("SELECT set_config('sinex.grants', $1, false)", grants)
+        .fetch_one(&mut *conn)
+        .await?;
+    Ok(())
+}
+
+/// Make the transaction just begun on `conn` read-only, with every statement
+/// seeing the same snapshot.
+pub async fn read_one_snapshot(conn: &mut PgConnection) -> Result<()> {
+    sqlx::query!("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY")
+        .execute(&mut *conn)
+        .await?;
+    Ok(())
+}
+
 /// Run a bound query and return one page of its answer.
 pub async fn run(
     conn: &mut PgConnection,
@@ -89,9 +107,7 @@ pub async fn run(
     page: &Page,
 ) -> Result<Answer> {
     let mut tx = conn.begin().await?;
-    sqlx::query!("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY")
-        .execute(&mut *tx)
-        .await?;
+    read_one_snapshot(&mut tx).await?;
     sqlx::query!("SET LOCAL TimeZone = 'UTC'")
         .execute(&mut *tx)
         .await?;
@@ -100,11 +116,12 @@ pub async fn run(
         return Err(Error::Invalid("page size is out of range".into()));
     }
     let ctx = context_for_page(ctx, page)?;
-    let scope: (String, String) = sqlx::query_as(
-        "SELECT current_user::text, coalesce(current_setting('sinex.grants', true), '')",
+    let scope = sqlx::query!(
+        r#"SELECT current_user::text AS "user!", coalesce(current_setting('sinex.grants', true), '') AS "grants!""#,
     )
     .fetch_one(&mut *tx)
     .await?;
+    let scope = (scope.user, scope.grants);
     let question = cursor::question(text, query, &ctx, &scope)?;
     let current = current_seq(&mut tx).await?;
     let prior = page

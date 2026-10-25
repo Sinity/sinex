@@ -358,12 +358,9 @@ impl Ingest {
         cited.sort_unstable();
         cited.dedup();
         if !cited.is_empty() {
-            let known: Vec<Uuid> =
-                sqlx::query_scalar("SELECT id FROM raw.materials WHERE id = ANY($1)")
-                    .bind(&cited)
-                    .fetch_all(&mut self.conn)
-                    .await
-                    .map_err(|e| Check::Unavailable(e.to_string()))?;
+            let known = sinex_store::material_bytes::registered(&mut self.conn, &cited)
+                .await
+                .map_err(|e| Check::Unavailable(e.to_string()))?;
             if let Some(missing) = cited.iter().find(|m| !known.contains(m)) {
                 return Err(Check::Refused(format!(
                     "events cite material {missing}, which is not registered; send its material frame first"
