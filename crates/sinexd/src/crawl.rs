@@ -1,6 +1,6 @@
 //! The `crawl` command: fetch pages from stored browser history whose host is
-//! on the allow list and that have not been fetched yet (architecture §5.6).
-//! The allow list is the opt-in: nothing is fetched without one.
+//! on the allow list and that have not been fetched yet. The allow list is the
+//! opt-in: nothing is fetched without one.
 use crate::backfill::{Totals, drive};
 use crate::one_shot::Sink;
 use crate::writer::WriterHandle;
@@ -56,12 +56,12 @@ pub async fn run(
                 .map(str::to_owned)
         })
         .collect();
-    let candidates = if urls.is_empty() {
+    let wanted = if urls.is_empty() {
         history_urls(read_conn).await?
     } else {
         urls
     };
-    let mut todo: Vec<String> = candidates
+    let mut todo: Vec<String> = wanted
         .into_iter()
         .filter(|u| !fetched.contains(u))
         .filter(|u| page_crawl::split(u).is_some_and(|(_, h, _)| page_crawl::allowed(&h, &allow)))

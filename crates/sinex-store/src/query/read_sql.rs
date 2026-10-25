@@ -1,7 +1,7 @@
-//! Read-only SQL under the caller's grants (architecture §7.1, `m1sz`): the
-//! statement runs in a read-only transaction as the reader role, so it can
-//! read the stable views and tables and change nothing. Rows come back as
-//! JSON objects with the statement's own column names, in order.
+//! Read-only SQL under the caller's grants: the statement runs in a read-only
+//! transaction as the reader role, so it can read the stable views and tables
+//! and change nothing. Rows come back as JSON objects with the statement's own
+//! column names, in order.
 use crate::{Error, Result};
 use serde_json::Value as Json;
 use sqlx::{Connection, PgConnection};

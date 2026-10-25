@@ -23,11 +23,11 @@ fn bundle_staging_does_not_hold_whole_file_bodies() {
     let mut state = DirState::default();
     // Counting is local to this synchronous poll. It excludes executable page
     // faults and filesystem cache, and includes buffers released before return.
-    let control = allocation_counter::measure(|| {
+    let known_allocation = allocation_counter::measure(|| {
         let body = vec![0u8; 24 << 20];
         std::hint::black_box(&body);
     });
-    assert!(control.bytes_max >= 24 << 20);
+    assert!(known_allocation.bytes_max >= 24 << 20);
 
     let mut acquired = None;
     let measured = allocation_counter::measure(|| {

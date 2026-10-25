@@ -45,7 +45,7 @@ pub struct Stress {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub binning_data: Option<Option<Binning>>,
     #[serde(flatten)]
-    pub(crate) uninterpreted: Map<String, Value>,
+    pub(crate) unknown: Map<String, Value>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
@@ -62,7 +62,7 @@ pub struct Steps {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub speed: Option<Option<Scalar>>,
     #[serde(flatten)]
-    pub(crate) uninterpreted: Map<String, Value>,
+    pub(crate) unknown: Map<String, Value>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
@@ -76,7 +76,7 @@ pub struct Hrv {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub binning_data: Option<Option<Binning>>,
     #[serde(flatten)]
-    pub(crate) uninterpreted: Map<String, Value>,
+    pub(crate) unknown: Map<String, Value>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
@@ -99,7 +99,7 @@ pub struct HeartRate {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub binning_data: Option<Option<Binning>>,
     #[serde(flatten)]
-    pub(crate) uninterpreted: Map<String, Value>,
+    pub(crate) unknown: Map<String, Value>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
@@ -119,7 +119,7 @@ pub struct Oxygen {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub low_duration: Option<Option<Scalar>>,
     #[serde(flatten)]
-    pub(crate) uninterpreted: Map<String, Value>,
+    pub(crate) unknown: Map<String, Value>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
@@ -139,7 +139,7 @@ pub struct Respiratory {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub binning_data: Option<Option<Binning>>,
     #[serde(flatten)]
-    pub(crate) uninterpreted: Map<String, Value>,
+    pub(crate) unknown: Map<String, Value>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
@@ -159,7 +159,7 @@ pub struct SkinTemperature {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub binning_data: Option<Option<Binning>>,
     #[serde(flatten)]
-    pub(crate) uninterpreted: Map<String, Value>,
+    pub(crate) unknown: Map<String, Value>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
@@ -191,7 +191,7 @@ pub struct Sleep {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub movement_awakening: Option<Option<Scalar>>,
     #[serde(flatten)]
-    pub(crate) uninterpreted: Map<String, Value>,
+    pub(crate) unknown: Map<String, Value>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
@@ -238,7 +238,7 @@ pub struct SleepCombined {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub wake_score: Option<Option<Scalar>>,
     #[serde(flatten)]
-    pub(crate) uninterpreted: Map<String, Value>,
+    pub(crate) unknown: Map<String, Value>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
@@ -252,7 +252,7 @@ pub struct SleepStage {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub sleep_id: Option<Option<Scalar>>,
     #[serde(flatten)]
-    pub(crate) uninterpreted: Map<String, Value>,
+    pub(crate) unknown: Map<String, Value>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
@@ -263,7 +263,7 @@ pub struct Snoring {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub duration: Option<Option<Scalar>>,
     #[serde(flatten)]
-    pub(crate) uninterpreted: Map<String, Value>,
+    pub(crate) unknown: Map<String, Value>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
@@ -274,7 +274,7 @@ pub struct Movement {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub binning_data: Option<Option<Binning>>,
     #[serde(flatten)]
-    pub(crate) uninterpreted: Map<String, Value>,
+    pub(crate) unknown: Map<String, Value>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
@@ -291,7 +291,7 @@ pub struct Nap {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub vitality_day_time: Option<Option<Scalar>>,
     #[serde(flatten)]
-    pub(crate) uninterpreted: Map<String, Value>,
+    pub(crate) unknown: Map<String, Value>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
@@ -317,7 +317,7 @@ pub struct Vitality {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub activity_level: Option<Option<Scalar>>,
     #[serde(flatten)]
-    pub(crate) uninterpreted: Map<String, Value>,
+    pub(crate) unknown: Map<String, Value>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
@@ -349,7 +349,7 @@ pub struct Weight {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub total_body_water: Option<Option<Scalar>>,
     #[serde(flatten)]
-    pub(crate) uninterpreted: Map<String, Value>,
+    pub(crate) unknown: Map<String, Value>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
@@ -360,7 +360,7 @@ pub struct Floors {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub floor: Option<Option<Scalar>>,
     #[serde(flatten)]
-    pub(crate) uninterpreted: Map<String, Value>,
+    pub(crate) unknown: Map<String, Value>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
@@ -380,7 +380,7 @@ pub struct Mood {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub notes: Option<Option<Scalar>>,
     #[serde(flatten)]
-    pub(crate) uninterpreted: Map<String, Value>,
+    pub(crate) unknown: Map<String, Value>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
@@ -412,7 +412,7 @@ pub struct ActivityDay {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub distance: Option<Option<Scalar>>,
     #[serde(flatten)]
-    pub(crate) uninterpreted: Map<String, Value>,
+    pub(crate) unknown: Map<String, Value>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
@@ -432,7 +432,7 @@ pub struct Calories {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub active_time: Option<Option<Scalar>>,
     #[serde(flatten)]
-    pub(crate) uninterpreted: Map<String, Value>,
+    pub(crate) unknown: Map<String, Value>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
@@ -455,7 +455,7 @@ pub struct Ecg {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub data_mime: Option<Option<Scalar>>,
     #[serde(flatten)]
-    pub(crate) uninterpreted: Map<String, Value>,
+    pub(crate) unknown: Map<String, Value>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
@@ -503,7 +503,7 @@ pub struct Bin {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub activity_level: Option<Option<Scalar>>,
     #[serde(flatten)]
-    pub(crate) uninterpreted: Map<String, Value>,
+    pub(crate) unknown: Map<String, Value>,
 }
 
 /// A companion-file reference, decoded source bins, or an unrecognized object.
@@ -512,7 +512,7 @@ pub struct Bin {
 pub enum Binning {
     Reference(String),
     Rows(Vec<Bin>),
-    UninterpretedObject(Map<String, Value>),
+    UnknownObject(Map<String, Value>),
 }
 impl<'de> Deserialize<'de> for Binning {
     fn deserialize<D: serde::Deserializer<'de>>(de: D) -> Result<Self, D::Error> {
@@ -522,7 +522,7 @@ impl<'de> Deserialize<'de> for Binning {
             Value::Array(_) => serde_json::from_value(value)
                 .map(Self::Rows)
                 .map_err(serde::de::Error::custom),
-            Value::Object(object) => Ok(Self::UninterpretedObject(object)),
+            Value::Object(object) => Ok(Self::UnknownObject(object)),
             _ => Err(serde::de::Error::custom(
                 "binning_data must be a reference, bin array or unknown object",
             )),
@@ -531,15 +531,15 @@ impl<'de> Deserialize<'de> for Binning {
 }
 
 impl Binning {
-    pub(crate) fn uninterpreted_fields(&self) -> Vec<String> {
+    pub(crate) fn unknown_fields(&self) -> Vec<String> {
         match self {
-            Self::UninterpretedObject(_) => vec!["/values/binning_data".into()],
+            Self::UnknownObject(_) => vec!["/values/binning_data".into()],
             Self::Reference(_) => vec![],
             Self::Rows(rows) => rows
                 .iter()
                 .enumerate()
                 .flat_map(|(i, row)| {
-                    row.uninterpreted
+                    row.unknown
                         .keys()
                         .map(move |key| format!("/values/binning_data/{i}/{}", super::pointer(key)))
                 })

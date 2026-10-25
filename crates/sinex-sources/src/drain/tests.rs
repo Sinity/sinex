@@ -357,13 +357,13 @@ fn directory_bundles_keep_empty_members_at_distinct_anchors() {
 }
 
 #[devkit::test]
-fn retained_reader_holds_one_record_and_stops_at_a_backing_fault() {
+fn stored_reader_holds_one_record_and_stops_at_a_read_fault() {
     use std::sync::atomic::{AtomicUsize, Ordering};
-    struct Backing {
+    struct Stored {
         peak: AtomicUsize,
         calls: AtomicUsize,
     }
-    impl RecordRead for Backing {
+    impl RecordRead for Stored {
         fn length(&self) -> u64 {
             1 << 40
         }
@@ -371,14 +371,14 @@ fn retained_reader_holds_one_record_and_stops_at_a_backing_fault() {
             self.peak.fetch_max(out.len(), Ordering::Relaxed);
             self.calls.fetch_add(1, Ordering::Relaxed);
             if start >= 12 {
-                return Err(std::io::Error::other("synthetic retained read failure"));
+                return Err(std::io::Error::other("synthetic stored read failure"));
             }
             assert_eq!(out.len(), 6);
             out.copy_from_slice(if start == 0 { b"first\n" } else { b"other\n" });
             Ok(())
         }
     }
-    let backing = Backing {
+    let stored = Stored {
         peak: AtomicUsize::new(0),
         calls: AtomicUsize::new(0),
     };
@@ -388,7 +388,7 @@ fn retained_reader_holds_one_record_and_stops_at_a_backing_fault() {
             source: "synthetic",
             class: Class::Open,
             material: MaterialId::new(),
-            bytes: RecordBytes::Reader(&backing),
+            bytes: RecordBytes::Reader(&stored),
             records: &[(0, 6), (6, 12), (12, 18)],
             carry: Value::Null,
             reading_order: &|a| ReadingOrder(a as i64),
@@ -405,15 +405,15 @@ fn retained_reader_holds_one_record_and_stops_at_a_backing_fault() {
     assert_eq!(first.carry, serde_json::json!(1));
     assert_eq!(commands(&[first]), vec![(0, "first".into())]);
     let error = chunks.next().unwrap().unwrap_err();
-    assert!(error.0.contains("synthetic retained read failure"));
+    assert!(error.0.contains("synthetic stored read failure"));
     assert!(chunks.next().is_none());
-    assert_eq!(backing.peak.load(Ordering::Relaxed), 6);
-    assert_eq!(backing.calls.load(Ordering::Relaxed), 3);
+    assert_eq!(stored.peak.load(Ordering::Relaxed), 6);
+    assert_eq!(stored.calls.load(Ordering::Relaxed), 3);
 }
 
 #[devkit::test]
 fn a_blank_record_is_no_record_and_leaves_the_carry_alone() {
-    let bytes = b"  \nretained\n";
+    let bytes = b"  \nkept\n";
     let records = lines(bytes);
     let chunks = drain(
         &Lines,
@@ -430,6 +430,6 @@ fn a_blank_record_is_no_record_and_leaves_the_carry_alone() {
         },
     )
     .unwrap();
-    assert_eq!(commands(&chunks), vec![(3, "retained".into())]);
+    assert_eq!(commands(&chunks), vec![(3, "kept".into())]);
     assert_eq!(chunks.last().unwrap().carry, serde_json::json!(1));
 }

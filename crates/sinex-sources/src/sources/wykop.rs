@@ -1,17 +1,17 @@
 //! Wykop account scrape (`wykop_*.jsonl`, one object per line with a `kind`),
-//! on `ExportArchive` (`spec/port-lynchpin-sources.md` §7.7). The operator's
-//! entries, comments and links become `post.published`; entries plused and
-//! links dug or buried become `vote.cast`. The activity feed
-//! (`wykop_actions`) repeats the operator's own posts and votes under the same
-//! identities, adds down-votes on entries and favourites (`bookmark.saved`),
-//! and lists items the operator only commented on, which yield nothing here
-//! because the comment files carry the comments. Tag notifications become
-//! `notification.received` (the grouped listing names the same notifications),
-//! and blacklisted users, tags and domains become `account.setting`. The
-//! observer feeds of other people's content (`wykop_observed_*`) are not read.
+//! on `ExportArchive`. The operator's entries, comments and links become
+//! `post.published`; entries plused and links dug or buried become `vote.cast`.
+//! The activity feed (`wykop_actions`) repeats the operator's own posts and
+//! votes under the same identities, adds down-votes on entries and favourites
+//! (`bookmark.saved`), and lists items the operator only commented on, which
+//! yield nothing here because the comment files carry the comments. Tag
+//! notifications become `notification.received` (the grouped listing names the
+//! same notifications), and blacklisted users, tags and domains become
+//! `account.setting`. The observer feeds of other people's content
+//! (`wykop_observed_*`) are not read.
 //!
 //! Every `*_created_at` is zoneless and is Warsaw local time, as Wykop's own
-//! frontend reads it (the predecessor read it as UTC, an hour or two early).
+//! frontend reads it; read as UTC it would be an hour or two early.
 use crate::drivers::export_archive::{ExportArchive, Framing, PART_BYTES};
 use crate::registry::{DeclaredSource, Driver, SourceSpec};
 use crate::sources::fields;

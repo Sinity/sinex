@@ -74,7 +74,7 @@ impl Child {
                 .lock()
                 .unwrap_or_else(|e| e.into_inner());
             let pid = registered.expect("unreaped child stays registered");
-            // Observe exit without reaping: the leader still reserves its PID
+            // Observe exit without reaping: the leader still holds its PID
             // while we stop descendants and remove the group registration.
             match waitid(
                 WaitId::Pid(pid),

@@ -48,7 +48,7 @@ fn direct_fit_values_keep_large_integers_and_extensions() {
     let wire = serde_json::to_value(&out[0]).unwrap();
     assert_eq!(wire["values"]["fitValue"], point["fitValue"]);
     assert_eq!(
-        wire["uninterpreted_fields"],
+        wire["unknown_fields"],
         json!(["/values/fitValue/0/extra", "/values/new_column"])
     );
 }

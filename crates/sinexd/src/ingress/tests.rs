@@ -271,12 +271,11 @@ async fn materials_then_events_are_admitted_and_acknowledged_once(db: devkit::pg
     assert!(h.have("phone", &["e1"]).await.is_empty());
 }
 
-/// Polylogue's side of the boundary (architecture §9): a unit of an
-/// archive's rows arrives as a record-batch material and one `polylogue.rows`
-/// event at its start. Sinex keys units by archive and position, so a unit
-/// sent again in a new frame is a repeat, and the next position is a new
-/// unit. Polylogue's own rebuild proof drives the same frames through a real
-/// `sinexd` (polylogue `crates/sinex/tests/proof.rs`).
+/// Polylogue's side of the boundary: a unit of an archive's rows arrives as a
+/// record-batch material and one `polylogue.rows` event at its start. Sinex
+/// keys units by archive and position, so a unit sent again in a new frame is a
+/// repeat, and the next position is a new unit. Polylogue's own tests drive the
+/// same frames through a real `sinexd`.
 #[devkit::test]
 async fn polylogue_units_are_admitted_once_by_archive_and_position(db: devkit::pg::TestDatabase) {
     let h = Harness::start(db).await;

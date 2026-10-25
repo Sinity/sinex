@@ -3,7 +3,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
-// Google Fit's exported value wrapper and direct value forms are both retained.
+// Google Fit's exported value wrapper and direct value forms are both kept.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct Fit {
     #[serde(default, deserialize_with = "supplied")]
@@ -19,7 +19,7 @@ pub struct Fit {
     #[serde(rename = "originDataSourceId")]
     pub origin_data_source_id: Option<Option<String>>,
     #[serde(flatten)]
-    pub(crate) uninterpreted: Map<String, Value>,
+    pub(crate) unknown: Map<String, Value>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
@@ -46,7 +46,7 @@ pub struct FitValue {
     #[serde(rename = "mapVal")]
     pub map_val: Option<Option<Vec<MapEntry>>>,
     #[serde(flatten)]
-    pub(crate) uninterpreted: Map<String, Value>,
+    pub(crate) unknown: Map<String, Value>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
@@ -58,41 +58,41 @@ pub struct MapEntry {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub value: Option<Option<FitValue>>,
     #[serde(flatten)]
-    pub(crate) uninterpreted: Map<String, Value>,
+    pub(crate) unknown: Map<String, Value>,
 }
 
 impl Fit {
-    pub(crate) fn nested_uninterpreted_fields(&self) -> Vec<String> {
+    pub(crate) fn nested_unknown_fields(&self) -> Vec<String> {
         let mut fields = Vec::new();
         if let Some(Some(values)) = &self.fit_value {
             for (i, value) in values.iter().enumerate() {
-                value.uninterpreted_fields(&format!("/values/fitValue/{i}"), &mut fields);
+                value.unknown_fields(&format!("/values/fitValue/{i}"), &mut fields);
             }
         }
         fields
     }
 }
 impl FitValue {
-    fn uninterpreted_fields(&self, path: &str, fields: &mut Vec<String>) {
+    fn unknown_fields(&self, path: &str, fields: &mut Vec<String>) {
         fields.extend(
-            self.uninterpreted
+            self.unknown
                 .keys()
                 .map(|key| format!("{path}/{}", super::pointer(key))),
         );
         if let Some(Some(value)) = &self.value {
-            value.uninterpreted_fields(&format!("{path}/value"), fields);
+            value.unknown_fields(&format!("{path}/value"), fields);
         }
         if let Some(Some(entries)) = &self.map_val {
             for (i, entry) in entries.iter().enumerate() {
                 let path = format!("{path}/mapVal/{i}");
                 fields.extend(
                     entry
-                        .uninterpreted
+                        .unknown
                         .keys()
                         .map(|key| format!("{path}/{}", super::pointer(key))),
                 );
                 if let Some(Some(value)) = &entry.value {
-                    value.uninterpreted_fields(&format!("{path}/value"), fields);
+                    value.unknown_fields(&format!("{path}/value"), fields);
                 }
             }
         }

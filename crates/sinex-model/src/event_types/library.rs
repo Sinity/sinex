@@ -1,12 +1,12 @@
-//! The media library (architecture §6.6): what a library scan saw, and the
-//! records library requests write. Every library record is an ordinary typed
-//! event; current values (which tag applies, which property value is shown,
-//! a collection's order) are read from them, never stored beside them.
+//! The media library: what a library scan saw, and the records library requests
+//! write. Every library record is an ordinary typed event; current values
+//! (which tag applies, which property value is shown, a collection's order) are
+//! read from them, never stored beside them.
 //!
-//! Identity follows the library's rules (spec `library.md` §2): exact bytes
-//! are named by their content hash; an item is a continuing object with an
-//! opaque ID, never inferred from a path or from equal bytes alone; a copy of
-//! the bytes seen at a path is an acquisition.
+//! Identity follows the library's rules: exact bytes are named by their content
+//! hash; an item is a continuing object with an opaque ID, never inferred from
+//! a path or from equal bytes alone; a copy of the bytes seen at a path is an
+//! acquisition.
 use crate::Timestamp;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -39,7 +39,7 @@ pub struct Acquisition {
     pub sha256: String,
     pub md5: String,
     /// Sniffed from the bytes; `application/octet-stream` when unknown. A file
-    /// Sinex cannot interpret is still stored and described.
+    /// Sinex cannot read is still stored and described.
     pub media_type: String,
     pub width: Option<u32>,
     pub height: Option<u32>,
@@ -144,8 +144,7 @@ pub struct Target {
     pub part: Option<String>,
 }
 
-/// Who an assigned value comes from, highest first in the selection policy
-/// (spec `library.md` §3).
+/// Who an assigned value comes from, highest first in the selection policy.
 #[derive(
     Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, JsonSchema,
 )]
@@ -186,9 +185,9 @@ pub struct Assignment {
     pub withdrawn_at: Option<Timestamp>,
 }
 
-/// A collection: an ordered list of entries, optionally with a saved query
-/// that offers suggestions. A frozen selection is a collection without a
-/// query whose entries were added from a query's results.
+/// A collection: an ordered list of entries, optionally with a saved query that
+/// offers suggestions. A fixed selection is a collection without a query whose
+/// entries were added from a query's results.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
 #[event(
     type = "library.collection",
@@ -202,8 +201,8 @@ pub struct Collection {
     pub collection: String,
     pub name: String,
     pub saved_query: Option<String>,
-    /// The query the entries were frozen from, for a frozen selection.
-    pub frozen_from: Option<String>,
+    /// The query the entries were selected from, for a fixed selection.
+    pub selected_from: Option<String>,
     pub by: String,
     pub at: Timestamp,
     pub withdrawn_at: Option<Timestamp>,

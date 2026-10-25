@@ -10,7 +10,7 @@ impl<R: Read> Read for Tiny<R> {
 }
 
 #[devkit::test]
-fn reader_framing_keeps_exact_legacy_ranges_across_boundaries() {
+fn reader_framing_keeps_exact_ranges_across_boundaries() {
     use crate::drivers::export_archive::{frame_csv, frame_lines, frame_mbox};
     use crate::sources::{asciinema, operator, zsh};
     let examples: Vec<(Framer, &[u8])> = vec![

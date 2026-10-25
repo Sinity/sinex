@@ -98,7 +98,7 @@ impl Control {
         Ok(child.wait()?.success().then_some(bytes))
     }
 
-    /// Wake a blocked socket reader when capture stops, retaining queued bytes.
+    /// Wake a blocked socket reader when capture stops, keeping queued bytes.
     pub fn shutdown_on_stop(&self, reader: &std::os::unix::net::UnixStream) -> io::Result<()> {
         let mut inner = self.state.inner.lock().unwrap_or_else(|e| e.into_inner());
         if inner.stopped {

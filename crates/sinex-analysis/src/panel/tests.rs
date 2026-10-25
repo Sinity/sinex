@@ -41,9 +41,9 @@ fn covered(source: &str, a: i64, b: i64) -> Coverage {
     }
 }
 
-/// The Kestrel example (`analysis.md` §3.3): partial first day, an
-/// observed day, a day whose last hours the poll could not see, and a day
-/// with no poll at all, which is missing, never zero.
+/// The Kestrel example: partial first day, an observed day, a day whose last
+/// hours the poll could not see, and a day with no poll at all, which is
+/// missing, never zero.
 #[devkit::test]
 fn kestrel_week_tells_zero_from_missing() {
     let payloads: Vec<Value> = (0..5).map(|_| json!({"host": "h"})).collect();

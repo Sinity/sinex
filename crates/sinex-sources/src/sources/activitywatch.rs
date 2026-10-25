@@ -4,9 +4,8 @@
 //! (heartbeat merging), so rows change after they are first read.
 //!
 //! Two capture defects are corrected here, while reading, and not in a later
-//! layer (operator ruling 2026-08-23, `y0o3.13`). The stored rows keep the
-//! bytes exactly as ActivityWatch wrote them; only the interpretation is
-//! corrected, and a replay re-derives it.
+//! layer. The stored rows keep the bytes exactly as ActivityWatch wrote them;
+//! only the reading is corrected, and a replay re-derives it.
 //!
 //! - **Spinner titles.** Coding agents in kitty animate the window title with
 //!   a spinner glyph, and every tick defeated ActivityWatch's merging: one
@@ -47,7 +46,7 @@ pub const SPEC: SourceSpec = SourceSpec {
     framer: crate::Framer::incremental(crate::drivers::append_file::lines),
 };
 
-/// The corrections applied while reading (`y0o3.13` AC4: one declared spec).
+/// The corrections applied while reading.
 pub struct Corrections {
     /// Leading glyphs that are a spinner frame, not part of the title
     /// (corpus-verified class, measured 2026-08-09..23).

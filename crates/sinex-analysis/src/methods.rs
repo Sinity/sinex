@@ -1,7 +1,7 @@
-//! Registered methods (spec `analysis.md` §6): numerical procedures with the
-//! question they estimate and their assumptions stated in code. A method
-//! refuses before computing (too few units, a constant series, gaps where it
-//! needs a dense series) and every result counts what it excluded and why.
+//! Registered methods: numerical procedures with the question they estimate and
+//! their assumptions stated in code. A method refuses before computing (too few
+//! units, a constant series, gaps where it needs a dense series) and every
+//! result counts what it excluded and why.
 pub mod baseline;
 pub mod changepoints;
 pub mod correlation;
@@ -189,7 +189,7 @@ fn dispatch<M: Method>(
 }
 
 /// A dense series: every unit eligible. Methods that need one refuse a series
-/// with holes, listing them, and never interpolate (`analysis.md` §6.6).
+/// with holes, listing them, and never interpolate.
 pub fn dense(input: &MethodInput, points: &[Point]) -> Result<Vec<f64>, NotEstimable> {
     let mut values = Vec::with_capacity(points.len());
     let mut holes = Vec::new();

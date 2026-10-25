@@ -4,8 +4,8 @@ async fn count(conn: &mut PgConnection, sql: &str) -> i64 {
     sqlx::query_scalar(sql).fetch_one(conn).await.unwrap()
 }
 
-/// Events and visibility changes share positions, not row kinds. These
-/// fixtures retain the hot log; excision may leave gaps in its positions.
+/// Events and visibility changes share positions, not row kinds. These fixtures
+/// keep the hot log; excision may leave gaps in its positions.
 pub async fn assert_commit_log(conn: &mut PgConnection) {
     let events = count(conn, "SELECT count(*) FROM core.events").await;
     let logged = count(

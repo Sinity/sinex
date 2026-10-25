@@ -13,7 +13,7 @@ pub(super) async fn source(conn: &mut PgConnection, p: &SourceProgress) -> Resul
         && material_matches(conn, &p.binding, &p.input, material).await? == Some(false)
     {
         return Err(Error::Invalid(
-            "material identity already belongs to different retained facts".into(),
+            "material identity already belongs to different stored facts".into(),
         ));
     }
 
@@ -95,7 +95,7 @@ pub(super) async fn source(conn: &mut PgConnection, p: &SourceProgress) -> Resul
 
     let role = sinex_model::MaterialRole::of(&m.manifest)
         .map_err(|e| Error::Invalid(format!("material {}: {e}", m.id)))?;
-    // Decoded record parts retain parser coordinates, not additional input bytes.
+    // Decoded record parts keep parser coordinates, not additional input bytes.
     if role == sinex_model::MaterialRole::Records {
         return Ok(());
     }

@@ -1,12 +1,12 @@
-//! Polylogue's archive in `primary` mode (architecture §9). Polylogue keeps
-//! the meaning of AI-session data; Sinex keeps its evidence. Each unit of
-//! Polylogue's `archive.db` rows (a revision with its input, extents,
-//! observations and blobs; a note with its targets and relations; an
-//! excision; a setting; a delivery) arrives as a record-batch material plus
-//! one `polylogue.rows` event anchored at its start. The input bytes the rows
-//! cite are materials of their own, placed in the content store before the
-//! event. Sinex never parses either: a deleted Polylogue archive is restored
-//! by reading these batches back in `local_seq` order.
+//! Polylogue's archive in `primary` mode. Polylogue keeps the meaning of
+//! AI-session data; Sinex keeps its evidence. Each unit of Polylogue's
+//! `archive.db` rows (a revision with its input, extents, observations and
+//! blobs; a note with its targets and relations; an excision; a setting; a
+//! delivery) arrives as a record-batch material plus one `polylogue.rows` event
+//! anchored at its start. The input bytes the rows cite are materials of their
+//! own, placed in the content store before the event. Sinex never parses
+//! either: a deleted Polylogue archive is restored by reading these batches
+//! back in `local_seq` order.
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 

@@ -1,8 +1,7 @@
-//! The derivation runner (architecture §6.2). It runs outside the writer task:
-//! it reads with its own connection, computes, and hands the writer one
-//! `Derived` batch per key (or per run of committed events), which admission
-//! stores under the same privacy, schema and identity rules as captured
-//! events.
+//! The derivation runner. It runs outside the writer task: it reads with its
+//! own connection, computes, and hands the writer one `Derived` batch per key
+//! (or per run of committed events), which admission stores under the same
+//! privacy, schema and identity rules as captured events.
 //!
 //! - **Keyed derivations:** admission marks keys dirty; the driver takes dirty
 //!   keys oldest first, reads each key's current inputs, computes, and submits
@@ -706,7 +705,7 @@ impl DerivationRunner {
     }
 
     /// Finish the current pass or maintenance step on shutdown, then release
-    /// the writer handle. Already submitted batches retain their acknowledgements.
+    /// the writer handle. Already submitted batches keep their acknowledgments.
     pub async fn run(
         mut self,
         wake: Arc<Notify>,

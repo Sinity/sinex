@@ -67,12 +67,12 @@ impl Api {
             }
             let unlock = self.unlock.lock().await;
             let Some(session) = unlock.as_ref() else {
-                return refused("sealed replay is pending explicit operator unlock");
+                return refused("sealed replay needs an operator unlock");
             };
-            if let Err(error) = session.authority.check() {
+            if let Err(error) = session.unlock.check() {
                 return refused(error);
             }
-            o.authority = Some(session.authority.clone());
+            o.unlock = Some(session.unlock.clone());
         }
         let Some(writer) = &self.writer else {
             return refused("this daemon has no writer; writes go through `sinexd run`");

@@ -6,7 +6,7 @@ use crate::{Class, RecordState, TsOrig};
 use serde::{Serialize, de::DeserializeOwned};
 use serde_json::Value;
 
-/// How Sinex recognizes the same record seen again (identity rule 2).
+/// How Sinex recognizes the same record seen again.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum KeyKind {
     /// No stable identity: one live reading per record location, event type and
@@ -17,7 +17,7 @@ pub enum KeyKind {
     Fields(&'static [&'static str]),
 }
 
-/// What admission does with a second reading of a live record (identity rule 3).
+/// What admission does with a second reading of a live record.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, serde::Serialize, crate::DbCheck)]
 #[serde(rename_all = "snake_case")]
 pub enum ReplaceRule {
@@ -28,7 +28,7 @@ pub enum ReplaceRule {
     SuppressRepeat,
 }
 
-/// The key under which a keyed record is remembered: BLAKE3 over the canonical
+/// The key under which a keyed record is remembered: BLAKE3 over the sorted
 /// JSON of its key fields, in declared order.
 #[derive(
     Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, serde::Serialize, serde::Deserialize,
@@ -83,8 +83,8 @@ pub trait EventPayload: Serialize + DeserializeOwned + Send + Sync + 'static {
     /// gone (a deleted video's title).
     const KEEP_KNOWN: &'static [&'static str] = &[];
 
-    /// The identity available in this particular record. The default retains
-    /// the declared key, including existing null-field behavior.
+    /// The identity available in this particular record. The default keeps the
+    /// declared key, including existing null-field behavior.
     fn key_kind(&self) -> KeyKind {
         Self::KEY
     }

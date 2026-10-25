@@ -1,6 +1,6 @@
 //! `sinexctl`: the CLI and the MCP server, generated from the command table in
-//! `sinex-protocol`, calling the daemon's API. A small offline mode diagnoses
-//! a stopped daemon without writing anything (architecture §7.2).
+//! `sinex-protocol`, calling the daemon's API. A small offline mode diagnoses a
+//! stopped daemon without writing anything.
 //!
 //! Exit codes: 0 done; 2 refused; 3 asks for something not built yet; 6 the
 //! daemon is not reachable; 1 anything else.
@@ -138,9 +138,8 @@ fn fail(code: u8, message: impl std::fmt::Display) -> ExitCode {
     ExitCode::from(code)
 }
 
-/// `library-open`: ask the daemon where the item's bytes are, hand that file
-/// to the player for its type, and record the view with how long the player
-/// ran (spec `library.md` §4: the target is fixed when the request is made).
+/// `library-open`: ask the daemon where the item's bytes are, hand that file to
+/// the player for its type, and record the view with how long the player ran.
 async fn open_and_record(client: &Client, request: &Request, item: &str) -> ExitCode {
     let target = match client.call(request).await {
         Ok((_, Reply::Ok { result })) => result,

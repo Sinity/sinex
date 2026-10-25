@@ -1,6 +1,5 @@
-//! Producing to `sinexd` over the NATS ingress (architecture §4.3), for
-//! processes that run sources outside the daemon: `sinex-session` and capture
-//! nodes.
+//! Producing to `sinexd` over the NATS ingress, for processes that run sources
+//! outside the daemon: `sinex-session` and capture nodes.
 //!
 //! A poll goes through the same driver and drain `sinexd` uses. Then:
 //!
@@ -13,12 +12,11 @@
 //! 3. only when every frame of a batch is acknowledged does the binding's
 //!    cursor (and parser carry) advance, in a state file next to the spool.
 //!
-//! Before a batch's first frame is sent, the frames and the position after
-//! them are written to a pending file. A producer that stops anywhere before
-//! the position is saved sends those same frames again on its next start
-//! ([`Producer::position`]), and Sinex answers frames it already recorded
-//! from the record, so nothing is read into a second material or admitted
-//! twice.
+//! Before a batch's first frame is sent, the frames and the position after them
+//! are written to a sending file. A producer that stops anywhere before the
+//! position is saved sends those same frames again on its next start
+//! ([`Producer::position`]), and Sinex answers frames it already recorded from
+//! the record, so nothing is read into a second material or admitted twice.
 //!
 //! A producer on another host, which does not share `sinexd`'s content store,
 //! sends a material's bytes in [`Ingress::Chunk`] frames first
@@ -127,14 +125,14 @@ impl Position {
 /// durably before the first frame goes out and removed once the position is
 /// saved.
 #[derive(Clone, Debug, Serialize, Deserialize)]
-struct Pending {
+struct Sending {
     frames: Vec<Ingress>,
     position: Position,
 }
 
-impl Pending {
+impl Sending {
     fn path(dir: &Path, binding: &str) -> PathBuf {
-        Position::path(dir, binding).with_extension("pending.json")
+        Position::path(dir, binding).with_extension("sending.json")
     }
 
     fn load(dir: &Path, binding: &str) -> Result<Option<Self>, Error> {
@@ -152,7 +150,7 @@ impl Pending {
         let path = Self::path(dir, binding);
         write_durably(
             &path,
-            &serde_json::to_vec(self).expect("pending serializes"),
+            &serde_json::to_vec(self).expect("sending batch serializes"),
         )
     }
 
@@ -188,7 +186,7 @@ pub struct Sent {
     pub admitted: usize,
     /// Records the parser could not read, sent to Sinex as failures.
     pub unread: usize,
-    /// Frames sent again from a pending batch after a restart.
+    /// Frames sent again from an unacknowledged batch after a restart.
     pub resent: usize,
 }
 
@@ -232,7 +230,7 @@ impl Producer {
         self
     }
 
-    /// The binding's committed position. A batch left pending by a stop
+    /// The binding's committed position. A batch a stop left unacknowledged
     /// before its position was saved is sent again first (Sinex answers its
     /// recorded frames from the record), and its position is saved.
     pub async fn position(
@@ -241,13 +239,13 @@ impl Producer {
         state: &Path,
         store: &Store,
     ) -> Result<Position, Error> {
-        if let Some(pending) = Pending::load(state, binding)? {
-            for frame in &pending.frames {
+        if let Some(sending) = Sending::load(state, binding)? {
+            for frame in &sending.frames {
                 self.deliver(frame.clone(), store).await?;
             }
-            pending.position.save(state, binding)?;
-            self.clear_spool(&pending.frames, store)?;
-            Pending::clear(state, binding)?;
+            sending.position.save(state, binding)?;
+            self.clear_spool(&sending.frames, store)?;
+            Sending::clear(state, binding)?;
         }
         Position::load(state, binding)
     }
@@ -557,7 +555,7 @@ impl Producer {
                 .into_iter()
                 .map(|f| self.prepare(f, &snapshots, sink))
                 .collect::<Result<Vec<_>, _>>()?;
-            Pending {
+            Sending {
                 frames: frames.clone(),
                 position: after.clone(),
             }
@@ -571,7 +569,7 @@ impl Producer {
             }
             after.save(state, binding)?;
             self.clear_spool(&frames, sink)?;
-            Pending::clear(state, binding)?;
+            Sending::clear(state, binding)?;
         }
         Ok(sent)
     }

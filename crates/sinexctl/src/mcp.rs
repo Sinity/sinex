@@ -1,7 +1,7 @@
-//! The MCP server (architecture §7.2): one tool per command of the table that
-//! is offered to agents, over stdio. Each call is sent to the daemon's API,
-//! which does all parsing, access checks and masking; results start with the
-//! data notice, and refusals are tool errors, never empty results.
+//! The MCP server: one tool per command of the table that is offered to agents,
+//! over stdio. Each call is sent to the daemon's API, which does all parsing,
+//! access checks and masking; results start with the data notice, and refusals
+//! are tool errors, never empty results.
 use crate::client::Client;
 use rmcp::model::{
     CallToolRequestParams, CallToolResponse, CallToolResult, ContentBlock, Implementation,

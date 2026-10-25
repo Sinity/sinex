@@ -28,7 +28,7 @@ pub struct BrowserVisit {
     /// The visit this one came from (a link click); `None` when it had none.
     pub from_visit: Option<i64>,
     /// Chromium's page transition as stored: the core type in the low byte,
-    /// qualifier flags above it.
+    /// transition flags above it.
     pub transition: i64,
     /// How long the page stayed open; `None` while it is still open (0).
     pub duration_us: Option<i64>,

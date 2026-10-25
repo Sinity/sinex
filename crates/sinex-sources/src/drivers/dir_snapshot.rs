@@ -1,5 +1,5 @@
 //! `DirSnapshot`: a directory of files read as a whole (a notes vault, a
-//! Maildir), architecture §5.3.
+//! Maildir).
 //!
 //! Each poll walks the tree comparing file facts with what was already read.
 //! New and changed files stream into an unnamed staged bundle, stored as one
@@ -56,12 +56,12 @@ pub struct Cursor {
 #[derive(Default)]
 pub struct DirState {
     files: HashMap<String, Option<(u64, i128, [u8; 32])>>,
-    pending: Option<Pending>,
+    held: Option<Held>,
     /// Paths a restart has already decided from a newer bundle.
     remembered: HashSet<String>,
 }
 
-struct Pending {
+struct Held {
     stored: StoredBytes,
     length: usize,
     records: Vec<(usize, usize)>,
@@ -74,7 +74,7 @@ struct Pending {
     observation: ObservationFacts,
 }
 
-impl Pending {
+impl Held {
     fn acquired(&self, input: InputRef, cursor: &Cursor) -> Acquired {
         let through = if cursor.material == Some(self.id) {
             cursor.through.unwrap_or(0)
@@ -158,12 +158,12 @@ impl DirSnapshot {
             serde_json::from_value(cursor.clone())
                 .map_err(|e| DriverError::Cursor(e.to_string()))?
         };
-        if let Some(pending) = state.pending.take() {
-            if previous.material == Some(pending.id) && previous.through == Some(pending.length) {
-                state.files = pending.files;
+        if let Some(held) = state.held.take() {
+            if previous.material == Some(held.id) && previous.through == Some(held.length) {
+                state.files = held.files;
             } else {
-                let acquired = pending.acquired(self.input(), &previous);
-                state.pending = Some(pending);
+                let acquired = held.acquired(self.input(), &previous);
+                state.held = Some(held);
                 return Ok(acquired);
             }
         }
@@ -316,7 +316,7 @@ impl DirSnapshot {
         } else {
             0
         };
-        let pending = Pending {
+        let held = Held {
             stored: StoredBytes::FramedFile(Arc::new(staged)),
             length,
             records,
@@ -328,8 +328,8 @@ impl DirSnapshot {
             files: next_files,
             observation: facts,
         };
-        let acquired = pending.acquired(self.input(), &Cursor::default());
-        state.pending = Some(pending);
+        let acquired = held.acquired(self.input(), &Cursor::default());
+        state.held = Some(held);
         Ok(acquired)
     }
 }

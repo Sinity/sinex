@@ -1,6 +1,6 @@
-//! The source framework (architecture §5). Every source goes through the same
-//! four steps: stage (what to read, with which parser), acquire (store exact
-//! bytes as materials), parse (bytes to events with record locations), admit.
+//! The source framework. Every source goes through the same four steps: stage
+//! (what to read, with which parser), acquire (store exact bytes as materials),
+//! parse (bytes to events with record locations), admit.
 //!
 //! A *driver* obtains bytes and frames them for one input shape, written once
 //! and shared by every source of that shape. A *parser* maps one framed record
@@ -79,7 +79,7 @@ impl<'a> RecordShape<'a> for serde_json::Map<String, serde_json::Value> {
     }
 }
 
-/// A source's parser (architecture §5.2).
+/// A source's parser.
 pub trait Parser: Send + Sync + 'static {
     /// The framed record: a line, a JSON row, an archive member's record.
     type Record<'a>: RecordShape<'a>;

@@ -182,7 +182,7 @@ fn plain_commands_preserve_text_and_do_not_invent_times() {
     }
 }
 
-// Normalize random event IDs away, retaining the payload, byte coordinates,
+// Normalize random event IDs away, keeping the payload, byte coordinates,
 // source clock, natural key and record bytes hash.
 fn observations(
     bytes: &[u8],

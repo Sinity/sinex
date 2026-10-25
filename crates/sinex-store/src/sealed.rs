@@ -119,7 +119,8 @@ pub fn seal_event(event: &mut Event, key: &DataKey) -> Result<()> {
     Ok(())
 }
 
-/// Seal one persisted interpretation value, including parser carry or failure details.
+/// Seal one stored value from a reading, including parser carry or failure
+/// details.
 pub fn seal_value(value: &Value, key: &DataKey) -> Result<Value> {
     let plain = serde_json::to_vec(value).map_err(|e| Error::Invalid(e.to_string()))?;
     let mut nonce = [0u8; 24];

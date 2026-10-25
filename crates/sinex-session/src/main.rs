@@ -1,7 +1,7 @@
 //! `sinex-session`: sources that need the operator's graphical session
 //! (Hyprland socket and plugin, session D-Bus, clipboard, accessibility, MPRIS,
-//! PipeWire audio, screen capture; home-directory sources). An outside
-//! producer of `sinexd` over the NATS ingress (architecture §7.3).
+//! PipeWire audio, screen capture; home-directory sources). An outside producer
+//! of `sinexd` over the NATS ingress.
 //!
 //! Capture and publishing are separate steps with the spool between them:
 //! capture writes what arrives to disk first, so nothing is lost while the

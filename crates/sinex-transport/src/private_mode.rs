@@ -1,7 +1,7 @@
-//! Private mode (spec `privacy.md` §1 rule 7): one switch every capture path
-//! checks before capturing. The switch is a file: present means on. If the
-//! switch cannot be checked (its directory unreadable, or not creatable), the
-//! answer is "on": capture stays off rather than capturing by accident.
+//! Private mode: one switch every capture path checks before capturing. The
+//! switch is a file: present means on. If the switch cannot be checked (its
+//! directory unreadable, or not creatable), the answer is "on": capture stays
+//! off rather than capturing by accident.
 //!
 //! Live captures drop what arrives while it is on; pollers skip their poll. A
 //! program that keeps its own history (a shell history file, a browser's

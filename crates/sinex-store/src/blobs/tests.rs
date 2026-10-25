@@ -22,7 +22,7 @@ fn put_then_read_range() {
 }
 
 #[devkit::test]
-fn plain_copy_and_retained_reader_keep_exact_bytes() {
+fn plain_copy_and_stored_reader_keep_exact_bytes() {
     let dir = std::env::temp_dir().join(format!("sinex-plain-copy-{}", uuid::Uuid::now_v7()));
     let blobs = Blobs::open(&dir).unwrap();
     let bytes: Vec<u8> = (0..(8 << 20)).map(|n| (n % 251) as u8).collect();

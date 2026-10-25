@@ -4,7 +4,7 @@ use crate::one_shot::Sink;
 use crate::writer::WriterHandle;
 use serde_json::Value;
 use sinex_model::{Class, ObservationFacts, RunId};
-use sinex_sources::drivers::export_archive::group::{self, Cursor, Pending, Route};
+use sinex_sources::drivers::export_archive::group::{self, Cursor, Route, UnfinishedPart};
 use sinex_sources::{Binding, InputKind, Reader, Source, drivers};
 use sinex_store::{Blobs, positions};
 use sqlx::PgConnection;
@@ -39,7 +39,7 @@ impl Bound {
 
 enum Choice {
     Complete,
-    Retained(ObservationFacts, Class),
+    Read(ObservationFacts, Class),
 }
 
 pub(crate) use crate::sealed_access::Access;
@@ -80,7 +80,7 @@ pub(crate) async fn read(
             continue;
         }
         if let Some(driver) = b.reader.export_archive() {
-            let candidate = async {
+            let choice = async {
                 let facts = drivers::file_facts(&driver.path).map_err(|e| e.to_string())?;
                 let cursor = positions::load(conn, &b.binding.name)
                     .await
@@ -102,11 +102,11 @@ pub(crate) async fn read(
                 {
                     return Ok(Choice::Complete);
                 }
-                Ok::<_, String>(Choice::Retained(facts, class))
+                Ok::<_, String>(Choice::Read(facts, class))
             }
             .await;
-            match candidate {
-                Ok(Choice::Retained(facts, class)) => {
+            match choice {
+                Ok(Choice::Read(facts, class)) => {
                     // Host and effective class are the acquisition/privacy context. Physical
                     // file facts permit aliases without conflating authored logical identities.
                     let compatible = archives.iter_mut().find(|g| {
@@ -208,7 +208,7 @@ async fn restore(
         blobs,
         b.reader.as_mut(),
         &b.binding.name,
-        access.authority,
+        access.unlock,
         stop,
     )
     .await?;
@@ -225,7 +225,7 @@ pub(crate) async fn restore_reader(
     blobs: &Blobs,
     reader: &mut dyn Reader,
     binding: &str,
-    authority: Option<&crate::sealed_access::Authority>,
+    unlock: Option<&crate::sealed_access::Unlock>,
     stop: &watch::Receiver<bool>,
 ) -> Result<bool, String> {
     let cursor = positions::load(conn, binding)
@@ -249,7 +249,7 @@ pub(crate) async fn restore_reader(
             .await
             .map_err(|e| e.to_string())?
             .ok_or("a stored part is missing")?;
-        let bytes = crate::retained::Lazy::new(conn, blobs, reference.clone(), authority).await?;
+        let bytes = crate::stored::Lazy::new(conn, blobs, reference.clone(), unlock).await?;
         sealed |= bytes.sealed();
         let more = reader
             .restore(
@@ -327,7 +327,7 @@ async fn read_archive(
             .recipient
             .cloned()
             .or(configured)
-            .or_else(|| access.authority.map(|a| a.recipient()))
+            .or_else(|| access.unlock.map(|a| a.recipient()))
             .ok_or("sealed archive capture requires the class key's public recipient")?;
         Some(Arc::new(crate::one_shot::SealingSink::new(
             blobs.clone(),
@@ -337,7 +337,7 @@ async fn read_archive(
         None
     };
     let mut routes = Vec::new();
-    let mut retained = None;
+    let mut stored_archive = None;
     let mut slots = Vec::new();
     let mut totals: Vec<Result<Totals, String>> = archive
         .indices
@@ -357,53 +357,49 @@ async fn read_archive(
                 .as_ref()
                 .filter(|c| c.same_file(&archive.facts) && c.capture.class == archive.class)
             {
-                retained = Some((c.capture.blob.clone(), c.capture.length));
+                stored_archive = Some((c.capture.blob.clone(), c.capture.length));
             }
             let continuing = saved
                 .as_ref()
                 .is_some_and(|c| c.same_file(&archive.facts) && c.capture.class == archive.class);
             if continuing && let Some(sealing) = &sealing {
-                let authority = access
-                    .authority
-                    .ok_or("retained sealed archive is pending explicit operator unlock")?;
+                let unlock = access
+                    .unlock
+                    .ok_or("continuing a sealed archive needs an operator unlock")?;
                 let cursor = saved.as_ref().expect("continuing");
                 let original = cursor
                     .original_material
                     .ok_or("sealed archive cursor has no original material")?;
-                let key = authority.material_key(conn, original).await?;
+                let key = unlock.material_key(conn, original).await?;
                 sealing.restore_key(cursor.capture.blob.clone(), key)?;
                 if let Some(material) = cursor.material {
                     let reference = sinex_store::material_bytes::reference(conn, material)
                         .await
                         .map_err(|e| e.to_string())?
                         .ok_or("sealed cursor material is missing")?;
-                    let key = authority.material_key(conn, material).await?;
+                    let key = unlock.material_key(conn, material).await?;
                     sealing.restore_current(material, reference.blob, key)?;
                 }
             }
-            let pending = if let Some(id) = saved
+            let unfinished = if let Some(id) = saved
                 .as_ref()
                 .filter(|_| continuing)
-                .and_then(Cursor::pending_material)
+                .and_then(Cursor::unfinished_part)
             {
                 let material = sinex_store::material_bytes::reference(conn, id)
                     .await
                     .map_err(|e| e.to_string())?
-                    .ok_or_else(|| format!("missing pending archive material {id}"))?;
+                    .ok_or_else(|| format!("unfinished archive part {id} is missing"))?;
                 let bytes = if let Some(sealing) = &sealing {
                     let key = sealing.key(&material.blob)?;
-                    let authority = access.authority.expect("scoped key loading").clone();
+                    let unlock = access.unlock.expect("scoped key loading").clone();
                     let mut reader = blobs
                         .read_sealed(
                             &material.blob,
                             Some(material.length),
                             &key,
                             crate::sealed_access::read_limits(material.length)?,
-                            move || {
-                                authority
-                                    .check()
-                                    .map_err(|e| std::io::Error::other(e).into())
-                            },
+                            move || unlock.check().map_err(|e| std::io::Error::other(e).into()),
                         )
                         .map_err(|e| e.to_string())?;
                     let mut bytes = Vec::new();
@@ -412,7 +408,10 @@ async fn read_archive(
                 } else {
                     blobs.read(&material.blob).map_err(|e| e.to_string())?
                 };
-                Some(Pending::new(material, bytes, b.source.spec()).map_err(|e| e.to_string())?)
+                Some(
+                    UnfinishedPart::new(material, bytes, b.source.spec())
+                        .map_err(|e| e.to_string())?,
+                )
             } else {
                 None
             };
@@ -420,7 +419,7 @@ async fn read_archive(
                 class: archive.class,
                 driver: b.reader.export_archive().expect("archive group").clone(),
                 cursor,
-                pending,
+                unfinished,
             })
         }
         .await;
@@ -440,12 +439,12 @@ async fn read_archive(
     let store = blobs.clone();
     let material_sink = Sink(blobs.clone());
     let worker_sealing = sealing.clone();
-    let authority = access.authority.cloned();
+    let unlock = access.unlock.cloned();
     let cancelled = Arc::clone(&cancel.0);
     let (send, mut receive) = mpsc::channel::<Delivery>(1);
     let worker = tokio::task::spawn_blocking(move || {
-        let captured = retained.is_none();
-        let (blob, length) = match retained {
+        let captured = stored_archive.is_none();
+        let (blob, length) = match stored_archive {
             Some(captured) => captured,
             None => {
                 let input = std::fs::File::open(&path).map_err(|e| e.to_string())?;
@@ -473,8 +472,8 @@ async fn read_archive(
             {
                 return Err(std::io::Error::other("archive verification cancelled").into());
             }
-            if let Some(authority) = &authority {
-                authority.check().map_err(std::io::Error::other)?;
+            if let Some(unlock) = &unlock {
+                unlock.check().map_err(std::io::Error::other)?;
             }
             Ok(())
         };
@@ -543,8 +542,8 @@ async fn read_archive(
             if sinex_transport::private_mode::PrivateMode::default().on() {
                 return Err("private mode is on; archive admission stopped".into());
             }
-            if let Some(authority) = access.authority {
-                authority.check()?;
+            if let Some(unlock) = access.unlock {
+                unlock.check()?;
             }
             let (_, carry) = positions::load(conn, &b.binding.name)
                 .await
@@ -559,14 +558,8 @@ async fn read_archive(
             } else if acquired.material.is_some() {
                 match &sealing {
                     Some(sealing) => {
-                        backfill::open_carry(
-                            conn,
-                            &b.binding.name,
-                            &carry,
-                            sealing,
-                            access.authority,
-                        )
-                        .await?
+                        backfill::open_carry(conn, &b.binding.name, &carry, sealing, access.unlock)
+                            .await?
                     }
                     None => carry,
                 }
@@ -585,7 +578,7 @@ async fn read_archive(
                 &b.binding.name,
                 physical_sink,
                 sealing.as_deref(),
-                access.authority,
+                access.unlock,
                 archive.class,
                 acquired,
                 carry,

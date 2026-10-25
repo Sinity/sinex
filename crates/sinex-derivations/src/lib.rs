@@ -1,4 +1,4 @@
-//! Derivations as pure functions (architecture §6). Two kinds:
+//! Derivations as pure functions. Two kinds:
 //!
 //! - a **per-event derivation** reads committed events in commit order and
 //!   writes zero or more outputs for each (document text, OCR, mark linking);
@@ -81,7 +81,7 @@ pub enum KeyState {
 #[derive(Clone, Debug)]
 pub struct Env {
     pub now: Timestamp,
-    /// The operator's zone and logical-day start, one setting (architecture §13).
+    /// The operator's zone and logical-day start, one setting.
     pub civil: Civil,
     pub settings: Value,
 }

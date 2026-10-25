@@ -1,7 +1,7 @@
-//! Parsing and binding (spec `query.md` §2): one pass that reads the tokens,
-//! checks every field against its unit's table, and resolves every time
-//! against the context. A query that cannot mean what it says is refused with
-//! the reason; nothing falls back silently.
+//! Parsing and binding: one pass that reads the tokens, checks every field
+//! against its unit's table, and resolves every time against the context. A
+//! query that cannot mean what it says is refused with the reason; nothing
+//! falls back silently.
 use super::QueryError;
 use super::ast::*;
 use super::lex::{Kind, Token, tokens};

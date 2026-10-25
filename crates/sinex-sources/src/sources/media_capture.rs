@@ -1,10 +1,10 @@
-//! Screen and audio capture on the `Media` driver (architecture §5.3), run by
-//! `sinex-session`. Screen capture takes a still of each output at an interval
-//! (`grim`, JPEG); audio capture records fixed-length segments of the default
-//! source (`pw-record`, 16 kHz mono, encoded to Opus with `ffmpeg` when it is
-//! present). Each segment is one stored material and one `media.segment`
-//! event; reading text from screens and speech from audio are derivations
-//! over those events (the `screen-text` derivation in `sinexd`).
+//! Screen and audio capture on the `Media` driver, run by `sinex-session`.
+//! Screen capture takes a still of each output at an interval (`grim`, JPEG);
+//! audio capture records fixed-length segments of the default source
+//! (`pw-record`, 16 kHz mono, encoded to Opus with `ffmpeg` when it is
+//! present). Each segment is one stored material and one `media.segment` event;
+//! reading text from screens and speech from audio are derivations over those
+//! events (the `screen-text` derivation in `sinexd`).
 //!
 //! Private mode stops capture: nothing is recorded while it is on.
 use crate::drivers::media::{self, Media};
@@ -182,7 +182,8 @@ fn capture_screen(
     Ok(n)
 }
 
-/// Record the default audio source in segments of `segment`, until capture stops. Returns the segments written.
+/// Record the default audio source in segments of `segment`, until capture
+/// stops. Returns the segments written.
 fn capture_audio(
     spool: &Path,
     segment: Duration,

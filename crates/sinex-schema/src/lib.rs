@@ -98,12 +98,12 @@ impl Checks {
     }
 }
 
-/// What a caller may read (architecture §3.5; spec `privacy.md` §4). The
-/// API sets `sinex.grants` on its read connection to the classes the caller's
-/// token holds (`guarded`, and `sealed` while unlocked); an `open` event is
-/// visible to every caller. Every read path goes through these views, so a
-/// guarded value never leaves Sinex for a caller without the grant: the event,
-/// its type and time stay visible, its payload and equivalence key do not.
+/// What a caller may read. The API sets `sinex.grants` on its read connection
+/// to the classes the caller's token holds (`guarded`, and `sealed` while
+/// unlocked); an `open` event is visible to every caller. Every read path goes
+/// through these views, so a guarded value never leaves Sinex for a caller
+/// without the grant: the event, its type and time stay visible, its payload
+/// and equivalence key do not.
 fn visibility() -> Vec<String> {
     vec![
         "CREATE FUNCTION core.class_visible(class text) RETURNS boolean LANGUAGE sql STABLE AS $$

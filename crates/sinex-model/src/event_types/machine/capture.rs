@@ -1,5 +1,5 @@
 //! Payloads declared by the Sinnix lake producers. The lane selects a source
-//! type before decoding, retaining the existing envelope and wire values.
+//! type before decoding, keeping the existing envelope and wire values.
 use crate::Timestamp;
 use schemars::JsonSchema;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
@@ -86,35 +86,35 @@ impl CapturePayload {
             _ => Ok(Self::Unknown(value)),
         }
     }
-    fn uninterpreted_fields(&self) -> Vec<String> {
+    fn unknown_fields(&self) -> Vec<String> {
         let mut fields = Vec::new();
         match self {
-            Self::Selection(value) => value.collect_uninterpreted("/payload", &mut fields),
-            Self::Notification(value) => value.collect_uninterpreted("/payload", &mut fields),
-            Self::Media(value) => value.collect_uninterpreted("/payload", &mut fields),
-            Self::Frame(value) => value.collect_uninterpreted("/payload", &mut fields),
-            Self::Navigation(value) => value.collect_uninterpreted("/payload", &mut fields),
-            Self::Reading(value) => value.collect_uninterpreted("/payload", &mut fields),
-            Self::Monitor(value) => value.collect_uninterpreted("/payload", &mut fields),
-            Self::Environment(value) => value.collect_uninterpreted("/payload", &mut fields),
-            Self::Focus(value) => value.collect_uninterpreted("/payload", &mut fields),
-            Self::TextChanged(value) => value.collect_uninterpreted("/payload", &mut fields),
-            Self::Subtree(value) => value.collect_uninterpreted("/payload", &mut fields),
-            Self::Idle(value) => value.collect_uninterpreted("/payload", &mut fields),
-            Self::Devices(value) => value.collect_uninterpreted("/payload", &mut fields),
-            Self::Node(value) => value.collect_uninterpreted("/payload", &mut fields),
-            Self::Port(value) => value.collect_uninterpreted("/payload", &mut fields),
-            Self::Link(value) => value.collect_uninterpreted("/payload", &mut fields),
-            Self::SpeechIndex(value) => value.collect_uninterpreted("/payload", &mut fields),
-            Self::Logitech(value) => value.collect_uninterpreted("/payload", &mut fields),
+            Self::Selection(value) => value.collect_unknown("/payload", &mut fields),
+            Self::Notification(value) => value.collect_unknown("/payload", &mut fields),
+            Self::Media(value) => value.collect_unknown("/payload", &mut fields),
+            Self::Frame(value) => value.collect_unknown("/payload", &mut fields),
+            Self::Navigation(value) => value.collect_unknown("/payload", &mut fields),
+            Self::Reading(value) => value.collect_unknown("/payload", &mut fields),
+            Self::Monitor(value) => value.collect_unknown("/payload", &mut fields),
+            Self::Environment(value) => value.collect_unknown("/payload", &mut fields),
+            Self::Focus(value) => value.collect_unknown("/payload", &mut fields),
+            Self::TextChanged(value) => value.collect_unknown("/payload", &mut fields),
+            Self::Subtree(value) => value.collect_unknown("/payload", &mut fields),
+            Self::Idle(value) => value.collect_unknown("/payload", &mut fields),
+            Self::Devices(value) => value.collect_unknown("/payload", &mut fields),
+            Self::Node(value) => value.collect_unknown("/payload", &mut fields),
+            Self::Port(value) => value.collect_unknown("/payload", &mut fields),
+            Self::Link(value) => value.collect_unknown("/payload", &mut fields),
+            Self::SpeechIndex(value) => value.collect_unknown("/payload", &mut fields),
+            Self::Logitech(value) => value.collect_unknown("/payload", &mut fields),
             Self::Battery(values) => {
                 for (i, value) in values.iter().enumerate() {
-                    value.collect_uninterpreted(&format!("/payload/{i}"), &mut fields);
+                    value.collect_unknown(&format!("/payload/{i}"), &mut fields);
                 }
             }
             Self::Transport(values) => {
                 for (i, value) in values.iter().enumerate() {
-                    value.collect_uninterpreted(&format!("/payload/{i}"), &mut fields);
+                    value.collect_unknown(&format!("/payload/{i}"), &mut fields);
                 }
             }
             Self::Unknown(_) => {}
@@ -136,7 +136,7 @@ fn extend_fields(extra: &Map<String, Value>, path: &str, fields: &mut Vec<String
     fields.extend(extra.keys().map(|key| format!("{path}/{}", pointer(key))));
 }
 
-/// An observation retains material-location identity. Host, lane and sequence
+/// An observation keeps material-location identity. Host, lane and sequence
 /// describe the producer envelope and never become a replacement key.
 #[derive(Clone, Debug, PartialEq, crate::EventPayload)]
 #[event(type = "capture.observed", key = location, replace = repeat, time = observed_at, quality = captured)]
@@ -208,9 +208,9 @@ impl Serialize for CaptureObserved {
             payload: &'a CapturePayload,
             raw_ref: &'a Option<String>,
             #[serde(skip_serializing_if = "std::ops::Not::not")]
-            uninterpreted: bool,
+            untyped: bool,
             #[serde(skip_serializing_if = "Vec::is_empty")]
-            uninterpreted_fields: Vec<String>,
+            unknown_fields: Vec<String>,
         }
         Row {
             observed_at: self.observed_at,
@@ -219,8 +219,8 @@ impl Serialize for CaptureObserved {
             seq: self.seq,
             payload: &self.payload,
             raw_ref: &self.raw_ref,
-            uninterpreted: matches!(self.payload, CapturePayload::Unknown(_)),
-            uninterpreted_fields: self.payload.uninterpreted_fields(),
+            untyped: matches!(self.payload, CapturePayload::Unknown(_)),
+            unknown_fields: self.payload.unknown_fields(),
         }
         .serialize(serializer)
     }
@@ -240,9 +240,9 @@ impl JsonSchema for CaptureObserved {
             payload: CapturePayload,
             raw_ref: Option<String>,
             #[serde(default)]
-            uninterpreted: bool,
+            untyped: bool,
             #[serde(default)]
-            uninterpreted_fields: Vec<String>,
+            unknown_fields: Vec<String>,
         }
         CaptureObservedSchema::json_schema(generator)
     }

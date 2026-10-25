@@ -133,8 +133,9 @@ fn validate(metadata: Metadata) -> Result<(), String> {
     let names: HashSet<_> = members.iter().map(|p| p.name.as_str()).collect();
     for package in &members {
         let permitted = allowed(&package.name)?;
-        // Declarations include optional, target-specific, build and development dependencies,
-        // even when the host build does not activate them. Renames retain the package name.
+        // Declarations include optional, target-specific, build and development
+        // dependencies, even when the host build does not activate them.
+        // Renames keep the package name.
         for dep in &package.dependencies {
             let forbidden_internal =
                 names.contains(dep.name.as_str()) && !permitted.contains(&dep.name.as_str());

@@ -4,7 +4,7 @@ use super::*;
 /// kind's view, and so the whole schema, fail to apply.
 #[devkit::test]
 fn no_payload_field_shadows_an_event_column() {
-    let reserved = [
+    let event_columns = [
         "id",
         "source",
         "ts_orig",
@@ -17,7 +17,7 @@ fn no_payload_field_shadows_an_event_column() {
         let props = schema.get("properties").and_then(|p| p.as_object());
         for field in props.into_iter().flat_map(|p| p.keys()) {
             assert!(
-                !reserved.contains(&field.as_str()),
+                !event_columns.contains(&field.as_str()),
                 "{} has a payload field {field:?} that shadows an event column",
                 kind.event_type
             );

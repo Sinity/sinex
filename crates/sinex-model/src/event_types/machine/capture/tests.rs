@@ -172,7 +172,7 @@ fn unknown_lanes_and_representation_kinds_remain_explicit() {
         assert!(matches!(decoded.payload(), CapturePayload::Unknown(_)));
         let output = serde_json::to_value(decoded).unwrap();
         assert_eq!(output["payload"], original["payload"]);
-        assert_eq!(output["uninterpreted"], true);
+        assert_eq!(output["untyped"], true);
         assert_eq!(
             serde_json::to_value(
                 serde_json::from_value::<CaptureObserved>(output.clone()).unwrap()
@@ -223,23 +223,23 @@ fn unknown_fields_and_open_hint_values_have_exact_output_pointers() {
         )
         .unwrap();
         assert_eq!(output["payload"], original["payload"]);
-        assert_eq!(output["uninterpreted_fields"], paths);
+        assert_eq!(output["unknown_fields"], paths);
     }
 }
 
 #[devkit::test]
-fn interpretation_markers_do_not_override_source_values() {
+fn markers_in_the_input_do_not_override_source_values() {
     let mut original = row("monitor", json!({"brightness":50}));
-    original["uninterpreted"] = json!(true);
-    original["uninterpreted_fields"] = json!(["/payload/brightness"]);
+    original["untyped"] = json!(true);
+    original["unknown_fields"] = json!(["/payload/brightness"]);
     let output =
         serde_json::to_value(serde_json::from_value::<CaptureObserved>(original).unwrap()).unwrap();
-    assert!(output.get("uninterpreted").is_none());
-    assert!(output.get("uninterpreted_fields").is_none());
+    assert!(output.get("untyped").is_none());
+    assert!(output.get("unknown_fields").is_none());
 }
 
 #[devkit::test]
-fn registration_retains_location_identity_repeat_rule_and_capture_time() {
+fn registration_keeps_location_identity_repeat_rule_and_capture_time() {
     use crate::{EventPayload, KeyKind, ReplaceRule, TimeQuality};
     assert_eq!(CaptureObserved::KEY, KeyKind::Location);
     assert_eq!(CaptureObserved::REPLACE, ReplaceRule::SuppressRepeat);
@@ -254,7 +254,7 @@ fn registration_retains_location_identity_repeat_rule_and_capture_time() {
             .get("brightness")
             .is_some()
     );
-    assert!(schema["properties"].get("uninterpreted_fields").is_some());
+    assert!(schema["properties"].get("unknown_fields").is_some());
     let origin = crate::Origin::Record {
         location: crate::RecordLocation {
             material: crate::MaterialId::new(),

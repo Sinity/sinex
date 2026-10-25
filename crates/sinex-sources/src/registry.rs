@@ -1,10 +1,10 @@
-//! Declaring a source (architecture §5.4). A source is a parser plus a
-//! declaration, registered in one list; the registry generates the NixOS
-//! options, the source catalog rows and the status view.
+//! Declaring a source. A source is a parser plus a declaration, registered in
+//! one list; the registry generates the NixOS options, the source catalog rows
+//! and the status view.
 use crate::{DrainInput, DrainOutput, Parser, RecordError};
 use sinex_model::Class;
 
-/// The input shape a source reads, which picks its driver (architecture §5.3).
+/// The input shape a source reads, which picks its driver.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Driver {
     AppendFile,
@@ -27,7 +27,7 @@ pub use framing::Framer;
 pub struct SourceSpec {
     pub name: &'static str,
     pub driver: Driver,
-    /// Every source names its consumer: what reads its events (`5j8`).
+    /// Every source names its consumer: what reads its events.
     pub consumer: &'static str,
     pub class: Class,
     pub parser: &'static str,
@@ -48,7 +48,7 @@ pub struct DeclaredSource<P> {
 /// in one list.
 pub trait Source: Send + Sync {
     fn spec(&self) -> &SourceSpec;
-    /// Drain one batch at a time, retaining the current record and batch.
+    /// Drain one batch at a time, holding only the current record and batch.
     /// Parser errors are accounted record outcomes; material read errors stop
     /// iteration without admitting the failed range.
     fn drainer<'a>(

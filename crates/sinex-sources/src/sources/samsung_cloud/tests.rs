@@ -80,9 +80,9 @@ fn health_unknown_columns_and_categories_remain_captured() {
         assert_eq!(wire["values"]["count"], json!("0042"));
         assert_eq!(wire["values"]["new_column"], json!({"raw":true}));
         if category == "Step Count" {
-            assert_eq!(wire["uninterpreted_fields"], json!(["/values/new_column"]));
+            assert_eq!(wire["unknown_fields"], json!(["/values/new_column"]));
         } else {
-            assert_eq!(wire["uninterpreted"], true);
+            assert_eq!(wire["untyped"], true);
         }
     }
 }
@@ -126,7 +126,7 @@ fn nul_cleanup_and_numeric_times_keep_the_previous_normalization() {
 }
 
 #[devkit::test]
-fn generic_account_tables_report_uninterpreted_without_changing_values_or_keys() {
+fn generic_account_tables_report_untyped_without_changing_values_or_keys() {
     let rows = run(
         "/x/samsungcloud_gk1/Synthetic Table/Synthetic Table.csv",
         &[
@@ -140,7 +140,7 @@ fn generic_account_tables_report_uninterpreted_without_changing_values_or_keys()
     let output = serde_json::to_value(account).unwrap();
     assert_eq!(account.native_id, "synthetic-id");
     assert_eq!(account.at, fields::rfc3339("2026-01-01T00:00:00Z").ok());
-    assert_eq!(output["uninterpreted"], true);
+    assert_eq!(output["untyped"], true);
     assert_eq!(
         output["values"],
         json!({"KEY":"synthetic-id","TIMESTAMP":1767225600000_i64,"VALUE":[],"padded":"0042","number":9007199254740993_i64})
@@ -162,8 +162,5 @@ fn unkeyed_account_rows_keep_the_original_row_hash_identity() {
         format!("blake3:{}", blake3::hash(data).to_hex())
     );
     assert!(account.at.is_none());
-    assert_eq!(
-        serde_json::to_value(account).unwrap()["uninterpreted"],
-        true
-    );
+    assert_eq!(serde_json::to_value(account).unwrap()["untyped"], true);
 }

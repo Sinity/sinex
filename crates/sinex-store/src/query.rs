@@ -1,8 +1,8 @@
-//! Running queries (architecture §7.1; spec `query.md`): the language
-//! compiled to SQL, provenance walks, recall, `show`, and read-only SQL.
-//! Each page uses one read-only repeatable snapshot. Continuations retain the
-//! original question, clock and event position; a changed visible ordered
-//! answer requires a fresh query. Rows use the unit's field names; times are UTC.
+//! Running queries: the language compiled to SQL, provenance walks, recall,
+//! `show`, and read-only SQL. Each page uses one read-only repeatable snapshot.
+//! Continuations keep the original question, clock and event position; a
+//! changed visible ordered answer requires a fresh query. Rows use the unit's
+//! field names; times are UTC.
 mod compile;
 mod cursor;
 mod fields;
@@ -37,7 +37,7 @@ pub struct Page {
 
 pub const DEFAULT_PAGE: u64 = 50;
 
-/// One page of an answer (spec `query.md` §10).
+/// One page of an answer.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct Answer {
     pub unit: String,
@@ -169,7 +169,7 @@ pub async fn run(
                 .and_then(Json::as_object)
                 .map(|o| o.keys().cloned().collect())
                 .unwrap_or_default();
-            let interpretation = read_as(query);
+            let reading = read_as(query);
             let mut hash = blake3::Hasher::new();
             for (ordinal, row) in rows.iter().enumerate() {
                 let bytes = serde_json::to_vec(row)
@@ -180,7 +180,7 @@ pub async fn run(
             }
             let view = cursor::digest(&serde_json::json!([
                 unit,
-                interpretation,
+                reading,
                 columns,
                 total,
                 hash.finalize().to_hex().to_string()
@@ -298,8 +298,8 @@ struct Rendered {
 
 fn render_page(compiled: Compiled, offset: u64, size: u64) -> Rendered {
     let object = json_object(&compiled.columns);
-    // Ordinary change detection, never an authority or integrity proof. Two
-    // seeded row hashes keep constant aggregate state; including _n avoids XOR
+    // Ordinary change detection, never an access or integrity check. Two seeded
+    // row hashes keep constant aggregate state; including _n avoids XOR
     // cancellation when projected rows happen to be equal.
     let row = format!("q.\"_n\"::text || ':' || ({object})::text");
     let mut total = Frag::text(format!(

@@ -6,7 +6,7 @@ fn wire(values: Value) -> Value {
 }
 
 #[devkit::test]
-fn old_rows_keep_every_value_and_gain_a_computed_uninterpreted_marker() {
+fn rows_keep_every_value_and_gain_a_computed_untyped_marker() {
     for values in [
         json!({}),
         json!({"text":"0042","number":9007199254740993_i64,"real":1.5,"null":null,"array":[false,{}],"nested":{"value":true}}),
@@ -18,7 +18,7 @@ fn old_rows_keep_every_value_and_gain_a_computed_uninterpreted_marker() {
         for field in ["service", "table", "native_id", "at"] {
             assert_eq!(output[field], original[field]);
         }
-        assert_eq!(output["uninterpreted"], true);
+        assert_eq!(output["untyped"], true);
         assert_eq!(
             serde_json::from_value::<AccountRecord>(output).unwrap(),
             record
@@ -27,20 +27,20 @@ fn old_rows_keep_every_value_and_gain_a_computed_uninterpreted_marker() {
 }
 
 #[devkit::test]
-fn incoming_interpretation_claims_cannot_change_the_fallback_kind() {
+fn an_untyped_marker_in_the_input_cannot_change_the_fallback_kind() {
     for marker in [json!(true), json!(false)] {
         let mut original = wire(json!({"raw":true}));
-        original["uninterpreted"] = marker;
+        original["untyped"] = marker;
         let output =
             serde_json::to_value(serde_json::from_value::<AccountRecord>(original).unwrap())
                 .unwrap();
-        assert_eq!(output["uninterpreted"], true);
+        assert_eq!(output["untyped"], true);
         assert_eq!(output["values"], json!({"raw":true}));
     }
 }
 
 #[devkit::test]
-fn registered_fallback_retains_identity_time_and_older_input_compatibility() {
+fn registered_fallback_keeps_identity_time_and_rows_without_the_marker() {
     use crate::{EventPayload, KeyKind, ReplaceRule, TimeQuality};
     assert_eq!(
         AccountRecord::KEY,
@@ -54,13 +54,13 @@ fn registered_fallback_retains_identity_time_and_older_input_compatibility() {
     assert_eq!(record.ts_orig().quality, TimeQuality::Intrinsic);
     let kind = crate::event_types::find("account.record").unwrap();
     let schema = (kind.json_schema)();
-    assert_eq!(schema["properties"]["uninterpreted"]["default"], true);
+    assert_eq!(schema["properties"]["untyped"]["default"], true);
     assert!(
         !schema["required"]
             .as_array()
             .unwrap()
             .iter()
-            .any(|field| field == "uninterpreted")
+            .any(|field| field == "untyped")
     );
     let origin = crate::Origin::Record {
         location: crate::RecordLocation {
@@ -79,5 +79,5 @@ fn registered_fallback_retains_identity_time_and_older_input_compatibility() {
     )
     .unwrap();
     assert_eq!(event.payload["values"], original["values"]);
-    assert_eq!(event.payload["uninterpreted"], true);
+    assert_eq!(event.payload["untyped"], true);
 }

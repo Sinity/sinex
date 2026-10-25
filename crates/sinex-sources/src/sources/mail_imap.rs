@@ -1,7 +1,7 @@
-//! Live mail over IMAP (`di7`): new messages in a mailbox, fetched by UID
-//! after the cursor, waiting with IDLE between polls when the server supports
-//! it. Gmail and other providers that refuse password logins take an OAuth
-//! access token (SASL `XOAUTH2`), as the predecessor's client did.
+//! Live mail over IMAP: new messages in a mailbox, fetched by UID after the
+//! cursor, waiting with IDLE between polls when the server supports it. Gmail
+//! and other providers that refuse password logins take an OAuth access token
+//! (SASL `XOAUTH2`).
 //!
 //! Each poll stores one batch of messages as one material: the messages'
 //! exact bytes back to back, each one a record, listed in the manifest so a
@@ -27,7 +27,7 @@ use std::net::TcpStream;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
-mod pending;
+mod held;
 
 pub const SPEC: SourceSpec = SourceSpec {
     name: "communication.imap",
@@ -324,7 +324,7 @@ impl ImapMail {
             .iter()
             .find_map(|l| number_after(&l.text, "UIDNEXT"));
         // A renumbered mailbox: start over.
-        let start = pending::first_uid(&previous, uid_validity);
+        let start = held::first_uid(&previous, uid_validity);
         let window_end = start.saturating_add(self.config.batch.max(1) - 1);
         let known_next = server_next.filter(|n| *n > start);
         let end = known_next.map_or(window_end, |n| window_end.min(n - 1));
@@ -418,7 +418,7 @@ impl ImapMail {
                 reading_order: crate::drivers::reading_order(&manifest),
                 manifest,
                 cursor_at: Box::new(move |end| {
-                    pending::at(&next, start, &cursor_records, end)
+                    held::at(&next, start, &cursor_records, end)
                         .map(|cursor| serde_json::to_value(cursor).expect("cursor serializes"))
                 }),
                 aligned: false,
@@ -457,7 +457,7 @@ pub const KIND: crate::binding::InputKind = crate::binding::InputKind {
                 config: config(&b.input)?,
                 host: b.settings.host.clone(),
             },
-            pending: None,
+            held: None,
         }))
     }),
     capture: None,
@@ -470,24 +470,24 @@ fn config(path: &std::path::Path) -> Result<ImapConfig, String> {
 
 struct ImapReader {
     mail: ImapMail,
-    pending: Option<pending::Answer>,
+    held: Option<held::Answer>,
 }
 
 impl crate::binding::Reader for ImapReader {
     fn poll(&mut self, cursor: &Value) -> Result<Acquired, DriverError> {
-        if let Some(answer) = &self.pending {
+        if let Some(answer) = &self.held {
             if !answer.complete(cursor)? {
                 return answer.acquired(self.mail.input(), cursor);
             }
-            self.pending = None;
+            self.held = None;
         }
         let acquired = self.mail.poll(cursor)?;
         if acquired.material.is_none() {
             return Ok(acquired);
         }
-        let pending = pending::Answer::capture(acquired, cursor)?;
-        let acquired = pending.acquired(self.mail.input(), cursor)?;
-        self.pending = Some(pending);
+        let held = held::Answer::capture(acquired, cursor)?;
+        let acquired = held.acquired(self.mail.input(), cursor)?;
+        self.held = Some(held);
         Ok(acquired)
     }
 }

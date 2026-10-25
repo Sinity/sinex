@@ -1,10 +1,9 @@
 //! Facebook Messenger exports (`*.json`, one thread per file), on
-//! `ExportArchive` (`spec/port-lynchpin-sources.md` §7.1). Two shapes: the
-//! GDPR export (`participants: [name]`, `threadName`, messages with
-//! `senderName`, `timestamp` ms, `text`, `isUnsent`) and Facebook's older
-//! download (`participants: [{name}]`, `title`, messages with `sender_name`,
-//! `timestamp_ms`, `content`), whose text is UTF-8 written as Latin-1 escapes
-//! and is repaired here.
+//! `ExportArchive`. Two shapes: the GDPR export (`participants: [name]`,
+//! `threadName`, messages with `senderName`, `timestamp` ms, `text`,
+//! `isUnsent`) and Facebook's older download (`participants: [{name}]`,
+//! `title`, messages with `sender_name`, `timestamp_ms`, `content`), whose text
+//! is UTF-8 written as Latin-1 escapes and is repaired here.
 //!
 //! File names carry an ordinal that changes between exports, so a thread is
 //! its sorted participants and a message is the thread, time and sender.
@@ -45,11 +44,17 @@ impl Parser for MessengerParser {
             .get("messages")
             .and_then(Value::as_array)
             .ok_or_else(|| RecordError::new("no messages array: not a Messenger thread"))?;
-        let legacy = messages
+        let older_export = messages
             .first()
             .is_some_and(|m| m.get("sender_name").is_some() || m.get("timestamp_ms").is_some())
             || doc.get("title").is_some();
-        let fix = |s: &str| if legacy { repair(s) } else { s.to_owned() };
+        let fix = |s: &str| {
+            if older_export {
+                repair(s)
+            } else {
+                s.to_owned()
+            }
+        };
         let mut participants: Vec<String> = doc
             .get("participants")
             .and_then(Value::as_array)

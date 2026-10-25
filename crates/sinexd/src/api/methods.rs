@@ -33,16 +33,16 @@ pub struct Api {
     pub host: String,
 }
 
-/// An unlock session (spec `privacy.md` §4): the operator's identity until it
-/// expires, and the data keys it has unwrapped.
+/// An unlock session: the operator's identity until it expires, and the data
+/// keys it has unwrapped.
 pub struct Unlocked {
-    authority: crate::sealed_access::Authority,
+    unlock: crate::sealed_access::Unlock,
     keys: std::collections::HashMap<String, age::secrecy::zeroize::Zeroizing<[u8; 32]>>,
 }
 
 impl Drop for Unlocked {
     fn drop(&mut self) {
-        self.authority.revoke();
+        self.unlock.revoke();
     }
 }
 
@@ -147,10 +147,7 @@ impl Api {
             ),
             Access::Operator => {
                 let mut session = self.unlock.lock().await;
-                if session
-                    .as_ref()
-                    .is_some_and(|s| s.authority.check().is_err())
-                {
+                if session.as_ref().is_some_and(|s| s.unlock.check().is_err()) {
                     *session = None;
                 }
                 if session.is_some() {
@@ -220,7 +217,7 @@ impl Api {
         let Some(s) = session.as_mut() else {
             return Ok(());
         };
-        s.authority.check()?;
+        s.unlock.check()?;
         let mut conn = self.reads.acquire().await.map_err(|e| e.to_string())?;
         for r in refs {
             if s.keys.contains_key(&r) {
@@ -230,11 +227,11 @@ impl Api {
                 .await
                 .map_err(|e| e.to_string())?
             {
-                let key = s.authority.unwrap(&wrapped)?;
+                let key = s.unlock.unwrap(&wrapped)?;
                 s.keys.insert(r, age::secrecy::zeroize::Zeroizing::new(key));
             }
         }
-        s.authority.check()?;
+        s.unlock.check()?;
         unseal_in(value, &s.keys);
         Ok(())
     }
@@ -387,7 +384,7 @@ impl Api {
                                 compare: compare.unwrap_or(false),
                                 resume,
                                 actor: actor.to_string(),
-                                authority: None,
+                                unlock: None,
                             },
                             all.unwrap_or(false),
                             sealed.unwrap_or(false),
@@ -485,14 +482,14 @@ impl Api {
             | Request::Brief { .. } => self.analysis(caller, request).await,
             Request::Follow { .. } => refused("follow streams; use the API's follow stream"),
             Request::Stage { .. } => not_built(
-                "stage needs the staging path of the source framework, which this daemon does not run yet (architecture §5.4)",
+                "stage needs the staging path of the source framework, which this daemon does not run yet",
             ),
             Request::Same { .. } | Request::Distinct { .. } => not_built(
-                "duplicate decisions need the fusion derivation's decision records, not built yet (architecture §6.4)",
+                "duplicate decisions need the fusion derivation's decision records, not built yet",
             ),
-            Request::Mark { .. } => not_built(
-                "moment marks need the operator.mark event type, not registered yet (architecture §7.2)",
-            ),
+            Request::Mark { .. } => {
+                not_built("moment marks need the operator.mark event type, not registered yet")
+            }
             r @ (Request::PrivacyRules { .. }
             | Request::PrivacyRule { .. }
             | Request::PrivacyEnd { .. }

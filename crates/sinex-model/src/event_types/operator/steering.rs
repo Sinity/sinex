@@ -161,7 +161,8 @@ pub struct SteeringRecord {
 }
 
 impl SteeringRecord {
-    /// Decode the row using its declared table, retaining missing and null fields.
+    /// Decode the row using its declared table, keeping missing and null
+    /// fields.
     pub fn from_row(table: &str, values: Value) -> Result<Self, String> {
         let table = match table {
             "commitments" => Table::Commitments,

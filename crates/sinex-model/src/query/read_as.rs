@@ -1,6 +1,6 @@
-//! Every query reads back as a sentence (joint decision 17): each unit,
-//! field, operator and clause has a phrase, joined in order, with the defaults
-//! the query relies on stated. No model is involved, so the reading is exact.
+//! Every query reads back as a sentence: each unit, field, operator and clause
+//! has a phrase, joined in order, with the defaults the query relies on stated.
+//! No model is involved, so the reading is exact.
 use super::ast::*;
 use jiff::Timestamp;
 

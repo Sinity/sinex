@@ -9,8 +9,8 @@
 //! Rows are stored as a JSON-lines material ("rows part"); each line is one
 //! row's columns, so the record location is the line's offset and a replay
 //! reads exactly the bytes the parser saw. Rows identical to what this driver
-//! already stored are left out of the material. Pending material and row hashes
-//! are retained until its final admitted cursor confirms them.
+//! already stored are left out of the material. The held material and its row
+//! hashes are kept until its final admitted cursor confirms them.
 //!
 //! What the driver already stored survives a restart: the rows still open
 //! travel in the cursor, and the row hashes are rebuilt from the stored parts
@@ -76,13 +76,13 @@ pub struct RowState {
     hashes: HashMap<i64, [u8; 32]>,
     /// Whether this process has polled since the state was made: the first
     /// poll after a start is a full pass even when the hashes were rebuilt,
-    /// so an update made while Sinex was down is seen (law L20).
+    /// so an update made while Sinex was down is seen.
     polled: bool,
-    pending: Option<Pending>,
+    held: Option<Held>,
 }
 
 #[derive(Debug)]
-struct Pending {
+struct Held {
     stored: StoredBytes,
     length: usize,
     records: Vec<(usize, usize)>,
@@ -96,7 +96,7 @@ struct Pending {
     observation: ObservationFacts,
 }
 
-impl Pending {
+impl Held {
     fn acquired(&self, input: InputRef, cursor: &Cursor) -> Acquired {
         let through = if cursor.material == Some(self.id) {
             cursor.through
@@ -213,13 +213,13 @@ impl SqliteRows {
             serde_json::from_value(cursor.clone())
                 .map_err(|e| DriverError::Cursor(e.to_string()))?
         };
-        if let Some(pending) = state.pending.take() {
-            if previous == pending.scanned {
-                state.hashes.extend(pending.hashes);
+        if let Some(held) = state.held.take() {
+            if previous == held.scanned {
+                state.hashes.extend(held.hashes);
                 state.polled = true;
             } else {
-                let acquired = pending.acquired(self.input(), &previous);
-                state.pending = Some(pending);
+                let acquired = held.acquired(self.input(), &previous);
+                state.held = Some(held);
                 return Ok(acquired);
             }
         }
@@ -386,7 +386,7 @@ impl SqliteRows {
         } else {
             0
         };
-        let pending = Pending {
+        let held = Held {
             stored: StoredBytes::FramedFile(Arc::new(staged)),
             length,
             records,
@@ -407,8 +407,8 @@ impl SqliteRows {
             manifest,
             observation: facts,
         };
-        let acquired = pending.acquired(self.input(), &Cursor::default());
-        state.pending = Some(pending);
+        let acquired = held.acquired(self.input(), &Cursor::default());
+        state.held = Some(held);
         Ok(acquired)
     }
 }

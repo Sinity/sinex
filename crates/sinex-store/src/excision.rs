@@ -203,7 +203,7 @@ pub async fn plan(conn: &mut PgConnection, target: Target) -> Result<Plan> {
     // Record bodies do not replace their original archive. Blanking a decoded
     // part alone would leave the same private bytes in its captured ancestor.
     let material_ids: Vec<Uuid> = materials.keys().copied().collect();
-    let retained_archive = sqlx::query_scalar!(
+    let stored_archive = sqlx::query_scalar!(
         r#"WITH RECURSIVE ancestors AS (
              SELECT id, previous_part_id, manifest FROM raw.materials WHERE id = ANY($1)
              UNION
@@ -214,9 +214,9 @@ pub async fn plan(conn: &mut PgConnection, target: Target) -> Result<Plan> {
     )
     .fetch_optional(&mut *conn)
     .await?;
-    if let Some(id) = retained_archive {
+    if let Some(id) = stored_archive {
         return Err(Error::Invalid(format!(
-            "material {id} retains an original archive: excision needs a cross-binding archive rewrite, which is not supported"
+            "material {id} is inside a stored original archive, which excision cannot rewrite"
         )));
     }
     Ok(Plan {

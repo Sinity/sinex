@@ -1,4 +1,4 @@
-//! Authenticated forecast requests retained as ordinary JSON-line materials.
+//! Authenticated forecast requests stored as ordinary JSON-line materials.
 use crate::drivers::{Acquired, NewMaterial};
 use crate::{DeclaredSource, Driver, Parser, RecordContext, RecordError, SourceSpec};
 use serde::{Deserialize, Serialize};
@@ -91,7 +91,7 @@ pub fn request_source() -> DeclaredSource<RequestParser> {
     }
 }
 
-/// Both acts retain their exact bytes with server-owned authorship and time.
+/// Both acts keep their exact bytes with server-owned authorship and time.
 pub fn request_material(
     record: ForecastRecord,
     actor: &str,

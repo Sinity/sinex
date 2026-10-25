@@ -1,5 +1,5 @@
 {
-  description = "Sinex isolated executable foundation";
+  description = "Sinex: a durable record of one person's digital life";
   inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
   inputs.rust-nixpkgs.url = "github:NixOS/nixpkgs/6510408d147d8c5e6d76043e899e9251756f6a75";
   outputs = { self, nixpkgs, rust-nixpkgs }:
@@ -9,7 +9,7 @@
         inherit system;
         config.allowUnfreePredicate = pkg: builtins.elem (pkgs.lib.getName pkg) [ "timescaledb" ];
       };
-      # Keep the qualified database packages while aligning the released crate’s compiler.
+      # The Rust toolchain comes from a pinned nixpkgs that matches the released shared crates.
       rustPkgs = import rust-nixpkgs { inherit system; };
       postgres = pkgs.postgresql_18.withPackages (p: [ p.timescaledb ]);
       package = rustPkgs.rustPlatform.buildRustPackage {
@@ -49,7 +49,7 @@
       packages.${system} = { default = package; sinexd = package; sinexctl = package; };
       nixosModules.default = import ./nix/module.nix self;
       # VM tests: the deployed stack, a satellite capture node, the restore
-      # drill (architecture §10, §11). Built on demand, not by `package`.
+      # drill. Built on demand, not by `package`.
       checks.${system} = {
         vm-stack = pkgs.testers.runNixOSTest (import ./nix/tests/stack.nix self);
         vm-topology = pkgs.testers.runNixOSTest (import ./nix/tests/topology.nix self);
@@ -58,7 +58,7 @@
       devShells.${system}.default = pkgs.mkShell {
         packages = [ rustPkgs.cargo rustPkgs.cargo-nextest rustPkgs.rustc rustPkgs.rustfmt rustPkgs.clippy postgres pkgs.nats-server pkgs.python3 pkgs.pkg-config ];
         shellHook = ''
-          # Optional host placement; explicit targets retain their current lease.
+          # Optional host placement; an explicit CARGO_TARGET_DIR is left as is.
           if [ -z "''${CARGO_TARGET_DIR:-}" ] && command -v sinnix-cargo-target >/dev/null 2>&1; then
             if cargo_target="$(sinnix-cargo-target)"; then
               export CARGO_TARGET_DIR="$cargo_target"

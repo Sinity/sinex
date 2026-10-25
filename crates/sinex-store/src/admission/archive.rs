@@ -58,8 +58,8 @@ pub(super) async fn replay_scope(
     Ok((live.len(), dirty))
 }
 
-/// Hide and unhide work on equivalence keys, or record locations for
-/// keyless types, and need nothing per source (architecture §5.5).
+/// Hide and unhide work on equivalence keys, or record locations for keyless
+/// types, and need nothing per source.
 pub(super) async fn request(
     conn: &mut PgConnection,
     request: &ArchiveRequest,

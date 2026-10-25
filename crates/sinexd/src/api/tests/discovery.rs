@@ -2,7 +2,7 @@
 use super::*;
 
 #[devkit::test]
-async fn discovery_omits_unimplemented_commands_and_reserved_calls_refuse_explicitly(
+async fn discovery_omits_unimplemented_commands_and_unimplemented_calls_refuse_explicitly(
     db: devkit::pg::TestDatabase,
 ) {
     let w = world(db).await;

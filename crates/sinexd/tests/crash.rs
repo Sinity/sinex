@@ -1,6 +1,5 @@
-//! The crash harness (architecture §11; `jdr`): kill `sinexd` at every
-//! admission, replay and excision step, start it again, and check that
-//! nothing was lost or doubled.
+//! The crash harness: kill `sinexd` at every admission, replay and excision
+//! step, start it again, and check that nothing was lost or doubled.
 //!
 //! No hook in the product binary: the harness takes a lock on the table the
 //! step's statement needs, so `sinexd` blocks exactly there; once PostgreSQL

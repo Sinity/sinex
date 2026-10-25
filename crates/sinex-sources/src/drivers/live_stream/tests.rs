@@ -45,9 +45,9 @@ fn captured_lines_are_acquired_once_in_order() {
     assert!(again.material.is_none());
 }
 
-/// L25: while private mode is on a live capture writes nothing, and after
-/// it ends capture resumes; the lines in between were never stored, which
-/// is what private mode means, not a loss.
+/// While private mode is on a live capture writes nothing, and after it ends
+/// capture resumes; the lines in between were never stored, which is what
+/// private mode means, not a loss.
 #[devkit::test]
 fn private_mode_drops_lines_while_on() {
     let spool = dir();

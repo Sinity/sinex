@@ -1,8 +1,7 @@
-//! Storage for the analysis layer (spec `analysis.md` §14): the rows metrics
-//! read, the evidence observation opportunity is computed from, maintained
-//! metric values, and products (requests, attempts, results, dependencies,
-//! status, findings). The analysis itself is pure code in `sinex-analysis`;
-//! the daemon joins the two.
+//! Storage for the analysis layer: the rows metrics read, the evidence
+//! observation opportunity is computed from, maintained metric values, and
+//! products (requests, attempts, results, dependencies, status, findings). The
+//! analysis itself is pure code in `sinex-analysis`; the daemon joins the two.
 use crate::Result;
 use serde_json::Value;
 use sqlx::PgConnection;
@@ -328,8 +327,8 @@ pub async fn current_result(
 
 /// Store a product in one transaction. A result whose dependency types were
 /// written after its as-of position is stored `stale`, never `current`, so a
-/// change racing the computation cannot be missed (`analysis.md` §7.3); a
-/// current result of the same standing question is superseded.
+/// change racing the computation cannot be missed; a current result of the same
+/// standing question is superseded.
 pub async fn store_result(conn: &mut PgConnection, r: &NewResult) -> Result<StoredResult> {
     sqlx::query!(
         r#"INSERT INTO analysis.requests (id, body, recipe, recipe_version, intent, family, as_of, standing)

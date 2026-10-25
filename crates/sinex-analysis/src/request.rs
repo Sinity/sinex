@@ -1,8 +1,8 @@
 //! Requests and the inputs a result read. A request holds everything that
-//! determines a computation, frozen before it runs; its identity is a keyed
-//! BLAKE3 hash of its canonical bytes, so the same question at the same commit
-//! position is the same request, and the second asking returns the first's
-//! result.
+//! determines a computation, fixed before it runs; its identity is a keyed
+//! BLAKE3 hash of its sorted JSON bytes, so the same question at the same
+//! commit position is the same request, and the second asking returns the
+//! first's result.
 use crate::coverage::Coverage;
 use crate::span::Span;
 use serde::{Deserialize, Serialize};
@@ -38,7 +38,7 @@ pub struct Request {
     pub plans: Vec<ReadPlan>,
     /// The commit position every plan is read at.
     pub as_of: i64,
-    /// The day setting the units were computed under (`analysis.md` §4.3).
+    /// The day setting the units were computed under.
     pub day_setting: String,
     /// The full hypothesis family, fixed before results are seen.
     pub family: Option<Vec<Value>>,
@@ -46,10 +46,10 @@ pub struct Request {
 }
 
 impl Request {
-    /// `blake3::derive_key("sinex analysis request v1", canonical bytes)`.
+    /// `blake3::derive_key("sinex analysis request v1", sorted JSON bytes)`.
     pub fn id(&self) -> [u8; 32] {
         let value = serde_json::to_value(self).expect("requests serialize");
-        blake3::derive_key("sinex analysis request v1", canonical(&value).as_bytes())
+        blake3::derive_key("sinex analysis request v1", sorted_json(&value).as_bytes())
     }
 
     pub fn id_hex(&self) -> String {
@@ -61,17 +61,17 @@ pub fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{b:02x}")).collect()
 }
 
-/// RFC 8785-style canonical JSON: object keys sorted by UTF-16 code units,
-/// no whitespace, and every number written as a string, so an integer and a
-/// float that print alike never hash differently by type. Non-finite floats
-/// cannot occur in `serde_json` values.
-pub fn canonical(v: &Value) -> String {
+/// RFC 8785-style sorted JSON: object keys sorted by UTF-16 code units, no
+/// whitespace, and every number written as a string, so an integer and a float
+/// that print alike never hash differently by type. Non-finite floats cannot
+/// occur in `serde_json` values.
+pub fn sorted_json(v: &Value) -> String {
     let mut out = String::new();
-    write_canonical(v, &mut out);
+    write_sorted(v, &mut out);
     out
 }
 
-fn write_canonical(v: &Value, out: &mut String) {
+fn write_sorted(v: &Value, out: &mut String) {
     match v {
         Value::Null => out.push_str("null"),
         Value::Bool(b) => out.push_str(if *b { "true" } else { "false" }),
@@ -83,7 +83,7 @@ fn write_canonical(v: &Value, out: &mut String) {
                 if i > 0 {
                     out.push(',');
                 }
-                write_canonical(x, out);
+                write_sorted(x, out);
             }
             out.push(']');
         }
@@ -97,7 +97,7 @@ fn write_canonical(v: &Value, out: &mut String) {
                 }
                 out.push_str(&Value::String(k.clone()).to_string());
                 out.push(':');
-                write_canonical(&m[k], out);
+                write_sorted(&m[k], out);
             }
             out.push('}');
         }
@@ -108,7 +108,7 @@ fn write_canonical(v: &Value, out: &mut String) {
 /// position, and the coverage it relied on.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct InputsRead {
-    /// Hex BLAKE3 of the canonical plan.
+    /// Hex BLAKE3 of the plan's sorted JSON.
     pub plan: String,
     pub as_of: i64,
     pub rows: u64,
@@ -136,7 +136,7 @@ impl InputsRead {
         }
         let plan_value = serde_json::to_value(plan).expect("plans serialize");
         Self {
-            plan: hex(blake3::hash(canonical(&plan_value).as_bytes()).as_bytes()),
+            plan: hex(blake3::hash(sorted_json(&plan_value).as_bytes()).as_bytes()),
             as_of,
             rows: row_ids.len() as u64,
             digest: hex(h.finalize().as_bytes()),
@@ -162,9 +162,9 @@ pub enum Outcome {
     Failed,
 }
 
-/// The output hash of a result: BLAKE3 over its canonical tables.
+/// The output hash of a result: BLAKE3 over its tables' sorted JSON.
 pub fn output_hash(tables: &Value) -> [u8; 32] {
-    *blake3::hash(canonical(tables).as_bytes()).as_bytes()
+    *blake3::hash(sorted_json(tables).as_bytes()).as_bytes()
 }
 
 /// Sort the keys of every object in a value, for stored output that compares

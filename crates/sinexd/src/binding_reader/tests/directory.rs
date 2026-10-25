@@ -1,4 +1,5 @@
-//! Directory capture, retained replay and byte checkpoints through the real writer.
+//! Directory capture, replay of stored bytes and byte checkpoints through the
+//! real writer.
 use super::*;
 
 type NoteReadings = Vec<(String, Value, i64, Vec<u8>, i64)>;
@@ -56,7 +57,7 @@ async fn empty_directory_files_keep_distinct_paths_bytes_and_locations_through_r
             compare: false,
             resume: None,
             actor: "synthetic".into(),
-            authority: None,
+            unlock: None,
         },
     )
     .await;
@@ -88,7 +89,7 @@ async fn empty_directory_files_keep_distinct_paths_bytes_and_locations_through_r
             compare: false,
             resume: None,
             actor: "synthetic".into(),
-            authority: None,
+            unlock: None,
         },
     )
     .await;

@@ -20,9 +20,9 @@ fn request() -> Request {
 }
 
 #[devkit::test]
-fn canonical_bytes_sort_keys_and_stringify_numbers() {
+fn sorted_json_sorts_keys_and_stringifies_numbers() {
     assert_eq!(
-        canonical(&json!({"b": 1, "a": [2.5, null, "x"]})),
+        sorted_json(&json!({"b": 1, "a": [2.5, null, "x"]})),
         r#"{"a":["2.5",null,"x"],"b":"1"}"#
     );
 }

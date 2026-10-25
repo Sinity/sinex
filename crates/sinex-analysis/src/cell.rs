@@ -1,7 +1,7 @@
-//! Observation states (spec `analysis.md` §3.1). Every value reported at a
-//! unit carries one, so "nothing happened" and "nothing was observed" never
-//! look alike. There is no `Default` and no conversion to the bare value: code
-//! that wants a number matches on the state.
+//! Observation states. Every value reported at a unit carries one, so "nothing
+//! happened" and "nothing was observed" never look alike. There is no `Default`
+//! and no conversion to the bare value: code that wants a number matches on the
+//! state.
 use serde::{Deserialize, Serialize};
 
 /// A value at a unit, with what Sinex could see of that unit.
@@ -36,7 +36,7 @@ pub enum Missing {
 
 impl Missing {
     /// Rank used when a paired method drops a unit for both sides: the worse
-    /// reason wins (`analysis.md` §6.6).
+    /// reason wins.
     pub fn severity(self) -> u8 {
         match self {
             Missing::NoCoverage => 6,
@@ -96,8 +96,8 @@ impl From<Missing> for Exclusion {
     }
 }
 
-/// Which cells a method may use (`analysis.md` §6.1): observed cells, partial
-/// ones only at or above a stated fraction, recorded ones only when admitted.
+/// Which cells a method may use: observed cells, partial ones only at or above
+/// a stated fraction, recorded ones only when admitted.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct Eligibility {
     pub min_observed_fraction: Option<f64>,

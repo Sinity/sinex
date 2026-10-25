@@ -1,7 +1,7 @@
-//! Findings (spec `analysis.md` §8): typed statements bound to a result, with
-//! slots filled from the result, an epistemic role, a support status, typed
-//! caveats and separate checks. Rendering comes from the slots, never from
-//! improvised text, and there is no free-floating confidence number.
+//! Findings: typed statements bound to a result, with slots filled from the
+//! result, an epistemic role, a support status, typed caveats and separate
+//! checks. Rendering comes from the slots, never from improvised text, and
+//! there is no free-floating confidence number.
 use crate::cell::Cell;
 use crate::methods::MethodResult;
 use crate::panel::PanelCell;
@@ -50,7 +50,7 @@ pub enum Caveat {
     Excluded { units: u64 },
 }
 
-/// Typed predicates with slots (`analysis.md` §8.2).
+/// Typed predicates with slots.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "template", rename_all = "snake_case")]
 pub enum Template {

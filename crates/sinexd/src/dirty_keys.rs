@@ -1,6 +1,6 @@
 //! Admission's dirty-key marking, backed by the registered keyed derivations
 //! and the shipped metrics: a changed event dirties its derivations' keys and
-//! the logical day of every metric over its type (`analysis.md` §4.4).
+//! the logical day of every metric over its type.
 use serde_json::{Value, json};
 use sinex_derivations::{AnyKeyed, Env, KeyView};
 use sinex_model::Timestamp;

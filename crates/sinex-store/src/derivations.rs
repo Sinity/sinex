@@ -1,8 +1,7 @@
-//! Reads for the derivation driver (architecture §6.2): the live events a key
-//! reads, the keys waiting to be recomputed, and committed events in commit
-//! order. Writes go through admission (`DerivedScope`), never from here,
-//! except the registry rows written at daemon start and the comparisons a
-//! recompute command keeps.
+//! Reads for the derivation driver: the live events a key reads, the keys
+//! waiting to be recomputed, and committed events in commit order. Writes go
+//! through admission (`DerivedScope`), never from here, except the registry
+//! rows written at daemon start and the comparisons a recompute command keeps.
 use crate::Result;
 use serde_json::Value;
 use sinex_model::{
@@ -539,9 +538,8 @@ pub struct StoredComparison {
     pub examples: Value,
 }
 
-/// Keep a comparison (the comparison lane, architecture §6.3). Comparisons
-/// are operations records, not events; they are written by the command that
-/// made them.
+/// Keep a comparison. Comparisons are operations records, not events; they are
+/// written by the command that made them.
 pub async fn store_comparison(conn: &mut PgConnection, c: &StoredComparison) -> Result<i64> {
     let (from, until) = c.range.unwrap_or((None, None));
     Ok(sqlx::query_scalar!(

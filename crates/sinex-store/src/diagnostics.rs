@@ -1,6 +1,6 @@
-//! What the offline diagnostics read while the daemon is down (architecture
-//! §7.2): a read-only snapshot of the database's state, and the stored blob
-//! names to verify. Nothing here writes.
+//! What the offline diagnostics read while the daemon is down: a read-only
+//! snapshot of the database's state, and the stored blob names to verify.
+//! Nothing here writes.
 use crate::Result;
 use sqlx::{Connection, PgConnection};
 

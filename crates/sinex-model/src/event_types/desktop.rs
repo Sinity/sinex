@@ -115,10 +115,10 @@ pub struct PresenceSpan {
 }
 
 /// Whether the operator was at the machine over an interval, judged from
-/// ActivityWatch's AFK watcher and corroborating input (`y0o3.13`, defect 2).
-/// The watcher misses idle transitions under load, so a long not-afk stretch
-/// with no input is `uncertain`, never silently `present`. Derived per
-/// logical day by the presence derivation; the reported spans stay as read.
+/// ActivityWatch's AFK watcher and corroborating input. The watcher misses idle
+/// transitions under load, so a long not-afk stretch with no input is
+/// `uncertain`, never silently `present`. Derived per logical day by the
+/// presence derivation; the reported spans stay as read.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
 #[event(type = "presence.interval", key = ["day", "started_at"], replace = newer, time = started_at, quality = intrinsic)]
 pub struct PresenceInterval {

@@ -1,4 +1,4 @@
-//! `xtask bench`: backfill and derivation measured on a frozen sample of the
+//! `xtask bench`: backfill and derivation measured on a fixed sample of the
 //! operator's real inputs instead of all of them.
 //!
 //! The inputs are listed, one per line, in `sources.tsv` under the project

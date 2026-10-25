@@ -1,7 +1,7 @@
-//! The HTTP API (architecture §7.2): JSON over a Unix socket and, when
-//! configured, localhost. One endpoint takes every request of the command
-//! table; `follow` streams new matching events as server-sent events. Three
-//! fixed tokens grant read, agent and operator access.
+//! The HTTP API: JSON over a Unix socket and, when configured, localhost. One
+//! endpoint takes every request of the command table; `follow` streams new
+//! matching events as server-sent events. Three fixed tokens grant read, agent
+//! and operator access.
 mod mask;
 mod methods;
 
@@ -77,10 +77,10 @@ impl Tokens {
     }
 }
 
-/// The classes the operator granted the agent token, from `agent.grants` in
-/// the tokens directory (one class per line or comma-separated). Only
-/// `guarded` can be granted: the agent token never reads sealed data (spec
-/// `privacy.md` §4), so a `sealed` line is refused rather than ignored.
+/// The classes the operator granted the agent token, from `agent.grants` in the
+/// tokens directory (one class per line or comma-separated). Only `guarded` can
+/// be granted: the agent token never reads sealed data, so a `sealed` line is
+/// refused rather than ignored.
 pub fn agent_grants(dir: &Path) -> std::io::Result<Vec<sinex_model::Class>> {
     let text = match std::fs::read_to_string(dir.join("agent.grants")) {
         Ok(t) => t,

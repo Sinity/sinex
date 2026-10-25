@@ -69,12 +69,12 @@ fn facts(length: usize) -> ObservationFacts {
         ..Default::default()
     }
 }
-fn route(cursor: Value, pending: Option<Pending>, budget: usize) -> Route {
+fn route(cursor: Value, unfinished: Option<UnfinishedPart>, budget: usize) -> Route {
     Route {
         class: Class::Open,
         driver: driver(budget),
         cursor,
-        pending,
+        unfinished,
     }
 }
 fn source(index: usize) -> crate::DeclaredSource<fit::FitParser> {
@@ -237,7 +237,7 @@ fn restart_finishes_a_part_with_its_original_material_id_and_anchors() {
     let blob = sink.put(&raw).unwrap();
     let mut seen = Seen::default();
     let mut stopped = false;
-    let mut pending = None;
+    let mut unfinished = None;
     read(
         Box::new(std::io::Cursor::new(raw.clone())),
         blob.clone(),
@@ -262,7 +262,7 @@ fn restart_finishes_a_part_with_its_original_material_id_and_anchors() {
                 let first = m.records[0];
                 seen.cursors.insert(0, (m.cursor_at)(first.1).unwrap());
                 let StoredBytes::Blob { name, length } = m.stored.as_ref().unwrap() else {
-                    panic!("retained body")
+                    panic!("stored body")
                 };
                 let reference = MaterialRef {
                     id: m.id,
@@ -275,7 +275,7 @@ fn restart_finishes_a_part_with_its_original_material_id_and_anchors() {
                     parser_version: source(0).spec.parser_version,
                     manifest: m.manifest.clone(),
                 };
-                pending = Some((reference, m.bytes.clone(), m.records.clone()));
+                unfinished = Some((reference, m.bytes.clone(), m.records.clone()));
                 stopped = true;
                 return Ok(false);
             }
@@ -283,9 +283,9 @@ fn restart_finishes_a_part_with_its_original_material_id_and_anchors() {
         },
     )
     .unwrap();
-    let (reference, bytes, records) = pending.unwrap();
+    let (reference, bytes, records) = unfinished.unwrap();
     let id = reference.id;
-    let saved = Pending::new(reference, bytes, &source(0).spec).unwrap();
+    let saved = UnfinishedPart::new(reference, bytes, &source(0).spec).unwrap();
     let mut resumed_id = None;
     let routes = vec![
         route(seen.cursors[&0].clone(), Some(saved), 31),
@@ -453,7 +453,7 @@ fn sealed_zip_uses_supplied_seek_without_plaintext_staging() {
         &mut |_, _| panic!("refuse before original admission"),
     )
     .unwrap_err();
-    assert!(error.to_string().contains("plaintext staging is forbidden"));
+    assert!(error.to_string().contains("plaintext is never staged"));
 }
 
 #[devkit::test]

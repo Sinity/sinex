@@ -1,7 +1,7 @@
-//! Robust baselines (median and MAD×1.4826) and deviations from them. "28
-//! days" is calendar days, and the minimum counts observed units, never
-//! samples (`a4w.3.6`). A prior-only baseline for a unit reads only units
-//! before it, so a later unit never changes it.
+//! Robust baselines (median and MAD×1.4826) and deviations from them. "28 days"
+//! is calendar days, and the minimum counts observed units, never samples. A
+//! prior-only baseline for a unit reads only units before it, so a later unit
+//! never changes it.
 use super::stats::{median, scaled_mad};
 use super::{Dependence, Estimand, Excluded, Method, MethodInput, MethodResult, NotEstimable};
 use serde::{Deserialize, Serialize};

@@ -1,6 +1,6 @@
 //! Identifiers. Every stored identity is a UUIDv7, minted when the thing is
-//! created; event IDs are never derived from content (identity rule 1), so a
-//! replay mints new ones.
+//! created; event IDs are never derived from content, so a replay mints new
+//! ones.
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 

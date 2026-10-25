@@ -1,7 +1,7 @@
-//! The registries as data for the NixOS module (architecture §5.4, §10): every
-//! source and derivation with what an option needs to know about it. The
-//! module reads the generated `nix/catalog.json`, so adding a source to the
-//! registry adds its option; a test keeps the file current.
+//! The registries as data for the NixOS module: every source and derivation
+//! with what an option needs to know about it. The module reads the generated
+//! `nix/catalog.json`, so adding a source to the registry adds its option; a
+//! test keeps the file current.
 use serde_json::{Value, json};
 
 pub fn catalog() -> Value {

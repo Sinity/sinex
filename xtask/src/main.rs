@@ -33,7 +33,7 @@ enum Cli {
     Db(devkit::cli::db::Db),
     /// Check the workspace dependency graph.
     Boundaries { dir: Option<PathBuf> },
-    /// Backfill and derivation on a frozen sample of the real inputs.
+    /// Backfill and derivation on a fixed sample of the real inputs.
     #[command(subcommand)]
     Bench(bench::Bench),
     #[command(flatten)]
@@ -164,7 +164,7 @@ fn test_options(args: &[String], env: Vec<(String, String)>) -> Nextest {
         args: selected,
         env,
         // Preserve the original single name-filter invocation. New nextest
-        // selectors retain devkit's default refusal when no tests match.
+        // selectors keep devkit's default refusal when no tests match.
         allow_no_tests: args.len() == 1 && !args[0].starts_with('-'),
         tmpfs: true,
     }

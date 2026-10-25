@@ -1,8 +1,7 @@
-//! Scenarios ported from the predecessor's `interval_lift_test.rs`, on the
-//! recompute model: inputs are folded in time order, so arrival order never
-//! matters and there is no carried state to decode. ActivityWatch heartbeats
-//! are joined into spans by the ActivityWatch source, so those scenarios are
-//! span scenarios here.
+//! Interval scenarios on the recompute model: inputs are folded in time order,
+//! so arrival order never matters and there is no carried state to decode.
+//! ActivityWatch heartbeats are joined into spans by the ActivityWatch source,
+//! so those scenarios are span scenarios here.
 use super::*;
 use sinex_model::{
     Class, EquivalenceKey, EventId, MaterialId, ReadingOrder, RecordLocation, RecordState,

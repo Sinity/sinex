@@ -1,8 +1,8 @@
-//! Presence from ActivityWatch's AFK watcher, checked against input
-//! (`y0o3.13`, defect 2). The watcher needs two heartbeats inside a hard five
-//! second window and does not retry, so under overnight load it misses idle
-//! transitions and reports hours of `not-afk` while nobody is there. Each
-//! reported span becomes a `presence.interval`, cut at logical-day boundaries:
+//! Presence from ActivityWatch's AFK watcher, checked against input. The
+//! watcher needs two heartbeats inside a hard five second window and does not
+//! retry, so under overnight load it misses idle transitions and reports hours
+//! of `not-afk` while nobody is there. Each reported span becomes a
+//! `presence.interval`, cut at logical-day boundaries:
 //!
 //! - `afk` is `absent`;
 //! - a `not-afk` span shorter than [`THRESHOLDS`]'s `long` is `present`;
@@ -19,7 +19,7 @@ use sinex_model::event_types::desktop::{PresenceInterval, PresenceSpan};
 use sinex_model::event_types::{CommandExecuted, CommandImported};
 use sinex_model::{Event, EventPayload, Timestamp};
 
-/// The correction's parameters, in one place (`y0o3.13` acceptance 4).
+/// The correction's parameters, in one place.
 #[derive(Clone, Copy, Debug)]
 pub struct PresenceThresholds {
     /// A `not-afk` span at least this long must be corroborated by input.

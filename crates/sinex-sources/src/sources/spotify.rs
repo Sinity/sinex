@@ -4,8 +4,8 @@
 //!
 //! Spotify records when playback *stopped*: `ts` (RFC 3339) in the extended
 //! export, `endTime` (`YYYY-MM-DD HH:MM`, UTC) in the account-data export. The
-//! start is the stop time less the milliseconds played. (The predecessor read
-//! `ts` as the start, which shifted every play by its length.)
+//! start is the stop time less the milliseconds played; reading `ts` as the
+//! start would shift every play by its length.
 use super::fields;
 use crate::drivers::export_archive::{ExportArchive, Framing, PART_BYTES};
 use crate::registry::{DeclaredSource, Driver, SourceSpec};

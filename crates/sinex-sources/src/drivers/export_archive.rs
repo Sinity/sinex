@@ -1,6 +1,6 @@
-//! Export declarations and record framing. `group` traverses a retained archive
-//! and stores exact decoded record parts, separately from its captured original.
-//! Native callers use that traversal for one binding or compatible bindings.
+//! Export declarations and record framing. `group` traverses a stored archive
+//! and stores exact decoded record parts, separately from its captured
+//! original. Callers use that traversal for one binding or compatible bindings.
 pub mod group;
 pub(crate) mod records;
 

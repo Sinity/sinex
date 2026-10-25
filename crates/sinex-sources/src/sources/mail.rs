@@ -4,13 +4,13 @@
 //! part of the message.
 //!
 //! The `Message-ID` header is the identity, so the same message in a later
-//! export of the same source is one record; a message without one is
-//! identified by a hash of its raw bytes. An mbox export and a Maildir are two
-//! sources (a Gmail export and a local mail store); the same message in both
-//! is combined by fusion, not by admission (architecture §3.3 rule 5). Gmail's labels and thread ID
-//! are read from its `X-Gmail-Labels` and `X-GM-THRID` headers. The first
-//! plain-text part is kept as text; attachments are listed with their size,
-//! and their bytes stay in the material.
+//! export of the same source is one record; a message without one is identified
+//! by a hash of its raw bytes. An mbox export and a Maildir are two sources (a
+//! Gmail export and a local mail store); the same message in both is combined
+//! by fusion, not by admission. Gmail's labels and thread ID are read from its
+//! `X-Gmail-Labels` and `X-GM-THRID` headers. The first plain-text part is kept
+//! as text; attachments are listed with their size, and their bytes stay in the
+//! material.
 //!
 //! A message deleted from a Maildir is not recorded as removed yet: the
 //! vanished file's marker names only its path, not its Message-ID.

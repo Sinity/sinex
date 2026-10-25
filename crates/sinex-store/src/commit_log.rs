@@ -1,14 +1,14 @@
-//! Reading committed events in commit order (architecture §4.3): the
-//! commit-log reader and the confirmed-stream publisher page through
-//! `core.commit_log` from a saved position. Archive notices (a reading
-//! replaced, hidden or restored) use the existing archival notice sequence;
-//! `audit.archive_changes` retains their committed history.
+//! Reading committed events in commit order: the commit-log reader and the
+//! confirmed-stream publisher page through `core.commit_log` from a saved
+//! position. Archive notices (a reading replaced, hidden or restored) use the
+//! existing archival notice sequence; `audit.archive_changes` keeps their
+//! committed history.
 //!
 //! An excision removes events and their commit-log rows, leaving gaps in the
 //! commit positions; pages read past gaps, and an event row missing behind a
 //! commit-log row is skipped, so consumers never see excised content. The
-//! publisher erases the stream messages of events excised after publication
-//! ([`excised_on_stream`]).
+//! publisher erases the stream messages of events excised after they were
+//! published ([`excised_on_stream`]).
 use crate::{Error, Result};
 use serde_json::Value;
 use sinex_model::{

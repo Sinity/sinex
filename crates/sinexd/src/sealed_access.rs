@@ -1,4 +1,4 @@
-//! Explicit, operation-scoped use of the operator's unlock authority.
+//! An operator unlock held by one operation for a limited time.
 use sinex_model::MaterialId;
 use sinex_store::sealed::{DataKey, Identity};
 use sqlx::PgConnection;
@@ -8,31 +8,31 @@ use std::sync::{
 };
 use std::time::{Duration, Instant};
 
-/// Capture can use a public recipient; historical plaintext requires the
-/// existing operation-scoped authority.
+/// Capture can use a public recipient; reading stored sealed bytes needs the
+/// operation's unlock.
 #[derive(Clone, Copy, Default)]
 pub(crate) struct Access<'a> {
     pub recipient: Option<&'a sinex_store::sealed::Recipient>,
-    pub authority: Option<&'a Authority>,
+    pub unlock: Option<&'a Unlock>,
 }
 
 #[derive(Clone)]
-pub(crate) struct Authority {
+pub(crate) struct Unlock {
     identity: Arc<Identity>,
-    lease: Arc<Lease>,
+    expiry: Arc<Expiry>,
 }
-struct Lease {
+struct Expiry {
     until: Instant,
     revoked: AtomicBool,
 }
-impl Authority {
+impl Unlock {
     pub fn new(identity: Identity, duration: Duration) -> Result<Self, String> {
         let until = Instant::now()
             .checked_add(duration)
             .ok_or("unlock duration exceeds the clock range")?;
         Ok(Self {
             identity: Arc::new(identity),
-            lease: Arc::new(Lease {
+            expiry: Arc::new(Expiry {
                 until,
                 revoked: AtomicBool::new(false),
             }),
@@ -43,14 +43,14 @@ impl Authority {
     }
 
     pub fn check(&self) -> Result<(), String> {
-        if self.lease.revoked.load(Ordering::Acquire) || Instant::now() >= self.lease.until {
-            Err("this operation's sealed unlock authority expired or was revoked".into())
+        if self.expiry.revoked.load(Ordering::Acquire) || Instant::now() >= self.expiry.until {
+            Err("this operation's sealed unlock expired or was revoked".into())
         } else {
             Ok(())
         }
     }
     pub fn revoke(&self) {
-        self.lease.revoked.store(true, Ordering::Release);
+        self.expiry.revoked.store(true, Ordering::Release);
     }
     pub fn unwrap(&self, wrapped: &[u8]) -> Result<[u8; 32], String> {
         self.check()?;
@@ -84,7 +84,8 @@ impl Authority {
 #[cfg(test)]
 mod tests;
 
-// Native sealed writers use this frame size; the index allowance includes footer metadata.
+// Sealed writers use this frame size; the index allowance includes footer
+// metadata.
 pub(crate) fn read_limits(length: u64) -> Result<sinex_store::blobs::SealedReadLimits, String> {
     let frame = sinex_store::blobs::BLOB_FRAME_BYTES;
     let frames = length.div_ceil(frame as u64).max(1);

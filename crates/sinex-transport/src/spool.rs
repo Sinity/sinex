@@ -1,10 +1,9 @@
-//! The producer handoff: bytes an outside producer gives Sinex for one frame,
-//! in that frame's directory under the store root, each file named by the
-//! BLAKE3 hash of its bytes. A producer on the same host writes them with
-//! [`stage`]; one on another host sends chunks that the receiver collects
-//! with [`receive`]. The receiver reads a verified copy with [`snapshot`],
-//! stores it, and removes the directory with [`discard`] once the frame is
-//! recorded.
+//! The producer spool: bytes an outside producer gives Sinex for one frame, in
+//! that frame's directory under the store root, each file named by the BLAKE3
+//! hash of its bytes. A producer on the same host writes them with [`stage`];
+//! one on another host sends chunks that the receiver collects with
+//! [`receive`]. The receiver reads a verified copy with [`snapshot`], stores
+//! it, and removes the directory with [`discard`] once the frame is recorded.
 mod permissions;
 
 use std::io::{Read, Seek, Write};

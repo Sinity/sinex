@@ -53,8 +53,8 @@ impl Cursor {
             .map_err(|e| DriverError::Cursor(e.to_string()))
     }
 
-    /// A partly admitted record material must finish from its retained bytes and identity.
-    pub fn pending_material(&self) -> Option<MaterialId> {
+    /// A partly admitted record part finishes from its stored bytes and identity.
+    pub fn unfinished_part(&self) -> Option<MaterialId> {
         (!self.done && self.part_member == Some(self.member) && self.record < self.part_end)
             .then_some(self.material)
             .flatten()
@@ -73,18 +73,18 @@ pub struct Route {
     pub class: Class,
     pub driver: ExportArchive,
     pub cursor: Value,
-    pub pending: Option<Pending>,
+    pub unfinished: Option<UnfinishedPart>,
 }
 
 /// The current material loaded by its durable ID. Metadata stays in the material row,
 /// not duplicated in every cursor update. Its body is one part or one oversized record.
-pub struct Pending {
+pub struct UnfinishedPart {
     material: MaterialRef,
     bytes: Vec<u8>,
     records: Vec<(usize, usize)>,
 }
 
-impl Pending {
+impl UnfinishedPart {
     pub fn new(
         material: MaterialRef,
         bytes: Vec<u8>,
@@ -92,7 +92,8 @@ impl Pending {
     ) -> Result<Self, DriverError> {
         if material.parser != source.parser || material.parser_version != source.parser_version {
             return Err(DriverError::Cursor(
-                "the pending archive part needs an explicit parser replay before resumption".into(),
+                "the unfinished archive part was read by another parser version; replay it first"
+                    .into(),
             ));
         }
         if sinex_model::MaterialRole::of(&material.manifest)
@@ -102,7 +103,7 @@ impl Pending {
             || material.length != bytes.len() as u64
         {
             return Err(DriverError::Cursor(
-                "pending archive record material has inconsistent metadata".into(),
+                "unfinished archive part has inconsistent metadata".into(),
             ));
         }
         let records: Vec<(usize, usize)> =
@@ -112,7 +113,7 @@ impl Pending {
         for &(start, end) in &records {
             if start < through || start >= end || end > bytes.len() {
                 return Err(DriverError::Cursor(
-                    "invalid pending archive record ranges".into(),
+                    "unfinished archive part has invalid record ranges".into(),
                 ));
             }
             through = end;
@@ -144,7 +145,7 @@ pub enum Input {
     Seekable(Box<dyn ReadSeek>),
 }
 
-/// Read already-retained bytes. The caller groups only compatible privacy/acquisition
+/// Read already-stored bytes. The caller groups only compatible privacy/acquisition
 /// contexts and installs the original blob once. Each callback is completed before reading
 /// further, so admission supplies backpressure. A false result stops only that route.
 #[allow(clippy::too_many_arguments)]
@@ -206,8 +207,7 @@ pub fn read_input(
         && opened.seekable.is_none()
     {
         return Err(DriverError::InvalidMaterial(
-            "sealed ZIP requires a retained random-access reader; plaintext staging is forbidden"
-                .into(),
+            "sealed ZIP needs a stored random-access reader; plaintext is never staged".into(),
         ));
     }
     let capture = Capture {
@@ -270,7 +270,7 @@ pub fn read_input(
             driver: route.driver,
             cursor,
             active: true,
-            pending: if continuing { route.pending } else { None },
+            unfinished: if continuing { route.unfinished } else { None },
         });
         let index = context.routes.len() - 1;
         if !continuing {
@@ -327,7 +327,7 @@ struct State {
     driver: ExportArchive,
     cursor: Cursor,
     active: bool,
-    pending: Option<Pending>,
+    unfinished: Option<UnfinishedPart>,
 }
 struct Context<'a, 'b> {
     capture: Capture,
@@ -342,30 +342,30 @@ struct Context<'a, 'b> {
 impl Context<'_, '_> {
     fn resume(&mut self, index: usize) -> Result<(), DriverError> {
         let state = &mut self.routes[index];
-        let Some(id) = state.cursor.pending_material() else {
+        let Some(id) = state.cursor.unfinished_part() else {
             return Ok(());
         };
-        let pending = state.pending.take().ok_or_else(|| {
+        let unfinished = state.unfinished.take().ok_or_else(|| {
             DriverError::Cursor("the partly admitted archive material was not loaded".into())
         })?;
-        if pending.material.id != id
-            || pending.material.part_index != state.cursor.part_index
-            || pending.records.len()
+        if unfinished.material.id != id
+            || unfinished.material.part_index != state.cursor.part_index
+            || unfinished.records.len()
                 != state
                     .cursor
                     .part_end
                     .saturating_sub(state.cursor.part_start)
             || state.cursor.record < state.cursor.part_start
-            || pending.material.manifest["framing"] != state.driver.framing.name()
+            || unfinished.material.manifest["framing"] != state.driver.framing.name()
         {
             return Err(DriverError::Cursor(
-                "the pending archive material does not match its cursor".into(),
+                "the unfinished archive part does not match its cursor".into(),
             ));
         }
         let skip = state.cursor.record - state.cursor.part_start;
         let mut after = state.cursor.clone();
         after.record = after.part_end;
-        let ends: Vec<usize> = pending.records.iter().map(|&(_, end)| end).collect();
+        let ends: Vec<usize> = unfinished.records.iter().map(|&(_, end)| end).collect();
         let cursor_base = after.clone();
         let acquired = Acquired {
             input: state.driver.input(),
@@ -376,16 +376,16 @@ impl Context<'_, '_> {
             revision: RevisionChange::Same,
             material: Some(NewMaterial {
                 id,
-                bytes: pending.bytes,
+                bytes: unfinished.bytes,
                 stored: Some(StoredBytes::Blob {
-                    name: pending.material.blob.clone(),
-                    length: pending.material.length,
+                    name: unfinished.material.blob.clone(),
+                    length: unfinished.material.length,
                 }),
-                records: pending.records[skip..].to_vec(),
-                part_index: pending.material.part_index,
-                previous_part: pending.material.previous_part,
-                reading_order: crate::drivers::reading_order(&pending.material.manifest),
-                manifest: pending.material.manifest,
+                records: unfinished.records[skip..].to_vec(),
+                part_index: unfinished.material.part_index,
+                previous_part: unfinished.material.previous_part,
+                reading_order: crate::drivers::reading_order(&unfinished.material.manifest),
+                manifest: unfinished.material.manifest,
                 cursor_at: Box::new({
                     let cursor = move |end| {
                         let mut cursor = cursor_base.clone();

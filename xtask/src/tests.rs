@@ -6,7 +6,7 @@ fn options(args: &[&str]) -> Nextest {
     else {
         panic!("expected test command")
     };
-    test_options(&args, vec![("synthetic".into(), "retained".into())])
+    test_options(&args, vec![("synthetic".into(), "kept".into())])
 }
 
 #[devkit::test]
@@ -14,7 +14,7 @@ fn test_selection_defaults_to_the_full_workspace() {
     let got = options(&[]);
     assert_eq!(got.args, ["--locked", "--workspace"]);
     assert!(got.tmpfs);
-    assert_eq!(got.env, [("synthetic".into(), "retained".into())]);
+    assert_eq!(got.env, [("synthetic".into(), "kept".into())]);
     assert!(!got.allow_no_tests);
 }
 

@@ -13,9 +13,9 @@ use sinex_store::analysis as store;
 use sqlx::PgConnection;
 use time::OffsetDateTime;
 
-/// The daily brief for one logical day (`analysis.md` §12): data quality
-/// first, then what the day's metrics show, departures from each metric's
-/// recent level, the current associations, and the machine.
+/// The daily brief for one logical day: data quality first, then what the day's
+/// metrics show, departures from each metric's recent level, the current
+/// associations, and the machine.
 pub async fn brief(
     conn: &mut PgConnection,
     settings: &Settings,

@@ -1,8 +1,8 @@
-//! Samsung Health in-app export (`com.samsung.<health|shealth>.<type>.<stamp>.csv`,
-//! as received in the export's zip), on `ExportArchive`
-//! (`spec/port-lynchpin-sources.md` §10.1). Line 1 of each file names the
-//! type, line 2 is the header (names may carry the type prefix, stripped to
-//! the last dotted part), then rows. Every row has a `datauuid`.
+//! Samsung Health in-app export
+//! (`com.samsung.<health|shealth>.<type>.<stamp>.csv`, as received in the
+//! export's zip), on `ExportArchive`. Line 1 of each file names the type, line
+//! 2 is the header (names may carry the type prefix, stripped to the last
+//! dotted part), then rows. Every row has a `datauuid`.
 //!
 //! Each row becomes one `health.record` whose category is the type and whose
 //! values are every column, typed as numbers where they are; splitting types

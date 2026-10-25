@@ -1,6 +1,6 @@
-//! Diagnostics that work while the daemon is down (architecture §7.2):
-//! `doctor`, `status --offline`, `store verify --offline`. Read-only: they open
-//! the database directly in read-only transactions and never write.
+//! Diagnostics that work while the daemon is down: `doctor`, `status
+//! --offline`, `store verify --offline`. Read-only: they open the database
+//! directly in read-only transactions and never write.
 use serde_json::{Value, json};
 use sinex_store::Verified;
 use sinex_store::diagnostics::{self, Snapshot};

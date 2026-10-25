@@ -1,9 +1,9 @@
-//! The commit-log reader (architecture §4.3, §7.4) for read models: one task
-//! that reads committed events in commit order from `core.commit_log` and
-//! feeds every read-model maintainer (`nbi.3`: never database triggers). Each
-//! maintainer updates its tables and its position (`core.consumer_positions`)
-//! in one transaction, so a restart resumes exactly where it stopped: nothing
-//! is skipped, and nothing is applied twice.
+//! The commit-log reader for read models: one task that reads committed events
+//! in commit order from `core.commit_log` and feeds every read-model maintainer
+//! (never database triggers). Each maintainer updates its tables and its
+//! position (`core.consumer_positions`) in one transaction, so a restart
+//! resumes exactly where it stopped: nothing is skipped, and nothing is applied
+//! twice.
 //!
 //! One page is read for all consumers, from the lowest position among them;
 //! each consumer gets the part of the page after its own position.
@@ -104,8 +104,8 @@ pub async fn run(
     }
 }
 
-/// A table kept only to make reads fast, maintained from committed events
-/// (architecture §3.6, `nbi.3`): never by database triggers.
+/// A table kept only to make reads fast, maintained from committed events:
+/// never by database triggers.
 pub trait ReadModel: Send + Sync {
     fn name(&self) -> &'static str;
     fn wants(&self, event_type: &str) -> bool;
@@ -117,13 +117,13 @@ pub trait ReadModel: Send + Sync {
     ) -> BoxFuture<'a, Result<(), String>>;
 }
 
-/// Every read model, in one list (architecture §3.6).
+/// Every read model, in one list.
 pub fn read_models() -> Vec<Box<dyn ReadModel>> {
     vec![Box::new(SearchText)]
 }
 
 /// The full-text read model `core.search_text`: every event's payload text,
-/// normalized, for the query language's words (spec `query.md` §5).
+/// normalized, for the query language's words.
 struct SearchText;
 
 impl ReadModel for SearchText {

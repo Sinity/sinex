@@ -20,7 +20,7 @@ fn gdpr_threads_key_by_participants() {
 }
 
 #[devkit::test]
-fn legacy_threads_are_repaired() {
+fn older_export_threads_are_repaired() {
     let doc = json!({"participants": [{"name": "Micha\u{00c5}\u{0082}"}, {"name": "B"}],
         "title": "B", "messages": [{"sender_name": "Micha\u{00c5}\u{0082}",
         "timestamp_ms": 1_500_000_000_000i64, "content": "za\u{00c5}\u{00bc}\u{00c3}\u{00b3}\u{00c5}\u{0082}\u{00c4}\u{0087}",

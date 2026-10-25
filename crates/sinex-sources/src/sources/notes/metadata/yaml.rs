@@ -1,5 +1,5 @@
 //! YAML syntax belongs to serde-saphyr. This boundary admits only values whose
-//! types JSON can retain, without converting mapping keys or large integers.
+//! types JSON can hold, without converting mapping keys or large integers.
 use super::*;
 use serde::{
     Deserialize, Deserializer,

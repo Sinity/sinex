@@ -240,7 +240,7 @@ async fn nested_credential_keys_refuse_replies_and_complete_follow_pages_without
     read_until(&mut stream, &mut seen, "event: notice").await;
     let key = "--secret=\"unfinished --token=\"synthetic-key-value\" tail";
     let mut bad = command("late-key-row", 1);
-    bad.payload["extra"] = json!({"nested": [{key: "retained", "ordinary": false}]});
+    bad.payload["extra"] = json!({"nested": [{key: "kept", "ordinary": false}]});
     let original = bad.payload.clone();
     admit_events(&w, vec![command("safe-first-row", 0), bad]).await;
     let before = sinex_store::query::current_seq(&mut w.reads.acquire().await.unwrap())

@@ -1,6 +1,5 @@
-//! Citations, `show`, provenance walks and recall's per-source account
-//! (spec `query.md` §6.3, §6.4, §7). These are fixed queries, checked at
-//! compile time.
+//! Citations, `show`, provenance walks and recall's per-source account. These
+//! are fixed queries, checked at compile time.
 use crate::{Error, Result};
 use serde_json::{Value as Json, json};
 use sinex_model::query::{Reference, Walk};
@@ -11,8 +10,8 @@ use uuid::Uuid;
 /// reported when reached rather than cut silently.
 const WALK_DEPTH: i32 = 100;
 
-/// The event a citation points at: for `ev`, that interpretation, live or
-/// archived; for `occ` and `eq`, the live interpretation of the occurrence.
+/// The event a citation points at: for `ev`, that reading, live or archived;
+/// for `occ` and `eq`, the live reading of the occurrence.
 pub async fn resolve(conn: &mut PgConnection, reference: &Reference) -> Result<Uuid> {
     match reference {
         Reference::Event(id) => {
@@ -56,11 +55,11 @@ pub async fn resolve(conn: &mut PgConnection, reference: &Reference) -> Result<U
                     .fetch_all(&mut *conn)
                     .await?;
                     Err(Error::Invalid(if archived.is_empty() {
-                        "no interpretation of this occurrence exists".to_string()
+                        "no reading of this occurrence exists".to_string()
                     } else {
                         let ids: Vec<String> = archived.iter().map(Uuid::to_string).collect();
                         format!(
-                            "no live interpretation of this occurrence; archived: {}",
+                            "no live reading of this occurrence; archived: {}",
                             ids.join(", ")
                         )
                     }))

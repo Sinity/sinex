@@ -1,8 +1,7 @@
-//! The query language (architecture §7.1; spec `query.md`): one language for
-//! the CLI, the HTTP API and MCP. Text is parsed and bound here against a
-//! [`Context`] that fixes `now`, the zone and the logical-day start once, then
-//! compiled to SQL by `sinex-store::query`. Every query reads back as a
-//! sentence ([`read_as`]).
+//! The query language: one language for the CLI, the HTTP API and MCP. Text is
+//! parsed and bound here against a [`Context`] that fixes `now`, the zone and
+//! the logical-day start once, then compiled to SQL by `sinex-store::query`.
+//! Every query reads back as a sentence ([`read_as`]).
 mod ast;
 mod lex;
 mod parse;

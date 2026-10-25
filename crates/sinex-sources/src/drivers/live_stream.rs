@@ -3,7 +3,7 @@
 //! keeps it, so capture writes each line, with the time it was received, to a
 //! spool on disk before anything else happens. The spool is a directory of
 //! segment files; capture closes a segment and starts the next one at 100 MiB
-//! or after an hour (the part size of architecture §3.1).
+//! or after an hour.
 //!
 //! Acquisition reads the spool like any growing file: each poll stores the
 //! complete records appended since the cursor as a new part, linked to the

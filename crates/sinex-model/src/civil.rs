@@ -1,12 +1,12 @@
-//! Civil time in the operator's zone (`2ged`). `ts_orig` stays a UTC instant
-//! everywhere; civil time is only for bucketing and rendering: hours, and
-//! logical days that start at a configured local time (04:00 by default, one
-//! setting). Days across a DST change are 23 or 25 hours long.
+//! Civil time in the operator's zone. `ts_orig` stays a UTC instant everywhere;
+//! civil time is only for bucketing and rendering: hours, and logical days that
+//! start at a configured local time (04:00 by default, one setting). Days
+//! across a DST change are 23 or 25 hours long.
 //!
-//! Hours are floored with the instant's own UTC offset, so the repeated hour
-//! at the autumn change (02:00–03:00 twice in Europe/Warsaw) gives two
-//! distinct buckets. The predecessor floored the local clock time and resolved
-//! it again, which put the second 02:xx into the first 02:00 bucket.
+//! Hours are floored with the instant's own UTC offset, so the repeated hour at
+//! the autumn change (02:00–03:00 twice in Europe/Warsaw) gives two distinct
+//! buckets. Flooring the local clock time and resolving it again would put the
+//! second 02:xx into the first 02:00 bucket.
 use crate::Timestamp;
 use jiff::civil::{Date, DateTime, Time};
 use jiff::tz::{AmbiguousOffset, TimeZone};
@@ -68,8 +68,8 @@ impl Civil {
     }
 
     /// Resolve a local date-time to an instant. In a fold, `prefer` picks the
-    /// candidate with that offset; otherwise the earlier one. A gap resolves
-    /// to the instant just after it.
+    /// instant with that offset; otherwise the earlier one. A gap resolves to
+    /// the instant just after it.
     fn resolve(
         &self,
         dt: DateTime,

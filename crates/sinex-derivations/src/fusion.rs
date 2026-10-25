@@ -1,7 +1,7 @@
-//! Command fusion (architecture §6.4): one fused command from every source that
-//! saw it (Atuin, zsh, later kitty), by declared rules, with every source
-//! record as a parent. Without a rule match records stay separate; the operator
-//! can still decide `same A B`.
+//! Command fusion: one fused command from every source that saw it (Atuin, zsh,
+//! later kitty), by declared rules, with every source record as a parent.
+//! Without a rule match records stay separate; the operator can still decide
+//! `same A B`.
 //!
 //! The rule is data ([`FusionRule`]). Two records match when their trimmed
 //! command text and host are equal, they come from different sources, and:
@@ -9,7 +9,7 @@
 //! 1. strong pass: the globally closest pairs within `window` seconds, closest
 //!    first (ties by source order, then commit order);
 //! 2. fallback pass: among records still alone, pairs within `fallback` where
-//!    each side has exactly one candidate;
+//!    each side has exactly one possible partner;
 //! 3. every other record is its own fused command.
 //!
 //! A group holds at most one record per source. Unknown times never match and
@@ -108,7 +108,7 @@ fn group(records: &[Record<'_>], rule: &FusionRule) -> Vec<Vec<usize>> {
         a.source_rank != b.source_rank && a.host == b.host && a.command == b.command
     };
 
-    // Candidate pairs, closest first. Records are sorted by time, so the inner
+    // Possible pairs, closest first. Records are sorted by time, so the inner
     // loop stops once the gap exceeds the fallback window.
     let mut pairs: Vec<(i128, usize, usize)> = Vec::new();
     for i in 0..n {
@@ -160,12 +160,12 @@ fn group(records: &[Record<'_>], rule: &FusionRule) -> Vec<Vec<usize>> {
         }
     }
 
-    // Fallback pass: only between records still alone, and only when each
-    // side has exactly one such candidate.
+    // Fallback pass: only between records still alone, and only when each side
+    // has exactly one such partner.
     let alone = |i: usize, members: &Vec<Vec<usize>>, group_of: &Vec<usize>| {
         members[group_of[i]].len() == 1
     };
-    let mut candidates: Vec<usize> = vec![0; n];
+    let mut partners: Vec<usize> = vec![0; n];
     let fallback: Vec<(usize, usize)> = pairs
         .iter()
         .filter(|&&(dt, i, j)| {
@@ -174,11 +174,11 @@ fn group(records: &[Record<'_>], rule: &FusionRule) -> Vec<Vec<usize>> {
         .map(|&(_, i, j)| (i, j))
         .collect();
     for &(i, j) in &fallback {
-        candidates[i] += 1;
-        candidates[j] += 1;
+        partners[i] += 1;
+        partners[j] += 1;
     }
     for &(i, j) in &fallback {
-        if candidates[i] == 1 && candidates[j] == 1 {
+        if partners[i] == 1 && partners[j] == 1 {
             merge(i, j, &mut members, &mut group_of);
         }
     }
