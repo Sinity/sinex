@@ -332,7 +332,7 @@ async fn an_ai_session_from_polylogue_is_ordinary_events(db: devkit::pg::TestDat
     let session = json!({
         "session": "claude-code:s1", "origin": "claude-code", "kind": "main", "title": null,
         "cwd": ["/home/op/morrow"], "repo": null, "branch": null, "tool_version": null,
-        "mode": null, "machine": null, "agent_name": null,
+        "mode": null, "machine": null,
         "started": "2026-10-03T09:00:00Z", "last_activity": "2026-10-03T09:00:05Z", "links": []
     });
     let message = |text: &str| {
@@ -348,7 +348,7 @@ async fn an_ai_session_from_polylogue_is_ordinary_events(db: devkit::pg::TestDat
         "call": "tool:claude-code:s1#t1", "session": "claude-code:s1", "message": "claude-code:a1",
         "tool": "Bash", "action": "shell", "command": "cargo test", "path": null,
         "outcome": "unknown", "outcome_reason": "no_result", "exit_code": null,
-        "at": "2026-10-03T09:00:05Z", "duration_ms": null, "child_session": null, "result": null
+        "at": "2026-10-03T09:00:05Z", "result": null
     });
     let turn = json!({
         "turn": "claude-code:u1", "session": "claude-code:s1", "start": "2026-10-03T09:00:00Z",

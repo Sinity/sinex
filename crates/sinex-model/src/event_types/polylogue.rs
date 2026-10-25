@@ -36,10 +36,8 @@ pub struct Session {
     pub tool_version: Option<String>,
     /// How the tool ran it, when not interactively (`bg`).
     pub mode: Option<String>,
-    /// The machine it ran on (`/etc/machine-id`), when known.
+    /// The machine whose files hold it (`/etc/machine-id`), when known.
     pub machine: Option<String>,
-    /// Its name as an agent: a subagent's or a team member's.
-    pub agent_name: Option<String>,
     pub started: Option<Timestamp>,
     pub last_activity: Option<Timestamp>,
     /// How it relates to other sessions, as their records state it.
@@ -153,9 +151,6 @@ pub struct ToolCall {
     pub outcome_reason: Option<String>,
     pub exit_code: Option<i64>,
     pub at: Option<Timestamp>,
-    pub duration_ms: Option<u64>,
-    /// The session it started (a subagent).
-    pub child_session: Option<String>,
     /// The record holding the call's output.
     pub result: Option<RecordRef>,
 }
