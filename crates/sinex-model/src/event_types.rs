@@ -20,7 +20,7 @@ pub mod session;
 pub mod shell;
 pub mod social;
 
-pub use derived::{ActivitySummary, StateInterval};
+pub use derived::{ActivitySummary, FigureValue, HealthFigure, StateInterval};
 use serde_json::Value;
 pub use shell::{CommandExecuted, CommandFused, CommandImported, ShellSession};
 
@@ -119,6 +119,7 @@ pub const ALL: &[EventTypeInfo] = &[
     info::<ShellSession>(),
     info::<StateInterval>(),
     info::<ActivitySummary>(),
+    info::<HealthFigure>(),
     // Browsing, listening, reading, notes, communication
     info::<browser::BrowserVisit>(),
     info::<browser::BrowserUrl>(),

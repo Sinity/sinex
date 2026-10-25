@@ -1,8 +1,8 @@
 //! Sinnix capture-lake JSONL day files become stored material and typed
 //! observations under each lane's catalog source. Configuration names the
 //! directories relative to the lake root and the accepted envelope lanes. An
-//! unbound lane is a record failure. Network-flow records keep their material
-//! without emitting per-record events.
+//! unbound lane is a record failure. Every record is one event, network flows
+//! included.
 use crate::drivers::append_file::{AppendFile, lines};
 use crate::registry::{DeclaredSource, Driver, SourceSpec};
 use crate::{Parser, RecordError};
@@ -20,8 +20,6 @@ pub struct Lane {
     pub dirs: &'static [&'static str],
     /// Accepted `lane` values; renamed lanes list both names.
     pub lanes: &'static [&'static str],
-    /// Stored as material only.
-    pub firehose: bool,
 }
 
 const fn spec(name: &'static str, parser: &'static str, consumer: &'static str) -> SourceSpec {
@@ -52,7 +50,6 @@ const LANES: &[Lane] = &[
         ),
         dirs: &["activity/desktop/clipboard", "activity/desktop/selection"],
         lanes: &["clipboard", "primary"],
-        firehose: false,
     },
     Lane {
         spec: spec(
@@ -62,7 +59,6 @@ const LANES: &[Lane] = &[
         ),
         dirs: &["activity/desktop/notification"],
         lanes: &["notifications"],
-        firehose: false,
     },
     Lane {
         spec: spec(
@@ -72,7 +68,6 @@ const LANES: &[Lane] = &[
         ),
         dirs: &["activity/desktop/media"],
         lanes: &["mpris"],
-        firehose: false,
     },
     Lane {
         spec: spec(
@@ -82,7 +77,6 @@ const LANES: &[Lane] = &[
         ),
         dirs: &["activity/desktop/accessibility"],
         lanes: &["a11y"],
-        firehose: false,
     },
     Lane {
         spec: spec(
@@ -92,7 +86,6 @@ const LANES: &[Lane] = &[
         ),
         dirs: &["activity/desktop/idle-inhibitor"],
         lanes: &["idle-inhibitors"],
-        firehose: false,
     },
     Lane {
         spec: spec(
@@ -102,7 +95,6 @@ const LANES: &[Lane] = &[
         ),
         dirs: &["activity/desktop/frame"],
         lanes: &["screen-frames"],
-        firehose: false,
     },
     Lane {
         spec: spec(
@@ -116,7 +108,6 @@ const LANES: &[Lane] = &[
             "activity/audio/index",
         ],
         lanes: &["audio-devices", "audio-topology", "audio-index"],
-        firehose: false,
     },
     Lane {
         spec: spec(
@@ -126,7 +117,6 @@ const LANES: &[Lane] = &[
         ),
         dirs: &["activity/browser/navigation"],
         lanes: &["browser-nav-edges"],
-        firehose: false,
     },
     Lane {
         spec: spec(
@@ -136,23 +126,23 @@ const LANES: &[Lane] = &[
         ),
         dirs: &["activity/browser/reading"],
         lanes: &["reading-stack"],
-        firehose: false,
     },
     Lane {
         spec: spec("display", "sinnix-lake:display", "machine state timeline"),
         dirs: &["device/sinnix-prime/monitor"],
         lanes: &["monitor"],
-        firehose: false,
     },
     Lane {
-        spec: spec(
-            "network.netflow",
-            "sinnix-lake:network.netflow",
-            "per-minute flow summaries (derived)",
-        ),
+        spec: SourceSpec {
+            parser_version: 3,
+            ..spec(
+                "network.netflow",
+                "sinnix-lake:network.netflow",
+                "network flows by connection",
+            )
+        },
         dirs: &["device/sinnix-prime/netflow"],
         lanes: &["netflow"],
-        firehose: true,
     },
     Lane {
         spec: spec(
@@ -166,7 +156,6 @@ const LANES: &[Lane] = &[
             "device/sinnix-prime/peripheral/logitech",
         ],
         lanes: &["bt-audio", "bt-battery", "logitech"],
-        firehose: false,
     },
     Lane {
         spec: spec(
@@ -176,7 +165,6 @@ const LANES: &[Lane] = &[
         ),
         dirs: &["health/environment"],
         lanes: &["awair", "environment"],
-        firehose: false,
     },
 ];
 
@@ -252,11 +240,7 @@ impl Parser for EnvelopeParser {
         _: &(),
         _context: &crate::RecordContext<'_>,
     ) -> Result<(Vec<CaptureObserved>, ()), RecordError> {
-        let observed = envelope(record, self.lane)?;
-        if self.lane.firehose {
-            return Ok((Vec::new(), ()));
-        }
-        Ok((vec![observed], ()))
+        Ok((vec![envelope(record, self.lane)?], ()))
     }
 }
 

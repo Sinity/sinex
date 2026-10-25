@@ -202,7 +202,7 @@ pub async fn run(
                 total,
                 hash.finalize().to_hex().to_string()
             ]))?;
-            read.check_view(&view, total)?;
+            read.check_view(&view)?;
             let start = (read.offset as usize).min(rows.len());
             let end = start
                 .saturating_add(usize::try_from(read.size).unwrap_or(usize::MAX))
@@ -224,6 +224,7 @@ pub async fn run(
                 Compiler::new(&read.ctx, read.seq).compile(query)?,
                 read.offset,
                 read.size,
+                read.prior.is_none(),
             );
             page_of(&mut tx, rendered, unit, text, query, &read, None).await?
         }
@@ -242,6 +243,7 @@ pub async fn run(
                 Compiler::new(&read.ctx, read.seq).compile(&as_events)?,
                 read.offset,
                 read.size,
+                read.prior.is_none(),
             );
             let account = selection.account(&mut tx, read.seq).await?;
             page_of(&mut tx, rendered, unit, text, query, &read, Some(account)).await?
@@ -272,9 +274,9 @@ impl ReadPage {
         }
     }
 
-    fn check_view(&self, view: &str, total: i64) -> Result<()> {
+    fn check_view(&self, view: &str) -> Result<()> {
         match &self.prior {
-            Some(cursor) => cursor.check_view(view, total),
+            Some(cursor) => cursor.check_view(view),
             None => Ok(()),
         }
     }
@@ -293,6 +295,7 @@ impl ReadPage {
                 &self.ctx,
                 self.seq,
                 next,
+                total,
                 view,
             )?)
         } else {
@@ -305,33 +308,52 @@ impl ReadPage {
     }
 }
 
-/// The two statements of one page, rendered before anything is awaited:
-/// the answer's size and the page's rows.
+/// The statements of one page, rendered before anything is awaited. Each
+/// reads the numbered answer only as far as this page: PostgreSQL stops
+/// numbering rows once `_n` passes the bound, so a page costs the rows up to
+/// its end, never the whole answer. Only the first page counts the answer.
 struct Rendered {
-    total: (String, Vec<sql::Param>),
+    /// The answer's size, when asked to count it (on a first page).
+    total: Option<(String, Vec<sql::Param>)>,
+    /// Hashes of the rows handed out before this page and of those up to its
+    /// end, and their counts.
+    seen: (String, Vec<sql::Param>),
     rows: (String, Vec<sql::Param>),
     columns: Vec<String>,
 }
 
-fn render_page(compiled: Compiled, offset: u64, size: u64) -> Rendered {
+fn render_page(compiled: Compiled, offset: u64, size: u64, count: bool) -> Rendered {
     let object = json_object(&compiled.columns);
+    let end = offset.saturating_add(size).min(i64::MAX as u64) as i64;
+    let total = count.then(|| compiled.count.render());
     // Ordinary change detection, never an access or integrity check. Two seeded
-    // row hashes keep constant aggregate state; including _n avoids XOR
-    // cancellation when projected rows happen to be equal.
+    // row hashes; including _n avoids XOR cancellation when projected rows
+    // happen to be equal.
     let row = format!("q.\"_n\"::text || ':' || ({object})::text");
-    let mut total = Frag::text(format!(
-        "SELECT jsonb_build_array(count(*), coalesce(bit_xor(hashtextextended(({row}) COLLATE \"C\", 0)), 0), coalesce(bit_xor(hashtextextended(({row}) COLLATE \"C\", 982451653)), 0)) FROM ("
+    let hash = |seed: u64| format!("hashtextextended(({row}) COLLATE \"C\", {seed})");
+    let mut seen = Frag::text(format!(
+        "SELECT jsonb_build_array(\
+         coalesce(bit_xor({h0}) FILTER (WHERE q.\"_n\" <= {offset}), 0), \
+         coalesce(bit_xor({h1}) FILTER (WHERE q.\"_n\" <= {offset}), 0), \
+         count(*) FILTER (WHERE q.\"_n\" <= {offset}), \
+         coalesce(bit_xor({h0}), 0), coalesce(bit_xor({h1}), 0), count(*)) FROM (",
+        h0 = hash(0),
+        h1 = hash(982_451_653),
+        offset = offset as i64,
     ));
-    total.append(compiled.answer.clone()).push(") q");
-    let object = json_object(&compiled.columns);
+    seen.append(compiled.answer.clone())
+        .push(") q WHERE q.\"_n\" <= ")
+        .param(sea_query::Value::BigInt(Some(end)));
     let mut rows = Frag::text(format!("SELECT {object} FROM ("));
     rows.append(compiled.answer)
         .push(") q WHERE q.\"_n\" > ")
         .param(sea_query::Value::BigInt(Some(offset as i64)))
-        .push(" ORDER BY q.\"_n\" LIMIT ")
-        .param(sea_query::Value::BigInt(Some(size as i64)));
+        .push(" AND q.\"_n\" <= ")
+        .param(sea_query::Value::BigInt(Some(end)))
+        .push(" ORDER BY q.\"_n\"");
     Rendered {
-        total: total.render(),
+        total,
+        seen: seen.render(),
         rows: rows.render(),
         columns: compiled.columns,
     }
@@ -346,26 +368,45 @@ async fn page_of(
     read: &ReadPage,
     recall: Option<Json>,
 ) -> Result<Answer> {
-    let (sql_text, values) = rendered.total;
-    let sqlx::types::Json((total, first, second)): sqlx::types::Json<(i64, i64, i64)> =
-        sql::bind_scalar(sqlx::query_scalar(&sql_text), values)
-            .fetch_one(&mut *tx)
-            .await?;
-    let view = cursor::digest(&serde_json::json!([
-        unit,
-        read_as(query),
-        rendered.columns,
-        total,
-        first,
-        second,
-        recall
-    ]))?;
-    read.check_view(&view, total)?;
+    let total = match (rendered.total, &read.prior) {
+        (Some((sql_text, values)), _) => {
+            sql::bind_scalar(sqlx::query_scalar::<_, i64>(&sql_text), values)
+                .fetch_one(&mut *tx)
+                .await?
+        }
+        (None, Some(cursor)) => cursor.total,
+        (None, None) => unreachable!("a first page is rendered with its count"),
+    };
+    let (sql_text, values) = rendered.seen;
+    let sqlx::types::Json((before_0, before_1, before, upto_0, upto_1, upto)): sqlx::types::Json<
+        (i64, i64, i64, i64, i64, i64),
+    > = sql::bind_scalar(sqlx::query_scalar(&sql_text), values)
+        .fetch_one(&mut *tx)
+        .await?;
+    let view = |count: i64, first: i64, second: i64| {
+        cursor::digest(&serde_json::json!([
+            unit,
+            read_as(query),
+            rendered.columns,
+            count,
+            first,
+            second,
+            recall
+        ]))
+    };
+    if before != read.offset as i64 {
+        return Err(Error::StaleCursor);
+    }
+    read.check_view(&view(before, before_0, before_1)?)?;
     let (sql_text, values) = rendered.rows;
     let rows: Vec<Json> = sql::bind_scalar(sqlx::query_scalar(&sql_text), values)
         .fetch_all(&mut *tx)
         .await?;
-    let page = read.info(&view, total, rows.len())?;
+    // The answer shrank past the rows already handed out.
+    if rows.is_empty() && read.prior.is_some() {
+        return Err(Error::StaleCursor);
+    }
+    let page = read.info(&view(upto, upto_0, upto_1)?, total, rows.len())?;
     Ok(Answer {
         unit,
         query: text.to_string(),

@@ -51,16 +51,22 @@ fn unbound_lanes_and_bad_envelopes_fail() {
 }
 
 #[devkit::test]
-fn firehoses_emit_nothing_but_still_validate() {
+fn network_flows_are_typed_events() {
     let p = EnvelopeParser {
         lane: lane("network.netflow").unwrap(),
     };
-    assert!(
-        p.parse(&line("netflow", 1), &(), &crate::RecordContext::none())
-            .unwrap()
-            .0
-            .is_empty()
+    let mut flow = line("netflow", 1);
+    flow.insert(
+        "payload".into(),
+        json!({"bytes":1367,"dport":5600,"dst":"192.0.2.1","packets":10,"proto":"tcp","sport":58550,"src":"192.0.2.2"}),
     );
+    let (out, ()) = p.parse(&flow, &(), &crate::RecordContext::none()).unwrap();
+    assert_eq!(out.len(), 1);
+    let wire = serde_json::to_value(&out[0]).unwrap();
+    assert_eq!(wire["payload"], flow["payload"]);
+    assert!(wire.get("untyped").is_none());
+    flow["payload"]["dport"] = json!("http");
+    assert!(p.parse(&flow, &(), &crate::RecordContext::none()).is_err());
     assert!(
         p.parse(&line("mpris", 1), &(), &crate::RecordContext::none())
             .is_err()

@@ -285,7 +285,7 @@
       "name": "google.fit",
       "kind": "takeout",
       "driver": "export-archive",
-      "consumer": "daily steps, activity, heart and location figures Fit recorded",
+      "consumer": "steps, activity, heart and location samples Fit recorded",
       "class": "open",
       "eventTypes": [
         "health.record"
@@ -554,7 +554,7 @@
       "name": "network.netflow",
       "kind": "sinnix-lake",
       "driver": "append-file",
-      "consumer": "per-minute flow summaries (derived)",
+      "consumer": "network flows by connection",
       "class": "open",
       "eventTypes": [
         "capture.observed"
@@ -754,6 +754,26 @@
       ],
       "outputs": [
         "presence.interval"
+      ]
+    },
+    {
+      "name": "health.hourly",
+      "kind": "keyed",
+      "inputs": [
+        "health.record"
+      ],
+      "outputs": [
+        "health.figure"
+      ]
+    },
+    {
+      "name": "health.daily",
+      "kind": "keyed",
+      "inputs": [
+        "health.figure"
+      ],
+      "outputs": [
+        "health.figure"
       ]
     }
   ]

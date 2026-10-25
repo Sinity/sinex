@@ -24,9 +24,14 @@
 //! but only complete runs enter benchmark history, under `completed-backfill`.
 //! Earlier `backfill` records did not check completeness. Every command it runs
 //! runs inside its AgentCTL job and holds the real-data lock.
+//!
+//! `bench synthetic` measures admission alone: it backfills a generated shell
+//! history of small events into its own PostgreSQL and records the rate under
+//! `synthetic-admission`.
 use devkit::bench::{self, Candidate, LoadMonitor, Manifest};
 use devkit::history::Store;
 use serde_json::{Value, json};
+use std::io::Write as _;
 use std::{
     env, fs,
     path::{Path, PathBuf},
@@ -70,6 +75,22 @@ pub enum Bench {
         #[arg(long, default_value = "6G")]
         memory_max: String,
     },
+    /// Backfill a synthetic zsh history of `events` commands and record
+    /// admission's rate: a fixed stream of small events, so runs compare
+    /// across commits.
+    Synthetic {
+        #[arg(long, default_value_t = 1_000_000)]
+        events: u64,
+        /// `disk` or `memory`, as for `run`.
+        #[arg(long, default_value = "disk")]
+        storage: String,
+        #[arg(long, default_value = "6G")]
+        memory_max: String,
+        /// A PostgreSQL setting over the deployment's, `name=value`;
+        /// repeatable. Recorded with the run.
+        #[arg(long = "postgres")]
+        settings: Vec<String>,
+    },
     #[command(flatten)]
     Shared(devkit::cli::Bench),
 }
@@ -81,6 +102,12 @@ pub fn execute(command: Bench) -> ExitCode {
             storage,
             memory_max,
         } => run(&storage, &memory_max),
+        Bench::Synthetic {
+            events,
+            storage,
+            memory_max,
+            settings,
+        } => synthetic(events, &storage, &memory_max, &settings),
         Bench::Shared(b) => return devkit::cli::bench("sinex", b),
     };
     match result {
@@ -245,7 +272,9 @@ struct Cluster {
 }
 
 impl Cluster {
-    fn start(dir: &Path, fsync: bool) -> Result<Cluster, String> {
+    /// Start a cluster with the deployment's settings (`nix/module.nix`),
+    /// then `settings` (`name=value`) over them.
+    fn start(dir: &Path, fsync: bool, settings: &[String]) -> Result<Cluster, String> {
         let data = dir.join("data");
         let socket = dir.to_path_buf();
         fs::create_dir_all(dir).map_err(|e| e.to_string())?;
@@ -266,12 +295,20 @@ impl Cluster {
         if !ok {
             return Err("initdb failed".into());
         }
-        let options = format!(
-            "-k {} -c listen_addresses= -c shared_preload_libraries=timescaledb \
-             -c timescaledb.enable_chunk_skipping=on -c timescaledb.telemetry_level=off -c fsync={}",
+        let mut options = format!(
+            "-k {} -c listen_addresses= -c shared_preload_libraries=timescaledb,pg_stat_statements \
+             -c timescaledb.enable_chunk_skipping=on -c timescaledb.telemetry_level=off -c fsync={} \
+             -c wal_compression=lz4",
             socket.display(),
             if fsync { "on" } else { "off" }
         );
+        for setting in settings {
+            if !setting.contains('=') || setting.contains(char::is_whitespace) {
+                return Err(format!("--postgres {setting}: expected name=value"));
+            }
+            options.push_str(" -c ");
+            options.push_str(setting);
+        }
         let ok = Command::new("pg_ctl")
             .arg("-D")
             .arg(&data)
@@ -307,6 +344,19 @@ impl Cluster {
             "postgresql:///sinex?host={}&user=sinex",
             self.socket.display()
         )
+    }
+
+    /// Run `sql` in the bench database and return its unaligned output.
+    fn psql(&self, sql: &str) -> Option<String> {
+        let out = Command::new("psql")
+            .arg("-h")
+            .arg(&self.socket)
+            .args(["-U", "sinex", "-v", "ON_ERROR_STOP=1", "-Atc", sql, "sinex"])
+            .output()
+            .ok()?;
+        out.status
+            .success()
+            .then(|| String::from_utf8_lossy(&out.stdout).into_owned())
     }
 
     fn database_mb(&self) -> Option<f64> {
@@ -401,6 +451,157 @@ fn dir_mb(path: &Path) -> f64 {
         / 1e6
 }
 
+/// An empty output directory for one run: on /realm for `disk`, in /dev/shm
+/// for `memory` when it has room for about four times `input_bytes`.
+fn output_dir(storage: &str, input_bytes: u64) -> Result<PathBuf, String> {
+    let out = match storage {
+        "disk" => bench_home().join("out"),
+        "memory" => PathBuf::from("/dev/shm/sinex-bench"),
+        other => return Err(format!("storage is disk or memory, not {other}")),
+    };
+    // The database and content store take a few times the input; filling
+    // /dev/shm would push the desktop into swap.
+    if storage == "memory"
+        && available(Path::new("/dev/shm")).is_some_and(|free| free < input_bytes * 4)
+    {
+        return Err(format!(
+            "/dev/shm has less than four times the input ({:.0} MB) free; use --storage disk",
+            input_bytes as f64 / 1e6
+        ));
+    }
+    if out.exists() {
+        fs::remove_dir_all(&out).map_err(|e| e.to_string())?;
+    }
+    fs::create_dir_all(&out).map_err(|e| e.to_string())?;
+    Ok(out)
+}
+
+fn apply_schema(binary: &Path, url: &str) -> Result<(), String> {
+    let schema = Command::new(binary)
+        .args(["admin", "schema", "--database", url])
+        .output()
+        .map_err(|e| e.to_string())?;
+    if !schema.status.success() {
+        return Err(format!(
+            "sinexd admin schema: {}",
+            String::from_utf8_lossy(&schema.stderr)
+        ));
+    }
+    Ok(())
+}
+
+/// A zsh extended history of `events` distinct commands a minute apart: the
+/// spacing of real shell history, so the parser's per-second carry stays
+/// realistic.
+fn synthetic_history(events: u64) -> Vec<u8> {
+    let mut text = Vec::with_capacity(usize::try_from(events).unwrap_or(0) * 48);
+    for i in 0..events {
+        let start = 1_600_000_000 + i * 60;
+        let _ = writeln!(text, ": {start}:0;echo synthetic {i}");
+    }
+    text
+}
+
+fn synthetic(
+    events: u64,
+    storage: &str,
+    memory_max: &str,
+    settings: &[String],
+) -> Result<(), String> {
+    let history = synthetic_history(events);
+    let out = output_dir(storage, history.len() as u64)?;
+    let input = out.join("zsh_history");
+    fs::write(&input, &history).map_err(|e| format!("{}: {e}", input.display()))?;
+    drop(history);
+    let binary = sinexd_binary()?;
+    let load = LoadMonitor::start()?;
+    let cluster = Cluster::start(&out.join("pg"), storage == "disk", settings)?;
+    let url = cluster.url();
+    apply_schema(&binary, &url)?;
+    cluster
+        .psql("CREATE EXTENSION pg_stat_statements")
+        .ok_or("pg_stat_statements is not available")?;
+    let store_dir = out.join("store");
+    let source = format!("zsh={}", input.display());
+    let result = sinexd(
+        &binary,
+        memory_max,
+        &[
+            "backfill".as_ref(),
+            "--database".as_ref(),
+            url.as_ref(),
+            "--store".as_ref(),
+            store_dir.as_os_str(),
+            "--host".as_ref(),
+            "bench".as_ref(),
+            "--source".as_ref(),
+            source.as_ref(),
+        ],
+    );
+    let database_mb = cluster.database_mb();
+    // Where admission's time went, by statement.
+    let statements = cluster.psql(
+        "SELECT coalesce(json_agg(s), '[]') FROM (SELECT calls, round(total_exec_time) AS ms, rows, \
+         left(regexp_replace(query, '\\s+', ' ', 'g'), 200) AS query FROM pg_stat_statements \
+         ORDER BY total_exec_time DESC LIMIT 20) s",
+    );
+    drop(cluster);
+    let load = load.finish()?;
+    let result = result?;
+    let totals = &result["sources"]["terminal.zsh-history"];
+    let complete = totals["admitted"].as_u64() == Some(events);
+    let metrics = json!({
+        "complete": complete,
+        "events": events,
+        "admitted": totals["admitted"],
+        "batches": totals["batches"],
+        "wall_s": totals["wall_s"],
+        "admission_s": totals["admission_s"],
+        "admission_events_per_s": totals["admission_events_per_s"],
+        "events_per_s": totals["events_per_s"],
+        "peak_rss_mb": result["peak_rss_mb"],
+        "database_mb": database_mb,
+        "memory_max": memory_max,
+        "postgres": settings,
+    });
+    let id = if complete {
+        let store = Store::open().map_err(|e| e.to_string())?;
+        let checkout = env::current_dir().map_err(|e| e.to_string())?;
+        Some(
+            bench::record(
+                &store,
+                &checkout,
+                "sinex",
+                "synthetic-admission",
+                &format!("zsh-{events}"),
+                &out,
+                &load,
+                &metrics,
+            )
+            .map_err(|e| e.to_string())?,
+        )
+    } else {
+        None
+    };
+    println!(
+        "{}",
+        json!({"run": id, "storage": bench::storage_of(&out),
+               "load_checks_passed": load.checks_passed(), "load": load.to_json(), "metrics": metrics,
+               "statements": statements.and_then(|s| serde_json::from_str::<Value>(&s).ok())})
+    );
+    if storage == "memory" {
+        let _ = fs::remove_dir_all(&out);
+    }
+    if complete {
+        Ok(())
+    } else {
+        Err(format!(
+            "admitted {} of {events} synthetic events; no record was saved",
+            totals["admitted"]
+        ))
+    }
+}
+
 fn run(storage: &str, memory_max: &str) -> Result<(), String> {
     let manifest = Manifest::read(&manifest_path()).map_err(|e| {
         format!(
@@ -420,39 +621,13 @@ fn run(storage: &str, memory_max: &str) -> Result<(), String> {
         manifest.bytes() as f64 / 1e6,
         if fresh { ", copied" } else { "" }
     );
-    let out = match storage {
-        "disk" => bench_home().join("out"),
-        "memory" => PathBuf::from("/dev/shm/sinex-bench"),
-        other => return Err(format!("storage is disk or memory, not {other}")),
-    };
-    // The database and content store take a few times the input; filling
-    // /dev/shm would push the desktop into swap.
-    if storage == "memory"
-        && available(Path::new("/dev/shm")).is_some_and(|free| free < manifest.bytes() * 4)
-    {
-        return Err(format!(
-            "/dev/shm has less than four times the sample ({:.0} MB) free; use --storage disk",
-            manifest.bytes() as f64 / 1e6
-        ));
-    }
-    if out.exists() {
-        fs::remove_dir_all(&out).map_err(|e| e.to_string())?;
-    }
+    let out = output_dir(storage, manifest.bytes())?;
     let binary = sinexd_binary()?;
     let load = LoadMonitor::start()?;
-    let cluster = Cluster::start(&out.join("pg"), storage == "disk")?;
+    let cluster = Cluster::start(&out.join("pg"), storage == "disk", &[])?;
     let url = cluster.url();
     let store_dir = out.join("store");
-    let schema = Command::new(&binary)
-        .args(["admin", "schema", "--database", &url])
-        .output()
-        .map_err(|e| e.to_string())?;
-    if !schema.status.success() {
-        return Err(format!(
-            "sinexd admin schema: {}",
-            String::from_utf8_lossy(&schema.stderr)
-        ));
-    }
+    apply_schema(&binary, &url)?;
     let shape = manifest.representativeness();
     let scale_of = |label: &str| -> Option<f64> {
         shape["strata"]

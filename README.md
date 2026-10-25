@@ -24,8 +24,9 @@ and [docs/vocabulary.md](docs/vocabulary.md) names the concepts.
   file changes, the Sinnix capture lake, and AI sessions from Polylogue. An export
   archive is stored once and read in one pass for every source that uses it.
 - **Derivations.** Fused shell commands, shell sessions, state intervals,
-  presence, hourly and daily summaries, and text read from screen stills,
-  recomputed per changed key as their inputs arrive.
+  presence, hourly and daily activity summaries, hourly and daily health
+  figures, and text read from screen stills, recomputed per changed key as
+  their inputs arrive.
 - **Removal and replay.** Hide and unhide; excision, which deletes a record's
   events and its material's bytes for good, when the record is alone in its
   material and its source never reads a record twice (live streams, media

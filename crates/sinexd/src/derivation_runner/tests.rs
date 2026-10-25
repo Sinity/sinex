@@ -548,14 +548,15 @@ async fn per_event_derivations_read_in_commit_order_and_keep_their_place(
     );
 }
 
-/// Reading many windows at once returns, for each, exactly what reading it
-/// alone returns: adjacent windows share a query, distant windows and
-/// windows with another filter do not.
+/// Reading many windows page by page returns, for each, exactly what reading
+/// it alone returns: adjacent windows share a paged query, distant windows and
+/// windows with another filter do not, and pages end between rows of one
+/// second.
 #[devkit::test]
-async fn windows_read_together_equal_windows_read_alone(db: devkit::pg::TestDatabase) {
+async fn windows_read_in_pages_equal_windows_read_alone(db: devkit::pg::TestDatabase) {
     let w = World::new(db).await;
     let mut events = Vec::new();
-    for (i, secs) in [0, 1_800, 3_599, 3_600, 7_200, 90_000, 400_000]
+    for (i, secs) in [0, 1_800, 1_800, 1_800, 3_599, 3_600, 7_200, 90_000, 400_000]
         .into_iter()
         .enumerate()
     {
@@ -581,15 +582,32 @@ async fn windows_read_together_equal_windows_read_alone(db: devkit::pg::TestData
         hour(0, &["command.imported", "command.executed"]),
     ];
     let mut conn = PgConnection::connect(&w.url).await.unwrap();
-    let together = derivations::read_windows(&mut conn, &windows)
-        .await
-        .unwrap();
-    for (w, got) in windows.iter().zip(&together) {
-        let alone = derivations::read_window(&mut conn, w).await.unwrap();
+    for page in [1, 2, 3, 10_000] {
+        let mut reader = derivations::Windows::new(windows.clone(), page);
+        let mut read: Vec<Option<Vec<derivations::Committed>>> = vec![None; windows.len()];
+        while let Some(done) = reader.next(&mut conn).await.unwrap() {
+            for (i, rows) in done {
+                assert!(
+                    read[i].replace(rows).is_none(),
+                    "window {i} handed out twice"
+                );
+            }
+        }
         let ids = |v: &[derivations::Committed]| v.iter().map(|c| c.event.id).collect::<Vec<_>>();
-        assert_eq!(ids(got), ids(&alone), "{w:?}");
+        for (w, got) in windows.iter().zip(&read) {
+            let alone = derivations::read_window(&mut conn, w).await.unwrap();
+            assert_eq!(
+                ids(got.as_ref().unwrap()),
+                ids(&alone),
+                "{w:?} in pages of {page}"
+            );
+        }
+        assert_eq!(
+            read[1].as_ref().unwrap().len(),
+            5,
+            "the first hour's five zsh commands"
+        );
     }
-    assert_eq!(together[1].len(), 3, "the first hour's three zsh commands");
 }
 
 mod shutdown;

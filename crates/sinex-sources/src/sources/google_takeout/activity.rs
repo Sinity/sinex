@@ -218,7 +218,6 @@ pub fn my_activity_driver(path: PathBuf, host: String) -> ExportArchive {
         select: select_my_activity,
         framing: Framing::Delimited(CELL),
         part_bytes: PART_BYTES,
-        join: None,
     }
 }
 
@@ -229,7 +228,6 @@ pub fn youtube_driver(path: PathBuf, host: String) -> ExportArchive {
         select: select_youtube,
         framing: Framing::Delimited(CELL),
         part_bytes: PART_BYTES,
-        join: None,
     }
 }
 

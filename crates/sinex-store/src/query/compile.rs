@@ -19,7 +19,10 @@ mod join;
 /// A compiled answer: one SELECT whose rows are numbered `_n` in answer order
 /// and carry the output columns.
 pub(crate) struct Compiled {
+    /// The rows, numbered `_n` in order.
     pub answer: Frag,
+    /// The number of rows, without ordering or numbering them.
+    pub count: Frag,
     pub columns: Vec<String>,
 }
 
@@ -466,6 +469,18 @@ impl<'c> Compiler<'c> {
             .map(|c| format!("{r}.{}", quote(c)))
             .collect();
         out_cols.extend(internal.iter().map(|c| format!("{r}.{}", quote(c))));
+        let mut count = Frag::text("SELECT count(*) FROM (");
+        match limit {
+            Some(n) => count
+                .push("SELECT 1 FROM (")
+                .append(rel.clone())
+                .push(format!(") {r} ORDER BY "))
+                .append(order.clone())
+                .push(" LIMIT ")
+                .param(V::BigInt(Some(n as i64))),
+            None => count.append(rel.clone()),
+        };
+        count.push(") c");
         let mut answer = Frag::text("SELECT row_number() OVER (ORDER BY ");
         answer
             .append(order.clone())
@@ -478,7 +493,11 @@ impl<'c> Compiler<'c> {
         if let Some(n) = limit {
             answer.push(" LIMIT ").param(V::BigInt(Some(n as i64)));
         }
-        Ok(Compiled { answer, columns })
+        Ok(Compiled {
+            answer,
+            count,
+            columns,
+        })
     }
 
     /// Apply a pending sort and limit by wrapping the relation.

@@ -1,6 +1,5 @@
 use super::*;
 use crate::drivers;
-use crate::drivers::export_archive::Framing;
 use crate::sources::google_takeout::fit;
 use sinex_model::{BatchKind, MaterialRef, RecordOutcome, RunId};
 use std::collections::BTreeMap;
@@ -58,7 +57,6 @@ fn driver(budget: usize) -> ExportArchive {
         select: |name| name.ends_with(".json"),
         framing: Framing::JsonArray("/Data Points"),
         part_bytes: budget,
-        join: None,
     }
 }
 fn facts(length: usize) -> ObservationFacts {
@@ -79,7 +77,7 @@ fn route(cursor: Value, budget: usize) -> Route {
     }
 }
 fn source(index: usize) -> crate::DeclaredSource<fit::FitParser> {
-    let mut source = fit::source(jiff::tz::TimeZone::UTC);
+    let mut source = fit::source();
     source.spec.name = if index == 0 {
         "synthetic.fit-a"
     } else {

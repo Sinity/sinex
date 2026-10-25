@@ -9,6 +9,7 @@ pub mod accessibility;
 pub mod audio;
 pub mod desktop;
 pub mod idle;
+pub mod network;
 pub mod peripheral;
 
 fn supplied<'de, D: Deserializer<'de>, T: Deserialize<'de>>(
@@ -35,6 +36,7 @@ pub enum CapturePayload {
     Reading(Box<desktop::Reading>),
     Monitor(Box<desktop::Monitor>),
     Environment(Box<desktop::Environment>),
+    Flow(Box<network::Flow>),
     Focus(Box<accessibility::Focus>),
     TextChanged(Box<accessibility::TextChanged>),
     Subtree(Box<accessibility::Subtree>),
@@ -60,6 +62,7 @@ impl CapturePayload {
             "reading-stack" => decode(value).map(Box::new).map(Self::Reading),
             "monitor" => decode(value).map(Box::new).map(Self::Monitor),
             "environment" | "awair" => decode(value).map(Box::new).map(Self::Environment),
+            "netflow" => decode(value).map(Box::new).map(Self::Flow),
             "idle-inhibitors" => decode(value).map(Box::new).map(Self::Idle),
             "logitech" => decode(value).map(Box::new).map(Self::Logitech),
             "bt-battery" => decode(value).map(Self::Battery),
@@ -98,6 +101,7 @@ impl CapturePayload {
             Self::Reading(value) => value.collect_unknown("/payload", &mut fields),
             Self::Monitor(value) => value.collect_unknown("/payload", &mut fields),
             Self::Environment(value) => value.collect_unknown("/payload", &mut fields),
+            Self::Flow(value) => value.collect_unknown("/payload", &mut fields),
             Self::Focus(value) => value.collect_unknown("/payload", &mut fields),
             Self::TextChanged(value) => value.collect_unknown("/payload", &mut fields),
             Self::Subtree(value) => value.collect_unknown("/payload", &mut fields),

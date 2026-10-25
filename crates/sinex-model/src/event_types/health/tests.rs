@@ -94,44 +94,26 @@ fn sleep_samples_and_event_numbers_keep_the_existing_wire_shape() {
 }
 
 #[devkit::test]
-fn fit_runs_round_trip_and_reject_other_shapes() {
+fn fit_direct_nested_and_map_values_are_concrete_and_lossless() {
     let original = row(
         "google-fit",
         "synthetic.steps",
-        json!({"day":"2026-01-02","zone":"Europe/Warsaw","run":1,"points":2,"fields":[
-            {"count":2,"sum":3.0,"min":1,"max":9007199254740993_i64},
-            {"count":0,"sum":0.0,"min":null,"max":null}]}),
+        json!({"fitValue":[{"intVal":9007199254740993_i64},{"value":{"intVal":1}},{"mapVal":[{"key":"synthetic","value":{"fpVal":1.5}}]}],"modifiedTimeMillis":1}),
     );
     let decoded: HealthRecord = serde_json::from_value(original.clone()).unwrap();
-    let HealthValues::FitRun(run) = &decoded.values else {
-        panic!("not a Fit run")
+    let HealthValues::Fit(fit) = &decoded.values else {
+        panic!("not fit")
     };
-    assert_eq!((run.run, run.points), (1, 2));
-    assert_eq!(run.fields[0].max, Some(Number::from(9007199254740993_i64)));
+    assert_eq!(fit.fit_value.as_ref().unwrap().as_ref().unwrap().len(), 3);
     assert_eq!(serde_json::to_value(decoded).unwrap(), original);
-    for values in [
-        json!({"fitValue":[{"intVal":1}]}),
-        json!({"day":null,"zone":"UTC","run":0,"points":"1","fields":[]}),
-        json!({"day":null,"zone":"UTC","run":0,"points":1,"fields":[],"extra":true}),
-        json!({"day":null,"zone":"UTC","run":0,"points":1,"fields":[{"count":1,"sum":1.0,"min":1,"max":1,"mean":1.0}]}),
-    ] {
-        assert!(
-            serde_json::from_value::<HealthRecord>(row("google-fit", "synthetic.steps", values))
-                .is_err()
-        );
-    }
-}
-
-#[devkit::test]
-fn fit_fields_keep_exact_extremes() {
-    let mut field = fit::FitField::default();
-    for value in [json!(4), json!(-2.5), json!(9007199254740993_i64)] {
-        field.add(&serde_json::from_value(value).unwrap());
-    }
-    assert_eq!(field.count, 3);
-    assert_eq!(field.min, Some(Number::from_f64(-2.5).unwrap()));
-    assert_eq!(field.max, Some(Number::from(9007199254740993_i64)));
-    assert_eq!(field.sum, 4.0 - 2.5 + 9007199254740993_f64);
+    assert!(
+        serde_json::from_value::<HealthRecord>(row(
+            "google-fit",
+            "synthetic.steps",
+            json!({"fitValue":[{"intVal":"1"}]})
+        ))
+        .is_err()
+    );
 }
 
 #[devkit::test]

@@ -225,61 +225,178 @@ pub async fn read_window(conn: &mut PgConnection, w: &Window) -> Result<Vec<Comm
     Ok(out)
 }
 
-/// [`read_window`] for many windows, in their order. Windows with the same
-/// types and filter and no neighbours, whose ranges touch or lie within one
-/// window length of each other, are read with one query over their combined
-/// range and split by time: one round trip for a run of adjacent keys
-/// (hours, days) instead of one per key. Each slice is exactly what its own
-/// query returns.
-pub async fn read_windows(
+/// One window page: live events of a window without neighbours after
+/// `after` in (`ts_orig`, commit order), at most `limit`.
+async fn window_page(
     conn: &mut PgConnection,
-    windows: &[Window],
-) -> Result<Vec<Vec<Committed>>> {
-    let mut out: Vec<Option<Vec<Committed>>> = vec![None; windows.len()];
-    let mut plain: Vec<usize> = Vec::new();
-    for (i, w) in windows.iter().enumerate() {
-        if w.before.is_empty() && w.after.is_empty() {
-            plain.push(i);
-        } else {
-            out[i] = Some(read_window(conn, w).await?);
-        }
+    w: &Window,
+    after: Option<(OffsetDateTime, i64)>,
+    limit: i64,
+) -> Result<Vec<Committed>> {
+    let (contains, one_of_field, one_of) = split(&w.matching);
+    let (after_ts, after_seq) = after.unzip();
+    let rows = sqlx::query!(
+        r#"SELECT e.id, e.event_type, e.source, e.material_id, e.anchor, e.ordinal, e.parents,
+             e.ts_orig, e.ts_quality, e.payload, e.equivalence_key, e.reading_order, e.record_hash,
+             e.record_state, e.class, e.support, e.commit_seq
+           FROM core.events e
+           WHERE e.event_type = ANY($1) AND e.ts_orig >= $2 AND e.ts_orig < $3
+             AND e.payload @> $4
+             AND ($5::text IS NULL OR e.payload->>$5 = ANY($6))
+             AND ($7::timestamptz IS NULL OR (e.ts_orig, e.commit_seq) > ($7, $8::bigint))
+             AND NOT EXISTS (SELECT 1 FROM audit.archived a WHERE a.event_id = e.id)
+           ORDER BY e.ts_orig, e.commit_seq
+           LIMIT $9"#,
+        &w.event_types,
+        w.start,
+        w.end,
+        contains,
+        one_of_field,
+        &one_of,
+        after_ts,
+        after_seq,
+        limit,
+    )
+    .fetch_all(&mut *conn)
+    .await?;
+    let mut out = Vec::with_capacity(rows.len());
+    for r in rows {
+        out.push(committed!(r));
     }
-    // Group by filter, then chain by start.
-    plain.sort_by(|&a, &b| {
-        let (wa, wb) = (&windows[a], &windows[b]);
-        (format!("{:?}{:?}", wa.event_types, wa.matching), wa.start)
-            .cmp(&(format!("{:?}{:?}", wb.event_types, wb.matching), wb.start))
-    });
-    let mut at = 0;
-    while at < plain.len() {
-        let first = &windows[plain[at]];
-        let (mut end, mut len) = (first.end, first.end - first.start);
-        let mut upto = at + 1;
-        while upto < plain.len() {
-            let w = &windows[plain[upto]];
-            let same = w.event_types == first.event_types && w.matching == first.matching;
-            if !same || w.start > end + len {
-                break;
+    Ok(out)
+}
+
+/// Windows read page by page, `page` rows per query. Windows with the same
+/// types and filter and no neighbours, whose ranges touch or lie within one
+/// window length of each other, share one paged query over their combined
+/// range: one round trip per page for a run of adjacent keys (hours, days)
+/// instead of one per key. Each
+/// window is handed out as soon as the pages have passed its end, with exactly
+/// what [`read_window`] returns for it, and its rows are then dropped, so a
+/// reader holds about one page and the windows still open, never the whole
+/// range. A window with neighbours is read alone.
+pub struct Windows {
+    windows: Vec<Window>,
+    page: i64,
+    alone: Vec<usize>,
+    groups: std::collections::VecDeque<Group>,
+}
+
+/// Adjacent windows read through one paged query.
+struct Group {
+    union: Window,
+    /// Windows not yet handed out, by start.
+    open: Vec<usize>,
+    /// Rows read that an open window may still need, in reading order.
+    rows: std::collections::VecDeque<Committed>,
+    after: Option<(OffsetDateTime, i64)>,
+    finished: bool,
+}
+
+impl Windows {
+    pub fn new(windows: Vec<Window>, page: i64) -> Self {
+        let (alone, mut plain): (Vec<usize>, Vec<usize>) = (0..windows.len())
+            .partition(|&i| !windows[i].before.is_empty() || !windows[i].after.is_empty());
+        // Group by filter, then chain by start.
+        plain.sort_by(|&a, &b| {
+            let (wa, wb) = (&windows[a], &windows[b]);
+            (format!("{:?}{:?}", wa.event_types, wa.matching), wa.start)
+                .cmp(&(format!("{:?}{:?}", wb.event_types, wb.matching), wb.start))
+        });
+        let mut groups = std::collections::VecDeque::new();
+        let mut at = 0;
+        while at < plain.len() {
+            let first = &windows[plain[at]];
+            let (mut end, mut len) = (first.end, first.end - first.start);
+            let mut upto = at + 1;
+            while upto < plain.len() {
+                let w = &windows[plain[upto]];
+                let same = w.event_types == first.event_types && w.matching == first.matching;
+                if !same || w.start > end + len {
+                    break;
+                }
+                end = end.max(w.end);
+                len = len.max(w.end - w.start);
+                upto += 1;
             }
-            end = end.max(w.end);
-            len = len.max(w.end - w.start);
-            upto += 1;
+            groups.push_back(Group {
+                union: Window {
+                    start: first.start,
+                    end,
+                    ..first.clone()
+                },
+                open: plain[at..upto].to_vec(),
+                rows: std::collections::VecDeque::new(),
+                after: None,
+                finished: false,
+            });
+            at = upto;
         }
-        let union = Window {
-            start: first.start,
-            end,
-            ..first.clone()
-        };
-        let rows = read_window(conn, &union).await?;
-        for &i in &plain[at..upto] {
-            let w = &windows[i];
-            let from = rows.partition_point(|c| c.event.ts_orig.at.is_some_and(|t| t.0 < w.start));
-            let to = rows.partition_point(|c| c.event.ts_orig.at.is_some_and(|t| t.0 < w.end));
-            out[i] = Some(rows[from..to].to_vec());
+        Self {
+            windows,
+            page: page.max(1),
+            alone,
+            groups,
         }
-        at = upto;
     }
-    Ok(out.into_iter().map(Option::unwrap_or_default).collect())
+
+    /// The next windows whose rows are complete, by their index in the list
+    /// given to [`Windows::new`]; `None` once every window was handed out.
+    pub async fn next(
+        &mut self,
+        conn: &mut PgConnection,
+    ) -> Result<Option<Vec<(usize, Vec<Committed>)>>> {
+        if let Some(i) = self.alone.pop() {
+            return Ok(Some(vec![(i, read_window(conn, &self.windows[i]).await?)]));
+        }
+        while let Some(group) = self.groups.front_mut() {
+            if group.open.is_empty() {
+                self.groups.pop_front();
+                continue;
+            }
+            let page = window_page(conn, &group.union, group.after, self.page).await?;
+            group.finished = i64::try_from(page.len()).unwrap_or(i64::MAX) < self.page;
+            if let Some(last) = page.last() {
+                group.after = last.event.ts_orig.at.map(|t| (t.0, last.commit_seq));
+            }
+            group.rows.extend(page);
+            // Rows come in time order, so a window ending at or before the
+            // last row read has all of its rows.
+            let reached = group.rows.back().and_then(|c| c.event.ts_orig.at);
+            let complete = |w: &Window| group.finished || reached.is_some_and(|t| w.end <= t.0);
+            let mut done = Vec::new();
+            let windows = &self.windows;
+            group.open.retain(|&i| {
+                let w = &windows[i];
+                if !complete(w) {
+                    return true;
+                }
+                let inside = |c: &&Committed| {
+                    c.event
+                        .ts_orig
+                        .at
+                        .is_some_and(|t| t.0 >= w.start && t.0 < w.end)
+                };
+                done.push((i, group.rows.iter().filter(inside).cloned().collect()));
+                false
+            });
+            if let Some(start) = group.open.iter().map(|&i| windows[i].start).min() {
+                while group
+                    .rows
+                    .front()
+                    .is_some_and(|c| c.event.ts_orig.at.is_none_or(|t| t.0 < start))
+                {
+                    group.rows.pop_front();
+                }
+            } else {
+                group.rows.clear();
+            }
+            if !done.is_empty() {
+                return Ok(Some(done));
+            }
+        }
+        Ok(None)
+    }
 }
 
 async fn nearest(
