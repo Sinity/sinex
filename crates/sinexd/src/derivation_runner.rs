@@ -59,6 +59,9 @@ const EVENTS_PER_PASS: i64 = 2_000;
 const KEYS_PER_BATCH: usize = 256;
 /// Outputs per writer batch, whatever the number of keys.
 const OUTPUTS_PER_BATCH: usize = 20_000;
+/// Input rows read per query: keys are computed as their rows complete, so
+/// memory holds a page and the keys still open, not every key's inputs.
+const ROWS_PER_PAGE: i64 = 10_000;
 /// A key to settle: the key, the dirty mark it was computed for (0 when it
 /// is a waiting key being refreshed), and whether it stops waiting.
 type KeyWork = (Value, i64, bool);
@@ -412,66 +415,76 @@ impl DerivationRunner {
         let mut scopes: Vec<KeyScope> = Vec::new();
         let mut records: Vec<RecordOutcome> = Vec::new();
         let mut outputs = 0usize;
-        let total = work.len();
-        // Read every key's inputs first: adjacent keys share one query.
         let name = self.keyed[index].name();
-        let queries: Vec<Option<Window>> = work
-            .iter()
-            .map(|(key, _, _)| self.keyed[index].inputs(key, env).map(|q| to_window(&q)))
-            .collect();
-        let windows: Vec<Window> = queries.iter().flatten().cloned().collect();
-        let t = Instant::now();
-        let mut read = derivations::read_windows(&mut self.read, &windows)
-            .await
-            .map_err(|e| e.to_string())?
-            .into_iter();
-        let mut inputs: Vec<Vec<Event>> = queries
-            .iter()
-            .map(|q| match q {
-                Some(_) => read
-                    .next()
-                    .unwrap_or_default()
-                    .into_iter()
-                    .map(|c| c.event)
-                    .collect(),
-                None => Vec::new(),
-            })
-            .collect();
-        self.counts.entry(name).or_default().read += t.elapsed();
-        for (i, (key, dirty_seq, give_up)) in work.into_iter().enumerate() {
-            let input = std::mem::take(&mut inputs[i]);
-            let t = Instant::now();
-            let mut computed = if queries[i].is_some() {
-                self.keyed[index].compute(&key, &input, env)
-            } else {
-                sinex_derivations::Computed::default()
-            };
-            let c = self.counts.entry(name).or_default();
-            c.compute += t.elapsed();
-            c.inputs += input.len();
-            if give_up {
-                computed.waiting = false;
+        // Keys without a query have no inputs; the rest are read page by
+        // page and computed as soon as their rows are complete.
+        let mut ready: Vec<(usize, Vec<Event>, bool)> = Vec::new();
+        let mut windows: Vec<Window> = Vec::new();
+        let mut window_keys: Vec<usize> = Vec::new();
+        for (i, (key, _, _)) in work.iter().enumerate() {
+            match self.keyed[index].inputs(key, env) {
+                Some(q) => {
+                    windows.push(to_window(&q));
+                    window_keys.push(i);
+                }
+                None => ready.push((i, Vec::new(), false)),
             }
-            outputs += computed.outputs.len();
-            scopes.push(KeyScope {
-                key,
-                dirty_seq,
-                waiting: computed.waiting,
-            });
-            records.push(RecordOutcome::Events {
-                location: None,
-                events: computed.outputs,
-            });
-            let last = i + 1 == total;
-            if last || scopes.len() >= KEYS_PER_BATCH || outputs >= OUTPUTS_PER_BATCH {
-                self.submit_keys(
-                    index,
-                    std::mem::take(&mut scopes),
-                    std::mem::take(&mut records),
-                )
-                .await?;
-                outputs = 0;
+        }
+        let mut reader = derivations::Windows::new(windows, ROWS_PER_PAGE);
+        loop {
+            if ready.is_empty() {
+                let t = Instant::now();
+                let next = reader
+                    .next(&mut self.read)
+                    .await
+                    .map_err(|e| e.to_string())?;
+                self.counts.entry(name).or_default().read += t.elapsed();
+                let Some(done) = next else { break };
+                ready.extend(done.into_iter().map(|(w, rows)| {
+                    (
+                        window_keys[w],
+                        rows.into_iter().map(|c| c.event).collect(),
+                        true,
+                    )
+                }));
             }
+            for (i, input, queried) in std::mem::take(&mut ready) {
+                let (key, dirty_seq, give_up) = &work[i];
+                let t = Instant::now();
+                let mut computed = if queried {
+                    self.keyed[index].compute(key, &input, env)
+                } else {
+                    sinex_derivations::Computed::default()
+                };
+                let c = self.counts.entry(name).or_default();
+                c.compute += t.elapsed();
+                c.inputs += input.len();
+                if *give_up {
+                    computed.waiting = false;
+                }
+                outputs += computed.outputs.len();
+                scopes.push(KeyScope {
+                    key: key.clone(),
+                    dirty_seq: *dirty_seq,
+                    waiting: computed.waiting,
+                });
+                records.push(RecordOutcome::Events {
+                    location: None,
+                    events: computed.outputs,
+                });
+                if scopes.len() >= KEYS_PER_BATCH || outputs >= OUTPUTS_PER_BATCH {
+                    self.submit_keys(
+                        index,
+                        std::mem::take(&mut scopes),
+                        std::mem::take(&mut records),
+                    )
+                    .await?;
+                    outputs = 0;
+                }
+            }
+        }
+        if !scopes.is_empty() {
+            self.submit_keys(index, scopes, records).await?;
         }
         Ok(())
     }
