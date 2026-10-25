@@ -367,6 +367,7 @@ pub fn driver(path: PathBuf, host: String) -> ExportArchive {
         select,
         framing: Framing::Delimited(EVENT),
         part_bytes: PART_BYTES,
+        join: None,
     }
 }
 

@@ -285,7 +285,7 @@
       "name": "google.fit",
       "kind": "takeout",
       "driver": "ExportArchive",
-      "consumer": "steps, activity, heart and location samples Fit recorded",
+      "consumer": "daily steps, activity, heart and location figures Fit recorded",
       "class": "open",
       "eventTypes": [
         "health.record"

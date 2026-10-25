@@ -115,6 +115,7 @@ pub fn driver(path: PathBuf, host: String) -> ExportArchive {
         },
         framing: Framing::JsonArray("/locations"),
         part_bytes: PART_BYTES,
+        join: None,
     }
 }
 

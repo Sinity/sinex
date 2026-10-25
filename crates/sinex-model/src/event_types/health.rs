@@ -32,7 +32,7 @@ fn decode<T: serde::de::DeserializeOwned>(value: Value) -> Result<T, serde_json:
 pub enum HealthValues {
     SleepSession(Box<sleep::SleepSession>),
     SleepNoise(Box<sleep::SleepNoise>),
-    Fit(Box<fit::Fit>),
+    FitDay(Box<fit::FitDay>),
     Stress(Box<samsung::Stress>),
     Steps(Box<samsung::Steps>),
     Hrv(Box<samsung::Hrv>),
@@ -62,7 +62,7 @@ impl HealthValues {
             ("sleep-as-android", "sleep-noise") => {
                 decode(value).map(Box::new).map(Self::SleepNoise)
             }
-            ("google-fit", _) => decode(value).map(Box::new).map(Self::Fit),
+            ("google-fit", _) => decode(value).map(Box::new).map(Self::FitDay),
             ("samsung-health" | "samsung-health-cloud", category) => match category {
                 "stress" | "Stress Internal Data" => decode(value).map(Box::new).map(Self::Stress),
                 "step_daily_trend" | "Step Count" => decode(value).map(Box::new).map(Self::Steps),
@@ -105,7 +105,6 @@ impl HealthValues {
         let extra = match self {
             Self::SleepSession(row) => &row.unknown,
             Self::SleepNoise(row) => &row.unknown,
-            Self::Fit(row) => &row.unknown,
             Self::Stress(row) => &row.unknown,
             Self::Steps(row) => &row.unknown,
             Self::Hrv(row) => &row.unknown,
@@ -126,7 +125,7 @@ impl HealthValues {
             Self::ActivityDay(row) => &row.unknown,
             Self::Calories(row) => &row.unknown,
             Self::Ecg(row) => &row.unknown,
-            Self::Unknown(_) => return vec![],
+            Self::FitDay(_) | Self::Unknown(_) => return vec![],
         };
         let mut fields: Vec<String> = extra
             .keys()
@@ -143,9 +142,6 @@ impl HealthValues {
         };
         if let Some(bins) = bins {
             fields.extend(bins.unknown_fields());
-        }
-        if let Self::Fit(row) = self {
-            fields.extend(row.nested_unknown_fields());
         }
         fields
     }
