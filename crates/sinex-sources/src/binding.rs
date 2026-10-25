@@ -175,6 +175,19 @@ pub enum Reading {
     Shared(Box<dyn crate::shared_pass::SharedPass>),
 }
 
+impl Reading {
+    /// The reader of a binding that is polled alone.
+    pub fn into_polled(self) -> Result<Box<dyn Reader>, String> {
+        match self {
+            Reading::Polled(reader) => Ok(reader),
+            Reading::Shared(shared) => Err(format!(
+                "{} is read in a pass shared with its other bindings, not polled",
+                shared.path().display()
+            )),
+        }
+    }
+}
+
 /// The driver of one binding.
 type ReaderFor = fn(&Binding) -> Result<Reading, String>;
 /// Live capture of one binding into its spool, until stopped or until the

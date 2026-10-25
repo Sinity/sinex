@@ -68,12 +68,10 @@ pub fn binding(
 fn start(k: &'static InputKind, binding: Binding) -> Result<Live, String> {
     let capture = k.capture.expect("live kinds capture");
     // Construct fallible readers before starting a capture that must be joined.
-    let crate::binding::Reading::Polled(reader) = (k
+    let reader = (k
         .reader
         .ok_or_else(|| format!("{}: no spool reader", k.name))?)(&binding)?
-    else {
-        return Err(format!("{}: a live kind is polled from its spool", k.name));
-    };
+    .into_polled()?;
     let source = (k.source)(&binding)?;
     let control = Arc::new(Control::new(None));
     let b = binding.clone();

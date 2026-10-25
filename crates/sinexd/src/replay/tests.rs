@@ -260,7 +260,9 @@ async fn a_rewritten_history_file_is_aligned_and_replays_without_duplicates(
     // zsh expires the older duplicate and appends a new command.
     std::fs::write(&path, ": 2:0;b\n: 3:0;a\n: 4:0;c\n").unwrap();
     // The driver restarts: its state comes back from the stored bytes.
-    let mut restarted = sinex_sources::binding::appended(zsh::driver(path.clone(), "h".into()));
+    let mut restarted = sinex_sources::binding::appended(zsh::driver(path.clone(), "h".into()))
+        .into_polled()
+        .unwrap();
     let (_stop, stop) = tokio::sync::watch::channel(false);
     crate::binding_reader::restore_reader(
         &mut f.ctx.read_conn,

@@ -56,6 +56,12 @@ binding, replaced in the cursor's transaction. A restart stops the walk at the
 part the memory was saved at and takes the rest from the memory, so it reads
 at most 1,000 parts, and an unchanged row or file is not stored again.
 
+A binding is either polled alone through `Reader` or read in a pass over a
+stored file shared with every compatible binding of that file (`SharedPass`,
+export archives). A shared-pass binding keeps no memory: its cursor names the
+stored copy and the next record, so a restart reads on from there, and a
+cursor that already covers the unchanged file reads nothing.
+
 A sealed part keeps the binding sealed after its class is lowered. The daemon
 does not know which driver a binding uses.
 

@@ -60,10 +60,9 @@ pub(crate) struct Totals {
     dirty_keys: usize,
     admit_time: Duration,
     wall: Duration,
-    archive_source_opens: u64,
-    archive_captures: u64,
-    archive_decoded_bytes: u64,
-    archive_record_bytes: u64,
+    files_stored: u64,
+    pass_decoded_bytes: u64,
+    pass_record_bytes: u64,
 }
 
 impl std::fmt::Display for Totals {
@@ -452,19 +451,17 @@ impl Totals {
         work: &sinex_sources::shared_pass::Work,
         captured: bool,
     ) {
-        self.archive_source_opens += u64::from(captured);
-        self.archive_captures += u64::from(captured);
-        self.archive_decoded_bytes += work.decoded_bytes;
-        self.archive_record_bytes += work.record_bytes_stored;
+        self.files_stored += u64::from(captured);
+        self.pass_decoded_bytes += work.decoded_bytes;
+        self.pass_record_bytes += work.record_bytes_stored;
     }
     pub(crate) fn to_json(&self) -> serde_json::Value {
         let per_s = |n: usize, d: Duration| n as f64 / d.as_secs_f64().max(1e-9);
         serde_json::json!({
             "polls": self.polls,
-            "archive_source_opens": self.archive_source_opens,
-            "archive_captures": self.archive_captures,
-            "archive_decoded_bytes": self.archive_decoded_bytes,
-            "archive_record_bytes": self.archive_record_bytes,
+            "files_stored": self.files_stored,
+            "pass_decoded_bytes": self.pass_decoded_bytes,
+            "pass_record_bytes": self.pass_record_bytes,
             "materials": self.materials,
             "material_bytes": self.material_bytes,
             "batches": self.batches,
@@ -487,10 +484,9 @@ impl Totals {
 
     pub(crate) fn add(&mut self, o: Totals) {
         self.polls += o.polls;
-        self.archive_source_opens += o.archive_source_opens;
-        self.archive_captures += o.archive_captures;
-        self.archive_decoded_bytes += o.archive_decoded_bytes;
-        self.archive_record_bytes += o.archive_record_bytes;
+        self.files_stored += o.files_stored;
+        self.pass_decoded_bytes += o.pass_decoded_bytes;
+        self.pass_record_bytes += o.pass_record_bytes;
         self.materials += o.materials;
         self.material_bytes += o.material_bytes;
         self.batches += o.batches;

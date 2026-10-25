@@ -134,9 +134,8 @@ async fn archive_acquisition_restart_replay_and_privacy_use_real_admission(
         total.add(r.unwrap());
     }
     let metrics = total.to_json();
-    assert_eq!(metrics["archive_source_opens"], 1);
-    assert_eq!(metrics["archive_captures"], 1);
-    assert!(metrics["archive_decoded_bytes"].as_u64().unwrap() <= decoded as u64);
+    assert_eq!(metrics["files_stored"], 1);
+    assert!(metrics["pass_decoded_bytes"].as_u64().unwrap() <= decoded as u64);
     let before = events(&mut ctx.read_conn).await;
     assert_eq!(before.len(), 41);
     let originals: Vec<(uuid::Uuid, String)> = sqlx::query_as(
@@ -175,7 +174,7 @@ async fn archive_acquisition_restart_replay_and_privacy_use_real_admission(
     )
     .await;
     for (_, result) in resumed {
-        assert_eq!(result.unwrap().to_json()["archive_source_opens"], 0);
+        assert_eq!(result.unwrap().to_json()["files_stored"], 0);
     }
     assert_eq!(events(&mut ctx.read_conn).await, before);
     let report = crate::replay::run(
@@ -238,8 +237,7 @@ async fn archive_acquisition_separates_effective_privacy_classes(db: devkit::pg:
     {
         total.add(result.unwrap());
     }
-    assert_eq!(total.to_json()["archive_source_opens"], 2);
-    assert_eq!(total.to_json()["archive_captures"], 2);
+    assert_eq!(total.to_json()["files_stored"], 2);
     let classes: Vec<String> =
         sqlx::query_scalar("SELECT DISTINCT class FROM core.events WHERE source='google.tasks'")
             .fetch_all(&mut ctx.read_conn)
@@ -444,7 +442,7 @@ async fn sealed_archive_restart_replay_and_class_changes_preserve_exact_material
         .await;
         for (_, result) in unlocked {
             let total = result.unwrap();
-            assert_eq!(total.to_json()["archive_captures"], 0);
+            assert_eq!(total.to_json()["files_stored"], 0);
         }
         let final_cursor = pass_cursor(&positions::load(&mut ctx.read_conn, &name)
                 .await
@@ -537,7 +535,7 @@ async fn sealed_archive_restart_replay_and_class_changes_preserve_exact_material
         )
         .await;
         assert_eq!(
-            result.into_iter().next().unwrap().1.unwrap().to_json()["archive_captures"],
+            result.into_iter().next().unwrap().1.unwrap().to_json()["files_stored"],
             1
         );
         let cursor = pass_cursor(&positions::load(&mut ctx.read_conn, &name)
@@ -565,7 +563,7 @@ async fn sealed_archive_restart_replay_and_class_changes_preserve_exact_material
         )
         .await;
         assert_eq!(
-            result.into_iter().next().unwrap().1.unwrap().to_json()["archive_captures"],
+            result.into_iter().next().unwrap().1.unwrap().to_json()["files_stored"],
             1
         );
         let cursor = pass_cursor(&positions::load(&mut ctx.read_conn, &name)
