@@ -43,11 +43,7 @@ fn takeout_driver(
 ) -> sinex_sources::drivers::export_archive::ExportArchive {
     let host = binding.settings.host.clone();
     let mut driver = if binding.source == fit::SPEC.name {
-        fit::driver(
-            binding.input.clone(),
-            host,
-            binding.settings.zone().unwrap(),
-        )
+        fit::driver(binding.input.clone(), host)
     } else {
         tasks::driver(binding.input.clone(), host)
     };
