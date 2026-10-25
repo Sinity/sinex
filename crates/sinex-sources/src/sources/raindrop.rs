@@ -224,7 +224,6 @@ pub fn driver(path: PathBuf, host: String) -> ExportArchive {
         },
         framing: if jsonl { Framing::Lines } else { Framing::Csv },
         part_bytes: PART_BYTES,
-        join: None,
     }
 }
 

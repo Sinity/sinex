@@ -1,4 +1,5 @@
-//! Derived activity: state intervals and hourly and daily summaries.
+//! Derived activity: state intervals, hourly and daily summaries, and hourly
+//! and daily health figures.
 use crate::Timestamp;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -62,4 +63,42 @@ pub struct ActivitySummary {
     pub state_seconds: std::collections::BTreeMap<String, i64>,
     /// The longest-held subjects: (state kind, label, seconds).
     pub top_subjects: Vec<(String, String, i64)>,
+}
+
+/// Figures over one series of health points in one civil hour or logical
+/// day: how many points started in the period and, for each numeric value
+/// position, their count, sum, minimum and maximum. Hourly figures are
+/// computed from the points, daily ones from the day's hourly figures.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
+#[event(
+    type = "health.figure",
+    key = ["grain", "period_start", "provider", "series"],
+    replace = newer,
+    time = period_start,
+    quality = intrinsic
+)]
+pub struct HealthFigure {
+    /// `hour` or `day`.
+    pub grain: String,
+    pub period_start: Timestamp,
+    pub period_end: Timestamp,
+    /// The logical day the period belongs to (`YYYY-MM-DD`).
+    pub day: String,
+    pub provider: String,
+    /// The points' data type.
+    pub category: String,
+    /// Where the points came from: a Fit data source.
+    pub series: String,
+    pub points: u64,
+    pub values: Vec<FigureValue>,
+}
+
+/// One numeric value position of a series' points, over a period.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct FigureValue {
+    pub position: u32,
+    pub count: u64,
+    pub sum: f64,
+    pub min: f64,
+    pub max: f64,
 }

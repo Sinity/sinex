@@ -468,7 +468,6 @@ pub fn driver(path: PathBuf, host: String) -> ExportArchive {
         select: |m| m.ends_with(".jsonl"),
         framing: Framing::Lines,
         part_bytes: PART_BYTES,
-        join: None,
     }
 }
 

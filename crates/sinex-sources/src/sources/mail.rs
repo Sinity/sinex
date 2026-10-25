@@ -243,7 +243,6 @@ pub fn mbox_driver(path: PathBuf, host: String) -> ExportArchive {
         select: |m| m.ends_with(".mbox"),
         framing: Framing::Mbox,
         part_bytes: PART_BYTES,
-        join: None,
     }
 }
 

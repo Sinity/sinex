@@ -125,7 +125,6 @@ pub fn driver(path: PathBuf, host: String) -> ExportArchive {
         select: |m| m.ends_with(".csv"),
         framing: Framing::Csv,
         part_bytes: PART_BYTES,
-        join: None,
     }
 }
 

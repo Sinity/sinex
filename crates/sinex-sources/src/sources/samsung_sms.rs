@@ -109,7 +109,6 @@ pub fn driver(path: PathBuf, host: String) -> ExportArchive {
         },
         framing: Framing::Csv,
         part_bytes: PART_BYTES,
-        join: None,
     }
 }
 
