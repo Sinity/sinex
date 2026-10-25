@@ -444,7 +444,11 @@ impl Totals {
         self.wall = started.elapsed();
     }
 
-    pub(crate) fn pass_work(&mut self, work: &sinex_sources::shared_pass::ArchivePassStats, captured: bool) {
+    pub(crate) fn pass_work(
+        &mut self,
+        work: &sinex_sources::shared_pass::ArchivePassStats,
+        captured: bool,
+    ) {
         self.files_stored += u64::from(captured);
         self.pass_decoded_bytes += work.decoded_bytes;
         self.pass_record_bytes += work.record_bytes_stored;

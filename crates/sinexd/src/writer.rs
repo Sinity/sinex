@@ -105,7 +105,10 @@ impl WriterHandle {
         batch: Batch,
         check: AdmissionCheck,
     ) -> Result<Outcome, WriteError> {
-        match self.send(priority, WriterJob::Checked(batch, check)).await? {
+        match self
+            .send(priority, WriterJob::Checked(batch, check))
+            .await?
+        {
             Done::Admitted(outcome) => Ok(outcome),
             _ => unreachable!("checked admission returns its outcome"),
         }
@@ -127,7 +130,10 @@ impl WriterHandle {
         &self,
         sequence: ReplaySequence,
     ) -> Result<(Vec<Outcome>, Diff), WriteError> {
-        match self.send(Priority::Derived, WriterJob::Replay(sequence)).await? {
+        match self
+            .send(Priority::Derived, WriterJob::Replay(sequence))
+            .await?
+        {
             Done::Replayed(outcomes, diff) => Ok((outcomes, diff)),
             _ => unreachable!("a replay answers with its outcomes"),
         }
