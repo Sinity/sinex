@@ -66,17 +66,13 @@ impl Unlock {
         material: MaterialId,
     ) -> Result<DataKey, String> {
         self.check()?;
-        let row = sqlx::query!(
-            "SELECT key_ref,wrapped_key FROM privacy.material_keys WHERE material_id=$1",
-            material.0
-        )
-        .fetch_optional(conn)
-        .await
-        .map_err(|e| e.to_string())?
-        .ok_or_else(|| format!("material {material}: sealed key unavailable"))?;
+        let (key_ref, wrapped) = sinex_store::sealed::material_key(conn, material)
+            .await
+            .map_err(|e| e.to_string())?
+            .ok_or_else(|| format!("material {material}: sealed key unavailable"))?;
         Ok(DataKey {
-            key_ref: row.key_ref,
-            key: self.unwrap(&row.wrapped_key)?,
+            key_ref,
+            key: self.unwrap(&wrapped)?,
         })
     }
 }

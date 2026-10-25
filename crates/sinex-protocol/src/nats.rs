@@ -362,8 +362,7 @@ pub struct ArchiveNotice {
     pub event: EventId,
     /// The commit position at which it was archived.
     pub archived_seq: i64,
-    /// `newer_reading`, `hide`, `excise`, `replay` or `version_change`.
-    pub reason: String,
+    pub reason: sinex_model::ArchiveReason,
     pub replaced_by: Option<EventId>,
     pub operation: Option<sinex_model::OperationId>,
 }

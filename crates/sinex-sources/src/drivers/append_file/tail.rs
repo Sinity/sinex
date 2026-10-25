@@ -4,6 +4,7 @@ use super::*;
 
 #[derive(Default)]
 pub struct AppendTail {
+    bounds: TailBounds,
     newest_first: Vec<Member>,
     bytes: usize,
 }
@@ -13,9 +14,18 @@ struct Member {
     digest: [u8; 32],
 }
 impl AppendTail {
+    /// An empty tail that accepts records within `bounds`.
+    pub fn bounded(bounds: TailBounds) -> Self {
+        Self {
+            bounds,
+            ..Self::default()
+        }
+    }
+
     fn accepts(&self, length: usize) -> bool {
-        self.newest_first.len() < STATE_RECORDS
-            && (self.newest_first.is_empty() || self.bytes.saturating_add(length) <= STATE_TAIL)
+        self.newest_first.len() < self.bounds.records
+            && (self.newest_first.is_empty()
+                || self.bytes.saturating_add(length) <= self.bounds.bytes)
     }
     /// Call newest to oldest. A single large record is kept, as during poll.
     pub fn push_raw(&mut self, location: RecordLocation, raw: &[u8]) -> Result<bool, DriverError> {
@@ -36,7 +46,7 @@ impl AppendTail {
         Ok(true)
     }
     pub fn into_state(self) -> Result<AppendState, DriverError> {
-        let mut state = AppendState::default();
+        let mut state = AppendState::bounded(self.bounds);
         for member in self.newest_first.into_iter().rev() {
             state.insert_digest(
                 member.digest,

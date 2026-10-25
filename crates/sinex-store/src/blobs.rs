@@ -108,7 +108,7 @@ impl Blobs {
         Ok(self.0.read_plain(&parse(name)?, expected_len, check)?)
     }
 
-    /// Own one existing verified plain representation for scoped seek reads.
+    /// A seekable reader over one stored blob's plain bytes, checked as read.
     pub fn read_plain_seek(
         &self,
         name: &str,

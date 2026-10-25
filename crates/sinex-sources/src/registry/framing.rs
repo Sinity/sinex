@@ -34,7 +34,7 @@ impl Framer {
         }
     }
 
-    /// Choose the existing export framing from the original stream prefix.
+    /// Choose the export framing from the first bytes of the stream.
     pub const fn detected(slice: SliceFramer, detect: fn(&[u8]) -> Framing) -> Self {
         Self {
             slice,

@@ -127,10 +127,27 @@ async fn material_matches(
         .map_err(|_| Error::Invalid("material part beyond i32".into()))?;
     let version = i32::try_from(material.parser_version)
         .map_err(|_| Error::Invalid("material parser version beyond i32".into()))?;
-    Ok(sqlx::query_scalar("SELECT m.blob=$2 AND m.durable_bytes=$3 AND m.part_index=$4 AND m.previous_part_id IS NOT DISTINCT FROM $5 AND m.parser=$6 AND m.parser_version=$7 AND m.manifest=$8 AND i.binding=$9 AND i.kind=$10 AND i.locator=$11 AND i.host=$12 FROM raw.materials m JOIN raw.inputs i ON i.id=m.input_id WHERE m.id=$1")
-        .bind(material.id.0).bind(&material.blob).bind(length).bind(part).bind(material.previous_part.map(|id|id.0))
-        .bind(&material.parser).bind(version).bind(&material.manifest).bind(binding).bind(&input.kind).bind(&input.locator).bind(&input.host)
-        .fetch_optional(conn).await?)
+    Ok(sqlx::query_scalar!(
+        r#"SELECT (m.blob = $2 AND m.durable_bytes = $3 AND m.part_index = $4
+                   AND m.previous_part_id IS NOT DISTINCT FROM $5
+                   AND m.parser = $6 AND m.parser_version = $7 AND m.manifest = $8
+                   AND i.binding = $9 AND i.kind = $10 AND i.locator = $11 AND i.host = $12) AS "matches!"
+           FROM raw.materials m JOIN raw.inputs i ON i.id = m.input_id WHERE m.id = $1"#,
+        material.id.0,
+        material.blob,
+        length,
+        part,
+        material.previous_part.map(|id| id.0),
+        material.parser,
+        version,
+        material.manifest,
+        binding,
+        input.kind,
+        input.locator,
+        input.host,
+    )
+    .fetch_optional(conn)
+    .await?)
 }
 
 async fn material(

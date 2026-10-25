@@ -7,7 +7,8 @@
 //! and its driver state is rebuilt from the materials it stored, so a
 //! second run reads only what changed.
 mod pipeline;
-use crate::one_shot::{OneShot, Sink};
+use crate::material_sink::Sink;
+use crate::one_shot::OneShot;
 use crate::writer::{self, Priority};
 use sinex_model::RunId;
 use sinex_sources::{Binding, InputKind, Limits, Settings, Source, drivers, sources};
@@ -253,7 +254,7 @@ pub(crate) async fn drive(
     let sealing = if effective_class == sinex_model::Class::Sealed {
         let recipient = match access.recipient {
             Some(recipient) => Some(recipient.clone()),
-            None => crate::one_shot::class_key()?,
+            None => crate::material_sink::class_key()?,
         };
         let recipient = recipient.ok_or_else(|| {
             format!(
@@ -261,15 +262,26 @@ pub(crate) async fn drive(
                 source.spec().name
             )
         })?;
-        Some(crate::one_shot::SealingSink::new(sink.0.clone(), recipient))
+        Some(crate::material_sink::SealingSink::new(
+            sink.0.clone(),
+            recipient,
+        ))
     } else {
         None
     };
     let checked_stop = stop.clone();
+    // Checked for every buffer read, so the switch is looked at only every
+    // quarter second.
+    let checked_private = std::sync::Mutex::new(sinex_transport::private_mode::Cached::new(
+        sinex_transport::private_mode::PrivateMode::default(),
+        std::time::Duration::from_millis(250),
+    ));
     let check: std::sync::Arc<dyn Fn() -> Result<(), String> + Send + Sync> =
         std::sync::Arc::new(move || {
-            if *checked_stop.borrow() || sinex_transport::private_mode::PrivateMode::default().on()
-            {
+            let private = checked_private
+                .lock()
+                .map_or(true, |mut cached| cached.on());
+            if *checked_stop.borrow() || private {
                 return Err("capture cancelled or private mode is on".into());
             }
             Ok(())
@@ -384,7 +396,7 @@ pub(crate) async fn submit(
     source: &dyn Source,
     binding: &str,
     material_sink: &dyn drivers::MaterialSink,
-    sealing: Option<&crate::one_shot::SealingSink>,
+    sealing: Option<&crate::material_sink::SealingSink>,
     unlock: Option<&crate::sealed_access::Unlock>,
     minimum_class: sinex_model::Class,
     acquired: drivers::Acquired,
@@ -542,7 +554,7 @@ pub(crate) async fn open_carry(
     conn: &mut PgConnection,
     binding: &str,
     carry: &serde_json::Value,
-    sealing: &crate::one_shot::SealingSink,
+    sealing: &crate::material_sink::SealingSink,
     unlock: Option<&crate::sealed_access::Unlock>,
 ) -> Result<serde_json::Value, String> {
     if let Ok(value) = sealing.open_carry(carry) {
@@ -550,11 +562,11 @@ pub(crate) async fn open_carry(
     }
     let reference = sinex_store::sealed::key_ref(carry).ok_or("invalid sealed parser carry")?;
     let unlock = unlock.ok_or("sealed parser carry requires explicit operator unlock")?;
-    let material:uuid::Uuid=sqlx::query_scalar("SELECT k.material_id FROM privacy.material_keys k JOIN raw.materials m ON m.id=k.material_id JOIN raw.inputs i ON i.id=m.input_id WHERE k.key_ref=$1 AND i.binding=$2")
-        .bind(reference).bind(binding).fetch_optional(&mut *conn).await.map_err(|e|e.to_string())?.ok_or("sealed parser carry has no key of this binding")?;
-    let key = unlock
-        .material_key(conn, sinex_model::MaterialId(material))
-        .await?;
+    let material = sinex_store::sealed::material_of_key(conn, reference, binding)
+        .await
+        .map_err(|e| e.to_string())?
+        .ok_or("sealed parser carry has no key of this binding")?;
+    let key = unlock.material_key(conn, material).await?;
     let value = sinex_store::sealed::unseal_payload(carry, &key.key).map_err(|e| e.to_string())?;
     unlock.check()?;
     Ok(value)

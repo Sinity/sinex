@@ -1,5 +1,4 @@
-//! Sorting by pairwise comparison (the operator's "Gwern's Resorter" style,
-//! 2025-01-09): every judgement "A is better than B" is kept, and a
+//! Sorting by pairwise comparison, in the style of Gwern's Resorter: every judgement "A is better than B" is kept, and a
 //! Bradley–Terry model is fitted to all of them. Each item gets a strength;
 //! the order is by strength. A weak prior (one virtual win and one virtual
 //! loss against an average item) keeps strengths finite for items that never

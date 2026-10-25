@@ -11,8 +11,8 @@
 //! that can still be running when the day starts. Shell sessions never cross
 //! a day start.
 //!
-//! Desktop states (`desktop.*`) count; systemd units do not, since a service
-//! running for weeks is not activity. A state with no end yet counts up to now,
+//! Only desktop states (`desktop.*`) count: other states, such as a service
+//! running for weeks, are not activity. A state with no end yet counts up to now,
 //! but never past the end of the logical day it started in: missing evidence is
 //! not continued activity, and a history that simply stopped must not count
 //! as one focus held until today.

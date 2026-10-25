@@ -187,7 +187,9 @@ fn backfill_of_a_large_file_peaks_well_under_its_size() {
         framer: crate::Framer::incremental(lines),
     };
     let before = peak_rss();
-    let mut state = AppendState::default();
+    // Small tail bounds: this measures the driver's streaming, not the size
+    // of the alignment tail it keeps.
+    let mut state = AppendState::bounded(crate::drivers::append_file::tests::SMALL);
     let mut cursor = Value::Null;
     let mut events = 0;
     let mut after_first = None;

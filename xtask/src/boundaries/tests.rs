@@ -178,3 +178,20 @@ fn a_pure_wrapper_cannot_hide_transport_io() {
         "forbidden transitive dependency: sinex-protocol -> sinex-transport"
     );
 }
+
+#[devkit::test]
+fn quoted_catalog_names_are_found_in_store_text() {
+    let names = catalog_names(
+        r#"{"sources":[{"name":"terminal.zsh-history","eventTypes":["command.imported"]}],
+            "derivations":[{"name":"command.fusion","inputs":["command.executed"],"outputs":["command.fused"]}]}"#,
+    )
+    .unwrap();
+    assert_eq!(
+        named_sources(
+            "WHERE event_type = 'command.fused' AND x = \"terminal.zsh-history\"",
+            &names
+        ),
+        vec!["command.fused", "terminal.zsh-history"]
+    );
+    assert!(named_sources("command.imported without quotes", &names).is_empty());
+}

@@ -9,7 +9,9 @@
 //! This crate uses no compile-time-checked queries: it builds before any
 //! database exists and provisions the one the store's queries are checked
 //! against.
-use sinex_model::{Class, DbCheck, KeyKind, RecordState, ReplaceRule, TimeQuality, event_types};
+use sinex_model::{
+    ArchiveReason, Class, DbCheck, KeyKind, RecordState, ReplaceRule, TimeQuality, event_types,
+};
 use sqlx::{Connection, Executor, PgConnection};
 
 mod tables;
@@ -46,15 +48,34 @@ impl std::fmt::Display for Applied {
     }
 }
 
-/// Every statement that creates the schema in an empty database, in order.
-pub fn declarations() -> Vec<String> {
-    let mut statements: Vec<String> = [
+/// What only a superuser may create: the extensions and the two roles. Each
+/// is created only when missing, so the owner can apply the schema once a
+/// superuser has run these ([`prepare`]).
+fn privileged() -> Vec<String> {
+    [
         "CREATE EXTENSION IF NOT EXISTS timescaledb",
         "CREATE EXTENSION IF NOT EXISTS pg_trgm",
         "DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname='sinex_writer') THEN CREATE ROLE sinex_writer; END IF; IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname='sinex_reader') THEN CREATE ROLE sinex_reader; END IF; END $$",
     ]
     .map(String::from)
-    .to_vec();
+    .to_vec()
+}
+
+/// Run as the database superuser before the owner applies the schema: create
+/// the extensions and roles, and give `owner` both roles.
+pub async fn prepare(connection: &mut PgConnection, owner: &str) -> Result<(), Error> {
+    for statement in privileged() {
+        connection.execute(statement.as_str()).await?;
+    }
+    connection
+        .execute(format!("GRANT sinex_writer, sinex_reader TO {}", quote_ident(owner)).as_str())
+        .await?;
+    Ok(())
+}
+
+/// Every statement that creates the schema in an empty database, in order.
+pub fn declarations() -> Vec<String> {
+    let mut statements = privileged();
     for schema in tables::SCHEMAS {
         statements.push(format!("CREATE SCHEMA {schema}"));
     }
@@ -85,6 +106,9 @@ pub(crate) struct Checks {
     pub record_state: String,
     pub class: String,
     pub replace_rule: String,
+    pub archive_reason: String,
+    /// The archive reasons, and `unhide` for a reading put back.
+    pub archive_change_reason: String,
 }
 
 impl Checks {
@@ -94,6 +118,15 @@ impl Checks {
             record_state: RecordState::check("record_state"),
             class: Class::check("class"),
             replace_rule: ReplaceRule::check("replace_rule"),
+            archive_reason: ArchiveReason::check("reason"),
+            archive_change_reason: {
+                let mut reasons: Vec<String> = ArchiveReason::VALUES
+                    .iter()
+                    .map(|v| format!("'{v}'"))
+                    .collect();
+                reasons.push("'unhide'".into());
+                format!("CHECK (reason IN ({}))", reasons.join(", "))
+            },
         }
     }
 }

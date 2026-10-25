@@ -20,6 +20,23 @@ pub enum Driver {
     ApiRequest,
 }
 
+impl Driver {
+    /// The driver's name in the catalog and the registry.
+    pub fn name(self) -> &'static str {
+        match self {
+            Driver::AppendFile => "append-file",
+            Driver::SqliteRows => "sqlite-rows",
+            Driver::ExportArchive => "export-archive",
+            Driver::LiveStream => "live-stream",
+            Driver::ApiCursor => "api-cursor",
+            Driver::DirSnapshot => "dir-snapshot",
+            Driver::Media => "media",
+            Driver::Producer => "producer",
+            Driver::ApiRequest => "api-request",
+        }
+    }
+}
+
 mod framing;
 pub use framing::Framer;
 

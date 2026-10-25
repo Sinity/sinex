@@ -11,7 +11,7 @@ pub fn catalog() -> Value {
             json!({
                 "name": s.name,
                 "kind": sinex_sources::sources::input_kind_of(s.name).map(|k| k.name),
-                "driver": format!("{:?}", s.driver),
+                "driver": s.driver.name(),
                 "consumer": s.consumer,
                 "class": s.class,
                 "eventTypes": s.event_types,
@@ -38,6 +38,20 @@ pub fn catalog() -> Value {
         "sources": sources,
         "derivations": keyed.chain(per_event).collect::<Vec<_>>(),
     })
+}
+
+/// The sources as `registry.sources` rows.
+pub fn registry_sources() -> Vec<sinex_store::registry::Source> {
+    sinex_sources::sources::specs()
+        .into_iter()
+        .map(|s| sinex_store::registry::Source {
+            name: s.name.to_owned(),
+            driver: s.driver.name().to_owned(),
+            version: i32::try_from(s.parser_version).unwrap_or(i32::MAX),
+            event_types: s.event_types.iter().map(|t| (*t).to_owned()).collect(),
+            consumer: s.consumer.to_owned(),
+        })
+        .collect()
 }
 
 /// The catalog as committed: pretty JSON with a trailing newline.

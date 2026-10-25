@@ -186,7 +186,7 @@ pub enum MaterialRole {
 }
 
 impl MaterialRole {
-    /// Existing drivers without an explicit role store original input bytes.
+    /// A manifest without a role describes input bytes.
     pub fn of(manifest: &Value) -> Result<Self, serde_json::Error> {
         manifest
             .get("role")
@@ -209,6 +209,21 @@ pub struct MaterialRef {
     pub parser_version: u32,
     /// Lossless description: path bytes, envelopes, media type, charset.
     pub manifest: Value,
+}
+
+/// Why a reading left the live set. Excision is not one: it deletes the
+/// reading and its archive history.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, crate::DbCheck)]
+#[serde(rename_all = "snake_case")]
+pub enum ArchiveReason {
+    /// A replay read the record again.
+    Replay,
+    /// A newer reading of the same record replaced it.
+    NewerReading,
+    /// The operator hid it.
+    Hide,
+    /// Its derivation key was computed again and no longer produced it.
+    Recomputed,
 }
 
 /// Requests that archive live readings in the same transaction. Excision is

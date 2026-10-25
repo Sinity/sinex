@@ -2,7 +2,7 @@
 //! on the allow list and that have not been fetched yet. The allow list is the
 //! opt-in: nothing is fetched without one.
 use crate::backfill::{Totals, drive};
-use crate::one_shot::Sink;
+use crate::material_sink::Sink;
 use crate::writer::WriterHandle;
 use sinex_sources::sources::page_crawl::{self, Crawl};
 use sinex_store::Blobs;

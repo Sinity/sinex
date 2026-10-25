@@ -365,9 +365,9 @@ async fn a_waiting_key_stops_waiting_past_the_horizon(db: devkit::pg::TestDataba
 
 #[devkit::test]
 fn derivations_rank_after_the_derivations_they_read() {
-    let catalog: Vec<Registered> = sinex_derivations::keyed()
+    let catalog: Vec<Derivation> = sinex_derivations::keyed()
         .iter()
-        .map(|d| Registered {
+        .map(|d| Derivation {
             name: d.name().to_owned(),
             kind: "keyed",
             version: 1,

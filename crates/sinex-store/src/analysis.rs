@@ -1,5 +1,5 @@
 //! Storage for the analysis layer: the rows metrics read, the evidence
-//! observation opportunity is computed from, maintained metric values, and
+//! coverage is computed from, maintained metric values, and
 //! products (requests, attempts, results, dependencies, status, findings). The
 //! analysis itself is pure code in `sinex-analysis`; the daemon joins the two.
 use crate::Result;

@@ -121,6 +121,14 @@ fn closed_sets_refuse_outside_values_naming_where_they_belong() {
 }
 
 #[devkit::test]
+fn every_written_archive_reason_can_be_asked_for() {
+    for reason in <crate::ArchiveReason as crate::DbCheck>::VALUES {
+        q(&format!("archive where reason = {reason}"));
+    }
+    err("archive where reason = version_change");
+}
+
+#[devkit::test]
 fn times_resolve_once_against_the_context() {
     // since 7d is [now - 7d, ...).
     let query = q("events since 7d");

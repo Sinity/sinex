@@ -1,6 +1,7 @@
 //! Replay through the real writer and the zsh driver, on a real database.
 use super::*;
-use crate::one_shot::{OneShot, Sink};
+use crate::material_sink::Sink;
+use crate::one_shot::OneShot;
 use crate::writer::Priority;
 use sinex_sources::drivers::append_file::AppendState;
 use sinex_sources::sources::zsh;

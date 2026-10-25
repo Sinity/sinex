@@ -1,6 +1,6 @@
 # Capture topology: one database host and a capture-only satellite.
-# The satellite mounts sinexd's content store over NFS (sending bytes over the
-# link is not built yet) and produces over NATS with its own credentials.
+# The satellite mounts sinexd's content store over NFS and produces over NATS
+# with its own credentials.
 self: {
   name = "sinex-topology";
   nodes = {
@@ -19,9 +19,12 @@ self: {
           producers.capture-satellite.passwordFile = "/etc/sinex-test/nats-satellite";
         };
       };
+      # The satellite writes into the store through this group over NFS, so
+      # both hosts give it the same ID.
+      users.groups.sinex.gid = 2900;
       services.nfs.server = {
         enable = true;
-        exports = "/var/lib/sinex/store *(rw,no_root_squash,no_subtree_check,sync)";
+        exports = "/var/lib/sinex/store *(rw,no_subtree_check,sync)";
       };
     };
     satellite = { ... }: {
@@ -36,6 +39,7 @@ self: {
         options = [ "x-systemd.automount" "noauto" ];
       };
       systemd.tmpfiles.rules = [ "d /srv/watched 0755 root root -" ];
+      users.groups.sinex.gid = 2900;
       services.sinex.captureNode = {
         enable = true;
         nats = "server:4222";
@@ -59,6 +63,9 @@ self: {
             "test $(sudo -u postgres psql -d sinex -tAc \"select count(*) from core.events where event_type = 'file.changed' and payload::text like '%x.txt%'\") -gt 0",
             timeout=180,
         )
+
+    with subtest("the capture does not run as root"):
+        satellite.succeed("test $(systemctl show -p User --value sinex-capture.service) = sinex-capture")
 
     with subtest("the satellite's credentials allow only its own subjects"):
         server.succeed("grep -q 'capture-satellite' /run/sinex-nats/nats.conf")

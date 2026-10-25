@@ -4,7 +4,7 @@
 //! read views; a source never emits below its floor.
 use super::*;
 use crate::privacy::{self, Action, NewRule};
-use crate::read_models::catch_up_search_text;
+use crate::read_models::tests::catch_up_search_text;
 use sinex_model::event_types::{CommandExecuted, CommandImported};
 use sinex_model::{Class, MaterialId, Origin, ReadingOrder, RecordLocation, RunId};
 use sinex_model::{RecordOutcome, Timestamp};

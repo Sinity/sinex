@@ -70,7 +70,7 @@ pub struct Neighbour {
 }
 
 /// Whether a key can still receive inputs. Joins take closed, settled inputs
-/// only; open keys are visible as provisional snapshots (`pq2`, `599`).
+/// only; open keys are visible as provisional snapshots.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum KeyState {
     Open,

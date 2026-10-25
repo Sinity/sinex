@@ -5,7 +5,7 @@
 //! the others or the daemon. Private mode pauses every read until it is off
 //! again.
 use crate::binding_reader::{self, Bound};
-use crate::one_shot::Sink;
+use crate::material_sink::Sink;
 use crate::writer::WriterHandle;
 use serde::Deserialize;
 use serde_json::Value;

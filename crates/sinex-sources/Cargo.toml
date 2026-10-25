@@ -23,7 +23,6 @@ gix.workspace = true
 tokio.workspace = true
 async-nats.workspace = true
 futures.workspace = true
-hashed-blobs.workspace = true
 zip = { version = "2", default-features = false, features = ["deflate", "bzip2"] }
 tar = "0.4"
 flate2 = "1"
@@ -46,6 +45,7 @@ webpki-roots = "1"
 allocation-counter = "0.8.1"
 proptest.workspace = true
 devkit.workspace = true
+hashed-blobs.workspace = true
 
 [lints]
 workspace = true

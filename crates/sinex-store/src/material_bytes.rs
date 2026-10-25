@@ -5,6 +5,18 @@ use crate::Result;
 use sinex_model::MaterialId;
 use sqlx::PgConnection;
 
+/// Which of `materials` are registered.
+pub async fn registered(
+    conn: &mut PgConnection,
+    materials: &[uuid::Uuid],
+) -> Result<Vec<uuid::Uuid>> {
+    Ok(
+        sqlx::query_scalar!("SELECT id FROM raw.materials WHERE id = ANY($1)", materials)
+            .fetch_all(&mut *conn)
+            .await?,
+    )
+}
+
 /// The content-store name of `material`'s bytes, if it is stored.
 pub async fn material_blob(
     conn: &mut PgConnection,

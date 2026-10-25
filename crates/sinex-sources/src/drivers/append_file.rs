@@ -63,22 +63,28 @@ pub struct Cursor {
 /// that a rewrite drops is not recognized as read before (rewrites such as a
 /// shell's duplicate expiry touch recent history), and one it keeps is read
 /// again as a repeat. Bounds the state and a restart's rebuild alike.
-#[cfg(not(test))]
-pub const STATE_TAIL: usize = 16 << 20;
-#[cfg(test)]
-pub const STATE_TAIL: usize = 4096;
-#[cfg(not(test))]
-pub const STATE_RECORDS: usize = 200_000;
-#[cfg(test)]
-pub const STATE_RECORDS: usize = 40;
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct TailBounds {
+    pub bytes: usize,
+    pub records: usize,
+}
+
+impl Default for TailBounds {
+    fn default() -> Self {
+        Self {
+            bytes: 16 << 20,
+            records: 200_000,
+        }
+    }
+}
 
 /// The records of the current revision's tail, by content hash, with where
 /// each occurrence was read: what a rewrite is aligned against. Kept for the
 /// life of the source task and rebuilt from the stored materials after a
-/// restart ([`AppendState::rebuild`]); bounded by [`STATE_TAIL`] and
-/// [`STATE_RECORDS`].
+/// restart ([`AppendState::rebuild`]); bounded by its [`TailBounds`].
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct AppendState {
+    bounds: TailBounds,
     records: HashMap<[u8; 32], std::collections::VecDeque<RecordLocation>>,
     /// Every held record in reading order, with its length, so the oldest
     /// is dropped first when the tail grows past a bound.
@@ -87,6 +93,14 @@ pub struct AppendState {
 }
 
 impl AppendState {
+    /// An empty state kept within `bounds`.
+    pub fn bounded(bounds: TailBounds) -> Self {
+        Self {
+            bounds,
+            ..Self::default()
+        }
+    }
+
     /// The state after reading `materials` (the current revision's parts, in
     /// order) with `framer`.
     pub fn rebuild<'a>(
@@ -125,7 +139,8 @@ impl AppendState {
         self.records.entry(hash).or_default().push_back(location);
         self.order.push_back((hash, location, length));
         self.bytes = self.bytes.saturating_add(length);
-        while self.order.len() > STATE_RECORDS || (self.bytes > STATE_TAIL && self.order.len() > 1)
+        while self.order.len() > self.bounds.records
+            || (self.bytes > self.bounds.bytes && self.order.len() > 1)
         {
             let (hash, location, n) = self.order.pop_front().expect("not empty");
             self.bytes -= n;
@@ -461,4 +476,4 @@ pub fn lines(bytes: &[u8]) -> (Vec<(usize, usize)>, usize) {
 }
 
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;

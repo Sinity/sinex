@@ -1,6 +1,6 @@
 //! Known steering rows keep their table's declared fields and original spelling.
 //! For a source field, outer `None` means absent and `Some(None)` means null.
-//! The store normally supplies every column; older sparse observations stay sparse.
+//! A column the row does not have stays absent.
 use crate::Timestamp;
 use schemars::JsonSchema;
 use serde::{Deserialize, Deserializer, Serialize};
@@ -149,7 +149,8 @@ enum Table {
     Reviews,
 }
 
-/// The existing steering event identity and wire shape, with typed known values.
+/// One steering row, identified by its table and record ID, with typed known
+/// values.
 #[derive(Clone, Debug, PartialEq, Serialize, JsonSchema, crate::EventPayload)]
 #[serde(deny_unknown_fields)]
 #[event(type = "steering.record", key = ["table", "record_id"], replace = newer, time = at, quality = intrinsic)]

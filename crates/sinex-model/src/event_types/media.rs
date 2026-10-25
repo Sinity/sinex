@@ -101,7 +101,7 @@ pub struct NoteDocument {
     pub modified_at: Option<Timestamp>,
     /// When a completed scan first found the file gone.
     pub vanished_at: Option<Timestamp>,
-    /// Extracted fields are absent for old payloads and vanished files.
+    /// Absent for a vanished file and for a note without one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub title: Option<String>,
     /// The exact front-matter string, including an explicitly empty ID.

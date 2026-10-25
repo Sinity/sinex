@@ -78,14 +78,6 @@ fn presence(secs: i64, end: i64, status: &str) -> Event {
     )
 }
 
-fn unit(kind: &str, secs: i64, name: &str) -> Event {
-    input(
-        kind,
-        secs,
-        json!({"unit_name": name, "unit_type": "service", "active_state": "active", "sub_state": "running"}),
-    )
-}
-
 /// Fold `events` (in the given arrival order) for one rule, as intervals.
 fn lift(state: &str, events: &[Event]) -> Vec<StateInterval> {
     let r = rule(state).unwrap();
@@ -232,88 +224,6 @@ fn a_span_ending_before_its_start_is_zero_length() {
 }
 
 #[devkit::test]
-fn a_unit_stop_closes_its_start() {
-    let out = lift(
-        "system.systemd.unit",
-        &[
-            unit("unit.started", 0, "a.service"),
-            unit("unit.started", 5, "b.service"),
-            unit("unit.stopped", 30, "a.service"),
-        ],
-    );
-    assert_eq!(out.len(), 2);
-    assert_eq!(out[0].subject_id.as_deref(), Some("a.service"));
-    assert_eq!(out[0].ended_at, Some(at(30)));
-    assert_eq!(out[0].end_event_type.as_deref(), Some("unit.stopped"));
-    assert_eq!(out[1].ended_at, None);
-}
-
-#[devkit::test]
-fn a_second_start_closes_the_first() {
-    let out = lift(
-        "system.systemd.unit",
-        &[
-            unit("unit.started", 0, "a.service"),
-            unit("unit.started", 40, "a.service"),
-        ],
-    );
-    assert_eq!(out.len(), 2);
-    assert_eq!(out[0].ended_at, Some(at(40)));
-    assert_eq!(out[0].end_event_type.as_deref(), Some("unit.started"));
-}
-
-#[devkit::test]
-fn a_stop_with_no_start_closes_nothing() {
-    assert!(
-        lift(
-            "system.systemd.unit",
-            &[unit("unit.stopped", 0, "a.service")]
-        )
-        .is_empty()
-    );
-}
-
-#[devkit::test]
-fn a_stop_at_its_start_is_zero_length() {
-    let out = lift(
-        "system.systemd.unit",
-        &[
-            unit("unit.started", 10, "a.service"),
-            unit("unit.stopped", 10, "a.service"),
-        ],
-    );
-    assert_eq!(out[0].started_at, out[0].ended_at.unwrap());
-}
-
-#[devkit::test]
-fn a_suspend_interrupts_focus() {
-    let out = lift(
-        "desktop.focus",
-        &[
-            focus(0, "0xa", "vim"),
-            unit("unit.started", 100, "sleep.target"),
-            focus(9000, "0xb", "web"),
-        ],
-    );
-    assert_eq!(
-        out[0].ended_at,
-        Some(at(100)),
-        "not the 9000 s overnight span"
-    );
-    assert_eq!(out[0].end_event_type.as_deref(), Some("unit.started"));
-    // An ordinary unit start is not a interruption.
-    let out = lift(
-        "desktop.focus",
-        &[
-            focus(0, "0xa", "vim"),
-            unit("unit.started", 100, "cron.service"),
-            focus(200, "0xb", "web"),
-        ],
-    );
-    assert_eq!(out[0].ended_at, Some(at(200)));
-}
-
-#[devkit::test]
 fn going_afk_interrupts_focus_and_is_an_interval_itself() {
     let events = [focus(0, "0xa", "vim"), presence(50, 650, "afk")];
     let f = lift("desktop.focus", &events);
@@ -321,23 +231,6 @@ fn going_afk_interrupts_focus_and_is_an_interval_itself() {
     let a = lift("desktop.activitywatch.afk", &events);
     assert_eq!(a.len(), 1);
     assert_eq!(a[0].ended_at, Some(at(650)));
-}
-
-#[devkit::test]
-fn a_suspend_cuts_a_window_span_but_afk_does_not() {
-    let out = lift(
-        "desktop.activitywatch.window",
-        &[
-            window_span(0, 100, "kitty", "zsh"),
-            unit("unit.started", 15, "suspend.target"),
-        ],
-    );
-    assert_eq!(out[0].ended_at, Some(at(15)));
-    let out = lift(
-        "desktop.activitywatch.window",
-        &[window_span(0, 100, "kitty", "zsh"), presence(15, 50, "afk")],
-    );
-    assert_eq!(out[0].ended_at, Some(at(100)));
 }
 
 fn key(state: &str) -> Value {
@@ -381,14 +274,10 @@ fn inputs_ask_for_the_transitions_after_the_day() {
     assert_eq!(q.window.1, at(18 * 3600));
     assert!(q.event_types.contains(&"window.focused"));
     assert!(
-        q.event_types.contains(&"unit.started"),
+        q.event_types.contains(&"presence.span"),
         "interruptions are inputs"
     );
-    assert_eq!(q.after.len(), 3, "next transitions, next suspend, next afk");
-    let q = StateIntervals
-        .inputs(&key("system.systemd.unit"), &env)
-        .unwrap();
-    assert_eq!(q.after[0].per, Some("unit_name"));
+    assert_eq!(q.after.len(), 2, "next transitions, next afk");
 }
 
 #[devkit::test]
@@ -404,21 +293,6 @@ fn keys_cover_the_rules_a_fence_ends() {
             &env,
         )
     };
-    let suspend = unit("unit.started", 0, "sleep.target");
-    let keys = view(&suspend);
-    for r in RULES {
-        assert!(
-            keys.iter().any(|k| k["state"] == r.state_kind),
-            "{} in {keys:?}",
-            r.state_kind
-        );
-    }
-    // An ordinary unit start is a transition for units only.
-    let cron = unit("unit.started", 0, "cron.service");
-    assert_eq!(
-        view(&cron),
-        vec![json!({"state": "system.systemd.unit", "day": "2024-06-15"})]
-    );
     // Going AFK ends focus and workspace, and is itself a presence span.
     let afk = presence(0, 10, "afk");
     assert_eq!(view(&afk).len(), 3);

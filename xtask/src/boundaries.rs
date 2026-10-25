@@ -1,4 +1,7 @@
-//! Which workspace crates may depend on which, and which crates must stay free of IO.
+//! Which workspace crates may depend on which, which crates must stay free of
+//! IO, and two rules about source text: the daemon states no SQL (its
+//! statements are checked queries in the store), and the store names no source
+//! or event type.
 use serde::Deserialize;
 use std::{
     collections::{HashMap, HashSet},
@@ -250,8 +253,104 @@ fn host_triple() -> Result<String, String> {
         .ok_or_else(|| "rustc -vV printed no host".to_string())
 }
 
-/// Check the declared and resolved dependency graph of the workspace at `root`.
+/// Check the declared and resolved dependency graph of the workspace at `root`,
+/// then the source-text rules.
 pub fn check(root: &Path) -> Result<(), String> {
+    graph(root)?;
+    let catalog = std::fs::read_to_string(root.join("nix/catalog.json"))
+        .map_err(|e| format!("nix/catalog.json: {e}"))?;
+    let names = catalog_names(&catalog)?;
+    let mut problems = Vec::new();
+    for (path, text) in product_files(&root.join("crates/sinexd/src"))? {
+        // Excision's lock and planning statements are the one exception.
+        if path.components().any(|c| c.as_os_str() == "excision") || path.ends_with("excision.rs") {
+            continue;
+        }
+        if text.contains("sqlx::query") {
+            problems.push(format!(
+                "{}: SQL in the daemon; add a checked query to sinex-store",
+                path.display()
+            ));
+        }
+    }
+    for (path, text) in product_files(&root.join("crates/sinex-store/src"))? {
+        problems.extend(named_sources(&text, &names).into_iter().map(|name| {
+            format!(
+                "{}: the store names the source or event type {name}",
+                path.display()
+            )
+        }));
+    }
+    if problems.is_empty() {
+        Ok(())
+    } else {
+        Err(problems.join("\n"))
+    }
+}
+
+/// Every source, derivation and event type name the catalog lists.
+fn catalog_names(catalog: &str) -> Result<Vec<String>, String> {
+    let catalog: serde_json::Value =
+        serde_json::from_str(catalog).map_err(|e| format!("nix/catalog.json: {e}"))?;
+    let mut names = Vec::new();
+    for entry in ["sources", "derivations"]
+        .iter()
+        .filter_map(|k| catalog[k].as_array())
+        .flatten()
+    {
+        names.extend(entry["name"].as_str().map(String::from));
+        for list in ["eventTypes", "inputs", "outputs"] {
+            names.extend(
+                entry[list]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .filter_map(|v| v.as_str().map(String::from)),
+            );
+        }
+    }
+    names.sort();
+    names.dedup();
+    Ok(names)
+}
+
+/// The names that appear quoted in `text`, as a Rust or SQL string.
+fn named_sources<'a>(text: &str, names: &'a [String]) -> Vec<&'a str> {
+    names
+        .iter()
+        .filter(|name| text.contains(&format!("\"{name}\"")) || text.contains(&format!("'{name}'")))
+        .map(String::as_str)
+        .collect()
+}
+
+/// The Rust files under `dir` that are not tests (`tests.rs`, `tests/`).
+fn product_files(dir: &Path) -> Result<Vec<(std::path::PathBuf, String)>, String> {
+    let mut files = Vec::new();
+    let mut pending = vec![dir.to_path_buf()];
+    while let Some(dir) = pending.pop() {
+        let entries = std::fs::read_dir(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+        for entry in entries {
+            let path = entry.map_err(|e| e.to_string())?.path();
+            if path
+                .file_name()
+                .is_some_and(|n| n == "tests" || n == "tests.rs")
+            {
+                continue;
+            }
+            if path.is_dir() {
+                pending.push(path);
+            } else if path.extension().is_some_and(|e| e == "rs") {
+                let text = std::fs::read_to_string(&path)
+                    .map_err(|e| format!("{}: {e}", path.display()))?;
+                files.push((path, text));
+            }
+        }
+    }
+    files.sort();
+    Ok(files)
+}
+
+fn graph(root: &Path) -> Result<(), String> {
     // The graph for the platform the crates are built for: a dependency that
     // only another platform uses (`log` under wasm32) is not built here.
     let host = host_triple()?;

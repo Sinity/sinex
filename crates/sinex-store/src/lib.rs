@@ -3,7 +3,7 @@
 //! transaction in `sinexd`. This crate knows no source or derivation by name.
 //!
 //! SQL is checked at compile time against a live development database with
-//! `sqlx::query!`; there is no offline cache (operator ruling, 2025-08-10).
+//! `sqlx::query!`; there is no offline cache.
 pub mod admission;
 pub mod analysis;
 pub mod bindings;
@@ -12,16 +12,19 @@ pub mod commit_log;
 pub mod derivations;
 pub mod diagnostics;
 pub mod excision;
+pub mod live;
 pub mod material_bytes;
 pub mod payloads;
 pub mod positions;
 pub mod privacy;
 pub mod query;
 pub mod read_models;
+pub mod registry;
 pub mod replay;
 pub mod runs;
 pub mod sealed;
 mod stage;
+pub mod writer_lock;
 
 pub use admission::{DerivedScope, DirtyKeys, KeyInput, KeyScope, NoDerivations, Outcome, admit};
 pub use blobs::Blobs;

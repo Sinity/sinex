@@ -20,6 +20,8 @@ struct World {
     _db: devkit::pg::TestDatabase,
     app: Router,
     commits: watch::Sender<u64>,
+    /// Kept so the commit reader runs until the test ends.
+    _stop: watch::Sender<bool>,
     writer: writer::WriterHandle,
     reads: sqlx::PgPool,
 }
@@ -86,10 +88,20 @@ async fn admit_events(w: &World, events: Vec<Event>) {
     let seq = sinex_store::query::current_seq(&mut w.reads.acquire().await.unwrap())
         .await
         .unwrap();
-    sinex_store::read_models::catch_up_search_text(&mut w.reads.acquire().await.unwrap())
+    w.commits.send_replace(seq as u64);
+    // The commit reader indexes the new events' text.
+    loop {
+        let (indexed, _) = sinex_store::commit_log::consumer_position(
+            &mut w.reads.acquire().await.unwrap(),
+            sinex_store::read_models::SEARCH_TEXT,
+        )
         .await
         .unwrap();
-    w.commits.send_replace(seq as u64);
+        if indexed >= seq {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
 }
 
 async fn world(db: devkit::pg::TestDatabase) -> World {
@@ -123,11 +135,27 @@ async fn world(db: devkit::pg::TestDatabase) -> World {
         host: "h".into(),
     };
     let (commits, rx) = watch::channel(0u64);
+    let (stop, stopped) = watch::channel(false);
+    tokio::spawn(crate::commit_reader::run(
+        <sqlx::PgConnection as sqlx::Connection>::connect(&url)
+            .await
+            .unwrap(),
+        crate::commit_reader::read_models()
+            .into_iter()
+            .map(|m| {
+                Box::new(crate::commit_reader::ReadModelRunner(m))
+                    as Box<dyn crate::commit_reader::Consumer>
+            })
+            .collect(),
+        rx.clone(),
+        stopped,
+    ));
     let tokens = Tokens::new(Some(READ.into()), Some(AGENT.into()), Some(OPERATOR.into()));
     World {
         _db: db,
         app: router(api, tokens, rx),
         commits,
+        _stop: stop,
         writer: handle,
         reads,
     }

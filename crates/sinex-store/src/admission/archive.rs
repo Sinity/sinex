@@ -2,7 +2,7 @@
 //! removing live side-table rows.
 use super::*;
 use crate::Error;
-use sinex_model::{OperationId, ReplayScope};
+use sinex_model::{ArchiveReason, OperationId, ReplayScope};
 
 mod history;
 pub use history::erase_archive_history;
@@ -45,7 +45,15 @@ pub(super) async fn replay_scope(
     .await?;
     let seq = position(conn).await?;
     let dirty = mark_archived_dirty(conn, &live, seq, keys).await?;
-    archive_at(conn, &live, seq, "replay", None, Some(operation.0)).await?;
+    archive_at(
+        conn,
+        &live,
+        seq,
+        ArchiveReason::Replay,
+        None,
+        Some(operation.0),
+    )
+    .await?;
     remove_live(conn, &live).await?;
     if scope.event_types.is_none() && scope.from.is_none() && scope.until.is_none() {
         sqlx::query!(
@@ -107,7 +115,15 @@ pub(super) async fn request(
             .await?;
             let seq = position(conn).await?;
             let dirty = mark_archived_dirty(conn, &live, seq, keys).await?;
-            archive_at(conn, &live, seq, kind, None, Some(operation.0)).await?;
+            archive_at(
+                conn,
+                &live,
+                seq,
+                ArchiveReason::Hide,
+                None,
+                Some(operation.0),
+            )
+            .await?;
             remove_live(conn, &live).await?;
             Ok(dirty)
         }

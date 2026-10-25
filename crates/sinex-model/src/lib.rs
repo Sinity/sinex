@@ -16,9 +16,9 @@ pub mod privacy;
 pub mod query;
 
 pub use batch::{
-    ArchiveRequest, Batch, BatchKind, Exclusions, IngressFrame, InputRef, MaterialRef,
-    MaterialRole, ObservationFacts, RecordOutcome, ReplayScope, RevisionChange, SourceProgress,
-    WrappedMaterialKey,
+    ArchiveReason, ArchiveRequest, Batch, BatchKind, Exclusions, IngressFrame, InputRef,
+    MaterialRef, MaterialRole, ObservationFacts, RecordOutcome, ReplayScope, RevisionChange,
+    SourceProgress, WrappedMaterialKey,
 };
 pub use clock::{TimeQuality, Timestamp, TsOrig};
 pub use event::{BuildError, Event, Origin, ReadingOrder, RecordLocation, RecordState};

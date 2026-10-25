@@ -1,7 +1,7 @@
 //! Typed payloads. Every event type is a Rust type deriving `EventPayload`,
 //! which declares its type name, how a repeat of it is recognized, which
-//! reading wins, and when it happened. Schemaless events are a fallback only
-//! (operator 2025-08-01); they are not modelled here.
+//! reading wins, and when it happened. Schemaless events are a fallback only;
+//! they are not modelled here.
 use crate::{Class, RecordState, TsOrig};
 use serde::{Serialize, de::DeserializeOwned};
 use serde_json::Value;
@@ -71,8 +71,8 @@ pub struct Cited {
 pub trait EventPayload: Serialize + DeserializeOwned + Send + Sync + 'static {
     /// The stored event type, such as `command.executed`.
     const EVENT_TYPE: &'static str;
-    /// Declared natural key. Individual records may lack that identity and
-    /// select the existing material-location path through `key_kind`.
+    /// The declared equivalence key. A record that lacks those fields is
+    /// identified by its record location instead (`key_kind`).
     const KEY: KeyKind;
     const REPLACE: ReplaceRule;
     /// Per-field privacy hints; rules in the store decide the effective class.
@@ -83,8 +83,8 @@ pub trait EventPayload: Serialize + DeserializeOwned + Send + Sync + 'static {
     /// gone (a deleted video's title).
     const KEEP_KNOWN: &'static [&'static str] = &[];
 
-    /// The identity available in this particular record. The default keeps the
-    /// declared key, including existing null-field behavior.
+    /// The identity available in this particular record: by default the
+    /// declared key.
     fn key_kind(&self) -> KeyKind {
         Self::KEY
     }

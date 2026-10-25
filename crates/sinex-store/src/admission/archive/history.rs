@@ -1,5 +1,6 @@
-//! Current archival membership and its history have one transactional writer.
+//! Archived state and its history are written together.
 use crate::Result;
+use sinex_model::{ArchiveReason, DbCheck};
 use sqlx::PgConnection;
 use uuid::Uuid;
 
@@ -23,7 +24,7 @@ pub(in crate::admission) async fn archive_at(
     conn: &mut PgConnection,
     ids: &[Uuid],
     position: i64,
-    reason: &str,
+    reason: ArchiveReason,
     replacements: Option<&[Uuid]>,
     operation: Option<Uuid>,
 ) -> Result<()> {
@@ -42,7 +43,7 @@ pub(in crate::admission) async fn archive_at(
         RETURNING notice_seq,event_id,archived_seq,reason,replaced_by,operation_id,archived_at)
       INSERT INTO audit.archive_changes(notice_seq,event_id,commit_seq,archived,reason,replaced_by,operation_id,recorded_at)
       SELECT notice_seq,event_id,archived_seq,true,reason,replaced_by,operation_id,archived_at FROM added"#,
-      ids,replacements,position,reason,operation)
+      ids,replacements,position,reason.as_db(),operation)
       .execute(conn).await?;
     Ok(())
 }
