@@ -37,11 +37,6 @@ impl Bound {
     }
 }
 
-enum Choice {
-    Complete,
-    Read(ObservationFacts, Class, Option<StoredCopy>),
-}
-
 pub(crate) use crate::sealed_access::Access;
 
 /// Bindings read in one shared pass over the same file.
@@ -98,19 +93,14 @@ pub(crate) async fn read(
                     .copied()
                     .unwrap_or_default();
                 let class = b.source.spec().class.max(floor);
-                Ok::<_, String>(
-                    match pass
-                        .resume(&cursor, &facts, class)
-                        .map_err(|e| e.to_string())?
-                    {
-                        Resume::Finished => Choice::Complete,
-                        Resume::Read(stored) => Choice::Read(facts, class, stored),
-                    },
-                )
+                let resume = pass
+                    .resume(&cursor, &facts, class)
+                    .map_err(|e| e.to_string())?;
+                Ok::<_, String>((resume, facts, class))
             }
             .await;
             match choice {
-                Ok(Choice::Read(facts, class, stored)) => {
+                Ok((Resume::Read(stored), facts, class)) => {
                     // Host and effective class are the acquisition/privacy context. Physical
                     // file facts permit aliases without conflating authored logical identities.
                     let compatible = passes.iter_mut().find(|g| {
@@ -132,7 +122,7 @@ pub(crate) async fn read(
                         });
                     }
                 }
-                Ok(Choice::Complete) => {
+                Ok((Resume::Finished, _, _)) => {
                     results.push((b.binding.source.clone(), Ok(Totals::default())))
                 }
                 Err(e) => results.push((
@@ -581,10 +571,10 @@ async fn read_shared(
     }
     drop(receive);
     let physical = worker.await.map_err(|e| e.to_string())?;
-    if let Ok((work, captured)) = &physical {
-        if let Some(total) = totals.iter_mut().find_map(|t| t.as_mut().ok()) {
-            total.pass_work(work, *captured);
-        }
+    if let Ok((work, captured)) = &physical
+        && let Some(total) = totals.iter_mut().find_map(|t| t.as_mut().ok())
+    {
+        total.pass_work(work, *captured);
     }
     if let Err(e) = physical {
         // A stopped route has its own error; a traversal-wide error affects every
