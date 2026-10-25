@@ -42,6 +42,11 @@
         '';
         cargoBuildFlags = [ "-p" "sinexd" "-p" "sinexctl" "-p" "sinex-session" "-p" "sinex-capture" "-p" "xtask" ];
         doCheck = true;
+        # Captures check the private-mode switch under $XDG_RUNTIME_DIR; the
+        # builder has none, and a switch that cannot be checked counts as on.
+        preCheck = ''
+          export XDG_RUNTIME_DIR=$(mktemp -d)
+        '';
         # Database tests need devkit's server; they run under `xtask test`.
         cargoTestFlags = [ "-p" "sinex-model" "-p" "sinex-protocol" "-p" "sinex-schema" "-p" "sinex-sources" "-p" "sinex-derivations" ];
       };
