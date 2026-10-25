@@ -3,7 +3,6 @@ use crate::one_shot::OneShot;
 use serde_json::json;
 use sinex_sources::{
     Settings,
-    binding::stateless,
     sources::google_takeout::{self, fit, tasks},
 };
 use std::io::Write;
@@ -37,6 +36,48 @@ fn archive(path: &std::path::Path) -> usize {
     tar.len()
 }
 
+/// The binding's Takeout driver with `part_bytes` per record part.
+fn takeout_driver(
+    binding: &Binding,
+    part_bytes: usize,
+) -> sinex_sources::drivers::export_archive::ExportArchive {
+    let host = binding.settings.host.clone();
+    let mut driver = if binding.source == fit::SPEC.name {
+        fit::driver(binding.input.clone(), host, binding.settings.zone().unwrap())
+    } else {
+        tasks::driver(binding.input.clone(), host)
+    };
+    driver.part_bytes = part_bytes;
+    driver
+}
+
+/// The fields of a shared-pass cursor these tests check.
+#[derive(serde::Deserialize)]
+struct PassCursor {
+    record: usize,
+    material: Option<sinex_model::MaterialId>,
+    original_material: Option<sinex_model::MaterialId>,
+    done: bool,
+    capture: PassCapture,
+}
+
+#[derive(serde::Deserialize)]
+struct PassCapture {
+    class: Class,
+}
+
+fn pass_cursor(cursor: &Value) -> PassCursor {
+    serde_json::from_value(cursor.clone()).unwrap()
+}
+
+/// The polled reader of `b`.
+fn polled(b: &mut Bound) -> &mut dyn Reader {
+    let Reading::Polled(reader) = &mut b.reading else {
+        panic!("{} is read in a shared pass", b.binding.name)
+    };
+    reader.as_mut()
+}
+
 fn bound(path: &std::path::Path) -> Vec<Bound> {
     let settings = Settings::new("synthetic");
     [fit::SPEC, tasks::SPEC]
@@ -45,9 +86,7 @@ fn bound(path: &std::path::Path) -> Vec<Bound> {
             let binding = Binding::of(spec, path, settings.clone());
             let mut b = Bound::new(&google_takeout::KIND, binding).unwrap();
             // Force several ordinary parts without changing the production limits.
-            let mut driver = b.reader.export_archive().unwrap().clone();
-            driver.part_bytes = 400;
-            b.reader = stateless(driver);
+            b.reading = Reading::Shared(Box::new(takeout_driver(&b.binding, 400)));
             b
         })
         .collect()
@@ -312,9 +351,7 @@ async fn sealed_archive_restart_replay_and_class_changes_preserve_exact_material
             let mut bindings = bound(&path);
             bindings.truncate(1);
             let b = &mut bindings[0];
-            let mut driver = b.reader.export_archive().unwrap().clone();
-            driver.part_bytes = 1 << 20;
-            b.reader = stateless(driver);
+            b.reading = Reading::Shared(Box::new(takeout_driver(&b.binding, 1 << 20)));
             b.source = Box::new(SmallBatches(std::mem::replace(
                 &mut b.source,
                 Box::new(fit::source()),
@@ -347,7 +384,7 @@ async fn sealed_archive_restart_replay_and_class_changes_preserve_exact_material
             .await
             .unwrap()
             .unwrap();
-        let cursor = Cursor::parse(&checkpoint.0).unwrap().unwrap();
+        let cursor = pass_cursor(&checkpoint.0);
         assert_eq!(cursor.record, 2);
         assert!(checkpoint.1.is_null() || sinex_store::sealed::is_sealed(&checkpoint.1));
         let partial = cursor.material.unwrap();
@@ -409,15 +446,11 @@ async fn sealed_archive_restart_replay_and_class_changes_preserve_exact_material
             let total = result.unwrap();
             assert_eq!(total.to_json()["archive_captures"], 0);
         }
-        let final_cursor = Cursor::parse(
-            &positions::load(&mut ctx.read_conn, &name)
+        let final_cursor = pass_cursor(&positions::load(&mut ctx.read_conn, &name)
                 .await
                 .unwrap()
                 .unwrap()
-                .0,
-        )
-        .unwrap()
-        .unwrap();
+                .0);
         assert!(final_cursor.done);
         // The rest of the partly admitted part was read again into a new part.
         assert_ne!(final_cursor.material, Some(partial));
@@ -507,15 +540,11 @@ async fn sealed_archive_restart_replay_and_class_changes_preserve_exact_material
             result.into_iter().next().unwrap().1.unwrap().to_json()["archive_captures"],
             1
         );
-        let cursor = Cursor::parse(
-            &positions::load(&mut ctx.read_conn, &name)
+        let cursor = pass_cursor(&positions::load(&mut ctx.read_conn, &name)
                 .await
                 .unwrap()
                 .unwrap()
-                .0,
-        )
-        .unwrap()
-        .unwrap();
+                .0);
         assert_eq!(cursor.capture.class, Class::Guarded);
         assert_ne!(cursor.original_material, Some(original));
         sqlx::query("INSERT INTO privacy.source_classes(source,class,author) VALUES ('google.fit','sealed','synthetic')").execute(&mut ctx.read_conn).await.unwrap();
@@ -539,15 +568,11 @@ async fn sealed_archive_restart_replay_and_class_changes_preserve_exact_material
             result.into_iter().next().unwrap().1.unwrap().to_json()["archive_captures"],
             1
         );
-        let cursor = Cursor::parse(
-            &positions::load(&mut ctx.read_conn, &name)
+        let cursor = pass_cursor(&positions::load(&mut ctx.read_conn, &name)
                 .await
                 .unwrap()
                 .unwrap()
-                .0,
-        )
-        .unwrap()
-        .unwrap();
+                .0);
         assert_eq!(cursor.capture.class, Class::Sealed);
         assert_ne!(cursor.original_material, Some(original));
         ctx.close().await.unwrap();

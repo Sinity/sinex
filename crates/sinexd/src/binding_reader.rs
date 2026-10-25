@@ -1,11 +1,11 @@
-//! A binding owns its parser and cursor; compatible archives share physical traversal.
+//! A binding owns its parser and cursor; bindings of the same stored file share one pass over it.
 use crate::backfill::{self, Totals};
 use crate::material_sink::Sink;
 use crate::writer::WriterHandle;
 use serde_json::Value;
 use sinex_model::{Class, ObservationFacts, RunId};
-use sinex_sources::drivers::export_archive::group::{self, Cursor, Route};
-use sinex_sources::{Binding, InputKind, Reader, Source, drivers};
+use sinex_sources::shared_pass::{self, Resume, StoredCopy};
+use sinex_sources::{Binding, InputKind, Reader, Reading, Source, drivers};
 use sinex_store::{Blobs, positions};
 use sqlx::PgConnection;
 use std::io::Read;
@@ -18,7 +18,7 @@ use tokio::sync::{mpsc, watch};
 pub(crate) struct Bound {
     pub binding: Binding,
     pub source: Box<dyn Source>,
-    reader: Box<dyn Reader>,
+    reading: Reading,
     remembered: bool,
     history_floor: Class,
 }
@@ -29,7 +29,7 @@ impl Bound {
             .ok_or_else(|| format!("{} is not read by a driver", kind.name))?;
         Ok(Self {
             source: (kind.source)(&binding)?,
-            reader: reader(&binding)?,
+            reading: reader(&binding)?,
             binding,
             remembered: false,
             history_floor: Class::Open,
@@ -39,13 +39,16 @@ impl Bound {
 
 enum Choice {
     Complete,
-    Read(ObservationFacts, Class),
+    Read(ObservationFacts, Class, Option<StoredCopy>),
 }
 
 pub(crate) use crate::sealed_access::Access;
 
-struct Archive {
+/// Bindings read in one shared pass over the same file.
+struct Pass {
     indices: Vec<usize>,
+    /// The stored copy of the file a binding's cursor names, if any.
+    stored: Option<StoredCopy>,
     facts: ObservationFacts,
     class: Class,
     host: String,
@@ -64,7 +67,7 @@ pub(crate) async fn read(
     access: Access<'_>,
 ) -> Vec<(String, Result<Totals, String>)> {
     let mut results = Vec::new();
-    let mut archives: Vec<Archive> = Vec::new();
+    let mut passes: Vec<Pass> = Vec::new();
     for (index, b) in bound.iter_mut().enumerate() {
         let init = async {
             if !b.remembered {
@@ -79,9 +82,9 @@ pub(crate) async fn read(
             results.push((b.binding.source.clone(), Err(e)));
             continue;
         }
-        if let Some(driver) = b.reader.export_archive() {
+        if let Reading::Shared(pass) = &b.reading {
             let choice = async {
-                let facts = drivers::file_facts(&driver.path).map_err(|e| e.to_string())?;
+                let facts = drivers::file_facts(pass.path()).map_err(|e| e.to_string())?;
                 let cursor = positions::load(conn, &b.binding.name)
                     .await
                     .map_err(|e| e.to_string())?
@@ -95,21 +98,22 @@ pub(crate) async fn read(
                     .copied()
                     .unwrap_or_default();
                 let class = b.source.spec().class.max(floor);
-                let previous = Cursor::parse(&cursor).map_err(|e| e.to_string())?;
-                if previous
-                    .as_ref()
-                    .is_some_and(|c| c.done && c.same_file(&facts) && c.capture.class == class)
-                {
-                    return Ok(Choice::Complete);
-                }
-                Ok::<_, String>(Choice::Read(facts, class))
+                Ok::<_, String>(
+                    match pass
+                        .resume(&cursor, &facts, class)
+                        .map_err(|e| e.to_string())?
+                    {
+                        Resume::Finished => Choice::Complete,
+                        Resume::Read(stored) => Choice::Read(facts, class, stored),
+                    },
+                )
             }
             .await;
             match choice {
-                Ok(Choice::Read(facts, class)) => {
+                Ok(Choice::Read(facts, class, stored)) => {
                     // Host and effective class are the acquisition/privacy context. Physical
                     // file facts permit aliases without conflating authored logical identities.
-                    let compatible = archives.iter_mut().find(|g| {
+                    let compatible = passes.iter_mut().find(|g| {
                         g.class == class
                             && class != Class::Sealed
                             && same_file(&g.facts, &facts)
@@ -117,9 +121,11 @@ pub(crate) async fn read(
                     });
                     if let Some(group) = compatible {
                         group.indices.push(index);
+                        group.stored = group.stored.take().or(stored);
                     } else {
-                        archives.push(Archive {
+                        passes.push(Pass {
                             indices: vec![index],
+                            stored,
                             facts,
                             class,
                             host: b.binding.settings.host.clone(),
@@ -134,7 +140,7 @@ pub(crate) async fn read(
                     Err(format!("{}: {e}", b.binding.name)),
                 )),
             }
-        } else {
+        } else if let Reading::Polled(reader) = &mut b.reading {
             let result = backfill::drive(
                 conn,
                 writer,
@@ -144,14 +150,13 @@ pub(crate) async fn read(
                 sink,
                 access,
                 b.history_floor,
-                b.reader.as_mut(),
+                reader.as_mut(),
                 stop.clone(),
             )
             .await;
             let result = match result {
                 Ok(totals) => match positions::load(conn, &b.binding.name).await {
-                    Ok(Some((cursor, _))) => b
-                        .reader
+                    Ok(Some((cursor, _))) => reader
                         .remove_passed(&cursor)
                         .map(|_| totals)
                         .map_err(|e| e.to_string()),
@@ -163,28 +168,28 @@ pub(crate) async fn read(
             results.push((b.binding.source.clone(), result));
         }
     }
-    for archive in archives {
-        let outcome = read_archive(
+    for pass in passes {
+        let outcome = read_shared(
             conn,
             blobs,
             writer,
             run,
             sink,
             bound,
-            &archive,
+            &pass,
             stop.clone(),
             access,
         )
         .await;
         match outcome {
             Ok(per_route) => results.extend(
-                archive
+                pass
                     .indices
                     .iter()
                     .zip(per_route)
                     .map(|(&i, r)| (bound[i].binding.source.clone(), r)),
             ),
-            Err(e) => results.extend(archive.indices.iter().map(|&i| {
+            Err(e) => results.extend(pass.indices.iter().map(|&i| {
                 (
                     bound[i].binding.source.clone(),
                     Err(format!("{}: {e}", bound[i].binding.name)),
@@ -194,8 +199,9 @@ pub(crate) async fn read(
     }
     results
 }
-/// Offer the reader the stored history it rebuilds its memory from. A sealed
-/// part raises the binding's class to sealed.
+/// Offer a polled reader the stored history it rebuilds its memory from. A
+/// sealed part raises the binding's class to sealed. A binding read in a
+/// shared pass resumes from its cursor alone.
 async fn restore(
     conn: &mut PgConnection,
     blobs: &Blobs,
@@ -203,10 +209,13 @@ async fn restore(
     access: Access<'_>,
     stop: &watch::Receiver<bool>,
 ) -> Result<(), String> {
+    let Reading::Polled(reader) = &mut b.reading else {
+        return Ok(());
+    };
     let sealed = restore_reader(
         conn,
         blobs,
-        b.reader.as_mut(),
+        reader.as_mut(),
         &b.binding.name,
         access.unlock,
         stop,
@@ -328,27 +337,27 @@ impl<R: Read> Read for Checked<R> {
         if self.stop.load(Ordering::Relaxed)
             || sinex_transport::private_mode::PrivateMode::default().on()
         {
-            return Err(std::io::Error::other("archive capture cancelled"));
+            return Err(std::io::Error::other("capture cancelled"));
         }
         self.input.read(bytes)
     }
 }
 
 #[allow(clippy::too_many_arguments)]
-async fn read_archive(
+async fn read_shared(
     conn: &mut PgConnection,
     blobs: &Blobs,
     writer: &WriterHandle,
     run: RunId,
     sink: &Sink,
     bound: &mut [Bound],
-    archive: &Archive,
+    pass: &Pass,
     mut stop: watch::Receiver<bool>,
     access: Access<'_>,
 ) -> Result<Vec<Result<Totals, String>>, String> {
     let started = std::time::Instant::now();
     let cancel = Cancel(Arc::new(AtomicBool::new(false)));
-    let sealing = if archive.class == Class::Sealed {
+    let sealing = if pass.class == Class::Sealed {
         let configured = if access.recipient.is_none() {
             crate::material_sink::class_key()?
         } else {
@@ -359,7 +368,7 @@ async fn read_archive(
             .cloned()
             .or(configured)
             .or_else(|| access.unlock.map(|a| a.recipient()))
-            .ok_or("sealed archive capture requires the class key's public recipient")?;
+            .ok_or("sealed capture requires the class key's public recipient")?;
         Some(Arc::new(crate::material_sink::SealingSink::new(
             blobs.clone(),
             recipient,
@@ -367,15 +376,30 @@ async fn read_archive(
     } else {
         None
     };
+    // Reading a stored sealed copy needs the key of the material that holds
+    // it; a sealed group has one binding.
+    if let (Some(stored), Some(sealing)) = (&pass.stored, &sealing) {
+        let unlock = access
+            .unlock
+            .ok_or("continuing a sealed file needs an operator unlock")?;
+        let material = stored
+            .material
+            .ok_or("a sealed stored copy names no material")?;
+        let key = unlock.material_key(conn, material).await?;
+        sealing.restore_key(stored.blob.clone(), key)?;
+    }
+    let stored_copy = pass
+        .stored
+        .as_ref()
+        .map(|stored| (stored.blob.clone(), stored.length));
     let mut routes = Vec::new();
-    let mut stored_archive = None;
     let mut slots = Vec::new();
-    let mut totals: Vec<Result<Totals, String>> = archive
+    let mut totals: Vec<Result<Totals, String>> = pass
         .indices
         .iter()
         .map(|_| Ok(Totals::default()))
         .collect();
-    for (slot, &index) in archive.indices.iter().enumerate() {
+    for (slot, &index) in pass.indices.iter().enumerate() {
         let route = async {
             let b = &mut bound[index];
             let cursor = positions::load(conn, &b.binding.name)
@@ -383,34 +407,10 @@ async fn read_archive(
                 .map_err(|e| e.to_string())?
                 .map(|(cursor, _)| cursor)
                 .unwrap_or(Value::Null);
-            let saved = Cursor::parse(&cursor).map_err(|e| e.to_string())?;
-            if let Some(c) = saved
-                .as_ref()
-                .filter(|c| c.same_file(&archive.facts) && c.capture.class == archive.class)
-            {
-                stored_archive = Some((c.capture.blob.clone(), c.capture.length));
-            }
-            let continuing = saved
-                .as_ref()
-                .is_some_and(|c| c.same_file(&archive.facts) && c.capture.class == archive.class);
-            // Reading a stored sealed archive needs the key of the material
-            // that holds it.
-            if continuing && let Some(sealing) = &sealing {
-                let unlock = access
-                    .unlock
-                    .ok_or("continuing a sealed archive needs an operator unlock")?;
-                let cursor = saved.as_ref().expect("continuing");
-                let original = cursor
-                    .original_material
-                    .ok_or("sealed archive cursor has no original material")?;
-                let key = unlock.material_key(conn, original).await?;
-                sealing.restore_key(cursor.capture.blob.clone(), key)?;
-            }
-            Ok::<_, String>(Route {
-                class: archive.class,
-                driver: b.reader.export_archive().expect("archive group").clone(),
-                cursor,
-            })
+            let Reading::Shared(shared) = &b.reading else {
+                unreachable!("only bindings read in a shared pass are grouped")
+            };
+            Ok::<_, String>(shared.route(cursor, pass.class))
         }
         .await;
         match route {
@@ -424,8 +424,11 @@ async fn read_archive(
     if routes.is_empty() {
         return Ok(totals);
     }
-    let path = routes[0].driver.path.clone();
-    let facts = archive.facts.clone();
+    let Reading::Shared(shared) = &bound[pass.indices[slots[0]]].reading else {
+        unreachable!("only bindings read in a shared pass are grouped")
+    };
+    let path = shared.path().to_owned();
+    let facts = pass.facts.clone();
     let store = blobs.clone();
     let material_sink = Sink(blobs.clone());
     let worker_sealing = sealing.clone();
@@ -433,8 +436,8 @@ async fn read_archive(
     let cancelled = Arc::clone(&cancel.0);
     let (send, mut receive) = mpsc::channel::<Delivery>(1);
     let worker = tokio::task::spawn_blocking(move || {
-        let captured = stored_archive.is_none();
-        let (blob, length) = match stored_archive {
+        let captured = stored_copy.is_none();
+        let (blob, length) = match stored_copy {
             Some(captured) => captured,
             None => {
                 let input = std::fs::File::open(&path).map_err(|e| e.to_string())?;
@@ -449,10 +452,10 @@ async fn read_archive(
                 let after = drivers::file_facts(&path).map_err(|e| e.to_string())?;
                 if !same_file(&facts, &after) {
                     return Err(
-                        "archive changed during capture; retry from an unchanged revision".into(),
+                        "file changed during capture; retry from an unchanged revision".into(),
                     );
                 }
-                (blob, facts.size.ok_or("archive size unavailable")?)
+                (blob, facts.size.ok_or("file size unavailable")?)
             }
         };
         let verify_stop = Arc::clone(&cancelled);
@@ -460,7 +463,7 @@ async fn read_archive(
             if verify_stop.load(Ordering::Relaxed)
                 || sinex_transport::private_mode::PrivateMode::default().on()
             {
-                return Err(std::io::Error::other("archive verification cancelled").into());
+                return Err(std::io::Error::other("verification cancelled").into());
             }
             if let Some(unlock) = &unlock {
                 unlock.check().map_err(std::io::Error::other)?;
@@ -470,7 +473,7 @@ async fn read_archive(
         let input = match &worker_sealing {
             Some(sealing) => {
                 let key = sealing.key(&blob)?;
-                group::Input::Seekable(Box::new(Checked {
+                shared_pass::Input::Seekable(Box::new(Checked {
                     input: store
                         .read_sealed(
                             &blob,
@@ -483,7 +486,7 @@ async fn read_archive(
                     stop: Arc::clone(&cancelled),
                 }))
             }
-            None => group::Input::Sequential(Box::new(Checked {
+            None => shared_pass::Input::Sequential(Box::new(Checked {
                 input: store
                     .read_plain(&blob, Some(length), check)
                     .map_err(|e| e.to_string())?,
@@ -494,7 +497,7 @@ async fn read_archive(
             Some(sealing) => sealing.as_ref(),
             None => &material_sink,
         };
-        group::read_input(
+        shared_pass::read(
             input,
             blob,
             length,
@@ -525,12 +528,12 @@ async fn read_archive(
             break;
         };
         let slot = slots[delivery.index];
-        let index = archive.indices[slot];
+        let index = pass.indices[slot];
         let b = &mut bound[index];
         let result = async {
             let mut acquired = delivery.acquired.map_err(|e| e.to_string())?;
             if sinex_transport::private_mode::PrivateMode::default().on() {
-                return Err("private mode is on; archive admission stopped".into());
+                return Err("private mode is on; admission stopped".into());
             }
             if let Some(unlock) = access.unlock {
                 unlock.check()?;
@@ -540,11 +543,7 @@ async fn read_archive(
                 .map_err(|e| e.to_string())?
                 .unwrap_or((Value::Null, Value::Null));
             drivers::note_previous_through(&cursor, &mut acquired);
-            let carry = if acquired
-                .material
-                .as_ref()
-                .is_some_and(|m| m.manifest["role"] == "original-archive")
-            {
+            let carry = if acquired.starts_over().map_err(|e| e.to_string())? {
                 Value::Null
             } else if acquired.material.is_some() {
                 match &sealing {
@@ -570,7 +569,7 @@ async fn read_archive(
                 physical_sink,
                 sealing.as_deref(),
                 access.unlock,
-                archive.class,
+                pass.class,
                 acquired,
                 carry,
                 total,
@@ -588,7 +587,7 @@ async fn read_archive(
     let physical = worker.await.map_err(|e| e.to_string())?;
     if let Ok((work, captured)) = &physical {
         if let Some(total) = totals.iter_mut().find_map(|t| t.as_mut().ok()) {
-            total.archive_work(work, *captured);
+            total.pass_work(work, *captured);
         }
     }
     if let Err(e) = physical {
@@ -609,7 +608,7 @@ async fn read_archive(
 impl<R: Read + std::io::Seek> std::io::Seek for Checked<R> {
     fn seek(&mut self, position: std::io::SeekFrom) -> std::io::Result<u64> {
         if self.stop.load(Ordering::Relaxed) {
-            return Err(std::io::Error::other("archive capture cancelled"));
+            return Err(std::io::Error::other("capture cancelled"));
         }
         self.input.seek(position)
     }

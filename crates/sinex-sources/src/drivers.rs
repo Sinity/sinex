@@ -58,6 +58,20 @@ pub struct Acquired {
     pub cursor_unchanged: Value,
 }
 
+impl Acquired {
+    /// Whether this acquisition starts the binding over from a new copy of
+    /// its whole input, so the parser's carried state is dropped.
+    pub fn starts_over(&self) -> Result<bool, DriverError> {
+        Ok(self
+            .material
+            .as_ref()
+            .map(|m| sinex_model::MaterialRole::of(&m.manifest))
+            .transpose()
+            .map_err(|e| DriverError::InvalidMaterial(e.to_string()))?
+            == Some(sinex_model::MaterialRole::OriginalArchive))
+    }
+}
+
 /// Bytes already stored, apart from the current decoded records.
 #[derive(Clone)]
 pub enum StoredBytes {
@@ -226,14 +240,11 @@ pub fn prepare<'s>(
     limits: Limits,
 ) -> Result<Prepared<'s>, DriverError> {
     let spec = source.spec();
-    let reset = acquired
-        .material
-        .as_ref()
-        .map(|m| sinex_model::MaterialRole::of(&m.manifest))
-        .transpose()
-        .map_err(|e| DriverError::InvalidMaterial(e.to_string()))?
-        == Some(sinex_model::MaterialRole::OriginalArchive);
-    let carry = if reset { Value::Null } else { carry };
+    let carry = if acquired.starts_over()? {
+        Value::Null
+    } else {
+        carry
+    };
     let material = match acquired.material {
         None => None,
         Some(m) => {

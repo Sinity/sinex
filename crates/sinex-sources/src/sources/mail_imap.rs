@@ -454,13 +454,13 @@ pub const KIND: crate::binding::InputKind = crate::binding::InputKind {
     }),
     source: |_| Ok(Box::new(source())),
     reader: Some(|b| {
-        Ok(Box::new(ImapReader {
+        Ok(crate::binding::Reading::Polled(Box::new(ImapReader {
             mail: ImapMail {
                 config: config(&b.input)?,
                 host: b.settings.host.clone(),
             },
             held: None,
-        }))
+        })))
     }),
     capture: None,
 };

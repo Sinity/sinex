@@ -447,9 +447,9 @@ impl Totals {
         self.wall = started.elapsed();
     }
 
-    pub(crate) fn archive_work(
+    pub(crate) fn pass_work(
         &mut self,
-        work: &sinex_sources::drivers::export_archive::group::Work,
+        work: &sinex_sources::shared_pass::Work,
         captured: bool,
     ) {
         self.archive_source_opens += u64::from(captured);

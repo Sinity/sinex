@@ -20,11 +20,14 @@ impl RecordRead for Body {
 }
 
 fn reader(path: &Path) -> Box<dyn Reader> {
-    super::super::appended(AppendFile {
+    let crate::binding::Reading::Polled(reader) = super::super::appended(AppendFile {
         path: path.to_owned(),
         host: "h".into(),
         framer: Framer::incremental(lines),
-    })
+    }) else {
+        unreachable!("an append file is polled")
+    };
+    reader
 }
 
 /// What the store would hold for the material `acquired` read.

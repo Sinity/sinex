@@ -132,11 +132,6 @@ pub struct StoredMaterial {
 /// reads only what changed. A material only partly admitted when the process
 /// stopped is not resumed: the reader reads on from the committed cursor.
 pub trait Reader: Send {
-    /// The export declaration, when this reader can share a physical archive traversal.
-    fn export_archive(&self) -> Option<&crate::drivers::export_archive::ExportArchive> {
-        None
-    }
-
     /// The newest material of the stored history this reader rebuilds its
     /// memory from, given the committed cursor; `None` when it remembers
     /// nothing.
@@ -173,8 +168,15 @@ pub trait Reader: Send {
 pub type Plan = fn(&Path, &Settings) -> Result<Vec<Binding>, String>;
 /// The parser of one binding.
 type SourceFor = fn(&Binding) -> Result<Box<dyn Source>, String>;
+/// How a binding is read: polled alone, or in a pass over a stored file
+/// shared with every compatible binding of that file.
+pub enum Reading {
+    Polled(Box<dyn Reader>),
+    Shared(Box<dyn crate::shared_pass::SharedPass>),
+}
+
 /// The driver of one binding.
-type ReaderFor = fn(&Binding) -> Result<Box<dyn Reader>, String>;
+type ReaderFor = fn(&Binding) -> Result<Reading, String>;
 /// Live capture of one binding into its spool, until stopped or until the
 /// source ends; the number of captured lines or segments.
 pub type Capture = fn(&Binding, &crate::capture::Control) -> Result<u64, String>;
@@ -254,10 +256,6 @@ pub struct Stateless<D>(pub D);
 
 /// The polls a memoryless driver offers.
 pub trait StatelessDriver: Send {
-    fn export_archive(&self) -> Option<&crate::drivers::export_archive::ExportArchive> {
-        None
-    }
-
     fn poll_once(&self, cursor: &Value) -> Result<Acquired, DriverError>;
     fn remove_passed_files(&self, _committed: &Value) -> Result<usize, DriverError> {
         Ok(0)
@@ -265,10 +263,6 @@ pub trait StatelessDriver: Send {
 }
 
 impl<D: StatelessDriver> Reader for Stateless<D> {
-    fn export_archive(&self) -> Option<&crate::drivers::export_archive::ExportArchive> {
-        self.0.export_archive()
-    }
-
     fn poll(&mut self, cursor: &Value) -> Result<Acquired, DriverError> {
         self.0.poll_once(cursor)
     }
@@ -278,21 +272,14 @@ impl<D: StatelessDriver> Reader for Stateless<D> {
     }
 }
 
-/// A box of `driver` as a [`Reader`].
-pub fn stateless<D: StatelessDriver + 'static>(driver: D) -> Box<dyn Reader> {
-    Box::new(Stateless(driver))
+/// `driver`, polled alone with no memory of its own.
+pub fn stateless<D: StatelessDriver + 'static>(driver: D) -> Reading {
+    Reading::Polled(Box::new(Stateless(driver)))
 }
 
-impl StatelessDriver for crate::drivers::export_archive::ExportArchive {
-    fn export_archive(&self) -> Option<&crate::drivers::export_archive::ExportArchive> {
-        Some(self)
-    }
-
-    fn poll_once(&self, _cursor: &Value) -> Result<Acquired, DriverError> {
-        Err(DriverError::InvalidMaterial(
-            "export archives are read through their stored archive, not a standalone poll".into(),
-        ))
-    }
+/// An export archive, read in a pass shared with the other bindings of it.
+pub fn shared(driver: crate::drivers::export_archive::ExportArchive) -> Reading {
+    Reading::Shared(Box::new(driver))
 }
 
 impl StatelessDriver for crate::drivers::live_stream::LiveStream {
@@ -336,13 +323,13 @@ pub struct Appended {
     tail: Option<crate::drivers::append_file::AppendTail>,
 }
 
-pub fn appended(driver: AppendFile) -> Box<dyn Reader> {
-    Box::new(Appended {
+pub fn appended(driver: AppendFile) -> Reading {
+    Reading::Polled(Box::new(Appended {
         held: None,
         driver,
         state: AppendState::default(),
         tail: None,
-    })
+    }))
 }
 
 impl Reader for Appended {
@@ -415,11 +402,11 @@ pub struct Rows {
     state: RowState,
 }
 
-pub fn rows(driver: SqliteRows) -> Box<dyn Reader> {
-    Box::new(Rows {
+pub fn rows(driver: SqliteRows) -> Reading {
+    Reading::Polled(Box::new(Rows {
         driver,
         state: RowState::default(),
-    })
+    }))
 }
 
 impl Reader for Rows {
@@ -465,11 +452,11 @@ struct Walked {
     state: DirState,
 }
 
-pub fn walked(driver: DirSnapshot) -> Box<dyn Reader> {
-    Box::new(Walked {
+pub fn walked(driver: DirSnapshot) -> Reading {
+    Reading::Polled(Box::new(Walked {
         driver,
         state: DirState::default(),
-    })
+    }))
 }
 
 impl Reader for Walked {

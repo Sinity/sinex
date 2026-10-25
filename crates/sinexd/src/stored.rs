@@ -1,6 +1,6 @@
 //! A stored material's records read through one verified reader. Sealed bodies
 //! stay off disk.
-use sinex_sources::drivers::export_archive::group::ReadSeek;
+use sinex_sources::shared_pass::ReadSeek;
 use sinex_sources::{Framer, drivers};
 use std::io::{Read, Seek, SeekFrom};
 use std::sync::Mutex;

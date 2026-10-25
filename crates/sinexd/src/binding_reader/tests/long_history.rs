@@ -46,12 +46,13 @@ async fn saved_memories(conn: &mut PgConnection, binding: &str) -> i64 {
 /// Rebuild a fresh reader's memory the way a restart does; how long it took.
 async fn restore(ctx: &mut OneShot, bound: &mut Bound) -> std::time::Duration {
     let (_stop, stop) = watch::channel(false);
+    let name = bound.binding.name.clone();
     let started = Instant::now();
     restore_reader(
         &mut ctx.read_conn,
         &ctx.blobs,
-        bound.reader.as_mut(),
-        &bound.binding.name,
+        polled(bound),
+        &name,
         None,
         &stop,
     )
@@ -100,7 +101,7 @@ async fn a_restarted_row_reader_remembers_every_stored_row(db: devkit::pg::TestD
         .await
         .unwrap()
         .unwrap();
-    let acquired = restarted.reader.poll(&cursor).unwrap();
+    let acquired = polled(&mut restarted).poll(&cursor).unwrap();
     assert!(
         acquired.material.is_none(),
         "a restart stored rows it had already stored"
@@ -135,7 +136,7 @@ async fn a_restarted_directory_reader_stores_nothing_unchanged_and_sees_old_remo
         .await
         .unwrap()
         .unwrap();
-    let unchanged = restarted.reader.poll(&cursor).unwrap();
+    let unchanged = polled(&mut restarted).poll(&cursor).unwrap();
     assert!(
         unchanged.material.is_none(),
         "a restart stored files it had already stored"
@@ -143,7 +144,7 @@ async fn a_restarted_directory_reader_stores_nothing_unchanged_and_sees_old_remo
 
     // Only the first part names this file.
     std::fs::remove_file(root.join("000000.md")).unwrap();
-    let acquired = restarted.reader.poll(&cursor).unwrap();
+    let acquired = polled(&mut restarted).poll(&cursor).unwrap();
     let material = acquired.material.expect("the removal is recorded");
     let members = material.manifest["members"].as_array().unwrap();
     let vanished: Vec<&str> = members
