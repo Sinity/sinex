@@ -97,8 +97,8 @@ pub struct PlayerChanged {
 
 /// Something the editor reported (a Neovim autocommand).
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
-#[event(type = "editor.event", key = location, replace = repeat, time = received_at, quality = captured)]
-pub struct EditorEvent {
+#[event(type = "editor.reported", key = location, replace = repeat, time = received_at, quality = captured)]
+pub struct EditorReport {
     pub received_at: Timestamp,
     pub editor: String,
     /// The autocommand (`BufEnter`, `BufWritePost`, `VimLeave`…).
@@ -114,8 +114,8 @@ pub struct EditorEvent {
 
 /// Something the terminal reported (a kitty watcher callback).
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
-#[event(type = "terminal.event", key = location, replace = repeat, time = received_at, quality = captured)]
-pub struct TerminalEvent {
+#[event(type = "terminal.reported", key = location, replace = repeat, time = received_at, quality = captured)]
+pub struct TerminalReport {
     pub received_at: Timestamp,
     pub terminal: String,
     /// `cmd_start`, `cmd_end`, `focus`, `close`, `title`…

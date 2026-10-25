@@ -16,10 +16,10 @@ use sinex_model::{Class, Timestamp};
 use std::path::PathBuf;
 
 pub const SPEC: SourceSpec = SourceSpec {
-    name: "calendar",
+    name: "calendar.export",
     driver: Driver::ExportArchive,
     excisable: false,
-    consumer: "planned events beside what happened",
+    purpose: "planned events beside what happened",
     class: Class::Open,
     parser: "icalendar",
     parser_version: 1,
@@ -371,9 +371,9 @@ pub fn driver(path: PathBuf, host: String) -> ExportArchive {
     }
 }
 
-/// `--source calendar=PATH`: each calendar export in PATH. Floating times are
+/// `--read calendar=PATH`: each calendar export in PATH. Floating times are
 /// read in the binding's zone, recorded when it is planned.
-pub const KIND: crate::binding::InputKind = crate::binding::InputKind {
+pub const FORMAT: crate::binding::InputFormat = crate::binding::InputFormat {
     name: "calendar",
     specs: || vec![&SPEC],
     plan: Some(|input, settings| {

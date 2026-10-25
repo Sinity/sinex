@@ -18,7 +18,7 @@ impl Library<'_> {
         content: &str,
         media_type: &str,
     ) -> R<(PathBuf, bool)> {
-        for a in reads::acquisitions_of(conn, content).await.map_err(e)? {
+        for a in reads::copies_of(conn, content).await.map_err(e)? {
             if a.vanished_at.is_some() {
                 continue;
             }
@@ -114,7 +114,7 @@ impl Library<'_> {
         let out = std::env::temp_dir().join(format!("sinex-preview-{}.webp", items::new_id()));
         let o = out.clone();
         let (stored, w, h) = tokio::task::spawn_blocking(
-            move || -> R<(sinex_model::Cited, Option<u32>, Option<u32>)> {
+            move || -> R<(sinex_model::OwnedBlob, Option<u32>, Option<u32>)> {
                 render::make_preview(&input, &o)?;
                 let d = library_source::digest(&o).map_err(e)?;
                 let (w, h, _) = library_source::dimensions(&d.head, &d.media_type);
@@ -122,7 +122,7 @@ impl Library<'_> {
                 let size = file.metadata().map_err(e)?.len();
                 let blob = blobs.put_reader(std::io::BufReader::new(file)).map_err(e)?;
                 let _ = std::fs::remove_file(&o);
-                Ok((sinex_model::Cited { blob, size }, w, h))
+                Ok((sinex_model::OwnedBlob { blob, size }, w, h))
             },
         )
         .await

@@ -159,10 +159,10 @@ fn an_empty_examined_window_reaches_the_later_message() {
     let imap = mail(port, Some("secret"), None);
     let first = imap.poll(&Value::Null).unwrap();
     assert!(first.material.is_none());
-    let next: Cursor = serde_json::from_value(first.cursor_unchanged.clone()).unwrap();
+    let next: Cursor = serde_json::from_value(first.cursor_without_material.clone()).unwrap();
     assert_eq!(next.uid_next, 201);
     let second = imap
-        .poll(&first.cursor_unchanged)
+        .poll(&first.cursor_without_material)
         .unwrap()
         .material
         .unwrap();
@@ -228,7 +228,7 @@ fn examined_empty_progress_is_clamped_and_unknown_or_stale_bounds_stay_put() {
             ("LOGOUT", "{tag} OK bye\r\n".into()),
         ]);
         let acquired = mail(port, Some("secret"), None).poll(&Value::Null).unwrap();
-        let cursor: Cursor = serde_json::from_value(acquired.cursor_unchanged).unwrap();
+        let cursor: Cursor = serde_json::from_value(acquired.cursor_without_material).unwrap();
         assert_eq!(cursor.uid_next, expected, "boundary={boundary:?}");
         server.join().unwrap();
     }
@@ -259,7 +259,7 @@ fn failed_fetch_returns_no_progress_and_the_same_cursor_can_retry() {
         ("LOGOUT", "{tag} OK bye\r\n".into()),
     ]);
     let acquired = mail(port, Some("secret"), None).poll(&previous).unwrap();
-    assert_eq!(acquired.cursor_unchanged["uid_next"], 201);
+    assert_eq!(acquired.cursor_without_material["uid_next"], 201);
     server.join().unwrap();
 }
 
@@ -284,8 +284,8 @@ fn idle_refreshes_uidnext_and_validity_before_the_next_fetch() {
             .poll(&json!({"uid_validity":99, "uid_next":201,
             "material":null, "part_index":0}))
             .unwrap();
-        assert_eq!(acquired.cursor_unchanged["uid_next"], expected);
-        assert_eq!(acquired.cursor_unchanged["uid_validity"], validity);
+        assert_eq!(acquired.cursor_without_material["uid_next"], expected);
+        assert_eq!(acquired.cursor_without_material["uid_validity"], validity);
         server.join().unwrap();
     }
 }

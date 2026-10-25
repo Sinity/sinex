@@ -1,4 +1,4 @@
-//! Every query reads back as a sentence: each unit, field, operator and clause
+//! Every query reads back as a sentence: each table, field, operator and clause
 //! has a phrase, joined in order, with the defaults the query relies on stated.
 //! No model is involved, so the reading is exact.
 use super::ast::*;
@@ -83,11 +83,11 @@ pub fn read_as(q: &Query) -> String {
 
 fn source(s: &Source) -> String {
     match s {
-        Source::Unit { alias: Some(a), .. } => a.phrase.to_string(),
-        Source::Unit { unit, alias: None } => unit.phrase().to_string(),
+        Source::Table { alias: Some(a), .. } => a.phrase.to_string(),
+        Source::Table { table, alias: None } => table.phrase().to_string(),
         Source::Walk { walk, reference } => {
             let what = match walk {
-                Walk::Trace => "the chain from",
+                Walk::Trace => "the path from",
                 Walk::Descendants => "everything derived from",
                 Walk::Parents => "the parents of",
             };
@@ -99,8 +99,7 @@ fn source(s: &Source) -> String {
             }
         }
         Source::RecallLast { filter } => {
-            let mut s =
-                "everything in the latest recorded shell group's observed envelope".to_string();
+            let mut s = "everything during the latest recorded shell session".to_string();
             if let Some(f) = filter {
                 s.push_str(" whose ");
                 s.push_str(&expr(f));
@@ -116,12 +115,12 @@ fn source(s: &Source) -> String {
 fn reference_text(r: &Reference) -> String {
     match r {
         Reference::Event(id) => format!("event {id}"),
-        Reference::Occurrence {
-            material, anchor, ..
+        Reference::Record {
+            material, offset, ..
         } => {
-            format!("the record at byte {anchor} of material {material}")
+            format!("the record at byte {offset} of material {material}")
         }
-        Reference::Equivalence {
+        Reference::Key {
             source,
             event_type,
             key,

@@ -47,7 +47,7 @@ fn commit(id: &str, hours: i64) -> Event {
                 material: MaterialId::new(),
                 anchor: 0,
             },
-            ordinal: 0,
+            output_index: 0,
         },
         ReadingOrder(0),
         *blake3::hash(id.as_bytes()).as_bytes(),

@@ -9,7 +9,7 @@ pub mod purchases;
 pub mod tasks;
 
 use crate::Source;
-use crate::binding::{Binding, InputKind, Reading, shared};
+use crate::binding::{Binding, InputFormat, Reading, shared};
 use crate::drivers::export_archive::ExportArchive;
 use crate::registry::SourceSpec;
 use std::path::PathBuf;
@@ -60,10 +60,10 @@ fn product(b: &Binding) -> Result<&'static Product, String> {
         .ok_or_else(|| format!("{}: not a Takeout product", b.source))
 }
 
-/// `--source takeout=PATH`: every product of each Takeout archive in PATH,
+/// `--read takeout=PATH`: every product of each Takeout archive in PATH,
 /// plus the calendars in it; each product its own binding, so each keeps its
 /// own cursor.
-pub const KIND: InputKind = InputKind {
+pub const FORMAT: InputFormat = InputFormat {
     name: "takeout",
     specs: || PRODUCTS.iter().map(|p| p.0).collect(),
     plan: Some(|input, settings| {
@@ -81,13 +81,13 @@ pub const KIND: InputKind = InputKind {
     }),
     source: |b| {
         if b.source == super::calendar::SPEC.name {
-            return (super::calendar::KIND.source)(b);
+            return (super::calendar::FORMAT.source)(b);
         }
         Ok((product(b)?.1)())
     },
     reader: Some(|b| -> Result<Reading, String> {
         if b.source == super::calendar::SPEC.name {
-            return (super::calendar::KIND.reader.expect("calendar reads"))(b);
+            return (super::calendar::FORMAT.reader.expect("calendar reads"))(b);
         }
         Ok(shared((product(b)?.2)(
             b.input.clone(),

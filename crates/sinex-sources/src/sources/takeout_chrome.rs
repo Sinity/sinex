@@ -14,7 +14,7 @@ pub const SPEC: SourceSpec = SourceSpec {
     name: "browser.takeout-chrome-history",
     driver: Driver::ExportArchive,
     excisable: false,
-    consumer: "browsing recall before live capture",
+    purpose: "browsing recall before live capture",
     class: Class::Open,
     parser: "takeout-chrome-history",
     parser_version: 1,
@@ -86,8 +86,8 @@ pub fn driver(path: PathBuf, host: String) -> ExportArchive {
     }
 }
 
-/// `--source takeout-chrome=PATH`: each Takeout Chrome history in PATH.
-pub const KIND: crate::binding::InputKind = crate::binding::InputKind {
+/// `--read takeout-chrome=PATH`: each Takeout Chrome history in PATH.
+pub const FORMAT: crate::binding::InputFormat = crate::binding::InputFormat {
     name: "takeout-chrome",
     specs: || vec![&SPEC],
     plan: Some(|input, settings| {

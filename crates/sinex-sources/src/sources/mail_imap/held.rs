@@ -115,10 +115,10 @@ impl Answer {
                         .map(|cursor| serde_json::to_value(cursor).expect("cursor serializes"))
                 }),
                 aligned: false,
-                vanished: Vec::new(),
+                removed: Vec::new(),
                 memory: None,
             }),
-            cursor_unchanged: Value::Null,
+            cursor_without_material: Value::Null,
         })
     }
 }

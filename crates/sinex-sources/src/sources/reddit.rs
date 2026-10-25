@@ -19,7 +19,7 @@ pub const SPEC: SourceSpec = SourceSpec {
     name: "social.reddit",
     driver: Driver::ExportArchive,
     excisable: false,
-    consumer: "what the operator wrote, voted on, saved and sent at Reddit",
+    purpose: "what the operator wrote, voted on, saved and sent at Reddit",
     class: Class::Open,
     parser: "reddit-gdpr",
     parser_version: 1,
@@ -260,8 +260,8 @@ pub fn driver(path: PathBuf, host: String) -> ExportArchive {
     }
 }
 
-/// `--source reddit=PATH`: each Reddit export ZIP in PATH.
-pub const KIND: crate::binding::InputKind = crate::binding::InputKind {
+/// `--read reddit=PATH`: each Reddit export ZIP in PATH.
+pub const FORMAT: crate::binding::InputFormat = crate::binding::InputFormat {
     name: "reddit",
     specs: || vec![&SPEC],
     plan: Some(|input, settings| {

@@ -20,10 +20,10 @@ use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 pub const SPEC: SourceSpec = SourceSpec {
-    name: "browser.page_crawl",
+    name: "browser.page-crawl",
     driver: Driver::ApiCursor,
     excisable: false,
-    consumer: "page content for recall and search over what was read",
+    purpose: "page content for recall and search over what was read",
     class: Class::Guarded,
     parser: "page-fetch",
     parser_version: 1,
@@ -282,10 +282,10 @@ impl Crawl {
                         move |end| Ok(cursor(end))
                     }),
                     aligned: false,
-                    vanished: Vec::new(),
+                    removed: Vec::new(),
                     memory: None,
                 }),
-                cursor_unchanged: Value::Null,
+                cursor_without_material: Value::Null,
             });
         }
         Ok(Acquired {
@@ -297,7 +297,7 @@ impl Crawl {
             },
             revision: RevisionChange::Same,
             material: None,
-            cursor_unchanged: serde_json::to_value(Cursor {
+            cursor_without_material: serde_json::to_value(Cursor {
                 next: index,
                 ..previous
             })
@@ -376,7 +376,7 @@ pub fn source() -> DeclaredSource<PageParser> {
 
 /// The forward crawl, run by `sinexd admin crawl` over browser history rather
 /// than read from a path.
-pub const KIND: crate::binding::InputKind = crate::binding::InputKind {
+pub const FORMAT: crate::binding::InputFormat = crate::binding::InputFormat {
     name: "page-crawl",
     specs: || vec![&SPEC],
     plan: None,

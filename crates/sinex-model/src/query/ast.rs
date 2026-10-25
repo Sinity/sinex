@@ -1,6 +1,6 @@
-//! The bound query: parsed, type-checked against the unit's fields, with every
+//! The bound query: parsed, type-checked against the table's fields, with every
 //! relative time resolved once against the [`Context`](super::Context).
-use super::units::{Alias, Field, Unit};
+use super::tables::{Alias, Field, Table};
 use jiff::Timestamp;
 use uuid::Uuid;
 
@@ -16,30 +16,32 @@ pub struct Query {
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum Source {
-    Unit {
-        unit: Unit,
+    Table {
+        table: Table,
         alias: Option<&'static Alias>,
     },
     /// A provenance walk from one reference.
     Walk { walk: Walk, reference: Reference },
     /// Everything recorded in a window, across every source.
     Recall { from: Timestamp, to: Timestamp },
-    /// The latest recorded shell group matching a session-field filter.
+    /// The latest recorded shell session matching a session-field filter.
     RecallLast { filter: Option<Expr> },
 }
 
 impl Source {
-    /// The unit whose fields the rows carry. Walks and recall return events.
-    pub fn unit(&self) -> Unit {
+    /// The table whose fields the rows carry. Walks and recall return events.
+    pub fn table(&self) -> Table {
         match self {
-            Source::Unit { unit, .. } => *unit,
-            Source::Walk { .. } | Source::Recall { .. } | Source::RecallLast { .. } => Unit::Events,
+            Source::Table { table, .. } => *table,
+            Source::Walk { .. } | Source::Recall { .. } | Source::RecallLast { .. } => {
+                Table::Events
+            }
         }
     }
 
     pub fn alias(&self) -> Option<&'static Alias> {
         match self {
-            Source::Unit { alias, .. } => *alias,
+            Source::Table { alias, .. } => *alias,
             _ => None,
         }
     }
@@ -60,15 +62,16 @@ pub enum Walk {
 pub enum Reference {
     /// `sinex:ev/<id>` or a bare event ID: one reading, live or archived.
     Event(Uuid),
-    /// `sinex:occ/<material>/<anchor>[/<event type>[/<ordinal>]]`.
-    Occurrence {
+    /// `sinex:record/<material>/<offset>[/<event type>[/<output>]]`: the live
+    /// reading of the record starting at that byte offset.
+    Record {
         material: Uuid,
-        anchor: i64,
+        offset: i64,
         event_type: Option<String>,
-        ordinal: Option<i16>,
+        output: Option<i16>,
     },
-    /// `sinex:eq/<source>/<event type>/<equivalence key>`.
-    Equivalence {
+    /// `sinex:key/<source>/<event type>/<equivalence key>`.
+    Key {
         source: String,
         event_type: String,
         key: String,

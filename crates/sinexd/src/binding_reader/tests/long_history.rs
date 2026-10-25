@@ -1,4 +1,4 @@
-//! A restart over a long chain of parts: the reader rebuilds what it needs
+//! A restart over a long sequence of parts: the reader rebuilds what it needs
 //! from its saved memory and the parts after it, and the time the rebuild
 //! takes is printed for comparison.
 use super::*;
@@ -75,7 +75,7 @@ async fn a_restarted_row_reader_remembers_every_stored_row(db: devkit::pg::TestD
         .await
         .unwrap();
     let binding = Binding::of(&atuin::SPEC, &path, Settings::new("synthetic"));
-    let mut bound = vec![Bound::new(&atuin::KIND, binding.clone()).unwrap()];
+    let mut bound = vec![Bound::new(&atuin::FORMAT, binding.clone()).unwrap()];
     for n in 0..PARTS {
         sqlite
             .execute(
@@ -92,7 +92,7 @@ async fn a_restarted_row_reader_remembers_every_stored_row(db: devkit::pg::TestD
     assert_eq!(parts(&mut ctx.read_conn).await, PARTS as i64);
     assert_eq!(saved_memories(&mut ctx.read_conn, &binding.name).await, 1);
 
-    let mut restarted = Bound::new(&atuin::KIND, binding.clone()).unwrap();
+    let mut restarted = Bound::new(&atuin::FORMAT, binding.clone()).unwrap();
     let took = restore(&mut ctx, &mut restarted).await;
     eprintln!("restored a row reader over {PARTS} parts in {took:?}");
     // The first poll after a start reads every row; none differs from what
@@ -120,7 +120,7 @@ async fn a_restarted_directory_reader_stores_nothing_unchanged_and_sees_old_remo
         .await
         .unwrap();
     let binding = Binding::of(&notes::SPEC, &root, Settings::new("synthetic"));
-    let mut bound = vec![Bound::new(&notes::KIND, binding.clone()).unwrap()];
+    let mut bound = vec![Bound::new(&notes::FORMAT, binding.clone()).unwrap()];
     for n in 0..PARTS {
         std::fs::write(root.join(format!("{n:06}.md")), format!("note {n}")).unwrap();
         turn(&mut ctx, &mut bound).await;
@@ -129,7 +129,7 @@ async fn a_restarted_directory_reader_stores_nothing_unchanged_and_sees_old_remo
     assert_eq!(saved_memories(&mut ctx.read_conn, &binding.name).await, 1);
     drop(bound);
 
-    let mut restarted = Bound::new(&notes::KIND, binding.clone()).unwrap();
+    let mut restarted = Bound::new(&notes::FORMAT, binding.clone()).unwrap();
     let took = restore(&mut ctx, &mut restarted).await;
     eprintln!("restored a directory reader over {PARTS} parts in {took:?}");
     let (cursor, _) = positions::load(&mut ctx.read_conn, &binding.name)
@@ -147,12 +147,12 @@ async fn a_restarted_directory_reader_stores_nothing_unchanged_and_sees_old_remo
     let acquired = polled(&mut restarted).poll(&cursor).unwrap();
     let material = acquired.material.expect("the removal is recorded");
     let members = material.manifest["members"].as_array().unwrap();
-    let vanished: Vec<&str> = members
+    let removed: Vec<&str> = members
         .iter()
-        .filter(|member| member.get("vanished_at_ns").is_some())
+        .filter(|member| member.get("removed_at_ns").is_some())
         .map(|member| member["path"].as_str().unwrap())
         .collect();
-    assert_eq!(vanished, ["000000.md"]);
+    assert_eq!(removed, ["000000.md"]);
     assert_eq!(members.len(), 1, "no unchanged file is stored again");
     ctx.close().await.unwrap();
 }

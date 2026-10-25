@@ -15,7 +15,7 @@ pub const SPEC: SourceSpec = SourceSpec {
     name: "terminal.atuin-history",
     driver: Driver::SqliteRows,
     excisable: false,
-    consumer: "command fusion and shell recall",
+    purpose: "command fusion and shell recall",
     class: Class::Open,
     parser: "atuin-history",
     parser_version: 1,
@@ -131,8 +131,8 @@ pub fn driver(path: PathBuf, host: String) -> SqliteRows {
     }
 }
 
-/// `--source atuin=PATH`: Atuin's history database.
-pub const KIND: crate::binding::InputKind = crate::binding::InputKind {
+/// `--read atuin=PATH`: Atuin's history database.
+pub const FORMAT: crate::binding::InputFormat = crate::binding::InputFormat {
     name: "atuin",
     specs: || vec![&SPEC],
     plan: Some(|input, settings| Ok(crate::binding::single(&SPEC, input, settings))),

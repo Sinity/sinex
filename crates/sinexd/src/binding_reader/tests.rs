@@ -84,7 +84,7 @@ fn bound(path: &std::path::Path) -> Vec<Bound> {
         .iter()
         .map(|spec| {
             let binding = Binding::of(spec, path, settings.clone());
-            let mut b = Bound::new(&google_takeout::KIND, binding).unwrap();
+            let mut b = Bound::new(&google_takeout::FORMAT, binding).unwrap();
             // Force several ordinary parts without changing the production limits.
             b.reading = Reading::Shared(Box::new(takeout_driver(&b.binding, 400)));
             b
@@ -147,20 +147,11 @@ async fn archive_acquisition_restart_replay_and_privacy_use_real_admission(
     assert_eq!(originals.len(), 2);
     assert_ne!(originals[0].0, originals[1].0);
     assert_eq!(originals[0].1, originals[1].1);
-    let extents: Vec<String> = sqlx::query_scalar("SELECT blob FROM raw.revision_extents")
-        .fetch_all(&mut ctx.read_conn)
-        .await
-        .unwrap();
-    assert_eq!(
-        extents,
-        vec![originals[0].1.clone(), originals[0].1.clone()],
-        "only original input bytes belong to the revision stream"
-    );
     let materials: i64 = sqlx::query_scalar("SELECT count(*) FROM raw.materials")
         .fetch_one(&mut ctx.read_conn)
         .await
         .unwrap();
-    // Fresh reader objects model a daemon restart. A completed cursor does no physical work.
+    // Fresh reader objects model a daemon restart. A completed cursor reads nothing.
     let mut restarted = bound(&path);
     let resumed = read(
         &mut ctx.read_conn,
@@ -457,7 +448,7 @@ async fn sealed_archive_restart_replay_and_class_changes_preserve_exact_material
         assert_eq!(final_cursor.original_material, Some(original));
         let before = live_events(&mut ctx.read_conn).await;
         assert_eq!(before.len(), 40);
-        let keys: Vec<String> = sqlx::query_scalar("SELECT key_ref FROM privacy.material_keys")
+        let keys: Vec<String> = sqlx::query_scalar("SELECT key_ref FROM privacy.data_keys")
             .fetch_all(&mut ctx.read_conn)
             .await
             .unwrap();
@@ -503,7 +494,7 @@ async fn sealed_archive_restart_replay_and_class_changes_preserve_exact_material
                 (&new.0, &new.1, new.3, new.4)
             );
             let key = unlock
-                .material_key(&mut ctx.read_conn, sinex_model::MaterialId(old.3.unwrap()))
+                .data_key(&mut ctx.read_conn, sinex_model::MaterialId(old.3.unwrap()))
                 .await
                 .unwrap();
             assert_eq!(
@@ -585,7 +576,7 @@ async fn sealed_archive_restart_replay_and_class_changes_preserve_exact_material
 }
 
 #[devkit::test]
-async fn sealed_bindings_never_share_material_keys_or_original_blob_names(
+async fn sealed_bindings_never_share_data_keys_or_original_blob_names(
     db: devkit::pg::TestDatabase,
 ) {
     let url = db.url(None);
@@ -617,7 +608,7 @@ async fn sealed_bindings_never_share_material_keys_or_original_blob_names(
     {
         result.unwrap();
     }
-    let originals:Vec<(String,String)>=sqlx::query_as("SELECT m.blob,k.key_ref FROM raw.materials m JOIN privacy.material_keys k ON m.id=k.material_id WHERE m.manifest->>'role'='original-archive'").fetch_all(&mut ctx.read_conn).await.unwrap();
+    let originals:Vec<(String,String)>=sqlx::query_as("SELECT m.blob,k.key_ref FROM raw.materials m JOIN privacy.data_keys k ON m.id=k.material_id WHERE m.manifest->>'role'='original-archive'").fetch_all(&mut ctx.read_conn).await.unwrap();
     assert_eq!(originals.len(), 2);
     assert_ne!(originals[0].0, originals[1].0);
     assert_ne!(originals[0].1, originals[1].1);

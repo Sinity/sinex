@@ -11,7 +11,7 @@ pub struct Source {
     pub driver: String,
     pub version: i32,
     pub event_types: Vec<String>,
-    pub consumer: String,
+    pub purpose: String,
 }
 
 /// Make `registry.sources` hold exactly `catalog`.
@@ -25,14 +25,14 @@ pub async fn write_sources(conn: &mut PgConnection, catalog: &[Source]) -> Resul
     .await?;
     for s in catalog {
         sqlx::query!(
-            r#"INSERT INTO registry.sources (name, driver, version, event_types, consumer) VALUES ($1, $2, $3, $4, $5)
+            r#"INSERT INTO registry.sources (name, driver, version, event_types, purpose) VALUES ($1, $2, $3, $4, $5)
                ON CONFLICT (name) DO UPDATE SET driver = EXCLUDED.driver, version = EXCLUDED.version,
-                 event_types = EXCLUDED.event_types, consumer = EXCLUDED.consumer"#,
+                 event_types = EXCLUDED.event_types, purpose = EXCLUDED.purpose"#,
             s.name,
             s.driver,
             s.version,
             &s.event_types,
-            s.consumer,
+            s.purpose,
         )
         .execute(&mut *conn)
         .await?;

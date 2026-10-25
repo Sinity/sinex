@@ -18,7 +18,7 @@ pub const SPEC: SourceSpec = SourceSpec {
     name: "communication.weechat-log",
     driver: Driver::AppendFile,
     excisable: false,
-    consumer: "chat recall and correspondence history",
+    purpose: "chat recall and correspondence history",
     class: Class::Open,
     parser: "weechat-log",
     parser_version: 1,
@@ -161,9 +161,9 @@ pub fn driver(path: PathBuf, host: String) -> AppendFile {
     }
 }
 
-/// `--source weechat=PATH`: each WeeChat log under PATH, read in the
+/// `--read weechat=PATH`: each WeeChat log under PATH, read in the
 /// binding's zone (WeeChat writes local times), recorded when it is planned.
-pub const KIND: crate::binding::InputKind = crate::binding::InputKind {
+pub const FORMAT: crate::binding::InputFormat = crate::binding::InputFormat {
     name: "weechat",
     specs: || vec![&SPEC],
     plan: Some(|input, settings| {

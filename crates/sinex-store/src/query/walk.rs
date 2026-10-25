@@ -20,23 +20,23 @@ pub async fn resolve(conn: &mut PgConnection, reference: &Reference) -> Result<U
                 .await?;
             found.ok_or_else(|| Error::Invalid(format!("no event {id}")))
         }
-        Reference::Occurrence {
+        Reference::Record {
             material,
-            anchor,
+            offset,
             event_type,
-            ordinal,
+            output,
         } => {
             let live = sqlx::query!(
                 r#"SELECT e.id AS "event_id!", e.event_type AS "event_type!" FROM core.events e
                    WHERE e.material_id = $1 AND e.anchor = $2
                    AND ($3::text IS NULL OR e.event_type = $3)
-                   AND ($4::smallint IS NULL OR e.ordinal = $4)
+                   AND ($4::smallint IS NULL OR e.output_index = $4)
                    AND (EXISTS (SELECT 1 FROM core.live_locations c WHERE c.event_id = e.id)
                         OR EXISTS (SELECT 1 FROM core.live_equivalence q WHERE q.event_id = e.id))"#,
                 material,
-                anchor,
+                offset,
                 event_type.as_deref(),
-                *ordinal
+                *output
             )
             .fetch_all(&mut *conn)
             .await?;
@@ -49,17 +49,17 @@ pub async fn resolve(conn: &mut PgConnection, reference: &Reference) -> Result<U
                            AND ($3::text IS NULL OR e.event_type = $3)
                            ORDER BY a.archived_seq DESC"#,
                         material,
-                        anchor,
+                        offset,
                         event_type.as_deref()
                     )
                     .fetch_all(&mut *conn)
                     .await?;
                     Err(Error::Invalid(if archived.is_empty() {
-                        "no reading of this occurrence exists".to_string()
+                        "no reading of this record exists".to_string()
                     } else {
                         let ids: Vec<String> = archived.iter().map(Uuid::to_string).collect();
                         format!(
-                            "no live reading of this occurrence; archived: {}",
+                            "no live reading of this record; archived: {}",
                             ids.join(", ")
                         )
                     }))
@@ -67,13 +67,13 @@ pub async fn resolve(conn: &mut PgConnection, reference: &Reference) -> Result<U
                 many => {
                     let kinds: Vec<String> = many.iter().map(|r| r.event_type.clone()).collect();
                     Err(Error::Invalid(format!(
-                        "this occurrence has several live outputs ({}); name the event type",
+                        "this record has several live outputs ({}); name the event type",
                         kinds.join(", ")
                     )))
                 }
             }
         }
-        Reference::Equivalence {
+        Reference::Key {
             source,
             event_type,
             key,
@@ -99,17 +99,17 @@ pub async fn show(conn: &mut PgConnection, reference: &Reference) -> Result<Json
     let id = resolve(conn, reference).await?;
     let row = sqlx::query_scalar!(
         r#"SELECT jsonb_build_object(
-             'id', e.id, 'kind', e.event_type, 'source', e.source,
+             'id', e.id, 'event_type', e.event_type, 'source', e.source,
              'when', e.ts_orig, 'time_quality', e.ts_quality, 'seen', e.ts_coided,
              'written', e.ts_persisted, 'commit_seq', e.commit_seq,
              'state', CASE WHEN a.event_id IS NULL THEN 'live' ELSE 'archived' END,
              'archived', a.archived_at, 'archive_reason', a.reason,
              'record_state', e.record_state, 'class', e.class, 'key', e.equivalence_key,
-             'material', e.material_id, 'anchor', e.anchor, 'ordinal', e.ordinal,
+             'material', e.material_id, 'offset', e.anchor, 'output', e.output_index,
              'parents', to_jsonb(e.parents), 'run', e.run_id, 'producer', r.name, 'host', r.host,
              'parser', m.parser, 'parser_version', m.parser_version, 'blob', m.blob,
              'citation', CASE WHEN e.material_id IS NOT NULL
-               THEN 'sinex:occ/' || e.material_id || '/' || e.anchor || '/' || e.event_type || '/' || e.ordinal
+               THEN 'sinex:record/' || e.material_id || '/' || e.anchor || '/' || e.event_type || '/' || e.output_index
                ELSE 'sinex:ev/' || e.id END,
              'payload', e.payload) AS "row!"
            FROM core.visible_events e
@@ -135,9 +135,9 @@ pub(crate) async fn walk(
         Walk::Parents => {
             sqlx::query_scalar!(
                 r#"SELECT jsonb_build_object(
-                     'id', e.id, 'kind', e.event_type, 'source', e.source, 'when', e.ts_orig,
+                     'id', e.id, 'event_type', e.event_type, 'source', e.source, 'when', e.ts_orig,
                      'state', CASE WHEN a.event_id IS NULL THEN 'live' ELSE 'archived' END,
-                     'material', e.material_id, 'anchor', e.anchor, 'payload', e.payload) AS "row!"
+                     'material', e.material_id, 'offset', e.anchor, 'payload', e.payload) AS "row!"
                    FROM core.visible_events c
                    CROSS JOIN LATERAL unnest(c.parents) AS p(id)
                    JOIN core.visible_events e ON e.id = p.id
@@ -158,7 +158,7 @@ pub(crate) async fn walk(
                      WHERE d.depth < $2
                    ), first AS (SELECT id, min(depth) AS depth FROM d GROUP BY id)
                    SELECT jsonb_build_object(
-                     'depth', f.depth, 'id', e.id, 'kind', e.event_type, 'source', e.source,
+                     'depth', f.depth, 'id', e.id, 'event_type', e.event_type, 'source', e.source,
                      'when', e.ts_orig,
                      'state', CASE WHEN a.event_id IS NULL THEN 'live' ELSE 'archived' END,
                      'depth_bound_reached', f.depth >= $2,
@@ -183,11 +183,11 @@ pub(crate) async fn walk(
                      WHERE up.depth < $2
                    ), first AS (SELECT id, min(depth) AS depth FROM up GROUP BY id)
                    SELECT jsonb_build_object(
-                     'depth', f.depth, 'id', e.id, 'kind', e.event_type, 'source', e.source,
+                     'depth', f.depth, 'id', e.id, 'event_type', e.event_type, 'source', e.source,
                      'when', e.ts_orig,
                      'state', CASE WHEN a.event_id IS NULL THEN 'live' ELSE 'archived' END,
                      'origin', CASE WHEN e.material_id IS NULL THEN 'derived' ELSE 'material' END,
-                     'material', e.material_id, 'anchor', e.anchor,
+                     'material', e.material_id, 'offset', e.anchor,
                      'bytes', CASE WHEN e.material_id IS NULL THEN NULL
                        WHEN m.id IS NULL THEN 'unavailable: material record missing'
                        ELSE m.blob END,

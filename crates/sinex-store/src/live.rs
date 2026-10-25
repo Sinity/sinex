@@ -54,7 +54,7 @@ pub async fn at(
         .map_err(|_| crate::Error::Invalid("output number beyond i16".into()))?;
     Ok(sqlx::query_scalar!(
         r#"SELECT e.id AS "id!" FROM core.visible_events e
-           WHERE e.material_id = $1 AND e.anchor = $2 AND e.ordinal = $3
+           WHERE e.material_id = $1 AND e.anchor = $2 AND e.output_index = $3
              AND NOT EXISTS (SELECT 1 FROM audit.archived a WHERE a.event_id = e.id)"#,
         location.material.0,
         anchor,

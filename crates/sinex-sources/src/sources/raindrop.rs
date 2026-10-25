@@ -17,7 +17,7 @@ pub const SPEC: SourceSpec = SourceSpec {
     name: "reading.raindrop",
     driver: Driver::ExportArchive,
     excisable: false,
-    consumer: "saved reading and URL recall",
+    purpose: "saved reading and URL recall",
     class: Class::Open,
     parser: "raindrop-export",
     parser_version: 1,
@@ -227,8 +227,8 @@ pub fn driver(path: PathBuf, host: String) -> ExportArchive {
     }
 }
 
-/// `--source raindrop=PATH`: each Raindrop export in PATH.
-pub const KIND: crate::binding::InputKind = crate::binding::InputKind {
+/// `--read raindrop=PATH`: each Raindrop export in PATH.
+pub const FORMAT: crate::binding::InputFormat = crate::binding::InputFormat {
     name: "raindrop",
     specs: || vec![&SPEC],
     plan: Some(|input, settings| {

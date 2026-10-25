@@ -3,7 +3,7 @@
 //! (or per run of committed events), which admission stores under the same
 //! privacy, schema and identity rules as captured events.
 //!
-//! - **Keyed derivations:** admission marks keys dirty; the driver takes dirty
+//! - **Keyed derivations:** admission marks keys dirty; the runner takes dirty
 //!   keys oldest first, reads each key's current inputs, computes, and submits
 //!   the outputs as the key's complete output set. The dirty mark clears in
 //!   the same transaction unless the key was dirtied again meanwhile. Keys whose
@@ -15,7 +15,7 @@
 //!   the material its input cites; an input that fails is counted and passed.
 //! - **Maintained tables:** derivations whose outputs are store rows rather
 //!   than events (analysis metric values), on the same dirty keys. They run
-//!   once the event derivations have settled, at most every
+//!   once the event derivations have finished, at most every
 //!   [`MAINTAIN_AT_MOST_EVERY`] while the daemon runs, so an import's burst of
 //!   commits is maintained once rather than per commit.
 //!
@@ -31,7 +31,7 @@
 //! be recomputed forever); its last outputs stand, and a later input in its
 //! window still dirties it as usual.
 //!
-//! The driver wakes on `wake`, which the daemon signals after every commit, and
+//! The runner wakes on `wake`, which the daemon signals after every commit, and
 //! also looks for work every so often, for keys that settle with time.
 use crate::writer::{Priority, WriterHandle};
 use serde_json::Value;
@@ -41,7 +41,7 @@ use sinex_model::{Batch, BatchKind, Event, ReadingOrder, RecordOutcome, RunId, T
 use sinex_store::blobs::Blobs;
 use sinex_store::derivations::{self, Match, Nearest, Window};
 use sinex_store::registry::Derivation;
-use sinex_store::{DerivedScope, KeyScope, material_bytes, runs};
+use sinex_store::{ComputedKey, DerivedScope, material_bytes, runs};
 use sqlx::PgConnection;
 use std::collections::{BTreeMap, HashSet};
 use std::future::Future;
@@ -54,7 +54,7 @@ use tokio::sync::Notify;
 const DIRTY_PER_PASS: i64 = 512;
 /// Committed events a per-event derivation reads per pass.
 const EVENTS_PER_PASS: i64 = 2_000;
-/// Keys settled per writer batch: one transaction for many keys, so a
+/// Keys computed per writer batch: one transaction for many keys, so a
 /// derivation's write cost is per batch, not per key.
 const KEYS_PER_BATCH: usize = 256;
 /// Outputs per writer batch, whatever the number of keys.
@@ -62,7 +62,7 @@ const OUTPUTS_PER_BATCH: usize = 20_000;
 /// Input rows read per query: keys are computed as their rows complete, so
 /// memory holds a page and the keys still open, not every key's inputs.
 const ROWS_PER_PAGE: i64 = 10_000;
-/// A key to settle: the key, the dirty mark it was computed for (0 when it
+/// A key to compute: the key, the dirty mark it was computed for (0 when it
 /// is a waiting key being refreshed), and whether it stops waiting.
 type KeyWork = (Value, i64, bool);
 
@@ -189,7 +189,7 @@ impl DerivationRunner {
             runs.insert(name, run);
         }
         let ranks = ranks(&catalog);
-        let mut driver = Self {
+        let mut runner = Self {
             keyed,
             per_event,
             maintained: Vec::new(),
@@ -205,15 +205,15 @@ impl DerivationRunner {
             counts: BTreeMap::new(),
         };
         for name in changed {
-            if driver.keyed.iter().any(|d| d.name() == name) {
-                driver.recompute_all(&name, None).await?;
+            if runner.keyed.iter().any(|d| d.name() == name) {
+                runner.recompute_all(&name, None).await?;
             } else {
-                derivations::reset_position(&mut driver.read, &name)
+                derivations::reset_position(&mut runner.read, &name)
                     .await
                     .map_err(|e| e.to_string())?;
             }
         }
-        Ok(driver)
+        Ok(runner)
     }
 
     fn env(&self) -> Env {
@@ -269,7 +269,7 @@ impl DerivationRunner {
         Ok(keys)
     }
 
-    /// A driver for one operation on one keyed derivation: a recompute or a
+    /// A runner for one operation on one keyed derivation: a recompute or a
     /// comparison asked for through the command table. It registers nothing
     /// and starts one run, for that derivation.
     pub async fn for_one(
@@ -406,13 +406,13 @@ impl DerivationRunner {
 
     /// Recompute these keys of one derivation and submit their complete
     /// output sets, several keys per writer batch.
-    async fn settle_keys(
+    async fn compute_keys(
         &mut self,
         index: usize,
         work: Vec<KeyWork>,
         env: &Env,
     ) -> Result<(), String> {
-        let mut scopes: Vec<KeyScope> = Vec::new();
+        let mut scopes: Vec<ComputedKey> = Vec::new();
         let mut records: Vec<RecordOutcome> = Vec::new();
         let mut outputs = 0usize;
         let name = self.keyed[index].name();
@@ -463,7 +463,7 @@ impl DerivationRunner {
                     computed.waiting = false;
                 }
                 outputs += computed.outputs.len();
-                scopes.push(KeyScope {
+                scopes.push(ComputedKey {
                     key: key.clone(),
                     dirty_seq: *dirty_seq,
                     waiting: computed.waiting,
@@ -492,7 +492,7 @@ impl DerivationRunner {
     async fn submit_keys(
         &mut self,
         index: usize,
-        scopes: Vec<KeyScope>,
+        scopes: Vec<ComputedKey>,
         mut records: Vec<RecordOutcome>,
     ) -> Result<(), String> {
         let name = self.keyed[index].name();
@@ -596,7 +596,7 @@ impl DerivationRunner {
                     keys.push((key, 0, give_up));
                     work += 1;
                 }
-                self.settle_keys(index, keys, env).await?;
+                self.compute_keys(index, keys, env).await?;
             }
         }
         for index in 0..self.per_event.len() {
@@ -702,7 +702,7 @@ impl DerivationRunner {
         let blobs = self
             .blobs
             .as_ref()
-            .ok_or("no content store was given to the driver")?;
+            .ok_or("no content store was given to the runner")?;
         let blob = material_bytes::material_blob(&mut self.read, location.material)
             .await
             .map_err(|e| e.to_string())?
@@ -712,7 +712,7 @@ impl DerivationRunner {
 
     /// Run passes until one does no work, then bring maintained tables up to
     /// date.
-    pub async fn settle(&mut self) -> Result<(), String> {
+    pub async fn catch_up(&mut self) -> Result<(), String> {
         while self.pass().await? > 0 {}
         self.maintain().await?;
         Ok(())
@@ -762,7 +762,7 @@ impl DerivationRunner {
 
     /// Compute `name` over its keys (optionally only keys touched by inputs in
     /// `range`) and compare with the stored outputs, writing nothing: the
-    /// comparison lane for a derivation change.
+    /// comparison for a derivation change.
     pub async fn compare(
         &mut self,
         name: &str,

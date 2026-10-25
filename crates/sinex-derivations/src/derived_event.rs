@@ -17,8 +17,11 @@ pub fn record_identity(event: &Event) -> String {
         return format!("{}:{id}", event.event_type);
     }
     match &event.origin {
-        Origin::Record { location, ordinal } => {
-            format!("{}:{}:{ordinal}", location.material, location.anchor)
+        Origin::Record {
+            location,
+            output_index,
+        } => {
+            format!("{}:{}:{output_index}", location.material, location.anchor)
         }
         Origin::Derived { .. } => event.id.to_string(),
     }

@@ -39,16 +39,16 @@ pub(crate) async fn open(
         .map_err(|e| e.to_string())?
     {
         let unlock = unlock.ok_or("stored sealed material requires explicit unlock")?;
-        Some(unlock.material_key(conn, material).await?)
+        Some(unlock.data_key(conn, material).await?)
     } else {
         None
     };
-    open_owned(blobs, reference, key, unlock, Arc::new(|| Ok(())))
+    open_checked(blobs, reference, key, unlock, Arc::new(|| Ok(())))
 }
 
 /// A stored material's bytes, opened on the first read. A sealed material's
 /// key is fetched when the operation is unlocked; without it, reading fails.
-pub(crate) struct Lazy {
+pub(crate) struct MaterialOnDemand {
     blobs: Blobs,
     reference: MaterialRef,
     sealed: bool,
@@ -56,7 +56,7 @@ pub(crate) struct Lazy {
     unlock: Option<Unlock>,
     opened: std::sync::OnceLock<Result<Arc<StoredReader>, String>>,
 }
-impl Lazy {
+impl MaterialOnDemand {
     pub async fn new(
         conn: &mut PgConnection,
         blobs: &Blobs,
@@ -67,7 +67,7 @@ impl Lazy {
             .is_sealed(&reference.blob)
             .map_err(|e| e.to_string())?;
         let key = match (sealed, unlock) {
-            (true, Some(unlock)) => Some(unlock.material_key(conn, reference.id).await?),
+            (true, Some(unlock)) => Some(unlock.data_key(conn, reference.id).await?),
             _ => None,
         };
         Ok(Self {
@@ -88,7 +88,7 @@ impl Lazy {
                 if self.sealed && self.key.is_none() {
                     return Err("stored sealed material requires explicit unlock".into());
                 }
-                open_owned(
+                open_checked(
                     &self.blobs,
                     self.reference.clone(),
                     self.key.clone(),
@@ -101,7 +101,7 @@ impl Lazy {
             .map_err(|e| std::io::Error::other(e.clone()))
     }
 }
-impl RecordRead for Lazy {
+impl RecordRead for MaterialOnDemand {
     fn length(&self) -> u64 {
         self.reference.length
     }
@@ -110,7 +110,9 @@ impl RecordRead for Lazy {
     }
 }
 
-fn open_owned(
+/// Open `reference` with `check` run before each read: plain, or sealed
+/// under `key`.
+pub(crate) fn open_checked(
     blobs: &Blobs,
     reference: MaterialRef,
     key: Option<DataKey>,

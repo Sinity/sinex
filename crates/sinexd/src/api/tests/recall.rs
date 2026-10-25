@@ -85,7 +85,7 @@ async fn recall_last_selects_recorded_groups_and_includes_the_observed_upper_poi
     );
     let (_, latest) = call(&w, Some(READ), json!({"method":"recall","around":"last"})).await;
     assert_eq!(
-        latest["result"]["recall"]["anchor"]["row"]["cwds"],
+        latest["result"]["recall"]["session"]["row"]["cwds"],
         json!(["/src/tidepool"])
     );
     let (_, scoped) = call(
@@ -98,10 +98,9 @@ async fn recall_last_selects_recorded_groups_and_includes_the_observed_upper_poi
     let mut actual = ids(&scoped);
     actual.sort();
     assert_eq!(actual, expected);
-    assert_eq!(scoped["result"]["recall"]["anchor"]["kind"], "shell_group");
     assert_eq!(
-        scoped["result"]["recall"]["anchor"]["bounds"],
-        "observed_envelope"
+        scoped["result"]["recall"]["session"]["bounds"],
+        "recorded_commands"
     );
     assert_eq!(scoped["result"]["recall"]["inclusive_end"], true);
     let by_source = scoped["result"]["recall"]["by_source"].as_array().unwrap();
@@ -156,7 +155,7 @@ async fn recall_last_pages_keep_the_selected_commit_and_equal_start_ties_are_sta
     admit_events(&w, events).await;
     let (_, answer) = call(&w, Some(READ), json!({"method":"recall","around":"last"})).await;
     assert_eq!(
-        answer["result"]["recall"]["anchor"]["row"]["id"],
+        answer["result"]["recall"]["session"]["row"]["id"],
         expected_anchor
     );
     let expected = ids(&answer);
@@ -179,7 +178,7 @@ async fn recall_last_pages_keep_the_selected_commit_and_equal_start_ties_are_sta
         .await;
         assert_eq!(page["result"]["resolved"]["commit_seq"], seq);
         assert_eq!(
-            page["result"]["recall"]["anchor"]["row"]["id"],
+            page["result"]["recall"]["session"]["row"]["id"],
             expected_anchor
         );
         collected.extend(ids(&page));
@@ -188,7 +187,7 @@ async fn recall_last_pages_keep_the_selected_commit_and_equal_start_ties_are_sta
     assert_eq!(collected, expected);
     let (_, changed) = call(&w, Some(READ), json!({"method":"recall","around":"last"})).await;
     assert_ne!(
-        changed["result"]["recall"]["anchor"]["row"]["id"],
+        changed["result"]["recall"]["session"]["row"]["id"],
         expected_anchor
     );
 }
@@ -206,7 +205,7 @@ async fn recall_cwd_quotes_paths_and_rejects_incompatible_windows(db: devkit::pg
     .await;
     assert_eq!(answer["outcome"], "ok", "{answer}");
     assert_eq!(
-        answer["result"]["recall"]["anchor"]["row"]["cwds"],
+        answer["result"]["recall"]["session"]["row"]["cwds"],
         json!([path])
     );
     for around in [None, Some("yesterday"), Some("2026-09-14T08:00:00Z")] {
@@ -263,7 +262,7 @@ async fn recall_last_never_invents_a_span_from_untimed_or_withheld_evidence(
                 material: MaterialId::new(),
                 anchor: 0,
             },
-            ordinal: 0,
+            output_index: 0,
         },
         ReadingOrder(1),
         [3; 32],
@@ -292,7 +291,7 @@ async fn recall_last_never_invents_a_span_from_untimed_or_withheld_evidence(
     let (_, observations) = call(
         &w,
         Some(READ),
-        json!({"method":"query","query":"events where kind = command.imported"}),
+        json!({"method":"query","query":"events where event_type = command.imported"}),
     )
     .await;
     assert_eq!(observations["result"]["total"], 1);
@@ -319,7 +318,7 @@ async fn recall_last_never_invents_a_span_from_untimed_or_withheld_evidence(
     .await;
     assert_eq!(visible["outcome"], "ok", "{visible}");
     assert_eq!(
-        visible["result"]["recall"]["anchor"]["row"]["cwds"],
+        visible["result"]["recall"]["session"]["row"]["cwds"],
         json!(["/src/private"])
     );
 }

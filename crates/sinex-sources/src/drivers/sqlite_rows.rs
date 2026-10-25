@@ -189,10 +189,11 @@ impl Held {
                     move |end| Ok(cursor(end))
                 }),
                 aligned: false,
-                vanished: Vec::new(),
+                removed: Vec::new(),
                 memory: self.memory.clone(),
             }),
-            cursor_unchanged: serde_json::to_value(&self.scanned).expect("cursor serializes"),
+            cursor_without_material: serde_json::to_value(&self.scanned)
+                .expect("cursor serializes"),
         }
     }
 }
@@ -290,7 +291,7 @@ impl SqliteRows {
             },
             revision: RevisionChange::Same,
             material: None,
-            cursor_unchanged: cursor.clone(),
+            cursor_without_material: cursor.clone(),
         };
         let facts = match file_facts(&self.path) {
             Ok(f) => f,
@@ -429,7 +430,8 @@ impl SqliteRows {
                 },
                 revision: RevisionChange::Same,
                 material: None,
-                cursor_unchanged: serde_json::to_value(unchanged).expect("cursor serializes"),
+                cursor_without_material: serde_json::to_value(unchanged)
+                    .expect("cursor serializes"),
             });
         }
         let id = MaterialId::new();

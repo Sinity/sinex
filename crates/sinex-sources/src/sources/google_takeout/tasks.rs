@@ -15,7 +15,7 @@ pub const SPEC: SourceSpec = SourceSpec {
     name: "google.tasks",
     driver: Driver::ExportArchive,
     excisable: false,
-    consumer: "tasks and their completion",
+    purpose: "tasks and their completion",
     class: Class::Open,
     parser: "google-tasks",
     parser_version: 1,

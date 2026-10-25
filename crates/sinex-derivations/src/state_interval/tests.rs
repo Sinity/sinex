@@ -29,7 +29,7 @@ fn input(event_type: &str, secs: i64, payload: Value) -> Event {
                 material: MaterialId::new(),
                 anchor: u64::try_from(secs.max(0)).unwrap(),
             },
-            ordinal: 0,
+            output_index: 0,
         },
         ts_orig: TsOrig::known(at(secs), TimeQuality::Captured),
         payload,
@@ -39,8 +39,7 @@ fn input(event_type: &str, secs: i64, payload: Value) -> Event {
         record_hash: [0; 32],
         record_state: RecordState::Present,
         class: Class::Open,
-        support: None,
-        cites: Vec::new(),
+        owned_blobs: Vec::new(),
     }
 }
 

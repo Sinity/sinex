@@ -13,8 +13,8 @@ fn blob() -> String {
     format!("blake3:{}", blake3::hash(BODY).to_hex())
 }
 
-fn stage_all(root: &Path, producer: &str) {
-    stage(root, producer, "frame", &blob(), BODY.len() as u64, BODY).unwrap();
+fn write_all_frames(root: &Path, producer: &str) {
+    write(root, producer, "frame", &blob(), BODY.len() as u64, BODY).unwrap();
 }
 
 fn file(root: &Path, producer: &str) -> std::path::PathBuf {
@@ -29,7 +29,7 @@ fn mode(path: &Path) -> u32 {
 fn configured_group_files_are_readable_without_writable_sender_inodes() {
     let root = tempfile::tempdir().unwrap();
     std::fs::set_permissions(root.path(), std::fs::Permissions::from_mode(0o2770)).unwrap();
-    stage_all(root.path(), "node");
+    write_all_frames(root.path(), "node");
     let path = file(root.path(), "node");
     assert_eq!(mode(&path), 0o640);
     assert_eq!(
@@ -42,7 +42,7 @@ fn configured_group_files_are_readable_without_writable_sender_inodes() {
 #[devkit::test]
 fn private_roots_keep_private_files_and_existing_directories_are_not_adopted() {
     let root = tempfile::tempdir().unwrap();
-    stage_all(root.path(), "node");
+    write_all_frames(root.path(), "node");
     assert_eq!(mode(&file(root.path(), "node")), 0o600);
     let upload = format!("blake3:{}", blake3::hash(b"upload").to_hex());
     assert!(receive(root.path(), "remote", "frame", &upload, 6, 0, b"upload").unwrap());
@@ -56,7 +56,7 @@ fn private_roots_keep_private_files_and_existing_directories_are_not_adopted() {
     std::fs::create_dir(&private).unwrap();
     std::fs::set_permissions(&private, std::fs::Permissions::from_mode(0o700)).unwrap();
     assert!(
-        stage(
+        write(
             shared.path(),
             "node",
             "frame",
@@ -70,14 +70,14 @@ fn private_roots_keep_private_files_and_existing_directories_are_not_adopted() {
 }
 
 #[devkit::test]
-fn existing_private_spool_files_are_refused_without_changing_their_bytes_or_modes() {
+fn existing_private_frame_files_are_refused_without_changing_their_bytes_or_modes() {
     let root = tempfile::tempdir().unwrap();
     std::fs::set_permissions(root.path(), std::fs::Permissions::from_mode(0o2770)).unwrap();
-    stage_all(root.path(), "node");
+    write_all_frames(root.path(), "node");
     let path = file(root.path(), "node");
     std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).unwrap();
     assert!(
-        stage(
+        write(
             root.path(),
             "node",
             "frame",
@@ -119,14 +119,14 @@ fn actor(operation: &str) {
     let private = Path::new("/proc/self/fd/0/private");
     let length = BODY.len() as u64;
     match operation {
-        "stage" => {
-            stage_all(shared, "node");
-            stage_all(shared, "other");
-            stage_all(private, "node");
+        "write" => {
+            write_all_frames(shared, "node");
+            write_all_frames(shared, "other");
+            write_all_frames(private, "node");
         }
         "denied" => {
             assert!(snapshot(shared, "node", "frame", &blob(), length).is_err());
-            assert!(stage(shared, "node", "frame", &blob(), length, BODY).is_err());
+            assert!(write(shared, "node", "frame", &blob(), length, BODY).is_err());
         }
         "receiver" => {
             let mut copy = snapshot(shared, "node", "frame", &blob(), length).unwrap();
@@ -148,7 +148,7 @@ fn actor(operation: &str) {
         }
         "retry" => {
             assert!(snapshot(shared, "node", "frame", &blob(), length).is_err());
-            stage_all(shared, "node");
+            write_all_frames(shared, "node");
             assert!(snapshot(shared, "node", "frame", &blob(), length).is_ok());
         }
         _ => panic!("unknown synthetic actor operation"),
@@ -162,7 +162,7 @@ fn run_actor(root: &Path, operation: &str, uid: u32, gid: u32) {
         "--clear-groups".into()
     };
     let test_name = format!(
-        "{}::configured_group_spool_between_distinct_users",
+        "{}::configured_group_frame_bytes_between_distinct_users",
         module_path!().split_once("::").unwrap().1,
     );
     let output = Command::new("/run/current-system/sw/bin/setpriv")
@@ -205,7 +205,7 @@ fn run_actor(root: &Path, operation: &str, uid: u32, gid: u32) {
 
 #[devkit::test]
 #[ignore = "requires root for isolated numeric-UID and group filesystem checks"]
-fn configured_group_spool_between_distinct_users() {
+fn configured_group_frame_bytes_between_distinct_users() {
     if let Ok(operation) = std::env::var("SINEX_FIXTURE_ACTOR") {
         return actor(&operation);
     }
@@ -240,7 +240,7 @@ fn configured_group_spool_between_distinct_users() {
         std::os::unix::fs::chown(&path, Some(RECEIVER), Some(GROUP)).unwrap();
         std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o2770)).unwrap();
     }
-    run_actor(root.path(), "stage", SENDER, SENDER);
+    run_actor(root.path(), "write", SENDER, SENDER);
     run_actor(root.path(), "denied", OUTSIDER, OUTSIDER);
     run_actor(root.path(), "receiver", RECEIVER, GROUP);
     run_actor(root.path(), "retry", SENDER, SENDER);

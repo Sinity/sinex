@@ -83,7 +83,7 @@ impl SealingSink {
                     .filter(|(_, name, _)| name == blob)
                     .map(|(_, _, key)| key.clone())
             })
-            .ok_or_else(|| "sealed material key is unavailable; explicit unlock is required".into())
+            .ok_or_else(|| "sealed data key is unavailable; explicit unlock is required".into())
     }
 
     pub fn open_carry(&self, value: &serde_json::Value) -> Result<serde_json::Value, String> {
@@ -145,7 +145,7 @@ impl SealingSink {
         Ok(name)
     }
 
-    /// Seal events and carry with their material key. The wrapped key travels
+    /// Seal events and carry with their material's data key. The wrapped key travels
     /// with source progress so its row and the material commit atomically.
     pub fn seal(&self, batches: &mut [sinex_model::Batch]) -> Result<(), String> {
         for batch in batches {
@@ -158,13 +158,13 @@ impl SealingSink {
                 let held = self.held(&material.blob)?;
                 let key = &held.data;
                 let wrapped = held.wrapped.clone();
-                let wrapped = sinex_model::WrappedMaterialKey {
+                let wrapped = sinex_model::WrappedDataKey {
                     material: material.id,
                     key_ref: key.key_ref.clone(),
                     wrapped,
                 };
                 if let sinex_model::BatchKind::Source(progress) = &mut batch.kind {
-                    progress.material_keys.push(wrapped);
+                    progress.data_keys.push(wrapped);
                 }
                 let mut state = self.state.lock().expect("sealing state");
                 state.unadmitted.remove(&material.blob);
@@ -181,8 +181,7 @@ impl SealingSink {
                     continue;
                 }
                 return Err(
-                    "sealed source state needs its material key; explicit unlock is required"
-                        .into(),
+                    "sealed source state needs its data key; explicit unlock is required".into(),
                 );
             };
             let key = &held.data;

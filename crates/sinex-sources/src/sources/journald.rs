@@ -27,7 +27,7 @@ pub const SPEC: SourceSpec = SourceSpec {
     name: "machine.journald",
     driver: Driver::LiveStream,
     excisable: false,
-    consumer: "machine timeline, service health and recall",
+    purpose: "machine timeline, service health and recall",
     // Journal messages carry command lines, paths and sometimes secrets.
     class: Class::Guarded,
     parser: "journald-json",
@@ -184,14 +184,19 @@ pub enum Start<'a> {
 /// child exits; without, it stops at the end of the journal. Returns the number
 /// of entries captured.
 pub fn capture(spool: &Path, follow: bool, start: Start<'_>) -> std::io::Result<u64> {
-    capture_with_control(spool, follow, start, &crate::capture::Control::new(None))
+    capture_until(
+        spool,
+        follow,
+        start,
+        &crate::capture::CaptureStop::new(None),
+    )
 }
 
-fn capture_with_control(
+fn capture_until(
     spool: &Path,
     follow: bool,
     start: Start<'_>,
-    control: &crate::capture::Control,
+    stop: &crate::capture::CaptureStop,
 ) -> std::io::Result<u64> {
     let mut command = Command::new("journalctl");
     command.args(["--output=json", "--all", "--no-pager", "--quiet"]);
@@ -210,7 +215,7 @@ fn capture_with_control(
         command.args(["--follow", "--lines=all"]);
     }
     command.stdout(Stdio::piped());
-    let Some(mut child) = control.spawn(&mut command)? else {
+    let Some(mut child) = stop.spawn(&mut command)? else {
         return Ok(0);
     };
     let stdout = child.stdout().expect("piped stdout");
@@ -221,7 +226,7 @@ fn capture_with_control(
         Duration::from_secs(1),
     )?;
     let status = child.wait()?;
-    if !status.success() && !control.stopped() {
+    if !status.success() && !stop.stopped() {
         return Err(std::io::Error::other(format!(
             "journalctl exited with {status}"
         )));
@@ -229,10 +234,10 @@ fn capture_with_control(
     Ok(count)
 }
 
-/// `--source journald=SPOOL`: the journal, captured into SPOOL. Options:
+/// `--read journald=SPOOL`: the journal, captured into SPOOL. Options:
 /// `since` (a `journalctl --since` expression; the whole journal otherwise)
 /// and `follow`.
-pub const KIND: crate::binding::InputKind = crate::binding::InputKind {
+pub const FORMAT: crate::binding::InputFormat = crate::binding::InputFormat {
     name: "journald",
     specs: || vec![&SPEC],
     plan: Some(|spool, settings| Ok(crate::binding::single(&SPEC, spool, settings))),
@@ -254,7 +259,7 @@ pub const KIND: crate::binding::InputKind = crate::binding::InputKind {
             .get("follow")
             .and_then(serde_json::Value::as_bool)
             .unwrap_or(false);
-        capture_with_control(&b.input, follow, start, stop).map_err(|e| e.to_string())
+        capture_until(&b.input, follow, start, stop).map_err(|e| e.to_string())
     }),
 };
 

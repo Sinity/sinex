@@ -1,12 +1,12 @@
 //! Suggestions for a mistyped first word.
 use super::*;
 
-/// A first word within two typing mistakes of a unit, alias or command.
+/// A first word within two typing mistakes of a table, alias or command.
 pub(super) fn typo(word: &str) -> Option<&'static str> {
-    if word.len() < 4 || RESERVED.contains(&word) || Unit::Events.field(word).is_some() {
+    if word.len() < 4 || RESERVED.contains(&word) || Table::Events.field(word).is_some() {
         return None;
     }
-    unit_like_words().find(|other| *other != word && distance(word, other) <= 2)
+    table_like_words().find(|other| *other != word && distance(word, other) <= 2)
 }
 
 /// Levenshtein distance over bytes.

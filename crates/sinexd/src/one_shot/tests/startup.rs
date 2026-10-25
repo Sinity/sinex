@@ -42,10 +42,10 @@ async fn refuse_other_version(db: devkit::pg::TestDatabase, derive: bool) {
     let before = state(&mut conn).await;
     let store = tempfile::tempdir().unwrap();
     let error = if derive {
-        match crate::local_driver(&url, "startup-fixture", Some(store.path())).await {
+        match crate::local_runner(&url, "startup-fixture", Some(store.path())).await {
             Err(error) => Some(error),
-            Ok((driver, task)) => {
-                drop(driver);
+            Ok((runner, task)) => {
+                drop(runner);
                 task.await.unwrap();
                 None
             }
@@ -88,7 +88,7 @@ async fn derivation_claims_the_writer_for_its_entire_lifetime(db: devkit::pg::Te
     let mut competing = <sqlx::PgConnection as sqlx::Connection>::connect(&url)
         .await
         .unwrap();
-    let (driver, task) = crate::local_driver(&url, "startup-fixture", None)
+    let (runner, task) = crate::local_runner(&url, "startup-fixture", None)
         .await
         .unwrap();
     let acquired: bool = sqlx::query_scalar("SELECT pg_try_advisory_lock($1)")
@@ -103,28 +103,28 @@ async fn derivation_claims_the_writer_for_its_entire_lifetime(db: devkit::pg::Te
             .await
             .unwrap();
     }
-    drop(driver);
+    drop(runner);
     task.await.unwrap();
     assert!(
         !acquired,
         "the derivation writer must keep its advisory claim"
     );
     writer::claim(&mut competing).await.unwrap();
-    let startup = crate::local_driver(&url, "startup-fixture", None);
+    let startup = crate::local_runner(&url, "startup-fixture", None);
     tokio::pin!(startup);
     tokio::select! {
         result = &mut startup => {
-            if let Ok((driver,task))=result { drop(driver);task.await.unwrap(); }
+            if let Ok((runner,task))=result { drop(runner);task.await.unwrap(); }
             panic!("standalone derivations must wait for the active writer");
         }
         _ = tokio::time::sleep(std::time::Duration::from_millis(100)) => {}
     }
     drop(competing);
-    let (driver, task) = tokio::time::timeout(std::time::Duration::from_secs(2), startup)
+    let (runner, task) = tokio::time::timeout(std::time::Duration::from_secs(2), startup)
         .await
         .unwrap()
         .unwrap();
-    drop(driver);
+    drop(runner);
     task.await.unwrap();
 }
 
@@ -150,7 +150,7 @@ async fn empty_database_needs_explicit_initialization_before_ordinary_startup(
         "ordinary startup must not initialize an empty database"
     );
     assert!(
-        crate::local_driver(&url, "startup-fixture", None)
+        crate::local_runner(&url, "startup-fixture", None)
             .await
             .is_err()
     );

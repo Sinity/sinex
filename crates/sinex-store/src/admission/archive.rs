@@ -77,14 +77,14 @@ pub(super) async fn request(
         ArchiveRequest::Replay { .. } | ArchiveRequest::RemovedAtSource { .. } => Ok(0),
         ArchiveRequest::Hide { target, operation } => {
             let event = sqlx::query!(
-                "SELECT source, event_type, equivalence_key, material_id, anchor, ordinal FROM core.events WHERE id = $1",
+                "SELECT source, event_type, equivalence_key, material_id, anchor, output_index FROM core.events WHERE id = $1",
                 target.0
             )
             .fetch_optional(&mut *conn)
             .await?
             .ok_or_else(|| Error::Invalid(format!("no event {target}")))?;
             sqlx::query!(
-                r#"INSERT INTO core.hidden_occurrences (source, event_type, equivalence_key, material_id, anchor, ordinal, operation_id)
+                r#"INSERT INTO core.hidden_records (source, event_type, equivalence_key, material_id, anchor, output_index, operation_id)
                    VALUES ($1, $2, $3,
                      CASE WHEN $3::text IS NULL THEN $4::uuid END,
                      CASE WHEN $3::text IS NULL THEN $5::bigint END,
@@ -95,7 +95,7 @@ pub(super) async fn request(
                 event.equivalence_key,
                 event.material_id,
                 event.anchor,
-                event.ordinal,
+                event.output_index,
                 operation.0,
             )
             .execute(&mut *conn)
@@ -108,7 +108,7 @@ pub(super) async fn request(
                 event.equivalence_key.as_deref(),
                 event.material_id,
                 event.anchor,
-                event.ordinal,
+                event.output_index,
             )
             .await?;
             let seq = position(conn).await?;
@@ -127,22 +127,22 @@ pub(super) async fn request(
         }
         ArchiveRequest::Unhide { target, operation } => {
             let event = sqlx::query!(
-                "SELECT source, event_type, equivalence_key, material_id, anchor, ordinal FROM core.events WHERE id = $1",
+                "SELECT source, event_type, equivalence_key, material_id, anchor, output_index FROM core.events WHERE id = $1",
                 target.0
             )
             .fetch_optional(&mut *conn)
             .await?
             .ok_or_else(|| Error::Invalid(format!("no event {target}")))?;
             let removed = sqlx::query_scalar!(
-                r#"DELETE FROM core.hidden_occurrences WHERE source = $1 AND event_type = $2
-                   AND ((equivalence_key = $3) OR ($3::text IS NULL AND material_id = $4 AND anchor = $5 AND ordinal = $6))
+                r#"DELETE FROM core.hidden_records WHERE source = $1 AND event_type = $2
+                   AND ((equivalence_key = $3) OR ($3::text IS NULL AND material_id = $4 AND anchor = $5 AND output_index = $6))
                    RETURNING id"#,
                 event.source,
                 event.event_type,
                 event.equivalence_key,
                 event.material_id,
                 event.anchor,
-                event.ordinal,
+                event.output_index,
             )
             .fetch_optional(&mut *conn)
             .await?;
@@ -151,25 +151,25 @@ pub(super) async fn request(
             }
             let seq = position(conn).await?;
             // The newest archived-by-hide reading becomes live again.
-            let restored = sqlx::query!(
-                r#"SELECT e.id, e.material_id, e.anchor, e.ordinal, e.reading_order, e.record_hash
+            let unhidden = sqlx::query!(
+                r#"SELECT e.id, e.material_id, e.anchor, e.output_index, e.reading_order, e.record_hash
                    FROM core.events e JOIN audit.archived a ON a.event_id = e.id AND a.reason = 'hide'
                    WHERE e.source = $1 AND e.event_type = $2
-                   AND ((e.equivalence_key = $3) OR ($3::text IS NULL AND e.material_id = $4 AND e.anchor = $5 AND e.ordinal = $6))
+                   AND ((e.equivalence_key = $3) OR ($3::text IS NULL AND e.material_id = $4 AND e.anchor = $5 AND e.output_index = $6))
                    ORDER BY e.reading_order DESC, e.commit_seq DESC LIMIT 1"#,
                 event.source,
                 event.event_type,
                 event.equivalence_key,
                 event.material_id,
                 event.anchor,
-                event.ordinal,
+                event.output_index,
             )
             .fetch_optional(&mut *conn)
             .await?;
-            let Some(r) = restored else { return Ok(0) };
-            if !history::restore_at(conn, r.id, seq, operation.0).await? {
+            let Some(r) = unhidden else { return Ok(0) };
+            if !history::unhide_at(conn, r.id, seq, operation.0).await? {
                 return Err(Error::Invalid(
-                    "hidden reading changed before restoration".into(),
+                    "hidden reading changed before it was unhidden".into(),
                 ));
             }
             match &event.equivalence_key {
@@ -183,8 +183,8 @@ pub(super) async fn request(
                 }
                 None => {
                     sqlx::query!(
-                        "INSERT INTO core.live_locations (material_id, anchor, event_type, ordinal, event_id, reading_order, record_hash) VALUES ($1,$2,$3,$4,$5,$6,$7)",
-                        r.material_id, r.anchor, event.event_type, r.ordinal, r.id, r.reading_order, r.record_hash,
+                        "INSERT INTO core.live_locations (material_id, anchor, event_type, output_index, event_id, reading_order, record_hash) VALUES ($1,$2,$3,$4,$5,$6,$7)",
+                        r.material_id, r.anchor, event.event_type, r.output_index, r.id, r.reading_order, r.record_hash,
                     )
                     .execute(&mut *conn)
                     .await?;
@@ -203,7 +203,7 @@ async fn live_reading(
     key: Option<&str>,
     material: Option<Uuid>,
     anchor: Option<i64>,
-    ordinal: i16,
+    output_index: i16,
 ) -> Result<Vec<Uuid>> {
     Ok(match key {
         Some(key) => sqlx::query_scalar!(
@@ -213,8 +213,8 @@ async fn live_reading(
         .fetch_all(&mut *conn)
         .await?,
         None => sqlx::query_scalar!(
-            "SELECT event_id FROM core.live_locations WHERE material_id = $1 AND anchor = $2 AND event_type = $3 AND ordinal = $4",
-            material, anchor, event_type, ordinal
+            "SELECT event_id FROM core.live_locations WHERE material_id = $1 AND anchor = $2 AND event_type = $3 AND output_index = $4",
+            material, anchor, event_type, output_index
         )
         .fetch_all(&mut *conn)
         .await?,

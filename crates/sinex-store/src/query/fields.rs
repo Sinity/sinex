@@ -1,39 +1,39 @@
-//! The SQL each field of each unit lowers to, keyed by the field names in
-//! `sinex_model::query::units`. A test checks that every field there has an
+//! The SQL each field of each table lowers to, keyed by the field names in
+//! `sinex_model::query::tables`. A test checks that every field there has an
 //! entry here.
 //!
-//! Templates name the unit's table alias `{t}` and, for the archive, the
+//! Templates name the table's table alias `{t}` and, for the archive, the
 //! archive row `{a}`; the compiler substitutes a distinct alias per nesting
 //! level, so an inner query of a time join never shadows the outer one.
-use sinex_model::query::Unit;
+use sinex_model::query::Table;
 
-/// The `FROM` clause of a unit, with `{t}` (and `{a}`) for its aliases.
-pub(crate) fn from(unit: Unit) -> &'static str {
-    match unit {
-        Unit::Events => "core.visible_events {t}",
-        Unit::Archive => {
+/// The `FROM` clause of a table, with `{t}` (and `{a}`) for its aliases.
+pub(crate) fn from(table: Table) -> &'static str {
+    match table {
+        Table::Events => "core.visible_events {t}",
+        Table::Archive => {
             "core.visible_events {t} JOIN audit.archive_changes {a} ON {a}.event_id = {t}.id"
         }
-        Unit::Materials => {
+        Table::Materials => {
             "raw.materials {t} LEFT JOIN raw.inputs {t}_i ON {t}_i.id = {t}.input_id \
              LEFT JOIN raw.revisions {t}_v ON {t}_v.id = {t}.revision_id"
         }
-        Unit::Runs => "core.runs {t} LEFT JOIN core.manifests {t}_m ON {t}_m.id = {t}.manifest_id",
+        Table::Runs => "core.runs {t} LEFT JOIN core.manifests {t}_m ON {t}_m.id = {t}.manifest_id",
         // Registered sources, and every source that has events, found by a
         // loose index scan over (source, ts_orig) rather than a full scan.
-        Unit::Sources => {
+        Table::Sources => {
             "(WITH RECURSIVE seen(name) AS ( \
                 SELECT min(source) FROM core.events \
                 UNION ALL \
                 SELECT (SELECT min(source) FROM core.events WHERE source > seen.name) FROM seen WHERE seen.name IS NOT NULL) \
-              SELECT r.name, r.driver, r.version, r.event_types, r.consumer FROM registry.sources r \
+              SELECT r.name, r.driver, r.version, r.event_types, r.purpose FROM registry.sources r \
               UNION ALL \
               SELECT seen.name, NULL, NULL, NULL, NULL FROM seen \
               WHERE seen.name IS NOT NULL AND NOT EXISTS (SELECT 1 FROM registry.sources r WHERE r.name = seen.name)) \
-             {t}(name, driver, version, event_types, consumer)"
+             {t}(name, driver, version, event_types, purpose)"
         }
-        Unit::Operations => "core.operations {t}",
-        Unit::Failures => {
+        Table::Operations => "core.operations {t}",
+        Table::Failures => {
             "raw.failures {t} LEFT JOIN raw.materials {t}_m ON {t}_m.id = {t}.material_id \
              LEFT JOIN raw.inputs {t}_i ON {t}_i.id = {t}_m.input_id"
         }
@@ -42,9 +42,9 @@ pub(crate) fn from(unit: Unit) -> &'static str {
 
 /// A row's own tie-breaking key, so equal sort values never split differently
 /// between pages.
-pub(crate) fn tiebreak(unit: Unit) -> &'static str {
-    match unit {
-        Unit::Sources => "{t}.name",
+pub(crate) fn tiebreak(table: Table) -> &'static str {
+    match table {
+        Table::Sources => "{t}.name",
         _ => "{t}.id",
     }
 }
@@ -53,11 +53,11 @@ pub(crate) fn tiebreak(unit: Unit) -> &'static str {
 const SOURCE_LIVE: &str = "FROM core.events se WHERE se.source = {t}.name \
      AND NOT EXISTS (SELECT 1 FROM audit.archived sa WHERE sa.event_id = se.id)";
 
-pub(crate) fn field(unit: Unit, name: &str) -> Option<String> {
+pub(crate) fn field(table: Table, name: &str) -> Option<String> {
     let event = |name: &str| -> Option<&'static str> {
         Some(match name {
             "id" => "{t}.id",
-            "kind" => "{t}.event_type",
+            "event_type" => "{t}.event_type",
             "source" => "{t}.source",
             "host" => "(SELECT r.host FROM core.runs r WHERE r.id = {t}.run_id)",
             "when" => "{t}.ts_orig",
@@ -66,8 +66,8 @@ pub(crate) fn field(unit: Unit, name: &str) -> Option<String> {
             "written" => "{t}.ts_persisted",
             "origin" => "(CASE WHEN {t}.material_id IS NULL THEN 'derived' ELSE 'material' END)",
             "material" => "{t}.material_id",
-            "anchor" => "{t}.anchor",
-            "ordinal" => "{t}.ordinal::bigint",
+            "offset" => "{t}.anchor",
+            "output" => "{t}.output_index::bigint",
             "parents" => "{t}.parents",
             "producer" => "(SELECT r.name FROM core.runs r WHERE r.id = {t}.run_id)",
             "run" => "{t}.run_id",
@@ -80,9 +80,9 @@ pub(crate) fn field(unit: Unit, name: &str) -> Option<String> {
             _ => return None,
         })
     };
-    let sql: &str = match unit {
-        Unit::Events => event(name)?,
-        Unit::Archive => match name {
+    let sql: &str = match table {
+        Table::Events => event(name)?,
+        Table::Archive => match name {
             "archived" => "{a}.recorded_at",
             "reason" => "{a}.reason",
             "operation" => "{a}.operation_id",
@@ -90,18 +90,18 @@ pub(crate) fn field(unit: Unit, name: &str) -> Option<String> {
             "archived_seq" => "{a}.commit_seq",
             _ => event(name)?,
         },
-        Unit::Materials => match name {
+        Table::Materials => match name {
             "id" => "{t}.id",
             "binding" => "{t}_i.binding",
             "parser" => "{t}.parser",
             "parser_version" => "{t}.parser_version::bigint",
             "hash" => "{t}.blob",
-            "size" => "{t}.durable_bytes",
-            "staged" => "{t}_v.started_at",
+            "size" => "{t}.length",
+            "stored" => "{t}_v.started_at",
             "origin_path" => "{t}_i.locator",
             "host" => "{t}_i.host",
             "part" => "{t}.part_index::bigint",
-            "continues" => "{t}.previous_part_id",
+            "previous_part" => "{t}.previous_part_id",
             "events" => {
                 "(SELECT count(*) FROM core.events me WHERE me.material_id = {t}.id \
                   AND NOT EXISTS (SELECT 1 FROM audit.archived ma WHERE ma.event_id = me.id))"
@@ -116,7 +116,7 @@ pub(crate) fn field(unit: Unit, name: &str) -> Option<String> {
             }
             _ => return None,
         },
-        Unit::Runs => match name {
+        Table::Runs => match name {
             "id" => "{t}.id",
             "producer" => "{t}.name",
             "producer_version" => "{t}_m.version",
@@ -128,16 +128,16 @@ pub(crate) fn field(unit: Unit, name: &str) -> Option<String> {
             "failed" => "(SELECT count(*) FROM raw.failures rf WHERE rf.run_id = {t}.id)",
             _ => return None,
         },
-        Unit::Sources => {
+        Table::Sources => {
             return Some(match name {
                 "binding" | "source" => "{t}.name".to_string(),
                 "driver" => "{t}.driver".to_string(),
                 "version" => "{t}.version::bigint".to_string(),
-                "kinds" => "array_to_string({t}.event_types, ',')".to_string(),
-                "consumer" => "{t}.consumer".to_string(),
+                "event_types" => "array_to_string({t}.event_types, ',')".to_string(),
+                "purpose" => "{t}.purpose".to_string(),
                 "events" => format!("(SELECT count(*) {SOURCE_LIVE})"),
                 "first" => format!("(SELECT min(se.ts_orig) {SOURCE_LIVE})"),
-                "last" | "last_event" => format!("(SELECT max(se.ts_orig) {SOURCE_LIVE})"),
+                "last_event" => format!("(SELECT max(se.ts_orig) {SOURCE_LIVE})"),
                 "last_seen" => format!("(SELECT max(se.ts_coided) {SOURCE_LIVE})"),
                 "failed_24h" => "(SELECT count(*) FROM raw.failures sf \
                       JOIN raw.materials sm ON sm.id = sf.material_id \
@@ -147,7 +147,7 @@ pub(crate) fn field(unit: Unit, name: &str) -> Option<String> {
                 _ => return None,
             });
         }
-        Unit::Operations => match name {
+        Table::Operations => match name {
             "id" => "{t}.id",
             "kind" => "{t}.kind",
             "actor" => "{t}.actor",
@@ -155,13 +155,12 @@ pub(crate) fn field(unit: Unit, name: &str) -> Option<String> {
             "started" => "{t}.at",
             _ => return None,
         },
-        Unit::Failures => match name {
+        Table::Failures => match name {
             "id" => "{t}.id",
             "when" => "{t}.failed_at",
-            "stage" => "'parse'::text",
             "source" => "{t}_i.binding",
             "material" => "{t}.material_id",
-            "anchor" => "{t}.anchor",
+            "offset" => "{t}.anchor",
             "reason" => "{t}.reason",
             _ => return None,
         },
@@ -242,9 +241,9 @@ pub(crate) fn alias_field(alias: &str, name: &str) -> Option<String> {
 
 /// The span of a row, for `during` and `containing`: `(start, end)`. An end
 /// that is unknown is an open span. The boolean marks an included upper bound.
-pub(crate) fn span(unit: Unit, alias: Option<&str>) -> Option<(String, String, bool)> {
-    match (unit, alias) {
-        (Unit::Events, Some(a)) => Some((
+pub(crate) fn span(table: Table, alias: Option<&str>) -> Option<(String, String, bool)> {
+    match (table, alias) {
+        (Table::Events, Some(a)) => Some((
             alias_field(a, "start")?,
             alias_field(
                 a,
@@ -256,7 +255,7 @@ pub(crate) fn span(unit: Unit, alias: Option<&str>) -> Option<(String, String, b
             )?,
             a == "shell-sessions",
         )),
-        (Unit::Runs, None) => Some(("{t}.started_at".into(), "{t}.ended_at".into(), false)),
+        (Table::Runs, None) => Some(("{t}.started_at".into(), "{t}.ended_at".into(), false)),
         _ => None,
     }
 }

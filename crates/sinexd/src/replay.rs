@@ -2,17 +2,17 @@
 //! scope is materials (named, a binding's, or those with readings of some types
 //! in a time window), narrowed by type and time.
 //!
-//! Each material chain (an input's parts, linked first to last) is replayed
+//! Each part sequence (an input's parts, linked first to last) is replayed
 //! from its first part, because a parser's carried state flows from part to
-//! part; only in-scope materials' readings are archived and admitted. A chain
+//! part; only in-scope materials' readings are archived and admitted. A sequence
 //! is one transaction: its live in-scope readings (and their live derived
 //! descendants) are archived and the new readings admitted together, so a
-//! failure changes nothing and a crash leaves the chain as it was. Finished
-//! chains are journaled under the operation, and `--resume` skips them.
+//! failure changes nothing and a crash leaves the sequence as it was. Finished
+//! sequences are journaled under the operation, and `--resume` skips them.
 //!
 //! `--compare` runs exactly the same transactions and rolls each back after
 //! reading what it would change.
-use crate::writer::{ReplayChain, WriterHandle};
+use crate::writer::{ReplaySequence, WriterHandle};
 use serde_json::{Value, json};
 use sinex_model::{
     ArchiveRequest, Batch, BatchKind, MaterialId, OperationId, RecordOutcome, ReplayScope, RunId,
@@ -64,8 +64,8 @@ impl Scope {
 #[derive(Debug, Default)]
 pub struct Report {
     pub operation: OperationId,
-    pub chains: usize,
-    pub chains_skipped: usize,
+    pub sequences: usize,
+    pub sequences_skipped: usize,
     pub materials: usize,
     pub events_read: usize,
     pub failures: usize,
@@ -78,10 +78,10 @@ impl std::fmt::Display for Report {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         writeln!(
             f,
-            "operation {} | chains {} (skipped as done: {}) | materials re-read {} | readings {} | failures {} | archived {} | admitted {}",
+            "operation {} | sequences {} (skipped as done: {}) | materials re-read {} | readings {} | failures {} | archived {} | admitted {}",
             self.operation,
-            self.chains,
-            self.chains_skipped,
+            self.sequences,
+            self.sequences_skipped,
             self.materials,
             self.events_read,
             self.failures,
@@ -106,8 +106,8 @@ impl Report {
         json!({
             "operation": self.operation,
             "compare_only": compare,
-            "chains": self.chains,
-            "chains_skipped": self.chains_skipped,
+            "sequences": self.sequences,
+            "sequences_skipped": self.sequences_skipped,
             "materials": self.materials,
             "readings": self.events_read,
             "failures": self.failures,
@@ -145,7 +145,7 @@ pub async fn run(
                 .await
                 .map_err(|e| e.to_string())?
                 .ok_or_else(|| format!("no replay operation {op}"))?;
-            let done: BTreeSet<Uuid> = replay::chains_done(read_conn, op)
+            let done: BTreeSet<Uuid> = replay::sequences_done(read_conn, op)
                 .await
                 .map_err(|e| e.to_string())?
                 .into_iter()
@@ -170,7 +170,7 @@ pub async fn run(
     let inputs = replay::inputs_of(read_conn, &in_scope_list)
         .await
         .map_err(|e| e.to_string())?;
-    let stored = replay::chains(read_conn, &inputs, &in_scope_list)
+    let stored = replay::materials_of(read_conn, &inputs, &in_scope_list)
         .await
         .map_err(|e| e.to_string())?;
 
@@ -178,20 +178,20 @@ pub async fn run(
         operation,
         ..Report::default()
     };
-    for chain in chains(&stored) {
-        let last = match chain.iter().rposition(|m| in_scope.contains(&m.id)) {
+    for sequence in sequences(&stored) {
+        let last = match sequence.iter().rposition(|m| in_scope.contains(&m.id)) {
             Some(i) => i,
             None => continue,
         };
-        let root = chain[0].id;
+        let root = sequence[0].id;
         if done.contains(&root) {
-            report.chains_skipped += 1;
+            report.sequences_skipped += 1;
             continue;
         }
-        let chain: Vec<Stored> = chain[..=last].iter().map(|m| (*m).clone()).collect();
-        let parsers = sources_of(read_conn, &chain).await?;
+        let sequence: Vec<Stored> = sequence[..=last].iter().map(|m| (*m).clone()).collect();
+        let parsers = sources_of(read_conn, &sequence).await?;
         let mut keys = HashMap::new();
-        for material in &chain {
+        for material in &sequence {
             if sinex_model::MaterialRole::of(&material.manifest).map_err(|e| e.to_string())?
                 == sinex_model::MaterialRole::OriginalArchive
             {
@@ -204,27 +204,20 @@ pub async fn run(
                         material.id
                     )
                 })?;
-                let reference =
-                    sinex_store::material_bytes::reference(read_conn, MaterialId(material.id))
-                        .await
-                        .map_err(|e| e.to_string())?
-                        .ok_or("sealed material reference missing")?;
-                let key = unlock
-                    .material_key(read_conn, MaterialId(material.id))
-                    .await?;
-                keys.insert(material.id, (key, reference.length));
+                let key = unlock.data_key(read_conn, MaterialId(material.id)).await?;
+                keys.insert(material.id, key);
             }
         }
         let unlock = o.unlock.clone();
-        // The chain is read on a blocking thread while the writer admits its
+        // The sequence is read on a blocking thread while the writer admits its
         // batches as they come, a few at a time.
         let (sender, batches) = tokio::sync::mpsc::channel(READ_AHEAD);
         let reading = {
             let (blobs, in_scope, scope) = (blobs.clone(), in_scope.clone(), scope.clone());
             tokio::task::spawn_blocking(move || {
-                read_chain(
+                read_sequence(
                     &blobs,
-                    &chain,
+                    &sequence,
                     &parsers,
                     &in_scope,
                     &scope,
@@ -236,7 +229,7 @@ pub async fn run(
             })
         };
         let replayed = writer
-            .replay(ReplayChain {
+            .replay(ReplaySequence {
                 operation,
                 actor: o.actor.clone(),
                 scope: {
@@ -250,11 +243,12 @@ pub async fn run(
             })
             .await;
         let read = reading.await.map_err(|e| e.to_string())?;
-        let (outcomes, diff) = replayed.map_err(|e| format!("chain from material {root}: {e}"))?;
+        let (outcomes, diff) =
+            replayed.map_err(|e| format!("sequence from material {root}: {e}"))?;
         report.materials += read.materials;
         report.events_read += read.events_read;
         report.failures += read.failures;
-        report.chains += 1;
+        report.sequences += 1;
         for out in &outcomes {
             report.archived += out.replay_archived;
             report.admitted += out.admitted;
@@ -264,18 +258,18 @@ pub async fn run(
     Ok(report)
 }
 
-/// Group stored materials into chains, each first part to last.
+/// Group stored materials into sequences, each first part to last.
 /// Each material's parser, built with the settings its binding was read with
 /// (stored by backfill and the binding runner). A material with no stored
 /// binding (sent by an outside producer) is read by the source whose parser
 /// it names.
 async fn sources_of(
     read_conn: &mut sqlx::PgConnection,
-    chain: &[Stored],
+    sequence: &[Stored],
 ) -> Result<Vec<Box<dyn Source>>, String> {
-    let mut out = Vec::with_capacity(chain.len());
+    let mut out = Vec::with_capacity(sequence.len());
     let mut bound: HashMap<String, sinex_sources::Binding> = HashMap::new();
-    for m in chain {
+    for m in sequence {
         let stored_binding = match &m.binding {
             Some(name) if !bound.contains_key(name) => {
                 let found = bindings::load(read_conn, name)
@@ -313,7 +307,7 @@ async fn sources_of(
     Ok(out)
 }
 
-fn chains(stored: &[Stored]) -> Vec<Vec<&Stored>> {
+fn sequences(stored: &[Stored]) -> Vec<Vec<&Stored>> {
     let by_id: HashMap<Uuid, &Stored> = stored.iter().map(|m| (m.id, m)).collect();
     let mut next: HashMap<Uuid, Vec<&Stored>> = HashMap::new();
     let mut roots = Vec::new();
@@ -326,25 +320,25 @@ fn chains(stored: &[Stored]) -> Vec<Vec<&Stored>> {
     roots
         .into_iter()
         .map(|root| {
-            let mut chain = vec![root];
+            let mut sequence = vec![root];
             let mut at = root.id;
             while let Some(after) = next.get(&at) {
                 // Parts form a line; were there ever two successors, the
-                // earlier one continues the chain and the other starts its own.
+                // earlier one continues the sequence and the other starts its own.
                 let mut after: Vec<&Stored> = after.clone();
                 after.sort_by_key(|m| (m.part_index, m.id));
-                chain.push(after[0]);
+                sequence.push(after[0]);
                 at = after[0].id;
             }
-            chain
+            sequence
         })
         .collect()
 }
 
-/// Batches of one chain read ahead of the writer.
+/// Batches of one sequence read ahead of the writer.
 const READ_AHEAD: usize = 4;
 
-/// What reading one chain counted.
+/// What reading one sequence counted.
 #[derive(Debug, Default)]
 struct Read {
     materials: usize,
@@ -352,26 +346,26 @@ struct Read {
     failures: usize,
 }
 
-/// Drain every material of a chain in order, carrying parser state, and send
+/// Drain every material of a sequence in order, carrying parser state, and send
 /// the batches that replace the in-scope materials' readings to the writer as
 /// they are built. The first batch carries the request to archive what is
 /// re-read. A material that cannot be read is sent as an error, which rolls
-/// the chain back.
+/// the sequence back.
 #[allow(clippy::too_many_arguments)]
-fn read_chain(
+fn read_sequence(
     blobs: &sinex_store::Blobs,
-    chain: &[Stored],
+    sequence: &[Stored],
     parsers: &[Box<dyn Source>],
     in_scope: &BTreeSet<Uuid>,
     scope: &Scope,
     operation: OperationId,
     out: &tokio::sync::mpsc::Sender<Result<Batch, String>>,
-    keys: &HashMap<Uuid, (sinex_store::sealed::DataKey, u64)>,
+    keys: &HashMap<Uuid, sinex_store::sealed::DataKey>,
     unlock: Option<&crate::sealed_access::Unlock>,
 ) -> Read {
     let mut read = Read::default();
-    if let Err(error) = read_chain_into(
-        blobs, chain, parsers, in_scope, scope, operation, out, &mut read, keys, unlock,
+    if let Err(error) = read_sequence_into(
+        blobs, sequence, parsers, in_scope, scope, operation, out, &mut read, keys, unlock,
     ) {
         // The writer may already have stopped reading; nothing else to tell.
         let _ = out.blocking_send(Err(error));
@@ -380,16 +374,16 @@ fn read_chain(
 }
 
 #[allow(clippy::too_many_arguments)]
-fn read_chain_into(
+fn read_sequence_into(
     blobs: &sinex_store::Blobs,
-    chain: &[Stored],
+    sequence: &[Stored],
     parsers: &[Box<dyn Source>],
     in_scope: &BTreeSet<Uuid>,
     scope: &Scope,
     operation: OperationId,
     out: &tokio::sync::mpsc::Sender<Result<Batch, String>>,
     report: &mut Read,
-    keys: &HashMap<Uuid, (sinex_store::sealed::DataKey, u64)>,
+    keys: &HashMap<Uuid, sinex_store::sealed::DataKey>,
     unlock: Option<&crate::sealed_access::Unlock>,
 ) -> Result<(), String> {
     let send = |batch: Batch| {
@@ -397,7 +391,7 @@ fn read_chain_into(
             unlock.check()?;
         }
         out.blocking_send(Ok(batch))
-            .map_err(|_| "the writer stopped reading the chain".to_owned())
+            .map_err(|_| "the writer stopped reading the sequence".to_owned())
     };
     let whole = scope.event_types.is_none() && scope.from.is_none() && scope.until.is_none();
     let narrowing = ReplayScope {
@@ -412,7 +406,7 @@ fn read_chain_into(
         records: Vec::new(),
         archive: vec![ArchiveRequest::Replay {
             scope: ReplayScope {
-                materials: chain
+                materials: sequence
                     .iter()
                     .filter(|m| in_scope.contains(&m.id))
                     .map(|m| MaterialId(m.id))
@@ -423,9 +417,9 @@ fn read_chain_into(
         }],
     })?;
     let mut carry = Value::Null;
-    for (position, (m, source)) in chain.iter().zip(parsers).enumerate() {
+    for (position, (m, source)) in sequence.iter().zip(parsers).enumerate() {
         // A later part read again what the reader had not admitted of this one.
-        let admitted = chain
+        let admitted = sequence
             .get(position + 1)
             .filter(|next| next.previous == Some(m.id))
             .and_then(|next| next.manifest.get("previous_through"))
@@ -435,68 +429,36 @@ fn read_chain_into(
         if role == sinex_model::MaterialRole::OriginalArchive {
             continue;
         }
-        // A compressed export's records are in its decoded member stream
-        // (`ExportArchive`), which replay does not decode yet.
-        if let Some(container) = m.manifest.get("container").and_then(Value::as_str)
-            && container != "plain"
-        {
-            return Err(format!(
-                "material {}: replaying a {container} export needs its member stream decoded, which replay does not do yet",
-                m.id
-            ));
-        }
         let key = keys.get(&m.id);
-        let stored = if let Some((key, length)) = key {
-            use std::io::Seek;
-            let unlock = unlock
-                .ok_or("sealed replay needs an operator unlock")?
-                .clone();
-            let sender = out.clone();
-            let mut reader = blobs
-                .read_sealed(
-                    &m.blob,
-                    Some(*length),
-                    key,
-                    crate::sealed_access::read_limits(*length)?,
-                    move || {
-                        unlock.check().map_err(std::io::Error::other)?;
-                        if sender.is_closed() {
-                            return Err(std::io::Error::other(
-                                "the writer stopped reading the chain",
-                            )
-                            .into());
-                        }
-                        Ok(())
-                    },
-                )
-                .map_err(|e| e.to_string())?;
-            // Authenticate even bytes outside declared ranges before accepting this material.
-            std::io::copy(&mut reader, &mut std::io::sink()).map_err(|e| e.to_string())?;
-            reader.rewind().map_err(|e| e.to_string())?;
-            crate::stored::StoredReader::new(reader, *length)
-        } else {
-            let mut file = tempfile::tempfile().map_err(|e| e.to_string())?;
-            let sender = out.clone();
-            let length = blobs
-                .copy_to_checked(&m.blob, &mut file, move || {
-                    if sender.is_closed() {
-                        Err(std::io::Error::other("the writer stopped reading the chain").into())
-                    } else {
-                        Ok(())
-                    }
-                })
-                .map_err(|e| e.to_string())?;
-            let sender = out.clone();
-            crate::stored::StoredReader::checked(file, length, move || {
+        let reference = sinex_model::MaterialRef {
+            id: MaterialId(m.id),
+            input: m.input.map(sinex_model::InputId),
+            blob: m.blob.clone(),
+            length: u64::try_from(m.length)
+                .map_err(|_| format!("material {}: negative length", m.id))?,
+            part_index: u32::try_from(m.part_index)
+                .map_err(|_| format!("material {}: negative part", m.id))?,
+            previous_part: m.previous.map(MaterialId),
+            parser: m.parser.clone(),
+            parser_version: u32::try_from(m.parser_version)
+                .map_err(|_| format!("material {}: negative parser version", m.id))?,
+            manifest: m.manifest.clone(),
+        };
+        let sender = out.clone();
+        let stored = crate::stored::open_checked(
+            blobs,
+            reference,
+            key.cloned(),
+            unlock,
+            std::sync::Arc::new(move || {
                 if sender.is_closed() {
-                    Err(std::io::Error::other(
-                        "the writer stopped reading the chain",
-                    ))
+                    Err("the writer stopped reading the sequence".to_owned())
                 } else {
                     Ok(())
                 }
-            })
-        };
+            }),
+        )?
+        .body;
         let mut records = stored.records(&m.manifest, source.spec().framer)?;
         if let Some(admitted) = admitted {
             records.retain(|&(_, end)| end as u64 <= admitted);
@@ -510,7 +472,7 @@ fn read_chain_into(
                 source: source.spec().name,
                 class: source.spec().class,
                 material: MaterialId(m.id),
-                bytes: sinex_sources::drain::RecordBytes::Reader(&stored),
+                bytes: sinex_sources::drain::RecordBytes::Reader(&*stored),
                 records: &records,
                 carry: carry.clone(),
                 reading_order: &*order,
@@ -533,8 +495,10 @@ fn read_chain_into(
                 .into_iter()
                 .filter_map(|outcome| match outcome {
                     RecordOutcome::Events { location, events } => {
-                        let events: Vec<_> =
-                            events.into_iter().filter(|e| narrowing.admits(e)).collect();
+                        let events: Vec<_> = events
+                            .into_iter()
+                            .filter(|e| narrowing.includes(e))
+                            .collect();
                         report.events_read += events.len();
                         (!events.is_empty()).then_some(RecordOutcome::Events { location, events })
                     }
@@ -548,7 +512,7 @@ fn read_chain_into(
             if records.is_empty() {
                 continue;
             }
-            if let Some((key, _)) = key {
+            if let Some(key) = key {
                 for record in &mut records {
                     match record {
                         RecordOutcome::Events { events, .. } => {

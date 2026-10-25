@@ -8,17 +8,17 @@ use sqlx::postgres::PgArguments;
 use sqlx::query::QueryScalar;
 
 #[derive(Clone, Debug, Default)]
-pub(crate) struct Frag {
-    pieces: Vec<Piece>,
+pub(crate) struct SqlFragment {
+    pieces: Vec<FragmentPart>,
 }
 
 #[derive(Clone, Debug)]
-enum Piece {
+enum FragmentPart {
     Text(String),
     Param(Value),
 }
 
-impl Frag {
+impl SqlFragment {
     pub fn new() -> Self {
         Self::default()
     }
@@ -30,23 +30,23 @@ impl Frag {
     }
 
     pub fn push(&mut self, s: impl Into<String>) -> &mut Self {
-        self.pieces.push(Piece::Text(s.into()));
+        self.pieces.push(FragmentPart::Text(s.into()));
         self
     }
 
     pub fn param(&mut self, v: impl Into<Value>) -> &mut Self {
-        self.pieces.push(Piece::Param(v.into()));
+        self.pieces.push(FragmentPart::Param(v.into()));
         self
     }
 
-    pub fn append(&mut self, other: Frag) -> &mut Self {
+    pub fn append(&mut self, other: SqlFragment) -> &mut Self {
         self.pieces.extend(other.pieces);
         self
     }
 
     /// `parts` joined by `sep`.
-    pub fn join(parts: Vec<Frag>, sep: &str) -> Frag {
-        let mut out = Frag::new();
+    pub fn join(parts: Vec<SqlFragment>, sep: &str) -> SqlFragment {
+        let mut out = SqlFragment::new();
         for (i, p) in parts.into_iter().enumerate() {
             if i > 0 {
                 out.push(sep);
@@ -57,8 +57,8 @@ impl Frag {
     }
 
     /// `(<self>)`.
-    pub fn parenthesized(self) -> Frag {
-        let mut out = Frag::text("(");
+    pub fn parenthesized(self) -> SqlFragment {
+        let mut out = SqlFragment::text("(");
         out.append(self);
         out.push(")");
         out
@@ -71,10 +71,10 @@ impl Frag {
         let mut values = Vec::new();
         for piece in &self.pieces {
             match piece {
-                Piece::Text(t) => {
+                FragmentPart::Text(t) => {
                     builder.push_fragment(t);
                 }
-                Piece::Param(v) => {
+                FragmentPart::Param(v) => {
                     builder.push_parameters(1);
                     values.push(Param::from(v.clone()));
                 }

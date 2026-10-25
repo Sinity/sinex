@@ -33,7 +33,7 @@ pub const SPEC: SourceSpec = SourceSpec {
     name: "communication.imap",
     driver: Driver::ApiCursor,
     excisable: false,
-    consumer: "mail recall and correspondence history",
+    purpose: "mail recall and correspondence history",
     class: Class::Open,
     parser: "rfc5322-mail",
     parser_version: 1,
@@ -364,7 +364,7 @@ impl ImapMail {
                 },
                 revision: RevisionChange::Same,
                 material: None,
-                cursor_unchanged: serde_json::to_value(next).expect("cursor serializes"),
+                cursor_without_material: serde_json::to_value(next).expect("cursor serializes"),
             });
         };
         let mut bytes = Vec::new();
@@ -423,10 +423,10 @@ impl ImapMail {
                         .map(|cursor| serde_json::to_value(cursor).expect("cursor serializes"))
                 }),
                 aligned: false,
-                vanished: Vec::new(),
+                removed: Vec::new(),
                 memory: None,
             }),
-            cursor_unchanged: Value::Null,
+            cursor_without_material: Value::Null,
         })
     }
 }
@@ -438,9 +438,9 @@ pub fn source() -> DeclaredSource<super::mail::MailParser> {
     }
 }
 
-/// `--source imap=CONFIG.json`: live mail from the account CONFIG describes,
+/// `--read imap=CONFIG.json`: live mail from the account CONFIG describes,
 /// the messages new since the last read.
-pub const KIND: crate::binding::InputKind = crate::binding::InputKind {
+pub const FORMAT: crate::binding::InputFormat = crate::binding::InputFormat {
     name: "imap",
     specs: || vec![&SPEC],
     plan: Some(|input, settings| {

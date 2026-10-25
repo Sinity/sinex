@@ -223,7 +223,7 @@ pub struct CalendarEvent {
 }
 
 pub mod record;
-pub use record::AccountRecord;
+pub use record::AccountRow;
 
 /// A location fix an account recorded (Google Location History): where the
 /// device was, how sure it was, and what it thought the operator was doing.

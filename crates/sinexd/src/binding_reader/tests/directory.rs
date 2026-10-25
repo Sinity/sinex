@@ -25,7 +25,7 @@ async fn empty_directory_files_keep_distinct_paths_bytes_and_locations_through_r
     let sink = Sink(ctx.blobs.clone());
     let binding = Binding::of(&notes::SPEC, &root, Settings::new("synthetic"));
     let name = binding.name.clone();
-    let mut b = Bound::new(&notes::KIND, binding).unwrap();
+    let mut b = Bound::new(&notes::FORMAT, binding).unwrap();
     b.source = Box::new(SmallBatches(b.source));
     let mut bindings = vec![b];
     let (_stop, stop) = watch::channel(false);

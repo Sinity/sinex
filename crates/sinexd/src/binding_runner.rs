@@ -1,5 +1,5 @@
 //! The binding runner: every binding the sources configuration enables, read
-//! continuously through the writer. Bindings are planned by their source's kind
+//! continuously through the writer. Bindings are planned by their source's format
 //! from the configured paths, recorded with their settings, and read in turn; a
 //! binding that fails is reported and retried on the next round, never stopping
 //! the others or the daemon. Private mode pauses every read until it is off
@@ -9,7 +9,7 @@ use crate::material_sink::Sink;
 use crate::writer::WriterHandle;
 use serde::Deserialize;
 use serde_json::Value;
-use sinex_sources::{Binding, InputKind, Settings, sources};
+use sinex_sources::{Binding, InputFormat, Settings, sources};
 use sinex_store::{Blobs, runs};
 use sqlx::PgConnection;
 use std::collections::BTreeMap;
@@ -38,11 +38,11 @@ pub struct SourceConfig {
     /// The source's own options.
     #[serde(default)]
     pub options: Value,
-    /// The kind to read it with, when several read this source name (the
+    /// The format to read it with, when several read this source name (the
     /// live clipboard spool and the Sinnix lake's clipboard lane); the first
     /// registered otherwise.
     #[serde(default)]
-    pub kind: Option<String>,
+    pub format: Option<String>,
 }
 
 impl Config {
@@ -53,19 +53,17 @@ impl Config {
 }
 
 /// The bindings `config` enables on `host`: each enabled source planned by
-/// its kind from each of its paths, keeping the bindings of that source.
-pub fn plan(config: &Config, host: &str) -> Result<Vec<(&'static InputKind, Binding)>, String> {
+/// its format from each of its paths, keeping the bindings of that source.
+pub fn plan(config: &Config, host: &str) -> Result<Vec<(&'static InputFormat, Binding)>, String> {
     let mut out = Vec::new();
     for (name, source) in config.sources.iter().filter(|(_, s)| s.enable) {
-        let kind = match &source.kind {
-            Some(k) => sources::input_kind(k)
+        let format = match &source.format {
+            Some(k) => sources::format(k)
                 .filter(|k| k.reads(name))
-                .ok_or_else(|| format!("{name}: kind {k} does not read it"))?,
-            None => {
-                sources::input_kind_of(name).ok_or_else(|| format!("{name}: no such source"))?
-            }
+                .ok_or_else(|| format!("{name}: format {k} does not read it"))?,
+            None => sources::format_of(name).ok_or_else(|| format!("{name}: no such source"))?,
         };
-        let plan = kind
+        let plan = format
             .plan
             .ok_or_else(|| format!("{name}: not read from a configured path"))?;
         let settings = Settings {
@@ -78,7 +76,7 @@ pub fn plan(config: &Config, host: &str) -> Result<Vec<(&'static InputKind, Bind
                 plan(Path::new(path), &settings)?
                     .into_iter()
                     .filter(|b| b.source == *name)
-                    .map(|b| (kind, b)),
+                    .map(|b| (format, b)),
             );
         }
     }
@@ -91,14 +89,14 @@ pub async fn run(
     blobs: Blobs,
     writer: WriterHandle,
     host: String,
-    planned: Vec<(&'static InputKind, Binding)>,
+    planned: Vec<(&'static InputFormat, Binding)>,
     interval: Duration,
     mut stop: watch::Receiver<bool>,
 ) -> Result<(), String> {
     let mut bound = Vec::new();
-    for (kind, binding) in planned {
+    for (format, binding) in planned {
         let name = binding.name.clone();
-        match Bound::new(kind, binding) {
+        match Bound::new(format, binding) {
             Ok(b) => bound.push(b),
             Err(e) => eprintln!("sinexd: binding {name}: {e}"),
         }

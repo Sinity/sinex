@@ -19,7 +19,7 @@ fn batch(tag: &str) -> Batch {
                 material: MaterialId::new(),
                 anchor: 0,
             },
-            ordinal: 0,
+            output_index: 0,
         },
         ReadingOrder(0),
         [1; 32],
@@ -285,7 +285,7 @@ async fn a_batch_whose_bytes_are_not_stored_is_refused(db: devkit::pg::TestDatab
         run: RunId::new(),
         kind: BatchKind::Source(Box::new(sinex_model::SourceProgress {
             binding: "synthetic".into(),
-            material_keys: Vec::new(),
+            data_keys: Vec::new(),
             input: sinex_model::InputRef {
                 kind: "file".into(),
                 locator: "synthetic".into(),

@@ -9,14 +9,14 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
-const HOST: &str = "laws";
+const HOST: &str = "end-to-end";
 
 /// A directory of inputs, removed afterwards.
 struct Dir(PathBuf);
 
 impl Dir {
     fn new() -> Self {
-        let d = std::env::temp_dir().join(format!("sinex-laws-{}", uuid::Uuid::now_v7()));
+        let d = std::env::temp_dir().join(format!("sinex-end-to-end-{}", uuid::Uuid::now_v7()));
         std::fs::create_dir_all(&d).unwrap();
         Self(d)
     }
@@ -53,7 +53,7 @@ fn atuin_db(path: &Path, rows: &[AtuinRow]) {
     .unwrap();
     for (id, start, duration, exit, command, deleted) in rows {
         c.execute(
-            "INSERT INTO history VALUES (?1, ?2, ?3, ?4, ?5, '/', 's', 'laws', ?6)",
+            "INSERT INTO history VALUES (?1, ?2, ?3, ?4, ?5, '/', 's', 'end-to-end', ?6)",
             rusqlite::params![id, start * 1_000_000_000, duration, exit, command, deleted],
         )
         .unwrap();
@@ -103,10 +103,10 @@ impl Target {
     fn backfill(&self, zsh: Option<&Path>, atuin: Option<&Path>) -> String {
         let mut c = self.sinexd(&["backfill", "--host", HOST]);
         if let Some(z) = zsh {
-            c.arg("--source").arg(format!("zsh={}", z.display()));
+            c.arg("--read").arg(format!("zsh={}", z.display()));
         }
         if let Some(a) = atuin {
-            c.arg("--source").arg(format!("atuin={}", a.display()));
+            c.arg("--read").arg(format!("atuin={}", a.display()));
         }
         finish(&mut c)
     }
@@ -153,7 +153,7 @@ struct Reading {
 
 async fn live(conn: &mut PgConnection) -> BTreeMap<String, Reading> {
     let rows = sqlx::query(
-        r#"SELECT e.id, e.source || ' ' || e.event_type || ' ' || coalesce(e.equivalence_key, e.material_id::text || '@' || e.anchor || '#' || e.ordinal) AS k,
+        r#"SELECT e.id, e.source || ' ' || e.event_type || ' ' || coalesce(e.equivalence_key, e.material_id::text || '@' || e.anchor || '#' || e.output_index) AS k,
                   e.payload::text AS p, e.ts_orig::text AS t, encode(e.record_hash, 'hex') AS h
            FROM core.events e
            WHERE e.id IN (SELECT event_id FROM core.live_equivalence UNION ALL SELECT event_id FROM core.live_locations)"#,
@@ -202,8 +202,8 @@ async fn consistent(conn: &mut PgConnection) {
     let disagree = scalar(
         conn,
         "SELECT count(*) FROM core.live_locations l JOIN core.events e ON e.id = l.event_id
-         WHERE (e.material_id, e.anchor, e.event_type, e.ordinal, e.reading_order, e.record_hash)
-               IS DISTINCT FROM (l.material_id, l.anchor, l.event_type, l.ordinal, l.reading_order, l.record_hash)",
+         WHERE (e.material_id, e.anchor, e.event_type, e.output_index, e.reading_order, e.record_hash)
+               IS DISTINCT FROM (l.material_id, l.anchor, l.event_type, l.output_index, l.reading_order, l.record_hash)",
     )
     .await
         + scalar(
@@ -289,7 +289,7 @@ async fn replay_keeps_occurrences_and_one_live_reading() {
     let per_occurrence = scalar(
         &mut c,
         &format!(
-            "SELECT count(*) FROM (SELECT source, event_type, coalesce(equivalence_key, material_id::text || anchor || '#' || ordinal) k, count(*) n
+            "SELECT count(*) FROM (SELECT source, event_type, coalesce(equivalence_key, material_id::text || anchor || '#' || output_index) k, count(*) n
              FROM core.events GROUP BY 1, 2, 3) g WHERE n <> {}",
             N + 1
         ),
@@ -541,7 +541,7 @@ async fn rows_that_change_are_read_to_their_final_values() {
     .await
     .unwrap();
     assert_eq!(removed.get::<String, _>("s"), "removed");
-    let excluded = scalar(&mut c, "SELECT count(*) FROM core.hidden_occurrences").await;
+    let excluded = scalar(&mut c, "SELECT count(*) FROM core.hidden_records").await;
     assert_eq!(excluded, 0, "a source deletion is not an exclusion");
     consistent(&mut c).await;
 }
@@ -663,7 +663,7 @@ async fn dry_runs_change_nothing_and_shared_bytes_survive() {
     ] {
         finish(
             t.sinexd(&["backfill", "--host", HOST])
-                .arg("--source")
+                .arg("--read")
                 .arg(format!("clipboard={}", spool.display())),
         );
     }
@@ -776,7 +776,7 @@ async fn a_second_writer_is_refused() {
             "backfill",
             "--host",
             HOST,
-            "--source",
+            "--read",
             &format!("zsh={}", zsh.display()),
         ])
         .output()

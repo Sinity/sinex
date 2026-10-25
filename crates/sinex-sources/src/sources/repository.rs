@@ -19,7 +19,7 @@ pub const SPEC: SourceSpec = SourceSpec {
     name: "code.git",
     driver: Driver::ApiCursor,
     excisable: false,
-    consumer: "work episodes, project attribution and recall",
+    purpose: "work episodes, project attribution and recall",
     class: Class::Open,
     parser: "git-commits",
     parser_version: 1,
@@ -168,8 +168,8 @@ pub fn driver(path: PathBuf, host: String) -> ApiCursor<Repository> {
     }
 }
 
-/// `--source repository=PATH`: a local repository's commits.
-pub const KIND: crate::binding::InputKind = crate::binding::InputKind {
+/// `--read repository=PATH`: a local repository's commits.
+pub const FORMAT: crate::binding::InputFormat = crate::binding::InputFormat {
     name: "repository",
     specs: || vec![&SPEC],
     plan: Some(|input, settings| Ok(crate::binding::single(&SPEC, input, settings))),

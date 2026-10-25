@@ -1,8 +1,8 @@
 //! Bindings: one instance of a source on one input, with the settings it was
-//! read with. A source module declares a [`InputKind`]: how to find its inputs,
+//! read with. A source module declares a [`InputFormat`]: how to find its inputs,
 //! how to build its parser and its driver for one binding, and, for live
 //! sources, how to capture into a spool. Backfill, the daemon's binding runner,
-//! `sinex-session`, replay and the NixOS catalog all work from the kinds, so
+//! `sinex-session`, replay and the NixOS catalog all work from the formats, so
 //! adding a source touches only its own module (and one line in the registry
 //! list).
 use crate::drivers::append_file::{AppendFile, AppendState};
@@ -140,7 +140,7 @@ pub trait Reader: Send {
         None
     }
 
-    /// One stored material, newest first along its chain of parts. Returns
+    /// One stored material, newest first along its sequence of parts. Returns
     /// whether to go on with the one before it.
     fn restore(&mut self, _cursor: &Value, _material: StoredMaterial) -> Result<bool, DriverError> {
         Ok(false)
@@ -165,7 +165,7 @@ pub trait Reader: Send {
     }
 }
 
-/// How a kind finds its inputs: the bindings for `input`.
+/// How a format finds its inputs: the bindings for `input`.
 pub type Plan = fn(&Path, &Settings) -> Result<Vec<Binding>, String>;
 /// The parser of one binding.
 type SourceFor = fn(&Binding) -> Result<Box<dyn Source>, String>;
@@ -193,11 +193,11 @@ impl Reading {
 type ReaderFor = fn(&Binding) -> Result<Reading, String>;
 /// Live capture of one binding into its spool, until stopped or until the
 /// source ends; the number of captured lines or segments.
-pub type Capture = fn(&Binding, &crate::capture::Control) -> Result<u64, String>;
+pub type Capture = fn(&Binding, &crate::capture::CaptureStop) -> Result<u64, String>;
 
-/// A kind of input and the sources that read it: what `--source KIND=PATH`,
+/// An input format and the sources that read it: what `--read FORMAT=PATH`,
 /// `sources.json` and `sinex-session` name.
-pub struct InputKind {
+pub struct InputFormat {
     pub name: &'static str,
     pub specs: fn() -> Vec<&'static SourceSpec>,
     /// `None` for sources written only through another path (the API's
@@ -209,8 +209,8 @@ pub struct InputKind {
     pub capture: Option<Capture>,
 }
 
-impl InputKind {
-    /// Whether this kind reads `spec_name`.
+impl InputFormat {
+    /// Whether this format reads `spec_name`.
     pub fn reads(&self, spec_name: &str) -> bool {
         (self.specs)().iter().any(|s| s.name == spec_name)
     }
@@ -361,7 +361,7 @@ impl Reader for Appended {
             Some((id, Some(through))) if id == reference.id => through.min(reference.length),
             _ => reference.length,
         };
-        let records = crate::drivers::physical_records(material.bytes.as_ref(), self.driver.framer)
+        let records = crate::drivers::record_ranges(material.bytes.as_ref(), self.driver.framer)
             .map_err(|e| DriverError::Io(e.to_string()))?;
         let tail = self.tail.get_or_insert_with(Default::default);
         for (start, end) in records

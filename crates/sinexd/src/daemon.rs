@@ -7,13 +7,13 @@
 //! Built: the writer, the derivation runner for keyed and per-event
 //! derivations, the commit-log reader for read models, the confirmed-stream
 //! publisher and the NATS ingress with its have responder. Every commit wakes
-//! the driver, the reader and the publisher, and the API serves reads from its
+//! the runner, the reader and the publisher, and the API serves reads from its
 //! own pool and writes through the writer. The source tasks and signals are
 //! added here by their lanes.
 use crate::api::{self, Api};
 use crate::commit_reader::{self, Consumer, ReadModelRunner};
 use crate::dirty_keys::Registered;
-use crate::{derivation_runner, ingress, publisher, source_runner, writer};
+use crate::{binding_runner, derivation_runner, ingress, publisher, writer};
 use sinex_protocol::Subjects;
 use sinex_store::Blobs;
 use sqlx::{Connection, PgConnection};
@@ -29,7 +29,7 @@ const RUNNER_IDLE: Duration = Duration::from_secs(30);
 
 /// The trailing days of metric values are recomputed at least this often
 /// (new opportunity, such as time passing for a live source, changes cells
-/// without a commit); dirty days are recomputed whenever the driver settles.
+/// without a commit); dirty days are recomputed whenever the runner catches up.
 const METRICS_IDLE: Duration = Duration::from_secs(600);
 /// How often the binding runner reads every configured binding again.
 const BINDINGS_EVERY: Duration = Duration::from_secs(5);
@@ -41,7 +41,7 @@ pub struct Options {
     /// server requires them.
     pub nats: String,
     /// Subject root: `sinex` unless several deployments share a server.
-    pub subjects: String,
+    pub subject_root: String,
     pub host: String,
     pub api: ApiOptions,
     /// The sources configuration (`sources.json`) the binding runner reads.
@@ -65,7 +65,7 @@ async fn connect(url: &str) -> Result<PgConnection, String> {
 }
 
 pub async fn run(o: Options) -> Result<(), String> {
-    let subjects = Subjects::new(o.subjects.clone());
+    let subjects = Subjects::new(o.subject_root.clone());
     let blobs = Blobs::open(&o.store).map_err(|e| e.to_string())?;
     let tokens =
         api::Tokens::load(&o.api.tokens).map_err(|e| format!("{}: {e}", o.api.tokens.display()))?;
@@ -121,9 +121,9 @@ pub async fn run(o: Options) -> Result<(), String> {
         ("writer", Ok(()))
     });
 
-    // Every derivation runs in the driver: events from keyed and per-event
+    // Every derivation runs in the runner: events from keyed and per-event
     // derivations (screen text included), then the maintained metric values.
-    let driver = derivation_runner::DerivationRunner::start(
+    let runner = derivation_runner::DerivationRunner::start(
         connect(&o.database).await?,
         handle.clone(),
         sinex_derivations::keyed(),
@@ -141,8 +141,8 @@ pub async fn run(o: Options) -> Result<(), String> {
     let (w, mut c, s) = (wake.clone(), commits.clone(), stop.clone());
     tasks.spawn(async move {
         tokio::select! {
-            result = driver.run(w.clone(), RUNNER_IDLE, s) => ("derivation runner", result),
-            // Every commit wakes the driver.
+            result = runner.run(w.clone(), RUNNER_IDLE, s) => ("derivation runner", result),
+            // Every commit wakes the runner.
             () = async move {
                 while c.changed().await.is_ok() {
                     w.notify_one();
@@ -209,7 +209,7 @@ pub async fn run(o: Options) -> Result<(), String> {
 
     // The configured sources, read continuously by the binding runner.
     if let Some(file) = &o.sources {
-        let planned = source_runner::plan(&source_runner::Config::load(file)?, &o.host)?;
+        let planned = binding_runner::plan(&binding_runner::Config::load(file)?, &o.host)?;
         let (read_conn, b, w, host, s) = (
             connect(&o.database).await?,
             blobs.clone(),
@@ -220,7 +220,7 @@ pub async fn run(o: Options) -> Result<(), String> {
         tasks.spawn(async move {
             (
                 "binding runner",
-                source_runner::run(read_conn, b, w, host, planned, BINDINGS_EVERY, s).await,
+                binding_runner::run(read_conn, b, w, host, planned, BINDINGS_EVERY, s).await,
             )
         });
     }

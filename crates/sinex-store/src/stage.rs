@@ -6,7 +6,7 @@ use sinex_model::{DbCheck, Event, Origin};
 use sqlx::PgConnection;
 use std::fmt::Write;
 
-pub(crate) const COLUMNS: &str = "ord, id, event_type, source, material_id, anchor, ordinal, parents, ts_orig, ts_quality, payload, equivalence_key, replace_rule, reading_order, record_hash, record_state, class, support";
+pub(crate) const COLUMNS: &str = "ord, id, event_type, source, material_id, anchor, output_index, parents, ts_orig, ts_quality, payload, equivalence_key, replace_rule, reading_order, record_hash, record_state, class";
 
 /// Copy `events` (with their batch-order numbers) into the stage table, which
 /// the caller has truncated in the same transaction.
@@ -24,15 +24,18 @@ pub(crate) async fn copy(connection: &mut PgConnection, events: &[(i32, &Event)]
 }
 
 fn row(buf: &mut String, ord: i32, e: &Event) -> Result<()> {
-    let (material, anchor, ordinal, parents) = match &e.origin {
-        Origin::Record { location, ordinal } => (
+    let (material, anchor, output_index, parents) = match &e.origin {
+        Origin::Record {
+            location,
+            output_index,
+        } => (
             Some(location.material.0.to_string()),
             Some(
                 i64::try_from(location.anchor)
                     .map_err(|_| Error::Invalid("anchor beyond i64".into()))?
                     .to_string(),
             ),
-            *ordinal,
+            *output_index,
             None,
         ),
         Origin::Derived { parents } => (
@@ -60,14 +63,14 @@ fn row(buf: &mut String, ord: i32, e: &Event) -> Result<()> {
     for b in e.record_hash {
         let _ = write!(hash, "{b:02x}");
     }
-    let fields: [Option<String>; 18] = [
+    let fields: [Option<String>; 17] = [
         Some(ord.to_string()),
         Some(e.id.0.to_string()),
         Some(e.event_type.to_owned()),
         Some(e.source.clone()),
         material,
         anchor,
-        Some(ordinal.to_string()),
+        Some(output_index.to_string()),
         parents,
         ts_orig,
         Some(e.ts_orig.quality.as_db().to_owned()),
@@ -78,7 +81,6 @@ fn row(buf: &mut String, ord: i32, e: &Event) -> Result<()> {
         None, // record_hash, written pre-escaped below
         Some(e.record_state.as_db().to_owned()),
         Some(e.class.as_db().to_owned()),
-        e.support.as_ref().map(|s| s.to_string()),
     ];
     for (i, field) in fields.iter().enumerate() {
         if i > 0 {

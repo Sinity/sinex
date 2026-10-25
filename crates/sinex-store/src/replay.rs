@@ -1,10 +1,10 @@
 //! Replay's statements. A replay re-reads stored materials with the current
 //! parsers and rules: the readings it re-reads are archived and the new ones
-//! admitted, one transaction per material chain, so a failure changes nothing
-//! and a crash leaves every chain either replayed or untouched. Finished chains
+//! admitted, one transaction per part sequence, so a failure changes nothing
+//! and a crash leaves every sequence either replayed or untouched. Finished sequences
 //! are journaled; a resumed replay skips them.
 //!
-//! The comparison lane is the same transaction rolled back: the writer runs
+//! A comparison is the same transaction rolled back: the writer runs
 //! the whole replay, reads the [`Diff`] between the archived and the new live
 //! readings, and discards it, so a parser, rule or derivation change is seen
 //! exactly as applying it would make it, without replacing anything.
@@ -14,8 +14,8 @@ use sinex_model::OperationId;
 use sqlx::PgConnection;
 use uuid::Uuid;
 
-/// Record the replay operation (idempotent: every chain's transaction calls
-/// it, so the row exists once any chain commits).
+/// Record the replay operation (idempotent: every sequence's transaction calls
+/// it, so the row exists once any sequence commits).
 pub async fn begin(
     conn: &mut PgConnection,
     operation: OperationId,
@@ -33,10 +33,14 @@ pub async fn begin(
     Ok(())
 }
 
-/// Mark a chain replayed, in the chain's own transaction.
-pub async fn chain_done(conn: &mut PgConnection, operation: OperationId, root: Uuid) -> Result<()> {
+/// Mark a sequence replayed, in the sequence's own transaction.
+pub async fn sequence_done(
+    conn: &mut PgConnection,
+    operation: OperationId,
+    root: Uuid,
+) -> Result<()> {
     sqlx::query!(
-        "INSERT INTO core.replay_chains (operation_id, chain_root) VALUES ($1, $2) ON CONFLICT DO NOTHING",
+        "INSERT INTO core.replayed_sequences (operation_id, first_part) VALUES ($1, $2) ON CONFLICT DO NOTHING",
         operation.0,
         root,
     )
@@ -45,10 +49,10 @@ pub async fn chain_done(conn: &mut PgConnection, operation: OperationId, root: U
     Ok(())
 }
 
-/// Chains an earlier run of this operation already replayed.
-pub async fn chains_done(conn: &mut PgConnection, operation: OperationId) -> Result<Vec<Uuid>> {
+/// Sequences an earlier run of this operation already replayed.
+pub async fn sequences_done(conn: &mut PgConnection, operation: OperationId) -> Result<Vec<Uuid>> {
     Ok(sqlx::query_scalar!(
-        "SELECT chain_root FROM core.replay_chains WHERE operation_id = $1",
+        "SELECT first_part FROM core.replayed_sequences WHERE operation_id = $1",
         operation.0
     )
     .fetch_all(&mut *conn)
@@ -69,7 +73,7 @@ pub async fn scope_of(conn: &mut PgConnection, operation: OperationId) -> Result
 #[derive(Clone, Debug, PartialEq)]
 pub struct Change {
     pub event_type: String,
-    /// The equivalence key, or `material:anchor:ordinal` for keyless types.
+    /// The equivalence key, or `material:anchor:output_index` for keyless types.
     pub record: String,
     pub before: Option<Value>,
     pub after: Option<Value>,
@@ -97,13 +101,13 @@ pub async fn diff(
     let rows = sqlx::query!(
         r#"WITH old AS (
              SELECT e.source, e.event_type,
-               coalesce(e.equivalence_key, e.material_id::text || ':' || e.anchor || ':' || e.ordinal) AS record,
+               coalesce(e.equivalence_key, e.material_id::text || ':' || e.anchor || ':' || e.output_index) AS record,
                e.payload
              FROM audit.archived a JOIN core.events e ON e.id = a.event_id
              WHERE a.operation_id = $1 AND a.reason = 'replay'),
            new AS (
              SELECT e.source, e.event_type,
-               coalesce(e.equivalence_key, e.material_id::text || ':' || e.anchor || ':' || e.ordinal) AS record,
+               coalesce(e.equivalence_key, e.material_id::text || ':' || e.anchor || ':' || e.output_index) AS record,
                e.payload
              FROM core.events e
              WHERE e.id = ANY($2)
@@ -186,14 +190,14 @@ pub async fn select(
 }
 
 /// Every material of the given inputs, plus the given input-less materials,
-/// so the caller can walk each chain from its first part.
-pub async fn chains(
+/// so the caller can walk each sequence from its first part.
+pub async fn materials_of(
     conn: &mut PgConnection,
     inputs: &[Uuid],
     loose: &[Uuid],
 ) -> Result<Vec<Stored>> {
     Ok(sqlx::query!(
-        r#"SELECT m.id, m.input_id, m.previous_part_id, m.part_index, m.blob, m.durable_bytes, m.parser, m.parser_version,
+        r#"SELECT m.id, m.input_id, m.previous_part_id, m.part_index, m.blob, m.length, m.parser, m.parser_version,
                   m.manifest, i.binding AS "binding?", i.host AS "host?"
            FROM raw.materials m LEFT JOIN raw.inputs i ON i.id = m.input_id
            WHERE m.input_id = ANY($1) OR m.id = ANY($2)
@@ -210,7 +214,7 @@ pub async fn chains(
         previous: r.previous_part_id,
         part_index: r.part_index,
         blob: r.blob,
-        length: r.durable_bytes,
+        length: r.length,
         parser: r.parser,
         parser_version: r.parser_version,
         manifest: r.manifest,

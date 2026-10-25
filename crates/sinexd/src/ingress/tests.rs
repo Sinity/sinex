@@ -3,7 +3,7 @@ use crate::writer;
 use serde_json::json;
 use sinex_model::{InputRef, MaterialId, RecordLocation};
 use sinex_protocol::Confirmed;
-use sinex_transport::spool;
+use sinex_transport::frame_bytes;
 use sqlx::Connection;
 use std::sync::Arc;
 
@@ -83,7 +83,7 @@ impl Harness {
         let mut spooled = Vec::new();
         match frame {
             Ingress::Material { material, .. } => spooled.push(material.blob.clone()),
-            Ingress::Indirect { blob, .. } => {
+            Ingress::LargeFrame { blob, .. } => {
                 spooled.push(blob.clone());
                 if let Ok(bytes) = std::fs::read(self.fixture_path(blob))
                     && let Ok(Ingress::Material { material, .. }) = serde_json::from_slice(&bytes)
@@ -97,7 +97,7 @@ impl Harness {
             let Ok(bytes) = std::fs::read(self.fixture_path(&blob)) else {
                 continue;
             };
-            if let Err(reason) = spool::stage(
+            if let Err(reason) = frame_bytes::write(
                 &self.store_dir,
                 producer,
                 frame.frame(),
@@ -149,14 +149,14 @@ impl Harness {
         serde_json::from_slice(&message.payload).unwrap()
     }
 
-    async fn have(&self, producer: &str, frames: &[&str]) -> Vec<Acknowledgment> {
-        let request = Have {
+    async fn recorded(&self, producer: &str, frames: &[&str]) -> Vec<Acknowledgment> {
+        let request = RecordedQuery {
             frames: frames.iter().map(|s| s.to_string()).collect(),
         };
         let reply = self
             .client
             .request(
-                self.subjects.have(producer),
+                self.subjects.recorded(producer),
                 serde_json::to_vec(&request).unwrap().into(),
             )
             .await
@@ -229,7 +229,7 @@ fn imported(material: MaterialId, anchor: u64, command: &str) -> ProducerEvent {
             "n": anchor
         }),
         location: Some(RecordLocation { material, anchor }),
-        ordinal: 0,
+        output_index: 0,
         parents: vec![],
         reading_order: 0,
         class: sinex_model::Class::Open,
@@ -274,11 +274,11 @@ async fn materials_then_events_are_admitted_and_acknowledged_once(db: devkit::pg
     assert_eq!(ack2.admitted, vec![]);
     assert_eq!(ack2.outcome["repeats"], 1);
 
-    let have = h.have("kitty", &["m1", "e1", "never-sent"]).await;
+    let have = h.recorded("kitty", &["m1", "e1", "never-sent"]).await;
     let names: Vec<&str> = have.iter().map(|a| a.frame.as_str()).collect();
     assert_eq!(names, ["m1", "e1"]);
     // Another producer's frames are not visible under this producer.
-    assert!(h.have("phone", &["e1"]).await.is_empty());
+    assert!(h.recorded("phone", &["e1"]).await.is_empty());
 }
 
 /// A synthetic Claude Code session as Polylogue sends it: the session file as
@@ -324,7 +324,7 @@ async fn an_ai_session_from_polylogue_is_ordinary_events(db: devkit::pg::TestDat
             event_type: event_type.into(),
             payload,
             location: at(anchor),
-            ordinal: 0,
+            output_index: 0,
             parents: vec![],
             reading_order: order,
             class: sinex_model::Class::Open,
@@ -399,7 +399,7 @@ async fn an_ai_session_from_polylogue_is_ordinary_events(db: devkit::pg::TestDat
     );
 
     let mut conn = PgConnection::connect(&h.url).await.unwrap();
-    let text = "events where kind = polylogue.session and payload.cwd ~ morrow";
+    let text = "events where event_type = polylogue.session and payload.cwd ~ morrow";
     let ctx = sinex_model::query::Context::new(
         jiff::Timestamp::now(),
         jiff::tz::TimeZone::UTC,
@@ -483,11 +483,11 @@ async fn invalid_frames_are_refused_and_recorded(db: devkit::pg::TestDatabase) {
     assert!(
         ack.refusal
             .unwrap()
-            .contains("neither in the content store nor in this frame's spool")
+            .contains("neither in the content store nor in this frame's directory")
     );
 
     // Refusals are recorded: asking again gets the same answer.
-    let have = h.have("kitty", &["f-type", "m-missing"]).await;
+    let have = h.recorded("kitty", &["f-type", "m-missing"]).await;
     assert_eq!(have.len(), 2);
     assert!(have.iter().all(|a| a.refusal.is_some()));
     assert_eq!(
@@ -630,7 +630,7 @@ async fn bytes_sent_in_chunks_register_a_material_and_failures_are_recorded(
     assert_eq!(ack.refusal, None, "{ack:?}");
     assert!(h.blobs.contains(&blob).unwrap());
     assert!(
-        !spool::directory(&h.store_dir, "node", "m-up").exists(),
+        !frame_bytes::directory(&h.store_dir, "node", "m-up").exists(),
         "a recorded frame's spool is removed"
     );
 
@@ -671,7 +671,7 @@ async fn an_indirect_frame_is_handled_as_the_frame_it_names(db: devkit::pg::Test
     };
     let body = serde_json::to_vec(&inner).unwrap();
     let blob = h.fixture_blob(&body);
-    let outer = Ingress::Indirect {
+    let outer = Ingress::LargeFrame {
         frame: "e-big".into(),
         blob: blob.clone(),
         length: body.len() as u64,
@@ -682,7 +682,7 @@ async fn an_indirect_frame_is_handled_as_the_frame_it_names(db: devkit::pg::Test
     assert_eq!(ack.admitted.len(), 1);
     // Bytes not in the spool, or an indirect frame standing for another
     // indirect frame, are refused.
-    let missing = Ingress::Indirect {
+    let missing = Ingress::LargeFrame {
         frame: "e-missing".into(),
         blob: format!("blake3:{}", blake3::hash(b"absent").to_hex()),
         length: 6,
@@ -693,7 +693,7 @@ async fn an_indirect_frame_is_handled_as_the_frame_it_names(db: devkit::pg::Test
     let ack = h
         .send(
             "kitty",
-            &Ingress::Indirect {
+            &Ingress::LargeFrame {
                 frame: "e-nested".into(),
                 blob: nested,
                 length: nested_body.len() as u64,

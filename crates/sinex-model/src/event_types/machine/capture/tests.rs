@@ -95,7 +95,7 @@ fn known_samples() -> Vec<(&'static str, Value)> {
 fn every_declared_event_lane_uses_concrete_fields_and_exact_wire_values() {
     for (lane, payload) in known_samples() {
         let original = row(lane, payload);
-        let decoded: CaptureObserved = serde_json::from_value(original.clone()).unwrap();
+        let decoded: LakeObservation = serde_json::from_value(original.clone()).unwrap();
         assert!(
             !matches!(decoded.payload(), CapturePayload::Unknown(_)),
             "{lane}"
@@ -110,7 +110,7 @@ fn missing_null_large_numbers_and_unicode_remain_distinct() {
         "clipboard",
         json!({"text":"synthetic\r\nł","size":9007199254740993_i64,"source_window":null}),
     );
-    let decoded: CaptureObserved = serde_json::from_value(original.clone()).unwrap();
+    let decoded: LakeObservation = serde_json::from_value(original.clone()).unwrap();
     let CapturePayload::Selection(selection) = decoded.payload() else {
         panic!("not selection")
     };
@@ -154,7 +154,7 @@ fn malformed_known_fields_do_not_fall_through_to_unknown() {
         ("a11y", json!({"kind":4})),
     ] {
         assert!(
-            serde_json::from_value::<CaptureObserved>(row(lane, payload.clone())).is_err(),
+            serde_json::from_value::<LakeObservation>(row(lane, payload.clone())).is_err(),
             "{lane}: {payload}"
         );
     }
@@ -168,14 +168,14 @@ fn unknown_lanes_and_representation_kinds_remain_explicit() {
         ("audio-topology", json!({"kind":"future-kind","id":[]})),
     ] {
         let original = row(lane, payload);
-        let decoded: CaptureObserved = serde_json::from_value(original.clone()).unwrap();
+        let decoded: LakeObservation = serde_json::from_value(original.clone()).unwrap();
         assert!(matches!(decoded.payload(), CapturePayload::Unknown(_)));
         let output = serde_json::to_value(decoded).unwrap();
         assert_eq!(output["payload"], original["payload"]);
         assert_eq!(output["untyped"], true);
         assert_eq!(
             serde_json::to_value(
-                serde_json::from_value::<CaptureObserved>(output.clone()).unwrap()
+                serde_json::from_value::<LakeObservation>(output.clone()).unwrap()
             )
             .unwrap(),
             output
@@ -219,7 +219,7 @@ fn unknown_fields_and_open_hint_values_have_exact_output_pointers() {
     ] {
         let original = row(lane, payload);
         let output = serde_json::to_value(
-            serde_json::from_value::<CaptureObserved>(original.clone()).unwrap(),
+            serde_json::from_value::<LakeObservation>(original.clone()).unwrap(),
         )
         .unwrap();
         assert_eq!(output["payload"], original["payload"]);
@@ -233,7 +233,7 @@ fn markers_in_the_input_do_not_override_source_values() {
     original["untyped"] = json!(true);
     original["unknown_fields"] = json!(["/payload/brightness"]);
     let output =
-        serde_json::to_value(serde_json::from_value::<CaptureObserved>(original).unwrap()).unwrap();
+        serde_json::to_value(serde_json::from_value::<LakeObservation>(original).unwrap()).unwrap();
     assert!(output.get("untyped").is_none());
     assert!(output.get("unknown_fields").is_none());
 }
@@ -241,13 +241,13 @@ fn markers_in_the_input_do_not_override_source_values() {
 #[devkit::test]
 fn registration_keeps_location_identity_repeat_rule_and_capture_time() {
     use crate::{EventPayload, KeyKind, ReplaceRule, TimeQuality};
-    assert_eq!(CaptureObserved::KEY, KeyKind::Location);
-    assert_eq!(CaptureObserved::REPLACE, ReplaceRule::SuppressRepeat);
+    assert_eq!(LakeObservation::KEY, KeyKind::Location);
+    assert_eq!(LakeObservation::REPLACE, ReplaceRule::SuppressRepeat);
     let original = row("monitor", json!({"brightness":50}));
-    let record: CaptureObserved = serde_json::from_value(original.clone()).unwrap();
+    let record: LakeObservation = serde_json::from_value(original.clone()).unwrap();
     assert_eq!(record.ts_orig().at, Some(record.observed_at));
     assert_eq!(record.ts_orig().quality, TimeQuality::Captured);
-    let kind = crate::event_types::find("capture.observed").unwrap();
+    let kind = crate::event_types::find("lake.observed").unwrap();
     let schema = (kind.json_schema)();
     assert!(
         schema["$defs"]["Monitor"]["properties"]
@@ -260,7 +260,7 @@ fn registration_keeps_location_identity_repeat_rule_and_capture_time() {
             material: crate::MaterialId::new(),
             anchor: 7,
         },
-        ordinal: 0,
+        output_index: 0,
     };
     let event = (kind.build)(
         &original,

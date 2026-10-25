@@ -219,7 +219,7 @@ fn one_forward_decode_and_record_write_serve_distinct_logical_sources() {
         assert_eq!(
             sink.writes.load(Ordering::Relaxed),
             1 + record_materials as u64 / 2,
-            "shared physical record bodies are installed once, logical material IDs remain distinct"
+            "shared record bytes are stored once, each binding keeps its own material IDs"
         );
         let mut uncompressed = Vec::new();
         if gzip {
@@ -229,7 +229,7 @@ fn one_forward_decode_and_record_write_serve_distinct_logical_sources() {
         } else {
             uncompressed = raw.clone();
         }
-        // tar may stop before trailing zero padding. The useful physical-work property
+        // tar may stop before trailing zero padding. The useful work property
         // is that adding a logical route does not add a decoding pass.
         assert!(work.decoded_bytes <= uncompressed.len() as u64);
         assert!(work.decoded_bytes >= 300_000 + points(400).len() as u64);
@@ -511,7 +511,7 @@ fn zip_members_keep_exact_ranges_and_long_plain_records_stay_whole() {
                     }
                 }
             } else {
-                cursor = acquired.cursor_unchanged;
+                cursor = acquired.cursor_without_material;
             }
             Ok(true)
         },

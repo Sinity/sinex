@@ -14,7 +14,7 @@
           "text": "---\r\ntitle: Weekly review\r\nid: areas.review.weekly\r\ntags: [review, \"#planning\"]\r\n---\r\n# Heading is not a tag\r\nBody with #inline-tag and [[Other Note|alias]] and [[Other Note#part]] and [[Third]].\r\n",
           "size": 197,
           "modified_at": "2023-11-14T22:13:20Z",
-          "vanished_at": null,
+          "removed_at": null,
           "title": "Weekly review",
           "note_id": "areas.review.weekly",
           "tags": [

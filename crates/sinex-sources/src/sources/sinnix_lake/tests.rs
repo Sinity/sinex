@@ -16,7 +16,7 @@ fn line(lane: &str, seq: i64) -> Map<String, Value> {
 #[devkit::test]
 fn reads_the_envelope_under_the_catalog_source() {
     let p = EnvelopeParser {
-        lane: lane("desktop.clipboard").unwrap(),
+        lake_source: lake_source("desktop.clipboard").unwrap(),
     };
     let (out, ()) = p
         .parse(&line("primary", 7), &(), &crate::RecordContext::none())
@@ -36,7 +36,7 @@ fn reads_the_envelope_under_the_catalog_source() {
 #[devkit::test]
 fn unbound_lanes_and_bad_envelopes_fail() {
     let p = EnvelopeParser {
-        lane: lane("desktop.clipboard").unwrap(),
+        lake_source: lake_source("desktop.clipboard").unwrap(),
     };
     assert!(
         p.parse(&line("mpris", 1), &(), &crate::RecordContext::none())
@@ -53,7 +53,7 @@ fn unbound_lanes_and_bad_envelopes_fail() {
 #[devkit::test]
 fn network_flows_are_typed_events() {
     let p = EnvelopeParser {
-        lane: lane("network.netflow").unwrap(),
+        lake_source: lake_source("network.netflow").unwrap(),
     };
     let mut flow = line("netflow", 1);
     flow.insert(
@@ -86,24 +86,28 @@ fn day_files_skip_index_and_sidecars() {
     ] {
         std::fs::write(dir.join(f), b"").unwrap();
     }
-    let files = day_files(&root, lane("desktop.notification").unwrap());
+    let files = day_files(&root, lake_source("desktop.notifications").unwrap());
     assert_eq!(files.len(), 1);
     assert!(files[0].ends_with("notifications-20261001.jsonl"));
 }
 
 #[devkit::test]
 fn source_names_and_parsers_are_unique() {
-    let mut names: Vec<_> = LANES.iter().map(|l| l.spec.name).collect();
+    let mut names: Vec<_> = LAKE_SOURCES.iter().map(|l| l.spec.name).collect();
     names.sort_unstable();
     names.dedup();
-    assert_eq!(names.len(), LANES.len());
-    assert!(LANES.iter().all(|l| l.spec.parser.ends_with(l.spec.name)));
+    assert_eq!(names.len(), LAKE_SOURCES.len());
+    assert!(
+        LAKE_SOURCES
+            .iter()
+            .all(|l| l.spec.parser.ends_with(l.spec.name))
+    );
 }
 
 #[devkit::test]
 fn known_payload_failures_are_not_untyped_successes() {
     let parser = EnvelopeParser {
-        lane: lane("desktop.clipboard").unwrap(),
+        lake_source: lake_source("desktop.clipboard").unwrap(),
     };
     let mut bad = line("clipboard", 1);
     bad.insert("payload".into(), json!({"text":4}));

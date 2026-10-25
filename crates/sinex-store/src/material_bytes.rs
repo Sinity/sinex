@@ -35,7 +35,7 @@ pub async fn reference(
     material: MaterialId,
 ) -> Result<Option<sinex_model::MaterialRef>> {
     let Some(row) = sqlx::query!(
-        "SELECT id, input_id, blob, durable_bytes, part_index, previous_part_id, parser, parser_version, manifest FROM raw.materials WHERE id = $1",
+        "SELECT id, input_id, blob, length, part_index, previous_part_id, parser, parser_version, manifest FROM raw.materials WHERE id = $1",
         material.0,
     ).fetch_optional(&mut *conn).await? else { return Ok(None); };
     let invalid = || {
@@ -47,7 +47,7 @@ pub async fn reference(
         id: MaterialId(row.id),
         input: row.input_id.map(sinex_model::InputId),
         blob: row.blob,
-        length: u64::try_from(row.durable_bytes).map_err(|_| invalid())?,
+        length: u64::try_from(row.length).map_err(|_| invalid())?,
         part_index: u32::try_from(row.part_index).map_err(|_| invalid())?,
         previous_part: row.previous_part_id.map(MaterialId),
         parser: row.parser,
@@ -56,25 +56,25 @@ pub async fn reference(
     }))
 }
 
-/// Up to `count` parts of a chain, newest first: `newest` and the parts before
+/// Up to `count` parts of a sequence, newest first: `newest` and the parts before
 /// it, each with the input revision it belongs to. The next page starts at the
 /// last part's `previous_part`. A part names its previous part only once that
-/// part is stored, and the link is never changed, so a chain has no cycle.
+/// part is stored, and the link is never changed, so a sequence has no cycle.
 pub async fn parts_from(
     conn: &mut PgConnection,
     newest: MaterialId,
     count: i32,
 ) -> Result<Vec<(sinex_model::MaterialRef, Option<uuid::Uuid>)>> {
     let rows = sqlx::query!(
-        r#"WITH RECURSIVE chain AS (
+        r#"WITH RECURSIVE sequence AS (
              SELECT id, previous_part_id, 1 AS depth FROM raw.materials WHERE id = $1
              UNION ALL
              SELECT m.id, m.previous_part_id, c.depth + 1
-             FROM raw.materials m JOIN chain c ON m.id = c.previous_part_id
+             FROM raw.materials m JOIN sequence c ON m.id = c.previous_part_id
              WHERE c.depth < $2)
-           SELECT m.id, m.input_id, m.revision_id, m.blob, m.durable_bytes, m.part_index,
+           SELECT m.id, m.input_id, m.revision_id, m.blob, m.length, m.part_index,
                   m.previous_part_id, m.parser, m.parser_version, m.manifest
-           FROM chain c JOIN raw.materials m ON m.id = c.id
+           FROM sequence c JOIN raw.materials m ON m.id = c.id
            ORDER BY c.depth"#,
         newest.0,
         count,
@@ -94,7 +94,7 @@ pub async fn parts_from(
                     id: MaterialId(row.id),
                     input: row.input_id.map(sinex_model::InputId),
                     blob: row.blob,
-                    length: u64::try_from(row.durable_bytes).map_err(|_| invalid())?,
+                    length: u64::try_from(row.length).map_err(|_| invalid())?,
                     part_index: u32::try_from(row.part_index).map_err(|_| invalid())?,
                     previous_part: row.previous_part_id.map(MaterialId),
                     parser: row.parser,

@@ -12,7 +12,7 @@ pub const REQUEST: SourceSpec = SourceSpec {
     name: "forecast.request",
     driver: Driver::ApiRequest,
     excisable: true,
-    consumer: "authored probability forecasts",
+    purpose: "authored probability forecasts",
     class: Class::Guarded,
     parser: "forecast-request",
     parser_version: 1,
@@ -130,13 +130,13 @@ pub fn request_material(
             reading_order: Box::new(move |_| ReadingOrder(order)),
             cursor_at: Box::new(|_| Ok(Value::Null)),
             aligned: false,
-            vanished: vec![],
+            removed: vec![],
             memory: None,
         }),
-        cursor_unchanged: Value::Null,
+        cursor_without_material: Value::Null,
     }
 }
-pub const KIND: crate::binding::InputKind = crate::binding::InputKind {
+pub const FORMAT: crate::binding::InputFormat = crate::binding::InputFormat {
     name: "forecast",
     specs: || vec![&REQUEST],
     plan: None,

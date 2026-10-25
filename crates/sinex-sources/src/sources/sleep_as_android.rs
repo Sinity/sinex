@@ -26,7 +26,7 @@ pub const SPEC: SourceSpec = SourceSpec {
     name: "health.sleep-as-android",
     driver: Driver::ExportArchive,
     excisable: false,
-    consumer: "sleep sessions and their phases",
+    purpose: "sleep sessions and their phases",
     class: Class::Open,
     parser: "sleep-as-android",
     parser_version: 3,
@@ -240,8 +240,8 @@ pub fn driver(path: PathBuf, host: String) -> ExportArchive {
     }
 }
 
-/// `--source sleep-as-android=PATH`: each Sleep as Android export in PATH.
-pub const KIND: crate::binding::InputKind = crate::binding::InputKind {
+/// `--read sleep-as-android=PATH`: each Sleep as Android export in PATH.
+pub const FORMAT: crate::binding::InputFormat = crate::binding::InputFormat {
     name: "sleep-as-android",
     specs: || vec![&SPEC],
     plan: Some(|input, settings| {

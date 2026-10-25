@@ -22,7 +22,7 @@ pub(crate) fn tables(c: &Checks) -> Vec<String> {
   run_id uuid NOT NULL,
   material_id uuid,
   anchor bigint,
-  ordinal smallint NOT NULL DEFAULT 0,
+  output_index smallint NOT NULL DEFAULT 0,
   parents uuid[],
   ts_orig timestamptz,
   ts_quality text NOT NULL {time_quality},
@@ -35,12 +35,11 @@ pub(crate) fn tables(c: &Checks) -> Vec<String> {
   record_hash bytea NOT NULL,
   record_state text NOT NULL DEFAULT 'present' {record_state},
   class text NOT NULL DEFAULT 'open' {class},
-  support jsonb,
   CONSTRAINT one_origin CHECK ((material_id IS NOT NULL AND anchor IS NOT NULL AND parents IS NULL) OR (material_id IS NULL AND anchor IS NULL AND parents IS NOT NULL AND cardinality(parents) > 0)),
   CONSTRAINT id_is_uuidv7 CHECK (uuid_extract_version(id) = 7),
   CONSTRAINT time_pair CHECK ((ts_orig IS NULL) = (ts_quality = 'unknown')),
   CONSTRAINT anchor_in_range CHECK (anchor IS NULL OR anchor >= 0),
-  CONSTRAINT ordinal_in_range CHECK (ordinal >= 0),
+  CONSTRAINT output_index_in_range CHECK (output_index >= 0),
   CONSTRAINT payload_object CHECK (jsonb_typeof(payload) = 'object'),
   CONSTRAINT hash_length CHECK (length(record_hash) = 32)",
         time_quality = c.time_quality,
@@ -56,11 +55,11 @@ pub(crate) fn tables(c: &Checks) -> Vec<String> {
   material_id uuid NOT NULL,
   anchor bigint NOT NULL,
   event_type text NOT NULL,
-  ordinal smallint NOT NULL,
+  output_index smallint NOT NULL,
   event_id uuid NOT NULL,
   reading_order bigint NOT NULL,
   record_hash bytea NOT NULL,
-  PRIMARY KEY (material_id, anchor, event_type, ordinal)
+  PRIMARY KEY (material_id, anchor, event_type, output_index)
 )".into(),
         // One live reading per equivalence key.
         "CREATE TABLE core.live_equivalence (
@@ -75,22 +74,22 @@ pub(crate) fn tables(c: &Checks) -> Vec<String> {
         // Found by event: removal of live readings, and readings at a location.
         "CREATE INDEX live_equivalence_event ON core.live_equivalence (event_id)".into(),
         "CREATE INDEX live_locations_event ON core.live_locations (event_id)".into(),
-        // Hidden occurrences, remembered so neither replay nor re-import
-        // brings them back.
-        "CREATE TABLE core.hidden_occurrences (
+        // Hidden records, remembered so neither replay nor re-import brings
+        // them back.
+        "CREATE TABLE core.hidden_records (
   id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
   source text NOT NULL,
   event_type text NOT NULL,
   equivalence_key text,
   material_id uuid,
   anchor bigint,
-  ordinal smallint,
+  output_index smallint,
   operation_id uuid NOT NULL,
   hidden_at timestamptz NOT NULL DEFAULT now(),
-  CONSTRAINT keyed_or_located CHECK ((equivalence_key IS NOT NULL AND material_id IS NULL AND anchor IS NULL AND ordinal IS NULL) OR (equivalence_key IS NULL AND material_id IS NOT NULL AND anchor IS NOT NULL AND ordinal IS NOT NULL))
+  CONSTRAINT keyed_or_located CHECK ((equivalence_key IS NOT NULL AND material_id IS NULL AND anchor IS NULL AND output_index IS NULL) OR (equivalence_key IS NULL AND material_id IS NOT NULL AND anchor IS NOT NULL AND output_index IS NOT NULL))
 )".into(),
-        "CREATE UNIQUE INDEX hidden_by_key ON core.hidden_occurrences (source, event_type, equivalence_key) WHERE equivalence_key IS NOT NULL".into(),
-        "CREATE UNIQUE INDEX hidden_by_location ON core.hidden_occurrences (material_id, anchor, event_type, ordinal) WHERE material_id IS NOT NULL".into(),
+        "CREATE UNIQUE INDEX hidden_by_key ON core.hidden_records (source, event_type, equivalence_key) WHERE equivalence_key IS NOT NULL".into(),
+        "CREATE UNIQUE INDEX hidden_by_location ON core.hidden_records (material_id, anchor, event_type, output_index) WHERE material_id IS NOT NULL".into(),
         // What an excision removed: identity and time, never the payload.
         "CREATE TABLE core.event_tombstones (
   event_id uuid PRIMARY KEY,
@@ -100,13 +99,13 @@ pub(crate) fn tables(c: &Checks) -> Vec<String> {
   operation_id uuid NOT NULL,
   removed_at timestamptz NOT NULL DEFAULT now()
 )".into(),
-        // Replay runs one transaction per material chain; a finished chain is
+        // Replay runs one transaction per part sequence; a finished sequence is
         // recorded here, so a resumed replay skips it.
-        "CREATE TABLE core.replay_chains (
+        "CREATE TABLE core.replayed_sequences (
   operation_id uuid NOT NULL,
-  chain_root uuid NOT NULL,
+  first_part uuid NOT NULL,
   completed_at timestamptz NOT NULL DEFAULT now(),
-  PRIMARY KEY (operation_id, chain_root)
+  PRIMARY KEY (operation_id, first_part)
 )".into(),
         // Commit order, read by derivations inside the daemon and by the publisher.
         "CREATE TABLE core.commit_log (
@@ -125,7 +124,7 @@ pub(crate) fn tables(c: &Checks) -> Vec<String> {
         "CREATE TABLE core.consumer_positions (
   consumer text PRIMARY KEY,
   commit_seq bigint NOT NULL,
-  notice_seq bigint NOT NULL DEFAULT 0,
+  change_seq bigint NOT NULL DEFAULT 0,
   updated_at timestamptz NOT NULL DEFAULT now()
 )".into(),
         // Where each published event sits in the confirmed stream, so an
@@ -156,7 +155,7 @@ pub(crate) fn tables(c: &Checks) -> Vec<String> {
         // the current state; archive_changes holds every transition.
         format!("CREATE TABLE audit.archived (
   event_id uuid PRIMARY KEY,
-  notice_seq bigint GENERATED ALWAYS AS IDENTITY UNIQUE,
+  change_seq bigint GENERATED ALWAYS AS IDENTITY UNIQUE,
   archived_seq bigint NOT NULL,
   reason text NOT NULL {archive_reason},
   replaced_by uuid,
@@ -166,7 +165,7 @@ pub(crate) fn tables(c: &Checks) -> Vec<String> {
         // Every visibility change at its writer position, so an as-of read
         // sees the visibility that held at that position.
         format!("CREATE TABLE audit.archive_changes (
-  notice_seq bigint PRIMARY KEY,
+  change_seq bigint PRIMARY KEY,
   event_id uuid NOT NULL,
   commit_seq bigint NOT NULL,
   archived boolean NOT NULL,
@@ -227,14 +226,6 @@ pub(crate) fn tables(c: &Checks) -> Vec<String> {
   kind text NOT NULL CHECK (kind IN ('appended', 'rewritten', 'replaced', 'truncated', 'snapshot')),
   started_at timestamptz NOT NULL DEFAULT now()
 )".into(),
-        "CREATE TABLE raw.revision_extents (
-  revision_id uuid NOT NULL REFERENCES raw.revisions(id),
-  position integer NOT NULL,
-  blob text NOT NULL REFERENCES core.blobs(hash),
-  blob_offset bigint NOT NULL,
-  length bigint NOT NULL,
-  PRIMARY KEY (revision_id, position)
-)".into(),
         "CREATE TABLE raw.materials (
   id uuid PRIMARY KEY,
   input_id uuid REFERENCES raw.inputs(id),
@@ -242,7 +233,7 @@ pub(crate) fn tables(c: &Checks) -> Vec<String> {
   part_index integer NOT NULL DEFAULT 0,
   previous_part_id uuid REFERENCES raw.materials(id),
   blob text NOT NULL REFERENCES core.blobs(hash),
-  durable_bytes bigint NOT NULL CHECK (durable_bytes >= 0),
+  length bigint NOT NULL CHECK (length >= 0),
   manifest jsonb NOT NULL,
   parser text NOT NULL,
   parser_version integer NOT NULL
@@ -322,7 +313,7 @@ pub(crate) fn tables(c: &Checks) -> Vec<String> {
   driver text NOT NULL,
   version integer NOT NULL,
   event_types text[] NOT NULL,
-  consumer text NOT NULL
+  purpose text NOT NULL
 )".into(),
         "CREATE TABLE registry.derivations (
   name text PRIMARY KEY,
@@ -357,7 +348,7 @@ pub(crate) fn tables(c: &Checks) -> Vec<String> {
   since timestamptz NOT NULL DEFAULT now(),
   PRIMARY KEY (derivation, key)
 )".into(),
-        // The comparison lane: what a recompute of a derivation would change,
+        // A comparison: what a recompute of a derivation would change,
         // computed without writing outputs, kept so a version change can be
         // judged before it is applied.
         "CREATE TABLE derivation.comparisons (
@@ -408,7 +399,7 @@ pub(crate) fn tables(c: &Checks) -> Vec<String> {
   hash_key bytea NOT NULL CHECK (length(hash_key) = 32)
 )".into(),
         // A sealed material's data key, wrapped with the class key's public half.
-        "CREATE TABLE privacy.material_keys (
+        "CREATE TABLE privacy.data_keys (
   material_id uuid PRIMARY KEY,
   key_ref text NOT NULL UNIQUE,
   class text NOT NULL,
@@ -522,7 +513,7 @@ pub(crate) fn tables(c: &Checks) -> Vec<String> {
   source text NOT NULL,
   material_id uuid,
   anchor bigint,
-  ordinal smallint NOT NULL,
+  output_index smallint NOT NULL,
   parents uuid[],
   ts_orig timestamptz,
   ts_quality text NOT NULL,
@@ -532,8 +523,7 @@ pub(crate) fn tables(c: &Checks) -> Vec<String> {
   reading_order bigint NOT NULL,
   record_hash bytea NOT NULL,
   record_state text NOT NULL,
-  class text NOT NULL,
-  support jsonb
+  class text NOT NULL
 )".into(),
     ]
 }

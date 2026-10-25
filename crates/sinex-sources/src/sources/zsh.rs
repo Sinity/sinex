@@ -19,7 +19,7 @@ pub const SPEC: SourceSpec = SourceSpec {
     name: "terminal.zsh-history",
     driver: Driver::AppendFile,
     excisable: false,
-    consumer: "command fusion and shell recall",
+    purpose: "command fusion and shell recall",
     class: Class::Open,
     parser: "zsh-extended-history",
     parser_version: 3,
@@ -222,8 +222,8 @@ pub fn driver(path: PathBuf, host: String) -> AppendFile {
     }
 }
 
-/// `--source zsh=PATH`: a zsh history file.
-pub const KIND: crate::binding::InputKind = crate::binding::InputKind {
+/// `--read zsh=PATH`: a zsh history file.
+pub const FORMAT: crate::binding::InputFormat = crate::binding::InputFormat {
     name: "zsh",
     specs: || vec![&SPEC],
     plan: Some(|input, settings| Ok(crate::binding::single(&SPEC, input, settings))),

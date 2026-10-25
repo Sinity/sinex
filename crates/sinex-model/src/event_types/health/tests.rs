@@ -249,7 +249,7 @@ fn registration_keeps_identity_time_and_validates_known_payloads() {
             material: crate::MaterialId::new(),
             anchor: 7,
         },
-        ordinal: 2,
+        output_index: 2,
     };
     let event = (kind.build)(
         &wire,

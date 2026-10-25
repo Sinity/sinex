@@ -15,7 +15,7 @@ pub const SPEC: SourceSpec = SourceSpec {
     name: "phone.samsung-sms",
     driver: Driver::ExportArchive,
     excisable: false,
-    consumer: "text messages sent and received",
+    purpose: "text messages sent and received",
     class: Class::Open,
     parser: "samsung-sms",
     parser_version: 1,
@@ -112,8 +112,8 @@ pub fn driver(path: PathBuf, host: String) -> ExportArchive {
     }
 }
 
-/// `--source samsung-sms=PATH`: each Samsung SMS backup (`SMS_*.csv`) under PATH.
-pub const KIND: crate::binding::InputKind = crate::binding::InputKind {
+/// `--read samsung-sms=PATH`: each Samsung SMS backup (`SMS_*.csv`) under PATH.
+pub const FORMAT: crate::binding::InputFormat = crate::binding::InputFormat {
     name: "samsung-sms",
     specs: || vec![&SPEC],
     plan: Some(|input, settings| {

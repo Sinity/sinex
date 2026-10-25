@@ -78,7 +78,7 @@ impl Media {
                 },
                 revision: RevisionChange::Same,
                 material: None,
-                cursor_unchanged: cursor.clone(),
+                cursor_without_material: cursor.clone(),
             });
         };
         let bytes = std::fs::read(&path).map_err(io)?;
@@ -126,10 +126,10 @@ impl Media {
                     move |end| Ok(cursor(end))
                 }),
                 aligned: false,
-                vanished: Vec::new(),
+                removed: Vec::new(),
                 memory: None,
             }),
-            cursor_unchanged: Value::Null,
+            cursor_without_material: Value::Null,
         })
     }
 

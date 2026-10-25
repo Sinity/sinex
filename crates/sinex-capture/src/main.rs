@@ -24,7 +24,7 @@ struct Cli {
     #[arg(long)]
     nats: String,
     #[arg(long, default_value = "sinex")]
-    subjects: String,
+    subject_root: String,
     /// This node's producer name, as its credentials allow.
     #[arg(long)]
     producer: String,
@@ -76,7 +76,7 @@ async fn run(cli: Cli) -> Result<(), String> {
     let store = Store::open(&cli.store).map_err(|e| format!("content store: {e}"))?;
     let mut producer = Producer::connect(
         &cli.nats,
-        sinex_protocol::Subjects::new(cli.subjects.clone()),
+        sinex_protocol::Subjects::new(cli.subject_root.clone()),
         &cli.producer,
     )
     .await
@@ -99,7 +99,9 @@ async fn run(cli: Cli) -> Result<(), String> {
     }
     let bindings = requested
         .into_iter()
-        .map(|(kind, spool, options)| live::binding(kind, &spools.join(spool), &cli.host, options))
+        .map(|(format, spool, options)| {
+            live::binding(format, &spools.join(spool), &cli.host, options)
+        })
         .collect::<Result<Vec<_>, _>>()?;
     live::run(
         &mut producer,

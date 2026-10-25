@@ -50,7 +50,7 @@ fn command(text: &str, i: i64) -> Event {
                 material: MaterialId::new(),
                 anchor: 0,
             },
-            ordinal: 0,
+            output_index: 0,
         },
         ReadingOrder(1),
         *blake3::hash(text.as_bytes()).as_bytes(),
@@ -429,7 +429,7 @@ async fn replay_is_offered_through_the_api(db: devkit::pg::TestDatabase) {
     )
     .await;
     assert_eq!(body["outcome"], json!("ok"), "{body}");
-    assert_eq!(body["result"]["chains"], json!(0));
+    assert_eq!(body["result"]["sequences"], json!(0));
     assert_eq!(body["result"]["compare_only"], json!(true));
     for token in [AGENT, OPERATOR] {
         let (_, body) = call(
@@ -667,7 +667,7 @@ async fn sealed_values_need_the_unlocked_operator_and_die_with_their_key(
             material,
             anchor: 0,
         },
-        ordinal: 0,
+        output_index: 0,
     };
     sealed::seal_event(&mut e, &key).unwrap();
     {

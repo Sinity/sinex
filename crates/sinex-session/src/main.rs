@@ -45,7 +45,7 @@ struct Run {
     nats: String,
     /// Subject root (`sinex` unless several deployments share a server).
     #[arg(long, default_value = "sinex")]
-    subjects: String,
+    subject_root: String,
     /// This producer's name, as its credentials allow.
     #[arg(long)]
     producer: String,
@@ -72,9 +72,9 @@ struct Run {
     /// Capture the clipboard and the primary selection.
     #[arg(long)]
     clipboard: bool,
-    /// Listen on the producer socket for the editor and terminal integrations.
+    /// Listen on the integration socket for the editor and terminal integrations.
     #[arg(long)]
-    producers: bool,
+    integrations: bool,
     /// Take a still of every output this often, in seconds.
     #[arg(long)]
     screen_every: Option<u64>,
@@ -91,9 +91,9 @@ struct Run {
 
 #[derive(clap::Args)]
 struct Live {
-    /// The kind of live source (`hyprland`, `notifications`, `players`,
+    /// The live format (`hyprland`, `notifications`, `players`,
     /// `clipboard`, `producers`, `media`, `file-watch`).
-    kind: String,
+    format: String,
     #[arg(long)]
     spool: PathBuf,
     /// A source option as `key=value` (`selection=primary`, `kind=screen`,
@@ -144,31 +144,31 @@ fn secs(s: Option<u64>) -> Option<Duration> {
 
 async fn capture(live: Live) -> Result<u64, String> {
     let shutdown = sinex_sources::capture::shutdown_signal().map_err(|e| e.to_string())?;
-    let control = std::sync::Arc::new(sinex_sources::capture::Control::new(secs(live.seconds)));
-    let stop = control.clone();
-    let mut task = tokio::task::spawn_blocking(move || capture_source(live, &stop));
+    let stop = std::sync::Arc::new(sinex_sources::capture::CaptureStop::new(secs(live.seconds)));
+    let task_stop = stop.clone();
+    let mut task = tokio::task::spawn_blocking(move || capture_source(live, &task_stop));
     let result = tokio::select! {
         result = &mut task => result.map_err(|e| e.to_string())?,
         _ = shutdown => {
-            control.stop();
+            stop.stop();
             task.await.map_err(|e| e.to_string())?
         }
     };
-    control.stop();
+    stop.stop();
     result
 }
 
-fn capture_source(live: Live, control: &sinex_sources::capture::Control) -> Result<u64, String> {
-    let (kind, binding) = live::binding(
-        &live.kind,
+fn capture_source(live: Live, stop: &sinex_sources::capture::CaptureStop) -> Result<u64, String> {
+    let (format, binding) = live::binding(
+        &live.format,
         &live.spool,
         "localhost",
         live::options(&live.options)?,
     )?;
-    (kind.capture.expect("live kinds capture"))(&binding, control)
+    (format.capture.expect("live formats capture"))(&binding, stop)
 }
 
-/// The live sources `run` asks for, as kinds and their options.
+/// The live sources `run` asks for, as formats and their options.
 fn requested(run: &Run) -> Vec<(&'static str, &'static str, Value)> {
     let mut out: Vec<(&'static str, &'static str, Value)> = Vec::new();
     if run.hyprland {
@@ -200,8 +200,8 @@ fn requested(run: &Run) -> Vec<(&'static str, &'static str, Value)> {
             serde_json::json!({"selection": "primary"}),
         ));
     }
-    if run.producers {
-        out.push(("producers", "producers", Value::Null));
+    if run.integrations {
+        out.push(("integration-socket", "integrations", Value::Null));
     }
     if let Some(every) = run.screen_every {
         out.push((
@@ -228,14 +228,16 @@ async fn produce(run: Run) -> Result<(), String> {
     let store = Store::open(&run.store).map_err(|e| format!("content store: {e}"))?;
     let mut producer = Producer::connect(
         &run.nats,
-        sinex_protocol::Subjects::new(run.subjects.clone()),
+        sinex_protocol::Subjects::new(run.subject_root.clone()),
         &run.producer,
     )
     .await
     .map_err(|e| e.to_string())?;
     let bindings = requested(&run)
         .into_iter()
-        .map(|(kind, spool, options)| live::binding(kind, &spools.join(spool), &run.host, options))
+        .map(|(format, spool, options)| {
+            live::binding(format, &spools.join(spool), &run.host, options)
+        })
         .collect::<Result<Vec<_>, _>>()?;
     if bindings.is_empty() {
         return Err("nothing to capture: pass at least one source flag".into());

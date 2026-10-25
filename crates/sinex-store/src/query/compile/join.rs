@@ -5,16 +5,16 @@ use super::*;
 impl Compiler<'_> {
     /// The rows of an inner query of a time join, as `_id`, `_t` (the time
     /// the join measures), `_s` and `_e` (the span, when rows have one).
-    pub(super) fn inner(&mut self, q: &Query, at: TimePoint) -> Result<Frag> {
-        let Source::Unit { unit, alias } = &q.source else {
+    pub(super) fn inner(&mut self, q: &Query, at: TimePoint) -> Result<SqlFragment> {
+        let Source::Table { table, alias } = &q.source else {
             return Err(invalid(
-                "the inner query of a time join selects rows of a unit",
+                "the inner query of a time join selects rows of a table",
             ));
         };
         let t = self.alias("i");
         let a = self.alias("ia");
         let cols = Cols::Base {
-            unit: *unit,
+            table: *table,
             alias: *alias,
             t,
             a,
@@ -48,8 +48,8 @@ impl Compiler<'_> {
                 ));
             }
         };
-        let mut f = Frag::text("SELECT ");
-        f.push(Self::template(&cols, fields::tiebreak(*unit)))
+        let mut f = SqlFragment::text("SELECT ");
+        f.push(Self::template(&cols, fields::tiebreak(*table)))
             .push(" AS _id, ")
             .append(point)
             .push(" AS _t, ");
@@ -66,12 +66,12 @@ impl Compiler<'_> {
             }
         }
         f.push(" FROM ")
-            .push(Self::template(&cols, fields::from(*unit)));
+            .push(Self::template(&cols, fields::from(*table)));
         for l in laterals {
             f.push(" ").append(l);
         }
         if !conds.is_empty() {
-            f.push(" WHERE ").append(Frag::join(conds, " AND "));
+            f.push(" WHERE ").append(SqlFragment::join(conds, " AND "));
         }
         Ok(f)
     }
@@ -84,7 +84,7 @@ impl Compiler<'_> {
         outer: &Cols,
         j: &Join,
         n: usize,
-    ) -> Result<(Frag, Vec<(String, String)>)> {
+    ) -> Result<(SqlFragment, Vec<(String, String)>)> {
         let inner = self.inner(&j.inner, j.at)?;
         let jl = self.alias("j");
         let suffix = if n == 0 {
@@ -93,7 +93,7 @@ impl Compiler<'_> {
             format!("_{}", n + 1)
         };
         let ot = self.main_time(outer)?;
-        let mut f = Frag::text("JOIN LATERAL (SELECT ");
+        let mut f = SqlFragment::text("JOIN LATERAL (SELECT ");
         let mut columns = Vec::new();
         let secs = || V::Double(j.within_secs);
         match j.kind {

@@ -23,7 +23,7 @@ fn imported(command: &str, n: u64) -> Event {
                 material: MaterialId(uuid::Uuid::from_u128(u128::from(n) + 1)),
                 anchor: 0,
             },
-            ordinal: 0,
+            output_index: 0,
         },
         ReadingOrder(0),
         *blake3::hash(command.as_bytes()).as_bytes(),

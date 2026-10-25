@@ -26,7 +26,7 @@ impl Parser<'_> {
             self.at += 1;
             let alias = Alias::from_name("shell-sessions").expect("shell sessions are declared");
             return Ok(Source::RecallLast {
-                filter: self.unit_filter(&Scope::rows(Unit::Events, Some(alias)))?,
+                filter: self.table_filter(&Scope::rows(Table::Events, Some(alias)))?,
             });
         }
         if word == "mark" {
@@ -107,12 +107,12 @@ impl Parser<'_> {
                 let inner_at = self.pos();
                 let inner = self.query(true)?;
                 self.expect_symbol(")")?;
-                if !matches!(inner.source, Source::Unit { .. })
+                if !matches!(inner.source, Source::Table { .. })
                     || inner.stages.iter().any(|s| matches!(s, Stage::Group(_)))
                 {
                     return Err(QueryError::at(
                         inner_at,
-                        "the inner query of a time join selects rows of a unit, without grouping",
+                        "the inner query of a time join selects rows of a table, without grouping",
                     ));
                 }
                 let mut at = TimePoint::When;

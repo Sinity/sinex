@@ -78,7 +78,7 @@ impl Pipeline<'_> {
                 sealing.seal(std::slice::from_mut(&mut batch))?;
                 if stored && let BatchKind::Source(p) = &mut batch.kind {
                     // The stored material's key row exists already.
-                    p.material_keys.clear();
+                    p.data_keys.clear();
                 }
             }
             (self.check)()?;

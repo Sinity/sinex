@@ -15,7 +15,7 @@
 //! time across spans. The session ID is the capture's
 //! `SINNIX_CAPTURE_SESSION_ID`, else the directory name.
 //!
-//! `events.jsonl` lines become `terminal.event`, the same type the live kitty
+//! `events.jsonl` lines become `terminal.reported`, the same type the live kitty
 //! watcher writes: `type` is the event, `ts_ms` its time, `command` its command
 //! line, `exit_code` its status, and the rest (with the recording's session)
 //! is kept. `session.json` restates the header and the capture's own fields;
@@ -28,14 +28,14 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use sinex_model::Timestamp;
 use sinex_model::event_types::machine::{TerminalOutput, TerminalSession};
-use sinex_model::event_types::session::TerminalEvent;
+use sinex_model::event_types::session::TerminalReport;
 use std::path::PathBuf;
 
 pub const CAST: SourceSpec = SourceSpec {
     name: "terminal.asciinema",
     driver: Driver::AppendFile,
     excisable: false,
-    consumer: "what terminals showed and what was typed, replayable",
+    purpose: "what terminals showed and what was typed, replayable",
     class: sinex_model::Class::Open,
     parser: "asciinema-cast",
     parser_version: 2,
@@ -47,11 +47,11 @@ pub const EVENTS: SourceSpec = SourceSpec {
     name: "terminal.capture-events",
     driver: Driver::AppendFile,
     excisable: false,
-    consumer: "shell commands around a terminal recording",
+    purpose: "shell commands around a terminal recording",
     class: sinex_model::Class::Open,
     parser: "terminal-capture-events",
     parser_version: 1,
-    event_types: &["terminal.event"],
+    event_types: &["terminal.reported"],
     framer: crate::Framer::incremental(complete_lines),
 };
 
@@ -321,14 +321,14 @@ pub struct EventsParser;
 impl Parser for EventsParser {
     type Record<'a> = Map<String, Value>;
     type Carry = ();
-    type Payload = TerminalEvent;
+    type Payload = TerminalReport;
 
     fn parse(
         &self,
         row: &Map<String, Value>,
         _: &(),
         context: &RecordContext<'_>,
-    ) -> Result<(Vec<TerminalEvent>, ()), RecordError> {
+    ) -> Result<(Vec<TerminalReport>, ()), RecordError> {
         let event = fields::text(row, "type")?;
         let received_at = fields::from_unix_ms(fields::int(row, "ts_ms")?)?;
         let text = |name: &str| row.get(name).and_then(Value::as_str).map(str::to_owned);
@@ -338,7 +338,7 @@ impl Parser for EventsParser {
         }
         extra.insert("session".into(), Value::String(directory(context)));
         Ok((
-            vec![TerminalEvent {
+            vec![TerminalReport {
                 received_at,
                 terminal: text("terminal").unwrap_or_else(|| "capture".into()),
                 event,
@@ -381,9 +381,9 @@ pub fn driver(path: PathBuf, host: String, spec: &SourceSpec) -> AppendFile {
     }
 }
 
-/// `--source asciinema=PATH`: each recording directory under PATH, its cast
+/// `--read asciinema=PATH`: each recording directory under PATH, its cast
 /// and the capture's events beside it.
-pub const KIND: crate::binding::InputKind = crate::binding::InputKind {
+pub const FORMAT: crate::binding::InputFormat = crate::binding::InputFormat {
     name: "asciinema",
     specs: || vec![&CAST, &EVENTS],
     plan: Some(|input, settings| {

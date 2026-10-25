@@ -210,7 +210,7 @@ impl<'a> Open<'a> {
 }
 
 /// An interval produced by the fold, before it becomes an event.
-struct Lifted<'a> {
+struct PendingInterval<'a> {
     open: Open<'a>,
     end: Option<(Timestamp, &'a str)>,
     closers: Vec<&'a Event>,
@@ -219,15 +219,18 @@ struct Lifted<'a> {
 fn interval_id(state_kind: &str, open: &Open<'_>) -> String {
     let subject = open.subject.as_deref().unwrap_or("unknown-subject");
     match &open.start.origin {
-        Origin::Record { location, ordinal } => format!(
-            "{state_kind}:{subject}:{}:{}:{ordinal}",
+        Origin::Record {
+            location,
+            output_index,
+        } => format!(
+            "{state_kind}:{subject}:{}:{}:{output_index}",
             location.material, location.anchor
         ),
         Origin::Derived { .. } => format!("{state_kind}:{subject}:ts:{}", open.at.unix_ns()),
     }
 }
 
-fn to_event(rule: &IntervalRule, l: Lifted<'_>) -> Event {
+fn to_event(rule: &IntervalRule, l: PendingInterval<'_>) -> Event {
     let payload = StateInterval {
         interval_id: interval_id(rule.state_kind, &l.open),
         state_kind: rule.state_kind.to_owned(),
@@ -252,8 +255,8 @@ fn interrupts(rule: &IntervalRule, e: &Event) -> bool {
 
 /// Fold one rule over time-sorted events. Returns every interval whose start
 /// is among `events`, closed or still open.
-fn fold<'a>(rule: &IntervalRule, events: &[&'a Event]) -> Vec<Lifted<'a>> {
-    let mut out: Vec<Lifted<'a>> = Vec::new();
+fn fold<'a>(rule: &IntervalRule, events: &[&'a Event]) -> Vec<PendingInterval<'a>> {
+    let mut out: Vec<PendingInterval<'a>> = Vec::new();
     match rule.shape {
         Shape::AdjacentTransitions => {
             let mut open: Option<Open<'a>> = None;
@@ -262,7 +265,7 @@ fn fold<'a>(rule: &IntervalRule, events: &[&'a Event]) -> Vec<Lifted<'a>> {
                 if interrupts(rule, e)
                     && let Some(o) = open.take_if(|o| o.at <= at)
                 {
-                    out.push(Lifted {
+                    out.push(PendingInterval {
                         open: o,
                         end: Some((at, e.event_type)),
                         closers: vec![e],
@@ -280,7 +283,7 @@ fn fold<'a>(rule: &IntervalRule, events: &[&'a Event]) -> Vec<Lifted<'a>> {
                     Some(o) if o.same_subject(&current) => o.refresh(&current),
                     Some(_) => {
                         let o = open.replace(current).expect("matched Some");
-                        out.push(Lifted {
+                        out.push(PendingInterval {
                             open: o,
                             end: Some((at, e.event_type)),
                             closers: vec![e],
@@ -289,7 +292,7 @@ fn fold<'a>(rule: &IntervalRule, events: &[&'a Event]) -> Vec<Lifted<'a>> {
                 }
             }
             if let Some(o) = open {
-                out.push(Lifted {
+                out.push(PendingInterval {
                     open: o,
                     end: None,
                     closers: vec![],
@@ -322,7 +325,7 @@ fn fold<'a>(rule: &IntervalRule, events: &[&'a Event]) -> Vec<Lifted<'a>> {
                     }
                     None => (observed.map(|o| (o, e.event_type)), vec![]),
                 };
-                out.push(Lifted {
+                out.push(PendingInterval {
                     open: Open::new(rule, e, at),
                     end,
                     closers,

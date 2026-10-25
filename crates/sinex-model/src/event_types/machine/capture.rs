@@ -144,8 +144,8 @@ fn extend_fields(extra: &Map<String, Value>, path: &str, fields: &mut Vec<String
 /// An observation keeps material-location identity. Host, lane and sequence
 /// describe the producer envelope and never become a replacement key.
 #[derive(Clone, Debug, PartialEq, crate::EventPayload)]
-#[event(type = "capture.observed", key = location, replace = repeat, time = observed_at, quality = captured)]
-pub struct CaptureObserved {
+#[event(type = "lake.observed", key = location, replace = repeat, time = observed_at, quality = captured)]
+pub struct LakeObservation {
     pub observed_at: Timestamp,
     lane: String,
     pub host: String,
@@ -153,7 +153,7 @@ pub struct CaptureObserved {
     payload: CapturePayload,
     pub raw_ref: Option<String>,
 }
-impl CaptureObserved {
+impl LakeObservation {
     pub fn lane(&self) -> &str {
         &self.lane
     }
@@ -188,7 +188,7 @@ struct WireRecord {
     payload: Value,
     raw_ref: Option<String>,
 }
-impl<'de> Deserialize<'de> for CaptureObserved {
+impl<'de> Deserialize<'de> for LakeObservation {
     fn deserialize<D: Deserializer<'de>>(de: D) -> Result<Self, D::Error> {
         let row = WireRecord::deserialize(de)?;
         Self::new(
@@ -202,7 +202,7 @@ impl<'de> Deserialize<'de> for CaptureObserved {
         .map_err(serde::de::Error::custom)
     }
 }
-impl Serialize for CaptureObserved {
+impl Serialize for LakeObservation {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         #[derive(Serialize)]
         struct Row<'a> {
@@ -230,9 +230,9 @@ impl Serialize for CaptureObserved {
         .serialize(serializer)
     }
 }
-impl JsonSchema for CaptureObserved {
+impl JsonSchema for LakeObservation {
     fn schema_name() -> std::borrow::Cow<'static, str> {
-        "CaptureObserved".into()
+        "LakeObservation".into()
     }
     fn json_schema(generator: &mut schemars::SchemaGenerator) -> schemars::Schema {
         #[derive(JsonSchema)]

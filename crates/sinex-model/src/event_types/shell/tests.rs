@@ -11,7 +11,7 @@ fn origin() -> Origin {
             material: MaterialId::new(),
             anchor: 7,
         },
-        ordinal: 0,
+        output_index: 0,
     }
 }
 

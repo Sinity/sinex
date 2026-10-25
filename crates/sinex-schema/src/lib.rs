@@ -145,12 +145,12 @@ fn visibility() -> Vec<String> {
 $$"
         .to_string(),
         "CREATE VIEW core.visible_events AS SELECT
-  e.id, e.event_type, e.source, e.run_id, e.material_id, e.anchor, e.ordinal, e.parents,
+  e.id, e.event_type, e.source, e.run_id, e.material_id, e.anchor, e.output_index, e.parents,
   e.ts_orig, e.ts_quality, e.ts_coided, e.ts_persisted, e.commit_seq,
   CASE WHEN core.class_visible(e.class) THEN e.payload
        ELSE jsonb_build_object('withheld', e.class) END AS payload,
   CASE WHEN core.class_visible(e.class) THEN e.equivalence_key END AS equivalence_key,
-  e.reading_order, e.record_hash, e.record_state, e.class, e.support
+  e.reading_order, e.record_hash, e.record_state, e.class
 FROM core.events e"
             .to_string(),
         "CREATE VIEW core.visible_search_text AS SELECT s.event_id, s.text, s.tsv
@@ -166,7 +166,7 @@ fn kind_views() -> Vec<String> {
     event_types::ALL.iter().map(kind_view).collect()
 }
 
-fn kind_view(kind: &event_types::EventTypeInfo) -> String {
+fn kind_view(kind: &event_types::RegisteredEventType) -> String {
     let schema = (kind.json_schema)();
     let mut columns = vec![
         "e.id".to_string(),

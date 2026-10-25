@@ -35,14 +35,14 @@ self: {
         return events, blobs
 
     machine.wait_for_unit("sinexd.service")
-    machine.succeed(f"{sinex} sinexd backfill --database '{url}' --store /var/lib/sinex/store --source zsh=/var/lib/sinex/zsh_history")
+    machine.succeed(f"{sinex} sinexd backfill --database '{url}' --store /var/lib/sinex/store --read zsh=/var/lib/sinex/zsh_history")
     before = state()
     assert not before[0].startswith("0|"), before
 
     with subtest("dump and back up"):
         machine.succeed("systemctl start sinex-dump.service")
         machine.succeed("test -s /var/lib/sinex/dumps/sinex.dump")
-        machine.succeed("test -s /var/lib/sinex/key-dumps/material-keys.dump")
+        machine.succeed("test -s /var/lib/sinex/key-dumps/data-keys.dump")
         machine.succeed("systemctl start borgbackup-job-sinex.service borgbackup-job-sinex-keys.service")
 
     with subtest("lose the database and the content store"):
@@ -58,7 +58,7 @@ self: {
         machine.succeed("sudo -u postgres psql -d sinex -c 'SELECT timescaledb_pre_restore()'")
         # The dumps belong to sinex; root's shell hands them to pg_restore.
         machine.succeed("sudo -u postgres pg_restore -d sinex --exit-on-error < /var/lib/sinex/dumps/sinex.dump")
-        machine.succeed("sudo -u postgres pg_restore -d sinex --data-only --exit-on-error < /var/lib/sinex/key-dumps/material-keys.dump")
+        machine.succeed("sudo -u postgres pg_restore -d sinex --data-only --exit-on-error < /var/lib/sinex/key-dumps/data-keys.dump")
         machine.succeed("sudo -u postgres psql -d sinex -c 'SELECT timescaledb_post_restore()'")
         machine.succeed("systemctl start sinexd.service")
         machine.wait_for_unit("sinexd.service")

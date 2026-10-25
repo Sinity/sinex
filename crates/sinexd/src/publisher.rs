@@ -1,28 +1,26 @@
 //! The confirmed-stream publisher: it reads `core.commit_log` from its saved
 //! position and publishes each committed event to the NATS confirmed stream in
-//! commit order, followed by the archive notices of the same span. Consumers
+//! commit order, followed by the archive changes of the same span. Consumers
 //! outside `sinexd` (outside derivations, live views, Polylogue's change feed)
 //! read only this stream, so they see only committed facts, in the order they
 //! committed.
 //!
 //! - **Masked.** A payload is published only for `open` events; for `guarded`
-//!   and `sealed` ones the envelope goes out and the payload is withheld, since
+//!   and `sealed` ones the event's metadata goes out and the payload is withheld, since
 //!   stream consumers hold no class grants. A payload too large for one NATS
 //!   message (the server's `max_payload`) is withheld the same way, so no event
 //!   is held back from the stream for its size; the stored event is whole.
 //! - **At least once, deduplicated.** The position is saved after JetStream
 //!   acknowledges a page; each message carries `Nats-Msg-Id` (`event-<seq>`,
-//!   `archive-<notice>`), so a page republished after a crash inside the
+//!   `archive-<change>`), so a page republished after a crash inside the
 //!   stream's duplicate window is stored once. Consumers identify events by
 //!   ID either way.
 //! - **Kept.** The stream has no age or size limit.
 use async_nats::HeaderMap;
 use async_nats::jetstream::{self, stream};
 use sinex_model::{Class, EventId, OperationId, RecordLocation, RunId, Timestamp};
-use sinex_protocol::{
-    ArchiveNotice, Confirmed, ConfirmedEvent, RestoredNotice, Subjects, Withheld,
-};
-use sinex_store::commit_log::{self, Committed, Notice};
+use sinex_protocol::{Archived, Confirmed, ConfirmedEvent, Subjects, Unhidden, Withheld};
+use sinex_store::commit_log::{self, ArchiveChange, Committed};
 use sqlx::{Connection, PgConnection};
 use std::time::{Duration, Instant};
 use tokio::sync::watch;
@@ -61,7 +59,7 @@ pub async fn ensure_stream(js: &jetstream::Context, subjects: &Subjects) -> Resu
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Published {
     pub events: u64,
-    pub notices: u64,
+    pub changes: u64,
     /// Excised events whose messages were erased from the stream.
     pub excised: u64,
 }
@@ -109,26 +107,26 @@ pub async fn publish_pending(
 ) -> Result<Published, String> {
     let mut total = Published::default();
     loop {
-        let (seq, notice) = commit_log::consumer_position(conn, CONSUMER)
+        let (seq, change) = commit_log::consumer_position(conn, CONSUMER)
             .await
             .map_err(|e| e.to_string())?;
         let page = commit_log::after(conn, seq, PAGE)
             .await
             .map_err(|e| e.to_string())?;
         let covered = page.up_to.unwrap_or(seq);
-        // A notice follows the commit that caused it: only notices archived at
+        // A change follows the commit that caused it: only changes archived at
         // or before the commit position this page reaches go out with it.
-        let notices: Vec<Notice> = commit_log::notices_after(conn, notice, PAGE)
+        let changes: Vec<ArchiveChange> = commit_log::changes_after(conn, change, PAGE)
             .await
             .map_err(|e| e.to_string())?
             .into_iter()
             .take_while(|n| n.commit_seq <= covered)
             .collect();
-        if page.up_to.is_none() && notices.is_empty() {
+        if page.up_to.is_none() && changes.is_empty() {
             total.excised += erase_excised(conn, js, subjects).await?;
             return Ok(total);
         }
-        let mut acks = Vec::with_capacity(page.events.len() + notices.len());
+        let mut acks = Vec::with_capacity(page.events.len() + changes.len());
         let limit = js.client().server_info().max_payload as u64;
         for event in &page.events {
             let message = Confirmed::Event(Box::new(fit(confirmed_event(event)?, limit)?));
@@ -142,14 +140,14 @@ pub async fn publish_pending(
                 .await?,
             );
         }
-        for n in &notices {
+        for n in &changes {
             let message = if n.archived {
-                Confirmed::Archived(notice_message(n)?)
+                Confirmed::Archived(archived_message(n)?)
             } else {
-                Confirmed::Restored(RestoredNotice {
-                    notice_seq: n.notice_seq,
+                Confirmed::Unhidden(Unhidden {
+                    change_seq: n.change_seq,
                     event: sinex_model::EventId(n.event_id),
-                    restored_seq: n.commit_seq,
+                    unhidden_seq: n.commit_seq,
                     operation: n.operation_id.map(sinex_model::OperationId),
                 })
             };
@@ -157,7 +155,7 @@ pub async fn publish_pending(
                 publish(
                     js,
                     subjects.confirmed_archive(),
-                    format!("archive-{}", n.notice_seq),
+                    format!("archive-{}", n.change_seq),
                     &message,
                 )
                 .await?,
@@ -173,17 +171,17 @@ pub async fn publish_pending(
                 placed.push((event.id, seq));
             }
         }
-        let last_notice = notices.last().map_or(notice, |n| n.notice_seq);
+        let last_change = changes.last().map_or(change, |n| n.change_seq);
         let mut tx = conn.begin().await.map_err(|e| e.to_string())?;
         commit_log::record_published(&mut tx, &placed)
             .await
             .map_err(|e| e.to_string())?;
-        commit_log::set_consumer_position(&mut tx, CONSUMER, covered, last_notice)
+        commit_log::set_consumer_position(&mut tx, CONSUMER, covered, last_change)
             .await
             .map_err(|e| e.to_string())?;
         tx.commit().await.map_err(|e| e.to_string())?;
         total.events += page.events.len() as u64;
-        total.notices += notices.len() as u64;
+        total.changes += changes.len() as u64;
     }
 }
 
@@ -256,11 +254,11 @@ async fn publish(
         .map_err(|e| format!("publish {id}: {e}"))
 }
 
-/// Room left in a message for the headers and the envelope's own growth.
+/// Room left in a message for the headers and the metadata's own growth.
 const HEADROOM: u64 = 4 * 1024;
 
 /// The message as published: with its payload when the whole message fits the
-/// server's size limit, otherwise the envelope alone, saying why. The event is
+/// server's size limit, otherwise the event's metadata alone, saying why. The event is
 /// stored whole either way; no event is held back from the stream for its size.
 fn fit(mut event: ConfirmedEvent, limit: u64) -> Result<ConfirmedEvent, String> {
     if event.payload.is_none() {
@@ -300,7 +298,7 @@ fn confirmed_event(e: &Committed) -> Result<ConfirmedEvent, String> {
         source: e.source.clone(),
         run: RunId(e.run_id),
         location,
-        ordinal: u16::try_from(e.ordinal).unwrap_or(0),
+        output_index: u16::try_from(e.output_index).unwrap_or(0),
         parents: e.parents.iter().flatten().map(|p| EventId(*p)).collect(),
         ts_orig: e.ts_orig.map(Timestamp),
         ts_quality: e.ts_quality.clone(),
@@ -314,11 +312,11 @@ fn confirmed_event(e: &Committed) -> Result<ConfirmedEvent, String> {
     })
 }
 
-fn notice_message(n: &Notice) -> Result<ArchiveNotice, String> {
+fn archived_message(n: &ArchiveChange) -> Result<Archived, String> {
     let reason = serde_json::from_value(serde_json::Value::String(n.reason.clone()))
         .map_err(|err| format!("event {}: archive reason {:?}: {err}", n.event_id, n.reason))?;
-    Ok(ArchiveNotice {
-        notice_seq: n.notice_seq,
+    Ok(Archived {
+        change_seq: n.change_seq,
         event: EventId(n.event_id),
         archived_seq: n.commit_seq,
         reason,
@@ -344,9 +342,9 @@ pub async fn drain(
         done.events as f64 / wall.as_secs_f64()
     };
     Ok(format!(
-        "published {} events and {} archive notices, erased {} excised, in {:.2}s, {rate:.0} events/s",
+        "published {} events and {} archive changes, erased {} excised, in {:.2}s, {rate:.0} events/s",
         done.events,
-        done.notices,
+        done.changes,
         done.excised,
         wall.as_secs_f64()
     ))

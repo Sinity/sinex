@@ -73,20 +73,20 @@ async fn archive_history_preserves_hide_unhide_hide_intervals_without_new_events
             position
         );
     }
-    let notices = commit_log::notices_after(&mut conn, 0, 10).await.unwrap();
+    let changes = commit_log::changes_after(&mut conn, 0, 10).await.unwrap();
     assert_eq!(
-        notices
+        changes
             .iter()
             .map(|n| (n.commit_seq, n.archived))
             .collect::<Vec<_>>(),
         [(4, true), (5, false), (6, true)]
     );
     assert!(
-        notices
+        changes
             .windows(2)
-            .all(|pair| pair[0].notice_seq < pair[1].notice_seq)
+            .all(|pair| pair[0].change_seq < pair[1].change_seq)
     );
-    assert!(notices.iter().all(|notice| notice.event_id == target.0));
+    assert!(changes.iter().all(|change| change.event_id == target.0));
     assert_eq!(
         sqlx::query_scalar!("SELECT payload FROM core.events ORDER BY commit_seq")
             .fetch_all(&mut conn)
@@ -120,7 +120,7 @@ async fn archive_changes_and_positions_roll_back_together(db: devkit::pg::TestDa
         tx.rollback().await.unwrap();
         assert_eq!(commit_log::latest(&mut conn).await.unwrap(), before);
         assert_eq!(
-            commit_log::notices_after(&mut conn, 0, 10)
+            commit_log::changes_after(&mut conn, 0, 10)
                 .await
                 .unwrap()
                 .len(),
@@ -171,7 +171,7 @@ async fn cancelling_an_archive_transaction_does_not_publish_partial_history_or_a
     );
     assert_eq!(visible(&mut conn, 1).await, 1);
     assert!(
-        commit_log::notices_after(&mut conn, 0, 10)
+        commit_log::changes_after(&mut conn, 0, 10)
             .await
             .unwrap()
             .is_empty()

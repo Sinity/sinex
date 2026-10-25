@@ -1,9 +1,9 @@
 use super::*;
 
 #[devkit::test]
-fn every_source_belongs_to_exactly_one_kind() {
+fn every_source_belongs_to_exactly_one_format() {
     for spec in specs() {
-        let owners: Vec<&str> = input_kinds()
+        let owners: Vec<&str> = formats()
             .iter()
             .filter(|k| {
                 (k.specs)()
@@ -23,12 +23,12 @@ fn every_source_belongs_to_exactly_one_kind() {
 }
 
 #[devkit::test]
-fn kind_names_are_unique() {
-    let mut names: Vec<&str> = input_kinds().iter().map(|k| k.name).collect();
+fn format_names_are_unique() {
+    let mut names: Vec<&str> = formats().iter().map(|k| k.name).collect();
     names.sort_unstable();
     let before = names.len();
     names.dedup();
-    assert_eq!(names.len(), before, "duplicate kind names");
+    assert_eq!(names.len(), before, "duplicate format names");
 }
 
 #[devkit::test]
@@ -41,7 +41,7 @@ fn a_shared_source_name_resolves_by_parser() {
     let b = crate::Binding::of(lake, std::path::Path::new("/realm"), Settings::new("h"));
     assert_eq!(source_for(&b).unwrap().spec().parser, lake.parser);
     assert_eq!(
-        input_kind_of_source(lake.name, lake.parser).unwrap().name,
+        format_of_source(lake.name, lake.parser).unwrap().name,
         "sinnix-lake"
     );
 }
@@ -51,7 +51,7 @@ fn a_shared_parser_resolves_by_name() {
     let outlook = spec("communication.outlook").expect("Outlook is registered");
     let b = crate::Binding::of(outlook, std::path::Path::new("/x.mbox"), Settings::new("h"));
     assert_eq!(
-        input_kind_of_source(&b.source, &b.parser).unwrap().name,
+        format_of_source(&b.source, &b.parser).unwrap().name,
         "outlook"
     );
 }

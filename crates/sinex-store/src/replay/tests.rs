@@ -31,7 +31,7 @@ fn reading(material: MaterialId, key: &str, command: &str) -> Event {
                 material,
                 anchor: 0,
             },
-            ordinal: 0,
+            output_index: 0,
         },
         ReadingOrder(1),
         *blake3::hash(command.as_bytes()).as_bytes(),

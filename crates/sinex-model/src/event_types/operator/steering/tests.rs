@@ -21,18 +21,15 @@ fn known_rows_keep_the_existing_wire_identity_and_exact_values() {
             json!({"id":"r1","ts":"2026-10-12T19:00:00Z","window":"evening","generated_summary":"model-written review","operator_notes":null}),
         ),
     ];
-    assert_eq!(
-        SteeringRecord::KEY,
-        KeyKind::Fields(&["table", "record_id"])
-    );
-    assert_eq!(SteeringRecord::REPLACE, ReplaceRule::ReplaceWhenNewer);
+    assert_eq!(SteeringRow::KEY, KeyKind::Fields(&["table", "record_id"]));
+    assert_eq!(SteeringRow::REPLACE, ReplaceRule::ReplaceWhenNewer);
     for (table, values) in cases {
-        let record = SteeringRecord::from_row(table, values.clone()).unwrap();
+        let record = SteeringRow::from_row(table, values.clone()).unwrap();
         let wire = serde_json::to_value(&record).unwrap();
         assert_eq!(wire["table"], table);
         assert_eq!(wire["record_id"], values["id"]);
         assert_eq!(wire["values"], values);
-        let again: SteeringRecord = serde_json::from_value(wire.clone()).unwrap();
+        let again: SteeringRow = serde_json::from_value(wire.clone()).unwrap();
         assert_eq!(again, record);
         let location = RecordLocation {
             material: MaterialId::new(),
@@ -43,7 +40,7 @@ fn known_rows_keep_the_existing_wire_identity_and_exact_values() {
             "operator.steering",
             Origin::Record {
                 location,
-                ordinal: 0,
+                output_index: 0,
             },
             ReadingOrder(19),
             [7; 32],
@@ -54,7 +51,7 @@ fn known_rows_keep_the_existing_wire_identity_and_exact_values() {
             event.origin,
             Origin::Record {
                 location,
-                ordinal: 0
+                output_index: 0
             }
         );
         assert_eq!(event.reading_order, ReadingOrder(19));
@@ -62,7 +59,7 @@ fn known_rows_keep_the_existing_wire_identity_and_exact_values() {
         assert_eq!(
             event.equivalence_key,
             Some(EquivalenceKey::of(
-                "steering.record",
+                "steering.row",
                 &["table", "record_id"],
                 &wire
             ))
@@ -87,17 +84,14 @@ fn missing_null_empty_and_numeric_representations_stay_distinct() {
         json!({"id":"c1","text":"","created_at":"","forecast_p":0.0}),
         json!({"id":"c1","forecast_p":9007199254740993_i64}),
     ] {
-        let record = SteeringRecord::from_row("commitments", values.clone()).unwrap();
+        let record = SteeringRow::from_row("commitments", values.clone()).unwrap();
         let wire = serde_json::to_value(&record).unwrap();
         assert_eq!(wire["values"], values);
         assert!(record.ts_orig().at.is_none());
-        assert_eq!(
-            serde_json::from_value::<SteeringRecord>(wire).unwrap(),
-            record
-        );
+        assert_eq!(serde_json::from_value::<SteeringRow>(wire).unwrap(), record);
     }
-    let absent = SteeringRecord::from_row("commitments", json!({"id":"c1"})).unwrap();
-    let null = SteeringRecord::from_row("commitments", json!({"id":"c1","text":null})).unwrap();
+    let absent = SteeringRow::from_row("commitments", json!({"id":"c1"})).unwrap();
+    let null = SteeringRow::from_row("commitments", json!({"id":"c1","text":null})).unwrap();
     assert_ne!(absent, null);
 }
 
@@ -118,12 +112,12 @@ fn known_table_selects_its_type_and_unknown_shapes_are_refused() {
         ("commitments", json!({"id":null})),
     ] {
         assert!(
-            SteeringRecord::from_row(table, values.clone()).is_err(),
+            SteeringRow::from_row(table, values.clone()).is_err(),
             "{table}: {values}"
         );
     }
     let record =
-        SteeringRecord::from_row("commitments", json!({"id":"c1","text":"original"})).unwrap();
+        SteeringRow::from_row("commitments", json!({"id":"c1","text":"original"})).unwrap();
     let wire = serde_json::to_value(record).unwrap();
     for (field, value) in [
         ("table", json!("activities")),
@@ -133,7 +127,7 @@ fn known_table_selects_its_type_and_unknown_shapes_are_refused() {
         let mut changed = wire.clone();
         changed[field] = value;
         assert!(
-            serde_json::from_value::<SteeringRecord>(changed).is_err(),
+            serde_json::from_value::<SteeringRow>(changed).is_err(),
             "{field}"
         );
     }
@@ -141,7 +135,7 @@ fn known_table_selects_its_type_and_unknown_shapes_are_refused() {
 
 #[devkit::test]
 fn registration_exposes_known_fields_and_builds_through_the_validated_type() {
-    let kind = crate::event_types::find("steering.record").unwrap();
+    let kind = crate::event_types::find("steering.row").unwrap();
     let schema = (kind.json_schema)();
     let table = &schema["$defs"]["Table"]["enum"];
     assert_eq!(table, &json!(["commitments", "activities", "reviews"]));
@@ -157,8 +151,7 @@ fn registration_exposes_known_fields_and_builds_through_the_validated_type() {
         assert_eq!(schema["$defs"][row]["additionalProperties"], false);
     }
     let wire = serde_json::to_value(
-        SteeringRecord::from_row("reviews", json!({"id":"r1","ts":null,"operator_notes":""}))
-            .unwrap(),
+        SteeringRow::from_row("reviews", json!({"id":"r1","ts":null,"operator_notes":""})).unwrap(),
     )
     .unwrap();
     let origin = Origin::Record {
@@ -166,7 +159,7 @@ fn registration_exposes_known_fields_and_builds_through_the_validated_type() {
             material: MaterialId::new(),
             anchor: 0,
         },
-        ordinal: 0,
+        output_index: 0,
     };
     let event = (kind.build)(
         &wire,

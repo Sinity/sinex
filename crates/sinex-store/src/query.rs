@@ -1,7 +1,7 @@
 //! Running queries: the language compiled to SQL, provenance walks, recall,
 //! `show`, and read-only SQL. Each page uses one read-only repeatable snapshot.
 //! Continuations keep the original question, clock and event position; a
-//! changed visible ordered answer requires a fresh query. Rows use the unit's
+//! changed visible ordered answer requires a fresh query. Rows use the table's
 //! field names; times are UTC.
 mod compile;
 mod cursor;
@@ -17,9 +17,9 @@ use compile::{Compiled, Compiler};
 use serde::{Deserialize, Serialize};
 use serde_json::Value as Json;
 use sinex_model::query::{
-    AsOf, Context, Expr, FieldRef, Operand, Query, Source, Stage, Unit, read_as,
+    AsOf, Context, Expr, FieldRef, Operand, Query, Source, Stage, Table, read_as,
 };
-use sql::Frag;
+use sql::SqlFragment;
 use sqlx::{Connection, PgConnection};
 
 pub use cursor::context_for_page;
@@ -40,7 +40,7 @@ pub const DEFAULT_PAGE: u64 = 50;
 /// One page of an answer.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct Answer {
-    pub unit: String,
+    pub table: String,
     pub query: String,
     pub read_as: String,
     pub resolved: Resolved,
@@ -171,9 +171,9 @@ pub async fn run(
         size,
         prior,
     };
-    let unit = match &query.source {
-        Source::Unit { alias: Some(a), .. } => a.name.to_string(),
-        Source::Unit { unit, .. } => unit.name().to_string(),
+    let table = match &query.source {
+        Source::Table { alias: Some(a), .. } => a.name.to_string(),
+        Source::Table { table, .. } => table.name().to_string(),
         Source::Walk { walk, .. } => format!("{walk:?}").to_lowercase(),
         Source::Recall { .. } | Source::RecallLast { .. } => "recall".to_string(),
     };
@@ -188,15 +188,15 @@ pub async fn run(
                 .unwrap_or_default();
             let reading = read_as(query);
             let mut hash = blake3::Hasher::new();
-            for (ordinal, row) in rows.iter().enumerate() {
+            for (output_index, row) in rows.iter().enumerate() {
                 let bytes = serde_json::to_vec(row)
                     .map_err(|_| Error::Invalid("query row cannot be encoded".into()))?;
-                hash.update(&(ordinal as u64).to_le_bytes());
+                hash.update(&(output_index as u64).to_le_bytes());
                 hash.update(&(bytes.len() as u64).to_le_bytes());
                 hash.update(&bytes);
             }
             let view = cursor::digest(&serde_json::json!([
-                unit,
+                table,
                 reading,
                 columns,
                 total,
@@ -208,7 +208,7 @@ pub async fn run(
                 .saturating_add(usize::try_from(read.size).unwrap_or(usize::MAX))
                 .min(rows.len());
             Answer {
-                unit,
+                table,
                 query: text.to_string(),
                 read_as: read_as(query),
                 resolved: read.resolved(),
@@ -219,20 +219,20 @@ pub async fn run(
                 recall: None,
             }
         }
-        Source::Unit { .. } => {
+        Source::Table { .. } => {
             let rendered = render_page(
                 Compiler::new(&read.ctx, read.seq).compile(query)?,
                 read.offset,
                 read.size,
                 read.prior.is_none(),
             );
-            page_of(&mut tx, rendered, unit, text, query, &read, None).await?
+            page_of(&mut tx, rendered, table, text, query, &read, None).await?
         }
         Source::Recall { .. } | Source::RecallLast { .. } => {
             let selection = recall::select(&mut tx, &query.source, &read.ctx, read.seq).await?;
             let as_events = Query {
-                source: Source::Unit {
-                    unit: Unit::Events,
+                source: Source::Table {
+                    table: Table::Events,
                     alias: None,
                 },
                 filter: Some(selection.filter()),
@@ -246,7 +246,7 @@ pub async fn run(
                 read.prior.is_none(),
             );
             let account = selection.account(&mut tx, read.seq).await?;
-            page_of(&mut tx, rendered, unit, text, query, &read, Some(account)).await?
+            page_of(&mut tx, rendered, table, text, query, &read, Some(account)).await?
         }
     };
     answer.read_as = read_as(query);
@@ -331,7 +331,7 @@ fn render_page(compiled: Compiled, offset: u64, size: u64, count: bool) -> Rende
     // happen to be equal.
     let row = format!("q.\"_n\"::text || ':' || ({object})::text");
     let hash = |seed: u64| format!("hashtextextended(({row}) COLLATE \"C\", {seed})");
-    let mut seen = Frag::text(format!(
+    let mut seen = SqlFragment::text(format!(
         "SELECT jsonb_build_array(\
          coalesce(bit_xor({h0}) FILTER (WHERE q.\"_n\" <= {offset}), 0), \
          coalesce(bit_xor({h1}) FILTER (WHERE q.\"_n\" <= {offset}), 0), \
@@ -344,7 +344,7 @@ fn render_page(compiled: Compiled, offset: u64, size: u64, count: bool) -> Rende
     seen.append(compiled.answer.clone())
         .push(") q WHERE q.\"_n\" <= ")
         .param(sea_query::Value::BigInt(Some(end)));
-    let mut rows = Frag::text(format!("SELECT {object} FROM ("));
+    let mut rows = SqlFragment::text(format!("SELECT {object} FROM ("));
     rows.append(compiled.answer)
         .push(") q WHERE q.\"_n\" > ")
         .param(sea_query::Value::BigInt(Some(offset as i64)))
@@ -362,7 +362,7 @@ fn render_page(compiled: Compiled, offset: u64, size: u64, count: bool) -> Rende
 async fn page_of(
     tx: &mut PgConnection,
     rendered: Rendered,
-    unit: String,
+    table: String,
     text: &str,
     query: &Query,
     read: &ReadPage,
@@ -385,7 +385,7 @@ async fn page_of(
         .await?;
     let view = |count: i64, first: i64, second: i64| {
         cursor::digest(&serde_json::json!([
-            unit,
+            table,
             read_as(query),
             rendered.columns,
             count,
@@ -408,7 +408,7 @@ async fn page_of(
     }
     let page = read.info(&view(upto, upto_0, upto_1)?, total, rows.len())?;
     Ok(Answer {
-        unit,
+        table,
         query: text.to_string(),
         read_as: read_as(query),
         resolved: read.resolved(),
@@ -491,7 +491,7 @@ fn collect_aliases(q: &Query, out: &mut Vec<&'static sinex_model::query::Alias>)
                 .expect("shell sessions declared"),
         );
     }
-    if let Source::Unit { alias: Some(a), .. } = &q.source {
+    if let Source::Table { alias: Some(a), .. } = &q.source {
         out.push(a);
     }
     for s in &q.stages {

@@ -5,7 +5,7 @@ use sinex_sources::drivers::{
 use std::{fs::File, io::Write};
 
 #[devkit::test]
-fn bundle_staging_does_not_hold_whole_file_bodies() {
+fn the_bundle_does_not_hold_whole_file_bodies_in_memory() {
     let dir = tempfile::tempdir().unwrap();
     let block = [b'x'; 64 * 1024];
     for n in 0..6 {
@@ -38,11 +38,11 @@ fn bundle_staging_does_not_hold_whole_file_bodies() {
     assert!(material.bytes.is_empty());
     assert_eq!(material.records.len(), 6);
     let Some(StoredBytes::FramedFile(file)) = material.stored else {
-        panic!("bundle must be staged in a file")
+        panic!("the bundle must be in a temporary file")
     };
     assert_eq!(file.metadata().unwrap().len(), (24 << 20) + 6);
     assert!(
         measured.bytes_max < 8 << 20,
-        "staging allocations: {measured:?}"
+        "bundle allocations: {measured:?}"
     );
 }

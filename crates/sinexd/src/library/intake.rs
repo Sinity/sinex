@@ -4,7 +4,7 @@ use super::{INTAKE, Library, R, e};
 use serde_json::{Value, json};
 use sinex_library::{items, reads};
 use sinex_model::Timestamp;
-use sinex_model::event_types::library::{Acquisition, Item, LibraryRecord};
+use sinex_model::event_types::library::{FileCopy, Item, LibraryRecord};
 use sinex_sources::drivers;
 use sinex_sources::sources::library as library_source;
 use sqlx::PgConnection;
@@ -35,7 +35,7 @@ impl Library<'_> {
         let binding = format!("library.scan:{root_text}@{}", self.host);
         // Seed the scan's state from what is already admitted, so a second
         // add of the same root hashes only what changed.
-        let known = reads::acquisitions(conn, self.host, &root_text)
+        let known = reads::copies(conn, self.host, &root_text)
             .await
             .map_err(e)?;
         let state = library_source::ScanState::seed(
@@ -120,24 +120,24 @@ impl Library<'_> {
                 None => break,
             }
         }
-        // Every present acquisition under the root, against the items its
+        // Every present copy under the root, against the items its
         // path belongs to.
-        let acquisitions = reads::acquisitions(conn, self.host, &root_text)
+        let copies = reads::copies(conn, self.host, &root_text)
             .await
             .map_err(e)?;
-        let keys: Vec<String> = acquisitions
+        let keys: Vec<String> = copies
             .iter()
             .flat_map(|a| {
-                let mut k = vec![items::acquisition_key(&a.host, &a.path)];
+                let mut k = vec![items::copy_key(&a.host, &a.path)];
                 if let Some(from) = &a.moved_from {
-                    k.push(items::acquisition_key(&a.host, from));
+                    k.push(items::copy_key(&a.host, from));
                 }
                 k
             })
             .collect();
         let mut holders: HashMap<String, Item> = HashMap::new();
         for item in reads::items_at(conn, &keys).await.map_err(e)? {
-            for k in &item.acquisitions {
+            for k in &item.copies {
                 holders.insert(k.clone(), item.clone());
             }
         }
@@ -146,7 +146,7 @@ impl Library<'_> {
         let (mut new_items, mut revisions, mut moves) = (0, 0, 0);
         // Moves first, then the rest, so a rename continues its item before
         // anything else claims the bytes.
-        let mut ordered: Vec<&Acquisition> = acquisitions.iter().collect();
+        let mut ordered: Vec<&FileCopy> = copies.iter().collect();
         ordered.sort_by_key(|a| a.moved_from.is_none());
         for a in ordered {
             let out = items::records_for(a, |k| holders.get(k).cloned(), INTAKE, now);
@@ -159,7 +159,7 @@ impl Library<'_> {
                         _ => {}
                     }
                     holders.retain(|_, o| o.item != i.item);
-                    for k in &i.acquisitions {
+                    for k in &i.copies {
                         holders.insert(k.clone(), i.clone());
                     }
                 }
@@ -175,7 +175,7 @@ impl Library<'_> {
             "root": root_text,
             "stored_bytes": !reference,
             "files_described": files,
-            "acquisitions_admitted": seen,
+            "copies_admitted": seen,
             "items_new": new_items,
             "items_moved": moves,
             "item_revisions": revisions,

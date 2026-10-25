@@ -8,18 +8,18 @@
 //! 1. answers from the recorded acknowledgment if the frame was handled
 //!    before (a redelivery or a resend);
 //! 2. checks it: a material frame's bytes must be in the content store or in
-//!    the frame's spool directory, from where they are stored first; every
+//!    the frame's directory, from where they are stored first; every
 //!    event must be of a registered type, match that type's JSON Schema,
 //!    decode into its Rust type, and cite a registered material or parent
 //!    events;
 //! 3. hands it to the writer as one `Ingress` batch, so its events and its
 //!    acknowledgment commit together; a frame that fails a check is recorded
 //!    as refused, with no events;
-//! 4. removes the frame's spool directory, publishes the acknowledgment on
+//! 4. removes the frame's directory, publishes the acknowledgment on
 //!    `<root>.ack.<producer>` and acknowledges the JetStream message.
 //!
 //! The producer is the one its subject names; per-producer credentials limit
-//! each producer to its own subjects. `<root>.have.<producer>` answers which
+//! each producer to its own subjects. `<root>.recorded.<producer>` answers which
 //! frames Sinex recorded, `<root>.materials.<producer>` pages through the
 //! materials the producer registered, and `<root>.excise.<producer>` excises
 //! whole materials the producer registered.
@@ -35,8 +35,8 @@ use sinex_model::{
     RecordOutcome, RevisionChange, RunId, SourceProgress, Timestamp, event_types,
 };
 use sinex_protocol::{
-    Acknowledgment, Excise, ExciseReply, Have, HeldMaterial, Ingress, MaterialFrame, Materials,
-    ProducerEvent, ProducerFailure, Subjects,
+    Acknowledgment, Excise, ExciseReply, HeldMaterial, Ingress, MaterialFrame, Materials,
+    ProducerEvent, ProducerFailure, RecordedQuery, Subjects,
 };
 use sinex_store::commit_log::{self, StoredFrame};
 use sinex_store::{Blobs, runs};
@@ -140,7 +140,7 @@ impl Ingest {
             return Ok(acknowledgment(stored));
         }
         let run = self.run(producer).await?;
-        let checked = match self.unwrap_indirect(producer, frame).await {
+        let checked = match self.unwrap_large_frame(producer, frame).await {
             Err(check) => Err(check),
             Ok(Ingress::Material { material, .. }) => match self.sealed(producer).await? {
                 true => Err(Check::Refused(
@@ -162,7 +162,7 @@ impl Ingest {
                 .receive_chunk(producer, &chunk)
                 .await
                 .map(|()| (None, vec![])),
-            Ok(Ingress::Indirect { .. }) => unreachable!("unwrap_indirect replaces indirect frames"),
+            Ok(Ingress::LargeFrame { .. }) => unreachable!("unwrap_large_frame replaces indirect frames"),
         };
         let batch = match checked {
             Ok((progress, records)) => Batch {
@@ -212,11 +212,11 @@ impl Ingest {
         Ok(acknowledgment(stored))
     }
 
-    /// Answer a have request: the recorded acknowledgments of these frames.
-    pub async fn have(
+    /// Answer a recorded query: the recorded acknowledgments of these frames.
+    pub async fn recorded(
         &mut self,
         producer: &str,
-        request: &Have,
+        request: &RecordedQuery,
     ) -> Result<Vec<Acknowledgment>, String> {
         Ok(
             commit_log::frames(&mut self.conn, producer, &request.frames)
@@ -336,7 +336,7 @@ impl Ingest {
         }
         Ok((
             Some(SourceProgress {
-                material_keys: Vec::new(),
+                data_keys: Vec::new(),
                 binding: format!("ingress:{producer}"),
                 input: m.input.clone(),
                 observation: ObservationFacts {
@@ -413,7 +413,7 @@ impl Ingest {
             let origin = match (e.location, e.parents.is_empty()) {
                 (Some(location), _) => Origin::Record {
                     location,
-                    ordinal: e.ordinal,
+                    output_index: e.output_index,
                 },
                 (None, false) => Origin::Derived {
                     parents: e.parents.clone(),
@@ -497,7 +497,7 @@ fn acknowledgment(s: StoredFrame) -> Acknowledgment {
     }
 }
 
-/// Consume the ingress stream and answer have and excise requests until
+/// Consume the ingress stream and answer recorded queries and excise requests until
 /// `stop` is set.
 pub async fn run(
     client: async_nats::Client,
@@ -511,9 +511,9 @@ pub async fn run(
         .await
         .map_err(|e| format!("ingress messages: {e}"))?;
     let mut have = client
-        .subscribe(ingest.subjects.have_all())
+        .subscribe(ingest.subjects.recorded_all())
         .await
-        .map_err(|e| format!("have subscription: {e}"))?;
+        .map_err(|e| format!("recorded-query subscription: {e}"))?;
     let mut materials = client
         .subscribe(ingest.subjects.materials_all())
         .await
@@ -554,7 +554,7 @@ pub async fn run(
             }
             request = have.next() => {
                 let Some(request) = request else {
-                    return Err("the have subscription ended".into());
+                    return Err("the recorded-query subscription ended".into());
                 };
                 let (Some(reply), Some(producer)) = (
                     request.reply.clone(),
@@ -562,9 +562,9 @@ pub async fn run(
                 ) else {
                     continue;
                 };
-                let answer = match serde_json::from_slice::<Have>(&request.payload) {
-                    Ok(have) => ingest.have(&producer, &have).await.map(|acks| serde_json::json!(acks)),
-                    Err(error) => Ok(serde_json::json!({ "refusal": format!("not a have request: {error}") })),
+                let answer = match serde_json::from_slice::<RecordedQuery>(&request.payload) {
+                    Ok(query) => ingest.recorded(&producer, &query).await.map(|acks| serde_json::json!(acks)),
+                    Err(error) => Ok(serde_json::json!({ "refusal": format!("not a recorded query: {error}") })),
                 };
                 let body = match answer {
                     Ok(value) => value,

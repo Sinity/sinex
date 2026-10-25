@@ -271,7 +271,7 @@ pub fn read_input(
             },
             revision: RevisionChange::Same,
             material: None,
-            cursor_unchanged: json!(state.cursor),
+            cursor_without_material: json!(state.cursor),
         };
         (context.emit)(index, Ok(acquired))?;
     }
@@ -323,10 +323,10 @@ impl Context<'_, '_> {
                     move |end| Ok(cursor(end))
                 }),
                 aligned: false,
-                vanished: Vec::new(),
+                removed: Vec::new(),
                 memory: None,
             }),
-            cursor_unchanged: Value::Null,
+            cursor_without_material: Value::Null,
         };
         state.active = (self.emit)(index, Ok(acquired))?;
         Ok(())
@@ -539,10 +539,10 @@ impl Context<'_, '_> {
                         move |end| Ok(cursor(end))
                     }),
                     aligned: false,
-                    vanished: Vec::new(),
+                    removed: Vec::new(),
                     memory: None,
                 }),
-                cursor_unchanged: Value::Null,
+                cursor_without_material: Value::Null,
             };
             if (self.emit)(index, Ok(acquired))? {
                 state.cursor = after;

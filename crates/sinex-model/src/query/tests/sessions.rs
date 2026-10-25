@@ -1,7 +1,7 @@
 use super::*;
 
 #[devkit::test]
-fn shell_sessions_are_explicit_and_recall_last_filters_the_anchor() {
+fn shell_sessions_are_explicit_and_recall_last_filters_the_session() {
     let query = q("shell-sessions where cwds ^ /src/tide sort start desc");
     assert_eq!(query.source.alias().unwrap().kinds, &["shell.session"]);
     assert!(matches!(
@@ -13,7 +13,7 @@ fn shell_sessions_are_explicit_and_recall_last_filters_the_anchor() {
         query.source,
         Source::RecallLast { filter: Some(_) }
     ));
-    assert!(read_as(&query).contains("observed envelope"));
+    assert!(read_as(&query).contains("during the latest recorded shell session"));
     assert!(
         err("shell-sessions where cwds ^ relative")
             .message

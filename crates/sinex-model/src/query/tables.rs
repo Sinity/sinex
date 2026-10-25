@@ -1,7 +1,7 @@
-//! Units and their fields. Every unit is one table of fields; the parser, the
+//! Tables and their fields. Every table is one table of fields; the parser, the
 //! compiler, the read-back and every surface read the same table, so they
 //! cannot disagree. The SQL each field lowers to lives in `sinex-store::query`,
-//! keyed by unit and field name, and a test there checks that every field here
+//! keyed by table and field name, and a test there checks that every field here
 //! has one.
 use crate::{ArchiveReason, Class, DbCheck, RecordState, TimeQuality};
 
@@ -38,13 +38,12 @@ const fn f(name: &'static str, ty: FieldType, phrase: &'static str) -> Field {
 
 const ORIGINS: &[&str] = &["material", "derived"];
 const RUN_STATUS: &[&str] = &["running", "finished"];
-const FAILURE_STAGES: &[&str] = &["parse"];
 
 macro_rules! event_fields {
     ($($extra:expr),* $(,)?) => {
         &[
             f("id", FieldType::Id, "event ID"),
-            f("kind", FieldType::Text, "kind"),
+            f("event_type", FieldType::Text, "event type"),
             f("source", FieldType::Text, "source"),
             f("host", FieldType::Text, "host"),
             f("when", FieldType::Time, "time it happened"),
@@ -53,8 +52,8 @@ macro_rules! event_fields {
             f("written", FieldType::Time, "time it was written"),
             f("origin", FieldType::Enum(ORIGINS), "origin"),
             f("material", FieldType::Id, "material"),
-            f("anchor", FieldType::Integer, "byte offset"),
-            f("ordinal", FieldType::Integer, "output number"),
+            f("offset", FieldType::Integer, "byte offset"),
+            f("output", FieldType::Integer, "output number"),
             f("parents", FieldType::IdList, "parent events"),
             f("producer", FieldType::Text, "producer"),
             f("run", FieldType::Id, "run"),
@@ -92,11 +91,11 @@ const MATERIALS: &[Field] = &[
     f("parser_version", FieldType::Integer, "parser version"),
     f("hash", FieldType::Text, "content hash"),
     f("size", FieldType::Integer, "size in bytes"),
-    f("staged", FieldType::Time, "time it was stored"),
+    f("stored", FieldType::Time, "time it was stored"),
     f("origin_path", FieldType::Path, "path it was read from"),
     f("host", FieldType::Text, "host"),
     f("part", FieldType::Integer, "part number"),
-    f("continues", FieldType::Id, "previous part"),
+    f("previous_part", FieldType::Id, "previous part"),
     f("events", FieldType::Integer, "live events"),
     f("first", FieldType::Time, "earliest event time"),
     f("last", FieldType::Time, "latest event time"),
@@ -117,11 +116,10 @@ const SOURCES: &[Field] = &[
     f("source", FieldType::Text, "source"),
     f("driver", FieldType::Text, "driver"),
     f("version", FieldType::Integer, "version"),
-    f("kinds", FieldType::Text, "event kinds"),
-    f("consumer", FieldType::Text, "consumer"),
+    f("event_types", FieldType::Text, "event types"),
+    f("purpose", FieldType::Text, "purpose"),
     f("events", FieldType::Integer, "live events"),
     f("first", FieldType::Time, "oldest event time"),
-    f("last", FieldType::Time, "newest event time"),
     f("last_event", FieldType::Time, "newest event time"),
     f(
         "last_seen",
@@ -144,15 +142,14 @@ const OPERATIONS: &[Field] = &[
 const FAILURES: &[Field] = &[
     f("id", FieldType::Integer, "failure ID"),
     f("when", FieldType::Time, "time it failed"),
-    f("stage", FieldType::Enum(FAILURE_STAGES), "stage"),
     f("source", FieldType::Text, "source"),
     f("material", FieldType::Id, "material"),
-    f("anchor", FieldType::Integer, "byte offset"),
+    f("offset", FieldType::Integer, "byte offset"),
     f("reason", FieldType::Text, "reason"),
 ];
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Unit {
+pub enum Table {
     Events,
     Archive,
     Materials,
@@ -162,95 +159,101 @@ pub enum Unit {
     Failures,
 }
 
-impl Unit {
-    pub const ALL: [Unit; 7] = [
-        Unit::Events,
-        Unit::Archive,
-        Unit::Materials,
-        Unit::Runs,
-        Unit::Sources,
-        Unit::Operations,
-        Unit::Failures,
+impl Table {
+    pub const ALL: [Table; 7] = [
+        Table::Events,
+        Table::Archive,
+        Table::Materials,
+        Table::Runs,
+        Table::Sources,
+        Table::Operations,
+        Table::Failures,
     ];
 
     pub fn name(self) -> &'static str {
         match self {
-            Unit::Events => "events",
-            Unit::Archive => "archive",
-            Unit::Materials => "materials",
-            Unit::Runs => "runs",
-            Unit::Sources => "sources",
-            Unit::Operations => "operations",
-            Unit::Failures => "failures",
+            Table::Events => "events",
+            Table::Archive => "archive",
+            Table::Materials => "materials",
+            Table::Runs => "runs",
+            Table::Sources => "sources",
+            Table::Operations => "operations",
+            Table::Failures => "failures",
         }
     }
 
-    pub fn from_name(name: &str) -> Option<Unit> {
-        Unit::ALL.into_iter().find(|u| u.name() == name)
+    pub fn from_name(name: &str) -> Option<Table> {
+        Table::ALL.into_iter().find(|u| u.name() == name)
     }
 
-    /// What the unit reads as in a sentence.
+    /// What the table reads as in a sentence.
     pub fn phrase(self) -> &'static str {
         match self {
-            Unit::Events => "live events",
-            Unit::Archive => "archived readings",
-            Unit::Materials => "stored materials",
-            Unit::Runs => "runs",
-            Unit::Sources => "sources",
-            Unit::Operations => "operations",
-            Unit::Failures => "records that failed",
+            Table::Events => "live events",
+            Table::Archive => "archived readings",
+            Table::Materials => "stored materials",
+            Table::Runs => "runs",
+            Table::Sources => "sources",
+            Table::Operations => "operations",
+            Table::Failures => "records that failed",
         }
     }
 
     pub fn fields(self) -> &'static [Field] {
         match self {
-            Unit::Events => EVENTS,
-            Unit::Archive => ARCHIVE,
-            Unit::Materials => MATERIALS,
-            Unit::Runs => RUNS,
-            Unit::Sources => SOURCES,
-            Unit::Operations => OPERATIONS,
-            Unit::Failures => FAILURES,
+            Table::Events => EVENTS,
+            Table::Archive => ARCHIVE,
+            Table::Materials => MATERIALS,
+            Table::Runs => RUNS,
+            Table::Sources => SOURCES,
+            Table::Operations => OPERATIONS,
+            Table::Failures => FAILURES,
         }
     }
 
     /// The time `since`, `until` and `in` apply to when no field is named.
     pub fn main_time(self) -> &'static str {
         match self {
-            Unit::Events | Unit::Archive | Unit::Failures => "when",
-            Unit::Materials => "staged",
-            Unit::Runs | Unit::Operations => "started",
-            Unit::Sources => "last_event",
+            Table::Events | Table::Archive | Table::Failures => "when",
+            Table::Materials => "stored",
+            Table::Runs | Table::Operations => "started",
+            Table::Sources => "last_event",
         }
     }
 
     /// Whether rows are events, with payloads, text and provenance.
     pub fn is_events(self) -> bool {
-        matches!(self, Unit::Events | Unit::Archive)
+        matches!(self, Table::Events | Table::Archive)
     }
 
     /// Fields shown when the query names none.
     pub fn default_fields(self) -> &'static [&'static str] {
         match self {
-            Unit::Events => &["id", "kind", "source", "when", "payload"],
-            Unit::Archive => &[
-                "id", "kind", "source", "when", "archived", "reason", "payload",
+            Table::Events => &["id", "event_type", "source", "when", "payload"],
+            Table::Archive => &[
+                "id",
+                "event_type",
+                "source",
+                "when",
+                "archived",
+                "reason",
+                "payload",
             ],
-            Unit::Materials => &["id", "binding", "parser", "size", "staged", "events"],
-            Unit::Runs => &[
+            Table::Materials => &["id", "binding", "parser", "size", "stored", "events"],
+            Table::Runs => &[
                 "id", "producer", "host", "started", "ended", "status", "events",
             ],
-            Unit::Sources => &[
+            Table::Sources => &[
                 "binding",
                 "driver",
-                "kinds",
+                "event_types",
                 "events",
                 "last_event",
                 "last_seen",
                 "failed_24h",
             ],
-            Unit::Operations => &["id", "kind", "actor", "scope", "started"],
-            Unit::Failures => &["id", "when", "source", "material", "anchor", "reason"],
+            Table::Operations => &["id", "kind", "actor", "scope", "started"],
+            Table::Failures => &["id", "when", "source", "material", "offset", "reason"],
         }
     }
 
@@ -259,7 +262,7 @@ impl Unit {
     }
 }
 
-/// A unit alias: `events` with fixed kinds and a few promoted fields. Adding
+/// A table alias: `events` with fixed kinds and a few promoted fields. Adding
 /// one is a line here and its field SQL in the store; never a code path.
 #[derive(Debug, PartialEq)]
 pub struct Alias {
@@ -392,7 +395,7 @@ pub const ALIASES: &[Alias] = &[
     },
     Alias {
         name: "media",
-        kinds: &["library.acquisition"],
+        kinds: &["library.copy"],
         phrase: "files seen in library folders",
         fields: &[
             f("path", FieldType::Path, "path"),
@@ -466,25 +469,25 @@ pub const COMMAND_WORDS: &[&str] = &[
     "duplicates",
 ];
 
-/// Every word that names a unit, alias or command, for typo suggestions.
-pub fn unit_like_words() -> impl Iterator<Item = &'static str> {
-    Unit::ALL
+/// Every word that names a table, alias or command, for typo suggestions.
+pub fn table_like_words() -> impl Iterator<Item = &'static str> {
+    Table::ALL
         .iter()
         .map(|u| u.name())
         .chain(ALIASES.iter().map(|a| a.name))
         .chain(COMMAND_WORDS.iter().copied())
 }
 
-/// Every unit whose closed-set field accepts `value`, as `unit.field`, so a
+/// Every table whose closed-set field accepts `value`, as `table.field`, so a
 /// refusal can say where the value belongs.
-pub fn units_accepting(value: &str) -> Vec<String> {
+pub fn tables_accepting(value: &str) -> Vec<String> {
     let mut out = Vec::new();
-    for unit in Unit::ALL {
-        for field in unit.fields() {
+    for table in Table::ALL {
+        for field in table.fields() {
             if let FieldType::Enum(values) = field.ty
                 && values.contains(&value)
             {
-                out.push(format!("{}.{}", unit.name(), field.name));
+                out.push(format!("{}.{}", table.name(), field.name));
             }
         }
     }

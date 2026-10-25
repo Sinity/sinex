@@ -58,7 +58,7 @@ impl Library<'_> {
         records: Vec<LibraryRecord>,
         actor: &str,
         action: &str,
-        cited: Vec<sinex_model::Cited>,
+        cited: Vec<sinex_model::OwnedBlob>,
     ) -> R<Value> {
         if records.is_empty() {
             return Ok(json!({"records":0}));
@@ -71,7 +71,7 @@ impl Library<'_> {
                 .material
                 .as_mut()
                 .expect("request has material")
-                .manifest["cited_blobs"] = serde_json::to_value(cited).map_err(e)?;
+                .manifest["owned_blobs"] = serde_json::to_value(cited).map_err(e)?;
         }
         let result = crate::authored::submit(
             conn,

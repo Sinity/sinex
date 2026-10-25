@@ -6,7 +6,7 @@ const SPEC: SourceSpec = SourceSpec {
     name: "test.source",
     driver: Driver::ExportArchive,
     excisable: false,
-    consumer: "tests",
+    purpose: "tests",
     class: Class::Open,
     parser: "test",
     parser_version: 1,

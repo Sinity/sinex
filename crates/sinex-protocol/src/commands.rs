@@ -17,7 +17,7 @@ pub enum Access {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ArgKind {
     Text,
-    /// A citation: an event ID, `sinex:ev/…`, `sinex:occ/…` or `sinex:eq/…`.
+    /// A citation: an event ID, `sinex:ev/…`, `sinex:record/…` or `sinex:key/…`.
     Reference,
     Integer,
     Bool,
@@ -169,7 +169,7 @@ pub const COMMANDS: &[Command] = &[
     },
     Command {
         name: "recall",
-        summary: "What sources recorded around a time/day, or in the latest shell group (last).",
+        summary: "What sources recorded around a time/day, or in the latest shell session (last).",
         args: &[
             Arg {
                 required: false,
@@ -182,7 +182,7 @@ pub const COMMANDS: &[Command] = &[
             opt(
                 "cwd",
                 ArgKind::Text,
-                "with last: select a shell group with a member in this directory or below",
+                "with last: select a shell session with a member in this directory or below",
             ),
             PAGE,
             CURSOR,
@@ -206,7 +206,7 @@ pub const COMMANDS: &[Command] = &[
     },
     Command {
         name: "trace",
-        summary: "The chain from an event down through its parents to stored bytes.",
+        summary: "The path from an event down through its parents to stored bytes.",
         args: &[
             pos("reference", ArgKind::Reference, "the event"),
             PAGE,
@@ -264,7 +264,7 @@ pub const COMMANDS: &[Command] = &[
             opt(
                 "resume",
                 ArgKind::Text,
-                "continue an interrupted replay operation, skipping the chains it finished",
+                "continue an interrupted replay operation, skipping the part sequences it finished",
             ),
             opt(
                 "all",
@@ -277,13 +277,13 @@ pub const COMMANDS: &[Command] = &[
     },
     Command {
         name: "recompute",
-        summary: "Recompute a keyed derivation's outputs. With --compare, compute into the comparison lane and show old against new without writing.",
+        summary: "Recompute a keyed derivation's outputs. With --compare, show old against new and keep the difference in derivation.comparisons, without writing outputs.",
         args: &[
             pos("derivation", ArgKind::Text, "the derivation"),
             opt(
                 "compare",
                 ArgKind::Bool,
-                "compute into the comparison lane and show old against new",
+                "show old against new without writing outputs",
             ),
             opt(
                 "from",

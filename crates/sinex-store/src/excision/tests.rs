@@ -7,7 +7,7 @@ use crate::Blobs;
 use crate::admission::{NoDerivations, admit};
 use sinex_model::event_types::{CommandExecuted, CommandFused};
 use sinex_model::{
-    Batch, BatchKind, Cited, Class, Event, Origin, ReadingOrder, RecordLocation, RecordOutcome,
+    Batch, BatchKind, Class, Event, Origin, OwnedBlob, ReadingOrder, RecordLocation, RecordOutcome,
     RunId, Timestamp,
 };
 use sqlx::Connection;
@@ -70,7 +70,7 @@ async fn material(
     .await
     .unwrap();
     sqlx::query!(
-        r#"INSERT INTO raw.materials (id, input_id, blob, durable_bytes, manifest, parser, parser_version)
+        r#"INSERT INTO raw.materials (id, input_id, blob, length, manifest, parser, parser_version)
            VALUES ($1, $2, $3, $4, '{}', 'lines', 1)"#,
         id.0,
         input,
@@ -112,7 +112,7 @@ fn keyed(material: MaterialId, bytes: &[u8], anchor: usize, key: &str, order: i6
                 material,
                 anchor: anchor as u64,
             },
-            ordinal: 0,
+            output_index: 0,
         },
         ReadingOrder(order),
         *blake3::hash(raw).as_bytes(),
@@ -140,7 +140,7 @@ fn keyless(material: MaterialId, bytes: &[u8], anchor: usize) -> Event {
                 material,
                 anchor: anchor as u64,
             },
-            ordinal: 0,
+            output_index: 0,
         },
         ReadingOrder(anchor as i64),
         *blake3::hash(raw).as_bytes(),
@@ -456,9 +456,9 @@ async fn cited_bytes_go_unless_something_else_cites_them(db: devkit::pg::TestDat
     let only = store.blobs.put(b"cited by a alone").unwrap();
     let shared = store.blobs.put(b"cited by b and c").unwrap();
     let cite = |mut event: Event, blobs: &[&String]| {
-        event.cites = blobs
+        event.owned_blobs = blobs
             .iter()
-            .map(|blob| Cited {
+            .map(|blob| OwnedBlob {
                 blob: (*blob).clone(),
                 size: 16,
             })
@@ -496,7 +496,7 @@ async fn excision_of_sealed_material_is_refused_without_changes(db: devkit::pg::
     let bytes = b"a\nb\n".to_vec();
     let (m, blob) = material(&mut conn, &store, "s", &bytes).await;
     sqlx::query!(
-        "INSERT INTO privacy.material_keys (material_id, key_ref, class, wrapped_key) VALUES ($1, $2, 'sealed', '\\x00')",
+        "INSERT INTO privacy.data_keys (material_id, key_ref, class, wrapped_key) VALUES ($1, $2, 'sealed', '\\x00')",
         m.0, m.0.to_string()
     ).execute(&mut conn).await.unwrap();
     let a = keyed(m, &bytes, 0, "a", 1);
@@ -509,7 +509,7 @@ async fn excision_of_sealed_material_is_refused_without_changes(db: devkit::pg::
         );
     }
     assert_eq!(
-        count(&mut conn, "SELECT count(*) FROM privacy.material_keys").await,
+        count(&mut conn, "SELECT count(*) FROM privacy.data_keys").await,
         1
     );
     assert_eq!(
@@ -523,10 +523,10 @@ async fn excision_of_sealed_material_is_refused_without_changes(db: devkit::pg::
     assert_eq!(store.blobs.read(&blob).unwrap(), bytes);
 }
 
-/// Two parts of one revision with equal bytes share their revision extents'
-/// blob; excision cannot tell which extent is whose, so it refuses.
+/// Two materials with equal bytes share one blob; excising a record of one
+/// leaves the other material and the shared blob as they were.
 #[devkit::test]
-async fn bytes_shared_within_a_revision_are_refused_without_changes(db: devkit::pg::TestDatabase) {
+async fn a_blob_shared_by_two_materials_stays_for_the_other(db: devkit::pg::TestDatabase) {
     let mut conn = connect(&db).await;
     let store = Store::new();
     let bytes = b"same\n".to_vec();
@@ -542,7 +542,7 @@ async fn bytes_shared_within_a_revision_are_refused_without_changes(db: devkit::
     .execute(&mut conn)
     .await
     .unwrap();
-    for (position, id) in [first, second].iter().enumerate() {
+    for id in [first, second] {
         sqlx::query!(
             "UPDATE raw.materials SET revision_id = $2 WHERE id = $1",
             id.0,
@@ -551,26 +551,22 @@ async fn bytes_shared_within_a_revision_are_refused_without_changes(db: devkit::
         .execute(&mut conn)
         .await
         .unwrap();
-        sqlx::query!(
-            "INSERT INTO raw.revision_extents (revision_id, position, blob, blob_offset, length) VALUES ($1, $2, $3, 0, 5)",
-            revision,
-            position as i32,
-            blob
-        )
-        .execute(&mut conn)
-        .await
-        .unwrap();
     }
     let event = keyless(first, &bytes, 0);
     admit_events(&mut conn, vec![event.clone(), keyless(second, &bytes, 0)]).await;
-    for target in [Target::Event(event.id), Target::Material(first)] {
-        let err = excise(&mut conn, &store, target).await.unwrap_err();
-        assert!(err.to_string().contains("cannot tell"), "{err}");
-    }
+    excise(&mut conn, &store, Target::Event(event.id))
+        .await
+        .unwrap();
     assert_eq!(
         count(&mut conn, "SELECT count(*) FROM core.events").await,
-        2
+        1
     );
+    let second_blob: String =
+        sqlx::query_scalar!("SELECT blob FROM raw.materials WHERE id = $1", second.0)
+            .fetch_one(&mut conn)
+            .await
+            .unwrap();
+    assert_eq!(second_blob, blob);
     assert_eq!(store.blobs.read(&blob).unwrap(), bytes);
 }
 

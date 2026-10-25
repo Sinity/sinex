@@ -40,7 +40,7 @@ impl Batch {
             .into_iter()
             .chain(
                 self.events()
-                    .flat_map(|e| e.cites.iter().map(|c| c.blob.as_str())),
+                    .flat_map(|e| e.owned_blobs.iter().map(|c| c.blob.as_str())),
             )
     }
 }
@@ -98,7 +98,7 @@ pub enum RecordOutcome {
 pub struct SourceProgress {
     pub binding: String,
     /// Wrapped keys of sealed materials, stored with the material rows.
-    pub material_keys: Vec<WrappedMaterialKey>,
+    pub data_keys: Vec<WrappedDataKey>,
     pub input: InputRef,
     pub observation: ObservationFacts,
     pub revision: RevisionChange,
@@ -147,15 +147,15 @@ pub struct ObservationFacts {
 
 /// A sealed material's data key, wrapped for the sealed class.
 #[derive(Clone, PartialEq, Eq)]
-pub struct WrappedMaterialKey {
+pub struct WrappedDataKey {
     pub material: MaterialId,
     pub key_ref: String,
     pub wrapped: Vec<u8>,
 }
 
-impl std::fmt::Debug for WrappedMaterialKey {
+impl std::fmt::Debug for WrappedDataKey {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("WrappedMaterialKey")
+        f.debug_struct("WrappedDataKey")
             .field("material", &self.material)
             .field("key_ref", &self.key_ref)
             .finish_non_exhaustive()
@@ -206,7 +206,8 @@ pub struct MaterialRef {
     pub previous_part: Option<MaterialId>,
     pub parser: String,
     pub parser_version: u32,
-    /// Lossless description: path bytes, envelopes, media type, charset.
+    /// Where the bytes came from and how to read them: path, media type,
+    /// charset, and the driver's details.
     pub manifest: Value,
 }
 
@@ -264,7 +265,7 @@ pub struct ReplayScope {
 impl ReplayScope {
     /// Whether a new reading belongs to the scope (its material is checked by
     /// the caller, which only re-reads in-scope materials).
-    pub fn admits(&self, event: &Event) -> bool {
+    pub fn includes(&self, event: &Event) -> bool {
         if let Some(types) = &self.event_types
             && !types.iter().any(|t| t == event.event_type)
         {

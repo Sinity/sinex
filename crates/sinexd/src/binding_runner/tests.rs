@@ -30,8 +30,8 @@ fn plans_the_enabled_sources_bindings_from_their_paths() {
 }
 
 #[devkit::test]
-fn keeps_only_the_named_source_of_a_kind_reading_several() {
-    // Chromium's kind plans visits and URLs; enabling one source keeps one.
+fn keeps_only_the_named_source_of_a_format_reading_several() {
+    // Chromium's format plans visits and URLs; enabling one source keeps one.
     let dir = std::env::temp_dir().join(format!("sinex-runner-{}", uuid::Uuid::now_v7()));
     std::fs::create_dir_all(dir.join("Default")).unwrap();
     std::fs::write(dir.join("Default/History"), b"").unwrap();
@@ -59,13 +59,13 @@ fn an_unknown_source_is_refused_by_name() {
 }
 
 #[devkit::test]
-fn a_configured_kind_chooses_among_kinds_sharing_a_name() {
+fn a_configured_format_chooses_among_formats_sharing_a_name() {
     let dir = std::env::temp_dir().join(format!("sinex-runner-{}", uuid::Uuid::now_v7()));
     std::fs::create_dir_all(&dir).unwrap();
     let planned = plan(
         &config(serde_json::json!({
             "sources": {"desktop.clipboard": {
-                "enable": true, "kind": "sinnix-lake", "paths": [dir.display().to_string()]
+                "enable": true, "format": "sinnix-lake", "paths": [dir.display().to_string()]
             }}
         })),
         "h",
@@ -78,11 +78,11 @@ fn a_configured_kind_chooses_among_kinds_sharing_a_name() {
     );
     let Err(e) = plan(
         &config(serde_json::json!({
-            "sources": {"desktop.clipboard": {"enable": true, "kind": "spotify", "paths": ["/x"]}}
+            "sources": {"desktop.clipboard": {"enable": true, "format": "spotify", "paths": ["/x"]}}
         })),
         "h",
     ) else {
-        panic!("a kind not reading the source was accepted");
+        panic!("a format not reading the source was accepted");
     };
     assert!(e.contains("spotify"), "{e}");
     std::fs::remove_dir_all(&dir).unwrap();

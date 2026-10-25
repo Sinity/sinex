@@ -34,7 +34,7 @@ pub const SPEC: SourceSpec = SourceSpec {
     name: "desktop.activitywatch",
     driver: Driver::SqliteRows,
     excisable: false,
-    consumer: "attention, presence and recall",
+    purpose: "attention, presence and recall",
     class: Class::Guarded,
     parser: "activitywatch-events",
     parser_version: 1,
@@ -285,8 +285,8 @@ pub fn driver(path: PathBuf, host: String) -> SqliteRows {
     }
 }
 
-/// `--source activitywatch=PATH`: `aw-server-rust`'s database.
-pub const KIND: crate::binding::InputKind = crate::binding::InputKind {
+/// `--read activitywatch=PATH`: `aw-server-rust`'s database.
+pub const FORMAT: crate::binding::InputFormat = crate::binding::InputFormat {
     name: "activitywatch",
     specs: || vec![&SPEC],
     plan: Some(|input, settings| Ok(crate::binding::single(&SPEC, input, settings))),

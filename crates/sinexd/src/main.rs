@@ -7,6 +7,7 @@ mod api;
 mod authored;
 mod backfill;
 mod binding_reader;
+mod binding_runner;
 mod catalog;
 mod commit_reader;
 mod crawl;
@@ -22,7 +23,6 @@ mod publisher;
 mod replay;
 mod screen_text;
 mod sealed_access;
-mod source_runner;
 mod stored;
 mod writer;
 
@@ -50,7 +50,7 @@ enum Command {
         nats: String,
         /// Subject root on the NATS server.
         #[arg(long, default_value = "sinex")]
-        subjects: String,
+        subject_root: String,
         #[arg(long, default_value = "localhost")]
         host: String,
         /// The API's Unix socket; default `$XDG_RUNTIME_DIR/sinex/sinexd.sock`,
@@ -83,7 +83,7 @@ enum Command {
         #[arg(long)]
         nats: String,
         #[arg(long, default_value = "sinex")]
-        subjects: String,
+        subject_root: String,
     },
     /// Capture a live system source into its spool (the daemon runs the same
     /// capture as a task).
@@ -105,12 +105,11 @@ enum Command {
         /// Content store directory.
         #[arg(long)]
         store: PathBuf,
-        /// A source as `kind=path`; repeatable. The kinds are every
-        /// registered source's (`sinexd admin catalog` lists them): exports
-        /// and directories (a file, or a directory of them), databases, and
-        /// live sources' spools.
-        #[arg(long = "source")]
-        sources: Vec<String>,
+        /// An input as `format=path`; repeatable. The formats are listed by
+        /// `sinexd admin catalog`: exports and directories (a file, or a
+        /// directory of them), databases, and live sources' spools.
+        #[arg(long = "read")]
+        reads: Vec<String>,
         /// The zone sources with local times were written in (IANA name);
         /// the system zone when unset. Recorded with each binding.
         #[arg(long)]
@@ -129,7 +128,7 @@ enum Command {
         identity_file: Option<PathBuf>,
     },
     /// Run every derivation until nothing is dirty, through the writer, and
-    /// report counts and rates. The daemon's driver, run to completion,
+    /// report counts and rates. The daemon's runner, run to completion,
     /// including the maintained metric values. Create the schema first
     /// with `sinexd admin schema`.
     Derive {
@@ -164,9 +163,9 @@ enum Capture {
     },
 }
 
-/// A writer and a derivation driver for a one-shot command, with the content
+/// A writer and a derivation runner for a one-shot command, with the content
 /// store when `store` names one.
-async fn local_driver(
+async fn local_runner(
     database: &str,
     host: &str,
     store: Option<&std::path::Path>,
@@ -197,7 +196,7 @@ async fn local_driver(
     let read = sqlx::PgConnection::connect(database)
         .await
         .map_err(|e| e.to_string())?;
-    let mut driver = derivation_runner::DerivationRunner::start(
+    let mut runner = derivation_runner::DerivationRunner::start(
         read,
         handle,
         sinex_derivations::keyed(),
@@ -206,9 +205,9 @@ async fn local_driver(
     )
     .await?;
     if let Some(blobs) = blobs {
-        driver = driver.with_blobs(blobs);
+        runner = runner.with_blobs(blobs);
     }
-    Ok((driver, task))
+    Ok((runner, task))
 }
 
 async fn run_derive(
@@ -217,20 +216,20 @@ async fn run_derive(
     host: String,
     json: bool,
 ) -> Result<(), String> {
-    let (driver, writer_task) = local_driver(&database, &host, store.as_deref()).await?;
-    let mut driver = driver.with_maintained(vec![Box::new(analysis::MetricValues::new(
+    let (runner, writer_task) = local_runner(&database, &host, store.as_deref()).await?;
+    let mut runner = runner.with_maintained(vec![Box::new(analysis::MetricValues::new(
         analysis::Settings::operator_default(),
         2,
         std::time::Duration::ZERO,
     ))]);
     let started = std::time::Instant::now();
-    driver.settle().await?;
+    runner.catch_up().await?;
     let wall = started.elapsed();
-    let outputs: usize = driver.counts.values().map(|c| c.outputs).sum();
-    let inputs: usize = driver.counts.values().map(|c| c.inputs).sum();
+    let outputs: usize = runner.counts.values().map(|c| c.outputs).sum();
+    let inputs: usize = runner.counts.values().map(|c| c.inputs).sum();
     let rate = outputs as f64 / wall.as_secs_f64().max(1e-9);
     if json {
-        let per: serde_json::Map<String, serde_json::Value> = driver
+        let per: serde_json::Map<String, serde_json::Value> = runner
             .counts
             .iter()
             .map(|(name, c)| (name.to_string(), c.to_json()))
@@ -242,7 +241,7 @@ async fn run_derive(
                 "peak_rss_mb": peak_rss_mb()})
         );
     } else {
-        for (name, counts) in &driver.counts {
+        for (name, counts) in &runner.counts {
             println!("{name:18} {counts}");
         }
         println!(
@@ -250,8 +249,8 @@ async fn run_derive(
             wall.as_secs_f64(),
         );
     }
-    driver.end_runs().await?;
-    drop(driver);
+    runner.end_runs().await?;
+    drop(runner);
     writer_task.await.map_err(|e| e.to_string())
 }
 
@@ -265,14 +264,15 @@ pub(crate) fn peak_rss_mb() -> Option<f64> {
         .map(|kb| kb / 1024.0)
 }
 
-async fn publish(database: &str, nats: &str, subjects: &str) -> Result<(), String> {
+async fn publish(database: &str, nats: &str, subject_root: &str) -> Result<(), String> {
     use sqlx::Connection;
     let mut conn = sqlx::PgConnection::connect(database)
         .await
         .map_err(|e| format!("database: {e}"))?;
     let client = sinex_sources::nats::connect(nats).await?;
     let js = publisher::context(client);
-    let report = publisher::drain(&mut conn, &js, &sinex_protocol::Subjects::new(subjects)).await?;
+    let report =
+        publisher::drain(&mut conn, &js, &sinex_protocol::Subjects::new(subject_root)).await?;
     println!("{report}");
     Ok(())
 }
@@ -314,7 +314,7 @@ async fn main() -> std::process::ExitCode {
             database,
             store,
             nats,
-            subjects,
+            subject_root,
             host,
             socket,
             listen,
@@ -328,7 +328,7 @@ async fn main() -> std::process::ExitCode {
                     database,
                     store,
                     nats,
-                    subjects,
+                    subject_root,
                     host,
                     api,
                     sources,
@@ -340,8 +340,8 @@ async fn main() -> std::process::ExitCode {
         Command::Publish {
             database,
             nats,
-            subjects,
-        } => publish(&database, &nats, &subjects).await,
+            subject_root,
+        } => publish(&database, &nats, &subject_root).await,
         Command::Capture {
             source:
                 Capture::Journald {
@@ -362,7 +362,7 @@ async fn main() -> std::process::ExitCode {
         Command::Backfill {
             database,
             store,
-            sources,
+            reads,
             zone,
             options,
             host,
@@ -372,7 +372,7 @@ async fn main() -> std::process::ExitCode {
             backfill::run(backfill::Options {
                 database,
                 store,
-                sources,
+                reads,
                 zone,
                 options,
                 host,

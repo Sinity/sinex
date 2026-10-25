@@ -299,9 +299,9 @@ async fn page_count_and_rows_keep_one_snapshot_across_concurrent_run_completion(
         "CREATE FUNCTION public.cursor_wait(v jsonb) RETURNS jsonb LANGUAGE plpgsql VOLATILE AS $$
          BEGIN PERFORM pg_advisory_xact_lock(982451653); RETURN v; END $$;
          ALTER VIEW core.visible_events RENAME TO cursor_original_events;
-         CREATE VIEW core.visible_events AS SELECT id,event_type,source,run_id,material_id,anchor,ordinal,parents,
+         CREATE VIEW core.visible_events AS SELECT id,event_type,source,run_id,material_id,anchor,output_index,parents,
          ts_orig,ts_quality,ts_coided,ts_persisted,commit_seq,public.cursor_wait(payload) AS payload,
-         equivalence_key,reading_order,record_hash,record_state,class,support FROM core.cursor_original_events;"
+         equivalence_key,reading_order,record_hash,record_state,class FROM core.cursor_original_events;"
     ).execute(&mut conn).await.unwrap();
     let mut writer = PgConnection::connect(&db.url(None)).await.unwrap();
     let mut block = writer.begin().await.unwrap();

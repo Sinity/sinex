@@ -63,7 +63,8 @@ impl<A: Api> ApiCursor<A> {
                 observation,
                 revision: RevisionChange::Same,
                 material: None,
-                cursor_unchanged: serde_json::to_value(unchanged).expect("cursor serializes"),
+                cursor_without_material: serde_json::to_value(unchanged)
+                    .expect("cursor serializes"),
             });
         }
         let mut bytes = Vec::new();
@@ -121,10 +122,10 @@ impl<A: Api> ApiCursor<A> {
                     move |end| Ok(cursor(end))
                 }),
                 aligned: false,
-                vanished: Vec::new(),
+                removed: Vec::new(),
                 memory: None,
             }),
-            cursor_unchanged: Value::Null,
+            cursor_without_material: Value::Null,
         })
     }
 }

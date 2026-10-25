@@ -42,9 +42,9 @@ fn frames_and_producers_have_separate_directories() {
     let body = b"material bytes";
     let blob = name(body);
     let length = body.len() as u64;
-    stage(root.path(), "node", "one", &blob, length, body.as_slice()).unwrap();
-    stage(root.path(), "node", "two", &blob, length, body.as_slice()).unwrap();
-    stage(root.path(), "other", "one", &blob, length, body.as_slice()).unwrap();
+    write(root.path(), "node", "one", &blob, length, body.as_slice()).unwrap();
+    write(root.path(), "node", "two", &blob, length, body.as_slice()).unwrap();
+    write(root.path(), "other", "one", &blob, length, body.as_slice()).unwrap();
     discard(root.path(), "node", "one").unwrap();
     assert!(snapshot(root.path(), "node", "one", &blob, length).is_err());
     assert!(snapshot(root.path(), "node", "two", &blob, length).is_ok());
@@ -52,11 +52,11 @@ fn frames_and_producers_have_separate_directories() {
 }
 
 #[devkit::test]
-fn staged_bytes_must_match_their_name_and_length() {
+fn written_bytes_must_match_their_name_and_length() {
     let root = tempfile::tempdir().unwrap();
     let body = b"right";
     assert!(
-        stage(
+        write(
             root.path(),
             "node",
             "frame",
@@ -67,7 +67,7 @@ fn staged_bytes_must_match_their_name_and_length() {
         .is_err()
     );
     assert!(
-        stage(
+        write(
             root.path(),
             "node",
             "frame",
@@ -78,7 +78,7 @@ fn staged_bytes_must_match_their_name_and_length() {
         .is_err()
     );
     assert!(
-        stage(
+        write(
             root.path(),
             "node",
             "frame",
@@ -89,7 +89,7 @@ fn staged_bytes_must_match_their_name_and_length() {
         .is_err()
     );
     assert!(
-        stage(
+        write(
             root.path(),
             "node",
             "frame",
@@ -119,7 +119,7 @@ fn empty_and_wrong_uploads_leave_no_complete_file() {
 fn discard_leaves_files_it_did_not_put_there() {
     let root = tempfile::tempdir().unwrap();
     let body = b"bytes";
-    stage(
+    write(
         root.path(),
         "node",
         "frame",

@@ -1,4 +1,4 @@
-//! Reads for the derivation driver: the live events a key reads, the keys
+//! Reads for the derivation runner: the live events a key reads, the keys
 //! waiting to be recomputed, and committed events in commit order. Writes go
 //! through admission (`DerivedScope`), never from here, except the registry
 //! rows written at daemon start and the comparisons a recompute command keeps.
@@ -89,7 +89,7 @@ fn event_from_row(
     source: String,
     material_id: Option<Uuid>,
     anchor: Option<i64>,
-    ordinal: i16,
+    output_index: i16,
     parents: Option<Vec<Uuid>>,
     ts_orig: Option<OffsetDateTime>,
     ts_quality: &str,
@@ -99,7 +99,6 @@ fn event_from_row(
     record_hash: Vec<u8>,
     record_state: &str,
     class: &str,
-    support: Option<Value>,
 ) -> Result<Event> {
     let event_type = static_type(event_type);
     let origin = match (material_id, anchor, parents) {
@@ -109,8 +108,8 @@ fn event_from_row(
                 anchor: u64::try_from(anchor)
                     .map_err(|_| crate::Error::Invalid("negative anchor".into()))?,
             },
-            ordinal: u16::try_from(ordinal)
-                .map_err(|_| crate::Error::Invalid("negative ordinal".into()))?,
+            output_index: u16::try_from(output_index)
+                .map_err(|_| crate::Error::Invalid("negative output_index".into()))?,
         },
         (_, _, Some(parents)) => Origin::Derived {
             parents: parents.into_iter().map(EventId).collect(),
@@ -133,8 +132,7 @@ fn event_from_row(
             .map_err(|_| crate::Error::Invalid("record hash is not 32 bytes".into()))?,
         record_state: text_enum::<RecordState>(record_state, "record state")?,
         class: text_enum::<Class>(class, "class")?,
-        support,
-        cites: Vec::new(),
+        owned_blobs: Vec::new(),
     })
 }
 
@@ -148,7 +146,7 @@ macro_rules! committed {
                 $r.source,
                 $r.material_id,
                 $r.anchor,
-                $r.ordinal,
+                $r.output_index,
                 $r.parents,
                 $r.ts_orig,
                 &$r.ts_quality,
@@ -158,7 +156,6 @@ macro_rules! committed {
                 $r.record_hash,
                 &$r.record_state,
                 &$r.class,
-                $r.support,
             )?,
         }
     };
@@ -184,9 +181,9 @@ fn split(matching: &[Match]) -> (Value, Option<String>, Vec<String>) {
 pub async fn read_window(conn: &mut PgConnection, w: &Window) -> Result<Vec<Committed>> {
     let (contains, one_of_field, one_of) = split(&w.matching);
     let rows = sqlx::query!(
-        r#"SELECT e.id, e.event_type, e.source, e.material_id, e.anchor, e.ordinal, e.parents,
+        r#"SELECT e.id, e.event_type, e.source, e.material_id, e.anchor, e.output_index, e.parents,
              e.ts_orig, e.ts_quality, e.payload, e.equivalence_key, e.reading_order, e.record_hash,
-             e.record_state, e.class, e.support, e.commit_seq
+             e.record_state, e.class, e.commit_seq
            FROM core.events e
            WHERE e.event_type = ANY($1) AND e.ts_orig >= $2 AND e.ts_orig < $3
              AND e.payload @> $4
@@ -236,9 +233,9 @@ async fn window_page(
     let (contains, one_of_field, one_of) = split(&w.matching);
     let (after_ts, after_seq) = after.unzip();
     let rows = sqlx::query!(
-        r#"SELECT e.id, e.event_type, e.source, e.material_id, e.anchor, e.ordinal, e.parents,
+        r#"SELECT e.id, e.event_type, e.source, e.material_id, e.anchor, e.output_index, e.parents,
              e.ts_orig, e.ts_quality, e.payload, e.equivalence_key, e.reading_order, e.record_hash,
-             e.record_state, e.class, e.support, e.commit_seq
+             e.record_state, e.class, e.commit_seq
            FROM core.events e
            WHERE e.event_type = ANY($1) AND e.ts_orig >= $2 AND e.ts_orig < $3
              AND e.payload @> $4
@@ -412,9 +409,9 @@ async fn nearest(
     match n.per {
         None => {
             let rows = sqlx::query!(
-                r#"SELECT e.id, e.event_type, e.source, e.material_id, e.anchor, e.ordinal, e.parents,
+                r#"SELECT e.id, e.event_type, e.source, e.material_id, e.anchor, e.output_index, e.parents,
                      e.ts_orig, e.ts_quality, e.payload, e.equivalence_key, e.reading_order, e.record_hash,
-                     e.record_state, e.class, e.support, e.commit_seq
+                     e.record_state, e.class, e.commit_seq
                    FROM core.events e
                    WHERE e.event_type = ANY($1)
                      AND (($2 AND e.ts_orig >= $3) OR (NOT $2 AND e.ts_orig < $3))
@@ -454,10 +451,10 @@ async fn nearest(
             }
             let rows = sqlx::query!(
                 r#"SELECT x.id AS "id!", x.event_type AS "event_type!", x.source AS "source!",
-                     x.material_id, x.anchor, x.ordinal AS "ordinal!", x.parents, x.ts_orig,
+                     x.material_id, x.anchor, x.output_index AS "output_index!", x.parents, x.ts_orig,
                      x.ts_quality AS "ts_quality!", x.payload AS "payload!", x.equivalence_key,
                      x.reading_order AS "reading_order!", x.record_hash AS "record_hash!",
-                     x.record_state AS "record_state!", x.class AS "class!", x.support,
+                     x.record_state AS "record_state!", x.class AS "class!",
                      x.commit_seq AS "commit_seq!"
                    FROM unnest($7::text[]) AS v(val) CROSS JOIN LATERAL (
                      SELECT e.* FROM core.events e
@@ -497,9 +494,9 @@ pub async fn after_seq(
     limit: i64,
 ) -> Result<Vec<Committed>> {
     let rows = sqlx::query!(
-        r#"SELECT e.id, e.event_type, e.source, e.material_id, e.anchor, e.ordinal, e.parents,
+        r#"SELECT e.id, e.event_type, e.source, e.material_id, e.anchor, e.output_index, e.parents,
              e.ts_orig, e.ts_quality, e.payload, e.equivalence_key, e.reading_order, e.record_hash,
-             e.record_state, e.class, e.support, e.commit_seq
+             e.record_state, e.class, e.commit_seq
            FROM core.commit_log l JOIN core.events e ON e.id = l.event_id
            WHERE l.commit_seq > $2 AND l.event_type = ANY($1)
              AND NOT EXISTS (SELECT 1 FROM audit.archived a WHERE a.event_id = e.id)
@@ -526,9 +523,9 @@ pub async fn live_at(conn: &mut PgConnection, locations: &[RecordLocation]) -> R
         .map(|l| i64::try_from(l.anchor).unwrap_or(i64::MAX))
         .collect();
     let rows = sqlx::query!(
-        r#"SELECT e.id, e.event_type, e.source, e.material_id, e.anchor, e.ordinal, e.parents,
+        r#"SELECT e.id, e.event_type, e.source, e.material_id, e.anchor, e.output_index, e.parents,
              e.ts_orig, e.ts_quality, e.payload, e.equivalence_key, e.reading_order, e.record_hash,
-             e.record_state, e.class, e.support, e.commit_seq
+             e.record_state, e.class, e.commit_seq
            FROM unnest($1::uuid[], $2::bigint[]) AS l(material_id, anchor)
            JOIN core.events e ON e.material_id = l.material_id AND e.anchor = l.anchor
            WHERE EXISTS (SELECT 1 FROM core.live_locations c WHERE c.event_id = e.id)
@@ -596,9 +593,9 @@ pub async fn waiting(conn: &mut PgConnection, derivation: &str) -> Result<Vec<(V
 /// The live outputs a key last produced.
 pub async fn outputs(conn: &mut PgConnection, derivation: &str, key: &Value) -> Result<Vec<Event>> {
     let rows = sqlx::query!(
-        r#"SELECT e.id, e.event_type, e.source, e.material_id, e.anchor, e.ordinal, e.parents,
+        r#"SELECT e.id, e.event_type, e.source, e.material_id, e.anchor, e.output_index, e.parents,
              e.ts_orig, e.ts_quality, e.payload, e.equivalence_key, e.reading_order, e.record_hash,
-             e.record_state, e.class, e.support, e.commit_seq
+             e.record_state, e.class, e.commit_seq
            FROM derivation.outputs o JOIN core.events e ON e.id = o.event_id
            WHERE o.derivation = $1 AND o.key = $2
              AND NOT EXISTS (SELECT 1 FROM audit.archived a WHERE a.event_id = e.id)
@@ -627,7 +624,7 @@ pub async fn position(conn: &mut PgConnection, derivation: &str) -> Result<i64> 
 }
 
 /// Start a per-event derivation over from the first committed event (its
-/// version changed). Written at daemon start, before the driver runs.
+/// version changed). Written at daemon start, before the runner runs.
 pub async fn reset_position(conn: &mut PgConnection, derivation: &str) -> Result<()> {
     sqlx::query!(
         "DELETE FROM derivation.positions WHERE derivation = $1",

@@ -96,7 +96,9 @@ fn a_restart_with_rebuilt_memory_stores_nothing_new() {
         .unwrap()
         .execute_batch("UPDATE t SET n = 7 WHERE id = 'b'")
         .unwrap();
-    let settled = d.poll(&again.cursor_unchanged, &mut rebuilt).unwrap();
+    let settled = d
+        .poll(&again.cursor_without_material, &mut rebuilt)
+        .unwrap();
     assert_eq!(lines(&settled)[0]["n"], json!(7));
     let s = settled.material.as_ref().unwrap();
     assert_eq!(
@@ -134,7 +136,7 @@ fn a_row_changed_while_down_is_read_after_the_restart() {
             &after
                 .material
                 .as_ref()
-                .map_or(after.cursor_unchanged.clone(), |m| {
+                .map_or(after.cursor_without_material.clone(), |m| {
                     (m.cursor_at)(material_bytes(m).len()).unwrap()
                 }),
             &mut rebuilt,
@@ -188,7 +190,7 @@ fn locked_rollback_spill_is_unavailable_until_rollback() {
         "locked source must not expose spilled uncommitted pages"
     );
     assert!(a.material.is_none());
-    assert_eq!(a.cursor_unchanged, Value::Null);
+    assert_eq!(a.cursor_without_material, Value::Null);
     assert!(state.is_empty());
     holder.execute_batch("ROLLBACK").unwrap();
     let after = d.poll(&Value::Null, &mut state).unwrap();
@@ -259,7 +261,7 @@ fn missing_database_stays_unavailable_without_creating_a_file() {
         .unwrap();
     assert!(a.observation.unavailable.is_some());
     assert!(a.material.is_none());
-    assert_eq!(a.cursor_unchanged, Value::Null);
+    assert_eq!(a.cursor_without_material, Value::Null);
     assert!(!path.exists());
 }
 

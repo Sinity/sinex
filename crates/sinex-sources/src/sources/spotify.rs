@@ -19,7 +19,7 @@ pub const SPEC: SourceSpec = SourceSpec {
     name: "media.spotify-history",
     driver: Driver::ExportArchive,
     excisable: false,
-    consumer: "listening history and the attention stream",
+    purpose: "listening history and the attention stream",
     class: Class::Open,
     parser: "spotify-streaming-history",
     parser_version: 1,
@@ -177,8 +177,8 @@ pub fn driver(path: PathBuf, host: String) -> ExportArchive {
     }
 }
 
-/// `--source spotify=PATH`: each Spotify export archive in PATH.
-pub const KIND: crate::binding::InputKind = crate::binding::InputKind {
+/// `--read spotify=PATH`: each Spotify export archive in PATH.
+pub const FORMAT: crate::binding::InputFormat = crate::binding::InputFormat {
     name: "spotify",
     specs: || vec![&SPEC],
     plan: Some(|input, settings| {

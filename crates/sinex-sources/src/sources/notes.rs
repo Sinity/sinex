@@ -20,7 +20,7 @@ pub const SPEC: SourceSpec = SourceSpec {
     name: "knowledge.notes-vault",
     driver: Driver::DirSnapshot,
     excisable: false,
-    consumer: "note recall and the library",
+    purpose: "note recall and the library",
     class: Class::Open,
     parser: "notes-vault",
     parser_version: 3,
@@ -62,8 +62,8 @@ impl Parser for NotesParser {
             .and_then(Value::as_str)
             .ok_or_else(|| RecordError::new("snapshot member has no path"))?
             .to_owned();
-        let vanished_at = nanos(member, "vanished_at_ns");
-        let text = if vanished_at.is_some() {
+        let removed_at = nanos(member, "removed_at_ns");
+        let text = if removed_at.is_some() {
             None
         } else {
             Some(
@@ -93,7 +93,7 @@ impl Parser for NotesParser {
             size: text.as_ref().map_or(0, |t| t.len() as u64),
             text,
             modified_at: nanos(member, "mtime_ns"),
-            vanished_at,
+            removed_at,
             title,
             note_id,
             tags,
@@ -127,8 +127,8 @@ pub fn driver(root: PathBuf, host: String) -> DirSnapshot {
     }
 }
 
-/// `--source notes=PATH`: the note vault at PATH, walked as one directory.
-pub const KIND: crate::binding::InputKind = crate::binding::InputKind {
+/// `--read notes=PATH`: the note vault at PATH, walked as one directory.
+pub const FORMAT: crate::binding::InputFormat = crate::binding::InputFormat {
     name: "notes",
     specs: || vec![&SPEC],
     plan: Some(|input, settings| Ok(crate::binding::single(&SPEC, input, settings))),

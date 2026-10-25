@@ -57,12 +57,12 @@ Create the PostgreSQL database, then the schema, then read some sources:
 ```sh
 sinex-schema apply 'postgresql:///sinex'
 sinexd backfill --database 'postgresql:///sinex' --store /path/to/store \
-  --host HOST --source atuin=$HOME/.local/share/atuin/history.db --source zsh="$HISTFILE"
+  --host HOST --read atuin=$HOME/.local/share/atuin/history.db --read zsh="$HISTFILE"
 ```
 
 `sinexd admin schema` does the same as `sinex-schema apply`. No other command
 creates the schema, and every command refuses a database at another schema
-version. `backfill` reads each source to its end. The daemon, `sinexd run`,
+version. `backfill` reads each input to its end. The daemon, `sinexd run`,
 reads the bindings in `--sources` continuously and also needs NATS and a tokens
 directory; the NixOS module sets it up. A sealed source that was left part-way needs
 `--identity-file KEYFILE` to continue.

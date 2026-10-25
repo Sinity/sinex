@@ -1,4 +1,4 @@
--- Sinex: report editor events to `sinex-session`'s producer socket.
+-- Sinex: report editor events to `sinex-session`'s integration socket.
 --
 --   require("sinex").setup()
 --

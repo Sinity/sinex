@@ -21,7 +21,7 @@ pub const SPEC: SourceSpec = SourceSpec {
     name: "session.media",
     driver: Driver::Media,
     excisable: true,
-    consumer: "recall: what was on screen and said; screen text and transcripts",
+    purpose: "recall: what was on screen and said; screen text and transcripts",
     // Whatever was on screen or within the microphone's reach.
     class: Class::Guarded,
     parser: "media-segment",
@@ -102,11 +102,11 @@ fn stem(start: Timestamp, end: Timestamp, kind: &str) -> String {
 
 /// Outputs (monitors) and their pixel sizes, from Hyprland.
 pub fn outputs() -> Vec<(String, u32, u32)> {
-    outputs_with_control(&crate::capture::Control::new(None))
+    outputs_until(&crate::capture::CaptureStop::new(None))
 }
 
-fn outputs_with_control(control: &crate::capture::Control) -> Vec<(String, u32, u32)> {
-    let Ok(Some(out)) = control.output(Command::new("hyprctl").args(["monitors", "-j"])) else {
+fn outputs_until(stop: &crate::capture::CaptureStop) -> Vec<(String, u32, u32)> {
+    let Ok(Some(out)) = stop.output(Command::new("hyprctl").args(["monitors", "-j"])) else {
         return Vec::new();
     };
     serde_json::from_slice::<Vec<Value>>(&out)
@@ -129,15 +129,15 @@ fn private_on() -> bool {
 fn capture_screen(
     spool: &Path,
     every: Duration,
-    control: &crate::capture::Control,
+    stop: &crate::capture::CaptureStop,
 ) -> std::io::Result<u64> {
     std::fs::create_dir_all(spool)?;
     let mut n = 0;
-    while !control.stopped() {
+    while !stop.stopped() {
         let tick = Instant::now();
         if !private_on() {
             // Without Hyprland to name the outputs, one still of everything.
-            let mut targets: Vec<(Option<String>, u32, u32)> = outputs_with_control(control)
+            let mut targets: Vec<(Option<String>, u32, u32)> = outputs_until(stop)
                 .into_iter()
                 .map(|(n, w, h)| (Some(n), w, h))
                 .collect();
@@ -156,7 +156,7 @@ fn capture_screen(
                 grim.args(["-t", "jpeg", "-q", "75"])
                     .arg(&partial)
                     .stderr(Stdio::null());
-                let ok = control
+                let ok = stop
                     .status(&mut grim)
                     .is_ok_and(|s| s.is_some_and(|s| s.success()));
                 if !ok {
@@ -178,7 +178,7 @@ fn capture_screen(
                 n += 1;
             }
         }
-        control.wait(every.saturating_sub(tick.elapsed()));
+        stop.wait(every.saturating_sub(tick.elapsed()));
     }
     Ok(n)
 }
@@ -188,10 +188,10 @@ fn capture_screen(
 fn capture_audio(
     spool: &Path,
     segment: Duration,
-    control: &crate::capture::Control,
+    stop: &crate::capture::CaptureStop,
 ) -> std::io::Result<u64> {
     std::fs::create_dir_all(spool)?;
-    let encode = control
+    let encode = stop
         .status(
             Command::new("ffmpeg")
                 .arg("-version")
@@ -200,9 +200,9 @@ fn capture_audio(
         )
         .is_ok_and(|status| status.is_some_and(|s| s.success()));
     let mut n = 0;
-    while !control.stopped() {
+    while !stop.stopped() {
         if private_on() {
-            control.wait(Duration::from_secs(1));
+            stop.wait(Duration::from_secs(1));
             continue;
         }
         let start = Timestamp::now();
@@ -214,10 +214,10 @@ fn capture_audio(
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::null());
-        let Some(mut child) = control.spawn(&mut command)? else {
+        let Some(mut child) = stop.spawn(&mut command)? else {
             break;
         };
-        control.wait(segment);
+        stop.wait(segment);
         child.interrupt();
         child.wait()?;
         let end = Timestamp::now();
@@ -233,7 +233,7 @@ fn capture_audio(
                 .arg(&wav)
                 .args(["-c:a", "libopus", "-b:a", "24k", "-f", "ogg"])
                 .arg(&ogg);
-            let ok = control
+            let ok = stop
                 .status(&mut command)
                 .is_ok_and(|s| s.is_some_and(|s| s.success()));
             if ok {
@@ -269,10 +269,10 @@ fn media(b: &crate::binding::Binding) -> Result<&'static str, String> {
     }
 }
 
-/// `--source media=SPOOL`: screen stills (option `kind: screen`, every
+/// `--read media=SPOOL`: screen stills (option `kind: screen`, every
 /// `every` seconds, 60 by default) or audio segments (`kind: audio`,
 /// `segment` seconds each, 300 by default), captured into SPOOL.
-pub const KIND: crate::binding::InputKind = crate::binding::InputKind {
+pub const FORMAT: crate::binding::InputFormat = crate::binding::InputFormat {
     name: "media",
     specs: || vec![&SPEC],
     plan: Some(|spool, settings| {

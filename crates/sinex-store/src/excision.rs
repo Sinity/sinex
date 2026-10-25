@@ -91,7 +91,7 @@ pub async fn plan(conn: &mut PgConnection, target: Target) -> Result<Plan> {
     let seeds: Vec<Uuid> = match target {
         Target::Event(id) => {
             let e = sqlx::query!(
-                "SELECT source, event_type, equivalence_key, material_id, anchor, ordinal FROM core.events WHERE id = $1",
+                "SELECT source, event_type, equivalence_key, material_id, anchor, output_index FROM core.events WHERE id = $1",
                 id.0
             )
             .fetch_optional(&mut *conn)
@@ -106,13 +106,13 @@ pub async fn plan(conn: &mut PgConnection, target: Target) -> Result<Plan> {
             sqlx::query_scalar!(
                 r#"SELECT id AS "id!" FROM core.events
                    WHERE source = $1 AND event_type = $2
-                   AND ((equivalence_key = $3) OR ($3::text IS NULL AND material_id = $4 AND anchor = $5 AND ordinal = $6))"#,
+                   AND ((equivalence_key = $3) OR ($3::text IS NULL AND material_id = $4 AND anchor = $5 AND output_index = $6))"#,
                 e.source,
                 e.event_type,
                 e.equivalence_key,
                 e.material_id,
                 e.anchor,
-                e.ordinal,
+                e.output_index,
             )
             .fetch_all(&mut *conn)
             .await?
@@ -168,10 +168,8 @@ pub async fn plan(conn: &mut PgConnection, target: Target) -> Result<Plan> {
     }
     let material_ids: Vec<Uuid> = anchors.keys().copied().collect();
     let rows = sqlx::query!(
-        r#"SELECT m.id, m.blob, m.durable_bytes, m.parser, m.manifest, i.binding AS "binding?", b.source AS "source?",
-             EXISTS(SELECT 1 FROM privacy.material_keys k WHERE k.material_id = m.id) AS "sealed!",
-             (SELECT count(*) FROM raw.revision_extents x
-              WHERE x.revision_id = m.revision_id AND x.blob = m.blob) AS "extents!"
+        r#"SELECT m.id, m.blob, m.length, m.parser, m.manifest, i.binding AS "binding?", b.source AS "source?",
+             EXISTS(SELECT 1 FROM privacy.data_keys k WHERE k.material_id = m.id) AS "sealed!"
            FROM raw.materials m
            LEFT JOIN raw.inputs i ON i.id = m.input_id
            LEFT JOIN raw.bindings b ON b.binding = i.binding
@@ -195,17 +193,11 @@ pub async fn plan(conn: &mut PgConnection, target: Target) -> Result<Plan> {
                 r.id
             )));
         }
-        if r.extents > 1 {
-            return Err(Error::Invalid(format!(
-                "material {} has the same bytes as another part of its input, and excision cannot tell their stored copies apart",
-                r.id
-            )));
-        }
         let is_whole = whole == Some(r.id);
         materials.push(Material {
             id: MaterialId(r.id),
             blob: r.blob,
-            length: u64::try_from(r.durable_bytes)
+            length: u64::try_from(r.length)
                 .map_err(|_| Error::Invalid(format!("material {} has a negative length", r.id)))?,
             binding: r.binding,
             source: r.source,
@@ -336,16 +328,6 @@ pub async fn apply(
         )
         .execute(&mut *conn)
         .await?;
-        // The plan refused a revision with more than one extent of these bytes,
-        // so this is the material's own extent.
-        sqlx::query!(
-            r#"UPDATE raw.revision_extents x SET blob = $2
-               FROM raw.materials m WHERE m.id = $1 AND x.revision_id = m.revision_id AND x.blob = m.blob"#,
-            m.id.0,
-            rewrite.blob,
-        )
-        .execute(&mut *conn)
-        .await?;
         sqlx::query!(
             "UPDATE raw.materials SET blob = $2 WHERE id = $1",
             m.id.0,
@@ -377,11 +359,10 @@ async fn mark_deleting(conn: &mut PgConnection, blob: &str) -> Result<()> {
     Ok(())
 }
 
-/// Whether no material, revision extent or event refers to `blob` any more.
+/// Whether no material or event refers to `blob` any more.
 pub(crate) async fn unreferenced(conn: &mut PgConnection, blob: &str) -> Result<bool> {
     Ok(sqlx::query_scalar!(
         r#"SELECT NOT EXISTS (SELECT 1 FROM raw.materials WHERE blob = $1)
-             AND NOT EXISTS (SELECT 1 FROM raw.revision_extents WHERE blob = $1)
              AND NOT EXISTS (SELECT 1 FROM core.event_blobs WHERE blob = $1) AS "gone!""#,
         blob
     )

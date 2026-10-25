@@ -39,7 +39,7 @@ pub async fn has_sealed_material(conn: &mut PgConnection, binding: &str) -> Resu
         r#"SELECT EXISTS (
              SELECT 1 FROM raw.materials m
              JOIN raw.inputs i ON i.id = m.input_id
-             JOIN privacy.material_keys k ON k.material_id = m.id
+             JOIN privacy.data_keys k ON k.material_id = m.id
              WHERE i.binding = $1) AS "sealed!""#,
         binding
     )

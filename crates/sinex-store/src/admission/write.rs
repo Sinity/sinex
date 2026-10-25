@@ -37,12 +37,12 @@ pub(super) async fn insert_admitted(
         r#"WITH a AS (
              SELECT s.*, $2::bigint + row_number() OVER (ORDER BY s.ord) - 1 AS seq
              FROM core.admission_stage s WHERE s.ord = ANY($1))
-           INSERT INTO core.events (id, event_type, source, run_id, material_id, anchor, ordinal,
+           INSERT INTO core.events (id, event_type, source, run_id, material_id, anchor, output_index,
              parents, ts_orig, ts_quality, commit_seq, payload, equivalence_key, reading_order,
-             record_hash, record_state, class, support)
-           SELECT id, event_type, source, $3, material_id, anchor, ordinal, parents, ts_orig,
+             record_hash, record_state, class)
+           SELECT id, event_type, source, $3, material_id, anchor, output_index, parents, ts_orig,
              ts_quality, seq, payload, equivalence_key, reading_order, record_hash, record_state,
-             class, support
+             class
            FROM a"#,
         admit_ords,
         first,
@@ -76,12 +76,12 @@ pub(super) async fn insert_admitted(
     .await?;
 
     sqlx::query!(
-        r#"INSERT INTO core.live_locations (material_id, anchor, event_type, ordinal, event_id, reading_order, record_hash)
-           SELECT s.material_id, s.anchor, s.event_type, s.ordinal, s.id, s.reading_order, s.record_hash
+        r#"INSERT INTO core.live_locations (material_id, anchor, event_type, output_index, event_id, reading_order, record_hash)
+           SELECT s.material_id, s.anchor, s.event_type, s.output_index, s.id, s.reading_order, s.record_hash
            FROM core.admission_stage s
            WHERE s.ord = ANY($1) AND s.equivalence_key IS NULL AND s.material_id IS NOT NULL
-           ORDER BY s.material_id, s.anchor, s.event_type, s.ordinal
-           ON CONFLICT (material_id, anchor, event_type, ordinal) DO UPDATE
+           ORDER BY s.material_id, s.anchor, s.event_type, s.output_index
+           ON CONFLICT (material_id, anchor, event_type, output_index) DO UPDATE
            SET event_id = EXCLUDED.event_id, reading_order = EXCLUDED.reading_order,
                record_hash = EXCLUDED.record_hash"#,
         admit_ords,
@@ -94,7 +94,7 @@ pub(super) async fn insert_admitted(
         let mut replacements = Vec::with_capacity(ords.len());
         for ord in &ords {
             replacements.push(
-                events[usize::try_from(*ord).expect("non-negative event ordinal")]
+                events[usize::try_from(*ord).expect("non-negative event output_index")]
                     .id
                     .0,
             );
@@ -206,7 +206,7 @@ async fn record_citations(conn: &mut PgConnection, events: &[Event], ords: &[i32
     let (mut ids, mut blobs, mut sizes) = (Vec::new(), Vec::new(), Vec::new());
     for ord in ords {
         let event = &events[usize::try_from(*ord).expect("ord is non-negative")];
-        for c in &event.cites {
+        for c in &event.owned_blobs {
             ids.push(event.id.0);
             blobs.push(c.blob.clone());
             sizes.push(

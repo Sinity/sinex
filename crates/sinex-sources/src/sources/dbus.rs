@@ -31,7 +31,7 @@ pub fn capture(
     matches: &[&str],
     initial: &[Vec<u8>],
     spool: &Path,
-    control: &crate::capture::Control,
+    stop: &crate::capture::CaptureStop,
 ) -> std::io::Result<u64> {
     let mut writer = SpoolWriter::open(spool, Rotation::default())?;
     for line in initial {
@@ -47,7 +47,7 @@ pub fn capture(
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::null());
-    let Some(mut child) = control.spawn(&mut command)? else {
+    let Some(mut child) = stop.spawn(&mut command)? else {
         return Ok(initial.len() as u64);
     };
     let stdout = child.stdout().expect("piped stdout");
@@ -66,8 +66,8 @@ pub fn call(
     method: &str,
     args: &[&str],
 ) -> Option<Value> {
-    call_with_control(
-        &crate::capture::Control::new(None),
+    call_until(
+        &crate::capture::CaptureStop::new(None),
         destination,
         path,
         interface,
@@ -76,15 +76,15 @@ pub fn call(
     )
 }
 
-pub(crate) fn call_with_control(
-    control: &crate::capture::Control,
+pub(crate) fn call_until(
+    stop: &crate::capture::CaptureStop,
     destination: &str,
     path: &str,
     interface: &str,
     method: &str,
     args: &[&str],
 ) -> Option<Value> {
-    let out = control
+    let out = stop
         .output(
             Command::new("busctl")
                 .args([
@@ -105,12 +105,12 @@ pub(crate) fn call_with_control(
 
 /// Names on the session bus.
 pub fn names() -> Vec<String> {
-    names_with_control(&crate::capture::Control::new(None))
+    names_until(&crate::capture::CaptureStop::new(None))
 }
 
-pub(crate) fn names_with_control(control: &crate::capture::Control) -> Vec<String> {
+pub(crate) fn names_until(stop: &crate::capture::CaptureStop) -> Vec<String> {
     let Ok(Some(out)) =
-        control.output(Command::new("busctl").args(["--user", "--json=short", "list"]))
+        stop.output(Command::new("busctl").args(["--user", "--json=short", "list"]))
     else {
         return Vec::new();
     };

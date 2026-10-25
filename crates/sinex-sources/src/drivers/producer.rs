@@ -3,9 +3,10 @@
 //!
 //! A poll goes through the same driver and drain `sinexd` uses. Then:
 //!
-//! 1. the material's bytes are written to the material frame's spool
+//! 1. the material's bytes are written to the material frame's
+//!    directory
 //!    directory under the content store this host shares with `sinexd`
-//!    (`sinex_transport::spool`); Sinex stores them and registers the
+//!    (`sinex_transport::frame_bytes`); Sinex stores them and registers the
 //!    material, and the producer waits for the acknowledgment before sending
 //!    anything that cites it;
 //! 2. the events go in frames that each fit one NATS message;
@@ -13,7 +14,7 @@
 //!    cursor (and parser carry) advance, in a state file next to the spool.
 //!
 //! Before a batch's first frame is sent, the frames and the position after them
-//! are written to a sending file. A producer that stops anywhere before the
+//! are written to an unacknowledged-frames file. A producer that stops anywhere before the
 //! position is saved sends those same frames again on its next start
 //! ([`Producer::position`]), and Sinex answers frames it already recorded from
 //! the record, so nothing is read into a second material or admitted twice.
@@ -21,8 +22,8 @@
 //! A producer on another host, which does not share `sinexd`'s content store,
 //! sends a material's bytes in [`Ingress::Chunk`] frames first
 //! ([`Producer::upload_bytes`]). A frame too large for one message is written
-//! to the spool as its JSON, and an [`Ingress::Indirect`] frame names it.
-use sinex_transport::spool;
+//! to its frame directory as its JSON, and an [`Ingress::LargeFrame`] frame names it.
+use sinex_transport::frame_bytes;
 mod staging;
 use staging::Snapshots;
 
@@ -36,7 +37,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sinex_model::{BatchKind, Origin, RecordOutcome, RunId};
 use sinex_protocol::{
-    Acknowledgment, Have, Ingress, MaterialFrame, ProducerEvent, ProducerFailure, Subjects,
+    Acknowledgment, Ingress, MaterialFrame, ProducerEvent, ProducerFailure, RecordedQuery, Subjects,
 };
 use std::io::Read;
 use std::path::{Path, PathBuf};
@@ -68,8 +69,8 @@ fn nats(e: impl std::fmt::Display) -> Error {
     Error::Nats(e.to_string())
 }
 
-/// The content store root shared with Sinex, whose spool receives the bytes;
-/// or, for a producer on another host, a local root whose spool holds them
+/// The content store root shared with Sinex, whose frame directories receive the bytes;
+/// or, for a producer on another host, a local root whose frame directories hold them
 /// until they are sent in chunks.
 pub struct Store(PathBuf);
 impl Store {
@@ -125,14 +126,14 @@ impl Position {
 /// durably before the first frame goes out and removed once the position is
 /// saved.
 #[derive(Clone, Debug, Serialize, Deserialize)]
-struct Sending {
+struct UnacknowledgedFrames {
     frames: Vec<Ingress>,
     position: Position,
 }
 
-impl Sending {
+impl UnacknowledgedFrames {
     fn path(dir: &Path, binding: &str) -> PathBuf {
-        Position::path(dir, binding).with_extension("sending.json")
+        Position::path(dir, binding).with_extension("unacknowledged.json")
     }
 
     fn load(dir: &Path, binding: &str) -> Result<Option<Self>, Error> {
@@ -150,7 +151,7 @@ impl Sending {
         let path = Self::path(dir, binding);
         write_durably(
             &path,
-            &serde_json::to_vec(self).expect("sending batch serializes"),
+            &serde_json::to_vec(self).expect("unacknowledged frames serialize"),
         )
     }
 
@@ -239,35 +240,35 @@ impl Producer {
         state: &Path,
         store: &Store,
     ) -> Result<Position, Error> {
-        if let Some(sending) = Sending::load(state, binding)? {
-            for frame in &sending.frames {
+        if let Some(unacknowledged) = UnacknowledgedFrames::load(state, binding)? {
+            for frame in &unacknowledged.frames {
                 self.deliver(frame.clone(), store).await?;
             }
-            sending.position.save(state, binding)?;
-            self.clear_spool(&sending.frames, store)?;
-            Sending::clear(state, binding)?;
+            unacknowledged.position.save(state, binding)?;
+            self.clear_frame_directories(&unacknowledged.frames, store)?;
+            UnacknowledgedFrames::clear(state, binding)?;
         }
         Position::load(state, binding)
     }
 
-    /// The root whose spool holds this producer's bytes.
-    fn spool_root<'a>(&'a self, shared: &'a Store) -> &'a Path {
+    /// The root whose frame directories hold this producer's bytes.
+    fn frame_root<'a>(&'a self, shared: &'a Store) -> &'a Path {
         &self.upload.as_ref().unwrap_or(shared).0
     }
 
-    fn clear_spool(&self, frames: &[Ingress], shared: &Store) -> Result<(), Error> {
+    fn clear_frame_directories(&self, frames: &[Ingress], shared: &Store) -> Result<(), Error> {
         for frame in frames {
-            if matches!(frame, Ingress::Material { .. } | Ingress::Indirect { .. }) {
-                spool::discard(self.spool_root(shared), &self.name, frame.frame())
+            if matches!(frame, Ingress::Material { .. } | Ingress::LargeFrame { .. }) {
+                frame_bytes::discard(self.frame_root(shared), &self.name, frame.frame())
                     .map_err(Error::Nats)?;
             }
         }
         Ok(())
     }
 
-    /// Write the bytes `frame` needs to its spool directory: a material's
+    /// Write the bytes `frame` needs to its frame directory: a material's
     /// bytes, and the frame itself when it is too large for one message, in
-    /// which case an indirect frame takes its place.
+    /// which case a `LargeFrame` naming those bytes takes its place.
     fn prepare(
         &self,
         frame: Ingress,
@@ -280,17 +281,17 @@ impl Producer {
             _ => None,
         };
         let frame = if body.len() + 4096 > self.max_message {
-            Ingress::Indirect {
-                frame: format!("{}/indirect", frame.frame()),
+            Ingress::LargeFrame {
+                frame: format!("{}/large", frame.frame()),
                 blob: format!("blake3:{}", blake3::hash(&body).to_hex()),
                 length: body.len() as u64,
             }
         } else {
             frame
         };
-        let root = self.spool_root(shared);
+        let root = self.frame_root(shared);
         if let Some(material) = material {
-            spool::stage(
+            frame_bytes::write(
                 root,
                 &self.name,
                 frame.frame(),
@@ -300,8 +301,8 @@ impl Producer {
             )
             .map_err(Error::Nats)?;
         }
-        if let Ingress::Indirect { blob, length, .. } = &frame {
-            spool::stage(
+        if let Ingress::LargeFrame { blob, length, .. } = &frame {
+            frame_bytes::write(
                 root,
                 &self.name,
                 frame.frame(),
@@ -314,12 +315,12 @@ impl Producer {
         Ok(frame)
     }
 
-    /// Send `frame`, after uploading its spooled bytes in chunks when Sinex
-    /// does not share this host's spool.
+    /// Send `frame`, after uploading its frame bytes in chunks when Sinex
+    /// does not share this host's content store.
     async fn deliver(&mut self, frame: Ingress, shared: &Store) -> Result<Acknowledgment, Error> {
         if let Some(store) = &self.upload {
             let root = store.0.clone();
-            let dir = spool::directory(&root, &self.name, frame.frame());
+            let dir = frame_bytes::directory(&root, &self.name, frame.frame());
             if dir.exists() {
                 let mut names = Vec::new();
                 for entry in std::fs::read_dir(&dir).map_err(nats)? {
@@ -341,7 +342,7 @@ impl Producer {
         self.send(frame).await
     }
 
-    /// Send the bytes named `blob` from the uploading store's spool, in
+    /// Send the bytes named `blob` from the uploading store's frame directory, in
     /// order, as chunk frames. Each attempt names its frames afresh: Sinex
     /// keeps the bytes it already has by offset, so a repeated upload costs
     /// only the sending, and a refused attempt never blocks the next one.
@@ -353,7 +354,7 @@ impl Producer {
         root: &Path,
     ) -> Result<(), Error> {
         let mut reader =
-            spool::snapshot(root, &self.name, for_frame, blob, total).map_err(Error::Nats)?;
+            frame_bytes::snapshot(root, &self.name, for_frame, blob, total).map_err(Error::Nats)?;
         let attempt = uuid::Uuid::now_v7();
         let mut offset = 0u64;
         let mut bytes = vec![0; total.min(CHUNK_BYTES as u64) as usize];
@@ -404,7 +405,7 @@ impl Producer {
             Ok(Some(ack)) => ack,
             // Missed it: ask what Sinex has recorded for this frame.
             _ => self
-                .have(std::slice::from_ref(&id))
+                .recorded(std::slice::from_ref(&id))
                 .await?
                 .into_iter()
                 .next()
@@ -420,14 +421,14 @@ impl Producer {
     }
 
     /// Which of these frames Sinex has recorded.
-    pub async fn have(&self, frames: &[String]) -> Result<Vec<Acknowledgment>, Error> {
-        let request = serde_json::to_vec(&Have {
+    pub async fn recorded(&self, frames: &[String]) -> Result<Vec<Acknowledgment>, Error> {
+        let request = serde_json::to_vec(&RecordedQuery {
             frames: frames.to_vec(),
         })
         .expect("request serializes");
         let reply = self
             .client
-            .request(self.subjects.have(&self.name), request.into())
+            .request(self.subjects.recorded(&self.name), request.into())
             .await
             .map_err(nats)?;
         serde_json::from_slice(&reply.payload).map_err(nats)
@@ -486,15 +487,18 @@ impl Producer {
                 match outcome {
                     RecordOutcome::Events { events: built, .. } => {
                         for e in built {
-                            let (location, ordinal) = match &e.origin {
-                                Origin::Record { location, ordinal } => (Some(*location), *ordinal),
+                            let (location, output_index) = match &e.origin {
+                                Origin::Record {
+                                    location,
+                                    output_index,
+                                } => (Some(*location), *output_index),
                                 Origin::Derived { .. } => (None, 0),
                             };
                             events.push(ProducerEvent {
                                 event_type: e.event_type.to_owned(),
                                 payload: e.payload.clone(),
                                 location,
-                                ordinal,
+                                output_index,
                                 parents: vec![],
                                 reading_order: e.reading_order.0,
                                 class: e.class,
@@ -555,7 +559,7 @@ impl Producer {
                 .into_iter()
                 .map(|f| self.prepare(f, &snapshots, sink))
                 .collect::<Result<Vec<_>, _>>()?;
-            Sending {
+            UnacknowledgedFrames {
                 frames: frames.clone(),
                 position: after.clone(),
             }
@@ -568,8 +572,8 @@ impl Producer {
                 }
             }
             after.save(state, binding)?;
-            self.clear_spool(&frames, sink)?;
-            Sending::clear(state, binding)?;
+            self.clear_frame_directories(&frames, sink)?;
+            UnacknowledgedFrames::clear(state, binding)?;
         }
         Ok(sent)
     }

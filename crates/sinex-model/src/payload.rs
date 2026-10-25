@@ -58,11 +58,11 @@ impl EquivalenceKey {
 }
 
 /// Stored bytes an event's payload names and owns beyond its material: a
-/// library acquisition's file, kept in the content store by the scan. The
+/// library copy's file, kept in the content store by the scan. The
 /// event holds the only reference to them, so excising the event deletes the
 /// bytes once no other event or material refers to them.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, serde::Deserialize)]
-pub struct Cited {
+pub struct OwnedBlob {
     /// The content store's name, `blake3:<hex>`.
     pub blob: String,
     pub size: u64,
@@ -99,8 +99,8 @@ pub trait EventPayload: Serialize + DeserializeOwned + Send + Sync + 'static {
         RecordState::Present
     }
 
-    /// Stored bytes this reading owns beyond its material (see [`Cited`]).
-    fn cited_blobs(&self) -> Vec<Cited> {
+    /// Stored bytes this reading owns beyond its material (see [`OwnedBlob`]).
+    fn owned_blobs(&self) -> Vec<OwnedBlob> {
         Vec::new()
     }
 

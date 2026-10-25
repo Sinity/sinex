@@ -155,7 +155,8 @@ fn first_capture_after_an_empty_segment_poll_survives_restart() {
     let first = live.poll(&Value::Null).unwrap();
     assert!(first.material.is_none());
     let saved: Value =
-        serde_json::from_slice(&serde_json::to_vec(&first.cursor_unchanged).unwrap()).unwrap();
+        serde_json::from_slice(&serde_json::to_vec(&first.cursor_without_material).unwrap())
+            .unwrap();
     assert!(live.poll(&saved).unwrap().material.is_none());
     writer
         .append(Timestamp::now(), b"first synthetic line")

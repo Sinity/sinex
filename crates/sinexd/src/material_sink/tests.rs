@@ -128,10 +128,10 @@ async fn sealed_failure_details_are_encrypted_and_exactly_recoverable(
         location,
         reason: "synthetic_failure_secret".into(),
     }];
-    let literal_envelope =
+    let literal_carry =
         serde_json::json!({"key":"synthetic_carry_secret","sealed":"synthetic_carry_secret"});
     if let sinex_model::BatchKind::Source(progress) = &mut batch.kind {
-        progress.carry = literal_envelope.clone();
+        progress.carry = literal_carry.clone();
     }
     let mut batch = [batch];
     sink.seal(&mut batch).unwrap();
@@ -165,7 +165,7 @@ async fn sealed_failure_details_are_encrypted_and_exactly_recoverable(
     assert!(!carry.to_string().contains("synthetic_carry_secret"));
     assert_eq!(
         sinex_store::sealed::unseal_payload(&carry, &key).unwrap(),
-        literal_envelope
+        literal_carry
     );
     ctx.close().await.unwrap();
     std::fs::remove_dir_all(&dir).unwrap();

@@ -23,7 +23,7 @@ pub const SPEC: SourceSpec = SourceSpec {
     name: "desktop.clipboard",
     driver: Driver::LiveStream,
     excisable: true,
-    consumer: "recall: what was copied where",
+    purpose: "recall: what was copied where",
     // Anything the operator copies, passwords included unless marked secret.
     class: Class::Guarded,
     parser: "wl-clipboard",
@@ -100,7 +100,7 @@ pub fn capture(
     selection: &str,
     helper: &[OsString],
     spool: &Path,
-    control: &crate::capture::Control,
+    stop: &crate::capture::CaptureStop,
 ) -> std::io::Result<u64> {
     let mut writer = SpoolWriter::open(spool, Rotation::default())?;
     let mut command = Command::new("wl-paste");
@@ -113,7 +113,7 @@ pub fn capture(
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::null());
-    let Some(mut child) = control.spawn(&mut command)? else {
+    let Some(mut child) = stop.spawn(&mut command)? else {
         return Ok(0);
     };
     let stdout = child.stdout().expect("piped stdout");
@@ -213,10 +213,10 @@ fn selection(b: &crate::binding::Binding) -> &'static str {
     }
 }
 
-/// `--source clipboard=SPOOL`: the clipboard (or, with the option
+/// `--read clipboard=SPOOL`: the clipboard (or, with the option
 /// `selection: primary`, the primary selection), captured into SPOOL. The
 /// frame printer is this program's own `clipboard-frame` command.
-pub const KIND: crate::binding::InputKind = crate::binding::InputKind {
+pub const FORMAT: crate::binding::InputFormat = crate::binding::InputFormat {
     name: "clipboard",
     specs: || vec![&SPEC],
     plan: Some(|spool, settings| {

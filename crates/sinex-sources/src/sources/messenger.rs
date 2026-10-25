@@ -5,7 +5,7 @@
 //! `title`, messages with `sender_name`, `timestamp_ms`, `content`), whose text
 //! is UTF-8 written as Latin-1 escapes and is repaired here.
 //!
-//! File names carry an ordinal that changes between exports, so a thread is
+//! File names carry an output_index that changes between exports, so a thread is
 //! its sorted participants and a message is the thread, time and sender.
 use crate::drivers::export_archive::{ExportArchive, Framing, PART_BYTES};
 use crate::registry::{DeclaredSource, Driver, SourceSpec};
@@ -17,10 +17,10 @@ use sinex_model::event_types::communication::ConversationMessage;
 use std::path::PathBuf;
 
 pub const SPEC: SourceSpec = SourceSpec {
-    name: "facebook-messenger-thread",
+    name: "communication.messenger",
     driver: Driver::ExportArchive,
     excisable: false,
-    consumer: "conversations with people",
+    purpose: "conversations with people",
     class: Class::Open,
     parser: "facebook-messenger",
     parser_version: 1,
@@ -182,8 +182,8 @@ pub fn driver(path: PathBuf, host: String) -> ExportArchive {
     }
 }
 
-/// `--source messenger=PATH`: each Messenger export in PATH.
-pub const KIND: crate::binding::InputKind = crate::binding::InputKind {
+/// `--read messenger=PATH`: each Messenger export in PATH.
+pub const FORMAT: crate::binding::InputFormat = crate::binding::InputFormat {
     name: "messenger",
     specs: || vec![&SPEC],
     plan: Some(|input, settings| {

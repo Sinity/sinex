@@ -26,7 +26,7 @@ pub use shell::{CommandExecuted, CommandFused, CommandImported, ShellSession};
 
 /// A registered event type, as the schema registry stores it.
 #[derive(Clone, Debug)]
-pub struct EventTypeInfo {
+pub struct RegisteredEventType {
     pub event_type: &'static str,
     /// Declared natural key; `build` applies the typed payload's per-record choice.
     pub key: crate::KeyKind,
@@ -40,7 +40,7 @@ pub struct EventTypeInfo {
     pub build: Build,
 }
 
-/// See [`EventTypeInfo::build`].
+/// See [`RegisteredEventType::build`].
 pub type Build = fn(
     &Value,
     &str,
@@ -50,8 +50,8 @@ pub type Build = fn(
     crate::Class,
 ) -> Result<crate::Event, crate::BuildError>;
 
-const fn info<P: EventPayload>() -> EventTypeInfo {
-    EventTypeInfo {
+const fn info<P: EventPayload>() -> RegisteredEventType {
+    RegisteredEventType {
         event_type: P::EVENT_TYPE,
         key: P::KEY,
         replace: P::REPLACE,
@@ -75,7 +75,7 @@ fn build_from_json<P: EventPayload>(
 }
 
 /// Every event type Sinex stores.
-pub const ALL: &[EventTypeInfo] = &[
+pub const ALL: &[RegisteredEventType] = &[
     info::<forecast::Issued>(),
     info::<forecast::Resolved>(),
     info::<CommandExecuted>(),
@@ -96,8 +96,8 @@ pub const ALL: &[EventTypeInfo] = &[
     info::<session::NotificationAction>(),
     info::<session::ClipboardCopied>(),
     info::<session::PlayerChanged>(),
-    info::<session::EditorEvent>(),
-    info::<session::TerminalEvent>(),
+    info::<session::EditorReport>(),
+    info::<session::TerminalReport>(),
     info::<session::MediaSegment>(),
     info::<session::ScreenText>(),
     info::<session::PageFetched>(),
@@ -109,7 +109,7 @@ pub const ALL: &[EventTypeInfo] = &[
     info::<desktop::WindowSampled>(),
     // Machine
     info::<machine::JournalEntry>(),
-    info::<machine::CaptureObserved>(),
+    info::<machine::LakeObservation>(),
     info::<machine::FileChanged>(),
     info::<machine::TerminalSession>(),
     info::<machine::TerminalOutput>(),
@@ -148,19 +148,19 @@ pub const ALL: &[EventTypeInfo] = &[
     info::<account::TaskRevised>(),
     info::<account::PurchaseObserved>(),
     info::<account::CalendarEvent>(),
-    info::<account::AccountRecord>(),
+    info::<account::AccountRow>(),
     info::<account::LocationSample>(),
     info::<communication::ConversationMessage>(),
-    info::<media::BookEvent>(),
+    info::<media::BookStatus>(),
     info::<health::HealthRecord>(),
     info::<social::PostPublished>(),
     info::<social::VoteCast>(),
     info::<social::NotificationReceived>(),
     info::<social::AccountSetting>(),
     info::<operator::LogEntry>(),
-    info::<operator::SteeringRecord>(),
+    info::<operator::SteeringRow>(),
     // Library
-    info::<library::Acquisition>(),
+    info::<library::FileCopy>(),
     info::<library::Item>(),
     info::<library::Rendition>(),
     info::<library::Assignment>(),
@@ -174,7 +174,7 @@ pub const ALL: &[EventTypeInfo] = &[
 
 /// The registered type named `event_type`, for code that holds a type name
 /// read from the database and needs the static one.
-pub fn find(event_type: &str) -> Option<&'static EventTypeInfo> {
+pub fn find(event_type: &str) -> Option<&'static RegisteredEventType> {
     ALL.iter().find(|k| k.event_type == event_type)
 }
 
