@@ -43,6 +43,8 @@ new part's manifest records how much of the part before it was admitted
 Each reader rebuilds what it remembers through the `Reader` trait: it names
 the material its committed cursor points at, and the daemon offers it that
 material and the parts before it, newest first, until the reader has enough.
+The parts are read a page at a time, so a reader that stops early reads no
+more of the chain.
 The append reader keeps the tail of the current revision's records, to align a
 rewrite; the SQLite-row reader keeps each row's newest hash; the directory
 reader keeps which files the admitted bundles hold. A sealed part keeps the
