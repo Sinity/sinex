@@ -13,6 +13,7 @@ fn subjects_and_streams_follow_the_root() {
     assert_eq!(t.ingress_stream(), "T123X9F_INGRESS");
     assert_eq!(t.producer_of("t123x9f.ingress.kitty"), Some("kitty"));
     assert_eq!(t.producer_of("t123x9f.have.kitty"), Some("kitty"));
+    assert_eq!(t.producer_of("t123x9f.materials.kitty"), Some("kitty"));
     assert_eq!(t.producer_of("t123x9f.ingress.Kitty"), None);
     assert_eq!(t.producer_of("other.ingress.kitty"), None);
     assert_eq!(t.producer_of("t123x9f.ack.kitty"), None);
@@ -22,14 +23,23 @@ fn subjects_and_streams_follow_the_root() {
 fn producer_permissions_name_only_its_own_subjects() {
     let s = Subjects::sinex();
     let (publish, subscribe) = s.producer_permissions("phone");
-    assert_eq!(publish, ["sinex.ingress.phone", "sinex.have.phone"]);
+    assert_eq!(
+        publish,
+        [
+            "sinex.ingress.phone",
+            "sinex.have.phone",
+            "sinex.materials.phone"
+        ]
+    );
     assert_eq!(subscribe, ["sinex.ack.phone", "_INBOX.>"]);
     let config = s.authorization(("sinexd", "pw"), &[("phone", "p\"w")]);
     assert!(
         config.contains(r#"user: "phone", password: "p\"w""#),
         "{config}"
     );
-    assert!(config.contains(r#"publish: { allow: ["sinex.ingress.phone", "sinex.have.phone"] }"#));
+    assert!(config.contains(
+        r#"publish: { allow: ["sinex.ingress.phone", "sinex.have.phone", "sinex.materials.phone"] }"#
+    ));
 }
 
 #[devkit::test]

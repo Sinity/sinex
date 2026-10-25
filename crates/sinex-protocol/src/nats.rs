@@ -9,6 +9,7 @@
 //! | `<root>.ingress.<producer>` | the producer | an [`Ingress`] frame, into the ingress stream |
 //! | `<root>.ack.<producer>` | `sinexd` | the [`Acknowledgment`] of each frame |
 //! | `<root>.have.<producer>` | the producer, as a request | [`Have`]: what Sinex recorded for these frames |
+//! | `<root>.materials.<producer>` | the producer, as a request | [`Materials`]: a page of the materials it registered |
 //! | `<root>.confirmed.event.<event type>` | `sinexd` | a [`Confirmed::Event`] |
 //! | `<root>.confirmed.archive` | `sinexd` | a [`Confirmed::Archived`], [`Confirmed::Restored`] or [`Confirmed::Excised`] notice |
 //!
@@ -97,23 +98,37 @@ impl Subjects {
         format!("{}.have.*", self.root)
     }
 
-    /// The producer an ingress or have subject names, if it is one of ours
-    /// and a valid producer name.
+    pub fn materials(&self, producer: &str) -> String {
+        format!("{}.materials.{producer}", self.root)
+    }
+
+    pub fn materials_all(&self) -> String {
+        format!("{}.materials.*", self.root)
+    }
+
+    /// The producer an ingress, have or materials subject names, if it is
+    /// one of ours and a valid producer name.
     pub fn producer_of<'a>(&self, subject: &'a str) -> Option<&'a str> {
         let rest = subject
             .strip_prefix(self.root.as_str())?
             .strip_prefix('.')?;
         let producer = rest
             .strip_prefix("ingress.")
-            .or_else(|| rest.strip_prefix("have."))?;
+            .or_else(|| rest.strip_prefix("have."))
+            .or_else(|| rest.strip_prefix("materials."))?;
         valid_producer(producer).then_some(producer)
     }
 
     /// What a producer's NATS user may publish and subscribe to: its own
-    /// ingress and have subjects, its acknowledgments, and reply inboxes.
+    /// ingress, have and materials subjects, its acknowledgments, and reply
+    /// inboxes.
     pub fn producer_permissions(&self, producer: &str) -> (Vec<String>, Vec<String>) {
         (
-            vec![self.ingress(producer), self.have(producer)],
+            vec![
+                self.ingress(producer),
+                self.have(producer),
+                self.materials(producer),
+            ],
             vec![self.ack(producer), "_INBOX.>".into()],
         )
     }
@@ -300,6 +315,27 @@ pub struct Acknowledgment {
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct Have {
     pub frames: Vec<String>,
+}
+
+/// A request on `<root>.materials.<producer>`: the materials this producer
+/// registered and Sinex still holds, in the order Sinex recorded them,
+/// starting after the frame numbered `after`. A producer that keeps nothing of
+/// its own rebuilds what it sent from these pages. The reply is a JSON array
+/// of [`HeldMaterial`]s, at most `limit` long; an empty page is the end.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct Materials {
+    #[serde(default)]
+    pub after: i64,
+    pub limit: u32,
+}
+
+/// One registered material, as its frame described it.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct HeldMaterial {
+    /// The order Sinex recorded the frame in; the next page starts after it.
+    pub number: i64,
+    pub frame: String,
+    pub material: MaterialFrame,
 }
 
 /// One message on the confirmed stream.

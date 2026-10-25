@@ -168,6 +168,20 @@ impl Harness {
         serde_json::from_slice(&reply.payload).unwrap()
     }
 
+    async fn materials(&self, producer: &str, after: i64, limit: u32) -> Vec<HeldMaterial> {
+        let reply = self
+            .client
+            .request(
+                self.subjects.materials(producer),
+                serde_json::to_vec(&Materials { after, limit })
+                    .unwrap()
+                    .into(),
+            )
+            .await
+            .unwrap();
+        serde_json::from_slice(&reply.payload).unwrap()
+    }
+
     fn material_frame(&self, frame: &str, bytes: &[u8]) -> (MaterialId, Ingress) {
         let blob = self.fixture_blob(bytes);
         let id = MaterialId::new();
@@ -271,70 +285,157 @@ async fn materials_then_events_are_admitted_and_acknowledged_once(db: devkit::pg
     assert!(h.have("phone", &["e1"]).await.is_empty());
 }
 
-/// Polylogue's side of the boundary: a unit of an archive's rows arrives as a
-/// record-batch material and one `polylogue.rows` event at its start. Sinex
-/// keys units by archive and position, so a unit sent again in a new frame is a
-/// repeat, and the next position is a new unit. Polylogue's own tests drive the
-/// same frames through a real `sinexd`.
+/// A synthetic Claude Code session as Polylogue sends it: the session file as
+/// a material of its real input, then the session, its message and tool call
+/// and the turn, keyed by Polylogue's IDs and anchored at their records. The
+/// same reading sent again is a repeat; a newer parser's reading replaces the
+/// message; the session answers Sinex's own query language; and the
+/// materials request lists the file, as Polylogue reads it to rebuild.
 #[devkit::test]
-async fn polylogue_units_are_admitted_once_by_archive_and_position(db: devkit::pg::TestDatabase) {
+async fn an_ai_session_from_polylogue_is_ordinary_events(db: devkit::pg::TestDatabase) {
     let h = Harness::start(db).await;
-    let rows = b"{\"table\":\"note\",\"row\":{\"id\":\"n1\",\"local_seq\":4}}\n";
-    let (batch, frame) = h.material_frame("batch:a1:1", rows);
+    let file = concat!(
+        r#"{"type":"user","uuid":"u1","sessionId":"s1","cwd":"/home/op/morrow","message":{"content":"run the tests"}}"#,
+        "\n",
+        r#"{"type":"assistant","uuid":"a1","sessionId":"s1","message":{"content":[{"type":"tool_use","id":"t1","name":"Bash","input":{"command":"cargo test"}}]}}"#,
+        "\n"
+    );
+    let blob = h.fixture_blob(file.as_bytes());
+    let material = MaterialId::new();
+    let frame = Ingress::Material {
+        frame: "input:s1".into(),
+        material: Box::new(MaterialFrame {
+            id: material,
+            input: InputRef {
+                kind: "claude-code".into(),
+                locator: "/home/op/.claude/projects/-home-op-morrow/s1.jsonl".into(),
+                host: "laptop".into(),
+            },
+            blob,
+            length: file.len() as u64,
+            parser: "polylogue-claude-code".into(),
+            parser_version: 40,
+            part_index: 0,
+            previous_part: None,
+            manifest: json!({"media_type": "application/jsonl"}),
+        }),
+    };
     assert_eq!(h.send("polylogue", &frame).await.refusal, None);
-    let unit = |position: u64| ProducerEvent {
-        event_type: "polylogue.rows".into(),
-        payload: json!({
-            "archive": "a1",
-            "position": position,
-            "local_seq": 4,
-            "unit": "note",
-            "key": "n1",
-            "batch": format!("blake3:{}", blake3::hash(rows).to_hex()),
-            "rows": 1,
-            "blobs": []
-        }),
-        location: Some(RecordLocation {
-            material: batch,
-            anchor: 0,
-        }),
-        ordinal: 0,
-        parents: vec![],
-        reading_order: position as i64,
-        class: sinex_model::Class::Open,
+    let second = file.find('\n').unwrap() as u64 + 1;
+    let at = |anchor: u64| Some(RecordLocation { material, anchor });
+    let event =
+        |event_type: &str, payload: serde_json::Value, anchor: u64, order: i64| ProducerEvent {
+            event_type: event_type.into(),
+            payload,
+            location: at(anchor),
+            ordinal: 0,
+            parents: vec![],
+            reading_order: order,
+            class: sinex_model::Class::Open,
+        };
+    let session = json!({
+        "session": "claude-code:s1", "origin": "claude-code", "kind": "main", "title": null,
+        "cwd": ["/home/op/morrow"], "repo": null, "branch": null, "tool_version": null,
+        "mode": null, "machine": null, "agent_name": null,
+        "started": "2026-10-03T09:00:00Z", "last_activity": "2026-10-03T09:00:05Z", "links": []
+    });
+    let message = |text: &str| {
+        json!({
+            "message": "claude-code:u1", "session": "claude-code:s1", "parent": null, "role": "user",
+            "written_by": "human", "prompt_kind": "prose", "at": "2026-10-03T09:00:00Z",
+            "model": null, "text": text, "usage": {"input": null, "cached_input": null,
+            "cache_write": null, "output": null, "reasoning": null}, "cost_nusd": null,
+            "stop_reason": null, "duration_ms": null, "attachments": [], "copies": []
+        })
     };
-    let first = Ingress::Events {
-        frame: "rows:a1:1".into(),
-        events: vec![unit(1)],
+    let call = json!({
+        "call": "tool:claude-code:s1#t1", "session": "claude-code:s1", "message": "claude-code:a1",
+        "tool": "Bash", "action": "shell", "command": "cargo test", "path": null,
+        "outcome": "unknown", "outcome_reason": "no_result", "exit_code": null,
+        "at": "2026-10-03T09:00:05Z", "duration_ms": null, "child_session": null, "result": null
+    });
+    let turn = json!({
+        "turn": "claude-code:u1", "session": "claude-code:s1", "start": "2026-10-03T09:00:00Z",
+        "end": "2026-10-03T09:00:05Z", "prompts": ["claude-code:u1"], "answer": "claude-code:a1",
+        "slash_command": false, "tool_calls": 1, "errors": 0, "input_tokens": null,
+        "output_tokens": null, "cost_nusd": null, "abandoned": false
+    });
+    let events = |text: &str, order: i64, name: &str| Ingress::Events {
+        frame: name.into(),
+        events: vec![
+            event("polylogue.session", session.clone(), 0, order),
+            event("polylogue.message", message(text), 0, order),
+            event("polylogue.tool_call", call.clone(), second, order),
+            event("polylogue.turn", turn.clone(), 0, order),
+        ],
         failures: vec![],
     };
-    let ack = h.send("polylogue", &first).await;
-    assert_eq!(ack.refusal, None, "{ack:?}");
-    assert_eq!(ack.outcome["admitted"], 1);
-    let again = Ingress::Events {
-        frame: "rows:a1:1-again".into(),
-        events: vec![unit(1)],
-        failures: vec![],
-    };
-    assert_eq!(h.send("polylogue", &again).await.outcome["repeats"], 1);
-    let next = Ingress::Events {
-        frame: "rows:a1:2".into(),
-        events: vec![unit(2)],
-        failures: vec![],
-    };
-    assert_eq!(h.send("polylogue", &next).await.outcome["admitted"], 1);
-    let have = h
-        .have(
-            "polylogue",
-            &["batch:a1:1", "rows:a1:1", "rows:a1:2", "rows:a1:3"],
-        )
+    let ack = h
+        .send("polylogue", &events("run the tests", 1, "events:1"))
         .await;
-    assert_eq!(have.len(), 3, "the unsent position is missing");
+    assert_eq!(ack.refusal, None, "{ack:?}");
+    assert_eq!(ack.outcome["admitted"], 4);
+    // The same reading again, under a new frame: repeats.
+    let again = h
+        .send("polylogue", &events("run the tests", 1, "events:2"))
+        .await;
+    assert_eq!(again.outcome["repeats"], 4, "{again:?}");
+    // A newer parser reads the prompt differently: only the message changes,
+    // and it replaces the live reading.
+    let newer = h
+        .send("polylogue", &events("run the tests, please", 2, "events:3"))
+        .await;
+    assert_eq!(newer.outcome["admitted"], 1, "{newer:?}");
+    assert_eq!(newer.outcome["repeats"], 3, "{newer:?}");
     assert_eq!(
-        h.count("SELECT count(*) FROM core.events WHERE event_type = 'polylogue.rows'")
+        h.count(
+            "SELECT count(*) FROM core.events e WHERE e.event_type = 'polylogue.message' \
+             AND NOT EXISTS (SELECT 1 FROM audit.archived a WHERE a.event_id = e.id)"
+        )
+        .await,
+        1
+    );
+    // The message text is guarded although the frame asked for open.
+    assert_eq!(
+        h.count("SELECT count(*) FROM core.events WHERE event_type = 'polylogue.message' AND class = 'guarded'")
             .await,
         2
     );
+
+    let mut conn = PgConnection::connect(&h.url).await.unwrap();
+    let text = "events where kind = polylogue.session and payload.cwd ~ morrow";
+    let ctx = sinex_model::query::Context::new(
+        jiff::Timestamp::now(),
+        jiff::tz::TimeZone::UTC,
+        jiff::civil::Time::constant(4, 0, 0, 0),
+    );
+    let bound = sinex_model::query::bind(text, &ctx).unwrap();
+    let answer = sinex_store::query::run(
+        &mut conn,
+        text,
+        &bound,
+        &ctx,
+        &sinex_store::query::Page {
+            size: Some(10),
+            cursor: None,
+        },
+    )
+    .await
+    .unwrap();
+    let rows = serde_json::to_value(answer).unwrap()["rows"].clone();
+    assert_eq!(rows.as_array().unwrap().len(), 1, "{rows}");
+
+    let page = h.materials("polylogue", 0, 10).await;
+    assert_eq!(page.len(), 1);
+    assert_eq!(page[0].frame, "input:s1");
+    assert_eq!(page[0].material.id, material);
+    assert_eq!(page[0].material.input.kind, "claude-code");
+    assert!(
+        h.materials("polylogue", page[0].number, 10)
+            .await
+            .is_empty()
+    );
+    assert!(h.materials("kitty", 0, 10).await.is_empty());
 }
 
 #[devkit::test]

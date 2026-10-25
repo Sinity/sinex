@@ -21,7 +21,7 @@ and [docs/vocabulary.md](docs/vocabulary.md) names the concepts.
   outside producers over NATS) and about forty sources on them: shell history,
   browsers, desktop and session capture, mail, chat, calendars, exports from
   Google, Samsung, Spotify, Reddit and others, notes vaults, git, the journal,
-  file changes, the Sinnix capture lake, and Polylogue's archive. An export
+  file changes, the Sinnix capture lake, and AI sessions from Polylogue. An export
   archive is stored once and read in one pass for every source that uses it.
 - **Derivations.** Fused shell commands, shell sessions, state intervals,
   presence, hourly and daily summaries, and text read from screen stills,

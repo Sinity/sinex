@@ -128,8 +128,17 @@ pub const ALL: &[EventTypeInfo] = &[
     info::<media::NoteDocument>(),
     info::<communication::ChatMessage>(),
     info::<communication::MailMessage>(),
-    // Polylogue's archive in primary mode
-    info::<polylogue::PolylogueRows>(),
+    // AI sessions from Polylogue, and what people and agents add to them
+    info::<polylogue::Session>(),
+    info::<polylogue::Message>(),
+    info::<polylogue::ToolCall>(),
+    info::<polylogue::Turn>(),
+    info::<polylogue::Delivery>(),
+    info::<polylogue::DeliveryOutcome>(),
+    info::<polylogue::Note>(),
+    info::<polylogue::Setting>(),
+    info::<polylogue::KeptResult>(),
+    info::<polylogue::Excision>(),
     // Account exports
     info::<account::ActionRecorded>(),
     info::<account::VideoWatched>(),

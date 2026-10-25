@@ -11,6 +11,7 @@
 //!     quality = intrinsic,         // TimeQuality variant, snake_case
 //!     removed_when = deleted_at,   // optional `Option<_>` field: Some means removed at source
 //!     keep_known = ["title"],      // optional fields a newer reading does not erase
+//!     class = guarded,             // optional: the least class its events are stored under
 //!     cites(field = content, size = size, when = stored), // optional: stored bytes the event owns
 //! )]
 //! ```
@@ -76,6 +77,7 @@ fn expand_event_payload(input: &DeriveInput) -> syn::Result<proc_macro2::TokenSt
     let mut removed_when: Option<Ident> = None;
     let mut keep_known: Vec<LitStr> = Vec::new();
     let mut cites: Option<(Ident, Ident, Option<Ident>)> = None;
+    let mut class: Option<Ident> = None;
     for attr in input.attrs.iter().filter(|a| a.path().is_ident("event")) {
         attr.parse_nested_meta(|meta| {
             if meta.path.is_ident("type") {
@@ -111,6 +113,8 @@ fn expand_event_payload(input: &DeriveInput) -> syn::Result<proc_macro2::TokenSt
                 syn::bracketed!(content in value);
                 let list = content.parse_terminated(|p| p.parse::<LitStr>(), syn::Token![,])?;
                 keep_known = list.into_iter().collect();
+            } else if meta.path.is_ident("class") {
+                class = Some(meta.value()?.parse()?);
             } else if meta.path.is_ident("cites") {
                 let (mut field, mut size, mut when) = (None, None, None);
                 meta.parse_nested_meta(|inner| {
@@ -181,6 +185,23 @@ fn expand_event_payload(input: &DeriveInput) -> syn::Result<proc_macro2::TokenSt
             ));
         }
     }
+    let class_tokens = match &class {
+        None => None,
+        Some(word) => {
+            let variant = match word.to_string().as_str() {
+                "open" => quote!(Open),
+                "guarded" => quote!(Guarded),
+                "sealed" => quote!(Sealed),
+                _ => {
+                    return Err(syn::Error::new_spanned(
+                        word,
+                        "class is `open`, `guarded` or `sealed`",
+                    ));
+                }
+            };
+            Some(quote!(const CLASS: ::sinex_model::Class = ::sinex_model::Class::#variant;))
+        }
+    };
     let removed_tokens = removed_when.map(|field| {
         quote! {
             fn record_state(&self) -> ::sinex_model::RecordState {
@@ -223,6 +244,7 @@ fn expand_event_payload(input: &DeriveInput) -> syn::Result<proc_macro2::TokenSt
             const KEY: ::sinex_model::KeyKind = #key_tokens;
             const REPLACE: ::sinex_model::ReplaceRule = #replace_tokens;
             const KEEP_KNOWN: &'static [&'static str] = &[#(#keep_known),*];
+            #class_tokens
 
             fn ts_orig(&self) -> ::sinex_model::TsOrig {
                 #time_tokens
