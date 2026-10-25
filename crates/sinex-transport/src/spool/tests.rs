@@ -1,245 +1,138 @@
 use super::*;
-use sinex_model::{Class, InputRef, MaterialId};
-use sinex_protocol::producer_bytes::{Material, MaterialFrame};
 
-fn declaration(bytes: &[u8], frame: &str) -> Publication {
-    Publication {
-        version: 1,
-        frame: frame.into(),
-        class: Class::Guarded,
-        material: None,
-        envelope: Some(Bytes {
-            blob: format!("blake3:{}", blake3::hash(bytes).to_hex()),
-            length: bytes.len() as u64,
-        }),
-    }
+fn name(bytes: &[u8]) -> String {
+    format!("blake3:{}", blake3::hash(bytes).to_hex())
 }
 
 #[test]
-fn partial_prefix_survives_reopen_and_conflicting_or_overflowing_resends_refuse() {
+fn chunks_survive_reopen_and_conflicting_or_overflowing_resends_are_refused() {
     let root = tempfile::tempdir().unwrap();
-    let bytes = b"exact frozen bytes across restart";
-    let p = declaration(bytes, "final-frame");
-    assert!(!receive(root.path(), "node", &p, Role::Envelope, 0, &bytes[..7]).unwrap());
-    let partial = directory(root.path(), "node", &p).join("envelope.partial");
+    let bytes = b"exact bytes across a restart";
+    let (blob, total) = (name(bytes), bytes.len() as u64);
+    let receive =
+        |offset, data: &[u8]| receive(root.path(), "node", "frame", &blob, total, offset, data);
+    assert!(!receive(0, &bytes[..7]).unwrap());
+    let partial = directory(root.path(), "node", "frame").join(format!("{}.partial", &blob[7..]));
     assert_eq!(std::fs::read(&partial).unwrap(), &bytes[..7]);
-    assert!(receive(root.path(), "node", &p, Role::Envelope, 0, b"changed").is_err());
-    assert!(receive(root.path(), "node", &p, Role::Envelope, 8, b"x").is_err());
-    assert!(receive(root.path(), "node", &p, Role::Envelope, u64::MAX, b"xx").is_err());
-    assert!(snapshot(root.path(), "node", &p, Role::Envelope).is_err());
-    assert!(receive(root.path(), "node", &p, Role::Envelope, 4, &bytes[4..]).unwrap());
-    assert!(receive(root.path(), "node", &p, Role::Envelope, 0, &bytes[..7]).unwrap());
-    assert!(receive(root.path(), "node", &p, Role::Envelope, 0, b"changed").is_err());
-    let mut original = snapshot(root.path(), "node", &p, Role::Envelope).unwrap();
+    assert!(receive(0, b"changed").is_err());
+    assert!(receive(8, b"x").is_err());
+    assert!(receive(u64::MAX, b"xx").is_err());
+    assert!(snapshot(root.path(), "node", "frame", &blob, total).is_err());
+    assert!(receive(4, &bytes[4..]).unwrap());
+    assert!(receive(0, &bytes[..7]).unwrap());
+    assert!(receive(0, b"changed").is_err());
+    let mut copy = snapshot(root.path(), "node", "frame", &blob, total).unwrap();
     std::fs::write(
-        directory(root.path(), "node", &p).join("envelope"),
-        b"provider changed",
+        directory(root.path(), "node", "frame").join(&blob[7..]),
+        b"producer changed it",
     )
     .unwrap();
-    let mut retained = Vec::new();
-    original.read_to_end(&mut retained).unwrap();
-    assert_eq!(retained, bytes, "receiver owns the verified inode");
-    assert!(snapshot(root.path(), "node", &p, Role::Envelope).is_err());
-    discard(root.path(), "node", &p).unwrap();
-    discard(root.path(), "node", &p).unwrap();
+    let mut read = Vec::new();
+    copy.read_to_end(&mut read).unwrap();
+    assert_eq!(read, bytes, "the receiver's copy is its own");
+    assert!(snapshot(root.path(), "node", "frame", &blob, total).is_err());
+    discard(root.path(), "node", "frame").unwrap();
+    discard(root.path(), "node", "frame").unwrap();
+    assert!(!directory(root.path(), "node", "frame").exists());
 }
 
 #[test]
-fn byte_roles_and_sources_have_distinct_private_lifetimes() {
+fn frames_and_producers_have_separate_directories() {
     let root = tempfile::tempdir().unwrap();
     let body = b"material bytes";
-    let envelope = b"different envelope bytes";
-    let mut p = declaration(envelope, "same-final-frame");
-    let frame = MaterialFrame {
-        id: MaterialId::new(),
-        input: InputRef {
-            kind: "file".into(),
-            locator: "fixture".into(),
-            host: "h".into(),
-        },
-        blob: format!("blake3:{}", blake3::hash(body).to_hex()),
-        length: body.len() as u64,
-        parser: "zsh".into(),
-        parser_version: 1,
-        part_index: 0,
-        previous_part: None,
-        manifest: serde_json::json!({}),
-    };
-    p.material = Some(Material::from_frame(&frame));
-    stage(root.path(), "one", &p, Role::Material, body.as_slice()).unwrap();
-    stage(root.path(), "one", &p, Role::Envelope, envelope.as_slice()).unwrap();
-    stage(root.path(), "two", &p, Role::Material, body.as_slice()).unwrap();
-    let mut a = String::new();
-    snapshot(root.path(), "one", &p, Role::Material)
-        .unwrap()
-        .read_to_string(&mut a)
-        .unwrap();
-    assert_eq!(a, "material bytes");
-    let mut b = String::new();
-    snapshot(root.path(), "one", &p, Role::Envelope)
-        .unwrap()
-        .read_to_string(&mut b)
-        .unwrap();
-    assert_eq!(b, "different envelope bytes");
-    discard(root.path(), "one", &p).unwrap();
-    assert!(snapshot(root.path(), "two", &p, Role::Material).is_ok());
-    let mut sealed = p.clone();
-    sealed.class = Class::Sealed;
+    let blob = name(body);
+    let length = body.len() as u64;
+    stage(root.path(), "node", "one", &blob, length, body.as_slice()).unwrap();
+    stage(root.path(), "node", "two", &blob, length, body.as_slice()).unwrap();
+    stage(root.path(), "other", "one", &blob, length, body.as_slice()).unwrap();
+    discard(root.path(), "node", "one").unwrap();
+    assert!(snapshot(root.path(), "node", "one", &blob, length).is_err());
+    assert!(snapshot(root.path(), "node", "two", &blob, length).is_ok());
+    assert!(snapshot(root.path(), "other", "one", &blob, length).is_ok());
+}
+
+#[test]
+fn staged_bytes_must_match_their_name_and_length() {
+    let root = tempfile::tempdir().unwrap();
+    let body = b"right";
     assert!(
         stage(
             root.path(),
-            "sealed",
-            &sealed,
-            Role::Material,
+            "node",
+            "frame",
+            &name(body),
+            5,
+            b"wrong".as_slice()
+        )
+        .is_err()
+    );
+    assert!(
+        stage(
+            root.path(),
+            "node",
+            "frame",
+            &name(body),
+            4,
             body.as_slice()
         )
         .is_err()
     );
-    assert!(!directory(root.path(), "sealed", &sealed).exists());
-}
-
-#[test]
-fn empty_and_wrong_named_uploads_do_not_publish_public_cas_bytes() {
-    let root = tempfile::tempdir().unwrap();
-    let empty = declaration(b"", "empty");
-    assert!(receive(root.path(), "node", &empty, Role::Envelope, 0, b"").unwrap());
-    let wrong = declaration(b"right", "wrong");
-    assert!(receive(root.path(), "node", &wrong, Role::Envelope, 0, b"wrong").is_err());
-    assert!(!root.path().join("blobs").exists());
     assert!(
-        !directory(root.path(), "node", &wrong)
-            .join("envelope")
-            .exists()
-    );
-    assert!(receive(root.path(), "node", &wrong, Role::Envelope, 0, b"right").unwrap());
-}
-
-#[test]
-fn frozen_sender_identity_survives_receiver_cleanup_and_differing_retry_refuses() {
-    let root = tempfile::tempdir().unwrap();
-    let body = b"exact material";
-    let frame = MaterialFrame {
-        id: MaterialId::new(),
-        input: InputRef {
-            kind: "file".into(),
-            locator: "fixture".into(),
-            host: "h".into(),
-        },
-        blob: format!("blake3:{}", blake3::hash(body).to_hex()),
-        length: body.len() as u64,
-        parser: "zsh".into(),
-        parser_version: 1,
-        part_index: 0,
-        previous_part: None,
-        manifest: serde_json::from_str(r#"{"z":0,"a":{"z":3,"a":4}}"#).unwrap(),
-    };
-    let inner = Ingress::Material {
-        frame: "inner".into(),
-        material: Box::new(frame),
-    };
-    let envelope = encode_frame(&inner);
-    let mut publication = declaration(&envelope, "final");
-    if let Ingress::Material { material, .. } = &inner {
-        publication.material = Some(Material::from_frame(material));
-    }
-    let frozen = Frozen {
-        publication,
-        frame: inner,
-    };
-    assert_eq!(freeze(root.path(), "node", &frozen).unwrap(), frozen);
-    for (role, _) in frozen.publication.roles() {
         stage(
             root.path(),
             "node",
-            &frozen.publication,
-            role,
-            if role == Role::Material {
-                body.as_slice()
-            } else {
-                envelope.as_slice()
-            },
+            "frame",
+            "blake3:../../x",
+            5,
+            body.as_slice()
         )
-        .unwrap();
-    }
-    discard_bytes(root.path(), "node", &frozen.publication).unwrap();
-    assert_eq!(
-        load(root.path(), "node", "final").unwrap(),
-        Some(frozen.clone())
+        .is_err()
     );
-    assert!(snapshot(root.path(), "node", &frozen.publication, Role::Material).is_err());
-    let mut different = frozen.clone();
-    if let Ingress::Material { material, .. } = &mut different.frame {
-        material.id = MaterialId::new();
-        different.publication.material = Some(Material::from_frame(material));
-    }
-    let bytes = encode_frame(&different.frame);
-    different.publication.envelope = Some(Bytes {
-        blob: format!("blake3:{}", blake3::hash(&bytes).to_hex()),
-        length: bytes.len() as u64,
-    });
-    assert!(freeze(root.path(), "node", &different).is_err());
-    assert_eq!(
-        load(root.path(), "node", "final").unwrap(),
-        Some(frozen.clone())
+    assert!(
+        stage(
+            root.path(),
+            "node",
+            "frame",
+            &name(body),
+            5,
+            body.as_slice()
+        )
+        .is_ok()
     );
-    discard(root.path(), "node", &frozen.publication).unwrap();
-    discard(root.path(), "node", &frozen.publication).unwrap();
-    assert!(load(root.path(), "node", "final").unwrap().is_none());
 }
 
 #[test]
-fn pending_artifacts_are_producer_scoped_and_keep_payload_order_through_the_supported_round_trip() {
+fn empty_and_wrong_uploads_leave_no_complete_file() {
     let root = tempfile::tempdir().unwrap();
-    let frame = Ingress::Events {
-        frame: "outer".into(),
-        failures: vec![],
-        events: vec![sinex_protocol::ProducerEvent {
-            event_type: "fixture".into(),
-            payload: serde_json::from_str(r#"{"z":0,"a":{"z":3,"a":4}}"#).unwrap(),
-            location: None,
-            ordinal: 0,
-            parents: vec![],
-            reading_order: 0,
-            class: Class::Guarded,
-        }],
-    };
-    let encoded = encode_frame(&frame);
-    let frozen = Frozen {
-        publication: declaration(&encoded, "outer"),
-        frame,
-    };
-    freeze(root.path(), "one", &frozen).unwrap();
-    freeze(root.path(), "two", &frozen).unwrap();
-    let first = pending(root.path(), "one")
-        .unwrap()
-        .collect::<Result<Vec<_>, _>>()
-        .unwrap();
-    assert_eq!(first, vec![frozen.clone()]);
-    assert_eq!(encode_frame(&first[0].frame), encoded);
-    let Ingress::Events { events, .. } = &first[0].frame else {
-        panic!("events")
-    };
-    assert_eq!(
-        serde_json::to_string(&events[0].payload).unwrap(),
-        r#"{"z":0,"a":{"z":3,"a":4}}"#
+    assert!(receive(root.path(), "node", "empty", &name(b""), 0, 0, b"").unwrap());
+    let right = name(b"right");
+    assert!(receive(root.path(), "node", "wrong", &right, 5, 0, b"wrong").is_err());
+    assert!(
+        !directory(root.path(), "node", "wrong")
+            .join(&right[7..])
+            .exists()
     );
-    let malformed = artifact_directory(root.path(), "one").join(format!("{}.json", "0".repeat(64)));
-    std::fs::write(&malformed, b"{not-json").unwrap();
-    let entries = pending(root.path(), "one").unwrap().collect::<Vec<_>>();
-    assert_eq!(entries.len(), 2);
-    assert_eq!(entries.iter().filter(|e| e.is_err()).count(), 1);
-    assert_eq!(
-        pending(root.path(), "two")
-            .unwrap()
-            .collect::<Result<Vec<_>, _>>()
-            .unwrap(),
-        vec![frozen.clone()]
-    );
-    assert!(pending(root.path(), "absent").unwrap().next().is_none());
-    std::fs::remove_file(malformed).unwrap();
-    discard(root.path(), "one", &frozen.publication).unwrap();
-    assert_eq!(pending(root.path(), "one").unwrap().count(), 0);
-    assert_eq!(pending(root.path(), "two").unwrap().count(), 1);
+    assert!(receive(root.path(), "node", "wrong", &right, 5, 0, b"right").unwrap());
+}
+
+#[test]
+fn discard_leaves_files_it_did_not_put_there() {
+    let root = tempfile::tempdir().unwrap();
+    let body = b"bytes";
+    stage(
+        root.path(),
+        "node",
+        "frame",
+        &name(body),
+        5,
+        body.as_slice(),
+    )
+    .unwrap();
+    let dir = directory(root.path(), "node", "frame");
+    std::fs::write(dir.join("unrelated"), b"kept").unwrap();
+    assert!(discard(root.path(), "node", "frame").is_ok());
+    assert_eq!(std::fs::read(dir.join("unrelated")).unwrap(), b"kept");
+    assert!(!dir.join(&name(body)[7..]).exists());
 }
 
 mod group;

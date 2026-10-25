@@ -275,11 +275,6 @@ pub async fn apply(
     sources.extend(bound);
     sources.sort();
     sources.dedup();
-    for source in &sources {
-        if crate::native_materials::source_pending(conn, source).await? {
-            return Err(Error::Invalid("the source has a material that is not admitted yet; let its capture finish before excising".into()));
-        }
-    }
 
     let mut scope = match target {
         Target::Event(e) => serde_json::json!({"event":e.0}),
@@ -419,7 +414,7 @@ pub async fn apply(
             .map_err(|_| Error::Invalid("material length beyond i64".into()))?;
         sqlx::query!(
             r#"INSERT INTO core.blobs (hash, size, status) VALUES ($1, $2, 'present')
-           ON CONFLICT (hash) DO UPDATE SET status = 'present' WHERE core.blobs.status IN ('reserved','deleting')"#,
+           ON CONFLICT (hash) DO UPDATE SET status = 'present' WHERE core.blobs.status = 'deleting'"#,
             rewrite.blob,
             length,
         )
@@ -464,9 +459,7 @@ pub(crate) async fn unreferenced(conn: &mut PgConnection, blob: &str) -> Result<
     Ok(sqlx::query_scalar!(
         r#"SELECT NOT EXISTS (SELECT 1 FROM raw.materials WHERE blob = $1)
              AND NOT EXISTS (SELECT 1 FROM raw.revision_extents WHERE blob = $1)
-             AND NOT EXISTS (SELECT 1 FROM core.event_blobs WHERE blob = $1)
-             AND NOT EXISTS (SELECT 1 FROM raw.pending_native_blobs WHERE blob = $1)
-             AND NOT EXISTS (SELECT 1 FROM raw.pending_producer_blobs WHERE blob = $1) AS "gone!""#,
+             AND NOT EXISTS (SELECT 1 FROM core.event_blobs WHERE blob = $1) AS "gone!""#,
         blob
     )
     .fetch_one(&mut *conn)
@@ -494,10 +487,11 @@ pub async fn finish_deletions(
             let status: Option<String> = sqlx::query_scalar("SELECT status FROM core.blobs WHERE hash=$1 FOR UPDATE")
                 .bind(&name).fetch_optional(&mut *tx).await?;
             if status.as_deref() != Some("deleting") { return Ok(None); }
-            // A fresh statement after the lock observes owners which committed
-            // while it waited. FK references and reservations cannot pass this
-            // lock until unlink and row deletion have completed together.
-            let owned: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM raw.materials WHERE blob=$1) OR EXISTS(SELECT 1 FROM raw.revision_extents WHERE blob=$1) OR EXISTS(SELECT 1 FROM core.event_blobs WHERE blob=$1) OR EXISTS(SELECT 1 FROM raw.pending_native_blobs WHERE blob=$1) OR EXISTS(SELECT 1 FROM raw.pending_producer_blobs WHERE blob=$1)")
+            // A fresh statement after the lock sees references committed while
+            // it waited; a new reference waits on this lock until the file and
+            // the row are gone together. The writer runs this and admission
+            // in turn, and admits no row whose file is missing.
+            let owned: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM raw.materials WHERE blob=$1) OR EXISTS(SELECT 1 FROM raw.revision_extents WHERE blob=$1) OR EXISTS(SELECT 1 FROM core.event_blobs WHERE blob=$1)")
                 .bind(&name).fetch_one(&mut *tx).await?;
             if owned { return Ok(None); }
             if blobs.delete(&name).is_err() { return Ok(Some(false)); }

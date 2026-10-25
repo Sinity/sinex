@@ -1,137 +1,148 @@
-//! Frozen producer queue bytes, separate from public CAS. A receiver always
-//! copies and verifies a producer-writable file before it can install it.
-use sinex_protocol::Ingress;
-use sinex_protocol::producer_bytes::{Bytes, Material, Publication, Role, encode_frame, spool_key};
+//! The producer handoff: bytes an outside producer gives Sinex for one frame,
+//! in that frame's directory under the store root, each file named by the
+//! BLAKE3 hash of its bytes. A producer on the same host writes them with
+//! [`stage`]; one on another host sends chunks that the receiver collects
+//! with [`receive`]. The receiver reads a verified copy with [`snapshot`],
+//! stores it, and removes the directory with [`discard`] once the frame is
+//! recorded.
 mod permissions;
 
 use std::io::{Read, Seek, Write};
 use std::os::unix::fs::OpenOptionsExt;
 use std::path::{Path, PathBuf};
 
-pub fn directory(root: &Path, producer: &str, publication: &Publication) -> PathBuf {
+/// The directory holding the bytes for `producer`'s frame `frame`. The name is
+/// a hash, so no producer-supplied text can leave the spool root.
+pub fn directory(root: &Path, producer: &str, frame: &str) -> PathBuf {
+    let mut hash = blake3::Hasher::new();
+    hash.update(b"sinex producer spool\0");
+    hash.update(producer.as_bytes());
+    hash.update(&[0]);
+    hash.update(frame.as_bytes());
     root.join("incoming")
         .join("producers")
-        .join(publication.spool_key(producer))
+        .join(hash.finalize().to_hex().as_str())
 }
-fn expected(publication: &Publication, role: Role) -> Result<&Bytes, String> {
-    publication.validate()?;
-    publication
-        .roles()
-        .find_map(|(r, b)| (r == role).then_some(b))
-        .ok_or_else(|| "producer publication lacks this byte role".into())
+
+/// The file name of the bytes named `blob` (`blake3:<hex>`).
+fn file_name(blob: &str) -> Result<String, String> {
+    let hex = blob
+        .strip_prefix("blake3:")
+        .filter(|hex| blake3::Hash::from_hex(hex).is_ok())
+        .ok_or_else(|| format!("invalid blob name {blob}"))?;
+    Ok(hex.to_owned())
 }
+
 fn error(e: impl std::fmt::Display) -> String {
     e.to_string()
 }
 
-fn copy_checked(mut input: impl Read, mut output: impl Write, bytes: &Bytes) -> Result<(), String> {
+/// Copy `input` to `output`, checking it is exactly the bytes named `blob`
+/// of `length`.
+fn copy_checked(
+    mut input: impl Read,
+    mut output: impl Write,
+    blob: &str,
+    length: u64,
+) -> Result<(), String> {
     let mut hash = blake3::Hasher::new();
-    let mut length = 0u64;
+    let mut copied = 0u64;
     let mut buffer = [0; 65536];
     loop {
         let n = input.read(&mut buffer).map_err(error)?;
         if n == 0 {
             break;
         }
-        length = length
+        copied = copied
             .checked_add(n as u64)
             .ok_or("producer byte length overflow")?;
-        if length > bytes.length {
-            return Err("producer bytes exceed their frozen length".into());
+        if copied > length {
+            return Err("producer bytes are longer than their declared length".into());
         }
         hash.update(&buffer[..n]);
         output.write_all(&buffer[..n]).map_err(error)?;
     }
-    if length != bytes.length || format!("blake3:{}", hash.finalize().to_hex()) != bytes.blob {
-        return Err("producer bytes differ from their frozen name or length".into());
+    if copied != length || format!("blake3:{}", hash.finalize().to_hex()) != blob {
+        return Err("producer bytes differ from their name or length".into());
     }
     Ok(())
 }
 
+/// Write the bytes named `blob` for `frame`, as the producer.
 pub fn stage(
     root: &Path,
     producer: &str,
-    publication: &Publication,
-    role: Role,
+    frame: &str,
+    blob: &str,
+    length: u64,
     input: impl Read,
 ) -> Result<(), String> {
-    let bytes = expected(publication, role)?;
-    let dir = directory(root, producer, publication);
+    let name = file_name(blob)?;
+    let dir = directory(root, producer, frame);
     let group = permissions::prepare_directory(root, &dir)?;
-    permissions::check_existing_file(&dir.join(role.name()), group)?;
+    permissions::check_existing_file(&dir.join(&name), group)?;
     sync_directories(root, &dir)?;
     let mut staged = tempfile::NamedTempFile::new_in(&dir).map_err(error)?;
-    copy_checked(input, &mut staged, bytes)?;
+    copy_checked(input, &mut staged, blob, length)?;
     permissions::share_completed_file(staged.as_file(), group)?;
     staged.as_file().sync_all().map_err(error)?;
-    staged.persist(dir.join(role.name())).map_err(error)?;
-    std::fs::File::open(&dir)
-        .and_then(|f| f.sync_all())
-        .map_err(error)?;
-    Ok(())
+    staged.persist(dir.join(name)).map_err(error)?;
+    sync_directory(&dir)
 }
 
-/// No producer-writable inode leaves this function. The returned anonymous
-/// receiver-owned snapshot is the version whose name/length were checked.
+/// A verified copy of the bytes named `blob` for `frame`, owned by the
+/// receiver, so a producer rewriting its file afterwards changes nothing.
 pub fn snapshot(
     root: &Path,
     producer: &str,
-    publication: &Publication,
-    role: Role,
+    frame: &str,
+    blob: &str,
+    length: u64,
 ) -> Result<std::fs::File, String> {
-    let bytes = expected(publication, role)?;
-    let path = directory(root, producer, publication).join(role.name());
+    let path = directory(root, producer, frame).join(file_name(blob)?);
     let input =
-        std::fs::File::open(path).map_err(|e| format!("frozen producer spool unavailable: {e}"))?;
+        std::fs::File::open(path).map_err(|e| format!("producer bytes unavailable: {e}"))?;
     let mut file = tempfile::tempfile().map_err(error)?;
-    copy_checked(input, &mut file, bytes)?;
+    copy_checked(input, &mut file, blob, length)?;
     file.rewind().map_err(error)?;
     Ok(file)
 }
 
-/// Acknowledged prefixes are synced. A resend must match every overlapping byte;
-/// a new attempt cannot silently replace the frozen publication's prefix.
+/// Add one chunk of the bytes named `blob` (`total` long) for `frame`.
+/// Chunks arrive in order; one sent again must match what was received.
+/// True once the bytes are complete and checked against their name.
 pub fn receive(
     root: &Path,
     producer: &str,
-    publication: &Publication,
-    role: Role,
+    frame: &str,
+    blob: &str,
+    total: u64,
     offset: u64,
     data: &[u8],
 ) -> Result<bool, String> {
-    let bytes = expected(publication, role)?;
+    let name = file_name(blob)?;
     let end = offset
         .checked_add(data.len() as u64)
         .ok_or("producer chunk offset overflow")?;
-    if end > bytes.length {
-        return Err("producer chunk exceeds frozen length".into());
+    if end > total {
+        return Err("producer chunk extends past its total".into());
     }
-    let dir = directory(root, producer, publication);
+    let dir = directory(root, producer, frame);
     let _ = permissions::prepare_directory(root, &dir)?;
     sync_directories(root, &dir)?;
-    if let Ok(mut ready) = std::fs::File::open(dir.join(role.name())) {
-        if ready.metadata().map_err(error)?.len() != bytes.length {
-            return Err("frozen producer spool length differs".into());
+    if let Ok(mut complete) = std::fs::File::open(dir.join(&name)) {
+        if complete.metadata().map_err(error)?.len() != total {
+            return Err("received producer bytes have a different length".into());
         }
-        ready
+        complete
             .seek(std::io::SeekFrom::Start(offset))
             .map_err(error)?;
-        let mut buffer = [0; 65536];
-        let mut at = 0;
-        while at < data.len() {
-            let n = (data.len() - at).min(buffer.len());
-            ready.read_exact(&mut buffer[..n]).map_err(error)?;
-            if buffer[..n] != data[at..at + n] {
-                return Err("producer resend differs from frozen bytes".into());
-            }
-            at += n;
+        if !same_bytes(&mut complete, data)? {
+            return Err("producer resend differs from the received bytes".into());
         }
-        // The role was synced and whole-name checked when completed. Final
-        // consumption verifies a receiver-owned snapshot again; a chunk retry
-        // need not copy/rehash the whole material for every small prefix.
         return Ok(true);
     }
-    let path = dir.join(format!("{}.partial", role.name()));
+    let path = dir.join(format!("{name}.partial"));
     let mut file = std::fs::OpenOptions::new()
         .create(true)
         .read(true)
@@ -142,269 +153,104 @@ pub fn receive(
         .map_err(error)?;
     file.lock().map_err(error)?;
     let have = file.metadata().map_err(error)?.len();
-    if have > bytes.length || offset > have {
-        return Err("producer chunks are not an exact ordered prefix".into());
+    if have > total || offset > have {
+        return Err("producer chunks are not an ordered prefix".into());
     }
     let overlap = (have.min(end) - offset) as usize;
     file.seek(std::io::SeekFrom::Start(offset)).map_err(error)?;
-    // Compare without allocating proportional to an incoming offset or total.
-    let mut buffer = [0; 65536];
-    let mut at = 0;
-    while at < overlap {
-        let n = (overlap - at).min(buffer.len());
-        file.read_exact(&mut buffer[..n]).map_err(error)?;
-        if buffer[..n] != data[at..at + n] {
-            return Err("producer resend differs from the frozen prefix".into());
-        }
-        at += n;
+    if !same_bytes(&mut file, &data[..overlap])? {
+        return Err("producer resend differs from the received prefix".into());
     }
     file.seek(std::io::SeekFrom::End(0)).map_err(error)?;
     file.write_all(&data[overlap..]).map_err(error)?;
     file.sync_all().map_err(error)?;
-    std::fs::File::open(&dir)
-        .and_then(|f| f.sync_all())
-        .map_err(error)?;
-    if have.max(end) < bytes.length {
+    sync_directory(&dir)?;
+    if have.max(end) < total {
         return Ok(false);
     }
     file.rewind().map_err(error)?;
     let mut hash = blake3::Hasher::new();
-    let length =
-        std::io::copy(&mut (&mut file).take(bytes.length + 1), &mut hash).map_err(error)?;
-    if length != bytes.length || format!("blake3:{}", hash.finalize().to_hex()) != bytes.blob {
-        // A completed attempt proved not to be the reserved bytes. Retire only
-        // its own partial file; a new attempt may resend the frozen original.
+    let length = std::io::copy(&mut (&mut file).take(total + 1), &mut hash).map_err(error)?;
+    if length != total || format!("blake3:{}", hash.finalize().to_hex()) != blob {
+        // This attempt's bytes are wrong; drop them so a new attempt can
+        // send the right ones.
         drop(file);
         std::fs::remove_file(&path).map_err(error)?;
-        std::fs::File::open(&dir)
-            .and_then(|f| f.sync_all())
-            .map_err(error)?;
-        return Err("producer bytes differ from their frozen name or length".into());
+        sync_directory(&dir)?;
+        return Err("producer bytes differ from their name or length".into());
     }
-    std::fs::rename(&path, dir.join(role.name())).map_err(error)?;
-    std::fs::File::open(&dir)
-        .and_then(|f| f.sync_all())
-        .map_err(error)?;
+    std::fs::rename(&path, dir.join(name)).map_err(error)?;
+    sync_directory(&dir)?;
     Ok(true)
 }
 
-pub fn discard_bytes(root: &Path, producer: &str, publication: &Publication) -> Result<(), String> {
-    let dir = directory(root, producer, publication);
-    if !dir.exists() {
-        return Ok(());
+/// Whether the next `data.len()` bytes of `file` equal `data`, compared
+/// without allocating in proportion to the chunk.
+fn same_bytes(file: &mut std::fs::File, data: &[u8]) -> Result<bool, String> {
+    let mut buffer = [0; 65536];
+    let mut at = 0;
+    while at < data.len() {
+        let n = (data.len() - at).min(buffer.len());
+        file.read_exact(&mut buffer[..n]).map_err(error)?;
+        if buffer[..n] != data[at..at + n] {
+            return Ok(false);
+        }
+        at += n;
     }
-    for (role, _) in publication.roles() {
-        for name in [role.name().to_owned(), format!("{}.partial", role.name())] {
-            match std::fs::remove_file(dir.join(name)) {
+    Ok(true)
+}
+
+/// Remove `frame`'s directory and the bytes in it. A file that is not named
+/// by a hash is left in place, and the directory with it.
+pub fn discard(root: &Path, producer: &str, frame: &str) -> Result<(), String> {
+    let dir = directory(root, producer, frame);
+    let entries = match std::fs::read_dir(&dir) {
+        Ok(entries) => entries,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(e) => return Err(error(e)),
+    };
+    for entry in entries {
+        let entry = entry.map_err(error)?;
+        let name = entry.file_name();
+        let name = name.to_string_lossy();
+        let hash = name.strip_suffix(".partial").unwrap_or(&name);
+        if blake3::Hash::from_hex(hash).is_ok() {
+            match std::fs::remove_file(entry.path()) {
                 Ok(()) => {}
                 Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
                 Err(e) => return Err(error(e)),
             }
         }
     }
-    std::fs::File::open(&dir)
-        .and_then(|f| f.sync_all())
-        .map_err(error)?;
-    // Unknown files retain the attributable owner rather than being guessed away.
-    std::fs::remove_dir(&dir).map_err(error)?;
-    std::fs::File::open(dir.parent().expect("spool parent"))
-        .and_then(|f| f.sync_all())
-        .map_err(error)?;
-    Ok(())
-}
-
-/// Sender cleanup follows final acknowledgment. Its frozen descriptor outlives
-/// receiver byte cleanup, including when that acknowledgment was lost in transit.
-pub fn discard(root: &Path, producer: &str, publication: &Publication) -> Result<(), String> {
-    discard_bytes(root, producer, publication)?;
-    match std::fs::remove_file(artifact_path(root, producer, &publication.frame)) {
-        Ok(()) => std::fs::File::open(
-            artifact_path(root, producer, &publication.frame)
-                .parent()
-                .expect("artifact parent"),
-        )
-        .and_then(|f| f.sync_all())
-        .map_err(error),
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
-        Err(e) => Err(error(e)),
-    }
-}
-
-fn artifact_path(root: &Path, producer: &str, frame: &str) -> PathBuf {
-    artifact_directory(root, producer).join(format!("{}.json", spool_key(producer, frame)))
-}
-
-fn artifact_directory(root: &Path, producer: &str) -> PathBuf {
-    let mut hash = blake3::Hasher::new();
-    hash.update(b"sinex producer artifact directory 1\0");
-    hash.update(producer.as_bytes());
-    root.join("incoming")
-        .join("producer-requests")
-        .join(hash.finalize().to_hex().as_str())
-}
-
-/// Stream this producer's committed frozen artifacts, one whole typed frame at
-/// a time. Uncommitted private temporary files follow the existing tmp policy.
-pub struct Pending {
-    entries: Option<std::fs::ReadDir>,
-    root: PathBuf,
-    producer: String,
-}
-pub fn pending(root: &Path, producer: &str) -> Result<Pending, String> {
-    let entries = match std::fs::read_dir(artifact_directory(root, producer)) {
-        Ok(entries) => Some(entries),
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
-        Err(e) => return Err(error(e)),
-    };
-    Ok(Pending {
-        entries,
-        root: root.to_owned(),
-        producer: producer.into(),
-    })
-}
-impl Iterator for Pending {
-    type Item = Result<Frozen, String>;
-    fn next(&mut self) -> Option<Self::Item> {
-        let entries = self.entries.as_mut()?;
-        loop {
-            let entry = match entries.next()? {
-                Ok(entry) => entry,
-                Err(e) => return Some(Err(error(e))),
-            };
-            if entry
-                .file_name()
-                .to_string_lossy()
-                .starts_with(".producer-request-")
-            {
-                continue;
-            }
-            let result = (|| {
-                if !entry.file_type().map_err(error)?.is_file() {
-                    return Err("producer artifact is not a regular file".into());
-                }
-                let frozen: Frozen =
-                    serde_json::from_reader(std::fs::File::open(entry.path()).map_err(error)?)
-                        .map_err(error)?;
-                frozen.validate()?;
-                if entry.path()
-                    != artifact_path(&self.root, &self.producer, &frozen.publication.frame)
-                {
-                    return Err(
-                        "producer artifact filename differs from its frozen identity".into(),
-                    );
-                }
-                Ok(frozen)
-            })();
-            return Some(result);
-        }
-    }
-}
-
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct Frozen {
-    pub publication: Publication,
-    /// Exact typed inner frame. wire_frame adds the declared indirect wrapper.
-    pub frame: Ingress,
-}
-impl Frozen {
-    pub fn validate(&self) -> Result<(), String> {
-        self.publication.validate()?;
-        match &self.frame {
-            Ingress::Material { material, .. }
-                if self.publication.material.as_ref() == Some(&Material::from_frame(material)) => {}
-            Ingress::Events { .. }
-                if self.publication.material.is_none() && self.publication.envelope.is_some() => {}
-            _ => {
-                return Err(
-                    "frozen producer artifact differs from its typed material descriptor".into(),
-                );
-            }
-        }
-        if let Some(envelope) = &self.publication.envelope {
-            let bytes = encode_frame(&self.frame);
-            if envelope.length != bytes.len() as u64
-                || envelope.blob != format!("blake3:{}", blake3::hash(&bytes).to_hex())
-            {
-                return Err(
-                    "frozen producer envelope differs from its exact typed frame encoding".into(),
-                );
-            }
-        } else if self.frame.frame() != self.publication.frame {
-            return Err("frozen producer frame identity differs".into());
-        }
-        Ok(())
-    }
-    pub fn wire_frame(&self) -> Ingress {
-        if let Some(envelope) = &self.publication.envelope {
-            Ingress::Indirect {
-                frame: self.publication.frame.clone(),
-                blob: envelope.blob.clone(),
-            }
-        } else {
-            self.frame.clone()
-        }
-    }
-}
-
-pub fn load(root: &Path, producer: &str, frame: &str) -> Result<Option<Frozen>, String> {
-    let file = match std::fs::File::open(artifact_path(root, producer, frame)) {
-        Ok(file) => file,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
-        Err(e) => return Err(error(e)),
-    };
-    let frozen: Frozen = serde_json::from_reader(file).map_err(error)?;
-    frozen.validate()?;
-    if frozen.publication.frame != frame {
-        return Err("frozen producer artifact has a different final frame".into());
-    }
-    Ok(Some(frozen))
-}
-
-/// The caller loads before minting a new MaterialId. No differing artifact can
-/// overwrite a frozen request; persist_noclobber also handles concurrent creators.
-pub fn freeze(root: &Path, producer: &str, frozen: &Frozen) -> Result<Frozen, String> {
-    frozen.validate()?;
-    let path = artifact_path(root, producer, &frozen.publication.frame);
-    let dir = path.parent().expect("artifact has a parent");
-    let group = permissions::prepare_directory(root, dir)?;
-    permissions::check_existing_file(&path, group)?;
-    sync_directories(root, dir)?;
-    let mut staged = tempfile::Builder::new()
-        .prefix(".producer-request-")
-        .tempfile_in(dir)
-        .map_err(error)?;
-    serde_json::to_writer(&mut staged, frozen).map_err(error)?;
-    permissions::share_completed_file(staged.as_file(), group)?;
-    staged.as_file().sync_all().map_err(error)?;
-    match staged.persist_noclobber(&path) {
-        Ok(_) => {}
-        Err(e) if e.error.kind() == std::io::ErrorKind::AlreadyExists => {}
+    sync_directory(&dir)?;
+    match std::fs::remove_dir(&dir) {
+        Ok(()) => {}
+        Err(e)
+            if matches!(
+                e.kind(),
+                std::io::ErrorKind::NotFound | std::io::ErrorKind::DirectoryNotEmpty
+            ) => {}
         Err(e) => return Err(error(e)),
     }
+    sync_directory(dir.parent().expect("spool directory has a parent"))
+}
+
+fn sync_directory(dir: &Path) -> Result<(), String> {
     std::fs::File::open(dir)
         .and_then(|f| f.sync_all())
-        .map_err(error)?;
-    let actual = load(root, producer, &frozen.publication.frame)?
-        .ok_or("frozen producer artifact disappeared")?;
-    if actual != *frozen {
-        return Err("producer publication already froze a different typed request".into());
-    }
-    Ok(actual)
+        .map_err(error)
 }
-
-#[cfg(test)]
-mod tests;
 
 fn sync_directories(root: &Path, leaf: &Path) -> Result<(), String> {
     let mut at = leaf;
     loop {
-        std::fs::File::open(at)
-            .and_then(|f| f.sync_all())
-            .map_err(error)?;
+        sync_directory(at)?;
         if at == root {
             return Ok(());
         }
-        at = at.parent().ok_or("producer spool escaped managed root")?;
+        at = at.parent().ok_or("producer spool left the store root")?;
     }
 }
+
+#[cfg(test)]
+mod tests;

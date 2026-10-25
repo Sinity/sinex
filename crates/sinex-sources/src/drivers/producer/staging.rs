@@ -1,5 +1,5 @@
-//! A poll's private snapshots are promoted into the durable Pending spool before
-//! its first reservation is sent. Public CAS encoding belongs to the receiver.
+//! A poll's material bytes, held in a temporary directory by their hash until
+//! they are written to the frame's spool directory.
 use super::*;
 use std::io::{Read, Write};
 

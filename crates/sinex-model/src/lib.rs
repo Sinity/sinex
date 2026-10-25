@@ -13,7 +13,6 @@ pub mod event_types;
 pub mod id;
 pub mod payload;
 pub mod privacy;
-pub mod producer_bytes;
 pub mod query;
 
 pub use batch::{

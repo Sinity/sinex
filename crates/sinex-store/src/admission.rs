@@ -28,7 +28,6 @@ pub use archive::erase_archive_history;
 mod classify;
 mod derived;
 mod register;
-pub(crate) use register::material_matches;
 mod write;
 
 pub(crate) use archive::remove_live;
@@ -96,10 +95,7 @@ pub async fn admit(
 
     if let BatchKind::Ingress(frame) = &batch.kind
         && frame.material.as_ref().is_some_and(|p| {
-            p.native_pending.is_some()
-                || p.exclusions.is_some()
-                || !p.material_keys.is_empty()
-                || !p.carry.is_null()
+            p.exclusions.is_some() || !p.material_keys.is_empty() || !p.carry.is_null()
         })
     {
         return Err(crate::Error::Invalid(
@@ -108,21 +104,8 @@ pub async fn admit(
     }
     crate::excision::exclusions::check(conn, batch).await?;
     match &batch.kind {
-        BatchKind::Source(progress) => {
-            crate::native_materials::validate(
-                conn,
-                progress,
-                &batch.archive,
-                &batch
-                    .events()
-                    .flat_map(|event| event.cites.iter().cloned())
-                    .collect::<Vec<_>>(),
-            )
-            .await?;
-            register::source(conn, progress).await?;
-        }
+        BatchKind::Source(progress) => register::source(conn, progress).await?,
         BatchKind::Ingress(frame) => {
-            crate::producer_bytes::validate(conn, frame).await?;
             if let Some(progress) = &frame.material {
                 register::source(conn, progress).await?;
             }
@@ -157,14 +140,12 @@ pub async fn admit(
     outcome.failures = write::record_failures(conn, batch).await?;
     if let BatchKind::Source(progress) = &batch.kind {
         write::save_position(conn, progress).await?;
-        crate::native_materials::complete(conn, progress, &events, &resolved).await?;
     }
     for request in &batch.archive {
         outcome.dirty_keys += archive::request(conn, request, keys).await?;
     }
     if let BatchKind::Ingress(frame) = &batch.kind {
         register::frame(conn, frame, &outcome).await?;
-        crate::producer_bytes::complete(conn, frame).await?;
     }
     Ok(outcome)
 }
@@ -209,6 +190,7 @@ async fn apply_privacy(conn: &mut PgConnection, batch: &Batch, events: &mut [Eve
     for event in events.iter_mut() {
         rules.apply(event)?;
     }
+    keep_removed_class(conn, events).await?;
     sqlx::query!(
         "UPDATE core.runs SET privacy_rules_seq = $2 WHERE id = $1 AND privacy_rules_seq IS DISTINCT FROM $2",
         batch.run.0,
@@ -216,6 +198,52 @@ async fn apply_privacy(conn: &mut PgConnection, batch: &Batch, events: &mut [Eve
     )
     .execute(&mut *conn)
     .await?;
+    Ok(())
+}
+
+/// A reading that records a removal is never of a lower class than the live
+/// reading it removes, so lowering a class later cannot reveal what was
+/// removed.
+async fn keep_removed_class(conn: &mut PgConnection, events: &mut [Event]) -> Result<()> {
+    let removed: Vec<usize> = events
+        .iter()
+        .enumerate()
+        .filter(|(_, e)| {
+            e.record_state == sinex_model::RecordState::Removed && e.equivalence_key.is_some()
+        })
+        .map(|(i, _)| i)
+        .collect();
+    if removed.is_empty() {
+        return Ok(());
+    }
+    let (sources, types, keys): (Vec<String>, Vec<String>, Vec<String>) = removed
+        .iter()
+        .map(|&i| {
+            let e = &events[i];
+            (
+                e.source.clone(),
+                e.event_type.to_owned(),
+                e.equivalence_key.as_ref().expect("filtered").0.clone(),
+            )
+        })
+        .collect();
+    let live = sqlx::query!(
+        r#"SELECT r.ord AS "ord!", e.class AS "class!"
+           FROM unnest($1::text[], $2::text[], $3::text[]) WITH ORDINALITY AS r(source, event_type, key, ord)
+           JOIN core.live_equivalence l ON l.source = r.source AND l.event_type = r.event_type AND l.equivalence_key = r.key
+           JOIN core.events e ON e.id = l.event_id"#,
+        &sources,
+        &types,
+        &keys,
+    )
+    .fetch_all(&mut *conn)
+    .await?;
+    for row in live {
+        let class = privacy::parse_class(&row.class)?;
+        let event =
+            &mut events[removed[usize::try_from(row.ord - 1).expect("ordinality is positive")]];
+        event.class = event.class.max(class);
+    }
     Ok(())
 }
 

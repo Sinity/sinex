@@ -15,9 +15,9 @@
 //! so each has its own record location and the parser reads the removal.
 //!
 //! The admitted cursor confirms cached file facts. Until its final byte commits,
-//! retries retain the staged bundle and its identity. Restart restores known
-//! member paths and finishes the retained current bundle before a fresh walk.
-//! Existing files are reread; restored membership has no fingerprint shortcut.
+//! a retry offers the same bundle again. A restart remembers which files the
+//! admitted bundles hold and walks again; those files are read again, since
+//! their fingerprints are not kept, and admission suppresses the repeats.
 use super::{Acquired, DriverError, NewMaterial, StoredBytes, file_facts};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -57,6 +57,8 @@ pub struct Cursor {
 pub struct DirState {
     files: HashMap<String, Option<(u64, i128, [u8; 32])>>,
     pending: Option<Pending>,
+    /// Paths a restart has already decided from a newer bundle.
+    remembered: HashSet<String>,
 }
 
 struct Pending {
@@ -93,7 +95,9 @@ impl Pending {
         Acquired {
             input,
             observation: self.observation.clone(),
-            revision: if matches!(&self.stored, StoredBytes::FramedReader(_)) {
+            // A retry after the bundle's first batch was admitted continues
+            // the revision that batch opened.
+            revision: if cursor.material == Some(self.id) {
                 RevisionChange::Same
             } else {
                 RevisionChange::Snapshot
@@ -305,7 +309,6 @@ impl DirSnapshot {
             "members": members,
             "records": records,
             "read_at_ns": i64::try_from(now.unix_ns()).unwrap_or(i64::MAX),
-            "directory_resume": { "previous": previous, "scanned": scanned, "observation": facts },
         });
         let id = MaterialId::new();
         let part_index = if previous.material.is_some() {

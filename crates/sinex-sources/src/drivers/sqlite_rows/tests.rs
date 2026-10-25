@@ -82,7 +82,8 @@ fn a_restart_with_rebuilt_memory_stores_nothing_new() {
     assert!(m.manifest["read_at_ns"].as_i64().is_some());
 
     // A new process: the state comes back from the stored part.
-    let mut rebuilt = RowState::rebuild([material_bytes(m).as_slice()]);
+    let mut rebuilt = RowState::default();
+    rebuilt.remember_rows(&material_bytes(m));
     assert!(state.hashes.is_empty(), "unconfirmed hashes remain pending");
     let again = d.poll(&cursor, &mut rebuilt).unwrap();
     assert!(
@@ -119,7 +120,8 @@ fn a_row_changed_while_down_is_read_after_the_restart() {
         .unwrap()
         .execute_batch("UPDATE t SET n = 9 WHERE id = 'a'")
         .unwrap();
-    let mut rebuilt = RowState::rebuild([material_bytes(m).as_slice()]);
+    let mut rebuilt = RowState::default();
+    rebuilt.remember_rows(&material_bytes(m));
     let after = d.poll(&cursor, &mut rebuilt).unwrap();
     let rows = lines(&after);
     assert_eq!(rows.len(), 1, "only the changed row");

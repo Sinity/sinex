@@ -261,10 +261,7 @@ pub(crate) async fn drive(
                 source.spec().name
             )
         })?;
-        Some(crate::one_shot::SealingSink::staged(
-            sink.0.clone(),
-            recipient,
-        ))
+        Some(crate::one_shot::SealingSink::new(sink.0.clone(), recipient))
     } else {
         None
     };
@@ -313,24 +310,7 @@ pub(crate) async fn drive(
                 return Err(error);
             }
         };
-        let base_carry = carry.clone();
-        let polled = async {
-            let pending_ids =
-                sinex_store::native_materials::binding_pending(guard.connection(), binding)
-                    .await
-                    .map_err(|e| e.to_string())?;
-            let acquired = reader.poll(&cursor);
-            Ok::<_, String>((acquired, pending_ids))
-        }
-        .await;
-        let (polled, pending_ids) = match polled {
-            Ok(value) => value,
-            Err(error) => {
-                guard.release().await?;
-                return Err(error);
-            }
-        };
-        let acquired = match polled {
+        let acquired = match reader.poll(&cursor) {
             Err(error) => {
                 guard.release().await?;
                 return Err(error.to_string());
@@ -342,7 +322,6 @@ pub(crate) async fn drive(
                 authority.check()?;
             }
             if let (Some(sealing), Some(material)) = (&sealing, &acquired.material)
-                && !pending_ids.contains(&material.id)
                 && let Some(drivers::StoredBytes::FramedReader(stored)) = &material.stored
                 && sink.0.is_sealed(&stored.blob).map_err(|e| e.to_string())?
             {
@@ -352,16 +331,7 @@ pub(crate) async fn drive(
                 let key = authority.material_key(read_conn, material.id).await?;
                 sealing.restore_key(stored.blob.clone(), key)?;
             }
-            // A directory material contains independent files. A new bundle has
-            // no parser state from the preceding bundle; a resumed bundle keeps
-            // its committed carry and requires its original sealed key.
-            let fresh_directory = source.spec().driver == sinex_sources::Driver::DirSnapshot
-                && acquired.material.as_ref().is_some_and(|m| {
-                    cursor["material"].as_str() != Some(m.id.to_string().as_str())
-                });
-            let carry = if fresh_directory {
-                serde_json::Value::Null
-            } else if acquired.material.is_some() {
+            let carry = if acquired.material.is_some() {
                 match &sealing {
                     Some(s) => open_carry(read_conn, binding, &carry, s, access.authority).await?,
                     None => carry,
@@ -395,15 +365,7 @@ pub(crate) async fn drive(
             check: check.clone(),
         };
         pipeline
-            .submit(
-                guard,
-                exclusions,
-                cursor,
-                base_carry,
-                carry,
-                acquired,
-                &mut totals,
-            )
+            .submit(guard, exclusions, carry, acquired, &mut totals)
             .await?;
         if !had_material {
             break;

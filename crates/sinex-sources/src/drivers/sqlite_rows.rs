@@ -14,8 +14,8 @@
 //!
 //! What the driver already stored survives a restart: the rows still open
 //! travel in the cursor, and the row hashes are rebuilt from the stored parts
-//! ([`RowState::rebuild`]), so a restart does not read and store every row
-//! again.
+//! ([`RowState::remember_rows`]), so a restart does not read and store every
+//! row again.
 use super::{Acquired, DriverError, NewMaterial, StoredBytes, file_facts};
 use rusqlite::{Connection, OpenFlags, types::ValueRef};
 use serde::{Deserialize, Serialize};
@@ -114,10 +114,23 @@ impl Pending {
         let ends = self.ends.clone();
         let base = self.base;
         let length = self.length;
+        // A retry after the material's first batch was admitted continues the
+        // revision that batch opened.
+        let (observation, revision) = if cursor.material == Some(self.id) {
+            (
+                ObservationFacts {
+                    changed: false,
+                    ..self.observation.clone()
+                },
+                RevisionChange::Same,
+            )
+        } else {
+            (self.observation.clone(), RevisionChange::Snapshot)
+        };
         Acquired {
             input,
-            observation: self.observation.clone(),
-            revision: RevisionChange::Snapshot,
+            observation,
+            revision,
             material: (!self.records.is_empty()).then(|| NewMaterial {
                 id: self.id,
                 bytes: Vec::new(),
@@ -164,105 +177,19 @@ impl Pending {
 }
 
 impl RowState {
-    /// The state after the stored rows parts `materials`, in order: the
-    /// last stored line of each row wins.
-    pub fn rebuild<'a>(materials: impl IntoIterator<Item = &'a [u8]>) -> Self {
-        let mut state = Self::default();
-        for bytes in materials {
-            for line in bytes.split(|b| *b == b'\n').filter(|l| !l.is_empty()) {
-                let Ok(row) = serde_json::from_slice::<Map<String, Value>>(line) else {
-                    continue;
-                };
-                if let Some(rowid) = row.get("_rowid").and_then(Value::as_i64) {
-                    state.hashes.insert(rowid, *blake3::hash(line).as_bytes());
-                }
-            }
-        }
-        state
-    }
-
-    /// Restore the exact registered material, including unadmitted suffix rows.
-    pub fn restore_pending(
-        &mut self,
-        reference: sinex_model::MaterialRef,
-        stored: super::RetainedRecords,
-        cursor: &Value,
-    ) -> Result<(), DriverError> {
-        let current: Cursor = if cursor.is_null() {
-            Cursor::default()
-        } else {
-            serde_json::from_value(cursor.clone())
-                .map_err(|e| DriverError::Cursor(e.to_string()))?
-        };
-        if current.material == Some(reference.id) && current.through as u64 >= reference.length {
-            return Ok(());
-        }
-        let resume = &reference.manifest["row_resume"];
-        let previous: Cursor = serde_json::from_value(resume["previous"].clone())
-            .map_err(|e| DriverError::Cursor(e.to_string()))?;
-        if current.material != Some(reference.id) && current != previous {
-            return Err(DriverError::Cursor(
-                "stored SQLite predecessor cursor differs from reservation".into(),
-            ));
-        }
-        let scanned: Cursor = serde_json::from_value(resume["scanned"].clone())
-            .map_err(|e| DriverError::Cursor(e.to_string()))?;
-        let ends: Vec<(usize, i64)> = serde_json::from_value(resume["ends"].clone())
-            .map_err(|e| DriverError::Cursor(e.to_string()))?;
-        let length = usize::try_from(reference.length)
-            .map_err(|_| DriverError::Io("row material exceeds address space".into()))?;
-        if scanned.material != Some(reference.id)
-            || scanned.through != length
-            || ends.last().map(|p| p.0) != Some(length)
-        {
-            return Err(DriverError::Cursor(
-                "stored SQLite resume plan differs from material".into(),
-            ));
-        }
-        let mut start = 0;
-        let mut hashes = Vec::new();
-        let mut records = Vec::new();
-        for &(end, rowid) in &ends {
-            if end <= start || end > length {
-                return Err(DriverError::Cursor(
-                    "stored SQLite row ranges are invalid".into(),
-                ));
-            }
-            let mut line = vec![0; end - start];
-            stored
-                .bytes
-                .read_exact_at(start as u64, &mut line)
-                .map_err(|e| DriverError::Io(e.to_string()))?;
-            if line.pop() != Some(b'\n') {
-                return Err(DriverError::Cursor(
-                    "stored SQLite row has no delimiter".into(),
-                ));
-            }
-            if line.iter().all(|b| *b == b' ') {
-                records.push((start, end));
-                start = end;
+    /// Remember the rows of one stored part. Parts are offered newest
+    /// first, so a row already remembered keeps its newer line.
+    pub fn remember_rows(&mut self, bytes: &[u8]) {
+        for line in bytes.split(|b| *b == b'\n').filter(|l| !l.is_empty()) {
+            let Ok(row) = serde_json::from_slice::<Map<String, Value>>(line) else {
                 continue;
+            };
+            if let Some(rowid) = row.get("_rowid").and_then(Value::as_i64) {
+                self.hashes
+                    .entry(rowid)
+                    .or_insert(*blake3::hash(line).as_bytes());
             }
-            hashes.push((rowid, *blake3::hash(&line).as_bytes()));
-            records.push((start, end));
-            start = end;
         }
-        self.pending = Some(Pending {
-            stored: StoredBytes::FramedReader(stored),
-            length,
-            records,
-            ends,
-            hashes,
-            id: reference.id,
-            previous,
-            scanned,
-            base: resume["base"]
-                .as_i64()
-                .ok_or_else(|| DriverError::Cursor("missing SQLite order base".into()))?,
-            manifest: reference.manifest,
-            observation: ObservationFacts::default(),
-        });
-        Ok(())
     }
 
     pub fn is_empty(&self) -> bool {
@@ -480,8 +407,6 @@ impl SqliteRows {
             manifest,
             observation: facts,
         };
-        let mut pending = pending;
-        pending.manifest["row_resume"] = json!({"previous":pending.previous,"scanned":pending.scanned,"base":pending.base,"ends":pending.ends});
         let acquired = pending.acquired(self.input(), &Cursor::default());
         state.pending = Some(pending);
         Ok(acquired)

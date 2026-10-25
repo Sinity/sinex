@@ -3,6 +3,7 @@
 use super::Retained;
 use crate::sealed_access::Authority;
 use sinex_model::{MaterialId, MaterialRef};
+use sinex_sources::drain::RecordRead;
 use sinex_sources::drivers::RetainedRecords;
 use sinex_store::{Blobs, sealed::DataKey};
 use sqlx::PgConnection;
@@ -29,16 +30,6 @@ pub(crate) async fn open(
     material: MaterialId,
     authority: Option<&Authority>,
 ) -> Result<Opened, String> {
-    open_checked(conn, blobs, material, authority, Arc::new(|| Ok(()))).await
-}
-pub(crate) async fn open_checked(
-    conn: &mut PgConnection,
-    blobs: &Blobs,
-    material: MaterialId,
-    authority: Option<&Authority>,
-    check: super::ReadCheck,
-) -> Result<Opened, String> {
-    check()?;
     let reference = sinex_store::material_bytes::reference(conn, material)
         .await
         .map_err(|e| e.to_string())?
@@ -52,57 +43,71 @@ pub(crate) async fn open_checked(
     } else {
         None
     };
-    open_owned(blobs, reference, key, authority, check)
+    open_owned(blobs, reference, key, authority, Arc::new(|| Ok(())))
 }
 
-/// Only the frozen storage-owned publication supplies these facts. Missing
-/// installed bytes stay unavailable; this never observes the provider again.
-pub(crate) fn open_pending(
-    blobs: &Blobs,
-    pending: &sinex_store::native_materials::Pending,
-    authority: Option<&Authority>,
-) -> Result<Opened, String> {
-    let reference = pending
-        .progress
-        .material
-        .clone()
-        .ok_or("pending publication has no row/record material")?;
-    if reference.id != pending.material
-        || pending.progress.binding != pending.binding
-        || pending
-            .progress
-            .exclusions
-            .as_ref()
-            .is_none_or(|b| b.source != pending.source)
-    {
-        return Err("pending material ownership differs".into());
-    }
-    let mut keys = pending
-        .progress
-        .material_keys
-        .iter()
-        .filter(|key| key.material == reference.id);
-    let wrapped = keys.next();
-    if keys.next().is_some() {
-        return Err("pending material has multiple data keys".into());
-    }
-    let key = if blobs
-        .is_sealed(&reference.blob)
-        .map_err(|e| e.to_string())?
-    {
-        let wrapped = wrapped.ok_or("pending sealed material lacks its data key")?;
-        let authority = authority.ok_or("pending sealed material requires explicit unlock")?;
-        Some(DataKey {
-            key_ref: wrapped.key_ref.clone(),
-            key: authority.unwrap(&wrapped.wrapped)?,
+/// A stored material's bytes, opened on the first read. A sealed material's
+/// key is fetched when the operation is unlocked; without it, reading fails.
+pub(crate) struct Lazy {
+    blobs: Blobs,
+    reference: MaterialRef,
+    sealed: bool,
+    key: Option<DataKey>,
+    authority: Option<Authority>,
+    opened: std::sync::OnceLock<Result<Arc<Retained>, String>>,
+}
+impl Lazy {
+    pub async fn new(
+        conn: &mut PgConnection,
+        blobs: &Blobs,
+        reference: MaterialRef,
+        authority: Option<&Authority>,
+    ) -> Result<Self, String> {
+        let sealed = blobs
+            .is_sealed(&reference.blob)
+            .map_err(|e| e.to_string())?;
+        let key = match (sealed, authority) {
+            (true, Some(authority)) => Some(authority.material_key(conn, reference.id).await?),
+            _ => None,
+        };
+        Ok(Self {
+            blobs: blobs.clone(),
+            reference,
+            sealed,
+            key,
+            authority: authority.cloned(),
+            opened: std::sync::OnceLock::new(),
         })
-    } else {
-        if wrapped.is_some() {
-            return Err("pending data key does not match a sealed body".into());
-        }
-        None
-    };
-    open_owned(blobs, reference, key, authority, Arc::new(|| Ok(())))
+    }
+    pub fn sealed(&self) -> bool {
+        self.sealed
+    }
+    fn body(&self) -> std::io::Result<&Arc<Retained>> {
+        self.opened
+            .get_or_init(|| {
+                if self.sealed && self.key.is_none() {
+                    return Err("stored sealed material requires explicit unlock".into());
+                }
+                open_owned(
+                    &self.blobs,
+                    self.reference.clone(),
+                    self.key.clone(),
+                    self.authority.as_ref(),
+                    Arc::new(|| Ok(())),
+                )
+                .map(|opened| opened.body)
+            })
+            .as_ref()
+            .map_err(|e| std::io::Error::other(e.clone()))
+    }
+}
+impl RecordRead for Lazy {
+    fn length(&self) -> u64 {
+        self.reference.length
+    }
+    fn read_exact_at(&self, start: u64, bytes: &mut [u8]) -> std::io::Result<()> {
+        self.body()?.read_exact_at(start, bytes)
+    }
 }
 
 fn open_owned(

@@ -3,7 +3,7 @@ use std::os::unix::fs::{MetadataExt, PermissionsExt};
 use std::process::Command;
 
 const BODY: &[u8] = b"a tiny receiver-installed plain blob\n";
-const LEGACY: &[u8] = b"existing private bytes stay private\n";
+const PRIVATE: &[u8] = b"existing private bytes stay private\n";
 const CLIENT: u32 = 60001;
 const RECEIVER: u32 = 60002;
 const OUTSIDER: u32 = 60003;
@@ -36,10 +36,9 @@ fn protected_group_mode_keeps_plain_encoding_and_sealed_key_checks() {
     let private = tempfile::tempdir().unwrap();
     std::fs::set_permissions(shared.path(), std::fs::Permissions::from_mode(0o2770)).unwrap();
     let blobs = Blobs::open(shared.path()).unwrap();
-    let prepared = blobs.prepare_plain(BODY).unwrap();
-    let hash = prepared.name();
+    let hash = name(BODY);
     assert!(!blobs.contains(&hash).unwrap());
-    assert_eq!(prepared.install().unwrap(), hash);
+    assert_eq!(blobs.put(BODY).unwrap(), hash);
     assert_eq!(
         std::fs::metadata(stored(shared.path(), &hash))
             .unwrap()
@@ -100,10 +99,7 @@ fn existing_private_dedup_destination_is_never_chmodded_or_rewritten() {
     std::fs::set_permissions(root.path(), std::fs::Permissions::from_mode(0o2770)).unwrap();
     let shared = Blobs::open(root.path()).unwrap();
     assert_eq!(shared.put(BODY).unwrap(), before);
-    assert_eq!(
-        shared.prepare_plain(BODY).unwrap().install().unwrap(),
-        before
-    );
+    assert_eq!(shared.put(BODY).unwrap(), before);
     let after = std::fs::metadata(&path).unwrap();
     assert_eq!(after.mode() & 0o777, 0o600);
     assert_eq!(after.ino(), original.ino());
@@ -141,20 +137,17 @@ fn actor(operation: &str) {
     match operation {
         "install" => {
             let blobs = Blobs::open(shared).unwrap();
-            assert_eq!(
-                blobs.prepare_plain(BODY).unwrap().install().unwrap(),
-                name(BODY)
-            );
+            assert_eq!(blobs.put(BODY).unwrap(), name(BODY));
             // Model a retained destination written with the previous private configuration.
-            let legacy = hashed_blobs::Store::open(shared, vec![], 0o600).unwrap();
-            legacy.put(LEGACY, 3).unwrap();
-            let old = std::fs::metadata(stored(shared, &name(LEGACY))).unwrap();
-            assert_eq!(blobs.put(LEGACY).unwrap(), name(LEGACY));
-            let after = std::fs::metadata(stored(shared, &name(LEGACY))).unwrap();
+            let private_store = hashed_blobs::Store::open(shared, vec![], 0o600).unwrap();
+            private_store.put(PRIVATE, 3).unwrap();
+            let old = std::fs::metadata(stored(shared, &name(PRIVATE))).unwrap();
+            assert_eq!(blobs.put(PRIVATE).unwrap(), name(PRIVATE));
+            let after = std::fs::metadata(stored(shared, &name(PRIVATE))).unwrap();
             assert_eq!((after.ino(), after.mode() & 0o777), (old.ino(), 0o600));
             Blobs::open(private).unwrap().put(BODY).unwrap();
             assert_eq!(read(shared, BODY).unwrap(), BODY);
-            assert_eq!(read(shared, LEGACY).unwrap(), LEGACY);
+            assert_eq!(read(shared, PRIVATE).unwrap(), PRIVATE);
             assert_eq!(read(private, BODY).unwrap(), BODY);
         }
         "read" => {
@@ -167,14 +160,14 @@ fn actor(operation: &str) {
                 0o640
             );
             assert!(
-                read(shared, LEGACY).is_err(),
+                read(shared, PRIVATE).is_err(),
                 "existing private files were not repaired"
             );
             assert!(read(private, BODY).is_err());
         }
         "denied" => {
             assert!(read(shared, BODY).is_err());
-            assert!(read(shared, LEGACY).is_err());
+            assert!(read(shared, PRIVATE).is_err());
             assert!(read(private, BODY).is_err());
         }
         _ => panic!("unknown synthetic readback operation"),

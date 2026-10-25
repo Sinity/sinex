@@ -40,15 +40,17 @@ impl Library<'_> {
     /// Store and admit one library request. All its records commit together
     /// or none do (one material, admitted in one batch when it fits).
     pub async fn write(&self, records: Vec<LibraryRecord>, actor: &str, action: &str) -> R<Value> {
-        self.write_staged(records, actor, action, Vec::new()).await
+        self.write_citing(records, actor, action, Vec::new()).await
     }
 
-    async fn write_staged(
+    /// [`Library::write`] for records that cite stored bytes beyond their
+    /// material (a preview), already written to the content store.
+    async fn write_citing(
         &self,
         records: Vec<LibraryRecord>,
         actor: &str,
         action: &str,
-        companions: Vec<sinex_store::blobs::PreparedPlain>,
+        cited: Vec<sinex_model::Cited>,
     ) -> R<Value> {
         if records.is_empty() {
             return Ok(json!({"records":0}));
@@ -56,27 +58,19 @@ impl Library<'_> {
         let n = records.len();
         let binding = format!("library.request:{actor}@{}", self.host);
         let mut acquired = library_source::request_material(&records, actor, self.host, action);
-        if !companions.is_empty() {
-            let citations = companions
-                .iter()
-                .map(|stage| sinex_model::Cited {
-                    blob: stage.name(),
-                    size: stage.length(),
-                })
-                .collect::<Vec<_>>();
+        if !cited.is_empty() {
             acquired
                 .material
                 .as_mut()
                 .expect("request has material")
-                .manifest["cited_blobs"] = serde_json::to_value(citations).map_err(e)?;
+                .manifest["cited_blobs"] = serde_json::to_value(cited).map_err(e)?;
         }
-        let result = crate::publication::submit_authored(
+        let result = crate::authored::submit(
             self.writer,
             self.blobs,
             std::sync::Arc::new(library_source::request_source()),
             &binding,
             acquired,
-            companions,
         )
         .await?;
         if result.outcome.failures > 0 {
@@ -87,7 +81,7 @@ impl Library<'_> {
         }
         Ok(
             json!({"records":n, "admitted":result.outcome.admitted, "replaced":result.outcome.replaced,
-            "material":result.material, "recovered_prior":result.recovered}),
+            "material":result.material}),
         )
     }
 

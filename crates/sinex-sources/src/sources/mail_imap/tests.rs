@@ -365,4 +365,22 @@ fn partial_admission_keeps_unfed_uids_available_for_retry() {
     assert!(imap.poll(&complete).unwrap().material.is_none());
 }
 
-mod resume;
+#[test]
+fn the_reader_retries_its_held_answer_without_asking_the_server_again() {
+    use crate::binding::Reader;
+    let port = server(vec![(4, M1), (7, M2)], 99, false);
+    let mut reader = ImapReader {
+        mail: mail(port, Some("secret"), None),
+        pending: None,
+    };
+    let first = reader.poll(&Value::Null).unwrap();
+    let material = first.material.unwrap();
+    let partial = (material.cursor_at)(material.records[0].1).unwrap();
+    // The server answered once; the retry comes from the held answer.
+    let again = reader.poll(&partial).unwrap().material.unwrap();
+    assert_eq!(again.id, material.id);
+    assert_eq!(again.records, material.records[1..]);
+    let retry = reader.poll(&Value::Null).unwrap().material.unwrap();
+    assert_eq!(retry.id, material.id);
+    assert_eq!(retry.records, material.records);
+}

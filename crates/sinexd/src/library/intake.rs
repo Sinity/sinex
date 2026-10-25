@@ -33,13 +33,6 @@ impl Library<'_> {
         };
         let root_text = root.display().to_string();
         let binding = format!("library.scan:{root_text}@{}", self.host);
-        let recovered = crate::publication::resume_authored(
-            self.writer,
-            self.blobs,
-            std::sync::Arc::new(library_source::scan_source()),
-            &binding,
-        )
-        .await?;
         // Seed the scan's state from what is already admitted, so a second
         // add of the same root hashes only what changed.
         let known = reads::acquisitions(conn, self.host, &root_text)
@@ -84,7 +77,7 @@ impl Library<'_> {
             let s = scan.clone();
             let mut m = state.take().expect("state is returned each poll");
             let c = cursor.clone();
-            let sink = crate::publication::StagingSink::new(self.blobs.clone());
+            let sink = crate::one_shot::Sink(self.blobs.clone());
             let (m, out) = tokio::task::spawn_blocking(move || {
                 let acquired = s.poll(&c, &mut m, &sink);
                 let out = acquired.and_then(|a| {
@@ -101,25 +94,23 @@ impl Library<'_> {
                             ))
                         })
                         .transpose()?;
-                    let stages = sink.take().map_err(drivers::DriverError::Store)?;
-                    Ok((next, a, stages))
+                    Ok((next, a))
                 });
                 (m, out)
             })
             .await
             .map_err(e)?;
             state = Some(m);
-            let (next, acquired, stages) = out.map_err(e)?;
-            let published = crate::publication::submit_authored(
+            let (next, acquired) = out.map_err(e)?;
+            let admitted = crate::authored::submit(
                 self.writer,
                 self.blobs,
                 std::sync::Arc::new(library_source::scan_source()),
                 &binding,
                 acquired,
-                stages,
             )
             .await?;
-            seen += published.outcome.admitted + published.outcome.replaced;
+            seen += admitted.outcome.admitted + admitted.outcome.replaced;
             match next {
                 Some((c, records)) => {
                     cursor = c;
@@ -181,7 +172,6 @@ impl Library<'_> {
         }
         Ok(json!({
             "root": root_text,
-            "recovered_prior": recovered,
             "stored_bytes": !reference,
             "files_described": files,
             "acquisitions_admitted": seen,

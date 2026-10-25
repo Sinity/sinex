@@ -24,6 +24,25 @@ impl Batch {
     pub fn event_count(&self) -> usize {
         self.events().count()
     }
+
+    /// The content-store names of the bytes this batch registers: its
+    /// material and the stored bytes its events cite. The writer admits the
+    /// batch only while every one of them is in the content store.
+    pub fn stored_bytes(&self) -> impl Iterator<Item = &str> {
+        let progress = match &self.kind {
+            BatchKind::Source(progress) => Some(progress.as_ref()),
+            BatchKind::Ingress(frame) => frame.material.as_ref(),
+            _ => None,
+        };
+        progress
+            .and_then(|p| p.material.as_ref())
+            .map(|m| m.blob.as_str())
+            .into_iter()
+            .chain(
+                self.events()
+                    .flat_map(|e| e.cites.iter().map(|c| c.blob.as_str())),
+            )
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -50,8 +69,6 @@ pub enum BatchKind {
 
 #[derive(Clone, Debug)]
 pub struct IngressFrame {
-    /// Archive-owned byte verification; never decoded from producer metadata.
-    pub publication: Option<crate::producer_bytes::Publication>,
     pub producer: String,
     /// The producer's own name for the frame, unique per producer.
     pub frame: String,
@@ -91,7 +108,6 @@ pub struct Exclusions {
 /// Progress of one source binding, committed with the batch's events.
 #[derive(Clone, Debug)]
 pub struct SourceProgress {
-    pub native_pending: Option<MaterialId>,
     pub exclusions: Option<Exclusions>,
     pub binding: String,
     /// Wrapped keys of sealed materials, stored with the material rows.

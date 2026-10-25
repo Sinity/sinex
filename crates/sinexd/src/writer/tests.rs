@@ -57,6 +57,7 @@ async fn live_batches_go_before_queued_bulk_work() {
         connection,
         queues,
         Arc::new(sinex_store::NoDerivations),
+        None,
     ));
     let live_seq = live.await.unwrap().unwrap().commit_seq.unwrap().0;
     let mut bulk_seqs = Vec::new();
@@ -78,6 +79,7 @@ async fn a_refused_batch_does_not_stop_the_writer() {
         connection,
         queues,
         Arc::new(sinex_store::NoDerivations),
+        None,
     ));
     let mut bad = batch("x");
     if let RecordOutcome::Events { events, .. } = &mut bad.records[0] {
@@ -123,6 +125,7 @@ async fn a_stalled_writer_makes_producers_wait_and_loses_nothing() {
         connection,
         queues,
         Arc::new(sinex_store::NoDerivations),
+        None,
     ));
     let mut seqs = std::collections::BTreeSet::new();
     for w in waits {
@@ -196,6 +199,7 @@ async fn queued_native_checks_reject_revoked_authority_and_roll_back_before_comm
         connection,
         queues,
         Arc::new(sinex_store::NoDerivations),
+        None,
     ));
     assert!(matches!(queued.await.unwrap(), Err(WriteError::Refused(_))));
     let calls = Arc::new(AtomicUsize::new(0));
@@ -296,6 +300,7 @@ async fn a_single_slot_planning_pool_keeps_the_queued_excision_lock_after_caller
         connection,
         queues,
         Arc::new(sinex_store::NoDerivations),
+        None,
     ));
     let acquired = tokio::time::timeout(std::time::Duration::from_secs(2), acquisition)
         .await
@@ -316,4 +321,59 @@ async fn a_single_slot_planning_pool_keeps_the_queued_excision_lock_after_caller
     drop(handle);
     writer.await.unwrap();
     pool.close().await;
+}
+
+/// A capture that stored its bytes before an excision deleted the same bytes
+/// is refused, rather than registering a material whose file is gone.
+#[tokio::test]
+async fn a_batch_whose_bytes_are_not_stored_is_refused() {
+    let (_db, url, connection) = crate::testdb::fresh().await;
+    let dir = tempfile::tempdir().unwrap();
+    let blobs = Blobs::open(dir.path()).unwrap();
+    let (handle, queues) = channels();
+    let writer = tokio::spawn(run(
+        url,
+        connection,
+        queues,
+        Arc::new(sinex_store::NoDerivations),
+        Some(blobs.clone()),
+    ));
+    let bytes = b"synthetic stored bytes";
+    let blob = format!("blake3:{}", blake3::hash(bytes).to_hex());
+    let source = || Batch {
+        run: RunId::new(),
+        kind: BatchKind::Source(Box::new(sinex_model::SourceProgress {
+            exclusions: None,
+            binding: "synthetic".into(),
+            material_keys: Vec::new(),
+            input: sinex_model::InputRef {
+                kind: "file".into(),
+                locator: "synthetic".into(),
+                host: "h".into(),
+            },
+            observation: Default::default(),
+            revision: sinex_model::RevisionChange::Appended,
+            material: Some(sinex_model::MaterialRef {
+                id: MaterialId(uuid::Uuid::from_u128(7)),
+                input: None,
+                blob: blob.clone(),
+                length: bytes.len() as u64,
+                part_index: 0,
+                previous_part: None,
+                parser: "zsh".into(),
+                parser_version: 1,
+                manifest: serde_json::json!({}),
+            }),
+            cursor: serde_json::json!({"offset": 1}),
+            carry: serde_json::Value::Null,
+        })),
+        records: vec![],
+        archive: vec![],
+    };
+    let refused = handle.submit(Priority::Bulk, source()).await.unwrap_err();
+    assert!(refused.to_string().contains("does not hold"), "{refused}");
+    blobs.put(bytes).unwrap();
+    handle.submit(Priority::Bulk, source()).await.unwrap();
+    drop(handle);
+    writer.await.unwrap();
 }

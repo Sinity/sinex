@@ -187,19 +187,18 @@ impl Api {
             &self.host,
             now,
         );
-        let done = crate::publication::submit_authored(
+        let done = crate::authored::submit(
             writer,
             &self.blobs,
             std::sync::Arc::new(sinex_sources::sources::forecast::request_source()),
             &binding,
             acquired,
-            Vec::new(),
         )
         .await?;
         if done.outcome.admitted != 1 || done.outcome.failures != 0 {
             return Err(format!(
-                "forecast admission retained no single event (admitted {}, failures {}, recovered prior materials {:?})",
-                done.outcome.admitted, done.outcome.failures, done.recovered
+                "the forecast was not admitted as one event (admitted {}, failures {})",
+                done.outcome.admitted, done.outcome.failures
             ));
         }
         let material = done.material.ok_or("forecast admission has no material")?;
@@ -207,7 +206,7 @@ impl Api {
             .bind(material.0).fetch_optional(&mut *conn).await.map_err(error)?;
         let id = id.ok_or("forecast event was withdrawn before its response")?;
         Ok(
-            json!({"forecast":forecast, "event":id, "citation":format!("sinex:ev/{id}"), "material":material, "recovered_prior_materials":done.recovered}),
+            json!({"forecast":forecast, "event":id, "citation":format!("sinex:ev/{id}"), "material":material}),
         )
     }
 }

@@ -1,8 +1,5 @@
 //! The content store adapter over `hashed-blobs`: bytes named by BLAKE3, stored
-//! as seekable zstd. Prepared handles keep bytes outside the published blob
-//! namespace while application publication reserves custody, then install before
-//! ready material admission.
-//! Producer transport keeps private spool bytes until durable custody exists.
+//! as seekable zstd. Bytes are stored before the admission that refers to them.
 use crate::Result;
 pub use hashed_blobs::{DEFAULT_FRAME as BLOB_FRAME_BYTES, SealedReadLimits};
 use std::io::{Read, Seek};
@@ -41,21 +38,6 @@ impl Blobs {
     pub fn put(&self, bytes: &[u8]) -> Result<String> {
         let hash = self.0.put(bytes, 3)?;
         Ok(format!("blake3:{}", hash.hex()))
-    }
-
-    /// Prepare the existing plain representation without publishing its name.
-    /// Reserve native custody from its name and decoded length before installing it.
-    pub fn prepare_plain(&self, reader: impl Read) -> Result<PreparedPlain> {
-        Ok(PreparedPlain(self.0.prepare_plain(reader, 3)?))
-    }
-
-    /// Prepare the existing encrypted representation without publishing its name.
-    pub fn prepare_sealed(
-        &self,
-        reader: impl Read + Seek,
-        key: &crate::sealed::DataKey,
-    ) -> Result<PreparedSealed> {
-        Ok(PreparedSealed(self.0.prepare_sealed(reader, 3, key)?))
     }
 
     /// Store bytes sealed under `key` (the sealed class): encrypted frames
@@ -202,36 +184,6 @@ impl Blobs {
     /// Read a blob back and check it against its name.
     pub fn verify(&self, name: &str) -> Result<hashed_blobs::Verified> {
         Ok(self.0.verify(&parse(name)?)?)
-    }
-}
-
-/// One store-owned private stage. Installation preserves the existing CAS format
-/// and deduplication; an ambiguous install error must retain its durable owner.
-pub struct PreparedPlain(hashed_blobs::PreparedPlain);
-impl PreparedPlain {
-    pub fn name(&self) -> String {
-        format!("blake3:{}", self.0.hash().hex())
-    }
-    pub fn length(&self) -> u64 {
-        self.0.decoded_len()
-    }
-    pub fn install(self) -> Result<String> {
-        Ok(format!("blake3:{}", self.0.install()?.hex()))
-    }
-}
-
-/// Encrypted private stage with its original store and authenticated dedup key.
-/// The publication must retain wrapped key custody before consuming install.
-pub struct PreparedSealed(hashed_blobs::PreparedSealed);
-impl PreparedSealed {
-    pub fn name(&self) -> String {
-        format!("blake3:{}", self.0.hash().hex())
-    }
-    pub fn length(&self) -> u64 {
-        self.0.decoded_len()
-    }
-    pub fn install(self) -> Result<String> {
-        Ok(format!("blake3:{}", self.0.install()?.hex()))
     }
 }
 
