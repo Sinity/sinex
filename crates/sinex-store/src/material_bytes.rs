@@ -44,32 +44,53 @@ pub async fn reference(
     }))
 }
 
-/// The chain of parts ending at `last`, newest first, each with the input
-/// revision it belongs to.
-pub async fn parts_ending(
+/// Up to `count` parts of a chain, newest first: `newest` and the parts before
+/// it, each with the input revision it belongs to. The next page starts at the
+/// last part's `previous_part`. A part names its previous part only once that
+/// part is stored, and the link is never changed, so a chain has no cycle.
+pub async fn parts_from(
     conn: &mut PgConnection,
-    last: MaterialId,
-) -> Result<Vec<(MaterialId, Option<uuid::Uuid>)>> {
+    newest: MaterialId,
+    count: i32,
+) -> Result<Vec<(sinex_model::MaterialRef, Option<uuid::Uuid>)>> {
     let rows = sqlx::query!(
         r#"WITH RECURSIVE chain AS (
-             SELECT id, previous_part_id, revision_id, 0 AS depth, ARRAY[id] AS path, false AS cycle
-             FROM raw.materials WHERE id = $1
+             SELECT id, previous_part_id, 1 AS depth FROM raw.materials WHERE id = $1
              UNION ALL
-             SELECT m.id, m.previous_part_id, m.revision_id, c.depth + 1, c.path || m.id, m.id = ANY(c.path)
+             SELECT m.id, m.previous_part_id, c.depth + 1
              FROM raw.materials m JOIN chain c ON m.id = c.previous_part_id
-             WHERE NOT c.cycle)
-           SELECT id AS "id!", revision_id, cycle AS "cycle!" FROM chain ORDER BY depth"#,
-        last.0
+             WHERE c.depth < $2)
+           SELECT m.id, m.input_id, m.revision_id, m.blob, m.durable_bytes, m.part_index,
+                  m.previous_part_id, m.parser, m.parser_version, m.manifest
+           FROM chain c JOIN raw.materials m ON m.id = c.id
+           ORDER BY c.depth"#,
+        newest.0,
+        count,
     )
     .fetch_all(&mut *conn)
     .await?;
-    if rows.iter().any(|row| row.cycle) {
-        return Err(crate::Error::Invalid(format!(
-            "the parts ending at material {last} form a cycle"
-        )));
-    }
-    Ok(rows
-        .into_iter()
-        .map(|row| (MaterialId(row.id), row.revision_id))
-        .collect())
+    rows.into_iter()
+        .map(|row| {
+            let invalid = || {
+                crate::Error::Invalid(format!(
+                    "material {}: invalid persisted length or version",
+                    row.id
+                ))
+            };
+            Ok((
+                sinex_model::MaterialRef {
+                    id: MaterialId(row.id),
+                    input: row.input_id.map(sinex_model::InputId),
+                    blob: row.blob,
+                    length: u64::try_from(row.durable_bytes).map_err(|_| invalid())?,
+                    part_index: u32::try_from(row.part_index).map_err(|_| invalid())?,
+                    previous_part: row.previous_part_id.map(MaterialId),
+                    parser: row.parser,
+                    parser_version: u32::try_from(row.parser_version).map_err(|_| invalid())?,
+                    manifest: row.manifest,
+                },
+                row.revision_id,
+            ))
+        })
+        .collect()
 }
