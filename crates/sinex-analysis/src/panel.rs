@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sinex_model::Timestamp;
 use sinex_model::civil::{Civil, CivilError};
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 
 /// One unit: a logical day or a clock hour.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
@@ -196,15 +196,6 @@ pub fn compute(
         }
     }
     out
-}
-
-/// The distinct dimension values a set of cells holds, for one dimension.
-pub fn dimension_values(cells: &[PanelCell], dimension: &str) -> BTreeSet<String> {
-    cells
-        .iter()
-        .filter(|c| c.dimension == dimension)
-        .map(|c| c.dimension_value.clone())
-        .collect()
 }
 
 #[cfg(test)]

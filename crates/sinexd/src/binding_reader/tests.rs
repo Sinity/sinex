@@ -608,3 +608,4 @@ async fn live_events(conn: &mut PgConnection) -> Vec<EventFields> {
 }
 
 mod directory;
+mod long_history;

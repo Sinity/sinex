@@ -363,7 +363,8 @@ impl MetricDef {
     }
 }
 
-/// A metric's value over one unit, with what the law needs to combine units.
+/// A metric's value over one unit; a ratio or mean also keeps the numerator
+/// and denominator it was made from.
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct Aggregate {
     pub value: f64,
@@ -472,30 +473,6 @@ fn quantile_sorted(v: &[f64], q: f64) -> f64 {
     let lo = h.floor() as usize;
     let hi = h.ceil() as usize;
     v[lo] + (h - lo as f64) * (v[hi] - v[lo])
-}
-
-/// Combine unit aggregates into one value over several units by the law
-/// (a week from days, a pooled value across days). Quantiles and distinct
-/// counts refuse: they are recomputed from rows.
-pub fn combine(def: &MetricDef, parts: &[Aggregate]) -> Result<Option<f64>, &'static str> {
-    if parts.is_empty() {
-        return Ok(None);
-    }
-    match def.law {
-        AggLaw::Count | AggLaw::SumDisjoint { .. } | AggLaw::UnionDuration => {
-            Ok(Some(parts.iter().map(|p| p.value).sum()))
-        }
-        AggLaw::Ratio { .. } | AggLaw::Mean { .. } => {
-            let n: f64 = parts.iter().filter_map(|p| p.numerator).sum();
-            let d: f64 = parts.iter().filter_map(|p| p.denominator).sum();
-            Ok((d != 0.0).then(|| n / d))
-        }
-        AggLaw::Min { .. } => Ok(parts.iter().map(|p| p.value).reduce(f64::min)),
-        AggLaw::Max { .. } => Ok(parts.iter().map(|p| p.value).reduce(f64::max)),
-        AggLaw::Quantile { .. } | AggLaw::Distinct { .. } => {
-            Err("quantiles and distinct counts are recomputed from rows, never combined")
-        }
-    }
 }
 
 /// Parse an RFC 3339 timestamp into microseconds since the epoch.

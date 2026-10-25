@@ -42,7 +42,7 @@ fn rows(payloads: &[Value]) -> Vec<(Row<'_>, Span)> {
 }
 
 #[devkit::test]
-fn ratios_pool_numerators_and_denominators() {
+fn a_ratio_keeps_its_numerator_and_denominator() {
     let law = AggLaw::Ratio {
         num: Term::Count {
             filter: Some(&EXIT_NONZERO),
@@ -62,9 +62,10 @@ fn ratios_pool_numerators_and_denominators() {
     let a = aggregate(&d, &rows(&day1)).unwrap();
     let b = aggregate(&d, &rows(&day2)).unwrap();
     assert_eq!(a.value, 0.5);
+    assert_eq!((a.numerator, a.denominator), (Some(1.0), Some(2.0)));
+    // An unknown exit code counts in the denominator, not as a failure.
     assert!((b.value - 1.0 / 6.0).abs() < 1e-12);
-    // Pooled 2/8, not the mean of 0.5 and 1/6.
-    assert_eq!(combine(&d, &[a, b]).unwrap(), Some(0.25));
+    assert_eq!((b.numerator, b.denominator), (Some(1.0), Some(6.0)));
 }
 
 #[devkit::test]
@@ -113,11 +114,10 @@ fn overlapping_intervals_are_unioned() {
 }
 
 #[devkit::test]
-fn quantiles_refuse_to_combine() {
+fn quantiles_interpolate_between_rows() {
     let d = def(AggLaw::Quantile { field: "x", q: 0.5 });
     let a = aggregate(&d, &rows(&[json!({"x": 1}), json!({"x": 3})])).unwrap();
     assert_eq!(a.value, 2.0);
-    assert!(combine(&d, &[a]).is_err());
     assert_eq!(quantile_sorted(&[1.0, 2.0, 3.0, 4.0], 0.25), 1.75);
 }
 

@@ -34,20 +34,6 @@ pub enum Missing {
     Recomputing,
 }
 
-impl Missing {
-    /// Rank used when a paired method drops a unit for both sides: the worse
-    /// reason wins.
-    pub fn severity(self) -> u8 {
-        match self {
-            Missing::NoCoverage => 6,
-            Missing::Gap => 5,
-            Missing::CoverageUnknown => 4,
-            Missing::Recomputing => 3,
-            Missing::NotApplicable => 1,
-        }
-    }
-}
-
 /// Why a cell was left out of a method's population.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
