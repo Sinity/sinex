@@ -15,7 +15,7 @@ use std::process::{Command, Stdio};
 const LANGUAGES: &str = "eng+pol";
 
 /// The engine's version line, recorded with each output.
-pub fn engine() -> Result<String, String> {
+pub(crate) fn engine() -> Result<String, String> {
     let out = Command::new("tesseract")
         .arg("--version")
         .output()
@@ -48,7 +48,7 @@ fn ocr(image: &[u8]) -> Result<String, String> {
 }
 
 /// Screen text, bound to the engine found at start.
-pub struct ScreenText {
+pub(crate) struct ScreenText {
     pub engine: String,
 }
 

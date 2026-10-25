@@ -14,22 +14,22 @@ mod brief;
 mod cells;
 mod recipes;
 
-pub use brief::{brief, why_not};
-pub use cells::{MetricValues, coverage, dirty_name, panel, table};
-pub use recipes::{Recipe, run, stored_finding};
+pub(crate) use brief::{brief, why_not};
+pub(crate) use cells::{MetricValues, coverage, dirty_name, panel, table};
+pub(crate) use recipes::{Recipe, run, stored_finding};
 
 const MICROS_PER_DAY: i64 = 86_400_000_000;
 
 /// The day setting every day-grain value is computed under.
 #[derive(Clone)]
-pub struct Settings {
+pub(crate) struct Settings {
     pub civil: Civil,
     /// `04:00 Europe/Warsaw`: recorded with every stored value.
     pub label: String,
 }
 
 impl Settings {
-    pub fn new(zone: &str, day_start: &str) -> Result<Self, String> {
+    pub(crate) fn new(zone: &str, day_start: &str) -> Result<Self, String> {
         let (h, m) = day_start
             .split_once(':')
             .and_then(|(h, m)| Some((h.parse::<u8>().ok()?, m.parse::<u8>().ok()?)))
@@ -43,7 +43,7 @@ impl Settings {
 
     /// The API's day setting. A zone without an IANA name (a bare offset)
     /// cannot be stored as a setting, so it is refused rather than guessed.
-    pub fn from_api(
+    pub(crate) fn from_api(
         zone: &jiff::tz::TimeZone,
         day_start: jiff::civil::Time,
     ) -> Result<Self, String> {
@@ -56,11 +56,11 @@ impl Settings {
         )
     }
 
-    pub fn operator_default() -> Self {
+    pub(crate) fn operator_default() -> Self {
         Self::new("Europe/Warsaw", "04:00").expect("the operator's default day setting is valid")
     }
 
-    pub fn day_span(
+    pub(crate) fn day_span(
         &self,
         from: jiff::civil::Date,
         to_inclusive: jiff::civil::Date,
@@ -78,7 +78,7 @@ impl Settings {
     }
 }
 
-pub fn parse_day(s: &str) -> Result<jiff::civil::Date, String> {
+pub(crate) fn parse_day(s: &str) -> Result<jiff::civil::Date, String> {
     s.parse()
         .map_err(|e| format!("`{s}` is not a date like 2026-10-18: {e}"))
 }

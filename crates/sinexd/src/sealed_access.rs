@@ -26,7 +26,7 @@ struct Expiry {
     revoked: AtomicBool,
 }
 impl Unlock {
-    pub fn new(identity: Identity, duration: Duration) -> Result<Self, String> {
+    pub(crate) fn new(identity: Identity, duration: Duration) -> Result<Self, String> {
         let until = Instant::now()
             .checked_add(duration)
             .ok_or("unlock duration exceeds the clock range")?;
@@ -38,21 +38,21 @@ impl Unlock {
             }),
         })
     }
-    pub fn recipient(&self) -> sinex_store::sealed::Recipient {
+    pub(crate) fn recipient(&self) -> sinex_store::sealed::Recipient {
         self.identity.to_public()
     }
 
-    pub fn check(&self) -> Result<(), String> {
+    pub(crate) fn check(&self) -> Result<(), String> {
         if self.expiry.revoked.load(Ordering::Acquire) || Instant::now() >= self.expiry.until {
             Err("this operation's sealed unlock expired or was revoked".into())
         } else {
             Ok(())
         }
     }
-    pub fn revoke(&self) {
+    pub(crate) fn revoke(&self) {
         self.expiry.revoked.store(true, Ordering::Release);
     }
-    pub fn unwrap(&self, wrapped: &[u8]) -> Result<[u8; 32], String> {
+    pub(crate) fn unwrap(&self, wrapped: &[u8]) -> Result<[u8; 32], String> {
         self.check()?;
         let key =
             sinex_store::sealed::unwrap(wrapped, &self.identity).map_err(|e| e.to_string())?;
@@ -60,7 +60,7 @@ impl Unlock {
         Ok(key)
     }
     /// Call only for material IDs in the explicit operation's resolved scope.
-    pub async fn data_key(
+    pub(crate) async fn data_key(
         &self,
         conn: &mut PgConnection,
         material: MaterialId,

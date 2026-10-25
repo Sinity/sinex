@@ -4,7 +4,7 @@
 //! test keeps the file current.
 use serde_json::{Value, json};
 
-pub fn catalog() -> Value {
+pub(crate) fn catalog() -> Value {
     let sources: Vec<Value> = sources().into_iter().map(|s| s.to_json()).collect();
     let keyed = sinex_derivations::keyed().into_iter().map(|d| {
         json!({
@@ -97,7 +97,7 @@ fn sources() -> Vec<CatalogSource> {
 }
 
 /// The sources as `registry.sources` rows.
-pub fn registry_sources() -> Vec<sinex_store::registry::Source> {
+pub(crate) fn registry_sources() -> Vec<sinex_store::registry::Source> {
     sources()
         .into_iter()
         .map(|s| sinex_store::registry::Source {
@@ -111,7 +111,7 @@ pub fn registry_sources() -> Vec<sinex_store::registry::Source> {
 }
 
 /// The catalog as committed: pretty JSON with a trailing newline.
-pub fn render() -> String {
+pub(crate) fn render() -> String {
     let mut text = serde_json::to_string_pretty(&catalog()).expect("catalog serializes");
     text.push('\n');
     text

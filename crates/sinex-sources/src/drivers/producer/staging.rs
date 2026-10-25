@@ -5,7 +5,7 @@ use std::io::{Read, Write};
 
 pub(super) struct Snapshots(tempfile::TempDir);
 impl Snapshots {
-    pub fn new() -> Result<Self, Error> {
+    pub(crate) fn new() -> Result<Self, Error> {
         tempfile::tempdir()
             .map(Self)
             .map_err(|e| Error::Nats(e.to_string()))
@@ -27,7 +27,7 @@ impl Snapshots {
             .map_err(|e| e.to_string())?;
         Ok(format!("blake3:{hash}"))
     }
-    pub fn open(&self, name: &str) -> Result<std::fs::File, Error> {
+    pub(crate) fn open(&self, name: &str) -> Result<std::fs::File, Error> {
         let hash = name
             .strip_prefix("blake3:")
             .ok_or_else(|| Error::Nats("invalid private snapshot name".into()))?;

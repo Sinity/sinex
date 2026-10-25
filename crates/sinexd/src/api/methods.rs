@@ -17,7 +17,7 @@ mod privacy;
 
 /// The daemon's read side and its handle on the writer.
 #[derive(Clone)]
-pub struct Api {
+pub(crate) struct Api {
     pub reads: PgPool,
     pub writer: Option<WriterHandle>,
     /// The content store, for excision's blanked bytes.
@@ -35,7 +35,7 @@ pub struct Api {
 
 /// An unlock session: the operator's identity until it expires, and the data
 /// keys it has unwrapped.
-pub struct Unlocked {
+pub(crate) struct Unlocked {
     unlock: crate::sealed_access::Unlock,
     keys: std::collections::HashMap<String, age::secrecy::zeroize::Zeroizing<[u8; 32]>>,
 }
@@ -49,7 +49,7 @@ impl Drop for Unlocked {
 /// Who is calling: the actor recorded on writes and the classes whose values
 /// they may read.
 #[derive(Clone, Debug)]
-pub struct Caller {
+pub(crate) struct Caller {
     pub actor: &'static str,
     pub grants: String,
 }
@@ -134,7 +134,7 @@ fn unseal_in(
 impl Api {
     /// The caller for a token's access. The operator token holds `guarded`;
     /// the agent token what the operator granted it; the read token nothing.
-    pub async fn caller(&self, access: Access) -> Caller {
+    pub(crate) async fn caller(&self, access: Access) -> Caller {
         let (actor, grants): (&'static str, Vec<&str>) = match access {
             Access::Read => ("reader", vec![]),
             Access::Agent => (
@@ -165,17 +165,17 @@ impl Api {
 
     /// A read connection that sees only what `caller` may (the visibility
     /// views read `sinex.grants`).
-    pub async fn acquire(&self, caller: &Caller) -> Result<Conn, sqlx::Error> {
+    pub(crate) async fn acquire(&self, caller: &Caller) -> Result<Conn, sqlx::Error> {
         let mut conn = self.reads.acquire().await?;
         sinex_store::query::set_grants(&mut conn, &caller.grants).await?;
         Ok(conn)
     }
 
-    pub fn context(&self) -> Context {
+    pub(crate) fn context(&self) -> Context {
         Context::new(jiff::Timestamp::now(), self.zone.clone(), self.day_start)
     }
 
-    pub async fn call(&self, request: Request, access: Access) -> Reply {
+    pub(crate) async fn call(&self, request: Request, access: Access) -> Reply {
         let caller = self.caller(access).await;
         let reply = self.dispatch(request, &caller).await;
         // Sealed values are unsealed for a caller holding the class, then

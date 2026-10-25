@@ -7,7 +7,7 @@ use sinex_protocol::{Reply, Request};
 use std::path::PathBuf;
 
 #[derive(Clone, Debug)]
-pub enum Endpoint {
+pub(crate) enum Endpoint {
     Unix(PathBuf),
     /// `host:port` on the loopback interface.
     Tcp(String),
@@ -15,7 +15,7 @@ pub enum Endpoint {
 
 impl Endpoint {
     /// `unix:/path`, a bare path, or `http://127.0.0.1:7171`.
-    pub fn parse(s: &str) -> Result<Endpoint, String> {
+    pub(crate) fn parse(s: &str) -> Result<Endpoint, String> {
         if let Some(rest) = s.strip_prefix("http://") {
             return Ok(Endpoint::Tcp(rest.trim_end_matches('/').to_string()));
         }
@@ -38,7 +38,7 @@ impl Endpoint {
 }
 
 #[derive(Debug)]
-pub enum ClientError {
+pub(crate) enum ClientError {
     /// The daemon is not running or not reachable.
     Unreachable(String),
     Protocol(String),
@@ -54,7 +54,7 @@ impl std::fmt::Display for ClientError {
 }
 
 #[derive(Clone, Debug)]
-pub struct Client {
+pub(crate) struct Client {
     pub endpoint: Endpoint,
     pub token: String,
 }
@@ -91,7 +91,7 @@ impl Client {
     }
 
     /// Send one request and return the daemon's reply.
-    pub async fn call(&self, request: &Request) -> Result<(StatusCode, Reply), ClientError> {
+    pub(crate) async fn call(&self, request: &Request) -> Result<(StatusCode, Reply), ClientError> {
         let mut sender = self.connect().await?;
         let body = serde_json::to_vec(request).map_err(|e| ClientError::Protocol(e.to_string()))?;
         let req = HttpRequest::post("/v1")
@@ -122,7 +122,7 @@ impl Client {
 
     /// Stream `follow`: call `on_event(event, data)` for each server-sent
     /// event until the daemon closes the stream or `on_event` returns false.
-    pub async fn follow(
+    pub(crate) async fn follow(
         &self,
         query: &str,
         mut on_event: impl FnMut(&str, &str) -> bool,

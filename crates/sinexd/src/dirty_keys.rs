@@ -7,7 +7,7 @@ use sinex_model::Timestamp;
 use sinex_model::civil::Civil;
 use sinex_store::{DirtyKeys, KeyInput};
 
-pub struct Registered {
+pub(crate) struct Registered {
     derivations: Vec<Box<dyn AnyKeyed>>,
     /// `(relation, dirty-key name)` of every shipped metric.
     metrics: Vec<(&'static str, &'static str)>,
@@ -15,7 +15,7 @@ pub struct Registered {
 }
 
 impl Registered {
-    pub fn new(derivations: Vec<Box<dyn AnyKeyed>>) -> Self {
+    pub(crate) fn new(derivations: Vec<Box<dyn AnyKeyed>>) -> Self {
         let metrics = sinex_analysis::catalog::METRICS
             .iter()
             .map(|m| {

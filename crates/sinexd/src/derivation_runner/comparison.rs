@@ -3,7 +3,7 @@ use serde_json::Value;
 use sinex_model::Event;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Change {
+pub(crate) enum Change {
     Added,
     Changed,
     Removed,
@@ -11,7 +11,7 @@ pub enum Change {
 
 /// What a recompute would change.
 #[derive(Debug, Default)]
-pub struct Comparison {
+pub(crate) struct Comparison {
     /// The stored comparison's ID.
     pub id: Option<i64>,
     pub keys: usize,

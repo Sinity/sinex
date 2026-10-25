@@ -12,7 +12,7 @@ use sqlx::PgConnection;
 use std::path::{Path, PathBuf};
 
 impl Library<'_> {
-    pub async fn tag(
+    pub(crate) async fn tag(
         &self,
         conn: &mut PgConnection,
         item: &str,
@@ -41,7 +41,7 @@ impl Library<'_> {
         Ok(json!({ "item": item, "tag": tag, "assignment": id }))
     }
 
-    pub async fn untag(
+    pub(crate) async fn untag(
         &self,
         conn: &mut PgConnection,
         item: &str,
@@ -75,7 +75,7 @@ impl Library<'_> {
         Ok(json!({ "item": item, "tag": tag, "withdrawn": n }))
     }
 
-    pub async fn set(
+    pub(crate) async fn set(
         &self,
         conn: &mut PgConnection,
         item: &str,
@@ -110,7 +110,7 @@ impl Library<'_> {
         Ok(json!({ "item": item, "field": field, "value": value }))
     }
 
-    pub async fn collect(
+    pub(crate) async fn collect(
         &self,
         conn: &mut PgConnection,
         collection: &str,
@@ -161,7 +161,7 @@ impl Library<'_> {
         Ok(json!({ "collection": c.name, "entry": id, "position": last + 1.0 }))
     }
 
-    pub async fn uncollect(
+    pub(crate) async fn uncollect(
         &self,
         conn: &mut PgConnection,
         collection: &str,
@@ -190,7 +190,7 @@ impl Library<'_> {
         Ok(json!({ "collection": collection, "item": item, "entries_withdrawn": n }))
     }
 
-    pub async fn rate(
+    pub(crate) async fn rate(
         &self,
         conn: &mut PgConnection,
         item: &str,
@@ -218,7 +218,7 @@ impl Library<'_> {
         Ok(json!({ "item": item, "scale": scale, "value": value, "of": of }))
     }
 
-    pub async fn compare(
+    pub(crate) async fn compare(
         &self,
         conn: &mut PgConnection,
         winner: &str,
@@ -245,7 +245,7 @@ impl Library<'_> {
         Ok(json!({ "scale": scale, "winner": winner, "loser": loser }))
     }
 
-    pub async fn viewed(
+    pub(crate) async fn viewed(
         &self,
         conn: &mut PgConnection,
         item: &str,
@@ -279,7 +279,12 @@ impl Library<'_> {
     }
 
     /// Bring in curation from sidecar files beside media under `path`.
-    pub async fn import(&self, conn: &mut PgConnection, path: &Path, actor: &str) -> R<Value> {
+    pub(crate) async fn import(
+        &self,
+        conn: &mut PgConnection,
+        path: &Path,
+        actor: &str,
+    ) -> R<Value> {
         let root =
             std::fs::canonicalize(path).map_err(|err| format!("{}: {err}", path.display()))?;
         let found =

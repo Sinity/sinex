@@ -33,7 +33,7 @@ async fn history_urls(read_conn: &mut PgConnection) -> Result<Vec<String>, Strin
 
 /// Crawl with its parts: a read connection, the content store and the writer.
 #[allow(clippy::too_many_arguments)]
-pub async fn run(
+pub(crate) async fn run(
     read_conn: &mut PgConnection,
     blobs: &Blobs,
     writer: &WriterHandle,

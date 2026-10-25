@@ -17,7 +17,7 @@ use sqlx::PgConnection;
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
-pub struct Options {
+pub(crate) struct Options {
     pub database: String,
     pub store: PathBuf,
     /// `format=path`, one per input; see [`sources::formats`].
@@ -98,7 +98,7 @@ impl std::fmt::Display for Totals {
     }
 }
 
-pub async fn run(o: Options) -> Result<(), String> {
+pub(crate) async fn run(o: Options) -> Result<(), String> {
     let unlock = o
         .identity_file
         .as_ref()
@@ -444,7 +444,11 @@ impl Totals {
         self.wall = started.elapsed();
     }
 
-    pub(crate) fn pass_work(&mut self, work: &sinex_sources::shared_pass::Work, captured: bool) {
+    pub(crate) fn pass_work(
+        &mut self,
+        work: &sinex_sources::shared_pass::ArchivePassStats,
+        captured: bool,
+    ) {
         self.files_stored += u64::from(captured);
         self.pass_decoded_bytes += work.decoded_bytes;
         self.pass_record_bytes += work.record_bytes_stored;

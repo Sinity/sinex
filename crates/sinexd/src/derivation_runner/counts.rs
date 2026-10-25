@@ -3,7 +3,7 @@ use std::time::Duration;
 
 /// Counts for one derivation.
 #[derive(Clone, Debug, Default)]
-pub struct Counts {
+pub(crate) struct Counts {
     pub keys: usize,
     pub inputs: usize,
     pub outputs: usize,
@@ -19,7 +19,7 @@ pub struct Counts {
 }
 
 impl Counts {
-    pub fn to_json(&self) -> serde_json::Value {
+    pub(crate) fn to_json(&self) -> serde_json::Value {
         serde_json::json!({
             "keys": self.keys,
             "inputs": self.inputs,

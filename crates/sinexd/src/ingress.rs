@@ -50,7 +50,7 @@ use uuid::Uuid;
 const DURABLE: &str = "sinexd";
 
 /// Create the ingress stream and its consumer if they do not exist.
-pub async fn ensure_stream(
+pub(crate) async fn ensure_stream(
     js: &jetstream::Context,
     subjects: &Subjects,
 ) -> Result<consumer::PullConsumer, String> {
@@ -82,7 +82,7 @@ pub async fn ensure_stream(
 }
 
 /// What the ingress needs from the daemon.
-pub struct Ingest {
+pub(crate) struct Ingest {
     pub subjects: Subjects,
     pub writer: WriterHandle,
     /// A read connection for recorded frames and registered materials.
@@ -94,7 +94,7 @@ pub struct Ingest {
 }
 
 impl Ingest {
-    pub fn new(
+    pub(crate) fn new(
         subjects: Subjects,
         writer: WriterHandle,
         conn: PgConnection,
@@ -122,7 +122,11 @@ impl Ingest {
     /// Handle one frame from `producer` and return its acknowledgment. `Err`
     /// means the frame could not be handled now (the database or writer is
     /// unavailable) and should be delivered again.
-    pub async fn handle(&mut self, producer: &str, body: &[u8]) -> Result<Acknowledgment, String> {
+    pub(crate) async fn handle(
+        &mut self,
+        producer: &str,
+        body: &[u8],
+    ) -> Result<Acknowledgment, String> {
         let frame: Ingress = match serde_json::from_slice(body) {
             Ok(frame) => frame,
             Err(error) => {
@@ -213,7 +217,7 @@ impl Ingest {
     }
 
     /// Answer a recorded query: the recorded acknowledgments of these frames.
-    pub async fn recorded(
+    pub(crate) async fn recorded(
         &mut self,
         producer: &str,
         request: &RecordedQuery,
@@ -230,7 +234,7 @@ impl Ingest {
 
     /// Answer a materials request: one page of the materials `producer`
     /// registered and Sinex still holds.
-    pub async fn materials(
+    pub(crate) async fn materials(
         &mut self,
         producer: &str,
         request: &Materials,
@@ -272,7 +276,7 @@ impl Ingest {
 
     /// Answer an excise request: excise whole materials `producer`
     /// registered, or say why nothing was excised.
-    pub async fn excise(&mut self, producer: &str, request: &Excise) -> ExciseReply {
+    pub(crate) async fn excise(&mut self, producer: &str, request: &Excise) -> ExciseReply {
         crate::excision::excise_for_producer(
             &mut self.conn,
             &self.blobs,
@@ -500,7 +504,7 @@ fn acknowledgment(s: StoredFrame) -> Acknowledgment {
 
 /// Consume the ingress stream and answer recorded queries and excise requests until
 /// `stop` is set.
-pub async fn run(
+pub(crate) async fn run(
     client: async_nats::Client,
     mut ingest: Ingest,
     mut stop: watch::Receiver<bool>,

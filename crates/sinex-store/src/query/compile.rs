@@ -151,7 +151,7 @@ fn column_name(f: &FieldRef) -> String {
 }
 
 impl<'c> Compiler<'c> {
-    pub fn new(ctx: &'c Context, seq: i64) -> Self {
+    pub(crate) fn new(ctx: &'c Context, seq: i64) -> Self {
         Self { ctx, seq, next: 0 }
     }
 
@@ -174,7 +174,7 @@ impl<'c> Compiler<'c> {
     }
 
     /// Compile a whole query into its numbered answer.
-    pub fn compile(&mut self, q: &Query) -> Result<Compiled> {
+    pub(crate) fn compile(&mut self, q: &Query) -> Result<Compiled> {
         let Source::Table { table, alias } = &q.source else {
             return Err(invalid(
                 "walks and recall are answered by their own readers",

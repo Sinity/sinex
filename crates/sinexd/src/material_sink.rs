@@ -6,7 +6,7 @@ use sinex_sources::drivers::MaterialSink;
 use sinex_store::Blobs;
 
 /// Drivers store a material's bytes through this.
-pub struct Sink(pub Blobs);
+pub(crate) struct Sink(pub Blobs);
 
 impl MaterialSink for Sink {
     fn put(&self, bytes: &[u8]) -> Result<String, String> {
@@ -25,7 +25,7 @@ impl MaterialSink for Sink {
 /// The class key's public half, from the file `$SINEX_CLASS_KEY_FILE` (an age
 /// recipient, `age1…`). Sealed sources need it to capture; the daemon never
 /// holds the secret half.
-pub fn class_key() -> Result<Option<sinex_store::sealed::Recipient>, String> {
+pub(crate) fn class_key() -> Result<Option<sinex_store::sealed::Recipient>, String> {
     let Some(path) = std::env::var_os("SINEX_CLASS_KEY_FILE") else {
         return Ok(None);
     };
@@ -39,7 +39,7 @@ pub fn class_key() -> Result<Option<sinex_store::sealed::Recipient>, String> {
 /// Drivers of a sealed source store a material's bytes through this: each
 /// material gets a fresh data key, its bytes are sealed under it, and the key
 /// waits here until the batch that registers the material is sealed with it.
-pub struct SealingSink {
+pub(crate) struct SealingSink {
     blobs: Blobs,
     recipient: sinex_store::sealed::Recipient,
     state: std::sync::Mutex<SealingState>,
@@ -58,7 +58,7 @@ struct SealingKey {
 }
 
 impl SealingSink {
-    pub fn new(blobs: Blobs, recipient: sinex_store::sealed::Recipient) -> Self {
+    pub(crate) fn new(blobs: Blobs, recipient: sinex_store::sealed::Recipient) -> Self {
         Self {
             blobs,
             recipient,
@@ -66,7 +66,7 @@ impl SealingSink {
         }
     }
 
-    pub fn key(&self, blob: &str) -> Result<sinex_store::sealed::DataKey, String> {
+    pub(crate) fn key(&self, blob: &str) -> Result<sinex_store::sealed::DataKey, String> {
         Ok(self.held(blob)?.data)
     }
 
@@ -86,7 +86,10 @@ impl SealingSink {
             .ok_or_else(|| "sealed data key is unavailable; explicit unlock is required".into())
     }
 
-    pub fn open_carry(&self, value: &serde_json::Value) -> Result<serde_json::Value, String> {
+    pub(crate) fn open_carry(
+        &self,
+        value: &serde_json::Value,
+    ) -> Result<serde_json::Value, String> {
         let Some(reference) = sinex_store::sealed::key_ref(value) else {
             return Ok(value.clone());
         };
@@ -107,7 +110,7 @@ impl SealingSink {
     }
 
     /// Hold `key` for the material stored as `blob`, wrapped for the class.
-    pub fn restore_key(
+    pub(crate) fn restore_key(
         &self,
         blob: String,
         key: sinex_store::sealed::DataKey,
@@ -122,7 +125,7 @@ impl SealingSink {
         Ok(())
     }
 
-    pub fn restore_current(
+    pub(crate) fn restore_current(
         &self,
         material: MaterialId,
         blob: String,
@@ -135,7 +138,10 @@ impl SealingSink {
         Ok(())
     }
 
-    pub fn put_reader(&self, reader: impl std::io::Read + std::io::Seek) -> Result<String, String> {
+    pub(crate) fn put_reader(
+        &self,
+        reader: impl std::io::Read + std::io::Seek,
+    ) -> Result<String, String> {
         let key = sinex_store::sealed::new_key().map_err(|e| e.to_string())?;
         let name = self
             .blobs
@@ -147,7 +153,7 @@ impl SealingSink {
 
     /// Seal events and carry with their material's data key. The wrapped key travels
     /// with source progress so its row and the material commit atomically.
-    pub fn seal(&self, batches: &mut [sinex_model::Batch]) -> Result<(), String> {
+    pub(crate) fn seal(&self, batches: &mut [sinex_model::Batch]) -> Result<(), String> {
         for batch in batches {
             let material = match &batch.kind {
                 sinex_model::BatchKind::Source(p) => p.material.clone(),

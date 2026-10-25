@@ -3,19 +3,6 @@ use crate::{DrainInput, Limits, drain};
 use sinex_model::event_types::library::{Level, Target};
 use sinex_model::{RecordOutcome, RecordState};
 
-struct MemorySink(std::sync::Mutex<HashMap<String, Vec<u8>>>);
-impl MaterialSink for MemorySink {
-    fn put_file(&self, path: &std::path::Path) -> Result<String, String> {
-        self.put(&std::fs::read(path).map_err(|e| e.to_string())?)
-    }
-
-    fn put(&self, bytes: &[u8]) -> Result<String, String> {
-        let name = format!("blake3:{}", blake3::hash(bytes).to_hex());
-        self.0.lock().unwrap().insert(name.clone(), bytes.to_vec());
-        Ok(name)
-    }
-}
-
 fn tmp() -> PathBuf {
     let d = std::env::temp_dir().join(format!("sinex-library-{}", uuid::Uuid::now_v7()));
     std::fs::create_dir_all(&d).unwrap();
@@ -38,7 +25,7 @@ fn read(a: &Acquired, parser: &ScanParser) -> Vec<FileCopy> {
             source: "library.scan",
             class: Class::Open,
             material: m.id,
-            bytes: m.bytes.as_slice().into(),
+            bytes: m.record_bytes(),
             records: &m.records,
             carry: Value::Null,
             reading_order: &*m.reading_order,
@@ -78,9 +65,8 @@ fn sidecars_named_by_stem_are_not_items() {
     std::fs::write(root.join("pic.json"), b"{}").unwrap();
     std::fs::write(root.join("pic.png.txt"), b"tag").unwrap();
     std::fs::write(root.join("notes.json"), b"{}").unwrap();
-    let sink = MemorySink(Default::default());
     let mut mem = ScanState::default();
-    let first = scan(&root).poll(&Value::Null, &mut mem, &sink).unwrap();
+    let first = scan(&root).poll(&Value::Null, &mut mem).unwrap();
     let mut paths: Vec<String> = read(&first, &ScanParser)
         .into_iter()
         .map(|a| a.path.rsplit('/').next().unwrap().to_owned())
@@ -95,9 +81,8 @@ fn a_single_file_scan_reads_and_misses_nothing_else() {
     let root = tmp();
     std::fs::write(root.join("one.png"), png(10, 10)).unwrap();
     std::fs::write(root.join("two.png"), png(20, 20)).unwrap();
-    let sink = MemorySink(Default::default());
     let mut mem = ScanState::default();
-    let all = scan(&root).poll(&Value::Null, &mut mem, &sink).unwrap();
+    let all = scan(&root).poll(&Value::Null, &mut mem).unwrap();
     assert_eq!(read(&all, &ScanParser).len(), 2);
 
     std::fs::write(root.join("one.png"), png(30, 30)).unwrap();
@@ -106,10 +91,7 @@ fn a_single_file_scan_reads_and_misses_nothing_else() {
         only: Some("one.png".into()),
         ..scan(&root)
     };
-    let seen = read(
-        &only.poll(&Value::Null, &mut mem, &sink).unwrap(),
-        &ScanParser,
-    );
+    let seen = read(&only.poll(&Value::Null, &mut mem).unwrap(), &ScanParser);
     assert_eq!(seen.len(), 1, "only the named file: {seen:?}");
     assert!(seen[0].path.ends_with("one.png"));
     assert!(seen[0].vanished_at.is_none());
@@ -122,12 +104,11 @@ fn scan_describes_stores_and_follows_renames_edits_and_removals() {
     std::fs::write(root.join("a/one.png"), png(640, 480)).unwrap();
     std::fs::write(root.join("two.bin"), b"\0\x01\x02 not media").unwrap();
     std::fs::write(root.join(".hidden"), b"x").unwrap();
-    let sink = MemorySink(Default::default());
     let s = scan(&root);
     let mut mem = ScanState::default();
     let parser = ScanParser;
 
-    let first = s.poll(&Value::Null, &mut mem, &sink).unwrap();
+    let first = s.poll(&Value::Null, &mut mem).unwrap();
     let seen = read(&first, &parser);
     assert_eq!(seen.len(), 2);
     let one = seen.iter().find(|a| a.path.ends_with("one.png")).unwrap();
@@ -136,18 +117,23 @@ fn scan_describes_stores_and_follows_renames_edits_and_removals() {
     assert!(one.stored && one.content.starts_with("blake3:"));
     assert_eq!(one.sha256.len(), 64);
     assert_eq!(one.md5.len(), 32);
-    assert!(sink.0.lock().unwrap().contains_key(&one.content));
+    let owned = &first.material.as_ref().unwrap().owned_files;
+    assert!(
+        owned
+            .iter()
+            .any(|f| f.blob == one.content && f.path.ends_with("a/one.png"))
+    );
     let other = seen.iter().find(|a| a.path.ends_with("two.bin")).unwrap();
     assert_eq!(other.media_type, "application/octet-stream");
 
     // Nothing changed: no material.
-    let again = s.poll(&Value::Null, &mut mem, &sink).unwrap();
+    let again = s.poll(&Value::Null, &mut mem).unwrap();
     assert!(again.material.is_none());
 
     // Rename one.png, edit two.bin in place, delete nothing else.
     std::fs::rename(root.join("a/one.png"), root.join("renamed.png")).unwrap();
     std::fs::write(root.join("two.bin"), b"\0\x01\x02 edited").unwrap();
-    let third = s.poll(&Value::Null, &mut mem, &sink).unwrap();
+    let third = s.poll(&Value::Null, &mut mem).unwrap();
     let seen = read(&third, &parser);
     let moved = seen
         .iter()
@@ -171,10 +157,84 @@ fn scan_describes_stores_and_follows_renames_edits_and_removals() {
     assert!(moved_at < gone_at);
 
     std::fs::remove_file(root.join("renamed.png")).unwrap();
-    let fourth = s.poll(&Value::Null, &mut mem, &sink).unwrap();
+    let fourth = s.poll(&Value::Null, &mut mem).unwrap();
     let seen = read(&fourth, &parser);
     assert_eq!(seen.len(), 1);
     assert!(seen[0].vanished_at.is_some());
+    std::fs::remove_dir_all(&root).unwrap();
+}
+
+struct Body(Vec<u8>);
+impl crate::drain::RecordRead for Body {
+    fn length(&self) -> u64 {
+        self.0.len() as u64
+    }
+    fn read_exact_at(&self, start: u64, out: &mut [u8]) -> std::io::Result<()> {
+        out.copy_from_slice(&self.0[start as usize..start as usize + out.len()]);
+        Ok(())
+    }
+}
+
+/// What the store holds for the material `acquired` read, and the cursor
+/// once all of it is admitted.
+fn stored(acquired: &Acquired) -> (crate::binding::StoredMaterial, Value) {
+    let m = acquired.material.as_ref().unwrap();
+    let length = m.records.last().unwrap().1;
+    let bytes = m.record_bytes().record(0, length).unwrap().into_owned();
+    let stored = crate::binding::StoredMaterial {
+        reference: sinex_model::MaterialRef {
+            id: m.id,
+            input: None,
+            blob: format!("blake3:{}", blake3::hash(&bytes).to_hex()),
+            length: length as u64,
+            part_index: m.part_index,
+            previous_part: m.previous_part,
+            parser: "library-scan".into(),
+            parser_version: 1,
+            manifest: m.manifest.clone(),
+        },
+        bytes: std::sync::Arc::new(Body(bytes)),
+        same_revision: true,
+    };
+    (stored, (m.cursor_at)(length).unwrap())
+}
+
+#[devkit::test]
+fn a_restarted_scan_reads_only_what_changed_since_its_stored_parts() {
+    use crate::binding::Reader;
+    let root = tmp();
+    std::fs::write(root.join("one.png"), png(10, 10)).unwrap();
+    std::fs::write(root.join("two.png"), png(20, 20)).unwrap();
+    let mut first = LibraryReader::new(scan(&root));
+    let a = first.poll(&Value::Null).unwrap();
+    let (part_a, cursor_a) = stored(&a);
+    let memory = a.material.as_ref().unwrap().memory.clone();
+    assert!(memory.is_some(), "the first part saves what the scan knows");
+    assert!(first.poll(&cursor_a).unwrap().material.is_none());
+
+    std::fs::rename(root.join("one.png"), root.join("moved.png")).unwrap();
+    let b = first.poll(&cursor_a).unwrap();
+    let (part_b, cursor_b) = stored(&b);
+
+    // A restart from both parts knows every file: nothing to read.
+    let mut again = LibraryReader::new(scan(&root));
+    assert_eq!(again.history_from(&cursor_b), Some(part_b.reference.id));
+    assert!(again.restore(&cursor_b, part_b).unwrap());
+    assert!(again.restore(&cursor_b, part_a).unwrap());
+    again.restored().unwrap();
+    assert!(again.poll(&cursor_b).unwrap().material.is_none());
+
+    // From the newest part and the memory saved at the first one.
+    let (part_b, _) = stored(&b);
+    let mut saved = LibraryReader::new(scan(&root));
+    saved.restore(&cursor_b, part_b).unwrap();
+    saved.restore_memory(&memory.unwrap()).unwrap();
+    saved.restored().unwrap();
+    std::fs::write(root.join("two.png"), png(30, 30)).unwrap();
+    let c = saved.poll(&cursor_b).unwrap();
+    let seen = read(&c, &ScanParser);
+    assert_eq!(seen.len(), 1, "only the edited file: {seen:?}");
+    assert!(seen[0].path.ends_with("two.png"));
     std::fs::remove_dir_all(&root).unwrap();
 }
 
@@ -248,7 +308,7 @@ fn requests_take_author_and_time_from_the_manifest() {
             source: "library.request",
             class: Class::Open,
             material: m.id,
-            bytes: m.bytes.as_slice().into(),
+            bytes: m.record_bytes(),
             records: &m.records,
             carry: Value::Null,
             reading_order: &*m.reading_order,

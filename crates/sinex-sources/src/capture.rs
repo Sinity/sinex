@@ -10,11 +10,11 @@ pub use process::Child;
 use process::Registration;
 
 pub struct CaptureStop {
-    state: Arc<State>,
+    state: Arc<CaptureStatus>,
     deadline: Option<JoinHandle<()>>,
 }
 
-struct State {
+struct CaptureStatus {
     inner: Mutex<Inner>,
     changed: Condvar,
 }
@@ -28,7 +28,7 @@ struct Inner {
 
 impl CaptureStop {
     pub fn new(duration: Option<Duration>) -> Self {
-        let state = Arc::new(State {
+        let state = Arc::new(CaptureStatus {
             inner: Mutex::new(Inner::default()),
             changed: Condvar::new(),
         });
@@ -119,7 +119,7 @@ impl Drop for CaptureStop {
     }
 }
 
-impl State {
+impl CaptureStatus {
     fn wait(&self, duration: Duration) -> bool {
         let inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
         let (inner, _) = self

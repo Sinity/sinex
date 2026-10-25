@@ -8,12 +8,12 @@ use std::fmt::Write;
 /// row is whole in `--json`.
 const CELL: usize = 60;
 
-pub struct Local {
+pub(crate) struct Local {
     zone: jiff::tz::TimeZone,
 }
 
 impl Local {
-    pub fn new(zone_name: Option<&str>) -> Self {
+    pub(crate) fn new(zone_name: Option<&str>) -> Self {
         let zone = zone_name
             .and_then(|z| jiff::tz::TimeZone::get(z).ok())
             .unwrap_or_else(jiff::tz::TimeZone::system);
@@ -56,7 +56,7 @@ fn cell(local: &Local, v: &Value) -> String {
 }
 
 /// Rows as an aligned table.
-pub fn table(columns: &[String], rows: &[Value], local: &Local) -> String {
+pub(crate) fn table(columns: &[String], rows: &[Value], local: &Local) -> String {
     let cells: Vec<Vec<String>> = rows
         .iter()
         .map(|r| columns.iter().map(|c| cell(local, &r[c])).collect())
@@ -91,7 +91,7 @@ pub fn table(columns: &[String], rows: &[Value], local: &Local) -> String {
 
 /// An answer: its reading, the rows, and a footer with counts and the next
 /// cursor.
-pub fn answer(result: &Value, local: &Local, next_hint: Option<&str>) -> String {
+pub(crate) fn answer(result: &Value, local: &Local, next_hint: Option<&str>) -> String {
     let mut out = String::new();
     if let Some(r) = result["read_as"].as_str() {
         let _ = writeln!(out, "# {r}");

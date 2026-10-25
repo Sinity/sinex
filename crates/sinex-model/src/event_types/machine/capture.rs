@@ -1,5 +1,5 @@
 //! Payloads declared by the Sinnix lake producers. The lane selects a source
-//! type before decoding; the lake's envelope and wire values are kept as
+//! type before decoding; the lake's metadata fields and wire values are kept as
 //! written.
 use crate::Timestamp;
 use schemars::JsonSchema;

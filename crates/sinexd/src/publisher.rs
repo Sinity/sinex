@@ -33,7 +33,7 @@ const RETRY: Duration = Duration::from_secs(1);
 /// The JetStream context `sinexd` uses. A page of messages waits for its
 /// acknowledgments together; on a busy disk the stream can take longer than the
 /// client's 5-second default to acknowledge a large page.
-pub fn context(client: async_nats::Client) -> jetstream::Context {
+pub(crate) fn context(client: async_nats::Client) -> jetstream::Context {
     jetstream::context::ContextBuilder::new()
         .timeout(Duration::from_secs(30))
         .ack_timeout(Duration::from_secs(30))
@@ -41,7 +41,10 @@ pub fn context(client: async_nats::Client) -> jetstream::Context {
 }
 
 /// Create the confirmed stream if it does not exist.
-pub async fn ensure_stream(js: &jetstream::Context, subjects: &Subjects) -> Result<(), String> {
+pub(crate) async fn ensure_stream(
+    js: &jetstream::Context,
+    subjects: &Subjects,
+) -> Result<(), String> {
     js.get_or_create_stream(stream::Config {
         name: subjects.confirmed_stream(),
         subjects: vec![subjects.confirmed_all()],
@@ -57,7 +60,7 @@ pub async fn ensure_stream(js: &jetstream::Context, subjects: &Subjects) -> Resu
 
 /// Counts for one publishing pass, for status and measurement.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct Published {
+pub(crate) struct Published {
     pub events: u64,
     pub changes: u64,
     /// Excised events whose messages were erased from the stream.
@@ -65,7 +68,7 @@ pub struct Published {
 }
 
 /// Publish until `stop` is set, waking when `commits` changes.
-pub async fn run(
+pub(crate) async fn run(
     mut conn: PgConnection,
     js: jetstream::Context,
     subjects: Subjects,
@@ -100,7 +103,7 @@ pub async fn run(
 /// Publish everything committed after the saved position, page by page, and
 /// return what was published. Each page's position is saved once JetStream
 /// has acknowledged it.
-pub async fn publish_pending(
+pub(crate) async fn publish_pending(
     conn: &mut PgConnection,
     js: &jetstream::Context,
     subjects: &Subjects,
@@ -327,7 +330,7 @@ fn archived_message(n: &ArchiveChange) -> Result<Archived, String> {
 
 /// Publish everything pending once and report the rate: for `sinexd publish`
 /// and measurement.
-pub async fn drain(
+pub(crate) async fn drain(
     conn: &mut PgConnection,
     js: &jetstream::Context,
     subjects: &Subjects,

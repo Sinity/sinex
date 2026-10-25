@@ -149,6 +149,16 @@ pub struct NewMaterial {
     /// it saves its memory at this part ([`memory_due`]). It is committed
     /// with the cursor at the material's end.
     pub memory: Option<std::sync::Arc<[u8]>>,
+    /// Files the material's events own (a library file's bytes), stored with
+    /// the material.
+    pub owned_files: Vec<OwnedFile>,
+}
+
+/// A file to store as the blob `blob`: its bytes as the reader hashed them.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct OwnedFile {
+    pub path: std::path::PathBuf,
+    pub blob: String,
 }
 
 /// Parts after which a reader saves its memory even if little changed, so a
@@ -278,6 +288,15 @@ pub fn prepare<'s>(
                     m.bytes.len() as u64,
                 ),
             };
+            for owned in &m.owned_files {
+                let name = sink.put_file(&owned.path).map_err(DriverError::Store)?;
+                if name != owned.blob {
+                    return Err(DriverError::InvalidMaterial(format!(
+                        "{} changed while it was read; read it again",
+                        owned.path.display()
+                    )));
+                }
+            }
             let reference = MaterialRef {
                 id: m.id,
                 input: None,

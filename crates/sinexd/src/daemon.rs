@@ -34,7 +34,7 @@ const METRICS_IDLE: Duration = Duration::from_secs(600);
 /// How often the binding runner reads every configured binding again.
 const BINDINGS_EVERY: Duration = Duration::from_secs(5);
 
-pub struct Options {
+pub(crate) struct Options {
     pub database: String,
     pub store: PathBuf,
     /// The NATS server, with the daemon's credentials in the URL when the
@@ -48,7 +48,7 @@ pub struct Options {
     pub sources: Option<PathBuf>,
 }
 
-pub struct ApiOptions {
+pub(crate) struct ApiOptions {
     pub socket: PathBuf,
     pub listen: Option<std::net::SocketAddr>,
     /// Directory holding `read.token`, `agent.token` and `operator.token`,
@@ -64,7 +64,7 @@ async fn connect(url: &str) -> Result<PgConnection, String> {
         .map_err(|e| format!("database: {e}"))
 }
 
-pub async fn run(o: Options) -> Result<(), String> {
+pub(crate) async fn run(o: Options) -> Result<(), String> {
     let subjects = Subjects::new(o.subject_root.clone());
     let blobs = Blobs::open(&o.store).map_err(|e| e.to_string())?;
     let tokens =

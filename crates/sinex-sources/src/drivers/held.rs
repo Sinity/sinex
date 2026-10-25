@@ -21,6 +21,7 @@ pub struct HeldMaterial {
     aligned: bool,
     removed: Vec<RecordLocation>,
     memory: Option<Arc<[u8]>>,
+    owned_files: Vec<super::OwnedFile>,
     input: InputRef,
     observation: ObservationFacts,
     revision: RevisionChange,
@@ -82,6 +83,7 @@ impl HeldMaterial {
             aligned: m.aligned,
             removed: m.removed,
             memory: m.memory,
+            owned_files: m.owned_files,
             input: acquired.input,
             observation: acquired.observation,
             revision: acquired.revision,
@@ -168,6 +170,11 @@ impl HeldMaterial {
                     Vec::new()
                 },
                 memory: self.memory.clone(),
+                owned_files: if through == 0 {
+                    self.owned_files.clone()
+                } else {
+                    Vec::new()
+                },
             }),
         })
     }

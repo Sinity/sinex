@@ -22,11 +22,11 @@ pub struct Child {
 pub(super) struct Registration(Mutex<Option<Pid>>);
 
 impl Registration {
-    pub fn interrupt(&self) {
+    pub(crate) fn interrupt(&self) {
         self.signal(Signal::INT);
     }
 
-    pub fn kill(&self) {
+    pub(crate) fn kill(&self) {
         self.signal(Signal::KILL);
     }
 
@@ -36,7 +36,7 @@ impl Registration {
         }
     }
 
-    pub fn running(&self) -> bool {
+    pub(crate) fn running(&self) -> bool {
         self.0.lock().unwrap_or_else(|e| e.into_inner()).is_some()
     }
 }

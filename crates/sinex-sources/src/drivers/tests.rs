@@ -103,6 +103,7 @@ fn batches_are_drained_lazily() {
             aligned: false,
             removed: vec![],
             memory: None,
+            owned_files: Vec::new(),
         }),
         cursor_without_material: Value::Null,
     };
@@ -286,6 +287,7 @@ fn stored_original_length_does_not_replace_decoded_record_coordinates() {
             aligned: false,
             removed: vec![],
             memory: None,
+            owned_files: Vec::new(),
         }),
         cursor_without_material: Value::Null,
     };
@@ -336,6 +338,7 @@ fn cursor_read_failure_is_reported_before_a_batch_and_stops_later_progress() {
             aligned: false,
             removed: Vec::new(),
             memory: None,
+            owned_files: Vec::new(),
         }),
     };
     let prepared = prepare(

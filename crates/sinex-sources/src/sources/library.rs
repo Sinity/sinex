@@ -16,7 +16,7 @@
 //! parser takes the author and time from the material's manifest, which the
 //! daemon fills from the authenticated caller, never from the lines.
 use crate::drain::RecordContext;
-use crate::drivers::{Acquired, DriverError, MaterialSink, NewMaterial, file_facts};
+use crate::drivers::{Acquired, DriverError, NewMaterial, file_facts};
 use crate::registry::{DeclaredSource, Driver, SourceSpec};
 use crate::{Parser, RecordError};
 use serde::{Deserialize, Serialize};
@@ -174,7 +174,7 @@ pub struct LibraryScan {
 }
 
 /// What a scan knows about a file it already read.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Known {
     pub size: u64,
     pub mtime_ns: i128,
@@ -187,8 +187,8 @@ pub struct Known {
 type Pending = (String, u64, i128, Option<u64>, Option<u64>);
 
 /// The scan's state: the files read, by path, and the work left from the
-/// current walk. Seeded from the live copies after a restart, so a
-/// restart does not hash the whole library again.
+/// current walk. A restart rebuilds the files from the saved memory and the
+/// scan parts after it, so it does not hash the whole library again.
 #[derive(Default)]
 pub struct ScanState {
     pub files: HashMap<String, Known>,
@@ -196,25 +196,165 @@ pub struct ScanState {
     /// Paths missing from the current walk, with the file identity they had.
     missing: BTreeMap<String, Known>,
     walk_pending: bool,
+    /// Paths a restart has already decided from a newer part.
+    remembered: std::collections::HashSet<String>,
 }
 
 impl ScanState {
-    pub fn seed(files: impl IntoIterator<Item = (String, Known)>) -> Self {
-        Self {
-            files: files.into_iter().collect(),
-            ..Self::default()
+    /// What the scan knows, as saved with the cursor.
+    fn memory(&self) -> std::sync::Arc<[u8]> {
+        let mut files: Vec<(&String, &Known)> = self.files.iter().collect();
+        files.sort_by_key(|(path, _)| *path);
+        serde_json::to_vec(&files)
+            .expect("scan memory serializes")
+            .into()
+    }
+
+    /// Remember the files a scan part described, up to `admitted` bytes of
+    /// it. Parts come newest first; a path a newer part decided keeps that.
+    fn remember_part(
+        &mut self,
+        root: &Path,
+        bytes: &dyn crate::drain::RecordRead,
+        admitted: u64,
+    ) -> Result<(), DriverError> {
+        let ranges = crate::drivers::record_ranges(bytes, SCAN.framer)
+            .map_err(|e| DriverError::Io(e.to_string()))?;
+        for (start, end) in ranges.into_iter().rev() {
+            if end as u64 > admitted {
+                continue;
+            }
+            let mut line = vec![0; end - start];
+            bytes
+                .read_exact_at(start as u64, &mut line)
+                .map_err(|e| DriverError::Io(e.to_string()))?;
+            let d: ScannedFile = serde_json::from_slice(&line)
+                .map_err(|e| DriverError::Cursor(format!("stored scan line: {e}")))?;
+            let Ok(relative) = Path::new(&d.path).strip_prefix(root) else {
+                continue;
+            };
+            let relative = relative.to_string_lossy().into_owned();
+            // A move left nothing at the path it came from.
+            if let Some(from) = d.moved_from.as_deref().map(Path::new)
+                && let Ok(from) = from.strip_prefix(root)
+            {
+                self.remembered.insert(from.to_string_lossy().into_owned());
+            }
+            if !self.remembered.insert(relative.clone()) || d.vanished_at_ns.is_some() {
+                continue;
+            }
+            let mtime_ns = d
+                .mtime_ns
+                .as_deref()
+                .and_then(|n| n.parse().ok())
+                .ok_or_else(|| DriverError::Cursor("stored scan line has no mtime".into()))?;
+            self.files.insert(
+                relative,
+                Known {
+                    size: d.size,
+                    mtime_ns,
+                    device: d.device,
+                    inode: d.inode,
+                    content: d.content,
+                },
+            );
         }
+        Ok(())
+    }
+
+    /// Remember the files of a saved memory that no newer part decided.
+    fn remember_saved(&mut self, memory: &[u8]) -> Result<(), DriverError> {
+        let files: Vec<(String, Known)> = serde_json::from_slice(memory)
+            .map_err(|e| DriverError::Cursor(format!("saved scan memory: {e}")))?;
+        for (path, known) in files {
+            if self.remembered.insert(path.clone()) {
+                self.files.insert(path, known);
+            }
+        }
+        Ok(())
+    }
+}
+
+/// A library root read through the reader framework: the scan, what it knows,
+/// and its newest material until that is admitted.
+pub struct LibraryReader {
+    scan: LibraryScan,
+    state: ScanState,
+    held: Option<crate::drivers::held::HeldMaterial>,
+}
+
+impl LibraryReader {
+    pub fn new(scan: LibraryScan) -> Self {
+        Self {
+            scan,
+            state: ScanState::default(),
+            held: None,
+        }
+    }
+}
+
+impl crate::binding::Reader for LibraryReader {
+    fn history_from(&self, cursor: &Value) -> Option<MaterialId> {
+        crate::drivers::cursor_material(cursor).map(|(material, _)| material)
+    }
+
+    fn restore(
+        &mut self,
+        cursor: &Value,
+        material: crate::binding::StoredMaterial,
+    ) -> Result<bool, DriverError> {
+        let admitted = match crate::drivers::cursor_material(cursor) {
+            Some((id, Some(through))) if id == material.reference.id => {
+                through.min(material.reference.length)
+            }
+            _ => material.reference.length,
+        };
+        self.state
+            .remember_part(&self.scan.root, material.bytes.as_ref(), admitted)?;
+        Ok(true)
+    }
+
+    fn restore_memory(&mut self, memory: &[u8]) -> Result<(), DriverError> {
+        self.state.remember_saved(memory)
+    }
+
+    fn restored(&mut self) -> Result<(), DriverError> {
+        self.state.remembered = Default::default();
+        Ok(())
+    }
+
+    fn poll(&mut self, cursor: &Value) -> Result<Acquired, DriverError> {
+        if let Some(held) = &self.held {
+            if !held.admitted(cursor) {
+                return held.acquired(cursor);
+            }
+            self.held = None;
+        }
+        let acquired = self.scan.poll(cursor, &mut self.state)?;
+        if acquired.material.is_none() {
+            return Ok(acquired);
+        }
+        let held = crate::drivers::held::HeldMaterial::hold(acquired, cursor)?;
+        let acquired = held.acquired(cursor)?;
+        self.held = Some(held);
+        Ok(acquired)
     }
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 struct ScanCursor {
-    /// Exact admitted byte cut. Older scan cursors leave this unknown.
+    /// How much of `material` is admitted.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub through: Option<u64>,
     pub material: Option<MaterialId>,
     pub part_index: u32,
     pub last_complete_walk_ns: Option<String>,
+    /// The part the scan last saved what it knows at.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub memory_part: Option<u32>,
+    /// Files described since then.
+    #[serde(default)]
+    pub changed_since_memory: u64,
 }
 
 /// Paths a library walk skips: hidden files and folders, and files other
@@ -306,12 +446,7 @@ impl LibraryScan {
     }
 
     /// One poll: continue the current walk's queue, or start a new walk.
-    pub fn poll(
-        &self,
-        cursor: &Value,
-        state: &mut ScanState,
-        sink: &dyn MaterialSink,
-    ) -> Result<Acquired, DriverError> {
+    pub fn poll(&self, cursor: &Value, state: &mut ScanState) -> Result<Acquired, DriverError> {
         let previous: ScanCursor = if cursor.is_null() {
             ScanCursor::default()
         } else {
@@ -343,6 +478,7 @@ impl LibraryScan {
         let mut lines: Vec<u8> = Vec::new();
         let mut records = Vec::new();
         let mut moved_away: Vec<(String, Known)> = Vec::new();
+        let mut owned_files = Vec::new();
         let mut budget = 0u64;
         while let Some((relative, size, mtime, dev, ino)) = state.queue.front().cloned() {
             if budget > 0 && budget + size > self.bytes_per_poll {
@@ -358,16 +494,7 @@ impl LibraryScan {
                 Err(_) => continue,
             };
             let content = format!("blake3:{}", digests.blake3);
-            let stored = if self.keep_bytes {
-                let name = sink.put_file(&full).map_err(DriverError::Store)?;
-                if name != content {
-                    // The file changed while it was read; read it next walk.
-                    continue;
-                }
-                true
-            } else {
-                false
-            };
+            let stored = self.keep_bytes;
             let before = state.files.get(&relative).cloned();
             // Moved: a missing path held this very file (device and inode)
             // with these bytes.
@@ -436,6 +563,12 @@ impl LibraryScan {
                 vanished_at_ns: None,
             };
             push_line(&mut lines, &mut records, &line);
+            if stored {
+                owned_files.push(crate::drivers::OwnedFile {
+                    path: full.clone(),
+                    blob: content.clone(),
+                });
+            }
             state.files.insert(
                 relative,
                 Known {
@@ -507,6 +640,29 @@ impl LibraryScan {
         } else {
             0
         };
+        let changed = previous
+            .changed_since_memory
+            .saturating_add(records.len() as u64);
+        let due = crate::drivers::memory_due(
+            part_index,
+            previous.memory_part,
+            changed,
+            state.files.len() as u64,
+        );
+        let memory = due.then(|| state.memory());
+        let length = lines.len();
+        let finished = ScanCursor {
+            through: Some(length as u64),
+            material: Some(id),
+            part_index,
+            memory_part: if due {
+                Some(part_index)
+            } else {
+                previous.memory_part
+            },
+            changed_since_memory: if due { 0 } else { changed },
+            ..scanned.clone()
+        };
         Ok(Acquired {
             input: self.input(),
             observation: facts,
@@ -522,28 +678,27 @@ impl LibraryScan {
                 reading_order: Box::new(move |_| ReadingOrder(read_at)),
                 cursor_at: Box::new({
                     let cursor = move |end: usize| {
-                        serde_json::to_value(ScanCursor {
-                            through: Some(end as u64),
-                            material: Some(id),
-                            part_index,
-                            ..scanned.clone()
-                        })
-                        .expect("cursor serializes")
+                        let at = if end == length {
+                            finished.clone()
+                        } else {
+                            ScanCursor {
+                                through: Some(end as u64),
+                                material: Some(id),
+                                part_index,
+                                ..previous.clone()
+                            }
+                        };
+                        serde_json::to_value(at).expect("cursor serializes")
                     };
                     move |end| Ok(cursor(end))
                 }),
                 aligned: false,
                 removed: Vec::new(),
-                memory: None,
+                memory,
+                owned_files,
             }),
             cursor_without_material: Value::Null,
         })
-    }
-
-    /// Poll until a walk completes, returning every material along the way.
-    /// Callers that admit as they go use `poll` directly.
-    pub fn pending(&self, state: &ScanState) -> usize {
-        state.queue.len()
     }
 }
 
@@ -1007,6 +1162,7 @@ pub fn request_material(
             aligned: false,
             removed: Vec::new(),
             memory: None,
+            owned_files: Vec::new(),
         }),
         cursor_without_material: Value::Null,
     }

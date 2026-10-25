@@ -13,20 +13,20 @@ pub(crate) struct StoredReader {
     length: u64,
 }
 impl StoredReader {
-    pub fn new(reader: impl Read + Seek + Send + 'static, length: u64) -> Self {
+    pub(crate) fn new(reader: impl Read + Seek + Send + 'static, length: u64) -> Self {
         Self {
             reader: Mutex::new(Box::new(reader)),
             length,
         }
     }
-    pub fn checked(
+    pub(crate) fn checked(
         reader: impl Read + Seek + Send + 'static,
         length: u64,
         check: impl FnMut() -> std::io::Result<()> + Send + 'static,
     ) -> Self {
         Self::new(Checked { reader, check }, length)
     }
-    pub fn records(
+    pub(crate) fn records(
         &self,
         manifest: &sinex_model::Manifest,
         framer: Framer,

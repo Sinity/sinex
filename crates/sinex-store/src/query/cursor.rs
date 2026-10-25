@@ -37,7 +37,7 @@ fn zone(ctx: &Context) -> Result<String> {
 }
 
 impl Cursor {
-    pub fn decode(raw: &str) -> Result<Self> {
+    pub(crate) fn decode(raw: &str) -> Result<Self> {
         if raw.len() > 4096 {
             return Err(invalid());
         }
@@ -71,7 +71,7 @@ impl Cursor {
         Ok(Context::new(now, ctx.zone.clone(), ctx.day_start))
     }
 
-    pub fn check_question(&self, question: &str) -> Result<()> {
+    pub(crate) fn check_question(&self, question: &str) -> Result<()> {
         if self.question != question {
             return Err(Error::Invalid(
                 "query cursor belongs to a different question or caller context".into(),
@@ -81,14 +81,14 @@ impl Cursor {
     }
 
     /// The rows handed out so far are unchanged and more remain.
-    pub fn check_view(&self, view: &str) -> Result<()> {
+    pub(crate) fn check_view(&self, view: &str) -> Result<()> {
         if self.view != view || self.offset >= self.total as u64 {
             return Err(Error::StaleCursor);
         }
         Ok(())
     }
 
-    pub fn encode(
+    pub(crate) fn encode(
         question: &str,
         ctx: &Context,
         seq: i64,

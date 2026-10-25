@@ -19,33 +19,33 @@ enum FragmentPart {
 }
 
 impl SqlFragment {
-    pub fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Self::default()
     }
 
-    pub fn text(s: impl Into<String>) -> Self {
+    pub(crate) fn text(s: impl Into<String>) -> Self {
         let mut f = Self::new();
         f.push(s);
         f
     }
 
-    pub fn push(&mut self, s: impl Into<String>) -> &mut Self {
+    pub(crate) fn push(&mut self, s: impl Into<String>) -> &mut Self {
         self.pieces.push(FragmentPart::Text(s.into()));
         self
     }
 
-    pub fn param(&mut self, v: impl Into<Value>) -> &mut Self {
+    pub(crate) fn param(&mut self, v: impl Into<Value>) -> &mut Self {
         self.pieces.push(FragmentPart::Param(v.into()));
         self
     }
 
-    pub fn append(&mut self, other: SqlFragment) -> &mut Self {
+    pub(crate) fn append(&mut self, other: SqlFragment) -> &mut Self {
         self.pieces.extend(other.pieces);
         self
     }
 
     /// `parts` joined by `sep`.
-    pub fn join(parts: Vec<SqlFragment>, sep: &str) -> SqlFragment {
+    pub(crate) fn join(parts: Vec<SqlFragment>, sep: &str) -> SqlFragment {
         let mut out = SqlFragment::new();
         for (i, p) in parts.into_iter().enumerate() {
             if i > 0 {
@@ -57,7 +57,7 @@ impl SqlFragment {
     }
 
     /// `(<self>)`.
-    pub fn parenthesized(self) -> SqlFragment {
+    pub(crate) fn parenthesized(self) -> SqlFragment {
         let mut out = SqlFragment::text("(");
         out.append(self);
         out.push(")");
@@ -66,7 +66,7 @@ impl SqlFragment {
 
     /// The SQL text with numbered placeholders, and the parameters in order,
     /// as values that can cross an `.await`.
-    pub fn render(&self) -> (String, Vec<Param>) {
+    pub(crate) fn render(&self) -> (String, Vec<Param>) {
         let mut builder = RawSqlQueryBuilder::new(PostgresQueryBuilder);
         let mut values = Vec::new();
         for piece in &self.pieces {

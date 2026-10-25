@@ -4,7 +4,7 @@
 use credential_masking::Masker;
 use serde_json::Value;
 
-pub fn mask_str(text: &str) -> String {
+pub(crate) fn mask_str(text: &str) -> String {
     let mut out = Vec::with_capacity(text.len());
     let mut masker = Masker::new();
     // Writing to a Vec cannot fail, and the masker refuses no input.
@@ -15,7 +15,7 @@ pub fn mask_str(text: &str) -> String {
     String::from_utf8(out).expect("the masker writes UTF-8")
 }
 
-pub fn mask_json(value: Value) -> Result<Value, &'static str> {
+pub(crate) fn mask_json(value: Value) -> Result<Value, &'static str> {
     Ok(match value {
         Value::String(s) => Value::String(mask_str(&s)),
         Value::Array(items) => {

@@ -78,7 +78,7 @@ const WAITING_HORIZON: time::Duration = time::Duration::days(14);
 
 /// A derivation that keeps store rows (not events) equal to a function of its
 /// inputs, driven by dirty keys admission marks under its own names.
-pub trait Maintained: Send {
+pub(crate) trait Maintained: Send {
     fn name(&self) -> &'static str;
     /// Bring the rows up to date: the dirty keys, plus whatever the
     /// derivation refreshes with time. Returns how much it recomputed.
@@ -88,7 +88,7 @@ pub trait Maintained: Send {
     ) -> Pin<Box<dyn Future<Output = Result<usize, String>> + Send + 'a>>;
 }
 
-pub struct DerivationRunner {
+pub(crate) struct DerivationRunner {
     keyed: Vec<Box<dyn AnyKeyed>>,
     per_event: Vec<Box<dyn AnyPerEvent>>,
     maintained: Vec<Box<dyn Maintained>>,
@@ -144,7 +144,7 @@ fn to_window(q: &InputQuery) -> Window {
 impl DerivationRunner {
     /// Register the derivation catalog, start one run per derivation, and
     /// queue a full recompute for every derivation whose version changed.
-    pub async fn start(
+    pub(crate) async fn start(
         mut read: PgConnection,
         writer: WriterHandle,
         keyed: Vec<Box<dyn AnyKeyed>>,
@@ -272,7 +272,7 @@ impl DerivationRunner {
     /// A runner for one operation on one keyed derivation: a recompute or a
     /// comparison asked for through the command table. It registers nothing
     /// and starts one run, for that derivation.
-    pub async fn for_one(
+    pub(crate) async fn for_one(
         mut read: PgConnection,
         writer: WriterHandle,
         name: &str,
@@ -313,20 +313,20 @@ impl DerivationRunner {
 
     /// The content store per-event derivations read stored bytes from.
     #[must_use]
-    pub fn with_blobs(mut self, blobs: Blobs) -> Self {
+    pub(crate) fn with_blobs(mut self, blobs: Blobs) -> Self {
         self.blobs = Some(blobs);
         self
     }
 
     /// Derivations that maintain store rows, run once the others settle.
     #[must_use]
-    pub fn with_maintained(mut self, maintained: Vec<Box<dyn Maintained>>) -> Self {
+    pub(crate) fn with_maintained(mut self, maintained: Vec<Box<dyn Maintained>>) -> Self {
         self.maintained = maintained;
         self
     }
 
     /// Run every maintained derivation. Returns how much they recomputed.
-    pub async fn maintain(&mut self) -> Result<usize, String> {
+    pub(crate) async fn maintain(&mut self) -> Result<usize, String> {
         let mut work = 0;
         for m in &mut self.maintained {
             work += m
@@ -339,7 +339,7 @@ impl DerivationRunner {
     }
 
     /// Mark every key of `name` dirty, through the writer.
-    pub async fn recompute_all(
+    pub(crate) async fn recompute_all(
         &mut self,
         name: &str,
         range: Option<(Timestamp, Timestamp)>,
@@ -539,7 +539,7 @@ impl DerivationRunner {
     /// [`EVERY_LEVEL_EVERY`]): its dirty keys, then the waiting keys of the
     /// derivations that ran, then its per-event derivations. Returns how much
     /// work it did.
-    pub async fn pass(&mut self) -> Result<usize, String> {
+    pub(crate) async fn pass(&mut self) -> Result<usize, String> {
         let env = self.env();
         self.passes = self.passes.wrapping_add(1);
         let every_rank = self.passes % EVERY_LEVEL_EVERY == 0;
@@ -712,7 +712,7 @@ impl DerivationRunner {
 
     /// Run passes until one does no work, then bring maintained tables up to
     /// date.
-    pub async fn catch_up(&mut self) -> Result<(), String> {
+    pub(crate) async fn catch_up(&mut self) -> Result<(), String> {
         while self.pass().await? > 0 {}
         self.maintain().await?;
         Ok(())
@@ -720,7 +720,7 @@ impl DerivationRunner {
 
     /// Finish the current pass or maintenance step on shutdown, then release
     /// the writer handle. Already submitted batches keep their acknowledgments.
-    pub async fn run(
+    pub(crate) async fn run(
         mut self,
         wake: Arc<Notify>,
         idle: Duration,
@@ -751,7 +751,7 @@ impl DerivationRunner {
         self.end_runs().await
     }
 
-    pub async fn end_runs(&mut self) -> Result<(), String> {
+    pub(crate) async fn end_runs(&mut self) -> Result<(), String> {
         for run in self.runs.values() {
             runs::end(&mut self.read, *run)
                 .await
@@ -763,7 +763,7 @@ impl DerivationRunner {
     /// Compute `name` over its keys (optionally only keys touched by inputs in
     /// `range`) and compare with the stored outputs, writing nothing: the
     /// comparison for a derivation change.
-    pub async fn compare(
+    pub(crate) async fn compare(
         &mut self,
         name: &str,
         range: Option<(Timestamp, Timestamp)>,
@@ -879,15 +879,15 @@ fn ranks(catalog: &[Derivation]) -> BTreeMap<&'static str, u32> {
 mod comparison;
 mod counts;
 
-pub use comparison::{Change, Comparison};
-pub use counts::Counts;
+pub(crate) use comparison::{Change, Comparison};
+pub(crate) use counts::Counts;
 
 #[cfg(test)]
 mod tests;
 
 /// Every per-event derivation `sinexd` runs: the pure ones, plus screen text
 /// when a local OCR engine is installed (said once when it is not).
-pub fn per_event() -> Vec<Box<dyn AnyPerEvent>> {
+pub(crate) fn per_event() -> Vec<Box<dyn AnyPerEvent>> {
     let mut all = sinex_derivations::per_event();
     match crate::screen_text::engine() {
         Ok(engine) => all.push(Box::new(crate::screen_text::ScreenText { engine })),

@@ -37,7 +37,7 @@ pub(super) fn same_file(a: &ObservationFacts, b: &ObservationFacts) -> bool {
         && a.device == b.device
 }
 
-struct Delivery {
+struct PollDelivery {
     index: usize,
     acquired: Result<drivers::Acquired, drivers::DriverError>,
     ack: std::sync::mpsc::SyncSender<bool>,
@@ -151,7 +151,7 @@ pub(super) async fn read_shared(
     let worker_sealing = sealing.clone();
     let unlock = access.unlock.cloned();
     let cancelled = Arc::clone(&cancel.0);
-    let (send, mut receive) = mpsc::channel::<Delivery>(1);
+    let (send, mut receive) = mpsc::channel::<PollDelivery>(1);
     let worker = tokio::task::spawn_blocking(move || {
         let captured = stored_copy.is_none();
         let (blob, length) = match stored_copy {
@@ -224,7 +224,7 @@ pub(super) async fn read_shared(
             archive_sink,
             &mut |index, acquired| {
                 let (ack, answer) = std::sync::mpsc::sync_channel(0);
-                send.blocking_send(Delivery {
+                send.blocking_send(PollDelivery {
                     index,
                     acquired,
                     ack,

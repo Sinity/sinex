@@ -20,7 +20,7 @@ const PAGE: i64 = 1_000;
 const RETRY: Duration = Duration::from_secs(1);
 
 /// Something fed committed events in commit order.
-pub trait Consumer: Send + Sync {
+pub(crate) trait Consumer: Send + Sync {
     fn name(&self) -> &str;
 
     /// Whether the consumer reads events of this type. Events it does not
@@ -42,7 +42,7 @@ pub trait Consumer: Send + Sync {
 
 /// Run the reader until `stop` is set. `commits` changes whenever the writer
 /// commits a batch.
-pub async fn run(
+pub(crate) async fn run(
     mut conn: PgConnection,
     mut consumers: Vec<Box<dyn Consumer>>,
     mut commits: watch::Receiver<u64>,
@@ -106,7 +106,7 @@ pub async fn run(
 
 /// A table kept only to make reads fast, maintained from committed events:
 /// never by database triggers.
-pub trait ReadModel: Send + Sync {
+pub(crate) trait ReadModel: Send + Sync {
     fn name(&self) -> &'static str;
     fn wants(&self, event_type: &str) -> bool;
     /// Apply `events` inside the open transaction `tx`.
@@ -118,7 +118,7 @@ pub trait ReadModel: Send + Sync {
 }
 
 /// Every read model, in one list.
-pub fn read_models() -> Vec<Box<dyn ReadModel>> {
+pub(crate) fn read_models() -> Vec<Box<dyn ReadModel>> {
     vec![Box::new(SearchText)]
 }
 
@@ -150,7 +150,7 @@ impl ReadModel for SearchText {
 
 /// A read model fed by the reader: its tables and its position change in one
 /// transaction.
-pub struct ReadModelRunner(pub Box<dyn ReadModel>);
+pub(crate) struct ReadModelRunner(pub Box<dyn ReadModel>);
 
 impl Consumer for ReadModelRunner {
     fn name(&self) -> &str {

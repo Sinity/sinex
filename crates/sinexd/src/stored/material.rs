@@ -16,7 +16,7 @@ pub(crate) struct Opened {
     pub key: Option<DataKey>,
 }
 impl Opened {
-    pub fn records(&self) -> StoredRecords {
+    pub(crate) fn records(&self) -> StoredRecords {
         StoredRecords {
             blob: self.reference.blob.clone(),
             bytes: self.body.clone(),
@@ -57,7 +57,7 @@ pub(crate) struct MaterialOnDemand {
     opened: std::sync::OnceLock<Result<Arc<StoredReader>, String>>,
 }
 impl MaterialOnDemand {
-    pub async fn new(
+    pub(crate) async fn new(
         conn: &mut PgConnection,
         blobs: &Blobs,
         reference: MaterialRef,
@@ -79,7 +79,7 @@ impl MaterialOnDemand {
             opened: std::sync::OnceLock::new(),
         })
     }
-    pub fn sealed(&self) -> bool {
+    pub(crate) fn sealed(&self) -> bool {
         self.sealed
     }
     fn body(&self) -> std::io::Result<&Arc<StoredReader>> {

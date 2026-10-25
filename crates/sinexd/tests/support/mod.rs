@@ -6,7 +6,7 @@ async fn count(conn: &mut PgConnection, sql: &str) -> i64 {
 
 /// Events and visibility changes share positions, not row kinds. These fixtures
 /// keep the hot log; excision may leave gaps in its positions.
-pub async fn assert_commit_log(conn: &mut PgConnection) {
+pub(crate) async fn assert_commit_log(conn: &mut PgConnection) {
     let events = count(conn, "SELECT count(*) FROM core.events").await;
     let logged = count(
         conn,
@@ -59,7 +59,7 @@ pub async fn assert_commit_log(conn: &mut PgConnection) {
     );
 }
 
-pub async fn marker_count(conn: &mut PgConnection) -> i64 {
+pub(crate) async fn marker_count(conn: &mut PgConnection) -> i64 {
     count(
         conn,
         "SELECT count(*) FROM core.commit_log WHERE event_id IS NULL",

@@ -16,7 +16,7 @@ use time::OffsetDateTime;
 /// The daily brief for one logical day: data quality first, then what the day's
 /// metrics show, departures from each metric's recent level, the current
 /// associations, and the machine.
-pub async fn brief(
+pub(crate) async fn brief(
     conn: &mut PgConnection,
     settings: &Settings,
     day: jiff::civil::Date,
@@ -216,7 +216,7 @@ pub async fn brief(
 
 /// Why a metric's cell for a day is what it is: its state and the coverage
 /// each of its sources had.
-pub async fn why_not(
+pub(crate) async fn why_not(
     conn: &mut PgConnection,
     settings: &Settings,
     def: &MetricDef,

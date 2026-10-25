@@ -21,11 +21,11 @@ pub(crate) struct Token {
 }
 
 impl Token {
-    pub fn is_word(&self, word: &str) -> bool {
+    pub(crate) fn is_word(&self, word: &str) -> bool {
         self.kind == Kind::Word && self.text.eq_ignore_ascii_case(word)
     }
 
-    pub fn is_symbol(&self, symbol: &str) -> bool {
+    pub(crate) fn is_symbol(&self, symbol: &str) -> bool {
         self.kind == Kind::Symbol && self.text == symbol
     }
 }
