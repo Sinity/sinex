@@ -109,7 +109,7 @@ async fn standin_with_refusal(
 /// A batch a stop left unacknowledged before its position was saved is sent
 /// again on the next start, with its bytes uploaded in chunks; a frame larger
 /// than one message travels indirectly.
-#[tokio::test(flavor = "multi_thread")]
+#[devkit::test(multi_thread)]
 async fn an_unacknowledged_batch_is_resent_with_uploaded_bytes() {
     let nats = devkit::nats::test_nats().unwrap();
     let subjects = Subjects::new(nats.prefix());
@@ -224,7 +224,7 @@ async fn an_unacknowledged_batch_is_resent_with_uploaded_bytes() {
 }
 
 /// Produce a Hyprland spool against the stand-in: material first, once.
-#[tokio::test(flavor = "multi_thread")]
+#[devkit::test(multi_thread)]
 async fn a_spool_is_produced_once_material_first() {
     use crate::drivers::live_stream::{Rotation, SpoolWriter, capture_lines};
     use crate::sources::hyprland;
@@ -326,7 +326,7 @@ fn assert_chunks(frames: &[Ingress], expected: &[u8]) {
     assert_eq!(bytes, expected);
 }
 
-#[tokio::test(flavor = "multi_thread")]
+#[devkit::test(multi_thread)]
 async fn streamed_upload_preserves_empty_and_chunk_boundary_materials() {
     let nats = devkit::nats::test_nats().unwrap();
     let subjects = Subjects::new(nats.prefix());
@@ -362,7 +362,7 @@ async fn streamed_upload_preserves_empty_and_chunk_boundary_materials() {
     }
 }
 
-#[tokio::test(flavor = "multi_thread")]
+#[devkit::test(multi_thread)]
 async fn damaged_producer_material_sends_no_chunks() {
     let nats = devkit::nats::test_nats().unwrap();
     let subjects = Subjects::new(nats.prefix());

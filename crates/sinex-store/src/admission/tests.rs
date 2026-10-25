@@ -120,7 +120,7 @@ fn reading() -> impl Strategy<Value = (u8, u8, i64)> {
     (0u8..4, 0u8..3, 0i64..8)
 }
 
-#[tokio::test(flavor = "multi_thread")]
+#[devkit::test(multi_thread)]
 async fn newer_replaces_older_suppresses_one_live_per_key() {
     // Property cases block on this runtime from proptest's thread, so the
     // test needs a multi-threaded runtime and takes its database directly.

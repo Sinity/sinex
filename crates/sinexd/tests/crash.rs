@@ -148,6 +148,46 @@ impl Target {
         self.sinexd(&["admin", "excise", event])
     }
 
+    /// The daemon on a test NATS server. No token files: the API serves no
+    /// level, which these tests do not use.
+    fn daemon(&self, inputs: &Inputs, nats: &devkit::nats::TestNats) -> Command {
+        let tokens = inputs.dir.join("tokens");
+        std::fs::create_dir_all(&tokens).unwrap();
+        let mut c = self.sinexd(&[
+            "run",
+            "--nats",
+            nats.url(),
+            "--subjects",
+            nats.prefix(),
+            "--host",
+            HOST,
+        ]);
+        c.arg("--tokens")
+            .arg(&tokens)
+            .arg("--socket")
+            .arg(inputs.dir.join("sinexd.sock"));
+        c
+    }
+
+    /// The names of the blob files in the content store.
+    fn stored_files(&self) -> std::collections::BTreeSet<String> {
+        let mut names = std::collections::BTreeSet::new();
+        let Ok(shards) = std::fs::read_dir(self.store.join("blobs")) else {
+            return names;
+        };
+        for shard in shards.map(Result::unwrap) {
+            if shard.file_name() == "tmp" {
+                continue;
+            }
+            for file in std::fs::read_dir(shard.path()).unwrap().map(Result::unwrap) {
+                let file_name = file.file_name().into_string().unwrap();
+                let hex = file_name.strip_suffix(".zst").unwrap();
+                names.insert(format!("blake3:{hex}"));
+            }
+        }
+        names
+    }
+
     async fn connect(&self) -> PgConnection {
         PgConnection::connect(&self.url).await.unwrap()
     }
@@ -593,23 +633,7 @@ async fn publisher_survives(ready: Option<&str>, lock_sql: &str) {
     let target = Target::new(&inputs);
     finish(&mut target.backfill(&inputs));
     let nats = devkit::nats::test_nats().expect("run through `xtask test`");
-    // No token files: the API serves no level, which this test does not use.
-    let tokens = inputs.dir.join("tokens");
-    std::fs::create_dir_all(&tokens).unwrap();
-    let socket = inputs.dir.join("sinexd.sock");
-    let run = || {
-        let mut c = target.sinexd(&[
-            "run",
-            "--nats",
-            nats.url(),
-            "--subjects",
-            nats.prefix(),
-            "--host",
-            HOST,
-        ]);
-        c.arg("--tokens").arg(&tokens).arg("--socket").arg(&socket);
-        c
-    };
+    let run = || target.daemon(&inputs, &nats);
     kill_at(&target, &mut run(), ready, lock_sql).await;
 
     let mut daemon = run().spawn().unwrap();
@@ -704,4 +728,87 @@ publisher_steps! {
     publisher_killed_between_pages:
         Some("SELECT EXISTS (SELECT 1 FROM core.consumer_positions WHERE consumer = 'publisher')"),
         "SELECT 1 FROM core.consumer_positions WHERE consumer = 'publisher' FOR UPDATE".to_string();
+}
+
+/// Kill a backfill after it stored a material's bytes but before the
+/// admission that adds their row commits. The next daemon start deletes the
+/// file no row names, and a backfill run afterwards stores the bytes again and
+/// makes the readings an uninterrupted run makes.
+#[devkit::test]
+async fn a_daemon_start_deletes_bytes_an_uncommitted_admission_left() {
+    let inputs = Inputs::first_transaction();
+    let expected = {
+        let reference = Target::new(&inputs);
+        finish(&mut reference.backfill(&inputs));
+        state(&mut reference.connect().await).await
+    };
+
+    let target = Target::new(&inputs);
+    kill_at(
+        &target,
+        &mut target.backfill(&inputs),
+        None,
+        &lock("raw.inputs"),
+    )
+    .await;
+    let mut c = target.connect().await;
+    let rows: std::collections::BTreeSet<String> =
+        sqlx::query_scalar("SELECT hash FROM core.blobs")
+            .fetch_all(&mut c)
+            .await
+            .unwrap()
+            .into_iter()
+            .collect();
+    let without_rows: Vec<String> = target
+        .stored_files()
+        .difference(&rows)
+        .cloned()
+        .collect();
+    assert!(
+        !without_rows.is_empty(),
+        "the killed backfill stored bytes it never admitted"
+    );
+
+    let nats = devkit::nats::test_nats().expect("run through `xtask test`");
+    let mut daemon = target.daemon(&inputs, &nats).spawn().unwrap();
+    let deadline = Instant::now() + WAIT_LIMIT;
+    while without_rows
+        .iter()
+        .any(|name| target.stored_files().contains(name))
+    {
+        if let Some(status) = daemon.try_wait().unwrap() {
+            let output = daemon.wait_with_output().unwrap();
+            panic!(
+                "the daemon stopped ({status}):\n{}\n{}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr),
+            );
+        }
+        assert!(
+            Instant::now() < deadline,
+            "the daemon never deleted {without_rows:?}"
+        );
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    daemon.kill().unwrap();
+    daemon.wait().unwrap();
+    assert!(
+        rows.iter().all(|name| target.stored_files().contains(name)),
+        "every file a row names stays"
+    );
+
+    consistent(&target).await;
+    finish(&mut target.backfill(&inputs));
+    consistent(&target).await;
+    // The daemon's derivations may have added events of their own; every
+    // reading the uninterrupted backfill made is live, once.
+    let actual = state(&mut target.connect().await).await;
+    let missing: Vec<&String> = expected
+        .live
+        .iter()
+        .filter(|(key, count)| actual.live.get(*key) != Some(*count))
+        .map(|(key, _)| key)
+        .take(5)
+        .collect();
+    assert!(missing.is_empty(), "readings differ after the restart: {missing:#?}");
 }

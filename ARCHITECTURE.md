@@ -25,7 +25,10 @@ the same transaction as its first events and the cursor. Only excision deletes
 bytes: it marks a blob `deleting` once nothing cites it, and the writer deletes
 the file under that row's lock, then the row. Deletion and admission both run
 in the writer, and the writer checks that every file a batch cites is present
-just before admitting it, so a batch never cites a file that is gone.
+just before admitting it, so a batch never cites a file that is gone. A
+process that stops between writing bytes and admitting them leaves a file with
+no row; the daemon deletes such files when it starts, holding the writer, before
+any source reads.
 
 A failed admission is retried from the material the reader holds: the append,
 directory, SQLite-row and IMAP readers keep their newest material in memory

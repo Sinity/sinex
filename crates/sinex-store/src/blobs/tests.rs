@@ -156,3 +156,48 @@ fn scoped_plain_seek_owns_verified_bytes_and_rechecks_cancellation_on_cached_rea
     drop(reader);
     std::fs::remove_dir_all(dir).unwrap();
 }
+
+#[devkit::test]
+async fn files_without_a_row_are_deleted_and_the_rest_kept(db: devkit::pg::TestDatabase) {
+    use sqlx::Connection;
+    let mut conn = sqlx::PgConnection::connect(&db.url(None)).await.unwrap();
+    let dir = std::env::temp_dir().join(format!("sinex-without-rows-{}", uuid::Uuid::now_v7()));
+    let blobs = Blobs::open(&dir).unwrap();
+    // More names than one query checks, so the listing spans several queries.
+    let mut with_rows = Vec::new();
+    let mut without_rows = Vec::new();
+    for n in 0..(NAMES_PER_QUERY + 200) {
+        let name = blobs.put(format!("bytes {n}").as_bytes()).unwrap();
+        if n % 3 == 0 {
+            without_rows.push(name);
+        } else {
+            with_rows.push(name);
+        }
+    }
+    sqlx::query("INSERT INTO core.blobs (hash, size, status) SELECT unnest($1::text[]), 1, 'present'")
+        .bind(&with_rows)
+        .execute(&mut conn)
+        .await
+        .unwrap();
+    let stray = dir.join("blobs").join("notes.txt");
+    std::fs::write(&stray, b"").unwrap();
+
+    let mut found = delete_files_without_rows(&mut conn, &blobs).await.unwrap();
+    found.deleted.sort();
+    without_rows.sort();
+    assert_eq!(found.deleted, without_rows);
+    assert_eq!(found.not_blobs.len(), 1);
+    assert!(found.not_blobs[0].contains("notes.txt"));
+    assert!(stray.exists());
+    for name in &with_rows {
+        assert!(blobs.contains(name).unwrap(), "{name} has a row and stays");
+    }
+    for name in &without_rows {
+        assert!(!blobs.contains(name).unwrap(), "{name} has no row and goes");
+    }
+
+    // A second run finds nothing more.
+    let again = delete_files_without_rows(&mut conn, &blobs).await.unwrap();
+    assert!(again.deleted.is_empty());
+    std::fs::remove_dir_all(dir).unwrap();
+}
