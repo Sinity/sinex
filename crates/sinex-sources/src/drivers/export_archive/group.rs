@@ -3,7 +3,7 @@ use super::{Container, DriverError, ExportArchive, Framing, file_name, io, is_ta
 use crate::drivers::{Acquired, MaterialSink, NewMaterial, StoredBytes};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
-use sinex_model::{Class, MaterialId, MaterialRef, ObservationFacts, RevisionChange};
+use sinex_model::{Class, MaterialId, ObservationFacts, RevisionChange};
 use std::io::{BufRead, BufReader, Read, Seek};
 use std::sync::{
     Arc,
@@ -38,9 +38,8 @@ pub struct Cursor {
     pub part_index: u32,
     pub original_material: Option<MaterialId>,
     pub done: bool,
-    pub part_member: Option<usize>,
+    /// The record of `member` the current part starts at.
     pub part_start: usize,
-    pub part_end: usize,
 }
 
 impl Cursor {
@@ -51,13 +50,6 @@ impl Cursor {
         serde_json::from_value(value.clone())
             .map(Some)
             .map_err(|e| DriverError::Cursor(e.to_string()))
-    }
-
-    /// A partly admitted record part finishes from its stored bytes and identity.
-    pub fn unfinished_part(&self) -> Option<MaterialId> {
-        (!self.done && self.part_member == Some(self.member) && self.record < self.part_end)
-            .then_some(self.material)
-            .flatten()
     }
 
     pub fn same_file(&self, facts: &ObservationFacts) -> bool {
@@ -73,57 +65,6 @@ pub struct Route {
     pub class: Class,
     pub driver: ExportArchive,
     pub cursor: Value,
-    pub unfinished: Option<UnfinishedPart>,
-}
-
-/// The current material loaded by its durable ID. Metadata stays in the material row,
-/// not duplicated in every cursor update. Its body is one part or one oversized record.
-pub struct UnfinishedPart {
-    material: MaterialRef,
-    bytes: Vec<u8>,
-    records: Vec<(usize, usize)>,
-}
-
-impl UnfinishedPart {
-    pub fn new(
-        material: MaterialRef,
-        bytes: Vec<u8>,
-        source: &crate::SourceSpec,
-    ) -> Result<Self, DriverError> {
-        if material.parser != source.parser || material.parser_version != source.parser_version {
-            return Err(DriverError::Cursor(
-                "the unfinished archive part was read by another parser version; replay it first"
-                    .into(),
-            ));
-        }
-        if sinex_model::MaterialRole::of(&material.manifest)
-            .map_err(|e| DriverError::InvalidMaterial(e.to_string()))?
-            != sinex_model::MaterialRole::Records
-            || material.manifest["format_version"] != VERSION
-            || material.length != bytes.len() as u64
-        {
-            return Err(DriverError::Cursor(
-                "unfinished archive part has inconsistent metadata".into(),
-            ));
-        }
-        let records: Vec<(usize, usize)> =
-            serde_json::from_value(material.manifest["records"].clone())
-                .map_err(|e| DriverError::Cursor(e.to_string()))?;
-        let mut through = 0;
-        for &(start, end) in &records {
-            if start < through || start >= end || end > bytes.len() {
-                return Err(DriverError::Cursor(
-                    "unfinished archive part has invalid record ranges".into(),
-                ));
-            }
-            through = end;
-        }
-        Ok(Self {
-            material,
-            bytes,
-            records,
-        })
-    }
 }
 
 #[derive(Debug, Default)]
@@ -251,9 +192,7 @@ pub fn read_input(
                 part_index: 0,
                 original_material: None,
                 done: false,
-                part_member: None,
                 part_start: 0,
-                part_end: 0,
             }
         };
         cursor.size = context.facts.size.unwrap_or(0);
@@ -270,13 +209,12 @@ pub fn read_input(
             driver: route.driver,
             cursor,
             active: true,
-            unfinished: if continuing { route.unfinished } else { None },
         });
         let index = context.routes.len() - 1;
+        // A continuing route reads on from its cursor: records of a part only
+        // partly admitted are read again from the stored archive into a new part.
         if !continuing {
             context.original(index, revision)?;
-        } else {
-            context.resume(index)?;
         }
     }
     let path = context.routes[0].driver.path.clone();
@@ -327,7 +265,6 @@ struct State {
     driver: ExportArchive,
     cursor: Cursor,
     active: bool,
-    unfinished: Option<UnfinishedPart>,
 }
 struct Context<'a, 'b> {
     capture: Capture,
@@ -340,73 +277,6 @@ struct Context<'a, 'b> {
 }
 
 impl Context<'_, '_> {
-    fn resume(&mut self, index: usize) -> Result<(), DriverError> {
-        let state = &mut self.routes[index];
-        let Some(id) = state.cursor.unfinished_part() else {
-            return Ok(());
-        };
-        let unfinished = state.unfinished.take().ok_or_else(|| {
-            DriverError::Cursor("the partly admitted archive material was not loaded".into())
-        })?;
-        if unfinished.material.id != id
-            || unfinished.material.part_index != state.cursor.part_index
-            || unfinished.records.len()
-                != state
-                    .cursor
-                    .part_end
-                    .saturating_sub(state.cursor.part_start)
-            || state.cursor.record < state.cursor.part_start
-            || unfinished.material.manifest["framing"] != state.driver.framing.name()
-        {
-            return Err(DriverError::Cursor(
-                "the unfinished archive part does not match its cursor".into(),
-            ));
-        }
-        let skip = state.cursor.record - state.cursor.part_start;
-        let mut after = state.cursor.clone();
-        after.record = after.part_end;
-        let ends: Vec<usize> = unfinished.records.iter().map(|&(_, end)| end).collect();
-        let cursor_base = after.clone();
-        let acquired = Acquired {
-            input: state.driver.input(),
-            observation: ObservationFacts {
-                changed: false,
-                ..self.facts.clone()
-            },
-            revision: RevisionChange::Same,
-            material: Some(NewMaterial {
-                id,
-                bytes: unfinished.bytes,
-                stored: Some(StoredBytes::Blob {
-                    name: unfinished.material.blob.clone(),
-                    length: unfinished.material.length,
-                }),
-                records: unfinished.records[skip..].to_vec(),
-                part_index: unfinished.material.part_index,
-                previous_part: unfinished.material.previous_part,
-                reading_order: crate::drivers::reading_order(&unfinished.material.manifest),
-                manifest: unfinished.material.manifest,
-                cursor_at: Box::new({
-                    let cursor = move |end| {
-                        let mut cursor = cursor_base.clone();
-                        cursor.record = cursor.part_start + ends.partition_point(|&at| at <= end);
-                        json!(cursor)
-                    };
-                    move |end| Ok(cursor(end))
-                }),
-                aligned: false,
-                vanished: Vec::new(),
-            }),
-            cursor_unchanged: Value::Null,
-        };
-        if (self.emit)(index, Ok(acquired))? {
-            state.cursor = after;
-        } else {
-            state.active = false;
-        }
-        Ok(())
-    }
-
     fn original(&mut self, index: usize, revision: RevisionChange) -> Result<(), DriverError> {
         let state = &mut self.routes[index];
         let id = MaterialId::new();
@@ -607,9 +477,7 @@ impl Context<'_, '_> {
             after.part_index = part_index;
             after.member = member;
             after.record = start + ranges.len();
-            after.part_member = Some(member);
             after.part_start = start + skip;
-            after.part_end = after.record;
             let ends: Vec<usize> = records.iter().map(|&(_, end)| end).collect();
             let cursor_base = after.clone();
             let path = if self.capture.container == Container::Gzip {

@@ -4,7 +4,7 @@ use crate::one_shot::Sink;
 use crate::writer::WriterHandle;
 use serde_json::Value;
 use sinex_model::{Class, ObservationFacts, RunId};
-use sinex_sources::drivers::export_archive::group::{self, Cursor, Route, UnfinishedPart};
+use sinex_sources::drivers::export_archive::group::{self, Cursor, Route};
 use sinex_sources::{Binding, InputKind, Reader, Source, drivers};
 use sinex_store::{Blobs, positions};
 use sqlx::PgConnection;
@@ -362,6 +362,8 @@ async fn read_archive(
             let continuing = saved
                 .as_ref()
                 .is_some_and(|c| c.same_file(&archive.facts) && c.capture.class == archive.class);
+            // Reading a stored sealed archive needs the key of the material
+            // that holds it.
             if continuing && let Some(sealing) = &sealing {
                 let unlock = access
                     .unlock
@@ -372,54 +374,11 @@ async fn read_archive(
                     .ok_or("sealed archive cursor has no original material")?;
                 let key = unlock.material_key(conn, original).await?;
                 sealing.restore_key(cursor.capture.blob.clone(), key)?;
-                if let Some(material) = cursor.material {
-                    let reference = sinex_store::material_bytes::reference(conn, material)
-                        .await
-                        .map_err(|e| e.to_string())?
-                        .ok_or("sealed cursor material is missing")?;
-                    let key = unlock.material_key(conn, material).await?;
-                    sealing.restore_current(material, reference.blob, key)?;
-                }
             }
-            let unfinished = if let Some(id) = saved
-                .as_ref()
-                .filter(|_| continuing)
-                .and_then(Cursor::unfinished_part)
-            {
-                let material = sinex_store::material_bytes::reference(conn, id)
-                    .await
-                    .map_err(|e| e.to_string())?
-                    .ok_or_else(|| format!("unfinished archive part {id} is missing"))?;
-                let bytes = if let Some(sealing) = &sealing {
-                    let key = sealing.key(&material.blob)?;
-                    let unlock = access.unlock.expect("scoped key loading").clone();
-                    let mut reader = blobs
-                        .read_sealed(
-                            &material.blob,
-                            Some(material.length),
-                            &key,
-                            crate::sealed_access::read_limits(material.length)?,
-                            move || unlock.check().map_err(|e| std::io::Error::other(e).into()),
-                        )
-                        .map_err(|e| e.to_string())?;
-                    let mut bytes = Vec::new();
-                    reader.read_to_end(&mut bytes).map_err(|e| e.to_string())?;
-                    bytes
-                } else {
-                    blobs.read(&material.blob).map_err(|e| e.to_string())?
-                };
-                Some(
-                    UnfinishedPart::new(material, bytes, b.source.spec())
-                        .map_err(|e| e.to_string())?,
-                )
-            } else {
-                None
-            };
             Ok::<_, String>(Route {
                 class: archive.class,
                 driver: b.reader.export_archive().expect("archive group").clone(),
                 cursor,
-                unfinished,
             })
         }
         .await;

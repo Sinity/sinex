@@ -352,7 +352,6 @@ async fn sealed_archive_restart_replay_and_class_changes_preserve_exact_material
             .unwrap();
         let cursor = Cursor::parse(&checkpoint.0).unwrap().unwrap();
         assert_eq!(cursor.record, 2);
-        assert!(cursor.unfinished_part().is_some());
         assert!(checkpoint.1.is_null() || sinex_store::sealed::is_sealed(&checkpoint.1));
         let partial = cursor.material.unwrap();
         let original = cursor.original_material.unwrap();
@@ -423,7 +422,8 @@ async fn sealed_archive_restart_replay_and_class_changes_preserve_exact_material
         .unwrap()
         .unwrap();
         assert!(final_cursor.done);
-        assert_eq!(final_cursor.material, Some(partial));
+        // The rest of the partly admitted part was read again into a new part.
+        assert_ne!(final_cursor.material, Some(partial));
         assert_eq!(final_cursor.original_material, Some(original));
         let before = live_events(&mut ctx.read_conn).await;
         assert_eq!(before.len(), 40);
@@ -431,8 +431,12 @@ async fn sealed_archive_restart_replay_and_class_changes_preserve_exact_material
             .fetch_all(&mut ctx.read_conn)
             .await
             .unwrap();
-        assert_eq!(keys.len(), 2);
-        assert_ne!(keys[0], keys[1]);
+        assert_eq!(keys.len(), 3);
+        assert_eq!(
+            keys.iter().collect::<std::collections::BTreeSet<_>>().len(),
+            3,
+            "every material has its own key"
+        );
         assert!(before.iter().all(|e| sinex_store::sealed::is_sealed(&e.2)));
         let scope = crate::replay::Scope {
             binding: Some(name.clone()),

@@ -60,6 +60,8 @@ driver a binding uses.
 - **Export archives.** An archive is stored once and read in one forward pass
   for every compatible binding (same host and class); each binding keeps its
   own record parts and cursor. A sealed archive uses one key per binding.
+  After a restart the stored archive is read again from each cursor; the
+  rest of a part only partly admitted becomes a new part.
 
 ### Typed payloads
 
