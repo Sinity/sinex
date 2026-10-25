@@ -16,15 +16,30 @@ result = "exit"
 timeout_seconds = 1800
 scratch = "nvme"
 cache = "none"
+cap = "cargo"
+unit_properties = ["MemoryHigh=8G"]
 
 [operations.test]
 description = "All Rust tests under nextest; each database test clones the schema template"
 exec = ["cargo", "run", "--locked", "--quiet", "-p", "xtask", "--", "test"]
 pool = "bulk"
 result = "exit"
-timeout_seconds = 3600
+timeout_seconds = 900
 scratch = "tmpfs"
 cache = "none"
+cap = "cargo"
+unit_properties = ["MemoryHigh=8G"]
+
+[operations.baseline]
+description = "All Rust tests on the master-baseline checkout; the host queues it on each new master head"
+exec = ["cargo", "run", "--locked", "--quiet", "-p", "xtask", "--", "test"]
+pool = "bulk"
+result = "exit"
+timeout_seconds = 900
+scratch = "tmpfs"
+cache = "none"
+cap = "cargo"
+unit_properties = ["MemoryHigh=8G"]
 
 [operations.focused]
 description = "Selected package/tests under nextest; pass -p PACKAGE and filters; full suites use bulk test"
@@ -35,6 +50,8 @@ result = "exit"
 timeout_seconds = 900
 scratch = "tmpfs"
 cache = "none"
+cap = "cargo"
+unit_properties = ["MemoryHigh=8G"]
 
 [operations.package]
 description = "Build the Nix package (runs the tests that need no database inside the builder)"
@@ -44,6 +61,7 @@ result = "exit"
 timeout_seconds = 2400
 scratch = "nvme"
 cache = "none"
+cap = "cargo"
 
 [operations.fmt]
 description = "Format the workspace"
@@ -83,6 +101,8 @@ result = "exit"
 timeout_seconds = 14400
 scratch = "nvme"
 cache = "none"
+cap = "cargo"
+max_io_pressure = 5
 
 [operations.compile]
 description = "Selected package or target compilation against the schema database"
@@ -93,3 +113,5 @@ result = "exit"
 timeout_seconds = 1800
 scratch = "nvme"
 cache = "none"
+cap = "cargo"
+unit_properties = ["MemoryHigh=8G"]

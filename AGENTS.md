@@ -51,25 +51,27 @@ schema change gives a new one and only the query-checking crates recompile.
 
 Optimize for fast integration.
 
-- While editing, run selected tests with
-  `agentctl job start sinex focused -- -p <package> -E 'test(<name>)'`
-  in the normal queue. For selected compilation use `agentctl job start sinex
-  compile -- -p <package> [--tests]`; it sets the schema database and runs
-  `cargo check --locked` without adding workspace selection. Package selection
-  limits the build; a name filter alone
-  still builds the workspace. Full suites use the bulk `test` operation.
+- Every cargo build or test runs as an AgentCTL job (`agentctl project
+  operations sinex`). While editing, run selected tests with
+  `agentctl job start sinex focused --workspace <worktree> -- -p <package>
+  -E 'test(<name>)'`, and selected compilation with `compile -- -p <package>
+  [--tests]`, which sets the schema database and runs `cargo check --locked`
+  without adding workspace selection. Package selection limits the build; a
+  name filter alone still builds the workspace. `fmt` formats; `check` runs
+  fmt, boundaries and clippy against the schema database; `test` runs every
+  Rust test under nextest; `package` is the Nix build.
+- Start a job, then wait for it in the background with `agentctl job wait
+  <id>` and keep working. A failed wait prints the failing tests and the
+  `xtask history` pointer.
+- Before treating a failure as yours, read the newest `sinex:baseline` job
+  (`agentctl job list --project sinex`): the host runs `test` on each new
+  master head.
 - The pre-push hook (`.githooks/pre-push`) runs `cargo fmt --check` and
-  `xtask boundaries` (seconds). Open a PR when ready and follow the forge's
-  current check and review rules.
-- Heavier work runs as AgentCTL operations (`agentctl project operations
-  sinex`): `check` (fmt, boundaries, clippy against the schema database),
-  `test` (all Rust tests under nextest) and `package` (Nix build). Run
-  them on batches of merged work, not before every merge, and fix what they
-  find afterwards.
-- Give each writable Cargo target directory one active build owner. Coordinate
-  sequential warm-cache reuse; concurrent worktrees use separate targets.
-- Merge small PRs often. Rebase before pushing; do not keep long-lived
-  branches.
+  `xtask boundaries` (seconds).
+- Land a few large, coherent PRs. Rebase onto `origin/master` before
+  pushing; `check` and `test` must pass on the exact head before it merges.
+  Master has no branch protection, so merge with `gh pr merge --squash
+  --match-head-commit <sha>` once they pass.
 - Report what you ran and what you did not. A merge is not evidence of testing.
 - Keep the loop fast: compare build, setup and test times separately. When a
   run slows down, inspect its slow tests, resource waits and cleanup before
