@@ -28,7 +28,7 @@ impl StoredReader {
     }
     pub fn records(
         &self,
-        manifest: &serde_json::Value,
+        manifest: &sinex_model::Manifest,
         framer: Framer,
     ) -> Result<Vec<(usize, usize)>, String> {
         let mut reader = self.reader.lock().map_err(|_| "stored reader poisoned")?;

@@ -11,7 +11,6 @@ use std::sync::{
     atomic::{AtomicBool, AtomicU64, Ordering},
 };
 
-const VERSION: u8 = 1;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Capture {
@@ -300,8 +299,8 @@ impl Context<'_, '_> {
         state.cursor.material = Some(id);
         state.cursor.original_material = Some(id);
         let after = json!(state.cursor);
-        let manifest = json!({"role": "original-archive", "format_version": VERSION,
-            "path": state.driver.path, "host": state.driver.host, "container": self.capture.container, "class": self.capture.class});
+        let manifest = sinex_model::Manifest::from_json(json!({"role": "original-archive",
+            "path": state.driver.path, "host": state.driver.host, "container": self.capture.container, "class": self.capture.class}));
         let acquired = Acquired {
             input: state.driver.input(),
             observation: self.facts.clone(),
@@ -505,10 +504,10 @@ impl Context<'_, '_> {
             } else {
                 name.to_owned()
             };
-            let manifest = json!({"role": "records", "format_version": VERSION, "container": "plain",
+            let manifest = sinex_model::Manifest::from_json(json!({"role": "records",
                 "source_container": self.capture.container, "path": state.driver.path, "host": state.driver.host,
                 "framing": state.driver.framing.name(), "records": records, "order_base": after.capture.reading_order_base.saturating_add(i64::try_from(after.order_offset.saturating_add(part_offset)).unwrap_or(i64::MAX)),
-                "members": [{"path": path, "stream_offset": 0, "length": bytes.len(), "record_start": after.part_start}]});
+                "members": [{"path": path, "stream_offset": 0, "length": bytes.len(), "record_start": after.part_start}]}));
             let acquired = Acquired {
                 input: state.driver.input(),
                 observation: ObservationFacts {

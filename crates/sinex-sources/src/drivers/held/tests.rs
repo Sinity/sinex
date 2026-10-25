@@ -110,6 +110,6 @@ fn a_restart_inside_a_material_reads_on_from_the_file() {
     let next = next.material.unwrap();
     assert_ne!(next.id, m.id);
     assert_eq!(next.previous_part, Some(m.id));
-    assert_eq!(next.manifest["file_offset"], 4);
+    assert_eq!(next.manifest.file_offset, Some(4));
     assert_eq!(next.records, vec![(0, 4), (4, 10)]);
 }

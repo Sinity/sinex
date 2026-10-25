@@ -79,7 +79,7 @@ fn a_restart_with_rebuilt_memory_stores_nothing_new() {
         json!([2]),
         "the running row travels in the cursor"
     );
-    assert!(m.manifest["read_at_ns"].as_i64().is_some());
+    assert!(m.manifest.read_at_ns.is_some());
 
     // A new process: the state comes back from the stored part.
     let mut rebuilt = RowState::default();

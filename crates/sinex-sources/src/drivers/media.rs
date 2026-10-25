@@ -86,9 +86,13 @@ impl Media {
             &std::fs::read(self.spool.join(format!("{stem}.json"))).map_err(io)?,
         )
         .map_err(|e| DriverError::Cursor(format!("segment sidecar {stem}.json: {e}")))?;
-        let mut manifest = sidecar;
-        manifest["file"] = json!(path.file_name().and_then(|n| n.to_str()));
-        manifest["read_at_ns"] = json!(i64::try_from(now.unix_ns()).unwrap_or(i64::MAX));
+        let mut manifest: sinex_model::Manifest = serde_json::from_value(sidecar)
+            .map_err(|e| DriverError::Cursor(format!("segment sidecar {stem}.json: {e}")))?;
+        manifest.details.insert(
+            "file".into(),
+            json!(path.file_name().and_then(|n| n.to_str())),
+        );
+        manifest.read_at_ns = Some(i64::try_from(now.unix_ns()).unwrap_or(i64::MAX));
         let id = MaterialId::new();
         let part_index = if previous.material.is_some() {
             previous.part_index + 1

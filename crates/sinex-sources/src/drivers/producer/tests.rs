@@ -140,7 +140,7 @@ async fn an_unacknowledged_batch_is_resent_with_uploaded_bytes() {
                 parser_version: 1,
                 part_index: 0,
                 previous_part: None,
-                manifest: json!({}),
+                manifest: sinex_model::Manifest::from_json(json!({})),
             }),
         },
         Ingress::Events {

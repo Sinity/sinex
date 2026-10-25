@@ -493,14 +493,14 @@ impl LibraryScan {
             });
         }
         let read_at = i64::try_from(now.unix_ns()).unwrap_or(i64::MAX);
-        let manifest = json!({
+        let manifest = sinex_model::Manifest::from_json(json!({
             "path": root,
             "host": self.host,
             "media_type": "application/x-sinex-library-scan",
             "keep_bytes": self.keep_bytes,
             "walk_complete": walk_done,
             "read_at_ns": read_at,
-        });
+        }));
         let id = MaterialId::new();
         let part_index = if previous.material.is_some() {
             previous.part_index + 1
@@ -841,8 +841,13 @@ fn request_bytes(records: &[LibraryRecord]) -> (Vec<u8>, Vec<(usize, usize)>) {
 }
 
 /// The manifest of a request material: who wrote it and when.
-fn request_manifest(actor: &str, host: &str, at: Timestamp, action: &str) -> Value {
-    json!({
+fn request_manifest(
+    actor: &str,
+    host: &str,
+    at: Timestamp,
+    action: &str,
+) -> sinex_model::Manifest {
+    sinex_model::Manifest::from_json(json!({
         "path": "library",
         "host": host,
         "media_type": "application/x-sinex-library-request",
@@ -850,7 +855,7 @@ fn request_manifest(actor: &str, host: &str, at: Timestamp, action: &str) -> Val
         "action": action,
         "written_at_ns": at.unix_ns().to_string(),
         "read_at_ns": i64::try_from(at.unix_ns()).unwrap_or(i64::MAX),
-    })
+    }))
 }
 
 /// Payload bytes stay the registered library shape. A request's copy
@@ -889,12 +894,14 @@ impl Parser for RequestParser {
     ) -> Result<(Vec<RequestPayload>, ()), RecordError> {
         let by = context
             .manifest
+            .details
             .get("actor")
             .and_then(Value::as_str)
             .ok_or_else(|| RecordError::new("library request manifest has no actor"))?
             .to_owned();
         let at = context
             .manifest
+            .details
             .get("written_at_ns")
             .and_then(Value::as_str)
             .and_then(|s| s.parse::<i128>().ok())
@@ -921,7 +928,7 @@ impl Parser for RequestParser {
             Line::View(x) => LibraryRecord::View(x),
             Line::Dismissal(x) => LibraryRecord::Dismissal(x),
         };
-        let citation = match context.manifest.get("owned_blobs") {
+        let citation = match context.manifest.details.get("owned_blobs") {
             None => None,
             Some(facts) => {
                 let facts: Vec<sinex_model::OwnedBlob> = serde_json::from_value(facts.clone())

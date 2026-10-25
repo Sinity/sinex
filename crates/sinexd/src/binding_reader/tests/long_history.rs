@@ -146,11 +146,11 @@ async fn a_restarted_directory_reader_stores_nothing_unchanged_and_sees_old_remo
     std::fs::remove_file(root.join("000000.md")).unwrap();
     let acquired = polled(&mut restarted).poll(&cursor).unwrap();
     let material = acquired.material.expect("the removal is recorded");
-    let members = material.manifest["members"].as_array().unwrap();
+    let members = &material.manifest.members;
     let removed: Vec<&str> = members
         .iter()
-        .filter(|member| member.get("removed_at_ns").is_some())
-        .map(|member| member["path"].as_str().unwrap())
+        .filter(|member| member.details.contains_key("removed_at_ns"))
+        .map(|member| member.path.as_str())
         .collect();
     assert_eq!(removed, ["000000.md"]);
     assert_eq!(members.len(), 1, "no unchanged file is stored again");

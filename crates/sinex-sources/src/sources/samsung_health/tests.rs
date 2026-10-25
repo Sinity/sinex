@@ -2,7 +2,7 @@ use super::*;
 
 #[devkit::test]
 fn type_line_header_and_rows() {
-    let manifest = json!({"path": "com.samsung.health.hrv.20260807162074.csv"});
+    let manifest = sinex_model::Manifest::from_json(json!({"path": "com.samsung.health.hrv.20260807162074.csv"}));
     let ctx = RecordContext {
         manifest: &manifest,
         member: None,
@@ -58,8 +58,8 @@ fn categories_and_values() {
 
 #[devkit::test]
 fn attachment_bins_become_one_record_each() {
-    let manifest = json!({"path": "export.zip"});
-    let member = json!({"path": "jsons/com.samsung.shealth.stress/0/a291.binning_data.json"});
+    let manifest = sinex_model::Manifest::from_json(json!({"path": "export.zip"}));
+    let member = serde_json::from_value::<sinex_model::Member>(json!({"path": "jsons/com.samsung.shealth.stress/0/a291.binning_data.json"})).unwrap();
     let ctx = RecordContext {
         manifest: &manifest,
         member: Some(&member),
@@ -72,7 +72,7 @@ fn attachment_bins_become_one_record_each() {
     assert_eq!(out[0].start, Timestamp::from_unix_ns(1_736_636_340_000_000_000).ok());
     assert_eq!(serde_json::to_value(out[0].values()).unwrap()["score"], json!(14));
 
-    let member = json!({"path": "jsons/com.samsung.shealth.sleep/0/b17.extra_data.json"});
+    let member = serde_json::from_value::<sinex_model::Member>(json!({"path": "jsons/com.samsung.shealth.sleep/0/b17.extra_data.json"})).unwrap();
     let ctx = RecordContext {
         manifest: &manifest,
         member: Some(&member),

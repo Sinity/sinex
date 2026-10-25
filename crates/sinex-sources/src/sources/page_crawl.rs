@@ -240,12 +240,12 @@ impl Crawl {
                 }
                 Err(e) => (0, url.clone(), None, Vec::new(), Some(e.to_string())),
             };
-            let manifest = json!({
+            let manifest = sinex_model::Manifest::from_json(json!({
                 "url": url, "final_url": final_url, "status": status, "content_type": content_type,
                 "error": error, "fetched_at_ns": fetched_at.unix_ns().to_string(),
                 "read_at_ns": i64::try_from(fetched_at.unix_ns()).unwrap_or(i64::MAX),
                 "media_type": content_type.clone().unwrap_or_else(|| "application/octet-stream".into()),
-            });
+            }));
             let id = MaterialId::new();
             let part_index = if previous.material.is_some() {
                 previous.part_index + 1
@@ -339,7 +339,7 @@ impl Parser for PageParser {
         _: &(),
         context: &RecordContext<'_>,
     ) -> Result<(Vec<PageFetched>, ()), RecordError> {
-        let m = context.manifest;
+        let m = &context.manifest.details;
         let s = |k: &str| m.get(k).and_then(Value::as_str).map(str::to_owned);
         let fetched_at = s("fetched_at_ns")
             .and_then(|n| n.parse::<i128>().ok())

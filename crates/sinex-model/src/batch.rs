@@ -175,25 +175,6 @@ pub enum RevisionChange {
     Snapshot,
 }
 
-/// Whether stored material contributes to the original input byte stream.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "kebab-case")]
-pub enum MaterialRole {
-    Input,
-    OriginalArchive,
-    Records,
-}
-
-impl MaterialRole {
-    /// A manifest without a role describes input bytes.
-    pub fn of(manifest: &Value) -> Result<Self, serde_json::Error> {
-        manifest
-            .get("role")
-            .map(|value| serde_json::from_value(value.clone()))
-            .unwrap_or(Ok(Self::Input))
-    }
-}
-
 /// A material whose bytes are already in the content store.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct MaterialRef {
@@ -208,7 +189,7 @@ pub struct MaterialRef {
     pub parser_version: u32,
     /// Where the bytes came from and how to read them: path, media type,
     /// charset, and the driver's details.
-    pub manifest: Value,
+    pub manifest: crate::Manifest,
 }
 
 /// Why a reading left the live set. Excision is not one: it deletes the

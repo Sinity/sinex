@@ -35,7 +35,7 @@ use sinex_model::{
     RecordOutcome, RevisionChange, RunId, SourceProgress, Timestamp, event_types,
 };
 use sinex_protocol::{
-    Acknowledgment, Excise, ExciseReply, HeldMaterial, Ingress, MaterialFrame, Materials,
+    Acknowledgment, Excise, ExciseReply, ProducerMaterial, Ingress, MaterialFrame, Materials,
     ProducerEvent, ProducerFailure, RecordedQuery, Subjects,
 };
 use sinex_store::commit_log::{self, StoredFrame};
@@ -234,7 +234,7 @@ impl Ingest {
         &mut self,
         producer: &str,
         request: &Materials,
-    ) -> Result<Vec<HeldMaterial>, String> {
+    ) -> Result<Vec<ProducerMaterial>, String> {
         let rows = commit_log::producer_materials(
             &mut self.conn,
             producer,
@@ -245,7 +245,7 @@ impl Ingest {
         .map_err(|e| e.to_string())?;
         rows.into_iter()
             .map(|row| {
-                Ok(HeldMaterial {
+                Ok(ProducerMaterial {
                     number: row.number,
                     frame: row.frame,
                     material: MaterialFrame {
@@ -262,7 +262,8 @@ impl Ingest {
                             .map_err(|e| e.to_string())?,
                         part_index: u32::try_from(row.part_index).map_err(|e| e.to_string())?,
                         previous_part: row.previous_part.map(sinex_model::MaterialId),
-                        manifest: row.manifest,
+                        manifest: serde_json::from_value(row.manifest)
+                            .map_err(|e| e.to_string())?,
                     },
                 })
             })

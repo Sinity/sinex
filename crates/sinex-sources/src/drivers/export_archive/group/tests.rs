@@ -151,7 +151,7 @@ impl Seen {
                 panic!("source progress")
             };
             if let Some(material) = progress.material {
-                if material.manifest["role"] == "original-archive" {
+                if material.manifest.role == sinex_model::MaterialRole::OriginalArchive {
                     assert_eq!(progress.cursor["done"], false);
                     self.originals.push(material.id);
                 }
@@ -497,13 +497,13 @@ fn zip_members_keep_exact_ranges_and_long_plain_records_stay_whole() {
         &mut |_, acquired| {
             let acquired = acquired?;
             if let Some(material) = acquired.material {
-                if material.manifest["role"] == "original-archive" {
+                if material.manifest.role == sinex_model::MaterialRole::OriginalArchive {
                     original += 1;
                 } else {
                     parts += 1;
                     assert!(material.bytes.len() <= 20);
-                    assert_eq!(material.manifest["source_container"], "zip");
-                    let path = material.manifest["members"][0]["path"].as_str().unwrap();
+                    assert_eq!(material.manifest.detail("source_container"), "zip");
+                    let path = material.manifest.members[0].path.as_str();
                     assert!(path.ends_with(".json"));
                     for (start, end) in material.records {
                         records

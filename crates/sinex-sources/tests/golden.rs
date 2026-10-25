@@ -46,9 +46,9 @@ fn run_case(parser: &str, dir: &Path) -> Value {
         .unwrap_or_else(|| panic!("no source reads with parser {parser}"));
     let source = sinex_sources::sources::source_for(&binding).expect("source");
     let bytes = std::fs::read(dir.join("input")).expect("case input");
-    let manifest: Value = match std::fs::read(dir.join("manifest.json")) {
+    let manifest: sinex_model::Manifest = match std::fs::read(dir.join("manifest.json")) {
         Ok(raw) => serde_json::from_slice(&raw).expect("manifest.json is JSON"),
-        Err(_) => json!({ "path": "input" }),
+        Err(_) => sinex_model::Manifest::from_json(json!({ "path": "input" })),
     };
     let (records, _covered) = source.spec().framer.frame(&bytes);
     struct Fragmented<R>(R);

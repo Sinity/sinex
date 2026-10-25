@@ -8,16 +8,19 @@ impl DirState {
     /// Remember the files whose records in the bundle `manifest` end at or
     /// before `admitted`. Bundles are offered newest first; a path already
     /// decided by a newer bundle keeps that decision.
-    pub fn remember_members(&mut self, manifest: &Value, admitted: u64) -> Result<(), DriverError> {
+    pub fn remember_members(
+        &mut self,
+        manifest: &sinex_model::Manifest,
+        admitted: u64,
+    ) -> Result<(), DriverError> {
         for (start, end) in records(manifest)? {
             if end as u64 > admitted {
                 continue;
             }
-            let member = crate::drain::member_at(manifest, start)
+            let member = manifest
+                .member_at(start)
                 .ok_or_else(|| DriverError::Cursor("directory member is ambiguous".into()))?;
-            let path = member["path"]
-                .as_str()
-                .ok_or_else(|| DriverError::Cursor("directory member has no path".into()))?;
+            let path = member.path.as_str();
             if !self.remembered.insert(path.to_owned()) {
                 continue;
             }
@@ -100,37 +103,39 @@ pub(super) fn memory_of(files: &HashMap<String, Facts>) -> Arc<[u8]> {
 }
 
 /// A member's size, modification time and content hash.
-fn facts(member: &Value) -> Result<Facts, DriverError> {
+fn facts(member: &sinex_model::Member) -> Result<Facts, DriverError> {
     let invalid = || DriverError::Cursor("directory member facts are invalid".into());
-    let Some(hash) = member.get("hash") else {
+    let Some(hash) = member.details.get("hash") else {
         return Ok(None);
     };
     let hash = hash
         .as_str()
         .and_then(|hex| blake3::Hash::from_hex(hex).ok())
         .ok_or_else(invalid)?;
-    let size = member["length"].as_u64().ok_or_else(invalid)?;
-    let mtime = member["mtime_ns"]
+    let size = member.length;
+    let mtime = member.details["mtime_ns"]
         .as_str()
         .and_then(|text| text.parse::<i128>().ok())
         .ok_or_else(invalid)?;
     Ok(Some((size, mtime, *hash.as_bytes())))
 }
 
-fn records(manifest: &Value) -> Result<Vec<(usize, usize)>, DriverError> {
-    if manifest["media_type"] != format::MEDIA_TYPE {
+fn records(manifest: &sinex_model::Manifest) -> Result<Vec<(usize, usize)>, DriverError> {
+    if manifest.media_type.as_deref() != Some(format::MEDIA_TYPE) {
         return Err(DriverError::Cursor(
             "stored material is not a directory bundle".into(),
         ));
     }
-    let records: Vec<(usize, usize)> = serde_json::from_value(manifest["records"].clone())
-        .map_err(|e| DriverError::Cursor(format!("directory records: {e}")))?;
+    let records = manifest
+        .records
+        .clone()
+        .ok_or_else(|| DriverError::Cursor("directory bundle lists no records".into()))?;
     format::validate(manifest, &records).map_err(|e| DriverError::Cursor(e.to_string()))?;
     Ok(records)
 }
 
-fn removed(member: &Value) -> Result<bool, DriverError> {
-    match member.get("removed_at_ns") {
+fn removed(member: &sinex_model::Member) -> Result<bool, DriverError> {
+    match member.details.get("removed_at_ns") {
         None => Ok(false),
         Some(value)
             if value

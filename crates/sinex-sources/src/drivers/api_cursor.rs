@@ -84,12 +84,12 @@ impl<A: Api> ApiCursor<A> {
         };
         let now_ns = i64::try_from(asked_at.unix_ns()).unwrap_or(i64::MAX);
         let base = now_ns.max(previous.last_order.saturating_add(1));
-        let manifest = json!({
+        let manifest = sinex_model::Manifest::from_json(json!({
             "media_type": "application/x-ndjson",
             "asked_with": previous.api,
             "asked_at_ns": now_ns,
             "order_base": base,
-        });
+        }));
         let length = bytes.len();
         let next = page.next;
         let old = previous.api.clone();

@@ -42,12 +42,14 @@ impl Parser for RequestParser {
     ) -> Result<(Vec<ForecastRecord>, ()), RecordError> {
         let actor = context
             .manifest
+            .details
             .get("actor")
             .and_then(Value::as_str)
             .filter(|s| !s.trim().is_empty())
             .ok_or_else(|| RecordError::new("forecast manifest has no actor"))?;
         let at = context
             .manifest
+            .details
             .get("written_at_ns")
             .and_then(Value::as_str)
             .and_then(|s| s.parse::<i128>().ok())
@@ -126,7 +128,7 @@ pub fn request_material(
             records: vec![(0, length)],
             part_index: 0,
             previous_part: None,
-            manifest: json!({"path":"forecast", "host":host, "actor":actor, "written_at_ns":at.unix_ns().to_string(), "read_at_ns":order, "media_type":"application/x-sinex-forecast-request"}),
+            manifest: sinex_model::Manifest::from_json(json!({"path":"forecast", "host":host, "actor":actor, "written_at_ns":at.unix_ns().to_string(), "read_at_ns":order, "media_type":"application/x-sinex-forecast-request"})),
             reading_order: Box::new(move |_| ReadingOrder(order)),
             cursor_at: Box::new(|_| Ok(Value::Null)),
             aligned: false,

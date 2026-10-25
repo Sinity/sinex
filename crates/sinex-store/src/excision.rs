@@ -50,7 +50,7 @@ pub struct Material {
     /// The parser that read it: with the source, how the caller finds its
     /// framing.
     pub parser: String,
-    pub manifest: serde_json::Value,
+    pub manifest: sinex_model::Manifest,
     /// Anchors of the excised records; empty when `whole`.
     pub anchors: BTreeSet<i64>,
     /// The material itself is the target.
@@ -202,7 +202,9 @@ pub async fn plan(conn: &mut PgConnection, target: Target) -> Result<Plan> {
             binding: r.binding,
             source: r.source,
             parser: r.parser,
-            manifest: r.manifest,
+            manifest: serde_json::from_value(r.manifest).map_err(|e| {
+                Error::Invalid(format!("material {}: manifest: {e}", r.id))
+            })?,
             anchors: if is_whole {
                 BTreeSet::new()
             } else {

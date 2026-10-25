@@ -123,7 +123,7 @@ fn a_rewrite_reads_only_records_the_previous_revision_did_not_hold() {
         }],
         "the dropped \"b\" is reported where it was read"
     );
-    assert_eq!(n.manifest["records"], json!([[4, 7]]));
+    assert_eq!(n.manifest.records, Some(vec![(4, 7)]));
     assert_eq!(
         crate::drivers::stored_records(&n.manifest, &n.bytes, crate::Framer::incremental(lines)),
         vec![(4, 7)]
@@ -293,7 +293,7 @@ fn rewrite_replace_and_truncate_keep_the_previous_parser_chain_and_reset_byte_of
         let next = next.material.unwrap();
         assert_eq!(next.previous_part, Some(m.id));
         assert_eq!(next.part_index, m.part_index + 1);
-        assert_eq!(next.manifest["file_offset"], 0);
+        assert_eq!(next.manifest.file_offset, Some(0));
     }
 }
 #[devkit::test]

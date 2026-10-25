@@ -192,9 +192,7 @@ pub async fn run(
         let parsers = sources_of(read_conn, &sequence).await?;
         let mut keys = HashMap::new();
         for material in &sequence {
-            if sinex_model::MaterialRole::of(&material.manifest).map_err(|e| e.to_string())?
-                == sinex_model::MaterialRole::OriginalArchive
-            {
+            if material.manifest.role == sinex_model::MaterialRole::OriginalArchive {
                 continue;
             }
             if blobs.is_sealed(&material.blob).map_err(|e| e.to_string())? {
@@ -422,11 +420,8 @@ fn read_sequence_into(
         let admitted = sequence
             .get(position + 1)
             .filter(|next| next.previous == Some(m.id))
-            .and_then(|next| next.manifest.get("previous_through"))
-            .and_then(Value::as_u64);
-        let role = sinex_model::MaterialRole::of(&m.manifest)
-            .map_err(|e| format!("material {}: {e}", m.id))?;
-        if role == sinex_model::MaterialRole::OriginalArchive {
+            .and_then(|next| next.manifest.previous_through);
+        if m.manifest.role == sinex_model::MaterialRole::OriginalArchive {
             continue;
         }
         let key = keys.get(&m.id);

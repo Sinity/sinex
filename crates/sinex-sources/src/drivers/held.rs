@@ -16,7 +16,7 @@ pub struct HeldMaterial {
     records: Vec<(usize, usize)>,
     part_index: u32,
     previous_part: Option<MaterialId>,
-    manifest: Value,
+    manifest: sinex_model::Manifest,
     cursor_at: CursorAt,
     aligned: bool,
     removed: Vec<RecordLocation>,

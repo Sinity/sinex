@@ -273,8 +273,8 @@ pub struct MaterialFrame {
     pub part_index: u32,
     #[serde(default)]
     pub previous_part: Option<MaterialId>,
-    /// Lossless description: path bytes, envelopes, media type, charset.
-    pub manifest: Value,
+    /// What the bytes are and how to read them.
+    pub manifest: sinex_model::Manifest,
 }
 
 /// An event as a producer sends it: a registered event type and its payload,
@@ -332,7 +332,7 @@ pub struct RecordedQuery {
 /// registered and Sinex still holds, in the order Sinex recorded them,
 /// starting after the frame numbered `after`. A producer that keeps nothing of
 /// its own rebuilds what it sent from these pages. The reply is a JSON array
-/// of [`HeldMaterial`]s, at most `limit` long; an empty page is the end.
+/// of [`ProducerMaterial`]s, at most `limit` long; an empty page is the end.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct Materials {
     #[serde(default)]
@@ -342,7 +342,7 @@ pub struct Materials {
 
 /// One registered material, as its frame described it.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
-pub struct HeldMaterial {
+pub struct ProducerMaterial {
     /// The order Sinex recorded the frame in; the next page starts after it.
     pub number: i64,
     pub frame: String,

@@ -123,7 +123,7 @@ async fn material_matches(
         material.previous_part.map(|id| id.0),
         material.parser,
         version,
-        material.manifest,
+        serde_json::to_value(&material.manifest).expect("manifests serialize"),
         binding,
         input.kind,
         input.locator,
@@ -159,7 +159,7 @@ async fn material(
         m.previous_part.map(|p| p.0),
         m.blob,
         length,
-        m.manifest,
+        serde_json::to_value(&m.manifest).expect("manifests serialize"),
         m.parser,
         i32::try_from(m.parser_version).map_err(|_| Error::Invalid("parser version beyond i32".into()))?,
     )

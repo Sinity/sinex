@@ -423,9 +423,9 @@ impl AppendFile {
             })
             .expect("cursor serializes")
         };
-        let mut manifest = json!({"path": self.path.display().to_string(), "host": self.host, "file_offset": start, "media_type": "text/plain"});
+        let mut manifest = sinex_model::Manifest::from_json(json!({"path": self.path.display().to_string(), "host": self.host, "file_offset": start, "media_type": "text/plain"}));
         if aligned {
-            manifest["records"] = json!(records);
+            manifest.records = Some(records.clone());
         }
         Ok(Acquired {
             input: self.input(),

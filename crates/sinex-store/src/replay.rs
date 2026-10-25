@@ -154,7 +154,7 @@ pub struct Stored {
     pub length: i64,
     pub parser: String,
     pub parser_version: i32,
-    pub manifest: Value,
+    pub manifest: sinex_model::Manifest,
     pub binding: Option<String>,
     pub host: Option<String>,
 }
@@ -196,7 +196,7 @@ pub async fn materials_of(
     inputs: &[Uuid],
     loose: &[Uuid],
 ) -> Result<Vec<Stored>> {
-    Ok(sqlx::query!(
+    sqlx::query!(
         r#"SELECT m.id, m.input_id, m.previous_part_id, m.part_index, m.blob, m.length, m.parser, m.parser_version,
                   m.manifest, i.binding AS "binding?", i.host AS "host?"
            FROM raw.materials m LEFT JOIN raw.inputs i ON i.id = m.input_id
@@ -208,7 +208,8 @@ pub async fn materials_of(
     .fetch_all(&mut *conn)
     .await?
     .into_iter()
-    .map(|r| Stored {
+    .map(|r| {
+        Ok(Stored {
         id: r.id,
         input: r.input_id,
         previous: r.previous_part_id,
@@ -217,11 +218,13 @@ pub async fn materials_of(
         length: r.length,
         parser: r.parser,
         parser_version: r.parser_version,
-        manifest: r.manifest,
+        manifest: serde_json::from_value(r.manifest)
+            .map_err(|e| crate::Error::Invalid(format!("material {}: manifest: {e}", r.id)))?,
         binding: r.binding,
         host: r.host,
+        })
     })
-    .collect())
+    .collect()
 }
 
 /// The inputs of the given materials.

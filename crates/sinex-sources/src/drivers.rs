@@ -66,10 +66,7 @@ impl Acquired {
         Ok(self
             .material
             .as_ref()
-            .map(|m| sinex_model::MaterialRole::of(&m.manifest))
-            .transpose()
-            .map_err(|e| DriverError::InvalidMaterial(e.to_string()))?
-            == Some(sinex_model::MaterialRole::OriginalArchive))
+            .is_some_and(|m| m.manifest.role == sinex_model::MaterialRole::OriginalArchive))
     }
 }
 
@@ -134,7 +131,7 @@ pub struct NewMaterial {
     pub records: Vec<(usize, usize)>,
     pub part_index: u32,
     pub previous_part: Option<MaterialId>,
-    pub manifest: Value,
+    pub manifest: sinex_model::Manifest,
     /// Which of two readings is newer, by the record's anchor.
     pub reading_order: Box<dyn Fn(usize) -> ReadingOrder + Send + Sync>,
     /// The cursor after this record. Failures reading the stored bytes refuse the
@@ -464,17 +461,16 @@ impl Prepared<'_> {
 /// record's byte offset in its file (`file_offset` plus the anchor). The
 /// driver and a replay both compute it here, so a replayed reading keeps the
 /// order of the reading it replaces.
-pub fn reading_order(manifest: &Value) -> Box<dyn Fn(usize) -> ReadingOrder + Send + Sync> {
-    if let Some(base) = manifest.get("order_base").and_then(Value::as_i64) {
+pub fn reading_order(
+    manifest: &sinex_model::Manifest,
+) -> Box<dyn Fn(usize) -> ReadingOrder + Send + Sync> {
+    if let Some(base) = manifest.order_base {
         return Box::new(move |anchor| ReadingOrder(base.saturating_add(anchor as i64)));
     }
-    if let Some(at) = manifest.get("read_at_ns").and_then(Value::as_i64) {
+    if let Some(at) = manifest.read_at_ns {
         return Box::new(move |_| ReadingOrder(at));
     }
-    let offset = manifest
-        .get("file_offset")
-        .and_then(Value::as_u64)
-        .unwrap_or(0);
+    let offset = manifest.file_offset.unwrap_or(0);
     Box::new(move |anchor| ReadingOrder(offset.saturating_add(anchor as u64) as i64))
 }
 
@@ -482,29 +478,25 @@ pub fn reading_order(manifest: &Value) -> Box<dyn Fn(usize) -> ReadingOrder + Se
 /// or, for a rewrite aligned against the previous revision, only those the
 /// manifest lists as new (`records`), since the rest were read before.
 pub fn stored_records(
-    manifest: &Value,
+    manifest: &sinex_model::Manifest,
     bytes: &[u8],
     framer: crate::Framer,
 ) -> Vec<(usize, usize)> {
-    match manifest.get("records").and_then(Value::as_array) {
-        Some(listed) => listed
-            .iter()
-            .filter_map(|r| Some((r.get(0)?.as_u64()? as usize, r.get(1)?.as_u64()? as usize)))
-            .collect(),
+    match &manifest.records {
+        Some(listed) => listed.clone(),
         None => framer.frame(bytes).0,
     }
 }
 
 /// Record ranges listed in the manifest take precedence over framing the bytes.
 pub fn stored_records_from(
-    manifest: &Value,
+    manifest: &sinex_model::Manifest,
     reader: &mut dyn std::io::Read,
     framer: crate::Framer,
 ) -> std::io::Result<Vec<(usize, usize)>> {
-    if manifest.get("records").and_then(Value::as_array).is_some() {
-        Ok(stored_records(manifest, &[], framer))
-    } else {
-        framer.ranges(reader)
+    match &manifest.records {
+        Some(listed) => Ok(listed.clone()),
+        None => framer.ranges(reader),
     }
 }
 
@@ -552,7 +544,7 @@ pub fn note_previous_through(cursor: &Value, acquired: &mut Acquired) {
     if let Some((previous, Some(through))) = cursor_material(cursor)
         && material.previous_part == Some(previous)
     {
-        material.manifest["previous_through"] = through.into();
+        material.manifest.previous_through = Some(through);
     }
 }
 

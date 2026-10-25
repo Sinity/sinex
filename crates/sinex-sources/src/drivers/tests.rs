@@ -94,7 +94,7 @@ fn batches_are_drained_lazily() {
             records: framed,
             part_index: 0,
             previous_part: None,
-            manifest: serde_json::json!({}),
+            manifest: sinex_model::Manifest::from_json(serde_json::json!({})),
             reading_order: Box::new(|a| ReadingOrder(a as i64)),
             cursor_at: Box::new({
                 let cursor = move |end| serde_json::json!({"end": end});
@@ -277,7 +277,7 @@ fn stored_original_length_does_not_replace_decoded_record_coordinates() {
             stored: Some(StoredBytes::File(path)),
             part_index: 0,
             previous_part: None,
-            manifest: serde_json::json!({}),
+            manifest: sinex_model::Manifest::from_json(serde_json::json!({})),
             reading_order: Box::new(|a| ReadingOrder(a as i64)),
             cursor_at: Box::new({
                 let cursor = |end| serde_json::json!({"end": end});
@@ -330,7 +330,7 @@ fn cursor_read_failure_is_reported_before_a_batch_and_stops_later_progress() {
             records: vec![(0, 4), (4, 8)],
             part_index: 0,
             previous_part: None,
-            manifest: serde_json::json!({}),
+            manifest: sinex_model::Manifest::from_json(serde_json::json!({})),
             reading_order: Box::new(|_| sinex_model::ReadingOrder(1)),
             cursor_at: Box::new(|_| Err(DriverError::Io("synthetic cursor read failure".into()))),
             aligned: false,

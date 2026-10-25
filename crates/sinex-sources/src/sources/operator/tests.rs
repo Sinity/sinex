@@ -122,7 +122,7 @@ fn unknown_steering_shapes_are_accounted_without_losing_later_coordinates() {
             carry: Value::Null,
             reading_order: &|at| ReadingOrder(at as i64),
             limits: Limits::default(),
-            manifest: &Value::Null,
+            manifest: crate::RecordContext::none().manifest,
         })
         .unwrap();
     assert_eq!(outputs.len(), 1);

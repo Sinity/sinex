@@ -114,15 +114,6 @@ async fn ask_page(conn: &mut PgConnection, text: &str, page: Page) -> Answer {
         .unwrap_or_else(|e| panic!("{text}: {e}"))
 }
 
-async fn refused(conn: &mut PgConnection, text: &str) -> String {
-    let ctx = ctx();
-    let q = bind(text, &ctx).unwrap();
-    run(conn, text, &q, &ctx, &Page::default())
-        .await
-        .expect_err(text)
-        .to_string()
-}
-
 fn column(a: &Answer, name: &str) -> Vec<serde_json::Value> {
     a.rows.iter().map(|r| r[name].clone()).collect()
 }

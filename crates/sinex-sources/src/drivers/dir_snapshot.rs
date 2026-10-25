@@ -237,16 +237,15 @@ impl DirSnapshot {
         }
         // Every file read by one walk is as new as the walk; the records are
         // listed so a replay or an excision finds them in the bundle.
-        let manifest = json!({
+        let manifest = sinex_model::Manifest::from_json(json!({
             "path": self.root.display().to_string(),
             "host": self.host,
             "media_type": format::MEDIA_TYPE,
-            "format_version": format::VERSION,
             "scan_complete": complete,
             "members": members,
             "records": records,
             "read_at_ns": i64::try_from(now.unix_ns()).unwrap_or(i64::MAX),
-        });
+        }));
         let id = MaterialId::new();
         let part_index = if previous.material.is_some() {
             previous.part_index + 1
