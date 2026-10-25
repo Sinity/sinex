@@ -90,6 +90,19 @@ pub async fn run(o: Options) -> Result<(), String> {
             left.len()
         );
     }
+    // Bytes written before an admission that never committed.
+    let without_rows = sinex_store::blobs::delete_files_without_rows(&mut writer_conn, &blobs)
+        .await
+        .map_err(|e| format!("deleting blob files without a row: {e}"))?;
+    if !without_rows.deleted.is_empty() {
+        eprintln!(
+            "sinexd: deleted {} blob files no row names, written before an admission that never committed",
+            without_rows.deleted.len()
+        );
+    }
+    for entry in &without_rows.not_blobs {
+        eprintln!("sinexd: content store: {entry}");
+    }
     let url = o.database.clone();
     let writer_store = blobs.clone();
     tasks.spawn(async move {

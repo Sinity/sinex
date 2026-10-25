@@ -171,12 +171,12 @@ fn breakdowns_share_the_unit_coverage() {
         &[covered("zsh", 0, DAY)],
         &SpanSet::default(),
     );
-    assert_eq!(
-        dimension_values(&cells, "host")
-            .into_iter()
-            .collect::<Vec<_>>(),
-        ["a", "unknown"]
-    );
+    let hosts: Vec<&str> = cells
+        .iter()
+        .filter(|c| c.dimension == "host")
+        .map(|c| c.dimension_value.as_str())
+        .collect();
+    assert_eq!(hosts, ["a", "unknown"]);
     assert!(
         cells
             .iter()

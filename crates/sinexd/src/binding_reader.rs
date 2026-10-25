@@ -218,8 +218,13 @@ async fn restore(
     Ok(())
 }
 
+/// How many parts one query of a restart's history reads.
+const PARTS_PER_QUERY: i32 = 256;
+
 /// Offer `reader` the committed cursor's material and the parts before it,
-/// newest first, until it has what it needs. True when a part was sealed.
+/// newest first, until it has what it needs. Parts are read a page at a time,
+/// so a reader that stops early reads no more of the chain. True when a part
+/// was sealed.
 pub(crate) async fn restore_reader(
     conn: &mut PgConnection,
     blobs: &Blobs,
@@ -236,33 +241,41 @@ pub(crate) async fn restore_reader(
     let Some(last) = reader.history_from(&cursor) else {
         return Ok(false);
     };
-    let parts = sinex_store::material_bytes::parts_ending(conn, last)
-        .await
-        .map_err(|e| e.to_string())?;
-    let newest_revision = parts.first().and_then(|(_, revision)| *revision);
     let mut sealed = false;
-    for (material, revision) in parts {
-        if *stop.borrow() {
-            return Err("restoring the reader's memory was cancelled".into());
-        }
-        let reference = sinex_store::material_bytes::reference(conn, material)
+    let mut newest_revision = None;
+    let mut next = Some(last);
+    'parts: while let Some(newest) = next {
+        let page = sinex_store::material_bytes::parts_from(conn, newest, PARTS_PER_QUERY)
             .await
-            .map_err(|e| e.to_string())?
-            .ok_or("a stored part is missing")?;
-        let bytes = crate::stored::Lazy::new(conn, blobs, reference.clone(), unlock).await?;
-        sealed |= bytes.sealed();
-        let more = reader
-            .restore(
-                &cursor,
-                sinex_sources::StoredMaterial {
-                    reference,
-                    bytes: Arc::new(bytes),
-                    same_revision: revision == newest_revision,
-                },
-            )
             .map_err(|e| e.to_string())?;
-        if !more {
-            break;
+        if page.is_empty() {
+            return Err(format!("stored part {newest} is missing"));
+        }
+        if newest == last {
+            newest_revision = page[0].1;
+        }
+        next = page
+            .last()
+            .and_then(|(reference, _)| reference.previous_part);
+        for (reference, revision) in page {
+            if *stop.borrow() {
+                return Err("restoring the reader's memory was cancelled".into());
+            }
+            let bytes = crate::stored::Lazy::new(conn, blobs, reference.clone(), unlock).await?;
+            sealed |= bytes.sealed();
+            let more = reader
+                .restore(
+                    &cursor,
+                    sinex_sources::StoredMaterial {
+                        reference,
+                        bytes: Arc::new(bytes),
+                        same_revision: revision == newest_revision,
+                    },
+                )
+                .map_err(|e| e.to_string())?;
+            if !more {
+                break 'parts;
+            }
         }
     }
     reader.restored().map_err(|e| e.to_string())?;

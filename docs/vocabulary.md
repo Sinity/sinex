@@ -15,7 +15,7 @@ these names and no others.
 - **part**: one closed chunk of a growing input; each part is its own material.
 - **blob**: bytes in the content store, named by their BLAKE3 hash.
 - **stored bytes**: the bytes of a material as kept in the content store; replay reads them.
-- **unadmitted bytes**: blobs written before the admission that will cite them. A failed admission is retried from them while the reader holds them; a crash can leave them in the store with nothing citing them.
+- **unadmitted bytes**: blobs written before the admission that will cite them. A failed admission is retried from them while the reader holds them; a file a crash leaves with no `core.blobs` row is deleted when the daemon next starts.
 - **held material**: the newest material a reader keeps in memory until its final cursor is admitted, so a failed admission retries the same bytes.
 - **record**: one unit a parser reads from a material (a line, a row, a file, a message).
 - **occurrence**: one thing a source recorded, found by its record location or equivalence key; it has at most one live reading.

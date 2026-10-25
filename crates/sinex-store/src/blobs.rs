@@ -186,6 +186,73 @@ impl Blobs {
     pub fn verify(&self, name: &str) -> Result<hashed_blobs::Verified> {
         Ok(self.0.verify(&parse(name)?)?)
     }
+
+    /// The names of the stored files, read from disk one directory at a time.
+    pub fn names(&self) -> Result<impl Iterator<Item = hashed_blobs::Result<String>>> {
+        Ok(self
+            .0
+            .names()?
+            .map(|name| name.map(|hash| format!("blake3:{}", hash.hex()))))
+    }
+}
+
+/// Files [`delete_files_without_rows`] found in the content store.
+#[derive(Debug, Default, PartialEq, Eq)]
+pub struct FilesWithoutRows {
+    /// Blob files deleted because no row names them.
+    pub deleted: Vec<String>,
+    /// Entries under `blobs/` that are not blob files, left alone.
+    pub not_blobs: Vec<String>,
+}
+
+/// How many listed names one query checks against `core.blobs`.
+const NAMES_PER_QUERY: usize = 1000;
+
+/// Delete every blob file that no `core.blobs` row names. A driver writes a
+/// material's bytes before the admission that adds their row, so a process
+/// that stops before that admission commits leaves a file with no row.
+///
+/// The caller holds the writer, and every process that writes to the store
+/// holds it while it does, so no admission adds a row for a listed file while
+/// this runs. The daemon runs it at start, before any source reads.
+pub async fn delete_files_without_rows(
+    conn: &mut sqlx::PgConnection,
+    blobs: &Blobs,
+) -> Result<FilesWithoutRows> {
+    let mut found = FilesWithoutRows::default();
+    let mut names = blobs.names()?;
+    loop {
+        let mut listed = Vec::with_capacity(NAMES_PER_QUERY);
+        for name in names.by_ref() {
+            match name {
+                Ok(name) => listed.push(name),
+                Err(hashed_blobs::Error::Io(error))
+                    if error.kind() == std::io::ErrorKind::InvalidData =>
+                {
+                    found.not_blobs.push(error.to_string());
+                }
+                Err(error) => return Err(error.into()),
+            }
+            if listed.len() == NAMES_PER_QUERY {
+                break;
+            }
+        }
+        if listed.is_empty() {
+            return Ok(found);
+        }
+        let with_rows: std::collections::HashSet<String> =
+            sqlx::query_scalar!("SELECT hash FROM core.blobs WHERE hash = ANY($1)", &listed)
+                .fetch_all(&mut *conn)
+                .await?
+                .into_iter()
+                .collect();
+        for name in listed {
+            if !with_rows.contains(&name) {
+                blobs.delete(&name)?;
+                found.deleted.push(name);
+            }
+        }
+    }
 }
 
 pub(crate) fn parse(name: &str) -> Result<hashed_blobs::Hash> {
