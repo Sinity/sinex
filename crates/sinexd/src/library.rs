@@ -71,7 +71,12 @@ impl Library<'_> {
                 .material
                 .as_mut()
                 .expect("request has material")
-                .manifest["owned_blobs"] = serde_json::to_value(cited).map_err(e)?;
+                .manifest
+                .details
+                .insert(
+                    "owned_blobs".into(),
+                    serde_json::to_value(cited).map_err(e)?,
+                );
         }
         let result = crate::authored::submit(
             conn,

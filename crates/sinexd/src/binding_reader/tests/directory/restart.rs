@@ -227,7 +227,7 @@ impl sinex_sources::Parser for IgnoreFirst {
     ) -> Result<(Vec<Self::Payload>, ()), sinex_sources::RecordError> {
         if context
             .member
-            .is_some_and(|m| m["path"] == "a.md" && m.get("removed_at_ns").is_none())
+            .is_some_and(|m| m.path == "a.md" && !m.details.contains_key("removed_at_ns"))
         {
             return Ok((Vec::new(), ()));
         }

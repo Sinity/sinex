@@ -2,7 +2,7 @@ use super::*;
 use serde_json::json;
 
 fn read(member: &str, rows: &[&[u8]]) -> Vec<RedditEvent> {
-    let manifest = json!({"path": member});
+    let manifest = sinex_model::Manifest::from_json(json!({"path": member}));
     let ctx = RecordContext {
         manifest: &manifest,
         member: None,
@@ -62,7 +62,7 @@ fn comments_votes_saves_and_messages() {
 
 #[devkit::test]
 fn a_new_member_starts_with_its_header() {
-    let manifest = json!({"path": "posts.csv"});
+    let manifest = sinex_model::Manifest::from_json(json!({"path": "posts.csv"}));
     let ctx = RecordContext {
         manifest: &manifest,
         member: None,

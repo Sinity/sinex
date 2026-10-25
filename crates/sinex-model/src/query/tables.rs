@@ -272,9 +272,10 @@ pub struct Alias {
     pub fields: &'static [Field],
     /// Whether rows have a span (`start`, `end`), for `during` and `containing`.
     pub spans: bool,
-    /// An extra fixed condition beyond the kind, by promoted field: `now` is
-    /// `intervals where open = true`.
-    pub open_only: bool,
+    /// A fixed payload condition beyond the kind, `(field, value)`: `now` is
+    /// `intervals` whose `open` is `true`, `days` are summaries whose `grain`
+    /// is `day`.
+    pub only: Option<(&'static str, &'static str)>,
 }
 
 pub const ALIASES: &[Alias] = &[
@@ -293,7 +294,7 @@ pub const ALIASES: &[Alias] = &[
             f("observed_by", FieldType::Text, "observing sources"),
         ],
         spans: true,
-        open_only: false,
+        only: None,
     },
     Alias {
         name: "shell-sessions",
@@ -314,26 +315,7 @@ pub const ALIASES: &[Alias] = &[
             f("cwds", FieldType::PathList, "member working directories"),
         ],
         spans: true,
-        open_only: false,
-    },
-    Alias {
-        name: "sessions",
-        kinds: &["activity.session.boundary"],
-        phrase: "activity sessions",
-        fields: &[
-            f("start", FieldType::Time, "start"),
-            f("end", FieldType::Time, "end"),
-            f("duration", FieldType::Number, "duration in seconds"),
-            f("project", FieldType::Text, "project"),
-            f("open", FieldType::Bool, "still open"),
-            f(
-                "depth",
-                FieldType::Enum(&["deep", "moderate", "shallow", "hyperfocus"]),
-                "depth",
-            ),
-        ],
-        spans: true,
-        open_only: false,
+        only: None,
     },
     Alias {
         name: "intervals",
@@ -345,11 +327,10 @@ pub const ALIASES: &[Alias] = &[
             f("duration", FieldType::Number, "duration in seconds"),
             f("state", FieldType::Text, "state"),
             f("subject", FieldType::Text, "subject"),
-            f("project", FieldType::Text, "project"),
             f("open", FieldType::Bool, "still open"),
         ],
         spans: true,
-        open_only: false,
+        only: None,
     },
     Alias {
         name: "now",
@@ -361,23 +342,28 @@ pub const ALIASES: &[Alias] = &[
             f("duration", FieldType::Number, "duration in seconds"),
             f("state", FieldType::Text, "state"),
             f("subject", FieldType::Text, "subject"),
-            f("project", FieldType::Text, "project"),
             f("open", FieldType::Bool, "still open"),
         ],
         spans: true,
-        open_only: true,
+        only: Some(("open", "true")),
     },
     Alias {
         name: "days",
-        kinds: &["activity.summary.daily"],
-        phrase: "daily summaries",
+        kinds: &["activity.summary"],
+        phrase: "daily activity summaries",
         fields: &[
             f("day", FieldType::Text, "logical day"),
-            f("active", FieldType::Number, "active seconds"),
-            f("top_sources", FieldType::Text, "top sources"),
+            f("commands", FieldType::Integer, "commands"),
+            f("failed_commands", FieldType::Integer, "failed commands"),
+            f("sessions", FieldType::Integer, "shell sessions"),
+            f(
+                "session_seconds",
+                FieldType::Number,
+                "seconds in shell sessions",
+            ),
         ],
         spans: false,
-        open_only: false,
+        only: Some(("grain", "day")),
     },
     Alias {
         name: "items",
@@ -391,7 +377,7 @@ pub const ALIASES: &[Alias] = &[
             f("media_type", FieldType::Text, "media type"),
         ],
         spans: false,
-        open_only: false,
+        only: None,
     },
     Alias {
         name: "media",
@@ -408,7 +394,7 @@ pub const ALIASES: &[Alias] = &[
             f("stored", FieldType::Bool, "bytes stored"),
         ],
         spans: false,
-        open_only: false,
+        only: None,
     },
     Alias {
         name: "assignments",
@@ -425,19 +411,7 @@ pub const ALIASES: &[Alias] = &[
             ),
         ],
         spans: false,
-        open_only: false,
-    },
-    Alias {
-        name: "pages",
-        kinds: &["page.visited"],
-        phrase: "page visits",
-        fields: &[
-            f("url", FieldType::Text, "URL"),
-            f("title", FieldType::Text, "title"),
-            f("domain", FieldType::Text, "domain"),
-        ],
-        spans: false,
-        open_only: false,
+        only: None,
     },
 ];
 

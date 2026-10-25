@@ -26,7 +26,8 @@ fn absent(pid: u32) -> bool {
 
 #[devkit::test]
 fn deadline_interrupts_and_reaps_an_owned_child() {
-    let stop = CaptureStop::new(Some(Duration::from_millis(150)));
+    // Long enough that a loaded host still spawns the child before it.
+    let stop = CaptureStop::new(Some(Duration::from_secs(2)));
     let mut child = shell(&stop, "echo $$; exec sleep 30");
     let pid = pid(&mut child);
     child.wait().unwrap();

@@ -103,7 +103,7 @@ fn new_messages_are_fetched_after_the_cursor_and_parse() {
     let m = a.material.unwrap();
     assert_eq!(m.records.len(), 2);
     assert_eq!(&m.bytes[m.records[0].0..m.records[0].1], M1.as_bytes());
-    assert_eq!(m.manifest["uids"], json!([4, 7]));
+    assert_eq!(m.manifest.detail("uids"), &json!([4, 7]));
     let cursor: Cursor = serde_json::from_value((m.cursor_at)(m.bytes.len()).unwrap()).unwrap();
     assert_eq!((cursor.uid_validity, cursor.uid_next), (Some(99), 8));
     let parsed =
@@ -166,7 +166,7 @@ fn an_empty_examined_window_reaches_the_later_message() {
         .unwrap()
         .material
         .unwrap();
-    assert_eq!(second.manifest["uids"], json!([201]));
+    assert_eq!(second.manifest.detail("uids"), &json!([201]));
     assert_eq!(second.bytes, M1.as_bytes());
 }
 
@@ -359,7 +359,7 @@ fn partial_admission_keeps_unfed_uids_available_for_retry() {
     let partial = progress(&batches[0]);
     assert_eq!(partial["uid_next"], 1);
     let repeated = imap.poll(&partial).unwrap().material.unwrap();
-    assert_eq!(repeated.manifest["uids"], json!([4, 7]));
+    assert_eq!(repeated.manifest.detail("uids"), &json!([4, 7]));
     let complete = progress(&batches[1]);
     assert_eq!(complete["uid_next"], 8);
     assert!(imap.poll(&complete).unwrap().material.is_none());

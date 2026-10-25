@@ -20,12 +20,7 @@ fn driver(root: PathBuf, part_bytes: usize) -> DirSnapshot {
 
 fn paths(a: &Acquired) -> Vec<String> {
     a.material.as_ref().map_or(vec![], |m| {
-        m.manifest["members"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .map(|x| x["path"].as_str().unwrap().to_owned())
-            .collect()
+        m.manifest.members.iter().map(|x| x.path.clone()).collect()
     })
 }
 
@@ -48,8 +43,8 @@ fn reads_changed_files_and_records_removed_ones() {
     assert_eq!(paths(&next), vec!["a.md", "sub/b.md"]);
     let m = next.material.as_ref().unwrap();
     assert_eq!(record(m, 1), &removed_marker("sub/b.md")[..]);
-    assert!(m.manifest["members"][1].get("removed_at_ns").is_some());
-    assert_eq!(m.manifest["records"].as_array().unwrap().len(), 2);
+    assert!(m.manifest.members[1].details.contains_key("removed_at_ns"));
+    assert_eq!(m.manifest.records.as_ref().unwrap().len(), 2);
 }
 
 #[devkit::test]
@@ -60,8 +55,13 @@ fn a_walk_cut_by_the_part_size_does_not_record_removed_files() {
     let first = small.poll(&Value::Null, &mut state).unwrap();
     assert_eq!(paths(&first), vec!["a.md"]);
     assert_eq!(
-        first.material.as_ref().unwrap().manifest["scan_complete"],
-        json!(false)
+        first
+            .material
+            .as_ref()
+            .unwrap()
+            .manifest
+            .detail("scan_complete"),
+        &json!(false)
     );
     let m = first.material.as_ref().unwrap();
     let second = small
@@ -216,7 +216,7 @@ fn partial_admission_resumes_original_member_anchors_and_only_final_cursor_updat
     let m = acquired.material.as_ref().unwrap();
     assert_eq!(m.id, id);
     assert_eq!(m.records, vec![(7, 11)]);
-    assert_eq!(m.manifest["records"], json!([[1, 6], [7, 11]]));
+    assert_eq!(m.manifest.records, Some(vec![(1, 6), (7, 11)]));
     assert!(state.files.is_empty());
     let prepared = prepare(
         &source,
@@ -282,7 +282,6 @@ fn empty_and_nonempty_members_keep_exact_body_ranges_in_every_order() {
             .poll(&Value::Null, &mut DirState::default())
             .unwrap();
         let m = acquired.material.unwrap();
-        assert_eq!(m.manifest["format_version"], 2);
         assert!(m.records.windows(2).all(|ranges| ranges[0].1 < ranges[1].1));
         let Some(StoredBytes::FramedFile(file)) = &m.stored else {
             panic!()
@@ -348,7 +347,9 @@ fn a_restart_remembers_the_files_of_admitted_records_only() {
     assert_eq!(restored.files.get("a.md"), Some(&empty));
     assert!(!restored.files.contains_key("sub/b.md"));
     let mut malformed = material.manifest.clone();
-    malformed["members"][0]["removed_at_ns"] = Value::Null;
+    malformed.members[0]
+        .details
+        .insert("removed_at_ns".into(), Value::Null);
     assert!(
         DirState::default()
             .remember_members(&malformed, u64::MAX)

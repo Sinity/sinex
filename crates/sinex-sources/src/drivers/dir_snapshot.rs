@@ -65,96 +65,13 @@ pub struct Cursor {
 #[derive(Default)]
 pub struct DirState {
     files: HashMap<String, Option<(u64, i128, [u8; 32])>>,
-    held: Option<Held>,
+    /// The newest bundle and the file facts it records once admitted.
+    held: Option<(
+        super::held::HeldMaterial,
+        HashMap<String, Option<(u64, i128, [u8; 32])>>,
+    )>,
     /// Paths a restart has already decided from a newer bundle.
     remembered: HashSet<String>,
-}
-
-struct Held {
-    stored: StoredBytes,
-    length: usize,
-    records: Vec<(usize, usize)>,
-    manifest: Value,
-    id: MaterialId,
-    part_index: u32,
-    previous: Cursor,
-    scanned: Cursor,
-    files: HashMap<String, Option<(u64, i128, [u8; 32])>>,
-    observation: ObservationFacts,
-    /// The file facts once this bundle is admitted, when it saves them.
-    memory: Option<Arc<[u8]>>,
-}
-
-impl Held {
-    fn acquired(&self, input: InputRef, cursor: &Cursor) -> Acquired {
-        let through = if cursor.material == Some(self.id) {
-            cursor.through.unwrap_or(0)
-        } else {
-            0
-        };
-        let records = self
-            .records
-            .iter()
-            .copied()
-            .filter(|&(_, end)| end > through)
-            .collect();
-        let id = self.id;
-        let part_index = self.part_index;
-        let length = self.length;
-        let scanned = self.scanned.clone();
-        let previous = self.previous.clone();
-        Acquired {
-            input,
-            observation: self.observation.clone(),
-            // A retry after the bundle's first batch was admitted continues
-            // the revision that batch opened.
-            revision: if cursor.material == Some(self.id) {
-                RevisionChange::Same
-            } else {
-                RevisionChange::Snapshot
-            },
-            material: Some(NewMaterial {
-                id,
-                bytes: Vec::new(),
-                stored: Some(self.stored.clone()),
-                records,
-                part_index,
-                previous_part: self.previous.material,
-                reading_order: super::reading_order(&self.manifest),
-                manifest: self.manifest.clone(),
-                cursor_at: Box::new({
-                    let cursor = move |end| {
-                        serde_json::to_value(Cursor {
-                            material: Some(id),
-                            part_index,
-                            through: Some(end),
-                            last_complete_scan_ns: if end == length {
-                                scanned.last_complete_scan_ns
-                            } else {
-                                previous.last_complete_scan_ns
-                            },
-                            memory_part: if end == length {
-                                scanned.memory_part
-                            } else {
-                                previous.memory_part
-                            },
-                            changed_since_memory: if end == length {
-                                scanned.changed_since_memory
-                            } else {
-                                previous.changed_since_memory
-                            },
-                        })
-                        .expect("cursor serializes")
-                    };
-                    move |end| Ok(cursor(end))
-                }),
-                aligned: false,
-                removed: Vec::new(),
-                memory: self.memory.clone(),
-            }),
-            cursor_without_material: Value::Null,
-        }
-    }
 }
 
 /// The marker a removed file's member holds.
@@ -180,12 +97,12 @@ impl DirSnapshot {
             serde_json::from_value(cursor.clone())
                 .map_err(|e| DriverError::Cursor(e.to_string()))?
         };
-        if let Some(held) = state.held.take() {
-            if previous.material == Some(held.id) && previous.through == Some(held.length) {
-                state.files = held.files;
+        if let Some((held, files)) = state.held.take() {
+            if held.admitted(cursor) {
+                state.files = files;
             } else {
-                let acquired = held.acquired(self.input(), &previous);
-                state.held = Some(held);
+                let acquired = held.acquired(cursor)?;
+                state.held = Some((held, files));
                 return Ok(acquired);
             }
         }
@@ -323,16 +240,15 @@ impl DirSnapshot {
         }
         // Every file read by one walk is as new as the walk; the records are
         // listed so a replay or an excision finds them in the bundle.
-        let manifest = json!({
+        let manifest = sinex_model::Manifest::from_json(json!({
             "path": self.root.display().to_string(),
             "host": self.host,
             "media_type": format::MEDIA_TYPE,
-            "format_version": format::VERSION,
             "scan_complete": complete,
             "members": members,
             "records": records,
             "read_at_ns": i64::try_from(now.unix_ns()).unwrap_or(i64::MAX),
-        });
+        }));
         let id = MaterialId::new();
         let part_index = if previous.material.is_some() {
             previous.part_index + 1
@@ -355,21 +271,54 @@ impl DirSnapshot {
         };
         scanned.changed_since_memory = if due { 0 } else { changed };
         let memory = due.then(|| restore::memory_of(&next_files));
-        let held = Held {
-            stored: StoredBytes::FramedFile(Arc::new(bundle)),
-            length,
-            records,
-            manifest,
-            id,
-            part_index,
-            previous,
-            scanned,
-            files: next_files,
-            observation: facts,
-            memory,
+        let previous_part = previous.material;
+        let cursor_at = move |end: usize| {
+            let last = end == length;
+            serde_json::to_value(Cursor {
+                material: Some(id),
+                part_index,
+                through: Some(end),
+                last_complete_scan_ns: if last {
+                    scanned.last_complete_scan_ns
+                } else {
+                    previous.last_complete_scan_ns
+                },
+                memory_part: if last {
+                    scanned.memory_part
+                } else {
+                    previous.memory_part
+                },
+                changed_since_memory: if last {
+                    scanned.changed_since_memory
+                } else {
+                    previous.changed_since_memory
+                },
+            })
+            .expect("cursor serializes")
         };
-        let acquired = held.acquired(self.input(), &Cursor::default());
-        state.held = Some(held);
+        let acquired = Acquired {
+            input: self.input(),
+            observation: facts,
+            revision: RevisionChange::Snapshot,
+            material: Some(NewMaterial {
+                id,
+                bytes: Vec::new(),
+                stored: Some(StoredBytes::FramedFile(Arc::new(bundle))),
+                records,
+                part_index,
+                previous_part,
+                reading_order: super::reading_order(&manifest),
+                manifest,
+                cursor_at: Box::new(move |end| Ok(cursor_at(end))),
+                aligned: false,
+                removed: Vec::new(),
+                memory,
+            }),
+            cursor_without_material: Value::Null,
+        };
+        let held = super::held::HeldMaterial::hold(acquired, cursor)?;
+        let acquired = held.acquired(cursor)?;
+        state.held = Some((held, next_files));
         Ok(acquired)
     }
 }

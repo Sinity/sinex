@@ -379,13 +379,13 @@ impl Compiler<'_> {
             f.param(V::String(Some(text_array(&kinds))))
                 .push("::text[])");
             out.push(f);
-            if a.open_only
-                && let Some(open) = fields::alias_field(a.name, "open")
+            if let Some((field, value)) = a.only
+                && let Some(sql) = fields::alias_field(a.name, field)
             {
-                out.push(SqlFragment::text(format!(
-                    "({} IS TRUE)",
-                    Self::template(cols, &open)
-                )));
+                let mut f =
+                    SqlFragment::text(format!("(({})::text = ", Self::template(cols, &sql)));
+                f.param(V::String(Some(value.to_owned()))).push(")");
+                out.push(f);
             }
         }
         out

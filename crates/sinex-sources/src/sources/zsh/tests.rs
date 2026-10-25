@@ -76,7 +76,7 @@ fn commands(bytes: &[u8], base: usize) -> Vec<(usize, String)> {
     let out = drain(
         &ZshParser { host: "h".into() },
         DrainInput {
-            manifest: &serde_json::Value::Null,
+            manifest: crate::RecordContext::none().manifest,
             source: SPEC.name,
             class: Class::Open,
             material: MaterialId(uuid::Uuid::nil()),
@@ -193,7 +193,7 @@ fn observations(
     let chunks = drain(
         &ZshParser { host: "h".into() },
         DrainInput {
-            manifest: &serde_json::Value::Null,
+            manifest: crate::RecordContext::none().manifest,
             source: SPEC.name,
             class: Class::Open,
             material: MaterialId(uuid::Uuid::nil()),

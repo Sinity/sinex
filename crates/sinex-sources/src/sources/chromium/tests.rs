@@ -25,7 +25,7 @@ fn history() -> PathBuf {
     path
 }
 
-fn rows(d: &SqliteRows) -> (Vec<Map<String, Value>>, Value) {
+fn rows(d: &SqliteRows) -> (Vec<Map<String, Value>>, sinex_model::Manifest) {
     let a = d.poll(&Value::Null, &mut RowState::default()).unwrap();
     let m = a.material.unwrap();
     let crate::drivers::StoredBytes::FramedFile(file) = m.stored.as_ref().unwrap() else {
@@ -44,7 +44,7 @@ fn rows(d: &SqliteRows) -> (Vec<Map<String, Value>>, Value) {
     (rows, m.manifest)
 }
 
-fn context(manifest: &Value) -> RecordContext<'_> {
+fn context(manifest: &sinex_model::Manifest) -> RecordContext<'_> {
     RecordContext {
         manifest,
         member: None,

@@ -86,116 +86,8 @@ pub struct RowState {
     /// poll after a start is a full pass even when the hashes were rebuilt,
     /// so an update made while Sinex was down is seen.
     polled: bool,
-    held: Option<Held>,
-}
-
-#[derive(Debug)]
-struct Held {
-    stored: StoredBytes,
-    length: usize,
-    records: Vec<(usize, usize)>,
-    ends: Vec<(usize, i64)>,
-    hashes: Vec<(i64, [u8; 32])>,
-    id: MaterialId,
-    previous: Cursor,
-    scanned: Cursor,
-    base: i64,
-    manifest: Value,
-    observation: ObservationFacts,
-    /// The row hashes once this part is admitted, when it saves them.
-    memory: Option<Arc<[u8]>>,
-}
-
-impl Held {
-    fn acquired(&self, input: InputRef, cursor: &Cursor) -> Acquired {
-        let through = if cursor.material == Some(self.id) {
-            cursor.through
-        } else {
-            0
-        };
-        let records = self
-            .records
-            .iter()
-            .copied()
-            .filter(|&(_, end)| end > through)
-            .collect();
-        let previous = self.previous.clone();
-        let scanned = self.scanned.clone();
-        let ends = self.ends.clone();
-        let base = self.base;
-        let length = self.length;
-        // A retry after the material's first batch was admitted continues the
-        // revision that batch opened.
-        let (observation, revision) = if cursor.material == Some(self.id) {
-            (
-                ObservationFacts {
-                    changed: false,
-                    ..self.observation.clone()
-                },
-                RevisionChange::Same,
-            )
-        } else {
-            (self.observation.clone(), RevisionChange::Snapshot)
-        };
-        Acquired {
-            input,
-            observation,
-            revision,
-            material: (!self.records.is_empty()).then(|| NewMaterial {
-                id: self.id,
-                bytes: Vec::new(),
-                stored: Some(self.stored.clone()),
-                records,
-                part_index: scanned.part_index,
-                previous_part: previous.material,
-                reading_order: super::reading_order(&self.manifest),
-                manifest: self.manifest.clone(),
-                cursor_at: Box::new({
-                    let cursor = move |end| {
-                        let upto = ends
-                            .iter()
-                            .take_while(|(e, _)| *e <= end)
-                            .map(|(_, r)| *r)
-                            .max()
-                            .unwrap_or(previous.max_rowid);
-                        serde_json::to_value(Cursor {
-                            max_rowid: upto.max(previous.max_rowid),
-                            last_full_pass_ns: if end == length {
-                                scanned.last_full_pass_ns
-                            } else {
-                                previous.last_full_pass_ns
-                            },
-                            last_order: base.saturating_add(end as i64),
-                            open: if end == length {
-                                scanned.open.clone()
-                            } else {
-                                previous.open.clone()
-                            },
-                            through: end,
-                            memory_part: if end == length {
-                                scanned.memory_part
-                            } else {
-                                previous.memory_part
-                            },
-                            changed_since_memory: if end == length {
-                                scanned.changed_since_memory
-                            } else {
-                                previous.changed_since_memory
-                            },
-                            ..scanned.clone()
-                        })
-                        .expect("cursor serializes")
-                    };
-                    move |end| Ok(cursor(end))
-                }),
-                aligned: false,
-                removed: Vec::new(),
-                memory: self.memory.clone(),
-            }),
-            cursor_without_material: serde_json::to_value(&self.scanned)
-                .expect("cursor serializes"),
-        }
-    }
+    /// The newest material and the row hashes it adds once admitted.
+    held: Option<(super::held::HeldMaterial, Vec<(i64, [u8; 32])>)>,
 }
 
 impl RowState {
@@ -272,13 +164,13 @@ impl SqliteRows {
             serde_json::from_value(cursor.clone())
                 .map_err(|e| DriverError::Cursor(e.to_string()))?
         };
-        if let Some(held) = state.held.take() {
-            if previous == held.scanned {
-                state.hashes.extend(held.hashes);
+        if let Some((held, hashes)) = state.held.take() {
+            if held.admitted(cursor) {
+                state.hashes.extend(hashes);
                 state.polled = true;
             } else {
-                let acquired = held.acquired(self.input(), &previous);
-                state.held = Some(held);
+                let acquired = held.acquired(cursor)?;
+                state.held = Some((held, hashes));
                 return Ok(acquired);
             }
         }
@@ -439,8 +331,9 @@ impl SqliteRows {
         // never below what earlier polls gave out, so a row read again later
         // (in this poll or a later one) is always newer.
         let base = now_ns.max(previous.last_order.saturating_add(1));
-        let mut manifest = json!({"path": self.path.display().to_string(), "host": self.host, "table": self.table, "from": self.from, "media_type": "application/x-ndjson", "full_pass": full, "read_at_ns": now_ns, "order_base": base, "read_from": "database"});
-        manifest["role"] = json!("records");
+        let manifest = sinex_model::Manifest::from_json(
+            json!({"role": "records", "path": self.path.display().to_string(), "host": self.host, "table": self.table, "from": self.from, "media_type": "application/x-ndjson", "full_pass": full, "read_at_ns": now_ns, "order_base": base, "read_from": "database"}),
+        );
         let part_index = if previous.material.is_some() {
             previous.part_index + 1
         } else {
@@ -460,36 +353,81 @@ impl SqliteRows {
             (state.hashes.len() + added) as u64,
         );
         let memory = due.then(|| state.memory_with(&hashes));
-        let held = Held {
-            stored: StoredBytes::FramedFile(Arc::new(staged)),
-            length,
-            records,
-            ends,
-            hashes,
-            id,
-            previous: previous.clone(),
-            scanned: Cursor {
-                max_rowid,
-                last_full_pass_ns: last_full,
-                last_order: base.saturating_add(length as i64),
-                material: Some(id),
-                part_index,
-                open,
-                through: length,
-                memory_part: if due {
-                    Some(part_index)
+        let scanned = Cursor {
+            max_rowid,
+            last_full_pass_ns: last_full,
+            last_order: base.saturating_add(length as i64),
+            material: Some(id),
+            part_index,
+            open,
+            through: length,
+            memory_part: if due {
+                Some(part_index)
+            } else {
+                previous.memory_part
+            },
+            changed_since_memory: if due { 0 } else { changed },
+        };
+        let previous_part = previous.material;
+        let cursor_at = move |end: usize| {
+            let upto = ends
+                .iter()
+                .take_while(|(e, _)| *e <= end)
+                .map(|(_, r)| *r)
+                .max()
+                .unwrap_or(previous.max_rowid);
+            let last = end == length;
+            serde_json::to_value(Cursor {
+                max_rowid: upto.max(previous.max_rowid),
+                last_full_pass_ns: if last {
+                    scanned.last_full_pass_ns
+                } else {
+                    previous.last_full_pass_ns
+                },
+                last_order: base.saturating_add(end as i64),
+                open: if last {
+                    scanned.open.clone()
+                } else {
+                    previous.open.clone()
+                },
+                through: end,
+                memory_part: if last {
+                    scanned.memory_part
                 } else {
                     previous.memory_part
                 },
-                changed_since_memory: if due { 0 } else { changed },
-            },
-            base,
-            manifest,
-            observation: facts,
-            memory,
+                changed_since_memory: if last {
+                    scanned.changed_since_memory
+                } else {
+                    previous.changed_since_memory
+                },
+                ..scanned.clone()
+            })
+            .expect("cursor serializes")
         };
-        let acquired = held.acquired(self.input(), &Cursor::default());
-        state.held = Some(held);
+        let acquired = Acquired {
+            input: self.input(),
+            observation: facts,
+            revision: RevisionChange::Snapshot,
+            material: Some(NewMaterial {
+                id,
+                bytes: Vec::new(),
+                stored: Some(StoredBytes::FramedFile(Arc::new(staged))),
+                records,
+                part_index,
+                previous_part,
+                reading_order: super::reading_order(&manifest),
+                manifest,
+                cursor_at: Box::new(move |end| Ok(cursor_at(end))),
+                aligned: false,
+                removed: Vec::new(),
+                memory,
+            }),
+            cursor_without_material: Value::Null,
+        };
+        let held = super::held::HeldMaterial::hold(acquired, cursor)?;
+        let acquired = held.acquired(cursor)?;
+        state.held = Some((held, hashes));
         Ok(acquired)
     }
 }

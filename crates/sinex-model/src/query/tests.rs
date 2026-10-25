@@ -249,7 +249,7 @@ fn joins_take_an_inner_query() {
     assert_eq!(j.kind, JoinKind::Near);
     assert_eq!(j.within_secs, Some(300.0));
     assert_eq!(j.inner.source.alias().unwrap().name, "commands");
-    let query = q("pages during (intervals where state = focused)");
+    let query = q("commands during (intervals where state = focused)");
     assert!(matches!(query.stages.first(), Some(Stage::Join(j)) if j.kind == JoinKind::During));
     assert!(err("events near (commands) ").message.contains("within"));
     // The columns a join adds can be shown and sorted on.
@@ -404,3 +404,16 @@ fn every_field_name_is_unique_within_its_table() {
 }
 
 mod sessions;
+
+#[devkit::test]
+fn every_alias_reads_registered_event_types() {
+    for alias in ALIASES {
+        for kind in alias.kinds {
+            assert!(
+                crate::event_types::find(kind).is_some(),
+                "{} reads {kind}, which no type declares",
+                alias.name
+            );
+        }
+    }
+}

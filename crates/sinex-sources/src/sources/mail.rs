@@ -70,7 +70,7 @@ impl Parser for MailParser {
         // A removed Maildir file: nothing to read (see the module note).
         if context
             .member
-            .is_some_and(|m| m.get("removed_at_ns").is_some())
+            .is_some_and(|m| m.details.contains_key("removed_at_ns"))
         {
             return Ok((vec![], ()));
         }

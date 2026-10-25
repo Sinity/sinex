@@ -52,7 +52,8 @@ pub async fn reference(
         previous_part: row.previous_part_id.map(MaterialId),
         parser: row.parser,
         parser_version: u32::try_from(row.parser_version).map_err(|_| invalid())?,
-        manifest: row.manifest,
+        manifest: serde_json::from_value(row.manifest)
+            .map_err(|e| crate::Error::Invalid(format!("material {material}: manifest: {e}")))?,
     }))
 }
 
@@ -99,7 +100,9 @@ pub async fn parts_from(
                     previous_part: row.previous_part_id.map(MaterialId),
                     parser: row.parser,
                     parser_version: u32::try_from(row.parser_version).map_err(|_| invalid())?,
-                    manifest: row.manifest,
+                    manifest: serde_json::from_value(row.manifest).map_err(|e| {
+                        crate::Error::Invalid(format!("material {}: manifest: {e}", row.id))
+                    })?,
                 },
                 row.revision_id,
             ))

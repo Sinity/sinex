@@ -4,7 +4,8 @@ use serde_json::json;
 /// Frame a cast with `cast_spans` and parse every record.
 fn run(lines: &[&str]) -> Vec<CastEvent> {
     let bytes: String = lines.iter().map(|l| format!("{l}\n")).collect();
-    let manifest = json!({"path": "/a/2026/10/04/sess-1/session.cast"});
+    let manifest =
+        sinex_model::Manifest::from_json(json!({"path": "/a/2026/10/04/sess-1/session.cast"}));
     let context = RecordContext {
         manifest: &manifest,
         member: None,

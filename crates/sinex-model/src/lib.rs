@@ -11,18 +11,20 @@ pub mod clock;
 pub mod event;
 pub mod event_types;
 pub mod id;
+pub mod manifest;
 pub mod payload;
 pub mod privacy;
 pub mod query;
 
 pub use batch::{
     ArchiveReason, ArchiveRequest, Batch, BatchKind, IngressFrame, InputRef, MaterialRef,
-    MaterialRole, ObservationFacts, ReaderMemory, RecordOutcome, ReplayScope, RevisionChange,
-    SourceProgress, WrappedDataKey,
+    ObservationFacts, ReaderMemory, RecordOutcome, ReplayScope, RevisionChange, SourceProgress,
+    WrappedDataKey,
 };
 pub use clock::{TimeQuality, Timestamp, TsOrig};
 pub use event::{BuildError, Event, Origin, ReadingOrder, RecordLocation, RecordState};
 pub use id::{EventId, InputId, MaterialId, ObservationId, OperationId, RevisionId, RunId};
+pub use manifest::{Manifest, MaterialRole, Member};
 pub use payload::{
     DbCheck, EquivalenceKey, EventPayload, KeyKind, OwnedBlob, Payloads, ReplaceRule,
 };

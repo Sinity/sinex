@@ -2,7 +2,8 @@
 use crate::{Parser, RecordError, RecordShape};
 use serde_json::Value;
 use sinex_model::{
-    Class, MaterialId, Origin, Payloads, ReadingOrder, RecordLocation, RecordOutcome,
+    Class, Manifest, MaterialId, Member, Origin, Payloads, ReadingOrder, RecordLocation,
+    RecordOutcome,
 };
 
 /// Batch size bounds. Batches are sized by events and bytes; a record too large
@@ -89,22 +90,21 @@ pub struct DrainInput<'a> {
     /// Which of two readings is newer, by the record's anchor.
     pub reading_order: &'a (dyn Fn(usize) -> ReadingOrder + Sync),
     pub limits: Limits,
-    /// The material's manifest. A `members` array of `{path, stream_offset,
-    /// length, ...}` (archive member streams, directory snapshots) tells each
-    /// record which member it is in.
-    pub manifest: &'a Value,
+    /// The material's manifest. Its members (archive member streams,
+    /// directory snapshots) tell each record which member it is in.
+    pub manifest: &'a Manifest,
 }
 
 /// What a parser may know about where its record came from.
 #[derive(Clone, Copy, Debug)]
 pub struct RecordContext<'a> {
-    pub manifest: &'a Value,
-    /// The manifest's member entry containing this record, if the material is
-    /// made of members.
-    pub member: Option<&'a Value>,
+    pub manifest: &'a Manifest,
+    /// The manifest's member containing this record, if the material is made
+    /// of members.
+    pub member: Option<&'a Member>,
 }
 
-static NO_MANIFEST: Value = Value::Null;
+static NO_MANIFEST: std::sync::LazyLock<Manifest> = std::sync::LazyLock::new(Manifest::default);
 
 impl RecordContext<'static> {
     /// A record read outside any material (a test, a live line).
@@ -120,31 +120,9 @@ impl RecordContext<'_> {
     /// The member's path, or the material's own `path`.
     pub fn path(&self) -> Option<&str> {
         self.member
-            .and_then(|m| m.get("path"))
-            .or_else(|| self.manifest.get("path"))
-            .and_then(Value::as_str)
+            .map(|m| m.path.as_str())
+            .or(self.manifest.path.as_deref())
     }
-}
-
-/// The member of `manifest` whose stream range holds byte `anchor`. Members
-/// are in stream order and do not overlap.
-pub fn member_at(manifest: &Value, anchor: usize) -> Option<&Value> {
-    let members = manifest.get("members")?.as_array()?;
-    let offset = |m: &Value| m.get("stream_offset").and_then(Value::as_u64).unwrap_or(0) as usize;
-    let length = |m: &Value| m.get("length").and_then(Value::as_u64).unwrap_or(0) as usize;
-    let i = members.partition_point(|m| offset(m) <= anchor);
-    let member = members[..i].last()?;
-    if length(member) == 0 && anchor == offset(member) {
-        // Equal zero-length members at one byte anchor have no unique context.
-        if members[..i - 1]
-            .last()
-            .is_some_and(|previous| offset(previous) == anchor && length(previous) == 0)
-        {
-            return None;
-        }
-        return Some(member);
-    }
-    (anchor < offset(member) + length(member)).then_some(member)
 }
 
 /// One batch's worth of drained records.
@@ -237,7 +215,7 @@ impl<'a, P: Parser> Drainer<'a, P> {
         };
         let context = RecordContext {
             manifest: input.manifest,
-            member: member_at(input.manifest, start),
+            member: input.manifest.member_at(start),
         };
         match parse_one(self.parser, raw, &self.carry, &context) {
             Ok((payloads, next)) => {

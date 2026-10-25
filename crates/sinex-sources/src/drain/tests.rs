@@ -58,7 +58,7 @@ fn run(bytes: &[u8], carry: Value, limits: Limits) -> Vec<DrainOutput> {
             carry,
             reading_order: &|a| ReadingOrder(a as i64),
             limits,
-            manifest: &Value::Null,
+            manifest: crate::RecordContext::none().manifest,
         },
     )
     .unwrap()
@@ -156,21 +156,6 @@ fn blanked_records_are_skipped_not_failed() {
 }
 
 #[devkit::test]
-fn records_find_their_member() {
-    let manifest = serde_json::json!({"members": [
-        {"path": "a", "stream_offset": 0, "length": 4},
-        {"path": "b", "stream_offset": 4, "length": 6},
-    ]});
-    let path = |anchor| member_at(&manifest, anchor).and_then(|m| m["path"].as_str());
-    assert_eq!(path(0), Some("a"));
-    assert_eq!(path(3), Some("a"));
-    assert_eq!(path(4), Some("b"));
-    assert_eq!(path(9), Some("b"));
-    assert_eq!(path(10), None);
-    assert_eq!(member_at(&Value::Null, 0), None);
-}
-
-#[devkit::test]
 fn nul_payloads_become_failures() {
     let out = run(b"a\0b\n", Value::Null, Limits::default());
     assert!(matches!(out[0].outcomes[0], RecordOutcome::Failure { .. }));
@@ -201,7 +186,7 @@ fn temporary_file_records_match_slice_hashes_locations_carry_and_limits() {
                     carry: Value::Null,
                     reading_order: &|a| ReadingOrder(a as i64),
                     limits,
-                    manifest: &Value::Null,
+                    manifest: crate::RecordContext::none().manifest,
                 },
             )
             .unwrap();
@@ -274,7 +259,7 @@ fn temporary_file_read_failure_stops_before_a_false_progress_chunk() {
                 max_events: 1,
                 max_bytes: 1000,
             },
-            manifest: &Value::Null,
+            manifest: crate::RecordContext::none().manifest,
         },
     )
     .unwrap();
@@ -300,7 +285,7 @@ fn invalid_staged_ranges_are_refused_before_record_allocation() {
                 carry: Value::Null,
                 reading_order: &|_| ReadingOrder(0),
                 limits: Limits::default(),
-                manifest: &Value::Null,
+                manifest: crate::RecordContext::none().manifest,
             }
         )
         .is_err()
@@ -310,11 +295,11 @@ fn invalid_staged_ranges_are_refused_before_record_allocation() {
 #[devkit::test]
 fn directory_bundles_keep_empty_members_at_distinct_anchors() {
     use crate::sources::notes::NotesParser;
-    let manifest = serde_json::json!({
-        "path":"synthetic-vault", "media_type":"application/x-sinex-file-bundle", "format_version": 2,
+    let manifest = sinex_model::Manifest::from_json(serde_json::json!({
+        "path":"synthetic-vault", "media_type":"application/x-sinex-file-bundle",
         "members":[{"path":"a.md", "stream_offset":1, "length":5}, {"path":"b.md", "stream_offset":7, "length":0}],
-    });
-    let run = |manifest: &Value, records: &[(usize, usize)]| {
+    }));
+    let run = |manifest: &sinex_model::Manifest, records: &[(usize, usize)]| {
         drain(
             &NotesParser,
             DrainInput {
@@ -347,13 +332,13 @@ fn directory_bundles_keep_empty_members_at_distinct_anchors() {
         assert_eq!(events[0].payload["text"], text);
     }
     let mut overlap = manifest.clone();
-    overlap["members"][1] = serde_json::json!({"path":"b.md","stream_offset":3,"length":3});
+    overlap.members[1] = sinex_model::Member {
+        path: "b.md".into(),
+        stream_offset: 3,
+        length: 3,
+        details: Default::default(),
+    };
     assert!(run(&overlap, &[(1, 6), (3, 6)]).is_err());
-    for version in [serde_json::json!(1), serde_json::json!(3), Value::Null] {
-        let mut other = manifest.clone();
-        other["format_version"] = version;
-        assert!(run(&other, &[(1, 6), (7, 7)]).is_err());
-    }
 }
 
 #[devkit::test]
@@ -396,7 +381,7 @@ fn stored_reader_holds_one_record_and_stops_at_a_read_fault() {
                 max_events: 1,
                 max_bytes: 6,
             },
-            manifest: &Value::Null,
+            manifest: crate::RecordContext::none().manifest,
         },
     )
     .unwrap();
@@ -426,7 +411,7 @@ fn a_blank_record_is_no_record_and_leaves_the_carry_alone() {
             carry: Value::Null,
             reading_order: &|a| ReadingOrder(a as i64),
             limits: Limits::default(),
-            manifest: &Value::Null,
+            manifest: crate::RecordContext::none().manifest,
         },
     )
     .unwrap();

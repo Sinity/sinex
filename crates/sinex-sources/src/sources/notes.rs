@@ -35,8 +35,9 @@ pub const SPEC: SourceSpec = SourceSpec {
 /// reads it the same way.
 pub struct NotesParser;
 
-fn nanos(member: &Value, field: &str) -> Option<Timestamp> {
+fn nanos(member: &sinex_model::Member, field: &str) -> Option<Timestamp> {
     member
+        .details
         .get(field)
         .and_then(Value::as_str)
         .and_then(|s| s.parse::<i128>().ok())
@@ -57,11 +58,7 @@ impl Parser for NotesParser {
         let member = context
             .member
             .ok_or_else(|| RecordError::new("a note needs its directory snapshot member"))?;
-        let path = member
-            .get("path")
-            .and_then(Value::as_str)
-            .ok_or_else(|| RecordError::new("snapshot member has no path"))?
-            .to_owned();
+        let path = member.path.clone();
         let removed_at = nanos(member, "removed_at_ns");
         let text = if removed_at.is_some() {
             None
@@ -84,8 +81,8 @@ impl Parser for NotesParser {
         let payload = NoteDocument {
             vault: context
                 .manifest
-                .get("path")
-                .and_then(Value::as_str)
+                .path
+                .as_deref()
                 .and_then(|p| p.rsplit('/').find(|s| !s.is_empty()))
                 .unwrap_or_default()
                 .to_owned(),

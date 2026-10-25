@@ -294,7 +294,7 @@ fn request_citation_facts_preserve_payload_identity_and_refuse_supplied_invalid_
     });
     let acquired = request_material(&[record], "operator", "h", "preview");
     let material = acquired.material.unwrap();
-    let outcomes = |manifest: &Value| {
+    let outcomes = |manifest: &sinex_model::Manifest| {
         drain(
             &RequestParser,
             DrainInput {
@@ -327,7 +327,9 @@ fn request_citation_facts_preserve_payload_identity_and_refuse_supplied_invalid_
         size: 17,
     };
     let mut manifest = material.manifest.clone();
-    manifest["owned_blobs"] = json!([citation]);
+    manifest
+        .details
+        .insert("owned_blobs".into(), json!([citation]));
     let current = outcomes(&manifest);
     let RecordOutcome::Events { events: new, .. } = &current[0] else {
         panic!()
@@ -346,7 +348,7 @@ fn request_citation_facts_preserve_payload_identity_and_refuse_supplied_invalid_
         json!([{"blob":"blake3:invalid","size":17}]),
         json!([{"blob":format!("blake3:{}",blake3::hash(b"different")),"size":17}]),
     ] {
-        manifest["owned_blobs"] = invalid;
+        manifest.details.insert("owned_blobs".into(), invalid);
         assert!(matches!(
             &outcomes(&manifest)[0],
             RecordOutcome::Failure { .. }

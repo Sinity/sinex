@@ -302,7 +302,7 @@ async fn a_batch_whose_bytes_are_not_stored_is_refused(db: devkit::pg::TestDatab
                 previous_part: None,
                 parser: "zsh".into(),
                 parser_version: 1,
-                manifest: serde_json::json!({}),
+                manifest: sinex_model::Manifest::from_json(serde_json::json!({})),
             }),
             cursor: serde_json::json!({"offset": 1}),
             carry: serde_json::Value::Null,

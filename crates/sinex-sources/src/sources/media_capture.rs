@@ -52,10 +52,10 @@ impl Parser for MediaParser {
         _: &(),
         context: &RecordContext<'_>,
     ) -> Result<(Vec<MediaSegment>, ()), RecordError> {
-        let m = context.manifest;
-        let started_at =
-            ts(&m["started_ns"]).ok_or_else(|| RecordError::new("segment has no start"))?;
-        let ended_at = ts(&m["ended_ns"]).unwrap_or(started_at);
+        let m = &context.manifest.details;
+        let started_at = ts(m.get("started_ns").unwrap_or(&Value::Null))
+            .ok_or_else(|| RecordError::new("segment has no start"))?;
+        let ended_at = ts(m.get("ended_ns").unwrap_or(&Value::Null)).unwrap_or(started_at);
         let s = |k: &str| m.get(k).and_then(Value::as_str).map(str::to_owned);
         let n = |k: &str| {
             m.get(k)

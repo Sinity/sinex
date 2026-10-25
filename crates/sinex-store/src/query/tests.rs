@@ -114,15 +114,6 @@ async fn ask_page(conn: &mut PgConnection, text: &str, page: Page) -> Answer {
         .unwrap_or_else(|e| panic!("{text}: {e}"))
 }
 
-async fn refused(conn: &mut PgConnection, text: &str) -> String {
-    let ctx = ctx();
-    let q = bind(text, &ctx).unwrap();
-    run(conn, text, &q, &ctx, &Page::default())
-        .await
-        .expect_err(text)
-        .to_string()
-}
-
 fn column(a: &Answer, name: &str) -> Vec<serde_json::Value> {
     a.rows.iter().map(|r| r[name].clone()).collect()
 }
@@ -431,16 +422,6 @@ async fn recall_reports_every_source_and_says_no_data(db: devkit::pg::TestDataba
 }
 
 #[devkit::test]
-async fn an_alias_nothing_produces_is_refused(db: devkit::pg::TestDatabase) {
-    let mut conn = <sqlx::PgConnection as sqlx::Connection>::connect(&db.url(None))
-        .await
-        .unwrap();
-    world(&mut conn).await;
-    let e = refused(&mut conn, "sessions").await;
-    assert!(e.contains("no source or derivation produces"), "{e}");
-}
-
-#[devkit::test]
 async fn sources_lists_every_source_with_events(db: devkit::pg::TestDatabase) {
     let mut conn = <sqlx::PgConnection as sqlx::Connection>::connect(&db.url(None))
         .await
@@ -522,3 +503,89 @@ async fn read_only_sql_reads_and_cannot_write(db: devkit::pg::TestDatabase) {
 }
 
 mod cursor;
+
+/// Admit derived events built from `payloads`, each with one fused command as
+/// its parent.
+async fn admit_derived<P: sinex_model::EventPayload>(conn: &mut PgConnection, payloads: &[P]) {
+    let parent = EventId(admit_commands(conn, &[("ls", "/")]).await[0].0);
+    let events = payloads
+        .iter()
+        .enumerate()
+        .map(|(i, p)| {
+            Event::build(
+                p,
+                "derive.test",
+                Origin::Derived {
+                    parents: vec![parent],
+                },
+                ReadingOrder(1),
+                *blake3::hash(format!("d{i}").as_bytes()).as_bytes(),
+                Class::Open,
+            )
+            .unwrap()
+        })
+        .collect();
+    let batch = Batch {
+        run: RunId::new(),
+        kind: BatchKind::Api {
+            actor: "test".into(),
+        },
+        records: vec![RecordOutcome::Events {
+            location: None,
+            events,
+        }],
+        archive: vec![],
+    };
+    let mut tx = conn.begin().await.unwrap();
+    admit(&mut tx, &batch, &NoDerivations).await.unwrap();
+    tx.commit().await.unwrap();
+}
+
+#[devkit::test]
+async fn interval_and_day_aliases_read_what_the_derivations_write(db: devkit::pg::TestDatabase) {
+    use sinex_model::event_types::{ActivitySummary, StateInterval};
+    let mut conn = <sqlx::PgConnection as sqlx::Connection>::connect(&db.url(None))
+        .await
+        .unwrap();
+    let at = |s: i64| Timestamp::from_unix_secs(BASE + s).unwrap();
+    let interval = |id: &str, ended: Option<i64>| StateInterval {
+        interval_id: id.into(),
+        state_kind: "desktop.focus".into(),
+        subject_id: Some(id.into()),
+        label: Some(format!("{id} window")),
+        started_at: at(0),
+        ended_at: ended.map(at),
+        start_event_type: "window.focused".into(),
+        end_event_type: ended.map(|_| "window.focused".into()),
+        attributes: Default::default(),
+    };
+    admit_derived(&mut conn, &[interval("a", Some(90)), interval("b", None)]).await;
+    let summary = |grain: &str| ActivitySummary {
+        grain: grain.into(),
+        period_start: at(0),
+        period_end: at(3600),
+        day: "2026-09-14".into(),
+        commands: 3,
+        failed_commands: 1,
+        sessions: 1,
+        session_seconds: 600,
+        top_cwds: vec![],
+        state_seconds: Default::default(),
+        top_subjects: vec![],
+    };
+    admit_derived(&mut conn, &[summary("hour"), summary("day")]).await;
+
+    let now = ask(&mut conn, "now").await;
+    assert_eq!(now.total, 1);
+    assert_eq!(column(&now, "subject"), vec![json!("b window")]);
+    let closed = ask(
+        &mut conn,
+        "intervals where open = false fields duration, state",
+    )
+    .await;
+    assert_eq!(closed.total, 1);
+    assert_eq!(column(&closed, "state"), vec![json!("desktop.focus")]);
+    let days = ask(&mut conn, "days fields day, commands").await;
+    assert_eq!(days.total, 1);
+    assert_eq!(column(&days, "commands"), vec![json!(3)]);
+}

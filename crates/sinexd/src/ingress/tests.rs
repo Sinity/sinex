@@ -164,7 +164,7 @@ impl Harness {
         serde_json::from_slice(&reply.payload).unwrap()
     }
 
-    async fn materials(&self, producer: &str, after: i64, limit: u32) -> Vec<HeldMaterial> {
+    async fn materials(&self, producer: &str, after: i64, limit: u32) -> Vec<ProducerMaterial> {
         let reply = self
             .client
             .request(
@@ -198,7 +198,7 @@ impl Harness {
                     parser_version: 1,
                     part_index: 0,
                     previous_part: None,
-                    manifest: json!({"media_type": "text/plain"}),
+                    manifest: sinex_model::Manifest::from_json(json!({"media_type": "text/plain"})),
                 }),
             },
         )
@@ -313,7 +313,7 @@ async fn an_ai_session_from_polylogue_is_ordinary_events(db: devkit::pg::TestDat
             parser_version: 40,
             part_index: 0,
             previous_part: None,
-            manifest: json!({"media_type": "application/jsonl"}),
+            manifest: sinex_model::Manifest::from_json(json!({"media_type": "application/jsonl"})),
         }),
     };
     assert_eq!(h.send("polylogue", &frame).await.refusal, None);
