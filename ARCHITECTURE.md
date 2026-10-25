@@ -31,7 +31,9 @@ A failed admission is retried from the material the reader holds: the append,
 directory, SQLite-row and IMAP readers keep their newest material in memory
 until its final cursor is admitted, then read on. After a restart nothing
 unadmitted is kept; the reader continues from the committed cursor, and a
-material admitted only in part is completed by reading the source again.
+material admitted only in part is completed by reading the source again. The
+new part's manifest records how much of the part before it was admitted
+(`previous_through`), and replay reads that part only that far.
 
 ### Restart
 
@@ -60,6 +62,8 @@ driver a binding uses.
 - **Export archives.** An archive is stored once and read in one forward pass
   for every compatible binding (same host and class); each binding keeps its
   own record parts and cursor. A sealed archive uses one key per binding.
+  After a restart the stored archive is read again from each cursor; the
+  rest of a part only partly admitted becomes a new part.
 
 ### Typed payloads
 

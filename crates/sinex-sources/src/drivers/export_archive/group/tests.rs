@@ -1,7 +1,7 @@
 use super::*;
 use crate::drivers;
 use crate::sources::google_takeout::fit;
-use sinex_model::{BatchKind, RecordOutcome, RunId};
+use sinex_model::{BatchKind, MaterialRef, RecordOutcome, RunId};
 use std::collections::BTreeMap;
 use std::sync::Mutex;
 
@@ -69,12 +69,11 @@ fn facts(length: usize) -> ObservationFacts {
         ..Default::default()
     }
 }
-fn route(cursor: Value, unfinished: Option<UnfinishedPart>, budget: usize) -> Route {
+fn route(cursor: Value, budget: usize) -> Route {
     Route {
         class: Class::Open,
         driver: driver(budget),
         cursor,
-        unfinished,
     }
 }
 fn source(index: usize) -> crate::DeclaredSource<fit::FitParser> {
@@ -168,7 +167,7 @@ fn one_forward_decode_and_record_write_serve_distinct_logical_sources() {
             raw.len() as u64,
             facts(raw.len()),
             Arc::new(AtomicBool::new(false)),
-            vec![route(Value::Null, None, 400), route(Value::Null, None, 400)],
+            vec![route(Value::Null, 400), route(Value::Null, 400)],
             &sink,
             &mut |index, acquired| Ok(seen.accept(index, acquired, &sink)),
         )
@@ -219,7 +218,7 @@ fn one_forward_decode_and_record_write_serve_distinct_logical_sources() {
             raw.len() as u64,
             facts(raw.len()),
             Arc::new(AtomicBool::new(false)),
-            vec![route(Value::Null, None, 400)],
+            vec![route(Value::Null, 400)],
             &one,
             &mut |index, acquired| Ok(one_seen.accept(index, acquired, &one)),
         )
@@ -231,89 +230,71 @@ fn one_forward_decode_and_record_write_serve_distinct_logical_sources() {
 }
 
 #[devkit::test]
-fn restart_finishes_a_part_with_its_original_material_id_and_anchors() {
+fn a_restart_reads_the_rest_of_a_partly_admitted_part_from_the_stored_archive() {
     let raw = tar(&[("Takeout/Fit/All Data/a.json", points(40))], true);
     let sink = Sink::default();
     let blob = sink.put(&raw).unwrap();
     let mut seen = Seen::default();
-    let mut stopped = false;
-    let mut unfinished = None;
+    let mut first_part = None;
     read(
         Box::new(std::io::Cursor::new(raw.clone())),
         blob.clone(),
         raw.len() as u64,
         facts(raw.len()),
         Arc::new(AtomicBool::new(false)),
-        vec![
-            route(Value::Null, None, 1000),
-            route(Value::Null, None, 1000),
-        ],
+        vec![route(Value::Null, 1000), route(Value::Null, 1000)],
         &sink,
         &mut |index, acquired| {
             let acquired = acquired.unwrap();
             if index == 0
-                && !stopped
+                && first_part.is_none()
                 && acquired
                     .material
                     .as_ref()
                     .is_some_and(|m| !m.records.is_empty())
             {
+                // Only the part's first record is admitted before the stop.
                 let m = acquired.material.as_ref().unwrap();
                 let first = m.records[0];
                 seen.cursors.insert(0, (m.cursor_at)(first.1).unwrap());
-                let StoredBytes::Blob { name, length } = m.stored.as_ref().unwrap() else {
-                    panic!("stored body")
-                };
-                let reference = MaterialRef {
-                    id: m.id,
-                    input: None,
-                    blob: name.clone(),
-                    length: *length,
-                    part_index: m.part_index,
-                    previous_part: m.previous_part,
-                    parser: source(0).spec.parser.into(),
-                    parser_version: source(0).spec.parser_version,
-                    manifest: m.manifest.clone(),
-                };
-                unfinished = Some((reference, m.bytes.clone(), m.records.clone()));
-                stopped = true;
+                first_part = Some(m.id);
                 return Ok(false);
             }
             Ok(seen.accept(index, Ok(acquired), &sink))
         },
     )
     .unwrap();
-    let (reference, bytes, records) = unfinished.unwrap();
-    let id = reference.id;
-    let saved = UnfinishedPart::new(reference, bytes, &source(0).spec).unwrap();
-    let mut resumed_id = None;
-    let routes = vec![
-        route(seen.cursors[&0].clone(), Some(saved), 31),
-        route(seen.cursors[&1].clone(), None, 31),
-    ];
+    let first_part = first_part.unwrap();
+    let mut rest = None;
     read(
         Box::new(std::io::Cursor::new(raw.clone())),
         blob,
         raw.len() as u64,
         facts(raw.len()),
         Arc::new(AtomicBool::new(false)),
-        routes,
+        vec![
+            route(seen.cursors[&0].clone(), 31),
+            route(seen.cursors[&1].clone(), 31),
+        ],
         &sink,
         &mut |index, acquired| {
-            if index == 0 && resumed_id.is_none() {
-                let acquired = acquired.as_ref().unwrap();
-                let material = acquired.material.as_ref().unwrap();
-                assert_eq!(material.id, id);
-                assert_eq!(material.records, records[1..]);
-                resumed_id = Some(material.id);
+            if index == 0 && rest.is_none() {
+                let material = acquired.as_ref().unwrap().material.as_ref().unwrap();
+                rest = Some((material.id, material.previous_part));
             }
             Ok(seen.accept(index, acquired, &sink))
         },
     )
     .unwrap();
-    assert_eq!(resumed_id, Some(id));
+    let (rest_id, previous) = rest.unwrap();
+    assert_ne!(rest_id, first_part, "the rest is a new part");
+    assert_eq!(previous, Some(first_part));
     assert!(seen.errors.is_empty(), "{:?}", seen.errors);
-    assert_eq!(seen.events[&0].len(), 39);
+    assert_eq!(
+        seen.events[&0].len(),
+        39,
+        "the first record was admitted before the stop"
+    );
     assert_eq!(seen.events[&1].len(), 40);
     assert_eq!(seen.cursors[&0]["done"], true);
 }
@@ -332,7 +313,7 @@ fn invalid_record_is_accounted_and_valid_suffix_is_still_admitted() {
         raw.len() as u64,
         facts(raw.len()),
         Arc::new(AtomicBool::new(false)),
-        vec![route(Value::Null, None, 100)],
+        vec![route(Value::Null, 100)],
         &sink,
         &mut |index, acquired| Ok(seen.accept(index, acquired, &sink)),
     )
@@ -356,7 +337,7 @@ fn incompatible_framing_stages_one_member_and_failure_stays_with_its_route() {
     let sink = Sink::default();
     let blob = sink.put(&raw).unwrap();
     let mut seen = Seen::default();
-    let mut wrong = route(Value::Null, None, 100);
+    let mut wrong = route(Value::Null, 100);
     wrong.driver.framing = Framing::JsonArray("/absent");
     let work = read(
         Box::new(std::io::Cursor::new(raw.clone())),
@@ -364,7 +345,7 @@ fn incompatible_framing_stages_one_member_and_failure_stays_with_its_route() {
         raw.len() as u64,
         facts(raw.len()),
         Arc::new(AtomicBool::new(false)),
-        vec![route(Value::Null, None, 100), wrong],
+        vec![route(Value::Null, 100), wrong],
         &sink,
         &mut |index, acquired| Ok(seen.accept(index, acquired, &sink)),
     )
@@ -395,7 +376,7 @@ fn cancellation_stops_decoding_before_an_unused_large_suffix() {
         raw.len() as u64,
         facts(raw.len()),
         Arc::clone(&stop),
-        vec![route(Value::Null, None, 100)],
+        vec![route(Value::Null, 100)],
         &sink,
         &mut |index, acquired| {
             let part = acquired
@@ -423,7 +404,7 @@ fn sealed_zip_uses_supplied_seek_without_plaintext_staging() {
     let raw = zip.finish().unwrap().into_inner();
     let sink = Sink::default();
     let blob = sink.put(&raw).unwrap();
-    let mut sealed_route = route(Value::Null, None, 400);
+    let mut sealed_route = route(Value::Null, 400);
     sealed_route.class = Class::Sealed;
     let mut seen = Seen::default();
     let work = read_input(
@@ -440,7 +421,7 @@ fn sealed_zip_uses_supplied_seek_without_plaintext_staging() {
     assert_eq!(work.zip_staging_bytes, 0);
     assert_eq!(work.member_staging_bytes, 0);
     assert_eq!(seen.events[&0].len(), 7);
-    let mut sealed_route = route(Value::Null, None, 400);
+    let mut sealed_route = route(Value::Null, 400);
     sealed_route.class = Class::Sealed;
     let error = read(
         Box::new(std::io::Cursor::new(raw.clone())),
@@ -475,7 +456,7 @@ fn zip_members_keep_exact_ranges_and_long_plain_records_stay_whole() {
     let raw = zip.finish().unwrap().into_inner();
     let sink = Sink::default();
     let blob = sink.put(&raw).unwrap();
-    let mut selected = route(Value::Null, None, 20);
+    let mut selected = route(Value::Null, 20);
     selected.driver.framing = Framing::JsonArray("");
     let mut records = Vec::new();
     let mut parts = 0;
@@ -519,7 +500,7 @@ fn zip_members_keep_exact_ranges_and_long_plain_records_stay_whole() {
     assert_eq!(work.zip_staging_bytes, raw.len() as u64);
     let raw = format!("{}\nb\n", "a".repeat(50)).into_bytes();
     let blob = sink.put(&raw).unwrap();
-    let mut selected = route(Value::Null, None, 8);
+    let mut selected = route(Value::Null, 8);
     selected.driver.framing = Framing::Lines;
     let mut records = Vec::new();
     read(
@@ -561,7 +542,7 @@ fn identical_captured_content_keeps_completed_material_identity_when_file_facts_
         raw.len() as u64,
         facts(raw.len()),
         Arc::new(AtomicBool::new(false)),
-        vec![route(Value::Null, None, 400)],
+        vec![route(Value::Null, 400)],
         &sink,
         &mut |i, a| Ok(seen.accept(i, a, &sink)),
     )
@@ -577,7 +558,7 @@ fn identical_captured_content_keeps_completed_material_identity_when_file_facts_
         raw.len() as u64,
         touched,
         Arc::new(AtomicBool::new(false)),
-        vec![route(prior, None, 400)],
+        vec![route(prior, 400)],
         &sink,
         &mut |i, a| Ok(seen.accept(i, a, &sink)),
     )
