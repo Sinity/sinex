@@ -1,4 +1,5 @@
-//! A continuation describes one question, clock and visible ordered answer.
+//! A continuation describes one question, clock, the answer's size and the
+//! rows already handed out.
 use super::*;
 use base64::Engine as _;
 
@@ -14,6 +15,8 @@ pub(super) struct Cursor {
     day_start: String,
     pub seq: i64,
     pub offset: u64,
+    /// Rows in the answer, counted on the first page.
+    pub total: i64,
     view: String,
 }
 
@@ -46,6 +49,7 @@ impl Cursor {
             || cursor.seq < 0
             || cursor.offset == 0
             || cursor.offset > i64::MAX as u64
+            || cursor.total < 0
             || cursor.question.len() != 64
             || cursor.view.len() != 64
         {
@@ -76,8 +80,9 @@ impl Cursor {
         Ok(())
     }
 
-    pub fn check_view(&self, view: &str, total: i64) -> Result<()> {
-        if self.view != view || self.offset >= total.max(0) as u64 {
+    /// The rows handed out so far are unchanged and more remain.
+    pub fn check_view(&self, view: &str) -> Result<()> {
+        if self.view != view || self.offset >= self.total as u64 {
             return Err(Error::StaleCursor);
         }
         Ok(())
@@ -88,6 +93,7 @@ impl Cursor {
         ctx: &Context,
         seq: i64,
         offset: u64,
+        total: i64,
         view: &str,
     ) -> Result<String> {
         let cursor = Self {
@@ -98,6 +104,7 @@ impl Cursor {
             day_start: ctx.day_start.to_string(),
             seq,
             offset,
+            total,
             view: view.into(),
         };
         Ok(base64::engine::general_purpose::URL_SAFE_NO_PAD

@@ -130,7 +130,7 @@ async fn latest(
         ranked: false,
     };
     let compiled = Compiler::new(ctx, seq).compile(&selector)?;
-    let rendered = render_page(compiled, 0, 1);
+    let rendered = render_page(compiled, 0, 1, false);
     let (text, values) = rendered.rows;
     Ok(sql::bind_scalar(sqlx::query_scalar(&text), values)
         .fetch_optional(conn)

@@ -376,3 +376,45 @@ async fn provenance_walks_refuse_stages_the_reader_does_not_execute(db: devkit::
         .unwrap_err();
     assert!(error.to_string().contains("do not support query stages"));
 }
+
+/// A continuation checks only the rows already handed out: a change to a row
+/// not yet handed out shows on its page instead of refusing the question.
+#[devkit::test]
+async fn a_change_after_the_rows_handed_out_shows_on_a_later_page(db: devkit::pg::TestDatabase) {
+    let mut conn = <sqlx::PgConnection as sqlx::Connection>::connect(&db.url(None))
+        .await
+        .unwrap();
+    let ids = runs(&mut conn).await;
+    let text = "runs sort started fields id,status";
+    let first = ask_at(
+        &mut conn,
+        text,
+        &ctx(),
+        Page {
+            size: Some(1),
+            cursor: None,
+        },
+    )
+    .await
+    .unwrap();
+    assert_eq!(first.total, 2);
+    assert_eq!(first.rows[0]["id"], json!(ids[0].0.to_string()));
+    let mut tx = conn.begin().await.unwrap();
+    crate::runs::end(&mut tx, ids[1]).await.unwrap();
+    tx.commit().await.unwrap();
+    let next = ask_at(
+        &mut conn,
+        text,
+        &ctx(),
+        Page {
+            size: Some(1),
+            cursor: first.page.cursor,
+        },
+    )
+    .await
+    .unwrap();
+    assert_eq!(next.total, 2);
+    assert_eq!(next.rows[0]["id"], json!(ids[1].0.to_string()));
+    assert_ne!(next.rows[0]["status"], json!("running"));
+    assert!(next.page.cursor.is_none());
+}
