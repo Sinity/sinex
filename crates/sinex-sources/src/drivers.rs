@@ -15,6 +15,7 @@ pub mod api_cursor;
 pub mod append_file;
 pub mod dir_snapshot;
 pub mod export_archive;
+pub mod held;
 pub mod live_stream;
 pub mod media;
 pub mod producer;

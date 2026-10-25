@@ -1,8 +1,10 @@
 use super::*;
 use crate::Framer;
-use crate::binding::StoredMaterial;
+use crate::binding::{Reader, StoredMaterial};
 use crate::drain::RecordRead;
-use crate::drivers::append_file::lines;
+use crate::drivers::append_file::{AppendFile, lines};
+use sinex_model::MaterialRef;
+use std::path::Path;
 
 struct Body(Vec<u8>);
 impl RecordRead for Body {
@@ -20,7 +22,7 @@ impl RecordRead for Body {
 }
 
 fn reader(path: &Path) -> Box<dyn Reader> {
-    super::super::appended(AppendFile {
+    crate::binding::appended(AppendFile {
         path: path.to_owned(),
         host: "h".into(),
         framer: Framer::incremental(lines),

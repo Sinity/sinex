@@ -13,7 +13,6 @@ use crate::registry::{Source, SourceSpec};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::path::{Path, PathBuf};
-mod held_append;
 
 /// The zone named `name` (an IANA name such as `Europe/Warsaw`), or this
 /// system's zone.
@@ -330,7 +329,7 @@ impl<A: crate::drivers::api_cursor::Api + Send + Sync + 'static> StatelessDriver
 /// rewrite is aligned rather than read again. The newest material is held
 /// until all of it is admitted, so a failed admission retries the same bytes.
 pub struct Appended {
-    held: Option<held_append::HeldAppend>,
+    held: Option<crate::drivers::held::HeldMaterial>,
     driver: AppendFile,
     state: AppendState,
     /// The tail rebuilt during a restart, newest record first.
@@ -394,7 +393,7 @@ impl Reader for Appended {
 
     fn poll(&mut self, cursor: &Value) -> Result<Acquired, DriverError> {
         if let Some(held) = &self.held {
-            if !held.complete(cursor)? {
+            if !held.admitted(cursor) {
                 return held.acquired(cursor);
             }
             self.held = None;
@@ -403,7 +402,7 @@ impl Reader for Appended {
         if acquired.material.is_none() {
             return Ok(acquired);
         }
-        let held = held_append::HeldAppend::capture(acquired, cursor.clone())?;
+        let held = crate::drivers::held::HeldMaterial::hold(acquired, cursor)?;
         let acquired = held.acquired(cursor)?;
         self.held = Some(held);
         Ok(acquired)
