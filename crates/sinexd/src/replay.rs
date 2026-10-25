@@ -27,7 +27,7 @@ use std::collections::{BTreeSet, HashMap};
 use uuid::Uuid;
 
 #[derive(Clone, Debug, Default)]
-pub struct Scope {
+pub(crate) struct Scope {
     pub materials: Vec<Uuid>,
     pub binding: Option<String>,
     pub event_types: Option<Vec<String>>,
@@ -62,7 +62,7 @@ impl Scope {
 
 /// What a replay did, or in compare mode would do.
 #[derive(Debug, Default)]
-pub struct Report {
+pub(crate) struct Report {
     pub operation: OperationId,
     pub sequences: usize,
     pub sequences_skipped: usize,
@@ -102,7 +102,7 @@ impl std::fmt::Display for Report {
 impl Report {
     /// The report as a reply: the counts, the summary line, and the changes
     /// (all of them with `all`, otherwise the first few of each kind).
-    pub fn to_json(&self, compare: bool, all: bool) -> Value {
+    pub(crate) fn to_json(&self, compare: bool, all: bool) -> Value {
         json!({
             "operation": self.operation,
             "compare_only": compare,
@@ -123,7 +123,7 @@ impl Report {
     }
 }
 
-pub struct Options {
+pub(crate) struct Options {
     pub scope: Scope,
     pub compare: bool,
     pub resume: Option<OperationId>,
@@ -133,7 +133,7 @@ pub struct Options {
 
 /// Replay with its parts: a read connection, the content store and the writer
 /// (the daemon's API and a local `sinexd admin` run hold these).
-pub async fn run(
+pub(crate) async fn run(
     read_conn: &mut PgConnection,
     blobs: &Blobs,
     writer: &WriterHandle,
@@ -545,7 +545,7 @@ fn merge(into: &mut Diff, from: Diff) {
 
 /// The changes, for printing: every one when `all`, otherwise the first few
 /// of each kind and how many more there are.
-pub fn describe(diff: &Diff, all: bool) -> String {
+pub(crate) fn describe(diff: &Diff, all: bool) -> String {
     let mut out = String::new();
     let shown = if all { usize::MAX } else { 10 };
     for (label, changes) in [

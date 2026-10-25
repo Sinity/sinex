@@ -22,23 +22,23 @@ use time::OffsetDateTime;
 
 /// A shipped recipe.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Recipe {
+pub(crate) enum Recipe {
     Correlations,
     Trends,
     Deviations,
 }
 
 impl Recipe {
-    pub const ALL: [Recipe; 3] = [Recipe::Correlations, Recipe::Trends, Recipe::Deviations];
+    pub(crate) const ALL: [Recipe; 3] = [Recipe::Correlations, Recipe::Trends, Recipe::Deviations];
 
-    pub fn parse(name: &str) -> Result<Self, String> {
+    pub(crate) fn parse(name: &str) -> Result<Self, String> {
         Self::ALL
             .into_iter()
             .find(|r| r.id() == name)
             .ok_or_else(|| format!("no recipe {name}; recipes: correlations, trends, deviations"))
     }
 
-    pub fn id(self) -> &'static str {
+    pub(crate) fn id(self) -> &'static str {
         match self {
             Recipe::Correlations => "correlations",
             Recipe::Trends => "trends",
@@ -48,7 +48,7 @@ impl Recipe {
 }
 
 /// A recipe's outcome as stored.
-pub struct RecipeRun {
+pub(crate) struct RecipeRun {
     pub result: store::StoredResult,
     pub findings: Vec<Finding>,
     pub tables: Value,
@@ -62,7 +62,7 @@ pub(super) fn tracked() -> Vec<&'static MetricDef> {
 /// Run a recipe over the logical days `from..=to` at the current commit
 /// position, and store the result (or return the stored one for an
 /// identical request).
-pub async fn run(
+pub(crate) async fn run(
     conn: &mut PgConnection,
     settings: &Settings,
     recipe: Recipe,
@@ -372,7 +372,7 @@ fn new_finding(f: &Finding) -> store::NewFinding {
 }
 
 /// A finding read back from its stored row.
-pub fn stored_finding(row: &Value) -> Option<Finding> {
+pub(crate) fn stored_finding(row: &Value) -> Option<Finding> {
     Some(Finding {
         template: serde_json::from_value(row["slots"].clone()).ok()?,
         role: serde_json::from_value(row["role"].clone()).ok()?,

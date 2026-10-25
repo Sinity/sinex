@@ -63,7 +63,7 @@ impl Library<'_> {
 
     /// Where to open an item: the target is fixed now, so a later change to
     /// the item never swaps what was asked for.
-    pub async fn open(
+    pub(crate) async fn open(
         &self,
         conn: &mut PgConnection,
         item: &str,
@@ -95,7 +95,12 @@ impl Library<'_> {
         }))
     }
 
-    pub async fn preview(&self, conn: &mut PgConnection, item: &str, actor: &str) -> R<Value> {
+    pub(crate) async fn preview(
+        &self,
+        conn: &mut PgConnection,
+        item: &str,
+        actor: &str,
+    ) -> R<Value> {
         let it = self.item_or(conn, item).await?;
         if !render::previewable(&it.media_type) {
             return Err(format!("{} has no still preview ({})", item, it.media_type));

@@ -5,7 +5,7 @@ use clap::Subcommand;
 use std::path::PathBuf;
 
 #[derive(Subcommand)]
-pub enum Admin {
+pub(crate) enum Admin {
     /// Create the schema in an empty database, or confirm it is current.
     Schema {
         #[arg(long)]
@@ -45,7 +45,7 @@ pub enum Admin {
     Table(Vec<String>),
 }
 
-pub async fn run(command: Admin) -> Result<(), String> {
+pub(crate) async fn run(command: Admin) -> Result<(), String> {
     match command {
         Admin::Table(args) => admin_table(args).await,
         Admin::Schema { database } => sinex_schema::apply_url(&database)

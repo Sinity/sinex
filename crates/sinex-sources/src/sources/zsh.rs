@@ -53,7 +53,7 @@ mod pairs {
 
     type Counts = imbl::OrdMap<(i64, [u8; 32]), u32>;
 
-    pub fn serialize<S: Serializer>(
+    pub(crate) fn serialize<S: Serializer>(
         m: &imbl::OrdMap<(i64, [u8; 32]), u32>,
         s: S,
     ) -> Result<S::Ok, S::Error> {
@@ -63,7 +63,7 @@ mod pairs {
             .serialize(s)
     }
 
-    pub fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<Counts, D::Error> {
+    pub(crate) fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<Counts, D::Error> {
         let list = Vec::<(i64, [u8; 32], u32)>::deserialize(d)?;
         Ok(list
             .into_iter()

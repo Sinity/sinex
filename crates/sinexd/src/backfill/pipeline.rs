@@ -28,7 +28,7 @@ impl Pipeline<'_> {
         })
     }
 
-    pub async fn submit(
+    pub(crate) async fn submit(
         &self,
         conn: &mut PgConnection,
         carry: serde_json::Value,

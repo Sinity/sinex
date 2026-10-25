@@ -21,10 +21,10 @@ mod views;
 use views::{collection_view, item_view, rank_view};
 
 /// Who intake's own records are attributed to.
-pub const INTAKE: &str = "library-intake";
+pub(crate) const INTAKE: &str = "library-intake";
 
 /// What a library operation writes with.
-pub struct Library<'a> {
+pub(crate) struct Library<'a> {
     pub writer: &'a WriterHandle,
     pub blobs: &'a Blobs,
     pub host: &'a str,
@@ -39,7 +39,7 @@ fn e(err: impl std::fmt::Display) -> String {
 impl Library<'_> {
     /// Store and admit one library request. All its records commit together
     /// or none do (one material, admitted in one batch when it fits).
-    pub async fn write(
+    pub(crate) async fn write(
         &self,
         conn: &mut PgConnection,
         records: Vec<LibraryRecord>,
@@ -137,7 +137,7 @@ impl Library<'_> {
 }
 
 /// Run one library command: reads need only `conn`; writes need the writer.
-pub async fn dispatch(
+pub(crate) async fn dispatch(
     conn: &mut PgConnection,
     writer: Option<&WriterHandle>,
     blobs: &Blobs,

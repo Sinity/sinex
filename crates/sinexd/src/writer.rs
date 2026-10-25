@@ -18,7 +18,7 @@ use std::sync::Arc;
 use tokio::sync::{mpsc, oneshot, watch};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Priority {
+pub(crate) enum Priority {
     /// Live capture; the daemon's source tasks submit these.
     #[allow(dead_code, reason = "the daemon's source tasks submit live batches")]
     Live,
@@ -28,7 +28,7 @@ pub enum Priority {
 }
 
 #[derive(Debug, thiserror::Error)]
-pub enum WriteError {
+pub(crate) enum WriteError {
     #[error("admission refused the batch: {0}")]
     Refused(String),
     #[error("the writer has stopped")]
@@ -38,7 +38,7 @@ pub enum WriteError {
 /// One replay sequence: its batches run in one transaction, admitted as they
 /// arrive, so only a few are held at a time. A batch arriving as an error
 /// (the sequence could not be read) rolls the sequence back.
-pub struct ReplaySequence {
+pub(crate) struct ReplaySequence {
     pub operation: OperationId,
     pub actor: String,
     pub scope: Value,
@@ -50,7 +50,7 @@ pub struct ReplaySequence {
 }
 
 /// An excision, planned and with its replacement bytes already stored.
-pub struct Excision {
+pub(crate) struct Excision {
     pub target: Target,
     pub plan: Plan,
     pub rewrites: Vec<Rewrite>,
@@ -63,7 +63,7 @@ pub struct Excision {
 /// What an excision did, and blob files it could not delete after commit
 /// (no row refers to them; a later excision of the same bytes retries).
 #[derive(Debug)]
-pub struct Excised {
+pub(crate) struct Excised {
     pub applied: Applied,
     pub files_left: Vec<String>,
 }
@@ -88,7 +88,7 @@ struct Job {
 
 /// Where producers hand batches to the writer.
 #[derive(Clone)]
-pub struct WriterHandle {
+pub(crate) struct WriterHandle {
     live: mpsc::Sender<Job>,
     derived: mpsc::Sender<Job>,
     bulk: mpsc::Sender<Job>,
@@ -111,7 +111,11 @@ impl WriterHandle {
         }
     }
     /// Submit a batch and wait until it is committed (or refused).
-    pub async fn submit(&self, priority: Priority, batch: Batch) -> Result<Outcome, WriteError> {
+    pub(crate) async fn submit(
+        &self,
+        priority: Priority,
+        batch: Batch,
+    ) -> Result<Outcome, WriteError> {
         match self.send(priority, Work::Admit(batch)).await? {
             Done::Admitted(outcome) => Ok(outcome),
             _ => unreachable!("an admission answers with its outcome"),
@@ -119,7 +123,7 @@ impl WriterHandle {
     }
 
     /// Replay one sequence in one transaction; in compare mode nothing is kept.
-    pub async fn replay(
+    pub(crate) async fn replay(
         &self,
         sequence: ReplaySequence,
     ) -> Result<(Vec<Outcome>, Diff), WriteError> {
@@ -129,7 +133,7 @@ impl WriterHandle {
         }
     }
 
-    pub async fn excise(&self, excision: Excision) -> Result<Excised, WriteError> {
+    pub(crate) async fn excise(&self, excision: Excision) -> Result<Excised, WriteError> {
         match self
             .send(Priority::Live, Work::Excise(Box::new(excision)))
             .await?
@@ -156,7 +160,7 @@ impl WriterHandle {
 
 /// The writer's receiving side, separate from the task so tests can queue work
 /// before the writer starts.
-pub struct Queues {
+pub(crate) struct Queues {
     live: mpsc::Receiver<Job>,
     derived: mpsc::Receiver<Job>,
     bulk: mpsc::Receiver<Job>,
@@ -166,7 +170,7 @@ pub struct Queues {
 /// the backpressure on capture and imports.
 const DEPTH: usize = 16;
 
-pub fn channels() -> (WriterHandle, Queues) {
+pub(crate) fn channels() -> (WriterHandle, Queues) {
     let (live, live_rx) = mpsc::channel(DEPTH);
     let (derived, derived_rx) = mpsc::channel(DEPTH);
     let (bulk, bulk_rx) = mpsc::channel(DEPTH);
@@ -190,7 +194,7 @@ pub fn channels() -> (WriterHandle, Queues) {
 ///
 /// A writer that was just killed holds the lock until the server notices its
 /// backend is gone, so a restart waits up to [`CLAIM_WAIT`] before refusing.
-pub async fn claim(connection: &mut PgConnection) -> Result<(), String> {
+pub(crate) async fn claim(connection: &mut PgConnection) -> Result<(), String> {
     sinex_schema::require_current(connection)
         .await
         .map_err(|error| error.to_string())?;
@@ -221,7 +225,7 @@ const CLAIM_WAIT: std::time::Duration = std::time::Duration::from_secs(5);
 /// files an excision freed. Both happen here, one after the other, so bytes
 /// checked before an admission cannot be deleted before it commits. A writer
 /// without a store admits only batches that register no bytes.
-pub async fn run(
+pub(crate) async fn run(
     url: String,
     connection: PgConnection,
     queues: Queues,
@@ -233,7 +237,7 @@ pub async fn run(
 
 /// [`run`], also counting committed batches on `commits`, which wakes the
 /// commit-log reader and the publisher.
-pub async fn run_notifying(
+pub(crate) async fn run_notifying(
     url: String,
     mut connection: PgConnection,
     mut queues: Queues,

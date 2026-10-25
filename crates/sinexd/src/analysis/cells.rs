@@ -14,7 +14,7 @@ use sqlx::{Connection, PgConnection};
 use std::collections::BTreeMap;
 
 /// The coverage of `sources`, as of a commit position.
-pub async fn coverage(
+pub(crate) async fn coverage(
     conn: &mut PgConnection,
     sources: &[&str],
     as_of: i64,
@@ -54,7 +54,7 @@ pub async fn coverage(
 }
 
 /// A computed panel: its units, its cells, and the inputs it read.
-pub struct Panel {
+pub(crate) struct Panel {
     pub units: Vec<Unit>,
     pub cells: Vec<PanelCell>,
     pub inputs_read: Vec<InputsRead>,
@@ -63,7 +63,7 @@ pub struct Panel {
 
 impl Panel {
     /// The total series of one metric, in unit order.
-    pub fn series(&self, metric: &str) -> Vec<Point> {
+    pub(crate) fn series(&self, metric: &str) -> Vec<Point> {
         self.cells
             .iter()
             .filter(|c| c.metric == metric && c.dimension.is_empty())
@@ -77,7 +77,7 @@ impl Panel {
 
 /// Compute `metrics` over the logical days of `range` from the events live at
 /// `as_of`, with the given coverage.
-pub async fn panel(
+pub(crate) async fn panel(
     conn: &mut PgConnection,
     settings: &Settings,
     metrics: &[&MetricDef],
@@ -219,7 +219,7 @@ fn stored_cells(cells: &[PanelCell]) -> Vec<store::MetricValue> {
 }
 
 /// Store a panel's cells as the maintained metric values of its days.
-pub async fn keep(
+pub(crate) async fn keep(
     conn: &mut PgConnection,
     settings: &Settings,
     panel: &Panel,
@@ -251,14 +251,14 @@ pub async fn keep(
 }
 
 /// The dirty-key name admission marks for a metric's changed days.
-pub fn dirty_name(metric: &str) -> String {
+pub(crate) fn dirty_name(metric: &str) -> String {
     format!("metric:{metric}")
 }
 
 /// Recompute the maintained cells of every day admission marked dirty, plus
 /// the trailing `recent_days` (more coverage, such as a poll that found
 /// nothing new, also changes a day's state). Returns the days recomputed.
-pub async fn maintain(
+pub(crate) async fn maintain(
     conn: &mut PgConnection,
     settings: &Settings,
     recent_days: i64,
@@ -316,7 +316,7 @@ pub async fn maintain(
 /// admission marked dirty whenever it runs, plus the trailing `recent_days`
 /// every `recent_every` (a poll that found nothing new still changes a day's
 /// observation state).
-pub struct MetricValues {
+pub(crate) struct MetricValues {
     pub settings: Settings,
     pub recent_days: i64,
     pub recent_every: std::time::Duration,
@@ -324,7 +324,11 @@ pub struct MetricValues {
 }
 
 impl MetricValues {
-    pub fn new(settings: Settings, recent_days: i64, recent_every: std::time::Duration) -> Self {
+    pub(crate) fn new(
+        settings: Settings,
+        recent_days: i64,
+        recent_every: std::time::Duration,
+    ) -> Self {
         Self {
             settings,
             recent_days,
@@ -359,7 +363,7 @@ impl crate::derivation_runner::Maintained for MetricValues {
 }
 
 /// Print a panel as a table: one row per day, one column per metric.
-pub fn table(p: &Panel, metrics: &[&MetricDef], by: Option<&str>) -> String {
+pub(crate) fn table(p: &Panel, metrics: &[&MetricDef], by: Option<&str>) -> String {
     let mut out = String::new();
     let cell_text = |c: &Cell<f64>| match c {
         Cell::Observed { value } => fmt_num(*value),

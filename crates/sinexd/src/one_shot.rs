@@ -9,7 +9,7 @@ use std::path::Path;
 use std::sync::Arc;
 use tokio::task::JoinHandle;
 
-pub struct OneShot {
+pub(crate) struct OneShot {
     pub read_conn: PgConnection,
     pub blobs: Blobs,
     pub writer: WriterHandle,
@@ -17,7 +17,7 @@ pub struct OneShot {
 }
 
 impl OneShot {
-    pub async fn open(database: &str, store: &Path) -> Result<Self, String> {
+    pub(crate) async fn open(database: &str, store: &Path) -> Result<Self, String> {
         let mut read_conn = PgConnection::connect(database)
             .await
             .map_err(|e| e.to_string())?;
@@ -46,7 +46,7 @@ impl OneShot {
     }
 
     /// Stop the writer once everything submitted is done.
-    pub async fn close(self) -> Result<(), String> {
+    pub(crate) async fn close(self) -> Result<(), String> {
         drop(self.writer);
         self.task.await.map_err(|e| e.to_string())
     }

@@ -5,7 +5,7 @@
 mod mask;
 mod methods;
 
-pub use methods::Api;
+pub(crate) use methods::Api;
 
 use axum::extract::{Query as UrlQuery, State};
 use axum::http::{HeaderMap, StatusCode};
@@ -27,14 +27,14 @@ use tokio_stream::wrappers::ReceiverStream;
 /// The three tokens, read from `read.token`, `agent.token` and
 /// `operator.token` in a directory. A missing file disables that level.
 #[derive(Clone, Default)]
-pub struct Tokens {
+pub(crate) struct Tokens {
     read: Option<String>,
     agent: Option<String>,
     operator: Option<String>,
 }
 
 impl Tokens {
-    pub fn load(dir: &Path) -> std::io::Result<Self> {
+    pub(crate) fn load(dir: &Path) -> std::io::Result<Self> {
         let read = |name: &str| -> std::io::Result<Option<String>> {
             match std::fs::read_to_string(dir.join(name)) {
                 Ok(s) if !s.trim().is_empty() => Ok(Some(s.trim().to_string())),
@@ -51,7 +51,11 @@ impl Tokens {
     }
 
     #[cfg(test)]
-    pub fn new(read: Option<String>, agent: Option<String>, operator: Option<String>) -> Self {
+    pub(crate) fn new(
+        read: Option<String>,
+        agent: Option<String>,
+        operator: Option<String>,
+    ) -> Self {
         Self {
             read,
             agent,
@@ -81,7 +85,7 @@ impl Tokens {
 /// tokens directory (one class per line or comma-separated). Only `guarded` can
 /// be granted: the agent token never reads sealed data, so a `sealed` line is
 /// refused rather than ignored.
-pub fn agent_grants(dir: &Path) -> std::io::Result<Vec<sinex_model::Class>> {
+pub(crate) fn agent_grants(dir: &Path) -> std::io::Result<Vec<sinex_model::Class>> {
     let text = match std::fs::read_to_string(dir.join("agent.grants")) {
         Ok(t) => t,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
@@ -111,7 +115,7 @@ fn same(a: &[u8], b: &[u8]) -> bool {
     a.len() == b.len() && a.iter().zip(b).fold(0u8, |acc, (x, y)| acc | (x ^ y)) == 0
 }
 
-pub struct Config {
+pub(crate) struct Config {
     pub socket: PathBuf,
     pub listen: Option<SocketAddr>,
     pub tokens: Tokens,
@@ -170,7 +174,7 @@ fn authorize(state: &AppState, headers: &HeaderMap, needs: Access) -> Result<Acc
     Ok(granted)
 }
 
-pub fn router(api: Api, tokens: Tokens, commits: watch::Receiver<u64>) -> Router {
+pub(crate) fn router(api: Api, tokens: Tokens, commits: watch::Receiver<u64>) -> Router {
     Router::new()
         .route("/v1", post(call))
         .route("/v1/commands", get(commands))
@@ -371,7 +375,7 @@ async fn follow(
 }
 
 /// Serve the API until `shutdown` resolves.
-pub async fn serve(
+pub(crate) async fn serve(
     config: Config,
     api: Api,
     commits: watch::Receiver<u64>,

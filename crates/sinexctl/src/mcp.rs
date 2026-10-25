@@ -15,7 +15,7 @@ use std::sync::Arc;
 
 const PREFIX: &str = "sinex_";
 
-pub struct Sinex {
+pub(crate) struct Sinex {
     client: Client,
 }
 
@@ -49,7 +49,7 @@ fn schema(c: &Command) -> Map<String, Value> {
     s
 }
 
-pub fn tools() -> Vec<Tool> {
+pub(crate) fn tools() -> Vec<Tool> {
     COMMANDS
         .iter()
         .filter(|c| c.mcp)
@@ -125,7 +125,7 @@ impl ServerHandler for Sinex {
 }
 
 /// Serve MCP on stdin and stdout until the client closes them.
-pub async fn serve(client: Client) -> Result<(), String> {
+pub(crate) async fn serve(client: Client) -> Result<(), String> {
     let service = Sinex { client }
         .serve(rmcp::transport::stdio())
         .await

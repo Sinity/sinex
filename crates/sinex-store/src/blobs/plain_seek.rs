@@ -9,7 +9,7 @@ pub(super) struct PlainSeek {
     check: Box<dyn FnMut() -> Result<()> + Send>,
 }
 impl PlainSeek {
-    pub fn new(
+    pub(crate) fn new(
         root: &std::path::Path,
         hash: Hash,
         length: u64,

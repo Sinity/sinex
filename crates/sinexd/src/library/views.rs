@@ -8,7 +8,7 @@ use sqlx::PgConnection;
 use std::collections::HashMap;
 
 /// One item, as the operator reads it.
-pub async fn item_view(conn: &mut PgConnection, item: &str) -> R<Value> {
+pub(crate) async fn item_view(conn: &mut PgConnection, item: &str) -> R<Value> {
     let it = reads::item(conn, item)
         .await
         .map_err(e)?
@@ -83,7 +83,7 @@ pub async fn item_view(conn: &mut PgConnection, item: &str) -> R<Value> {
 }
 
 /// A collection's entries in order, or every collection.
-pub async fn collection_view(conn: &mut PgConnection, name: Option<&str>) -> R<Value> {
+pub(crate) async fn collection_view(conn: &mut PgConnection, name: Option<&str>) -> R<Value> {
     match name {
         None => {
             let all = reads::collections(conn).await.map_err(e)?;
@@ -110,7 +110,7 @@ pub async fn collection_view(conn: &mut PgConnection, name: Option<&str>) -> R<V
 }
 
 /// Items ranked from pairwise comparisons on a scale.
-pub async fn rank_view(conn: &mut PgConnection, scale: &str) -> R<Value> {
+pub(crate) async fn rank_view(conn: &mut PgConnection, scale: &str) -> R<Value> {
     let judgements: Vec<(String, String)> = reads::comparisons(conn, scale)
         .await
         .map_err(e)?

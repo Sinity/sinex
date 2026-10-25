@@ -19,7 +19,7 @@ pub(crate) struct Bound {
     history_floor: Class,
 }
 impl Bound {
-    pub fn new(kind: &InputFormat, binding: Binding) -> Result<Self, String> {
+    pub(crate) fn new(kind: &InputFormat, binding: Binding) -> Result<Self, String> {
         let reader = kind
             .reader
             .ok_or_else(|| format!("{} is not read by a driver", kind.name))?;

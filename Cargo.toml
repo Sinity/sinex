@@ -79,6 +79,7 @@ sinex-diagnostics = { path = "crates/sinex-diagnostics" }
 
 [workspace.lints.rust]
 unsafe_code = "forbid"
+unreachable_pub = "warn"
 
 [workspace.lints.clippy]
 # Skeleton bodies are allowed while the workspace is being filled.

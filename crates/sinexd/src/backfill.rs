@@ -17,7 +17,7 @@ use sqlx::PgConnection;
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
-pub struct Options {
+pub(crate) struct Options {
     pub database: String,
     pub store: PathBuf,
     /// `format=path`, one per input; see [`sources::formats`].
@@ -98,7 +98,7 @@ impl std::fmt::Display for Totals {
     }
 }
 
-pub async fn run(o: Options) -> Result<(), String> {
+pub(crate) async fn run(o: Options) -> Result<(), String> {
     let unlock = o
         .identity_file
         .as_ref()

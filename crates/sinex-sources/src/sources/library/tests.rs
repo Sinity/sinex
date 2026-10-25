@@ -91,10 +91,7 @@ fn a_single_file_scan_reads_and_misses_nothing_else() {
         only: Some("one.png".into()),
         ..scan(&root)
     };
-    let seen = read(
-        &only.poll(&Value::Null, &mut mem).unwrap(),
-        &ScanParser,
-    );
+    let seen = read(&only.poll(&Value::Null, &mut mem).unwrap(), &ScanParser);
     assert_eq!(seen.len(), 1, "only the named file: {seen:?}");
     assert!(seen[0].path.ends_with("one.png"));
     assert!(seen[0].vanished_at.is_none());

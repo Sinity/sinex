@@ -20,13 +20,13 @@ use tokio::sync::watch;
 /// `sources.json` as the NixOS module writes it: each source's options by its
 /// registered name.
 #[derive(Debug, Default, Deserialize)]
-pub struct Config {
+pub(crate) struct Config {
     #[serde(default)]
     pub sources: BTreeMap<String, SourceConfig>,
 }
 
 #[derive(Debug, Default, Deserialize)]
-pub struct SourceConfig {
+pub(crate) struct SourceConfig {
     #[serde(default)]
     pub enable: bool,
     /// Where the source reads from on this host.
@@ -46,7 +46,7 @@ pub struct SourceConfig {
 }
 
 impl Config {
-    pub fn load(path: &Path) -> Result<Self, String> {
+    pub(crate) fn load(path: &Path) -> Result<Self, String> {
         let text = std::fs::read(path).map_err(|e| format!("{}: {e}", path.display()))?;
         serde_json::from_slice(&text).map_err(|e| format!("{}: {e}", path.display()))
     }
@@ -54,7 +54,10 @@ impl Config {
 
 /// The bindings `config` enables on `host`: each enabled source planned by
 /// its format from each of its paths, keeping the bindings of that source.
-pub fn plan(config: &Config, host: &str) -> Result<Vec<(&'static InputFormat, Binding)>, String> {
+pub(crate) fn plan(
+    config: &Config,
+    host: &str,
+) -> Result<Vec<(&'static InputFormat, Binding)>, String> {
     let mut out = Vec::new();
     for (name, source) in config.sources.iter().filter(|(_, s)| s.enable) {
         let format = match &source.format {
@@ -84,7 +87,7 @@ pub fn plan(config: &Config, host: &str) -> Result<Vec<(&'static InputFormat, Bi
 }
 
 /// Read `planned` in rounds every `interval` until `stop`.
-pub async fn run(
+pub(crate) async fn run(
     mut read_conn: PgConnection,
     blobs: Blobs,
     writer: WriterHandle,

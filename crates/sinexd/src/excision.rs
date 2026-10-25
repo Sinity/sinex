@@ -17,7 +17,7 @@ use sinex_store::excision::{self, Material, Plan, Rewrite, Target};
 use sqlx::PgConnection;
 use std::io::Read;
 
-pub fn describe(plan: &Plan) -> String {
+pub(crate) fn describe(plan: &Plan) -> String {
     format!(
         "events {} | materials blanked {}",
         plan.events.len(),

@@ -5,15 +5,20 @@ use serde_json::{Value, json};
 use sinex_library::{items, reads};
 use sinex_model::Timestamp;
 use sinex_model::event_types::library::{FileCopy, Item, LibraryRecord};
-use sinex_sources::{Reader, drivers};
 use sinex_sources::sources::library as library_source;
+use sinex_sources::{Reader, drivers};
 use sqlx::PgConnection;
 use std::collections::HashMap;
 use std::path::Path;
 
 impl Library<'_> {
     /// Scan a library root, admit what changed, and make or continue items.
-    pub async fn add(&self, conn: &mut PgConnection, path: &Path, reference: bool) -> R<Value> {
+    pub(crate) async fn add(
+        &self,
+        conn: &mut PgConnection,
+        path: &Path,
+        reference: bool,
+    ) -> R<Value> {
         let given =
             std::fs::canonicalize(path).map_err(|err| format!("{}: {err}", path.display()))?;
         // A single file is scanned within its folder, alone: nothing else in

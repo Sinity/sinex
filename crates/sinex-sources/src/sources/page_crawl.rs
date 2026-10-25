@@ -82,7 +82,7 @@ struct Robots {
 }
 
 impl Robots {
-    pub fn parse(text: &str) -> Self {
+    pub(crate) fn parse(text: &str) -> Self {
         let mut rules = Vec::new();
         let (mut ours, mut in_group, mut seen_rule) = (false, false, false);
         for line in text.lines() {
@@ -113,7 +113,7 @@ impl Robots {
         Self { rules }
     }
 
-    pub fn permits(&self, path: &str) -> bool {
+    pub(crate) fn permits(&self, path: &str) -> bool {
         self.rules
             .iter()
             .filter(|(_, prefix)| path.starts_with(prefix.as_str()))
