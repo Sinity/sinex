@@ -1,10 +1,10 @@
-//! Bindings (architecture §5.4): one instance of a source on one input, with
-//! the settings it was read with. A source module declares a [`InputKind`]: how to
-//! find its inputs, how to build its parser and its driver for one binding,
-//! and, for live sources, how to capture into a spool. Backfill, the daemon's
-//! binding runner, `sinex-session`, replay and the NixOS catalog all work from
-//! the kinds, so adding a source touches only its own module (and one line in
-//! the registry list).
+//! Bindings: one instance of a source on one input, with the settings it was
+//! read with. A source module declares a [`InputKind`]: how to find its inputs,
+//! how to build its parser and its driver for one binding, and, for live
+//! sources, how to capture into a spool. Backfill, the daemon's binding runner,
+//! `sinex-session`, replay and the NixOS catalog all work from the kinds, so
+//! adding a source touches only its own module (and one line in the registry
+//! list).
 use crate::drivers::append_file::{AppendFile, AppendState};
 use crate::drivers::dir_snapshot::{DirSnapshot, DirState};
 use crate::drivers::sqlite_rows::{RowState, SqliteRows};
@@ -13,7 +13,7 @@ use crate::registry::{Source, SourceSpec};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::path::{Path, PathBuf};
-mod append_pending;
+mod held_append;
 
 /// The zone named `name` (an IANA name such as `Europe/Warsaw`), or this
 /// system's zone.
@@ -295,7 +295,7 @@ impl StatelessDriver for crate::drivers::export_archive::ExportArchive {
 
     fn poll_once(&self, _cursor: &Value) -> Result<Acquired, DriverError> {
         Err(DriverError::InvalidMaterial(
-            "export archives require retained traversal, not a standalone poll".into(),
+            "export archives are read through their stored archive, not a standalone poll".into(),
         ))
     }
 }
@@ -334,7 +334,7 @@ impl<A: crate::drivers::api_cursor::Api + Send + Sync + 'static> StatelessDriver
 /// rewrite is aligned rather than read again. The newest material is held
 /// until all of it is admitted, so a failed admission retries the same bytes.
 pub struct Appended {
-    pending: Option<append_pending::Pending>,
+    held: Option<held_append::HeldAppend>,
     driver: AppendFile,
     state: AppendState,
     /// The tail rebuilt during a restart, newest record first.
@@ -343,7 +343,7 @@ pub struct Appended {
 
 pub fn appended(driver: AppendFile) -> Box<dyn Reader> {
     Box::new(Appended {
-        pending: None,
+        held: None,
         driver,
         state: AppendState::default(),
         tail: None,
@@ -397,19 +397,19 @@ impl Reader for Appended {
     }
 
     fn poll(&mut self, cursor: &Value) -> Result<Acquired, DriverError> {
-        if let Some(pending) = &self.pending {
-            if !pending.complete(cursor)? {
-                return pending.acquired(cursor);
+        if let Some(held) = &self.held {
+            if !held.complete(cursor)? {
+                return held.acquired(cursor);
             }
-            self.pending = None;
+            self.held = None;
         }
         let acquired = self.driver.poll(cursor, &mut self.state)?;
         if acquired.material.is_none() {
             return Ok(acquired);
         }
-        let pending = append_pending::Pending::capture(acquired, cursor.clone())?;
-        let acquired = pending.acquired(cursor)?;
-        self.pending = Some(pending);
+        let held = held_append::HeldAppend::capture(acquired, cursor.clone())?;
+        let acquired = held.acquired(cursor)?;
+        self.held = Some(held);
         Ok(acquired)
     }
 }

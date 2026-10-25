@@ -329,16 +329,16 @@ async fn excision_erases_the_published_message(db: devkit::pg::TestDatabase) {
     .await
     .unwrap();
     tx.commit().await.unwrap();
-    let retained: Vec<uuid::Uuid> = sqlx::query_scalar(
+    let remaining: Vec<uuid::Uuid> = sqlx::query_scalar(
         "SELECT event_id FROM audit.archive_changes WHERE event_id IS NOT NULL ORDER BY event_id",
     )
     .fetch_all(&mut conn)
     .await
     .unwrap();
     assert_eq!(
-        retained,
+        remaining,
         [sibling_id.0],
-        "excision erases the exact event's full visibility history and retains its sibling"
+        "excision erases the exact event's full visibility history and keeps its sibling"
     );
 
     let done = publish_pending(&mut publisher_conn, &js, &subjects)

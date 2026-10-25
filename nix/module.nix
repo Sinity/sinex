@@ -1,4 +1,4 @@
-# The Sinex NixOS module (architecture §10). It deploys sinexd with its
+# The Sinex NixOS module. It deploys sinexd with its
 # PostgreSQL and NATS, the session service, the journald capture, a
 # capture-only node for satellite hosts, and the backups. Source and derivation
 # options come from the registries through the generated `catalog.json`.
@@ -36,7 +36,7 @@ let
   '';
 
   # Sealed operations restart cleanly: three tries in ten minutes, 30 s apart
-  # (lesson from the old Sinnix bridge, architecture §10).
+  #.
   restartPolicy = {
     Restart = "on-failure";
     RestartSec = "30s";
@@ -56,7 +56,7 @@ let
     class = mkOption {
       type = types.enum [ "open" "guarded" "sealed" ];
       default = spec.class;
-      description = "Privacy class of ${spec.name}'s events (architecture §3.5).";
+      description = "Privacy class of ${spec.name}'s events.";
     };
     kind = mkOption {
       type = types.nullOr types.str;
@@ -94,10 +94,9 @@ in
       type = types.path;
       default = "${cfg.stateDir}/store";
       description = ''
-        The content store: the exact bytes events are read from. Local producer
-        handoff uses its protected configured group. Existing private handoff
-        files or directories are refused: preserve the saved publication request
-        and bytes, then explicitly restage them under that group before retrying.
+        The content store: the exact bytes events are read from. Producers on
+        this host write their spool under it through the store's group; spool
+        files or directories with other ownership or modes are refused.
       '';
     };
     noCow = mkOption {

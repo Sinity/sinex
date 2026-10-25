@@ -1,11 +1,11 @@
-//! Generic account rows retain normalized source values without interpreting
-//! a provider table. A table name alone does not establish its field schema.
+//! Generic account rows keep normalized source values without typing a provider
+//! table. A table name alone does not establish its field schema.
 use crate::Timestamp;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize, Serializer};
 use serde_json::{Map, Value};
 
-/// A fallback for account-export tables with no declared field interpretation.
+/// A fallback for account-export tables with no declared field types.
 #[derive(Clone, Debug, PartialEq, Deserialize, crate::EventPayload)]
 #[event(
     type = "account.record",
@@ -24,8 +24,8 @@ pub struct AccountRecord {
     pub values: Map<String, Value>,
 }
 
-// This wire view owns both serialization and its schema. The marker is
-// computed from the fallback kind, never accepted as an interpretation claim.
+// This wire view owns both serialization and its schema. The marker is computed
+// from the fallback kind, never accepted from the input.
 #[derive(Serialize, JsonSchema)]
 struct AccountRecordView<'a> {
     service: &'a str,
@@ -33,10 +33,10 @@ struct AccountRecordView<'a> {
     native_id: &'a str,
     at: Option<Timestamp>,
     values: &'a Map<String, Value>,
-    #[serde(default = "uninterpreted")]
-    uninterpreted: bool,
+    #[serde(default = "untyped")]
+    untyped: bool,
 }
-fn uninterpreted() -> bool {
+fn untyped() -> bool {
     true
 }
 impl Serialize for AccountRecord {
@@ -47,7 +47,7 @@ impl Serialize for AccountRecord {
             native_id: &self.native_id,
             at: self.at,
             values: &self.values,
-            uninterpreted: true,
+            untyped: true,
         }
         .serialize(serializer)
     }

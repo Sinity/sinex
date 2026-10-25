@@ -1,8 +1,7 @@
-//! Privacy laws against a real database (spec `privacy.md`; laws L9, L24
-//! and the class verification of old `rkv.12`): rules apply once, at
-//! admission, to source and derived events alike; a derived event is never
-//! below its parents' class; values of a class a caller is not granted never
-//! leave through the read views; a source never emits below its floor.
+//! Privacy rules against a real database: rules apply once, at admission, to
+//! source and derived events alike; a derived event is never below its parents'
+//! class; values of a class a caller is not granted never leave through the
+//! read views; a source never emits below its floor.
 use super::*;
 use crate::privacy::{self, Action, NewRule};
 use crate::read_models::catch_up_search_text;
@@ -87,7 +86,7 @@ async fn payload_count(conn: &mut PgConnection, needle: &str) -> i64 {
 }
 
 #[devkit::test]
-async fn l9_one_privacy_point_covers_source_and_derived_events(db: devkit::pg::TestDatabase) {
+async fn one_privacy_point_covers_source_and_derived_events(db: devkit::pg::TestDatabase) {
     let mut conn = <sqlx::PgConnection as sqlx::Connection>::connect(&db.url(None))
         .await
         .unwrap();

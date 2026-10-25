@@ -1,7 +1,6 @@
 //! PostgreSQL and the content store. Admission is the only route by which an
-//! event is stored (architecture §4); its statements live here and run inside
-//! the writer task's transaction in `sinexd`. This crate knows no source or
-//! derivation by name.
+//! event is stored; its statements live here and run inside the writer task's
+//! transaction in `sinexd`. This crate knows no source or derivation by name.
 //!
 //! SQL is checked at compile time against a live development database with
 //! `sqlx::query!`; there is no offline cache (operator ruling, 2025-08-10).

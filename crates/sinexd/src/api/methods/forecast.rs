@@ -20,7 +20,7 @@ async fn visible(conn: &mut PgConnection, reference: &str) -> Result<Value, Stri
         return Err("reference needs an available live event".into());
     }
     if event["class"] == "sealed" {
-        return Err("sealed evidence needs authored sealed retention, which this command does not implement".into());
+        return Err("forecasts cannot cite sealed evidence".into());
     }
     Ok(event)
 }

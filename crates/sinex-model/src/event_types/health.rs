@@ -1,4 +1,5 @@
-//! Source-normalized health records. Raw captured material remains authoritative.
+//! Source-normalized health records. The captured material stays the record of
+//! truth.
 use crate::Timestamp;
 use schemars::JsonSchema;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
@@ -24,8 +25,8 @@ fn decode<T: serde::de::DeserializeOwned>(value: Value) -> Result<T, serde_json:
     serde_json::from_value(value)
 }
 
-/// Known source categories select their fields before decoding. A malformed known
-/// field is an error, never a reason to reinterpret the row as unknown.
+/// Known source categories select their fields before decoding. A malformed
+/// known field is an error, never a reason to read the row as unknown.
 #[derive(Clone, Debug, PartialEq, Serialize, JsonSchema)]
 #[serde(untagged)]
 pub enum HealthValues {
@@ -100,31 +101,31 @@ impl HealthValues {
             _ => decode(value).map(Self::Unknown),
         }
     }
-    fn uninterpreted_fields(&self) -> Vec<String> {
+    fn unknown_fields(&self) -> Vec<String> {
         let extra = match self {
-            Self::SleepSession(row) => &row.uninterpreted,
-            Self::SleepNoise(row) => &row.uninterpreted,
-            Self::Fit(row) => &row.uninterpreted,
-            Self::Stress(row) => &row.uninterpreted,
-            Self::Steps(row) => &row.uninterpreted,
-            Self::Hrv(row) => &row.uninterpreted,
-            Self::HeartRate(row) => &row.uninterpreted,
-            Self::Oxygen(row) => &row.uninterpreted,
-            Self::Respiratory(row) => &row.uninterpreted,
-            Self::SkinTemperature(row) => &row.uninterpreted,
-            Self::Sleep(row) => &row.uninterpreted,
-            Self::SleepCombined(row) => &row.uninterpreted,
-            Self::SleepStage(row) => &row.uninterpreted,
-            Self::Snoring(row) => &row.uninterpreted,
-            Self::Movement(row) => &row.uninterpreted,
-            Self::Nap(row) => &row.uninterpreted,
-            Self::Vitality(row) => &row.uninterpreted,
-            Self::Weight(row) => &row.uninterpreted,
-            Self::Floors(row) => &row.uninterpreted,
-            Self::Mood(row) => &row.uninterpreted,
-            Self::ActivityDay(row) => &row.uninterpreted,
-            Self::Calories(row) => &row.uninterpreted,
-            Self::Ecg(row) => &row.uninterpreted,
+            Self::SleepSession(row) => &row.unknown,
+            Self::SleepNoise(row) => &row.unknown,
+            Self::Fit(row) => &row.unknown,
+            Self::Stress(row) => &row.unknown,
+            Self::Steps(row) => &row.unknown,
+            Self::Hrv(row) => &row.unknown,
+            Self::HeartRate(row) => &row.unknown,
+            Self::Oxygen(row) => &row.unknown,
+            Self::Respiratory(row) => &row.unknown,
+            Self::SkinTemperature(row) => &row.unknown,
+            Self::Sleep(row) => &row.unknown,
+            Self::SleepCombined(row) => &row.unknown,
+            Self::SleepStage(row) => &row.unknown,
+            Self::Snoring(row) => &row.unknown,
+            Self::Movement(row) => &row.unknown,
+            Self::Nap(row) => &row.unknown,
+            Self::Vitality(row) => &row.unknown,
+            Self::Weight(row) => &row.unknown,
+            Self::Floors(row) => &row.unknown,
+            Self::Mood(row) => &row.unknown,
+            Self::ActivityDay(row) => &row.unknown,
+            Self::Calories(row) => &row.unknown,
+            Self::Ecg(row) => &row.unknown,
             Self::Unknown(_) => return vec![],
         };
         let mut fields: Vec<String> = extra
@@ -141,16 +142,16 @@ impl HealthValues {
             _ => None,
         };
         if let Some(bins) = bins {
-            fields.extend(bins.uninterpreted_fields());
+            fields.extend(bins.unknown_fields());
         }
         if let Self::Fit(row) = self {
-            fields.extend(row.nested_uninterpreted_fields());
+            fields.extend(row.nested_unknown_fields());
         }
         fields
     }
 }
 
-/// In-session markers retain their source order and nullable numeric value.
+/// In-session markers keep their source order and nullable numeric value.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct HealthEvent {
     pub kind: String,
@@ -158,7 +159,7 @@ pub struct HealthEvent {
     #[schemars(with = "Option<f64>")]
     pub value: Option<Number>,
     #[serde(flatten)]
-    uninterpreted: Map<String, Value>,
+    unknown: Map<String, Value>,
 }
 
 /// Identity and normalized times keep the existing `health.record` contract.
@@ -252,15 +253,15 @@ impl Serialize for HealthRecord {
             #[serde(skip_serializing_if = "Vec::is_empty")]
             events: &'a Vec<HealthEvent>,
             #[serde(skip_serializing_if = "std::ops::Not::not")]
-            uninterpreted: bool,
+            untyped: bool,
             #[serde(skip_serializing_if = "Vec::is_empty")]
-            uninterpreted_fields: Vec<String>,
+            unknown_fields: Vec<String>,
         }
-        let mut fields = self.values.uninterpreted_fields();
+        let mut fields = self.values.unknown_fields();
         for (i, event) in self.events.iter().enumerate() {
             fields.extend(
                 event
-                    .uninterpreted
+                    .unknown
                     .keys()
                     .map(|key| format!("/events/{i}/{}", pointer(key))),
             );
@@ -275,8 +276,8 @@ impl Serialize for HealthRecord {
             offset_minutes: self.offset_minutes,
             values: &self.values,
             events: &self.events,
-            uninterpreted: matches!(self.values, HealthValues::Unknown(_)),
-            uninterpreted_fields: fields,
+            untyped: matches!(self.values, HealthValues::Unknown(_)),
+            unknown_fields: fields,
         }
         .serialize(serializer)
     }
@@ -305,9 +306,9 @@ impl JsonSchema for HealthRecord {
             #[serde(default)]
             events: Vec<HealthEvent>,
             #[serde(default)]
-            uninterpreted: bool,
+            untyped: bool,
             #[serde(default)]
-            uninterpreted_fields: Vec<String>,
+            unknown_fields: Vec<String>,
         }
         HealthRecordSchema::json_schema(generator)
     }

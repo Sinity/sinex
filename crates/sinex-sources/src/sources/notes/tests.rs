@@ -234,7 +234,7 @@ fn unsupported_yaml_values_and_expansion_keep_text_with_structural_diagnostics()
 }
 
 #[devkit::test]
-fn old_payloads_and_vanished_notes_do_not_claim_metadata_was_interpreted() {
+fn payloads_without_metadata_and_vanished_notes_do_not_claim_metadata() {
     let old = serde_json::json!({"vault":"v","path":"a.md","text":"","size":0,"modified_at":null,"vanished_at":null});
     let payload: NoteDocument = serde_json::from_value(old.clone()).unwrap();
     assert_eq!(payload.front_matter, None);

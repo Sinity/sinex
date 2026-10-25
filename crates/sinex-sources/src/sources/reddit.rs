@@ -1,9 +1,9 @@
-//! Reddit GDPR export (`export_<user>_<date>.zip` of CSVs), on `ExportArchive`
-//! (`spec/port-lynchpin-sources.md` §7.6): comments and posts become
-//! `post.published`, votes `vote.cast`, saved items `bookmark.saved`, messages
-//! and chats `conversation.message`. The `ip` columns are dropped as read;
-//! account metadata files stay in the material, unread. Exports are
-//! cumulative, so an older one adds only older readings of the same items.
+//! Reddit GDPR export (`export_<user>_<date>.zip` of CSVs), on `ExportArchive`:
+//! comments and posts become `post.published`, votes `vote.cast`, saved items
+//! `bookmark.saved`, messages and chats `conversation.message`. The `ip`
+//! columns are dropped as read; account metadata files stay in the material,
+//! unread. Exports are cumulative, so an older one adds only older readings of
+//! the same items.
 use crate::drivers::export_archive::{ExportArchive, Framing, PART_BYTES};
 use crate::registry::{DeclaredSource, Driver, SourceSpec};
 use crate::sources::fields;

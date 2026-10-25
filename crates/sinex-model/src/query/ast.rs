@@ -20,9 +20,9 @@ pub enum Source {
         unit: Unit,
         alias: Option<&'static Alias>,
     },
-    /// A provenance walk from one reference (spec `query.md` §7).
+    /// A provenance walk from one reference.
     Walk { walk: Walk, reference: Reference },
-    /// Everything recorded in a window, across every source (§6.3).
+    /// Everything recorded in a window, across every source.
     Recall { from: Timestamp, to: Timestamp },
     /// The latest recorded shell group matching a session-field filter.
     RecallLast { filter: Option<Expr> },
@@ -55,10 +55,10 @@ pub enum Walk {
     Parents,
 }
 
-/// A citation (spec `query.md` §6.4).
+/// A citation.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Reference {
-    /// `sinex:ev/<id>` or a bare event ID: one interpretation, live or archived.
+    /// `sinex:ev/<id>` or a bare event ID: one reading, live or archived.
     Event(Uuid),
     /// `sinex:occ/<material>/<anchor>[/<event type>[/<ordinal>]]`.
     Occurrence {

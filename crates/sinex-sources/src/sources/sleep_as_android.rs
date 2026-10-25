@@ -1,8 +1,8 @@
-//! Sleep as Android export (`sleep-as-android.csv`), on `ExportArchive`
-//! (`spec/port-lynchpin-sources.md` §10.3). Each session is a header row
-//! starting `Id,` and a data row; the first 15 columns are fixed and the rest
-//! are the session's own (`Event` markers such as `DEEP_START-<ms>` and
-//! `HR-<ms>-<bpm>`, or actigraphy samples headed by a time of day).
+//! Sleep as Android export (`sleep-as-android.csv`), on `ExportArchive`. Each
+//! session is a header row starting `Id,` and a data row; the first 15 columns
+//! are fixed and the rest are the session's own (`Event` markers such as
+//! `DEEP_START-<ms>` and `HR-<ms>-<bpm>`, or actigraphy samples headed by a
+//! time of day).
 //!
 //! `Id` is the session start in epoch milliseconds; `From` and `To` are naive
 //! local times. The `Tz` column is unreliable (IANA names beside POSIX-inverted

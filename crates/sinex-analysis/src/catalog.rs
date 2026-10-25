@@ -1,8 +1,8 @@
-//! The shipped catalog: metrics declared once, the completeness of each
-//! source, and the recipes and standing analyses built on them. This is the
-//! port of Lynchpin's day panel (`operator_daily`, `port-lynchpin-analysis.md`
-//! §3.1 #1) for the sources Sinex captures today: one metric per field
-//! instead of a wide table, every cell with its state.
+//! The shipped catalog: metrics declared once, the completeness of each source,
+//! and the recipes and standing analyses built on them. This is the counterpart
+//! of Lynchpin's day panel (`operator_daily`) for the sources Sinex captures
+//! today: one metric per field instead of a wide table, every cell with its
+//! state.
 use crate::coverage::{CaptureMode, Completeness};
 use crate::metric::{
     AggLaw, Allocation, CoverageRule, IntervalShape, Lit, MetricDef, Predicate, Quantity,
@@ -252,9 +252,9 @@ pub fn metric(id: &str) -> Option<&'static MetricDef> {
     METRICS.iter().find(|m| m.id == id)
 }
 
-/// What each source sees of its kind (`analysis.md` §3.2). A shell history
-/// sees the commands typed in that shell, not every command run; a browser
-/// profile sees that profile; the journal and ActivityWatch see this host.
+/// What each source sees of its kind. A shell history sees the commands typed
+/// in that shell, not every command run; a browser profile sees that profile;
+/// the journal and ActivityWatch see this host.
 pub fn completeness(source: &str) -> Completeness {
     match source {
         "machine.journald" | "desktop.activitywatch" | "media.spotify-history" => {
@@ -306,10 +306,10 @@ pub fn relations() -> Vec<&'static str> {
     v
 }
 
-/// The correlation family the standing lifestyle analysis tests: every pair
-/// of deviation-tracked metrics at lags 0 and 1, fixed before any result is
-/// seen (Lynchpin's `lifestyle_correlations` and `daytime_correlates`, as one
-/// declared family, `port-lynchpin-analysis.md` §3.2 #7, #12).
+/// The correlation family the standing lifestyle analysis tests: every pair of
+/// deviation-tracked metrics at lags 0 and 1, fixed before any result is seen
+/// (Lynchpin's `lifestyle_correlations` and `daytime_correlates`, as one
+/// declared family).
 pub fn correlation_family() -> Vec<(&'static str, &'static str, i32)> {
     let tracked: Vec<&'static str> = METRICS
         .iter()

@@ -1,8 +1,8 @@
-//! Metric definitions and their aggregation laws (spec `analysis.md` §4.2,
-//! `k4c.2`). A metric turns one relation into one number per unit: counters
-//! sum only disjoint increments, ratios carry numerator and denominator,
-//! means carry sum and count, durations union their intervals, quantiles and
-//! distinct counts are recomputed per unit and never combined.
+//! Metric definitions and their aggregation laws. A metric turns one relation
+//! into one number per unit: counters sum only disjoint increments, ratios
+//! carry numerator and denominator, means carry sum and count, durations union
+//! their intervals, quantiles and distinct counts are recomputed per unit and
+//! never combined.
 use crate::span::{MICROS_PER_SECOND, Span, SpanSet};
 use serde::Serialize;
 use serde_json::Value;

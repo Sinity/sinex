@@ -25,7 +25,7 @@ pub struct Selection {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub source_window: Option<Option<SourceWindow>>,
     #[serde(flatten)]
-    pub(crate) uninterpreted: Map<String, Value>,
+    pub(crate) unknown: Map<String, Value>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
@@ -37,7 +37,7 @@ pub struct SourceWindow {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub title: Option<Option<String>>,
     #[serde(flatten)]
-    pub(crate) uninterpreted: Map<String, Value>,
+    pub(crate) unknown: Map<String, Value>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
@@ -80,7 +80,7 @@ pub struct Notification {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub hints: Option<Option<Map<String, Value>>>,
     #[serde(flatten)]
-    pub(crate) uninterpreted: Map<String, Value>,
+    pub(crate) unknown: Map<String, Value>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
@@ -92,7 +92,7 @@ pub struct NotificationAction {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub label: Option<Option<String>>,
     #[serde(flatten)]
-    pub(crate) uninterpreted: Map<String, Value>,
+    pub(crate) unknown: Map<String, Value>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
@@ -124,7 +124,7 @@ pub struct Media {
     #[schemars(with = "Option<Option<f64>>")]
     pub duration_seconds: Option<Option<serde_json::Number>>,
     #[serde(flatten)]
-    pub(crate) uninterpreted: Map<String, Value>,
+    pub(crate) unknown: Map<String, Value>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
@@ -155,7 +155,7 @@ pub struct Frame {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub geometry: Option<Option<Geometry>>,
     #[serde(flatten)]
-    pub(crate) uninterpreted: Map<String, Value>,
+    pub(crate) unknown: Map<String, Value>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
@@ -173,7 +173,7 @@ pub struct Geometry {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub height: Option<Option<i64>>,
     #[serde(flatten)]
-    pub(crate) uninterpreted: Map<String, Value>,
+    pub(crate) unknown: Map<String, Value>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
@@ -204,7 +204,7 @@ pub struct Navigation {
     #[schemars(with = "Option<Option<f64>>")]
     pub ts: Option<Option<serde_json::Number>>,
     #[serde(flatten)]
-    pub(crate) uninterpreted: Map<String, Value>,
+    pub(crate) unknown: Map<String, Value>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
@@ -235,7 +235,7 @@ pub struct Reading {
     #[schemars(with = "Option<Option<f64>>")]
     pub pushed_at: Option<Option<serde_json::Number>>,
     #[serde(flatten)]
-    pub(crate) uninterpreted: Map<String, Value>,
+    pub(crate) unknown: Map<String, Value>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
@@ -257,7 +257,7 @@ pub struct Monitor {
     #[schemars(with = "Option<Option<f64>>")]
     pub input_sl: Option<Option<serde_json::Number>>,
     #[serde(flatten)]
-    pub(crate) uninterpreted: Map<String, Value>,
+    pub(crate) unknown: Map<String, Value>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
@@ -271,30 +271,30 @@ pub struct Environment {
     #[schemars(with = "Option<Option<f64>>")]
     pub co2: Option<Option<serde_json::Number>>,
     #[serde(flatten)]
-    pub(crate) uninterpreted: Map<String, Value>,
+    pub(crate) unknown: Map<String, Value>,
 }
 
 impl Selection {
-    pub(crate) fn collect_uninterpreted(&self, path: &str, fields: &mut Vec<String>) {
-        super::extend_fields(&self.uninterpreted, path, fields);
+    pub(crate) fn collect_unknown(&self, path: &str, fields: &mut Vec<String>) {
+        super::extend_fields(&self.unknown, path, fields);
         if let Some(Some(value)) = &self.source_window {
-            value.collect_uninterpreted(&format!("{path}/source_window"), fields);
+            value.collect_unknown(&format!("{path}/source_window"), fields);
         }
     }
 }
 
 impl SourceWindow {
-    pub(crate) fn collect_uninterpreted(&self, path: &str, fields: &mut Vec<String>) {
-        super::extend_fields(&self.uninterpreted, path, fields);
+    pub(crate) fn collect_unknown(&self, path: &str, fields: &mut Vec<String>) {
+        super::extend_fields(&self.unknown, path, fields);
     }
 }
 
 impl Notification {
-    pub(crate) fn collect_uninterpreted(&self, path: &str, fields: &mut Vec<String>) {
-        super::extend_fields(&self.uninterpreted, path, fields);
+    pub(crate) fn collect_unknown(&self, path: &str, fields: &mut Vec<String>) {
+        super::extend_fields(&self.unknown, path, fields);
         if let Some(Some(values)) = &self.actions {
             for (i, value) in values.iter().enumerate() {
-                value.collect_uninterpreted(&format!("{path}/actions/{i}"), fields);
+                value.collect_unknown(&format!("{path}/actions/{i}"), fields);
             }
         }
         if let Some(Some(values)) = &self.hints {
@@ -304,52 +304,52 @@ impl Notification {
 }
 
 impl NotificationAction {
-    pub(crate) fn collect_uninterpreted(&self, path: &str, fields: &mut Vec<String>) {
-        super::extend_fields(&self.uninterpreted, path, fields);
+    pub(crate) fn collect_unknown(&self, path: &str, fields: &mut Vec<String>) {
+        super::extend_fields(&self.unknown, path, fields);
     }
 }
 
 impl Media {
-    pub(crate) fn collect_uninterpreted(&self, path: &str, fields: &mut Vec<String>) {
-        super::extend_fields(&self.uninterpreted, path, fields);
+    pub(crate) fn collect_unknown(&self, path: &str, fields: &mut Vec<String>) {
+        super::extend_fields(&self.unknown, path, fields);
     }
 }
 
 impl Frame {
-    pub(crate) fn collect_uninterpreted(&self, path: &str, fields: &mut Vec<String>) {
-        super::extend_fields(&self.uninterpreted, path, fields);
+    pub(crate) fn collect_unknown(&self, path: &str, fields: &mut Vec<String>) {
+        super::extend_fields(&self.unknown, path, fields);
         if let Some(Some(value)) = &self.geometry {
-            value.collect_uninterpreted(&format!("{path}/geometry"), fields);
+            value.collect_unknown(&format!("{path}/geometry"), fields);
         }
     }
 }
 
 impl Geometry {
-    pub(crate) fn collect_uninterpreted(&self, path: &str, fields: &mut Vec<String>) {
-        super::extend_fields(&self.uninterpreted, path, fields);
+    pub(crate) fn collect_unknown(&self, path: &str, fields: &mut Vec<String>) {
+        super::extend_fields(&self.unknown, path, fields);
     }
 }
 
 impl Navigation {
-    pub(crate) fn collect_uninterpreted(&self, path: &str, fields: &mut Vec<String>) {
-        super::extend_fields(&self.uninterpreted, path, fields);
+    pub(crate) fn collect_unknown(&self, path: &str, fields: &mut Vec<String>) {
+        super::extend_fields(&self.unknown, path, fields);
     }
 }
 
 impl Reading {
-    pub(crate) fn collect_uninterpreted(&self, path: &str, fields: &mut Vec<String>) {
-        super::extend_fields(&self.uninterpreted, path, fields);
+    pub(crate) fn collect_unknown(&self, path: &str, fields: &mut Vec<String>) {
+        super::extend_fields(&self.unknown, path, fields);
     }
 }
 
 impl Monitor {
-    pub(crate) fn collect_uninterpreted(&self, path: &str, fields: &mut Vec<String>) {
-        super::extend_fields(&self.uninterpreted, path, fields);
+    pub(crate) fn collect_unknown(&self, path: &str, fields: &mut Vec<String>) {
+        super::extend_fields(&self.unknown, path, fields);
     }
 }
 
 impl Environment {
-    pub(crate) fn collect_uninterpreted(&self, path: &str, fields: &mut Vec<String>) {
-        super::extend_fields(&self.uninterpreted, path, fields);
+    pub(crate) fn collect_unknown(&self, path: &str, fields: &mut Vec<String>) {
+        super::extend_fields(&self.unknown, path, fields);
     }
 }

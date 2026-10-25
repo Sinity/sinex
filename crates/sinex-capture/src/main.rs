@@ -1,7 +1,7 @@
-//! `sinex-capture`: the capture-only node for satellite hosts (`rkv.7`,
-//! `1c5`; architecture §7.3). It runs the same drivers and sources as
-//! `sinexd`, keeps a local spool, and produces to the one database's `sinexd`
-//! over the NATS ingress with its own credentials. It has no database.
+//! `sinex-capture`: the capture-only node for satellite hosts. It runs the same
+//! drivers and sources as `sinexd`, keeps a local spool, and produces to the
+//! one database's `sinexd` over the NATS ingress with its own credentials. It
+//! has no database.
 //!
 //! The ingress registers a material only once its bytes are in `sinexd`'s
 //! content store. A node that mounts that store places them there directly;

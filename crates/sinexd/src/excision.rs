@@ -155,7 +155,7 @@ fn rewrites(blobs: &Blobs, plan: &Plan) -> Result<Vec<Rewrite>, String> {
         let length = blobs
             .copy_to(&m.blob, &mut file)
             .map_err(|e| e.to_string())?;
-        let stored = crate::retained::Retained::new(file, length);
+        let stored = crate::stored::StoredReader::new(file, length);
         let length =
             usize::try_from(stored.length()).map_err(|_| "material exceeds address space")?;
         let spans: Vec<(usize, usize)> = if m.whole {
@@ -185,7 +185,7 @@ fn rewrites(blobs: &Blobs, plan: &Plan) -> Result<Vec<Rewrite>, String> {
                 })
                 .collect::<Result<_, _>>()?
         };
-        let reader = crate::retained::Blanked::new(stored.into_reader()?, spans);
+        let reader = crate::stored::Blanked::new(stored.into_reader()?, spans);
         rewrites.push(Rewrite {
             material: m.id,
             blob: blobs.put_reader(reader).map_err(|e| e.to_string())?,

@@ -1,6 +1,6 @@
 //! `sinexd`: one context built in `main`; admission and the writer task; the
 //! commit-log reader; the confirmed-stream publisher; the NATS ingress
-//! consumer; the derivation runner; replay; the API (architecture §7.4).
+//! consumer; the derivation runner; replay; the API.
 mod admin;
 mod analysis;
 mod api;
@@ -19,10 +19,10 @@ mod library;
 mod one_shot;
 mod publisher;
 mod replay;
-mod retained;
 mod screen_text;
 mod sealed_access;
 mod source_runner;
+mod stored;
 mod writer;
 
 use clap::{Parser, Subcommand};
@@ -73,9 +73,9 @@ enum Command {
         #[arg(long)]
         sources: Option<PathBuf>,
     },
-    /// Publish every committed event not yet on the confirmed stream, then
-    /// stop and report the rate. For first publication and measurement; the
-    /// running daemon does the same continuously.
+    /// Publish every committed event not yet on the confirmed stream, then stop
+    /// and report the rate. For a first run and measurement; the running daemon
+    /// does the same continuously.
     Publish {
         #[arg(long)]
         database: String,
@@ -123,7 +123,7 @@ enum Command {
         /// One JSON object: totals per source and peak memory.
         #[arg(long)]
         json: bool,
-        /// Explicitly unlock retained sealed archive bytes for this backfill only.
+        /// Unlock stored sealed archive bytes for this backfill only.
         #[arg(long)]
         identity_file: Option<PathBuf>,
     },

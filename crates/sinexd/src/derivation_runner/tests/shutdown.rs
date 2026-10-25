@@ -3,7 +3,7 @@ use super::*;
 #[devkit::test]
 async fn shutdown_finishes_the_active_pass_and_its_queued_admission(db: devkit::pg::TestDatabase) {
     let w = World::with_keys(db, vec![Box::new(Count::<1>)]).await;
-    w.admit(vec![zsh("retained input", 0, 1)]).await;
+    w.admit(vec![zsh("kept input", 0, 1)]).await;
     let driver = w.driver_with(vec![Box::new(Count::<1>)], vec![]).await;
     let mut blocker = PgConnection::connect(&w.url).await.unwrap();
     sqlx::query("BEGIN").execute(&mut blocker).await.unwrap();

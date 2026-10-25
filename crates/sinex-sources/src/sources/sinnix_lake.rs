@@ -1,8 +1,8 @@
-//! Sinnix capture-lake JSONL day files become retained material and typed
+//! Sinnix capture-lake JSONL day files become stored material and typed
 //! observations under each lane's catalog source. Configuration names the
-//! directories relative to the lake root and the accepted envelope lanes.
-//! An unbound lane is a record failure. Network-flow records retain their
-//! material without emitting per-record events.
+//! directories relative to the lake root and the accepted envelope lanes. An
+//! unbound lane is a record failure. Network-flow records keep their material
+//! without emitting per-record events.
 use crate::drivers::append_file::{AppendFile, lines};
 use crate::registry::{DeclaredSource, Driver, SourceSpec};
 use crate::{Parser, RecordError};
@@ -20,7 +20,7 @@ pub struct Lane {
     pub dirs: &'static [&'static str],
     /// Accepted `lane` values; renamed lanes list both names.
     pub lanes: &'static [&'static str],
-    /// Stored as material only (spec `port-sinnix.md` §1 rule 5).
+    /// Stored as material only.
     pub firehose: bool,
 }
 
@@ -29,8 +29,8 @@ const fn spec(name: &'static str, parser: &'static str, consumer: &'static str) 
         name,
         driver: Driver::AppendFile,
         consumer,
-        // The class of each lane is the operator's to choose (sxnext-zpa);
-        // floors raise it without a code change.
+        // The class of each lane is the operator's to choose; floors raise it
+        // without a code change.
         class: Class::Open,
         parser,
         parser_version: 2,

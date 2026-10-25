@@ -1,6 +1,6 @@
-//! What travels over NATS (architecture §4.3): the ingress where outside
-//! producers send materials and events, their acknowledgments, and the
-//! confirmed stream of committed events in commit order.
+//! What travels over NATS: the ingress where outside producers send materials
+//! and events, their acknowledgments, and the confirmed stream of committed
+//! events in commit order.
 //!
 //! Subjects, all under one root (`sinex` when deployed):
 //!
@@ -308,7 +308,7 @@ pub struct Have {
 pub enum Confirmed {
     Event(Box<ConfirmedEvent>),
     Archived(ArchiveNotice),
-    /// A previously hidden interpretation is live again at a new position.
+    /// A previously hidden reading is live again at a new position.
     Restored(RestoredNotice),
     /// The event was excised: its message has been erased from the stream,
     /// and a consumer drops anything it kept of it.

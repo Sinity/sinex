@@ -23,29 +23,29 @@ fn streamed_blanking_matches_original_bytes_across_small_buffers_and_overlaps() 
 }
 
 #[devkit::test]
-fn retained_record_reads_are_exact_and_propagate_backing_faults() {
+fn stored_record_reads_are_exact_and_propagate_read_faults() {
     use sinex_sources::drain::RecordRead;
-    let retained = Retained::new(Cursor::new(b"alpha\nbeta\n"), 11);
+    let stored = StoredReader::new(Cursor::new(b"alpha\nbeta\n"), 11);
     let mut row = [0; 5];
-    retained.read_exact_at(6, &mut row).unwrap();
+    stored.read_exact_at(6, &mut row).unwrap();
     assert_eq!(&row, b"beta\n");
-    assert!(retained.read_exact_at(7, &mut row).is_err());
+    assert!(stored.read_exact_at(7, &mut row).is_err());
 }
 
 #[devkit::test]
-fn sealed_retained_seek_rechecks_authority_even_for_a_cached_record() {
+fn sealed_stored_seek_rechecks_the_unlock_even_for_a_cached_record() {
     use sinex_sources::drain::RecordRead;
     let dir = tempfile::tempdir().unwrap();
     let blobs = sinex_store::Blobs::open(dir.path()).unwrap();
     let key = sinex_store::sealed::new_key().unwrap();
     let bytes = b"first\nother\n";
     let name = blobs.put_sealed(bytes, &key).unwrap();
-    let authority = crate::sealed_access::Authority::new(
+    let unlock = crate::sealed_access::Unlock::new(
         sinex_store::sealed::Identity::generate(),
         std::time::Duration::from_secs(30),
     )
     .unwrap();
-    let check = authority.clone();
+    let check = unlock.clone();
     let mut reader = blobs
         .read_sealed(
             &name,
@@ -56,13 +56,13 @@ fn sealed_retained_seek_rechecks_authority_even_for_a_cached_record() {
         )
         .unwrap();
     std::io::copy(&mut reader, &mut std::io::sink()).unwrap();
-    let retained = Retained::new(reader, bytes.len() as u64);
+    let stored = StoredReader::new(reader, bytes.len() as u64);
     let mut row = [0; 6];
-    retained.read_exact_at(0, &mut row).unwrap();
+    stored.read_exact_at(0, &mut row).unwrap();
     assert_eq!(&row, b"first\n");
-    authority.revoke();
+    unlock.revoke();
     assert!(
-        retained
+        stored
             .read_exact_at(0, &mut row)
             .unwrap_err()
             .to_string()

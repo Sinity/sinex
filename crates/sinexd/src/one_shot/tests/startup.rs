@@ -107,7 +107,7 @@ async fn derivation_claims_the_writer_for_its_entire_lifetime(db: devkit::pg::Te
     task.await.unwrap();
     assert!(
         !acquired,
-        "the derivation writer must retain its advisory claim"
+        "the derivation writer must keep its advisory claim"
     );
     writer::claim(&mut competing).await.unwrap();
     let startup = crate::local_driver(&url, "startup-fixture", None);

@@ -1,7 +1,6 @@
-//! Laws (Beads "Laws for: …", label `laws`) checked end to end through the
-//! real `sinexd` binary on small generated inputs: backfill, replay, hide,
-//! excise. Each test names its law; laws covered elsewhere are cited on their
-//! Bead. Run through `xtask test`, which provides the development database.
+//! Whole-system rules checked end to end through the real `sinexd` binary on
+//! small generated inputs: backfill, replay, hide, excise. Run through `xtask
+//! test`, which provides the development database.
 mod support;
 
 use devkit::pg::TestDatabase;
@@ -177,8 +176,8 @@ async fn live(conn: &mut PgConnection) -> BTreeMap<String, Reading> {
         .collect()
 }
 
-/// L3's agreement between the side tables and `core.events`, plus the
-/// invariants every run keeps (as in the crash harness).
+/// The agreement between the side tables and `core.events`, plus the invariants
+/// every run keeps (as in the crash harness).
 async fn consistent(conn: &mut PgConnection) {
     let live = scalar(
         conn,
@@ -224,9 +223,9 @@ fn small_zsh() -> String {
         .collect()
 }
 
-/// L1. Provenance XOR, enforced by the database whatever writes the row.
+/// Provenance XOR, enforced by the database whatever writes the row.
 #[devkit::test]
-async fn l1_an_event_has_exactly_one_origin() {
+async fn an_event_has_exactly_one_origin() {
     let dir = Dir::new();
     let t = Target::new(&dir);
     t.backfill(Some(&dir.file("zsh", small_zsh().as_bytes())), None);
@@ -254,11 +253,11 @@ async fn l1_an_event_has_exactly_one_origin() {
     assert_eq!(both_or_neither, 0);
 }
 
-/// L2 and L3. Replay keeps occurrences and stated times, mints new IDs, and
-/// each replay leaves one live reading per occurrence with the earlier ones
-/// archived; the side tables agree with the events.
+/// Replay keeps occurrences and stated times, mints new IDs, and each replay
+/// leaves one live reading per occurrence with the earlier ones archived; the
+/// side tables agree with the events.
 #[devkit::test]
-async fn l2_l3_replay_keeps_occurrences_and_one_live_reading() {
+async fn replay_keeps_occurrences_and_one_live_reading() {
     let dir = Dir::new();
     let t = Target::new(&dir);
     let atuin = dir.0.join("history.db");
@@ -318,11 +317,10 @@ async fn l2_l3_replay_keeps_occurrences_and_one_live_reading() {
     consistent(&mut c).await;
 }
 
-/// L6. Duplicate delivery is harmless: forget every source position (as if
-/// progress were lost after the batches committed) and deliver everything
-/// again.
+/// Duplicate delivery is harmless: forget every source position (as if progress
+/// were lost after the batches committed) and deliver everything again.
 #[devkit::test]
-async fn l6_delivering_everything_twice_changes_nothing() {
+async fn delivering_everything_twice_changes_nothing() {
     let dir = Dir::new();
     let t = Target::new(&dir);
     let zsh = dir.file("zsh", small_zsh().as_bytes());
@@ -355,10 +353,10 @@ async fn l6_delivering_everything_twice_changes_nothing() {
     consistent(&mut c).await;
 }
 
-/// L7 and L28. Re-staging the same export, and the same bytes under a new
-/// name, registers new material but admits nothing new.
+/// Re-staging the same export, and the same bytes under a new name, registers
+/// new material but admits nothing new.
 #[devkit::test]
-async fn l7_l28_restaging_the_same_bytes_admits_nothing_new() {
+async fn restaging_the_same_bytes_admits_nothing_new() {
     let dir = Dir::new();
     let t = Target::new(&dir);
     let text = small_zsh();
@@ -393,11 +391,11 @@ async fn l7_l28_restaging_the_same_bytes_admits_nothing_new() {
     consistent(&mut c).await;
 }
 
-/// L11 and L51. Clocks are honest: `ts_coided` is the ID's minting time, the
-/// stated time is kept as stated (1970 and 2200 included), never the run
-/// time, and never refused for its value.
+/// Clocks are honest: `ts_coided` is the ID's minting time, the stated time is
+/// kept as stated (1970 and 2200 included), never the run time, and never
+/// refused for its value.
 #[devkit::test]
-async fn l11_l51_stated_times_are_kept_whatever_their_value() {
+async fn stated_times_are_kept_whatever_their_value() {
     let dir = Dir::new();
     let t = Target::new(&dir);
     let text = [
@@ -459,10 +457,10 @@ async fn chrono_now(c: &mut PgConnection) -> String {
         .unwrap()
 }
 
-/// L14. Large materials stay large: a long history is a handful of parts,
-/// never one material per record.
+/// Large materials stay large: a long history is a handful of parts, never one
+/// material per record.
 #[devkit::test]
-async fn l14_a_long_history_is_a_few_materials() {
+async fn a_long_history_is_a_few_materials() {
     let dir = Dir::new();
     let t = Target::new(&dir);
     let text: String = (0..20_000)
@@ -481,13 +479,13 @@ async fn l14_a_long_history_is_a_few_materials() {
     );
 }
 
-/// L20 and L47. Rows that change after capture: a command that ends long
-/// after thousands of later rows is read with its final values, the earlier
-/// reading archived; a soft-deleted row's newest reading is "removed at
-/// source", stays out of the live counts' ordinary state but is never an
-/// exclusion; a replay keeps the final readings.
+/// Rows that change after capture: a command that ends long after thousands of
+/// later rows is read with its final values, the earlier reading archived; a
+/// soft-deleted row's newest reading is "removed at source", stays out of the
+/// live counts' ordinary state but is never an exclusion; a replay keeps the
+/// final readings.
 #[devkit::test]
-async fn l20_l47_rows_that_change_are_read_to_their_final_values() {
+async fn rows_that_change_are_read_to_their_final_values() {
     let dir = Dir::new();
     let t = Target::new(&dir);
     let path = dir.0.join("history.db");
@@ -548,11 +546,11 @@ async fn l20_l47_rows_that_change_are_read_to_their_final_values() {
     consistent(&mut c).await;
 }
 
-/// L21. Progress never ahead of storage: a bad record between two good ones
-/// is a failure row with its bytes; both good records are stored and the
-/// source keeps reading.
+/// Progress never ahead of storage: a bad record between two good ones is a
+/// failure row with its bytes; both good records are stored and the source
+/// keeps reading.
 #[devkit::test]
-async fn l21_a_bad_record_is_a_failure_and_its_neighbours_are_stored() {
+async fn a_bad_record_is_a_failure_and_its_neighbours_are_stored() {
     let dir = Dir::new();
     let t = Target::new(&dir);
     let mut bytes = zsh_line(1_600_000_001, "before").into_bytes();
@@ -569,10 +567,10 @@ async fn l21_a_bad_record_is_a_failure_and_its_neighbours_are_stored() {
     assert_eq!(scalar(&mut c, "SELECT count(*) FROM raw.failures").await, 1);
 }
 
-/// L34 and L48. Repeats are separate occurrences: the same command typed 500
-/// times, twice within one second included, is 500 commands.
+/// Repeats are separate occurrences: the same command typed 500 times, twice
+/// within one second included, is 500 commands.
 #[devkit::test]
-async fn l34_l48_repeated_commands_are_kept() {
+async fn repeated_commands_are_kept() {
     let dir = Dir::new();
     let t = Target::new(&dir);
     let mut text = String::new();
@@ -592,10 +590,10 @@ async fn l34_l48_repeated_commands_are_kept() {
     );
 }
 
-/// L18. A hidden record stays hidden across replay and re-import, and comes
-/// back once unhidden and read again.
+/// A hidden record stays hidden across replay and re-import, and comes back
+/// once unhidden and read again.
 #[devkit::test]
-async fn l18_hidden_stays_hidden_across_replay_and_reimport() {
+async fn hidden_stays_hidden_across_replay_and_reimport() {
     let dir = Dir::new();
     let t = Target::new(&dir);
     let path = dir.0.join("a/history.db");
@@ -637,10 +635,10 @@ async fn visible_a3(c: &mut PgConnection) -> i64 {
     .await
 }
 
-/// L23. Dry runs change nothing, and bytes two materials share survive the
-/// excision of one of them.
+/// Dry runs change nothing, and bytes two materials share survive the excision
+/// of one of them.
 #[devkit::test]
-async fn l23_dry_runs_change_nothing_and_shared_bytes_survive() {
+async fn dry_runs_change_nothing_and_shared_bytes_survive() {
     let dir = Dir::new();
     let t = Target::new(&dir);
     let text = small_zsh();
@@ -693,10 +691,10 @@ async fn l23_dry_runs_change_nothing_and_shared_bytes_survive() {
     consistent(&mut c).await;
 }
 
-/// L43. One writer per database: a second writer is refused while the first
-/// holds the database, and allowed once it is gone.
+/// One writer per database: a second writer is refused while the first holds
+/// the database, and allowed once it is gone.
 #[devkit::test]
-async fn l43_a_second_writer_is_refused() {
+async fn a_second_writer_is_refused() {
     let dir = Dir::new();
     let t = Target::new(&dir);
     let zsh = dir.file("zsh", small_zsh().as_bytes());
@@ -744,11 +742,11 @@ async fn l43_a_second_writer_is_refused() {
     t.backfill(Some(&zsh), None);
 }
 
-/// L15. Schema round trip: a database created fresh from the declarations
-/// describes exactly the schema an existing database at this version has,
-/// including views, triggers and hypertable settings.
+/// Schema round trip: a database created fresh from the declarations describes
+/// exactly the schema an existing database at this version has, including
+/// views, triggers and hypertable settings.
 #[devkit::test]
-async fn l15_a_fresh_schema_matches_the_existing_one() {
+async fn a_fresh_schema_matches_the_existing_one() {
     let dir = Dir::new();
     let t = Target::new(&dir);
     let mut c = t.connect().await;
@@ -868,11 +866,11 @@ fn derivation_inputs(dir: &Dir) -> (PathBuf, PathBuf) {
     (zsh, atuin)
 }
 
-/// L4 and L5. Derivations do not depend on arrival order or on when they
-/// start: deriving after both sources (one ingest order) equals deriving
-/// between the two sources and again after (the other order, live).
+/// Derivations do not depend on arrival order or on when they start: deriving
+/// after both sources (one ingest order) equals deriving between the two
+/// sources and again after (the other order, live).
 #[devkit::test]
-async fn l4_l5_derived_results_do_not_depend_on_arrival_order() {
+async fn derived_results_do_not_depend_on_arrival_order() {
     let dir = Dir::new();
     let (zsh, atuin) = derivation_inputs(&dir);
 
@@ -911,11 +909,11 @@ async fn l4_l5_derived_results_do_not_depend_on_arrival_order() {
     );
 }
 
-/// L10. Provenance closure: every derived event's parents resolve, live or
+/// Provenance is complete: every derived event's parents resolve, live or
 /// archived, down to material events, and every parent committed before its
 /// child.
 #[devkit::test]
-async fn l10_every_parent_resolves_and_committed_first() {
+async fn every_parent_resolves_and_committed_first() {
     let dir = Dir::new();
     let (zsh, atuin) = derivation_inputs(&dir);
     let t = Target::new(&dir);
@@ -943,7 +941,7 @@ async fn l10_every_parent_resolves_and_committed_first() {
     .await;
     assert_eq!(later, 0, "every parent committed before its child");
     // Parents exist and commit strictly earlier, so following parents always
-    // ends, at events without parents: material events (L1).
+    // ends, at events without parents: material events.
 }
 
 /// The binding backfill files a zsh history under.

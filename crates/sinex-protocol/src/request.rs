@@ -392,8 +392,9 @@ impl Request {
         }
     }
 
-    /// Advertised access comes from the table. Reserved wire requests retain
-    /// explicit access so decoding one cannot bypass authorization or panic.
+    /// Advertised access comes from the table. Wire requests outside the table
+    /// keep explicit access so decoding one cannot bypass authorization or
+    /// panic.
     pub fn access(&self) -> Access {
         match self {
             Self::Stage { .. } | Self::Same { .. } | Self::Distinct { .. } | Self::Mark { .. } => {

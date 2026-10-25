@@ -1,6 +1,6 @@
-//! What producers hand the writer (architecture §4.1). A source batch carries
-//! its new cursor and carried parser state, so events and progress commit in
-//! one transaction: a cursor advances only when what it covers is stored.
+//! What producers hand the writer. A source batch carries its new cursor and
+//! carried parser state, so events and progress commit in one transaction: a
+//! cursor advances only when what it covers is stored.
 use crate::{Event, EventId, InputId, MaterialId, OperationId, RecordLocation, RunId, Timestamp};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -55,10 +55,9 @@ pub enum BatchKind {
     Api {
         actor: String,
     },
-    /// One frame from an outside producer over the NATS ingress
-    /// (architecture §4.3). Admission records the frame and its outcome in the
-    /// same transaction as its events, which is the producer's persisted
-    /// acknowledgment.
+    /// One frame from an outside producer over the NATS ingress. Admission
+    /// records the frame and its outcome in the same transaction as its events,
+    /// which is the producer's persisted acknowledgment.
     Ingress(Box<IngressFrame>),
     /// New readings of stored materials, from a replay; the material is
     /// already registered, so there is no source progress.
@@ -177,7 +176,7 @@ pub enum RevisionChange {
     Snapshot,
 }
 
-/// Whether retained material contributes to the original input byte stream.
+/// Whether stored material contributes to the original input byte stream.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum MaterialRole {
@@ -225,8 +224,8 @@ pub enum ArchiveRequest {
         target: EventId,
         operation: OperationId,
     },
-    /// Archive the live readings a replay re-reads, before its new readings
-    /// are admitted in the same transaction (architecture §5.5).
+    /// Archive the live readings a replay re-reads, before its new readings are
+    /// admitted in the same transaction.
     Replay {
         scope: ReplayScope,
         operation: OperationId,

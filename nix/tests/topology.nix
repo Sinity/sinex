@@ -1,4 +1,4 @@
-# Capture topology (rkv.7): one database host and a capture-only satellite.
+# Capture topology: one database host and a capture-only satellite.
 # The satellite mounts sinexd's content store over NFS (sending bytes over the
 # link is not built yet) and produces over NATS with its own credentials.
 self: {

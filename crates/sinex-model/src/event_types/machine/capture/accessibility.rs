@@ -21,7 +21,7 @@ pub struct Focus {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub window: Option<Option<String>>,
     #[serde(flatten)]
-    pub(crate) uninterpreted: Map<String, Value>,
+    pub(crate) unknown: Map<String, Value>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
@@ -45,7 +45,7 @@ pub struct TextChanged {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub detail: Option<Option<String>>,
     #[serde(flatten)]
-    pub(crate) uninterpreted: Map<String, Value>,
+    pub(crate) unknown: Map<String, Value>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
@@ -63,7 +63,7 @@ pub struct Subtree {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tree: Option<Option<AccessibleNode>>,
     #[serde(flatten)]
-    pub(crate) uninterpreted: Map<String, Value>,
+    pub(crate) unknown: Map<String, Value>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
@@ -84,36 +84,36 @@ pub struct AccessibleNode {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub children: Option<Option<Vec<AccessibleNode>>>,
     #[serde(flatten)]
-    pub(crate) uninterpreted: Map<String, Value>,
+    pub(crate) unknown: Map<String, Value>,
 }
 
 impl Focus {
-    pub(crate) fn collect_uninterpreted(&self, path: &str, fields: &mut Vec<String>) {
-        super::extend_fields(&self.uninterpreted, path, fields);
+    pub(crate) fn collect_unknown(&self, path: &str, fields: &mut Vec<String>) {
+        super::extend_fields(&self.unknown, path, fields);
     }
 }
 
 impl TextChanged {
-    pub(crate) fn collect_uninterpreted(&self, path: &str, fields: &mut Vec<String>) {
-        super::extend_fields(&self.uninterpreted, path, fields);
+    pub(crate) fn collect_unknown(&self, path: &str, fields: &mut Vec<String>) {
+        super::extend_fields(&self.unknown, path, fields);
     }
 }
 
 impl Subtree {
-    pub(crate) fn collect_uninterpreted(&self, path: &str, fields: &mut Vec<String>) {
-        super::extend_fields(&self.uninterpreted, path, fields);
+    pub(crate) fn collect_unknown(&self, path: &str, fields: &mut Vec<String>) {
+        super::extend_fields(&self.unknown, path, fields);
         if let Some(Some(value)) = &self.tree {
-            value.collect_uninterpreted(&format!("{path}/tree"), fields);
+            value.collect_unknown(&format!("{path}/tree"), fields);
         }
     }
 }
 
 impl AccessibleNode {
-    pub(crate) fn collect_uninterpreted(&self, path: &str, fields: &mut Vec<String>) {
-        super::extend_fields(&self.uninterpreted, path, fields);
+    pub(crate) fn collect_unknown(&self, path: &str, fields: &mut Vec<String>) {
+        super::extend_fields(&self.unknown, path, fields);
         if let Some(Some(values)) = &self.children {
             for (i, value) in values.iter().enumerate() {
-                value.collect_uninterpreted(&format!("{path}/children/{i}"), fields);
+                value.collect_unknown(&format!("{path}/children/{i}"), fields);
             }
         }
     }

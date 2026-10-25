@@ -17,7 +17,7 @@ impl AppendTail {
         self.newest_first.len() < STATE_RECORDS
             && (self.newest_first.is_empty() || self.bytes.saturating_add(length) <= STATE_TAIL)
     }
-    /// Call newest to oldest. A single large record is retained, as during poll.
+    /// Call newest to oldest. A single large record is kept, as during poll.
     pub fn push_raw(&mut self, location: RecordLocation, raw: &[u8]) -> Result<bool, DriverError> {
         if raw.is_empty() || location.anchor.checked_add(raw.len() as u64).is_none() {
             return Err(DriverError::InvalidMaterial(

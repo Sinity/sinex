@@ -57,7 +57,7 @@ pub struct SleepSession {
     #[schemars(with = "Option<Option<Vec<(Option<String>, Option<f64>)>>>")]
     pub actigraphy: Option<Option<Vec<ActigraphySample>>>,
     #[serde(flatten)]
-    pub(crate) uninterpreted: Map<String, Value>,
+    pub(crate) unknown: Map<String, Value>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
@@ -67,5 +67,5 @@ pub struct SleepNoise {
     #[schemars(with = "Option<Option<Vec<Option<f64>>>>")]
     pub noise: Option<Option<Vec<Option<serde_json::Number>>>>,
     #[serde(flatten)]
-    pub(crate) uninterpreted: Map<String, Value>,
+    pub(crate) unknown: Map<String, Value>,
 }

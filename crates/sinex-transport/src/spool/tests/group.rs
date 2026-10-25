@@ -70,7 +70,7 @@ fn private_roots_keep_private_files_and_existing_directories_are_not_adopted() {
 }
 
 #[devkit::test]
-fn existing_private_handoff_files_are_refused_without_changing_their_bytes_or_modes() {
+fn existing_private_spool_files_are_refused_without_changing_their_bytes_or_modes() {
     let root = tempfile::tempdir().unwrap();
     std::fs::set_permissions(root.path(), std::fs::Permissions::from_mode(0o2770)).unwrap();
     stage_all(root.path(), "node");
@@ -113,7 +113,7 @@ fn actor(operation: &str) {
     };
     assert_eq!(
         groups, expected,
-        "inherited supplementary groups were not retained"
+        "inherited supplementary groups were not kept"
     );
     let shared = Path::new("/proc/self/fd/0/shared");
     let private = Path::new("/proc/self/fd/0/private");
@@ -162,7 +162,7 @@ fn run_actor(root: &Path, operation: &str, uid: u32, gid: u32) {
         "--clear-groups".into()
     };
     let test_name = format!(
-        "{}::configured_group_handoff_between_distinct_users",
+        "{}::configured_group_spool_between_distinct_users",
         module_path!().split_once("::").unwrap().1,
     );
     let output = Command::new("/run/current-system/sw/bin/setpriv")
@@ -204,8 +204,8 @@ fn run_actor(root: &Path, operation: &str, uid: u32, gid: u32) {
 }
 
 #[devkit::test]
-#[ignore = "requires root for isolated numeric-UID/group filesystem controls"]
-fn configured_group_handoff_between_distinct_users() {
+#[ignore = "requires root for isolated numeric-UID and group filesystem checks"]
+fn configured_group_spool_between_distinct_users() {
     if let Ok(operation) = std::env::var("SINEX_FIXTURE_ACTOR") {
         return actor(&operation);
     }
@@ -213,7 +213,7 @@ fn configured_group_handoff_between_distinct_users() {
     assert_eq!(
         String::from_utf8(uid.stdout).unwrap().trim(),
         "0",
-        "run this native control as root"
+        "run this test as root"
     );
     let root = tempfile::tempdir().unwrap();
     std::fs::set_permissions(root.path(), std::fs::Permissions::from_mode(0o711)).unwrap();

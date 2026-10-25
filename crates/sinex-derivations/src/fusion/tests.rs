@@ -133,13 +133,13 @@ fn closest_pairs_win_and_extras_stay_alone() {
 }
 
 #[devkit::test]
-fn fallback_needs_a_unique_candidate() {
+fn fallback_needs_a_unique_partner() {
     // 30 s apart: only the fallback pass can match, and it does when unique.
     assert_eq!(
         run(&[atuin("git push", H + 200.0, 0), zsh("git push", H + 230.0)]).len(),
         1
     );
-    // Two zsh candidates for one Atuin record: ambiguous, nothing fuses.
+    // Two zsh partners for one Atuin record: ambiguous, nothing fuses.
     let out = run(&[
         atuin("git push", H + 300.0, 0),
         zsh("git push", H + 320.0),

@@ -15,17 +15,17 @@ pub(super) struct Pipeline<'a> {
     pub run: RunId,
     pub class: Class,
     pub sealing: Option<&'a crate::one_shot::SealingSink>,
-    pub authority: Option<&'a crate::sealed_access::Authority>,
+    pub unlock: Option<&'a crate::sealed_access::Unlock>,
     pub check: Arc<dyn Fn() -> Result<(), String> + Send + Sync>,
 }
 impl Pipeline<'_> {
     fn queued_check(&self) -> crate::writer::AdmissionCheck {
         let check = self.check.clone();
-        let authority = self.authority.cloned();
+        let unlock = self.unlock.cloned();
         Arc::new(move || {
             check()?;
-            if let Some(authority) = &authority {
-                authority.check()?;
+            if let Some(unlock) = &unlock {
+                unlock.check()?;
             }
             Ok(())
         })
@@ -64,7 +64,7 @@ impl Pipeline<'_> {
             self.source,
             &mut acquired,
             self.sealing,
-            self.authority,
+            self.unlock,
         )
         .await?;
         let filtered = exclusions.filter(self.source, acquired, &carry, self.class, stored)?;
@@ -106,8 +106,8 @@ impl Pipeline<'_> {
                 }
             }
             (self.check)()?;
-            if let Some(authority) = self.authority {
-                authority.check()?;
+            if let Some(unlock) = self.unlock {
+                unlock.check()?;
             }
             totals.batches += 1;
             totals.events_offered += batch.event_count();
@@ -144,7 +144,7 @@ async fn reopen_stored(
     source: &dyn Source,
     acquired: &mut drivers::Acquired,
     sealing: Option<&crate::one_shot::SealingSink>,
-    authority: Option<&crate::sealed_access::Authority>,
+    unlock: Option<&crate::sealed_access::Unlock>,
 ) -> Result<bool, String> {
     let Some(material) = &mut acquired.material else {
         return Ok(false);
@@ -157,7 +157,7 @@ async fn reopen_stored(
     if !exists {
         return Ok(false);
     }
-    let opened = crate::retained::open(conn, blobs, material.id, authority).await?;
+    let opened = crate::stored::open(conn, blobs, material.id, unlock).await?;
     if opened.reference.parser != source.spec().parser
         || opened.reference.parser_version != source.spec().parser_version
     {

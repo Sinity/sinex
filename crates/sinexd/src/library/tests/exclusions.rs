@@ -31,7 +31,7 @@ async fn unrelated_authored_requests_continue_after_excision_while_matching_requ
             collection: id.into(),
             name: format!("synthetic {id}"),
             saved_query: None,
-            frozen_from: None,
+            selected_from: None,
             by: String::new(),
             at: sinex_model::Timestamp::from_unix_secs(1).unwrap(),
             withdrawn_at: None,

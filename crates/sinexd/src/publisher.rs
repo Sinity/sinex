@@ -1,9 +1,9 @@
-//! The confirmed-stream publisher (architecture §4.3, §7.4): it reads
-//! `core.commit_log` from its saved position and publishes each committed
-//! event to the NATS confirmed stream in commit order, followed by the archive
-//! notices of the same span. Consumers outside `sinexd` (outside derivations, live
-//! views, Polylogue's change feed) read only this stream, so they see only
-//! committed facts, in the order they committed.
+//! The confirmed-stream publisher: it reads `core.commit_log` from its saved
+//! position and publishes each committed event to the NATS confirmed stream in
+//! commit order, followed by the archive notices of the same span. Consumers
+//! outside `sinexd` (outside derivations, live views, Polylogue's change feed)
+//! read only this stream, so they see only committed facts, in the order they
+//! committed.
 //!
 //! - **Masked.** A payload is published only for `open` events; for `guarded`
 //!   and `sealed` ones the envelope goes out and the payload is withheld, since
@@ -15,8 +15,7 @@
 //!   `archive-<notice>`), so a page republished after a crash inside the
 //!   stream's duplicate window is stored once. Consumers identify events by
 //!   ID either way.
-//! - **Kept.** The stream has no age or size limit (operator, 2026-09-03:
-//!   "we NEVER want retention").
+//! - **Kept.** The stream has no age or size limit.
 use async_nats::HeaderMap;
 use async_nats::jetstream::{self, stream};
 use sinex_model::{Class, EventId, OperationId, RecordLocation, RunId, Timestamp};
@@ -33,9 +32,9 @@ const CONSUMER: &str = "publisher";
 const PAGE: i64 = 1_000;
 const RETRY: Duration = Duration::from_secs(1);
 
-/// The JetStream context `sinexd` uses. A page of publications waits for its
-/// acknowledgments together; on a busy disk the stream can take longer than
-/// the client's 5-second default to acknowledge a large page.
+/// The JetStream context `sinexd` uses. A page of messages waits for its
+/// acknowledgments together; on a busy disk the stream can take longer than the
+/// client's 5-second default to acknowledge a large page.
 pub fn context(client: async_nats::Client) -> jetstream::Context {
     jetstream::context::ContextBuilder::new()
         .timeout(Duration::from_secs(30))
@@ -189,9 +188,9 @@ pub async fn publish_pending(
 }
 
 /// Erase the messages of excised events from the confirmed stream, and tell
-/// consumers to drop what they kept (architecture §3.4: excision reaches every
-/// surface). JetStream's message delete without `no_erase` overwrites the stored
-/// message, not only its index entry.
+/// consumers to drop what they kept, so excision reaches every surface.
+/// JetStream's message delete without `no_erase` overwrites the stored message,
+/// not only its index entry.
 async fn erase_excised(
     conn: &mut PgConnection,
     js: &jetstream::Context,

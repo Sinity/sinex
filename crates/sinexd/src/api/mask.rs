@@ -1,6 +1,6 @@
-//! Masking on every output (architecture §3.5): each string in a result passes
-//! through the shared credential masker. Credential-shaped object keys refuse
-//! the result because renaming could change its meaning.
+//! Masking on every output: each string in a result passes through the shared
+//! credential masker. Credential-shaped object keys refuse the result because
+//! renaming could change its meaning.
 use credential_masking::Masker;
 use serde_json::Value;
 

@@ -1,6 +1,6 @@
-//! Renditions and handoff. Media decoding and playing use existing programs
-//! (spec `library.md` §1, §4): previews are made with `ffmpeg`, and an open
-//! request hands a file to a player chosen by media type.
+//! Renditions and opening files. Media decoding and playing use existing
+//! programs: previews are made with `ffmpeg`, and an open request hands a file
+//! to a player chosen by media type.
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
@@ -69,8 +69,8 @@ pub fn player_for(media_type: &str, configured: Option<&str>) -> String {
 }
 
 /// A path that holds exactly `content` now: the file exists, has the size
-/// recorded, and hashes to the content name. Each handoff rechecks, so a
-/// moved or edited file is never opened in place of the requested bytes.
+/// recorded, and hashes to the content name. Each open rechecks, so a moved or
+/// edited file is never opened in place of the requested bytes.
 pub fn verified(path: &Path, size: u64, content: &str) -> bool {
     let Ok(meta) = std::fs::metadata(path) else {
         return false;

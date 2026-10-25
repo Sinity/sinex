@@ -107,7 +107,7 @@ async fn a_refused_batch_does_not_stop_the_writer(db: devkit::pg::TestDatabase) 
     writer.await.unwrap();
 }
 
-/// L12. No silent loss under backpressure: with the writer stalled, far
+/// No silent loss under backpressure: with the writer stalled, far
 /// more batches than the queues hold are handed over; producers wait
 /// rather than drop, and once the writer runs each is admitted once.
 #[devkit::test]
@@ -150,7 +150,7 @@ async fn a_stalled_writer_makes_producers_wait_and_loses_nothing(db: devkit::pg:
     writer.await.unwrap();
 }
 
-/// L43. One writer per database: a second claim is refused while the
+/// One writer per database: a second claim is refused while the
 /// first connection lives, and granted once it is gone.
 #[devkit::test]
 async fn only_one_connection_can_claim_the_writer(db: devkit::pg::TestDatabase) {
@@ -179,7 +179,7 @@ async fn only_one_connection_can_claim_the_writer(db: devkit::pg::TestDatabase) 
 }
 
 #[devkit::test]
-async fn queued_native_checks_reject_revoked_authority_and_roll_back_before_commit(
+async fn queued_checks_reject_a_revoked_unlock_and_roll_back_before_commit(
     db: devkit::pg::TestDatabase,
 ) {
     use std::sync::atomic::{AtomicUsize, Ordering};
@@ -188,18 +188,18 @@ async fn queued_native_checks_reject_revoked_authority_and_roll_back_before_comm
         .await
         .unwrap();
     let (handle, queues) = channels();
-    let authority = crate::sealed_access::Authority::new(
+    let unlock = crate::sealed_access::Unlock::new(
         sinex_store::sealed::Identity::generate(),
         std::time::Duration::from_secs(30),
     )
     .unwrap();
-    let check_authority = authority.clone();
+    let check_unlock = unlock.clone();
     let h = handle.clone();
     let queued = tokio::spawn(async move {
         h.submit_checked(
             Priority::Bulk,
             batch("revoked"),
-            Arc::new(move || check_authority.check()),
+            Arc::new(move || check_unlock.check()),
         )
         .await
     });
@@ -210,7 +210,7 @@ async fn queued_native_checks_reject_revoked_authority_and_roll_back_before_comm
     })
     .await
     .unwrap();
-    authority.revoke();
+    unlock.revoke();
     let writer = tokio::spawn(run(
         url.clone(),
         connection,
@@ -308,7 +308,7 @@ async fn a_single_slot_planning_pool_keeps_the_queued_excision_lock_after_caller
         tokio::time::timeout(std::time::Duration::from_millis(20), pool.acquire())
             .await
             .is_err(),
-        "queued work must retain the original single pool slot"
+        "queued work must keep the original single pool slot"
     );
     let h = handle.clone();
     let acquisition = tokio::spawn(async move { h.source_guard("synthetic-source").await });

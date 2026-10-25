@@ -1,7 +1,7 @@
 //! Bringing curation in from other library applications and sites, as
-//! assignments at the `import` level so an operator override still wins.
-//! Hydrus is the reference for features (spec `library.md` §1); no Hydrus
-//! component is needed: its tag sidecars are plain text.
+//! assignments at the `import` level so an operator override still wins. Hydrus
+//! is the reference for features; no Hydrus component is needed: its tag
+//! sidecars are plain text.
 //!
 //! - **gallery-dl metadata** (`<file>.json`, written with
 //!   `--write-metadata`): booru, Twitter, Reddit and other extractors. Tags

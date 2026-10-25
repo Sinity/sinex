@@ -1,5 +1,5 @@
-//! Record framing over a member reader. JSON arrays use Serde's streaming visitor;
-//! other formats retain only a part and the current incomplete record.
+//! Record framing over a member reader. JSON arrays use Serde's streaming
+//! visitor; other formats hold only a part and the current incomplete record.
 use super::{DriverError, Framing, io};
 use serde::Deserialize;
 use serde::de::{self, DeserializeSeed, IgnoredAny, MapAccess, SeqAccess, Visitor};
@@ -44,21 +44,21 @@ pub(super) fn visit(
         }
         return Ok(());
     }
-    let mut pending = Vec::new();
+    let mut buffer = Vec::new();
     let mut want = part_bytes.max(1);
     loop {
-        let before = pending.len();
+        let before = buffer.len();
         (&mut *reader)
             .take(want as u64)
-            .read_to_end(&mut pending)
+            .read_to_end(&mut buffer)
             .map_err(io)?;
-        let eof = pending.len() - before < want;
-        let (records, consumed) = framing.frame(&pending, eof);
+        let eof = buffer.len() - before < want;
+        let (records, consumed) = framing.frame(&buffer, eof);
         for (start, end) in &records {
-            emit(pending[*start..*end].to_vec())?;
+            emit(buffer[*start..*end].to_vec())?;
         }
         if consumed > 0 {
-            pending.drain(..consumed);
+            buffer.drain(..consumed);
         }
         if eof {
             return Ok(());
@@ -135,8 +135,9 @@ impl<'de> Visitor<'de> for ArrayAt<'_, '_> {
 #[cfg(test)]
 mod tests;
 
-/// Frame a retained original stream without changing its byte coordinates.
-/// JSON syntax failure keeps the former one-record fallback; no valid prefix escapes it.
+/// Frame a stored original stream without changing its byte coordinates. A JSON
+/// syntax failure makes the whole stream one failed record; no valid prefix
+/// escapes it.
 pub(crate) fn ranges(
     reader: &mut dyn Read,
     framing: Framing,
@@ -154,21 +155,21 @@ pub(crate) fn ranges(
             vec![(0, length)]
         });
     }
-    let mut pending = Vec::new();
+    let mut buffer = Vec::new();
     let mut base = 0usize;
     let mut out = Vec::new();
     let mut block = [0; 65536];
     loop {
         let n = reader.read(&mut block)?;
-        pending.extend_from_slice(&block[..n]);
+        buffer.extend_from_slice(&block[..n]);
         let eof = n == 0;
-        let (records, consumed) = framing.frame(&pending, eof);
+        let (records, consumed) = framing.frame(&buffer, eof);
         out.extend(
             records
                 .into_iter()
                 .map(|(start, end)| (base + start, base + end)),
         );
-        pending.drain(..consumed);
+        buffer.drain(..consumed);
         base += consumed;
         if eof {
             return Ok(out);

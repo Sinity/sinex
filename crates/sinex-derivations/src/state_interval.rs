@@ -188,7 +188,7 @@ pub const RULES: &[IntervalRule] = &[
     },
     // The systemd source emits `unit.started` and `unit.stopped` with
     // `unit_name`, `unit_type`, `active_state`, `sub_state` and, when known,
-    // `main_pid` or `exit_code` (the predecessor's payloads).
+    // `main_pid` or `exit_code`.
     IntervalRule {
         state_kind: "system.systemd.unit",
         event_types: &["unit.started", "unit.stopped"],

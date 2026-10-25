@@ -1,4 +1,4 @@
-//! Native signal handling must release the writer without the forced-abort delay.
+//! Signal handling must release the writer without the forced-abort delay.
 
 use sqlx::{Connection, PgConnection};
 use std::os::unix::process::CommandExt;

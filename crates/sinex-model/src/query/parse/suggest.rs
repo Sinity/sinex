@@ -6,7 +6,7 @@ pub(super) fn typo(word: &str) -> Option<&'static str> {
     if word.len() < 4 || RESERVED.contains(&word) || Unit::Events.field(word).is_some() {
         return None;
     }
-    unit_like_words().find(|candidate| *candidate != word && distance(word, candidate) <= 2)
+    unit_like_words().find(|other| *other != word && distance(word, other) <= 2)
 }
 
 /// Levenshtein distance over bytes.

@@ -6,7 +6,7 @@
 //! binding is recorded with its settings (so a replay reads it the same way)
 //! and its driver state is rebuilt from the materials it stored, so a
 //! second run reads only what changed.
-mod native;
+mod pipeline;
 use crate::one_shot::{OneShot, Sink};
 use crate::writer::{self, Priority};
 use sinex_model::RunId;
@@ -99,7 +99,7 @@ impl std::fmt::Display for Totals {
 }
 
 pub async fn run(o: Options) -> Result<(), String> {
-    let authority = o
+    let unlock = o
         .identity_file
         .as_ref()
         .map(|path| {
@@ -107,7 +107,7 @@ pub async fn run(o: Options) -> Result<(), String> {
                 std::fs::read_to_string(path).map_err(|e| format!("{}: {e}", path.display()))?;
             let identity =
                 sinex_store::sealed::parse_identity(text.trim()).map_err(|e| e.to_string())?;
-            crate::sealed_access::Authority::new(identity, Duration::from_secs(480 * 60))
+            crate::sealed_access::Unlock::new(identity, Duration::from_secs(480 * 60))
         })
         .transpose()?;
     let mut settings = Settings::new(o.host.clone());
@@ -170,7 +170,7 @@ pub async fn run(o: Options) -> Result<(), String> {
         stop,
         crate::binding_reader::Access {
             recipient: None,
-            authority: authority.as_ref(),
+            unlock: unlock.as_ref(),
         },
     )
     .await;
@@ -270,7 +270,7 @@ pub(crate) async fn drive(
         std::sync::Arc::new(move || {
             if *checked_stop.borrow() || sinex_transport::private_mode::PrivateMode::default().on()
             {
-                return Err("native capture cancelled or private mode is on".into());
+                return Err("capture cancelled or private mode is on".into());
             }
             Ok(())
         });
@@ -283,12 +283,12 @@ pub(crate) async fn drive(
             ));
         }
         if *stop.borrow() {
-            return Err("native capture cancelled".into());
+            return Err("capture cancelled".into());
         }
         let mut stopping = stop.clone();
         let mut guard = tokio::select! {
             guard=handle.source_guard(source.spec().name)=>guard?,
-            _=stopping.wait_for(|stopped|*stopped)=>return Err("native capture cancelled".into()),
+            _=stopping.wait_for(|stopped|*stopped)=>return Err("capture cancelled".into()),
         };
         let before = async {
             let position = positions::load(guard.connection(), binding)
@@ -318,22 +318,22 @@ pub(crate) async fn drive(
             Ok(acquired) => acquired,
         };
         let prepared = async {
-            if let Some(authority) = access.authority {
-                authority.check()?;
+            if let Some(unlock) = access.unlock {
+                unlock.check()?;
             }
             if let (Some(sealing), Some(material)) = (&sealing, &acquired.material)
                 && let Some(drivers::StoredBytes::FramedReader(stored)) = &material.stored
                 && sink.0.is_sealed(&stored.blob).map_err(|e| e.to_string())?
             {
-                let authority = access
-                    .authority
-                    .ok_or("retained sealed material requires explicit operator unlock")?;
-                let key = authority.material_key(read_conn, material.id).await?;
+                let unlock = access
+                    .unlock
+                    .ok_or("stored sealed material needs an operator unlock")?;
+                let key = unlock.material_key(read_conn, material.id).await?;
                 sealing.restore_key(stored.blob.clone(), key)?;
             }
             let carry = if acquired.material.is_some() {
                 match &sealing {
-                    Some(s) => open_carry(read_conn, binding, &carry, s, access.authority).await?,
+                    Some(s) => open_carry(read_conn, binding, &carry, s, access.unlock).await?,
                     None => carry,
                 }
             } else {
@@ -353,7 +353,7 @@ pub(crate) async fn drive(
             }
         };
         let had_material = acquired.material.is_some();
-        let pipeline = native::Pipeline {
+        let pipeline = pipeline::Pipeline {
             writer: handle,
             blobs: &sink.0,
             source,
@@ -361,7 +361,7 @@ pub(crate) async fn drive(
             run,
             class: effective_class,
             sealing: sealing.as_ref(),
-            authority: access.authority,
+            unlock: access.unlock,
             check: check.clone(),
         };
         pipeline
@@ -384,7 +384,7 @@ pub(crate) async fn submit(
     binding: &str,
     material_sink: &dyn drivers::MaterialSink,
     sealing: Option<&crate::one_shot::SealingSink>,
-    authority: Option<&crate::sealed_access::Authority>,
+    unlock: Option<&crate::sealed_access::Unlock>,
     minimum_class: sinex_model::Class,
     acquired: drivers::Acquired,
     carry: serde_json::Value,
@@ -393,7 +393,7 @@ pub(crate) async fn submit(
     totals.polls += 1;
     // Batches are submitted as they are drained, so memory holds one
     // batch at a time, never a whole material's events.
-    let retained_material = acquired.material.as_ref().and_then(|material| {
+    let stored_material = acquired.material.as_ref().and_then(|material| {
         matches!(
             &material.stored,
             Some(drivers::StoredBytes::FramedReader(_))
@@ -427,7 +427,7 @@ pub(crate) async fn submit(
         if let Some(s) = sealing {
             s.seal(&mut one)?;
             if let (Some(material), sinex_model::BatchKind::Source(progress)) =
-                (retained_material, &mut one[0].kind)
+                (stored_material, &mut one[0].kind)
             {
                 // Admission already owned this key. An authorized cached read
                 // cannot publish it again after excision destroyed it.
@@ -436,8 +436,8 @@ pub(crate) async fn submit(
                     .retain(|key| key.material != material);
             }
         }
-        if let Some(authority) = authority {
-            authority.check()?;
+        if let Some(unlock) = unlock {
+            unlock.check()?;
         }
         let [batch] = one;
         totals.batches += 1;
@@ -542,19 +542,19 @@ pub(crate) async fn open_carry(
     binding: &str,
     carry: &serde_json::Value,
     sealing: &crate::one_shot::SealingSink,
-    authority: Option<&crate::sealed_access::Authority>,
+    unlock: Option<&crate::sealed_access::Unlock>,
 ) -> Result<serde_json::Value, String> {
     if let Ok(value) = sealing.open_carry(carry) {
         return Ok(value);
     }
     let reference = sinex_store::sealed::key_ref(carry).ok_or("invalid sealed parser carry")?;
-    let authority = authority.ok_or("sealed parser carry requires explicit operator unlock")?;
+    let unlock = unlock.ok_or("sealed parser carry requires explicit operator unlock")?;
     let material:uuid::Uuid=sqlx::query_scalar("SELECT k.material_id FROM privacy.material_keys k JOIN raw.materials m ON m.id=k.material_id JOIN raw.inputs i ON i.id=m.input_id WHERE k.key_ref=$1 AND i.binding=$2")
         .bind(reference).bind(binding).fetch_optional(&mut *conn).await.map_err(|e|e.to_string())?.ok_or("sealed parser carry has no key of this binding")?;
-    let key = authority
+    let key = unlock
         .material_key(conn, sinex_model::MaterialId(material))
         .await?;
     let value = sinex_store::sealed::unseal_payload(carry, &key.key).map_err(|e| e.to_string())?;
-    authority.check()?;
+    unlock.check()?;
     Ok(value)
 }

@@ -148,7 +148,7 @@ async fn archive_acquisition_restart_replay_and_privacy_use_real_admission(
             compare: false,
             resume: None,
             actor: "synthetic".into(),
-            authority: None,
+            unlock: None,
         },
     )
     .await
@@ -338,7 +338,7 @@ async fn sealed_archive_restart_replay_and_class_changes_preserve_exact_material
             stop.clone(),
             Access {
                 recipient: Some(&recipient),
-                authority: None,
+                unlock: None,
             },
         )
         .await;
@@ -352,7 +352,7 @@ async fn sealed_archive_restart_replay_and_class_changes_preserve_exact_material
             .unwrap();
         let cursor = Cursor::parse(&checkpoint.0).unwrap().unwrap();
         assert_eq!(cursor.record, 2);
-        assert!(cursor.pending_material().is_some());
+        assert!(cursor.unfinished_part().is_some());
         assert!(checkpoint.1.is_null() || sinex_store::sealed::is_sealed(&checkpoint.1));
         let partial = cursor.material.unwrap();
         let original = cursor.original_material.unwrap();
@@ -374,7 +374,7 @@ async fn sealed_archive_restart_replay_and_class_changes_preserve_exact_material
             stop.clone(),
             Access {
                 recipient: Some(&recipient),
-                authority: None,
+                unlock: None,
             },
         )
         .await;
@@ -382,7 +382,7 @@ async fn sealed_archive_restart_replay_and_class_changes_preserve_exact_material
             locked[0]
                 .1
                 .as_ref()
-                .is_err_and(|e| e.contains("pending explicit operator unlock"))
+                .is_err_and(|e| e.contains("needs an operator unlock"))
         );
         assert_eq!(
             positions::load(&mut ctx.read_conn, &name)
@@ -391,8 +391,8 @@ async fn sealed_archive_restart_replay_and_class_changes_preserve_exact_material
                 .unwrap(),
             checkpoint
         );
-        let authority =
-            crate::sealed_access::Authority::new(identity, std::time::Duration::from_secs(60))
+        let unlock =
+            crate::sealed_access::Unlock::new(identity, std::time::Duration::from_secs(60))
                 .unwrap();
         let mut restarted = make_bound();
         let unlocked = read(
@@ -405,7 +405,7 @@ async fn sealed_archive_restart_replay_and_class_changes_preserve_exact_material
             stop.clone(),
             Access {
                 recipient: Some(&recipient),
-                authority: Some(&authority),
+                unlock: Some(&unlock),
             },
         )
         .await;
@@ -438,12 +438,12 @@ async fn sealed_archive_restart_replay_and_class_changes_preserve_exact_material
             binding: Some(name.clone()),
             ..Default::default()
         };
-        let replay = |authority| crate::replay::Options {
+        let replay = |unlock| crate::replay::Options {
             scope: scope.clone(),
             compare: false,
             resume: None,
             actor: "operator".into(),
-            authority,
+            unlock,
         };
         assert!(
             crate::replay::run(&mut ctx.read_conn, &ctx.blobs, &ctx.writer, replay(None))
@@ -455,7 +455,7 @@ async fn sealed_archive_restart_replay_and_class_changes_preserve_exact_material
             &mut ctx.read_conn,
             &ctx.blobs,
             &ctx.writer,
-            replay(Some(authority.clone())),
+            replay(Some(unlock.clone())),
         )
         .await
         .unwrap();
@@ -468,7 +468,7 @@ async fn sealed_archive_restart_replay_and_class_changes_preserve_exact_material
                 (&old.0, &old.1, old.3, old.4),
                 (&new.0, &new.1, new.3, new.4)
             );
-            let key = authority
+            let key = unlock
                 .material_key(&mut ctx.read_conn, sinex_model::MaterialId(old.3.unwrap()))
                 .await
                 .unwrap();
@@ -477,13 +477,13 @@ async fn sealed_archive_restart_replay_and_class_changes_preserve_exact_material
                 sinex_store::sealed::unseal_payload(&new.2, &key.key).unwrap()
             );
         }
-        authority.revoke();
+        unlock.revoke();
         assert!(
             crate::replay::run(
                 &mut ctx.read_conn,
                 &ctx.blobs,
                 &ctx.writer,
-                replay(Some(authority))
+                replay(Some(unlock))
             )
             .await
             .is_err()
@@ -530,7 +530,7 @@ async fn sealed_archive_restart_replay_and_class_changes_preserve_exact_material
             stop,
             Access {
                 recipient: Some(&recipient),
-                authority: None,
+                unlock: None,
             },
         )
         .await;
@@ -580,7 +580,7 @@ async fn sealed_bindings_never_share_material_keys_or_original_blob_names(
         stop,
         Access {
             recipient: Some(&recipient),
-            authority: None,
+            unlock: None,
         },
     )
     .await

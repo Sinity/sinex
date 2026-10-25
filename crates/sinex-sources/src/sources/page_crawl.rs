@@ -1,8 +1,8 @@
-//! The forward crawl: pages from browser history fetched again so their
-//! content is kept (architecture §5.6, browser domain). It is opt-in per
-//! domain: only URLs whose host is on the operator's allow list are fetched.
-//! It is polite: each host's `robots.txt` is honoured for this user agent,
-//! one request at a time with a pause between requests to the same host.
+//! The forward crawl: pages from browser history fetched again so their content
+//! is kept. It is opt-in per domain: only URLs whose host is on the operator's
+//! allow list are fetched. It is polite: each host's `robots.txt` is honoured
+//! for this user agent, one request at a time with a pause between requests to
+//! the same host.
 //!
 //! Each fetch is one stored material, the response body as received, with
 //! the request and response facts in its manifest; the parser turns it into
@@ -51,11 +51,16 @@ pub fn split(url: &str) -> Option<(String, String, String)> {
     if scheme != "http" && scheme != "https" {
         return None;
     }
-    let (authority, path) = match rest.find(['/', '?', '#']) {
+    let (user_host_port, path) = match rest.find(['/', '?', '#']) {
         Some(i) => (&rest[..i], &rest[i..]),
         None => (rest, "/"),
     };
-    let host = authority.rsplit('@').next()?.split(':').next()?.to_owned();
+    let host = user_host_port
+        .rsplit('@')
+        .next()?
+        .split(':')
+        .next()?
+        .to_owned();
     let path = path.split('#').next().unwrap_or("/");
     Some((
         scheme.to_owned(),

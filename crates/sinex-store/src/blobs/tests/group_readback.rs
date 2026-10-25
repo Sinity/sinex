@@ -138,7 +138,7 @@ fn actor(operation: &str) {
         "install" => {
             let blobs = Blobs::open(shared).unwrap();
             assert_eq!(blobs.put(BODY).unwrap(), name(BODY));
-            // Model a retained destination written with the previous private configuration.
+            // A file already in the store, written under the private configuration.
             let private_store = hashed_blobs::Store::open(shared, vec![], 0o600).unwrap();
             private_store.put(PRIVATE, 3).unwrap();
             let old = std::fs::metadata(stored(shared, &name(PRIVATE))).unwrap();
@@ -218,7 +218,7 @@ fn run_actor(root: &Path, operation: &str, uid: u32, gid: u32) {
 }
 
 #[devkit::test]
-#[ignore = "requires root for isolated numeric-UID/group filesystem controls"]
+#[ignore = "requires root for isolated numeric-UID and group filesystem checks"]
 fn configured_group_plain_readback_between_distinct_users() {
     if let Ok(operation) = std::env::var("SINEX_FIXTURE_ACTOR") {
         return actor(&operation);

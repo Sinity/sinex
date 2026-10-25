@@ -485,7 +485,7 @@ async fn a_plan_that_went_stale_is_refused(db: devkit::pg::TestDatabase) {
 }
 
 #[devkit::test]
-async fn retained_archive_refuses_record_and_original_excision_without_changes(
+async fn a_stored_archive_refuses_record_and_original_excision_without_changes(
     db: devkit::pg::TestDatabase,
 ) {
     let mut conn = <sqlx::PgConnection as sqlx::Connection>::connect(&db.url(None))
@@ -527,10 +527,7 @@ async fn retained_archive_refuses_record_and_original_excision_without_changes(
         Target::Material(original),
     ] {
         let err = excise(&mut conn, &store, target).await.unwrap_err();
-        assert!(
-            err.to_string().contains("cross-binding archive rewrite"),
-            "{err}"
-        );
+        assert!(err.to_string().contains("excision cannot rewrite"), "{err}");
     }
     let after: Vec<(Uuid, serde_json::Value, String, Option<Uuid>)> = sqlx::query_as(
         "SELECT id, manifest, blob, previous_part_id FROM raw.materials ORDER BY id",

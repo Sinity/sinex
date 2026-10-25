@@ -27,7 +27,7 @@ pub struct Devices {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub failed: Option<Option<Vec<Failed>>>,
     #[serde(flatten)]
-    pub(crate) uninterpreted: Map<String, Value>,
+    pub(crate) unknown: Map<String, Value>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
@@ -49,7 +49,7 @@ pub struct Recording {
     #[schemars(with = "Option<Option<f64>>")]
     pub since: Option<Option<serde_json::Number>>,
     #[serde(flatten)]
-    pub(crate) uninterpreted: Map<String, Value>,
+    pub(crate) unknown: Map<String, Value>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
@@ -61,7 +61,7 @@ pub struct Excluded {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub pattern: Option<Option<String>>,
     #[serde(flatten)]
-    pub(crate) uninterpreted: Map<String, Value>,
+    pub(crate) unknown: Map<String, Value>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
@@ -77,7 +77,7 @@ pub struct Failed {
     #[schemars(with = "Option<Option<f64>>")]
     pub at: Option<Option<serde_json::Number>>,
     #[serde(flatten)]
-    pub(crate) uninterpreted: Map<String, Value>,
+    pub(crate) unknown: Map<String, Value>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
@@ -104,7 +104,7 @@ pub struct Node {
     #[serde(rename = "media.class")]
     pub media_class: Option<Option<String>>,
     #[serde(flatten)]
-    pub(crate) uninterpreted: Map<String, Value>,
+    pub(crate) unknown: Map<String, Value>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
@@ -131,7 +131,7 @@ pub struct Port {
     #[serde(rename = "node.id")]
     pub node_id: Option<Option<String>>,
     #[serde(flatten)]
-    pub(crate) uninterpreted: Map<String, Value>,
+    pub(crate) unknown: Map<String, Value>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
@@ -162,7 +162,7 @@ pub struct Link {
     #[serde(rename = "input-port-id")]
     pub input_port_id: Option<Option<String>>,
     #[serde(flatten)]
-    pub(crate) uninterpreted: Map<String, Value>,
+    pub(crate) unknown: Map<String, Value>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
@@ -199,7 +199,7 @@ pub struct SpeechIndex {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub speech_spans: Option<Option<Vec<SpeechSpan>>>,
     #[serde(flatten)]
-    pub(crate) uninterpreted: Map<String, Value>,
+    pub(crate) unknown: Map<String, Value>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
@@ -213,79 +213,79 @@ pub struct SpeechSpan {
     #[schemars(with = "Option<Option<f64>>")]
     pub end: Option<Option<serde_json::Number>>,
     #[serde(flatten)]
-    pub(crate) uninterpreted: Map<String, Value>,
+    pub(crate) unknown: Map<String, Value>,
 }
 
 impl Devices {
-    pub(crate) fn collect_uninterpreted(&self, path: &str, fields: &mut Vec<String>) {
-        super::extend_fields(&self.uninterpreted, path, fields);
+    pub(crate) fn collect_unknown(&self, path: &str, fields: &mut Vec<String>) {
+        super::extend_fields(&self.unknown, path, fields);
         if let Some(Some(values)) = &self.recording {
             for (i, value) in values.iter().enumerate() {
-                value.collect_uninterpreted(&format!("{path}/recording/{i}"), fields);
+                value.collect_unknown(&format!("{path}/recording/{i}"), fields);
             }
         }
         if let Some(Some(values)) = &self.excluded {
             for (i, value) in values.iter().enumerate() {
-                value.collect_uninterpreted(&format!("{path}/excluded/{i}"), fields);
+                value.collect_unknown(&format!("{path}/excluded/{i}"), fields);
             }
         }
         if let Some(Some(values)) = &self.failed {
             for (i, value) in values.iter().enumerate() {
-                value.collect_uninterpreted(&format!("{path}/failed/{i}"), fields);
+                value.collect_unknown(&format!("{path}/failed/{i}"), fields);
             }
         }
     }
 }
 
 impl Recording {
-    pub(crate) fn collect_uninterpreted(&self, path: &str, fields: &mut Vec<String>) {
-        super::extend_fields(&self.uninterpreted, path, fields);
+    pub(crate) fn collect_unknown(&self, path: &str, fields: &mut Vec<String>) {
+        super::extend_fields(&self.unknown, path, fields);
     }
 }
 
 impl Excluded {
-    pub(crate) fn collect_uninterpreted(&self, path: &str, fields: &mut Vec<String>) {
-        super::extend_fields(&self.uninterpreted, path, fields);
+    pub(crate) fn collect_unknown(&self, path: &str, fields: &mut Vec<String>) {
+        super::extend_fields(&self.unknown, path, fields);
     }
 }
 
 impl Failed {
-    pub(crate) fn collect_uninterpreted(&self, path: &str, fields: &mut Vec<String>) {
-        super::extend_fields(&self.uninterpreted, path, fields);
+    pub(crate) fn collect_unknown(&self, path: &str, fields: &mut Vec<String>) {
+        super::extend_fields(&self.unknown, path, fields);
     }
 }
 
 impl Node {
-    pub(crate) fn collect_uninterpreted(&self, path: &str, fields: &mut Vec<String>) {
-        super::extend_fields(&self.uninterpreted, path, fields);
+    pub(crate) fn collect_unknown(&self, path: &str, fields: &mut Vec<String>) {
+        super::extend_fields(&self.unknown, path, fields);
     }
 }
 
 impl Port {
-    pub(crate) fn collect_uninterpreted(&self, path: &str, fields: &mut Vec<String>) {
-        super::extend_fields(&self.uninterpreted, path, fields);
+    pub(crate) fn collect_unknown(&self, path: &str, fields: &mut Vec<String>) {
+        super::extend_fields(&self.unknown, path, fields);
     }
 }
 
 impl Link {
-    pub(crate) fn collect_uninterpreted(&self, path: &str, fields: &mut Vec<String>) {
-        super::extend_fields(&self.uninterpreted, path, fields);
+    pub(crate) fn collect_unknown(&self, path: &str, fields: &mut Vec<String>) {
+        super::extend_fields(&self.unknown, path, fields);
     }
 }
 
 impl SpeechIndex {
-    pub(crate) fn collect_uninterpreted(&self, path: &str, fields: &mut Vec<String>) {
-        super::extend_fields(&self.uninterpreted, path, fields);
+    pub(crate) fn collect_unknown(&self, path: &str, fields: &mut Vec<String>) {
+        super::extend_fields(&self.unknown, path, fields);
         if let Some(Some(values)) = &self.speech_spans {
             for (i, value) in values.iter().enumerate() {
-                value.collect_uninterpreted(&format!("{path}/speech_spans/{i}"), fields);
+                value.collect_unknown(&format!("{path}/speech_spans/{i}"), fields);
             }
         }
     }
 }
 
 impl SpeechSpan {
-    pub(crate) fn collect_uninterpreted(&self, path: &str, fields: &mut Vec<String>) {
-        super::extend_fields(&self.uninterpreted, path, fields);
+    pub(crate) fn collect_unknown(&self, path: &str, fields: &mut Vec<String>) {
+        super::extend_fields(&self.unknown, path, fields);
     }
 }

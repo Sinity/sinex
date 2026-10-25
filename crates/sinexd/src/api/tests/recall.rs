@@ -14,7 +14,7 @@ fn facts(host: &str, rows: &[(i64, &str, Option<i64>)], class: Class) -> Vec<Eve
         raw.payload["duration_ns"] = json!(duration);
         raw.class = class;
         let c = raw.payload_as::<CommandExecuted>().unwrap();
-        let canonical = derived(
+        let command = derived(
             &CommandFused {
                 record: c.native_id,
                 command: c.command,
@@ -30,7 +30,7 @@ fn facts(host: &str, rows: &[(i64, &str, Option<i64>)], class: Class) -> Vec<Eve
             [&raw],
         );
         events.push(raw);
-        fused.push(canonical);
+        fused.push(command);
     }
     let env = Env::at(Timestamp::from_unix_secs(1_789_459_200).unwrap());
     let sessions = ShellSessions

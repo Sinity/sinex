@@ -1,7 +1,7 @@
-//! The three clocks (architecture §3.2). `ts_orig` is when the thing happened by
-//! the source's own evidence, with a quality; unknown stays unknown ("never
-//! falsify a clock"). `ts_coided` comes from the event ID; `ts_persisted` is set
-//! by the database at commit.
+//! The three clocks. `ts_orig` is when the thing happened by the source's own
+//! evidence, with a quality; unknown stays unknown ("never falsify a clock").
+//! `ts_coided` comes from the event ID; `ts_persisted` is set by the database
+//! at commit.
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use time::OffsetDateTime;
 use time::format_description::well_known::Rfc3339;

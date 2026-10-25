@@ -168,7 +168,7 @@ impl Exclusions {
             return Err("excised records cannot be left out of sealed source material".into());
         }
         selected.sort_unstable();
-        let mut blanked = crate::retained::Blanked::new(
+        let mut blanked = crate::stored::Blanked::new(
             Bytes {
                 bytes: &bytes,
                 length,

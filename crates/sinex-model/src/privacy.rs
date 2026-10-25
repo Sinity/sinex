@@ -1,5 +1,5 @@
-//! Privacy classes (architecture §3.5). Rules themselves are data in the store;
-//! the class travels with every event so outputs can withhold or mask.
+//! Privacy classes. Rules themselves are data in the store; the class travels
+//! with every event so outputs can withhold or mask.
 use serde::{Deserialize, Serialize};
 
 #[derive(

@@ -107,8 +107,8 @@ pub struct NoteDocument {
     /// The exact front-matter string, including an explicitly empty ID.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub note_id: Option<String>,
-    /// Sorted string tags from the interpreted header and known body. An
-    /// invalid front_matter means header tags remain unknown.
+    /// Sorted string tags from the parsed header and known body. An invalid
+    /// front_matter means header tags remain unknown.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tags: Option<Vec<String>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -117,7 +117,7 @@ pub struct NoteDocument {
     pub front_matter: Option<NoteFrontMatter>,
 }
 
-/// YAML interpretation, separate from the exact original note text.
+/// The parsed YAML header, separate from the exact original note text.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "state", rename_all = "snake_case")]
 pub enum NoteFrontMatter {

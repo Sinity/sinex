@@ -1,16 +1,15 @@
-//! The running daemon (architecture §7.4): tasks under one supervisor in one
-//! tokio runtime, built once here from one configuration. Every task gets the
-//! connections and handles it needs from this function; none opens its own
-//! configuration. A task that ends with an error stops the daemon, so the
-//! service manager restarts it whole.
+//! The running daemon: tasks under one supervisor in one tokio runtime, built
+//! once here from one configuration. Every task gets the connections and
+//! handles it needs from this function; none opens its own configuration. A
+//! task that ends with an error stops the daemon, so the service manager
+//! restarts it whole.
 //!
-//! Built: the writer (§4.3), the derivation runner for keyed and per-event
-//! derivations (§6.2), the commit-log reader for read models (§4.3), the
-//! confirmed-stream publisher (§4.3) and the NATS ingress with its have
-//! responder (§4.3). Every commit wakes the driver, the reader and the
-//! publisher, and the API (§7.2) serves reads from its own pool and writes
-//! through the writer. The source tasks (§5) and signals (§7.2) are added
-//! here by their lanes.
+//! Built: the writer, the derivation runner for keyed and per-event
+//! derivations, the commit-log reader for read models, the confirmed-stream
+//! publisher and the NATS ingress with its have responder. Every commit wakes
+//! the driver, the reader and the publisher, and the API serves reads from its
+//! own pool and writes through the writer. The source tasks and signals are
+//! added here by their lanes.
 use crate::api::{self, Api};
 use crate::commit_reader::{self, Consumer, ReadModelRunner};
 use crate::dirty_keys::Registered;

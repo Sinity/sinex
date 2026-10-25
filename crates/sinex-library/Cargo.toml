@@ -1,6 +1,6 @@
 [package]
 name = "sinex-library"
-description = "The media library: items, renditions, curation and handoff."
+description = "The media library: items, renditions, curation and opening files."
 version.workspace = true
 edition.workspace = true
 publish.workspace = true

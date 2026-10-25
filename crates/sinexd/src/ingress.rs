@@ -1,7 +1,7 @@
-//! The NATS ingress (architecture §4.3): outside producers (`sinex-session`,
-//! capture nodes, Polylogue, the browser extension, programs in other
-//! languages) send frames to `<root>.ingress.<producer>`, which a JetStream
-//! work-queue stream holds until `sinexd` has handled them.
+//! The NATS ingress: outside producers (`sinex-session`, capture nodes,
+//! Polylogue, the browser extension, programs in other languages) send frames
+//! to `<root>.ingress.<producer>`, which a JetStream work-queue stream holds
+//! until `sinexd` has handled them.
 //!
 //! For each frame the consumer:
 //!
@@ -20,7 +20,7 @@
 //!
 //! The producer is the one its subject names; per-producer credentials limit
 //! each producer to its own subjects. `<root>.have.<producer>` answers which
-//! frames Sinex recorded (`mn8u`).
+//! frames Sinex recorded.
 mod bytes;
 
 use crate::writer::{Priority, WriteError, WriterHandle};

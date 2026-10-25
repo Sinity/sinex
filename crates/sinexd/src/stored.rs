@@ -1,4 +1,5 @@
-//! Retained material records over one verified backing. Sealed bodies stay off disk.
+//! A stored material's records read through one verified reader. Sealed bodies
+//! stay off disk.
 use sinex_sources::drivers::export_archive::group::ReadSeek;
 use sinex_sources::{Framer, drivers};
 use std::io::{Read, Seek, SeekFrom};
@@ -7,11 +8,11 @@ mod material;
 pub(crate) use material::{Lazy, open};
 pub(crate) type ReadCheck = std::sync::Arc<dyn Fn() -> Result<(), String> + Send + Sync>;
 
-pub(crate) struct Retained {
+pub(crate) struct StoredReader {
     reader: Mutex<Box<dyn ReadSeek>>,
     length: u64,
 }
-impl Retained {
+impl StoredReader {
     pub fn new(reader: impl Read + Seek + Send + 'static, length: u64) -> Self {
         Self {
             reader: Mutex::new(Box::new(reader)),
@@ -30,7 +31,7 @@ impl Retained {
         manifest: &serde_json::Value,
         framer: Framer,
     ) -> Result<Vec<(usize, usize)>, String> {
-        let mut reader = self.reader.lock().map_err(|_| "retained reader poisoned")?;
+        let mut reader = self.reader.lock().map_err(|_| "stored reader poisoned")?;
         reader.rewind().map_err(|e| e.to_string())?;
         drivers::stored_records_from(manifest, &mut *reader, framer).map_err(|e| e.to_string())
     }
@@ -41,12 +42,12 @@ impl Retained {
         let mut reader = self
             .reader
             .into_inner()
-            .map_err(|_| "retained reader poisoned")?;
+            .map_err(|_| "stored reader poisoned")?;
         reader.rewind().map_err(|e| e.to_string())?;
         Ok(reader)
     }
 }
-impl sinex_sources::drain::RecordRead for Retained {
+impl sinex_sources::drain::RecordRead for StoredReader {
     fn length(&self) -> u64 {
         self.length
     }
@@ -54,7 +55,7 @@ impl sinex_sources::drain::RecordRead for Retained {
         let mut reader = self
             .reader
             .lock()
-            .map_err(|_| std::io::Error::other("retained reader poisoned"))?;
+            .map_err(|_| std::io::Error::other("stored reader poisoned"))?;
         reader.seek(SeekFrom::Start(start))?;
         reader.read_exact(bytes)
     }

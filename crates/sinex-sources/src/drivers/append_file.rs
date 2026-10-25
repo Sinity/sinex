@@ -19,7 +19,7 @@ use std::collections::HashMap;
 use std::io::{Read, Seek, SeekFrom};
 use std::path::PathBuf;
 
-/// Bytes before the offset whose hash proves the prefix is unchanged.
+/// Bytes before the offset whose hash shows the prefix is unchanged.
 const WINDOW: u64 = 4096;
 /// The most bytes one poll reads past its cursor (more only for a single
 /// record longer than this): a file of any size is read in bounded parts.
@@ -43,9 +43,10 @@ pub struct Cursor {
     pub inode: u64,
     /// BLAKE3 of the up-to-`WINDOW` bytes before `offset`.
     pub window: Option<String>,
-    /// A rewrite observed before its first complete record is retained.
+    /// A rewrite seen before any of its records was complete; the next material
+    /// records it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub pending_revision: Option<RevisionChange>,
+    pub unrecorded_rewrite: Option<RevisionChange>,
     pub material: Option<MaterialId>,
     pub part_index: u32,
     /// How many bytes of `material` the stored readings cover. A restart
@@ -187,14 +188,14 @@ impl AppendFile {
             serde_json::from_value(cursor.clone())
                 .map_err(|e| DriverError::Cursor(e.to_string()))?
         };
-        if previous.pending_revision.is_some_and(|kind| {
+        if previous.unrecorded_rewrite.is_some_and(|kind| {
             !matches!(
                 kind,
                 RevisionChange::Rewritten | RevisionChange::Replaced | RevisionChange::Truncated
             )
         }) {
             return Err(DriverError::Cursor(
-                "invalid pending append revision kind".into(),
+                "invalid unrecorded rewrite kind".into(),
             ));
         }
         if !cursor.is_null() && previous.window.is_none() {
@@ -251,7 +252,7 @@ impl AppendFile {
             (
                 previous.offset,
                 previous
-                    .pending_revision
+                    .unrecorded_rewrite
                     .unwrap_or(RevisionChange::Appended),
             )
         } else if previous.inode != inode {
@@ -301,7 +302,7 @@ impl AppendFile {
             material: previous.material,
             part_index: previous.part_index,
             through: previous.through,
-            pending_revision: if restarted
+            unrecorded_rewrite: if restarted
                 && matches!(
                     revision,
                     RevisionChange::Rewritten
@@ -310,7 +311,7 @@ impl AppendFile {
                 ) {
                 Some(revision)
             } else {
-                previous.pending_revision
+                previous.unrecorded_rewrite
             },
         };
         if consumed == 0 {
@@ -402,7 +403,7 @@ impl AppendFile {
                 material: Some(id),
                 part_index,
                 through: end,
-                pending_revision: None,
+                unrecorded_rewrite: None,
             })
             .expect("cursor serializes")
         };

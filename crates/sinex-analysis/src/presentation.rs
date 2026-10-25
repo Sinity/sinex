@@ -1,8 +1,8 @@
-//! The one presentation compiler (spec `analysis.md` §12): a brief, a context
-//! pack and a "what did I do" answer are sections of findings compiled
-//! against one evaluation context. Within a byte budget whole findings are
-//! dropped, never parts of one, and each section says how many it dropped;
-//! a section whose sources had no coverage is shown absent with the reason.
+//! The one presentation compiler: a brief, a context pack and a "what did I do"
+//! answer are sections of findings compiled against one evaluation context.
+//! Within a byte budget whole findings are dropped, never parts of one, and
+//! each section says how many it dropped; a section whose sources had no
+//! coverage is shown absent with the reason.
 use crate::finding::Finding;
 use serde::Serialize;
 use std::fmt::Write as _;

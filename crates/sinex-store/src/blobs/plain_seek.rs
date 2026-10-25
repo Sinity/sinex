@@ -22,7 +22,7 @@ impl PlainSeek {
             at: 0,
             check,
         };
-        // Verify the complete name/length before exposing this scoped backing.
+        // Verify the complete name and length before handing out this reader.
         value.reader.read_range_checked::<hashed_blobs::Error>(
             &value.hash,
             Some(length),
@@ -48,7 +48,7 @@ impl Read for PlainSeek {
             )
             .map_err(std::io::Error::other)?;
         if bytes.len() as u64 != n {
-            return Err(std::io::Error::other("retained plain range is short"));
+            return Err(std::io::Error::other("stored plain range is short"));
         }
         out[..bytes.len()].copy_from_slice(&bytes);
         self.at += n;
@@ -64,7 +64,7 @@ impl Seek for PlainSeek {
             SeekFrom::End(n) => i128::from(self.length) + i128::from(n),
         };
         self.at =
-            u64::try_from(at).map_err(|_| std::io::Error::other("invalid retained plain seek"))?;
+            u64::try_from(at).map_err(|_| std::io::Error::other("invalid stored plain seek"))?;
         Ok(self.at)
     }
 }

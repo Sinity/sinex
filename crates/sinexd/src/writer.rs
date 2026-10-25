@@ -1,7 +1,7 @@
-//! The writer task: the only database writer (architecture §4.3, §7.4). It
-//! takes batches from three channels in priority order, live before derived
-//! before bulk, so a backfill never starves live capture, and runs admission
-//! for each batch in its own transaction.
+//! The writer task: the only database writer. It takes batches from three
+//! channels in priority order, live before derived before bulk, so a backfill
+//! never starves live capture, and runs admission for each batch in its own
+//! transaction.
 //!
 //! Besides single batches it runs two kinds of work that need one
 //! transaction around more than one admission: a replay chain (archive what
@@ -22,7 +22,7 @@ pub enum Priority {
     /// Live capture; the daemon's source tasks submit these.
     #[allow(dead_code, reason = "the daemon's source tasks submit live batches")]
     Live,
-    /// Outputs of derivations (§6.2), and replays, which re-derive.
+    /// Outputs of derivations, and replays, which re-derive.
     Derived,
     Bulk,
 }
@@ -255,9 +255,9 @@ fn channels_with_database(source_database: Option<Arc<str>>) -> (WriterHandle, Q
 /// The session advisory lock only the writer holds, per database.
 const WRITER_LOCK: i64 = sinex_schema::WRITER_LOCK;
 
-/// Claim `connection` as the database's one writer (architecture §4; law
-/// L43). A session advisory lock, so it lasts exactly as long as the
-/// connection: a killed writer frees it, a second one is refused.
+/// Claim `connection` as the database's one writer. A session advisory lock, so
+/// it lasts exactly as long as the connection: a killed writer frees it, a
+/// second one is refused.
 ///
 /// A writer that was just killed holds the lock until the server notices its
 /// backend is gone, so a restart waits up to [`CLAIM_WAIT`] before refusing.
@@ -305,7 +305,7 @@ pub async fn run(
 }
 
 /// [`run`], also counting committed batches on `commits`, which wakes the
-/// commit-log reader and the publisher (architecture §4.2 step 8).
+/// commit-log reader and the publisher.
 pub async fn run_notifying(
     url: String,
     mut connection: PgConnection,

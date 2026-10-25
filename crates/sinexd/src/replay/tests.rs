@@ -122,7 +122,7 @@ fn options(scope: Scope, compare: bool) -> Options {
         compare,
         resume: None,
         actor: "t".into(),
-        authority: None,
+        unlock: None,
     }
 }
 
@@ -287,7 +287,7 @@ async fn a_rewritten_history_file_is_aligned_and_replays_without_duplicates(
     .unwrap();
     assert_eq!(
         report.chains, 1,
-        "the aligned rewrite continues its parser predecessor"
+        "the aligned rewrite continues the previous revision's parser chain"
     );
     let revisions: i64 = sqlx::query_scalar("SELECT count(*) FROM raw.revisions")
         .fetch_one(&mut f.ctx.read_conn)
@@ -295,7 +295,7 @@ async fn a_rewritten_history_file_is_aligned_and_replays_without_duplicates(
         .unwrap();
     assert_eq!(
         revisions, 2,
-        "byte revisions remain distinct from parser carry lineage"
+        "byte revisions stay distinct from the parser carry chain"
     );
     assert_eq!(
         (
@@ -407,7 +407,7 @@ async fn a_later_material_read_failure_rolls_back_the_entire_replay_chain(
 }
 
 #[devkit::test]
-async fn aligned_rewrite_replay_uses_the_same_predecessor_carry_as_native_capture(
+async fn aligned_rewrite_replay_uses_the_same_previous_carry_as_capture(
     db: devkit::pg::TestDatabase,
 ) {
     let mut f = fixture(db).await;

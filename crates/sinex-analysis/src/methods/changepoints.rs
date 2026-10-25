@@ -1,8 +1,7 @@
 //! Change points in a piecewise-constant mean, by binary segmentation with a
 //! BIC penalty of log(n)·σ². σ² is estimated robustly from first differences,
 //! so the steps themselves do not inflate it. A detected boundary stays where
-//! it was detected; nearby known events are a separate annotation
-//! (`analysis.md` §6.4).
+//! it was detected; nearby known events are a separate annotation.
 use super::stats::{mean, scaled_mad};
 use super::{Dependence, Estimand, Method, MethodInput, MethodResult, NotEstimable, dense};
 use serde::{Deserialize, Serialize};

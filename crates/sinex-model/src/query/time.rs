@@ -1,7 +1,6 @@
-//! Times in queries (spec `query.md` §2, "Times and durations"). Every
-//! relative time is resolved once, against one [`Context`]: `now`, the zone
-//! clock times are read in, and the hour a logical day starts (04:00 by
-//! default, joint decision 15), so 01:30 belongs to the day before.
+//! Times in queries. Every relative time is resolved once, against one
+//! [`Context`]: `now`, the zone clock times are read in, and the hour a logical
+//! day starts (04:00 by default), so 01:30 belongs to the day before.
 use jiff::civil::{Date, DateTime, Time};
 use jiff::tz::TimeZone;
 use jiff::{Timestamp, ToSpan, Zoned};

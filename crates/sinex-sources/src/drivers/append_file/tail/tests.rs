@@ -16,7 +16,7 @@ fn newest_first_tail_preserves_duplicate_locations() {
 }
 
 #[devkit::test]
-fn completed_tail_obeys_live_record_and_byte_limits_without_retaining_raw_bodies() {
+fn completed_tail_obeys_live_record_and_byte_limits_without_keeping_raw_bodies() {
     let material = MaterialId::new();
     let mut tail = AppendTail::default();
     for anchor in (0..STATE_RECORDS as u64).rev() {

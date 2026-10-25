@@ -106,11 +106,11 @@ async fn standin_with_refusal(
     received
 }
 
-/// A batch left pending by a stop before its position was saved is sent
-/// again on the next start, with its bytes uploaded in chunks; a frame
-/// larger than one message travels indirectly.
+/// A batch a stop left unacknowledged before its position was saved is sent
+/// again on the next start, with its bytes uploaded in chunks; a frame larger
+/// than one message travels indirectly.
 #[tokio::test(flavor = "multi_thread")]
-async fn a_pending_batch_is_resent_with_uploaded_bytes() {
+async fn an_unacknowledged_batch_is_resent_with_uploaded_bytes() {
     let nats = devkit::nats::test_nats().unwrap();
     let subjects = Subjects::new(nats.prefix());
     let received =
@@ -158,7 +158,7 @@ async fn a_pending_batch_is_resent_with_uploaded_bytes() {
         bytes.as_slice(),
     )
     .unwrap();
-    Pending {
+    Sending {
         frames,
         position: Position {
             cursor: json!({"segment": 7}),
@@ -176,7 +176,7 @@ async fn a_pending_batch_is_resent_with_uploaded_bytes() {
         producer.position("b", &state, &store).await,
         Err(Error::Refused { .. })
     ));
-    assert!(Pending::load(&state, "b").unwrap().is_some());
+    assert!(Sending::load(&state, "b").unwrap().is_some());
     assert!(Position::load(&state, "b").unwrap().cursor.is_null());
     let first_attempt = received.lock().unwrap().clone();
     assert_eq!(first_attempt.len(), 2);
@@ -187,7 +187,7 @@ async fn a_pending_batch_is_resent_with_uploaded_bytes() {
     assert_ne!(first_attempt[0].frame(), second_attempt[0].frame());
     assert_chunks(&second_attempt[..2], &bytes);
     assert_eq!(position.cursor, json!({"segment": 7}));
-    assert!(Pending::load(&state, "b").unwrap().is_none());
+    assert!(Sending::load(&state, "b").unwrap().is_none());
     let kinds = |frames: &[Ingress]| -> Vec<String> {
         frames
             .iter()

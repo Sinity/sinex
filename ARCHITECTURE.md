@@ -1,85 +1,36 @@
 # Architecture
 
-This describes the current Rust ownership boundaries. Planned work is in Beads.
+How the crates divide the work today. [docs/vocabulary.md](docs/vocabulary.md)
+defines the terms; planned work is in Beads.
 
-## Capture and interpretation
+## Reading sources
 
-`sinex-sources` owns source declarations, shared acquisition drivers, framing
-and parsers. Drivers obtain bytes; parsers interpret one framed record without
-opening files, networks or clocks. The drain attaches record locations, hashes,
-carried state and record failures to the resulting batch. Provider-specific
-interpretation belongs here, not in the database or daemon.
+`sinex-sources` holds the source declarations, the shared drivers, record
+framing and the parsers. A driver gets bytes from an input; a parser reads one
+framed record and opens no files, sockets or clocks. The drain around the
+parser attaches record locations, hashes, carry and record failures to each
+batch. Anything specific to one provider lives here, not in the store or the
+daemon.
 
-Notes vaults use the directory driver and stored member context. Parser version
-3 keeps the complete UTF-8 text, file mtime and `(vault, path)` identity while
-extracting a title, native string ID, sorted tags and wikilinks. Title priority is
-a nonempty header title, the last segment of a string ID, then the file stem.
-Header tag arrays contribute only string values; body tags exclude heading lines.
-Links strip aliases and heading anchors. These body references are lexical
-extractions, not a Markdown rendering.
-
-`front_matter` distinguishes absent, parsed JSON-compatible YAML and invalid or
-unsupported interpretation. Empty YAML remains parsed null; an empty mapping
-remains an empty mapping. Errors carry only a kind and available line/column,
-never copied YAML snippets. A closed invalid header leaves known body references
-available; its header tags remain unknown. An unclosed header has no established
-body boundary. Old payloads and vanished-file markers carry no interpreted
-metadata. Ordinary replay of the stored material supplies the newer interpretation.
-
-YAML syntax, duplicate detection and bounded alias handling use serde-saphyr.
-A private JSON conversion refuses non-string mapping keys, unsupported tags and
-plain integers outside the parser's signed/unsigned 64-bit representation,
-including unsupported plain leading-zero forms. Quoted or explicitly string-tagged
-numeric IDs remain strings. The header has a 1 MiB byte/scalar budget, structural
-limits and bounded alias replay. Limit/refusal outcomes keep the exact note
-text. Parsers do not resolve external includes or open files.
-
-Steering commitments, activities and reviews use closed typed row variants behind their existing
-`steering.record` wire shape and `(table, record_id)` identity. The table selects
-the row type before decoding. Missing fields, explicit nulls and numeric values
-keep their representations; unknown columns or types become record failures
-with their bytes kept. Parser version 2 uses the normal replay path to
-reinterpret stored rows; it does not rewrite earlier event payloads.
-
-Sinnix lake observations keep the `capture.observed` envelope and material-location
-identity. The lane and, where declared, payload kind select concrete source fields
-before decoding. Unknown lanes/kinds remain explicit, while unknown extension fields
-and open notification hints keep their values with computed interpretation markers.
-Known-field errors become record failures with raw bytes kept. Awair interprets
-only the producer's declared score and CO2 fields; other sensor fields remain extensions.
-Netflow stays material-only. Parser version 2 uses ordinary replay.
-
-Non-health Samsung account tables keep normalized columns as generic
-`account.record` fallbacks with computed `uninterpreted: true`. Table names and
-synthetic normalization examples do not establish provider field schemas. A known-table
-interpreter requires those declarations; the generic row does not claim one. Existing
-payloads without the marker remain readable. Samsung parser version 4 uses normal replay.
-
-`sinexd` connects these pieces: source tasks, backfill and replay submit work
-to the writer. A source cursor records admitted progress; storing bytes does
-not mean their records were read.
-
-On shutdown, the derivation runner completes its active pass or maintenance
-step, then releases its writer handle. Idle waits observe the shared stop signal.
-The writer drains queued work after its producers release their handles; the
-supervisor keeps its ten-second fallback for tasks that cannot finish.
+`sinexd` runs the sources: `backfill` reads them to the end, and the daemon's
+source tasks read them continuously. Both hand batches to the writer. A cursor
+records admitted progress; bytes being stored does not mean their records were
+read.
 
 ### Stored bytes and admission
 
-A driver's bytes are written to the content store before the batch that
-registers them is admitted; admission inserts the material and its
-`core.blobs` row in the same transaction as its first events and the cursor.
-Only excision deletes bytes. It marks a blob `deleting` once nothing refers to
-it, and the writer deletes the file under that row's lock, then the row. The
-writer checks that every file a batch registers is in the store just before
-admitting it; deletion and admission both run in the writer, one after the
-other, so a capture that stored the same bytes an excision is deleting is
-refused rather than registered without its file.
+A driver's bytes are written to the content store before the batch that cites
+them is admitted. Admission inserts the material and its `core.blobs` row in
+the same transaction as its first events and the cursor. Only excision deletes
+bytes: it marks a blob `deleting` once nothing cites it, and the writer deletes
+the file under that row's lock, then the row. Deletion and admission both run
+in the writer, and the writer checks that every file a batch cites is present
+just before admitting it, so a batch never cites a file that is gone.
 
-A failed admission is retried from the bytes the reader still holds: append,
+A failed admission is retried from the material the reader holds: the append,
 directory, SQLite-row and IMAP readers keep their newest material in memory
 until its final cursor is admitted, then read on. After a restart nothing
-unadmitted is kept: the reader reads on from the committed cursor, so a
+unadmitted is kept; the reader continues from the committed cursor, and a
 material admitted only in part is completed by reading the source again.
 
 ### Restart
@@ -87,160 +38,146 @@ material admitted only in part is completed by reading the source again.
 Each reader rebuilds what it remembers through the `Reader` trait: it names
 the material its committed cursor points at, and the daemon offers it that
 material and the parts before it, newest first, until the reader has enough.
-The append reader keeps the tail of the current revision's admitted records,
-for aligning a rewrite; the SQLite-row reader keeps each row's newest hash; the
-directory reader keeps which files the admitted bundles hold and reads them
-again on the next walk. A sealed part keeps the binding sealed after its class
-is lowered. The daemon does not know which driver a binding uses.
+The append reader keeps the tail of the current revision's records, to align a
+rewrite; the SQLite-row reader keeps each row's newest hash; the directory
+reader keeps which files the admitted bundles hold. A sealed part keeps the
+binding sealed after its class is lowered. The daemon does not know which
+driver a binding uses.
 
 ### Drivers
 
-SQLite row snapshots use one read transaction across schema inspection and row
-selection, so SQLite supplies committed rollback-journal and WAL visibility. A
-locked database is unavailable. The first poll after a start reads every row
-and stores only those whose hash changed.
+- **SQLite rows.** One read transaction covers the schema check and the row
+  query, so SQLite's own locking gives a committed view. A locked database is
+  unavailable for that poll. The first poll after a start reads every row and
+  stores only those whose hash changed.
+- **IMAP.** An answer records the UIDs it holds and the server's UID window. A
+  cursor inside an answer resumes at its first UID, so a restart fetches the
+  whole answer again and admission drops the repeats.
+- **Directory snapshots.** Changed files stream into one unnamed bundle. Each
+  file is preceded by one byte outside its source range, so empty files have
+  distinct anchors. The cursor confirms the reader's file facts only at the
+  bundle's last byte.
+- **Export archives.** An archive is stored once and read in one forward pass
+  for every compatible binding (same host and class); each binding keeps its
+  own record parts and cursor. A sealed archive uses one key per binding.
 
-IMAP answers record the UIDs they hold and the server's UID window. A cursor
-inside an answer resumes at the answer's first UID, so a restart fetches the
-whole answer again and admission suppresses the repeats.
+### Typed payloads
 
-Directory snapshots stream changed files into an unnamed bundle. Each record
-is preceded by one byte outside its source range, so empty files have distinct
-anchors. The cursor confirms the reader's file facts only at the bundle's
-final byte.
+Notes keep the complete text, the file time and `(vault, path)` identity, and
+add a title, a native note ID, sorted tags and wikilinks. The YAML front matter
+is parsed into JSON values or reported as absent, invalid or unsupported, with
+only an error kind and position; the text is kept either way.
 
-An export archive is stored once and read in one forward pass for every
-compatible binding (same host and class); each binding keeps its own record
-parts and cursor. Sealed archives use one key per binding.
+Steering rows, Sinnix lake observations and health records are decoded into a
+type chosen by their table, lane or category before their fields are read. A
+malformed known field is a record failure with its bytes kept. Fields the type
+does not know are kept, and the event lists their JSON pointers in
+`unknown_fields`; a category with no type at all is marked `untyped: true`.
+Samsung account tables other than health stay generic `account.record` rows,
+always marked `untyped`.
 
 ### Outside producers
 
 `sinex-session`, `sinex-capture` and Polylogue send frames over the NATS
-ingress. The bytes a material or indirect frame needs go in that frame's spool
-directory under the content store root (`sinex_transport::spool`), written by a
-producer on the same host or sent in chunk frames by one elsewhere. Sinex
-copies and checks them against their name, stores them, admits the frame,
-records its acknowledgment in the same transaction, and then removes the
-spool directory. A redelivered frame is answered from that record. A producer
-keeps a batch's frames and the position after them until every frame is
-acknowledged, and sends them again after a restart. In a store root with mode
-2770, spool directories are 2770 and completed files 0640, so a producer
-running as another user in the store's group can hand over bytes without
-write access to the content store. Producer bytes are never stored sealed.
+ingress. The bytes a frame needs go in that frame's spool directory under the
+content store root (`sinex_transport::spool`): a producer on the same host
+writes them there, and one elsewhere sends them in chunk frames. Sinex copies
+the bytes, checks them against their name, stores them, admits the frame and
+records its acknowledgment in one transaction, then removes the spool
+directory. A frame sent again is answered from that record. A producer keeps a
+batch's frames and the position after them until every frame is acknowledged,
+and sends them again after a restart. In a store root with mode 2770, spool
+directories are 2770 and finished files 0640, so a producer running as another
+user in the store's group can hand over bytes without write access to the
+content store. Producer bytes are never stored sealed.
 
-The outside producers use `sinex-sources::live::run` to start capture threads
-and send their spools under one lifetime. Signal handlers are registered
-before capture begins. Deadline, failure, interrupt and termination stop every
-capture before joining their threads. `capture::Control` owns interruptible
-waits, socket read shutdown and child process groups: it interrupts groups,
-escalates after 250 ms and reaps their children, including adopted descendants
-through Linux subreaper support.
+The outside producers start their capture threads with `sinex-sources::live`,
+which registers signal handlers first and stops every capture before joining
+it. `capture::Control` owns interruptible waits, socket shutdown and child
+process groups: it interrupts a group, escalates after 250 ms, and reaps its
+children, including descendants adopted through Linux subreaper support.
 
-## Persistence and derived work
+## Storing and deriving
 
-`sinex-store` owns PostgreSQL access, content storage and admission. The daemon's
-writer owns transaction scheduling; admission stores events and source progress
-together and marks affected derivation keys dirty. Source and derivation code
-do not insert event rows independently. Stored bytes are written before the
-admission that refers to them (see above).
+`sinex-store` owns PostgreSQL access, the content store and admission. The
+daemon's writer schedules the transactions; admission stores events and source
+progress together and marks the derivation keys they affect. No other code
+inserts events.
 
-`sinex-derivations` contains computations over supplied events and configuration.
-The daemon's derivation runner reads their inputs and submits replacement output
-sets through admission. Analysis methods similarly live apart from their store
-and application adapters. The commit reader and NATS publisher handle committed
-events separately from source acquisition.
+`sinex-derivations` holds computations over supplied events. The daemon's
+derivation runner reads their inputs and submits each key's new outputs
+through admission. `sinex-analysis` holds the analysis methods as pure code;
+the daemon reads their inputs and stores their results.
 
-Writer positions cover both admitted Events and visibility changes. Hide and
-unhide update the current archival projection and append their history in the
-same transaction; unhide keeps the original Event. Commit-log markers carry no
-Event. Readers advance across those markers and excision gaps using one captured
-head. Historical time lookup uses stored events and visibility history, so
-pruning the hot commit log does not erase its time basis. Permanent excision
-still removes the exact event's historical metadata.
+The commit log orders committed events and visibility changes (hide, unhide,
+replacement). Hide and unhide change what is live and append to the visibility
+history in one transaction. Readers move past positions an excision left
+empty. Time lookups use stored events and the visibility history, so pruning
+the commit log loses nothing. The publisher sends committed events on the
+confirmed stream, with `Archived`, `Restored` and `Excised` notices.
+
+On shutdown the derivation runner finishes its current pass and releases its
+writer handle; the writer drains queued work once every producer has released
+its handle. The supervisor gives tasks ten seconds before stopping them.
 
 `sinex-schema` declares the schema in Rust at version 0. `sinex-schema apply`
-(or `sinexd admin schema`) creates it in an empty database; a database at any
-other version is refused, and ordinary commands never create the schema.
-Ordered upgrades begin with the first deployment.
+creates it in an empty database; any other version is refused, and no other
+command creates the schema. Numbered changes start with the first deployment.
+Checked SQL in `sinex-store` compiles against that schema.
 
-Archive-stream consumers receive `Restored` as well as `Archived` and `Excised`.
+## Interfaces
 
+`sinex-model` holds identities and payloads. `sinex-protocol` declares the
+public commands and wire types without IO. `sinex-transport` holds the
+private-mode switch and the producer spool, so the daemon, drivers and CLI
+share them without the wire types touching the filesystem. CLI, MCP and HTTP
+are generated from the command table. `sinex-diagnostics` works while the
+daemon is down.
 
-## Interfaces and shared code
+Forecast issues and resolutions are ordinary `forecast.request` records. Both
+commands write through `sinexd/src/authored.rs`, as library requests do: one
+material, stored and then admitted in one batch. The parser takes the caller's
+role and the submission time from the material's manifest. The report reads
+the live issues, resolutions and evidence in one transaction and scores them
+with `sinex-analysis`; nothing about forecasts is cached.
 
-`sinex-model` owns identities and payloads; `sinex-protocol` declares public
-commands and wire types without IO. `sinex-transport` owns the private-mode
-switch and the producer spool. The daemon,
-source drivers and CLI use that small library without putting filesystem access
-in wire definitions or making outside publishers depend on source parsers.
-CLI, MCP and HTTP adapt the public commands. `sinex-diagnostics` supports
-the separate daemon-down diagnostic path. Schema declarations and application
-remain in `sinex-schema`; checked SQL compiles against that real schema.
+The `shell-sessions` query alias reads the `shell.session` derivation; `start`
+and `observed_until` cover the recorded commands, including a last command of
+unknown duration. `recall last` picks the latest matching session with the
+ordinary query compiler and reads every source in its span, at one commit
+position. When no session matches, it says no session is known, not that
+nothing was recorded.
 
-Forecast issuance and resolution are ordinary `forecast.request` source records.
-Their parser takes the caller's role and submission time from the stored
-manifest, keeping the outcome time separately. Both commands write through
-`sinexd/src/authored.rs`, as library requests do: one material, stored and then
-admitted in one batch.
-The report reads currently visible, live issues, resolutions and resolution evidence
-in one repeatable-read transaction and supplies resolved probability pairs to pure
-`sinex-analysis` scoring. It stores no separate forecast state or cached score.
+A query continuation is bound to its question, the caller's grants, the
+resolved clock and time settings, and the commit position. It also carries a
+hash of the visible answer; when hiding, excision or a metadata change alters
+that answer, the continuation is refused and the query must be asked again.
 
-Shared blob storage, credential masking and development tooling come from
-immutable `polylogue-sinex-common` releases. Prefer these existing owners to
-another local implementation. Change an interface with its callers and remove
-the replaced path. Read [AGENTS.md](AGENTS.md) for test placement and focused
-development commands; passing a component test does not verify a deployment.
+Every output goes through credential masking. A JSON key that looks like a
+credential refuses the whole reply, since renaming the key could change the
+object's meaning. Follow streams check a page before sending its first row.
 
-The `shell-sessions` query alias reads the existing `shell.session` derivation;
-its `start` and `observed_until` describe recorded command extent. Its observed
-span includes both endpoints, including a final command with unknown duration.
-It does not supply activity-session depth, project, open state or a proven end.
-The broader `sessions` alias remains planned. `recall last` binds its optional
-session-field filter against `shell-sessions`, selects the latest group through
-the ordinary query compiler, and reads all sources in that observed envelope.
-Selection and rows use the same commit position, including cursor continuations;
-equal starts use the ordinary event-ID tie break. Withheld bounds refuse rather
-than borrowing an older group. No matching group keeps the ordinary output
-stages and carries a no-known-session account, not a no-observations claim.
-
-Query continuations bind the actual question and caller visibility, the first
-resolved clock, time-zone/day settings and event commit position. Count and
-rows share one repeatable-read transaction. Each continuation compares a
-fixed-size fingerprint of the visible ordered answer, including columns and
-recall metadata. New events beyond the original position can leave that answer
-unchanged; removals or mutable metadata changes require a fresh query when they
-change it. Fingerprints detect ordinary changes and grant no authority. Every
-page still uses current visible views and the final masking/unseal checks.
-Changing page size is allowed; obsolete or malformed cursors are refused.
-
-Output uses `credential-output`, including independently recognized
-overlapping credentials. Credential-shaped JSON keys refuse the complete
-reply because renaming could change an object's meaning. Follow streams check
-the whole query page before emitting its first row; a refused page emits a
-generic error without the key and leaves stored values and cursors unchanged.
-Refusal reasons and follow-query errors pass through the same masker before
-encoding; their typed refusal flags stay intact.
+Shared blob storage, credential masking and the development tooling come from
+released `polylogue-sinex-common` versions.
 
 ## Sealing and excision
 
 A sealed source encrypts each material under its own data key, wrapped for the
-sealed class key; its events carry their payloads encrypted under the same key,
-and their equivalence keys and record hashes are keyed hashes. Capture needs only
-the class key's public half. Reading sealed payloads, replaying sealed materials
-and resuming a sealed archive need an operator unlock.
+sealed class key; its events' payloads are encrypted under the same key, and
+their equivalence keys and record hashes are keyed hashes. Capture needs only
+the class key's public half. Reading sealed payloads, replaying sealed
+materials and continuing a sealed archive need an operator unlock.
 
 Excision (`excise`) is a rare operator action. It removes every reading of a
-record with every derived event that descends from it, leaves a tombstone for
-each, and blanks the record's bytes in a new blob; the old blob goes once nothing
-refers to it. The request is recorded once in `core.operations` and applied by
-the writer in one transaction while the excision holds its source's lock.
-Running the same request again finds only what is left. Excision refuses sealed
-material, a producer's records, and records inside a stored original archive.
+record and every event derived from it, leaves a tombstone for each, and writes
+the material again with the record's bytes blanked; the old blob goes once
+nothing cites it. The request is recorded once in `core.operations` and applied
+by the writer in one transaction while it holds the source's lock. Running the
+same request again finds only what is left. Excision refuses sealed material, a
+producer's records, and records inside a stored original archive.
 
 A source read again can meet an excised record (a shell history still holds the
 command). The excision's record keys and hashes are kept as the source's
 exclusions; `sinexd/src/excision/exclusions.rs` blanks matching records before
-the new bytes are stored, the way excision blanks stored ones. Admission
-compares the excisions a read applied with the source's current ones, so a read
-that overlapped an excision is read again.
+the new bytes are stored. Admission compares the exclusions a read applied with
+the source's current ones, so a read that overlapped an excision is read again.

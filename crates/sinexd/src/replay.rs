@@ -1,6 +1,6 @@
-//! Replay (architecture §5.5): read stored materials again with the current
-//! parsers and rules. The scope is materials (named, a binding's, or those
-//! with readings of some types in a time window), narrowed by type and time.
+//! Replay: read stored materials again with the current parsers and rules. The
+//! scope is materials (named, a binding's, or those with readings of some types
+//! in a time window), narrowed by type and time.
 //!
 //! Each material chain (an input's parts, linked first to last) is replayed
 //! from its first part, because a parser's carried state flows from part to
@@ -128,7 +128,7 @@ pub struct Options {
     pub compare: bool,
     pub resume: Option<OperationId>,
     pub actor: String,
-    pub authority: Option<crate::sealed_access::Authority>,
+    pub unlock: Option<crate::sealed_access::Unlock>,
 }
 
 /// Replay with its parts: a read connection, the content store and the writer
@@ -198,19 +198,24 @@ pub async fn run(
                 continue;
             }
             if blobs.is_sealed(&material.blob).map_err(|e| e.to_string())? {
-                let authority=o.authority.as_ref().ok_or_else(||format!("material {}: sealed replay is pending explicit operator unlock and --sealed",material.id))?;
+                let unlock = o.unlock.as_ref().ok_or_else(|| {
+                    format!(
+                        "material {}: sealed replay needs an operator unlock and --sealed",
+                        material.id
+                    )
+                })?;
                 let reference =
                     sinex_store::material_bytes::reference(read_conn, MaterialId(material.id))
                         .await
                         .map_err(|e| e.to_string())?
                         .ok_or("sealed material reference missing")?;
-                let key = authority
+                let key = unlock
                     .material_key(read_conn, MaterialId(material.id))
                     .await?;
                 keys.insert(material.id, (key, reference.length));
             }
         }
-        let authority = o.authority.clone();
+        let unlock = o.unlock.clone();
         // The chain is read on a blocking thread while the writer admits its
         // batches as they come, a few at a time.
         let (sender, batches) = tokio::sync::mpsc::channel(READ_AHEAD);
@@ -226,7 +231,7 @@ pub async fn run(
                     operation,
                     &sender,
                     &keys,
-                    authority.as_ref(),
+                    unlock.as_ref(),
                 )
             })
         };
@@ -236,7 +241,7 @@ pub async fn run(
                 actor: o.actor.clone(),
                 scope: {
                     let mut value = scope.to_json();
-                    value["sealed"] = Value::Bool(o.authority.is_some());
+                    value["sealed"] = Value::Bool(o.unlock.is_some());
                     value
                 },
                 root,
@@ -362,11 +367,11 @@ fn read_chain(
     operation: OperationId,
     out: &tokio::sync::mpsc::Sender<Result<Batch, String>>,
     keys: &HashMap<Uuid, (sinex_store::sealed::DataKey, u64)>,
-    authority: Option<&crate::sealed_access::Authority>,
+    unlock: Option<&crate::sealed_access::Unlock>,
 ) -> Read {
     let mut read = Read::default();
     if let Err(error) = read_chain_into(
-        blobs, chain, parsers, in_scope, scope, operation, out, &mut read, keys, authority,
+        blobs, chain, parsers, in_scope, scope, operation, out, &mut read, keys, unlock,
     ) {
         // The writer may already have stopped reading; nothing else to tell.
         let _ = out.blocking_send(Err(error));
@@ -385,11 +390,11 @@ fn read_chain_into(
     out: &tokio::sync::mpsc::Sender<Result<Batch, String>>,
     report: &mut Read,
     keys: &HashMap<Uuid, (sinex_store::sealed::DataKey, u64)>,
-    authority: Option<&crate::sealed_access::Authority>,
+    unlock: Option<&crate::sealed_access::Unlock>,
 ) -> Result<(), String> {
     let send = |batch: Batch| {
-        if let Some(authority) = authority {
-            authority.check()?;
+        if let Some(unlock) = unlock {
+            unlock.check()?;
         }
         out.blocking_send(Ok(batch))
             .map_err(|_| "the writer stopped reading the chain".to_owned())
@@ -435,10 +440,10 @@ fn read_chain_into(
             ));
         }
         let key = keys.get(&m.id);
-        let retained = if let Some((key, length)) = key {
+        let stored = if let Some((key, length)) = key {
             use std::io::Seek;
-            let authority = authority
-                .ok_or("sealed replay requires scoped authority")?
+            let unlock = unlock
+                .ok_or("sealed replay needs an operator unlock")?
                 .clone();
             let sender = out.clone();
             let mut reader = blobs
@@ -448,7 +453,7 @@ fn read_chain_into(
                     key,
                     crate::sealed_access::read_limits(*length)?,
                     move || {
-                        authority.check().map_err(std::io::Error::other)?;
+                        unlock.check().map_err(std::io::Error::other)?;
                         if sender.is_closed() {
                             return Err(std::io::Error::other(
                                 "the writer stopped reading the chain",
@@ -462,7 +467,7 @@ fn read_chain_into(
             // Authenticate even bytes outside declared ranges before accepting this material.
             std::io::copy(&mut reader, &mut std::io::sink()).map_err(|e| e.to_string())?;
             reader.rewind().map_err(|e| e.to_string())?;
-            crate::retained::Retained::new(reader, *length)
+            crate::stored::StoredReader::new(reader, *length)
         } else {
             let mut file = tempfile::tempfile().map_err(|e| e.to_string())?;
             let sender = out.clone();
@@ -476,7 +481,7 @@ fn read_chain_into(
                 })
                 .map_err(|e| e.to_string())?;
             let sender = out.clone();
-            crate::retained::Retained::checked(file, length, move || {
+            crate::stored::StoredReader::checked(file, length, move || {
                 if sender.is_closed() {
                     Err(std::io::Error::other(
                         "the writer stopped reading the chain",
@@ -486,7 +491,7 @@ fn read_chain_into(
                 }
             })
         };
-        let records = retained.records(&m.manifest, source.spec().framer)?;
+        let records = stored.records(&m.manifest, source.spec().framer)?;
         let order = drivers::reading_order(&m.manifest);
         // Chunks are drained one at a time, so a material's events are never
         // all in memory at once. A material out of scope is still read for
@@ -496,7 +501,7 @@ fn read_chain_into(
                 source: source.spec().name,
                 class: source.spec().class,
                 material: MaterialId(m.id),
-                bytes: sinex_sources::drain::RecordBytes::Reader(&retained),
+                bytes: sinex_sources::drain::RecordBytes::Reader(&stored),
                 records: &records,
                 carry: carry.clone(),
                 reading_order: &*order,

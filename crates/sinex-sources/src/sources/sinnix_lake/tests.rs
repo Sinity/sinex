@@ -95,7 +95,7 @@ fn source_names_and_parsers_are_unique() {
 }
 
 #[devkit::test]
-fn known_payload_failures_are_not_uninterpreted_successes() {
+fn known_payload_failures_are_not_untyped_successes() {
     let parser = EnvelopeParser {
         lane: lane("desktop.clipboard").unwrap(),
     };
@@ -113,5 +113,5 @@ fn known_payload_failures_are_not_uninterpreted_successes() {
         .unwrap();
     let wire = serde_json::to_value(&out[0]).unwrap();
     assert_eq!(wire["payload"], extended["payload"]);
-    assert_eq!(wire["uninterpreted_fields"], json!(["/payload/future"]));
+    assert_eq!(wire["unknown_fields"], json!(["/payload/future"]));
 }

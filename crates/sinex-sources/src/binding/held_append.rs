@@ -7,7 +7,7 @@ use std::sync::Arc;
 
 type CursorAt = Arc<dyn Fn(usize) -> Result<Value, DriverError> + Send + Sync>;
 
-pub(super) struct Pending {
+pub(super) struct HeldAppend {
     reference: MaterialRef,
     stored: StoredBytes,
     records: Vec<(usize, usize)>,
@@ -24,7 +24,7 @@ pub(super) struct Pending {
 fn invalid(s: &str) -> DriverError {
     DriverError::Cursor(s.into())
 }
-impl Pending {
+impl HeldAppend {
     pub fn capture(acquired: Acquired, base: Value) -> Result<Self, DriverError> {
         let m = acquired
             .material
@@ -66,7 +66,7 @@ impl Pending {
         let c: crate::drivers::append_file::Cursor = serde_json::from_value(cursor.clone())
             .map_err(|_| invalid("invalid append resume cursor"))?;
         if c.material != Some(self.reference.id) || c.through as u64 > self.reference.length {
-            return Err(invalid("cursor does not belong to pending append material"));
+            return Err(invalid("cursor does not belong to held append material"));
         }
         if c.through as u64 == self.reference.length && cursor != &self.end {
             return Err(invalid(

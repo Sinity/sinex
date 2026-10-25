@@ -1,7 +1,7 @@
 //! Hyprland's event socket (`$XDG_RUNTIME_DIR/hypr/<instance>/.socket2.sock`),
 //! on `LiveStream`. Each line is `NAME>>DATA`. Hyprland keeps no history of
-//! these, so capture spools every line as it arrives and the stored line is
-//! the only record (`sn6s`).
+//! these, so capture spools every line as it arrives and the stored line is the
+//! only record.
 //!
 //! Hyprland sends many events twice, an old form and a `v2` form, for the
 //! same change. Exactly one form of each is read, the one with more

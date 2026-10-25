@@ -86,8 +86,8 @@ async fn sealed_material_encrypts_every_chunk_in_the_actual_admission_pipeline(
             .all(|entry| entry[1].as_array().is_some_and(|key| key.len() == 32) && entry[2] == 1)
     );
     assert!(
-        sink.state.lock().unwrap().pending.is_empty(),
-        "registered chunk keys are not retained indefinitely"
+        sink.state.lock().unwrap().unadmitted.is_empty(),
+        "registered chunk keys are not kept indefinitely"
     );
     ctx.close().await.unwrap();
     std::fs::remove_dir_all(&dir).unwrap();

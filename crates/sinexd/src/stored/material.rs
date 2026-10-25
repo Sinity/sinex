@@ -1,23 +1,23 @@
 //! Open a stored material's bytes for reading again: plain, or sealed with the
 //! operator's unlock.
-use super::Retained;
-use crate::sealed_access::Authority;
+use super::StoredReader;
+use crate::sealed_access::Unlock;
 use sinex_model::{MaterialId, MaterialRef};
 use sinex_sources::drain::RecordRead;
-use sinex_sources::drivers::RetainedRecords;
+use sinex_sources::drivers::StoredRecords;
 use sinex_store::{Blobs, sealed::DataKey};
 use sqlx::PgConnection;
 use std::{io::Seek, sync::Arc};
 
 pub(crate) struct Opened {
     pub reference: MaterialRef,
-    pub body: Arc<Retained>,
+    pub body: Arc<StoredReader>,
     /// The data key of a sealed material.
     pub key: Option<DataKey>,
 }
 impl Opened {
-    pub fn records(&self) -> RetainedRecords {
-        RetainedRecords {
+    pub fn records(&self) -> StoredRecords {
+        StoredRecords {
             blob: self.reference.blob.clone(),
             bytes: self.body.clone(),
         }
@@ -28,7 +28,7 @@ pub(crate) async fn open(
     conn: &mut PgConnection,
     blobs: &Blobs,
     material: MaterialId,
-    authority: Option<&Authority>,
+    unlock: Option<&Unlock>,
 ) -> Result<Opened, String> {
     let reference = sinex_store::material_bytes::reference(conn, material)
         .await
@@ -38,12 +38,12 @@ pub(crate) async fn open(
         .is_sealed(&reference.blob)
         .map_err(|e| e.to_string())?
     {
-        let authority = authority.ok_or("stored sealed material requires explicit unlock")?;
-        Some(authority.material_key(conn, material).await?)
+        let unlock = unlock.ok_or("stored sealed material requires explicit unlock")?;
+        Some(unlock.material_key(conn, material).await?)
     } else {
         None
     };
-    open_owned(blobs, reference, key, authority, Arc::new(|| Ok(())))
+    open_owned(blobs, reference, key, unlock, Arc::new(|| Ok(())))
 }
 
 /// A stored material's bytes, opened on the first read. A sealed material's
@@ -53,21 +53,21 @@ pub(crate) struct Lazy {
     reference: MaterialRef,
     sealed: bool,
     key: Option<DataKey>,
-    authority: Option<Authority>,
-    opened: std::sync::OnceLock<Result<Arc<Retained>, String>>,
+    unlock: Option<Unlock>,
+    opened: std::sync::OnceLock<Result<Arc<StoredReader>, String>>,
 }
 impl Lazy {
     pub async fn new(
         conn: &mut PgConnection,
         blobs: &Blobs,
         reference: MaterialRef,
-        authority: Option<&Authority>,
+        unlock: Option<&Unlock>,
     ) -> Result<Self, String> {
         let sealed = blobs
             .is_sealed(&reference.blob)
             .map_err(|e| e.to_string())?;
-        let key = match (sealed, authority) {
-            (true, Some(authority)) => Some(authority.material_key(conn, reference.id).await?),
+        let key = match (sealed, unlock) {
+            (true, Some(unlock)) => Some(unlock.material_key(conn, reference.id).await?),
             _ => None,
         };
         Ok(Self {
@@ -75,14 +75,14 @@ impl Lazy {
             reference,
             sealed,
             key,
-            authority: authority.cloned(),
+            unlock: unlock.cloned(),
             opened: std::sync::OnceLock::new(),
         })
     }
     pub fn sealed(&self) -> bool {
         self.sealed
     }
-    fn body(&self) -> std::io::Result<&Arc<Retained>> {
+    fn body(&self) -> std::io::Result<&Arc<StoredReader>> {
         self.opened
             .get_or_init(|| {
                 if self.sealed && self.key.is_none() {
@@ -92,7 +92,7 @@ impl Lazy {
                     &self.blobs,
                     self.reference.clone(),
                     self.key.clone(),
-                    self.authority.as_ref(),
+                    self.unlock.as_ref(),
                     Arc::new(|| Ok(())),
                 )
                 .map(|opened| opened.body)
@@ -114,11 +114,11 @@ fn open_owned(
     blobs: &Blobs,
     reference: MaterialRef,
     key: Option<DataKey>,
-    authority: Option<&Authority>,
+    unlock: Option<&Unlock>,
     check: super::ReadCheck,
 ) -> Result<Opened, String> {
     let caller_check = check;
-    let unlock = authority.cloned();
+    let unlock = unlock.cloned();
     let check: super::ReadCheck = Arc::new(move || {
         caller_check()?;
         if let Some(unlock) = &unlock {
@@ -142,7 +142,7 @@ fn open_owned(
         std::io::copy(&mut input, &mut std::io::sink()).map_err(|e| e.to_string())?;
         input.rewind().map_err(|e| e.to_string())?;
         let cancel = Arc::clone(&check);
-        Arc::new(Retained::checked(input, reference.length, move || {
+        Arc::new(StoredReader::checked(input, reference.length, move || {
             cancel().map_err(std::io::Error::other)
         }))
     } else {
@@ -152,7 +152,7 @@ fn open_owned(
             })
             .map_err(|e| e.to_string())?;
         let cancel = Arc::clone(&check);
-        Arc::new(Retained::checked(input, reference.length, move || {
+        Arc::new(StoredReader::checked(input, reference.length, move || {
             cancel().map_err(std::io::Error::other)
         }))
     };

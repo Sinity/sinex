@@ -1,4 +1,4 @@
-//! Table declarations for version 0 (architecture §3.6; spec `storage.md` §3).
+//! Table declarations for version 0.
 use crate::Checks;
 
 pub(crate) const SCHEMAS: &[&str] = &[
@@ -76,7 +76,7 @@ pub(crate) fn tables(c: &Checks) -> Vec<String> {
         "CREATE INDEX live_equivalence_event ON core.live_equivalence (event_id)".into(),
         "CREATE INDEX live_locations_event ON core.live_locations (event_id)".into(),
         // Hidden and excised occurrences, remembered so neither replay nor
-        // re-import brings them back (identity rule 6).
+        // re-import brings them back.
         "CREATE TABLE core.hidden_occurrences (
   id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
   source text NOT NULL,
@@ -92,8 +92,7 @@ pub(crate) fn tables(c: &Checks) -> Vec<String> {
 )".into(),
         "CREATE UNIQUE INDEX hidden_by_key ON core.hidden_occurrences (source, event_type, equivalence_key) WHERE equivalence_key IS NOT NULL".into(),
         "CREATE UNIQUE INDEX hidden_by_location ON core.hidden_occurrences (material_id, anchor, event_type, ordinal) WHERE material_id IS NOT NULL".into(),
-        // What an excision removed: identity and time, never the payload
-        // (spec storage.md §9).
+        // What an excision removed: identity and time, never the payload.
         "CREATE TABLE core.event_tombstones (
   event_id uuid PRIMARY KEY,
   source text NOT NULL,
@@ -140,15 +139,15 @@ pub(crate) fn tables(c: &Checks) -> Vec<String> {
   updated_at timestamptz NOT NULL DEFAULT now()
 )".into(),
         // Where each published event sits in the confirmed stream, so an
-        // excision can erase it there too: excision reaches every surface
-        // (architecture §3.4). The row goes once the message is erased.
+        // excision can erase it there too: excision reaches every surface. The
+        // row goes once the message is erased.
         "CREATE TABLE core.published (
   event_id uuid PRIMARY KEY,
   stream_seq bigint NOT NULL
 )".into(),
-        // Frames outside producers sent over the NATS ingress and what Sinex did
-        // with each, written by admission with the frame's events, so a producer
-        // can ask what Sinex holds (`mn8u`) and a redelivered frame is answered
+        // Frames outside producers sent over the NATS ingress and what Sinex
+        // did with each, written by admission with the frame's events, so a
+        // producer can ask what Sinex holds and a redelivered frame is answered
         // from here instead of admitted twice.
         "CREATE TABLE core.ingress_frames (
   producer text NOT NULL,
@@ -357,9 +356,9 @@ pub(crate) fn tables(c: &Checks) -> Vec<String> {
   since timestamptz NOT NULL DEFAULT now(),
   PRIMARY KEY (derivation, key)
 )".into(),
-        // The comparison lane (architecture §6.3): what a recompute of a
-        // derivation would change, computed without writing outputs, kept so a
-        // version change can be judged before it is applied.
+        // The comparison lane: what a recompute of a derivation would change,
+        // computed without writing outputs, kept so a version change can be
+        // judged before it is applied.
         "CREATE TABLE derivation.comparisons (
   id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
   derivation text NOT NULL,
@@ -374,10 +373,10 @@ pub(crate) fn tables(c: &Checks) -> Vec<String> {
   removed bigint NOT NULL,
   examples jsonb NOT NULL
 )".into(),
-        // Privacy rules (spec `privacy.md` §1 rule 2): insert-only. A change is
-        // a new row with the same name; a removal is a row with `ended`. The
-        // newest row per name is in force; `seq` orders the history, and each
-        // admitted run records the newest `seq` it was admitted under.
+        // Privacy rules: insert-only. A change is a new row with the same name;
+        // a removal is a row with `ended`. The newest row per name is in force;
+        // `seq` orders the history, and each admitted run records the newest
+        // `seq` it was admitted under.
         format!("CREATE TABLE privacy.rules (
   seq bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
   id uuid NOT NULL UNIQUE,
@@ -415,11 +414,10 @@ pub(crate) fn tables(c: &Checks) -> Vec<String> {
   wrapped_key bytea NOT NULL,
   created_at timestamptz NOT NULL DEFAULT now()
 )".into(),
-        // Full-text search read model (spec `query.md` §5, `storage.md`
-        // §3.11): each event's payload text, normalized (case-folded, NFC,
-        // words separated by single spaces), kept uncompressed apart from the
-        // hypertable. Rebuildable from the events; maintained from the commit
-        // log by its reader, never by a trigger.
+        // Full-text search read model: each event's payload text, normalized
+        // (case-folded, NFC, words separated by single spaces), kept
+        // uncompressed apart from the hypertable. Rebuildable from the events;
+        // maintained from the commit log by its reader, never by a trigger.
         "CREATE TABLE core.search_text (
   event_id uuid PRIMARY KEY,
   text text NOT NULL,
@@ -427,10 +425,10 @@ pub(crate) fn tables(c: &Checks) -> Vec<String> {
 )".into(),
         "CREATE INDEX search_text_tsv ON core.search_text USING gin (tsv)".into(),
         "CREATE INDEX search_text_trigram ON core.search_text USING gin (text gin_trgm_ops)".into(),
-        // The analysis layer (spec `analysis.md` §14). Metric values are a
-        // read model kept per unit, recomputed from dirty units; requests,
-        // attempts, results, their dependencies and status, and findings are
-        // the products. None of it is an event and all of it is rebuildable.
+        // The analysis layer. Metric values are a read model kept per unit,
+        // recomputed from dirty units; requests, attempts, results, their
+        // dependencies and status, and findings are the products. None of it is
+        // an event and all of it is rebuildable.
         "CREATE TABLE analysis.metric_values (
   metric text NOT NULL,
   metric_version integer NOT NULL,
@@ -541,8 +539,7 @@ pub(crate) fn tables(c: &Checks) -> Vec<String> {
 
 /// Hypertables, indexes and guards. Events are partitioned by `id` (UUIDv7, so
 /// chunks follow minting time) with chunk skipping on `ts_orig`, because
-/// `ts_orig` can be unknown and historical imports put old times in new chunks
-/// (spec `storage.md` §3.1).
+/// `ts_orig` can be unknown and historical imports put old times in new chunks.
 pub(crate) fn after_tables() -> Vec<String> {
     let mut out = vec![archive_history_function().into(), event_guard().into()];
     for table in ["core.events", "telemetry.events"] {

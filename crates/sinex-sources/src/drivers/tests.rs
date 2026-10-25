@@ -237,7 +237,7 @@ fn backfill_of_a_large_file_peaks_well_under_its_size() {
 }
 
 #[devkit::test]
-fn retained_original_length_does_not_replace_decoded_record_coordinates() {
+fn stored_original_length_does_not_replace_decoded_record_coordinates() {
     let source = DeclaredSource {
         spec: SourceSpec {
             name: "test.counting",
@@ -253,7 +253,7 @@ fn retained_original_length_does_not_replace_decoded_record_coordinates() {
     };
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("original");
-    std::fs::write(&path, b"synthetic retained archive envelope").unwrap();
+    std::fs::write(&path, b"synthetic stored archive envelope").unwrap();
     let bytes = b"decoded\n".to_vec();
     let decoded_len = bytes.len();
     let acquired = Acquired {
@@ -300,7 +300,7 @@ fn retained_original_length_does_not_replace_decoded_record_coordinates() {
     assert_eq!(progress.cursor["end"], decoded_len);
     assert_eq!(
         progress.material.unwrap().length,
-        b"synthetic retained archive envelope".len() as u64
+        b"synthetic stored archive envelope".len() as u64
     );
 }
 

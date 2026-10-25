@@ -1,7 +1,7 @@
-//! Text for full-text search (spec `query.md` §5): words split at Unicode
-//! word boundaries, case-folded and NFC-normalized, without stemming. The
-//! search read model stores a payload's text in this form and queries are
-//! normalized the same way, so the two always agree.
+//! Text for full-text search: words split at Unicode word boundaries,
+//! case-folded and NFC-normalized, without stemming. The search read model
+//! stores a payload's text in this form and queries are normalized the same
+//! way, so the two always agree.
 use serde_json::Value;
 use unicode_normalization::UnicodeNormalization;
 use unicode_segmentation::UnicodeSegmentation;

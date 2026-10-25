@@ -63,7 +63,7 @@ fn unknown_categories_and_columns_are_preserved_and_identified() {
     assert!(matches!(decoded.values, HealthValues::Unknown(_)));
     let output = serde_json::to_value(decoded).unwrap();
     assert_eq!(output["values"], original["values"]);
-    assert_eq!(output["uninterpreted"], true);
+    assert_eq!(output["untyped"], true);
     let original = row(
         "samsung-health",
         "hrv",
@@ -72,10 +72,7 @@ fn unknown_categories_and_columns_are_preserved_and_identified() {
     let decoded: HealthRecord = serde_json::from_value(original.clone()).unwrap();
     let output = serde_json::to_value(decoded).unwrap();
     assert_eq!(output["values"], original["values"]);
-    assert_eq!(
-        output["uninterpreted_fields"],
-        json!(["/values/new~1field"])
-    );
+    assert_eq!(output["unknown_fields"], json!(["/values/new~1field"]));
     assert_eq!(
         serde_json::to_value(serde_json::from_value::<HealthRecord>(output.clone()).unwrap())
             .unwrap(),
@@ -130,7 +127,7 @@ fn decoded_bins_preserve_extensions_without_hiding_bad_known_fields() {
     let output = serde_json::to_value(decoded).unwrap();
     assert_eq!(output["values"], original["values"]);
     assert_eq!(
-        output["uninterpreted_fields"],
+        output["unknown_fields"],
         json!(["/values/binning_data/0/extra"])
     );
 }
@@ -172,7 +169,7 @@ fn declared_samsung_categories_share_source_metadata_without_losing_fields() {
         let output = serde_json::to_value(decoded).unwrap();
         assert_eq!(output["values"], original["values"], "{category}");
         assert_eq!(
-            output["uninterpreted_fields"],
+            output["unknown_fields"],
             json!(["/values/new_column"]),
             "{category}"
         );
@@ -180,17 +177,17 @@ fn declared_samsung_categories_share_source_metadata_without_losing_fields() {
 }
 
 #[devkit::test]
-fn interpretation_markers_are_computed_from_values_not_input_claims() {
+fn markers_are_computed_from_values_not_taken_from_the_input() {
     let mut original = row("samsung-health", "hrv", json!({"score":7}));
-    original["uninterpreted"] = json!(true);
-    original["uninterpreted_fields"] = json!(["/values/score"]);
+    original["untyped"] = json!(true);
+    original["unknown_fields"] = json!(["/values/score"]);
     let output =
         serde_json::to_value(serde_json::from_value::<HealthRecord>(original).unwrap()).unwrap();
-    assert!(output.get("uninterpreted").is_none());
-    assert!(output.get("uninterpreted_fields").is_none());
+    assert!(output.get("untyped").is_none());
+    assert!(output.get("unknown_fields").is_none());
     let schema = serde_json::to_value(schemars::schema_for!(HealthRecord)).unwrap();
-    assert!(schema["properties"].get("uninterpreted").is_some());
-    assert!(schema["properties"].get("uninterpreted_fields").is_some());
+    assert!(schema["properties"].get("untyped").is_some());
+    assert!(schema["properties"].get("unknown_fields").is_some());
 }
 
 #[devkit::test]
@@ -289,10 +286,7 @@ fn unrecognized_bin_objects_are_explicit_but_invalid_scalar_bins_fail() {
         serde_json::to_value(serde_json::from_value::<HealthRecord>(original.clone()).unwrap())
             .unwrap();
     assert_eq!(output["values"], original["values"]);
-    assert_eq!(
-        output["uninterpreted_fields"],
-        json!(["/values/binning_data"])
-    );
+    assert_eq!(output["unknown_fields"], json!(["/values/binning_data"]));
     for invalid in [json!(true), json!(4)] {
         assert!(
             serde_json::from_value::<HealthRecord>(row(

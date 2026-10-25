@@ -11,14 +11,14 @@
 //!   `time_offset` is the local offset in milliseconds.
 //! - Any other table (alarms, settings, backups, store and membership
 //!   records) is an `account.record` of its service and table, every column
-//!   kept, a JSON column decoded. These tables remain explicitly uninterpreted
+//!   kept, a JSON column decoded. These tables stay explicitly untyped
 //!   until a declared table schema is implemented. `KEY`, `_id` or `id` identifies the
 //!   row, else a hash of it; `CREATETIME`, `TIMESTAMP` or `create_time` dates
 //!   it.
 //!
 //! Two tables are not read here. Samsung Pass holds saved credentials, so its
-//! privacy class is the operator's call (`zpa`) before anything is stored;
-//! SMS is read by `communication.samsung-sms`.
+//! privacy class is the operator's call before anything is stored; SMS is read
+//! by `communication.samsung-sms`.
 use crate::drivers::export_archive::{ExportArchive, Framing, PART_BYTES};
 use crate::registry::{DeclaredSource, Driver, SourceSpec};
 use crate::sources::fields;

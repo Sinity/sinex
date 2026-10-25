@@ -371,7 +371,7 @@ fn the_reader_retries_its_held_answer_without_asking_the_server_again() {
     let port = server(vec![(4, M1), (7, M2)], 99, false);
     let mut reader = ImapReader {
         mail: mail(port, Some("secret"), None),
-        pending: None,
+        held: None,
     };
     let first = reader.poll(&Value::Null).unwrap();
     let material = first.material.unwrap();

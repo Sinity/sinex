@@ -1,8 +1,7 @@
-//! SMS from the Samsung account export (`SMS/SMS_*.csv`), on `ExportArchive`
-//! (`spec/port-lynchpin-sources.md` §7.4). Each row's `VALUE` cell is a JSON
-//! string holding the message object (`_id, thread_id, address, date (ms),
-//! body, type`: 1 received, 2 sent, 3 draft). Drafts are kept, marked as
-//! such.
+//! SMS from the Samsung account export (`SMS/SMS_*.csv`), on `ExportArchive`.
+//! Each row's `VALUE` cell is a JSON string holding the message object (`_id,
+//! thread_id, address, date (ms), body, type`: 1 received, 2 sent, 3 draft).
+//! Drafts are kept, marked as such.
 use crate::drivers::export_archive::{ExportArchive, Framing, PART_BYTES};
 use crate::registry::{DeclaredSource, Driver, SourceSpec};
 use crate::sources::fields;

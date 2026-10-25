@@ -1,8 +1,8 @@
-//! Units and their fields (spec `query.md` §3). Every unit is one table of
-//! fields; the parser, the compiler, the read-back and every surface read the
-//! same table, so they cannot disagree. The SQL each field lowers to lives in
-//! `sinex-store::query`, keyed by unit and field name, and a test there checks
-//! that every field here has one.
+//! Units and their fields. Every unit is one table of fields; the parser, the
+//! compiler, the read-back and every surface read the same table, so they
+//! cannot disagree. The SQL each field lowers to lives in `sinex-store::query`,
+//! keyed by unit and field name, and a test there checks that every field here
+//! has one.
 use crate::{Class, DbCheck, RecordState, TimeQuality};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -262,9 +262,8 @@ impl Unit {
     }
 }
 
-/// A unit alias: `events` with fixed kinds and a few promoted fields
-/// (spec `query.md` §3.6). Adding one is a line here and its field SQL in the
-/// store; never a code path.
+/// A unit alias: `events` with fixed kinds and a few promoted fields. Adding
+/// one is a line here and its field SQL in the store; never a code path.
 #[derive(Debug, PartialEq)]
 pub struct Alias {
     pub name: &'static str,
@@ -452,8 +451,8 @@ impl Alias {
     }
 }
 
-/// Words that start a command rather than a query (spec `query.md` §2): a
-/// query beginning with one is that command, never a search for the word.
+/// Words that start a command rather than a query: a query beginning with one
+/// is that command, never a search for the word.
 pub const COMMAND_WORDS: &[&str] = &[
     "recall",
     "panel",

@@ -1,6 +1,6 @@
-//! Admission laws (architecture §11): one live reading per location and key;
-//! newer replaces, older suppresses; hidden stays hidden across re-admission;
-//! events and progress commit together. Run against a real database.
+//! Admission laws: one live reading per location and key; newer replaces, older
+//! suppresses; hidden stays hidden across re-admission; events and progress
+//! commit together. Run against a real database.
 use super::*;
 use proptest::prelude::*;
 use serde_json::json;
@@ -171,7 +171,7 @@ async fn newer_replaces_older_suppresses_one_live_per_key() {
 
 /// Ties on reading order are decided by content, never by arrival: the same
 /// readings admitted one batch each in either order, or together in either
-/// order, leave the same live readings (sxnext-9zw.24).
+/// order, leave the same live readings.
 #[devkit::test]
 async fn equal_reading_orders_are_decided_by_content_not_arrival(db: devkit::pg::TestDatabase) {
     let mut conn = <sqlx::PgConnection as sqlx::Connection>::connect(&db.url(None))

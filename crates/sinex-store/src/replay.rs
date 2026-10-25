@@ -1,8 +1,8 @@
-//! Replay's statements (architecture §5.5). A replay re-reads stored
-//! materials with the current parsers and rules: the readings it re-reads are
-//! archived and the new ones admitted, one transaction per material chain, so
-//! a failure changes nothing and a crash leaves every chain either replayed
-//! or untouched. Finished chains are journaled; a resumed replay skips them.
+//! Replay's statements. A replay re-reads stored materials with the current
+//! parsers and rules: the readings it re-reads are archived and the new ones
+//! admitted, one transaction per material chain, so a failure changes nothing
+//! and a crash leaves every chain either replayed or untouched. Finished chains
+//! are journaled; a resumed replay skips them.
 //!
 //! The comparison lane is the same transaction rolled back: the writer runs
 //! the whole replay, reads the [`Diff`] between the archived and the new live

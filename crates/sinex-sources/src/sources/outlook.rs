@@ -7,10 +7,10 @@
 //! converted mbox is what Sinex stores and replays; its material path names the
 //! PST and the folder it came from. The PST stays where the operator keeps it.
 //!
-//! The CSV export carries no message ID and no date, only the people,
-//! subject, body and a few Outlook fields. Each row is one message identified
-//! by a hash of its decoded cells; the same message in the PST is a separate
-//! record, combined by fusion if at all (architecture §3.3 rule 5).
+//! The CSV export carries no message ID and no date, only the people, subject,
+//! body and a few Outlook fields. Each row is one message identified by a hash
+//! of its decoded cells; the same message in the PST is a separate record,
+//! combined by fusion if at all.
 use crate::drivers::export_archive::{ExportArchive, Framing, PART_BYTES};
 use crate::registry::{DeclaredSource, Driver, SourceSpec};
 use crate::sources::{fields, mail};

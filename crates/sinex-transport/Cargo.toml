@@ -1,6 +1,6 @@
 [package]
 name = "sinex-transport"
-description = "Filesystem transport shared by Sinex and its outside producers: the producer byte handoff and the private-mode switch."
+description = "Filesystem transport shared by Sinex and its outside producers: the producer spool and the private-mode switch."
 version.workspace = true
 edition.workspace = true
 publish.workspace = true

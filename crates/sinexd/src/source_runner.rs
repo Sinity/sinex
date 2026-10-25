@@ -1,9 +1,9 @@
-//! The binding runner (architecture §7.3, §7.4): every binding the sources
-//! configuration enables, read continuously through the writer. Bindings are
-//! planned by their source's kind from the configured paths, recorded with
-//! their settings, and read in turn; a binding that fails is reported and
-//! retried on the next round, never stopping the others or the daemon.
-//! Private mode pauses every read until it is off again.
+//! The binding runner: every binding the sources configuration enables, read
+//! continuously through the writer. Bindings are planned by their source's kind
+//! from the configured paths, recorded with their settings, and read in turn; a
+//! binding that fails is reported and retried on the next round, never stopping
+//! the others or the daemon. Private mode pauses every read until it is off
+//! again.
 use crate::binding_reader::{self, Bound};
 use crate::one_shot::Sink;
 use crate::writer::WriterHandle;

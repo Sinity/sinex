@@ -47,7 +47,8 @@ impl Library<'_> {
             if let Some(dir) = target.parent() {
                 std::fs::create_dir_all(dir).map_err(e)?;
             }
-            // Plain media streams to the cache; delta content still uses its legacy whole read.
+            // Plain media streams to the cache; delta-encoded content is
+            // decoded whole first.
             let tmp = target.with_extension("partial");
             let mut file = std::io::BufWriter::new(std::fs::File::create(&tmp).map_err(e)?);
             blobs.copy_to(&content, &mut file).map_err(e)?;

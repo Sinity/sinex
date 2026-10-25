@@ -1,6 +1,5 @@
 //! Half-open time spans in microseconds since the Unix epoch, and unions of
-//! them. Durations are always unions, never sums of overlapping windows
-//! (`analysis.md` §4.2, law `UnionDuration`).
+//! them. Durations are always unions, never sums of overlapping windows.
 use serde::{Deserialize, Serialize};
 
 pub const MICROS_PER_SECOND: i64 = 1_000_000;

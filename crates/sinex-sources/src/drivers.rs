@@ -1,5 +1,5 @@
-//! Drivers (architecture §5.3): each obtains bytes for one input shape and
-//! frames them, written once and shared by every source of that shape.
+//! Drivers: each obtains bytes for one input shape and frames them, written
+//! once and shared by every source of that shape.
 //!
 //! A driver's poll returns [`Acquired`]: the observation, the new material's
 //! bytes and framed records, and how to compute the cursor after any record.
@@ -58,16 +58,16 @@ pub struct Acquired {
     pub cursor_unchanged: Value,
 }
 
-/// Bytes already retained independently from the current decoded records.
+/// Bytes already stored, apart from the current decoded records.
 #[derive(Clone)]
 pub enum StoredBytes {
     File(std::path::PathBuf),
-    /// Authoritative framed bytes, staged in an unnamed owned file. The
+    /// The framed bytes, staged in an unnamed owned file. The
     /// decoded record body is read from this file, not `NewMaterial::bytes`.
     FramedFile(std::sync::Arc<std::fs::File>),
-    /// Owned decoded bytes retained across retries without copying the body.
+    /// Owned decoded bytes kept across retries without copying the body.
     FramedMemory(std::sync::Arc<Vec<u8>>),
-    FramedReader(RetainedRecords),
+    FramedReader(StoredRecords),
     Blob {
         name: String,
         length: u64,
@@ -94,13 +94,13 @@ impl std::fmt::Debug for StoredBytes {
 }
 
 #[derive(Clone)]
-pub struct RetainedRecords {
+pub struct StoredRecords {
     pub blob: String,
     pub bytes: std::sync::Arc<dyn crate::drain::RecordRead>,
 }
-impl std::fmt::Debug for RetainedRecords {
+impl std::fmt::Debug for StoredRecords {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("RetainedRecords")
+        f.debug_struct("StoredRecords")
             .field("blob", &self.blob)
             .field("length", &self.bytes.length())
             .finish()
@@ -112,7 +112,7 @@ pub struct NewMaterial {
     /// In-memory decoded record bytes. `FramedFile` supplies these ranges
     /// from its owned file instead; its `bytes` vector stays empty.
     pub bytes: Vec<u8>,
-    /// Retained backing. `File` and `Blob` may hold an original export while
+    /// Where the stored bytes are. `File` and `Blob` may hold an original export while
     /// `bytes` holds its decoded stream. `FramedFile` supplies both the stored
     /// body and the record ranges, without a second in-memory copy.
     pub stored: Option<StoredBytes>,
@@ -122,7 +122,7 @@ pub struct NewMaterial {
     pub manifest: Value,
     /// Which of two readings is newer, by the record's anchor.
     pub reading_order: Box<dyn Fn(usize) -> ReadingOrder + Send + Sync>,
-    /// The cursor after this record. Retained backing failures refuse the
+    /// The cursor after this record. Failures reading the stored bytes refuse the
     /// batch before its progress or readings become visible.
     pub cursor_at: Box<dyn Fn(usize) -> Result<Value, DriverError> + Send + Sync>,
     /// A rewrite aligned against the previous revision: `records` holds only
@@ -136,13 +136,13 @@ pub struct NewMaterial {
 }
 
 impl NewMaterial {
-    fn decoded_len(&self, retained_len: u64) -> usize {
+    fn decoded_len(&self, stored_len: u64) -> usize {
         match self.stored {
             Some(
                 StoredBytes::FramedFile(_)
                 | StoredBytes::FramedMemory(_)
                 | StoredBytes::FramedReader(_),
-            ) => retained_len as usize,
+            ) => stored_len as usize,
             _ => self.bytes.len(),
         }
     }
@@ -151,8 +151,8 @@ impl NewMaterial {
         match &self.stored {
             Some(StoredBytes::FramedFile(file)) => crate::drain::RecordBytes::File(file),
             Some(StoredBytes::FramedMemory(bytes)) => bytes.as_slice().into(),
-            Some(StoredBytes::FramedReader(retained)) => {
-                crate::drain::RecordBytes::Reader(retained.bytes.as_ref())
+            Some(StoredBytes::FramedReader(stored)) => {
+                crate::drain::RecordBytes::Reader(stored.bytes.as_ref())
             }
             _ => self.bytes.as_slice().into(),
         }
@@ -229,7 +229,7 @@ pub fn prepare<'s>(
                         .map_err(|e| DriverError::Io(e.to_string()))?
                         .len();
                     // Linux exposes the live unnamed file without giving it a crash-leaking
-                    // directory entry. The Arc retains it through storage and draining.
+                    // directory entry. The Arc keeps it open through storage and draining.
                     let path =
                         std::path::PathBuf::from(format!("/proc/self/fd/{}", file.as_raw_fd()));
                     (sink.put_file(&path).map_err(DriverError::Store)?, length)
@@ -238,8 +238,8 @@ pub fn prepare<'s>(
                     sink.put(bytes).map_err(DriverError::Store)?,
                     bytes.len() as u64,
                 ),
-                Some(StoredBytes::FramedReader(retained)) => {
-                    (retained.blob.clone(), retained.bytes.length())
+                Some(StoredBytes::FramedReader(stored)) => {
+                    (stored.blob.clone(), stored.bytes.length())
                 }
                 Some(StoredBytes::Blob { name, length }) => (name.clone(), *length),
                 None => (

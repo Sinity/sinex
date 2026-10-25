@@ -84,7 +84,7 @@ fn a_restart_with_rebuilt_memory_stores_nothing_new() {
     // A new process: the state comes back from the stored part.
     let mut rebuilt = RowState::default();
     rebuilt.remember_rows(&material_bytes(m));
-    assert!(state.hashes.is_empty(), "unconfirmed hashes remain pending");
+    assert!(state.hashes.is_empty(), "unconfirmed hashes stay held");
     let again = d.poll(&cursor, &mut rebuilt).unwrap();
     assert!(
         again.material.is_none(),
@@ -105,7 +105,7 @@ fn a_restart_with_rebuilt_memory_stores_nothing_new() {
     );
 }
 
-/// L20: a finished row changed while Sinex was down (Atuin's soft
+/// A finished row changed while Sinex was down (Atuin's soft
 /// delete) is read on the first poll after the restart, though the
 /// rebuilt state is not empty and the row is outside the open window.
 #[devkit::test]

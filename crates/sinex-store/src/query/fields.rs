@@ -1,6 +1,6 @@
-//! The SQL each field of each unit lowers to (spec `query.md` §3), keyed by
-//! the field names in `sinex_model::query::units`. A test checks that every
-//! field there has an entry here.
+//! The SQL each field of each unit lowers to, keyed by the field names in
+//! `sinex_model::query::units`. A test checks that every field there has an
+//! entry here.
 //!
 //! Templates name the unit's table alias `{t}` and, for the archive, the
 //! archive row `{a}`; the compiler substitutes a distinct alias per nesting

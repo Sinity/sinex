@@ -89,8 +89,8 @@ pub fn table(columns: &[String], rows: &[Value], local: &Local) -> String {
     out
 }
 
-/// An answer (spec `query.md` §10): its reading, the rows, and a footer with
-/// counts and the next cursor.
+/// An answer: its reading, the rows, and a footer with counts and the next
+/// cursor.
 pub fn answer(result: &Value, local: &Local, next_hint: Option<&str>) -> String {
     let mut out = String::new();
     if let Some(r) = result["read_as"].as_str() {

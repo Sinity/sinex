@@ -60,7 +60,7 @@ async fn a_reread_source_leaves_the_excised_record_out_of_its_new_bytes(
     .await
     .unwrap();
     db.execute(
-        "UPDATE history SET cwd='/updated-private-stage-control' WHERE id='native-2'",
+        "UPDATE history SET cwd='/updated-private-stage' WHERE id='native-2'",
         [],
     )
     .unwrap();
@@ -124,7 +124,7 @@ async fn a_reread_source_leaves_the_excised_record_out_of_its_new_bytes(
             compare: false,
             resume: None,
             actor: "synthetic".into(),
-            authority: None,
+            unlock: None,
         },
     )
     .await

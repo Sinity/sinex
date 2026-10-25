@@ -253,7 +253,7 @@ fn short_records_are_bounded_by_count_within_one_material() {
 }
 
 #[devkit::test]
-fn rewrite_replace_and_truncate_keep_the_parser_predecessor_and_reset_byte_offsets() {
+fn rewrite_replace_and_truncate_keep_the_previous_parser_chain_and_reset_byte_offsets() {
     for change in [
         RevisionChange::Rewritten,
         RevisionChange::Replaced,
@@ -291,7 +291,7 @@ fn rewrite_replace_and_truncate_keep_the_parser_predecessor_and_reset_byte_offse
     }
 }
 #[devkit::test]
-fn incomplete_rewrite_keeps_the_old_parser_cut_and_its_pending_physical_revision_kind() {
+fn incomplete_rewrite_keeps_the_old_parser_cut_and_its_unrecorded_rewrite_kind() {
     let path = temp("history");
     std::fs::write(&path, b"old-long-record\n").unwrap();
     let driver = AppendFile {
@@ -309,7 +309,10 @@ fn incomplete_rewrite_keeps_the_old_parser_cut_and_its_pending_physical_revision
     let checkpoint: Cursor = serde_json::from_value(pending.cursor_unchanged.clone()).unwrap();
     assert_eq!(checkpoint.material, Some(m.id));
     assert_eq!(checkpoint.through, m.bytes.len());
-    assert_eq!(checkpoint.pending_revision, Some(RevisionChange::Truncated));
+    assert_eq!(
+        checkpoint.unrecorded_rewrite,
+        Some(RevisionChange::Truncated)
+    );
     std::fs::write(&path, b"part-completed\n").unwrap();
     let next = driver.poll(&pending.cursor_unchanged, &mut state).unwrap();
     assert_eq!(next.revision, RevisionChange::Truncated);

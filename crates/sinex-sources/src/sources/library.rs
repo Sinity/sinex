@@ -1,4 +1,4 @@
-//! The media library's two sources (architecture §6.6).
+//! The media library's two sources.
 //!
 //! **Scan** (`library.scan`): a walk of a library root. Each new or changed
 //! file is hashed once (BLAKE3, SHA-256, MD5), its type sniffed from its
@@ -567,7 +567,7 @@ fn walk(root: &Path, dir: &Path, found: &mut Found) -> Result<(), DriverError> {
             continue;
         }
         // Symlinks are not followed: a link can point anywhere, including
-        // outside the root (the predecessor's containment rule, `kv6l`).
+        // outside the root.
         let Ok(meta) = std::fs::symlink_metadata(&path) else {
             continue;
         };
@@ -757,7 +757,7 @@ pub fn dimensions(head: &[u8], media_type: &str) -> (Option<u32>, Option<u32>, O
 }
 
 /// Width, height and duration from `ffprobe`, when it is installed. Media
-/// decoding uses existing implementations (spec `library.md` §1).
+/// decoding uses existing implementations.
 fn ffprobe(path: &Path) -> Option<(Option<u32>, Option<u32>, Option<u64>)> {
     let out = std::process::Command::new("ffprobe")
         .args([
@@ -851,8 +851,8 @@ fn request_manifest(actor: &str, host: &str, at: Timestamp, action: &str) -> Val
     })
 }
 
-/// Payload bytes stay the registered library shape. A request's frozen
-/// acquisition facts additionally retain ownership of a prepared rendition.
+/// Payload bytes stay the registered library shape. A request's acquisition
+/// facts also make its event cite the prepared rendition.
 pub struct RequestPayload {
     record: LibraryRecord,
     citation: Option<sinex_model::Cited>,

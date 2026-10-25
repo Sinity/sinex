@@ -1,10 +1,9 @@
-//! Privacy rules run in admission, once (architecture §3.5; spec `privacy.md`
-//! §1). A rule names a source, optionally an event type and a payload field by
-//! JSON Pointer, one matcher and one action. Rules are insert-only rows: a
-//! change inserts a new version and a removal inserts its end, so the rule set
-//! in force at any moment can be read back, and every admitted run records the
-//! rule-set position it was admitted under. Reads never apply a rule again; a
-//! new rule reaches old data by replay.
+//! Privacy rules run in admission, once. A rule names a source, optionally an
+//! event type and a payload field by JSON Pointer, one matcher and one action.
+//! Rules are insert-only rows: a change inserts a new version and a removal
+//! inserts its end, so the rule set in force at any moment can be read back,
+//! and every admitted run records the rule-set position it was admitted under.
+//! Reads never apply a rule again; a new rule reaches old data by replay.
 //!
 //! Each source also has a class floor: the class its declaration gives, raised
 //! by the operator's per-source setting. No event is admitted below its
@@ -266,7 +265,7 @@ fn iban_valid(s: &str) -> bool {
 }
 
 impl RuleSet {
-    /// A rule set held in memory (tests, the shadow audit's candidate rules).
+    /// A rule set held in memory (tests, and proposed rules being audited).
     pub fn new(rules: Vec<Rule>, floors: HashMap<String, Class>, hash_key: [u8; 32]) -> Self {
         Self {
             seq: 0,
@@ -673,9 +672,9 @@ pub async fn list_rules(conn: &mut PgConnection, history: bool) -> Result<Vec<Ru
         .collect())
 }
 
-/// Events whose class is below what their source's floor or the rules in
-/// force now give them (admitted before a rule or floor changed): the class
-/// verification (old `rkv.12`). A replay brings them up.
+/// Events whose class is below what their source's floor or the rules in force
+/// now give them (admitted before a rule or floor changed): the class
+/// verification. A replay brings them up.
 #[derive(Clone, Debug, Default, serde::Serialize)]
 pub struct Verification {
     pub checked: u64,

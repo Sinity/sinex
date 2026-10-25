@@ -1,6 +1,5 @@
 //! Tables kept only to make reads fast, rebuildable, maintained by their
-//! consumers through the commit-log reader, never by database triggers
-//! (architecture §3.6, `nbi.3`).
+//! consumers through the commit-log reader, never by database triggers.
 use crate::Result;
 use crate::commit_log::{self, Committed};
 use sinex_model::query::text::payload_text;

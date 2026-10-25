@@ -12,7 +12,7 @@ pub struct Idle {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub provenance: Option<Option<Provenance>>,
     #[serde(flatten)]
-    pub(crate) uninterpreted: Map<String, Value>,
+    pub(crate) unknown: Map<String, Value>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
@@ -30,7 +30,7 @@ pub struct Provenance {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub other_session_dbus: Option<Option<Unavailable>>,
     #[serde(flatten)]
-    pub(crate) uninterpreted: Map<String, Value>,
+    pub(crate) unknown: Map<String, Value>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
@@ -48,7 +48,7 @@ pub struct ClientInventory {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub inhibitors: Option<Option<Vec<Window>>>,
     #[serde(flatten)]
-    pub(crate) uninterpreted: Map<String, Value>,
+    pub(crate) unknown: Map<String, Value>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
@@ -66,7 +66,7 @@ pub struct SystemInhibitors {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub inhibitors: Option<Option<Vec<SystemInhibitor>>>,
     #[serde(flatten)]
-    pub(crate) uninterpreted: Map<String, Value>,
+    pub(crate) unknown: Map<String, Value>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
@@ -84,7 +84,7 @@ pub struct ActiveWindow {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub window: Option<Option<Window>>,
     #[serde(flatten)]
-    pub(crate) uninterpreted: Map<String, Value>,
+    pub(crate) unknown: Map<String, Value>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
@@ -99,7 +99,7 @@ pub struct Unavailable {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub exit_code: Option<Option<i64>>,
     #[serde(flatten)]
-    pub(crate) uninterpreted: Map<String, Value>,
+    pub(crate) unknown: Map<String, Value>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
@@ -120,7 +120,7 @@ pub struct Window {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub workspace: Option<Option<Workspace>>,
     #[serde(flatten)]
-    pub(crate) uninterpreted: Map<String, Value>,
+    pub(crate) unknown: Map<String, Value>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
@@ -132,7 +132,7 @@ pub struct Workspace {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub name: Option<Option<String>>,
     #[serde(flatten)]
-    pub(crate) uninterpreted: Map<String, Value>,
+    pub(crate) unknown: Map<String, Value>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
@@ -156,90 +156,90 @@ pub struct SystemInhibitor {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub uid: Option<Option<i64>>,
     #[serde(flatten)]
-    pub(crate) uninterpreted: Map<String, Value>,
+    pub(crate) unknown: Map<String, Value>,
 }
 
 impl Idle {
-    pub(crate) fn collect_uninterpreted(&self, path: &str, fields: &mut Vec<String>) {
-        super::extend_fields(&self.uninterpreted, path, fields);
+    pub(crate) fn collect_unknown(&self, path: &str, fields: &mut Vec<String>) {
+        super::extend_fields(&self.unknown, path, fields);
         if let Some(Some(value)) = &self.provenance {
-            value.collect_uninterpreted(&format!("{path}/provenance"), fields);
+            value.collect_unknown(&format!("{path}/provenance"), fields);
         }
     }
 }
 
 impl Provenance {
-    pub(crate) fn collect_uninterpreted(&self, path: &str, fields: &mut Vec<String>) {
-        super::extend_fields(&self.uninterpreted, path, fields);
+    pub(crate) fn collect_unknown(&self, path: &str, fields: &mut Vec<String>) {
+        super::extend_fields(&self.unknown, path, fields);
         if let Some(Some(value)) = &self.hyprland_clients {
-            value.collect_uninterpreted(&format!("{path}/hyprland_clients"), fields);
+            value.collect_unknown(&format!("{path}/hyprland_clients"), fields);
         }
         if let Some(Some(value)) = &self.systemd_logind {
-            value.collect_uninterpreted(&format!("{path}/systemd_logind"), fields);
+            value.collect_unknown(&format!("{path}/systemd_logind"), fields);
         }
         if let Some(Some(value)) = &self.active_window {
-            value.collect_uninterpreted(&format!("{path}/active_window"), fields);
+            value.collect_unknown(&format!("{path}/active_window"), fields);
         }
         if let Some(Some(value)) = &self.other_session_dbus {
-            value.collect_uninterpreted(&format!("{path}/other_session_dbus"), fields);
+            value.collect_unknown(&format!("{path}/other_session_dbus"), fields);
         }
     }
 }
 
 impl ClientInventory {
-    pub(crate) fn collect_uninterpreted(&self, path: &str, fields: &mut Vec<String>) {
-        super::extend_fields(&self.uninterpreted, path, fields);
+    pub(crate) fn collect_unknown(&self, path: &str, fields: &mut Vec<String>) {
+        super::extend_fields(&self.unknown, path, fields);
         if let Some(Some(values)) = &self.inhibitors {
             for (i, value) in values.iter().enumerate() {
-                value.collect_uninterpreted(&format!("{path}/inhibitors/{i}"), fields);
+                value.collect_unknown(&format!("{path}/inhibitors/{i}"), fields);
             }
         }
     }
 }
 
 impl SystemInhibitors {
-    pub(crate) fn collect_uninterpreted(&self, path: &str, fields: &mut Vec<String>) {
-        super::extend_fields(&self.uninterpreted, path, fields);
+    pub(crate) fn collect_unknown(&self, path: &str, fields: &mut Vec<String>) {
+        super::extend_fields(&self.unknown, path, fields);
         if let Some(Some(values)) = &self.inhibitors {
             for (i, value) in values.iter().enumerate() {
-                value.collect_uninterpreted(&format!("{path}/inhibitors/{i}"), fields);
+                value.collect_unknown(&format!("{path}/inhibitors/{i}"), fields);
             }
         }
     }
 }
 
 impl ActiveWindow {
-    pub(crate) fn collect_uninterpreted(&self, path: &str, fields: &mut Vec<String>) {
-        super::extend_fields(&self.uninterpreted, path, fields);
+    pub(crate) fn collect_unknown(&self, path: &str, fields: &mut Vec<String>) {
+        super::extend_fields(&self.unknown, path, fields);
         if let Some(Some(value)) = &self.window {
-            value.collect_uninterpreted(&format!("{path}/window"), fields);
+            value.collect_unknown(&format!("{path}/window"), fields);
         }
     }
 }
 
 impl Unavailable {
-    pub(crate) fn collect_uninterpreted(&self, path: &str, fields: &mut Vec<String>) {
-        super::extend_fields(&self.uninterpreted, path, fields);
+    pub(crate) fn collect_unknown(&self, path: &str, fields: &mut Vec<String>) {
+        super::extend_fields(&self.unknown, path, fields);
     }
 }
 
 impl Window {
-    pub(crate) fn collect_uninterpreted(&self, path: &str, fields: &mut Vec<String>) {
-        super::extend_fields(&self.uninterpreted, path, fields);
+    pub(crate) fn collect_unknown(&self, path: &str, fields: &mut Vec<String>) {
+        super::extend_fields(&self.unknown, path, fields);
         if let Some(Some(value)) = &self.workspace {
-            value.collect_uninterpreted(&format!("{path}/workspace"), fields);
+            value.collect_unknown(&format!("{path}/workspace"), fields);
         }
     }
 }
 
 impl Workspace {
-    pub(crate) fn collect_uninterpreted(&self, path: &str, fields: &mut Vec<String>) {
-        super::extend_fields(&self.uninterpreted, path, fields);
+    pub(crate) fn collect_unknown(&self, path: &str, fields: &mut Vec<String>) {
+        super::extend_fields(&self.unknown, path, fields);
     }
 }
 
 impl SystemInhibitor {
-    pub(crate) fn collect_uninterpreted(&self, path: &str, fields: &mut Vec<String>) {
-        super::extend_fields(&self.uninterpreted, path, fields);
+    pub(crate) fn collect_unknown(&self, path: &str, fields: &mut Vec<String>) {
+        super::extend_fields(&self.unknown, path, fields);
     }
 }

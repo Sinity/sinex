@@ -1,6 +1,6 @@
-//! Benjamini-Hochberg q-values across a declared family (`analysis.md` §6.3).
-//! The family is fixed before results are seen, and cells that produced no
-//! estimate stay in it as non-findings rather than shrinking it.
+//! Benjamini-Hochberg q-values across a declared family. The family is fixed
+//! before results are seen, and cells that produced no estimate stay in it as
+//! non-findings rather than shrinking it.
 
 /// q-values for `p`, in the input order. `None` entries (cells that were not
 /// estimable) count toward the family size and get no q.

@@ -24,13 +24,14 @@ impl Default for Limits {
     }
 }
 
-/// Random-access retained records. Implementations keep their verified backing open.
+/// Random-access stored records. Implementations keep their verified reader
+/// open.
 pub trait RecordRead: Send + Sync {
     fn length(&self) -> u64;
     fn read_exact_at(&self, start: u64, bytes: &mut [u8]) -> std::io::Result<()>;
 }
 
-/// Borrowed record storage. File reads retain only the current decoded record.
+/// Borrowed record storage. File reads hold only the current decoded record.
 pub enum RecordBytes<'a> {
     Slice(&'a [u8]),
     File(&'a std::fs::File),

@@ -137,16 +137,17 @@ impl Blobs {
         Ok(out)
     }
 
-    /// Copy verified content into `out`. Plain blobs use bounded sequential reads; the
-    /// legacy delta read still materializes the decoded body. Sealed blobs require a key
-    /// and are refused here. Returns the number of bytes written.
+    /// Copy verified content into `out`. Plain blobs use bounded sequential
+    /// reads; a delta-encoded blob is decoded whole first. Sealed blobs require
+    /// a key and are refused here. Returns the number of bytes written.
     pub fn copy_to(&self, name: &str, out: &mut impl std::io::Write) -> Result<u64> {
         self.copy_to_checked(name, out, || Ok(()))
     }
 
     /// Copy one verified representation with cancellation during plain reads.
-    /// Legacy deltas still decode their body in the shared reader; cancellation is
-    /// checked before and after that decode. Sealed bytes require the keyed API.
+    /// Delta-encoded blobs decode their body whole in the shared reader;
+    /// cancellation is checked before and after that decode. Sealed bytes
+    /// require the keyed API.
     pub fn copy_to_checked(
         &self,
         name: &str,
@@ -168,8 +169,8 @@ impl Blobs {
         copied.map_err(|e| crate::Error::Invalid(format!("read {name}: {e}")))
     }
 
-    /// Delete a blob's file once no row refers to it (spec `storage.md` §5:
-    /// rows first, the file after commit). A file already gone is fine.
+    /// Delete a blob's file once no row refers to it: rows first, the file
+    /// after commit. A file already gone is fine.
     pub fn delete(&self, name: &str) -> Result<()> {
         match self.0.delete(&parse(name)?) {
             Ok(()) | Err(hashed_blobs::Error::Missing(_)) => Ok(()),

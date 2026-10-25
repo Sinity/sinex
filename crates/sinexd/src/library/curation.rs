@@ -125,7 +125,7 @@ impl Library<'_> {
                     collection: items::new_id(),
                     name: collection.to_owned(),
                     saved_query: None,
-                    frozen_from: None,
+                    selected_from: None,
                     by: String::new(),
                     at: Timestamp::now(),
                     withdrawn_at: None,

@@ -9,9 +9,9 @@
 //! inotify watch limit is reached, is recorded as `unwatched` with the limit
 //! named, so the gap shows instead of looking like silence.
 //!
-//! This records that a file changed, not what it contains; reading contents
-//! is the directory-snapshot driver's job (it must also check that a symlink
-//! inside a root does not lead outside it, `kv6l`).
+//! This records that a file changed, not what it contains; reading contents is
+//! the directory-snapshot driver's job (it must also check that a symlink
+//! inside a root does not lead outside it).
 use crate::drivers::live_stream::{self, LiveStream, Rotation, SpoolWriter};
 use crate::registry::{DeclaredSource, Driver, SourceSpec};
 use crate::{Parser, RecordError};

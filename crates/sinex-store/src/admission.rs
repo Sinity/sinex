@@ -156,8 +156,8 @@ async fn apply_privacy(conn: &mut PgConnection, batch: &Batch, events: &mut [Eve
     if events.is_empty() {
         return Ok(());
     }
-    // A derived event is never below the highest class of its parents
-    // (spec `privacy.md` §4), so derivation cannot launder a class away.
+    // A derived event is never below the highest class of its parents, so
+    // derivation cannot launder a class away.
     let parents: Vec<Uuid> = events
         .iter()
         .filter_map(|e| match &e.origin {

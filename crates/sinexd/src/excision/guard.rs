@@ -104,7 +104,8 @@ async fn check_ready_unlocked(conn: &mut PgConnection, source: &str) -> Result<(
     Ok(())
 }
 
-/// Native acquisition owns its connection until the first admission finishes.
+/// Acquisition by a daemon reader owns its connection until the first admission
+/// finishes.
 pub(crate) struct AcquisitionGuard {
     connection: PgConnection,
     source: String,

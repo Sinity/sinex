@@ -71,9 +71,9 @@ impl MaterialSink for Sink {
     }
 }
 
-/// The class key's public half, from the file `$SINEX_CLASS_KEY_FILE` (an
-/// age recipient, `age1…`). Sealed sources need it to capture; the daemon
-/// never holds the secret half (spec `privacy.md` §4).
+/// The class key's public half, from the file `$SINEX_CLASS_KEY_FILE` (an age
+/// recipient, `age1…`). Sealed sources need it to capture; the daemon never
+/// holds the secret half.
 pub fn class_key() -> Result<Option<sinex_store::sealed::Recipient>, String> {
     let Some(path) = std::env::var_os("SINEX_CLASS_KEY_FILE") else {
         return Ok(None);
@@ -96,7 +96,7 @@ pub struct SealingSink {
 
 #[derive(Default)]
 struct SealingState {
-    pending: std::collections::HashMap<String, SealingKey>,
+    unadmitted: std::collections::HashMap<String, SealingKey>,
     current: Option<(MaterialId, String, SealingKey)>,
 }
 
@@ -122,7 +122,7 @@ impl SealingSink {
     fn held(&self, blob: &str) -> Result<SealingKey, String> {
         let state = self.state.lock().expect("sealing state");
         state
-            .pending
+            .unadmitted
             .get(blob)
             .cloned()
             .or_else(|| {
@@ -147,7 +147,7 @@ impl SealingSink {
             .map(|(_, _, key)| key)
             .or_else(|| {
                 state
-                    .pending
+                    .unadmitted
                     .values()
                     .find(|key| key.data.key_ref == reference)
             })
@@ -166,7 +166,7 @@ impl SealingSink {
         self.state
             .lock()
             .expect("sealing state")
-            .pending
+            .unadmitted
             .insert(blob, SealingKey { data: key, wrapped });
         Ok(())
     }
@@ -216,7 +216,7 @@ impl SealingSink {
                     progress.material_keys.push(wrapped);
                 }
                 let mut state = self.state.lock().expect("sealing state");
-                state.pending.remove(&material.blob);
+                state.unadmitted.remove(&material.blob);
                 state.current = Some((material.id, material.blob.clone(), held));
             }
             let current = self.state.lock().expect("sealing state").current.clone();

@@ -1,6 +1,6 @@
-//! The media library end to end, against a real database and the real
-//! writer: intake, curation, the selection policy, ranking, handoff,
-//! previews, imports, and item continuity across renames and edits.
+//! The media library end to end, against a real database and the real writer:
+//! intake, curation, the selection policy, ranking, opening, previews, imports,
+//! and item continuity across renames and edits.
 use crate::library::{Library, dispatch};
 use crate::writer;
 use serde_json::{Value, json};
@@ -39,7 +39,7 @@ async fn world(db: devkit::pg::TestDatabase) -> World {
         .unwrap();
     let root = base.join("library");
     std::fs::create_dir_all(root.join("sub")).unwrap();
-    // Intake records canonical paths; TMPDIR may be a borrowed /proc/fd alias.
+    // Intake records resolved paths; TMPDIR may be a borrowed /proc/fd alias.
     let root = std::fs::canonicalize(root).unwrap();
     World {
         _db: db,
@@ -339,7 +339,7 @@ async fn the_library_end_to_end(db: devkit::pg::TestDatabase) {
     );
     assert!(rows(&mut w.conn, "assignments where level = import").await >= 4);
 
-    // Handoff: a verified copy on disk; then the view.
+    // Opening: a verified copy on disk; then the view.
     let open = w
         .ok(Request::LibraryOpen {
             item: ia.clone(),
@@ -359,12 +359,13 @@ async fn the_library_end_to_end(db: devkit::pg::TestDatabase) {
         let p = w.ok(Request::LibraryPreview { item: ia.clone() }).await;
         let preview = p["content"].as_str().unwrap();
         assert!(w.blobs.contains(preview).unwrap());
-        let owners: i64 = sqlx::query_scalar("SELECT count(*) FROM core.event_blobs WHERE blob=$1")
-            .bind(preview)
-            .fetch_one(&mut w.conn)
-            .await
-            .unwrap();
-        assert_eq!(owners, 1, "rendered preview has no retained owner");
+        let citations: i64 =
+            sqlx::query_scalar("SELECT count(*) FROM core.event_blobs WHERE blob=$1")
+                .bind(preview)
+                .fetch_one(&mut w.conn)
+                .await
+                .unwrap();
+        assert_eq!(citations, 1, "rendered preview is cited once");
         assert!(p["width"].as_u64().unwrap() <= 512);
         let view = w.ok(Request::LibraryItem { item: ia.clone() }).await;
         assert!(
@@ -536,7 +537,7 @@ async fn excision_deletes_the_stored_media_bytes(db: devkit::pg::TestDatabase) {
 }
 
 #[devkit::test]
-async fn library_add_through_an_alias_keeps_one_canonical_acquisition(
+async fn library_add_through_an_alias_keeps_one_acquisition(
     db: devkit::pg::TestDatabase,
 ) {
     let mut w = world(db).await;

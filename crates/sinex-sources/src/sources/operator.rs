@@ -1,5 +1,5 @@
-//! The operator's own records (`spec/port-lynchpin-sources.md` §12): the raw
-//! log of quick notes and the steering store.
+//! The operator's own records: the raw log of quick notes and the steering
+//! store.
 //!
 //! The raw log (`raw-log.md`) is a Markdown list, one entry per item,
 //! `- **YYYY-MM-DD HH:MM:SS** text`, local time, continued on following lines.
