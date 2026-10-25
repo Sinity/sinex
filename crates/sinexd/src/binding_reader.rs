@@ -257,7 +257,9 @@ pub(crate) async fn restore_reader(
                 reached_saved = true;
                 break 'parts;
             }
-            let bytes = crate::stored::Lazy::new(conn, blobs, reference.clone(), unlock).await?;
+            let bytes =
+                crate::stored::MaterialOnDemand::new(conn, blobs, reference.clone(), unlock)
+                    .await?;
             sealed |= bytes.sealed();
             let more = reader
                 .restore(
