@@ -537,9 +537,7 @@ async fn excision_deletes_the_stored_media_bytes(db: devkit::pg::TestDatabase) {
 }
 
 #[devkit::test]
-async fn library_add_through_an_alias_keeps_one_acquisition(
-    db: devkit::pg::TestDatabase,
-) {
+async fn library_add_through_an_alias_keeps_one_acquisition(db: devkit::pg::TestDatabase) {
     let mut w = world(db).await;
     let file = w.root.join("note.txt");
     std::fs::write(&file, "synthetic library content").unwrap();
