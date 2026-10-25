@@ -1,6 +1,7 @@
 //! One forward archive traversal shared by compatible logical bindings.
 use super::{Container, DriverError, ExportArchive, Framing, file_name, io, is_tar, records};
 use crate::drivers::{Acquired, MaterialSink, NewMaterial, StoredBytes};
+use crate::shared_pass::{Resume, StoredCopy};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use sinex_model::{Class, MaterialId, ObservationFacts, RevisionChange};
@@ -44,8 +45,43 @@ pub struct Cursor {
     pub through: usize,
 }
 
+impl crate::shared_pass::SharedPass for ExportArchive {
+    fn path(&self) -> &std::path::Path {
+        &self.path
+    }
+
+    fn resume(
+        &self,
+        cursor: &Value,
+        facts: &ObservationFacts,
+        class: Class,
+    ) -> Result<Resume, DriverError> {
+        let Some(cursor) =
+            Cursor::parse(cursor)?.filter(|c| c.same_file(facts) && c.capture.class == class)
+        else {
+            return Ok(Resume::Read(None));
+        };
+        if cursor.done {
+            return Ok(Resume::Finished);
+        }
+        Ok(Resume::Read(Some(StoredCopy {
+            blob: cursor.capture.blob,
+            length: cursor.capture.length,
+            material: cursor.original_material,
+        })))
+    }
+
+    fn route(&self, cursor: Value, class: Class) -> Route {
+        Route {
+            class,
+            driver: self.clone(),
+            cursor,
+        }
+    }
+}
+
 impl Cursor {
-    pub fn parse(value: &Value) -> Result<Option<Self>, DriverError> {
+    fn parse(value: &Value) -> Result<Option<Self>, DriverError> {
         if value.is_null() {
             return Ok(None);
         }
@@ -54,7 +90,7 @@ impl Cursor {
             .map_err(|e| DriverError::Cursor(e.to_string()))
     }
 
-    pub fn same_file(&self, facts: &ObservationFacts) -> bool {
+    fn same_file(&self, facts: &ObservationFacts) -> bool {
         Some(self.size) == facts.size
             && Some(self.mtime_ns) == facts.mtime_ns
             && self.ctime_ns == facts.ctime_ns
@@ -63,10 +99,11 @@ impl Cursor {
     }
 }
 
+/// One binding's part in a pass.
 pub struct Route {
-    pub class: Class,
-    pub driver: ExportArchive,
-    pub cursor: Value,
+    class: Class,
+    driver: ExportArchive,
+    cursor: Value,
 }
 
 #[derive(Debug, Default)]
@@ -91,29 +128,6 @@ pub enum Input {
 /// Read already-stored bytes. The caller groups only compatible privacy/acquisition
 /// contexts and installs the original blob once. Each callback is completed before reading
 /// further, so admission supplies backpressure. A false result stops only that route.
-#[allow(clippy::too_many_arguments)]
-pub fn read(
-    reader: Box<dyn Read + Send>,
-    blob: String,
-    length: u64,
-    facts: ObservationFacts,
-    stop: Arc<AtomicBool>,
-    routes: Vec<Route>,
-    sink: &dyn MaterialSink,
-    emit: &mut Emit<'_>,
-) -> Result<Work, DriverError> {
-    read_input(
-        Input::Sequential(reader),
-        blob,
-        length,
-        facts,
-        stop,
-        routes,
-        sink,
-        emit,
-    )
-}
-
 #[allow(clippy::too_many_arguments)]
 pub fn read_input(
     input: Input,
@@ -310,6 +324,7 @@ impl Context<'_, '_> {
                 }),
                 aligned: false,
                 vanished: Vec::new(),
+                memory: None,
             }),
             cursor_unchanged: Value::Null,
         };
@@ -525,6 +540,7 @@ impl Context<'_, '_> {
                     }),
                     aligned: false,
                     vanished: Vec::new(),
+                    memory: None,
                 }),
                 cursor_unchanged: Value::Null,
             };

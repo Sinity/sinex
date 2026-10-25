@@ -270,7 +270,7 @@ pub const KIND: crate::binding::InputKind = crate::binding::InputKind {
     }),
     source: |_| Ok(Box::new(source())),
     reader: Some(|b| {
-        Ok(crate::binding::stateless(driver(
+        Ok(crate::binding::shared(driver(
             b.input.clone(),
             b.settings.host.clone(),
         )))

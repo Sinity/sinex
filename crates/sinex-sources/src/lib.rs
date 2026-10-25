@@ -16,9 +16,10 @@ pub mod drivers;
 pub mod live;
 pub mod nats;
 pub mod registry;
+pub mod shared_pass;
 pub mod sources;
 
-pub use binding::{Binding, InputKind, Reader, Settings, StoredMaterial};
+pub use binding::{Binding, InputKind, Reader, Reading, Settings, StoredMaterial};
 pub use drain::{DrainInput, DrainOutput, Drainer, Limits, RecordContext, drain};
 pub use drivers::{Acquired, DriverError, MaterialSink};
 pub use registry::{DeclaredSource, Driver, Framer, Source, SourceSpec};

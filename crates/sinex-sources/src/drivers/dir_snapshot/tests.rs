@@ -340,7 +340,12 @@ fn a_restart_remembers_the_files_of_admitted_records_only() {
     restored
         .remember_members(&material.manifest, material.records[0].1 as u64)
         .unwrap();
-    assert_eq!(restored.files.get("a.md"), Some(&None));
+    let empty = Some((
+        0,
+        restored.files["a.md"].unwrap().1,
+        *blake3::hash(b"").as_bytes(),
+    ));
+    assert_eq!(restored.files.get("a.md"), Some(&empty));
     assert!(!restored.files.contains_key("sub/b.md"));
     let mut malformed = material.manifest.clone();
     malformed["members"][0]["vanished_at_ns"] = Value::Null;
@@ -353,11 +358,16 @@ fn a_restart_remembers_the_files_of_admitted_records_only() {
     restored
         .remember_members(&material.manifest, u64::MAX)
         .unwrap();
-    assert_eq!(restored.files.get("sub/b.md"), Some(&None));
     assert_eq!(
-        paths(&d.poll(&Value::Null, &mut restored).unwrap()),
-        vec!["a.md", "sub/b.md"],
-        "remembered files are read again: their fingerprints are not kept"
+        restored.files["sub/b.md"].map(|(size, _, hash)| (size, hash)),
+        Some((4, *blake3::hash(b"beta").as_bytes()))
+    );
+    assert!(
+        d.poll(&Value::Null, &mut restored)
+            .unwrap()
+            .material
+            .is_none(),
+        "remembered files that did not change are not stored again"
     );
 }
 
@@ -463,4 +473,30 @@ impl super::super::MaterialSink for FixtureSink {
             .map(|h| format!("blake3:{}", h.hex()))
             .map_err(|e| e.to_string())
     }
+}
+
+#[devkit::test]
+fn saved_memory_round_trips_and_newer_bundles_win() {
+    let files: HashMap<String, Option<(u64, i128, [u8; 32])>> = HashMap::from([
+        ("a.md".to_owned(), Some((5, -3, [1; 32]))),
+        (
+            "sub/é.md".to_owned(),
+            Some((0, 1_700_000_000_000_000_000, [2; 32])),
+        ),
+        ("unknown.md".to_owned(), None),
+    ]);
+    let memory = restore::memory_of(&files);
+    let mut state = DirState::default();
+    // A newer bundle already decided a.md.
+    state.remembered.insert("a.md".to_owned());
+    state.files.insert("a.md".to_owned(), Some((9, 9, [9; 32])));
+    state.remember_saved(&memory).unwrap();
+    assert_eq!(state.files["a.md"], Some((9, 9, [9; 32])));
+    assert_eq!(state.files["sub/é.md"], files["sub/é.md"]);
+    assert_eq!(state.files["unknown.md"], None);
+    assert!(
+        DirState::default()
+            .remember_saved(&memory[..memory.len() - 1])
+            .is_err()
+    );
 }

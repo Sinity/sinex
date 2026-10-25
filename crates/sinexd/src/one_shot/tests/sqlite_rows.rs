@@ -26,7 +26,9 @@ async fn sqlite_rows_keep_failed_and_partial_snapshots_until_writer_commits(
     let mut ctx = OneShot::open(&url, &dir.join("store")).await.unwrap();
     let sink = Sink(ctx.blobs.clone());
     let source = atuin::source();
-    let mut reader = binding::rows(atuin::driver(path, "synthetic".into()));
+    let mut reader = binding::rows(atuin::driver(path, "synthetic".into()))
+        .into_polled()
+        .unwrap();
     let acquired = reader.poll(&Value::Null).unwrap();
     let id = acquired.material.as_ref().unwrap().id;
     assert!(

@@ -306,6 +306,7 @@ async fn a_batch_whose_bytes_are_not_stored_is_refused(db: devkit::pg::TestDatab
             }),
             cursor: serde_json::json!({"offset": 1}),
             carry: serde_json::Value::Null,
+            memory: None,
         })),
         records: vec![],
         archive: vec![],

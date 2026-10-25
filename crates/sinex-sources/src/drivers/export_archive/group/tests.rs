@@ -5,6 +5,30 @@ use sinex_model::{BatchKind, MaterialRef, RecordOutcome, RunId};
 use std::collections::BTreeMap;
 use std::sync::Mutex;
 
+/// A pass over bytes read in order.
+#[allow(clippy::too_many_arguments)]
+fn read(
+    reader: Box<dyn Read + Send>,
+    blob: String,
+    length: u64,
+    facts: ObservationFacts,
+    stop: Arc<AtomicBool>,
+    routes: Vec<Route>,
+    sink: &dyn MaterialSink,
+    emit: &mut Emit<'_>,
+) -> Result<Work, DriverError> {
+    read_input(
+        Input::Sequential(reader),
+        blob,
+        length,
+        facts,
+        stop,
+        routes,
+        sink,
+        emit,
+    )
+}
+
 #[derive(Default)]
 struct Sink {
     bytes: Mutex<BTreeMap<String, Vec<u8>>>,

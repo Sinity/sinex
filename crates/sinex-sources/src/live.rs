@@ -70,7 +70,8 @@ fn start(k: &'static InputKind, binding: Binding) -> Result<Live, String> {
     // Construct fallible readers before starting a capture that must be joined.
     let reader = (k
         .reader
-        .ok_or_else(|| format!("{}: no spool reader", k.name))?)(&binding)?;
+        .ok_or_else(|| format!("{}: no spool reader", k.name))?)(&binding)?
+    .into_polled()?;
     let source = (k.source)(&binding)?;
     let control = Arc::new(Control::new(None));
     let b = binding.clone();

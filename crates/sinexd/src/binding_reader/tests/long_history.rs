@@ -1,5 +1,6 @@
-//! A restart over a long chain of parts: the reader rebuilds what it needs,
-//! and the time the rebuild takes is printed for comparison.
+//! A restart over a long chain of parts: the reader rebuilds what it needs
+//! from its saved memory and the parts after it, and the time the rebuild
+//! takes is printed for comparison.
 use super::*;
 use sinex_sources::sources::{atuin, notes};
 use std::time::Instant;
@@ -33,15 +34,25 @@ async fn parts(conn: &mut PgConnection) -> i64 {
         .unwrap()
 }
 
+/// The binding's saved memories: one, replaced as the reader saves again.
+async fn saved_memories(conn: &mut PgConnection, binding: &str) -> i64 {
+    sqlx::query_scalar("SELECT count(*) FROM raw.reader_memory WHERE binding = $1")
+        .bind(binding)
+        .fetch_one(conn)
+        .await
+        .unwrap()
+}
+
 /// Rebuild a fresh reader's memory the way a restart does; how long it took.
 async fn restore(ctx: &mut OneShot, bound: &mut Bound) -> std::time::Duration {
     let (_stop, stop) = watch::channel(false);
+    let name = bound.binding.name.clone();
     let started = Instant::now();
     restore_reader(
         &mut ctx.read_conn,
         &ctx.blobs,
-        bound.reader.as_mut(),
-        &bound.binding.name,
+        polled(bound),
+        &name,
         None,
         &stop,
     )
@@ -79,6 +90,7 @@ async fn a_restarted_row_reader_remembers_every_stored_row(db: devkit::pg::TestD
         turn(&mut ctx, &mut bound).await;
     }
     assert_eq!(parts(&mut ctx.read_conn).await, PARTS as i64);
+    assert_eq!(saved_memories(&mut ctx.read_conn, &binding.name).await, 1);
 
     let mut restarted = Bound::new(&atuin::KIND, binding.clone()).unwrap();
     let took = restore(&mut ctx, &mut restarted).await;
@@ -89,7 +101,7 @@ async fn a_restarted_row_reader_remembers_every_stored_row(db: devkit::pg::TestD
         .await
         .unwrap()
         .unwrap();
-    let acquired = restarted.reader.poll(&cursor).unwrap();
+    let acquired = polled(&mut restarted).poll(&cursor).unwrap();
     assert!(
         acquired.material.is_none(),
         "a restart stored rows it had already stored"
@@ -98,7 +110,7 @@ async fn a_restarted_row_reader_remembers_every_stored_row(db: devkit::pg::TestD
 }
 
 #[devkit::test]
-async fn a_restarted_directory_reader_remembers_files_from_its_first_part(
+async fn a_restarted_directory_reader_stores_nothing_unchanged_and_sees_old_removals(
     db: devkit::pg::TestDatabase,
 ) {
     let dir = tempfile::tempdir().unwrap();
@@ -114,9 +126,8 @@ async fn a_restarted_directory_reader_remembers_files_from_its_first_part(
         turn(&mut ctx, &mut bound).await;
     }
     assert_eq!(parts(&mut ctx.read_conn).await, PARTS as i64);
+    assert_eq!(saved_memories(&mut ctx.read_conn, &binding.name).await, 1);
     drop(bound);
-    // Only the first part holds this file.
-    std::fs::remove_file(root.join("000000.md")).unwrap();
 
     let mut restarted = Bound::new(&notes::KIND, binding.clone()).unwrap();
     let took = restore(&mut ctx, &mut restarted).await;
@@ -125,15 +136,23 @@ async fn a_restarted_directory_reader_remembers_files_from_its_first_part(
         .await
         .unwrap()
         .unwrap();
-    let acquired = restarted.reader.poll(&cursor).unwrap();
+    let unchanged = polled(&mut restarted).poll(&cursor).unwrap();
+    assert!(
+        unchanged.material.is_none(),
+        "a restart stored files it had already stored"
+    );
+
+    // Only the first part names this file.
+    std::fs::remove_file(root.join("000000.md")).unwrap();
+    let acquired = polled(&mut restarted).poll(&cursor).unwrap();
     let material = acquired.material.expect("the removal is recorded");
-    let vanished: Vec<&str> = material.manifest["members"]
-        .as_array()
-        .unwrap()
+    let members = material.manifest["members"].as_array().unwrap();
+    let vanished: Vec<&str> = members
         .iter()
         .filter(|member| member.get("vanished_at_ns").is_some())
         .map(|member| member["path"].as_str().unwrap())
         .collect();
     assert_eq!(vanished, ["000000.md"]);
+    assert_eq!(members.len(), 1, "no unchanged file is stored again");
     ctx.close().await.unwrap();
 }

@@ -9,7 +9,7 @@ pub mod purchases;
 pub mod tasks;
 
 use crate::Source;
-use crate::binding::{Binding, InputKind, Reader, stateless};
+use crate::binding::{Binding, InputKind, Reading, shared};
 use crate::drivers::export_archive::ExportArchive;
 use crate::registry::SourceSpec;
 use std::path::PathBuf;
@@ -85,11 +85,11 @@ pub const KIND: InputKind = InputKind {
         }
         Ok((product(b)?.1)())
     },
-    reader: Some(|b| -> Result<Box<dyn Reader>, String> {
+    reader: Some(|b| -> Result<Reading, String> {
         if b.source == super::calendar::SPEC.name {
             return (super::calendar::KIND.reader.expect("calendar reads"))(b);
         }
-        Ok(stateless((product(b)?.2)(
+        Ok(shared((product(b)?.2)(
             b.input.clone(),
             b.settings.host.clone(),
         )))

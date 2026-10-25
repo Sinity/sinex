@@ -358,6 +358,7 @@ impl Ingest {
                 }),
                 cursor: Value::Null,
                 carry: Value::Null,
+                memory: None,
             }),
             vec![],
         ))

@@ -44,12 +44,26 @@ Each reader rebuilds what it remembers through the `Reader` trait: it names
 the material its committed cursor points at, and the daemon offers it that
 material and the parts before it, newest first, until the reader has enough.
 The parts are read a page at a time, so a reader that stops early reads no
-more of the chain.
-The append reader keeps the tail of the current revision's records, to align a
-rewrite; the SQLite-row reader keeps each row's newest hash; the directory
-reader keeps which files the admitted bundles hold. A sealed part keeps the
-binding sealed after its class is lowered. The daemon does not know which
-driver a binding uses.
+more of the chain. The append reader keeps the tail of the current revision's
+records, to align a rewrite.
+
+The SQLite-row reader keeps each row's newest hash and the directory reader
+each file's size, modification time and content hash. Both save this reader
+memory with the cursor at the end of a part: at their first part, once the
+entries stored since the last save reach a quarter of what they remember, and
+at least every 1,000 parts. `raw.reader_memory` keeps only the latest per
+binding, replaced in the cursor's transaction. A restart stops the walk at the
+part the memory was saved at and takes the rest from the memory, so it reads
+at most 1,000 parts, and an unchanged row or file is not stored again.
+
+A binding is either polled alone through `Reader` or read in a pass over a
+stored file shared with every compatible binding of that file (`SharedPass`,
+export archives). A shared-pass binding keeps no memory: its cursor names the
+stored copy and the next record, so a restart reads on from there, and a
+cursor that already covers the unchanged file reads nothing.
+
+A sealed part keeps the binding sealed after its class is lowered. The daemon
+does not know which driver a binding uses.
 
 ### Drivers
 

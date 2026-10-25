@@ -238,7 +238,7 @@ pub const KIND: crate::binding::InputKind = crate::binding::InputKind {
     }),
     source: |_| Ok(Box::new(pst_source())),
     reader: Some(|b| {
-        Ok(crate::binding::stateless(pst_driver(
+        Ok(crate::binding::shared(pst_driver(
             b.input.clone(),
             b.settings.host.clone(),
         )))
@@ -257,7 +257,7 @@ pub const CSV_KIND: crate::binding::InputKind = crate::binding::InputKind {
     }),
     source: |_| Ok(Box::new(csv_source())),
     reader: Some(|b| {
-        Ok(crate::binding::stateless(csv_driver(
+        Ok(crate::binding::shared(csv_driver(
             b.input.clone(),
             b.settings.host.clone(),
         )))

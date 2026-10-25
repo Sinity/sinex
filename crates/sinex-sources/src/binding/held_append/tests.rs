@@ -25,6 +25,8 @@ fn reader(path: &Path) -> Box<dyn Reader> {
         host: "h".into(),
         framer: Framer::incremental(lines),
     })
+    .into_polled()
+    .unwrap()
 }
 
 /// What the store would hold for the material `acquired` read.

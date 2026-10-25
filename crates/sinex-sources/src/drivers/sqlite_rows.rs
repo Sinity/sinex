@@ -13,9 +13,11 @@
 //! hashes are kept until its final admitted cursor confirms them.
 //!
 //! What the driver already stored survives a restart: the rows still open
-//! travel in the cursor, and the row hashes are rebuilt from the stored parts
-//! ([`RowState::remember_rows`]), so a restart does not read and store every
-//! row again.
+//! travel in the cursor, and the row hashes come from the reader memory saved
+//! at the end of a recent part ([`RowState::remember_saved`], on the cadence
+//! of [`super::memory_due`]) plus the stored parts after it
+//! ([`RowState::remember_rows`]), so a restart neither reads the whole part
+//! chain nor stores every row again.
 use super::{Acquired, DriverError, NewMaterial, StoredBytes, file_facts};
 use rusqlite::{Connection, OpenFlags, types::ValueRef};
 use serde::{Deserialize, Serialize};
@@ -65,12 +67,18 @@ pub struct Cursor {
     /// rebuilds the row state from those bytes only.
     #[serde(default)]
     pub through: usize,
+    /// The part at whose end the reader last saved its memory.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub memory_part: Option<u32>,
+    /// Rows stored since that part.
+    #[serde(default)]
+    pub changed_since_memory: u64,
 }
 
 /// What this driver already stored: the hash of each row's stored line, by
-/// rowid. Kept for the life of the source task and rebuilt from the stored
-/// parts after a restart. An empty state (no stored parts yet) triggers a
-/// full pass, whose repeats admission suppresses.
+/// rowid. Kept for the life of the source task and rebuilt on a restart from
+/// the saved memory and the parts after it. An empty state (no stored parts
+/// yet) triggers a full pass, whose repeats admission suppresses.
 #[derive(Debug, Default)]
 pub struct RowState {
     hashes: HashMap<i64, [u8; 32]>,
@@ -94,6 +102,8 @@ struct Held {
     base: i64,
     manifest: Value,
     observation: ObservationFacts,
+    /// The row hashes once this part is admitted, when it saves them.
+    memory: Option<Arc<[u8]>>,
 }
 
 impl Held {
@@ -162,6 +172,16 @@ impl Held {
                                 previous.open.clone()
                             },
                             through: end,
+                            memory_part: if end == length {
+                                scanned.memory_part
+                            } else {
+                                previous.memory_part
+                            },
+                            changed_since_memory: if end == length {
+                                scanned.changed_since_memory
+                            } else {
+                                previous.changed_since_memory
+                            },
                             ..scanned.clone()
                         })
                         .expect("cursor serializes")
@@ -170,6 +190,7 @@ impl Held {
                 }),
                 aligned: false,
                 vanished: Vec::new(),
+                memory: self.memory.clone(),
             }),
             cursor_unchanged: serde_json::to_value(&self.scanned).expect("cursor serializes"),
         }
@@ -195,7 +216,44 @@ impl RowState {
     pub fn is_empty(&self) -> bool {
         self.hashes.is_empty()
     }
+
+    /// Remember the rows of a saved memory that no newer part decided.
+    pub fn remember_saved(&mut self, memory: &[u8]) -> Result<(), DriverError> {
+        let (entries, rest) = memory.as_chunks::<MEMORY_ENTRY>();
+        if !rest.is_empty() {
+            return Err(DriverError::Cursor("saved row memory is damaged".into()));
+        }
+        for entry in entries {
+            let (rowid, hash) = entry.split_at(8);
+            let rowid = i64::from_le_bytes(rowid.try_into().expect("eight bytes"));
+            self.hashes
+                .entry(rowid)
+                .or_insert(hash.try_into().expect("32 bytes"));
+        }
+        Ok(())
+    }
+
+    /// The memory to save once `newer` (row hashes of a part not yet
+    /// admitted) is admitted: each row ID, eight bytes little-endian, and its
+    /// line hash, in row order.
+    fn memory_with(&self, newer: &[(i64, [u8; 32])]) -> Arc<[u8]> {
+        let mut rows: std::collections::BTreeMap<i64, &[u8; 32]> = self
+            .hashes
+            .iter()
+            .map(|(rowid, hash)| (*rowid, hash))
+            .collect();
+        rows.extend(newer.iter().map(|(rowid, hash)| (*rowid, hash)));
+        let mut bytes = Vec::with_capacity(rows.len() * MEMORY_ENTRY);
+        for (rowid, hash) in rows {
+            bytes.extend_from_slice(&rowid.to_le_bytes());
+            bytes.extend_from_slice(hash);
+        }
+        bytes.into()
+    }
 }
+
+/// One remembered row in a saved memory: its ID and line hash.
+const MEMORY_ENTRY: usize = 8 + 32;
 
 impl SqliteRows {
     fn input(&self) -> InputRef {
@@ -386,6 +444,20 @@ impl SqliteRows {
         } else {
             0
         };
+        let changed = previous
+            .changed_since_memory
+            .saturating_add(hashes.len() as u64);
+        let added = hashes
+            .iter()
+            .filter(|(rowid, _)| !state.hashes.contains_key(rowid))
+            .count();
+        let due = super::memory_due(
+            part_index,
+            previous.memory_part,
+            changed,
+            (state.hashes.len() + added) as u64,
+        );
+        let memory = due.then(|| state.memory_with(&hashes));
         let held = Held {
             stored: StoredBytes::FramedFile(Arc::new(staged)),
             length,
@@ -402,10 +474,17 @@ impl SqliteRows {
                 part_index,
                 open,
                 through: length,
+                memory_part: if due {
+                    Some(part_index)
+                } else {
+                    previous.memory_part
+                },
+                changed_since_memory: if due { 0 } else { changed },
             },
             base,
             manifest,
             observation: facts,
+            memory,
         };
         let acquired = held.acquired(self.input(), &Cursor::default());
         state.held = Some(held);

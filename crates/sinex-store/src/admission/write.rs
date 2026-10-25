@@ -165,7 +165,7 @@ pub(super) async fn record_failures(conn: &mut PgConnection, batch: &Batch) -> R
 }
 
 /// Save the source's cursor and carried parser state with the events they
-/// cover.
+/// cover, and the reader's memory when the batch carries it.
 pub(super) async fn save_position(
     conn: &mut PgConnection,
     progress: &SourceProgress,
@@ -185,6 +185,18 @@ pub(super) async fn save_position(
     )
     .execute(&mut *conn)
     .await?;
+    if let Some(memory) = &progress.memory {
+        sqlx::query!(
+            r#"INSERT INTO raw.reader_memory (binding, material_id, memory) VALUES ($1, $2, $3)
+               ON CONFLICT (binding) DO UPDATE SET material_id = EXCLUDED.material_id,
+                 memory = EXCLUDED.memory, updated_at = now()"#,
+            progress.binding,
+            memory.material.0,
+            &memory.bytes[..],
+        )
+        .execute(&mut *conn)
+        .await?;
+    }
     Ok(())
 }
 

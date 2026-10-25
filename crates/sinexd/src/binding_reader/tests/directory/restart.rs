@@ -96,7 +96,7 @@ async fn prefix(
         .await
         .unwrap()
         .unwrap_or((Value::Null, Value::Null));
-    let acquired = b.reader.poll(&cursor).unwrap();
+    let acquired = polled(b).poll(&cursor).unwrap();
     let prepared = drivers::prepare(
         b.source.as_ref(),
         &b.binding.name,

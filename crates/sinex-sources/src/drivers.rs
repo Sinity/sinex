@@ -58,6 +58,20 @@ pub struct Acquired {
     pub cursor_unchanged: Value,
 }
 
+impl Acquired {
+    /// Whether this acquisition starts the binding over from a new copy of
+    /// its whole input, so the parser's carried state is dropped.
+    pub fn starts_over(&self) -> Result<bool, DriverError> {
+        Ok(self
+            .material
+            .as_ref()
+            .map(|m| sinex_model::MaterialRole::of(&m.manifest))
+            .transpose()
+            .map_err(|e| DriverError::InvalidMaterial(e.to_string()))?
+            == Some(sinex_model::MaterialRole::OriginalArchive))
+    }
+}
+
 /// Bytes already stored, apart from the current decoded records.
 #[derive(Clone)]
 pub enum StoredBytes {
@@ -133,6 +147,29 @@ pub struct NewMaterial {
     /// Records the previous revision held that a rewrite dropped, by where
     /// they were read: each becomes a removed-at-source reading.
     pub vanished: Vec<sinex_model::RecordLocation>,
+    /// What the reader remembers once this material is fully admitted, when
+    /// it saves its memory at this part ([`memory_due`]). It is committed
+    /// with the cursor at the material's end.
+    pub memory: Option<std::sync::Arc<[u8]>>,
+}
+
+/// Parts after which a reader saves its memory even if little changed, so a
+/// restart reads at most this many parts.
+pub const PARTS_BETWEEN_MEMORY: u32 = 1000;
+
+/// Whether a reader saves its memory at the end of part `part_index`. It
+/// saves at its first part, once the entries stored since the last save
+/// reach a quarter of what it remembers, and at least every
+/// [`PARTS_BETWEEN_MEMORY`] parts. Writing the memory then costs at most four
+/// times the entries changed, or one memory per thousand parts.
+pub fn memory_due(part_index: u32, saved_at: Option<u32>, changed: u64, remembered: u64) -> bool {
+    match saved_at {
+        None => true,
+        Some(saved) => {
+            part_index.saturating_sub(saved) >= PARTS_BETWEEN_MEMORY
+                || changed.saturating_mul(4) >= remembered
+        }
+    }
 }
 
 impl NewMaterial {
@@ -203,14 +240,11 @@ pub fn prepare<'s>(
     limits: Limits,
 ) -> Result<Prepared<'s>, DriverError> {
     let spec = source.spec();
-    let reset = acquired
-        .material
-        .as_ref()
-        .map(|m| sinex_model::MaterialRole::of(&m.manifest))
-        .transpose()
-        .map_err(|e| DriverError::InvalidMaterial(e.to_string()))?
-        == Some(sinex_model::MaterialRole::OriginalArchive);
-    let carry = if reset { Value::Null } else { carry };
+    let carry = if acquired.starts_over()? {
+        Value::Null
+    } else {
+        carry
+    };
     let material = match acquired.material {
         None => None,
         Some(m) => {
@@ -289,6 +323,7 @@ impl Prepared<'_> {
         carry: Value,
         observation: ObservationFacts,
         revision: RevisionChange,
+        memory: Option<sinex_model::ReaderMemory>,
     ) -> BatchKind {
         BatchKind::Source(Box::new(SourceProgress {
             material_keys: Vec::new(),
@@ -299,6 +334,7 @@ impl Prepared<'_> {
             material,
             cursor,
             carry,
+            memory,
         }))
     }
 
@@ -315,6 +351,7 @@ impl Prepared<'_> {
                     self.carry.clone(),
                     self.observation.clone(),
                     self.revision,
+                    None,
                 ),
                 records: vec![],
                 archive: vec![],
@@ -363,11 +400,20 @@ impl Prepared<'_> {
             };
             // After the last chunk the whole material is read, records
             // skipped as already read included.
+            let full = m.decoded_len(material.length);
             let end = if chunk.end >= last_end {
-                m.decoded_len(material.length)
+                full
             } else {
                 chunk.end
             };
+            let memory =
+                m.memory
+                    .as_ref()
+                    .filter(|_| end == full)
+                    .map(|bytes| sinex_model::ReaderMemory {
+                        material: m.id,
+                        bytes: bytes.clone(),
+                    });
             let (observation, revision) = if first {
                 (self.observation.clone(), self.revision)
             } else {
@@ -394,6 +440,7 @@ impl Prepared<'_> {
                     chunk.carry,
                     observation,
                     revision,
+                    memory,
                 ),
                 records: chunk.outcomes,
                 archive: if first && !m.vanished.is_empty() {

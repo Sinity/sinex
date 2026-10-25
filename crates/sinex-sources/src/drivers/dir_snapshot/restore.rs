@@ -1,6 +1,8 @@
-//! Rebuild which files the admitted bundles hold. Their fingerprints are not
-//! kept, so the next walk reads them again.
+//! Rebuild the file facts of a restarted reader from its saved memory and the
+//! admitted bundles after it.
 use super::*;
+
+type Facts = Option<(u64, i128, [u8; 32])>;
 
 impl DirState {
     /// Remember the files whose records in the bundle `manifest` end at or
@@ -20,7 +22,31 @@ impl DirState {
                 continue;
             }
             if !vanished(member)? {
-                self.files.insert(path.to_owned(), None);
+                self.files.insert(path.to_owned(), facts(member)?);
+            }
+        }
+        Ok(())
+    }
+
+    /// Remember the files of a saved memory that no newer bundle decided.
+    pub fn remember_saved(&mut self, memory: &[u8]) -> Result<(), DriverError> {
+        let mut rest = memory;
+        while !rest.is_empty() {
+            let length = u32::from_le_bytes(take(&mut rest)?) as usize;
+            let path = std::str::from_utf8(take_slice(&mut rest, length)?)
+                .map_err(|_| damaged())?
+                .to_owned();
+            let file = match take::<1>(&mut rest)? {
+                [0] => None,
+                [1] => Some((
+                    u64::from_le_bytes(take(&mut rest)?),
+                    i128::from_le_bytes(take(&mut rest)?),
+                    take(&mut rest)?,
+                )),
+                _ => return Err(damaged()),
+            };
+            if self.remembered.insert(path.clone()) {
+                self.files.insert(path, file);
             }
         }
         Ok(())
@@ -30,6 +56,65 @@ impl DirState {
     pub fn finish_remembering(&mut self) {
         self.remembered = HashSet::new();
     }
+}
+
+fn damaged() -> DriverError {
+    DriverError::Cursor("saved directory memory is damaged".into())
+}
+
+fn take_slice<'a>(rest: &mut &'a [u8], count: usize) -> Result<&'a [u8], DriverError> {
+    if rest.len() < count {
+        return Err(damaged());
+    }
+    let (taken, after) = rest.split_at(count);
+    *rest = after;
+    Ok(taken)
+}
+
+fn take<const N: usize>(rest: &mut &[u8]) -> Result<[u8; N], DriverError> {
+    Ok(take_slice(rest, N)?.try_into().expect("N bytes"))
+}
+
+/// The memory to save: for each file, in path order, the path's length
+/// (four bytes, little-endian) and UTF-8 bytes, then 1 and its size (eight
+/// bytes), modification time (sixteen) and content hash (32), or 0 when the
+/// facts are unknown.
+pub(super) fn memory_of(files: &HashMap<String, Facts>) -> Arc<[u8]> {
+    let mut paths: Vec<(&String, &Facts)> = files.iter().collect();
+    paths.sort_by(|a, b| a.0.cmp(b.0));
+    let mut bytes = Vec::new();
+    for (path, file) in paths {
+        bytes.extend_from_slice(&(path.len() as u32).to_le_bytes());
+        bytes.extend_from_slice(path.as_bytes());
+        match file {
+            None => bytes.push(0),
+            Some((size, mtime, hash)) => {
+                bytes.push(1);
+                bytes.extend_from_slice(&size.to_le_bytes());
+                bytes.extend_from_slice(&mtime.to_le_bytes());
+                bytes.extend_from_slice(hash);
+            }
+        }
+    }
+    bytes.into()
+}
+
+/// A member's size, modification time and content hash.
+fn facts(member: &Value) -> Result<Facts, DriverError> {
+    let invalid = || DriverError::Cursor("directory member facts are invalid".into());
+    let Some(hash) = member.get("hash") else {
+        return Ok(None);
+    };
+    let hash = hash
+        .as_str()
+        .and_then(|hex| blake3::Hash::from_hex(hex).ok())
+        .ok_or_else(invalid)?;
+    let size = member["length"].as_u64().ok_or_else(invalid)?;
+    let mtime = member["mtime_ns"]
+        .as_str()
+        .and_then(|text| text.parse::<i128>().ok())
+        .ok_or_else(invalid)?;
+    Ok(Some((size, mtime, *hash.as_bytes())))
 }
 
 fn records(manifest: &Value) -> Result<Vec<(usize, usize)>, DriverError> {

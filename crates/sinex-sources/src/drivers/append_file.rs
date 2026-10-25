@@ -445,6 +445,7 @@ impl AppendFile {
                 }),
                 aligned,
                 vanished,
+                memory: None,
             }),
             cursor_unchanged: Value::Null,
         })

@@ -19,7 +19,9 @@ async fn staged_directory_resumes_from_actual_admitted_cursor_with_original_byte
     let mut ctx = OneShot::open(&url, &dir.join("store")).await.unwrap();
     let sink = Sink(ctx.blobs.clone());
     let source = notes::source();
-    let mut reader = binding::walked(notes::driver(root.clone(), "synthetic".into()));
+    let mut reader = binding::walked(notes::driver(root.clone(), "synthetic".into()))
+        .into_polled()
+        .unwrap();
     let acquired = reader.poll(&Value::Null).unwrap();
     let id = acquired.material.as_ref().unwrap().id;
     let prepared = drivers::prepare(

@@ -275,7 +275,7 @@ pub const MBOX_KIND: crate::binding::InputKind = crate::binding::InputKind {
     }),
     source: |_| Ok(Box::new(mbox_source())),
     reader: Some(|b| {
-        Ok(crate::binding::stateless(mbox_driver(
+        Ok(crate::binding::shared(mbox_driver(
             b.input.clone(),
             b.settings.host.clone(),
         )))
