@@ -23,6 +23,7 @@ use std::time::Duration;
 pub const SPEC: SourceSpec = SourceSpec {
     name: "session.producers",
     driver: Driver::LiveStream,
+    excisable: true,
     consumer: "recall: files edited, commands run in the terminal",
     // Paths and command lines.
     class: Class::Guarded,

@@ -195,6 +195,7 @@ impl Api {
             now,
         );
         let done = crate::authored::submit(
+            &mut conn,
             writer,
             &self.blobs,
             std::sync::Arc::new(sinex_sources::sources::forecast::request_source()),

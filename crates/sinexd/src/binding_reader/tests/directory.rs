@@ -51,38 +51,6 @@ async fn empty_directory_files_keep_distinct_paths_bytes_and_locations_through_r
         &ctx.writer,
         crate::replay::Options {
             scope: crate::replay::Scope {
-                binding: Some(name.clone()),
-                ..Default::default()
-            },
-            compare: false,
-            resume: None,
-            actor: "synthetic".into(),
-            unlock: None,
-        },
-    )
-    .await;
-    let after = current_notes(&mut ctx.read_conn).await;
-    let target: Option<uuid::Uuid> = sqlx::query_scalar("SELECT e.id FROM core.live_equivalence l JOIN core.events e ON e.id=l.event_id WHERE e.event_type='note.document' AND e.payload->>'path'='c.md'")
-        .fetch_optional(&mut ctx.read_conn).await.unwrap();
-    let excised = match target {
-        Some(id) => {
-            crate::excision::excise_with(
-                &mut ctx.read_conn,
-                &ctx.blobs,
-                &ctx.writer,
-                sinex_store::excision::Target::Event(sinex_model::EventId(id)),
-                "synthetic",
-            )
-            .await
-        }
-        None => Err("no nonempty sibling to excise".into()),
-    };
-    let replay_after_excision = crate::replay::run(
-        &mut ctx.read_conn,
-        &ctx.blobs,
-        &ctx.writer,
-        crate::replay::Options {
-            scope: crate::replay::Scope {
                 binding: Some(name),
                 ..Default::default()
             },
@@ -93,7 +61,7 @@ async fn empty_directory_files_keep_distinct_paths_bytes_and_locations_through_r
         },
     )
     .await;
-    let after_excision = current_notes(&mut ctx.read_conn).await;
+    let after = current_notes(&mut ctx.read_conn).await;
     std::fs::remove_file(root.join("a.md")).unwrap();
     std::fs::remove_file(root.join("b.md")).unwrap();
     let removed = read(
@@ -149,19 +117,11 @@ async fn empty_directory_files_keep_distinct_paths_bytes_and_locations_through_r
             .iter()
             .map(|r| (&*r.0, r.1.clone()))
             .collect::<Vec<_>>(),
-        vec![("a.md", Value::Null), ("b.md", Value::Null)]
-    );
-    assert!(excised.is_ok(), "nonempty sibling excision: {excised:?}");
-    assert!(
-        replay_after_excision.is_ok(),
-        "replay after sibling excision: {replay_after_excision:?}"
-    );
-    assert_eq!(
-        after_excision
-            .iter()
-            .map(|r| (&*r.0, r.1.clone()))
-            .collect::<Vec<_>>(),
-        vec![("a.md", json!("")), ("b.md", json!(""))]
+        vec![
+            ("a.md", Value::Null),
+            ("b.md", Value::Null),
+            ("c.md", json!("gamma"))
+        ]
     );
 }
 

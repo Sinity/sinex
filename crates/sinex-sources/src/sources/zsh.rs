@@ -18,6 +18,7 @@ use std::path::PathBuf;
 pub const SPEC: SourceSpec = SourceSpec {
     name: "terminal.zsh-history",
     driver: Driver::AppendFile,
+    excisable: false,
     consumer: "command fusion and shell recall",
     class: Class::Open,
     parser: "zsh-extended-history",

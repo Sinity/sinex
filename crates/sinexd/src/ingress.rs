@@ -20,8 +20,9 @@
 //!
 //! The producer is the one its subject names; per-producer credentials limit
 //! each producer to its own subjects. `<root>.have.<producer>` answers which
-//! frames Sinex recorded, and `<root>.materials.<producer>` pages through the
-//! materials the producer registered.
+//! frames Sinex recorded, `<root>.materials.<producer>` pages through the
+//! materials the producer registered, and `<root>.excise.<producer>` excises
+//! whole materials the producer registered.
 mod bytes;
 
 use crate::writer::{Priority, WriteError, WriterHandle};
@@ -34,8 +35,8 @@ use sinex_model::{
     RecordOutcome, RevisionChange, RunId, SourceProgress, Timestamp, event_types,
 };
 use sinex_protocol::{
-    Acknowledgment, Have, HeldMaterial, Ingress, MaterialFrame, Materials, ProducerEvent,
-    ProducerFailure, Subjects,
+    Acknowledgment, Excise, ExciseReply, Have, HeldMaterial, Ingress, MaterialFrame, Materials,
+    ProducerEvent, ProducerFailure, Subjects,
 };
 use sinex_store::commit_log::{self, StoredFrame};
 use sinex_store::{Blobs, runs};
@@ -86,7 +87,6 @@ pub struct Ingest {
     pub writer: WriterHandle,
     /// A read connection for recorded frames and registered materials.
     pub conn: PgConnection,
-    reads: sqlx::PgPool,
     pub blobs: Blobs,
     pub host: String,
     validators: HashMap<&'static str, jsonschema::Validator>,
@@ -98,7 +98,6 @@ impl Ingest {
         subjects: Subjects,
         writer: WriterHandle,
         conn: PgConnection,
-        reads: sqlx::PgPool,
         blobs: Blobs,
         host: String,
     ) -> Result<Self, String> {
@@ -113,7 +112,6 @@ impl Ingest {
             subjects,
             writer,
             conn,
-            reads,
             blobs,
             host,
             validators,
@@ -125,21 +123,6 @@ impl Ingest {
     /// means the frame could not be handled now (the database or writer is
     /// unavailable) and should be delivered again.
     pub async fn handle(&mut self, producer: &str, body: &[u8]) -> Result<Acknowledgment, String> {
-        let mut guard =
-            Some(crate::excision::AcquisitionGuard::from_pool(&self.reads, producer).await?);
-        let result = self.handle_guarded(producer, body, &mut guard).await;
-        if let Some(guard) = guard {
-            guard.release().await?;
-        }
-        result
-    }
-
-    async fn handle_guarded(
-        &mut self,
-        producer: &str,
-        body: &[u8],
-        guard: &mut Option<crate::excision::AcquisitionGuard>,
-    ) -> Result<Acknowledgment, String> {
         let frame: Ingress = match serde_json::from_slice(body) {
             Ok(frame) => frame,
             Err(error) => {
@@ -156,22 +139,7 @@ impl Ingest {
             self.discard(producer, &name);
             return Ok(acknowledgment(stored));
         }
-        let exclusions = sinex_store::excision::exclusions::current(&mut self.conn, producer)
-            .await
-            .map_err(|e| e.to_string())?;
-        if exclusions.count != 0 {
-            return Ok(refused_unrecorded(
-                "this producer has excised records, and its frames cannot be checked against them yet",
-            ));
-        }
         let run = self.run(producer).await?;
-        // Queue capacity is taken before any bytes are stored; the queued
-        // admission keeps the source guard.
-        let permit = self
-            .writer
-            .guarded_slot(Priority::Live)
-            .await
-            .map_err(|e| e.to_string())?;
         let checked = match self.unwrap_indirect(producer, frame).await {
             Err(check) => Err(check),
             Ok(Ingress::Material { material, .. }) => match self.sealed(producer).await? {
@@ -211,14 +179,7 @@ impl Ingest {
             Err(Check::Refused(reason)) => refusal(run, producer, &name, reason),
             Err(Check::Unavailable(error)) => return Err(error),
         };
-        match permit
-            .admit(
-                batch,
-                guard.take().expect("source guard owned until queue send"),
-                std::sync::Arc::new(|| Ok(())),
-            )
-            .await
-        {
+        match self.writer.submit(Priority::Live, batch).await {
             Ok(_) => {}
             Err(WriteError::Stopped) => return Err("the writer has stopped".into()),
             Err(WriteError::Refused(reason)) => {
@@ -308,6 +269,23 @@ impl Ingest {
             .collect()
     }
 
+    /// Answer an excise request: excise whole materials `producer`
+    /// registered, or say why nothing was excised.
+    pub async fn excise(&mut self, producer: &str, request: &Excise) -> ExciseReply {
+        crate::excision::excise_for_producer(
+            &mut self.conn,
+            &self.blobs,
+            &self.writer,
+            producer,
+            &request.materials,
+        )
+        .await
+        .unwrap_or_else(|refusal| ExciseReply {
+            refusal: Some(refusal),
+            ..ExciseReply::default()
+        })
+    }
+
     async fn stored(&mut self, producer: &str, frame: &str) -> Result<Option<StoredFrame>, String> {
         Ok(
             commit_log::frames(&mut self.conn, producer, &[frame.to_owned()])
@@ -358,7 +336,6 @@ impl Ingest {
         }
         Ok((
             Some(SourceProgress {
-                exclusions: None,
                 material_keys: Vec::new(),
                 binding: format!("ingress:{producer}"),
                 input: m.input.clone(),
@@ -519,7 +496,8 @@ fn acknowledgment(s: StoredFrame) -> Acknowledgment {
     }
 }
 
-/// Consume the ingress stream and answer have requests until `stop` is set.
+/// Consume the ingress stream and answer have and excise requests until
+/// `stop` is set.
 pub async fn run(
     client: async_nats::Client,
     mut ingest: Ingest,
@@ -539,6 +517,10 @@ pub async fn run(
         .subscribe(ingest.subjects.materials_all())
         .await
         .map_err(|e| format!("materials subscription: {e}"))?;
+    let mut excise = client
+        .subscribe(ingest.subjects.excise_all())
+        .await
+        .map_err(|e| format!("excise subscription: {e}"))?;
     client.flush().await.map_err(|e| e.to_string())?;
     loop {
         tokio::select! {
@@ -607,6 +589,26 @@ pub async fn run(
                     Err(error) => serde_json::json!({ "refusal": format!("not a materials request: {error}") }),
                 };
                 let _ = client.publish(reply, body.to_string().into()).await;
+            }
+            request = excise.next() => {
+                let Some(request) = request else {
+                    return Err("the excise subscription ended".into());
+                };
+                let (Some(reply), Some(producer)) = (
+                    request.reply.clone(),
+                    ingest.subjects.producer_of(&request.subject).map(str::to_owned),
+                ) else {
+                    continue;
+                };
+                let answer = match serde_json::from_slice::<Excise>(&request.payload) {
+                    Ok(excise) => ingest.excise(&producer, &excise).await,
+                    Err(error) => ExciseReply {
+                        refusal: Some(format!("not an excise request: {error}")),
+                        ..ExciseReply::default()
+                    },
+                };
+                let body = serde_json::to_vec(&answer).map_err(|e| e.to_string())?;
+                let _ = client.publish(reply, body.into()).await;
             }
         }
     }

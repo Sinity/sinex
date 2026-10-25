@@ -32,6 +32,7 @@ use std::path::PathBuf;
 pub const SPEC: SourceSpec = SourceSpec {
     name: "google.fit",
     driver: Driver::ExportArchive,
+    excisable: false,
     consumer: "daily steps, activity, heart and location figures Fit recorded",
     class: Class::Open,
     parser: "google-fit",

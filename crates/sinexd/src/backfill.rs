@@ -297,74 +297,32 @@ pub(crate) async fn drive(
         if *stop.borrow() {
             return Err("capture cancelled".into());
         }
-        let mut stopping = stop.clone();
-        let mut guard = tokio::select! {
-            guard=handle.source_guard(source.spec().name)=>guard?,
-            _=stopping.wait_for(|stopped|*stopped)=>return Err("capture cancelled".into()),
-        };
-        let before = async {
-            let position = positions::load(guard.connection(), binding)
-                .await
-                .map_err(|e| e.to_string())?
-                .unwrap_or((serde_json::Value::Null, serde_json::Value::Null));
-            let exclusions = crate::excision::exclusions::Exclusions::load(
-                guard.connection(),
-                source.spec().name,
-            )
-            .await?;
-            Ok::<_, String>((position, exclusions))
-        }
-        .await;
-        let ((cursor, carry), exclusions) = match before {
-            Ok(value) => value,
-            Err(error) => {
-                guard.release().await?;
-                return Err(error);
-            }
-        };
-        let mut acquired = match reader.poll(&cursor) {
-            Err(error) => {
-                guard.release().await?;
-                return Err(error.to_string());
-            }
-            Ok(acquired) => acquired,
-        };
+        let (cursor, carry) = positions::load(read_conn, binding)
+            .await
+            .map_err(|e| e.to_string())?
+            .unwrap_or((serde_json::Value::Null, serde_json::Value::Null));
+        let mut acquired = reader.poll(&cursor).map_err(|e| e.to_string())?;
         drivers::note_previous_through(&cursor, &mut acquired);
-        let prepared = async {
-            if let Some(unlock) = access.unlock {
-                unlock.check()?;
-            }
-            if let (Some(sealing), Some(material)) = (&sealing, &acquired.material)
-                && let Some(drivers::StoredBytes::FramedReader(stored)) = &material.stored
-                && sink.0.is_sealed(&stored.blob).map_err(|e| e.to_string())?
-            {
-                let unlock = access
-                    .unlock
-                    .ok_or("stored sealed material needs an operator unlock")?;
-                let key = unlock.material_key(read_conn, material.id).await?;
-                sealing.restore_key(stored.blob.clone(), key)?;
-            }
-            let carry = if acquired.material.is_some() {
-                match &sealing {
-                    Some(s) => open_carry(read_conn, binding, &carry, s, access.unlock).await?,
-                    None => carry,
-                }
-            } else {
-                carry
-            };
-            if let Some(reason) = &acquired.observation.unavailable {
-                return Err(format!("{binding}: {reason}"));
-            }
-            Ok::<_, String>(carry)
+        if let Some(unlock) = access.unlock {
+            unlock.check()?;
         }
-        .await;
-        let carry = match prepared {
-            Ok(carry) => carry,
-            Err(error) => {
-                guard.release().await?;
-                return Err(error);
-            }
+        if let (Some(sealing), Some(material)) = (&sealing, &acquired.material)
+            && let Some(drivers::StoredBytes::FramedReader(stored)) = &material.stored
+            && sink.0.is_sealed(&stored.blob).map_err(|e| e.to_string())?
+        {
+            let unlock = access
+                .unlock
+                .ok_or("stored sealed material needs an operator unlock")?;
+            let key = unlock.material_key(read_conn, material.id).await?;
+            sealing.restore_key(stored.blob.clone(), key)?;
+        }
+        let carry = match (&sealing, acquired.material.is_some()) {
+            (Some(s), true) => open_carry(read_conn, binding, &carry, s, access.unlock).await?,
+            _ => carry,
         };
+        if let Some(reason) = &acquired.observation.unavailable {
+            return Err(format!("{binding}: {reason}"));
+        }
         let had_material = acquired.material.is_some();
         let pipeline = pipeline::Pipeline {
             writer: handle,
@@ -378,7 +336,7 @@ pub(crate) async fn drive(
             check: check.clone(),
         };
         pipeline
-            .submit(guard, exclusions, carry, acquired, &mut totals)
+            .submit(read_conn, carry, acquired, &mut totals)
             .await?;
         if !had_material {
             break;

@@ -310,56 +310,6 @@ async fn a_rewritten_history_file_is_aligned_and_replays_without_duplicates(
 }
 
 #[devkit::test]
-async fn an_excised_record_stays_out_of_a_replay(db: devkit::pg::TestDatabase) {
-    let mut f = fixture(db).await;
-    let path = history(&f.dir, ": 1:0;ls\n: 2:0;cat secret\n: 3:0;pwd\n");
-    ingest(&mut f.ctx, &path, &mut AppendState::default()).await;
-    let secret: Uuid = sqlx::query_scalar!(
-        r#"SELECT id FROM core.events WHERE payload->>'command' = 'cat secret'"#
-    )
-    .fetch_one(&mut f.ctx.read_conn)
-    .await
-    .unwrap();
-    let out = crate::excision::excise_with(
-        &mut f.ctx.read_conn,
-        &f.ctx.blobs,
-        &f.ctx.writer,
-        sinex_store::excision::Target::Event(sinex_model::EventId(secret)),
-        "t",
-    )
-    .await
-    .unwrap();
-    assert!(
-        out.starts_with("excised events 1 | materials rewritten 1"),
-        "{out}"
-    );
-    let blob: String = sqlx::query_scalar!("SELECT blob FROM raw.materials")
-        .fetch_one(&mut f.ctx.read_conn)
-        .await
-        .unwrap();
-    let bytes = f.ctx.blobs.read(&blob).unwrap();
-    assert_eq!(
-        bytes, b": 1:0;ls\n                \n: 3:0;pwd\n",
-        "only the selected record is blanked, with its closing newline and sibling coordinates intact"
-    );
-    assert_eq!(bytes.len(), ": 1:0;ls\n: 2:0;cat secret\n: 3:0;pwd\n".len());
-
-    let report = run(
-        &mut f.ctx.read_conn,
-        &f.ctx.blobs,
-        &f.ctx.writer,
-        options(whole_binding(), false),
-    )
-    .await
-    .unwrap();
-    assert_eq!(
-        (report.archived, report.admitted, report.failures),
-        (2, 2, 0)
-    );
-    assert_eq!(live_commands(&mut f.ctx.read_conn).await, vec!["ls", "pwd"]);
-}
-
-#[devkit::test]
 async fn a_later_material_read_failure_rolls_back_the_entire_replay_chain(
     db: devkit::pg::TestDatabase,
 ) {

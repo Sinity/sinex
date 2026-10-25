@@ -358,7 +358,7 @@ pub const COMMANDS: &[Command] = &[
     },
     Command {
         name: "excise",
-        summary: "Permanently delete an event's every reading, or a whole material and its bytes; it never comes back by any route.",
+        summary: "Permanently delete the record an event was read from, with every reading of it and the material holding it, or a whole material. Refused when other records share the material or the source can read a record again.",
         args: &[
             pos_opt("reference", ArgKind::Reference, "the event"),
             opt(

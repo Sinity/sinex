@@ -191,16 +191,36 @@ their equivalence keys and record hashes are keyed hashes. Capture needs only
 the class key's public half. Reading sealed payloads, replaying sealed
 materials and continuing a sealed archive need an operator unlock.
 
-Excision (`excise`) is a rare operator action. It removes every reading of a
-record and every event derived from it, leaves a tombstone for each, and writes
-the material again with the record's bytes blanked; the old blob goes once
-nothing cites it. The request is recorded once in `core.operations` and applied
-by the writer in one transaction while it holds the source's lock. Running the
-same request again finds only what is left. Excision refuses sealed material, a
-producer's records, and records inside a stored original archive.
+Excision (`excise`) is a rare operator action. It removes one record (or one
+material the operator names): every reading of it, every event derived from
+it, and its bytes. It works on whole materials: a record is excised only when
+every material it was read from holds nothing else, and each such material's
+bytes are replaced by spaces of the same length, so the part chain keeps its
+offsets; the old blob goes once nothing cites it. A tombstone (identity and
+time) stays for each event. The request is recorded once in
+`core.operations`, planned, and applied by the writer in one transaction
+after a fresh plan matches; running it again finds only what is left. Nothing
+that is not the record changes: a material other records share is never
+rewritten, and equal bytes elsewhere are other records and stay.
 
-A source read again can meet an excised record (a shell history still holds the
-command). The excision's record keys and hashes are kept as the source's
-exclusions; `sinexd/src/excision/exclusions.rs` blanks matching records before
-the new bytes are stored. Admission compares the exclusions a read applied with
-the source's current ones, so a read that overlapped an excision is read again.
+Excision refuses, before anything changes, what it cannot remove cleanly.
+Only sources whose every stored copy of a record is one of its readings
+declare themselves excisable (`SourceSpec::excisable`): the live streams with
+records identified by their location (clipboard, file changes, Hyprland,
+MPRIS, notifications, editor and terminal sessions), media capture and
+forecasts. Every other source can read a record again or store another copy
+of it: an append-only file is rewritten, SQLite rows and directories are read
+again, an API cursor fetches again, an export archive holds the original
+bytes of every record in it, and a request can repeat a record. The
+operator's excision of their records is refused, as is excision of a record
+that shares its material with other records, of sealed material, of a
+derived event (excise what it was derived from), and of a material whose
+bytes another part of the same revision shares.
+
+An outside producer knows which of its materials hold what, so it excises
+its own: a request on `<root>.excise.<producer>` names whole materials it
+registered, and runs the same excision with the producer as the actor. A
+material another producer or a binding registered is refused, and nothing
+changes. An excised material is no longer listed on
+`<root>.materials.<producer>`. The operator's excision refuses producers'
+materials.

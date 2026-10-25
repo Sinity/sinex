@@ -23,6 +23,7 @@ use std::process::Command;
 pub const PST: SourceSpec = SourceSpec {
     name: "communication.outlook",
     driver: Driver::ExportArchive,
+    excisable: false,
     consumer: "mail recall and correspondence history",
     class: Class::Open,
     parser: "rfc5322-mail",
@@ -37,6 +38,7 @@ pub const PST: SourceSpec = SourceSpec {
 pub const CSV: SourceSpec = SourceSpec {
     name: "communication.outlook-csv",
     driver: Driver::ExportArchive,
+    excisable: false,
     consumer: "mail recall and correspondence history",
     class: Class::Open,
     parser: "outlook-csv",

@@ -2,27 +2,6 @@ use super::*;
 use std::io::Cursor;
 
 #[devkit::test]
-fn streamed_blanking_matches_original_bytes_across_small_buffers_and_overlaps() {
-    let original = b"a\nb\nc\nlast\nend";
-    let spans = vec![(0, 6), (4, 10), (10, 14)];
-    let mut expected = original.to_vec();
-    sinex_store::excision::blank(&mut expected, &spans);
-    for size in [1, 2, 3, 7, 64] {
-        let mut reader = Blanked::new(Cursor::new(original), spans.clone());
-        let mut actual = Vec::new();
-        let mut block = vec![0; size];
-        loop {
-            let n = reader.read(&mut block).unwrap();
-            if n == 0 {
-                break;
-            }
-            actual.extend_from_slice(&block[..n]);
-        }
-        assert_eq!(actual, expected, "buffer {size}");
-    }
-}
-
-#[devkit::test]
 fn stored_record_reads_are_exact_and_propagate_read_faults() {
     use sinex_sources::drain::RecordRead;
     let stored = StoredReader::new(Cursor::new(b"alpha\nbeta\n"), 11);
@@ -68,22 +47,4 @@ fn sealed_stored_seek_rechecks_the_unlock_even_for_a_cached_record() {
             .to_string()
             .contains("revoked")
     );
-}
-
-#[devkit::test]
-fn blanked_seek_repeats_the_same_exact_transform_without_staging() {
-    use std::io::{Cursor, Read, Seek, SeekFrom};
-    let bytes = b"kept\nremove\nlast\n";
-    let mut reader = Blanked::new(Cursor::new(bytes), vec![(5, 12)]);
-    let mut first = Vec::new();
-    reader.read_to_end(&mut first).unwrap();
-    assert_eq!(first, b"kept\n      \nlast\n");
-    reader.rewind().unwrap();
-    let mut second = Vec::new();
-    reader.read_to_end(&mut second).unwrap();
-    assert_eq!(second, first);
-    reader.seek(SeekFrom::Start(8)).unwrap();
-    let mut suffix = Vec::new();
-    reader.read_to_end(&mut suffix).unwrap();
-    assert_eq!(suffix, first[8..]);
 }

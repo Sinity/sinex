@@ -32,6 +32,7 @@ mod held;
 pub const SPEC: SourceSpec = SourceSpec {
     name: "communication.imap",
     driver: Driver::ApiCursor,
+    excisable: false,
     consumer: "mail recall and correspondence history",
     class: Class::Open,
     parser: "rfc5322-mail",

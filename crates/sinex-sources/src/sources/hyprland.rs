@@ -27,6 +27,7 @@ use std::time::Duration;
 pub const SPEC: SourceSpec = SourceSpec {
     name: "desktop.hyprland",
     driver: Driver::LiveStream,
+    excisable: true,
     consumer: "focus intervals, attention and recall",
     // Window titles are free text that can contain anything.
     class: Class::Guarded,

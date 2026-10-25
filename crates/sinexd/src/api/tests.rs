@@ -24,6 +24,7 @@ struct World {
     _stop: watch::Sender<bool>,
     writer: writer::WriterHandle,
     reads: sqlx::PgPool,
+    blobs: sinex_store::Blobs,
 }
 
 fn command(text: &str, i: i64) -> Event {
@@ -111,7 +112,7 @@ async fn world(db: devkit::pg::TestDatabase) -> World {
         .unwrap();
     let store = std::env::temp_dir().join(format!("sinexd-api-{}", uuid::Uuid::now_v7()));
     let blobs = sinex_store::Blobs::open(&store).unwrap();
-    let (handle, queues) = writer::channels_for(&url);
+    let (handle, queues) = writer::channels();
     tokio::spawn(writer::run(
         url.clone(),
         connection,
@@ -127,7 +128,7 @@ async fn world(db: devkit::pg::TestDatabase) -> World {
     let api = Api {
         reads: reads.clone(),
         writer: Some(handle.clone()),
-        blobs,
+        blobs: blobs.clone(),
         zone: jiff::tz::TimeZone::UTC,
         day_start: jiff::civil::Time::constant(4, 0, 0, 0),
         agent_grants: vec![],
@@ -158,6 +159,7 @@ async fn world(db: devkit::pg::TestDatabase) -> World {
         _stop: stop,
         writer: handle,
         reads,
+        blobs,
     }
 }
 

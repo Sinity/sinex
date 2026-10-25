@@ -5,6 +5,7 @@ use sinex_model::Class;
 const SPEC: SourceSpec = SourceSpec {
     name: "test.source",
     driver: Driver::ExportArchive,
+    excisable: false,
     consumer: "tests",
     class: Class::Open,
     parser: "test",

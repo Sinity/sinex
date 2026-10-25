@@ -268,9 +268,6 @@ impl Source for SmallBatches {
     fn spec(&self) -> &sinex_sources::SourceSpec {
         self.0.spec()
     }
-    fn record_hash(&self, raw: &[u8]) -> [u8; 32] {
-        self.0.record_hash(raw)
-    }
     fn drainer<'a>(
         &'a self,
         mut input: sinex_sources::DrainInput<'a>,

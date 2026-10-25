@@ -1,9 +1,6 @@
-//! One acquisition of a binding the daemon reads itself: exclusions applied,
-//! bytes stored, then the batches admitted. The source guard is held from the
-//! exclusions read until the first batch is admitted, so no excision of the
-//! source falls between them.
+//! One acquisition of a binding the daemon reads itself: bytes stored, then
+//! the batches admitted.
 use super::*;
-use crate::excision::{AcquisitionGuard, exclusions::Exclusions};
 use sinex_model::{BatchKind, Class};
 use std::sync::Arc;
 
@@ -33,33 +30,14 @@ impl Pipeline<'_> {
 
     pub async fn submit(
         &self,
-        guard: AcquisitionGuard,
-        exclusions: Exclusions,
-        carry: serde_json::Value,
-        acquired: drivers::Acquired,
-        totals: &mut Totals,
-    ) -> Result<(), String> {
-        let mut guard = Some(guard);
-        let result = self
-            .submit_guarded(&mut guard, exclusions, carry, acquired, totals)
-            .await;
-        if let Some(guard) = guard {
-            guard.release().await?;
-        }
-        result
-    }
-
-    async fn submit_guarded(
-        &self,
-        guard: &mut Option<AcquisitionGuard>,
-        exclusions: Exclusions,
+        conn: &mut PgConnection,
         carry: serde_json::Value,
         mut acquired: drivers::Acquired,
         totals: &mut Totals,
     ) -> Result<(), String> {
         (self.check)()?;
         let stored = reopen_stored(
-            guard.as_mut().expect("guard held").connection(),
+            conn,
             self.blobs,
             self.source,
             &mut acquired,
@@ -67,7 +45,6 @@ impl Pipeline<'_> {
             self.unlock,
         )
         .await?;
-        let filtered = exclusions.filter(self.source, acquired, &carry, self.class, stored)?;
         let plain = crate::material_sink::Sink(self.blobs.clone());
         let sink: &dyn drivers::MaterialSink = match self.sealing {
             Some(sealing) => sealing,
@@ -77,13 +54,12 @@ impl Pipeline<'_> {
             self.source,
             self.binding,
             self.run,
-            filtered,
+            acquired,
             carry,
             sink,
             Limits::default(),
         )
-        .map_err(|e| e.to_string())?
-        .with_exclusions(exclusions.version().clone());
+        .map_err(|e| e.to_string())?;
         totals.polls += 1;
         if let Some(length) = prepared.material_len() {
             totals.materials += 1;
@@ -112,22 +88,11 @@ impl Pipeline<'_> {
             totals.batches += 1;
             totals.events_offered += batch.event_count();
             let started = Instant::now();
-            let outcome = match guard.take() {
-                Some(guard) => {
-                    self.writer
-                        .guarded_slot(Priority::Bulk)
-                        .await
-                        .map_err(|e| e.to_string())?
-                        .admit(batch, guard, self.queued_check())
-                        .await
-                }
-                None => {
-                    self.writer
-                        .submit_checked(Priority::Bulk, batch, self.queued_check())
-                        .await
-                }
-            }
-            .map_err(|e| e.to_string())?;
+            let outcome = self
+                .writer
+                .submit_checked(Priority::Bulk, batch, self.queued_check())
+                .await
+                .map_err(|e| e.to_string())?;
             totals.admit_time += started.elapsed();
             totals.add_outcome(outcome);
         }

@@ -14,6 +14,7 @@ use std::path::PathBuf;
 pub const SPEC: SourceSpec = SourceSpec {
     name: "phone.samsung-sms",
     driver: Driver::ExportArchive,
+    excisable: false,
     consumer: "text messages sent and received",
     class: Class::Open,
     parser: "samsung-sms",

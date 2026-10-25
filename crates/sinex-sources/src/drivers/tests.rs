@@ -63,6 +63,7 @@ fn batches_are_drained_lazily() {
         spec: SourceSpec {
             name: "test.counting",
             driver: Driver::AppendFile,
+            excisable: false,
             consumer: "test",
             class: Class::Open,
             parser: "counting",
@@ -172,6 +173,7 @@ fn backfill_of_a_large_file_peaks_well_under_its_size() {
         spec: SourceSpec {
             name: "test.counting",
             driver: Driver::AppendFile,
+            excisable: false,
             consumer: "test",
             class: Class::Open,
             parser: "counting",
@@ -244,6 +246,7 @@ fn stored_original_length_does_not_replace_decoded_record_coordinates() {
         spec: SourceSpec {
             name: "test.counting",
             driver: Driver::ExportArchive,
+            excisable: false,
             consumer: "test",
             class: Class::Open,
             parser: "counting",

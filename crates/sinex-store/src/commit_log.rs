@@ -291,7 +291,8 @@ pub struct ProducerMaterial {
 }
 
 /// Up to `limit` materials `producer` registered after the frame numbered
-/// `after`, that Sinex still holds, in the order their frames were recorded.
+/// `after`, that Sinex still holds (not excised), in the order their frames
+/// were recorded.
 pub async fn producer_materials(
     conn: &mut PgConnection,
     producer: &str,
@@ -307,6 +308,8 @@ pub async fn producer_materials(
            JOIN raw.materials m ON m.id = f.material_id
            JOIN raw.inputs i ON i.id = m.input_id
            WHERE f.producer = $1 AND f.refusal IS NULL AND f.number > $2
+             AND NOT EXISTS (SELECT 1 FROM core.operations o
+                             WHERE o.kind = 'excise' AND o.scope->'materials' ? m.id::text)
            ORDER BY f.number LIMIT $3"#,
         producer,
         after,

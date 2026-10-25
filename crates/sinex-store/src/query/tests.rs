@@ -521,36 +521,4 @@ async fn read_only_sql_reads_and_cannot_write(db: devkit::pg::TestDatabase) {
     );
 }
 
-#[devkit::test]
-async fn excision_removes_search_text(db: devkit::pg::TestDatabase) {
-    use crate::excision::{Target, apply, plan};
-    let mut conn = <sqlx::PgConnection as sqlx::Connection>::connect(&db.url(None))
-        .await
-        .unwrap();
-    let ids = world(&mut conn).await;
-    let target = Target::Event(EventId(ids[0].1));
-    let plan = plan(&mut conn, target).await.unwrap();
-    let mut tx = conn.begin().await.unwrap();
-    apply(
-        &mut tx,
-        target,
-        &plan,
-        &[],
-        OperationId::new(),
-        "operator",
-        &NoDerivations,
-    )
-    .await
-    .unwrap();
-    tx.commit().await.unwrap();
-    let left = sqlx::query_scalar!(
-        r#"SELECT count(*) AS "n!" FROM core.search_text WHERE event_id = $1"#,
-        ids[0].1
-    )
-    .fetch_one(&mut conn)
-    .await
-    .unwrap();
-    assert_eq!(left, 0);
-}
-
 mod cursor;

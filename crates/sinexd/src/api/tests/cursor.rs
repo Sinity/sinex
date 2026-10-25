@@ -63,6 +63,17 @@ async fn public_continuation_refuses_permanent_removal_instead_of_skipping_the_n
         .enumerate()
         .map(|(i, text)| command(text, i as i64))
         .collect();
+    for (parent, text) in parents.iter().zip(["alpha", "beta", "gamma"]) {
+        crate::excision::tests::register(
+            &mut w.reads.acquire().await.unwrap(),
+            &w.blobs,
+            &sinex_sources::sources::clipboard::SPEC,
+            parent.location().unwrap().0.material,
+            format!("{text}\n").as_bytes(),
+        )
+        .await;
+    }
+    let excised = parents[0].id;
     let derived: Vec<_> = parents
         .iter()
         .map(|parent| {
@@ -95,7 +106,7 @@ async fn public_continuation_refuses_permanent_removal_instead_of_skipping_the_n
     let (_, removed) = call(
         &w,
         Some(OPERATOR),
-        json!({"method":"excise", "reference":page["result"]["rows"][0]["id"]}),
+        json!({"method":"excise", "reference":excised.to_string()}),
     )
     .await;
     assert_eq!(removed["outcome"], "ok", "{removed}");

@@ -95,8 +95,9 @@ Optimize for fast integration.
   not by widening visibility.
 - Register only operations that are implemented. Unsupported requests return a
   typed error, never an empty success. Unknown times stay unknown.
-- Do not change stored source material; keep what was captured. Excision is
-  the one exception: it blanks the excised records.
+- Do not change stored source material; keep what was captured. Excision,
+  which blanks a material holding only the excised record, is the only
+  exception.
 
 ## Data
 

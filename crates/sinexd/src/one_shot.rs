@@ -29,7 +29,7 @@ impl OneShot {
             .await
             .map_err(|e| e.to_string())?;
         writer::claim(&mut writer_conn).await?;
-        let (writer, queues) = writer::channels_for(database);
+        let (writer, queues) = writer::channels();
         let task = tokio::spawn(writer::run(
             database.to_owned(),
             writer_conn,

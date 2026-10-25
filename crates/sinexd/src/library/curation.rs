@@ -36,7 +36,7 @@ impl Library<'_> {
         }
         let a = Self::assignment(item, "tag", Some(tag.to_owned()), Level::Override, None);
         let id = a.assignment.clone();
-        self.write(vec![LibraryRecord::Assignment(a)], actor, "tag")
+        self.write(conn, vec![LibraryRecord::Assignment(a)], actor, "tag")
             .await?;
         Ok(json!({ "item": item, "tag": tag, "assignment": id }))
     }
@@ -66,6 +66,7 @@ impl Library<'_> {
         }
         let n = mine.len();
         self.write(
+            conn,
             mine.into_iter().map(Self::withdraw).collect(),
             actor,
             "untag",
@@ -105,7 +106,7 @@ impl Library<'_> {
             Level::Override,
             None,
         )));
-        self.write(records, actor, "set").await?;
+        self.write(conn, records, actor, "set").await?;
         Ok(json!({ "item": item, "field": field, "value": value }))
     }
 
@@ -156,7 +157,7 @@ impl Library<'_> {
         };
         let id = entry.entry.clone();
         records.push(LibraryRecord::Entry(entry));
-        self.write(records, actor, "collect").await?;
+        self.write(conn, records, actor, "collect").await?;
         Ok(json!({ "collection": c.name, "entry": id, "position": last + 1.0 }))
     }
 
@@ -185,7 +186,7 @@ impl Library<'_> {
             return Err(format!("{item} is not in {collection}"));
         }
         let n = gone.len();
-        self.write(gone, actor, "uncollect").await?;
+        self.write(conn, gone, actor, "uncollect").await?;
         Ok(json!({ "collection": collection, "item": item, "entries_withdrawn": n }))
     }
 
@@ -212,7 +213,7 @@ impl Library<'_> {
             at: Timestamp::now(),
             withdrawn_at: None,
         };
-        self.write(vec![LibraryRecord::Rating(r)], actor, "rate")
+        self.write(conn, vec![LibraryRecord::Rating(r)], actor, "rate")
             .await?;
         Ok(json!({ "item": item, "scale": scale, "value": value, "of": of }))
     }
@@ -239,7 +240,7 @@ impl Library<'_> {
             at: Timestamp::now(),
             withdrawn_at: None,
         };
-        self.write(vec![LibraryRecord::Comparison(c)], actor, "compare")
+        self.write(conn, vec![LibraryRecord::Comparison(c)], actor, "compare")
             .await?;
         Ok(json!({ "scale": scale, "winner": winner, "loser": loser }))
     }
@@ -272,7 +273,7 @@ impl Library<'_> {
             level: Level::Override,
             by: String::new(),
         };
-        self.write(vec![LibraryRecord::View(v)], actor, "viewed")
+        self.write(conn, vec![LibraryRecord::View(v)], actor, "viewed")
             .await?;
         Ok(json!({ "item": item, "seconds": seconds, "player": player }))
     }
@@ -347,7 +348,7 @@ impl Library<'_> {
             }
         }
         for chunk in records.chunks(2000) {
-            self.write(chunk.to_vec(), actor, "import").await?;
+            self.write(conn, chunk.to_vec(), actor, "import").await?;
         }
         Ok(json!({
             "files_with_sidecars_matched": matched,

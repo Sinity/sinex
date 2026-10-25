@@ -44,6 +44,12 @@ pub use framing::Framer;
 pub struct SourceSpec {
     pub name: &'static str,
     pub driver: Driver,
+    /// Whether excision can remove a record of this source completely. True
+    /// only where every stored copy of a record is one of its readings: the
+    /// driver never reads a record a second time (no rewrite, restart, re-fetch
+    /// or new export brings it back) and no record repeats under a key in a
+    /// later material. Excision refuses records of every other source.
+    pub excisable: bool,
     /// Every source names its consumer: what reads its events.
     pub consumer: &'static str,
     pub class: Class,
@@ -73,9 +79,6 @@ pub trait Source: Send + Sync {
         input: DrainInput<'a>,
     ) -> Result<Box<dyn Iterator<Item = Result<DrainOutput, RecordError>> + Send + 'a>, RecordError>;
 
-    /// The record hash the drain gives a record's events.
-    fn record_hash(&self, raw: &[u8]) -> [u8; 32];
-
     fn drain(&self, input: DrainInput<'_>) -> Result<Vec<DrainOutput>, RecordError> {
         self.drainer(input)?.collect()
     }
@@ -84,10 +87,6 @@ pub trait Source: Send + Sync {
 impl<P: Parser> Source for DeclaredSource<P> {
     fn spec(&self) -> &SourceSpec {
         &self.spec
-    }
-
-    fn record_hash(&self, raw: &[u8]) -> [u8; 32] {
-        crate::drain::record_hash::<P>(raw)
     }
 
     fn drainer<'a>(

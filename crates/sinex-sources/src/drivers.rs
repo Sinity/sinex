@@ -190,7 +190,6 @@ pub struct Prepared<'s> {
     carry: Value,
     limits: Limits,
     material: Option<(NewMaterial, MaterialRef)>,
-    exclusions: Option<sinex_model::Exclusions>,
 }
 
 /// Store the poll's material (if any) and return it ready to drain.
@@ -272,16 +271,10 @@ pub fn prepare<'s>(
         carry,
         limits,
         material,
-        exclusions: None,
     })
 }
 
 impl Prepared<'_> {
-    pub fn with_exclusions(mut self, exclusions: sinex_model::Exclusions) -> Self {
-        self.exclusions = Some(exclusions);
-        self
-    }
-
     /// The decoded record body length, if the poll produced a material.
     pub fn material_len(&self) -> Option<usize> {
         self.material
@@ -298,7 +291,6 @@ impl Prepared<'_> {
         revision: RevisionChange,
     ) -> BatchKind {
         BatchKind::Source(Box::new(SourceProgress {
-            exclusions: self.exclusions.clone(),
             material_keys: Vec::new(),
             binding: self.binding.clone(),
             input: self.input.clone(),

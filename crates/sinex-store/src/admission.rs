@@ -67,8 +67,7 @@ pub struct Outcome {
     pub replaced: usize,
     /// Older readings of a record that has a newer live reading: suppressed.
     pub older: usize,
-    /// Readings of hidden or excised records, or of bytes an excision
-    /// removed: suppressed.
+    /// Readings of hidden records: suppressed.
     pub hidden: usize,
     /// Superseded by a newer reading of the same record in this batch.
     pub superseded: usize,
@@ -94,15 +93,15 @@ pub async fn admit(
     let mut resolved: Vec<Option<Uuid>> = Vec::new();
 
     if let BatchKind::Ingress(frame) = &batch.kind
-        && frame.material.as_ref().is_some_and(|p| {
-            p.exclusions.is_some() || !p.material_keys.is_empty() || !p.carry.is_null()
-        })
+        && frame
+            .material
+            .as_ref()
+            .is_some_and(|p| !p.material_keys.is_empty() || !p.carry.is_null())
     {
         return Err(crate::Error::Invalid(
             "producer protocol does not authorize archive-owned source state".into(),
         ));
     }
-    crate::excision::exclusions::check(conn, batch).await?;
     match &batch.kind {
         BatchKind::Source(progress) => register::source(conn, progress).await?,
         BatchKind::Ingress(frame) => {

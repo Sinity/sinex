@@ -103,6 +103,7 @@ impl Library<'_> {
             state = Some(m);
             let (next, acquired) = out.map_err(e)?;
             let admitted = crate::authored::submit(
+                conn,
                 self.writer,
                 self.blobs,
                 std::sync::Arc::new(library_source::scan_source()),
@@ -167,7 +168,7 @@ impl Library<'_> {
         }
         let mut written = 0;
         for chunk in records.chunks(2000) {
-            let v = self.write(chunk.to_vec(), INTAKE, "intake").await?;
+            let v = self.write(conn, chunk.to_vec(), INTAKE, "intake").await?;
             written += v["records"].as_u64().unwrap_or(0);
         }
         Ok(json!({

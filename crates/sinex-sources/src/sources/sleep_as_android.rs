@@ -25,6 +25,7 @@ use std::path::PathBuf;
 pub const SPEC: SourceSpec = SourceSpec {
     name: "health.sleep-as-android",
     driver: Driver::ExportArchive,
+    excisable: false,
     consumer: "sleep sessions and their phases",
     class: Class::Open,
     parser: "sleep-as-android",

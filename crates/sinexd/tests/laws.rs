@@ -635,31 +635,52 @@ async fn visible_a3(c: &mut PgConnection) -> i64 {
     .await
 }
 
+/// A clipboard spool holding one copy of each of `texts`: a source whose
+/// records can be excised.
+fn clipboard_spool(dir: &Dir, name: &str, texts: &[&str]) -> PathBuf {
+    use sinex_sources::drivers::live_stream;
+    use sinex_sources::sources::clipboard;
+    let mut bytes = Vec::new();
+    for (i, text) in texts.iter().enumerate() {
+        let line = clipboard::frame("clipboard", &["text/plain".into()], text.as_bytes());
+        let received = sinex_model::Timestamp::from_unix_secs(1_600_000_000 + i as i64).unwrap();
+        bytes.extend(live_stream::frame(received, &line));
+    }
+    let segment = dir.file(&format!("{name}/000000000000.ndjson"), &bytes);
+    segment.parent().unwrap().to_path_buf()
+}
+
 /// Dry runs change nothing, and bytes two materials share survive the excision
 /// of one of them.
 #[devkit::test]
 async fn dry_runs_change_nothing_and_shared_bytes_survive() {
     let dir = Dir::new();
     let t = Target::new(&dir);
-    let text = small_zsh();
-    let a = dir.file("a/zsh", text.as_bytes());
-    t.backfill(Some(&a), None);
-    t.backfill(Some(&dir.file("b/zsh", text.as_bytes())), None);
+    let texts = ["synthetic one"];
+    for spool in [
+        clipboard_spool(&dir, "a", &texts),
+        clipboard_spool(&dir, "b", &texts),
+    ] {
+        finish(
+            t.sinexd(&["backfill", "--host", HOST])
+                .arg("--source")
+                .arg(format!("clipboard={}", spool.display())),
+        );
+    }
     let mut c = t.connect().await;
-    let shared: Vec<String> = sqlx::query_scalar("SELECT blob FROM raw.materials")
+    let shared: Vec<String> = sqlx::query_scalar("SELECT DISTINCT blob FROM raw.materials")
         .fetch_all(&mut c)
         .await
         .unwrap();
+    assert_eq!(shared.len(), 1, "both spools stored the same bytes once");
     let before = live(&mut c).await;
     let events = scalar(&mut c, "SELECT count(*) FROM core.events").await;
-    t.admin(&["replay", "--binding", &zsh_binding(&a), "--compare"]);
-    let victim: uuid::Uuid =
-        sqlx::query_scalar(
-            "SELECT event_id FROM core.live_equivalence WHERE event_type = 'command.imported' ORDER BY event_id LIMIT 1",
-        )
-            .fetch_one(&mut c)
-            .await
-            .unwrap();
+    let victim: uuid::Uuid = sqlx::query_scalar(
+        "SELECT event_id FROM core.live_locations WHERE event_type = 'clipboard.copied' ORDER BY event_id LIMIT 1",
+    )
+    .fetch_one(&mut c)
+    .await
+    .unwrap();
     t.admin(&["excise", &victim.to_string(), "--dry-run"]);
     assert_eq!(
         live(&mut c).await,
@@ -672,23 +693,67 @@ async fn dry_runs_change_nothing_and_shared_bytes_survive() {
     );
 
     t.admin(&["excise", &victim.to_string()]);
-    for blob in shared {
-        let still: i64 = sqlx::query_scalar("SELECT count(*) FROM raw.materials WHERE blob = $1")
-            .bind(&blob)
-            .fetch_one(&mut c)
-            .await
-            .unwrap();
-        if still > 0 {
-            let hex = blob.trim_start_matches("blake3:");
-            let file = t
-                .store
-                .join("blobs")
-                .join(&hex[..2])
-                .join(format!("{hex}.zst"));
-            assert!(file.exists(), "a blob still referenced was deleted: {blob}");
-        }
-    }
+    let still: i64 = sqlx::query_scalar("SELECT count(*) FROM raw.materials WHERE blob = $1")
+        .bind(&shared[0])
+        .fetch_one(&mut c)
+        .await
+        .unwrap();
+    assert_eq!(
+        still, 1,
+        "the other spool's material keeps the shared bytes"
+    );
+    let hex = shared[0].trim_start_matches("blake3:");
+    let file = t
+        .store
+        .join("blobs")
+        .join(&hex[..2])
+        .join(format!("{hex}.zst"));
+    assert!(file.exists(), "bytes still referenced were deleted");
+    assert_eq!(
+        scalar(&mut c, "SELECT count(*) FROM core.events").await,
+        events - 1
+    );
     consistent(&mut c).await;
+}
+
+/// Records of a source that reads its input again are refused, and nothing
+/// changes.
+#[devkit::test]
+async fn excision_of_a_shell_history_record_is_refused() {
+    let dir = Dir::new();
+    let t = Target::new(&dir);
+    let zsh = dir.file("zsh", small_zsh().as_bytes());
+    t.backfill(Some(&zsh), None);
+    let mut c = t.connect().await;
+    let before = live(&mut c).await;
+    let victim: uuid::Uuid = sqlx::query_scalar(
+        "SELECT event_id FROM core.live_equivalence WHERE event_type = 'command.imported' ORDER BY event_id LIMIT 1",
+    )
+    .fetch_one(&mut c)
+    .await
+    .unwrap();
+    let out = t
+        .sinexd(&["admin", "excise", &victim.to_string()])
+        .output()
+        .unwrap();
+    let said = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(
+        said.contains("records of terminal.zsh-history cannot be excised"),
+        "{said}"
+    );
+    assert_eq!(live(&mut c).await, before);
+    assert_eq!(
+        scalar(
+            &mut c,
+            "SELECT count(*) FROM core.operations WHERE kind = 'excise'"
+        )
+        .await,
+        0
+    );
 }
 
 /// One writer per database: a second writer is refused while the first holds

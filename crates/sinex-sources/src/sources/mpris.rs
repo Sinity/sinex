@@ -19,6 +19,7 @@ use std::path::{Path, PathBuf};
 pub const SPEC: SourceSpec = SourceSpec {
     name: "media.mpris",
     driver: Driver::LiveStream,
+    excisable: true,
     consumer: "listening and watching history, attention",
     // Titles and URLs of what is playing.
     class: Class::Guarded,

@@ -18,6 +18,7 @@ use std::path::PathBuf;
 pub const SPEC: SourceSpec = SourceSpec {
     name: "code.git",
     driver: Driver::ApiCursor,
+    excisable: false,
     consumer: "work episodes, project attribution and recall",
     class: Class::Open,
     parser: "git-commits",

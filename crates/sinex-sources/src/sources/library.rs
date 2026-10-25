@@ -35,6 +35,7 @@ use std::path::{Path, PathBuf};
 pub const SCAN: SourceSpec = SourceSpec {
     name: "library.scan",
     driver: Driver::DirSnapshot,
+    excisable: false,
     consumer: "the media library",
     class: Class::Open,
     parser: "library-scan",
@@ -49,6 +50,7 @@ pub const SCAN: SourceSpec = SourceSpec {
 pub const REQUEST: SourceSpec = SourceSpec {
     name: "library.request",
     driver: Driver::ApiRequest,
+    excisable: false,
     consumer: "the media library",
     class: Class::Open,
     parser: "library-request",

@@ -75,8 +75,8 @@ pub(crate) fn tables(c: &Checks) -> Vec<String> {
         // Found by event: removal of live readings, and readings at a location.
         "CREATE INDEX live_equivalence_event ON core.live_equivalence (event_id)".into(),
         "CREATE INDEX live_locations_event ON core.live_locations (event_id)".into(),
-        // Hidden and excised occurrences, remembered so neither replay nor
-        // re-import brings them back.
+        // Hidden occurrences, remembered so neither replay nor re-import
+        // brings them back.
         "CREATE TABLE core.hidden_occurrences (
   id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
   source text NOT NULL,
@@ -85,7 +85,6 @@ pub(crate) fn tables(c: &Checks) -> Vec<String> {
   material_id uuid,
   anchor bigint,
   ordinal smallint,
-  kind text NOT NULL CHECK (kind IN ('hide', 'excise')),
   operation_id uuid NOT NULL,
   hidden_at timestamptz NOT NULL DEFAULT now(),
   CONSTRAINT keyed_or_located CHECK ((equivalence_key IS NOT NULL AND material_id IS NULL AND anchor IS NULL AND ordinal IS NULL) OR (equivalence_key IS NULL AND material_id IS NOT NULL AND anchor IS NOT NULL AND ordinal IS NOT NULL))
@@ -100,15 +99,6 @@ pub(crate) fn tables(c: &Checks) -> Vec<String> {
   ts_orig timestamptz,
   operation_id uuid NOT NULL,
   removed_at timestamptz NOT NULL DEFAULT now()
-)".into(),
-        // Record hashes an excision removed, so re-staging the same bytes
-        // (a new material, so a new location) does not bring them back.
-        "CREATE TABLE core.excised_digests (
-  source text NOT NULL,
-  event_type text NOT NULL,
-  record_hash bytea NOT NULL,
-  operation_id uuid NOT NULL,
-  PRIMARY KEY (source, event_type, record_hash)
 )".into(),
         // Replay runs one transaction per material chain; a finished chain is
         // recorded here, so a resumed replay skips it.
