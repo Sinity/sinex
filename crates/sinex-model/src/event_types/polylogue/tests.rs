@@ -39,13 +39,14 @@ fn origin() -> Origin {
 
 #[devkit::test]
 fn sessions_messages_and_calls_are_keyed_by_polylogue_ids_and_replaced_when_newer() {
-    for (key, replace, field) in [
-        (Session::KEY, Session::REPLACE, "session"),
-        (Message::KEY, Message::REPLACE, "message"),
-        (ToolCall::KEY, ToolCall::REPLACE, "call"),
-        (Turn::KEY, Turn::REPLACE, "turn"),
-    ] {
-        assert_eq!(key, KeyKind::Fields(&[field]));
+    let keys: [(KeyKind, ReplaceRule, &'static [&'static str]); 4] = [
+        (Session::KEY, Session::REPLACE, &["session"]),
+        (Message::KEY, Message::REPLACE, &["message"]),
+        (ToolCall::KEY, ToolCall::REPLACE, &["call"]),
+        (Turn::KEY, Turn::REPLACE, &["turn"]),
+    ];
+    for (key, replace, field) in keys {
+        assert_eq!(key, KeyKind::Fields(field));
         assert_eq!(replace, ReplaceRule::ReplaceWhenNewer);
     }
     assert_eq!(Note::REPLACE, ReplaceRule::SuppressRepeat);
