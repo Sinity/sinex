@@ -46,15 +46,40 @@ impl std::fmt::Display for Applied {
     }
 }
 
-/// Every statement that creates the schema in an empty database, in order.
-pub fn declarations() -> Vec<String> {
-    let mut statements: Vec<String> = [
+/// What only a superuser may create: the extensions and the two roles. Each
+/// is created only when missing, so the owner can apply the schema once a
+/// superuser has run these ([`prepare`]).
+fn privileged() -> Vec<String> {
+    [
         "CREATE EXTENSION IF NOT EXISTS timescaledb",
         "CREATE EXTENSION IF NOT EXISTS pg_trgm",
         "DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname='sinex_writer') THEN CREATE ROLE sinex_writer; END IF; IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname='sinex_reader') THEN CREATE ROLE sinex_reader; END IF; END $$",
     ]
     .map(String::from)
-    .to_vec();
+    .to_vec()
+}
+
+/// Run as the database superuser before the owner applies the schema: create
+/// the extensions and roles, and give `owner` both roles.
+pub async fn prepare(connection: &mut PgConnection, owner: &str) -> Result<(), Error> {
+    for statement in privileged() {
+        connection.execute(statement.as_str()).await?;
+    }
+    connection
+        .execute(
+            format!(
+                "GRANT sinex_writer, sinex_reader TO {}",
+                quote_ident(owner)
+            )
+            .as_str(),
+        )
+        .await?;
+    Ok(())
+}
+
+/// Every statement that creates the schema in an empty database, in order.
+pub fn declarations() -> Vec<String> {
+    let mut statements = privileged();
     for schema in tables::SCHEMAS {
         statements.push(format!("CREATE SCHEMA {schema}"));
     }

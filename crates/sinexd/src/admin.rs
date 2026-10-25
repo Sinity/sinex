@@ -11,6 +11,14 @@ pub enum Admin {
         #[arg(long)]
         database: String,
     },
+    /// As the database superuser: create the extensions and roles the schema
+    /// needs, and give `owner` the roles. The owner then applies the schema.
+    PrepareDatabase {
+        #[arg(long)]
+        database: String,
+        #[arg(long)]
+        owner: String,
+    },
     /// Print every source and derivation as JSON, for the NixOS module's
     /// generated options (`nix/catalog.json`).
     Catalog,
@@ -44,6 +52,15 @@ pub async fn run(command: Admin) -> Result<(), String> {
             .await
             .map(|applied| println!("{applied}"))
             .map_err(|e| e.to_string()),
+        Admin::PrepareDatabase { database, owner } => {
+            use sqlx::Connection;
+            let mut connection = sqlx::PgConnection::connect(&database)
+                .await
+                .map_err(|e| e.to_string())?;
+            sinex_schema::prepare(&mut connection, &owner)
+                .await
+                .map_err(|e| e.to_string())
+        }
         Admin::Catalog => {
             print!("{}", catalog::render());
             Ok(())

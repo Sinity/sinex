@@ -2,9 +2,6 @@
 # PostgreSQL and NATS, the session service, the journald capture, a
 # capture-only node for satellite hosts, and the backups. Source and derivation
 # options come from the registries through the generated `catalog.json`.
-#
-# Deployment itself waits for the operator's Phase C go-ahead; this module is
-# what that deployment will use.
 self:
 { config, lib, pkgs, ... }:
 let
@@ -35,8 +32,8 @@ let
     nats_url="nats://${user}:$pw@${address}"
   '';
 
-  # Sealed operations restart cleanly: three tries in ten minutes, 30 s apart
-  #.
+  # A failing service is restarted three times in ten minutes, 30 s apart,
+  # then left stopped.
   restartPolicy = {
     Restart = "on-failure";
     RestartSec = "30s";
@@ -262,9 +259,28 @@ in
     subjects = mkOption { type = types.str; default = "sinex"; };
     producer = mkOption { type = types.str; default = "capture-${config.networking.hostName}"; };
     passwordFile = mkOption { type = types.path; };
+    user = mkOption {
+      type = types.str;
+      default = "sinex-capture";
+      description = "The account the capture runs as. It must be able to read the watched directories.";
+    };
+    group = mkOption {
+      type = types.str;
+      default = "sinex";
+      description = ''
+        The content store's group: the capture writes its frames' bytes through
+        it. When the store is a network mount, the group's ID must match the
+        store host's.
+      '';
+    };
     store = mkOption {
       type = types.path;
-      description = "sinexd's content store as mounted here (sending bytes over the link is not built yet).";
+      description = "sinexd's content store as mounted here, or with `upload` this node's own store.";
+    };
+    upload = mkOption {
+      type = types.bool;
+      default = false;
+      description = "Keep `store` on this node and send each material's bytes over the NATS link.";
     };
     stateDir = mkOption { type = types.path; default = "/var/lib/sinex-capture"; };
     host = mkOption { type = types.str; default = config.networking.hostName; };
@@ -350,7 +366,7 @@ in
       };
 
       # Extensions and roles need the superuser; the schema itself is applied
-      # by the sinex user at daemon start.
+      # by the sinex user at daemon start. Both come from sinex-schema.
       systemd.services.sinex-db-setup = {
         description = "Sinex database extensions and roles";
         after = [ "postgresql.service" "postgresql-setup.service" ];
@@ -362,15 +378,8 @@ in
           User = "postgres";
         };
         script = ''
-          ${postgres}/bin/psql -v ON_ERROR_STOP=1 -d sinex <<'SQL'
-          CREATE EXTENSION IF NOT EXISTS timescaledb;
-          CREATE EXTENSION IF NOT EXISTS pg_trgm;
-          DO $$ BEGIN
-            IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname='sinex_writer') THEN CREATE ROLE sinex_writer; END IF;
-            IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname='sinex_reader') THEN CREATE ROLE sinex_reader; END IF;
-          END $$;
-          GRANT sinex_writer, sinex_reader TO ${cfg.user};
-          SQL
+          exec ${cfg.package}/bin/sinexd admin prepare-database \
+            --database ${escapeShellArg dbUrl} --owner ${escapeShellArg cfg.user}
         '';
       };
 
@@ -546,6 +555,11 @@ in
     })
 
     (mkIf node.enable {
+      users.users.${node.user} = {
+        isSystemUser = true;
+        group = node.group;
+      };
+      users.groups.${node.group} = { };
       systemd.services.sinex-capture = {
         description = "Sinex capture-only node";
         after = [ "network-online.target" "remote-fs.target" ];
@@ -553,6 +567,9 @@ in
         wantedBy = [ "multi-user.target" ];
         unitConfig = startLimit;
         serviceConfig = restartPolicy // {
+          User = node.user;
+          Group = node.group;
+          UMask = "0007";
           StateDirectory = "sinex-capture";
           SupplementaryGroups = optional node.journald "systemd-journal";
         };
@@ -566,6 +583,7 @@ in
             --store ${escapeShellArg node.store} \
             --state ${escapeShellArg node.stateDir} \
             --host ${escapeShellArg node.host} \
+            ${optionalString node.upload "--upload"} \
             ${optionalString node.journald "--journald"} \
             ${concatMapStringsSep " " (d: "--watch ${escapeShellArg d}") node.watch}
         '';
