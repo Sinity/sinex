@@ -123,8 +123,8 @@ sends `polylogue.session`, `polylogue.message`, `polylogue.tool_call` and
 `polylogue.turn` events anchored at their records and keyed by Polylogue's own
 IDs, so the same message in two files, or read again by a changed parser, is
 one occurrence whose newer reading replaces the older. Notes, settings, kept
-results, deliveries and excision requests arrive as small record materials
-with one event each. A type can declare the least class its events are stored
+results, deliveries and excisions arrive as small request materials with one
+event each. A type can declare the least class its events are stored
 under (`class = guarded` on `polylogue.message`), whatever class the producer
 asks for. Sinex has no AI-chat parser of its own.
 

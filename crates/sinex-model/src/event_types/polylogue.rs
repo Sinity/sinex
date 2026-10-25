@@ -7,9 +7,9 @@
 //! one occurrence, and the newer reading replaces the older. Sinex never
 //! parses AI sessions.
 //!
-//! Notes, settings, kept results, deliveries and excision requests are
-//! records Polylogue writes: each is a small material holding the record and
-//! one event below.
+//! Notes, settings, kept results, deliveries and excisions are requests
+//! Polylogue writes: each is a small material holding the request (a request
+//! material) and one event below.
 use crate::{MaterialId, Timestamp};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -225,14 +225,15 @@ pub struct DeliveryOutcome {
 }
 
 /// A note, tag, title, judgment, saved query or other assertion a person or
-/// agent wrote about something. A revision is a new note in the same family
-/// (`root`); a withdrawal is a note of kind `withdrawal`.
+/// agent wrote about something. A revision is a new note with the same
+/// `first_note`; a withdrawal is a note of kind `withdrawal`.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
 #[serde(deny_unknown_fields)]
 #[event(type = "polylogue.note", key = ["note"], replace = repeat, time = created_at, quality = intrinsic, class = guarded)]
 pub struct Note {
     pub note: String,
-    pub root: String,
+    /// The first note of its revisions; the note itself for a first note.
+    pub first_note: String,
     pub kind: String,
     pub key: Option<String>,
     pub value: Option<String>,
@@ -277,8 +278,8 @@ pub struct KeptResult {
     pub name: Option<String>,
     pub query: String,
     pub ran_at: Timestamp,
-    /// What the query read.
-    pub view: Value,
+    /// What its read transaction read (the query's resolved time).
+    pub read_at: Value,
     /// The rows it returned.
     pub rows: Value,
 }
@@ -289,8 +290,8 @@ pub struct KeptResult {
 #[event(type = "polylogue.excision", key = ["excision"], replace = repeat, time = created_at, quality = operator)]
 pub struct Excision {
     pub excision: String,
-    /// `input:<id>`, `session:<id>`, `document:<id>`, `note:<id>`, ….
-    pub scope: String,
+    /// What it removed: `input:<id>`, `session:<id>` or `document:<id>`.
+    pub target: String,
     pub reason: Option<String>,
     pub created_at: Timestamp,
 }
