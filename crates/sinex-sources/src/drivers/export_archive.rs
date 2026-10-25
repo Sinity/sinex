@@ -91,7 +91,9 @@ pub struct ExportArchive {
 /// as one record (Fit's points of one data type and local day). A record
 /// without a key stays alone. A joined record is never split across parts.
 #[derive(Clone)]
-pub struct Join(pub std::sync::Arc<dyn Fn(&[u8]) -> Option<String> + Send + Sync>);
+pub struct Join(pub std::sync::Arc<RecordKey>);
+
+pub type RecordKey = dyn Fn(&[u8]) -> Option<String> + Send + Sync;
 
 /// Default target size for decoded record parts. One record can exceed it.
 pub const PART_BYTES: usize = 64 << 20;
