@@ -1,7 +1,7 @@
 //! Queries against a real database: each test admits a few commands (an
 //! observation and the fused command derived from it) and reads them back.
 use super::*;
-use crate::read_models::catch_up_search_text;
+use crate::read_models::tests::catch_up_search_text;
 use crate::{NoDerivations, admit};
 use serde_json::json;
 use sinex_model::event_types::{CommandExecuted, CommandFused};

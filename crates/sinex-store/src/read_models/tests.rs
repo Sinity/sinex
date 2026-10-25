@@ -1,5 +1,22 @@
 use super::*;
 
+/// Bring the search read model up to the newest commit without the daemon's
+/// reader, page by page with its position.
+pub(crate) async fn catch_up_search_text(conn: &mut PgConnection) -> Result<i64> {
+    let (mut position, _) = crate::commit_log::consumer_position(conn, SEARCH_TEXT).await?;
+    loop {
+        let page = crate::commit_log::after(conn, position, 2_000).await?;
+        let Some(up_to) = page.up_to else {
+            return Ok(position);
+        };
+        let mut tx = sqlx::Connection::begin(&mut *conn).await?;
+        apply_search_text(&mut tx, &page.events).await?;
+        crate::commit_log::set_consumer_position(&mut tx, SEARCH_TEXT, up_to, 0).await?;
+        tx.commit().await?;
+        position = up_to;
+    }
+}
+
 #[devkit::test]
 async fn indexes_committed_payload_text_once_and_resumes(db: devkit::pg::TestDatabase) {
     let mut conn = <sqlx::PgConnection as sqlx::Connection>::connect(&db.url(None))

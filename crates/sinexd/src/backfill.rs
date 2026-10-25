@@ -266,10 +266,18 @@ pub(crate) async fn drive(
         None
     };
     let checked_stop = stop.clone();
+    // Checked for every buffer read, so the switch is looked at only every
+    // quarter second.
+    let checked_private = std::sync::Mutex::new(sinex_transport::private_mode::Cached::new(
+        sinex_transport::private_mode::PrivateMode::default(),
+        std::time::Duration::from_millis(250),
+    ));
     let check: std::sync::Arc<dyn Fn() -> Result<(), String> + Send + Sync> =
         std::sync::Arc::new(move || {
-            if *checked_stop.borrow() || sinex_transport::private_mode::PrivateMode::default().on()
-            {
+            let private = checked_private
+                .lock()
+                .map_or(true, |mut cached| cached.on());
+            if *checked_stop.borrow() || private {
                 return Err("capture cancelled or private mode is on".into());
             }
             Ok(())

@@ -1,4 +1,10 @@
 use super::*;
+
+/// Bounds small enough for a test to reach.
+pub(crate) const SMALL: TailBounds = TailBounds {
+    bytes: 4096,
+    records: 40,
+};
 use std::io::Write;
 
 fn temp(name: &str) -> PathBuf {
@@ -201,7 +207,7 @@ fn a_file_larger_than_a_part_is_read_in_bounded_parts_covering_every_record() {
 
 #[devkit::test]
 fn the_memory_keeps_a_bounded_tail_of_the_newest_records() {
-    let mut state = AppendState::default();
+    let mut state = AppendState::bounded(SMALL);
     let mut first = None;
     for m in 0..100 {
         let id = MaterialId::new();
@@ -213,8 +219,8 @@ fn the_memory_keeps_a_bounded_tail_of_the_newest_records() {
         }
     }
     // 1000 records of ~1 KB: held by bytes, the newest only.
-    assert!(state.bytes <= STATE_TAIL, "{} bytes kept", state.bytes);
-    assert!(state.bytes + 1010 > STATE_TAIL);
+    assert!(state.bytes <= SMALL.bytes, "{} bytes kept", state.bytes);
+    assert!(state.bytes + 1010 > SMALL.bytes);
     let first = first.unwrap();
     assert!(
         state
@@ -234,20 +240,20 @@ fn the_memory_keeps_a_bounded_tail_of_the_newest_records() {
 
 #[devkit::test]
 fn short_records_are_bounded_by_count_within_one_material() {
-    let mut state = AppendState::default();
+    let mut state = AppendState::bounded(SMALL);
     let id = MaterialId::new();
     for i in 0..1000 {
         state.insert(format!("{i}\n").as_bytes(), id, i * 4);
     }
     // 1000 records of 2-4 bytes in one material: far under the byte tail,
     // held by count.
-    assert_eq!(state.order.len(), STATE_RECORDS);
+    assert_eq!(state.order.len(), SMALL.records);
     let held: usize = state
         .records
         .values()
         .map(|locations| locations.len())
         .sum();
-    assert_eq!(held, STATE_RECORDS);
+    assert_eq!(held, SMALL.records);
     assert!(state.take(b"999\n"), "the newest record is held");
     assert!(!state.take(b"0\n"), "the oldest is not");
 }

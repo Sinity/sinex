@@ -1,10 +1,11 @@
 use super::*;
+use crate::drivers::append_file::tests::SMALL;
 
 #[devkit::test]
 fn newest_first_tail_preserves_duplicate_locations() {
     let material = MaterialId::new();
     let location = |anchor| RecordLocation { material, anchor };
-    let mut tail = AppendTail::default();
+    let mut tail = AppendTail::bounded(SMALL);
     assert!(tail.push_raw(location(8), b"same").unwrap());
     assert!(tail.push_raw(location(0), b"same").unwrap());
     let mut state = tail.into_state().unwrap();
@@ -18,8 +19,8 @@ fn newest_first_tail_preserves_duplicate_locations() {
 #[devkit::test]
 fn completed_tail_obeys_live_record_and_byte_limits_without_keeping_raw_bodies() {
     let material = MaterialId::new();
-    let mut tail = AppendTail::default();
-    for anchor in (0..STATE_RECORDS as u64).rev() {
+    let mut tail = AppendTail::bounded(SMALL);
+    for anchor in (0..SMALL.records as u64).rev() {
         assert!(
             tail.push_raw(RecordLocation { material, anchor }, b"x")
                 .unwrap()
@@ -36,9 +37,9 @@ fn completed_tail_obeys_live_record_and_byte_limits_without_keeping_raw_bodies()
             )
             .unwrap()
     );
-    assert_eq!(tail.into_state().unwrap().order.len(), STATE_RECORDS);
-    let large = vec![b'x'; STATE_TAIL + 1];
-    let mut tail = AppendTail::default();
+    assert_eq!(tail.into_state().unwrap().order.len(), SMALL.records);
+    let large = vec![b'x'; SMALL.bytes + 1];
+    let mut tail = AppendTail::bounded(SMALL);
     assert!(
         tail.push_raw(
             RecordLocation {
@@ -63,7 +64,7 @@ fn completed_tail_obeys_live_record_and_byte_limits_without_keeping_raw_bodies()
     let state = tail.into_state().unwrap();
     assert_eq!(state.order.len(), 1);
     assert_eq!(state.bytes, large.len());
-    let mut tail = AppendTail::default();
+    let mut tail = AppendTail::bounded(SMALL);
     assert!(
         tail.push_raw(
             RecordLocation {

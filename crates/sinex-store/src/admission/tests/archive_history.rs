@@ -67,7 +67,7 @@ async fn archive_history_preserves_hide_unhide_hide_intervals_without_new_events
         );
         assert_eq!(page.up_to, Some(position));
         assert_eq!(
-            read_models::catch_up_search_text(&mut conn).await.unwrap(),
+            read_models::tests::catch_up_search_text(&mut conn).await.unwrap(),
             position
         );
     }
