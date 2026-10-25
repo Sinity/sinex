@@ -99,7 +99,7 @@ pub(super) async fn insert_admitted(
             conn,
             &live,
             last,
-            "newer_reading",
+            sinex_model::ArchiveReason::NewerReading,
             Some(&replacements),
             None,
         )

@@ -146,7 +146,7 @@ async fn publishes_in_commit_order_masked_once(db: devkit::pg::TestDatabase) {
     };
     assert_eq!(notice.event, first_id);
     assert_eq!(notice.replaced_by, Some(newer_id));
-    assert_eq!(notice.reason, "newer_reading");
+    assert_eq!(notice.reason, sinex_model::ArchiveReason::NewerReading);
 }
 
 /// Found on real data: one Atuin command of 4 MB. The event goes out,
@@ -270,7 +270,7 @@ async fn hide_after_publishing_sends_a_notice(db: devkit::pg::TestDatabase) {
     let Confirmed::Archived(notice) = messages.last().unwrap() else {
         panic!("notice")
     };
-    assert_eq!((notice.event, notice.reason.as_str()), (id, "hide"));
+    assert_eq!((notice.event, notice.reason), (id, sinex_model::ArchiveReason::Hide));
 }
 
 /// Excision reaches every surface: an event excised after it was published

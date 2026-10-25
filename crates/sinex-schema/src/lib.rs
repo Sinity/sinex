@@ -9,7 +9,7 @@
 //! This crate uses no compile-time-checked queries: it builds before any
 //! database exists and provisions the one the store's queries are checked
 //! against.
-use sinex_model::{Class, DbCheck, KeyKind, RecordState, ReplaceRule, TimeQuality, event_types};
+use sinex_model::{ArchiveReason, Class, DbCheck, KeyKind, RecordState, ReplaceRule, TimeQuality, event_types};
 use sqlx::{Connection, Executor, PgConnection};
 
 mod tables;
@@ -85,6 +85,9 @@ pub(crate) struct Checks {
     pub record_state: String,
     pub class: String,
     pub replace_rule: String,
+    pub archive_reason: String,
+    /// The archive reasons, and `unhide` for a reading put back.
+    pub archive_change_reason: String,
 }
 
 impl Checks {
@@ -94,6 +97,13 @@ impl Checks {
             record_state: RecordState::check("record_state"),
             class: Class::check("class"),
             replace_rule: ReplaceRule::check("replace_rule"),
+            archive_reason: ArchiveReason::check("reason"),
+            archive_change_reason: {
+                let mut reasons: Vec<String> =
+                    ArchiveReason::VALUES.iter().map(|v| format!("'{v}'")).collect();
+                reasons.push("'unhide'".into());
+                format!("CHECK (reason IN ({}))", reasons.join(", "))
+            },
         }
     }
 }

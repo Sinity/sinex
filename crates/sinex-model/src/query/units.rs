@@ -3,7 +3,7 @@
 //! cannot disagree. The SQL each field lowers to lives in `sinex-store::query`,
 //! keyed by unit and field name, and a test there checks that every field here
 //! has one.
-use crate::{Class, DbCheck, RecordState, TimeQuality};
+use crate::{ArchiveReason, Class, DbCheck, RecordState, TimeQuality};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum FieldType {
@@ -37,13 +37,6 @@ const fn f(name: &'static str, ty: FieldType, phrase: &'static str) -> Field {
 }
 
 const ORIGINS: &[&str] = &["material", "derived"];
-const ARCHIVE_REASONS: &[&str] = &[
-    "replay",
-    "newer_reading",
-    "hide",
-    "excise",
-    "version_change",
-];
 const RUN_STATUS: &[&str] = &["running", "finished"];
 const FAILURE_STAGES: &[&str] = &["parse"];
 
@@ -79,7 +72,7 @@ macro_rules! event_fields {
 const EVENTS: &[Field] = event_fields!();
 const ARCHIVE: &[Field] = event_fields!(
     f("archived", FieldType::Time, "time it left the live set"),
-    f("reason", FieldType::Enum(ARCHIVE_REASONS), "archive reason"),
+    f("reason", FieldType::Enum(ArchiveReason::VALUES), "archive reason"),
     f("operation", FieldType::Id, "operation"),
     f("replaced_by", FieldType::Id, "replacing event"),
     f(

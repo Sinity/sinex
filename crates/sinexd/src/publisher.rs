@@ -144,7 +144,7 @@ pub async fn publish_pending(
         }
         for n in &notices {
             let message = if n.archived {
-                Confirmed::Archived(notice_message(n))
+                Confirmed::Archived(notice_message(n)?)
             } else {
                 Confirmed::Restored(RestoredNotice {
                     notice_seq: n.notice_seq,
@@ -314,15 +314,17 @@ fn confirmed_event(e: &Committed) -> Result<ConfirmedEvent, String> {
     })
 }
 
-fn notice_message(n: &Notice) -> ArchiveNotice {
-    ArchiveNotice {
+fn notice_message(n: &Notice) -> Result<ArchiveNotice, String> {
+    let reason = serde_json::from_value(serde_json::Value::String(n.reason.clone()))
+        .map_err(|err| format!("event {}: archive reason {:?}: {err}", n.event_id, n.reason))?;
+    Ok(ArchiveNotice {
         notice_seq: n.notice_seq,
         event: EventId(n.event_id),
         archived_seq: n.commit_seq,
-        reason: n.reason.clone(),
+        reason,
         replaced_by: n.replaced_by.map(EventId),
         operation: n.operation_id.map(OperationId),
-    }
+    })
 }
 
 /// Publish everything pending once and report the rate: for `sinexd publish`

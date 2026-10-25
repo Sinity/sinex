@@ -162,29 +162,29 @@ pub(crate) fn tables(c: &Checks) -> Vec<String> {
 )".into(),
         // The archive is logical: archived rows stay in core.events. This is
         // the current state; archive_changes holds every transition.
-        "CREATE TABLE audit.archived (
+        format!("CREATE TABLE audit.archived (
   event_id uuid PRIMARY KEY,
   notice_seq bigint GENERATED ALWAYS AS IDENTITY UNIQUE,
   archived_seq bigint NOT NULL,
-  reason text NOT NULL CHECK (reason IN ('replay', 'newer_reading', 'hide', 'excise', 'version_change', 'recomputed')),
+  reason text NOT NULL {archive_reason},
   replaced_by uuid,
   operation_id uuid,
   archived_at timestamptz NOT NULL DEFAULT now()
-)".into(),
+)", archive_reason = c.archive_reason),
         // Every visibility change at its writer position, so an as-of read
         // sees the visibility that held at that position.
-        "CREATE TABLE audit.archive_changes (
+        format!("CREATE TABLE audit.archive_changes (
   notice_seq bigint PRIMARY KEY,
   event_id uuid NOT NULL,
   commit_seq bigint NOT NULL,
   archived boolean NOT NULL,
-  reason text NOT NULL CHECK (reason IN ('replay', 'newer_reading', 'hide', 'unhide', 'excise', 'version_change', 'recomputed')),
+  reason text NOT NULL {archive_change_reason},
   replaced_by uuid,
   operation_id uuid,
   recorded_at timestamptz NOT NULL DEFAULT now(),
   UNIQUE (event_id, commit_seq),
   CHECK (archived = (reason <> 'unhide'))
-)".into(),
+)", archive_change_reason = c.archive_change_reason),
         "CREATE INDEX archive_changes_position ON audit.archive_changes (event_id, commit_seq DESC)".into(),
         "CREATE TABLE core.blobs (
   hash text PRIMARY KEY CHECK (hash ~ '^blake3:[0-9a-f]{64}$'),

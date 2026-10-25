@@ -16,7 +16,7 @@ pub mod privacy;
 pub mod query;
 
 pub use batch::{
-    ArchiveRequest, Batch, BatchKind, Exclusions, IngressFrame, InputRef, MaterialRef,
+    ArchiveReason, ArchiveRequest, Batch, BatchKind, Exclusions, IngressFrame, InputRef, MaterialRef,
     MaterialRole, ObservationFacts, RecordOutcome, ReplayScope, RevisionChange, SourceProgress,
     WrappedMaterialKey,
 };
