@@ -237,7 +237,7 @@ pub fn source() -> DeclaredSource<HyprlandParser> {
 }
 
 /// The event socket of the Hyprland instance in this session's environment.
-pub fn socket_path() -> Option<PathBuf> {
+fn socket_path() -> Option<PathBuf> {
     let runtime = std::env::var_os("XDG_RUNTIME_DIR")?;
     let instance = std::env::var_os("HYPRLAND_INSTANCE_SIGNATURE")?;
     Some(

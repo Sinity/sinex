@@ -264,7 +264,7 @@ pub async fn run(
 /// (stored by backfill and the binding runner). A material with no stored
 /// binding (sent by an outside producer) is read by the source whose parser
 /// it names.
-pub(crate) async fn sources_of(
+async fn sources_of(
     read_conn: &mut sqlx::PgConnection,
     chain: &[Stored],
 ) -> Result<Vec<Box<dyn Source>>, String> {

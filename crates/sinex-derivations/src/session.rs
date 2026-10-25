@@ -15,7 +15,7 @@ use sinex_model::{Event, EventPayload, Timestamp};
 
 /// Gap between one command's end and the next command's start that ends a
 /// session.
-pub const GAP_NS: i128 = 300 * 1_000_000_000;
+const GAP_NS: i128 = 300 * 1_000_000_000;
 
 pub struct ShellSessions;
 

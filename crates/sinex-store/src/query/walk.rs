@@ -9,7 +9,7 @@ use uuid::Uuid;
 
 /// Walks follow at most this many levels: the bound the archive cascade uses,
 /// reported when reached rather than cut silently.
-pub const WALK_DEPTH: i32 = 100;
+const WALK_DEPTH: i32 = 100;
 
 /// The event a citation points at: for `ev`, that interpretation, live or
 /// archived; for `occ` and `eq`, the live interpretation of the occurrence.

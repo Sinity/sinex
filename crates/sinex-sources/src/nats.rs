@@ -19,7 +19,7 @@ pub async fn connect(url: &str) -> Result<async_nats::Client, String> {
 }
 
 /// The URL with any password replaced, for messages and logs.
-pub fn redacted(url: &str) -> String {
+fn redacted(url: &str) -> String {
     match split(url) {
         (server, Some((user, _))) => {
             let (scheme, host) = server.split_once("://").unwrap_or(("nats", &server));

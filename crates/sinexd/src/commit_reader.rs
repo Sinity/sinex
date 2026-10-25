@@ -124,7 +124,7 @@ pub fn read_models() -> Vec<Box<dyn ReadModel>> {
 
 /// The full-text read model `core.search_text`: every event's payload text,
 /// normalized, for the query language's words (spec `query.md` §5).
-pub struct SearchText;
+struct SearchText;
 
 impl ReadModel for SearchText {
     fn name(&self) -> &'static str {

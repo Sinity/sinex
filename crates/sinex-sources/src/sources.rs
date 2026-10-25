@@ -137,7 +137,7 @@ pub fn input_kind_of(spec_name: &str) -> Option<&'static InputKind> {
 /// alone: a name is shared by one source read two ways (the live clipboard
 /// and its lake lane), a parser by sources of one format (mbox, Maildir and
 /// Outlook mail).
-pub fn input_kind_of_source(name: &str, parser: &str) -> Option<&'static InputKind> {
+fn input_kind_of_source(name: &str, parser: &str) -> Option<&'static InputKind> {
     input_kinds().iter().copied().find(|k| {
         (k.specs)()
             .iter()

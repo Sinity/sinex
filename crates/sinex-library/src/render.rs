@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
 /// The longest side of a preview, in pixels.
-pub const PREVIEW_SIDE: u32 = 512;
+const PREVIEW_SIDE: u32 = 512;
 
 /// Whether `ffmpeg` can make a still preview of this media type.
 pub fn previewable(media_type: &str) -> bool {

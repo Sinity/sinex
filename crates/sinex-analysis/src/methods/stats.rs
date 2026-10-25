@@ -5,7 +5,7 @@
 use std::f64::consts::PI;
 
 /// ln Γ(x) for x > 0 (Lanczos approximation, g = 7, n = 9).
-pub fn ln_gamma(x: f64) -> f64 {
+fn ln_gamma(x: f64) -> f64 {
     const G: f64 = 7.0;
     const C: [f64; 9] = [
         0.999_999_999_999_809_9,
@@ -32,7 +32,7 @@ pub fn ln_gamma(x: f64) -> f64 {
 }
 
 /// The regularized incomplete beta function I_x(a, b).
-pub fn incomplete_beta(x: f64, a: f64, b: f64) -> f64 {
+fn incomplete_beta(x: f64, a: f64, b: f64) -> f64 {
     if x <= 0.0 {
         return 0.0;
     }
@@ -94,7 +94,7 @@ fn beta_fraction(x: f64, a: f64, b: f64) -> f64 {
 }
 
 /// Two-sided p-value of Student's t with `df` degrees of freedom.
-pub fn t_two_sided_p(t: f64, df: f64) -> f64 {
+fn t_two_sided_p(t: f64, df: f64) -> f64 {
     if !t.is_finite() {
         return 0.0;
     }
@@ -114,13 +114,13 @@ pub fn r_p_value(r: f64, n: f64) -> f64 {
 }
 
 /// The standard normal CDF, through erfc.
-pub fn normal_cdf(z: f64) -> f64 {
+fn normal_cdf(z: f64) -> f64 {
     0.5 * erfc(-z / std::f64::consts::SQRT_2)
 }
 
 /// erfc via the continued-fraction-free Chebyshev fit of Numerical Recipes
 /// (fractional error below 1.2e-7 everywhere).
-pub fn erfc(x: f64) -> f64 {
+fn erfc(x: f64) -> f64 {
     let z = x.abs();
     let t = 1.0 / (1.0 + 0.5 * z);
     let poly = -z * z - 1.265_512_23
@@ -141,7 +141,7 @@ pub fn z_two_sided_p(z: f64) -> f64 {
 }
 
 pub const Z_975: f64 = 1.959_963_984_540_054;
-pub const Z_80: f64 = 0.841_621_233_572_914_3;
+const Z_80: f64 = 0.841_621_233_572_914_3;
 
 /// The smallest |r| detectable at two-sided α = 0.05 with power 0.8 over
 /// `n` effective pairs (Fisher z).

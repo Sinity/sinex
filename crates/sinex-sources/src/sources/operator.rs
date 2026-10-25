@@ -136,7 +136,7 @@ pub fn raw_log_driver(path: PathBuf, host: String) -> AppendFile {
 
 /// The steering tables, each its own binding and parser name, so a replay
 /// knows which table a stored row came from.
-pub const STEERING: [SourceSpec; 3] = [
+const STEERING: [SourceSpec; 3] = [
     steering_spec("steering-commitments"),
     steering_spec("steering-activities"),
     steering_spec("steering-reviews"),

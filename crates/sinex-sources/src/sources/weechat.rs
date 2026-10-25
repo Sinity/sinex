@@ -55,7 +55,7 @@ impl Parser for WeeChatParser {
 
 /// `…/#channel/2024-09-18.log` → `#channel`; `…/irc.libera.#c.weechatlog` →
 /// `irc.libera.#c`.
-pub fn buffer_of(path: &str) -> String {
+fn buffer_of(path: &str) -> String {
     let p = std::path::Path::new(path);
     let flat = p.extension().is_some_and(|e| e == "weechatlog");
     let name = if flat {

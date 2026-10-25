@@ -215,7 +215,7 @@ pub fn rule(state_kind: &str) -> Option<&'static IntervalRule> {
 }
 
 /// Every event type any rule reads, as transitions, spans or interruptions.
-pub const INPUT_TYPES: &[&str] = &[
+const INPUT_TYPES: &[&str] = &[
     "window.focused",
     "workspace.switched",
     "window.span",

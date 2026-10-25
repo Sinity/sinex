@@ -49,7 +49,7 @@ fn texts(v: &Value) -> Vec<String> {
 }
 
 /// A gallery-dl metadata file.
-pub fn gallery_dl(json: &Value) -> Sidecar {
+fn gallery_dl(json: &Value) -> Sidecar {
     let mut out = Sidecar::default();
     let Some(object) = json.as_object() else {
         return out;
@@ -118,7 +118,7 @@ pub fn gallery_dl(json: &Value) -> Sidecar {
 }
 
 /// A Hydrus-style tag sidecar: one tag per line.
-pub fn tag_lines(text: &str) -> Sidecar {
+fn tag_lines(text: &str) -> Sidecar {
     Sidecar {
         values: text.lines().filter_map(tag).collect(),
         ..Sidecar::default()

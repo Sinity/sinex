@@ -177,9 +177,9 @@ fn cursor_material(cursor: &Value) -> Option<(sinex_model::MaterialId, Option<u6
 /// How a kind finds its inputs: the bindings for `input`.
 pub type Plan = fn(&Path, &Settings) -> Result<Vec<Binding>, String>;
 /// The parser of one binding.
-pub type SourceFor = fn(&Binding) -> Result<Box<dyn Source>, String>;
+type SourceFor = fn(&Binding) -> Result<Box<dyn Source>, String>;
 /// The driver of one binding.
-pub type ReaderFor = fn(&Binding) -> Result<Box<dyn Reader>, String>;
+type ReaderFor = fn(&Binding) -> Result<Box<dyn Reader>, String>;
 /// Live capture of one binding into its spool, until stopped or until the
 /// source ends; the number of captured lines or segments.
 pub type Capture = fn(&Binding, &crate::capture::Control) -> Result<u64, String>;
@@ -461,7 +461,7 @@ impl Reader for Rows {
 /// what the reader remembers of each walk; an unfinished bundle is held for
 /// retry. A restart remembers which files the admitted bundles hold, and the
 /// next walk reads them again; admission suppresses the repeats.
-pub struct Walked {
+struct Walked {
     driver: DirSnapshot,
     state: DirState,
 }

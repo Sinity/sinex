@@ -284,10 +284,10 @@ impl Source for SmallBatches {
 }
 
 #[devkit::test]
-async fn sealed_archive_restart_replay_and_class_changes_preserve_exact_materials(
-    db: devkit::pg::TestDatabase,
-) {
+async fn sealed_archive_restart_replay_and_class_changes_preserve_exact_materials() {
     for zip in [false, true] {
+        // Each container kind gets its own database.
+        let db = devkit::pg::test_database().unwrap();
         let url = db.url(None);
         let dir =
             std::env::temp_dir().join(format!("sinex-sealed-archive-{}", uuid::Uuid::now_v7()));

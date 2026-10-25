@@ -41,7 +41,7 @@ pub const URLS: SourceSpec = SourceSpec {
 };
 
 /// The profile a `History` path belongs to: `<browser dir>/<profile dir>`.
-pub fn profile_of(history: &str) -> String {
+fn profile_of(history: &str) -> String {
     let mut parts = Path::new(history).components().rev().skip(1);
     let profile = parts
         .next()
@@ -216,7 +216,7 @@ pub fn urls_driver(history: PathBuf, host: String) -> SqliteRows {
 /// Every profile under a browser's user-data directory
 /// (`~/.config/google-chrome`, `~/.config/chromium`): each directory holding
 /// a `History` database, named `<browser dir>/<profile dir>`.
-pub fn profiles(user_data: &Path) -> Vec<(String, PathBuf)> {
+fn profiles(user_data: &Path) -> Vec<(String, PathBuf)> {
     let mut out: Vec<(String, PathBuf)> = std::fs::read_dir(user_data)
         .into_iter()
         .flatten()

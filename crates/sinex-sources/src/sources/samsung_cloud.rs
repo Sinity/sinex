@@ -229,7 +229,7 @@ fn names(path: &Path) -> (String, String) {
 }
 
 /// Every CSV of the export but Samsung Pass and SMS (see the module note).
-pub fn is_table(path: &Path) -> bool {
+fn is_table(path: &Path) -> bool {
     let csv = path
         .extension()
         .is_some_and(|e| e.eq_ignore_ascii_case("csv"));

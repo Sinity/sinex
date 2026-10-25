@@ -125,7 +125,7 @@ fn private_on() -> bool {
 }
 
 /// Take a still of every output each `every`, until capture stops. Returns the stills written.
-pub fn capture_screen(
+fn capture_screen(
     spool: &Path,
     every: Duration,
     control: &crate::capture::Control,
@@ -183,7 +183,7 @@ pub fn capture_screen(
 }
 
 /// Record the default audio source in segments of `segment`, until capture stops. Returns the segments written.
-pub fn capture_audio(
+fn capture_audio(
     spool: &Path,
     segment: Duration,
     control: &crate::capture::Control,

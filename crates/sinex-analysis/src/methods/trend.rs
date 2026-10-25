@@ -87,7 +87,7 @@ impl Method for Trend {
 }
 
 /// S and its variance with the correction for tied values.
-pub fn mann_kendall(x: &[f64]) -> (f64, f64) {
+fn mann_kendall(x: &[f64]) -> (f64, f64) {
     let n = x.len();
     let mut s = 0.0;
     for i in 0..n {

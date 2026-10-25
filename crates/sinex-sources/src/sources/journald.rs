@@ -124,7 +124,7 @@ pub fn driver(spool: PathBuf, host: String) -> LiveStream {
 }
 
 /// The cursor of the last complete entry in the spool, to resume after.
-pub fn last_spooled_cursor(spool: &Path) -> std::io::Result<Option<String>> {
+fn last_spooled_cursor(spool: &Path) -> std::io::Result<Option<String>> {
     if !spool.exists() {
         return Ok(None);
     }
