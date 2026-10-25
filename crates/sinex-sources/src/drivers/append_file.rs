@@ -343,7 +343,8 @@ impl AppendFile {
                 observation: facts,
                 revision: RevisionChange::Same,
                 material: None,
-                cursor_without_material: serde_json::to_value(unchanged).expect("cursor serializes"),
+                cursor_without_material: serde_json::to_value(unchanged)
+                    .expect("cursor serializes"),
             });
         }
         data.truncate(consumed);

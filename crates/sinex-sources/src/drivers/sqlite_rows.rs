@@ -192,7 +192,8 @@ impl Held {
                 removed: Vec::new(),
                 memory: self.memory.clone(),
             }),
-            cursor_without_material: serde_json::to_value(&self.scanned).expect("cursor serializes"),
+            cursor_without_material: serde_json::to_value(&self.scanned)
+                .expect("cursor serializes"),
         }
     }
 }
@@ -429,7 +430,8 @@ impl SqliteRows {
                 },
                 revision: RevisionChange::Same,
                 material: None,
-                cursor_without_material: serde_json::to_value(unchanged).expect("cursor serializes"),
+                cursor_without_material: serde_json::to_value(unchanged)
+                    .expect("cursor serializes"),
             });
         }
         let id = MaterialId::new();

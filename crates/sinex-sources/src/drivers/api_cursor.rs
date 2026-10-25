@@ -63,7 +63,8 @@ impl<A: Api> ApiCursor<A> {
                 observation,
                 revision: RevisionChange::Same,
                 material: None,
-                cursor_without_material: serde_json::to_value(unchanged).expect("cursor serializes"),
+                cursor_without_material: serde_json::to_value(unchanged)
+                    .expect("cursor serializes"),
             });
         }
         let mut bytes = Vec::new();

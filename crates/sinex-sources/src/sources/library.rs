@@ -22,7 +22,7 @@ use crate::{Parser, RecordError};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 use sinex_model::event_types::library::{
-    FileCopy, Assignment, Collection, Comparison, Dismissal, Entry, Item, LibraryRecord, Rating,
+    Assignment, Collection, Comparison, Dismissal, Entry, FileCopy, Item, LibraryRecord, Rating,
     Rendition, View,
 };
 use sinex_model::{
