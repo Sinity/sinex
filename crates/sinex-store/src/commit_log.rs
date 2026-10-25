@@ -272,6 +272,50 @@ pub async fn frames(
     .await?)
 }
 
+/// One material a producer registered, as its frame described it.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ProducerMaterial {
+    pub number: i64,
+    pub frame: String,
+    pub material_id: Uuid,
+    pub kind: String,
+    pub locator: String,
+    pub host: String,
+    pub blob: String,
+    pub length: i64,
+    pub part_index: i32,
+    pub previous_part: Option<Uuid>,
+    pub parser: String,
+    pub parser_version: i32,
+    pub manifest: serde_json::Value,
+}
+
+/// Up to `limit` materials `producer` registered after the frame numbered
+/// `after`, that Sinex still holds, in the order their frames were recorded.
+pub async fn producer_materials(
+    conn: &mut PgConnection,
+    producer: &str,
+    after: i64,
+    limit: i64,
+) -> Result<Vec<ProducerMaterial>> {
+    Ok(sqlx::query_as!(
+        ProducerMaterial,
+        r#"SELECT f.number AS "number!", f.frame, m.id AS material_id, i.kind, i.locator, i.host,
+                  m.blob, m.durable_bytes AS length, m.part_index, m.previous_part_id AS previous_part,
+                  m.parser, m.parser_version, m.manifest
+           FROM core.ingress_frames f
+           JOIN raw.materials m ON m.id = f.material_id
+           JOIN raw.inputs i ON i.id = m.input_id
+           WHERE f.producer = $1 AND f.refusal IS NULL AND f.number > $2
+           ORDER BY f.number LIMIT $3"#,
+        producer,
+        after,
+        limit,
+    )
+    .fetch_all(&mut *conn)
+    .await?)
+}
+
 /// Record where published events sit in the confirmed stream.
 pub async fn record_published(conn: &mut PgConnection, published: &[(Uuid, i64)]) -> Result<()> {
     if published.is_empty() {

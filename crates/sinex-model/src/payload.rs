@@ -75,8 +75,10 @@ pub trait EventPayload: Serialize + DeserializeOwned + Send + Sync + 'static {
     /// identified by its record location instead (`key_kind`).
     const KEY: KeyKind;
     const REPLACE: ReplaceRule;
-    /// Per-field privacy hints; rules in the store decide the effective class.
-    const FIELD_CLASSES: &'static [(&'static str, Class)] = &[];
+    /// The least class this type's events are stored under: a payload that
+    /// carries what people wrote (an AI session's messages) is `guarded`
+    /// whatever class its producer asks for. Rules in the store can raise it.
+    const CLASS: Class = Class::Open;
     /// Fields a newer reading does not erase: when it leaves one unknown
     /// (`null` or absent) and the reading it replaces had a value, admission
     /// keeps that value. For exports that drop details of things that are

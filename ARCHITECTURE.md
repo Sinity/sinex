@@ -98,7 +98,21 @@ batch's frames and the position after them until every frame is acknowledged,
 and sends them again after a restart. In a store root with mode 2770, spool
 directories are 2770 and finished files 0640, so a producer running as another
 user in the store's group can hand over bytes without write access to the
-content store. Producer bytes are never stored sealed.
+content store. Producer bytes are never stored sealed. A producer pages
+through the materials it registered (`<root>.materials.<producer>`), so one
+that keeps nothing of its own rebuilds from Sinex what it sent.
+
+Polylogue is the producer for AI sessions. Each file an AI tool wrote is a
+material of its real input (origin, path, host), a growing file a chain of
+parts, named with the Polylogue parser that reads it. Polylogue parses it and
+sends `polylogue.session`, `polylogue.message`, `polylogue.tool_call` and
+`polylogue.turn` events anchored at their records and keyed by Polylogue's own
+IDs, so the same message in two files, or read again by a changed parser, is
+one occurrence whose newer reading replaces the older. Notes, settings, kept
+results, deliveries and excision requests arrive as small record materials
+with one event each. A type can declare the least class its events are stored
+under (`class = guarded` on `polylogue.message`), whatever class the producer
+asks for. Sinex has no AI-chat parser of its own.
 
 The outside producers start their capture threads with `sinex-sources::live`,
 which registers signal handlers first and stops every capture before joining

@@ -148,8 +148,10 @@ pub(crate) fn tables(c: &Checks) -> Vec<String> {
         // Frames outside producers sent over the NATS ingress and what Sinex
         // did with each, written by admission with the frame's events, so a
         // producer can ask what Sinex holds and a redelivered frame is answered
-        // from here instead of admitted twice.
+        // from here instead of admitted twice. `number` orders a producer's
+        // pages of its registered materials.
         "CREATE TABLE core.ingress_frames (
+  number bigint GENERATED ALWAYS AS IDENTITY UNIQUE,
   producer text NOT NULL,
   frame text NOT NULL,
   material_id uuid,

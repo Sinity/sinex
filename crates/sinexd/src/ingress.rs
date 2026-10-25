@@ -20,7 +20,8 @@
 //!
 //! The producer is the one its subject names; per-producer credentials limit
 //! each producer to its own subjects. `<root>.have.<producer>` answers which
-//! frames Sinex recorded.
+//! frames Sinex recorded, and `<root>.materials.<producer>` pages through the
+//! materials the producer registered.
 mod bytes;
 
 use crate::writer::{Priority, WriteError, WriterHandle};
@@ -33,7 +34,8 @@ use sinex_model::{
     RecordOutcome, RevisionChange, RunId, SourceProgress, Timestamp, event_types,
 };
 use sinex_protocol::{
-    Acknowledgment, Have, Ingress, MaterialFrame, ProducerEvent, ProducerFailure, Subjects,
+    Acknowledgment, Have, HeldMaterial, Ingress, MaterialFrame, Materials, ProducerEvent,
+    ProducerFailure, Subjects,
 };
 use sinex_store::commit_log::{self, StoredFrame};
 use sinex_store::{Blobs, runs};
@@ -265,6 +267,47 @@ impl Ingest {
         )
     }
 
+    /// Answer a materials request: one page of the materials `producer`
+    /// registered and Sinex still holds.
+    pub async fn materials(
+        &mut self,
+        producer: &str,
+        request: &Materials,
+    ) -> Result<Vec<HeldMaterial>, String> {
+        let rows = commit_log::producer_materials(
+            &mut self.conn,
+            producer,
+            request.after,
+            i64::from(request.limit),
+        )
+        .await
+        .map_err(|e| e.to_string())?;
+        rows.into_iter()
+            .map(|row| {
+                Ok(HeldMaterial {
+                    number: row.number,
+                    frame: row.frame,
+                    material: MaterialFrame {
+                        id: sinex_model::MaterialId(row.material_id),
+                        input: sinex_model::InputRef {
+                            kind: row.kind,
+                            locator: row.locator,
+                            host: row.host,
+                        },
+                        blob: row.blob,
+                        length: u64::try_from(row.length).map_err(|e| e.to_string())?,
+                        parser: row.parser,
+                        parser_version: u32::try_from(row.parser_version)
+                            .map_err(|e| e.to_string())?,
+                        part_index: u32::try_from(row.part_index).map_err(|e| e.to_string())?,
+                        previous_part: row.previous_part.map(sinex_model::MaterialId),
+                        manifest: row.manifest,
+                    },
+                })
+            })
+            .collect()
+    }
+
     async fn stored(&mut self, producer: &str, frame: &str) -> Result<Option<StoredFrame>, String> {
         Ok(
             commit_log::frames(&mut self.conn, producer, &[frame.to_owned()])
@@ -492,6 +535,10 @@ pub async fn run(
         .subscribe(ingest.subjects.have_all())
         .await
         .map_err(|e| format!("have subscription: {e}"))?;
+    let mut materials = client
+        .subscribe(ingest.subjects.materials_all())
+        .await
+        .map_err(|e| format!("materials subscription: {e}"))?;
     client.flush().await.map_err(|e| e.to_string())?;
     loop {
         tokio::select! {
@@ -539,6 +586,25 @@ pub async fn run(
                 let body = match answer {
                     Ok(value) => value,
                     Err(error) => serde_json::json!({ "refusal": error }),
+                };
+                let _ = client.publish(reply, body.to_string().into()).await;
+            }
+            request = materials.next() => {
+                let Some(request) = request else {
+                    return Err("the materials subscription ended".into());
+                };
+                let (Some(reply), Some(producer)) = (
+                    request.reply.clone(),
+                    ingest.subjects.producer_of(&request.subject).map(str::to_owned),
+                ) else {
+                    continue;
+                };
+                let body = match serde_json::from_slice::<Materials>(&request.payload) {
+                    Ok(page) => match ingest.materials(&producer, &page).await {
+                        Ok(held) => serde_json::json!(held),
+                        Err(error) => serde_json::json!({ "refusal": error }),
+                    },
+                    Err(error) => serde_json::json!({ "refusal": format!("not a materials request: {error}") }),
                 };
                 let _ = client.publish(reply, body.to_string().into()).await;
             }
