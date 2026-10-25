@@ -9,7 +9,7 @@ fn at(seconds: i64) -> Timestamp {
 
 fn message(text: &str) -> Message {
     Message {
-        id: "claude-code:m1".into(),
+        message: "claude-code:m1".into(),
         session: "claude-code:s1".into(),
         parent: None,
         role: "user".into(),
@@ -39,13 +39,13 @@ fn origin() -> Origin {
 
 #[devkit::test]
 fn sessions_messages_and_calls_are_keyed_by_polylogue_ids_and_replaced_when_newer() {
-    for (key, replace) in [
-        (Session::KEY, Session::REPLACE),
-        (Message::KEY, Message::REPLACE),
-        (ToolCall::KEY, ToolCall::REPLACE),
-        (Turn::KEY, Turn::REPLACE),
+    for (key, replace, field) in [
+        (Session::KEY, Session::REPLACE, "session"),
+        (Message::KEY, Message::REPLACE, "message"),
+        (ToolCall::KEY, ToolCall::REPLACE, "call"),
+        (Turn::KEY, Turn::REPLACE, "turn"),
     ] {
-        assert_eq!(key, KeyKind::Fields(&["id"]));
+        assert_eq!(key, KeyKind::Fields(&[field]));
         assert_eq!(replace, ReplaceRule::ReplaceWhenNewer);
     }
     assert_eq!(Note::REPLACE, ReplaceRule::SuppressRepeat);

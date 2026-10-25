@@ -334,14 +334,14 @@ async fn an_ai_session_from_polylogue_is_ordinary_events(db: devkit::pg::TestDat
             class: sinex_model::Class::Open,
         };
     let session = json!({
-        "id": "claude-code:s1", "origin": "claude-code", "kind": "main", "title": null,
+        "session": "claude-code:s1", "origin": "claude-code", "kind": "main", "title": null,
         "cwd": ["/home/op/morrow"], "repo": null, "branch": null, "tool_version": null,
         "mode": null, "machine": null, "agent_name": null,
         "started": "2026-10-03T09:00:00Z", "last_activity": "2026-10-03T09:00:05Z", "links": []
     });
     let message = |text: &str| {
         json!({
-            "id": "claude-code:u1", "session": "claude-code:s1", "parent": null, "role": "user",
+            "message": "claude-code:u1", "session": "claude-code:s1", "parent": null, "role": "user",
             "written_by": "human", "prompt_kind": "prose", "at": "2026-10-03T09:00:00Z",
             "model": null, "text": text, "usage": {"input": null, "cached_input": null,
             "cache_write": null, "output": null, "reasoning": null}, "cost_nusd": null,
@@ -349,13 +349,13 @@ async fn an_ai_session_from_polylogue_is_ordinary_events(db: devkit::pg::TestDat
         })
     };
     let call = json!({
-        "id": "tool:claude-code:s1#t1", "session": "claude-code:s1", "message": "claude-code:a1",
+        "call": "tool:claude-code:s1#t1", "session": "claude-code:s1", "message": "claude-code:a1",
         "tool": "Bash", "action": "shell", "command": "cargo test", "path": null,
         "outcome": "unknown", "outcome_reason": "no_result", "exit_code": null,
         "at": "2026-10-03T09:00:05Z", "duration_ms": null, "child_session": null, "result": null
     });
     let turn = json!({
-        "id": "claude-code:u1", "session": "claude-code:s1", "start": "2026-10-03T09:00:00Z",
+        "turn": "claude-code:u1", "session": "claude-code:s1", "start": "2026-10-03T09:00:00Z",
         "end": "2026-10-03T09:00:05Z", "prompts": ["claude-code:u1"], "answer": "claude-code:a1",
         "slash_command": false, "tool_calls": 1, "errors": 0, "input_tokens": null,
         "output_tokens": null, "cost_nusd": null, "abandoned": false

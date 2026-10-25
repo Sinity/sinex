@@ -18,10 +18,10 @@ use serde_json::Value;
 /// One AI session: a conversation or agent run in one tool.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
 #[serde(deny_unknown_fields)]
-#[event(type = "polylogue.session", key = ["id"], replace = newer, time = started, quality = intrinsic)]
+#[event(type = "polylogue.session", key = ["session"], replace = newer, time = started, quality = intrinsic)]
 pub struct Session {
     /// `<origin>:<native id>`, such as `claude-code:7f3a…`.
-    pub id: String,
+    pub session: String,
     /// The tool that wrote it: `claude-code`, `codex`, `chatgpt`, ….
     pub origin: String,
     /// `main`, `subagent`, `sidechain` or `compaction`.
@@ -65,9 +65,9 @@ pub struct SessionLink {
 /// what people and models wrote, so it is guarded.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
 #[serde(deny_unknown_fields)]
-#[event(type = "polylogue.message", key = ["id"], replace = newer, time = at, quality = intrinsic, class = guarded)]
+#[event(type = "polylogue.message", key = ["message"], replace = newer, time = at, quality = intrinsic, class = guarded)]
 pub struct Message {
-    pub id: String,
+    pub message: String,
     pub session: String,
     /// The message it replies to, when the source records it.
     pub parent: Option<String>,
@@ -133,10 +133,10 @@ pub struct RecordRef {
 /// material: `result` names the record holding the output.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
 #[serde(deny_unknown_fields)]
-#[event(type = "polylogue.tool_call", key = ["id"], replace = newer, time = at, quality = intrinsic, class = guarded)]
+#[event(type = "polylogue.tool_call", key = ["call"], replace = newer, time = at, quality = intrinsic, class = guarded)]
 pub struct ToolCall {
     /// `tool:<session>#<call id>`, Polylogue's reference to the call.
-    pub id: String,
+    pub call: String,
     pub session: String,
     /// The message that made the call.
     pub message: String,
@@ -164,10 +164,10 @@ pub struct ToolCall {
 /// be read during it.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
 #[serde(deny_unknown_fields)]
-#[event(type = "polylogue.turn", key = ["id"], replace = newer, time = start, quality = intrinsic)]
+#[event(type = "polylogue.turn", key = ["turn"], replace = newer, time = start, quality = intrinsic)]
 pub struct Turn {
     /// Its first prompt's message ID.
-    pub id: String,
+    pub turn: String,
     pub session: String,
     pub start: Option<Timestamp>,
     pub end: Option<Timestamp>,
@@ -190,9 +190,9 @@ pub struct Turn {
 /// what it left out. The text itself is in the record's material.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
 #[serde(deny_unknown_fields)]
-#[event(type = "polylogue.delivery", key = ["id"], replace = repeat, time = at, quality = intrinsic)]
+#[event(type = "polylogue.delivery", key = ["delivery"], replace = repeat, time = at, quality = intrinsic)]
 pub struct Delivery {
-    pub id: String,
+    pub delivery: String,
     /// `session` or `operator`.
     pub recipient_kind: String,
     pub recipient_id: Option<String>,
@@ -234,9 +234,9 @@ pub struct DeliveryOutcome {
 /// (`root`); a withdrawal is a note of kind `withdrawal`.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
 #[serde(deny_unknown_fields)]
-#[event(type = "polylogue.note", key = ["id"], replace = repeat, time = created_at, quality = intrinsic, class = guarded)]
+#[event(type = "polylogue.note", key = ["note"], replace = repeat, time = created_at, quality = intrinsic, class = guarded)]
 pub struct Note {
-    pub id: String,
+    pub note: String,
     pub root: String,
     pub kind: String,
     pub key: Option<String>,
@@ -262,9 +262,9 @@ pub struct NoteRelation {
 /// One value of a Polylogue setting; a change is a new record.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
 #[serde(deny_unknown_fields)]
-#[event(type = "polylogue.setting", key = ["id"], replace = repeat, time = set_at, quality = intrinsic)]
+#[event(type = "polylogue.setting", key = ["setting"], replace = repeat, time = set_at, quality = intrinsic)]
 pub struct Setting {
-    pub id: String,
+    pub setting: String,
     /// The machine it applies to, or `*` for every machine.
     pub machine: String,
     pub key: String,
@@ -276,9 +276,9 @@ pub struct Setting {
 /// A query's answer kept as it was, cited as `result:<id>`.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
 #[serde(deny_unknown_fields)]
-#[event(type = "polylogue.kept_result", key = ["id"], replace = repeat, time = ran_at, quality = intrinsic, class = guarded)]
+#[event(type = "polylogue.kept_result", key = ["result"], replace = repeat, time = ran_at, quality = intrinsic, class = guarded)]
 pub struct KeptResult {
-    pub id: String,
+    pub result: String,
     pub name: Option<String>,
     pub query: String,
     pub ran_at: Timestamp,
@@ -291,9 +291,9 @@ pub struct KeptResult {
 /// The operator's request to remove something from Polylogue for good.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
 #[serde(deny_unknown_fields)]
-#[event(type = "polylogue.excision", key = ["id"], replace = repeat, time = created_at, quality = operator)]
+#[event(type = "polylogue.excision", key = ["excision"], replace = repeat, time = created_at, quality = operator)]
 pub struct Excision {
-    pub id: String,
+    pub excision: String,
     /// `input:<id>`, `session:<id>`, `document:<id>`, `note:<id>`, ….
     pub scope: String,
     pub reason: Option<String>,
