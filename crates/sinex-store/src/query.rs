@@ -155,7 +155,6 @@ pub async fn run(
             "as-of position is outside the known archive".into(),
         ));
     }
-    check_kinds(&mut tx, query).await?;
     if matches!(query.source, Source::Walk { .. })
         && (query.filter.is_some() || !query.stages.is_empty())
     {
@@ -459,46 +458,6 @@ async fn seq_at(conn: &mut PgConnection, t: jiff::Timestamp) -> Result<i64> {
     )
     .fetch_one(&mut *conn)
     .await?)
-}
-
-/// An alias over kinds nothing produces yet is refused, never answered empty.
-async fn check_kinds(conn: &mut PgConnection, query: &Query) -> Result<()> {
-    let mut aliases = Vec::new();
-    collect_aliases(query, &mut aliases);
-    for alias in aliases {
-        let kinds: Vec<String> = alias.kinds.iter().map(|k| k.to_string()).collect();
-        let registered = sqlx::query_scalar!(
-            r#"SELECT EXISTS (SELECT 1 FROM registry.event_types WHERE name = ANY($1::text[])) AS "registered!""#,
-            &kinds
-        )
-        .fetch_one(&mut *conn)
-        .await?;
-        if !registered {
-            return Err(Error::Invalid(format!(
-                "`{}` reads {}, which no source or derivation produces yet",
-                alias.name,
-                kinds.join(", ")
-            )));
-        }
-    }
-    Ok(())
-}
-
-fn collect_aliases(q: &Query, out: &mut Vec<&'static sinex_model::query::Alias>) {
-    if matches!(q.source, Source::RecallLast { .. }) {
-        out.push(
-            sinex_model::query::Alias::from_name("shell-sessions")
-                .expect("shell sessions declared"),
-        );
-    }
-    if let Source::Table { alias: Some(a), .. } = &q.source {
-        out.push(a);
-    }
-    for s in &q.stages {
-        if let Stage::Join(j) = s {
-            collect_aliases(&j.inner, out);
-        }
-    }
 }
 
 #[cfg(test)]

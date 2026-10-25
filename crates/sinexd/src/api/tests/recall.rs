@@ -127,8 +127,6 @@ async fn recall_last_selects_recorded_groups_and_includes_the_observed_upper_poi
     assert_eq!(during["result"]["total"], 3, "{during}");
     let (_, containing) = call(&w,Some(READ),json!({"method":"query","query":"shell-sessions containing (commands where cwd = /src/tide/tools)"})).await;
     assert_eq!(containing["result"]["total"], 1, "{containing}");
-    let (_, broad) = call(&w, Some(READ), json!({"method":"query","query":"sessions"})).await;
-    assert_eq!(broad["outcome"], "refused");
 }
 
 #[devkit::test]

@@ -227,14 +227,22 @@ pub(crate) fn alias_field(alias: &str, name: &str) -> Option<String> {
         ("media", "stored") => payload_bool(name),
         ("assignments", "item") => payload_text("target,item"),
         ("assignments", "field" | "value" | "level") => payload_text(name),
-        (_, "start" | "end") => payload_time(name),
-        (_, "duration" | "active") => payload_number(name),
-        (_, "open") => payload_bool(name),
-        (
-            "sessions" | "intervals" | "now" | "days" | "pages",
-            "project" | "depth" | "state" | "subject" | "day" | "top_sources" | "url" | "title"
-            | "domain",
-        ) => payload_text(name),
+        ("days", "commands" | "failed_commands" | "sessions" | "session_seconds") => {
+            payload_number(name)
+        }
+        ("intervals" | "now", "start") => payload_time("started_at"),
+        ("intervals" | "now", "end") => payload_time("ended_at"),
+        ("intervals" | "now", "duration") => format!(
+            "extract(epoch from (coalesce({}, now()) - {}))",
+            payload_time("ended_at"),
+            payload_time("started_at")
+        ),
+        ("intervals" | "now", "state") => payload_text("state_kind"),
+        ("intervals" | "now", "subject") => payload_text("label"),
+        ("intervals" | "now", "open") => {
+            "(coalesce(jsonb_typeof({t}.payload -> 'ended_at'), 'null') = 'null')".to_string()
+        }
+        ("days", "day" | "grain") => payload_text(name),
         _ => return None,
     })
 }
