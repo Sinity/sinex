@@ -8,8 +8,14 @@
 //! values are every column, typed as numbers where they are; splitting types
 //! into series samples is a derivation. Times are UTC text
 //! (`YYYY-MM-DD HH:MM:SS.fff`), and `time_offset` (`UTC+0200`) is the local
-//! offset at the record. Companion `jsons/` files (binned samples) are kept in
-//! the material, not read here.
+//! offset at the record.
+//!
+//! A row's larger columns are separate `jsons/<type>/<x>/<datauuid>.<column>.json`
+//! members (binned heart-rate or stress samples, sleep stages, daily
+//! achievements). A second binding of the same export reads them: an array
+//! member gives one `health.record` per element (one bin) and an object member
+//! one record, each of category `<type>.<column>` and identified by the row's
+//! `datauuid`, the column and the element's position.
 use crate::drivers::export_archive::{ExportArchive, Framing, PART_BYTES};
 use crate::registry::{DeclaredSource, Driver, SourceSpec};
 use crate::sources::fields;
@@ -30,6 +36,19 @@ pub const SPEC: SourceSpec = SourceSpec {
     parser_version: 2,
     event_types: &["health.record"],
     framer: crate::Framer::export(frame, crate::drivers::export_archive::Framing::Csv),
+};
+
+/// The `jsons/` members: the columns Samsung stores beside a row.
+pub const ATTACHMENTS: SourceSpec = SourceSpec {
+    name: "health.samsung-export",
+    driver: Driver::ExportArchive,
+    excisable: false,
+    purpose: "sleep, heart, activity and body measurements",
+    class: Class::Open,
+    parser: "samsung-health-attachments",
+    parser_version: 1,
+    event_types: &["health.record"],
+    framer: crate::Framer::export(whole, crate::drivers::export_archive::Framing::Whole),
 };
 
 /// The member being read, its type (line 1) and header (line 2).
@@ -193,6 +212,99 @@ pub fn source() -> DeclaredSource<SamsungParser> {
     }
 }
 
+/// Reads one `jsons/<type>/<x>/<datauuid>.<column>.json` member.
+pub struct AttachmentParser;
+
+impl Parser for AttachmentParser {
+    type Record<'a> = &'a [u8];
+    type Carry = ();
+    type Payload = HealthRecord;
+
+    fn parse(
+        &self,
+        record: &&[u8],
+        _: &(),
+        context: &RecordContext<'_>,
+    ) -> Result<(Vec<HealthRecord>, ()), RecordError> {
+        let path = context.path().unwrap_or_default();
+        let (category, row, column) = attachment_of(path).ok_or_else(|| {
+            RecordError::new(format!("{path}: not a jsons/<type>/<x>/<datauuid>.<column>.json member"))
+        })?;
+        let value: Value = serde_json::from_slice(record)
+            .map_err(|e| RecordError::new(format!("{path}: {e}")))?;
+        let category = format!("{category}.{column}");
+        let millis = |v: &Map<String, Value>, name: &str| {
+            v.get(name)
+                .and_then(Value::as_i64)
+                .and_then(|ms| Timestamp::from_unix_ns(i128::from(ms) * 1_000_000).ok())
+        };
+        let record_of = |native_id: String, value: Value| {
+            let values = match value {
+                Value::Object(map) => map,
+                other => Map::from_iter([("value".to_owned(), other)]),
+            };
+            HealthRecord::new(
+                "samsung-health".into(),
+                category.clone(),
+                native_id,
+                millis(&values, "start_time"),
+                millis(&values, "end_time"),
+                None,
+                values,
+                vec![],
+            )
+            .map_err(|error| RecordError::new(error.to_string()))
+        };
+        let records = match value {
+            Value::Array(items) => items
+                .into_iter()
+                .enumerate()
+                .map(|(i, item)| record_of(format!("{row}:{column}:{i}"), item))
+                .collect::<Result<_, _>>()?,
+            other => vec![record_of(format!("{row}:{column}"), other)?],
+        };
+        Ok((records, ()))
+    }
+}
+
+/// `jsons/com.samsung.shealth.stress/0/<datauuid>.binning_data.json` →
+/// (`stress`, `<datauuid>`, `binning_data`). The column may carry the type
+/// prefix (`com.samsung.health.heart_rate.binning_data`), stripped to its last
+/// dotted part as in the CSV header.
+fn attachment_of(path: &str) -> Option<(String, &str, &str)> {
+    let mut parts = path.rsplit('/');
+    let file = parts.next()?.strip_suffix(".json")?;
+    parts.next()?;
+    let category = category_of(parts.next()?);
+    let (row, column) = file.split_once('.')?;
+    Some((category, row, column.rsplit('.').next().unwrap_or(column)))
+}
+
+pub fn attachments_source() -> DeclaredSource<AttachmentParser> {
+    DeclaredSource {
+        spec: ATTACHMENTS,
+        parser: AttachmentParser,
+    }
+}
+
+pub fn whole(bytes: &[u8]) -> (Vec<(usize, usize)>, usize) {
+    Framing::Whole.frame(bytes, true)
+}
+
+pub fn select_attachments(member: &str) -> bool {
+    member.contains("jsons/") && member.ends_with(".json")
+}
+
+pub fn attachments_driver(path: PathBuf, host: String) -> ExportArchive {
+    ExportArchive {
+        path,
+        host,
+        select: select_attachments,
+        framing: Framing::Whole,
+        part_bytes: PART_BYTES,
+    }
+}
+
 pub fn frame(bytes: &[u8]) -> (Vec<(usize, usize)>, usize) {
     Framing::Csv.frame(bytes, true)
 }
@@ -215,19 +327,31 @@ pub fn driver(path: PathBuf, host: String) -> ExportArchive {
 /// `--read samsung-health=PATH`: each Samsung Health export ZIP under PATH.
 pub const FORMAT: crate::binding::InputFormat = crate::binding::InputFormat {
     name: "samsung-health",
-    specs: || vec![&SPEC],
+    specs: || vec![&SPEC, &ATTACHMENTS],
     plan: Some(|input, settings| {
-        Ok(crate::binding::per_file(
-            &SPEC,
-            input,
-            settings,
-            true,
-            |p| p.extension().is_some_and(|e| e == "zip"),
-        ))
+        let zip = |p: &std::path::Path| p.extension().is_some_and(|e| e == "zip");
+        let mut out = crate::binding::per_file(&SPEC, input, settings, true, zip);
+        out.extend(
+            crate::binding::per_file(&ATTACHMENTS, input, settings, true, zip)
+                .into_iter()
+                .map(|b| b.named("attachments")),
+        );
+        Ok(out)
     }),
-    source: |_| Ok(Box::new(source())),
+    source: |b| {
+        if b.parser == ATTACHMENTS.parser {
+            Ok(Box::new(attachments_source()))
+        } else {
+            Ok(Box::new(source()))
+        }
+    },
     reader: Some(|b| {
-        Ok(crate::binding::shared(driver(
+        let read = if b.parser == ATTACHMENTS.parser {
+            attachments_driver
+        } else {
+            driver
+        };
+        Ok(crate::binding::shared(read(
             b.input.clone(),
             b.settings.host.clone(),
         )))

@@ -55,3 +55,42 @@ fn categories_and_values() {
     assert_eq!(typed("-1.5"), json!(-1.5));
     assert_eq!(offset("UTC-0130"), Some(-90));
 }
+
+#[devkit::test]
+fn attachment_bins_become_one_record_each() {
+    let manifest = json!({"path": "export.zip"});
+    let member = json!({"path": "jsons/com.samsung.shealth.stress/0/a291.binning_data.json"});
+    let ctx = RecordContext {
+        manifest: &manifest,
+        member: Some(&member),
+    };
+    let bins = br#"[{"score":14,"start_time":1736636340000,"end_time":1736636399000},{"score":10,"start_time":1736636280000,"end_time":1736636339000}]"#;
+    let (out, ()) = AttachmentParser.parse(&&bins[..], &(), &ctx).unwrap();
+    assert_eq!(out.len(), 2);
+    assert_eq!(out[0].category(), "stress.binning_data");
+    assert_eq!(out[1].native_id, "a291:binning_data:1");
+    assert_eq!(out[0].start, Timestamp::from_unix_ns(1_736_636_340_000_000_000).ok());
+    assert_eq!(serde_json::to_value(out[0].values()).unwrap()["score"], json!(14));
+
+    let member = json!({"path": "jsons/com.samsung.shealth.sleep/0/b17.extra_data.json"});
+    let ctx = RecordContext {
+        manifest: &manifest,
+        member: Some(&member),
+    };
+    let (out, ()) = AttachmentParser
+        .parse(&&br#"{"sleep_result_type":"STAGE"}"#[..], &(), &ctx)
+        .unwrap();
+    assert_eq!(out[0].native_id, "b17:extra_data");
+    assert_eq!(out[0].category(), "sleep.extra_data");
+    assert_eq!(out[0].start, None);
+}
+
+#[devkit::test]
+fn attachment_paths_strip_the_column_prefix() {
+    assert_eq!(
+        attachment_of("jsons/com.samsung.shealth.tracker.heart_rate/f/x1.com.samsung.health.heart_rate.binning_data.json"),
+        Some(("tracker.heart_rate".to_owned(), "x1", "binning_data"))
+    );
+    assert!(select_attachments("jsons/com.samsung.shealth.sleep/0/b.extra_data.json"));
+    assert!(!select("jsons/com.samsung.shealth.sleep/0/b.extra_data.json"));
+}
