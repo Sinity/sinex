@@ -759,11 +759,7 @@ async fn a_daemon_start_deletes_bytes_an_uncommitted_admission_left() {
             .unwrap()
             .into_iter()
             .collect();
-    let without_rows: Vec<String> = target
-        .stored_files()
-        .difference(&rows)
-        .cloned()
-        .collect();
+    let without_rows: Vec<String> = target.stored_files().difference(&rows).cloned().collect();
     assert!(
         !without_rows.is_empty(),
         "the killed backfill stored bytes it never admitted"
@@ -810,5 +806,8 @@ async fn a_daemon_start_deletes_bytes_an_uncommitted_admission_left() {
         .map(|(key, _)| key)
         .take(5)
         .collect();
-    assert!(missing.is_empty(), "readings differ after the restart: {missing:#?}");
+    assert!(
+        missing.is_empty(),
+        "readings differ after the restart: {missing:#?}"
+    );
 }

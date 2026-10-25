@@ -254,7 +254,9 @@ pub(crate) async fn restore_reader(
         if newest == last {
             newest_revision = page[0].1;
         }
-        next = page.last().and_then(|(reference, _)| reference.previous_part);
+        next = page
+            .last()
+            .and_then(|(reference, _)| reference.previous_part);
         for (reference, revision) in page {
             if *stop.borrow() {
                 return Err("restoring the reader's memory was cancelled".into());

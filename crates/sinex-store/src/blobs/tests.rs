@@ -174,11 +174,13 @@ async fn files_without_a_row_are_deleted_and_the_rest_kept(db: devkit::pg::TestD
             with_rows.push(name);
         }
     }
-    sqlx::query("INSERT INTO core.blobs (hash, size, status) SELECT unnest($1::text[]), 1, 'present'")
-        .bind(&with_rows)
-        .execute(&mut conn)
-        .await
-        .unwrap();
+    sqlx::query(
+        "INSERT INTO core.blobs (hash, size, status) SELECT unnest($1::text[]), 1, 'present'",
+    )
+    .bind(&with_rows)
+    .execute(&mut conn)
+    .await
+    .unwrap();
     let stray = dir.join("blobs").join("notes.txt");
     std::fs::write(&stray, b"").unwrap();
 
