@@ -148,6 +148,34 @@ creates it in an empty database; any other version is refused, and no other
 command creates the schema. Numbered changes start with the first deployment.
 Checked SQL in `sinex-store` compiles against that schema.
 
+### Volume
+
+Every source makes one event per record it reads: a Fit point, a journal
+entry, a network flow, a shell command. No parser combines records to keep
+the count down; coarser figures are derivations, so the finest grain stays
+queryable and the coarse views can be recomputed from it.
+
+Admission is sized for that. A batch of up to 10,000 events is staged with one
+`COPY` and classified and written by a fixed number of set-based statements,
+so its cost grows with rows, not round trips. Equivalence keys are hashes,
+so the live side tables are written in key order; even so, once the key index
+outgrows PostgreSQL's buffers, a batch touches most of its pages, and that
+and the event indexes are where admission spends its time (`xtask bench
+synthetic` reports it by statement).
+
+Health figures show the shape for a dense series. `health.hourly` reads one
+civil hour of Google Fit points and writes one `health.figure` per data
+source (count, sum, minimum and maximum per value), naming the points as
+parents. `health.daily` reads a logical day's hourly figures, never the points;
+the logical day is the operator's `Civil` setting (Europe/Warsaw, from 04:00),
+the same one the activity summaries use.
+
+The derivation runner reads a pass's keys a page at a time: adjacent keys
+share one paged query, and a key is computed as soon as the pages pass its
+end, so the runner holds a page and the keys still open, not every key's
+inputs. A key's own inputs are held whole, so a derivation over a dense series
+keys by hour.
+
 ## Interfaces
 
 `sinex-model` holds identities and payloads. `sinex-protocol` declares the
@@ -172,9 +200,12 @@ position. When no session matches, it says no session is known, not that
 nothing was recorded.
 
 A query continuation is bound to its question, the caller's grants, the
-resolved clock and time settings, and the commit position. It also carries a
-hash of the visible answer; when hiding, excision or a metadata change alters
-that answer, the continuation is refused and the query must be asked again.
+resolved clock and time settings, and the commit position. It also carries the
+answer's size, counted on the first page, and a hash of the rows already
+handed out; when excision or a metadata change alters those rows, the
+continuation is refused and the query must be asked again. A page reads the
+numbered answer only up to its own last row, so it costs the rows before it,
+never the whole answer.
 
 Every output goes through credential masking. A JSON key that looks like a
 credential refuses the whole reply, since renaming the key could change the
