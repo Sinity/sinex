@@ -8,28 +8,24 @@ use serde::{
 use serde_saphyr::granit_parser::{Event, Parser, ScalarStyle};
 use std::fmt;
 
-const MAX_BYTES: usize = 1 << 20;
-
 fn invalid(kind: NoteFrontMatterError, line: Option<u64>, column: Option<u64>) -> NoteFrontMatter {
     NoteFrontMatter::Invalid { kind, line, column }
 }
 
 pub(super) fn parse(text: &str) -> NoteFrontMatter {
-    if text.len() > MAX_BYTES {
-        return invalid(NoteFrontMatterError::Limit, None, None);
-    }
+    // Front matter of any size is read. The limits left are real ones: nesting
+    // depth bounds the parser's stack, and the alias limits stop a few lines
+    // of aliases from expanding into an unbounded document.
     let mut options = serde_saphyr::options! {
         with_snippet: false,
         reject_unsupported_tags: true,
         strict_booleans: true,
         budget: serde_saphyr::budget! {
-            max_depth: 32,
-            max_nodes: 16_384,
-            max_events: 65_536,
+            max_depth: 64,
+            max_nodes: usize::MAX,
+            max_events: usize::MAX,
+            max_total_scalar_bytes: usize::MAX,
             max_aliases: 64,
-            max_total_scalar_bytes: MAX_BYTES,
-            max_recorded_anchor_events: 16_384,
-            max_recorded_anchor_bytes: MAX_BYTES,
         },
     };
     options.alias_limits.max_total_replayed_events = 4096;
