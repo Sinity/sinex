@@ -72,7 +72,11 @@ macro_rules! event_fields {
 const EVENTS: &[Field] = event_fields!();
 const ARCHIVE: &[Field] = event_fields!(
     f("archived", FieldType::Time, "time it left the live set"),
-    f("reason", FieldType::Enum(ArchiveReason::VALUES), "archive reason"),
+    f(
+        "reason",
+        FieldType::Enum(ArchiveReason::VALUES),
+        "archive reason"
+    ),
     f("operation", FieldType::Id, "operation"),
     f("replaced_by", FieldType::Id, "replacing event"),
     f(

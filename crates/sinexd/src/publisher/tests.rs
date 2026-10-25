@@ -270,7 +270,10 @@ async fn hide_after_publishing_sends_a_notice(db: devkit::pg::TestDatabase) {
     let Confirmed::Archived(notice) = messages.last().unwrap() else {
         panic!("notice")
     };
-    assert_eq!((notice.event, notice.reason), (id, sinex_model::ArchiveReason::Hide));
+    assert_eq!(
+        (notice.event, notice.reason),
+        (id, sinex_model::ArchiveReason::Hide)
+    );
 }
 
 /// Excision reaches every surface: an event excised after it was published

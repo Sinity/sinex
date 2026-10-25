@@ -109,7 +109,15 @@ pub(super) async fn settle(
             if !gone.is_empty() {
                 let seq = super::archive::position(conn).await?;
                 dirty += mark_archived_dirty(conn, &gone, seq, keys).await?;
-                super::archive::archive_at(conn, &gone, seq, sinex_model::ArchiveReason::Recomputed, None, None).await?;
+                super::archive::archive_at(
+                    conn,
+                    &gone,
+                    seq,
+                    sinex_model::ArchiveReason::Recomputed,
+                    None,
+                    None,
+                )
+                .await?;
                 remove_live(conn, &gone).await?;
             }
             sqlx::query!(

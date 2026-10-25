@@ -206,4 +206,3 @@ async fn admin_table(args: Vec<String>) -> Result<(), String> {
         sinex_protocol::Reply::Refused { reason, .. } => Err(reason),
     }
 }
-

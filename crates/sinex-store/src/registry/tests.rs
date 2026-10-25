@@ -18,14 +18,20 @@ async fn the_source_rows_follow_the_catalog(db: devkit::pg::TestDatabase) {
     write_sources(&mut conn, &[source("a.one", 1), source("a.two", 1)])
         .await
         .unwrap();
-    write_sources(&mut conn, &[source("a.two", 2)]).await.unwrap();
+    write_sources(&mut conn, &[source("a.two", 2)])
+        .await
+        .unwrap();
     let rows = sqlx::query!("SELECT name, version, driver FROM registry.sources ORDER BY name")
         .fetch_all(&mut conn)
         .await
         .unwrap();
     assert_eq!(rows.len(), 1);
     assert_eq!(
-        (rows[0].name.as_str(), rows[0].version, rows[0].driver.as_str()),
+        (
+            rows[0].name.as_str(),
+            rows[0].version,
+            rows[0].driver.as_str()
+        ),
         ("a.two", 2, "append-file")
     );
 }

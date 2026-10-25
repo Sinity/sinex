@@ -263,9 +263,7 @@ pub fn check(root: &Path) -> Result<(), String> {
     let mut problems = Vec::new();
     for (path, text) in product_files(&root.join("crates/sinexd/src"))? {
         // Excision's lock and planning statements are the one exception.
-        if path.components().any(|c| c.as_os_str() == "excision")
-            || path.ends_with("excision.rs")
-        {
+        if path.components().any(|c| c.as_os_str() == "excision") || path.ends_with("excision.rs") {
             continue;
         }
         if text.contains("sqlx::query") {
@@ -277,7 +275,10 @@ pub fn check(root: &Path) -> Result<(), String> {
     }
     for (path, text) in product_files(&root.join("crates/sinex-store/src"))? {
         problems.extend(named_sources(&text, &names).into_iter().map(|name| {
-            format!("{}: the store names the source or event type {name}", path.display())
+            format!(
+                "{}: the store names the source or event type {name}",
+                path.display()
+            )
         }));
     }
     if problems.is_empty() {
@@ -317,9 +318,7 @@ fn catalog_names(catalog: &str) -> Result<Vec<String>, String> {
 fn named_sources<'a>(text: &str, names: &'a [String]) -> Vec<&'a str> {
     names
         .iter()
-        .filter(|name| {
-            text.contains(&format!("\"{name}\"")) || text.contains(&format!("'{name}'"))
-        })
+        .filter(|name| text.contains(&format!("\"{name}\"")) || text.contains(&format!("'{name}'")))
         .map(String::as_str)
         .collect()
 }
@@ -329,11 +328,13 @@ fn product_files(dir: &Path) -> Result<Vec<(std::path::PathBuf, String)>, String
     let mut files = Vec::new();
     let mut pending = vec![dir.to_path_buf()];
     while let Some(dir) = pending.pop() {
-        let entries =
-            std::fs::read_dir(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+        let entries = std::fs::read_dir(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
         for entry in entries {
             let path = entry.map_err(|e| e.to_string())?.path();
-            if path.file_name().is_some_and(|n| n == "tests" || n == "tests.rs") {
+            if path
+                .file_name()
+                .is_some_and(|n| n == "tests" || n == "tests.rs")
+            {
                 continue;
             }
             if path.is_dir() {

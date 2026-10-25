@@ -17,9 +17,12 @@ pub struct Source {
 /// Make `registry.sources` hold exactly `catalog`.
 pub async fn write_sources(conn: &mut PgConnection, catalog: &[Source]) -> Result<()> {
     let names: Vec<String> = catalog.iter().map(|s| s.name.clone()).collect();
-    sqlx::query!("DELETE FROM registry.sources WHERE NOT (name = ANY($1))", &names)
-        .execute(&mut *conn)
-        .await?;
+    sqlx::query!(
+        "DELETE FROM registry.sources WHERE NOT (name = ANY($1))",
+        &names
+    )
+    .execute(&mut *conn)
+    .await?;
     for s in catalog {
         sqlx::query!(
             r#"INSERT INTO registry.sources (name, driver, version, event_types, consumer) VALUES ($1, $2, $3, $4, $5)
@@ -51,7 +54,10 @@ pub struct Derivation {
 /// Write the derivation rows from the Rust catalog at daemon start. Returns the
 /// derivations whose version differs from the stored one (including new
 /// ones), whose outputs must be recomputed.
-pub async fn write_derivations(conn: &mut PgConnection, catalog: &[Derivation]) -> Result<Vec<String>> {
+pub async fn write_derivations(
+    conn: &mut PgConnection,
+    catalog: &[Derivation],
+) -> Result<Vec<String>> {
     let mut changed = Vec::new();
     for d in catalog {
         let previous = sqlx::query_scalar!(

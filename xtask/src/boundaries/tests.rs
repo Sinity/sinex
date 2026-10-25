@@ -187,7 +187,10 @@ fn quoted_catalog_names_are_found_in_store_text() {
     )
     .unwrap();
     assert_eq!(
-        named_sources("WHERE event_type = 'command.fused' AND x = \"terminal.zsh-history\"", &names),
+        named_sources(
+            "WHERE event_type = 'command.fused' AND x = \"terminal.zsh-history\"",
+            &names
+        ),
         vec!["command.fused", "terminal.zsh-history"]
     );
     assert!(named_sources("command.imported without quotes", &names).is_empty());

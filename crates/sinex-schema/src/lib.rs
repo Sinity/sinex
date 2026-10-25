@@ -9,7 +9,9 @@
 //! This crate uses no compile-time-checked queries: it builds before any
 //! database exists and provisions the one the store's queries are checked
 //! against.
-use sinex_model::{ArchiveReason, Class, DbCheck, KeyKind, RecordState, ReplaceRule, TimeQuality, event_types};
+use sinex_model::{
+    ArchiveReason, Class, DbCheck, KeyKind, RecordState, ReplaceRule, TimeQuality, event_types,
+};
 use sqlx::{Connection, Executor, PgConnection};
 
 mod tables;
@@ -66,13 +68,7 @@ pub async fn prepare(connection: &mut PgConnection, owner: &str) -> Result<(), E
         connection.execute(statement.as_str()).await?;
     }
     connection
-        .execute(
-            format!(
-                "GRANT sinex_writer, sinex_reader TO {}",
-                quote_ident(owner)
-            )
-            .as_str(),
-        )
+        .execute(format!("GRANT sinex_writer, sinex_reader TO {}", quote_ident(owner)).as_str())
         .await?;
     Ok(())
 }
@@ -124,8 +120,10 @@ impl Checks {
             replace_rule: ReplaceRule::check("replace_rule"),
             archive_reason: ArchiveReason::check("reason"),
             archive_change_reason: {
-                let mut reasons: Vec<String> =
-                    ArchiveReason::VALUES.iter().map(|v| format!("'{v}'")).collect();
+                let mut reasons: Vec<String> = ArchiveReason::VALUES
+                    .iter()
+                    .map(|v| format!("'{v}'"))
+                    .collect();
                 reasons.push("'unhide'".into());
                 format!("CHECK (reason IN ({}))", reasons.join(", "))
             },

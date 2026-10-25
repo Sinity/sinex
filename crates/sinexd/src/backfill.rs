@@ -262,7 +262,10 @@ pub(crate) async fn drive(
                 source.spec().name
             )
         })?;
-        Some(crate::material_sink::SealingSink::new(sink.0.clone(), recipient))
+        Some(crate::material_sink::SealingSink::new(
+            sink.0.clone(),
+            recipient,
+        ))
     } else {
         None
     };
