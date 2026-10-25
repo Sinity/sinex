@@ -127,10 +127,11 @@ pub struct StoredMaterial {
     pub same_revision: bool,
 }
 
-/// How a binding is read. A reader that remembers what it read rebuilds that
-/// memory from the stored materials before its first poll, so a restart
-/// reads only what changed. A material only partly admitted when the process
-/// stopped is not resumed: the reader reads on from the committed cursor.
+/// A binding polled alone. A reader that remembers what it read rebuilds that
+/// memory before its first poll, from the memory it saved with its cursor and
+/// the stored materials after it, so a restart reads only what changed. A
+/// material only partly admitted when the process stopped is not resumed: the
+/// reader reads on from the committed cursor.
 pub trait Reader: Send {
     /// The newest material of the stored history this reader rebuilds its
     /// memory from, given the committed cursor; `None` when it remembers

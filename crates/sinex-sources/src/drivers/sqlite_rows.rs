@@ -76,9 +76,9 @@ pub struct Cursor {
 }
 
 /// What this driver already stored: the hash of each row's stored line, by
-/// rowid. Kept for the life of the source task and rebuilt from the saved
-/// memory and the parts after it on a restart. An empty state (no stored parts yet) triggers a
-/// full pass, whose repeats admission suppresses.
+/// rowid. Kept for the life of the source task and rebuilt on a restart from
+/// the saved memory and the parts after it. An empty state (no stored parts
+/// yet) triggers a full pass, whose repeats admission suppresses.
 #[derive(Debug, Default)]
 pub struct RowState {
     hashes: HashMap<i64, [u8; 32]>,
