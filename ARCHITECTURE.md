@@ -214,7 +214,7 @@ change it. Fingerprints detect ordinary changes and grant no authority. Every
 page still uses current visible views and the final masking/unseal checks.
 Changing page size is allowed; obsolete or malformed cursors are refused.
 
-Output uses `credential-output-v2`, including independently recognized
+Output uses `credential-output`, including independently recognized
 overlapping credentials. Credential-shaped JSON keys refuse the complete
 reply because renaming could change an object's meaning. Follow streams check
 the whole query page before emitting its first row; a refused page emits a

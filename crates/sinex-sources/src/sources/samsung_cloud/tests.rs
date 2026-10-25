@@ -17,7 +17,7 @@ fn run(path: &str, rows: &[&[u8]]) -> Vec<SamsungEvent> {
     out
 }
 
-#[test]
+#[devkit::test]
 fn health_tables_become_health_records() {
     let out = run(
         "/x/samsungcloud_gk000066110879_20260329_access/Step Count/Step Count(3).csv",
@@ -38,7 +38,7 @@ fn health_tables_become_health_records() {
     assert_eq!(h.start, fields::rfc3339("2026-03-12T17:23:00Z").ok());
 }
 
-#[test]
+#[devkit::test]
 fn other_tables_keep_every_column_with_json_decoded() {
     let out = run(
         "/x/samsungcloud_gk000066110887_20260329_access/Alarm/Alarm_1.csv",
@@ -62,7 +62,7 @@ fn other_tables_keep_every_column_with_json_decoded() {
     assert!(is_table(Path::new("/x/SmartThings_gk1/a.csv")));
 }
 
-#[test]
+#[devkit::test]
 fn health_unknown_columns_and_categories_remain_captured() {
     for category in ["Step Count", "New Health Category"] {
         let path = format!("/x/samsungcloud_gk1/{category}/{category}.csv");
@@ -87,7 +87,7 @@ fn health_unknown_columns_and_categories_remain_captured() {
     }
 }
 
-#[test]
+#[devkit::test]
 fn malformed_known_health_fields_are_record_failures() {
     let manifest = json!({"path":"/x/samsungcloud_gk1/Step Count/Step Count.csv"});
     let context = RecordContext {
@@ -104,7 +104,7 @@ fn malformed_known_health_fields_are_record_failures() {
     );
 }
 
-#[test]
+#[devkit::test]
 fn nul_cleanup_and_numeric_times_keep_the_previous_normalization() {
     let out = run(
         "/x/samsungcloud_gk1/Step Count/Step Count.csv",
@@ -125,7 +125,7 @@ fn nul_cleanup_and_numeric_times_keep_the_previous_normalization() {
     );
 }
 
-#[test]
+#[devkit::test]
 fn generic_account_tables_report_uninterpreted_without_changing_values_or_keys() {
     let rows = run(
         "/x/samsungcloud_gk1/Synthetic Table/Synthetic Table.csv",
@@ -147,7 +147,7 @@ fn generic_account_tables_report_uninterpreted_without_changing_values_or_keys()
     );
 }
 
-#[test]
+#[devkit::test]
 fn unkeyed_account_rows_keep_the_original_row_hash_identity() {
     let data = b"synthetic,[]\n";
     let rows = run(

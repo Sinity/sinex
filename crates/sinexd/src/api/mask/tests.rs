@@ -1,7 +1,7 @@
 use super::*;
 use serde_json::json;
 
-#[test]
+#[devkit::test]
 fn masks_every_string_and_keeps_the_rest() {
     let secret = format!("ghp_{}", "a".repeat(36));
     let v = mask_json(
@@ -15,7 +15,7 @@ fn masks_every_string_and_keeps_the_rest() {
     assert_eq!(mask_str("ls -la"), "ls -la");
 }
 
-#[test]
+#[devkit::test]
 fn crossing_quoted_values_are_masked_and_nested_credential_keys_refuse() {
     for quote in ['"', '\''] {
         let text =

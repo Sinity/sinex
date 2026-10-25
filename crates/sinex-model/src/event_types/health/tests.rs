@@ -6,7 +6,7 @@ fn row(provider: &str, category: &str, values: Value) -> Value {
         "start":null,"end":null,"offset_minutes":null,"values":values})
 }
 
-#[test]
+#[devkit::test]
 fn known_fields_keep_missing_null_numeric_precision_and_text() {
     let wire = row(
         "samsung-health",
@@ -26,7 +26,7 @@ fn known_fields_keep_missing_null_numeric_precision_and_text() {
     assert_eq!(serde_json::to_value(decoded).unwrap(), wire);
 }
 
-#[test]
+#[devkit::test]
 fn known_field_type_errors_do_not_become_unknown_rows() {
     for value in [
         json!({"count":[]}),
@@ -52,7 +52,7 @@ fn known_field_type_errors_do_not_become_unknown_rows() {
     );
 }
 
-#[test]
+#[devkit::test]
 fn unknown_categories_and_columns_are_preserved_and_identified() {
     let original = row(
         "samsung-health",
@@ -83,7 +83,7 @@ fn unknown_categories_and_columns_are_preserved_and_identified() {
     );
 }
 
-#[test]
+#[devkit::test]
 fn sleep_samples_and_event_numbers_keep_the_existing_wire_shape() {
     let mut original = row(
         "sleep-as-android",
@@ -96,7 +96,7 @@ fn sleep_samples_and_event_numbers_keep_the_existing_wire_shape() {
     assert_eq!(serde_json::to_value(decoded).unwrap(), original);
 }
 
-#[test]
+#[devkit::test]
 fn fit_direct_nested_and_map_values_are_concrete_and_lossless() {
     let original = row(
         "google-fit",
@@ -119,7 +119,7 @@ fn fit_direct_nested_and_map_values_are_concrete_and_lossless() {
     );
 }
 
-#[test]
+#[devkit::test]
 fn decoded_bins_preserve_extensions_without_hiding_bad_known_fields() {
     let original = row(
         "samsung-health-cloud",
@@ -135,7 +135,7 @@ fn decoded_bins_preserve_extensions_without_hiding_bad_known_fields() {
     );
 }
 
-#[test]
+#[devkit::test]
 fn declared_samsung_categories_share_source_metadata_without_losing_fields() {
     for category in [
         "Stress Internal Data",
@@ -179,7 +179,7 @@ fn declared_samsung_categories_share_source_metadata_without_losing_fields() {
     }
 }
 
-#[test]
+#[devkit::test]
 fn interpretation_markers_are_computed_from_values_not_input_claims() {
     let mut original = row("samsung-health", "hrv", json!({"score":7}));
     original["uninterpreted"] = json!(true);
@@ -193,7 +193,7 @@ fn interpretation_markers_are_computed_from_values_not_input_claims() {
     assert!(schema["properties"].get("uninterpreted_fields").is_some());
 }
 
-#[test]
+#[devkit::test]
 fn every_declared_category_validates_its_own_fields_before_fallback() {
     for (category, field) in [
         ("Stress Internal Data", "score"),
@@ -232,7 +232,7 @@ fn every_declared_category_validates_its_own_fields_before_fallback() {
     }
 }
 
-#[test]
+#[devkit::test]
 fn registration_keeps_identity_time_and_validates_known_payloads() {
     use crate::{EventPayload, KeyKind, ReplaceRule, TimeQuality};
     assert_eq!(HealthRecord::EVENT_TYPE, "health.record");
@@ -278,7 +278,7 @@ fn registration_keeps_identity_time_and_validates_known_payloads() {
     );
 }
 
-#[test]
+#[devkit::test]
 fn unrecognized_bin_objects_are_explicit_but_invalid_scalar_bins_fail() {
     let original = row(
         "samsung-health-cloud",

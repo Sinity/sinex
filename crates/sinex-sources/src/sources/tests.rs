@@ -1,6 +1,6 @@
 use super::*;
 
-#[test]
+#[devkit::test]
 fn every_source_belongs_to_exactly_one_kind() {
     for spec in specs() {
         let owners: Vec<&str> = input_kinds()
@@ -22,7 +22,7 @@ fn every_source_belongs_to_exactly_one_kind() {
     }
 }
 
-#[test]
+#[devkit::test]
 fn kind_names_are_unique() {
     let mut names: Vec<&str> = input_kinds().iter().map(|k| k.name).collect();
     names.sort_unstable();
@@ -31,7 +31,7 @@ fn kind_names_are_unique() {
     assert_eq!(names.len(), before, "duplicate kind names");
 }
 
-#[test]
+#[devkit::test]
 fn a_shared_source_name_resolves_by_parser() {
     // The live clipboard and its lake lane are one source read two ways.
     let lake = specs()
@@ -46,7 +46,7 @@ fn a_shared_source_name_resolves_by_parser() {
     );
 }
 
-#[test]
+#[devkit::test]
 fn a_shared_parser_resolves_by_name() {
     let outlook = spec("communication.outlook").expect("Outlook is registered");
     let b = crate::Binding::of(outlook, std::path::Path::new("/x.mbox"), Settings::new("h"));
@@ -56,7 +56,7 @@ fn a_shared_parser_resolves_by_name() {
     );
 }
 
-#[test]
+#[devkit::test]
 fn every_source_resolves_its_parser_from_a_binding() {
     for spec in specs() {
         let binding = Binding {
@@ -78,7 +78,7 @@ fn every_source_resolves_its_parser_from_a_binding() {
     assert!(binding_for_parser("no-such-parser", "h").is_none());
 }
 
-#[test]
+#[devkit::test]
 fn the_six_late_sources_are_registered() {
     for name in [
         "desktop.arbtt",

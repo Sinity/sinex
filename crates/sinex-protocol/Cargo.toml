@@ -16,6 +16,7 @@ serde_json.workspace = true
 clap = { workspace = true, optional = true }
 
 [dev-dependencies]
+devkit.workspace = true
 uuid.workspace = true
 
 [lints]

@@ -29,7 +29,7 @@ fn paths(a: &Acquired) -> Vec<String> {
     })
 }
 
-#[test]
+#[devkit::test]
 fn reads_changed_files_and_records_vanished_ones() {
     let root = vault();
     let d = driver(root.clone(), 1 << 20);
@@ -52,7 +52,7 @@ fn reads_changed_files_and_records_vanished_ones() {
     assert_eq!(m.manifest["records"].as_array().unwrap().len(), 2);
 }
 
-#[test]
+#[devkit::test]
 fn a_walk_cut_by_the_part_size_does_not_record_vanished_files() {
     let root = vault();
     let mut state = DirState::default();
@@ -73,7 +73,7 @@ fn a_walk_cut_by_the_part_size_does_not_record_vanished_files() {
     assert_eq!(paths(&second), vec!["sub/b.md"]);
 }
 
-#[test]
+#[devkit::test]
 fn a_touched_but_unchanged_file_is_skipped() {
     let root = vault();
     let d = driver(root.clone(), 1 << 20);
@@ -111,7 +111,7 @@ impl super::super::MaterialSink for Refuse {
     }
 }
 
-#[test]
+#[devkit::test]
 fn failed_storage_retries_the_same_unnamed_capture_before_new_source_changes() {
     use super::super::prepare;
     use crate::{Limits, sources::notes};
@@ -179,7 +179,7 @@ fn failed_storage_retries_the_same_unnamed_capture_before_new_source_changes() {
     );
 }
 
-#[test]
+#[devkit::test]
 fn partial_admission_resumes_original_member_anchors_and_only_final_cursor_updates_cache() {
     use super::super::prepare;
     use crate::{Limits, sources::notes};
@@ -248,7 +248,7 @@ fn partial_admission_resumes_original_member_anchors_and_only_final_cursor_updat
     assert_eq!(state.files.len(), 2);
 }
 
-#[test]
+#[devkit::test]
 fn missing_directory_is_unavailable_and_accessible_empty_is_not() {
     let dir = tempfile::tempdir().unwrap();
     let d = driver(dir.path().join("missing"), 1024);
@@ -262,7 +262,7 @@ fn missing_directory_is_unavailable_and_accessible_empty_is_not() {
     assert!(empty.cursor_unchanged["last_complete_scan_ns"].is_number());
 }
 
-#[test]
+#[devkit::test]
 fn empty_and_nonempty_members_keep_exact_body_ranges_in_every_order() {
     use crate::{Limits, drain::drain, sources::notes};
     use sinex_model::{Class, ReadingOrder, RecordOutcome};
@@ -328,7 +328,7 @@ fn empty_and_nonempty_members_keep_exact_body_ranges_in_every_order() {
     }
 }
 
-#[test]
+#[devkit::test]
 fn a_restart_remembers_the_files_of_admitted_records_only() {
     let root = vault();
     std::fs::write(root.join("a.md"), b"").unwrap();
@@ -361,7 +361,7 @@ fn a_restart_remembers_the_files_of_admitted_records_only() {
     );
 }
 
-#[test]
+#[devkit::test]
 fn a_newer_bundle_decides_a_path_before_an_older_one() {
     let root = vault();
     let d = driver(root.clone(), 1 << 20);
@@ -386,7 +386,7 @@ fn a_newer_bundle_decides_a_path_before_an_older_one() {
     );
 }
 
-#[test]
+#[devkit::test]
 fn failed_disappearance_is_retried_before_a_reappeared_file() {
     use super::super::prepare;
     use crate::{Limits, sources::notes};

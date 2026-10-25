@@ -1,7 +1,7 @@
 use super::*;
 use serde_json::json;
 
-#[test]
+#[devkit::test]
 fn tables_align_and_times_turn_local() {
     let local = Local::new(Some("Europe/Warsaw"));
     let rows = vec![
@@ -15,7 +15,7 @@ fn tables_align_and_times_turn_local() {
     );
 }
 
-#[test]
+#[devkit::test]
 fn long_cells_end_with_an_ellipsis() {
     let local = Local::new(Some("UTC"));
     let long = "x".repeat(100);

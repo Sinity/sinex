@@ -10,7 +10,7 @@ fn row(duration: i64, exit: i64) -> Map<String, Value> {
     .clone()
 }
 
-#[test]
+#[devkit::test]
 fn running_commands_have_unknown_duration_and_exit() {
     let (p, ()) = AtuinParser
         .parse(&row(-1, -1), &(), &crate::RecordContext::none())
@@ -26,7 +26,7 @@ fn running_commands_have_unknown_duration_and_exit() {
     );
 }
 
-#[test]
+#[devkit::test]
 fn unknown_columns_are_kept_and_deletion_is_removal() {
     let mut r = row(5, 0);
     r.insert("deleted_at".into(), json!(1_743_722_300_000_000_000i64));
@@ -41,7 +41,7 @@ fn unknown_columns_are_kept_and_deletion_is_removal() {
     );
 }
 
-#[test]
+#[devkit::test]
 fn wrong_types_fail_the_record() {
     let mut r = row(5, 0);
     r.insert("command".into(), json!(7));

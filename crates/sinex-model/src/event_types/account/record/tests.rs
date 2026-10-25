@@ -5,7 +5,7 @@ fn wire(values: Value) -> Value {
     json!({"service":"samsungcloud","table":"Synthetic Table","native_id":"synthetic-id","at":null,"values":values})
 }
 
-#[test]
+#[devkit::test]
 fn old_rows_keep_every_value_and_gain_a_computed_uninterpreted_marker() {
     for values in [
         json!({}),
@@ -26,7 +26,7 @@ fn old_rows_keep_every_value_and_gain_a_computed_uninterpreted_marker() {
     }
 }
 
-#[test]
+#[devkit::test]
 fn incoming_interpretation_claims_cannot_change_the_fallback_kind() {
     for marker in [json!(true), json!(false)] {
         let mut original = wire(json!({"raw":true}));
@@ -39,7 +39,7 @@ fn incoming_interpretation_claims_cannot_change_the_fallback_kind() {
     }
 }
 
-#[test]
+#[devkit::test]
 fn registered_fallback_retains_identity_time_and_older_input_compatibility() {
     use crate::{EventPayload, KeyKind, ReplaceRule, TimeQuality};
     assert_eq!(

@@ -95,7 +95,7 @@ fn mail(port: u16, password: Option<&str>, token: Option<&str>) -> ImapMail {
     }
 }
 
-#[test]
+#[devkit::test]
 fn new_messages_are_fetched_after_the_cursor_and_parse() {
     let port = server(vec![(4, M1), (7, M2)], 99, false);
     let imap = mail(port, Some("secret"), None);
@@ -114,7 +114,7 @@ fn new_messages_are_fetched_after_the_cursor_and_parse() {
     assert!(again.material.is_none());
 }
 
-#[test]
+#[devkit::test]
 fn xoauth2_is_used_when_a_token_file_is_set_and_bad_credentials_fail_without_echoing_them() {
     let port = server(vec![(1, M1)], 5, true);
     assert!(
@@ -135,7 +135,7 @@ fn xoauth2_is_used_when_a_token_file_is_set_and_bad_credentials_fail_without_ech
     );
 }
 
-#[test]
+#[devkit::test]
 fn a_renumbered_mailbox_is_read_from_the_start() {
     let port = server(vec![(1, M1), (2, M2)], 200, false);
     let old = Cursor {
@@ -153,7 +153,7 @@ fn a_renumbered_mailbox_is_read_from_the_start() {
     assert_eq!(m.records.len(), 2);
 }
 
-#[test]
+#[devkit::test]
 fn an_empty_examined_window_reaches_the_later_message() {
     let port = server(vec![(201, M1)], 99, false);
     let imap = mail(port, Some("secret"), None);
@@ -213,7 +213,7 @@ fn selected(next: Option<u32>, validity: u32) -> String {
     format!("* OK [UIDVALIDITY {validity}] ok\r\n{next}{{tag}} OK selected\r\n")
 }
 
-#[test]
+#[devkit::test]
 fn examined_empty_progress_is_clamped_and_unknown_or_stale_bounds_stay_put() {
     for (boundary, fetch, expected) in [
         (Some(51), "UID FETCH 1:50 (UID BODY.PEEK[])", 51),
@@ -234,7 +234,7 @@ fn examined_empty_progress_is_clamped_and_unknown_or_stale_bounds_stay_put() {
     }
 }
 
-#[test]
+#[devkit::test]
 fn failed_fetch_returns_no_progress_and_the_same_cursor_can_retry() {
     let previous = json!({"uid_validity": 99, "uid_next": 1, "material": null, "part_index": 0});
     let original = previous.clone();
@@ -263,7 +263,7 @@ fn failed_fetch_returns_no_progress_and_the_same_cursor_can_retry() {
     server.join().unwrap();
 }
 
-#[test]
+#[devkit::test]
 fn idle_refreshes_uidnext_and_validity_before_the_next_fetch() {
     for (validity, next, fetch, expected) in [
         (99, 204, "UID FETCH 201:203 (UID BODY.PEEK[])", 204),
@@ -290,7 +290,7 @@ fn idle_refreshes_uidnext_and_validity_before_the_next_fetch() {
     }
 }
 
-#[test]
+#[devkit::test]
 fn returned_uids_allow_progress_without_a_usable_uidnext() {
     for boundary in [None, Some(0), Some(1)] {
         let (port, server) = scripted(vec![
@@ -316,7 +316,7 @@ fn returned_uids_allow_progress_without_a_usable_uidnext() {
     }
 }
 
-#[test]
+#[devkit::test]
 fn partial_admission_keeps_unfed_uids_available_for_retry() {
     struct Discard;
     impl crate::drivers::MaterialSink for Discard {
@@ -365,7 +365,7 @@ fn partial_admission_keeps_unfed_uids_available_for_retry() {
     assert!(imap.poll(&complete).unwrap().material.is_none());
 }
 
-#[test]
+#[devkit::test]
 fn the_reader_retries_its_held_answer_without_asking_the_server_again() {
     use crate::binding::Reader;
     let port = server(vec![(4, M1), (7, M2)], 99, false);

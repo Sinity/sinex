@@ -12,7 +12,7 @@ fn parse(line: &str) -> Result<Produced, RecordError> {
         .map(|(mut v, ())| v.remove(0))
 }
 
-#[test]
+#[devkit::test]
 fn neovim_and_kitty_lines_become_typed_events() {
     let Produced::Editor(e) = parse(r#"{"source":"neovim","event":"BufWritePost","path":"/a.rs","filetype":"rust","pid":42,"buf":3}"#).unwrap() else { panic!() };
     assert_eq!(
@@ -32,7 +32,7 @@ fn neovim_and_kitty_lines_become_typed_events() {
     );
 }
 
-#[test]
+#[devkit::test]
 fn unknown_producers_fail_by_name() {
     assert!(
         parse(r#"{"source":"emacs","event":"x"}"#)
@@ -64,7 +64,7 @@ fn start_capture() -> (
     (socket, spool, stop, handle)
 }
 
-#[test]
+#[devkit::test]
 fn the_socket_spools_what_connections_write() {
     let (socket, spool, stop, handle) = start_capture();
     let mut client = UnixStream::connect(&socket).unwrap();
@@ -81,7 +81,7 @@ fn the_socket_spools_what_connections_write() {
     let _ = std::fs::remove_dir_all(socket.parent().unwrap());
 }
 
-#[test]
+#[devkit::test]
 fn shutdown_drains_sent_records_and_a_partial_line_with_idle_clients_open() {
     let (socket, spool, stop, handle) = start_capture();
     let _idle = UnixStream::connect(&socket).unwrap();
@@ -117,7 +117,7 @@ fn shutdown_drains_sent_records_and_a_partial_line_with_idle_clients_open() {
     let _ = std::fs::remove_dir_all(socket.parent().unwrap());
 }
 
-#[test]
+#[devkit::test]
 fn reader_panics_are_errors() {
     let handler =
         std::thread::spawn(|| -> std::io::Result<u64> { panic!("synthetic reader failure") });
@@ -129,7 +129,7 @@ fn reader_panics_are_errors() {
     );
 }
 
-#[test]
+#[devkit::test]
 fn spool_errors_are_returned_after_readers_finish() {
     let dir = std::env::temp_dir().join(format!("sx-sock-{}", uuid::Uuid::now_v7()));
     std::fs::create_dir_all(&dir).unwrap();
@@ -154,7 +154,7 @@ fn spool_errors_are_returned_after_readers_finish() {
     let _ = std::fs::remove_dir_all(dir);
 }
 
-#[test]
+#[devkit::test]
 fn read_shutdown_preserves_queued_bytes_and_refuses_future_writes() {
     let (mut reader, mut client) = UnixStream::pair().unwrap();
     client.write_all(b"first\npartial").unwrap();
@@ -165,7 +165,7 @@ fn read_shutdown_preserves_queued_bytes_and_refuses_future_writes() {
     assert!(client.write(b"future").is_err());
 }
 
-#[test]
+#[devkit::test]
 fn continuously_writing_peer_cannot_extend_shutdown() {
     let (socket, spool, stop, handle) = start_capture();
     let mut client = UnixStream::connect(&socket).unwrap();
@@ -214,7 +214,7 @@ fn continuously_writing_peer_cannot_extend_shutdown() {
     let _ = std::fs::remove_dir_all(socket.parent().unwrap());
 }
 
-#[test]
+#[devkit::test]
 fn public_capture_removes_its_socket_on_stop_and_setup_error() {
     let dir = std::env::temp_dir().join(format!("sx-sock-{}", uuid::Uuid::now_v7()));
     std::fs::create_dir_all(&dir).unwrap();
@@ -231,7 +231,7 @@ fn public_capture_removes_its_socket_on_stop_and_setup_error() {
     let _ = std::fs::remove_dir_all(dir);
 }
 
-#[test]
+#[devkit::test]
 fn private_records_stay_unwritten_and_do_not_count_as_captured() {
     let dir = std::env::temp_dir().join(format!("sx-private-{}", uuid::Uuid::now_v7()));
     let mode = sinex_transport::private_mode::PrivateMode::new(dir.join("private"));
@@ -256,7 +256,7 @@ fn private_records_stay_unwritten_and_do_not_count_as_captured() {
     let _ = std::fs::remove_dir_all(dir);
 }
 
-#[test]
+#[devkit::test]
 fn stop_is_checked_between_accept_batches_with_more_clients_pending() {
     let dir = std::env::temp_dir().join(format!("sx-sock-{}", uuid::Uuid::now_v7()));
     std::fs::create_dir_all(&dir).unwrap();

@@ -9,7 +9,7 @@ fn one(v: Value) -> WykopEvent {
         .remove(0)
 }
 
-#[test]
+#[devkit::test]
 fn entries_are_warsaw_time_not_utc() {
     let WykopEvent::Post(p) = one(json!({"kind": "entry", "entry_id": 76315507,
         "entry_created_at": "2024-05-18 06:53:25", "entry_content": "x #tag",
@@ -24,7 +24,7 @@ fn entries_are_warsaw_time_not_utc() {
     assert!(!p.extra.contains_key("page"));
 }
 
-#[test]
+#[devkit::test]
 fn activity_feed_repeats_own_posts_and_adds_down_votes_and_favourites() {
     let rows = WykopParser
         .parse(
@@ -75,7 +75,7 @@ fn activity_feed_repeats_own_posts_and_adds_down_votes_and_favourites() {
     assert!(rows.is_empty());
 }
 
-#[test]
+#[devkit::test]
 fn notifications_and_blacklists() {
     let n = one(
         json!({"kind": "notification_group_item", "id": "6Rj", "type":
@@ -100,7 +100,7 @@ fn notifications_and_blacklists() {
     );
 }
 
-#[test]
+#[devkit::test]
 fn votes_have_no_time_of_their_own() {
     let WykopEvent::Vote(v) = one(json!({"kind": "link_zakopane", "link_id": 7,
         "link_created_at": "2024-01-08 17:14:47", "link_title": "t"}))

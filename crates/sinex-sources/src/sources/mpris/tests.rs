@@ -19,7 +19,7 @@ fn run(lines: &[&str]) -> Vec<PlayerChanged> {
     out
 }
 
-#[test]
+#[devkit::test]
 fn snapshot_names_the_sender_of_later_changes() {
     let out = run(&[
         r#"{"snapshot":{"name":"org.mpris.MediaPlayer2.spotify","owner":":1.5","properties":{"PlaybackStatus":"Paused","Metadata":{"xesam:title":"Song","xesam:artist":["A"],"mpris:length":200000000}}}}"#,
@@ -33,7 +33,7 @@ fn snapshot_names_the_sender_of_later_changes() {
     assert!(!out[1].snapshot);
 }
 
-#[test]
+#[devkit::test]
 fn owner_changes_follow_players_that_appear_later() {
     let out = run(&[
         r#"{"type":"signal","member":"NameOwnerChanged","payload":{"type":"sss","data":["org.mpris.MediaPlayer2.mpv","",":1.9"]}}"#,

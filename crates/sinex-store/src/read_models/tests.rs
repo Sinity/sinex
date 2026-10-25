@@ -1,9 +1,10 @@
 use super::*;
-use crate::testdb;
 
-#[tokio::test]
-async fn indexes_committed_payload_text_once_and_resumes() {
-    let (_db, mut conn) = testdb::fresh().await;
+#[devkit::test]
+async fn indexes_committed_payload_text_once_and_resumes(db: devkit::pg::TestDatabase) {
+    let mut conn = <sqlx::PgConnection as sqlx::Connection>::connect(&db.url(None))
+        .await
+        .unwrap();
     let ids = crate::query::tests::admit_commands(
         &mut conn,
         &[("Cargo test --workspace", "/src/tide"), ("ls", "/")],

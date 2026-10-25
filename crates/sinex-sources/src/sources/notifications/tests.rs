@@ -16,7 +16,7 @@ fn parse(line: &str) -> Vec<Notification> {
         .0
 }
 
-#[test]
+#[devkit::test]
 fn notify_becomes_shown() {
     let out = parse(
         r#"{"type":"method_call","sender":":1.9","interface":"org.freedesktop.Notifications","member":"Notify","payload":{"type":"susssasa{sv}i","data":["mail",7,"","New mail","from a",["default","Open"],{"urgency":{"type":"y","data":1}},5000]}}"#,
@@ -34,7 +34,7 @@ fn notify_becomes_shown() {
     assert_eq!(s.expire_timeout_ms, 5000);
 }
 
-#[test]
+#[devkit::test]
 fn signals_become_closed_and_action() {
     let closed = parse(
         r#"{"type":"signal","member":"NotificationClosed","payload":{"type":"uu","data":[12,2]}}"#,
@@ -50,7 +50,7 @@ fn signals_become_closed_and_action() {
     );
 }
 
-#[test]
+#[devkit::test]
 fn other_traffic_is_read_without_events() {
     assert!(
         parse(

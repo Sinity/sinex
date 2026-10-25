@@ -2,7 +2,7 @@ use super::*;
 
 const SEARCH: &str = r#"<div class="outer-cell mdl-cell mdl-cell--12-col mdl-shadow--2dp"><div class="mdl-grid"><div class="header-cell mdl-cell mdl-cell--12-col"><p class="mdl-typography--title">Search<br></p></div><div class="content-cell mdl-cell mdl-cell--6-col mdl-typography--body-1">Searched for <a href="https://www.google.com/search?q=a+%26+b">a &amp; b</a><br>Aug 26, 2026, 9:34:44 PM CEST<br></div><div class="content-cell mdl-cell mdl-cell--6-col mdl-typography--body-1 mdl-typography--text-right"></div><div class="content-cell mdl-cell mdl-cell--12-col mdl-typography--caption"><b>Products:</b><br>&emsp;Search<br><b>Locations:</b><br>&emsp;At <a href="https://maps.example/x">this general area</a> - From your device<br></div></div></div>"#;
 
-#[test]
+#[devkit::test]
 fn reads_a_search_cell() {
     let c = parse(SEARCH).unwrap();
     assert_eq!(c.service, "Search");
@@ -24,13 +24,13 @@ fn reads_a_search_cell() {
     assert_eq!(c.section("Locations").len(), 1);
 }
 
-#[test]
+#[devkit::test]
 fn a_bare_ampersand_before_multibyte_text() {
     assert_eq!(decode("Kraków & Łódź żółć"), "Kraków & Łódź żółć");
     assert_eq!(decode("a &amp; ż&#x17c;"), "a & żż");
 }
 
-#[test]
+#[devkit::test]
 fn one_moment_in_two_zones_hashes_the_same() {
     let utc = SEARCH.replace(
         "Aug 26, 2026, 9:34:44 PM CEST",
@@ -47,7 +47,7 @@ fn one_moment_in_two_zones_hashes_the_same() {
     );
 }
 
-#[test]
+#[devkit::test]
 fn times_with_narrow_spaces_noon_and_midnight() {
     let (t, z) = time("Dec 15, 2025, 12:05:21\u{202f}AM CET")
         .unwrap()
@@ -66,7 +66,7 @@ fn times_with_narrow_spaces_noon_and_midnight() {
     assert!(time("Aug 7, 2019, 4:34:48 PM XYZT").unwrap().is_err());
 }
 
-#[test]
+#[devkit::test]
 fn the_time_line_is_found_by_pattern_in_multiline_text() {
     let html = SEARCH.replace(
         "<br>Aug 26, 2026",

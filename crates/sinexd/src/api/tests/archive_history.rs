@@ -6,9 +6,11 @@ async fn totals(w: &World, question: &str) -> u64 {
     body["result"]["total"].as_u64().unwrap()
 }
 
-#[tokio::test]
-async fn explicit_historical_api_views_survive_repeated_hide_and_unhide() {
-    let w = world().await;
+#[devkit::test]
+async fn explicit_historical_api_views_survive_repeated_hide_and_unhide(
+    db: devkit::pg::TestDatabase,
+) {
+    let w = world(db).await;
     admit(&w, &["first", "second", "third"], 0).await;
     let before = sinex_store::query::current_seq(&mut w.reads.acquire().await.unwrap())
         .await

@@ -1,7 +1,7 @@
 use super::*;
 use serde_json::json;
 
-#[test]
+#[devkit::test]
 fn key_depends_on_type_fields_and_order() {
     let p = json!({"a": 1, "b": "x", "c": true});
     let k = EquivalenceKey::of("t", &["a", "b"], &p);
@@ -14,7 +14,7 @@ fn key_depends_on_type_fields_and_order() {
     assert_eq!(k.0.len(), 64);
 }
 
-#[test]
+#[devkit::test]
 fn missing_key_field_is_null() {
     assert_eq!(
         EquivalenceKey::of("t", &["a"], &json!({})),
@@ -22,7 +22,7 @@ fn missing_key_field_is_null() {
     );
 }
 
-#[test]
+#[devkit::test]
 fn check_lists_variants() {
     assert_eq!(
         ReplaceRule::check("rule"),

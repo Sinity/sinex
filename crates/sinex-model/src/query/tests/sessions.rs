@@ -1,6 +1,6 @@
 use super::*;
 
-#[test]
+#[devkit::test]
 fn shell_sessions_are_explicit_and_recall_last_filters_the_anchor() {
     let query = q("shell-sessions where cwds ^ /src/tide sort start desc");
     assert_eq!(query.source.alias().unwrap().kinds, &["shell.session"]);

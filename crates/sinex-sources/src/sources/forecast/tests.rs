@@ -2,7 +2,7 @@ use super::*;
 use crate::{DrainInput, Limits, drain};
 use sinex_model::RecordOutcome;
 
-#[test]
+#[devkit::test]
 fn forecast_requests_keep_bytes_but_take_author_and_time_from_manifest() {
     let at = Timestamp::from_unix_secs(100).unwrap();
     let spoofed = Issued {
@@ -45,7 +45,7 @@ fn forecast_requests_keep_bytes_but_take_author_and_time_from_manifest() {
     assert_eq!(events[0].location().unwrap().0.material, material.id);
 }
 
-#[test]
+#[devkit::test]
 fn forecast_unknown_resolution_keeps_unknown_outcome_and_time() {
     let at = Timestamp::from_unix_secs(100).unwrap();
     let acquired = request_material(

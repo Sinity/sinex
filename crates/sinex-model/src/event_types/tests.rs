@@ -21,7 +21,7 @@ fn atuin(deleted: bool) -> CommandExecuted {
     }
 }
 
-#[test]
+#[devkit::test]
 fn derive_declares_identity_and_time() {
     assert_eq!(CommandExecuted::EVENT_TYPE, "command.executed");
     assert_eq!(CommandExecuted::KEY, KeyKind::Fields(&["native_id"]));
@@ -40,7 +40,7 @@ fn derive_declares_identity_and_time() {
     assert_eq!(atuin(true).record_state(), RecordState::Removed);
 }
 
-#[test]
+#[devkit::test]
 fn json_schema_requires_declared_fields() {
     let schema = CommandImported::payload_schema();
     let required = schema["required"].as_array().unwrap();
@@ -48,7 +48,7 @@ fn json_schema_requires_declared_fields() {
     assert!(!required.iter().any(|f| f == "started_at"));
 }
 
-#[test]
+#[devkit::test]
 fn json_payloads_build_through_the_rust_type() {
     let kind = find("command.executed").unwrap();
     let origin = || crate::Origin::Record {
@@ -86,7 +86,7 @@ fn json_payloads_build_through_the_rust_type() {
     assert!(find("no.such.type").is_none());
 }
 
-#[test]
+#[devkit::test]
 fn catalog_lists_each_type_once() {
     let mut names: Vec<_> = ALL.iter().map(|k| k.event_type).collect();
     names.sort_unstable();

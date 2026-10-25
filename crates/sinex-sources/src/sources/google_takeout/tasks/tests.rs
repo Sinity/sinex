@@ -1,7 +1,7 @@
 use super::*;
 use serde_json::json;
 
-#[test]
+#[devkit::test]
 fn tasks_in_lists() {
     let doc = json!({"kind": "tasks#taskLists", "items": [{"id": "L1", "title": "Mine",
         "items": [{"id": "T1", "title": "Call", "status": "completed",

@@ -25,7 +25,7 @@ fn absent(pid: u32) -> bool {
     !std::path::Path::new(&format!("/proc/{pid}")).exists()
 }
 
-#[test]
+#[devkit::test]
 fn deadline_interrupts_and_reaps_an_owned_child() {
     let control = Control::new(Some(Duration::from_millis(150)));
     let mut child = shell(&control, "echo $$; exec sleep 30");
@@ -36,7 +36,7 @@ fn deadline_interrupts_and_reaps_an_owned_child() {
     assert!(control.spawn(&mut Command::new("true")).unwrap().is_none());
 }
 
-#[test]
+#[devkit::test]
 fn child_drop_reaps_after_error_or_panic_without_waiting_for_a_deadline() {
     let control = Control::new(None);
     let mut pid_seen = 0;
@@ -49,7 +49,7 @@ fn child_drop_reaps_after_error_or_panic_without_waiting_for_a_deadline() {
     assert!(absent(pid_seen));
 }
 
-#[test]
+#[devkit::test]
 fn stop_escalates_when_the_capture_ignores_interrupts() {
     let control = Control::new(None);
     let mut child = shell(&control, "trap '' INT; echo $$; exec sleep 30");
@@ -61,7 +61,7 @@ fn stop_escalates_when_the_capture_ignores_interrupts() {
     assert!(absent(pid));
 }
 
-#[test]
+#[devkit::test]
 fn dropping_control_stops_a_still_owned_process_and_drops_the_timer() {
     let control = Control::new(Some(Duration::from_secs(30)));
     let mut child = shell(&control, "echo $$; exec sleep 30");
@@ -73,7 +73,7 @@ fn dropping_control_stops_a_still_owned_process_and_drops_the_timer() {
     assert!(absent(pid));
 }
 
-#[test]
+#[devkit::test]
 fn a_blocked_socket_is_woken_and_keeps_queued_bytes() {
     use std::io::{Read, Write};
     let (reader, mut writer) = std::os::unix::net::UnixStream::pair().unwrap();
@@ -86,7 +86,7 @@ fn a_blocked_socket_is_woken_and_keeps_queued_bytes() {
     assert_eq!(bytes, b"queued exact bytes");
 }
 
-#[test]
+#[devkit::test]
 fn a_leader_exit_reaps_descendants_and_stops_later_output_before_returning() {
     let dir = tempfile::tempdir().unwrap();
     let heartbeat = dir.path().join("heartbeat");

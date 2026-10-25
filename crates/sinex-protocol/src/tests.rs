@@ -11,7 +11,7 @@ fn sample(kind: ArgKind) -> Value {
     }
 }
 
-#[test]
+#[devkit::test]
 fn the_table_and_the_requests_agree() {
     for c in COMMANDS {
         let all: Map<String, Value> = c
@@ -32,7 +32,7 @@ fn the_table_and_the_requests_agree() {
     }
 }
 
-#[test]
+#[devkit::test]
 fn requests_have_stable_wire_names() {
     let r = Request::Excise {
         reference: Some("sinex:ev/x".into()),
@@ -47,7 +47,7 @@ fn requests_have_stable_wire_names() {
     assert_eq!(Request::Status.access(), Access::Read);
 }
 
-#[test]
+#[devkit::test]
 fn missing_and_unknown_arguments_are_refused() {
     assert!(
         Request::from_args("show", Map::new())
@@ -65,7 +65,7 @@ fn missing_and_unknown_arguments_are_refused() {
     );
 }
 
-#[test]
+#[devkit::test]
 fn unadvertised_requests_keep_wire_decoding_and_explicit_write_access() {
     for value in [
         json!({"method":"stage", "path":"/synthetic/input"}),

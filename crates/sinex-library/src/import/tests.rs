@@ -1,7 +1,7 @@
 use super::*;
 use serde_json::json;
 
-#[test]
+#[devkit::test]
 fn gallery_dl_booru_metadata() {
     let s = gallery_dl(&json!({
         "category": "danbooru",
@@ -30,7 +30,7 @@ fn gallery_dl_booru_metadata() {
     assert_eq!(s.source_ref.as_deref(), Some("danbooru:123"));
 }
 
-#[test]
+#[devkit::test]
 fn reddit_and_twitter_metadata_keep_text_and_urls() {
     let s = gallery_dl(&json!({
         "category": "reddit", "title": "A title", "url": "https://i.redd.it/x.jpg"
@@ -42,14 +42,14 @@ fn reddit_and_twitter_metadata_keep_text_and_urls() {
     assert_eq!(s.source_ref.as_deref(), Some("https://i.redd.it/x.jpg"));
 }
 
-#[test]
+#[devkit::test]
 fn hydrus_tag_lines() {
     let s = tag_lines("creator:someone\n\nseries:thing\nplain tag\n");
     assert_eq!(s.values.len(), 3);
     assert_eq!(s.values[2].value, "plain tag");
 }
 
-#[test]
+#[devkit::test]
 fn sidecar_names() {
     let names: Vec<String> = sidecars_of(std::path::Path::new("/r/a.jpg"))
         .into_iter()

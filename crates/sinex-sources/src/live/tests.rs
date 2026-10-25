@@ -1,6 +1,6 @@
 use super::*;
 
-#[test]
+#[devkit::test]
 fn options_keep_numbers_and_collect_lists() {
     let o = options(&[
         "every=60".into(),
@@ -17,7 +17,7 @@ fn options_keep_numbers_and_collect_lists() {
     assert!(options(&["novalue".into()]).is_err());
 }
 
-#[test]
+#[devkit::test]
 fn live_bindings_come_from_the_kinds_that_capture() {
     let (kind, b) = binding(
         "clipboard",

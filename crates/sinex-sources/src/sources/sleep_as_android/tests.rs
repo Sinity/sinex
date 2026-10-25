@@ -2,7 +2,7 @@ use super::*;
 
 const HEADER: &[u8] = b"Id,Tz,From,To,Sched,Hours,Rating,Comment,Framerate,Snore,Noise,Cycles,DeepSleep,LenAdjust,Geo,\"Event\",\"Event\"\n";
 
-#[test]
+#[devkit::test]
 fn derives_the_offset_from_from_and_id_and_drops_sentinels() {
     let (_, header) = SleepParser
         .parse(&HEADER, &Carry::default(), &crate::RecordContext::none())
@@ -35,7 +35,7 @@ fn derives_the_offset_from_from_and_id_and_drops_sentinels() {
     );
 }
 
-#[test]
+#[devkit::test]
 fn a_row_without_its_header_is_an_error() {
     assert!(
         SleepParser
@@ -48,7 +48,7 @@ fn a_row_without_its_header_is_an_error() {
     );
 }
 
-#[test]
+#[devkit::test]
 fn a_noise_row_belongs_to_the_session_before_it() {
     let (_, header) = SleepParser
         .parse(&HEADER, &Carry::default(), &crate::RecordContext::none())

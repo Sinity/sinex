@@ -8,7 +8,7 @@ fn midnight_civil() -> Civil {
     Civil::new("Europe/Warsaw", 0, 0).unwrap()
 }
 
-#[test]
+#[devkit::test]
 fn spring_forward_day_is_23_hours() {
     let c = midnight_civil();
     // 2024-03-31 noon local.
@@ -17,7 +17,7 @@ fn spring_forward_day_is_23_hours() {
     assert_eq!(len, 23 * 3_600_000_000_000);
 }
 
-#[test]
+#[devkit::test]
 fn fall_back_day_is_25_hours() {
     let c = midnight_civil();
     let day = c.day(ts(1_730_026_800)).unwrap();
@@ -27,7 +27,7 @@ fn fall_back_day_is_25_hours() {
     assert_eq!(len, 25 * 3_600_000_000_000);
 }
 
-#[test]
+#[devkit::test]
 fn repeated_hour_at_fall_back_is_two_buckets() {
     let c = midnight_civil();
     // 2024-10-27: 02:30 CEST is 00:30 UTC; 02:30 CET is 01:30 UTC.
@@ -38,7 +38,7 @@ fn repeated_hour_at_fall_back_is_two_buckets() {
     assert_eq!(c.hour_end(first).unwrap(), second);
 }
 
-#[test]
+#[devkit::test]
 fn late_evening_stays_in_its_local_day() {
     let c = midnight_civil();
     // 2024-06-15 23:30 CEST.
@@ -49,7 +49,7 @@ fn late_evening_stays_in_its_local_day() {
     assert_eq!(c.hour_start(ts(1_718_455_040)).unwrap(), ts(1_718_452_800));
 }
 
-#[test]
+#[devkit::test]
 fn logical_day_starts_at_four() {
     let c = Civil::operator_default();
     // 2024-06-15 03:59 CEST belongs to the 14th; 04:00 to the 15th.
@@ -67,7 +67,7 @@ fn logical_day_starts_at_four() {
     );
 }
 
-#[test]
+#[devkit::test]
 fn unknown_zone_is_an_error_not_utc() {
     assert!(matches!(
         Civil::new("Not/A_Zone", 4, 0),

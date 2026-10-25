@@ -1,8 +1,8 @@
 use super::*;
 
-#[tokio::test]
-async fn shutdown_finishes_the_active_pass_and_its_queued_admission() {
-    let w = World::with_keys(vec![Box::new(Count::<1>)]).await;
+#[devkit::test]
+async fn shutdown_finishes_the_active_pass_and_its_queued_admission(db: devkit::pg::TestDatabase) {
+    let w = World::with_keys(db, vec![Box::new(Count::<1>)]).await;
     w.admit(vec![zsh("retained input", 0, 1)]).await;
     let driver = w.driver_with(vec![Box::new(Count::<1>)], vec![]).await;
     let mut blocker = PgConnection::connect(&w.url).await.unwrap();
@@ -50,9 +50,9 @@ async fn shutdown_finishes_the_active_pass_and_its_queued_admission() {
     );
 }
 
-#[tokio::test]
-async fn a_closed_stop_channel_also_releases_the_idle_driver() {
-    let w = World::with_keys(vec![]).await;
+#[devkit::test]
+async fn a_closed_stop_channel_also_releases_the_idle_driver(db: devkit::pg::TestDatabase) {
+    let w = World::with_keys(db, vec![]).await;
     let driver = w.driver_with(vec![], vec![]).await;
     let (stop_tx, stop) = tokio::sync::watch::channel(false);
     drop(stop_tx);

@@ -2,7 +2,7 @@ use super::*;
 use crate::{DrainInput, Limits, Source};
 use sinex_model::{MaterialId, ReadingOrder, RecordOutcome};
 
-#[test]
+#[devkit::test]
 fn a_stored_segment_drains_to_one_event_from_its_manifest() {
     let dir = std::env::temp_dir().join(format!("sinex-mc-{}", uuid::Uuid::now_v7()));
     std::fs::create_dir_all(&dir).unwrap();

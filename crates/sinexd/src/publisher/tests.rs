@@ -77,13 +77,16 @@ async fn read_all(js: &jetstream::Context, subjects: &Subjects) -> Vec<Confirmed
     out
 }
 
-#[tokio::test]
-async fn publishes_in_commit_order_masked_once() {
+#[devkit::test]
+async fn publishes_in_commit_order_masked_once(db: devkit::pg::TestDatabase) {
     let nats = devkit::nats::test_nats().unwrap();
     let subjects = Subjects::new(nats.prefix());
     let js = context(async_nats::connect(nats.url()).await.unwrap());
     ensure_stream(&js, &subjects).await.unwrap();
-    let (_db, url, mut conn) = crate::testdb::fresh().await;
+    let url = db.url(None);
+    let mut conn = <sqlx::PgConnection as sqlx::Connection>::connect(&url)
+        .await
+        .unwrap();
 
     let first = executed("1", "ls", 1, Class::Open);
     let first_id = first.id;
@@ -148,14 +151,17 @@ async fn publishes_in_commit_order_masked_once() {
 
 /// Found on real data: one Atuin command of 4 MB. The event goes out,
 /// without its payload, and the next ones follow it.
-#[tokio::test]
-async fn an_event_larger_than_a_message_goes_out_without_its_payload() {
+#[devkit::test]
+async fn an_event_larger_than_a_message_goes_out_without_its_payload(db: devkit::pg::TestDatabase) {
     let nats = devkit::nats::test_nats().unwrap();
     let subjects = Subjects::new(nats.prefix());
     let js = context(async_nats::connect(nats.url()).await.unwrap());
     ensure_stream(&js, &subjects).await.unwrap();
     let limit = js.client().server_info().max_payload as u64;
-    let (_db, url, mut conn) = crate::testdb::fresh().await;
+    let url = db.url(None);
+    let mut conn = <sqlx::PgConnection as sqlx::Connection>::connect(&url)
+        .await
+        .unwrap();
     let huge = "x".repeat(usize::try_from(limit).unwrap() * 2);
     admit(
         &mut conn,
@@ -189,13 +195,16 @@ async fn an_event_larger_than_a_message_goes_out_without_its_payload() {
     assert_eq!(small.withheld, None);
 }
 
-#[tokio::test]
-async fn a_page_published_twice_is_stored_once() {
+#[devkit::test]
+async fn a_page_published_twice_is_stored_once(db: devkit::pg::TestDatabase) {
     let nats = devkit::nats::test_nats().unwrap();
     let subjects = Subjects::new(nats.prefix());
     let js = context(async_nats::connect(nats.url()).await.unwrap());
     ensure_stream(&js, &subjects).await.unwrap();
-    let (_db, url, mut conn) = crate::testdb::fresh().await;
+    let url = db.url(None);
+    let mut conn = <sqlx::PgConnection as sqlx::Connection>::connect(&url)
+        .await
+        .unwrap();
     admit(
         &mut conn,
         batch(vec![executed("1", "ls", 1, Class::Open)], vec![]),
@@ -218,13 +227,16 @@ async fn a_page_published_twice_is_stored_once() {
     assert_eq!(read_all(&js, &subjects).await.len(), 1);
 }
 
-#[tokio::test]
-async fn hide_after_publishing_sends_a_notice() {
+#[devkit::test]
+async fn hide_after_publishing_sends_a_notice(db: devkit::pg::TestDatabase) {
     let nats = devkit::nats::test_nats().unwrap();
     let subjects = Subjects::new(nats.prefix());
     let js = context(async_nats::connect(nats.url()).await.unwrap());
     ensure_stream(&js, &subjects).await.unwrap();
-    let (_db, url, mut conn) = crate::testdb::fresh().await;
+    let url = db.url(None);
+    let mut conn = <sqlx::PgConnection as sqlx::Connection>::connect(&url)
+        .await
+        .unwrap();
     let event = executed("1", "ls", 1, Class::Open);
     let id = event.id;
     admit(&mut conn, batch(vec![event], vec![])).await;
@@ -263,13 +275,16 @@ async fn hide_after_publishing_sends_a_notice() {
 
 /// Excision reaches every surface: an event excised after it was published
 /// is erased from the stream, and consumers are told.
-#[tokio::test]
-async fn excision_erases_the_published_message() {
+#[devkit::test]
+async fn excision_erases_the_published_message(db: devkit::pg::TestDatabase) {
     let nats = devkit::nats::test_nats().unwrap();
     let subjects = Subjects::new(nats.prefix());
     let js = context(async_nats::connect(nats.url()).await.unwrap());
     ensure_stream(&js, &subjects).await.unwrap();
-    let (_db, url, mut conn) = crate::testdb::fresh().await;
+    let url = db.url(None);
+    let mut conn = <sqlx::PgConnection as sqlx::Connection>::connect(&url)
+        .await
+        .unwrap();
     let secret = executed("1", "export TOKEN=hunter2", 1, Class::Open);
     let secret_id = secret.id;
     let sibling = executed("2", "ls", 2, Class::Open);
@@ -355,13 +370,18 @@ async fn excision_erases_the_published_message() {
     assert_eq!(again, Published::default());
 }
 
-#[tokio::test]
-async fn archive_consumer_observes_hide_restore_hide_without_duplicate_events() {
+#[devkit::test]
+async fn archive_consumer_observes_hide_restore_hide_without_duplicate_events(
+    db: devkit::pg::TestDatabase,
+) {
     let nats = devkit::nats::test_nats().unwrap();
     let subjects = Subjects::new(nats.prefix());
     let js = context(async_nats::connect(nats.url()).await.unwrap());
     ensure_stream(&js, &subjects).await.unwrap();
-    let (_db, url, mut conn) = crate::testdb::fresh().await;
+    let url = db.url(None);
+    let mut conn = <sqlx::PgConnection as sqlx::Connection>::connect(&url)
+        .await
+        .unwrap();
     let event = executed("lifecycle", "pwd", 1, Class::Open);
     let id = event.id;
     admit(&mut conn, batch(vec![event], vec![])).await;

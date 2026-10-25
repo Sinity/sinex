@@ -185,7 +185,7 @@ exec sleep 30
     }
 }
 
-#[test]
+#[devkit::test]
 fn capture_deadline_reaps_clipboard_and_audio_children() {
     for kind in ["clipboard", "media"] {
         let fixture = Fixture::new();
@@ -210,7 +210,7 @@ fn capture_deadline_reaps_clipboard_and_audio_children() {
     }
 }
 
-#[test]
+#[devkit::test]
 fn run_deadline_reaps_both_clipboard_selections() {
     let nats = devkit::nats::test_nats().unwrap();
     let fixture = Fixture::new();
@@ -227,7 +227,7 @@ fn run_deadline_reaps_both_clipboard_selections() {
     fixture.all_reaped();
 }
 
-#[test]
+#[devkit::test]
 fn run_signals_join_capture_threads_and_reap_children() {
     for signal in ["INT", "TERM"] {
         let nats = devkit::nats::test_nats().unwrap();
@@ -259,7 +259,7 @@ fn run_signals_join_capture_threads_and_reap_children() {
     }
 }
 
-#[test]
+#[devkit::test]
 fn a_producer_error_stops_already_running_capture_children() {
     let nats = devkit::nats::test_nats().unwrap();
     let fixture = Fixture::new();
@@ -277,7 +277,7 @@ fn a_producer_error_stops_already_running_capture_children() {
     fixture.all_reaped();
 }
 
-#[test]
+#[devkit::test]
 fn a_first_record_after_saved_empty_polls_reaches_transport_and_reaps_children() {
     let nats = devkit::nats::test_nats().unwrap();
     let fixture = Fixture::new();

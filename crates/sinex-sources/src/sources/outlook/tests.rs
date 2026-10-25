@@ -4,7 +4,7 @@ fn cp1250(s: &str) -> Vec<u8> {
     encoding_rs::WINDOWS_1250.encode(s).0.into_owned()
 }
 
-#[test]
+#[devkit::test]
 fn csv_rows_are_windows_1250_with_polish_headers() {
     let header = cp1250(
         "\"Temat\",\"Treść\",\"Od: (imię/nazwisko)\",\"Od: (adres)\",\"Od: (rodzaj)\",\"Do: (imię/nazwisko)\",\"Do: (adres)\",\"Do: (rodzaj)\",\"DW: (imię/nazwisko)\",\"DW: (adres)\",\"DW: (rodzaj)\",\"Kategorie\"\n",

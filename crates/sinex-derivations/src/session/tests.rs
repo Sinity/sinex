@@ -34,7 +34,7 @@ fn sessions(inputs: &[Event]) -> Vec<ShellSession> {
         .collect()
 }
 
-#[test]
+#[devkit::test]
 fn gap_after_the_latest_end_splits_sessions() {
     let s = sessions(&[
         fused(T, Some(10), 0),
@@ -53,7 +53,7 @@ fn gap_after_the_latest_end_splits_sessions() {
     assert_eq!(s[1].day, "2024-06-15");
 }
 
-#[test]
+#[devkit::test]
 fn key_is_host_and_logical_day() {
     let env = Env::at(Timestamp::now());
     let e = fused(T, None, 0);
@@ -79,7 +79,7 @@ fn key_is_host_and_logical_day() {
     assert_eq!(keys[0]["day"], "2024-06-14");
 }
 
-#[test]
+#[devkit::test]
 fn every_member_is_a_parent() {
     let env = Env::at(Timestamp::now());
     let inputs = [fused(T, None, 0), fused(T + 10, None, 0)];

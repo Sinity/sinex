@@ -2,7 +2,6 @@
 //! newer replaces, older suppresses; hidden stays hidden across re-admission;
 //! events and progress commit together. Run against a real database.
 use super::*;
-use crate::testdb;
 use proptest::prelude::*;
 use serde_json::json;
 use sinex_model::event_types::{CommandExecuted, CommandImported};
@@ -123,7 +122,12 @@ fn reading() -> impl Strategy<Value = (u8, u8, i64)> {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn newer_replaces_older_suppresses_one_live_per_key() {
-    let (_db, conn) = testdb::fresh().await;
+    // Property cases block on this runtime from proptest's thread, so the
+    // test needs a multi-threaded runtime and takes its database directly.
+    let db = devkit::pg::test_database().unwrap();
+    let conn = <sqlx::PgConnection as sqlx::Connection>::connect(&db.url(None))
+        .await
+        .unwrap();
     let conn = tokio::sync::Mutex::new(conn);
     let cases = std::sync::Mutex::new(0u32);
     let rt = tokio::runtime::Handle::current();
@@ -168,9 +172,11 @@ async fn newer_replaces_older_suppresses_one_live_per_key() {
 /// Ties on reading order are decided by content, never by arrival: the same
 /// readings admitted one batch each in either order, or together in either
 /// order, leave the same live readings (sxnext-9zw.24).
-#[tokio::test]
-async fn equal_reading_orders_are_decided_by_content_not_arrival() {
-    let (_db, mut conn) = testdb::fresh().await;
+#[devkit::test]
+async fn equal_reading_orders_are_decided_by_content_not_arrival(db: devkit::pg::TestDatabase) {
+    let mut conn = <sqlx::PgConnection as sqlx::Connection>::connect(&db.url(None))
+        .await
+        .unwrap();
     let readings = [(0u8, 1u8, 5i64), (0, 2, 5), (1, 0, 3), (1, 2, 3), (1, 1, 3)];
     let mut outcomes = Vec::new();
     for (n, plan) in [
@@ -211,9 +217,11 @@ async fn equal_reading_orders_are_decided_by_content_not_arrival() {
     assert_eq!(outcomes[0], want);
 }
 
-#[tokio::test]
-async fn replaced_readings_are_archived_with_their_successor() {
-    let (_db, mut conn) = testdb::fresh().await;
+#[devkit::test]
+async fn replaced_readings_are_archived_with_their_successor(db: devkit::pg::TestDatabase) {
+    let mut conn = <sqlx::PgConnection as sqlx::Connection>::connect(&db.url(None))
+        .await
+        .unwrap();
     let first = keyed("s", 1, 1, 1);
     admit_one(&mut conn, &batch(vec![first.clone()])).await;
     let second = keyed("s", 1, 2, 2);
@@ -263,9 +271,11 @@ fn watched(title: Option<&str>, order: i64) -> Event {
     .unwrap()
 }
 
-#[tokio::test]
-async fn a_newer_reading_keeps_known_fields_it_leaves_unknown() {
-    let (_db, mut conn) = testdb::fresh().await;
+#[devkit::test]
+async fn a_newer_reading_keeps_known_fields_it_leaves_unknown(db: devkit::pg::TestDatabase) {
+    let mut conn = <sqlx::PgConnection as sqlx::Connection>::connect(&db.url(None))
+        .await
+        .unwrap();
     admit_one(&mut conn, &batch(vec![watched(Some("A talk"), 1)])).await;
     // The later export dropped the title and channel of a deleted video.
     let out = admit_one(&mut conn, &batch(vec![watched(None, 2)])).await;
@@ -288,9 +298,13 @@ async fn a_newer_reading_keeps_known_fields_it_leaves_unknown() {
     );
 }
 
-#[tokio::test]
-async fn location_keyed_records_are_one_live_reading_and_never_replaced() {
-    let (_db, mut conn) = testdb::fresh().await;
+#[devkit::test]
+async fn location_keyed_records_are_one_live_reading_and_never_replaced(
+    db: devkit::pg::TestDatabase,
+) {
+    let mut conn = <sqlx::PgConnection as sqlx::Connection>::connect(&db.url(None))
+        .await
+        .unwrap();
     let material = MaterialId::new();
     let at = |anchor: u64, change: &str, order: i64| {
         Event::build(
@@ -328,9 +342,11 @@ async fn location_keyed_records_are_one_live_reading_and_never_replaced() {
     assert_eq!(live, 2);
 }
 
-#[tokio::test]
-async fn hidden_stays_hidden_across_readmission_until_unhidden() {
-    let (_db, mut conn) = testdb::fresh().await;
+#[devkit::test]
+async fn hidden_stays_hidden_across_readmission_until_unhidden(db: devkit::pg::TestDatabase) {
+    let mut conn = <sqlx::PgConnection as sqlx::Connection>::connect(&db.url(None))
+        .await
+        .unwrap();
     let e = keyed("s", 7, 1, 1);
     admit_one(&mut conn, &batch(vec![e.clone()])).await;
     let mut hide = batch(vec![]);
@@ -356,9 +372,11 @@ async fn hidden_stays_hidden_across_readmission_until_unhidden() {
     );
 }
 
-#[tokio::test]
-async fn a_dropped_record_gets_a_removed_reading_once() {
-    let (_db, mut conn) = testdb::fresh().await;
+#[devkit::test]
+async fn a_dropped_record_gets_a_removed_reading_once(db: devkit::pg::TestDatabase) {
+    let mut conn = <sqlx::PgConnection as sqlx::Connection>::connect(&db.url(None))
+        .await
+        .unwrap();
     let location = RecordLocation {
         material: MaterialId::new(),
         anchor: 2,
@@ -410,9 +428,11 @@ async fn a_dropped_record_gets_a_removed_reading_once() {
     assert_eq!((again.admitted, again.replaced), (0, 0));
 }
 
-#[tokio::test]
-async fn events_and_progress_commit_together() {
-    let (_db, mut conn) = testdb::fresh().await;
+#[devkit::test]
+async fn events_and_progress_commit_together(db: devkit::pg::TestDatabase) {
+    let mut conn = <sqlx::PgConnection as sqlx::Connection>::connect(&db.url(None))
+        .await
+        .unwrap();
     let progress = |cursor: i64| SourceProgress {
         exclusions: None,
         material_keys: Vec::new(),
@@ -454,9 +474,11 @@ async fn events_and_progress_commit_together() {
     assert_eq!(live(&mut conn, "s").await.len(), 1);
 }
 
-#[tokio::test]
-async fn commit_seq_is_dense_and_in_batch_order() {
-    let (_db, mut conn) = testdb::fresh().await;
+#[devkit::test]
+async fn commit_seq_is_dense_and_in_batch_order(db: devkit::pg::TestDatabase) {
+    let mut conn = <sqlx::PgConnection as sqlx::Connection>::connect(&db.url(None))
+        .await
+        .unwrap();
     let events: Vec<Event> = (0..5).map(|k| keyed("s", k, 1, 1)).collect();
     let out = admit_one(&mut conn, &batch(events.clone())).await;
     assert_eq!(out.commit_seq, Some((1, 5)));
@@ -480,9 +502,11 @@ impl DirtyKeys for ByDay {
     }
 }
 
-#[tokio::test]
-async fn admitted_and_archived_readings_mark_dirty_keys() {
-    let (_db, mut conn) = testdb::fresh().await;
+#[devkit::test]
+async fn admitted_and_archived_readings_mark_dirty_keys(db: devkit::pg::TestDatabase) {
+    let mut conn = <sqlx::PgConnection as sqlx::Connection>::connect(&db.url(None))
+        .await
+        .unwrap();
     let mut tx = conn.begin().await.unwrap();
     let out = admit(
         &mut tx,
@@ -502,9 +526,11 @@ async fn admitted_and_archived_readings_mark_dirty_keys() {
     assert_eq!(n, 1, "both events fall on the same day");
 }
 
-#[tokio::test]
-async fn dirty_keys_keep_each_derivation_and_advance_existing_keys() {
-    let (_db, mut conn) = testdb::fresh().await;
+#[devkit::test]
+async fn dirty_keys_keep_each_derivation_and_advance_existing_keys(db: devkit::pg::TestDatabase) {
+    let mut conn = <sqlx::PgConnection as sqlx::Connection>::connect(&db.url(None))
+        .await
+        .unwrap();
     let first = json!({"day": "2026-01-01"});
     let second = json!({"day": "2026-01-02"});
     let mut tx = conn.begin().await.unwrap();
@@ -557,9 +583,13 @@ async fn dirty_keys_keep_each_derivation_and_advance_existing_keys() {
 
 mod privacy;
 
-#[tokio::test]
-async fn untimed_zsh_occurrences_coexist_and_only_same_locations_repeat() {
-    let (_db, mut conn) = testdb::fresh().await;
+#[devkit::test]
+async fn untimed_zsh_occurrences_coexist_and_only_same_locations_repeat(
+    db: devkit::pg::TestDatabase,
+) {
+    let mut conn = <sqlx::PgConnection as sqlx::Connection>::connect(&db.url(None))
+        .await
+        .unwrap();
     let first = MaterialId::new();
     let second = MaterialId::new();
     let make = |material, anchor, timed: bool| {

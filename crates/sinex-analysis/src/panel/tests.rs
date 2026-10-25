@@ -44,7 +44,7 @@ fn covered(source: &str, a: i64, b: i64) -> Coverage {
 /// The Kestrel example (`analysis.md` §3.3): partial first day, an
 /// observed day, a day whose last hours the poll could not see, and a day
 /// with no poll at all, which is missing, never zero.
-#[test]
+#[devkit::test]
 fn kestrel_week_tells_zero_from_missing() {
     let payloads: Vec<Value> = (0..5).map(|_| json!({"host": "h"})).collect();
     let mut rows = Vec::new();
@@ -94,7 +94,7 @@ fn kestrel_week_tells_zero_from_missing() {
     );
 }
 
-#[test]
+#[devkit::test]
 fn any_of_unions_and_sources_intersects() {
     let rows = [covered("atuin", 0, 10), covered("zsh", 5, 20)];
     let (u, _) = covered_spans(&CoverageRule::AnyOf(&["atuin", "zsh"]), &rows);
@@ -103,7 +103,7 @@ fn any_of_unions_and_sources_intersects() {
     assert_eq!(i.len(), 5);
 }
 
-#[test]
+#[devkit::test]
 fn gaps_turn_coverage_into_missing() {
     let cells = compute(
         &metric(),
@@ -120,7 +120,7 @@ fn gaps_turn_coverage_into_missing() {
     );
 }
 
-#[test]
+#[devkit::test]
 fn rows_without_known_coverage_are_lower_bounds() {
     let p = json!({"host": "h"});
     let rows = [Row {
@@ -148,7 +148,7 @@ fn rows_without_known_coverage_are_lower_bounds() {
     );
 }
 
-#[test]
+#[devkit::test]
 fn breakdowns_share_the_unit_coverage() {
     let a = json!({"host": "a"});
     let b = json!({});
@@ -184,7 +184,7 @@ fn breakdowns_share_the_unit_coverage() {
     );
 }
 
-#[test]
+#[devkit::test]
 fn logical_days_follow_the_day_setting() {
     let civil = Civil::new("Europe/Warsaw", 4, 0).unwrap();
     // 2026-10-25 is the autumn DST change in Warsaw: a 25-hour day.

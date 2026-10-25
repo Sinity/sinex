@@ -1,6 +1,6 @@
 use super::*;
 
-#[test]
+#[devkit::test]
 fn metric_ids_are_unique_and_rules_name_known_sources() {
     let mut ids: Vec<_> = METRICS.iter().map(|m| m.id).collect();
     ids.sort_unstable();
@@ -15,7 +15,7 @@ fn metric_ids_are_unique_and_rules_name_known_sources() {
     }
 }
 
-#[test]
+#[devkit::test]
 fn metrics_read_only_the_fields_they_need() {
     assert_eq!(JOURNAL_ERRORS.fields(), ["priority", "unit"]);
     assert_eq!(SHELL_FAILED_RATIO.fields(), ["exit_code"]);
@@ -23,7 +23,7 @@ fn metrics_read_only_the_fields_they_need() {
     assert!(SHELL_COMMANDS.fields() == ["host"]);
 }
 
-#[test]
+#[devkit::test]
 fn the_family_is_fixed_by_the_catalog() {
     let fam = correlation_family();
     // Four tracked metrics: 6 pairs × 2 lags.

@@ -9,7 +9,7 @@ fn parse(bytes: &[u8]) -> Result<String, RecordError> {
         .map(|(p, _)| p[0].command.clone())
 }
 
-#[test]
+#[devkit::test]
 fn identical_runs_in_one_second_are_numbered_in_file_order() {
     let parser = ZshParser { host: "h".into() };
     let lines: [&[u8]; 4] = [
@@ -41,7 +41,7 @@ fn identical_runs_in_one_second_are_numbered_in_file_order() {
     assert_eq!(ns, ns2);
 }
 
-#[test]
+#[devkit::test]
 fn keeps_original_backslashes_spaces_and_tabs() {
     let records: &[(&[u8], &str)] = &[
         (b": 1:0;echo slash\\ \n", "echo slash\\"),
@@ -59,7 +59,7 @@ fn keeps_original_backslashes_spaces_and_tabs() {
     }
 }
 
-#[test]
+#[devkit::test]
 fn metafied_bytes_and_continuations() {
     let bytes = b": 3600:0;echo \xc4\x83\x85\n: 3601:0;printf a\\\nb\n: 3602:0;partial";
     let (r, consumed) = frame(bytes);
@@ -105,7 +105,7 @@ fn commands(bytes: &[u8], base: usize) -> Vec<(usize, String)> {
 proptest! {
     /// Source law: reading the file in pieces gives the same records, at the
     /// same file offsets, as reading it at once.
-    #[test]
+    #[devkit::test]
     fn pieces_equal_whole(cmds in prop::collection::vec("[a-z \\\\]{0,6}", 1..12), cut in 0usize..400) {
         let mut file = Vec::new();
         for (i, c) in cmds.iter().enumerate() {
@@ -120,7 +120,7 @@ proptest! {
     }
 
     /// Source law: an anchor reads back exactly its record.
-    #[test]
+    #[devkit::test]
     fn anchors_read_back_records(cmds in prop::collection::vec("[a-z]{1,5}", 1..8)) {
         let mut file = Vec::new();
         for (i, c) in cmds.iter().enumerate() {
@@ -133,7 +133,7 @@ proptest! {
     }
 }
 
-#[test]
+#[devkit::test]
 fn plain_commands_preserve_text_and_do_not_invent_times() {
     let parser = ZshParser { host: "h".into() };
     let cases: &[(&[u8], &str)] = &[
@@ -241,7 +241,7 @@ fn observations(
     (out, carry)
 }
 
-#[test]
+#[devkit::test]
 fn mixed_history_append_cuts_keep_carry_coordinates_and_failures() {
     let file = b"pwd\n: 10:0;pwd\npwd\n\n: invalid\n: 10:2;pwd\nprintf a\\\nb\n\\: literal\npwd\n: 10:0;pwd\n";
     let (whole, state) = observations(file, 0, serde_json::Value::Null);
@@ -261,7 +261,7 @@ fn mixed_history_append_cuts_keep_carry_coordinates_and_failures() {
     }
 }
 
-#[test]
+#[devkit::test]
 fn appended_plain_records_keep_distinct_material_locations_on_replay() {
     use crate::drivers::append_file::AppendState;
     use std::io::Write;
@@ -304,7 +304,7 @@ fn appended_plain_records_keep_distinct_material_locations_on_replay() {
     );
 }
 
-#[test]
+#[devkit::test]
 fn the_carry_holds_no_command_text() {
     let (_, carry) = observations(b": 10:0;secret-command\n", 0, serde_json::Value::Null);
     assert!(!carry.to_string().contains("secret-command"), "{carry}");

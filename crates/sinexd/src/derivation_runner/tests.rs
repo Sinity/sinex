@@ -96,13 +96,16 @@ struct World {
 }
 
 impl World {
-    async fn new() -> Self {
-        Self::with_keys(sinex_derivations::keyed()).await
+    async fn new(db: devkit::pg::TestDatabase) -> Self {
+        Self::with_keys(db, sinex_derivations::keyed()).await
     }
 
     /// A world whose writer marks the keys of `keyed` dirty.
-    async fn with_keys(keyed: Vec<Box<dyn AnyKeyed>>) -> Self {
-        let (db, url, connection) = crate::testdb::fresh().await;
+    async fn with_keys(db: devkit::pg::TestDatabase, keyed: Vec<Box<dyn AnyKeyed>>) -> Self {
+        let url = db.url(None);
+        let connection = <sqlx::PgConnection as sqlx::Connection>::connect(&url)
+            .await
+            .unwrap();
         let (handle, queues) = writer::channels();
         let task = tokio::spawn(writer::run(
             url.clone(),
@@ -174,9 +177,9 @@ impl World {
     }
 }
 
-#[tokio::test]
-async fn commands_fuse_into_sessions_and_summaries() {
-    let w = World::new().await;
+#[devkit::test]
+async fn commands_fuse_into_sessions_and_summaries(db: devkit::pg::TestDatabase) {
+    let w = World::new(db).await;
     w.admit(vec![
         atuin("1", "make", 0, 0, 1),
         zsh("make", 1, 10),
@@ -217,9 +220,9 @@ async fn commands_fuse_into_sessions_and_summaries() {
     );
 }
 
-#[tokio::test]
-async fn a_changed_input_replaces_outputs_downstream() {
-    let w = World::new().await;
+#[devkit::test]
+async fn a_changed_input_replaces_outputs_downstream(db: devkit::pg::TestDatabase) {
+    let w = World::new(db).await;
     w.admit(vec![atuin("1", "make", 0, 0, 1)]).await;
     let mut d = w.driver().await;
     d.settle().await.unwrap();
@@ -234,9 +237,9 @@ async fn a_changed_input_replaces_outputs_downstream() {
     assert_eq!(w.live::<ShellSession>().await[0].failed, 1);
 }
 
-#[tokio::test]
-async fn an_output_no_longer_produced_is_archived() {
-    let w = World::new().await;
+#[devkit::test]
+async fn an_output_no_longer_produced_is_archived(db: devkit::pg::TestDatabase) {
+    let w = World::new(db).await;
     let a = atuin("1", "make", 0, 0, 1);
     let a_id = a.id;
     w.admit(vec![a, zsh("make", 1, 10)]).await;
@@ -267,9 +270,9 @@ async fn an_output_no_longer_produced_is_archived() {
     );
 }
 
-#[tokio::test]
-async fn an_open_interval_waits_and_closes_on_the_next_transition() {
-    let w = World::new().await;
+#[devkit::test]
+async fn an_open_interval_waits_and_closes_on_the_next_transition(db: devkit::pg::TestDatabase) {
+    let w = World::new(db).await;
     w.admit(vec![focus("0xa", 0)]).await;
     let mut d = w.driver().await;
     d.settle().await.unwrap();
@@ -333,9 +336,9 @@ impl Keyed for Waiting {
     }
 }
 
-#[tokio::test]
-async fn a_waiting_key_stops_waiting_past_the_horizon() {
-    let w = World::with_keys(vec![Box::new(Waiting)]).await;
+#[devkit::test]
+async fn a_waiting_key_stops_waiting_past_the_horizon(db: devkit::pg::TestDatabase) {
+    let w = World::with_keys(db, vec![Box::new(Waiting)]).await;
     let waiting = "SELECT count(*) FROM derivation.waiting";
     w.admit(vec![zsh("a", 0, 1)]).await;
     let mut d = w.driver_with(vec![Box::new(Waiting)], vec![]).await;
@@ -360,7 +363,7 @@ async fn a_waiting_key_stops_waiting_past_the_horizon() {
     assert_eq!(out.len(), 3, "{out:?}");
 }
 
-#[test]
+#[devkit::test]
 fn derivations_rank_after_the_derivations_they_read() {
     let catalog: Vec<Registered> = sinex_derivations::keyed()
         .iter()
@@ -385,9 +388,9 @@ fn derivations_rank_after_the_derivations_they_read() {
     assert!(r.values().any(|&rank| rank > fusion), "{r:?}");
 }
 
-#[tokio::test]
-async fn a_key_dirtied_again_stays_dirty() {
-    let w = World::new().await;
+#[devkit::test]
+async fn a_key_dirtied_again_stays_dirty(db: devkit::pg::TestDatabase) {
+    let w = World::new(db).await;
     w.admit(vec![atuin("1", "make", 0, 0, 1)]).await;
     let mut conn = PgConnection::connect(&w.url).await.unwrap();
     let dirty = "SELECT count(*) FROM derivation.dirty WHERE derivation = 'command.fusion'";
@@ -464,9 +467,9 @@ impl<const V: u32> Keyed for Count<V> {
     }
 }
 
-#[tokio::test]
-async fn compare_shows_a_version_change_before_switching() {
-    let w = World::new().await;
+#[devkit::test]
+async fn compare_shows_a_version_change_before_switching(db: devkit::pg::TestDatabase) {
+    let w = World::new(db).await;
     w.admit(vec![zsh("a", 0, 1), zsh("b", 10, 2)]).await;
     let mut v1 = w.driver_with(vec![Box::new(Count::<1>)], vec![]).await;
     v1.settle().await.unwrap();
@@ -522,9 +525,11 @@ impl sinex_derivations::PerEvent for Echo {
     }
 }
 
-#[tokio::test]
-async fn per_event_derivations_read_in_commit_order_and_keep_their_place() {
-    let w = World::new().await;
+#[devkit::test]
+async fn per_event_derivations_read_in_commit_order_and_keep_their_place(
+    db: devkit::pg::TestDatabase,
+) {
+    let w = World::new(db).await;
     w.admit(vec![zsh("a", 0, 1), zsh("b", 10, 2)]).await;
     let mut d = w.driver_with(vec![], vec![Box::new(Echo)]).await;
     d.settle().await.unwrap();
@@ -546,9 +551,9 @@ async fn per_event_derivations_read_in_commit_order_and_keep_their_place() {
 /// Reading many windows at once returns, for each, exactly what reading it
 /// alone returns: adjacent windows share a query, distant windows and
 /// windows with another filter do not.
-#[tokio::test]
-async fn windows_read_together_equal_windows_read_alone() {
-    let w = World::new().await;
+#[devkit::test]
+async fn windows_read_together_equal_windows_read_alone(db: devkit::pg::TestDatabase) {
+    let w = World::new(db).await;
     let mut events = Vec::new();
     for (i, secs) in [0, 1_800, 3_599, 3_600, 7_200, 90_000, 400_000]
         .into_iter()

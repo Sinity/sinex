@@ -24,7 +24,7 @@ fn commits(a: &crate::drivers::Acquired) -> Vec<Map<String, Value>> {
         .collect()
 }
 
-#[test]
+#[devkit::test]
 fn only_newly_reachable_commits_are_read() {
     let dir = std::env::temp_dir().join(format!("sinex-git-{}", uuid::Uuid::now_v7()));
     std::fs::create_dir_all(&dir).unwrap();

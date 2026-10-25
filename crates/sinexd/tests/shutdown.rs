@@ -39,7 +39,7 @@ async fn source_rows(
         .fetch_all(conn).await.unwrap()
 }
 
-#[tokio::test]
+#[devkit::test]
 async fn sigterm_finishes_empty_source_daemon_and_releases_writer_for_restart() {
     let db = devkit::pg::test_database().expect("run through xtask test");
     let database = db.url(None);

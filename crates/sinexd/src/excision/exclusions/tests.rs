@@ -1,10 +1,12 @@
 use super::*;
 use uuid::Uuid;
 
-#[tokio::test]
-async fn a_reread_source_leaves_the_excised_record_out_of_its_new_bytes() {
+#[devkit::test]
+async fn a_reread_source_leaves_the_excised_record_out_of_its_new_bytes(
+    db: devkit::pg::TestDatabase,
+) {
     use sinex_sources::{Source, drivers};
-    let (_db, url, _) = crate::testdb::fresh().await;
+    let url = db.url(None);
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("provider.sqlite");
     let db = rusqlite::Connection::open(&path).unwrap();

@@ -1,6 +1,6 @@
 use super::*;
 
-#[test]
+#[devkit::test]
 fn a_copy_is_verified_by_its_bytes() {
     let dir = std::env::temp_dir().join(format!("sinex-render-{}", uuid::Uuid::now_v7()));
     std::fs::create_dir_all(&dir).unwrap();
@@ -15,7 +15,7 @@ fn a_copy_is_verified_by_its_bytes() {
     std::fs::remove_dir_all(&dir).unwrap();
 }
 
-#[test]
+#[devkit::test]
 fn players_and_cache_names() {
     assert_eq!(player_for("video/mp4", None), "mpv");
     assert_eq!(player_for("image/png", None), "xdg-open");
@@ -27,7 +27,7 @@ fn players_and_cache_names() {
     assert!(previewable("video/webm") && !previewable("audio/flac"));
 }
 
-#[test]
+#[devkit::test]
 fn previews_are_made_with_ffmpeg_when_present() {
     if Command::new("ffmpeg").arg("-version").output().is_err() {
         return;

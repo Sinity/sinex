@@ -12,9 +12,9 @@ async fn first(w: &World, token: &str, query: &str) -> Value {
     page
 }
 
-#[tokio::test]
-async fn a_public_cursor_cannot_skip_rows_in_a_different_question() {
-    let w = world().await;
+#[devkit::test]
+async fn a_public_cursor_cannot_skip_rows_in_a_different_question(db: devkit::pg::TestDatabase) {
+    let w = world(db).await;
     admit(&w, &["alpha", "beta", "gamma"], 0).await;
     let page = first(&w, READ, "events sort when").await;
     let (_, next) = call(&w, Some(READ), json!({"method":"query", "query":"events where beta", "page":1, "cursor":page["result"]["page"]["cursor"]})).await;
@@ -25,9 +25,11 @@ async fn a_public_cursor_cannot_skip_rows_in_a_different_question() {
     assert!(next["reason"].as_str().unwrap().contains("cursor"));
 }
 
-#[tokio::test]
-async fn a_public_cursor_does_not_transfer_the_operators_guarded_visibility() {
-    let w = world().await;
+#[devkit::test]
+async fn a_public_cursor_does_not_transfer_the_operators_guarded_visibility(
+    db: devkit::pg::TestDatabase,
+) {
+    let w = world(db).await;
     let (_, set) = call(
         &w,
         Some(AGENT),
@@ -50,10 +52,12 @@ async fn a_public_cursor_does_not_transfer_the_operators_guarded_visibility() {
     assert!(!fresh["result"]["rows"].to_string().contains("guarded beta"));
 }
 
-#[tokio::test]
-async fn public_continuation_refuses_permanent_removal_instead_of_skipping_the_next_row() {
+#[devkit::test]
+async fn public_continuation_refuses_permanent_removal_instead_of_skipping_the_next_row(
+    db: devkit::pg::TestDatabase,
+) {
     use sinex_model::event_types::CommandFused;
-    let w = world().await;
+    let w = world(db).await;
     let parents: Vec<_> = ["alpha", "beta", "gamma"]
         .iter()
         .enumerate()
@@ -103,9 +107,11 @@ async fn public_continuation_refuses_permanent_removal_instead_of_skipping_the_n
     assert!(next["reason"].as_str().unwrap().contains("result changed"));
 }
 
-#[tokio::test]
-async fn public_run_metadata_changes_invalidate_a_question_without_new_event_commits() {
-    let w = world().await;
+#[devkit::test]
+async fn public_run_metadata_changes_invalidate_a_question_without_new_event_commits(
+    db: devkit::pg::TestDatabase,
+) {
+    let w = world(db).await;
     for name in ["cursor-a", "cursor-b", "cursor-c"] {
         sinex_store::runs::start(
             &mut w.reads.acquire().await.unwrap(),
@@ -132,10 +138,10 @@ async fn public_run_metadata_changes_invalidate_a_question_without_new_event_com
     assert!(next["reason"].as_str().unwrap().contains("result changed"));
 }
 
-#[tokio::test]
-async fn public_cursor_refuses_obsolete_and_overflow_values() {
+#[devkit::test]
+async fn public_cursor_refuses_obsolete_and_overflow_values(db: devkit::pg::TestDatabase) {
     use base64::Engine as _;
-    let w = world().await;
+    let w = world(db).await;
     admit(&w, &["one", "two"], 0).await;
     let page = first(&w, READ, "events sort when").await;
     let raw = page["result"]["page"]["cursor"].as_str().unwrap();

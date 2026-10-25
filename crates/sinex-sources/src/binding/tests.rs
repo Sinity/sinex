@@ -16,14 +16,14 @@ const SPEC: SourceSpec = SourceSpec {
     ),
 };
 
-#[test]
+#[devkit::test]
 fn bindings_are_named_by_source_input_and_host() {
     let b = Binding::of(&SPEC, Path::new("/x/y.zip"), Settings::new("h"));
     assert_eq!(b.name, "test.source:/x/y.zip@h");
     assert_eq!(b.named("visits").name, "test.source:/x/y.zip#visits@h");
 }
 
-#[test]
+#[devkit::test]
 fn per_file_reads_a_file_or_a_directorys_kept_files_in_order() {
     let dir = std::env::temp_dir().join(format!("sinex-binding-test-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
@@ -43,7 +43,7 @@ fn per_file_reads_a_file_or_a_directorys_kept_files_in_order() {
     std::fs::remove_dir_all(&dir).unwrap();
 }
 
-#[test]
+#[devkit::test]
 fn settings_round_trip_and_keep_a_resolved_zone() {
     let s = Settings {
         zone: Some("Europe/Warsaw".into()),

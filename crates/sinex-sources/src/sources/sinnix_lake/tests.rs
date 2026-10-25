@@ -13,7 +13,7 @@ fn line(lane: &str, seq: i64) -> Map<String, Value> {
     )
 }
 
-#[test]
+#[devkit::test]
 fn reads_the_envelope_under_the_catalog_source() {
     let p = EnvelopeParser {
         lane: lane("desktop.clipboard").unwrap(),
@@ -33,7 +33,7 @@ fn reads_the_envelope_under_the_catalog_source() {
     );
 }
 
-#[test]
+#[devkit::test]
 fn unbound_lanes_and_bad_envelopes_fail() {
     let p = EnvelopeParser {
         lane: lane("desktop.clipboard").unwrap(),
@@ -50,7 +50,7 @@ fn unbound_lanes_and_bad_envelopes_fail() {
     assert!(p.parse(&bad, &(), &crate::RecordContext::none()).is_err());
 }
 
-#[test]
+#[devkit::test]
 fn firehoses_emit_nothing_but_still_validate() {
     let p = EnvelopeParser {
         lane: lane("network.netflow").unwrap(),
@@ -67,7 +67,7 @@ fn firehoses_emit_nothing_but_still_validate() {
     );
 }
 
-#[test]
+#[devkit::test]
 fn day_files_skip_index_and_sidecars() {
     let root = std::env::temp_dir().join(format!("sinex-lake-{}", std::process::id()));
     let dir = root.join("activity/desktop/notification");
@@ -85,7 +85,7 @@ fn day_files_skip_index_and_sidecars() {
     assert!(files[0].ends_with("notifications-20261001.jsonl"));
 }
 
-#[test]
+#[devkit::test]
 fn source_names_and_parsers_are_unique() {
     let mut names: Vec<_> = LANES.iter().map(|l| l.spec.name).collect();
     names.sort_unstable();
@@ -94,7 +94,7 @@ fn source_names_and_parsers_are_unique() {
     assert!(LANES.iter().all(|l| l.spec.parser.ends_with(l.spec.name)));
 }
 
-#[test]
+#[devkit::test]
 fn known_payload_failures_are_not_uninterpreted_successes() {
     let parser = EnvelopeParser {
         lane: lane("desktop.clipboard").unwrap(),

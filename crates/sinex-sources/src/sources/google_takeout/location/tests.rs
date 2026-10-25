@@ -1,7 +1,7 @@
 use super::*;
 use serde_json::json;
 
-#[test]
+#[devkit::test]
 fn old_and_new_fix_shapes() {
     let (out, ()) = LocationParser
         .parse(

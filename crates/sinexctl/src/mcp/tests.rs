@@ -1,6 +1,6 @@
 use super::*;
 
-#[test]
+#[devkit::test]
 fn tools_come_from_the_command_table() {
     let tools = tools();
     let names: Vec<&str> = tools.iter().map(|t| t.name.as_ref()).collect();

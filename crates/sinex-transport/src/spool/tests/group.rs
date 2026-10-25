@@ -25,7 +25,7 @@ fn mode(path: &Path) -> u32 {
     std::fs::metadata(path).unwrap().mode() & 0o7777
 }
 
-#[test]
+#[devkit::test]
 fn configured_group_files_are_readable_without_writable_sender_inodes() {
     let root = tempfile::tempdir().unwrap();
     std::fs::set_permissions(root.path(), std::fs::Permissions::from_mode(0o2770)).unwrap();
@@ -39,7 +39,7 @@ fn configured_group_files_are_readable_without_writable_sender_inodes() {
     assert_eq!(mode(&directory(root.path(), "node", "frame")), 0o2770);
 }
 
-#[test]
+#[devkit::test]
 fn private_roots_keep_private_files_and_existing_directories_are_not_adopted() {
     let root = tempfile::tempdir().unwrap();
     stage_all(root.path(), "node");
@@ -69,7 +69,7 @@ fn private_roots_keep_private_files_and_existing_directories_are_not_adopted() {
     assert_eq!(mode(&private), 0o700);
 }
 
-#[test]
+#[devkit::test]
 fn existing_private_handoff_files_are_refused_without_changing_their_bytes_or_modes() {
     let root = tempfile::tempdir().unwrap();
     std::fs::set_permissions(root.path(), std::fs::Permissions::from_mode(0o2770)).unwrap();
@@ -203,7 +203,7 @@ fn run_actor(root: &Path, operation: &str, uid: u32, gid: u32) {
     );
 }
 
-#[test]
+#[devkit::test]
 #[ignore = "requires root for isolated numeric-UID/group filesystem controls"]
 fn configured_group_handoff_between_distinct_users() {
     if let Ok(operation) = std::env::var("SINEX_FIXTURE_ACTOR") {

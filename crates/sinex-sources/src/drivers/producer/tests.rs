@@ -13,7 +13,7 @@ fn event(n: usize) -> ProducerEvent {
     }
 }
 
-#[test]
+#[devkit::test]
 fn frames_fit_one_message_and_a_large_event_travels_alone() {
     let frames = split(vec![
         event(300_000),
@@ -287,7 +287,7 @@ async fn a_spool_is_produced_once_material_first() {
     );
 }
 
-#[test]
+#[devkit::test]
 fn position_survives_a_restart() {
     let dir = std::env::temp_dir().join(format!("sinex-pos-{}", uuid::Uuid::now_v7()));
     assert!(Position::load(&dir, "hyprland@h").unwrap().cursor.is_null());
@@ -386,7 +386,7 @@ async fn damaged_producer_material_sends_no_chunks() {
     assert!(received.lock().unwrap().is_empty());
 }
 
-#[test]
+#[devkit::test]
 fn malformed_producer_blob_names_are_errors() {
     let dir = tempfile::tempdir().unwrap();
     let store = Store::open(dir.path()).unwrap();

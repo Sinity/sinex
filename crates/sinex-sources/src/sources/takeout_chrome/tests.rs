@@ -1,7 +1,7 @@
 use super::*;
 use serde_json::json;
 
-#[test]
+#[devkit::test]
 fn reads_an_entry_and_keeps_new_fields() {
     let row = json!({"favicon_url": "https://a/f.ico", "page_transition": "LINK", "title": "A",
         "url": "https://a/", "client_id": "c==", "time_usec": 1_565_000_000_123_456i64,
@@ -17,7 +17,7 @@ fn reads_an_entry_and_keeps_new_fields() {
     );
 }
 
-#[test]
+#[devkit::test]
 fn selects_both_member_names() {
     assert!(select("Takeout/Chrome/BrowserHistory.json"));
     assert!(select("Takeout/Chrome/History.json"));

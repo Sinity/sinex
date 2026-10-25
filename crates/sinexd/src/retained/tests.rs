@@ -1,7 +1,7 @@
 use super::*;
 use std::io::Cursor;
 
-#[test]
+#[devkit::test]
 fn streamed_blanking_matches_original_bytes_across_small_buffers_and_overlaps() {
     let original = b"a\nb\nc\nlast\nend";
     let spans = vec![(0, 6), (4, 10), (10, 14)];
@@ -22,7 +22,7 @@ fn streamed_blanking_matches_original_bytes_across_small_buffers_and_overlaps() 
     }
 }
 
-#[test]
+#[devkit::test]
 fn retained_record_reads_are_exact_and_propagate_backing_faults() {
     use sinex_sources::drain::RecordRead;
     let retained = Retained::new(Cursor::new(b"alpha\nbeta\n"), 11);
@@ -32,7 +32,7 @@ fn retained_record_reads_are_exact_and_propagate_backing_faults() {
     assert!(retained.read_exact_at(7, &mut row).is_err());
 }
 
-#[test]
+#[devkit::test]
 fn sealed_retained_seek_rechecks_authority_even_for_a_cached_record() {
     use sinex_sources::drain::RecordRead;
     let dir = tempfile::tempdir().unwrap();
@@ -70,7 +70,7 @@ fn sealed_retained_seek_rechecks_authority_even_for_a_cached_record() {
     );
 }
 
-#[test]
+#[devkit::test]
 fn blanked_seek_repeats_the_same_exact_transform_without_staging() {
     use std::io::{Cursor, Read, Seek, SeekFrom};
     let bytes = b"kept\nremove\nlast\n";

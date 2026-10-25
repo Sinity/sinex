@@ -40,7 +40,7 @@ fn ctx() -> Context {
     }
 }
 
-#[test]
+#[devkit::test]
 fn the_budget_drops_whole_findings_and_says_so() {
     let sections = vec![Section {
         title: "S".into(),
@@ -59,7 +59,7 @@ fn the_budget_drops_whole_findings_and_says_so() {
     assert!(!p.markdown.contains("Thing (m) on d: 1"));
 }
 
-#[test]
+#[devkit::test]
 fn absent_sections_are_shown_with_their_reason() {
     let p = compile(
         ctx(),

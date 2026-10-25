@@ -28,9 +28,13 @@ async fn visible(conn: &mut PgConnection, position: i64) -> i64 {
     .unwrap()
 }
 
-#[tokio::test]
-async fn archive_history_preserves_hide_unhide_hide_intervals_without_new_events() {
-    let (_db, mut conn) = testdb::fresh().await;
+#[devkit::test]
+async fn archive_history_preserves_hide_unhide_hide_intervals_without_new_events(
+    db: devkit::pg::TestDatabase,
+) {
+    let mut conn = <sqlx::PgConnection as sqlx::Connection>::connect(&db.url(None))
+        .await
+        .unwrap();
     let events: Vec<_> = (0..3).map(|key| keyed("history", key, 1, 1)).collect();
     admit_one(&mut conn, &batch(events.clone())).await;
     let target = events[0].id;
@@ -97,9 +101,11 @@ async fn archive_history_preserves_hide_unhide_hide_intervals_without_new_events
     );
 }
 
-#[tokio::test]
-async fn archive_changes_and_positions_roll_back_together() {
-    let (_db, mut conn) = testdb::fresh().await;
+#[devkit::test]
+async fn archive_changes_and_positions_roll_back_together(db: devkit::pg::TestDatabase) {
+    let mut conn = <sqlx::PgConnection as sqlx::Connection>::connect(&db.url(None))
+        .await
+        .unwrap();
     let event = keyed("rollback", 1, 1, 1);
     admit_one(&mut conn, &batch(vec![event.clone()])).await;
     for hide in [true, false] {
@@ -126,9 +132,13 @@ async fn archive_changes_and_positions_roll_back_together() {
     }
 }
 
-#[tokio::test]
-async fn cancelling_an_archive_transaction_does_not_publish_partial_history_or_a_position() {
-    let (db, mut conn) = testdb::fresh().await;
+#[devkit::test]
+async fn cancelling_an_archive_transaction_does_not_publish_partial_history_or_a_position(
+    db: devkit::pg::TestDatabase,
+) {
+    let mut conn = <sqlx::PgConnection as sqlx::Connection>::connect(&db.url(None))
+        .await
+        .unwrap();
     let event = keyed("cancel", 1, 1, 1);
     admit_one(&mut conn, &batch(vec![event.clone()])).await;
     let url = db.url(None);
@@ -166,9 +176,11 @@ async fn cancelling_an_archive_transaction_does_not_publish_partial_history_or_a
     );
 }
 
-#[tokio::test]
-async fn commit_pages_cover_deleted_tail_gaps_and_refuse_zero_limits() {
-    let (_db, mut conn) = testdb::fresh().await;
+#[devkit::test]
+async fn commit_pages_cover_deleted_tail_gaps_and_refuse_zero_limits(db: devkit::pg::TestDatabase) {
+    let mut conn = <sqlx::PgConnection as sqlx::Connection>::connect(&db.url(None))
+        .await
+        .unwrap();
     admit_one(
         &mut conn,
         &batch((0..3).map(|key| keyed("gaps", key, 1, 1)).collect()),

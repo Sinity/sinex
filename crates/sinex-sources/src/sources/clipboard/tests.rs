@@ -14,7 +14,7 @@ fn parse(line: &[u8]) -> ClipboardCopied {
         .remove(0)
 }
 
-#[test]
+#[devkit::test]
 fn text_is_recorded_with_its_hash() {
     let types = vec![
         "text/plain;charset=utf-8".to_owned(),
@@ -31,7 +31,7 @@ fn text_is_recorded_with_its_hash() {
     assert!(!c.secret);
 }
 
-#[test]
+#[devkit::test]
 fn binary_content_stays_out_of_the_event() {
     let c = parse(&frame(
         "primary",
@@ -43,7 +43,7 @@ fn binary_content_stays_out_of_the_event() {
     assert_eq!(c.selection, "primary");
 }
 
-#[test]
+#[devkit::test]
 fn secrets_are_not_read() {
     let line = frame(
         "clipboard",

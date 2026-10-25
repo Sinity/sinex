@@ -31,7 +31,7 @@ fn end_cursor(a: &Acquired) -> Value {
     (m.cursor_at)(m.bytes.len()).unwrap()
 }
 
-#[test]
+#[devkit::test]
 fn captured_lines_are_acquired_once_in_order() {
     let spool = dir();
     let mut writer = SpoolWriter::open(&spool, Rotation::default()).unwrap();
@@ -48,7 +48,7 @@ fn captured_lines_are_acquired_once_in_order() {
 /// L25: while private mode is on a live capture writes nothing, and after
 /// it ends capture resumes; the lines in between were never stored, which
 /// is what private mode means, not a loss.
-#[test]
+#[devkit::test]
 fn private_mode_drops_lines_while_on() {
     let spool = dir();
     let switch = sinex_transport::private_mode::PrivateMode::new(dir().join("private-mode"));
@@ -72,7 +72,7 @@ fn private_mode_drops_lines_while_on() {
     assert_eq!(got, vec!["before", "after"]);
 }
 
-#[test]
+#[devkit::test]
 fn parts_continue_across_segments() {
     let spool = dir();
     let rotation = Rotation {
@@ -111,14 +111,14 @@ fn parts_continue_across_segments() {
     assert_eq!(segments(&spool).unwrap(), vec![2]);
 }
 
-#[test]
+#[devkit::test]
 fn bytes_that_are_not_utf8_survive() {
     let record: Map<String, Value> =
         serde_json::from_slice(&frame(Timestamp::now(), &[0xff, b'a'])).unwrap();
     assert_eq!(received(&record).unwrap().1, vec![0xff, b'a']);
 }
 
-#[test]
+#[devkit::test]
 fn a_restarted_capture_starts_a_new_segment() {
     let spool = dir();
     let mut w = SpoolWriter::open(&spool, Rotation::default()).unwrap();
@@ -134,7 +134,7 @@ fn a_restarted_capture_starts_a_new_segment() {
     assert_eq!(w.segment(), 1);
 }
 
-#[test]
+#[devkit::test]
 fn empty_spool_is_unchanged_not_an_error() {
     let spool = dir();
     std::fs::create_dir_all(&spool).unwrap();
@@ -147,7 +147,7 @@ fn empty_spool_is_unchanged_not_an_error() {
     assert!(missing.material.is_none() && missing.observation.unavailable.is_none());
 }
 
-#[test]
+#[devkit::test]
 fn first_capture_after_an_empty_segment_poll_survives_restart() {
     let dir = tempfile::tempdir().unwrap();
     let mut writer = SpoolWriter::open(dir.path(), Rotation::default()).unwrap();

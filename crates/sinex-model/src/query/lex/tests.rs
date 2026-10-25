@@ -4,7 +4,7 @@ fn texts(q: &str) -> Vec<String> {
     tokens(q).unwrap().into_iter().map(|t| t.text).collect()
 }
 
-#[test]
+#[devkit::test]
 fn splits_symbols_fields_and_quotes() {
     assert_eq!(
         texts(r#"commands where exit_code != 0 and command ~ "cargo test""#),
@@ -33,14 +33,14 @@ fn splits_symbols_fields_and_quotes() {
     );
 }
 
-#[test]
+#[devkit::test]
 fn quoted_words_are_never_keywords() {
     let t = tokens(r#""recall""#).unwrap();
     assert_eq!(t[0].kind, Kind::Quoted);
     assert!(!t[0].is_word("recall"));
 }
 
-#[test]
+#[devkit::test]
 fn refuses_a_bad_quote() {
     assert!(tokens(r#"a "unterminated"#).is_err());
 }

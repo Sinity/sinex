@@ -19,7 +19,7 @@ fn a(id: &str, value: Option<&str>, level: Level, withdrawn: bool) -> Assignment
     }
 }
 
-#[test]
+#[devkit::test]
 fn override_beats_import_beats_proposal() {
     let imported = a("1", Some("q"), Level::Import, false);
     let proposed = a("2", Some("s"), Level::Proposal, false);
@@ -52,7 +52,7 @@ fn override_beats_import_beats_proposal() {
     assert_eq!(property(&[]), Shown::Unknown);
 }
 
-#[test]
+#[devkit::test]
 fn two_values_at_one_level_conflict() {
     let s = property(&[
         a("1", Some("x"), Level::Import, false),
@@ -69,7 +69,7 @@ fn two_values_at_one_level_conflict() {
     ));
 }
 
-#[test]
+#[devkit::test]
 fn a_tag_applies_while_any_live_assignment_supports_it() {
     let both = [
         a("1", Some("cat"), Level::Import, false),

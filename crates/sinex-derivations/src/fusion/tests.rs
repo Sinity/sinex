@@ -108,7 +108,7 @@ fn run(inputs: &[Event]) -> Vec<CommandFused> {
     out
 }
 
-#[test]
+#[devkit::test]
 fn close_readings_fuse_and_atuin_supplies_fields() {
     let out = run(&[atuin("ls -la", H + 10.0, 2), zsh("  ls -la ", H + 10.5)]);
     assert_eq!(out.len(), 1);
@@ -119,7 +119,7 @@ fn close_readings_fuse_and_atuin_supplies_fields() {
     assert_eq!(f.host, "box");
 }
 
-#[test]
+#[devkit::test]
 fn closest_pairs_win_and_extras_stay_alone() {
     // Two zsh readings of the same command near one Atuin reading: the
     // closer one fuses, the other stays its own command.
@@ -132,7 +132,7 @@ fn closest_pairs_win_and_extras_stay_alone() {
     assert_eq!(out.iter().filter(|f| f.observed_by.len() == 2).count(), 1);
 }
 
-#[test]
+#[devkit::test]
 fn fallback_needs_a_unique_candidate() {
     // 30 s apart: only the fallback pass can match, and it does when unique.
     assert_eq!(
@@ -149,7 +149,7 @@ fn fallback_needs_a_unique_candidate() {
     assert!(out.iter().all(|f| f.observed_by.len() == 1));
 }
 
-#[test]
+#[devkit::test]
 fn different_commands_or_far_apart_never_fuse() {
     assert_eq!(
         run(&[atuin("ls", H + 10.0, 0), zsh("ls -l", H + 10.0)]).len(),
@@ -161,14 +161,14 @@ fn different_commands_or_far_apart_never_fuse() {
     );
 }
 
-#[test]
+#[devkit::test]
 fn a_pair_across_an_hour_edge_is_emitted_once() {
     let out = run(&[atuin("cargo test", H - 0.5, 0), zsh("cargo test", H + 0.5)]);
     assert_eq!(out.len(), 1, "{out:?}");
     assert_eq!(out[0].observed_by.len(), 2);
 }
 
-#[test]
+#[devkit::test]
 fn privacy_class_is_the_strictest_parent() {
     let a = atuin("ls", H + 10.0, 0);
     let z = zsh("ls", H + 10.2);
@@ -180,7 +180,7 @@ fn privacy_class_is_the_strictest_parent() {
     assert!(matches!(&out[0].origin, Origin::Derived { parents } if parents.len() == 2));
 }
 
-#[test]
+#[devkit::test]
 fn removed_atuin_records_do_not_fuse() {
     let mut a = atuin("rm -rf x", H + 10.0, 0);
     a.record_state = RecordState::Removed;
@@ -189,7 +189,7 @@ fn removed_atuin_records_do_not_fuse() {
     assert_eq!(out[0].observed_by, vec!["terminal.zsh"]);
 }
 
-#[test]
+#[devkit::test]
 fn the_same_command_twice_in_one_second_is_two_runs() {
     let a = zsh("ls", H + 5.0);
     let mut b = zsh("ls", H + 5.0);
@@ -203,7 +203,7 @@ fn the_same_command_twice_in_one_second_is_two_runs() {
     assert_ne!(out[0].equivalence_key, out[1].equivalence_key);
 }
 
-#[test]
+#[devkit::test]
 fn result_does_not_depend_on_input_order() {
     let inputs = vec![
         atuin("a", H + 1.0, 0),

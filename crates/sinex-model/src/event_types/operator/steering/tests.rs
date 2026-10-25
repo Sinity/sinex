@@ -5,7 +5,7 @@ use crate::{
 };
 use serde_json::json;
 
-#[test]
+#[devkit::test]
 fn known_rows_keep_the_existing_wire_identity_and_exact_values() {
     let cases = [
         (
@@ -78,7 +78,7 @@ fn known_rows_keep_the_existing_wire_identity_and_exact_values() {
     }
 }
 
-#[test]
+#[devkit::test]
 fn missing_null_empty_and_numeric_representations_stay_distinct() {
     for values in [
         json!({"id":"c1"}),
@@ -101,7 +101,7 @@ fn missing_null_empty_and_numeric_representations_stay_distinct() {
     assert_ne!(absent, null);
 }
 
-#[test]
+#[devkit::test]
 fn known_table_selects_its_type_and_unknown_shapes_are_refused() {
     for (table, values) in [
         ("commitments", json!({"id":"c1","forecast_p":"0.7"})),
@@ -139,7 +139,7 @@ fn known_table_selects_its_type_and_unknown_shapes_are_refused() {
     }
 }
 
-#[test]
+#[devkit::test]
 fn registration_exposes_known_fields_and_builds_through_the_validated_type() {
     let kind = crate::event_types::find("steering.record").unwrap();
     let schema = (kind.json_schema)();

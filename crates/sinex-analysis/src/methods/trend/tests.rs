@@ -2,7 +2,7 @@ use super::super::observed;
 use super::*;
 use crate::cell::{Cell, Missing};
 
-#[test]
+#[devkit::test]
 fn worked_examples() {
     // Five increasing values: S = 10, Var = 5·4·15/18.
     let (s, v) = mann_kendall(&[1.0, 2.0, 3.0, 4.0, 5.0]);
@@ -14,7 +14,7 @@ fn worked_examples() {
     assert!((v - 48.0 / 18.0).abs() < 1e-12);
 }
 
-#[test]
+#[devkit::test]
 fn sen_slope_is_per_calendar_unit_and_holes_refuse() {
     let x: Vec<f64> = (0..12)
         .map(|i| 2.0 * f64::from(i) + f64::from(i % 2))

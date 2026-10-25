@@ -51,7 +51,7 @@ fn context(manifest: &Value) -> RecordContext<'_> {
     }
 }
 
-#[test]
+#[devkit::test]
 fn visits_carry_their_url_and_unknown_times_stay_unknown() {
     let path = history();
     let (rows, manifest) = rows(&visits_driver(path, "h".into()));
@@ -74,7 +74,7 @@ fn visits_carry_their_url_and_unknown_times_stay_unknown() {
     assert!(!closed[0].extra.contains_key("rowid"));
 }
 
-#[test]
+#[devkit::test]
 fn urls_read_counts_and_never_visited_is_unknown() {
     let path = history();
     let (rows, manifest) = rows(&urls_driver(path, "h".into()));
@@ -84,7 +84,7 @@ fn urls_read_counts_and_never_visited_is_unknown() {
     assert!(b[0].hidden);
 }
 
-#[test]
+#[devkit::test]
 fn profiles_are_named_from_their_path() {
     assert_eq!(
         profile_of("/home/u/.config/google-chrome/Profile 7/History"),

@@ -4,7 +4,7 @@ use sinex_sources::drivers::{
 };
 use std::{fs::File, io::Write};
 
-#[test]
+#[devkit::test]
 fn bundle_staging_does_not_hold_whole_file_bodies() {
     let dir = tempfile::tempdir().unwrap();
     let block = [b'x'; 64 * 1024];

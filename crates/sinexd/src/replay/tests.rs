@@ -39,8 +39,8 @@ impl Drop for Fixture {
     }
 }
 
-async fn fixture() -> Fixture {
-    let (db, url, _) = crate::testdb::fresh().await;
+async fn fixture(db: devkit::pg::TestDatabase) -> Fixture {
+    let url = db.url(None);
     let dir = std::env::temp_dir().join(format!("sinexd-replay-{}", Uuid::now_v7()));
     let ctx = OneShot::open(&url, &dir.join("store")).await.unwrap();
     Fixture { _db: db, ctx, dir }
@@ -126,9 +126,11 @@ fn options(scope: Scope, compare: bool) -> Options {
     }
 }
 
-#[tokio::test]
-async fn replay_reads_every_record_again_with_new_ids_and_the_same_content() {
-    let mut f = fixture().await;
+#[devkit::test]
+async fn replay_reads_every_record_again_with_new_ids_and_the_same_content(
+    db: devkit::pg::TestDatabase,
+) {
+    let mut f = fixture(db).await;
     let path = history(&f.dir, ": 1:0;ls\n: 2:0;echo a\\\nb\n");
     let mut state = AppendState::default();
     ingest(&mut f.ctx, &path, &mut state).await;
@@ -210,9 +212,11 @@ async fn replay_reads_every_record_again_with_new_ids_and_the_same_content() {
     assert_eq!((resumed.chains, resumed.chains_skipped), (0, 1));
 }
 
-#[tokio::test]
-async fn a_narrowed_replay_touches_only_its_window_and_hidden_stays_hidden() {
-    let mut f = fixture().await;
+#[devkit::test]
+async fn a_narrowed_replay_touches_only_its_window_and_hidden_stays_hidden(
+    db: devkit::pg::TestDatabase,
+) {
+    let mut f = fixture(db).await;
     let path = history(&f.dir, ": 100:0;one\n: 200:0;two\n: 300:0;three\n");
     ingest(&mut f.ctx, &path, &mut AppendState::default()).await;
     let two: Uuid =
@@ -244,9 +248,11 @@ async fn a_narrowed_replay_touches_only_its_window_and_hidden_stays_hidden() {
     );
 }
 
-#[tokio::test]
-async fn a_rewritten_history_file_is_aligned_and_replays_without_duplicates() {
-    let mut f = fixture().await;
+#[devkit::test]
+async fn a_rewritten_history_file_is_aligned_and_replays_without_duplicates(
+    db: devkit::pg::TestDatabase,
+) {
+    let mut f = fixture(db).await;
     let path = history(&f.dir, ": 1:0;a\n: 2:0;b\n: 3:0;a\n");
     let mut state = AppendState::default();
     ingest(&mut f.ctx, &path, &mut state).await;
@@ -302,9 +308,9 @@ async fn a_rewritten_history_file_is_aligned_and_replays_without_duplicates() {
     );
 }
 
-#[tokio::test]
-async fn an_excised_record_stays_out_of_a_replay() {
-    let mut f = fixture().await;
+#[devkit::test]
+async fn an_excised_record_stays_out_of_a_replay(db: devkit::pg::TestDatabase) {
+    let mut f = fixture(db).await;
     let path = history(&f.dir, ": 1:0;ls\n: 2:0;cat secret\n: 3:0;pwd\n");
     ingest(&mut f.ctx, &path, &mut AppendState::default()).await;
     let secret: Uuid = sqlx::query_scalar!(
@@ -352,9 +358,11 @@ async fn an_excised_record_stays_out_of_a_replay() {
     assert_eq!(live_commands(&mut f.ctx.read_conn).await, vec!["ls", "pwd"]);
 }
 
-#[tokio::test]
-async fn a_later_material_read_failure_rolls_back_the_entire_replay_chain() {
-    let mut f = fixture().await;
+#[devkit::test]
+async fn a_later_material_read_failure_rolls_back_the_entire_replay_chain(
+    db: devkit::pg::TestDatabase,
+) {
+    let mut f = fixture(db).await;
     let path = history(&f.dir, ": 1:0;first\n");
     let mut state = AppendState::default();
     ingest(&mut f.ctx, &path, &mut state).await;
@@ -398,9 +406,11 @@ async fn a_later_material_read_failure_rolls_back_the_entire_replay_chain() {
     assert_eq!((archived, operations), (0, 0));
 }
 
-#[tokio::test]
-async fn aligned_rewrite_replay_uses_the_same_predecessor_carry_as_native_capture() {
-    let mut f = fixture().await;
+#[devkit::test]
+async fn aligned_rewrite_replay_uses_the_same_predecessor_carry_as_native_capture(
+    db: devkit::pg::TestDatabase,
+) {
+    let mut f = fixture(db).await;
     let path = history(
         &f.dir,
         ": 1700000000:0;duplicate\n: 1700000000:1;duplicate\n",

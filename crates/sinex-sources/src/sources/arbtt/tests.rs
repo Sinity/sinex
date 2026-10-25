@@ -45,7 +45,7 @@ fn sample(windows: &[(bool, Vec<u8>, Vec<u8>)], desktop: Vec<u8>) -> Vec<u8> {
     out
 }
 
-#[test]
+#[devkit::test]
 fn samples_decode_with_back_references_and_utc_times() {
     let mut file = MAGIC.to_vec();
     file.extend(sample(
@@ -81,7 +81,7 @@ fn samples_decode_with_back_references_and_utc_times() {
     assert_eq!(out[0].windows.len(), 1);
 }
 
-#[test]
+#[devkit::test]
 fn a_cut_sample_waits_and_a_bad_reference_fails() {
     let mut file = MAGIC.to_vec();
     file.extend(sample(&[(true, literal("t"), literal("p"))], literal("")));

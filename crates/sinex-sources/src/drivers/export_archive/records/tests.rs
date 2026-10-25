@@ -1,6 +1,6 @@
 use super::*;
 
-#[test]
+#[devkit::test]
 fn json_records_keep_their_exact_original_spelling_and_order() {
     let input = br#"{"ignored":"prefix", "a/b":{"~key":[12, -2.00e+4, true, null, "\\u0061", {"x": 1}, [2, 3]]}, "tail":[0]}"#;
     let mut got = Vec::new();
@@ -26,7 +26,7 @@ fn json_records_keep_their_exact_original_spelling_and_order() {
     assert_eq!(got, expected);
 }
 
-#[test]
+#[devkit::test]
 fn streaming_frames_equal_whole_frames_across_small_budgets() {
     for (framing, input) in [
         (Framing::Lines, &b"a\nb\nc"[..]),
@@ -60,7 +60,7 @@ fn streaming_frames_equal_whole_frames_across_small_budgets() {
     }
 }
 
-#[test]
+#[devkit::test]
 fn malformed_json_and_missing_arrays_are_reported_and_consumer_cancellation_survives() {
     for input in [b"[1, bad]".as_slice(), b"{\"other\": []}".as_slice()] {
         let mut reader = input;

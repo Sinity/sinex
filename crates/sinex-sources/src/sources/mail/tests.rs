@@ -25,7 +25,7 @@ Content-Transfer-Encoding: base64\n\
 aGVsbG8=\n\
 --b--\n";
 
-#[test]
+#[devkit::test]
 fn reads_headers_labels_text_and_attachments() {
     let (m, ()) = MailParser
         .parse(&MESSAGE, &(), &crate::RecordContext::none())
@@ -47,7 +47,7 @@ fn reads_headers_labels_text_and_attachments() {
     assert!(!m.html_only);
 }
 
-#[test]
+#[devkit::test]
 fn a_message_without_id_or_date_is_hashed_and_undated() {
     let (m, ()) = MailParser
         .parse(
@@ -60,7 +60,7 @@ fn a_message_without_id_or_date_is_hashed_and_undated() {
     assert_eq!(m[0].date, None);
 }
 
-#[test]
+#[devkit::test]
 fn maildir_selects_message_files() {
     let d = maildir_driver(PathBuf::from("/m"), "h".into());
     assert!((d.select)("INBOX/cur/1.host:2,S"));

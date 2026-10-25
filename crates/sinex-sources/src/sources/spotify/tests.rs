@@ -1,7 +1,7 @@
 use super::*;
 use serde_json::json;
 
-#[test]
+#[devkit::test]
 fn extended_rows_start_before_they_stop() {
     let row = json!({"ts": "2013-02-12T13:17:05Z", "ms_played": 269866, "ip_addr": "x",
         "master_metadata_track_name": "Thus Spake the Nightspirit", "spotify_track_uri": "spotify:track:2W",
@@ -22,7 +22,7 @@ fn extended_rows_start_before_they_stop() {
     assert!(p[0].extra.contains_key("ip_addr"));
 }
 
-#[test]
+#[devkit::test]
 fn account_data_rows_and_podcasts() {
     let row = json!({"endTime": "2025-02-28 14:17", "podcastName": "Histories of Mysteries",
         "episodeName": "LUCA", "msPlayed": 12756});
@@ -45,7 +45,7 @@ fn account_data_rows_and_podcasts() {
     );
 }
 
-#[test]
+#[devkit::test]
 fn selects_history_members_only() {
     assert!(select(
         "Spotify Extended Streaming History/Streaming_History_Audio_2013-2014_0.json"

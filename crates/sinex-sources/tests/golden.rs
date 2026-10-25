@@ -91,7 +91,7 @@ fn run_case(parser: &str, dir: &Path) -> Value {
     )
 }
 
-#[test]
+#[devkit::test]
 fn golden_cases() {
     let root = cases_root();
     let bless = std::env::var_os("GOLDEN_BLESS").is_some();
@@ -148,7 +148,7 @@ fn entries(root: &Path) -> std::io::Result<Vec<std::fs::DirEntry>> {
     Ok(entries)
 }
 
-#[test]
+#[devkit::test]
 fn missing_or_empty_case_directories_fail() {
     let root = std::env::temp_dir().join(format!("golden-{}", uuid::Uuid::now_v7()));
     assert!(entries(&root).is_err());

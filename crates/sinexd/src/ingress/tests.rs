@@ -21,11 +21,14 @@ struct Harness {
 }
 
 impl Harness {
-    async fn start() -> Self {
+    async fn start(db: devkit::pg::TestDatabase) -> Self {
         let nats = devkit::nats::test_nats().unwrap();
         let subjects = Subjects::new(nats.prefix());
         let client = async_nats::connect(nats.url()).await.unwrap();
-        let (db, url, connection) = crate::testdb::fresh().await;
+        let url = db.url(None);
+        let connection = <sqlx::PgConnection as sqlx::Connection>::connect(&url)
+            .await
+            .unwrap();
         let store_dir = std::env::temp_dir().join(format!("sinex-ingress-{}", Uuid::now_v7()));
         let blobs = Blobs::open(&store_dir).unwrap();
         let (handle, queues) = writer::channels();
@@ -223,9 +226,9 @@ fn imported(material: MaterialId, anchor: u64, command: &str) -> ProducerEvent {
     }
 }
 
-#[tokio::test]
-async fn materials_then_events_are_admitted_and_acknowledged_once() {
-    let h = Harness::start().await;
+#[devkit::test]
+async fn materials_then_events_are_admitted_and_acknowledged_once(db: devkit::pg::TestDatabase) {
+    let h = Harness::start(db).await;
     let bytes = b": 1760788800:0;ls\n: 1760788801:0;pwd\n";
     let (material, frame) = h.material_frame("m1", bytes);
     let ack = h.send("kitty", &frame).await;
@@ -274,9 +277,9 @@ async fn materials_then_events_are_admitted_and_acknowledged_once() {
 /// sent again in a new frame is a repeat, and the next position is a new
 /// unit. Polylogue's own rebuild proof drives the same frames through a real
 /// `sinexd` (polylogue `crates/sinex/tests/proof.rs`).
-#[tokio::test]
-async fn polylogue_units_are_admitted_once_by_archive_and_position() {
-    let h = Harness::start().await;
+#[devkit::test]
+async fn polylogue_units_are_admitted_once_by_archive_and_position(db: devkit::pg::TestDatabase) {
+    let h = Harness::start(db).await;
     let rows = b"{\"table\":\"note\",\"row\":{\"id\":\"n1\",\"local_seq\":4}}\n";
     let (batch, frame) = h.material_frame("batch:a1:1", rows);
     assert_eq!(h.send("polylogue", &frame).await.refusal, None);
@@ -335,9 +338,9 @@ async fn polylogue_units_are_admitted_once_by_archive_and_position() {
     );
 }
 
-#[tokio::test]
-async fn invalid_frames_are_refused_and_recorded() {
-    let h = Harness::start().await;
+#[devkit::test]
+async fn invalid_frames_are_refused_and_recorded(db: devkit::pg::TestDatabase) {
+    let h = Harness::start(db).await;
     let (material, frame) = h.material_frame("m1", b"x\n");
     h.send("kitty", &frame).await;
 
@@ -401,7 +404,7 @@ async fn invalid_frames_are_refused_and_recorded() {
     assert!(garbage.refusal.unwrap().starts_with("not a frame"));
 }
 
-#[tokio::test]
+#[devkit::test]
 async fn producers_are_limited_to_their_own_subjects() {
     let subjects = Subjects::new("sx");
     let config = subjects.authorization(("daemon", "dpw"), &[("kitty", "kpw"), ("phone", "ppw")]);
@@ -454,9 +457,9 @@ async fn producers_are_limited_to_their_own_subjects() {
     );
 }
 
-#[tokio::test]
-async fn ingress_events_reach_the_confirmed_stream() {
-    let h = Harness::start().await;
+#[devkit::test]
+async fn ingress_events_reach_the_confirmed_stream(db: devkit::pg::TestDatabase) {
+    let h = Harness::start(db).await;
     let (material, frame) = h.material_frame("m1", b"ls\n");
     h.send("kitty", &frame).await;
     h.send(
@@ -490,10 +493,12 @@ async fn ingress_events_reach_the_confirmed_stream() {
     let _ = &h.nats;
 }
 
-#[tokio::test]
-async fn bytes_sent_in_chunks_register_a_material_and_failures_are_recorded() {
+#[devkit::test]
+async fn bytes_sent_in_chunks_register_a_material_and_failures_are_recorded(
+    db: devkit::pg::TestDatabase,
+) {
     use base64::Engine;
-    let h = Harness::start().await;
+    let h = Harness::start(db).await;
     // A producer on another host: its bytes are not in this content store.
     let bytes: Vec<u8> = b": 1760788800:0;ls\n: 1760788801:0;pwd\n".repeat(50);
     let blob = format!("blake3:{}", blake3::hash(&bytes).to_hex());
@@ -558,9 +563,9 @@ async fn bytes_sent_in_chunks_register_a_material_and_failures_are_recorded() {
     );
 }
 
-#[tokio::test]
-async fn an_indirect_frame_is_handled_as_the_frame_it_names() {
-    let h = Harness::start().await;
+#[devkit::test]
+async fn an_indirect_frame_is_handled_as_the_frame_it_names(db: devkit::pg::TestDatabase) {
+    let h = Harness::start(db).await;
     let (material, frame) = h.material_frame("m1", b"ls\n");
     h.send("kitty", &frame).await;
     let inner = Ingress::Events {
@@ -602,10 +607,12 @@ async fn an_indirect_frame_is_handled_as_the_frame_it_names() {
     assert!(ack.refusal.unwrap().contains("material or events frame"));
 }
 
-#[tokio::test]
-async fn exclusion_guard_precedes_new_producer_registration_and_chunk_storage() {
+#[devkit::test]
+async fn exclusion_guard_precedes_new_producer_registration_and_chunk_storage(
+    db: devkit::pg::TestDatabase,
+) {
     use base64::Engine;
-    let h = Harness::start().await;
+    let h = Harness::start(db).await;
     let mut conn = PgConnection::connect(&h.url).await.unwrap();
     let mut guard = conn.begin().await.unwrap();
     sinex_store::excision::lock_source(&mut guard, "new-node", false)

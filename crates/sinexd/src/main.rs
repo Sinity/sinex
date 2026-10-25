@@ -25,9 +25,6 @@ mod sealed_access;
 mod source_runner;
 mod writer;
 
-#[cfg(test)]
-mod testdb;
-
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
 

@@ -9,7 +9,7 @@ fn rec(entry: Value) -> Map<String, Value> {
     .unwrap()
 }
 
-#[test]
+#[devkit::test]
 fn known_fields_are_typed_and_the_rest_kept() {
     let (out, ()) = JournaldParser
         .parse(
@@ -39,7 +39,7 @@ fn known_fields_are_typed_and_the_rest_kept() {
     assert!(!e.fields.contains_key("MESSAGE"));
 }
 
-#[test]
+#[devkit::test]
 fn byte_array_messages_decode_when_utf8_and_stay_raw_otherwise() {
     // "\x1b[1mhi" (colour codes make journalctl print bytes).
     let (out, ()) = JournaldParser
@@ -61,7 +61,7 @@ fn byte_array_messages_decode_when_utf8_and_stay_raw_otherwise() {
     assert_eq!(out[0].fields.get("MESSAGE"), Some(&json!([255, 0])));
 }
 
-#[test]
+#[devkit::test]
 fn a_missing_or_malformed_time_stays_unknown() {
     let (out, ()) = JournaldParser
         .parse(
@@ -77,7 +77,7 @@ fn a_missing_or_malformed_time_stays_unknown() {
     );
 }
 
-#[test]
+#[devkit::test]
 fn an_entry_without_a_cursor_is_a_failure_not_a_guess() {
     assert!(
         JournaldParser
@@ -90,7 +90,7 @@ fn an_entry_without_a_cursor_is_a_failure_not_a_guess() {
     );
 }
 
-#[test]
+#[devkit::test]
 fn capture_resumes_after_the_last_spooled_cursor() {
     let spool = std::env::temp_dir().join(format!("sinex-jd-{}", uuid::Uuid::now_v7()));
     assert_eq!(last_spooled_cursor(&std::env::temp_dir()).unwrap(), None);

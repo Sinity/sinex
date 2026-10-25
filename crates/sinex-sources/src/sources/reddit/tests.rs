@@ -17,7 +17,7 @@ fn read(member: &str, rows: &[&[u8]]) -> Vec<RedditEvent> {
     out
 }
 
-#[test]
+#[devkit::test]
 fn comments_votes_saves_and_messages() {
     let c = read("comments.csv", &[
         b"id,permalink,date,ip,subreddit,gildings,link,parent,body,media\n",
@@ -60,7 +60,7 @@ fn comments_votes_saves_and_messages() {
     assert_eq!(m.sender, "/u/Sinity");
 }
 
-#[test]
+#[devkit::test]
 fn a_new_member_starts_with_its_header() {
     let manifest = json!({"path": "posts.csv"});
     let ctx = RecordContext {

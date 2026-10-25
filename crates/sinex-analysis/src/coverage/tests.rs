@@ -1,6 +1,6 @@
 use super::*;
 
-#[test]
+#[devkit::test]
 fn a_polled_source_is_covered_until_it_was_last_read() {
     let e = CoverageEvidence {
         records: Some(Span::new(100, 500)),

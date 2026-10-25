@@ -1,6 +1,6 @@
 use super::*;
 
-#[test]
+#[devkit::test]
 fn endpoints() {
     assert!(matches!(
         Endpoint::parse("unix:/run/sinex/s.sock").unwrap(),

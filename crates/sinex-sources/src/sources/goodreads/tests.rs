@@ -2,7 +2,7 @@ use super::*;
 
 const HEADER: &[u8] = b"Book Id,Title,Author,ISBN,ISBN13,My Rating,Average Rating,Date Read,Date Added,Bookshelves,Exclusive Shelf\n";
 
-#[test]
+#[devkit::test]
 fn shelved_and_read_books() {
     let (none, header) = GoodreadsParser
         .parse(&HEADER, &vec![], &crate::RecordContext::none())

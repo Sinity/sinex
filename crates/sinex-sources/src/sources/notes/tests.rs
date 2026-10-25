@@ -3,7 +3,7 @@ use crate::drivers::dir_snapshot::{DirState, vanished_marker};
 use crate::{DrainInput, Limits, drain};
 use sinex_model::{MaterialId, ReadingOrder, RecordOutcome};
 
-#[test]
+#[devkit::test]
 fn notes_and_their_removal() {
     let owned = tempfile::tempdir().unwrap();
     let root = owned.path().to_path_buf();
@@ -68,7 +68,7 @@ fn note(text: &str, path: &str) -> NoteDocument {
         .remove(0)
 }
 
-#[test]
+#[devkit::test]
 fn structured_note_keeps_exact_text_and_extracts_front_matter_tags_links_and_native_id() {
     use sinex_model::event_types::media::NoteFrontMatter;
     let text = "---\r\ntitle: Weekly review\r\nid: areas.review.weekly\r\ntags: [review, \"#planning\", review]\r\n---\r\n# Heading #not-a-tag\r\nBody #inline-tag [[Other Note|alias]] [[Other Note#part]] [[Third]].\r\n";
@@ -88,7 +88,7 @@ fn structured_note_keeps_exact_text_and_extracts_front_matter_tags_links_and_nat
     );
 }
 
-#[test]
+#[devkit::test]
 fn absent_empty_and_invalid_front_matter_are_distinct_without_losing_the_text() {
     use sinex_model::event_types::media::{NoteFrontMatter, NoteFrontMatterError};
     let empty = note("", "empty.markdown");
@@ -130,7 +130,7 @@ fn absent_empty_and_invalid_front_matter_are_distinct_without_losing_the_text() 
     assert_eq!(unclosed.wikilinks, None);
 }
 
-#[test]
+#[devkit::test]
 fn supplied_scalar_types_and_title_fallbacks_do_not_invent_note_ids() {
     use sinex_model::event_types::media::NoteFrontMatter;
     let p = note(
@@ -164,7 +164,7 @@ fn supplied_scalar_types_and_title_fallbacks_do_not_invent_note_ids() {
     );
 }
 
-#[test]
+#[devkit::test]
 fn unsupported_yaml_values_and_expansion_keep_text_with_structural_diagnostics() {
     use sinex_model::event_types::media::{NoteFrontMatter, NoteFrontMatterError};
     for fm in [
@@ -233,7 +233,7 @@ fn unsupported_yaml_values_and_expansion_keep_text_with_structural_diagnostics()
     ));
 }
 
-#[test]
+#[devkit::test]
 fn old_payloads_and_vanished_notes_do_not_claim_metadata_was_interpreted() {
     let old = serde_json::json!({"vault":"v","path":"a.md","text":"","size":0,"modified_at":null,"vanished_at":null});
     let payload: NoteDocument = serde_json::from_value(old.clone()).unwrap();

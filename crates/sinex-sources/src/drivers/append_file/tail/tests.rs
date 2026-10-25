@@ -1,6 +1,6 @@
 use super::*;
 
-#[test]
+#[devkit::test]
 fn newest_first_tail_preserves_duplicate_locations() {
     let material = MaterialId::new();
     let location = |anchor| RecordLocation { material, anchor };
@@ -15,7 +15,7 @@ fn newest_first_tail_preserves_duplicate_locations() {
     assert!(!state.take(b"same"));
 }
 
-#[test]
+#[devkit::test]
 fn completed_tail_obeys_live_record_and_byte_limits_without_retaining_raw_bodies() {
     let material = MaterialId::new();
     let mut tail = AppendTail::default();

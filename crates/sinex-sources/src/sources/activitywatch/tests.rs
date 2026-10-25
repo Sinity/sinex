@@ -58,7 +58,7 @@ fn spans(out: &[Activity]) -> Vec<(i64, String, i64, u32)> {
         .collect()
 }
 
-#[test]
+#[devkit::test]
 fn spinner_glyphs_are_stripped_only_from_the_declared_apps() {
     assert_eq!(corrected_title("kitty", "⠋ claude"), "claude");
     assert_eq!(corrected_title("Kitty", "✳ claude"), "claude");
@@ -67,7 +67,7 @@ fn spinner_glyphs_are_stripped_only_from_the_declared_apps() {
     assert_eq!(corrected_title("kitty", "plain"), "plain");
 }
 
-#[test]
+#[devkit::test]
 fn spinner_ticks_become_one_span() {
     let (out, _) = run(&[
         win(1, 0, 2, "kitty", "⠋ claude"),
@@ -84,7 +84,7 @@ fn spinner_ticks_become_one_span() {
     assert_eq!(s[4], (5, "docs".into(), 26, 1));
 }
 
-#[test]
+#[devkit::test]
 fn a_heartbeat_extending_the_last_row_extends_its_span() {
     let (_, carry) = run(&[win(1, 0, 2, "kitty", "a"), win(2, 2, 4, "kitty", "a")]);
     let (out, _) = ActivityWatchParser
@@ -97,7 +97,7 @@ fn a_heartbeat_extending_the_last_row_extends_its_span() {
     assert_eq!(spans(&out), vec![(1, "a".into(), 9, 2)]);
 }
 
-#[test]
+#[devkit::test]
 fn reading_history_again_reproduces_the_same_spans() {
     let rows = [
         win(1, 0, 2, "kitty", "⠋ x"),
@@ -118,7 +118,7 @@ fn reading_history_again_reproduces_the_same_spans() {
     assert_eq!(spans(&first), spans(&again));
 }
 
-#[test]
+#[devkit::test]
 fn presence_tabs_and_unknown_watchers_are_kept() {
     let (out, _) = run(&[
         row(
@@ -151,7 +151,7 @@ fn presence_tabs_and_unknown_watchers_are_kept() {
     assert!(matches!(&out[2], Activity::Other(o) if o.data["label"] == "x"));
 }
 
-#[test]
+#[devkit::test]
 fn rfc3339_times_from_the_python_server_are_read() {
     let mut r = win(1, 0, 1, "a", "b");
     r.insert("starttime".into(), json!("2026-01-01T00:00:00Z"));
@@ -164,7 +164,7 @@ fn rfc3339_times_from_the_python_server_are_read() {
     );
 }
 
-#[test]
+#[devkit::test]
 fn the_driver_reads_the_join_and_sees_heartbeat_growth() {
     let dir = std::env::temp_dir().join(format!("sinex-aw-{}", uuid::Uuid::now_v7()));
     std::fs::create_dir_all(&dir).unwrap();

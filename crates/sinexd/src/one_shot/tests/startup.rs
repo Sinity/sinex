@@ -33,8 +33,11 @@ async fn state(conn: &mut PgConnection) -> (Vec<String>, Vec<Value>) {
     (catalog, rows)
 }
 
-async fn refuse_other_version(derive: bool) {
-    let (_db, url, mut conn) = crate::testdb::fresh().await;
+async fn refuse_other_version(db: devkit::pg::TestDatabase, derive: bool) {
+    let url = db.url(None);
+    let mut conn = <sqlx::PgConnection as sqlx::Connection>::connect(&url)
+        .await
+        .unwrap();
     other_version(&mut conn).await;
     let before = state(&mut conn).await;
     let store = tempfile::tempdir().unwrap();
@@ -67,19 +70,24 @@ async fn refuse_other_version(derive: bool) {
     assert_eq!(state(&mut conn).await, before);
 }
 
-#[tokio::test]
-async fn one_shot_refuses_another_schema_version_without_changing_it() {
-    refuse_other_version(false).await;
+#[devkit::test]
+async fn one_shot_refuses_another_schema_version_without_changing_it(db: devkit::pg::TestDatabase) {
+    refuse_other_version(db, false).await;
 }
 
-#[tokio::test]
-async fn derivation_refuses_another_schema_version_without_changing_it() {
-    refuse_other_version(true).await;
+#[devkit::test]
+async fn derivation_refuses_another_schema_version_without_changing_it(
+    db: devkit::pg::TestDatabase,
+) {
+    refuse_other_version(db, true).await;
 }
 
-#[tokio::test]
-async fn derivation_claims_the_writer_for_its_entire_lifetime() {
-    let (_db, url, mut competing) = crate::testdb::fresh().await;
+#[devkit::test]
+async fn derivation_claims_the_writer_for_its_entire_lifetime(db: devkit::pg::TestDatabase) {
+    let url = db.url(None);
+    let mut competing = <sqlx::PgConnection as sqlx::Connection>::connect(&url)
+        .await
+        .unwrap();
     let (driver, task) = crate::local_driver(&url, "startup-fixture", None)
         .await
         .unwrap();
@@ -120,9 +128,14 @@ async fn derivation_claims_the_writer_for_its_entire_lifetime() {
     task.await.unwrap();
 }
 
-#[tokio::test]
-async fn empty_database_needs_explicit_initialization_before_ordinary_startup() {
-    let (_db, url, mut conn) = crate::testdb::fresh().await;
+#[devkit::test]
+async fn empty_database_needs_explicit_initialization_before_ordinary_startup(
+    db: devkit::pg::TestDatabase,
+) {
+    let url = db.url(None);
+    let mut conn = <sqlx::PgConnection as sqlx::Connection>::connect(&url)
+        .await
+        .unwrap();
     conn.execute("DROP SCHEMA sinex_schema,core,audit,raw,registry,derivation,privacy,telemetry,event_types,analysis CASCADE").await.unwrap();
     let store = tempfile::tempdir().unwrap();
     let refused = match OneShot::open(&url, store.path()).await {

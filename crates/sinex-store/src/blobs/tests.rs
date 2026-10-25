@@ -1,7 +1,7 @@
 use super::*;
 use std::io::Write;
 
-#[test]
+#[devkit::test]
 fn put_then_read_range() {
     let dir = std::env::temp_dir().join(format!("sinex-blobs-{}", uuid::Uuid::now_v7()));
     let blobs = Blobs::open(&dir).unwrap();
@@ -21,7 +21,7 @@ fn put_then_read_range() {
     std::fs::remove_dir_all(dir).unwrap();
 }
 
-#[test]
+#[devkit::test]
 fn plain_copy_and_retained_reader_keep_exact_bytes() {
     let dir = std::env::temp_dir().join(format!("sinex-plain-copy-{}", uuid::Uuid::now_v7()));
     let blobs = Blobs::open(&dir).unwrap();
@@ -65,7 +65,7 @@ fn plain_copy_and_retained_reader_keep_exact_bytes() {
     std::fs::remove_dir_all(dir).unwrap();
 }
 
-#[test]
+#[devkit::test]
 fn checked_plain_copy_stops_after_its_consumer_cancels() {
     use std::sync::atomic::{AtomicBool, Ordering};
     struct CancelAfterWrite {
@@ -110,7 +110,7 @@ fn checked_plain_copy_stops_after_its_consumer_cancels() {
 
 mod group_readback;
 
-#[test]
+#[devkit::test]
 fn scoped_plain_seek_owns_verified_bytes_and_rechecks_cancellation_on_cached_reads() {
     use std::io::{Read, Seek, SeekFrom};
     use std::sync::atomic::{AtomicBool, Ordering};

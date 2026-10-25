@@ -20,10 +20,12 @@ fn preview(content: String) -> LibraryRecord {
     })
 }
 
-#[tokio::test]
-async fn unrelated_authored_requests_continue_after_excision_while_matching_requests_refuse() {
+#[devkit::test]
+async fn unrelated_authored_requests_continue_after_excision_while_matching_requests_refuse(
+    db: devkit::pg::TestDatabase,
+) {
     use sinex_model::event_types::library::Collection;
-    let mut w = world().await;
+    let mut w = world(db).await;
     let record = |id: &str| {
         LibraryRecord::Collection(Collection {
             collection: id.into(),
@@ -88,10 +90,11 @@ fn named_preview(id: &str, content: String) -> LibraryRecord {
     record
 }
 
-#[tokio::test]
-async fn source_bound_media_exclusions_refuse_new_wrappers_but_preserve_unrelated_and_other_source_bytes()
- {
-    let mut w = world().await;
+#[devkit::test]
+async fn source_bound_media_exclusions_refuse_new_wrappers_but_preserve_unrelated_and_other_source_bytes(
+    db: devkit::pg::TestDatabase,
+) {
+    let mut w = world(db).await;
     let removed = b"synthetic media selected by a request";
     let name = w.blobs.put(removed).unwrap();
     let stored = sinex_model::Cited {

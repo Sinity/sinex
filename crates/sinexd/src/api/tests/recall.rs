@@ -50,9 +50,11 @@ fn ids(body: &Value) -> Vec<String> {
         .collect()
 }
 
-#[tokio::test]
-async fn recall_last_selects_recorded_groups_and_includes_the_observed_upper_point() {
-    let w = world().await;
+#[devkit::test]
+async fn recall_last_selects_recorded_groups_and_includes_the_observed_upper_point(
+    db: devkit::pg::TestDatabase,
+) {
+    let w = world(db).await;
     let first = facts(
         "box",
         &[
@@ -130,9 +132,11 @@ async fn recall_last_selects_recorded_groups_and_includes_the_observed_upper_poi
     assert_eq!(broad["outcome"], "refused");
 }
 
-#[tokio::test]
-async fn recall_last_pages_keep_the_selected_commit_and_equal_start_ties_are_stable() {
-    let w = world().await;
+#[devkit::test]
+async fn recall_last_pages_keep_the_selected_commit_and_equal_start_ties_are_stable(
+    db: devkit::pg::TestDatabase,
+) {
+    let w = world(db).await;
     let mut events = facts(
         "first",
         &[(0, "/src/tide", None), (1, "/src/tide", None)],
@@ -189,9 +193,9 @@ async fn recall_last_pages_keep_the_selected_commit_and_equal_start_ties_are_sta
     );
 }
 
-#[tokio::test]
-async fn recall_cwd_quotes_paths_and_rejects_incompatible_windows() {
-    let w = world().await;
+#[devkit::test]
+async fn recall_cwd_quotes_paths_and_rejects_incompatible_windows(db: devkit::pg::TestDatabase) {
+    let w = world(db).await;
     let path = "/src/tide (notes) \" where cwds = /else";
     admit_events(&w, facts("box", &[(0, path, None)], Class::Open)).await;
     let (_, answer) = call(
@@ -240,9 +244,11 @@ async fn recall_cwd_quotes_paths_and_rejects_incompatible_windows() {
     assert_eq!(relative["outcome"], "refused");
 }
 
-#[tokio::test]
-async fn recall_last_never_invents_a_span_from_untimed_or_withheld_evidence() {
-    let w = world().await;
+#[devkit::test]
+async fn recall_last_never_invents_a_span_from_untimed_or_withheld_evidence(
+    db: devkit::pg::TestDatabase,
+) {
+    let w = world(db).await;
     let untimed = Event::build(
         &CommandImported {
             command: "synthetic untimed".into(),

@@ -64,8 +64,11 @@ struct World {
 }
 
 impl World {
-    async fn new() -> Self {
-        let (db, url, connection) = crate::testdb::fresh().await;
+    async fn new(db: devkit::pg::TestDatabase) -> Self {
+        let url = db.url(None);
+        let connection = <sqlx::PgConnection as sqlx::Connection>::connect(&url)
+            .await
+            .unwrap();
         let (handle, queues) = writer::channels();
         let task = tokio::spawn(writer::run(
             url.clone(),
@@ -144,9 +147,11 @@ async fn state(conn: &mut PgConnection, id: uuid::Uuid) -> String {
         .unwrap()
 }
 
-#[tokio::test]
-async fn admission_dirties_metric_days_and_maintenance_recomputes_them() {
-    let w = World::new().await;
+#[devkit::test]
+async fn admission_dirties_metric_days_and_maintenance_recomputes_them(
+    db: devkit::pg::TestDatabase,
+) {
+    let w = World::new(db).await;
     w.admit(vec![commit("a", 0), commit("b", 2), commit("c", 24)])
         .await;
     let mut conn = w.conn().await;
@@ -201,9 +206,11 @@ async fn admission_dirties_metric_days_and_maintenance_recomputes_them() {
     assert_eq!(left, 0);
 }
 
-#[tokio::test]
-async fn a_result_goes_stale_when_its_inputs_change_and_not_otherwise() {
-    let w = World::new().await;
+#[devkit::test]
+async fn a_result_goes_stale_when_its_inputs_change_and_not_otherwise(
+    db: devkit::pg::TestDatabase,
+) {
+    let w = World::new(db).await;
     w.admit(vec![commit("a", 0)]).await;
     let mut conn = w.conn().await;
     let head = store::head(&mut conn).await.unwrap();
@@ -225,9 +232,9 @@ async fn a_result_goes_stale_when_its_inputs_change_and_not_otherwise() {
     assert_eq!(state(&mut conn, day9.id).await, "current");
 }
 
-#[tokio::test]
-async fn a_result_computed_before_a_racing_commit_is_stored_stale() {
-    let w = World::new().await;
+#[devkit::test]
+async fn a_result_computed_before_a_racing_commit_is_stored_stale(db: devkit::pg::TestDatabase) {
+    let w = World::new(db).await;
     let mut conn = w.conn().await;
     let before = store::head(&mut conn).await.unwrap();
     w.admit(vec![commit("a", 0)]).await;
@@ -239,9 +246,11 @@ async fn a_result_computed_before_a_racing_commit_is_stored_stale() {
     assert_eq!(r.state, "stale");
 }
 
-#[tokio::test]
-async fn a_newer_answer_supersedes_the_standing_questions_previous_one() {
-    let w = World::new().await;
+#[devkit::test]
+async fn a_newer_answer_supersedes_the_standing_questions_previous_one(
+    db: devkit::pg::TestDatabase,
+) {
+    let w = World::new(db).await;
     let mut conn = w.conn().await;
     let mut tx = conn.begin().await.unwrap();
     let first = store::store_result(&mut tx, &result_on(0, 0, 0, Some("q"), "first"))
@@ -255,9 +264,9 @@ async fn a_newer_answer_supersedes_the_standing_questions_previous_one() {
     assert_eq!(state(&mut conn, second.id).await, "current");
 }
 
-#[tokio::test]
-async fn a_recipe_is_stored_and_an_identical_request_returns_it() {
-    let w = World::new().await;
+#[devkit::test]
+async fn a_recipe_is_stored_and_an_identical_request_returns_it(db: devkit::pg::TestDatabase) {
+    let w = World::new(db).await;
     w.admit(vec![commit("a", 0)]).await;
     let mut conn = w.conn().await;
     let settings = Settings::operator_default();
@@ -296,9 +305,11 @@ async fn a_recipe_is_stored_and_an_identical_request_returns_it() {
     assert_eq!(again.result.id, first.result.id);
 }
 
-#[tokio::test]
-async fn the_brief_reports_coverage_first_and_never_shows_missing_as_zero() {
-    let w = World::new().await;
+#[devkit::test]
+async fn the_brief_reports_coverage_first_and_never_shows_missing_as_zero(
+    db: devkit::pg::TestDatabase,
+) {
+    let w = World::new(db).await;
     w.admit(vec![commit("a", 0), commit("b", 2)]).await;
     let mut conn = w.conn().await;
     let p = brief(

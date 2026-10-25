@@ -375,7 +375,7 @@ async fn backfill_survives(inputs: Inputs, ready: Option<&str>, lock_sql: &str) 
 
 macro_rules! backfill_steps {
     ($inputs:expr; $($name:ident: $ready:expr, $lock:expr;)*) => {$(
-        #[tokio::test]
+        #[devkit::test]
         async fn $name() {
             backfill_survives($inputs, $ready, &$lock).await;
         }
@@ -448,7 +448,7 @@ async fn replay_survives(lock_sql: &str) {
 
 macro_rules! replay_steps {
     ($($name:ident: $lock:expr;)*) => {$(
-        #[tokio::test]
+        #[devkit::test]
         async fn $name() {
             replay_survives(&$lock).await;
         }
@@ -464,7 +464,7 @@ replay_steps! {
 
 /// A replay of two chains killed after the first committed resumes with the
 /// second only.
-#[tokio::test]
+#[devkit::test]
 async fn an_interrupted_replay_resumes_where_it_stopped() {
     let inputs = Inputs::multiple_batches();
     let target = Target::new(&inputs);
@@ -568,7 +568,7 @@ fn zstd_decode(path: &Path) -> Vec<u8> {
 
 macro_rules! excision_steps {
     ($($name:ident: $lock:expr;)*) => {$(
-        #[tokio::test]
+        #[devkit::test]
         async fn $name() {
             excision_survives(&$lock).await;
         }
@@ -691,7 +691,7 @@ async fn publisher_survives(ready: Option<&str>, lock_sql: &str) {
 
 macro_rules! publisher_steps {
     ($($name:ident: $ready:expr, $lock:expr;)*) => {$(
-        #[tokio::test]
+        #[devkit::test]
         async fn $name() {
             publisher_survives($ready, &$lock).await;
         }

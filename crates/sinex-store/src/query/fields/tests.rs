@@ -1,7 +1,7 @@
 use super::*;
 use sinex_model::query::{ALIASES, FieldType};
 
-#[test]
+#[devkit::test]
 fn every_field_in_the_model_has_sql() {
     for unit in Unit::ALL {
         for f in unit.fields() {
