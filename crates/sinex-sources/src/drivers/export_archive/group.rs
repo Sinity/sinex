@@ -56,8 +56,8 @@ impl crate::shared_pass::SharedPass for ExportArchive {
         facts: &ObservationFacts,
         class: Class,
     ) -> Result<Resume, DriverError> {
-        let Some(cursor) = Cursor::parse(cursor)?
-            .filter(|c| c.same_file(facts) && c.capture.class == class)
+        let Some(cursor) =
+            Cursor::parse(cursor)?.filter(|c| c.same_file(facts) && c.capture.class == class)
         else {
             return Ok(Resume::Read(None));
         };

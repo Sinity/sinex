@@ -237,8 +237,11 @@ impl RowState {
     /// admitted) is admitted: each row ID, eight bytes little-endian, and its
     /// line hash, in row order.
     fn memory_with(&self, newer: &[(i64, [u8; 32])]) -> Arc<[u8]> {
-        let mut rows: std::collections::BTreeMap<i64, &[u8; 32]> =
-            self.hashes.iter().map(|(rowid, hash)| (*rowid, hash)).collect();
+        let mut rows: std::collections::BTreeMap<i64, &[u8; 32]> = self
+            .hashes
+            .iter()
+            .map(|(rowid, hash)| (*rowid, hash))
+            .collect();
         rows.extend(newer.iter().map(|(rowid, hash)| (*rowid, hash)));
         let mut bytes = Vec::with_capacity(rows.len() * MEMORY_ENTRY);
         for (rowid, hash) in rows {

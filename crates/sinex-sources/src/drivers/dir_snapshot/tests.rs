@@ -340,7 +340,11 @@ fn a_restart_remembers_the_files_of_admitted_records_only() {
     restored
         .remember_members(&material.manifest, material.records[0].1 as u64)
         .unwrap();
-    let empty = Some((0, restored.files["a.md"].unwrap().1, *blake3::hash(b"").as_bytes()));
+    let empty = Some((
+        0,
+        restored.files["a.md"].unwrap().1,
+        *blake3::hash(b"").as_bytes(),
+    ));
     assert_eq!(restored.files.get("a.md"), Some(&empty));
     assert!(!restored.files.contains_key("sub/b.md"));
     let mut malformed = material.manifest.clone();
@@ -475,7 +479,10 @@ impl super::super::MaterialSink for FixtureSink {
 fn saved_memory_round_trips_and_newer_bundles_win() {
     let files: HashMap<String, Option<(u64, i128, [u8; 32])>> = HashMap::from([
         ("a.md".to_owned(), Some((5, -3, [1; 32]))),
-        ("sub/é.md".to_owned(), Some((0, 1_700_000_000_000_000_000, [2; 32]))),
+        (
+            "sub/é.md".to_owned(),
+            Some((0, 1_700_000_000_000_000_000, [2; 32])),
+        ),
         ("unknown.md".to_owned(), None),
     ]);
     let memory = restore::memory_of(&files);
@@ -487,5 +494,9 @@ fn saved_memory_round_trips_and_newer_bundles_win() {
     assert_eq!(state.files["a.md"], Some((9, 9, [9; 32])));
     assert_eq!(state.files["sub/é.md"], files["sub/é.md"]);
     assert_eq!(state.files["unknown.md"], None);
-    assert!(DirState::default().remember_saved(&memory[..memory.len() - 1]).is_err());
+    assert!(
+        DirState::default()
+            .remember_saved(&memory[..memory.len() - 1])
+            .is_err()
+    );
 }

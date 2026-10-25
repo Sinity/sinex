@@ -183,8 +183,7 @@ pub(crate) async fn read(
         .await;
         match outcome {
             Ok(per_route) => results.extend(
-                pass
-                    .indices
+                pass.indices
                     .iter()
                     .zip(per_route)
                     .map(|(&i, r)| (bound[i].binding.source.clone(), r)),
@@ -394,11 +393,8 @@ async fn read_shared(
         .map(|stored| (stored.blob.clone(), stored.length));
     let mut routes = Vec::new();
     let mut slots = Vec::new();
-    let mut totals: Vec<Result<Totals, String>> = pass
-        .indices
-        .iter()
-        .map(|_| Ok(Totals::default()))
-        .collect();
+    let mut totals: Vec<Result<Totals, String>> =
+        pass.indices.iter().map(|_| Ok(Totals::default())).collect();
     for (slot, &index) in pass.indices.iter().enumerate() {
         let route = async {
             let b = &mut bound[index];

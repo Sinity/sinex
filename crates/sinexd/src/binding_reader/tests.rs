@@ -43,7 +43,11 @@ fn takeout_driver(
 ) -> sinex_sources::drivers::export_archive::ExportArchive {
     let host = binding.settings.host.clone();
     let mut driver = if binding.source == fit::SPEC.name {
-        fit::driver(binding.input.clone(), host, binding.settings.zone().unwrap())
+        fit::driver(
+            binding.input.clone(),
+            host,
+            binding.settings.zone().unwrap(),
+        )
     } else {
         tasks::driver(binding.input.clone(), host)
     };
@@ -444,11 +448,13 @@ async fn sealed_archive_restart_replay_and_class_changes_preserve_exact_material
             let total = result.unwrap();
             assert_eq!(total.to_json()["files_stored"], 0);
         }
-        let final_cursor = pass_cursor(&positions::load(&mut ctx.read_conn, &name)
+        let final_cursor = pass_cursor(
+            &positions::load(&mut ctx.read_conn, &name)
                 .await
                 .unwrap()
                 .unwrap()
-                .0);
+                .0,
+        );
         assert!(final_cursor.done);
         // The rest of the partly admitted part was read again into a new part.
         assert_ne!(final_cursor.material, Some(partial));
@@ -538,11 +544,13 @@ async fn sealed_archive_restart_replay_and_class_changes_preserve_exact_material
             result.into_iter().next().unwrap().1.unwrap().to_json()["files_stored"],
             1
         );
-        let cursor = pass_cursor(&positions::load(&mut ctx.read_conn, &name)
+        let cursor = pass_cursor(
+            &positions::load(&mut ctx.read_conn, &name)
                 .await
                 .unwrap()
                 .unwrap()
-                .0);
+                .0,
+        );
         assert_eq!(cursor.capture.class, Class::Guarded);
         assert_ne!(cursor.original_material, Some(original));
         sqlx::query("INSERT INTO privacy.source_classes(source,class,author) VALUES ('google.fit','sealed','synthetic')").execute(&mut ctx.read_conn).await.unwrap();
@@ -566,11 +574,13 @@ async fn sealed_archive_restart_replay_and_class_changes_preserve_exact_material
             result.into_iter().next().unwrap().1.unwrap().to_json()["files_stored"],
             1
         );
-        let cursor = pass_cursor(&positions::load(&mut ctx.read_conn, &name)
+        let cursor = pass_cursor(
+            &positions::load(&mut ctx.read_conn, &name)
                 .await
                 .unwrap()
                 .unwrap()
-                .0);
+                .0,
+        );
         assert_eq!(cursor.capture.class, Class::Sealed);
         assert_ne!(cursor.original_material, Some(original));
         ctx.close().await.unwrap();

@@ -406,14 +406,14 @@ impl Prepared<'_> {
             } else {
                 chunk.end
             };
-            let memory = m
-                .memory
-                .as_ref()
-                .filter(|_| end == full)
-                .map(|bytes| sinex_model::ReaderMemory {
-                    material: m.id,
-                    bytes: bytes.clone(),
-                });
+            let memory =
+                m.memory
+                    .as_ref()
+                    .filter(|_| end == full)
+                    .map(|bytes| sinex_model::ReaderMemory {
+                        material: m.id,
+                        bytes: bytes.clone(),
+                    });
             let (observation, revision) = if first {
                 (self.observation.clone(), self.revision)
             } else {
