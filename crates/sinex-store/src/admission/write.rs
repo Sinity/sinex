@@ -10,7 +10,9 @@ use sinex_model::{Batch, Event, RecordOutcome, SourceProgress};
 use sqlx::PgConnection;
 use uuid::Uuid;
 
-/// Allocate the commit sequence range and write every admitted event.
+/// Allocate the commit sequence range and write every admitted event. The
+/// live side tables are written in key order: equivalence keys are hashes, so
+/// a batch in arrival order would touch the key index at random.
 pub(super) async fn insert_admitted(
     conn: &mut PgConnection,
     batch: &Batch,
@@ -64,6 +66,7 @@ pub(super) async fn insert_admitted(
            SELECT s.source, s.event_type, s.equivalence_key, s.id, s.reading_order, s.record_hash
            FROM core.admission_stage s
            WHERE s.ord = ANY($1) AND s.equivalence_key IS NOT NULL
+           ORDER BY s.source, s.event_type, s.equivalence_key
            ON CONFLICT (source, event_type, equivalence_key) DO UPDATE
            SET event_id = EXCLUDED.event_id, reading_order = EXCLUDED.reading_order,
                record_hash = EXCLUDED.record_hash"#,
@@ -77,6 +80,7 @@ pub(super) async fn insert_admitted(
            SELECT s.material_id, s.anchor, s.event_type, s.ordinal, s.id, s.reading_order, s.record_hash
            FROM core.admission_stage s
            WHERE s.ord = ANY($1) AND s.equivalence_key IS NULL AND s.material_id IS NOT NULL
+           ORDER BY s.material_id, s.anchor, s.event_type, s.ordinal
            ON CONFLICT (material_id, anchor, event_type, ordinal) DO UPDATE
            SET event_id = EXCLUDED.event_id, reading_order = EXCLUDED.reading_order,
                record_hash = EXCLUDED.record_hash"#,
