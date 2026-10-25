@@ -109,6 +109,17 @@ pub struct SourceProgress {
     pub cursor: Value,
     /// The parser's carried state at the cursor.
     pub carry: Value,
+    /// What the reader remembers once this batch's material is fully
+    /// admitted, saved with the cursor so a restart reads only later parts.
+    pub memory: Option<ReaderMemory>,
+}
+
+/// A reader's memory as of the end of one material, in the driver's own
+/// encoding.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ReaderMemory {
+    pub material: MaterialId,
+    pub bytes: std::sync::Arc<[u8]>,
 }
 
 /// The thing observed: a file path, a database, an API collection, a socket.

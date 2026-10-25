@@ -122,6 +122,7 @@ impl<A: Api> ApiCursor<A> {
                 }),
                 aligned: false,
                 vanished: Vec::new(),
+                memory: None,
             }),
             cursor_unchanged: Value::Null,
         })

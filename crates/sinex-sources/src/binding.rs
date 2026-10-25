@@ -150,6 +150,12 @@ pub trait Reader: Send {
         Ok(false)
     }
 
+    /// The memory this reader saved at the end of an older part, offered
+    /// after every part newer than it; what a newer part decided stays.
+    fn restore_memory(&mut self, _memory: &[u8]) -> Result<(), DriverError> {
+        Ok(())
+    }
+
     /// Called once the history has been offered.
     fn restored(&mut self) -> Result<(), DriverError> {
         Ok(())
@@ -441,6 +447,10 @@ impl Reader for Rows {
         Ok(true)
     }
 
+    fn restore_memory(&mut self, memory: &[u8]) -> Result<(), DriverError> {
+        self.state.remember_saved(memory)
+    }
+
     fn poll(&mut self, cursor: &Value) -> Result<Acquired, DriverError> {
         self.driver.poll(cursor, &mut self.state)
     }
@@ -477,6 +487,10 @@ impl Reader for Walked {
         };
         self.state.remember_members(&reference.manifest, admitted)?;
         Ok(true)
+    }
+
+    fn restore_memory(&mut self, memory: &[u8]) -> Result<(), DriverError> {
+        self.state.remember_saved(memory)
     }
 
     fn restored(&mut self) -> Result<(), DriverError> {

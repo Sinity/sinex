@@ -274,6 +274,15 @@ pub(crate) fn tables(c: &Checks) -> Vec<String> {
   committed_seq bigint NOT NULL,
   updated_at timestamptz NOT NULL DEFAULT now()
 )".into(),
+        // The latest memory a reader saved with its cursor at the end of
+        // `material`: a restart loads it and reads only the parts after it.
+        // Replaced in the transaction that saves the cursor.
+        "CREATE TABLE raw.reader_memory (
+  binding text PRIMARY KEY,
+  material_id uuid NOT NULL REFERENCES raw.materials(id),
+  memory bytea NOT NULL,
+  updated_at timestamptz NOT NULL DEFAULT now()
+)".into(),
         "CREATE TABLE core.manifests (
   id uuid PRIMARY KEY,
   name text NOT NULL,

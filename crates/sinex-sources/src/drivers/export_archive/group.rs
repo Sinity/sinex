@@ -310,6 +310,7 @@ impl Context<'_, '_> {
                 }),
                 aligned: false,
                 vanished: Vec::new(),
+                memory: None,
             }),
             cursor_unchanged: Value::Null,
         };
@@ -525,6 +526,7 @@ impl Context<'_, '_> {
                     }),
                     aligned: false,
                     vanished: Vec::new(),
+                    memory: None,
                 }),
                 cursor_unchanged: Value::Null,
             };

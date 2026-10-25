@@ -222,9 +222,10 @@ async fn restore(
 const PARTS_PER_QUERY: i32 = 256;
 
 /// Offer `reader` the committed cursor's material and the parts before it,
-/// newest first, until it has what it needs. Parts are read a page at a time,
-/// so a reader that stops early reads no more of the chain. True when a part
-/// was sealed.
+/// newest first, until it has what it needs or the walk reaches the part its
+/// saved memory was written at; then the saved memory. Parts are read a page
+/// at a time, so a reader that stops early reads no more of the chain. True
+/// when a part was sealed.
 pub(crate) async fn restore_reader(
     conn: &mut PgConnection,
     blobs: &Blobs,
@@ -241,6 +242,10 @@ pub(crate) async fn restore_reader(
     let Some(last) = reader.history_from(&cursor) else {
         return Ok(false);
     };
+    let saved = positions::reader_memory(conn, binding)
+        .await
+        .map_err(|e| e.to_string())?;
+    let mut reached_saved = false;
     let mut sealed = false;
     let mut newest_revision = None;
     let mut next = Some(last);
@@ -261,6 +266,10 @@ pub(crate) async fn restore_reader(
             if *stop.borrow() {
                 return Err("restoring the reader's memory was cancelled".into());
             }
+            if saved.as_ref().is_some_and(|m| m.material == reference.id) {
+                reached_saved = true;
+                break 'parts;
+            }
             let bytes = crate::stored::Lazy::new(conn, blobs, reference.clone(), unlock).await?;
             sealed |= bytes.sealed();
             let more = reader
@@ -277,6 +286,15 @@ pub(crate) async fn restore_reader(
                 break 'parts;
             }
         }
+    }
+    if let Some(saved) = saved.filter(|_| reached_saved) {
+        reader
+            .restore_memory(&saved.bytes)
+            .map_err(|e| e.to_string())?;
+        // The parts the saved memory stands for were not opened.
+        sealed |= positions::has_sealed_material(conn, binding)
+            .await
+            .map_err(|e| e.to_string())?;
     }
     reader.restored().map_err(|e| e.to_string())?;
     Ok(sealed)

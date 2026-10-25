@@ -17,8 +17,8 @@ pub mod query;
 
 pub use batch::{
     ArchiveReason, ArchiveRequest, Batch, BatchKind, IngressFrame, InputRef, MaterialRef,
-    MaterialRole, ObservationFacts, RecordOutcome, ReplayScope, RevisionChange, SourceProgress,
-    WrappedMaterialKey,
+    MaterialRole, ObservationFacts, ReaderMemory, RecordOutcome, ReplayScope, RevisionChange,
+    SourceProgress, WrappedMaterialKey,
 };
 pub use clock::{TimeQuality, Timestamp, TsOrig};
 pub use event::{BuildError, Event, Origin, ReadingOrder, RecordLocation, RecordState};

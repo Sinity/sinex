@@ -15,9 +15,12 @@
 //! so each has its own record location and the parser reads the removal.
 //!
 //! The admitted cursor confirms cached file facts. Until its final byte commits,
-//! a retry offers the same bundle again. A restart remembers which files the
-//! admitted bundles hold and walks again; those files are read again, since
-//! their fingerprints are not kept, and admission suppresses the repeats.
+//! a retry offers the same bundle again. Each member records the file's size,
+//! modification time and content hash, and the reader saves its file facts
+//! with the cursor on the cadence of [`super::memory_due`]. A restart takes
+//! the facts from that saved memory and the bundles after it, so an unchanged
+//! file is not read or stored again and a file removed while Sinex was down is
+//! still recorded as vanished.
 use super::{Acquired, DriverError, NewMaterial, StoredBytes, file_facts};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -50,6 +53,12 @@ pub struct Cursor {
     /// Admitted byte end within the current bundle; none before the first.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub through: Option<usize>,
+    /// The part at whose end the reader last saved its memory.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub memory_part: Option<u32>,
+    /// Files stored or recorded as vanished since that part.
+    #[serde(default)]
+    pub changed_since_memory: u64,
 }
 
 /// What was already read, by relative path: size, modification time, hash.
@@ -72,6 +81,8 @@ struct Held {
     scanned: Cursor,
     files: HashMap<String, Option<(u64, i128, [u8; 32])>>,
     observation: ObservationFacts,
+    /// The file facts once this bundle is admitted, when it saves them.
+    memory: Option<Arc<[u8]>>,
 }
 
 impl Held {
@@ -91,7 +102,7 @@ impl Held {
         let part_index = self.part_index;
         let length = self.length;
         let scanned = self.scanned.clone();
-        let previous_scan = self.previous.last_complete_scan_ns;
+        let previous = self.previous.clone();
         Acquired {
             input,
             observation: self.observation.clone(),
@@ -120,7 +131,17 @@ impl Held {
                             last_complete_scan_ns: if end == length {
                                 scanned.last_complete_scan_ns
                             } else {
-                                previous_scan
+                                previous.last_complete_scan_ns
+                            },
+                            memory_part: if end == length {
+                                scanned.memory_part
+                            } else {
+                                previous.memory_part
+                            },
+                            changed_since_memory: if end == length {
+                                scanned.changed_since_memory
+                            } else {
+                                previous.changed_since_memory
                             },
                         })
                         .expect("cursor serializes")
@@ -129,6 +150,7 @@ impl Held {
                 }),
                 aligned: false,
                 vanished: Vec::new(),
+                memory: self.memory.clone(),
             }),
             cursor_unchanged: Value::Null,
         }
@@ -244,6 +266,7 @@ impl DirSnapshot {
                 "stream_offset": offset,
                 "length": actual_size,
                 "mtime_ns": mtime.to_string(),
+                "hash": blake3::Hash::from(hash).to_hex().as_str(),
             }));
             length =
                 offset
@@ -279,7 +302,7 @@ impl DirSnapshot {
                 length = offset + marker.len();
             }
         }
-        let scanned = Cursor {
+        let mut scanned = Cursor {
             last_complete_scan_ns: if complete {
                 Some(now.unix_ns())
             } else {
@@ -316,6 +339,22 @@ impl DirSnapshot {
         } else {
             0
         };
+        let changed = previous
+            .changed_since_memory
+            .saturating_add(members.len() as u64);
+        let due = super::memory_due(
+            part_index,
+            previous.memory_part,
+            changed,
+            next_files.len() as u64,
+        );
+        scanned.memory_part = if due {
+            Some(part_index)
+        } else {
+            previous.memory_part
+        };
+        scanned.changed_since_memory = if due { 0 } else { changed };
+        let memory = due.then(|| restore::memory_of(&next_files));
         let held = Held {
             stored: StoredBytes::FramedFile(Arc::new(staged)),
             length,
@@ -327,6 +366,7 @@ impl DirSnapshot {
             scanned,
             files: next_files,
             observation: facts,
+            memory,
         };
         let acquired = held.acquired(self.input(), &Cursor::default());
         state.held = Some(held);

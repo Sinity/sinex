@@ -127,6 +127,7 @@ impl HeldAppend {
                 } else {
                     Vec::new()
                 },
+                memory: None,
             }),
         })
     }

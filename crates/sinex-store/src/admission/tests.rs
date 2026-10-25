@@ -449,6 +449,7 @@ async fn events_and_progress_commit_together(db: devkit::pg::TestDatabase) {
         material: None,
         cursor: json!(cursor),
         carry: json!({}),
+        memory: None,
     };
     let mut good = batch(vec![keyed("s", 1, 1, 1)]);
     good.kind = BatchKind::Source(Box::new(progress(10)));

@@ -131,6 +131,7 @@ pub fn request_material(
             cursor_at: Box::new(|_| Ok(Value::Null)),
             aligned: false,
             vanished: vec![],
+            memory: None,
         }),
         cursor_unchanged: Value::Null,
     }

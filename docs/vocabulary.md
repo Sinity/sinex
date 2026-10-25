@@ -23,6 +23,7 @@ these names and no others.
 - **record failure**: a record the parser could not read, stored with its bytes.
 - **carry**: parser state kept between records of one input.
 - **cursor**: how far a binding's input has been admitted.
+- **reader memory**: what a reader remembers about its input (each row's hash, each file's size, time and hash), saved with the cursor at the end of a part so a restart reads only the parts after it.
 
 ## Events
 

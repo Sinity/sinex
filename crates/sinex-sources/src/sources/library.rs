@@ -534,6 +534,7 @@ impl LibraryScan {
                 }),
                 aligned: false,
                 vanished: Vec::new(),
+                memory: None,
             }),
             cursor_unchanged: Value::Null,
         })
@@ -1003,6 +1004,7 @@ pub fn request_material(
             }),
             aligned: false,
             vanished: Vec::new(),
+            memory: None,
         }),
         cursor_unchanged: Value::Null,
     }

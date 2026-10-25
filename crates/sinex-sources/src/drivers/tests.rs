@@ -102,6 +102,7 @@ fn batches_are_drained_lazily() {
             }),
             aligned: false,
             vanished: vec![],
+            memory: None,
         }),
         cursor_unchanged: Value::Null,
     };
@@ -284,6 +285,7 @@ fn stored_original_length_does_not_replace_decoded_record_coordinates() {
             }),
             aligned: false,
             vanished: vec![],
+            memory: None,
         }),
         cursor_unchanged: Value::Null,
     };
@@ -333,6 +335,7 @@ fn cursor_read_failure_is_reported_before_a_batch_and_stops_later_progress() {
             cursor_at: Box::new(|_| Err(DriverError::Io("synthetic cursor read failure".into()))),
             aligned: false,
             vanished: Vec::new(),
+            memory: None,
         }),
     };
     let prepared = prepare(
@@ -358,4 +361,15 @@ fn cursor_read_failure_is_reported_before_a_batch_and_stops_later_progress() {
             .contains("synthetic cursor read failure")
     );
     assert!(batches.next().is_none());
+}
+
+#[devkit::test]
+fn memory_is_saved_first_then_as_the_remembered_entries_change() {
+    assert!(memory_due(0, None, 1, 1));
+    // A quarter of what is remembered has changed.
+    assert!(!memory_due(10, Some(9), 24, 100));
+    assert!(memory_due(10, Some(9), 25, 100));
+    // Little changes in a large memory: saved once per thousand parts.
+    assert!(!memory_due(1008, Some(9), 1, 1_000_000));
+    assert!(memory_due(1009, Some(9), 1, 1_000_000));
 }

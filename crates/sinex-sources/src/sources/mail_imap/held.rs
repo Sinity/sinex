@@ -116,6 +116,7 @@ impl Answer {
                 }),
                 aligned: false,
                 vanished: Vec::new(),
+                memory: None,
             }),
             cursor_unchanged: Value::Null,
         })
