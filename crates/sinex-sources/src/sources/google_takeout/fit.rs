@@ -6,7 +6,9 @@
 //! file (the data source) and the day, and the values the day's point count
 //! and, for each `fitValue` position, the count, sum, minimum, maximum and
 //! mean of its numbers. Its start and end are the earliest point start and
-//! the latest point end.
+//! the latest point end. Points of one day that are not consecutive in the
+//! file make two records with one native ID, and the later replaces the
+//! earlier.
 //!
 //! The points stay in the stored material as exported; [`points`] reads a
 //! record's points back. Fit's points carry no zone, so the day is reckoned in
