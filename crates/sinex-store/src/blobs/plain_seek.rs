@@ -1,4 +1,4 @@
-//! A cursor over the existing operation-owned, one-blob verified range reader.
+//! A seekable reader over one verified blob.
 use hashed_blobs::{Hash, Reader, Result};
 use std::io::{Read, Seek, SeekFrom};
 pub(super) struct PlainSeek {

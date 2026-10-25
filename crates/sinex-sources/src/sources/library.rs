@@ -756,8 +756,7 @@ pub fn dimensions(head: &[u8], media_type: &str) -> (Option<u32>, Option<u32>, O
     (w.filter(|v| *v > 0), h.filter(|v| *v > 0), None)
 }
 
-/// Width, height and duration from `ffprobe`, when it is installed. Media
-/// decoding uses existing implementations.
+/// Width, height and duration from `ffprobe`, when it is installed.
 fn ffprobe(path: &Path) -> Option<(Option<u32>, Option<u32>, Option<u64>)> {
     let out = std::process::Command::new("ffprobe")
         .args([

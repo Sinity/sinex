@@ -1,7 +1,7 @@
 //! Reading committed events in commit order: the commit-log reader and the
 //! confirmed-stream publisher page through `core.commit_log` from a saved
-//! position. Archive notices (a reading replaced, hidden or restored) use the
-//! existing archival notice sequence; `audit.archive_changes` keeps their
+//! position. Visibility changes (a reading replaced, hidden or unhidden) are
+//! numbered in their own sequence; `audit.archive_changes` keeps their
 //! committed history.
 //!
 //! An excision removes events and their commit-log rows, leaving gaps in the

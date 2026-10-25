@@ -186,7 +186,7 @@ pub enum MaterialRole {
 }
 
 impl MaterialRole {
-    /// Existing drivers without an explicit role store original input bytes.
+    /// A manifest without a role describes input bytes.
     pub fn of(manifest: &Value) -> Result<Self, serde_json::Error> {
         manifest
             .get("role")

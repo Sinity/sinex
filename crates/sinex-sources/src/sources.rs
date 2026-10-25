@@ -42,7 +42,7 @@ pub mod samsung_health;
 pub mod samsung_sms;
 /// The session producer socket: Neovim and kitty integrations.
 pub mod session_socket;
-/// The Sinnix capture lake's envelope lanes (phase 1 of the port).
+/// The Sinnix capture lake's envelope lanes.
 pub mod sinnix_lake;
 pub mod sleep_as_android;
 pub mod spotify;

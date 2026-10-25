@@ -3,7 +3,7 @@
 //! transaction in `sinexd`. This crate knows no source or derivation by name.
 //!
 //! SQL is checked at compile time against a live development database with
-//! `sqlx::query!`; there is no offline cache (operator ruling, 2025-08-10).
+//! `sqlx::query!`; there is no offline cache.
 pub mod admission;
 pub mod analysis;
 pub mod bindings;

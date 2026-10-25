@@ -48,7 +48,7 @@ pub(crate) fn tables(c: &Checks) -> Vec<String> {
         class = c.class,
     );
     vec![
-        // Events. No foreign key points into a hypertable (spec storage.md, sinex-h8no).
+        // Events. No foreign key points into a hypertable.
         format!("CREATE TABLE core.events (\n  {event_columns},\n  PRIMARY KEY (id)\n)"),
         format!("CREATE TABLE telemetry.events (\n  {event_columns},\n  PRIMARY KEY (id)\n)"),
         // One live reading per record location, event type and output number.

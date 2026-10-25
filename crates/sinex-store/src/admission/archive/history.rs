@@ -1,4 +1,4 @@
-//! Current archival membership and its history have one transactional writer.
+//! Archived state and its history are written together.
 use crate::Result;
 use sinex_model::{ArchiveReason, DbCheck};
 use sqlx::PgConnection;
