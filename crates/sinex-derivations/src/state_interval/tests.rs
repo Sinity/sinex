@@ -233,7 +233,6 @@ fn going_afk_interrupts_focus_and_is_an_interval_itself() {
     assert_eq!(a[0].ended_at, Some(at(650)));
 }
 
-
 fn key(state: &str) -> Value {
     json!({"state": state, "day": "2024-06-15"})
 }
