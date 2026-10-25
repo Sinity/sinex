@@ -14,6 +14,7 @@ use std::path::PathBuf;
 pub const SPEC: SourceSpec = SourceSpec {
     name: "terminal.atuin-history",
     driver: Driver::SqliteRows,
+    excisable: false,
     consumer: "command fusion and shell recall",
     class: Class::Open,
     parser: "atuin-history",

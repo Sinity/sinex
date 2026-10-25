@@ -93,21 +93,9 @@ pub enum RecordOutcome {
     },
 }
 
-/// The excisions of a source that an acquisition applied as exclusions.
-/// Admission compares it with the current set, so an excision committed in
-/// between makes the acquisition read again rather than keep excluded bytes.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Exclusions {
-    pub source: String,
-    /// BLAKE3 of the source's excision operation IDs, in order.
-    pub digest: [u8; 32],
-    pub count: u64,
-}
-
 /// Progress of one source binding, committed with the batch's events.
 #[derive(Clone, Debug)]
 pub struct SourceProgress {
-    pub exclusions: Option<Exclusions>,
     pub binding: String,
     /// Wrapped keys of sealed materials, stored with the material rows.
     pub material_keys: Vec<WrappedMaterialKey>,

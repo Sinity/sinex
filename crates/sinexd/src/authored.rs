@@ -1,13 +1,11 @@
 //! Records written through the API (library requests and scans, forecasts):
-//! one material, stored and then admitted in one batch, under the source's
-//! guard so no excision of the source falls between its exclusions and the
-//! admission.
-use crate::excision::exclusions::Exclusions;
+//! one material, stored and then admitted in one batch.
 use crate::writer::{Priority, WriterHandle};
 use serde_json::Value;
-use sinex_model::{BatchKind, Class, MaterialId, RunId};
+use sinex_model::{Class, MaterialId, RunId};
 use sinex_sources::{Limits, Source, drivers};
 use sinex_store::{Blobs, Outcome, bindings};
+use sqlx::PgConnection;
 use std::sync::Arc;
 
 pub(crate) struct Authored {
@@ -21,103 +19,62 @@ fn error(e: impl std::fmt::Display) -> String {
 
 /// Store and admit what `acquired` holds as one batch of `binding`.
 pub(crate) async fn submit(
+    conn: &mut PgConnection,
     writer: &WriterHandle,
     blobs: &Blobs,
     source: Arc<dyn Source>,
     binding: &str,
     acquired: drivers::Acquired,
 ) -> Result<Authored, String> {
-    let mut guard = writer.source_guard(source.spec().name).await?;
-    let checked = async {
-        if let Some(reason) = &acquired.observation.unavailable {
-            return Err(format!("authored records are unavailable: {reason}"));
-        }
-        bindings::save(
-            guard.connection(),
-            &bindings::Stored {
-                binding: binding.to_owned(),
-                source: source.spec().name.into(),
-                input: acquired.input.locator.clone(),
-                settings: serde_json::json!({"host": acquired.input.host}),
-            },
-        )
-        .await
-        .map_err(error)?;
-        let exclusions = Exclusions::load(guard.connection(), source.spec().name).await?;
-        let floor =
-            sinex_store::privacy::load(guard.connection(), std::iter::once(source.spec().name))
-                .await
-                .map_err(error)?
-                .floors
-                .get(source.spec().name)
-                .copied()
-                .unwrap_or_default();
-        let class = source.spec().class.max(floor);
-        if class == Class::Sealed {
-            return Err("authored records cannot be stored sealed".into());
-        }
-        Ok((exclusions, class))
+    if let Some(reason) = &acquired.observation.unavailable {
+        return Err(format!("authored records are unavailable: {reason}"));
     }
-    .await;
-    let (exclusions, class) = match checked {
-        Ok(value) => value,
-        Err(e) => {
-            guard.release().await?;
-            return Err(e);
-        }
-    };
-    let prepared = {
-        let (source, binding, blobs) = (source.clone(), binding.to_owned(), blobs.clone());
-        let exclusions = Arc::new(exclusions);
-        let filter = exclusions.clone();
-        tokio::task::spawn_blocking(move || {
-            prepare(source.as_ref(), &binding, acquired, &blobs, &filter, class)
-        })
-        .await
-        .map_err(error)
-        .and_then(|batch| batch)
-        .map(|batch| (batch, exclusions))
-    };
-    let (mut batch, exclusions) = match prepared {
-        Ok(value) => value,
-        Err(e) => {
-            guard.release().await?;
-            return Err(e);
-        }
-    };
-    let cited = batch
-        .events()
-        .flat_map(|event| event.cites.iter().cloned())
-        .collect::<Vec<_>>();
-    if let Err(e) = exclusions.check_cited(&cited) {
-        guard.release().await?;
-        return Err(e);
-    }
-    let BatchKind::Source(progress) = &mut batch.kind else {
-        unreachable!("drivers build source batches")
-    };
-    progress.exclusions = Some(exclusions.version().clone());
-    let material = progress.material.as_ref().map(|m| m.id);
-    let outcome = writer
-        .guarded_slot(Priority::Live)
+    bindings::save(
+        conn,
+        &bindings::Stored {
+            binding: binding.to_owned(),
+            source: source.spec().name.into(),
+            input: acquired.input.locator.clone(),
+            settings: serde_json::json!({"host": acquired.input.host}),
+        },
+    )
+    .await
+    .map_err(error)?;
+    let floor = sinex_store::privacy::load(conn, std::iter::once(source.spec().name))
         .await
         .map_err(error)?
-        .admit(batch, guard, Arc::new(|| Ok(())))
+        .floors
+        .get(source.spec().name)
+        .copied()
+        .unwrap_or_default();
+    let class = source.spec().class.max(floor);
+    if class == Class::Sealed {
+        return Err("authored records cannot be stored sealed".into());
+    }
+    let batch = {
+        let (binding, blobs) = (binding.to_owned(), blobs.clone());
+        tokio::task::spawn_blocking(move || {
+            prepare(source.as_ref(), &binding, acquired, &blobs, class)
+        })
         .await
-        .map_err(error)?;
+        .map_err(error)??
+    };
+    let material = match &batch.kind {
+        sinex_model::BatchKind::Source(progress) => progress.material.as_ref().map(|m| m.id),
+        _ => unreachable!("drivers build source batches"),
+    };
+    let outcome = writer.submit(Priority::Live, batch).await.map_err(error)?;
     Ok(Authored { outcome, material })
 }
 
-/// Apply exclusions, store the bytes and build the one batch.
+/// Store the bytes and build the one batch.
 fn prepare(
     source: &dyn Source,
     binding: &str,
     acquired: drivers::Acquired,
     blobs: &Blobs,
-    exclusions: &Exclusions,
     class: Class,
 ) -> Result<sinex_model::Batch, String> {
-    let acquired = exclusions.filter(source, acquired, &Value::Null, class, false)?;
     let prepared = drivers::prepare(
         source,
         binding,

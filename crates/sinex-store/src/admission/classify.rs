@@ -55,7 +55,7 @@ pub(super) async fn stage_and_classify(
            SELECT s.ord AS "ord!",
              CASE
                WHEN s.rank > 1 THEN 'superseded'
-               WHEN hk.id IS NOT NULL OR hl.id IS NOT NULL OR xd.record_hash IS NOT NULL THEN 'hidden'
+               WHEN hk.id IS NOT NULL OR hl.id IS NOT NULL THEN 'hidden'
                WHEN coalesce(le.event_id, lc.event_id) IS NULL THEN 'new'
                WHEN coalesce(le.record_hash, lc.record_hash) = s.record_hash THEN 'repeat'
                -- The source dropping a record is a fact, not another
@@ -77,9 +77,6 @@ pub(super) async fn stage_and_classify(
            LEFT JOIN core.hidden_occurrences hl
              ON s.equivalence_key IS NULL AND hl.material_id = s.material_id
              AND hl.anchor = s.anchor AND hl.event_type = s.event_type AND hl.ordinal = s.ordinal
-           LEFT JOIN core.excised_digests xd
-             ON s.material_id IS NOT NULL AND xd.source = s.source
-             AND xd.event_type = s.event_type AND xd.record_hash = s.record_hash
            LEFT JOIN core.live_equivalence le
              ON s.equivalence_key IS NOT NULL AND le.source = s.source
              AND le.event_type = s.event_type AND le.equivalence_key = s.equivalence_key

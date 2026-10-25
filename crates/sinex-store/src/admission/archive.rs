@@ -76,7 +76,6 @@ pub(super) async fn request(
     match request {
         ArchiveRequest::Replay { .. } | ArchiveRequest::RemovedAtSource { .. } => Ok(0),
         ArchiveRequest::Hide { target, operation } => {
-            let kind = "hide";
             let event = sqlx::query!(
                 "SELECT source, event_type, equivalence_key, material_id, anchor, ordinal FROM core.events WHERE id = $1",
                 target.0
@@ -85,11 +84,11 @@ pub(super) async fn request(
             .await?
             .ok_or_else(|| Error::Invalid(format!("no event {target}")))?;
             sqlx::query!(
-                r#"INSERT INTO core.hidden_occurrences (source, event_type, equivalence_key, material_id, anchor, ordinal, kind, operation_id)
+                r#"INSERT INTO core.hidden_occurrences (source, event_type, equivalence_key, material_id, anchor, ordinal, operation_id)
                    VALUES ($1, $2, $3,
                      CASE WHEN $3::text IS NULL THEN $4::uuid END,
                      CASE WHEN $3::text IS NULL THEN $5::bigint END,
-                     CASE WHEN $3::text IS NULL THEN $6::smallint END, $7, $8)
+                     CASE WHEN $3::text IS NULL THEN $6::smallint END, $7)
                    ON CONFLICT DO NOTHING"#,
                 event.source,
                 event.event_type,
@@ -97,7 +96,6 @@ pub(super) async fn request(
                 event.material_id,
                 event.anchor,
                 event.ordinal,
-                kind,
                 operation.0,
             )
             .execute(&mut *conn)
@@ -136,7 +134,7 @@ pub(super) async fn request(
             .await?
             .ok_or_else(|| Error::Invalid(format!("no event {target}")))?;
             let removed = sqlx::query_scalar!(
-                r#"DELETE FROM core.hidden_occurrences WHERE kind = 'hide' AND source = $1 AND event_type = $2
+                r#"DELETE FROM core.hidden_occurrences WHERE source = $1 AND event_type = $2
                    AND ((equivalence_key = $3) OR ($3::text IS NULL AND material_id = $4 AND anchor = $5 AND ordinal = $6))
                    RETURNING id"#,
                 event.source,

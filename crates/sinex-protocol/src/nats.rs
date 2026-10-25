@@ -10,6 +10,7 @@
 //! | `<root>.ack.<producer>` | `sinexd` | the [`Acknowledgment`] of each frame |
 //! | `<root>.have.<producer>` | the producer, as a request | [`Have`]: what Sinex recorded for these frames |
 //! | `<root>.materials.<producer>` | the producer, as a request | [`Materials`]: a page of the materials it registered |
+//! | `<root>.excise.<producer>` | the producer, as a request | [`Excise`]: excise whole materials it registered |
 //! | `<root>.confirmed.event.<event type>` | `sinexd` | a [`Confirmed::Event`] |
 //! | `<root>.confirmed.archive` | `sinexd` | a [`Confirmed::Archived`], [`Confirmed::Restored`] or [`Confirmed::Excised`] notice |
 //!
@@ -106,8 +107,16 @@ impl Subjects {
         format!("{}.materials.*", self.root)
     }
 
-    /// The producer an ingress, have or materials subject names, if it is
-    /// one of ours and a valid producer name.
+    pub fn excise(&self, producer: &str) -> String {
+        format!("{}.excise.{producer}", self.root)
+    }
+
+    pub fn excise_all(&self) -> String {
+        format!("{}.excise.*", self.root)
+    }
+
+    /// The producer an ingress, have, materials or excise subject names, if
+    /// it is one of ours and a valid producer name.
     pub fn producer_of<'a>(&self, subject: &'a str) -> Option<&'a str> {
         let rest = subject
             .strip_prefix(self.root.as_str())?
@@ -115,19 +124,21 @@ impl Subjects {
         let producer = rest
             .strip_prefix("ingress.")
             .or_else(|| rest.strip_prefix("have."))
-            .or_else(|| rest.strip_prefix("materials."))?;
+            .or_else(|| rest.strip_prefix("materials."))
+            .or_else(|| rest.strip_prefix("excise."))?;
         valid_producer(producer).then_some(producer)
     }
 
     /// What a producer's NATS user may publish and subscribe to: its own
-    /// ingress, have and materials subjects, its acknowledgments, and reply
-    /// inboxes.
+    /// ingress, have, materials and excise subjects, its acknowledgments, and
+    /// reply inboxes.
     pub fn producer_permissions(&self, producer: &str) -> (Vec<String>, Vec<String>) {
         (
             vec![
                 self.ingress(producer),
                 self.have(producer),
                 self.materials(producer),
+                self.excise(producer),
             ],
             vec![self.ack(producer), "_INBOX.>".into()],
         )
@@ -336,6 +347,26 @@ pub struct HeldMaterial {
     pub number: i64,
     pub frame: String,
     pub material: MaterialFrame,
+}
+
+/// A request on `<root>.excise.<producer>`: permanently delete whole
+/// materials this producer registered, every event read from them and every
+/// event derived from those, through Sinex's one excision with the producer
+/// as the actor. Each material is replaced by spaces of its length. Refused,
+/// with nothing changed, when a material was registered by anyone else, or is
+/// sealed. Sending it again finishes an interrupted one. The reply is an
+/// [`ExciseReply`].
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct Excise {
+    pub materials: Vec<MaterialId>,
+}
+
+/// What an [`Excise`] request removed, or why it removed nothing.
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
+pub struct ExciseReply {
+    pub materials: u64,
+    pub events: u64,
+    pub refusal: Option<String>,
 }
 
 /// One message on the confirmed stream.

@@ -1,28 +1,26 @@
-//! Excision: the one true deletion.
-//! Operator only. It removes every reading of a record, live and archived,
-//! with every derived event that descends from them, and the record's bytes:
+//! Excision: the one true deletion. Operator only. It removes every reading of
+//! one record, live and archived, every derived event that descends from them,
+//! and the record's bytes, and nothing else:
 //!
-//! - an open or guarded material gets a new blob in which the excised records
-//!   are blanked to spaces of the same length (the closing newline kept), so
-//!   every other record keeps its anchor; the old blob is deleted once nothing
-//!   refers to it;
-//! - excision of sealed material is refused, since its bytes cannot be
-//!   rewritten without its key;
-//! - a tombstone (identity and time, no payload) remains for each event, the
-//!   record's key or location goes into `core.hidden_occurrences` as `excise`,
-//!   which nothing undoes, and its record hash into `core.excised_digests`, so
-//!   neither a replay nor re-staging the same bytes brings it back;
-//! - stored bytes the excised events own beyond their materials (a library
-//!   file the scan kept, `core.event_blobs`) are deleted once no other event
-//!   or material refers to them.
+//! - each material a reading was read from gets a new blob of spaces of the
+//!   same length (the caller writes it, and refuses a material that holds
+//!   other records too); the old blob is deleted once nothing refers to it,
+//!   and kept while another material shares it;
+//! - a tombstone (identity and time, no payload) remains for each event;
+//! - stored bytes the excised events cite beyond their materials
+//!   (`core.event_blobs`) are deleted once nothing else refers to them.
 //!
-//! Each excision is recorded once in `core.operations`; its record keys and
-//! hashes are the exclusions later acquisition applies ([`exclusions`]).
+//! [`plan`] refuses, before anything changes, what it cannot remove cleanly:
+//! an event that was not read from a stored record, sealed material, and a
+//! material whose bytes another part of the same revision shares. Whether the
+//! source or producer may excise the planned materials is decided by the
+//! caller, which knows the sources.
 //!
-//! Planning reads; the writer applies the plan in one transaction, checking
-//! that the readings it removes are still exactly the planned ones, and
-//! deletes the old blob files after commit. Running the same request again
-//! after a crash finds what is left and finishes it.
+//! Each excision is recorded once in `core.operations`. The writer applies the
+//! plan in one transaction, checking that the readings it removes are still
+//! exactly the planned ones, and deletes the old blob files after commit.
+//! Running the same request again after a crash finds what is left and
+//! finishes it.
 use crate::admission::{DirtyKeys, mark_archived_dirty, remove_live};
 use crate::{Error, Result};
 use sinex_model::{EventId, MaterialId, OperationId};
@@ -38,22 +36,29 @@ pub enum Target {
     Material(MaterialId),
 }
 
-/// A material whose records an excision blanks.
+/// A material an excision blanks.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Material {
     pub id: MaterialId,
     pub blob: String,
-    /// The parser and host that read it: how the caller finds its framing.
+    pub length: u64,
+    /// Who registered it: the binding, or `ingress:<producer>` for an outside
+    /// producer's material.
+    pub binding: Option<String>,
+    /// The source of its binding; `None` for a producer's material.
+    pub source: Option<String>,
+    /// The parser that read it: with the source, how the caller finds its
+    /// framing.
     pub parser: String,
-    pub host: String,
     pub manifest: serde_json::Value,
-    /// Anchors of the records to blank; empty when `whole`.
+    /// Anchors of the excised records; empty when `whole`.
     pub anchors: BTreeSet<i64>,
+    /// The material itself is the target.
     pub whole: bool,
 }
 
 /// What an excision removes, as planned.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Plan {
     pub events: BTreeSet<Uuid>,
     pub materials: Vec<Material>,
@@ -73,17 +78,13 @@ pub struct Applied {
     pub events: usize,
     pub failures_removed: usize,
     pub materials_rewritten: usize,
-    /// Stored bytes the excised events owned that nothing else refers to.
+    /// Stored bytes the excised events cited that nothing else refers to.
     pub blobs_deleted: usize,
     pub dirty_keys: usize,
     /// Blob files no row refers to any more; the writer deletes them after
     /// commit.
     pub delete_after_commit: Vec<String>,
 }
-
-pub mod exclusions;
-mod source_lock;
-pub use source_lock::{is_producer, lock_source, lock_source_session};
 
 /// Find every reading the excision of `target` removes. Read-only.
 pub async fn plan(conn: &mut PgConnection, target: Target) -> Result<Plan> {
@@ -96,6 +97,11 @@ pub async fn plan(conn: &mut PgConnection, target: Target) -> Result<Plan> {
             .fetch_optional(&mut *conn)
             .await?
             .ok_or_else(|| Error::Invalid(format!("no event {id}")))?;
+            if e.material_id.is_none() {
+                return Err(Error::Invalid(format!(
+                    "event {id} was not read from a stored record; excise the records it was derived from"
+                )));
+            }
             // Every reading of the record: by key, or by location for keyless types.
             sqlx::query_scalar!(
                 r#"SELECT id AS "id!" FROM core.events
@@ -141,108 +147,79 @@ pub async fn plan(conn: &mut PgConnection, target: Target) -> Result<Plan> {
     let events: BTreeSet<Uuid> = events.into_iter().collect();
     let ids: Vec<Uuid> = events.iter().copied().collect();
 
-    let rows = sqlx::query!(
-        r#"SELECT DISTINCT e.material_id AS "material!", e.anchor AS "anchor!", m.blob, m.parser, m.manifest,
-             i.host AS "host?", (k.material_id IS NOT NULL) AS "sealed!"
-           FROM core.events e
-           JOIN raw.materials m ON m.id = e.material_id
-           LEFT JOIN raw.inputs i ON i.id = m.input_id
-           LEFT JOIN privacy.material_keys k ON k.material_id = m.id
-           WHERE e.id = ANY($1) AND e.material_id IS NOT NULL"#,
+    // The records to blank, by material; a whole material when it is the target.
+    let mut anchors: BTreeMap<Uuid, BTreeSet<i64>> = BTreeMap::new();
+    for r in sqlx::query!(
+        r#"SELECT DISTINCT material_id AS "material!", anchor AS "anchor!" FROM core.events
+           WHERE id = ANY($1) AND material_id IS NOT NULL"#,
         &ids,
     )
     .fetch_all(&mut *conn)
-    .await?;
-    let mut materials: BTreeMap<Uuid, Material> = BTreeMap::new();
-    for r in rows {
-        if r.sealed {
-            return Err(sealed(r.material));
-        }
-        let m = materials.entry(r.material).or_insert_with(|| Material {
-            id: MaterialId(r.material),
-            blob: r.blob.clone(),
-            parser: r.parser.clone(),
-            host: r.host.clone().unwrap_or_default(),
-            manifest: r.manifest.clone(),
-            anchors: BTreeSet::new(),
-            whole: matches!(target, Target::Material(t) if t.0 == r.material),
-        });
-        if !m.whole {
-            m.anchors.insert(r.anchor);
-        }
-    }
-    if let Target::Material(m) = target
-        && !materials.contains_key(&m.0)
+    .await?
     {
-        // A material with no events left (all suppressed or failed) still has bytes.
-        let r = sqlx::query!(
-            r#"SELECT m.blob, m.parser, m.manifest, i.host AS "host?", (k.material_id IS NOT NULL) AS "sealed!"
-               FROM raw.materials m LEFT JOIN raw.inputs i ON i.id = m.input_id
-               LEFT JOIN privacy.material_keys k ON k.material_id = m.id WHERE m.id = $1"#,
-            m.0
-        )
-        .fetch_optional(&mut *conn)
-        .await?
-        .ok_or_else(|| Error::Invalid(format!("no material {m}")))?;
-        if r.sealed {
-            return Err(sealed(m.0));
-        }
-        materials.insert(
-            m.0,
-            Material {
-                id: m,
-                blob: r.blob,
-                parser: r.parser,
-                host: r.host.unwrap_or_default(),
-                manifest: r.manifest,
-                anchors: BTreeSet::new(),
-                whole: true,
-            },
-        );
+        anchors.entry(r.material).or_default().insert(r.anchor);
     }
-    // Record bodies do not replace their original archive. Blanking a decoded
-    // part alone would leave the same private bytes in its captured ancestor.
-    let material_ids: Vec<Uuid> = materials.keys().copied().collect();
-    let stored_archive = sqlx::query_scalar!(
-        r#"WITH RECURSIVE ancestors AS (
-             SELECT id, previous_part_id, manifest FROM raw.materials WHERE id = ANY($1)
-             UNION
-             SELECT m.id, m.previous_part_id, m.manifest FROM raw.materials m
-               JOIN ancestors a ON m.id = a.previous_part_id)
-           SELECT id AS "id!" FROM ancestors WHERE manifest->>'role' = 'original-archive' LIMIT 1"#,
+    let whole = match target {
+        Target::Material(m) => Some(m.0),
+        Target::Event(_) => None,
+    };
+    if let Some(m) = whole {
+        anchors.entry(m).or_default();
+    }
+    let material_ids: Vec<Uuid> = anchors.keys().copied().collect();
+    let rows = sqlx::query!(
+        r#"SELECT m.id, m.blob, m.durable_bytes, m.parser, m.manifest, i.binding AS "binding?", b.source AS "source?",
+             EXISTS(SELECT 1 FROM privacy.material_keys k WHERE k.material_id = m.id) AS "sealed!",
+             (SELECT count(*) FROM raw.revision_extents x
+              WHERE x.revision_id = m.revision_id AND x.blob = m.blob) AS "extents!"
+           FROM raw.materials m
+           LEFT JOIN raw.inputs i ON i.id = m.input_id
+           LEFT JOIN raw.bindings b ON b.binding = i.binding
+           WHERE m.id = ANY($1)
+           ORDER BY m.id"#,
         &material_ids,
     )
-    .fetch_optional(&mut *conn)
+    .fetch_all(&mut *conn)
     .await?;
-    if let Some(id) = stored_archive {
-        return Err(Error::Invalid(format!(
-            "material {id} is inside a stored original archive, which excision cannot rewrite"
-        )));
+    if let Some(missing) = material_ids
+        .iter()
+        .find(|id| !rows.iter().any(|r| r.id == **id))
+    {
+        return Err(Error::Invalid(format!("no stored material {missing}")));
     }
-    Ok(Plan {
-        events,
-        materials: materials.into_values().collect(),
-    })
-}
-
-fn sealed(material: Uuid) -> Error {
-    Error::Invalid(format!(
-        "material {material} is sealed: excision of sealed source material is not supported"
-    ))
-}
-
-/// Blank records in `bytes`: every byte of each `(start, end)` span becomes a
-/// space, except a closing newline, so framing and every other anchor stay as
-/// they were. A record that is all spaces is no record (the drain skips it).
-pub fn blank(bytes: &mut [u8], spans: &[(usize, usize)]) {
-    for &(start, end) in spans {
-        let end = end.min(bytes.len());
-        let keep_newline = end > start && bytes[end - 1] == b'\n';
-        let stop = if keep_newline { end - 1 } else { end };
-        for b in &mut bytes[start..stop] {
-            *b = b' ';
+    let mut materials = Vec::with_capacity(rows.len());
+    for r in rows {
+        if r.sealed {
+            return Err(Error::Invalid(format!(
+                "material {} is sealed: excision of sealed source material is not supported",
+                r.id
+            )));
         }
+        if r.extents > 1 {
+            return Err(Error::Invalid(format!(
+                "material {} has the same bytes as another part of its input, and excision cannot tell their stored copies apart",
+                r.id
+            )));
+        }
+        let is_whole = whole == Some(r.id);
+        materials.push(Material {
+            id: MaterialId(r.id),
+            blob: r.blob,
+            length: u64::try_from(r.durable_bytes)
+                .map_err(|_| Error::Invalid(format!("material {} has a negative length", r.id)))?,
+            binding: r.binding,
+            source: r.source,
+            parser: r.parser,
+            manifest: r.manifest,
+            anchors: if is_whole {
+                BTreeSet::new()
+            } else {
+                anchors.remove(&r.id).unwrap_or_default()
+            },
+            whole: is_whole,
+        });
     }
+    Ok(Plan { events, materials })
 }
 
 /// Apply `plan` inside the writer's transaction. `rewrites` holds the new
@@ -264,66 +241,16 @@ pub async fn apply(
     let ids: Vec<Uuid> = plan.events.iter().copied().collect();
     let mut applied = Applied::default();
 
-    let mut sources = sqlx::query_scalar!(
-        "SELECT DISTINCT source FROM core.events WHERE id=ANY($1) ORDER BY source",
-        &ids
-    )
-    .fetch_all(&mut *conn)
-    .await?;
-    let owners = plan.materials.iter().map(|m| m.id.0).collect::<Vec<_>>();
-    let bound:Vec<String>=sqlx::query_scalar("SELECT DISTINCT b.source FROM raw.materials m JOIN raw.inputs i ON i.id=m.input_id JOIN raw.bindings b ON b.binding=i.binding WHERE m.id=ANY($1)").bind(&owners).fetch_all(&mut *conn).await?;
-    sources.extend(bound);
-    sources.sort();
-    sources.dedup();
-
     let mut scope = match target {
-        Target::Event(e) => serde_json::json!({"event":e.0}),
-        Target::Material(m) => serde_json::json!({"material":m.0}),
+        Target::Event(e) => serde_json::json!({"event": e.0}),
+        Target::Material(m) => serde_json::json!({"material": m.0}),
     };
-    scope["sources"] = serde_json::json!(sources);
     scope["materials"] = serde_json::json!(plan.materials.iter().map(|m| m.id).collect::<Vec<_>>());
-    // Stored bytes the excised events cite are excluded from later capture
-    // of the same sources.
-    scope["cited_media"] = exclusions::cited_media_of(conn, &ids).await?;
     sqlx::query!(
-        "INSERT INTO core.operations (id,kind,actor,scope) VALUES($1,'excise',$2,$3)",
+        "INSERT INTO core.operations (id, kind, actor, scope) VALUES ($1, 'excise', $2, $3)",
         operation.0,
         actor,
         scope
-    )
-    .execute(&mut *conn)
-    .await?;
-
-    // Remembered, so neither replay nor re-import brings any of it back.
-    sqlx::query!(
-        r#"INSERT INTO core.hidden_occurrences (source, event_type, equivalence_key, kind, operation_id)
-           SELECT DISTINCT source, event_type, equivalence_key, 'excise', $2::uuid FROM core.events
-           WHERE id = ANY($1) AND equivalence_key IS NOT NULL
-           ON CONFLICT (source, event_type, equivalence_key) WHERE equivalence_key IS NOT NULL
-           DO UPDATE SET kind = 'excise', operation_id = EXCLUDED.operation_id"#,
-        &ids,
-        operation.0,
-    )
-    .execute(&mut *conn)
-    .await?;
-    sqlx::query!(
-        r#"INSERT INTO core.hidden_occurrences (source, event_type, material_id, anchor, ordinal, kind, operation_id)
-           SELECT DISTINCT source, event_type, material_id, anchor, ordinal, 'excise', $2::uuid FROM core.events
-           WHERE id = ANY($1) AND equivalence_key IS NULL AND material_id IS NOT NULL
-           ON CONFLICT (material_id, anchor, event_type, ordinal) WHERE material_id IS NOT NULL
-           DO UPDATE SET kind = 'excise', operation_id = EXCLUDED.operation_id"#,
-        &ids,
-        operation.0,
-    )
-    .execute(&mut *conn)
-    .await?;
-    sqlx::query!(
-        r#"INSERT INTO core.excised_digests (source, event_type, record_hash, operation_id)
-           SELECT DISTINCT source, event_type, record_hash, $2::uuid FROM core.events
-           WHERE id = ANY($1) AND material_id IS NOT NULL
-           ON CONFLICT DO NOTHING"#,
-        &ids,
-        operation.0,
     )
     .execute(&mut *conn)
     .await?;
@@ -373,7 +300,7 @@ pub async fn apply(
         .await?;
     applied.events = usize::try_from(deleted.rows_affected()).unwrap_or(usize::MAX);
 
-    // Bytes the excised events owned: gone with them unless something else
+    // Bytes the excised events cited: gone with them unless something else
     // (another event, a material, a revision) still refers to them.
     let cited: Vec<String> = sqlx::query_scalar!(
         "DELETE FROM core.event_blobs WHERE event_id = ANY($1) RETURNING blob",
@@ -384,27 +311,16 @@ pub async fn apply(
     let cited: BTreeSet<String> = cited.into_iter().collect();
     for blob in cited {
         if unreferenced(conn, &blob).await? {
-            sqlx::query!(
-                "UPDATE core.blobs SET status = 'deleting' WHERE hash = $1",
-                blob
-            )
-            .execute(&mut *conn)
-            .await?;
+            mark_deleting(conn, &blob).await?;
             applied.blobs_deleted += 1;
             applied.delete_after_commit.push(blob);
         }
     }
 
     for m in &plan.materials {
-        let anchors: Vec<i64> = m.anchors.iter().copied().collect();
-        let removed = sqlx::query!(
-            "DELETE FROM raw.failures WHERE material_id=$1 AND ($2 OR anchor=ANY($3))",
-            m.id.0,
-            m.whole,
-            &anchors
-        )
-        .execute(&mut *conn)
-        .await?;
+        let removed = sqlx::query!("DELETE FROM raw.failures WHERE material_id = $1", m.id.0)
+            .execute(&mut *conn)
+            .await?;
         applied.failures_removed += usize::try_from(removed.rows_affected()).unwrap_or(usize::MAX);
         let rewrite = rewrites
             .iter()
@@ -420,6 +336,8 @@ pub async fn apply(
         )
         .execute(&mut *conn)
         .await?;
+        // The plan refused a revision with more than one extent of these bytes,
+        // so this is the material's own extent.
         sqlx::query!(
             r#"UPDATE raw.revision_extents x SET blob = $2
                FROM raw.materials m WHERE m.id = $1 AND x.revision_id = m.revision_id AND x.blob = m.blob"#,
@@ -439,12 +357,7 @@ pub async fn apply(
         // The old bytes go once nothing refers to them; deduplication may
         // share a blob with a material outside the excision.
         if m.blob != rewrite.blob && unreferenced(conn, &m.blob).await? {
-            sqlx::query!(
-                "UPDATE core.blobs SET status = 'deleting' WHERE hash = $1",
-                m.blob
-            )
-            .execute(&mut *conn)
-            .await?;
+            mark_deleting(conn, &m.blob).await?;
             applied.delete_after_commit.push(m.blob.clone());
         }
     }
@@ -452,6 +365,16 @@ pub async fn apply(
         .fetch_one(&mut *conn)
         .await?;
     Ok(applied)
+}
+
+async fn mark_deleting(conn: &mut PgConnection, blob: &str) -> Result<()> {
+    sqlx::query!(
+        "UPDATE core.blobs SET status = 'deleting' WHERE hash = $1",
+        blob
+    )
+    .execute(conn)
+    .await?;
+    Ok(())
 }
 
 /// Whether no material, revision extent or event refers to `blob` any more.
@@ -475,44 +398,44 @@ pub async fn finish_deletions(
     conn: &mut PgConnection,
     blobs: &crate::Blobs,
 ) -> Result<(Vec<String>, Vec<String>)> {
-    let pending: Vec<String> =
-        sqlx::query_scalar("SELECT hash FROM core.blobs WHERE status='deleting' ORDER BY hash")
+    let waiting: Vec<String> =
+        sqlx::query_scalar!("SELECT hash FROM core.blobs WHERE status = 'deleting' ORDER BY hash")
             .fetch_all(&mut *conn)
             .await?;
     let (mut deleted, mut left) = (Vec::new(), Vec::new());
-    for name in pending {
+    for name in waiting {
         let mut tx = conn.begin().await?;
-        let result = async {
-            sqlx::query("SET TRANSACTION ISOLATION LEVEL READ COMMITTED").execute(&mut *tx).await?;
-            let status: Option<String> = sqlx::query_scalar("SELECT status FROM core.blobs WHERE hash=$1 FOR UPDATE")
-                .bind(&name).fetch_optional(&mut *tx).await?;
-            if status.as_deref() != Some("deleting") { return Ok(None); }
-            // A fresh statement after the lock sees references committed while
-            // it waited; a new reference waits on this lock until the file and
-            // the row are gone together. The writer runs this and admission
-            // in turn, and admits no row whose file is missing.
-            let owned: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM raw.materials WHERE blob=$1) OR EXISTS(SELECT 1 FROM raw.revision_extents WHERE blob=$1) OR EXISTS(SELECT 1 FROM core.event_blobs WHERE blob=$1)")
-                .bind(&name).fetch_one(&mut *tx).await?;
-            if owned { return Ok(None); }
-            if blobs.delete(&name).is_err() { return Ok(Some(false)); }
-            sqlx::query("DELETE FROM core.blobs WHERE hash=$1 AND status='deleting'")
-                .bind(&name).execute(&mut *tx).await?;
-            Ok::<_, Error>(Some(true))
-        }.await;
-        match result {
-            Ok(result) => {
-                tx.commit().await?;
-                match result {
-                    Some(true) => deleted.push(name),
-                    Some(false) => left.push(name),
-                    None => {}
-                }
-            }
-            Err(error) => {
-                tx.rollback().await?;
-                return Err(error);
-            }
+        // Each statement reads its own snapshot, so the reference check after
+        // the row lock sees every reference committed while it waited; a new
+        // reference waits on this lock until the file and the row are gone
+        // together. The writer runs this and admission in turn, and admits no
+        // row whose file is missing.
+        sqlx::query!("SET TRANSACTION ISOLATION LEVEL READ COMMITTED")
+            .execute(&mut *tx)
+            .await?;
+        let status = sqlx::query_scalar!(
+            "SELECT status FROM core.blobs WHERE hash = $1 FOR UPDATE",
+            name
+        )
+        .fetch_optional(&mut *tx)
+        .await?;
+        if status.as_deref() != Some("deleting") || !unreferenced(&mut tx, &name).await? {
+            tx.commit().await?;
+            continue;
         }
+        if blobs.delete(&name).is_err() {
+            tx.commit().await?;
+            left.push(name);
+            continue;
+        }
+        sqlx::query!(
+            "DELETE FROM core.blobs WHERE hash = $1 AND status = 'deleting'",
+            name
+        )
+        .execute(&mut *tx)
+        .await?;
+        tx.commit().await?;
+        deleted.push(name);
     }
     Ok((deleted, left))
 }

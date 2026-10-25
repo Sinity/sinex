@@ -7,20 +7,21 @@ use sinex_model::{
 };
 use std::sync::Arc;
 
-fn imported(command: &str, anchor: u64) -> Event {
+/// The record of `command`, alone in material `n + 1`, started `n` seconds in.
+fn imported(command: &str, n: u64) -> Event {
     Event::build(
         &CommandImported {
             command: command.into(),
             hostname: "h".into(),
-            started_at: Some(Timestamp::from_unix_secs(1_700_000_000 + anchor as i64).unwrap()),
+            started_at: Some(Timestamp::from_unix_secs(1_700_000_000 + n as i64).unwrap()),
             header_elapsed: Some(0),
             n: 0,
         },
         "zsh",
         Origin::Record {
             location: RecordLocation {
-                material: MaterialId(uuid::Uuid::nil()),
-                anchor,
+                material: MaterialId(uuid::Uuid::from_u128(u128::from(n) + 1)),
+                anchor: 0,
             },
             ordinal: 0,
         },
@@ -172,6 +173,16 @@ async fn excised_events_never_reach_consumers(db: devkit::pg::TestDatabase) {
     let mut connection = <sqlx::PgConnection as sqlx::Connection>::connect(&url)
         .await
         .unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    let blobs = sinex_store::Blobs::open(dir.path()).unwrap();
+    crate::excision::tests::register(
+        &mut connection,
+        &blobs,
+        &sinex_sources::sources::clipboard::SPEC,
+        MaterialId(uuid::Uuid::from_u128(1)),
+        b"secret\n",
+    )
+    .await;
     let secret = imported("secret", 0);
     let keep = imported("keep", 1);
     let excise_target = secret.id;
@@ -183,20 +194,13 @@ async fn excised_events_never_reach_consumers(db: devkit::pg::TestDatabase) {
     )
     .await
     .unwrap();
-    let target = sinex_store::excision::Target::Event(excise_target);
-    let plan = sinex_store::excision::plan(&mut tx, target).await.unwrap();
-    sinex_store::excision::apply(
-        &mut tx,
-        target,
-        &plan,
-        &[],
-        sinex_model::OperationId::new(),
-        "operator",
-        &sinex_store::NoDerivations,
-    )
-    .await
-    .unwrap();
     tx.commit().await.unwrap();
+    crate::excision::tests::excise_directly(
+        &mut connection,
+        &blobs,
+        sinex_store::excision::Target::Event(excise_target),
+    )
+    .await;
     let mut conn = PgConnection::connect(&url).await.unwrap();
     let page = commit_log::after(&mut conn, 0, 10).await.unwrap();
     assert_eq!(page.up_to, Some(2));

@@ -11,6 +11,7 @@ use sinex_model::{
 pub const REQUEST: SourceSpec = SourceSpec {
     name: "forecast.request",
     driver: Driver::ApiRequest,
+    excisable: true,
     consumer: "authored probability forecasts",
     class: Class::Guarded,
     parser: "forecast-request",

@@ -34,6 +34,7 @@ use std::path::{Path, PathBuf};
 pub const SPEC: SourceSpec = SourceSpec {
     name: "account.samsung",
     driver: Driver::ExportArchive,
+    excisable: false,
     consumer: "what the operator's Samsung account kept: health sync, settings, backups",
     class: Class::Open,
     parser: "samsung-account-export",

@@ -146,6 +146,7 @@ impl Library<'_> {
         };
         let id = r.rendition.clone();
         self.write_citing(
+            conn,
             vec![LibraryRecord::Rendition(r)],
             actor,
             "preview",

@@ -27,8 +27,11 @@ and [docs/vocabulary.md](docs/vocabulary.md) names the concepts.
   presence, hourly and daily summaries, and text read from screen stills,
   recomputed per changed key as their inputs arrive.
 - **Removal and replay.** Hide and unhide; excision, which deletes a record's
-  events and bytes for good; replay of stored bytes with the current parsers.
-  Hidden and excised records stay out when the source is read again.
+  events and its material's bytes for good, when the record is alone in its
+  material and its source never reads a record twice (live streams, media
+  capture, forecasts), and an outside producer's excision of whole materials
+  it registered; replay of stored bytes with the
+  current parsers. Hidden records stay out when the source is read again.
 - **Privacy.** Rules applied at admission, the classes `open`, `guarded` and
   `sealed`, and a private-mode switch that stops capture. Sealed sources are
   encrypted at rest; capture needs only the class key's public half, and

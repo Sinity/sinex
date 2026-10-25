@@ -36,7 +36,7 @@ impl Inputs {
         format!("terminal.zsh-history:{}@{HOST}", self.zsh.display())
     }
 
-    // Includes two multiline records and the excision target with neighbours.
+    // Includes two multiline records.
     fn first_transaction() -> Self {
         Self::new(128, 127)
     }
@@ -146,6 +146,13 @@ impl Target {
 
     fn excise(&self, event: &str) -> Command {
         self.sinexd(&["admin", "excise", event])
+    }
+
+    fn backfill_clipboard(&self, spool: &Path) -> Command {
+        let mut c = self.sinexd(&["backfill", "--host", HOST]);
+        c.arg("--source")
+            .arg(format!("clipboard={}", spool.display()));
+        c
     }
 
     /// The daemon on a test NATS server. No token files: the API serves no
@@ -543,19 +550,60 @@ async fn an_interrupted_replay_resumes_where_it_stopped() {
     );
 }
 
+/// A clipboard spool of two segments: `copy 42` alone in the first, `copies`
+/// other copies in the second. Each segment is read as its own material.
+fn clipboard_spool(dir: &Path, copies: usize) -> PathBuf {
+    use sinex_sources::drivers::live_stream;
+    use sinex_sources::sources::clipboard;
+    let spool = dir.join("clipboard");
+    std::fs::create_dir_all(&spool).unwrap();
+    let copy = |i: usize| {
+        let line = clipboard::frame(
+            "clipboard",
+            &["text/plain".into()],
+            format!("copy {i}").as_bytes(),
+        );
+        let received = sinex_model::Timestamp::from_unix_secs(1_600_000_000 + i as i64).unwrap();
+        live_stream::frame(received, &line)
+    };
+    std::fs::write(spool.join("000000000000.ndjson"), copy(42)).unwrap();
+    let others: Vec<u8> = (0..copies).filter(|i| *i != 42).flat_map(copy).collect();
+    std::fs::write(spool.join("000000000001.ndjson"), others).unwrap();
+    spool
+}
+
+/// The stored bytes of the clipboard material `nth` in part order.
+async fn clipboard_bytes(target: &Target, c: &mut PgConnection, nth: i64) -> Vec<u8> {
+    let blob: String = sqlx::query_scalar("SELECT blob FROM raw.materials m JOIN raw.inputs i ON i.id = m.input_id WHERE i.binding LIKE 'desktop.clipboard:%' ORDER BY m.part_index OFFSET $1 LIMIT 1")
+        .bind(nth)
+        .fetch_one(c)
+        .await
+        .unwrap();
+    let hex = blob.trim_start_matches("blake3:");
+    zstd_decode(
+        &target
+            .store
+            .join("blobs")
+            .join(&hex[..2])
+            .join(format!("{hex}.zst")),
+    )
+}
+
 /// Kill an excision at a step; nothing is removed. Excising again removes the
-/// record, and its bytes, once.
+/// record, and its material's bytes, once; the other material is untouched.
 async fn excision_survives(lock_sql: &str) {
     let inputs = Inputs::first_transaction();
     let target = Target::new(&inputs);
-    finish(&mut target.backfill(&inputs));
+    let spool = clipboard_spool(&inputs.dir, 64);
+    finish(&mut target.backfill_clipboard(&spool));
     let mut c = target.connect().await;
     let event: uuid::Uuid =
-        sqlx::query_scalar("SELECT id FROM core.events WHERE payload->>'command' = 'cmd 42'")
+        sqlx::query_scalar("SELECT id FROM core.events WHERE payload->>'text' = 'copy 42'")
             .fetch_one(&mut c)
             .await
             .unwrap();
     let before = state(&mut c).await;
+    let neighbours = clipboard_bytes(&target, &mut c, 1).await;
     kill_at(
         &target,
         &mut target.excise(&event.to_string()),
@@ -577,26 +625,16 @@ async fn excision_survives(lock_sql: &str) {
         scalar(&mut c, "SELECT count(*) FROM core.event_tombstones").await,
         1
     );
-    let blob: String = sqlx::query_scalar("SELECT blob FROM raw.materials m JOIN raw.inputs i ON i.id = m.input_id WHERE i.binding LIKE 'terminal.zsh-history:%@crash' ORDER BY m.part_index LIMIT 1")
-        .fetch_one(&mut c)
-        .await
-        .unwrap();
-    let hex = blob.trim_start_matches("blake3:");
-    let path = target
-        .store
-        .join("blobs")
-        .join(&hex[..2])
-        .join(format!("{hex}.zst"));
-    let bytes = zstd_decode(&path);
+    let excised = clipboard_bytes(&target, &mut c, 0).await;
     assert!(
-        !contains(&bytes, b"cmd 42\n"),
-        "the record's bytes are gone"
+        excised.iter().all(|b| *b == b' ' || *b == b'\n'),
+        "the record's material is blank"
     );
-    assert!(contains(&bytes, b"cmd 43\n"), "its neighbours stay");
-}
-
-fn contains(haystack: &[u8], needle: &[u8]) -> bool {
-    haystack.windows(needle.len()).any(|w| w == needle)
+    assert_eq!(
+        clipboard_bytes(&target, &mut c, 1).await,
+        neighbours,
+        "the other material is untouched"
+    );
 }
 
 fn zstd_decode(path: &Path) -> Vec<u8> {

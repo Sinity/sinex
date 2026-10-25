@@ -262,10 +262,6 @@ pub fn check(root: &Path) -> Result<(), String> {
     let names = catalog_names(&catalog)?;
     let mut problems = Vec::new();
     for (path, text) in product_files(&root.join("crates/sinexd/src"))? {
-        // Excision's lock and planning statements are the one exception.
-        if path.components().any(|c| c.as_os_str() == "excision") || path.ends_with("excision.rs") {
-            continue;
-        }
         if text.contains("sqlx::query") {
             problems.push(format!(
                 "{}: SQL in the daemon; add a checked query to sinex-store",

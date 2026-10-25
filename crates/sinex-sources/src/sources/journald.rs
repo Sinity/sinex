@@ -26,6 +26,7 @@ use std::time::Duration;
 pub const SPEC: SourceSpec = SourceSpec {
     name: "machine.journald",
     driver: Driver::LiveStream,
+    excisable: false,
     consumer: "machine timeline, service health and recall",
     // Journal messages carry command lines, paths and sometimes secrets.
     class: Class::Guarded,

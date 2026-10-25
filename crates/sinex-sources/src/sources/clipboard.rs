@@ -22,6 +22,7 @@ use std::time::Duration;
 pub const SPEC: SourceSpec = SourceSpec {
     name: "desktop.clipboard",
     driver: Driver::LiveStream,
+    excisable: true,
     consumer: "recall: what was copied where",
     // Anything the operator copies, passwords included unless marked secret.
     class: Class::Guarded,

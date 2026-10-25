@@ -23,6 +23,7 @@ use std::path::PathBuf;
 pub const SPEC: SourceSpec = SourceSpec {
     name: "health.samsung-export",
     driver: Driver::ExportArchive,
+    excisable: false,
     consumer: "sleep, heart, activity and body measurements",
     class: Class::Open,
     parser: "samsung-health-export",

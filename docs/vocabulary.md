@@ -61,9 +61,7 @@ these names and no others.
 
 - **removed at source**: the source no longer has a record; stored as a newer reading.
 - **hide / unhide**: take an event out of views, counts and re-imports, and put it back.
-- **excision**: the operator's permanent deletion of a record's events and bytes.
-- **exclusions**: the record keys and hashes of excised records, blanked when a source is read again.
-- **source lock**: the lock a source's reads and excisions hold so they do not overlap.
+- **excision**: the operator's permanent deletion of one record's events and the material holding it, when nothing else shares that material; only an **excisable** source, one whose every stored copy of a record is a reading of it, allows it.
 - **class**: a privacy class: `open`, `guarded` or `sealed`.
 - **sealed**: encrypted at rest under a per-material **data key**, wrapped for the operator's **class key**; reading needs an **unlock**.
 - **rule**: a privacy rule applied at admission; **masking** hides credentials on output.
@@ -77,7 +75,7 @@ these names and no others.
 | publication (for bytes) | write, install |
 | frozen, freeze | fixed, saved, or name the thing itself |
 | canonical | fused (commands), sorted (JSON) |
-| basis | exclusions |
+| basis | name the thing itself |
 | candidate | selected |
 | authority, lease | access, grant, guard |
 | legacy, predecessor, old formats | nothing: internal formats have one version until the first deployment |

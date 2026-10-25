@@ -261,90 +261,6 @@ async fn queued_checks_reject_a_revoked_unlock_and_roll_back_before_commit(
     writer.await.unwrap();
 }
 
-#[devkit::test]
-async fn a_single_slot_planning_pool_keeps_the_queued_excision_lock_after_caller_cancellation(
-    db: devkit::pg::TestDatabase,
-) {
-    let url = db.url(None);
-    let connection = <sqlx::PgConnection as sqlx::Connection>::connect(&url)
-        .await
-        .unwrap();
-    let pool = sqlx::postgres::PgPoolOptions::new()
-        .max_connections(1)
-        .connect(&url)
-        .await
-        .unwrap();
-    let guard = crate::excision::ExcisionGuard::acquire(
-        pool.acquire().await.unwrap(),
-        "synthetic-source".into(),
-    )
-    .await
-    .unwrap();
-    let (handle, queues) = channels_for(&url);
-    let directory = tempfile::tempdir().unwrap();
-    let h = handle.clone();
-    let caller = tokio::spawn(async move {
-        h.excise(Excision {
-            guard: Some(guard),
-            target: Target::Material(MaterialId::new()),
-            plan: Plan::default(),
-            rewrites: Vec::new(),
-            operation: OperationId::new(),
-            actor: "synthetic".into(),
-            blobs: Blobs::open(directory.path()).unwrap(),
-        })
-        .await
-    });
-    tokio::time::timeout(std::time::Duration::from_secs(2), async {
-        while queues.live.len() != 1 {
-            tokio::task::yield_now().await;
-        }
-    })
-    .await
-    .unwrap();
-    caller.abort();
-    assert!(caller.await.unwrap_err().is_cancelled());
-    assert!(
-        tokio::time::timeout(std::time::Duration::from_millis(20), pool.acquire())
-            .await
-            .is_err(),
-        "queued work must keep the original single pool slot"
-    );
-    let h = handle.clone();
-    let acquisition = tokio::spawn(async move { h.source_guard("synthetic-source").await });
-    tokio::task::yield_now().await;
-    assert!(
-        !acquisition.is_finished(),
-        "dropping the caller released the queued source lock"
-    );
-    let writer = tokio::spawn(run(
-        url,
-        connection,
-        queues,
-        Arc::new(sinex_store::NoDerivations),
-        None,
-    ));
-    let acquired = tokio::time::timeout(std::time::Duration::from_secs(2), acquisition)
-        .await
-        .unwrap()
-        .unwrap()
-        .unwrap();
-    acquired.release().await.unwrap();
-    let mut returned = tokio::time::timeout(std::time::Duration::from_secs(2), pool.acquire())
-        .await
-        .unwrap()
-        .unwrap();
-    let operations: i64 = sqlx::query_scalar("SELECT count(*) FROM core.operations")
-        .fetch_one(&mut *returned)
-        .await
-        .unwrap();
-    assert_eq!(operations, 0, "canceled queued apply changed the archive");
-    drop(returned);
-    drop(handle);
-    writer.await.unwrap();
-    pool.close().await;
-}
-
 /// A capture that stored its bytes before an excision deleted the same bytes
 /// is refused, rather than registering a material whose file is gone.
 #[devkit::test]
@@ -368,7 +284,6 @@ async fn a_batch_whose_bytes_are_not_stored_is_refused(db: devkit::pg::TestDatab
     let source = || Batch {
         run: RunId::new(),
         kind: BatchKind::Source(Box::new(sinex_model::SourceProgress {
-            exclusions: None,
             binding: "synthetic".into(),
             material_keys: Vec::new(),
             input: sinex_model::InputRef {

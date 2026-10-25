@@ -34,6 +34,7 @@ use std::path::PathBuf;
 pub const CAST: SourceSpec = SourceSpec {
     name: "terminal.asciinema",
     driver: Driver::AppendFile,
+    excisable: false,
     consumer: "what terminals showed and what was typed, replayable",
     class: sinex_model::Class::Open,
     parser: "asciinema-cast",
@@ -45,6 +46,7 @@ pub const CAST: SourceSpec = SourceSpec {
 pub const EVENTS: SourceSpec = SourceSpec {
     name: "terminal.capture-events",
     driver: Driver::AppendFile,
+    excisable: false,
     consumer: "shell commands around a terminal recording",
     class: sinex_model::Class::Open,
     parser: "terminal-capture-events",

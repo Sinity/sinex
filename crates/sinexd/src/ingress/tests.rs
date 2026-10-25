@@ -43,10 +43,6 @@ impl Harness {
             subjects.clone(),
             handle,
             PgConnection::connect(&url).await.unwrap(),
-            sqlx::postgres::PgPoolOptions::new()
-                .max_connections(1)
-                .connect_lazy(&url)
-                .unwrap(),
             blobs.clone(),
             "test-host".into(),
         )
@@ -707,82 +703,91 @@ async fn an_indirect_frame_is_handled_as_the_frame_it_names(db: devkit::pg::Test
     assert!(ack.refusal.unwrap().contains("material or events frame"));
 }
 
-#[devkit::test]
-async fn exclusion_guard_precedes_new_producer_registration_and_chunk_storage(
-    db: devkit::pg::TestDatabase,
-) {
-    use base64::Engine;
-    let h = Harness::start(db).await;
-    let mut conn = PgConnection::connect(&h.url).await.unwrap();
-    let mut guard = conn.begin().await.unwrap();
-    sinex_store::excision::lock_source(&mut guard, "new-node", false)
-        .await
-        .unwrap();
-    let bytes = b"synthetic private chunk";
-    let blob = format!("blake3:{}", blake3::hash(bytes).to_hex());
-    let frame = Ingress::Chunk {
-        for_frame: "late-material".into(),
-        frame: "late-chunk".into(),
-        blob: blob.clone(),
-        offset: 0,
-        total: bytes.len() as u64,
-        data: base64::engine::general_purpose::STANDARD.encode(bytes),
-    };
-    let mut acks = h
-        .client
-        .subscribe(h.subjects.ack("new-node"))
-        .await
-        .unwrap();
-    h.client.flush().await.unwrap();
-    let js = jetstream::new(h.client.clone());
-    js.publish(
-        h.subjects.ingress("new-node"),
-        serde_json::to_vec(&frame).unwrap().into(),
-    )
-    .await
-    .unwrap()
-    .await
-    .unwrap();
-    let mut observer = PgConnection::connect(&h.url).await.unwrap();
-    let mut waiting = false;
-    for _ in 0..500 {
-        waiting = sqlx::query_scalar::<_, bool>("SELECT EXISTS(SELECT 1 FROM pg_locks WHERE locktype='advisory' AND NOT granted AND database=(SELECT oid FROM pg_database WHERE datname=current_database()))")
-            .fetch_one(&mut observer).await.unwrap();
-        if waiting {
-            break;
-        }
-        tokio::time::sleep(Duration::from_millis(10)).await;
+impl Harness {
+    async fn excise(&self, producer: &str, materials: &[MaterialId]) -> ExciseReply {
+        let request = Excise {
+            materials: materials.to_vec(),
+        };
+        let reply = self
+            .client
+            .request(
+                self.subjects.excise(producer),
+                serde_json::to_vec(&request).unwrap().into(),
+            )
+            .await
+            .unwrap();
+        serde_json::from_slice(&reply.payload).unwrap()
     }
+
+    async fn stored(&self, material: MaterialId) -> Vec<u8> {
+        let mut conn = PgConnection::connect(&self.url).await.unwrap();
+        let blob: String = sqlx::query_scalar("SELECT blob FROM raw.materials WHERE id = $1")
+            .bind(material.0)
+            .fetch_one(&mut conn)
+            .await
+            .unwrap();
+        self.blobs.read(&blob).unwrap()
+    }
+}
+
+/// A producer excises whole materials it registered: their events go and
+/// their bytes become spaces. A request naming a material another producer
+/// registered is refused, and nothing changes.
+#[devkit::test]
+async fn a_producer_excises_only_its_own_whole_materials(db: devkit::pg::TestDatabase) {
+    let h = Harness::start(db).await;
+    let (mine, frame) = h.material_frame("m1", b": 1760788800:0;ls\n");
+    assert_eq!(h.send("kitty", &frame).await.refusal, None);
+    let (other, frame) = h.material_frame("m2", b": 1760788801:0;pwd\n");
+    assert_eq!(h.send("phone", &frame).await.refusal, None);
+    for (producer, material) in [("kitty", mine), ("phone", other)] {
+        let events = Ingress::Events {
+            frame: format!("e-{producer}"),
+            events: vec![imported(material, 0, "ls")],
+            failures: vec![],
+        };
+        assert_eq!(h.send(producer, &events).await.refusal, None);
+    }
+
+    let refused = h.excise("kitty", &[mine, other]).await;
     assert!(
-        waiting,
-        "ingress must wait before registration and chunk writing"
+        refused
+            .refusal
+            .as_deref()
+            .is_some_and(|r| r.contains("not registered by kitty")),
+        "{refused:?}"
+    );
+    assert_eq!(h.count("SELECT count(*) FROM core.events").await, 2);
+    assert_eq!(h.stored(mine).await, b": 1760788800:0;ls\n");
+
+    let done = h.excise("kitty", &[mine]).await;
+    assert_eq!(
+        done,
+        ExciseReply {
+            materials: 1,
+            events: 1,
+            refusal: None
+        }
     );
     assert_eq!(
-        h.count("SELECT count(*) FROM core.manifests WHERE name='new-node'")
+        h.count("SELECT count(*) FROM core.events WHERE source = 'kitty'")
             .await,
         0
     );
-    assert!(!h.blobs.contains(&blob).unwrap());
-    sqlx::query(
-        "INSERT INTO core.operations(id,kind,actor,scope) VALUES($1,'excise','synthetic',$2)",
-    )
-    .bind(Uuid::now_v7())
-    .bind(json!({"sources":["new-node"]}))
-    .execute(&mut *guard)
-    .await
-    .unwrap();
-    guard.commit().await.unwrap();
-    let message = tokio::time::timeout(Duration::from_secs(5), acks.next())
-        .await
-        .unwrap()
-        .unwrap();
-    let ack: Acknowledgment = serde_json::from_slice(&message.payload).unwrap();
-    assert!(ack.refusal.unwrap().contains("excised records"));
-    assert!(!h.blobs.contains(&blob).unwrap());
-    assert_eq!(
-        h.count("SELECT count(*) FROM core.manifests WHERE name='new-node'")
-            .await,
-        0
+    assert_eq!(h.stored(mine).await, b"                 \n");
+    assert!(
+        h.materials("kitty", 0, 10).await.is_empty(),
+        "an excised material is no longer listed"
     );
-    assert!(!h.store_dir.join("incoming").exists());
+    assert_eq!(h.materials("phone", 0, 10).await.len(), 1);
+    assert_eq!(
+        h.stored(other).await,
+        b": 1760788801:0;pwd\n",
+        "another producer's material is untouched"
+    );
+    assert_eq!(
+        h.count("SELECT count(*) FROM core.events WHERE source = 'phone'")
+            .await,
+        1
+    );
 }

@@ -51,7 +51,6 @@ pub struct ReplayChain {
 
 /// An excision, planned and with its replacement bytes already stored.
 pub struct Excision {
-    pub guard: Option<crate::excision::ExcisionGuard>,
     pub target: Target,
     pub plan: Plan,
     pub rewrites: Vec<Rewrite>,
@@ -71,7 +70,6 @@ pub struct Excised {
 
 enum Work {
     Admit(Batch),
-    Guarded(Batch, crate::excision::AcquisitionGuard, AdmissionCheck),
     Checked(Batch, AdmissionCheck),
     Replay(ReplayChain),
     Excise(Box<Excision>),
@@ -94,34 +92,11 @@ pub struct WriterHandle {
     live: mpsc::Sender<Job>,
     derived: mpsc::Sender<Job>,
     bulk: mpsc::Sender<Job>,
-    source_database: Option<Arc<str>>,
 }
 
 /// A check run just before and after the admission (cancellation, unlock
 /// expiry); an error refuses the batch.
 pub(crate) type AdmissionCheck = Arc<dyn Fn() -> Result<(), String> + Send + Sync>;
-
-/// A place in a writer queue, for a batch admitted under a source guard. The
-/// queued work owns the guard, so dropping the caller does not release it.
-pub(crate) struct GuardedSlot(mpsc::OwnedPermit<Job>);
-impl GuardedSlot {
-    pub async fn admit(
-        self,
-        batch: Batch,
-        guard: crate::excision::AcquisitionGuard,
-        check: AdmissionCheck,
-    ) -> Result<Outcome, WriteError> {
-        let (reply, answer) = oneshot::channel();
-        self.0.send(Job {
-            work: Work::Guarded(batch, guard, check),
-            reply,
-        });
-        match answer.await.map_err(|_| WriteError::Stopped)?? {
-            Done::Admitted(outcome) => Ok(outcome),
-            _ => unreachable!("a guarded admission answers with its outcome"),
-        }
-    }
-}
 
 impl WriterHandle {
     pub(crate) async fn submit_checked(
@@ -135,42 +110,6 @@ impl WriterHandle {
             _ => unreachable!("checked admission returns its outcome"),
         }
     }
-    pub(crate) async fn source_guard(
-        &self,
-        source: &str,
-    ) -> Result<crate::excision::AcquisitionGuard, String> {
-        let database = self
-            .source_database
-            .as_deref()
-            .ok_or("the writer has no database to take source guards on")?;
-        crate::excision::AcquisitionGuard::acquire(database, source).await
-    }
-    #[cfg(test)]
-    pub(crate) async fn excision_guard(
-        &self,
-        source: String,
-    ) -> Result<crate::excision::ExcisionGuard, String> {
-        let database = self
-            .source_database
-            .as_deref()
-            .ok_or("writer has no source connection configuration")?;
-        crate::excision::ExcisionGuard::connect(database, source).await
-    }
-    pub(crate) async fn guarded_slot(&self, priority: Priority) -> Result<GuardedSlot, WriteError> {
-        let channel = match priority {
-            Priority::Live => &self.live,
-            Priority::Derived => &self.derived,
-            Priority::Bulk => &self.bulk,
-        };
-        Ok(GuardedSlot(
-            channel
-                .clone()
-                .reserve_owned()
-                .await
-                .map_err(|_| WriteError::Stopped)?,
-        ))
-    }
-
     /// Submit a batch and wait until it is committed (or refused).
     pub async fn submit(&self, priority: Priority, batch: Batch) -> Result<Outcome, WriteError> {
         match self.send(priority, Work::Admit(batch)).await? {
@@ -224,16 +163,7 @@ pub struct Queues {
 /// the backpressure on capture and imports.
 const DEPTH: usize = 16;
 
-#[cfg(test)]
 pub fn channels() -> (WriterHandle, Queues) {
-    channels_with_database(None)
-}
-
-pub(crate) fn channels_for(database: &str) -> (WriterHandle, Queues) {
-    channels_with_database(Some(Arc::from(database)))
-}
-
-fn channels_with_database(source_database: Option<Arc<str>>) -> (WriterHandle, Queues) {
     let (live, live_rx) = mpsc::channel(DEPTH);
     let (derived, derived_rx) = mpsc::channel(DEPTH);
     let (bulk, bulk_rx) = mpsc::channel(DEPTH);
@@ -242,7 +172,6 @@ fn channels_with_database(source_database: Option<Arc<str>>) -> (WriterHandle, Q
             live,
             derived,
             bulk,
-            source_database,
         },
         Queues {
             live: live_rx,
@@ -329,49 +258,12 @@ pub async fn run_notifying(
                     .await
                     .map(Done::Admitted)
             }
-            Work::Guarded(batch, mut guard, check) => {
-                let result = async {
-                    let source = match &batch.kind {
-                        sinex_model::BatchKind::Source(progress) => {
-                            progress.exclusions.as_ref().map(|b| b.source.as_str())
-                        }
-                        sinex_model::BatchKind::Ingress(frame) => Some(frame.producer.as_str()),
-                        _ => None,
-                    };
-                    if source != Some(guard.source()) {
-                        return Err(WriteError::Refused(
-                            "the batch's source differs from its source guard".into(),
-                        ));
-                    }
-                    guard.check().await.map_err(WriteError::Refused)?;
-                    admit_checked(&mut connection, &batch, keys.as_ref(), store, &*check)
-                        .await
-                        .map(Done::Admitted)
-                }
-                .await;
-                // A committed admission is still committed if closing the guard
-                // connection fails. The owned connection is never returned to a pool.
-                let released = guard.release().await;
-                if let Err(error) = released {
-                    eprintln!("sinexd: closing the source guard: {error}");
-                }
-                result
-            }
             Work::Replay(mut chain) => replay_chain(&mut connection, &mut chain, keys.as_ref())
                 .await
                 .map(|(o, d)| Done::Replayed(o, d)),
-            Work::Excise(mut excision) => {
-                let result = excise(&mut connection, &mut excision, keys.as_ref()).await;
-                let released = match excision.guard.take() {
-                    Some(guard) => guard.release().await.map_err(WriteError::Refused),
-                    None => Ok(()),
-                };
-                match (result, released) {
-                    (Ok(done), Ok(())) => Ok(Done::Excised(done)),
-                    (Err(error), _) => Err(error),
-                    (_, Err(error)) => Err(error),
-                }
-            }
+            Work::Excise(excision) => excise(&mut connection, &excision, keys.as_ref())
+                .await
+                .map(Done::Excised),
         };
         if let Err(WriteError::Refused(_)) = &result
             && connection.ping().await.is_err()
@@ -468,40 +360,29 @@ async fn replay_chain(
 
 async fn excise(
     connection: &mut PgConnection,
-    e: &mut Excision,
+    e: &Excision,
     keys: &dyn DirtyKeys,
 ) -> Result<Excised, WriteError> {
     let refuse = |e: &dyn std::fmt::Display| WriteError::Refused(e.to_string());
-    if let Some(guard) = e.guard.as_mut() {
-        guard.check().await.map_err(WriteError::Refused)?;
-    }
     let mut tx = connection.begin().await.map_err(|e| refuse(&e))?;
-    let result = async {
-        let applied = excision::apply(
-            &mut tx,
-            e.target,
-            &e.plan,
-            &e.rewrites,
-            e.operation,
-            &e.actor,
-            keys,
-        )
-        .await
-        .map_err(|e| refuse(&e))?;
-        if let Some(guard) = e.guard.as_mut() {
-            guard.check().await.map_err(WriteError::Refused)?;
-        }
-        Ok::<_, WriteError>(applied)
-    }
-    .await;
-    let applied = match result {
+    let applied = match excision::apply(
+        &mut tx,
+        e.target,
+        &e.plan,
+        &e.rewrites,
+        e.operation,
+        &e.actor,
+        keys,
+    )
+    .await
+    {
         Ok(applied) => {
             tx.commit().await.map_err(|e| refuse(&e))?;
             applied
         }
         Err(error) => {
             tx.rollback().await.map_err(|e| refuse(&e))?;
-            return Err(error);
+            return Err(refuse(&error));
         }
     };
     let (_, files_left) = excision::finish_deletions(connection, &e.blobs)

@@ -186,7 +186,7 @@ async fn local_driver(
         .map(sinex_store::blobs::Blobs::open)
         .transpose()
         .map_err(|e| e.to_string())?;
-    let (handle, queues) = writer::channels_for(database);
+    let (handle, queues) = writer::channels();
     let task = tokio::spawn(writer::run(
         database.to_owned(),
         writer_conn,

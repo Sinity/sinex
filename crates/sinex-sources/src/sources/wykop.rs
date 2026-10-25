@@ -27,6 +27,7 @@ use std::path::PathBuf;
 pub const SPEC: SourceSpec = SourceSpec {
     name: "social.wykop",
     driver: Driver::ExportArchive,
+    excisable: false,
     consumer: "what the operator wrote and voted on at Wykop",
     class: Class::Open,
     parser: "wykop",

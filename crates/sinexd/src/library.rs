@@ -39,14 +39,22 @@ fn e(err: impl std::fmt::Display) -> String {
 impl Library<'_> {
     /// Store and admit one library request. All its records commit together
     /// or none do (one material, admitted in one batch when it fits).
-    pub async fn write(&self, records: Vec<LibraryRecord>, actor: &str, action: &str) -> R<Value> {
-        self.write_citing(records, actor, action, Vec::new()).await
+    pub async fn write(
+        &self,
+        conn: &mut PgConnection,
+        records: Vec<LibraryRecord>,
+        actor: &str,
+        action: &str,
+    ) -> R<Value> {
+        self.write_citing(conn, records, actor, action, Vec::new())
+            .await
     }
 
     /// [`Library::write`] for records that cite stored bytes beyond their
     /// material (a preview), already written to the content store.
     async fn write_citing(
         &self,
+        conn: &mut PgConnection,
         records: Vec<LibraryRecord>,
         actor: &str,
         action: &str,
@@ -66,6 +74,7 @@ impl Library<'_> {
                 .manifest["cited_blobs"] = serde_json::to_value(cited).map_err(e)?;
         }
         let result = crate::authored::submit(
+            conn,
             self.writer,
             self.blobs,
             std::sync::Arc::new(library_source::request_source()),

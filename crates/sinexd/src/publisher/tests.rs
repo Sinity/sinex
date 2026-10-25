@@ -24,9 +24,10 @@ fn executed(native_id: &str, command: &str, order: i64, class: Class) -> Event {
         },
         "atuin",
         Origin::Record {
+            // Each record is alone in its material.
             location: RecordLocation {
-                material: MaterialId(uuid::Uuid::nil()),
-                anchor: order as u64,
+                material: MaterialId(uuid::Uuid::from_u128(order as u128)),
+                anchor: 0,
             },
             ordinal: 0,
         },
@@ -288,6 +289,16 @@ async fn excision_erases_the_published_message(db: devkit::pg::TestDatabase) {
     let mut conn = <sqlx::PgConnection as sqlx::Connection>::connect(&url)
         .await
         .unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    let blobs = sinex_store::Blobs::open(dir.path()).unwrap();
+    crate::excision::tests::register(
+        &mut conn,
+        &blobs,
+        &sinex_sources::sources::clipboard::SPEC,
+        MaterialId(uuid::Uuid::from_u128(1)),
+        b"export TOKEN=hunter2\n",
+    )
+    .await;
     let secret = executed("1", "export TOKEN=hunter2", 1, Class::Open);
     let secret_id = secret.id;
     let sibling = executed("2", "ls", 2, Class::Open);
@@ -316,22 +327,12 @@ async fn excision_erases_the_published_message(db: devkit::pg::TestDatabase) {
     )
     .await;
 
-    let target = sinex_store::excision::Target::Event(secret_id);
-    let mut tx = conn.begin().await.unwrap();
-    let plan = sinex_store::excision::plan(&mut tx, target).await.unwrap();
-    let operation = OperationId::new();
-    sinex_store::excision::apply(
-        &mut tx,
-        target,
-        &plan,
-        &[],
-        operation,
-        "operator",
-        &sinex_store::NoDerivations,
+    let operation = crate::excision::tests::excise_directly(
+        &mut conn,
+        &blobs,
+        sinex_store::excision::Target::Event(secret_id),
     )
-    .await
-    .unwrap();
-    tx.commit().await.unwrap();
+    .await;
     let remaining: Vec<uuid::Uuid> = sqlx::query_scalar(
         "SELECT event_id FROM audit.archive_changes WHERE event_id IS NOT NULL ORDER BY event_id",
     )

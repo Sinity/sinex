@@ -28,6 +28,7 @@ const fn spec(name: &'static str, parser: &'static str, consumer: &'static str) 
     SourceSpec {
         name,
         driver: Driver::AppendFile,
+        excisable: false,
         consumer,
         // The class of each lane is the operator's to choose; floors raise it
         // without a code change.

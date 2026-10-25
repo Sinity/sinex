@@ -20,6 +20,7 @@ use std::time::{Duration, Instant};
 pub const SPEC: SourceSpec = SourceSpec {
     name: "session.media",
     driver: Driver::Media,
+    excisable: true,
     consumer: "recall: what was on screen and said; screen text and transcripts",
     // Whatever was on screen or within the microphone's reach.
     class: Class::Guarded,

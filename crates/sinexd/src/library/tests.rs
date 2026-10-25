@@ -25,7 +25,7 @@ async fn world(db: devkit::pg::TestDatabase) -> World {
         .unwrap();
     let base = std::env::temp_dir().join(format!("sinexd-library-{}", uuid::Uuid::now_v7()));
     let blobs = Blobs::open(&base.join("store")).unwrap();
-    let (handle, queues) = writer::channels_for(&url);
+    let (handle, queues) = writer::channels();
     writer::claim(&mut connection).await.unwrap();
     tokio::spawn(writer::run(
         url.clone(),
@@ -480,60 +480,37 @@ async fn blob_row(conn: &mut PgConnection, blob: &str) -> bool {
         .unwrap()
 }
 
-/// Excising a library file deletes the media bytes the scan kept, unless
-/// another file (an unrelated copy at another path) still names them.
+/// A library scan reads its files again, so excising one of its records is
+/// refused before anything changes.
 #[devkit::test]
-async fn excision_deletes_the_stored_media_bytes(db: devkit::pg::TestDatabase) {
+async fn excision_of_a_scanned_file_is_refused(db: devkit::pg::TestDatabase) {
     let mut w = world(db).await;
-    let (a, b, c) = (
-        w.root.join("a.png"),
-        w.root.join("sub/b.png"),
-        w.root.join("c.png"),
-    );
-    image(&a, "red");
-    std::fs::copy(&a, &b).unwrap();
-    image(&c, "blue");
+    let file = w.root.join("c.png");
+    image(&file, "blue");
     w.ok(Request::LibraryAdd {
         path: w.root.display().to_string(),
         reference: None,
     })
     .await;
-
-    let (c_event, c_bytes) = acquisition(&mut w.conn, &c).await;
-    assert!(
-        w.blobs.contains(&c_bytes).unwrap(),
-        "the scan kept c's bytes"
-    );
-    assert!(blob_row(&mut w.conn, &c_bytes).await);
-    crate::excision::excise_with(
+    let (event, bytes) = acquisition(&mut w.conn, &file).await;
+    let refused = crate::excision::excise(
         &mut w.conn,
         &w.blobs.clone(),
         &w.writer,
-        sinex_store::excision::Target::Event(sinex_model::EventId(c_event)),
+        sinex_store::excision::Target::Event(sinex_model::EventId(event)),
         "operator",
     )
     .await
-    .unwrap();
-    assert!(
-        !w.blobs.contains(&c_bytes).unwrap(),
-        "c's media bytes are gone"
-    );
-    assert!(!blob_row(&mut w.conn, &c_bytes).await);
-
-    let (a_event, a_bytes) = acquisition(&mut w.conn, &a).await;
-    crate::excision::excise_with(
-        &mut w.conn,
-        &w.blobs.clone(),
-        &w.writer,
-        sinex_store::excision::Target::Event(sinex_model::EventId(a_event)),
-        "operator",
-    )
-    .await
-    .unwrap();
-    assert!(
-        w.blobs.contains(&a_bytes).unwrap(),
-        "b names the same bytes, so they stay"
-    );
+    .unwrap_err();
+    assert!(refused.contains("cannot be excised"), "{refused}");
+    assert!(w.blobs.contains(&bytes).unwrap());
+    assert!(blob_row(&mut w.conn, &bytes).await);
+    let left: i64 = sqlx::query_scalar("SELECT count(*) FROM core.events WHERE id = $1")
+        .bind(event)
+        .fetch_one(&mut w.conn)
+        .await
+        .unwrap();
+    assert_eq!(left, 1);
 }
 
 #[devkit::test]
@@ -573,5 +550,3 @@ async fn library_add_through_an_alias_keeps_one_acquisition(db: devkit::pg::Test
     assert_eq!(count, 1);
     std::fs::remove_dir_all(w.root.parent().unwrap()).unwrap();
 }
-
-mod exclusions;

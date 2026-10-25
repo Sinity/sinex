@@ -17,6 +17,7 @@ use std::path::PathBuf;
 pub const MY_ACTIVITY: SourceSpec = SourceSpec {
     name: "google.my-activity",
     driver: Driver::ExportArchive,
+    excisable: false,
     consumer: "searches, visits and app use recorded by the Google account",
     class: Class::Open,
     parser: "google-my-activity",
@@ -31,6 +32,7 @@ pub const MY_ACTIVITY: SourceSpec = SourceSpec {
 pub const YOUTUBE: SourceSpec = SourceSpec {
     name: "google.youtube-history",
     driver: Driver::ExportArchive,
+    excisable: false,
     consumer: "videos watched and searched for",
     class: Class::Open,
     parser: "google-youtube-history",

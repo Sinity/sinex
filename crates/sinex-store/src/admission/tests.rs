@@ -434,7 +434,6 @@ async fn events_and_progress_commit_together(db: devkit::pg::TestDatabase) {
         .await
         .unwrap();
     let progress = |cursor: i64| SourceProgress {
-        exclusions: None,
         material_keys: Vec::new(),
         binding: "b".into(),
         input: InputRef {

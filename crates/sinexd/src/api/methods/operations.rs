@@ -37,14 +37,14 @@ impl Api {
             _ => return refused("excise needs exactly one of an event reference or --material"),
         };
         if dry_run {
-            return match sinex_store::excision::plan(&mut conn, target).await {
+            return match crate::excision::plan(&mut conn, &self.blobs, target).await {
                 Ok(plan) => Reply::Ok {
                     result: json!({ "dry_run": true, "would_excise": crate::excision::describe(&plan) }),
                 },
-                Err(e) => refused(e.to_string()),
+                Err(e) => refused(e),
             };
         }
-        match crate::excision::excise_pooled(conn, &self.blobs, writer, target, actor).await {
+        match crate::excision::excise(&mut conn, &self.blobs, writer, target, actor).await {
             Ok(summary) => Reply::Ok {
                 result: json!({ "excised": summary }),
             },

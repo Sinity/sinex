@@ -14,6 +14,7 @@ fn subjects_and_streams_follow_the_root() {
     assert_eq!(t.producer_of("t123x9f.ingress.kitty"), Some("kitty"));
     assert_eq!(t.producer_of("t123x9f.have.kitty"), Some("kitty"));
     assert_eq!(t.producer_of("t123x9f.materials.kitty"), Some("kitty"));
+    assert_eq!(t.producer_of("t123x9f.excise.kitty"), Some("kitty"));
     assert_eq!(t.producer_of("t123x9f.ingress.Kitty"), None);
     assert_eq!(t.producer_of("other.ingress.kitty"), None);
     assert_eq!(t.producer_of("t123x9f.ack.kitty"), None);
@@ -28,7 +29,8 @@ fn producer_permissions_name_only_its_own_subjects() {
         [
             "sinex.ingress.phone",
             "sinex.have.phone",
-            "sinex.materials.phone"
+            "sinex.materials.phone",
+            "sinex.excise.phone"
         ]
     );
     assert_eq!(subscribe, ["sinex.ack.phone", "_INBOX.>"]);
@@ -38,7 +40,7 @@ fn producer_permissions_name_only_its_own_subjects() {
         "{config}"
     );
     assert!(config.contains(
-        r#"publish: { allow: ["sinex.ingress.phone", "sinex.have.phone", "sinex.materials.phone"] }"#
+        r#"publish: { allow: ["sinex.ingress.phone", "sinex.have.phone", "sinex.materials.phone", "sinex.excise.phone"] }"#
     ));
 }
 

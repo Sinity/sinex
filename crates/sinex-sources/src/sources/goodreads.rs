@@ -13,6 +13,7 @@ use std::path::PathBuf;
 pub const SPEC: SourceSpec = SourceSpec {
     name: "reading.goodreads",
     driver: Driver::ExportArchive,
+    excisable: false,
     consumer: "books shelved and read, for long-horizon interest",
     class: Class::Open,
     parser: "goodreads-library",
