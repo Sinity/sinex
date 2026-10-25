@@ -1,21 +1,17 @@
 //! State intervals: transitions and observed spans become `state.interval`
 //! events, one per span during which a state held (a focused window, a
-//! workspace, a running systemd unit). One rule per state kind, as data; a new
-//! point, transition or span source adds a rule, never a new derivation.
+//! workspace). One rule per state kind, as data; a new point, transition or
+//! span source adds a rule, never a new derivation.
 //!
-//! Three rule shapes:
+//! Two rule shapes:
 //!
 //! - **adjacent transitions** (window focus, workspace): a state holds until
 //!   the next transition to a different subject, or until an interruption;
 //! - **spans** (ActivityWatch window and presence spans, already joined at the
 //!   source): each span is one interval, cut short by an interruption inside
-//!   it;
-//! - **start/stop pairs** (systemd units): a start opens a subject, the
-//!   matching stop closes it; a second start closes the first at its own time.
+//!   it.
 //!
-//! Interruptions end desktop-attention states at their own time: a suspend
-//! (systemd sleep and suspend units starting) ends focus, workspace and window
-//! spans; going AFK ends focus and workspace.
+//! Going AFK is an interruption: it ends focus and workspace at its own time.
 //!
 //! The key is the rule and the logical day. A key emits the intervals that
 //! start inside its day; it reads the earliest transitions after the day to end
@@ -30,22 +26,8 @@ use sinex_model::event_types::StateInterval;
 use sinex_model::{Event, EventPayload, Origin, Timestamp};
 use std::collections::BTreeMap;
 
-pub const SUSPEND_UNITS: &[&str] = &[
-    "sleep.target",
-    "suspend.target",
-    "systemd-suspend.service",
-    "hibernate.target",
-    "systemd-hibernate.service",
-    "hybrid-sleep.target",
-    "systemd-hybrid-sleep.service",
-    "suspend-then-hibernate.target",
-    "systemd-suspend-then-hibernate.service",
-];
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Interruption {
-    /// The machine suspends or hibernates.
-    Suspend,
     /// The operator went AFK.
     Afk,
 }
@@ -54,12 +36,6 @@ impl Interruption {
     /// The neighbour query that finds the next interruption of this kind.
     fn neighbour(self) -> Neighbour {
         match self {
-            Self::Suspend => Neighbour {
-                event_types: vec!["unit.started"],
-                equal: vec![("unit_name", json!(SUSPEND_UNITS))],
-                per: None,
-                count: 1,
-            },
             Self::Afk => Neighbour {
                 event_types: vec!["presence.span"],
                 equal: vec![("status", json!("afk"))],
@@ -72,9 +48,6 @@ impl Interruption {
     fn of(event_type: &str, payload: &Value) -> Option<Self> {
         let field = |f: &str| payload.get(f).and_then(Value::as_str);
         match event_type {
-            "unit.started" if field("unit_name").is_some_and(|u| SUSPEND_UNITS.contains(&u)) => {
-                Some(Self::Suspend)
-            }
             "presence.span" if field("status") == Some("afk") => Some(Self::Afk),
             _ => None,
         }
@@ -87,10 +60,6 @@ pub enum Shape {
     /// The source already observed the span: the payload carries its end.
     Span {
         end: &'static str,
-    },
-    StartStopPair {
-        start: &'static str,
-        stop: &'static str,
     },
 }
 
@@ -144,7 +113,7 @@ pub const RULES: &[IntervalRule] = &[
         },
         label: |p| app_and_title(p, "class", "title"),
         attributes: &["window", "class", "title"],
-        ended_by: &[Interruption::Suspend, Interruption::Afk],
+        ended_by: &[Interruption::Afk],
     },
     IntervalRule {
         state_kind: "desktop.workspace",
@@ -161,7 +130,7 @@ pub const RULES: &[IntervalRule] = &[
                 .or_else(|| scalar(p, "workspace_id"))
         },
         attributes: &["workspace_id", "workspace_name"],
-        ended_by: &[Interruption::Suspend, Interruption::Afk],
+        ended_by: &[Interruption::Afk],
     },
     IntervalRule {
         state_kind: "desktop.activitywatch.window",
@@ -175,7 +144,7 @@ pub const RULES: &[IntervalRule] = &[
         },
         label: |p| app_and_title(p, "app", "title"),
         attributes: &["bucket", "app", "title"],
-        ended_by: &[Interruption::Suspend],
+        ended_by: &[],
     },
     IntervalRule {
         state_kind: "desktop.activitywatch.afk",
@@ -184,28 +153,6 @@ pub const RULES: &[IntervalRule] = &[
         subject: |p| text(p, "status").map(|s| format!("status:{s}")),
         label: |p| text(p, "status").map(str::to_owned),
         attributes: &["bucket", "status"],
-        ended_by: &[Interruption::Suspend],
-    },
-    // The systemd source emits `unit.started` and `unit.stopped` with
-    // `unit_name`, `unit_type`, `active_state`, `sub_state` and, when known,
-    // `main_pid` or `exit_code`.
-    IntervalRule {
-        state_kind: "system.systemd.unit",
-        event_types: &["unit.started", "unit.stopped"],
-        shape: Shape::StartStopPair {
-            start: "unit.started",
-            stop: "unit.stopped",
-        },
-        subject: |p| text(p, "unit_name").map(str::to_owned),
-        label: |p| text(p, "unit_name").map(str::to_owned),
-        attributes: &[
-            "unit_name",
-            "unit_type",
-            "active_state",
-            "sub_state",
-            "main_pid",
-            "exit_code",
-        ],
         ended_by: &[],
     },
 ];
@@ -220,8 +167,6 @@ const INPUT_TYPES: &[&str] = &[
     "workspace.switched",
     "window.span",
     "presence.span",
-    "unit.started",
-    "unit.stopped",
 ];
 
 /// An open state during the fold.
@@ -384,47 +329,6 @@ fn fold<'a>(rule: &IntervalRule, events: &[&'a Event]) -> Vec<Lifted<'a>> {
                 });
             }
         }
-        Shape::StartStopPair { start, stop } => {
-            let mut open: BTreeMap<String, Open<'a>> = BTreeMap::new();
-            for &e in events {
-                let Some(at) = e.ts_orig.at else { continue };
-                let current = Open::new(rule, e, at);
-                let Some(subject) = current.subject.clone() else {
-                    continue;
-                };
-                if e.event_type == start {
-                    // A second start means the previous instance ran until now.
-                    if let Some(previous) = open.remove(&subject) {
-                        out.push(Lifted {
-                            open: previous,
-                            end: Some((at, e.event_type)),
-                            closers: vec![e],
-                        });
-                    }
-                    open.insert(subject, current);
-                } else if e.event_type == stop {
-                    // A stop with no open start belongs to an interval an
-                    // earlier key emits; nothing to close here.
-                    if let Some(mut previous) = open.remove(&subject) {
-                        previous.attributes.extend(current.attributes);
-                        // A stop at or before its start is a zero-length run.
-                        let end = at.max(previous.at);
-                        out.push(Lifted {
-                            open: previous,
-                            end: Some((end, e.event_type)),
-                            closers: vec![e],
-                        });
-                    }
-                }
-            }
-            for (_, o) in open {
-                out.push(Lifted {
-                    open: o,
-                    end: None,
-                    closers: vec![],
-                });
-            }
-        }
     }
     out
 }
@@ -482,12 +386,6 @@ impl Keyed for StateIntervals {
                 count: AFTER_COUNT,
             }),
             Shape::Span { .. } => {}
-            Shape::StartStopPair { .. } => q.after.push(Neighbour {
-                event_types: r.event_types.to_vec(),
-                equal: vec![],
-                per: Some("unit_name"),
-                count: 1,
-            }),
         }
         for f in r.ended_by {
             q.after.push(f.neighbour());

@@ -712,9 +712,7 @@
         "window.focused",
         "workspace.switched",
         "window.span",
-        "presence.span",
-        "unit.started",
-        "unit.stopped"
+        "presence.span"
       ],
       "outputs": [
         "state.interval"
