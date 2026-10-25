@@ -19,6 +19,7 @@ pub mod positions;
 pub mod privacy;
 pub mod query;
 pub mod read_models;
+pub mod registry;
 pub mod replay;
 pub mod runs;
 pub mod sealed;

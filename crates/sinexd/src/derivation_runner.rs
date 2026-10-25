@@ -39,7 +39,8 @@ use sinex_derivations::{AnyKeyed, AnyPerEvent, Env, Input, InputQuery, KeyView, 
 use sinex_model::civil::Civil;
 use sinex_model::{Batch, BatchKind, Event, ReadingOrder, RecordOutcome, RunId, Timestamp};
 use sinex_store::blobs::Blobs;
-use sinex_store::derivations::{self, Match, Nearest, Registered, Window};
+use sinex_store::derivations::{self, Match, Nearest, Window};
+use sinex_store::registry::Derivation;
 use sinex_store::{DerivedScope, KeyScope, material_bytes, runs};
 use sqlx::PgConnection;
 use std::collections::{BTreeMap, HashSet};
@@ -147,16 +148,16 @@ impl DerivationRunner {
         per_event: Vec<Box<dyn AnyPerEvent>>,
         host: &str,
     ) -> Result<Self, String> {
-        let catalog: Vec<Registered> = keyed
+        let catalog: Vec<Derivation> = keyed
             .iter()
-            .map(|d| Registered {
+            .map(|d| Derivation {
                 name: d.name().to_owned(),
                 kind: "keyed",
                 version: i32::try_from(d.version()).unwrap_or(i32::MAX),
                 inputs: d.inputs_types().iter().map(|s| (*s).to_owned()).collect(),
                 outputs: d.output_types().iter().map(|s| (*s).to_owned()).collect(),
             })
-            .chain(per_event.iter().map(|d| Registered {
+            .chain(per_event.iter().map(|d| Derivation {
                 name: d.name().to_owned(),
                 kind: "per_event",
                 version: i32::try_from(d.version()).unwrap_or(i32::MAX),
@@ -164,7 +165,7 @@ impl DerivationRunner {
                 outputs: d.output_types().iter().map(|s| (*s).to_owned()).collect(),
             }))
             .collect();
-        let changed = derivations::register(&mut read, &catalog)
+        let changed = sinex_store::registry::write_derivations(&mut read, &catalog)
             .await
             .map_err(|e| e.to_string())?;
         let mut runs = BTreeMap::new();
@@ -835,7 +836,7 @@ impl DerivationRunner {
 /// Each derivation's rank: 0 when no derivation produces any of its inputs,
 /// otherwise one more than the highest rank among those that do. A cycle
 /// (which no catalog should have) settles at the catalog's size.
-fn ranks(catalog: &[Registered]) -> BTreeMap<&'static str, u32> {
+fn ranks(catalog: &[Derivation]) -> BTreeMap<&'static str, u32> {
     let limit = u32::try_from(catalog.len()).unwrap_or(u32::MAX);
     let mut rank: BTreeMap<&str, u32> = catalog.iter().map(|d| (d.name.as_str(), 0)).collect();
     for _ in 0..catalog.len() {

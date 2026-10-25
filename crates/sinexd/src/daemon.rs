@@ -103,6 +103,9 @@ pub async fn run(o: Options) -> Result<(), String> {
     for entry in &without_rows.not_blobs {
         eprintln!("sinexd: content store: {entry}");
     }
+    sinex_store::registry::write_sources(&mut writer_conn, &crate::catalog::registry_sources())
+        .await
+        .map_err(|e| format!("writing the source registry: {e}"))?;
     let url = o.database.clone();
     let writer_store = blobs.clone();
     tasks.spawn(async move {
