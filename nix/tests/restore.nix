@@ -47,7 +47,8 @@ self: {
         machine.succeed("systemctl start sinex-dump.service")
         machine.succeed("test -s /var/lib/sinex/dumps/sinex.dump")
         machine.succeed("test -s /var/lib/sinex/key-dumps/data-keys.dump")
-        machine.succeed("systemctl start borgbackup-job-sinex.service borgbackup-job-sinex-keys.service")
+        # The jobs are simple services: wait for them to finish.
+        machine.succeed("systemctl start --wait borgbackup-job-sinex.service borgbackup-job-sinex-keys.service")
 
     with subtest("lose the database and the content store"):
         machine.succeed("systemctl stop sinexd.service")
