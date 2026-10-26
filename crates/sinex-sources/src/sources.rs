@@ -18,6 +18,8 @@ pub mod hyprland;
 pub mod journald;
 /// The media library: scans of library roots and library requests.
 pub mod library;
+/// The machine telemetry collector's SQLite databases.
+pub mod machine_telemetry;
 pub mod mail;
 /// Live mail over IMAP, with IDLE and XOAUTH2.
 pub mod mail_imap;
@@ -63,6 +65,7 @@ pub fn formats() -> &'static [&'static InputFormat] {
         &zsh::FORMAT,
         &hyprland::FORMAT,
         &journald::FORMAT,
+        &machine_telemetry::FORMAT,
         &file_watch::FORMAT,
         &activitywatch::FORMAT,
         &repository::FORMAT,

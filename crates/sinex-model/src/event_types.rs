@@ -20,6 +20,7 @@ pub mod polylogue;
 pub mod session;
 pub mod shell;
 pub mod social;
+pub mod telemetry;
 
 pub use derived::{FigureValue, HealthFigure, MetricFigure, StateInterval};
 pub use fused::CommandFused;
@@ -114,6 +115,10 @@ pub const ALL: &[RegisteredEventType] = &[
     info::<machine::FileChanged>(),
     info::<machine::TerminalSession>(),
     info::<machine::TerminalOutput>(),
+    // Machine telemetry
+    info::<telemetry::ResourceSampled>(),
+    info::<telemetry::ProcessKilled>(),
+    info::<telemetry::HardwareState>(),
     // Code
     info::<code::GitCommit>(),
     // Derived

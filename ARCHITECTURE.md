@@ -47,8 +47,9 @@ The parts are read a page at a time, so a reader that stops early reads no
 more of the part sequence. The append reader keeps the tail of the current
 revision's records, to align a rewrite.
 
-The SQLite-row reader keeps each row's newest hash and the directory reader
-each file's size, modification time and content hash. Both save this reader
+The SQLite-row reader of a table updated in place keeps each row's newest
+hash and the directory reader each file's size, modification time and
+content hash. Both save this reader
 memory with the cursor at the end of a part: at their first part, once the
 entries stored since the last save reach a quarter of what they remember, and
 at least every 1,000 parts. `raw.reader_memory` keeps only the latest per
@@ -69,8 +70,13 @@ does not know which driver a binding uses.
 
 - **SQLite rows.** One read transaction covers the schema check and the row
   query, so SQLite's own locking gives a committed view. A locked database is
-  unavailable for that poll. The first poll after a start reads every row and
-  stores only those whose hash changed.
+  unavailable for that poll. For a table whose rows are updated in place, the
+  first poll after a start reads every row and stores only those whose hash
+  changed. An appended table (rows only added, never changed: the machine
+  telemetry collector's) is read after its cursor only, at most 50,000 rows
+  per part, the next poll continuing; its reader remembers nothing but the
+  cursor, so a table of hundreds of millions of rows costs no memory and a
+  restart reads no history.
 - **IMAP.** An answer records the UIDs it holds and the server's UID window. A
   cursor inside an answer resumes at its first UID, so a restart fetches the
   whole answer again and admission drops the repeats.
