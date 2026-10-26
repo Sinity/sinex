@@ -29,6 +29,34 @@
       ]
     },
     {
+      "name": "terminal.bash-history",
+      "formats": [
+        "bash"
+      ],
+      "drivers": [
+        "append-file"
+      ],
+      "purpose": "command fusion and shell recall",
+      "class": "open",
+      "eventTypes": [
+        "command.imported"
+      ]
+    },
+    {
+      "name": "terminal.fish-history",
+      "formats": [
+        "fish"
+      ],
+      "drivers": [
+        "append-file"
+      ],
+      "purpose": "command fusion and shell recall",
+      "class": "open",
+      "eventTypes": [
+        "command.imported"
+      ]
+    },
+    {
       "name": "desktop.hyprland",
       "formats": [
         "hyprland"
@@ -567,6 +595,40 @@
       ]
     },
     {
+      "name": "terminal.kitty-scrollback",
+      "formats": [
+        "kitty-scrollback"
+      ],
+      "drivers": [
+        "dir-snapshot"
+      ],
+      "purpose": "terminal recall: what kitty windows showed",
+      "class": "guarded",
+      "eventTypes": [
+        "scrollback.captured",
+        "scrollback.window"
+      ]
+    },
+    {
+      "name": "desktop.input-log",
+      "formats": [
+        "input-log"
+      ],
+      "drivers": [
+        "append-file"
+      ],
+      "purpose": "keystroke timing, typing and pointer activity",
+      "class": "guarded",
+      "eventTypes": [
+        "key.pressed",
+        "key.released",
+        "pointer.button",
+        "pointer.moved",
+        "pointer.scrolled",
+        "input.logger"
+      ]
+    },
+    {
       "name": "operator.raw-log",
       "formats": [
         "raw-log"
@@ -806,11 +868,12 @@
       "drivers": [
         "live-stream"
       ],
-      "purpose": "recall: files edited, commands run in the terminal",
+      "purpose": "recall: files edited, commands run in the terminal and what they printed",
       "class": "guarded",
       "eventTypes": [
         "editor.reported",
-        "terminal.reported"
+        "terminal.reported",
+        "scrollback.captured"
       ]
     },
     {
