@@ -99,6 +99,12 @@ does not know are kept, and the event lists their JSON pointers in
 Samsung account tables other than health stay generic `account.row` rows,
 always marked `untyped`.
 
+The machine records (activations, backup checks and drills, audits, the usage
+census, configuration drift, experiment runs) and the router's capture lake
+lanes have one type per file or lane; fields the type does not know are kept
+by name in the payload's `extra`. A router sample is one record that yields
+an event per log line, lease, traffic row or Wi-Fi client.
+
 ### Outside producers
 
 `sinex-session`, `sinex-capture` and Polylogue send frames over the NATS

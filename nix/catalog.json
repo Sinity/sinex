@@ -891,6 +891,137 @@
       "eventTypes": [
         "page.fetched"
       ]
+    },
+    {
+      "name": "machine.generations",
+      "formats": [
+        "machine-records"
+      ],
+      "drivers": [
+        "append-file"
+      ],
+      "purpose": "which system configuration ran when, for attributing changes in behavior",
+      "class": "open",
+      "eventTypes": [
+        "generation.activated"
+      ]
+    },
+    {
+      "name": "machine.backup-checks",
+      "formats": [
+        "machine-records"
+      ],
+      "drivers": [
+        "append-file"
+      ],
+      "purpose": "backup health over time",
+      "class": "open",
+      "eventTypes": [
+        "backup.checked"
+      ]
+    },
+    {
+      "name": "machine.restore-drills",
+      "formats": [
+        "machine-records"
+      ],
+      "drivers": [
+        "append-file"
+      ],
+      "purpose": "evidence that the backups restore",
+      "class": "open",
+      "eventTypes": [
+        "backup.drilled"
+      ]
+    },
+    {
+      "name": "machine.task-store-drills",
+      "formats": [
+        "machine-records"
+      ],
+      "drivers": [
+        "append-file"
+      ],
+      "purpose": "evidence that the task store restores from the backups",
+      "class": "open",
+      "eventTypes": [
+        "backup.task_store_drilled"
+      ]
+    },
+    {
+      "name": "machine.sandbox-audit",
+      "formats": [
+        "machine-records"
+      ],
+      "drivers": [
+        "append-file"
+      ],
+      "purpose": "unit and capture-lane health over time",
+      "class": "open",
+      "eventTypes": [
+        "sandbox_audit.finding"
+      ]
+    },
+    {
+      "name": "machine.usage-census",
+      "formats": [
+        "machine-records"
+      ],
+      "drivers": [
+        "append-file"
+      ],
+      "purpose": "deciding what in the machine configuration is used and what to remove",
+      "class": "open",
+      "eventTypes": [
+        "usage.assessed",
+        "usage_census.taken"
+      ]
+    },
+    {
+      "name": "machine.config-drift",
+      "formats": [
+        "machine-records"
+      ],
+      "drivers": [
+        "append-file"
+      ],
+      "purpose": "whether the live machine matches its configuration",
+      "class": "open",
+      "eventTypes": [
+        "config_drift.checked"
+      ]
+    },
+    {
+      "name": "machine.experiments",
+      "formats": [
+        "machine-records"
+      ],
+      "drivers": [
+        "dir-snapshot"
+      ],
+      "purpose": "machine experiment results with the conditions they ran under",
+      "class": "open",
+      "eventTypes": [
+        "experiment.started",
+        "experiment.run"
+      ]
+    },
+    {
+      "name": "network.router",
+      "formats": [
+        "router"
+      ],
+      "drivers": [
+        "append-file"
+      ],
+      "purpose": "which devices were on the home network, their traffic and the router's log",
+      "class": "guarded",
+      "eventTypes": [
+        "router_log.line",
+        "dhcp_lease.sampled",
+        "device_traffic.sampled",
+        "wifi_client.sampled"
+      ]
     }
   ],
   "derivations": [

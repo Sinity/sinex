@@ -36,6 +36,7 @@ pub struct DhcpLeaseSampled {
     /// The name the device gave; unknown when it gave none.
     pub hostname: Option<String>,
     pub client_id: Option<String>,
+    /// Unknown for a lease that does not expire.
     pub expires_at: Option<Timestamp>,
     pub sampled_at: Timestamp,
     pub host: String,
