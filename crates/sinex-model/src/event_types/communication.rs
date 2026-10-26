@@ -115,3 +115,40 @@ pub struct ConversationMessage {
     /// stands for it.
     pub unsent_at: Option<Timestamp>,
 }
+
+/// A phone's call log entry: a call, or a message the phone's log lists
+/// beside calls. The account's own key for the entry identifies it across
+/// exports.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
+#[event(
+    type = "call.logged",
+    key = ["account_key"],
+    replace = newer,
+    time = at,
+    quality = intrinsic
+)]
+pub struct CallLogged {
+    /// The key the account export gave the entry.
+    pub account_key: String,
+    pub at: Option<Timestamp>,
+    /// The other party's number as logged; empty when withheld.
+    pub number: Option<String>,
+    /// The contact or caller-ID name the phone showed.
+    pub name: Option<String>,
+    /// `incoming`, `outgoing`, `missed`, `voicemail`, `rejected`, `blocked`
+    /// or `answered_elsewhere`, from Android's call type; `None` for a code
+    /// Android does not define.
+    pub direction: Option<String>,
+    /// Android's call type code as logged.
+    pub call_type: Option<i64>,
+    pub duration_seconds: Option<i64>,
+    /// The phone maker's code for what kind of entry it is (a voice call, a
+    /// message, a call through an app), as logged and not interpreted.
+    pub log_type: Option<i64>,
+    /// A message entry's text and subject.
+    pub text: Option<String>,
+    pub subject: Option<String>,
+    /// The entry's other fields, by the name the phone gave them.
+    #[serde(default, skip_serializing_if = "serde_json::Map::is_empty")]
+    pub extra: serde_json::Map<String, serde_json::Value>,
+}

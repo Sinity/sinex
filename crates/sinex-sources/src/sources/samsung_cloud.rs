@@ -9,6 +9,8 @@
 //!   provider `samsung-health-cloud`, its category the table's directory name.
 //!   Times are `YYYY-MM-DD HH:MM`, UTC as Samsung Health stores them;
 //!   `time_offset` is the local offset in milliseconds.
+//! - The `Call Log` table is the phone's call log: each row's `VALUE` holds
+//!   Android's call log columns, read as a `call.logged`.
 //! - Any other table (alarms, settings, backups, store and membership
 //!   records) is an `account.row` of its service and table, every column
 //!   kept, a JSON column decoded. These tables stay explicitly untyped
@@ -27,6 +29,7 @@ use crate::{Parser, RecordContext, RecordError};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use sinex_model::event_types::account::AccountRow;
+use sinex_model::event_types::communication::CallLogged;
 use sinex_model::event_types::health::HealthRecord;
 use sinex_model::{Class, Timestamp};
 use std::path::{Path, PathBuf};
@@ -38,8 +41,8 @@ pub const SPEC: SourceSpec = SourceSpec {
     purpose: "what the operator's Samsung account kept: health sync, settings, backups",
     class: Class::Open,
     parser: "samsung-account-export",
-    parser_version: 4,
-    event_types: &["health.record", "account.row"],
+    parser_version: 5,
+    event_types: &["health.record", "call.logged", "account.row"],
     framer: crate::Framer::export(frame, crate::drivers::export_archive::Framing::Csv),
 };
 
@@ -47,6 +50,7 @@ sinex_model::payload_enum! {
     #[derive(Clone, Debug, PartialEq)]
     pub enum SamsungEvent {
         Health(HealthRecord),
+        Call(CallLogged),
         Account(AccountRow),
     }
 }
@@ -142,6 +146,12 @@ impl Parser for SamsungCloudParser {
             .iter()
             .find_map(|k| values.get(*k).map(id_text))
             .unwrap_or_else(|| format!("blake3:{}", blake3::hash(record).to_hex()));
+        if table == "Call Log" {
+            return Ok((
+                vec![SamsungEvent::Call(call(native_id, &values)?)],
+                carry.clone(),
+            ));
+        }
         let at = ["CREATETIME", "TIMESTAMP", "create_time", "createTime"]
             .iter()
             .find_map(|k| values.get(*k).and_then(time_of));
@@ -156,6 +166,63 @@ impl Parser for SamsungCloudParser {
             carry.clone(),
         ))
     }
+}
+
+/// A call log row: Android's call log columns in `VALUE`, each a string.
+fn call(account_key: String, values: &Map<String, Value>) -> Result<CallLogged, RecordError> {
+    let Some(Value::Object(entry)) = values.get("VALUE") else {
+        return Err(RecordError::new("call log row without a VALUE object"));
+    };
+    let mut extra = entry.clone();
+    let mut text = |name: &str| {
+        extra
+            .remove(name)
+            .and_then(|v| v.as_str().map(str::to_owned))
+            .filter(|s| !s.is_empty())
+    };
+    let number = text("number");
+    let name = text("name").or_else(|| text("cnap_name"));
+    let date = text("date");
+    let call_type = text("type");
+    let duration = text("duration");
+    let log_type = text("logtype");
+    let message = text("m_content");
+    let subject = text("m_subject");
+    let integer = |field: &str, value: Option<String>| {
+        value
+            .map(|v| {
+                v.parse::<i64>()
+                    .map_err(|_| RecordError::new(format!("call log {field} {v:?} is not a number")))
+            })
+            .transpose()
+    };
+    let call_type = integer("type", call_type)?;
+    Ok(CallLogged {
+        account_key,
+        at: integer("date", date)?
+            .map(fields::from_unix_ms)
+            .transpose()?,
+        number,
+        name,
+        direction: call_type
+            .and_then(|code| match code {
+                1 => Some("incoming"),
+                2 => Some("outgoing"),
+                3 => Some("missed"),
+                4 => Some("voicemail"),
+                5 => Some("rejected"),
+                6 => Some("blocked"),
+                7 => Some("answered_elsewhere"),
+                _ => None,
+            })
+            .map(str::to_owned),
+        call_type,
+        duration_seconds: integer("duration", duration)?,
+        log_type: integer("logtype", log_type)?,
+        text: message,
+        subject,
+        extra,
+    })
 }
 
 fn id_text(v: &Value) -> String {

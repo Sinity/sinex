@@ -548,6 +548,7 @@
       "class": "open",
       "eventTypes": [
         "health.record",
+        "call.logged",
         "account.row"
       ]
     },

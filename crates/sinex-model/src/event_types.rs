@@ -167,6 +167,7 @@ pub const ALL: &[RegisteredEventType] = &[
     info::<media::NoteDocument>(),
     info::<communication::ChatMessage>(),
     info::<communication::MailMessage>(),
+    info::<communication::CallLogged>(),
     // AI sessions from Polylogue, and what people and agents add to them
     info::<polylogue::Session>(),
     info::<polylogue::Message>(),

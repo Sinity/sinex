@@ -166,3 +166,31 @@ fn unkeyed_account_rows_keep_the_original_row_hash_identity() {
     assert!(account.at.is_none());
     assert_eq!(serde_json::to_value(account).unwrap()["untyped"], true);
 }
+
+#[devkit::test]
+fn the_call_log_is_read_as_calls() {
+    let header = b"\xef\xbb\xbfITEM_DATA,FILE_LIST,TIMESTAMP,SIZE,VALUE,CREATETIME,KEY\n";
+    let missed = br#""",,1755081462183,468,"""{\""_id\"":\""12\"",\""date\"":\""1737110847678\"",\""duration\"":\""0\"",\""number\"":\""+10000000000\"",\""type\"":\""3\"",\""logtype\"":\""100\"",\""name\"":\""Synthetic Person\"",\""is_read\"":\""1\""}""",1755081462183,k1"#;
+    let message = br#""",,1755081462183,468,"""{\""_id\"":\""13\"",\""date\"":\""1737110847000\"",\""duration\"":\""0\"",\""number\"":\""\"",\""type\"":\""1\"",\""logtype\"":\""300\"",\""cnap_name\"":\""Service\"",\""m_content\"":\""synthetic text\""}""",1755081462183,k2"#;
+    let out = run(
+        "/x/samsungcloud_gk000066110887_20260329_access/Call Log/CALLLOGS_1.csv",
+        &[header, missed, message],
+    );
+    let SamsungEvent::Call(call) = &out[0] else {
+        panic!("not a call: {out:?}")
+    };
+    assert_eq!(call.account_key, "k1");
+    assert_eq!(call.direction.as_deref(), Some("missed"));
+    assert_eq!(call.duration_seconds, Some(0));
+    assert_eq!(call.name.as_deref(), Some("Synthetic Person"));
+    assert_eq!(call.at, fields::from_unix_ms(1_737_110_847_678).ok());
+    assert_eq!(call.extra["is_read"], json!("1"));
+    assert!(!call.extra.contains_key("number"));
+    let SamsungEvent::Call(text) = &out[1] else {
+        panic!("not a call")
+    };
+    assert_eq!(text.number, None, "an empty number is unknown");
+    assert_eq!(text.name.as_deref(), Some("Service"));
+    assert_eq!(text.text.as_deref(), Some("synthetic text"));
+    assert_eq!(text.log_type, Some(300));
+}
