@@ -102,7 +102,12 @@ in
     noCow = mkOption {
       type = types.bool;
       default = true;
-      description = "Turn copy-on-write off for the database and content store directories on btrfs; both checksum their own data.";
+      description = ''
+        Turn copy-on-write off for the database directory on btrfs, where
+        rewrites in place would fragment it; PostgreSQL checksums its own pages.
+        The content store keeps copy-on-write and compression: its files are
+        written once.
+      '';
     };
     host = mkOption {
       type = types.str;
@@ -372,7 +377,6 @@ in
         "d ${cfg.database.dataDir} 0700 postgres postgres -"
       ] ++ optionals cfg.noCow [
         "h ${cfg.database.dataDir} - - - - +C"
-        "h ${cfg.storeDir} - - - - +C"
       ];
 
       services.postgresql = {
