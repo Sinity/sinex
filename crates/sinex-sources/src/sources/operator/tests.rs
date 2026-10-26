@@ -76,7 +76,7 @@ fn steering_rows_take_their_tables_time() {
     let p = SteeringParser {
         table: "commitments",
     };
-    let row = json!({"rowid": 1, "id": "c1", "text": "x", "created_at": "2026-10-12T08:00:00+02:00",
+    let row = json!({"_rowid": 1, "id": "c1", "text": "x", "created_at": "2026-10-12T08:00:00+02:00",
         "status": "open", "forecast_p": 0.7});
     let (out, ()) = p
         .parse(row.as_object().unwrap(), &(), &crate::RecordContext::none())
@@ -87,9 +87,9 @@ fn steering_rows_take_their_tables_time() {
         fields::rfc3339("2026-10-12T06:00:00Z").ok()
     );
     let wire = serde_json::to_value(&out[0]).unwrap();
-    assert!(!wire["values"].as_object().unwrap().contains_key("rowid"));
+    assert!(!wire["values"].as_object().unwrap().contains_key("_rowid"));
     let mut expected = row.clone();
-    expected.as_object_mut().unwrap().remove("rowid");
+    expected.as_object_mut().unwrap().remove("_rowid");
     assert_eq!(wire["values"], expected);
     assert!(steering("reviews").is_some());
     assert!(steering("nope").is_none());
@@ -99,15 +99,31 @@ fn steering_rows_take_their_tables_time() {
             .iter()
             .map(|s| s.parser_version)
             .collect::<Vec<_>>(),
-        vec![2; 3]
+        vec![3; 3]
     );
+}
+
+#[devkit::test]
+fn each_steering_table_is_its_own_binding() {
+    let settings = crate::Settings {
+        host: "h".into(),
+        zone: None,
+        options: Value::Null,
+    };
+    let planned =
+        (STEERING_FORMAT.plan.unwrap())(std::path::Path::new("/s.sqlite"), &settings).unwrap();
+    let mut names: Vec<&str> = planned.iter().map(|b| b.name.as_str()).collect();
+    names.sort_unstable();
+    names.dedup();
+    assert_eq!(names.len(), 3, "{names:?}");
+    assert!(names.iter().any(|n| n.contains("#reviews@h")), "{names:?}");
 }
 
 #[devkit::test]
 fn unknown_steering_shapes_are_accounted_without_losing_later_coordinates() {
     use crate::{DrainInput, Limits, Source};
     use sinex_model::{MaterialId, Origin, ReadingOrder, RecordLocation, RecordOutcome};
-    let bytes = b"{\"rowid\":1,\"id\":\"c1\",\"status\":\"open\",\"text\":\"before\"}\n{\"rowid\":2,\"id\":\"unknown\",\"future_column\":true}\n{\"rowid\":3,\"id\":\"c3\",\"forecast_p\":null,\"text\":\"after\"}\n";
+    let bytes = b"{\"_rowid\":1,\"id\":\"c1\",\"status\":\"open\",\"text\":\"before\"}\n{\"_rowid\":2,\"id\":\"unknown\",\"future_column\":true}\n{\"_rowid\":3,\"id\":\"c3\",\"forecast_p\":null,\"text\":\"after\"}\n";
     let (records, covered) = crate::drivers::append_file::lines(bytes);
     assert_eq!(covered, bytes.len());
     let material = MaterialId::new();
@@ -167,7 +183,7 @@ fn unknown_steering_shapes_are_accounted_without_losing_later_coordinates() {
                     !events[0].payload["values"]
                         .as_object()
                         .unwrap()
-                        .contains_key("rowid")
+                        .contains_key("_rowid")
                 );
             }
         }

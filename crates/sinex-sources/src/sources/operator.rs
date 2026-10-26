@@ -151,7 +151,7 @@ const fn steering_spec(parser: &'static str) -> SourceSpec {
         purpose: "commitments, forecasts and reviews the operator keeps",
         class: Class::Open,
         parser,
-        parser_version: 2,
+        parser_version: 3,
         event_types: &["steering.row"],
         framer: crate::Framer::incremental(crate::drivers::append_file::lines),
     }
@@ -173,7 +173,8 @@ impl Parser for SteeringParser {
         _context: &crate::RecordContext<'_>,
     ) -> Result<(Vec<SteeringRow>, ()), RecordError> {
         let mut values = row.clone();
-        values.remove("rowid");
+        // The SQLite-row driver's own field, not a column of the table.
+        values.remove("_rowid");
         let payload =
             SteeringRow::from_row(self.table, Value::Object(values)).map_err(RecordError::new)?;
         Ok((vec![payload], ()))
@@ -239,9 +240,13 @@ pub const STEERING_FORMAT: crate::binding::InputFormat = crate::binding::InputFo
     name: "steering",
     specs: || STEERING.iter().collect(),
     plan: Some(|input, settings| {
+        // One binding, and so one cursor, per table.
         Ok(STEERING
             .iter()
-            .map(|spec| crate::binding::Binding::of(spec, input, settings.clone()))
+            .map(|spec| {
+                let table = spec.parser.strip_prefix("steering-").unwrap_or(spec.parser);
+                crate::binding::Binding::of(spec, input, settings.clone()).named(table)
+            })
             .collect())
     }),
     source: |b| {
