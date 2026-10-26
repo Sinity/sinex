@@ -326,9 +326,9 @@ impl<P: Parser> Iterator for Drainer<'_, P> {
                     ))));
                 }
             };
-            // An excision blanks a record to spaces (its newline kept): no
-            // record is left there, so nothing is read and nothing fails.
-            if is_blanked(&raw) {
+            // Only spaces and newlines: no record is there, so nothing is
+            // read and nothing fails.
+            if is_blank(&raw) {
                 current.end = end;
                 continue;
             }
@@ -397,7 +397,7 @@ fn parse_one<P: Parser>(
     }
 }
 
-fn is_blanked(raw: &[u8]) -> bool {
+fn is_blank(raw: &[u8]) -> bool {
     !raw.is_empty() && raw.iter().all(|b| *b == b' ' || *b == b'\n')
 }
 

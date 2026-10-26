@@ -20,7 +20,7 @@ mod privacy;
 pub(crate) struct Api {
     pub reads: PgPool,
     pub writer: Option<WriterHandle>,
-    /// The content store, for excision's blanked bytes.
+    /// The content store.
     pub blobs: sinex_store::Blobs,
     pub zone: jiff::tz::TimeZone,
     pub day_start: jiff::civil::Time,

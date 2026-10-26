@@ -1,20 +1,28 @@
-//! Excision: the one true deletion. Operator only. It removes every reading of
-//! one record, live and archived, every derived event that descends from them,
-//! and the record's bytes, and nothing else:
+//! Excision: the one true deletion, by the operator or by the producer that
+//! registered a material. It removes every reading of one record or material,
+//! live and archived, every derived event that descends from them, and the
+//! materials they were read from, and nothing else:
 //!
-//! - each material a reading was read from gets a new blob of spaces of the
-//!   same length (the caller writes it, and refuses a material that holds
-//!   other records too); the old blob is deleted once nothing refers to it,
-//!   and kept while another material shares it;
+//! - each material goes whole: its row, its failures, the reader memory saved
+//!   at it and the producer frames that registered it or its events; its
+//!   blob is deleted once nothing refers to it, and kept while another
+//!   material shares it; an input left with no material goes with its
+//!   observations and revisions;
+//! - the material's ID and digest stay in `core.excised_materials`, so the
+//!   same bytes are refused if they are registered again;
 //! - a tombstone (identity and time, no payload) remains for each event;
 //! - stored bytes the excised events cite beyond their materials
 //!   (`core.event_blobs`) are deleted once nothing else refers to them.
 //!
+//! A later part, or a binding's cursor, that named a removed material as the
+//! part before it names the part before that instead, so the input's part
+//! sequence stays whole and the next part links to a stored one.
+//!
 //! [`plan`] refuses, before anything changes, what it cannot remove cleanly:
-//! an event that was not read from a stored record, sealed material, and a
-//! material whose bytes another part of the same revision shares. Whether the
-//! source or producer may excise the planned materials is decided by the
-//! caller, which knows the sources.
+//! an event that was not read from a stored record and sealed material;
+//! [`removable`], a material a later part continues inside. Whether the source or producer may excise the planned
+//! materials, and whether a material holds only the excised record, is
+//! decided by the caller, which knows the sources.
 //!
 //! Each excision is recorded once in `core.operations`. The writer applies the
 //! plan in one transaction, checking that the readings it removes are still
@@ -36,7 +44,7 @@ pub enum Target {
     Material(MaterialId),
 }
 
-/// A material an excision blanks.
+/// A material an excision removes.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Material {
     pub id: MaterialId,
@@ -64,20 +72,13 @@ pub struct Plan {
     pub materials: Vec<Material>,
 }
 
-/// A material's replacement bytes, written to the content store before the
-/// plan is applied (bytes before rows).
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Rewrite {
-    pub material: MaterialId,
-    pub blob: String,
-    pub length: u64,
-}
-
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Applied {
     pub events: usize,
     pub failures_removed: usize,
-    pub materials_rewritten: usize,
+    pub materials_removed: usize,
+    /// Inputs left with no material, removed with them.
+    pub inputs_removed: usize,
     /// Stored bytes the excised events cited that nothing else refers to.
     pub blobs_deleted: usize,
     pub dirty_keys: usize,
@@ -147,7 +148,7 @@ pub async fn plan(conn: &mut PgConnection, target: Target) -> Result<Plan> {
     let events: BTreeSet<Uuid> = events.into_iter().collect();
     let ids: Vec<Uuid> = events.iter().copied().collect();
 
-    // The records to blank, by material; a whole material when it is the target.
+    // The records excised, by material; a whole material when it is the target.
     let mut anchors: BTreeMap<Uuid, BTreeSet<i64>> = BTreeMap::new();
     for r in sqlx::query!(
         r#"SELECT DISTINCT material_id AS "material!", anchor AS "anchor!" FROM core.events
@@ -215,13 +216,33 @@ pub async fn plan(conn: &mut PgConnection, target: Target) -> Result<Plan> {
     Ok(Plan { events, materials })
 }
 
-/// Apply `plan` inside the writer's transaction. `rewrites` holds the new
-/// blob for every planned material.
+/// Refuse what removing `plan`'s materials would break: a later part that
+/// continues inside one. The caller checks this once it has checked who may
+/// excise them, and the writer again before it applies the plan.
+pub async fn removable(conn: &mut PgConnection, plan: &Plan) -> Result<()> {
+    let ids: Vec<Uuid> = plan.materials.iter().map(|m| m.id.0).collect();
+    if let Some(r) = sqlx::query!(
+        r#"SELECT m.previous_part_id AS "material!", m.id AS "next!" FROM raw.materials m
+           WHERE m.previous_part_id = ANY($1) AND NOT (m.id = ANY($1))
+             AND m.manifest ? 'previous_through' LIMIT 1"#,
+        &ids,
+    )
+    .fetch_optional(&mut *conn)
+    .await?
+    {
+        return Err(Error::Invalid(format!(
+            "part {} of the input continues inside material {}; excise them together",
+            r.next, r.material
+        )));
+    }
+    Ok(())
+}
+
+/// Apply `plan` inside the writer's transaction.
 pub async fn apply(
     conn: &mut PgConnection,
     target: Target,
     plan: &Plan,
-    rewrites: &[Rewrite],
     operation: OperationId,
     actor: &str,
     keys: &dyn DirtyKeys,
@@ -231,6 +252,7 @@ pub async fn apply(
             "the readings to excise changed after planning; plan the excision again".into(),
         ));
     }
+    removable(conn, plan).await?;
     let ids: Vec<Uuid> = plan.events.iter().copied().collect();
     let mut applied = Applied::default();
 
@@ -331,44 +353,142 @@ pub async fn apply(
         }
     }
 
-    for m in &plan.materials {
-        let removed = sqlx::query!("DELETE FROM raw.failures WHERE material_id = $1", m.id.0)
-            .execute(&mut *conn)
-            .await?;
-        applied.failures_removed += usize::try_from(removed.rows_affected()).unwrap_or(usize::MAX);
-        let rewrite = rewrites
-            .iter()
-            .find(|r| r.material == m.id)
-            .ok_or_else(|| Error::Invalid(format!("no replacement bytes for material {}", m.id)))?;
-        let length = i64::try_from(rewrite.length)
-            .map_err(|_| Error::Invalid("material length beyond i64".into()))?;
-        sqlx::query!(
-            r#"INSERT INTO core.blobs (hash, size, status) VALUES ($1, $2, 'present')
-           ON CONFLICT (hash) DO UPDATE SET status = 'present' WHERE core.blobs.status = 'deleting'"#,
-            rewrite.blob,
-            length,
-        )
-        .execute(&mut *conn)
-        .await?;
-        sqlx::query!(
-            "UPDATE raw.materials SET blob = $2 WHERE id = $1",
-            m.id.0,
-            rewrite.blob,
-        )
-        .execute(&mut *conn)
-        .await?;
-        applied.materials_rewritten += 1;
-        // The old bytes go once nothing refers to them; deduplication may
-        // share a blob with a material outside the excision.
-        if m.blob != rewrite.blob && unreferenced(conn, &m.blob).await? {
-            mark_deleting(conn, &m.blob).await?;
-            applied.delete_after_commit.push(m.blob.clone());
-        }
-    }
+    remove_materials(conn, plan, &ids, operation, &mut applied).await?;
     sqlx::query!("SELECT set_config('sinex.excise_operation', '', true)")
         .fetch_one(&mut *conn)
         .await?;
     Ok(applied)
+}
+
+/// Remove the planned materials whole, keep their digests, and remove the
+/// inputs they leave with no material.
+async fn remove_materials(
+    conn: &mut PgConnection,
+    plan: &Plan,
+    events: &[Uuid],
+    operation: OperationId,
+    applied: &mut Applied,
+) -> Result<()> {
+    let materials: Vec<Uuid> = plan.materials.iter().map(|m| m.id.0).collect();
+    let removed = sqlx::query!(
+        "DELETE FROM raw.failures WHERE material_id = ANY($1)",
+        &materials
+    )
+    .execute(&mut *conn)
+    .await?;
+    applied.failures_removed = usize::try_from(removed.rows_affected()).unwrap_or(usize::MAX);
+    sqlx::query!(
+        "DELETE FROM raw.reader_memory WHERE material_id = ANY($1)",
+        &materials
+    )
+    .execute(&mut *conn)
+    .await?;
+    sqlx::query!(
+        "DELETE FROM core.ingress_frames WHERE material_id = ANY($1) OR admitted && $2",
+        &materials,
+        events,
+    )
+    .execute(&mut *conn)
+    .await?;
+    // Empty bytes hold nothing to keep out.
+    sqlx::query!(
+        r#"INSERT INTO core.excised_materials (material_id, blob, operation_id)
+           SELECT id, blob, $2 FROM raw.materials WHERE id = ANY($1) AND length > 0
+           ON CONFLICT DO NOTHING"#,
+        &materials,
+        operation.0,
+    )
+    .execute(&mut *conn)
+    .await?;
+    // Later parts follow on from the part before the removed ones.
+    let previous: BTreeMap<Uuid, Option<Uuid>> = sqlx::query!(
+        "SELECT id, previous_part_id FROM raw.materials WHERE id = ANY($1)",
+        &materials
+    )
+    .fetch_all(&mut *conn)
+    .await?
+    .into_iter()
+    .map(|r| (r.id, r.previous_part_id))
+    .collect();
+    let next: Vec<(Uuid, Uuid)> = sqlx::query!(
+        r#"SELECT id, previous_part_id AS "previous!" FROM raw.materials
+           WHERE previous_part_id = ANY($1) AND NOT (id = ANY($1))"#,
+        &materials
+    )
+    .fetch_all(&mut *conn)
+    .await?
+    .into_iter()
+    .map(|r| (r.id, r.previous))
+    .collect();
+    let before = |removed: Uuid| {
+        let mut before = previous.get(&removed).copied().flatten();
+        while let Some(id) = before.filter(|id| previous.contains_key(id)) {
+            before = previous[&id];
+        }
+        before
+    };
+    for (part, removed) in next {
+        sqlx::query!(
+            "UPDATE raw.materials SET previous_part_id = $2 WHERE id = $1",
+            part,
+            before(removed)
+        )
+        .execute(&mut *conn)
+        .await?;
+    }
+    // A cursor names the last part it stored, which its next part follows.
+    for removed in previous.keys() {
+        let named = serde_json::to_string(&removed.to_string()).expect("strings serialize");
+        let instead = serde_json::to_string(&before(*removed)).expect("IDs serialize");
+        sqlx::query!(
+            "UPDATE raw.positions SET cursor = replace(cursor::text, $1, $2)::jsonb
+             WHERE strpos(cursor::text, $1) > 0",
+            named,
+            instead
+        )
+        .execute(&mut *conn)
+        .await?;
+    }
+    let inputs: Vec<Option<Uuid>> = sqlx::query_scalar!(
+        "DELETE FROM raw.materials WHERE id = ANY($1) RETURNING input_id",
+        &materials
+    )
+    .fetch_all(&mut *conn)
+    .await?;
+    applied.materials_removed = inputs.len();
+    let blobs: BTreeSet<&str> = plan.materials.iter().map(|m| m.blob.as_str()).collect();
+    for blob in blobs {
+        // Deduplication may share a blob with a material outside the excision.
+        if unreferenced(conn, blob).await? {
+            mark_deleting(conn, blob).await?;
+            applied.delete_after_commit.push(blob.to_owned());
+        }
+    }
+    let inputs: Vec<Uuid> = inputs.into_iter().flatten().collect();
+    let emptied: Vec<Uuid> = sqlx::query_scalar!(
+        r#"SELECT i.id AS "id!" FROM raw.inputs i WHERE i.id = ANY($1)
+           AND NOT EXISTS (SELECT 1 FROM raw.materials m WHERE m.input_id = i.id)"#,
+        &inputs
+    )
+    .fetch_all(&mut *conn)
+    .await?;
+    sqlx::query!(
+        "DELETE FROM raw.observations WHERE input_id = ANY($1)",
+        &emptied
+    )
+    .execute(&mut *conn)
+    .await?;
+    sqlx::query!(
+        "DELETE FROM raw.revisions WHERE input_id = ANY($1)",
+        &emptied
+    )
+    .execute(&mut *conn)
+    .await?;
+    let gone = sqlx::query!("DELETE FROM raw.inputs WHERE id = ANY($1)", &emptied)
+        .execute(&mut *conn)
+        .await?;
+    applied.inputs_removed = usize::try_from(gone.rows_affected()).unwrap_or(usize::MAX);
+    Ok(())
 }
 
 async fn mark_deleting(conn: &mut PgConnection, blob: &str) -> Result<()> {

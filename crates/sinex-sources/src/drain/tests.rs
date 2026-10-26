@@ -148,7 +148,7 @@ fn oversized_record_goes_alone() {
 }
 
 #[devkit::test]
-fn blanked_records_are_skipped_not_failed() {
+fn blank_records_are_skipped_not_failed() {
     let out = run(b"a\n     \nb\n", Value::Null, Limits::default());
     assert_eq!(commands(&out), vec![(0, "a".into()), (8, "b".into())]);
     assert_eq!(out[0].failures, 0);

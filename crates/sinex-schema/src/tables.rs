@@ -26,6 +26,17 @@ pub(crate) const SOURCE_COUNTS: &str = "CREATE TABLE core.source_counts (
   last_seen timestamptz NOT NULL
 )";
 
+/// The materials excisions removed, by the digest of their bytes, so the same
+/// bytes are refused if they are registered again. Nothing else of them is
+/// kept.
+pub(crate) const EXCISED_MATERIALS: &str = "CREATE TABLE core.excised_materials (
+  material_id uuid PRIMARY KEY,
+  blob text NOT NULL,
+  operation_id uuid NOT NULL
+)";
+pub(crate) const EXCISED_MATERIALS_BLOB: &str =
+    "CREATE INDEX excised_materials_blob ON core.excised_materials (blob)";
+
 pub(crate) fn tables(c: &Checks) -> Vec<String> {
     let event_columns = format!(
         "id uuid NOT NULL,
@@ -131,6 +142,8 @@ pub(crate) fn tables(c: &Checks) -> Vec<String> {
         "CREATE TABLE core.counters (name text PRIMARY KEY, value bigint NOT NULL)".into(),
         "INSERT INTO core.counters (name, value) VALUES ('commit_seq', 0)".into(),
         SOURCE_COUNTS.into(),
+        EXCISED_MATERIALS.into(),
+        EXCISED_MATERIALS_BLOB.into(),
         // Positions of the commit-log consumers that are not derivations: the
         // confirmed-stream publisher and the read-model maintainers. Each
         // commits its position with the work it covers.

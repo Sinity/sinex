@@ -1,6 +1,6 @@
 //! Excision laws: every reading of the one record and its descendants go, a
-//! tombstone stays, each material the record was read from is blanked whole
-//! in a new blob, and nothing that is not the record changes. Every record
+//! tombstone stays, each material the record was read from goes whole with
+//! only its digest kept, and nothing that is not the record changes. Every record
 //! here is alone in its material, as the caller requires.
 use super::*;
 use crate::Blobs;
@@ -172,17 +172,15 @@ async fn admit_events(conn: &mut PgConnection, events: Vec<Event>) -> crate::Out
     out
 }
 
-/// Plan, write the blanked bytes, apply and commit, then delete the old
-/// files: what the writer does.
+/// Plan, apply and commit, then delete the freed files: what the writer
+/// does.
 async fn excise(conn: &mut PgConnection, store: &Store, target: Target) -> Result<Applied> {
     let plan = plan(conn, target).await?;
-    let rewrites = rewrites_for(store, &plan);
     let mut tx = conn.begin().await?;
     let applied = apply(
         &mut tx,
         target,
         &plan,
-        &rewrites,
         OperationId::new(),
         "operator",
         &NoDerivations,
@@ -191,23 +189,6 @@ async fn excise(conn: &mut PgConnection, store: &Store, target: Target) -> Resul
     tx.commit().await?;
     finish_deletions(conn, &store.blobs).await?;
     Ok(applied)
-}
-
-/// The blanked bytes for each material a plan rewrites, stored: spaces, with
-/// the closing newline.
-fn rewrites_for(store: &Store, plan: &Plan) -> Vec<Rewrite> {
-    let mut rewrites = Vec::new();
-    for m in &plan.materials {
-        let mut bytes = store.blobs.read(&m.blob).unwrap();
-        let end = bytes.len() - 1;
-        bytes[..end].fill(b' ');
-        rewrites.push(Rewrite {
-            material: m.id,
-            blob: store.blobs.put(&bytes).unwrap(),
-            length: bytes.len() as u64,
-        });
-    }
-    rewrites
 }
 
 async fn count(conn: &mut PgConnection, sql: &str) -> i64 {
@@ -238,13 +219,11 @@ async fn deletions_a_stop_left_are_finished_and_reused_bytes_kept(db: devkit::pg
     // The excision commits; the process stops before deleting the file.
     let target = Target::Event(old.id);
     let plan = plan(&mut conn, target).await.unwrap();
-    let rewrites = rewrites_for(&store, &plan);
     let mut tx = conn.begin().await.unwrap();
     apply(
         &mut tx,
         target,
         &plan,
-        &rewrites,
         OperationId::new(),
         "operator",
         &NoDerivations,
@@ -293,13 +272,13 @@ async fn deletions_a_stop_left_are_finished_and_reused_bytes_kept(db: devkit::pg
 }
 
 #[devkit::test]
-async fn every_reading_goes_and_its_bytes_are_blanked_in_place(db: devkit::pg::TestDatabase) {
+async fn every_reading_goes_with_its_materials(db: devkit::pg::TestDatabase) {
     let mut conn = connect(&db).await;
     let store = Store::new();
     let first = b"secret v1\n".to_vec();
     let second = b"secret v2\n".to_vec();
     let (m1, blob1) = material(&mut conn, &store, "s", &first).await;
-    let (m2, _) = material(&mut conn, &store, "s", &second).await;
+    let (m2, blob2) = material(&mut conn, &store, "s", &second).await;
     let (k1, kept1) = material(&mut conn, &store, "s", b"keep-1\n").await;
     let (k2, kept2) = material(&mut conn, &store, "s", b"keep-2\n").await;
     let old = keyed(m1, &first, 0, "k", 1);
@@ -322,19 +301,30 @@ async fn every_reading_goes_and_its_bytes_are_blanked_in_place(db: devkit::pg::T
         applied.events, 2,
         "both readings of the record, live and archived"
     );
-    assert_eq!(applied.materials_rewritten, 2);
+    assert_eq!(applied.materials_removed, 2);
+    assert_eq!(
+        applied.inputs_removed, 0,
+        "the input still has other materials"
+    );
     assert_eq!(applied.delete_after_commit.len(), 2);
     assert!(store.blobs.read(&blob1).is_err(), "the old file is gone");
-
-    let blobs: Vec<String> = sqlx::query_scalar!(
-        "SELECT blob FROM raw.materials WHERE id = ANY($1) ORDER BY id",
-        &[m1.0, m2.0]
-    )
-    .fetch_all(&mut conn)
-    .await
-    .unwrap();
-    assert_eq!(store.blobs.read(&blobs[0]).unwrap(), b"         \n");
-    assert_eq!(store.blobs.read(&blobs[1]).unwrap(), b"         \n");
+    assert!(store.blobs.read(&blob2).is_err());
+    assert_eq!(
+        count(
+            &mut conn,
+            &format!(
+                "SELECT count(*) FROM raw.materials WHERE id IN ('{}', '{}')",
+                m1.0, m2.0
+            )
+        )
+        .await,
+        0
+    );
+    assert_eq!(
+        count(&mut conn, "SELECT count(*) FROM core.excised_materials").await,
+        2,
+        "only the digests stay"
+    );
     assert_eq!(store.blobs.read(&kept1).unwrap(), b"keep-1\n");
     assert_eq!(store.blobs.read(&kept2).unwrap(), b"keep-2\n");
 
@@ -363,8 +353,7 @@ async fn every_reading_goes_and_its_bytes_are_blanked_in_place(db: devkit::pg::T
 }
 
 /// Equal bytes are not the same record: excising one of two equal records
-/// leaves the other and the bytes it shares, and a later equal record is read
-/// as usual.
+/// leaves the other and the bytes it shares.
 #[devkit::test]
 async fn equal_records_elsewhere_are_untouched(db: devkit::pg::TestDatabase) {
     let mut conn = connect(&db).await;
@@ -379,11 +368,6 @@ async fn equal_records_elsewhere_are_untouched(db: devkit::pg::TestDatabase) {
         .await
         .unwrap();
     assert_eq!(applied.events, 1);
-    let blob: String = sqlx::query_scalar!("SELECT blob FROM raw.materials WHERE id = $1", m.0)
-        .fetch_one(&mut conn)
-        .await
-        .unwrap();
-    assert_eq!(store.blobs.read(&blob).unwrap(), b"          \n");
     assert_eq!(
         store.blobs.read(&other_blob).unwrap(),
         b"git status\n",
@@ -394,9 +378,95 @@ async fn equal_records_elsewhere_are_untouched(db: devkit::pg::TestDatabase) {
         1,
         "the equal record stays live"
     );
-    let (later, _) = material(&mut conn, &store, "s", b"git status\n").await;
-    let out = admit_events(&mut conn, vec![keyless(later, b"git status\n", 0)]).await;
-    assert_eq!((out.admitted, out.hidden), (1, 0));
+}
+
+/// An input whose last material goes is removed with its observations and
+/// revisions, so no path of it stays; a later part or a cursor that named a
+/// removed part names the part before it.
+#[devkit::test]
+async fn an_input_left_empty_goes_and_part_sequences_stay_whole(db: devkit::pg::TestDatabase) {
+    let mut conn = connect(&db).await;
+    let store = Store::new();
+    let (alone, _) = material(&mut conn, &store, "lone", b"secret\n").await;
+    sqlx::query(
+        "INSERT INTO raw.observations (id, input_id, observed_at, last_looked_at)
+         SELECT gen_random_uuid(), input_id, now(), now() FROM raw.materials WHERE id = $1",
+    )
+    .bind(alone.0)
+    .execute(&mut conn)
+    .await
+    .unwrap();
+    let event = keyless(alone, b"secret\n", 0);
+    admit_events(&mut conn, vec![event.clone()]).await;
+    let applied = excise(&mut conn, &store, Target::Event(event.id))
+        .await
+        .unwrap();
+    assert_eq!((applied.materials_removed, applied.inputs_removed), (1, 1));
+    assert_eq!(
+        count(
+            &mut conn,
+            "SELECT count(*) FROM raw.inputs WHERE binding = 'lone:synthetic@h'"
+        )
+        .await,
+        0,
+        "no excised path stays"
+    );
+    assert_eq!(
+        count(&mut conn, "SELECT count(*) FROM raw.observations").await,
+        0
+    );
+
+    // Three parts in sequence; the middle one goes.
+    let parts: Vec<MaterialId> = {
+        let mut parts = Vec::new();
+        for bytes in [&b"one\n"[..], b"two\n", b"three\n"] {
+            parts.push(material(&mut conn, &store, "seq", bytes).await.0);
+        }
+        parts
+    };
+    for (index, pair) in parts.windows(2).enumerate() {
+        sqlx::query(
+            "UPDATE raw.materials SET previous_part_id = $2, part_index = $3 WHERE id = $1",
+        )
+        .bind(pair[1].0)
+        .bind(pair[0].0)
+        .bind(index as i32 + 1)
+        .execute(&mut conn)
+        .await
+        .unwrap();
+    }
+    // A cursor that names the middle part as the last one stored.
+    sqlx::query(
+        "INSERT INTO raw.positions (binding, cursor, carry, committed_seq)
+         VALUES ('seq:synthetic@h', jsonb_build_object('last_material', $1::text), 'null', 0)",
+    )
+    .bind(parts[1].0.to_string())
+    .execute(&mut conn)
+    .await
+    .unwrap();
+    let middle = keyless(parts[1], b"two\n", 0);
+    admit_events(&mut conn, vec![middle.clone()]).await;
+    excise(&mut conn, &store, Target::Event(middle.id))
+        .await
+        .unwrap();
+    let previous: Option<Uuid> =
+        sqlx::query_scalar("SELECT previous_part_id FROM raw.materials WHERE id = $1")
+            .bind(parts[2].0)
+            .fetch_one(&mut conn)
+            .await
+            .unwrap();
+    assert_eq!(previous, Some(parts[0].0));
+    let cursor: String = sqlx::query_scalar(
+        "SELECT cursor->>'last_material' FROM raw.positions WHERE binding = 'seq:synthetic@h'",
+    )
+    .fetch_one(&mut conn)
+    .await
+    .unwrap();
+    assert_eq!(
+        cursor,
+        parts[0].0.to_string(),
+        "the cursor names a stored part"
+    );
 }
 
 #[devkit::test]
@@ -592,7 +662,6 @@ async fn a_plan_that_went_stale_is_refused(db: devkit::pg::TestDatabase) {
         &mut tx,
         Target::Event(first.id),
         &stale,
-        &[],
         OperationId::new(),
         "operator",
         &NoDerivations,

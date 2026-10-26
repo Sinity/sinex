@@ -90,7 +90,7 @@ these names and no others.
 
 - **removed at source**: the source no longer has a record; stored as a newer reading in state removed.
 - **hide / unhide**: take an event out of views, counts and re-imports, and put it back; hidden records are kept in `core.hidden_records`.
-- **excision**: the operator's permanent deletion of one record's events and the material holding it, when nothing else shares that material; only an **excisable** source, one whose every stored copy of a record is a reading of it, allows it.
+- **excision**: the permanent deletion of one record's events and the material holding it, when nothing else shares that material, keeping only the material's digest so its bytes are refused if registered again; only an **excisable** source, one whose every stored copy of a record is a reading of it, allows it.
 - **class**: a privacy class: `open`, `guarded` or `sealed`.
 - **sealed**: encrypted at rest under a per-material **data key**, wrapped for the operator's **class key**; equivalence keys and record hashes become keyed hashes under a **hash key** derived from the data key; reading needs an **unlock**.
 - **rule**: a privacy rule applied at admission; **masking** hides credentials on output.

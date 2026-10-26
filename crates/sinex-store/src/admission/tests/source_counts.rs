@@ -96,8 +96,9 @@ async fn counts_follow_admission_replacement_hiding_and_unhiding(db: devkit::pg:
     assert_eq!(live, [("a", 3), ("b", 1)]);
 }
 
-/// A database at version 0 had no counts. Upgrading it fills them from the
-/// stored events, keeps every row, and gives the schema a fresh database has.
+/// A database at version 0 had no counts and no excised materials. Upgrading
+/// it fills the counts from the stored events, keeps every row, and gives
+/// the schema a fresh database has.
 #[devkit::test]
 async fn upgrading_from_version_0_counts_the_stored_events(db: devkit::pg::TestDatabase) {
     let mut conn = <sqlx::PgConnection as sqlx::Connection>::connect(&db.url(None))
@@ -120,6 +121,9 @@ async fn upgrading_from_version_0_counts_the_stored_events(db: devkit::pg::TestD
     conn.execute("ALTER TABLE core.runs DROP COLUMN events")
         .await
         .unwrap();
+    conn.execute("DROP TABLE core.excised_materials")
+        .await
+        .unwrap();
     conn.execute("UPDATE sinex_schema.applied SET version = 0")
         .await
         .unwrap();
@@ -127,7 +131,10 @@ async fn upgrading_from_version_0_counts_the_stored_events(db: devkit::pg::TestD
 
     assert_eq!(
         sinex_schema::apply(&mut conn).await.unwrap(),
-        sinex_schema::Applied::Upgraded { from: 0, to: 1 }
+        sinex_schema::Applied::Upgraded {
+            from: 0,
+            to: sinex_schema::VERSION
+        }
     );
     sinex_schema::require_current(&mut conn).await.unwrap();
     assert_eq!(kept(&mut conn).await, expected);
@@ -158,6 +165,9 @@ async fn an_upgrade_waits_for_no_writer(db: devkit::pg::TestDatabase) {
         .unwrap();
     conn.execute("DROP TABLE core.source_counts").await.unwrap();
     conn.execute("ALTER TABLE core.runs DROP COLUMN events")
+        .await
+        .unwrap();
+    conn.execute("DROP TABLE core.excised_materials")
         .await
         .unwrap();
     conn.execute("UPDATE sinex_schema.applied SET version = 0")

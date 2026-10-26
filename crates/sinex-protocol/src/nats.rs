@@ -353,9 +353,10 @@ pub struct ProducerMaterial {
 /// A request on `<root>.excise.<producer>`: permanently delete whole
 /// materials this producer registered, every event read from them and every
 /// event derived from those, through Sinex's one excision with the producer
-/// as the actor. Each material is replaced by spaces of its length. Refused,
-/// with nothing changed, when a material was registered by anyone else, or is
-/// sealed. Sending it again finishes an interrupted one. The reply is an
+/// as the actor. Each material goes whole, its bytes and its rows; only its
+/// digest is kept, so the same bytes are refused if they are sent again.
+/// Refused, with nothing changed, when a material was registered by anyone
+/// else, is sealed, or is followed by a later part not in the request. Sending it again finishes an interrupted one. The reply is an
 /// [`ExciseReply`].
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct Excise {

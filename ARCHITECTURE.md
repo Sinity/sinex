@@ -295,14 +295,18 @@ materials and continuing a sealed archive need an operator unlock.
 Excision (`excise`) is a rare operator action. It removes one record (or one
 material the operator names): every reading of it, every event derived from
 it, and its bytes. It works on whole materials: a record is excised only when
-every material it was read from holds nothing else, and each such material's
-bytes are replaced by spaces of the same length, so the part chain keeps its
-offsets; the old blob goes once nothing cites it. A tombstone (identity and
-time) stays for each event. The request is recorded once in
+every material it was read from holds nothing else, and each such material
+goes whole: its row, its failures, the producer frames that registered it,
+and its blob once nothing else cites it; an input left with no material goes
+too. Only the material's ID and digest stay (`core.excised_materials`), so
+the same bytes are refused if they are registered again. A later part, or a
+binding's cursor, that named a removed material names the part before it; a
+material a later part continues inside is refused. A tombstone (identity and time) stays for each event. The request is
+recorded once in
 `core.operations`, planned, and applied by the writer in one transaction
 after a fresh plan matches; running it again finds only what is left. Nothing
 that is not the record changes: a material other records share is never
-rewritten, and equal bytes elsewhere are other records and stay.
+touched, and equal bytes elsewhere are other records and stay.
 
 Excision refuses, before anything changes, what it cannot remove cleanly.
 Only sources whose every stored copy of a record is one of its readings

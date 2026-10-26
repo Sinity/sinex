@@ -242,6 +242,12 @@ pub(crate) async fn run(o: Options) -> Result<(), String> {
         });
     }
 
+    let requests = ingress::Requests {
+        subjects: subjects.clone(),
+        writer: handle.clone(),
+        reads,
+        blobs: blobs.clone(),
+    };
     let ingest = ingress::Ingest::new(
         subjects,
         handle.clone(),
@@ -250,7 +256,7 @@ pub(crate) async fn run(o: Options) -> Result<(), String> {
         o.host.clone(),
     )?;
     let s = stop.clone();
-    tasks.spawn(async move { ("ingress", ingress::run(client, ingest, s).await) });
+    tasks.spawn(async move { ("ingress", ingress::run(client, ingest, requests, s).await) });
     // The writer stops when every handle is gone; the tasks above hold theirs.
     drop(handle);
 

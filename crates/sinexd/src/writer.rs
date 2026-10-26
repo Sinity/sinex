@@ -10,7 +10,7 @@
 //! freed blob files after commit).
 use serde_json::Value;
 use sinex_model::{Batch, OperationId};
-use sinex_store::excision::{self, Applied, Plan, Rewrite, Target};
+use sinex_store::excision::{self, Applied, Plan, Target};
 use sinex_store::replay::{self, Diff};
 use sinex_store::{Blobs, DirtyKeys, Outcome};
 use sqlx::{Connection, PgConnection};
@@ -49,11 +49,10 @@ pub(crate) struct ReplaySequence {
     pub batches: tokio::sync::mpsc::Receiver<Result<Batch, String>>,
 }
 
-/// An excision, planned and with its replacement bytes already stored.
+/// A planned excision.
 pub(crate) struct Excision {
     pub target: Target,
     pub plan: Plan,
-    pub rewrites: Vec<Rewrite>,
     pub operation: OperationId,
     pub actor: String,
     /// Where the freed blob files are deleted after commit.
@@ -385,26 +384,17 @@ async fn excise(
 ) -> Result<Excised, WriteError> {
     let refuse = |e: &dyn std::fmt::Display| WriteError::Refused(e.to_string());
     let mut tx = connection.begin().await.map_err(|e| refuse(&e))?;
-    let applied = match excision::apply(
-        &mut tx,
-        e.target,
-        &e.plan,
-        &e.rewrites,
-        e.operation,
-        &e.actor,
-        keys,
-    )
-    .await
-    {
-        Ok(applied) => {
-            tx.commit().await.map_err(|e| refuse(&e))?;
-            applied
-        }
-        Err(error) => {
-            tx.rollback().await.map_err(|e| refuse(&e))?;
-            return Err(refuse(&error));
-        }
-    };
+    let applied =
+        match excision::apply(&mut tx, e.target, &e.plan, e.operation, &e.actor, keys).await {
+            Ok(applied) => {
+                tx.commit().await.map_err(|e| refuse(&e))?;
+                applied
+            }
+            Err(error) => {
+                tx.rollback().await.map_err(|e| refuse(&e))?;
+                return Err(refuse(&error));
+            }
+        };
     let (_, files_left) = excision::finish_deletions(connection, &e.blobs)
         .await
         .map_err(|e| refuse(&e))?;

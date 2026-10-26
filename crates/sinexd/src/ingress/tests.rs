@@ -10,6 +10,7 @@ use std::sync::Arc;
 /// A daemon slice for tests: NATS, a database, the writer, the ingress task
 /// and a content store.
 struct Harness {
+    reads: sqlx::PgPool,
     nats: devkit::nats::TestNats,
     subjects: Subjects,
     client: async_nats::Client,
@@ -39,6 +40,19 @@ impl Harness {
             Arc::new(sinex_store::NoDerivations),
             Some(blobs.clone()),
         ));
+        // One connection for requests, so a test can hold it to make a
+        // request wait.
+        let reads = sqlx::postgres::PgPoolOptions::new()
+            .max_connections(1)
+            .connect(&url)
+            .await
+            .unwrap();
+        let requests = Requests {
+            subjects: subjects.clone(),
+            writer: handle.clone(),
+            reads: reads.clone(),
+            blobs: blobs.clone(),
+        };
         let ingest = Ingest::new(
             subjects.clone(),
             handle,
@@ -49,8 +63,9 @@ impl Harness {
         .unwrap();
         let (stop, stopped) = watch::channel(false);
         let task_client = client.clone();
-        tokio::spawn(async move { run(task_client, ingest, stopped).await.unwrap() });
+        tokio::spawn(async move { run(task_client, ingest, requests, stopped).await.unwrap() });
         let harness = Self {
+            reads,
             nats,
             subjects,
             client,
@@ -737,14 +752,15 @@ impl Harness {
     }
 }
 
-/// A producer excises whole materials it registered: their events go and
-/// their bytes become spaces. A request naming a material another producer
-/// registered is refused, and nothing changes.
+/// A producer excises whole materials it registered: their events, bytes,
+/// frames and input go, and sending the same material again is refused. A
+/// request naming a material another producer registered is refused, and
+/// nothing changes.
 #[devkit::test]
 async fn a_producer_excises_only_its_own_whole_materials(db: devkit::pg::TestDatabase) {
     let h = Harness::start(db).await;
-    let (mine, frame) = h.material_frame("m1", b": 1760788800:0;ls\n");
-    assert_eq!(h.send("kitty", &frame).await.refusal, None);
+    let (mine, mine_frame) = h.material_frame("m1", b": 1760788800:0;ls\n");
+    assert_eq!(h.send("kitty", &mine_frame).await.refusal, None);
     let (other, frame) = h.material_frame("m2", b": 1760788801:0;pwd\n");
     assert_eq!(h.send("phone", &frame).await.refusal, None);
     for (producer, material) in [("kitty", mine), ("phone", other)] {
@@ -781,7 +797,25 @@ async fn a_producer_excises_only_its_own_whole_materials(db: devkit::pg::TestDat
             .await,
         0
     );
-    assert_eq!(h.stored(mine).await, b"                 \n");
+    assert_eq!(
+        h.count(&format!(
+            "SELECT count(*) FROM raw.materials WHERE id = '{}'",
+            mine.0
+        ))
+        .await,
+        0
+    );
+    assert_eq!(
+        h.count("SELECT count(*) FROM raw.inputs WHERE binding = 'ingress:kitty'")
+            .await,
+        0,
+        "no excised path stays"
+    );
+    assert_eq!(
+        h.count("SELECT count(*) FROM core.ingress_frames WHERE producer = 'kitty'")
+            .await,
+        0
+    );
     assert!(
         h.materials("kitty", 0, 10).await.is_empty(),
         "an excised material is no longer listed"
@@ -797,4 +831,48 @@ async fn a_producer_excises_only_its_own_whole_materials(db: devkit::pg::TestDat
             .await,
         1
     );
+    let again = h.send("kitty", &mine_frame).await;
+    assert!(
+        again
+            .refusal
+            .as_deref()
+            .is_some_and(|r| r.contains("an excision removed")),
+        "{again:?}"
+    );
+}
+
+/// A slow producer request (here one waiting for a database connection)
+/// leaves the frame consumer reading: frames are acknowledged meanwhile, and
+/// the request is answered once it can run.
+#[devkit::test]
+async fn frames_flow_while_a_request_waits(db: devkit::pg::TestDatabase) {
+    let h = Harness::start(db).await;
+    let held = h.reads.acquire().await.unwrap();
+    let client = h.client.clone();
+    let subject = h.subjects.recorded("kitty");
+    let request = tokio::spawn(async move {
+        let body = serde_json::to_vec(&RecordedQuery {
+            frames: vec!["m1".into()],
+        })
+        .unwrap();
+        client.request(subject, body.into()).await.unwrap()
+    });
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    assert!(
+        !request.is_finished(),
+        "the request waits for its connection"
+    );
+
+    let (_, frame) = h.material_frame("m1", b"ls\n");
+    assert_eq!(h.send("kitty", &frame).await.refusal, None);
+    assert!(!request.is_finished());
+
+    drop(held);
+    let reply = tokio::time::timeout(Duration::from_secs(10), request)
+        .await
+        .unwrap()
+        .unwrap();
+    let acks: Vec<Acknowledgment> = serde_json::from_slice(&reply.payload).unwrap();
+    assert_eq!(acks.len(), 1);
+    assert_eq!(acks[0].frame, "m1");
 }

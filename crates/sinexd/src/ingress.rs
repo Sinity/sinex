@@ -85,7 +85,7 @@ pub(crate) async fn ensure_stream(
 pub(crate) struct Ingest {
     pub subjects: Subjects,
     pub writer: WriterHandle,
-    /// A read connection for recorded frames and registered materials.
+    /// The connection frames are checked and answered from.
     pub conn: PgConnection,
     pub blobs: Blobs,
     pub host: String,
@@ -214,81 +214,6 @@ impl Ingest {
             .ok_or_else(|| format!("frame {name} from {producer} was not recorded"))?;
         self.discard(producer, &name);
         Ok(acknowledgment(stored))
-    }
-
-    /// Answer a recorded query: the recorded acknowledgments of these frames.
-    pub(crate) async fn recorded(
-        &mut self,
-        producer: &str,
-        request: &RecordedQuery,
-    ) -> Result<Vec<Acknowledgment>, String> {
-        Ok(
-            commit_log::frames(&mut self.conn, producer, &request.frames)
-                .await
-                .map_err(|e| e.to_string())?
-                .into_iter()
-                .map(acknowledgment)
-                .collect(),
-        )
-    }
-
-    /// Answer a materials request: one page of the materials `producer`
-    /// registered and Sinex still holds.
-    pub(crate) async fn materials(
-        &mut self,
-        producer: &str,
-        request: &Materials,
-    ) -> Result<Vec<ProducerMaterial>, String> {
-        let rows = commit_log::producer_materials(
-            &mut self.conn,
-            producer,
-            request.after,
-            i64::from(request.limit),
-        )
-        .await
-        .map_err(|e| e.to_string())?;
-        rows.into_iter()
-            .map(|row| {
-                Ok(ProducerMaterial {
-                    number: row.number,
-                    frame: row.frame,
-                    material: MaterialFrame {
-                        id: sinex_model::MaterialId(row.material_id),
-                        input: sinex_model::InputRef {
-                            kind: row.kind,
-                            locator: row.locator,
-                            host: row.host,
-                        },
-                        blob: row.blob,
-                        length: u64::try_from(row.length).map_err(|e| e.to_string())?,
-                        parser: row.parser,
-                        parser_version: u32::try_from(row.parser_version)
-                            .map_err(|e| e.to_string())?,
-                        part_index: u32::try_from(row.part_index).map_err(|e| e.to_string())?,
-                        previous_part: row.previous_part.map(sinex_model::MaterialId),
-                        manifest: serde_json::from_value(row.manifest)
-                            .map_err(|e| e.to_string())?,
-                    },
-                })
-            })
-            .collect()
-    }
-
-    /// Answer an excise request: excise whole materials `producer`
-    /// registered, or say why nothing was excised.
-    pub(crate) async fn excise(&mut self, producer: &str, request: &Excise) -> ExciseReply {
-        crate::excision::excise_for_producer(
-            &mut self.conn,
-            &self.blobs,
-            &self.writer,
-            producer,
-            &request.materials,
-        )
-        .await
-        .unwrap_or_else(|refusal| ExciseReply {
-            refusal: Some(refusal),
-            ..ExciseReply::default()
-        })
     }
 
     async fn stored(&mut self, producer: &str, frame: &str) -> Result<Option<StoredFrame>, String> {
@@ -502,121 +427,256 @@ fn acknowledgment(s: StoredFrame) -> Acknowledgment {
     }
 }
 
-/// Consume the ingress stream and answer recorded queries and excise requests until
+/// Producer requests answered at once, each in its own task.
+const REQUESTS_AT_ONCE: usize = 4;
+
+/// What answers producer requests (recorded queries, material pages,
+/// excisions) beside the frame consumer, so a slow request never keeps the
+/// consumer from reading its stream.
+#[derive(Clone)]
+pub(crate) struct Requests {
+    pub subjects: Subjects,
+    pub writer: WriterHandle,
+    pub reads: sqlx::PgPool,
+    pub blobs: Blobs,
+}
+
+impl Requests {
+    /// Answer a recorded query: the recorded acknowledgments of these frames.
+    async fn recorded(
+        &self,
+        producer: &str,
+        request: &RecordedQuery,
+    ) -> Result<Vec<Acknowledgment>, String> {
+        let mut conn = self.reads.acquire().await.map_err(|e| e.to_string())?;
+        Ok(commit_log::frames(&mut conn, producer, &request.frames)
+            .await
+            .map_err(|e| e.to_string())?
+            .into_iter()
+            .map(acknowledgment)
+            .collect())
+    }
+
+    /// Answer a materials request: one page of the materials `producer`
+    /// registered and Sinex still holds.
+    async fn materials(
+        &self,
+        producer: &str,
+        request: &Materials,
+    ) -> Result<Vec<ProducerMaterial>, String> {
+        let mut conn = self.reads.acquire().await.map_err(|e| e.to_string())?;
+        let rows = commit_log::producer_materials(
+            &mut conn,
+            producer,
+            request.after,
+            i64::from(request.limit),
+        )
+        .await
+        .map_err(|e| e.to_string())?;
+        rows.into_iter()
+            .map(|row| {
+                Ok(ProducerMaterial {
+                    number: row.number,
+                    frame: row.frame,
+                    material: MaterialFrame {
+                        id: sinex_model::MaterialId(row.material_id),
+                        input: sinex_model::InputRef {
+                            kind: row.kind,
+                            locator: row.locator,
+                            host: row.host,
+                        },
+                        blob: row.blob,
+                        length: u64::try_from(row.length).map_err(|e| e.to_string())?,
+                        parser: row.parser,
+                        parser_version: u32::try_from(row.parser_version)
+                            .map_err(|e| e.to_string())?,
+                        part_index: u32::try_from(row.part_index).map_err(|e| e.to_string())?,
+                        previous_part: row.previous_part.map(sinex_model::MaterialId),
+                        manifest: serde_json::from_value(row.manifest)
+                            .map_err(|e| e.to_string())?,
+                    },
+                })
+            })
+            .collect()
+    }
+
+    /// Answer an excise request: excise whole materials `producer`
+    /// registered, or say why nothing was excised.
+    async fn excise(&self, producer: &str, request: &Excise) -> Result<ExciseReply, String> {
+        let mut conn = self.reads.acquire().await.map_err(|e| e.to_string())?;
+        Ok(crate::excision::excise_for_producer(
+            &mut conn,
+            &self.blobs,
+            &self.writer,
+            producer,
+            &request.materials,
+        )
+        .await
+        .unwrap_or_else(|refusal| ExciseReply {
+            refusal: Some(refusal),
+            ..ExciseReply::default()
+        }))
+    }
+
+    /// The reply to one request on `subject`, or `None` when it names no
+    /// producer.
+    async fn answer(&self, subject: &str, payload: &[u8]) -> Option<Vec<u8>> {
+        let producer = self.subjects.producer_of(subject)?.to_owned();
+        let body = if subject == self.subjects.recorded(&producer) {
+            match serde_json::from_slice::<RecordedQuery>(payload) {
+                Ok(query) => match self.recorded(&producer, &query).await {
+                    Ok(acks) => serde_json::json!(acks),
+                    Err(error) => serde_json::json!({ "refusal": error }),
+                },
+                Err(error) => {
+                    serde_json::json!({ "refusal": format!("not a recorded query: {error}") })
+                }
+            }
+        } else if subject == self.subjects.materials(&producer) {
+            match serde_json::from_slice::<Materials>(payload) {
+                Ok(page) => match self.materials(&producer, &page).await {
+                    Ok(held) => serde_json::json!(held),
+                    Err(error) => serde_json::json!({ "refusal": error }),
+                },
+                Err(error) => {
+                    serde_json::json!({ "refusal": format!("not a materials request: {error}") })
+                }
+            }
+        } else {
+            let reply = match serde_json::from_slice::<Excise>(payload) {
+                Ok(excise) => self
+                    .excise(&producer, &excise)
+                    .await
+                    .unwrap_or_else(|error| ExciseReply {
+                        refusal: Some(error),
+                        ..ExciseReply::default()
+                    }),
+                Err(error) => ExciseReply {
+                    refusal: Some(format!("not an excise request: {error}")),
+                    ..ExciseReply::default()
+                },
+            };
+            serde_json::json!(reply)
+        };
+        Some(body.to_string().into_bytes())
+    }
+}
+
+/// Consume the ingress stream, and answer producer requests beside it, until
 /// `stop` is set.
 pub(crate) async fn run(
     client: async_nats::Client,
-    mut ingest: Ingest,
+    ingest: Ingest,
+    requests: Requests,
     mut stop: watch::Receiver<bool>,
 ) -> Result<(), String> {
+    let stopped = async move {
+        while stop.changed().await.is_ok() {
+            if *stop.borrow() {
+                return;
+            }
+        }
+    };
+    tokio::select! {
+        () = stopped => Ok(()),
+        result = consume(client.clone(), ingest) => result,
+        result = serve(client, requests) => result,
+    }
+}
+
+async fn consume(client: async_nats::Client, mut ingest: Ingest) -> Result<(), String> {
     let js = crate::publisher::context(client.clone());
     let consumer = ensure_stream(&js, &ingest.subjects).await?;
     let mut frames = consumer
         .messages()
         .await
         .map_err(|e| format!("ingress messages: {e}"))?;
-    let mut have = client
-        .subscribe(ingest.subjects.recorded_all())
-        .await
-        .map_err(|e| format!("recorded-query subscription: {e}"))?;
-    let mut materials = client
-        .subscribe(ingest.subjects.materials_all())
-        .await
-        .map_err(|e| format!("materials subscription: {e}"))?;
-    let mut excise = client
-        .subscribe(ingest.subjects.excise_all())
-        .await
-        .map_err(|e| format!("excise subscription: {e}"))?;
-    client.flush().await.map_err(|e| e.to_string())?;
     loop {
-        tokio::select! {
-            _ = stop.changed() => {
-                if *stop.borrow() {
-                    return Ok(());
-                }
+        let Some(message) = frames.next().await else {
+            return Err("the ingress stream ended".into());
+        };
+        let message = match message {
+            Ok(message) => message,
+            // A frame that waited on a busy writer kept the stream unread past
+            // its heartbeat; read it again.
+            Err(error) if error.kind() == consumer::pull::MessagesErrorKind::MissingHeartbeat => {
+                frames = consumer
+                    .messages()
+                    .await
+                    .map_err(|e| format!("ingress messages: {e}"))?;
+                continue;
             }
-            message = frames.next() => {
-                let Some(message) = message else {
-                    return Err("the ingress stream ended".into());
-                };
-                let message = message.map_err(|e| format!("ingress: {e}"))?;
-                let Some(producer) = ingest.subjects.producer_of(&message.subject).map(str::to_owned) else {
-                    // Not a subject a producer can send on: drop it for good.
-                    let _ = message.ack_with(AckKind::Term).await;
-                    continue;
-                };
-                match ingest.handle(&producer, &message.payload).await {
-                    Ok(ack) => {
-                        let body = serde_json::to_vec(&ack).map_err(|e| e.to_string())?;
-                        let _ = client.publish(ingest.subjects.ack(&producer), body.into()).await;
-                        message.ack().await.map_err(|e| format!("ack: {e}"))?;
-                    }
-                    Err(error) => {
-                        eprintln!("sinexd: ingress frame from {producer} delayed: {error}");
-                        let _ = message.ack_with(AckKind::Nak(Some(Duration::from_secs(5)))).await;
-                    }
-                }
+            Err(error) => return Err(format!("ingress: {error}")),
+        };
+        let Some(producer) = ingest
+            .subjects
+            .producer_of(&message.subject)
+            .map(str::to_owned)
+        else {
+            // Not a subject a producer can send on: drop it for good.
+            let _ = message.ack_with(AckKind::Term).await;
+            continue;
+        };
+        match ingest.handle(&producer, &message.payload).await {
+            Ok(ack) => {
+                let body = serde_json::to_vec(&ack).map_err(|e| e.to_string())?;
+                let _ = client
+                    .publish(ingest.subjects.ack(&producer), body.into())
+                    .await;
+                message.ack().await.map_err(|e| format!("ack: {e}"))?;
             }
-            request = have.next() => {
-                let Some(request) = request else {
-                    return Err("the recorded-query subscription ended".into());
-                };
-                let (Some(reply), Some(producer)) = (
-                    request.reply.clone(),
-                    ingest.subjects.producer_of(&request.subject).map(str::to_owned),
-                ) else {
-                    continue;
-                };
-                let answer = match serde_json::from_slice::<RecordedQuery>(&request.payload) {
-                    Ok(query) => ingest.recorded(&producer, &query).await.map(|acks| serde_json::json!(acks)),
-                    Err(error) => Ok(serde_json::json!({ "refusal": format!("not a recorded query: {error}") })),
-                };
-                let body = match answer {
-                    Ok(value) => value,
-                    Err(error) => serde_json::json!({ "refusal": error }),
-                };
-                let _ = client.publish(reply, body.to_string().into()).await;
-            }
-            request = materials.next() => {
-                let Some(request) = request else {
-                    return Err("the materials subscription ended".into());
-                };
-                let (Some(reply), Some(producer)) = (
-                    request.reply.clone(),
-                    ingest.subjects.producer_of(&request.subject).map(str::to_owned),
-                ) else {
-                    continue;
-                };
-                let body = match serde_json::from_slice::<Materials>(&request.payload) {
-                    Ok(page) => match ingest.materials(&producer, &page).await {
-                        Ok(held) => serde_json::json!(held),
-                        Err(error) => serde_json::json!({ "refusal": error }),
-                    },
-                    Err(error) => serde_json::json!({ "refusal": format!("not a materials request: {error}") }),
-                };
-                let _ = client.publish(reply, body.to_string().into()).await;
-            }
-            request = excise.next() => {
-                let Some(request) = request else {
-                    return Err("the excise subscription ended".into());
-                };
-                let (Some(reply), Some(producer)) = (
-                    request.reply.clone(),
-                    ingest.subjects.producer_of(&request.subject).map(str::to_owned),
-                ) else {
-                    continue;
-                };
-                let answer = match serde_json::from_slice::<Excise>(&request.payload) {
-                    Ok(excise) => ingest.excise(&producer, &excise).await,
-                    Err(error) => ExciseReply {
-                        refusal: Some(format!("not an excise request: {error}")),
-                        ..ExciseReply::default()
-                    },
-                };
-                let body = serde_json::to_vec(&answer).map_err(|e| e.to_string())?;
-                let _ = client.publish(reply, body.into()).await;
+            Err(error) => {
+                eprintln!("sinexd: ingress frame from {producer} delayed: {error}");
+                let _ = message
+                    .ack_with(AckKind::Nak(Some(Duration::from_secs(5))))
+                    .await;
             }
         }
+    }
+}
+
+/// Answer producer requests, at most [`REQUESTS_AT_ONCE`] at a time.
+async fn serve(client: async_nats::Client, requests: Requests) -> Result<(), String> {
+    let subscribe = |subject: String| {
+        let client = client.clone();
+        async move {
+            client
+                .subscribe(subject.clone())
+                .await
+                .map_err(|e| format!("{subject} subscription: {e}"))
+        }
+    };
+    let mut incoming = futures::stream::select_all([
+        subscribe(requests.subjects.recorded_all()).await?,
+        subscribe(requests.subjects.materials_all()).await?,
+        subscribe(requests.subjects.excise_all()).await?,
+    ]);
+    client.flush().await.map_err(|e| e.to_string())?;
+    let slots = std::sync::Arc::new(tokio::sync::Semaphore::new(REQUESTS_AT_ONCE));
+    let mut running = tokio::task::JoinSet::new();
+    loop {
+        let request = tokio::select! {
+            request = incoming.next() => request,
+            Some(_) = running.join_next() => continue,
+        };
+        let Some(request) = request else {
+            return Err("a producer request subscription ended".into());
+        };
+        let Some(reply) = request.reply.clone() else {
+            continue;
+        };
+        let slot = slots
+            .clone()
+            .acquire_owned()
+            .await
+            .map_err(|e| e.to_string())?;
+        let (client, requests) = (client.clone(), requests.clone());
+        running.spawn(async move {
+            if let Some(body) = requests.answer(&request.subject, &request.payload).await {
+                let _ = client.publish(reply, body.into()).await;
+            }
+            drop(slot);
+        });
     }
 }
 

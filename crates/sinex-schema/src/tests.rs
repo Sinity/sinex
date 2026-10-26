@@ -42,6 +42,7 @@ fn declarations_are_deterministic_and_named() {
         "derivation.dirty",
         "core.admission_stage",
         "core.source_counts",
+        "core.excised_materials",
     ] {
         assert!(all.contains(&format!("TABLE {table} (")), "{table}");
     }
