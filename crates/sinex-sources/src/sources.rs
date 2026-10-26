@@ -46,7 +46,11 @@ pub mod session_socket;
 pub mod sinnix_lake;
 pub mod sleep_as_android;
 pub mod spotify;
+/// Machine state on the system bus: network, Bluetooth, batteries.
+pub mod system_bus;
 pub mod takeout_chrome;
+/// Devices from udev.
+pub mod udev;
 pub mod weechat;
 pub mod wykop;
 pub mod zsh;
@@ -63,6 +67,8 @@ pub fn formats() -> &'static [&'static InputFormat] {
         &zsh::FORMAT,
         &hyprland::FORMAT,
         &journald::FORMAT,
+        &udev::FORMAT,
+        &system_bus::FORMAT,
         &file_watch::FORMAT,
         &activitywatch::FORMAT,
         &repository::FORMAT,

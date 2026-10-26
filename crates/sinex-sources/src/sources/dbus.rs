@@ -1,8 +1,9 @@
-//! Capture from the session bus, shared by the D-Bus sources (notifications,
-//! media players). `busctl --user monitor --json=short` prints one JSON object
-//! per message that matches; capture spools those lines on `LiveStream`
-//! exactly as they arrive. Parsers decode the message and its payload, whose
-//! values `busctl` writes as `{"type": <signature>, "data": <value>}`.
+//! Capture from D-Bus, shared by the D-Bus sources: notifications and media
+//! players on the session bus, machine state on the system bus. `busctl
+//! monitor --json=short` prints one JSON object per message that matches;
+//! capture spools those lines on `LiveStream` exactly as they arrive. Parsers
+//! decode the message and its payload, whose values `busctl` writes as
+//! `{"type": <signature>, "data": <value>}`.
 use crate::drivers::live_stream::{self, LiveStream, Rotation, SpoolWriter};
 use serde_json::{Map, Value};
 use sinex_model::InputRef;
@@ -10,6 +11,24 @@ use std::io::BufReader;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::Duration;
+
+/// Which bus a capture watches.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Bus {
+    /// The operator's session bus.
+    Session,
+    /// The system bus. Monitoring it needs root.
+    System,
+}
+
+impl Bus {
+    fn flag(self) -> &'static str {
+        match self {
+            Bus::Session => "--user",
+            Bus::System => "--system",
+        }
+    }
+}
 
 /// The spool driver of a bus source.
 pub fn driver(spool: PathBuf, host: String, locator: &str) -> LiveStream {
@@ -33,13 +52,24 @@ pub fn capture(
     spool: &Path,
     stop: &crate::capture::CaptureStop,
 ) -> std::io::Result<u64> {
+    capture_on(Bus::Session, matches, initial, spool, stop)
+}
+
+/// [`capture`] on `bus`.
+pub fn capture_on(
+    bus: Bus,
+    matches: &[&str],
+    initial: &[Vec<u8>],
+    spool: &Path,
+    stop: &crate::capture::CaptureStop,
+) -> std::io::Result<u64> {
     let mut writer = SpoolWriter::open(spool, Rotation::default())?;
     for line in initial {
         writer.append(sinex_model::Timestamp::now(), line)?;
     }
     writer.sync()?;
     let mut command = Command::new("busctl");
-    command.args(["--user", "monitor", "--json=short"]);
+    command.args([bus.flag(), "monitor", "--json=short"]);
     for m in matches {
         command.arg("--match").arg(m);
     }
@@ -84,11 +114,24 @@ pub(crate) fn call_until(
     method: &str,
     args: &[&str],
 ) -> Option<Value> {
+    call_on(Bus::Session, stop, destination, path, interface, method, args)
+}
+
+/// [`call_until`] on `bus`.
+pub(crate) fn call_on(
+    bus: Bus,
+    stop: &crate::capture::CaptureStop,
+    destination: &str,
+    path: &str,
+    interface: &str,
+    method: &str,
+    args: &[&str],
+) -> Option<Value> {
     let out = stop
         .output(
             Command::new("busctl")
                 .args([
-                    "--user",
+                    bus.flag(),
                     "--json=short",
                     "call",
                     destination,

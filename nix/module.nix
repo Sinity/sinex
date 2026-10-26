@@ -1,6 +1,6 @@
 # The Sinex NixOS module. It deploys sinexd with its
-# PostgreSQL and NATS, the session service, the journald capture, a
-# capture-only node for satellite hosts, and the backups. Source and derivation
+# PostgreSQL and NATS, the session service, the system captures (journal,
+# udev, system bus), a capture-only node for satellite hosts, and the backups. Source and derivation
 # options come from the registries through the generated `catalog.json`.
 self:
 { config, lib, pkgs, ... }:
@@ -200,6 +200,24 @@ in
       description = "Capture the systemd journal into its spool.";
     };
 
+    udev.enable = mkOption {
+      type = types.bool;
+      default = cfg.sources."machine.udev".enable;
+      defaultText = lib.literalExpression ''config.services.sinex.sources."machine.udev".enable'';
+      description = "Capture udev's device events into their spool.";
+    };
+
+    systemBus.enable = mkOption {
+      type = types.bool;
+      default = cfg.sources."machine.system-bus".enable;
+      defaultText = lib.literalExpression ''config.services.sinex.sources."machine.system-bus".enable'';
+      description = ''
+        Capture the system bus (logind, NetworkManager, BlueZ, UPower) into its
+        spool. Monitoring the system bus needs root, so this capture runs as
+        root with no capabilities, writing only its spool.
+      '';
+    };
+
     session = {
       enable = mkEnableOption "the session service for the operator's graphical session";
       user = mkOption { type = types.str; default = ""; description = "The operator's account."; };
@@ -346,13 +364,25 @@ in
       };
 
       # Bindings from the registry-generated options, for the daemon's sources.
-      # The journald capture's spool is the journald source's input.
+      # Each system capture's spool is its source's input.
       environment.etc."sinex/sources.json".text = builtins.toJSON {
         sources = filterAttrs (_: s: s.enable) (cfg.sources
           // lib.optionalAttrs cfg.journald.enable {
             "machine.journald" = cfg.sources."machine.journald" // {
               enable = true;
               paths = [ "${cfg.stateDir}/spool/journald" ];
+            };
+          }
+          // lib.optionalAttrs cfg.udev.enable {
+            "machine.udev" = cfg.sources."machine.udev" // {
+              enable = true;
+              paths = [ "${cfg.stateDir}/spool/udev" ];
+            };
+          }
+          // lib.optionalAttrs cfg.systemBus.enable {
+            "machine.system-bus" = cfg.sources."machine.system-bus" // {
+              enable = true;
+              paths = [ "${cfg.stateDir}/spool/system-bus" ];
             };
           });
         derivations = mapAttrs (_: d: d.enable) cfg.derivations;
@@ -371,6 +401,9 @@ in
         "d ${cfg.stateDir}/tokens 0750 ${cfg.user} ${cfg.group} -"
         "d ${cfg.stateDir}/nats 0750 ${cfg.user} ${cfg.group} -"
         "d ${cfg.stateDir}/spool 0750 ${cfg.user} ${cfg.group} -"
+        # The system-bus capture runs as root; sinexd removes the segments it
+        # has stored through the group.
+        "d ${cfg.stateDir}/spool/system-bus 2770 root ${cfg.group} -"
         "d ${cfg.backup.dumpDir} 0750 ${cfg.user} ${cfg.group} -"
         "d ${cfg.backup.keysDir} 0700 ${cfg.user} ${cfg.group} -"
         "d ${cfg.database.dataDir} 0700 postgres postgres -"
@@ -534,7 +567,46 @@ in
         path = [ config.systemd.package ];
         script = ''
           exec ${cfg.package}/bin/sinexd capture journald \
-            --spool ${cfg.stateDir}/spool/journald --since=-1d --follow
+            --spool ${cfg.stateDir}/spool/journald --option since=-1d --option follow=true
+        '';
+      };
+
+      systemd.services.sinex-capture-udev = mkIf cfg.udev.enable {
+        description = "Sinex udev capture into its spool";
+        after = [ "systemd-udevd.service" ];
+        wantedBy = [ "multi-user.target" ];
+        unitConfig = startLimit;
+        serviceConfig = restartPolicy // {
+          User = cfg.user;
+          Group = cfg.group;
+        };
+        path = [ config.systemd.package ];
+        script = ''
+          exec ${cfg.package}/bin/sinexd capture udev --spool ${cfg.stateDir}/spool/udev
+        '';
+      };
+
+      systemd.services.sinex-capture-system-bus = mkIf cfg.systemBus.enable {
+        description = "Sinex system bus capture into its spool";
+        after = [ "dbus.service" ];
+        wantedBy = [ "multi-user.target" ];
+        unitConfig = startLimit;
+        serviceConfig = restartPolicy // {
+          # The bus lets only root become a monitor; no capability is needed.
+          User = "root";
+          Group = cfg.group;
+          UMask = "0027";
+          CapabilityBoundingSet = "";
+          NoNewPrivileges = true;
+          ProtectSystem = "strict";
+          ProtectHome = true;
+          PrivateTmp = true;
+          ReadWritePaths = [ "${cfg.stateDir}/spool/system-bus" ];
+          RestrictAddressFamilies = [ "AF_UNIX" ];
+        };
+        path = [ config.systemd.package ];
+        script = ''
+          exec ${cfg.package}/bin/sinexd capture system-bus --spool ${cfg.stateDir}/spool/system-bus
         '';
       };
 

@@ -48,6 +48,10 @@ fn focus(app: &str, from: i64, to: Option<i64>) -> Event {
 }
 
 fn journal(secs: i64, priority: u8) -> Event {
+    journal_from(secs, priority, false)
+}
+
+fn journal_from(secs: i64, priority: u8, from_sinex: bool) -> Event {
     Event::build(
         &JournalEntry {
             cursor: format!("c{secs}"),
@@ -63,6 +67,7 @@ fn journal(secs: i64, priority: u8) -> Event {
             uid: None,
             command: None,
             transport: None,
+            from_sinex,
             fields: Default::default(),
         },
         "machine.journald",
@@ -298,7 +303,12 @@ fn a_day_is_the_logical_day() {
 fn only_error_entries_count_as_journal_errors() {
     let out = hourly(
         "machine.journal_errors",
-        &[journal(10, 3), journal(20, 4), journal(30, 0)],
+        &[
+            journal(10, 3),
+            journal(20, 4),
+            journal(30, 0),
+            journal_from(40, 3, true),
+        ],
         100_000,
     );
     assert_eq!(total_at(&out, 0).value, Some(2.0));

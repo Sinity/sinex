@@ -91,11 +91,17 @@ enum Command {
         #[arg(long, default_value = "sinex")]
         subject_root: String,
     },
-    /// Capture a live system source into its spool (the daemon runs the same
-    /// capture as a task).
+    /// Capture a live system source into its spool until it ends or a signal
+    /// stops it: `journald`, `udev`, `system-bus` (`sinexd admin catalog`
+    /// lists the formats). The daemon reads the spool as the source's input.
     Capture {
-        #[command(subcommand)]
-        source: Capture,
+        format: String,
+        #[arg(long)]
+        spool: PathBuf,
+        /// A capture option as `key=value` (journald's `since=-1d`,
+        /// `follow=true`, `directory=PATH`); repeatable.
+        #[arg(long = "option")]
+        options: Vec<String>,
     },
     /// Administration that needs the database but not the running daemon.
     Admin {
@@ -151,21 +157,30 @@ enum Command {
     },
 }
 
-#[derive(Subcommand)]
-enum Capture {
-    /// The systemd journal through `journalctl -o json`, resuming after the
-    /// last spooled cursor.
-    Journald {
-        #[arg(long)]
-        spool: PathBuf,
-        /// On a first capture, start here (a `journalctl --since` value, such
-        /// as `-1d`); the whole journal otherwise.
-        #[arg(long)]
-        since: Option<String>,
-        /// Keep following new entries.
-        #[arg(long)]
-        follow: bool,
-    },
+/// Run one live format's capture into `spool` on a blocking thread, stopping
+/// it on SIGINT or SIGTERM so it syncs what it spooled.
+async fn capture(format: String, spool: PathBuf, options: Vec<String>) -> Result<(), String> {
+    use sinex_sources::capture::{CaptureStop, shutdown_signal};
+    let shutdown = shutdown_signal().map_err(|e| e.to_string())?;
+    let (format, binding) = sinex_sources::live::binding(
+        &format,
+        &spool,
+        "localhost",
+        sinex_sources::live::options(&options)?,
+    )?;
+    let capture = format.capture.ok_or("not a live source")?;
+    let stop = std::sync::Arc::new(CaptureStop::new(None));
+    let task_stop = stop.clone();
+    let mut task = tokio::task::spawn_blocking(move || capture(&binding, &task_stop));
+    let captured = tokio::select! {
+        result = &mut task => result.map_err(|e| e.to_string())?,
+        _ = shutdown => {
+            stop.stop();
+            task.await.map_err(|e| e.to_string())?
+        }
+    }?;
+    println!("captured {captured}");
+    Ok(())
 }
 
 /// A writer and a derivation runner for a one-shot command, with the content
@@ -359,21 +374,10 @@ async fn main() -> std::process::ExitCode {
             .await
         }
         Command::Capture {
-            source:
-                Capture::Journald {
-                    spool,
-                    since,
-                    follow,
-                },
-        } => {
-            let start = match &since {
-                Some(s) => sinex_sources::sources::journald::Start::Since(s),
-                None => sinex_sources::sources::journald::Start::Beginning,
-            };
-            sinex_sources::sources::journald::capture(&spool, follow, start)
-                .map(|n| println!("captured {n} journal entries"))
-                .map_err(|e| e.to_string())
-        }
+            format,
+            spool,
+            options,
+        } => capture(format, spool, options).await,
         Command::Admin { command } => admin::run(command).await,
         Command::Backfill {
             database,

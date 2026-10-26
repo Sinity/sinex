@@ -29,6 +29,10 @@ pub struct JournalEntry {
     pub uid: Option<i64>,
     pub command: Option<String>,
     pub transport: Option<String>,
+    /// Written by Sinex itself (its daemon, captures and session service):
+    /// Sinex's reflection, kept out of figures about the machine's activity.
+    #[serde(default)]
+    pub from_sinex: bool,
     /// Every other field, by its journal name.
     #[serde(default, skip_serializing_if = "Map::is_empty")]
     pub fields: Map<String, Value>,

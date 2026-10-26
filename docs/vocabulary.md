@@ -34,6 +34,8 @@ these names and no others.
 - **reader memory**: what a reader remembers about its input (each row's hash, each file's size, time and hash), saved with the cursor at the end of a part so a restart reads only the parts after it.
 - **shared pass**: one read of a stored file for every compatible binding of it (export archives); each binding keeps its own parts and cursor.
 - **spool**: a live capture's directory of segment files, which its binding then reads like a growing file.
+- **snapshot** (of a live source): what its capture reads of the current state when it starts (players present, devices attached, the system bus's objects), spooled before the changes that follow.
+- **reflection**: what Sinex records about itself, such as its own journal entries (`from_sinex`); kept out of figures about the machine's activity.
 
 ## Events
 
