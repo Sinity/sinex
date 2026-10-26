@@ -892,7 +892,9 @@ impl Github {
     ) -> Result<Vec<Map<String, Value>>, DriverError> {
         let token = self.token()?;
         let repository = self.repository()?;
-        let (owner, name) = repository.split_once('/').expect("owner/name");
+        let (owner, name) = repository.split_once('/').ok_or_else(|| {
+            DriverError::Io(format!("GitHub repository {repository:?} is not owner/name"))
+        })?;
         let mut records = Vec::new();
 
         let pull_requests = self.pull_requests(&token, owner, name, &position.pull_requests)?;
