@@ -590,7 +590,7 @@ async fn clipboard_bytes(target: &Target, c: &mut PgConnection, nth: i64) -> Vec
 }
 
 /// Kill an excision at a step; nothing is removed. Excising again removes the
-/// record, and its material's bytes, once; the other material is untouched.
+/// record and its material once; the other material is untouched.
 async fn excision_survives(lock_sql: &str) {
     let inputs = Inputs::first_transaction();
     let target = Target::new(&inputs);
@@ -625,13 +625,18 @@ async fn excision_survives(lock_sql: &str) {
         scalar(&mut c, "SELECT count(*) FROM core.event_tombstones").await,
         1
     );
-    let excised = clipboard_bytes(&target, &mut c, 0).await;
-    assert!(
-        excised.iter().all(|b| *b == b' ' || *b == b'\n'),
-        "the record's material is blank"
+    assert_eq!(
+        scalar(
+            &mut c,
+            "SELECT count(*) FROM raw.materials m JOIN raw.inputs i ON i.id = m.input_id \
+             WHERE i.binding LIKE 'desktop.clipboard:%'"
+        )
+        .await,
+        1,
+        "the record's material is gone"
     );
     assert_eq!(
-        clipboard_bytes(&target, &mut c, 1).await,
+        clipboard_bytes(&target, &mut c, 0).await,
         neighbours,
         "the other material is untouched"
     );
@@ -656,7 +661,7 @@ excision_steps! {
     excision_killed_recording_the_operation: lock("core.operations");
     excision_killed_writing_tombstones: lock("core.event_tombstones");
     excision_killed_deleting_events: lock("core.commit_log");
-    excision_killed_repointing_the_material: lock("raw.materials");
+    excision_killed_removing_the_material: lock("core.excised_materials");
 }
 
 /// How far the publisher is behind the commit counter.

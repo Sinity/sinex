@@ -141,6 +141,21 @@ async fn material(
 ) -> Result<()> {
     let length =
         i64::try_from(m.length).map_err(|_| Error::Invalid("material length beyond i64".into()))?;
+    let excised = sqlx::query_scalar!(
+        r#"SELECT EXISTS (SELECT 1 FROM core.excised_materials
+             WHERE material_id = $1 OR (blob = $2 AND $3::bigint > 0)) AS "excised!""#,
+        m.id.0,
+        m.blob,
+        length,
+    )
+    .fetch_one(&mut *conn)
+    .await?;
+    if excised {
+        return Err(Error::Invalid(format!(
+            "material {} holds bytes an excision removed; they are not stored again",
+            m.id
+        )));
+    }
     sqlx::query!(
         r#"INSERT INTO core.blobs (hash, size, status) VALUES ($1, $2, 'present')
            ON CONFLICT (hash) DO UPDATE SET status = 'present' WHERE core.blobs.status = 'deleting'"#,

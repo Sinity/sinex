@@ -76,18 +76,12 @@ pub(crate) async fn excise_directly(
 ) -> OperationId {
     use sqlx::Connection;
     let plan = plan(conn, blobs, target).await.unwrap();
-    let rewrites = plan
-        .materials
-        .iter()
-        .map(|m| blanked(blobs, m).unwrap())
-        .collect::<Vec<_>>();
     let operation = OperationId::new();
     let mut tx = conn.begin().await.unwrap();
     excision::apply(
         &mut tx,
         target,
         &plan,
-        &rewrites,
         operation,
         "operator",
         &sinex_store::NoDerivations,
@@ -239,7 +233,7 @@ async fn a_copy_alone_in_its_material_goes_and_nothing_else_changes(db: devkit::
     let dry = plan(&mut w.ctx.read_conn, &w.ctx.blobs, Target::Event(alone))
         .await
         .unwrap();
-    assert_eq!(describe(&dry), "events 1 | materials blanked 1");
+    assert_eq!(describe(&dry), "events 1 | materials removed 1");
     let done = excise(
         &mut w.ctx.read_conn,
         &w.ctx.blobs,
@@ -250,13 +244,18 @@ async fn a_copy_alone_in_its_material_goes_and_nothing_else_changes(db: devkit::
     .await
     .unwrap();
     assert!(
-        done.starts_with("excised events 1 | materials blanked 1"),
+        done.starts_with("excised events 1 | materials removed 1 | inputs removed 0"),
         "{done}"
     );
     assert_eq!(w.live().await, ["git status", "synthetic other"]);
     let stored = w.stored().await;
     assert_eq!(stored.matches("git status").count(), 1, "{stored}");
     assert!(stored.contains("synthetic other"));
+    let kept: i64 = sqlx::query_scalar("SELECT count(*) FROM core.excised_materials")
+        .fetch_one(&mut w.ctx.read_conn)
+        .await
+        .unwrap();
+    assert_eq!(kept, 1, "the material's digest stays");
 
     w.copy(&["git status"]).await;
     assert_eq!(

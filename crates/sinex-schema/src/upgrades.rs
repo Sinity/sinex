@@ -28,5 +28,14 @@ pub(crate) fn upgrades() -> Vec<Vec<String>> {
             "GRANT SELECT ON core.source_counts TO sinex_reader, sinex_writer".into(),
             "GRANT INSERT, UPDATE, DELETE ON core.source_counts TO sinex_writer".into(),
         ],
+        // 1 to 2: excision removes whole materials and keeps only their
+        // digests. Materials an earlier excision blanked to spaces stay as
+        // they are.
+        vec![
+            crate::tables::EXCISED_MATERIALS.into(),
+            crate::tables::EXCISED_MATERIALS_BLOB.into(),
+            "GRANT SELECT ON core.excised_materials TO sinex_reader, sinex_writer".into(),
+            "GRANT INSERT, UPDATE, DELETE ON core.excised_materials TO sinex_writer".into(),
+        ],
     ]
 }

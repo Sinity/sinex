@@ -1,25 +1,24 @@
 //! Excision, through the one writer: what it would remove, and removing it.
-//! A request is planned and checked here, the replacement bytes are written,
-//! and the writer applies the plan in one transaction after checking that a
-//! fresh plan is the same. The same request run again finds only what is left.
+//! A request is planned and checked here, and the writer applies the plan in
+//! one transaction after checking that a fresh plan is the same. The same
+//! request run again finds only what is left.
 //!
 //! Excision removes whole materials only. The operator can excise a record
 //! when every material it was read from holds nothing else, and only from a
 //! source declared excisable: one whose every stored copy of a record is a
 //! reading of it. An outside producer can excise whole materials it
 //! registered itself. Every other request is refused before anything changes;
-//! a shared material is never rewritten.
+//! no material's bytes are ever rewritten.
 use crate::writer::{Excision, WriterHandle};
 use sinex_model::OperationId;
 use sinex_sources::sources;
 use sinex_store::Blobs;
-use sinex_store::excision::{self, Material, Plan, Rewrite, Target};
+use sinex_store::excision::{self, Material, Plan, Target};
 use sqlx::PgConnection;
-use std::io::Read;
 
 pub(crate) fn describe(plan: &Plan) -> String {
     format!(
-        "events {} | materials blanked {}",
+        "events {} | materials removed {}",
         plan.events.len(),
         plan.materials.len()
     )
@@ -48,6 +47,9 @@ pub(crate) async fn plan(
             holds_only_the_record(blobs, spec, m)?;
         }
     }
+    excision::removable(conn, &plan)
+        .await
+        .map_err(|e| e.to_string())?;
     Ok(plan)
 }
 
@@ -69,7 +71,7 @@ fn excisable(source: &str, parser: &str) -> Result<&'static sinex_sources::Sourc
 }
 
 /// Refuse a material that holds records besides the planned ones: excision
-/// never rewrites a material other records share.
+/// removes only materials that hold nothing else.
 fn holds_only_the_record(
     blobs: &Blobs,
     spec: &sinex_sources::SourceSpec,
@@ -106,9 +108,10 @@ pub(crate) async fn excise(
     let done = apply(blobs, writer, target, plan, actor).await?;
     let a = &done.applied;
     let mut out = format!(
-        "excised events {} | materials blanked {} | blob files deleted {}",
+        "excised events {} | materials removed {} | inputs removed {} | blob files deleted {}",
         a.events,
-        a.materials_rewritten,
+        a.materials_removed,
+        a.inputs_removed,
         a.delete_after_commit.len() - done.files_left.len()
     );
     if !done.files_left.is_empty() {
@@ -152,19 +155,21 @@ pub(crate) async fn excise_for_producer(
                 other.id
             ));
         }
+        excision::removable(conn, &plan)
+            .await
+            .map_err(|e| e.to_string())?;
         plans.push((target, plan));
     }
     let mut reply = sinex_protocol::ExciseReply::default();
     for (target, plan) in plans {
         let done = apply(blobs, writer, target, plan, producer).await?;
-        reply.materials += done.applied.materials_rewritten as u64;
+        reply.materials += done.applied.materials_removed as u64;
         reply.events += done.applied.events as u64;
     }
     Ok(reply)
 }
 
-/// Write the replacement bytes of `plan`'s materials and have the writer
-/// apply it.
+/// Have the writer apply `plan`.
 async fn apply(
     blobs: &Blobs,
     writer: &WriterHandle,
@@ -172,42 +177,16 @@ async fn apply(
     plan: Plan,
     actor: &str,
 ) -> Result<crate::writer::Excised, String> {
-    let rewrites = plan
-        .materials
-        .iter()
-        .map(|m| blanked(blobs, m))
-        .collect::<Result<Vec<_>, _>>()?;
     writer
         .excise(Excision {
             target,
             plan,
-            rewrites,
             operation: OperationId::new(),
             actor: actor.into(),
             blobs: blobs.clone(),
         })
         .await
         .map_err(|e| e.to_string())
-}
-
-/// The material's replacement: spaces of the same length, ending in the
-/// material's closing newline if it has one, so the stored part chain keeps
-/// its offsets and holds no record. Written to the store before the plan is
-/// applied (bytes before rows).
-fn blanked(blobs: &Blobs, m: &Material) -> Result<Rewrite, String> {
-    let newline = m.length > 0
-        && blobs
-            .read_range(&m.blob, m.length - 1, 1)
-            .map_err(|e| e.to_string())?
-            == b"\n";
-    let spaces = std::io::repeat(b' ')
-        .take(m.length - u64::from(newline))
-        .chain(if newline { &b"\n"[..] } else { &b""[..] });
-    Ok(Rewrite {
-        material: m.id,
-        blob: blobs.put_reader(spaces).map_err(|e| e.to_string())?,
-        length: m.length,
-    })
 }
 
 #[cfg(test)]
