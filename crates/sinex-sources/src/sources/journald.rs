@@ -104,16 +104,16 @@ fn sinex_unit(unit: &str) -> bool {
 
 /// systemd's catalog IDs for the entries read as state changes.
 mod message {
-    pub const START_DONE: &str = "39f53479d3a045ac8e11786248231fbf";
-    pub const START_FAILED: &str = "be02cf6855d2428ba40df7e9d022f03d";
-    pub const STOP_DONE: &str = "9d1aaa27d60140bd96365438aad20286";
-    pub const RELOAD_DONE: &str = "7b05ebc668384222baa8881179cfda54";
-    pub const UNIT_SUCCEEDED: &str = "7ad2d189f7e94e70a38c781354912448";
-    pub const UNIT_FAILED: &str = "d9b373ed55a64feb8242e02dbe79a49c";
-    pub const STARTUP_FINISHED: &str = "b07a249cd024414a82dd00cd181378ff";
-    pub const SLEEP_START: &str = "6bbd95ee977941e497c48be27c254128";
-    pub const SLEEP_STOP: &str = "8811e6df2a8e40f58a94cea26f8ebf14";
-    pub const SHUTDOWN: &str = "98268866d1d54a499c4e98921d93bc40";
+    pub(super) const START_DONE: &str = "39f53479d3a045ac8e11786248231fbf";
+    pub(super) const START_FAILED: &str = "be02cf6855d2428ba40df7e9d022f03d";
+    pub(super) const STOP_DONE: &str = "9d1aaa27d60140bd96365438aad20286";
+    pub(super) const RELOAD_DONE: &str = "7b05ebc668384222baa8881179cfda54";
+    pub(super) const UNIT_SUCCEEDED: &str = "7ad2d189f7e94e70a38c781354912448";
+    pub(super) const UNIT_FAILED: &str = "d9b373ed55a64feb8242e02dbe79a49c";
+    pub(super) const STARTUP_FINISHED: &str = "b07a249cd024414a82dd00cd181378ff";
+    pub(super) const SLEEP_START: &str = "6bbd95ee977941e497c48be27c254128";
+    pub(super) const SLEEP_STOP: &str = "8811e6df2a8e40f58a94cea26f8ebf14";
+    pub(super) const SHUTDOWN: &str = "98268866d1d54a499c4e98921d93bc40";
 }
 
 /// The state change an entry records, if it is one systemd or logind wrote.

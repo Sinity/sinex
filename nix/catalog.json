@@ -57,10 +57,49 @@
       "drivers": [
         "live-stream"
       ],
-      "purpose": "machine timeline, service health and recall",
+      "purpose": "machine timeline, service health, unit and boot intervals, and recall",
       "class": "guarded",
       "eventTypes": [
-        "journal.entry"
+        "journal.entry",
+        "unit.started",
+        "unit.stopped",
+        "unit.reloaded",
+        "boot.started",
+        "sleep.started",
+        "sleep.ended",
+        "shutdown.started"
+      ]
+    },
+    {
+      "name": "machine.udev",
+      "formats": [
+        "udev"
+      ],
+      "drivers": [
+        "live-stream"
+      ],
+      "purpose": "which devices were attached when, peripheral and storage history",
+      "class": "open",
+      "eventTypes": [
+        "device.changed"
+      ]
+    },
+    {
+      "name": "machine.system-bus",
+      "formats": [
+        "system-bus"
+      ],
+      "drivers": [
+        "live-stream"
+      ],
+      "purpose": "machine timeline: network, Bluetooth devices, batteries, sessions",
+      "class": "guarded",
+      "eventTypes": [
+        "bus.signal",
+        "network.changed",
+        "network.device_changed",
+        "bluetooth.device_changed",
+        "battery.changed"
       ]
     },
     {
@@ -988,7 +1027,10 @@
       "inputs": [
         "window.focused",
         "workspace.switched",
-        "presence.span"
+        "presence.span",
+        "unit.started",
+        "unit.stopped",
+        "sleep.started"
       ],
       "outputs": [
         "state.interval"
