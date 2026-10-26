@@ -20,6 +20,7 @@ async fn turn(ctx: &mut OneShot, bound: &mut [Bound]) {
         bound,
         stop,
         Access::default(),
+        &mut |_, _| {},
     )
     .await
     {

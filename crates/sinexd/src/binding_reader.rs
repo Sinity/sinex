@@ -42,7 +42,23 @@ pub(crate) use crate::sealed_access::Access;
 mod shared;
 use shared::{Pass, read_shared, same_file};
 
-/// Read independent bindings, reporting each error without preventing other bindings.
+/// Each binding's outcome as it is read: its source and result, kept for the
+/// caller, and handed at once to `report` with the binding's name.
+struct Results<'a> {
+    list: Vec<(String, Result<Totals, String>)>,
+    report: &'a mut (dyn FnMut(&str, &Result<Totals, String>) + Send),
+}
+
+impl Results<'_> {
+    fn add(&mut self, binding: &Binding, result: Result<Totals, String>) {
+        (self.report)(&binding.name, &result);
+        self.list.push((binding.source.clone(), result));
+    }
+}
+
+/// Read independent bindings, reporting each error without preventing other
+/// bindings. `report` sees each binding's outcome as soon as it is known, so a
+/// round that takes hours does not hide its failures until it ends.
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn read(
     conn: &mut PgConnection,
@@ -53,8 +69,12 @@ pub(crate) async fn read(
     bound: &mut [Bound],
     stop: watch::Receiver<bool>,
     access: Access<'_>,
+    report: &mut (dyn FnMut(&str, &Result<Totals, String>) + Send),
 ) -> Vec<(String, Result<Totals, String>)> {
-    let mut results = Vec::new();
+    let mut results = Results {
+        list: Vec::new(),
+        report,
+    };
     let mut passes: Vec<Pass> = Vec::new();
     for (index, b) in bound.iter_mut().enumerate() {
         let init = async {
@@ -67,7 +87,7 @@ pub(crate) async fn read(
         }
         .await;
         if let Err(e) = init {
-            results.push((b.binding.source.clone(), Err(e)));
+            results.add(&b.binding, Err(e));
             continue;
         }
         if let Reading::Shared(pass) = &b.reading {
@@ -115,13 +135,8 @@ pub(crate) async fn read(
                         });
                     }
                 }
-                Ok((Resume::Finished, _, _)) => {
-                    results.push((b.binding.source.clone(), Ok(Totals::default())))
-                }
-                Err(e) => results.push((
-                    b.binding.source.clone(),
-                    Err(format!("{}: {e}", b.binding.name)),
-                )),
+                Ok((Resume::Finished, _, _)) => results.add(&b.binding, Ok(Totals::default())),
+                Err(e) => results.add(&b.binding, Err(format!("{}: {e}", b.binding.name))),
             }
         } else if let Reading::Polled(reader) = &mut b.reading {
             // Taken before the poll, so bytes appended during it change them.
@@ -131,7 +146,7 @@ pub(crate) async fn read(
             if let (Some(now), Some(then)) = (&facts, &b.settled)
                 && same_file(now, then)
             {
-                results.push((b.binding.source.clone(), Ok(Totals::default())));
+                results.add(&b.binding, Ok(Totals::default()));
                 continue;
             }
             let result = backfill::drive(
@@ -159,7 +174,7 @@ pub(crate) async fn read(
                 Err(e) => Err(e),
             };
             b.settled = if result.is_ok() { facts } else { None };
-            results.push((b.binding.source.clone(), result));
+            results.add(&b.binding, result);
         }
     }
     for pass in passes {
@@ -176,21 +191,20 @@ pub(crate) async fn read(
         )
         .await;
         match outcome {
-            Ok(per_route) => results.extend(
-                pass.indices
-                    .iter()
-                    .zip(per_route)
-                    .map(|(&i, r)| (bound[i].binding.source.clone(), r)),
-            ),
-            Err(e) => results.extend(pass.indices.iter().map(|&i| {
-                (
-                    bound[i].binding.source.clone(),
-                    Err(format!("{}: {e}", bound[i].binding.name)),
-                )
-            })),
+            Ok(per_route) => {
+                for (&i, r) in pass.indices.iter().zip(per_route) {
+                    results.add(&bound[i].binding, r);
+                }
+            }
+            Err(e) => {
+                for &i in &pass.indices {
+                    let failed = Err(format!("{}: {e}", bound[i].binding.name));
+                    results.add(&bound[i].binding, failed);
+                }
+            }
         }
     }
-    results
+    results.list
 }
 /// Offer a polled reader the stored history it rebuilds its memory from. A
 /// sealed part raises the binding's class to sealed. A binding read in a

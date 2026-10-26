@@ -38,6 +38,7 @@ async fn empty_directory_files_keep_distinct_paths_bytes_and_locations_through_r
         &mut bindings,
         stop.clone(),
         Access::default(),
+        &mut |_, _| {},
     )
     .await;
     let capture_results: Vec<_> = captured
@@ -73,6 +74,7 @@ async fn empty_directory_files_keep_distinct_paths_bytes_and_locations_through_r
         &mut bindings,
         stop,
         Access::default(),
+        &mut |_, _| {},
     )
     .await;
     let removal_results: Vec<_> = removed

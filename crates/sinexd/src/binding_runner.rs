@@ -237,7 +237,10 @@ pub(crate) async fn run(
                 }
                 planned_at = Some(std::time::Instant::now());
             }
-            for (source, result) in binding_reader::read(
+            // Each failure is logged as it happens, once until it changes or
+            // the binding reads again.
+            let said = &mut bindings.said;
+            binding_reader::read(
                 &mut read_conn,
                 &blobs,
                 &writer,
@@ -246,13 +249,23 @@ pub(crate) async fn run(
                 &mut bindings.bound,
                 stop.clone(),
                 binding_reader::Access::default(),
+                &mut |binding, result| {
+                    let key = format!("binding {binding}");
+                    match result {
+                        Err(e) => {
+                            let message = format!("sinexd: binding {binding}: {e}");
+                            if said.get(&key) != Some(&message) {
+                                eprintln!("{message}");
+                                said.insert(key, message);
+                            }
+                        }
+                        Ok(_) => {
+                            said.remove(&key);
+                        }
+                    }
+                },
             )
-            .await
-            {
-                if let Err(e) = result {
-                    eprintln!("sinexd: source {source}: {e}");
-                }
-            }
+            .await;
         }
         tokio::select! {
             _ = tokio::time::sleep(interval) => {}
