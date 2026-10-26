@@ -113,7 +113,7 @@ pub(crate) async fn publish_pending(
         let (seq, change) = commit_log::consumer_position(conn, CONSUMER)
             .await
             .map_err(|e| e.to_string())?;
-        let page = commit_log::after(conn, seq, PAGE)
+        let page = commit_log::after(conn, seq, PAGE, sinex_store::PAGE_BYTES)
             .await
             .map_err(|e| e.to_string())?;
         let covered = page.up_to.unwrap_or(seq);

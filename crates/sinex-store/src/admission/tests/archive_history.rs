@@ -58,7 +58,7 @@ async fn archive_history_preserves_hide_unhide_hide_intervals_without_new_events
             assert_eq!(visible(&mut conn, 5).await, 3);
         }
         assert_eq!(visible(&mut conn, position).await, total);
-        let page = commit_log::after(&mut conn, position - 1, 10)
+        let page = commit_log::after(&mut conn, position - 1, 10, i64::MAX)
             .await
             .unwrap();
         assert!(
@@ -126,7 +126,9 @@ async fn archive_changes_and_positions_roll_back_together(db: devkit::pg::TestDa
                 .len(),
             usize::from(!hide)
         );
-        let page = commit_log::after(&mut conn, before, 10).await.unwrap();
+        let page = commit_log::after(&mut conn, before, 10, i64::MAX)
+            .await
+            .unwrap();
         assert!(page.up_to.is_none());
         if hide {
             admit_one(&mut conn, &action(event.id, true)).await;
@@ -188,22 +190,47 @@ async fn commit_pages_cover_deleted_tail_gaps_and_refuse_zero_limits(db: devkit:
         &batch((0..3).map(|key| keyed("gaps", key, 1, 1)).collect()),
     )
     .await;
-    assert!(commit_log::after(&mut conn, 0, 0).await.is_err());
+    assert!(commit_log::after(&mut conn, 0, 0, i64::MAX).await.is_err());
     sqlx::query!("DELETE FROM core.commit_log WHERE commit_seq>=2")
         .execute(&mut conn)
         .await
         .unwrap();
-    let first = commit_log::after(&mut conn, 0, 1).await.unwrap();
+    let first = commit_log::after(&mut conn, 0, 1, i64::MAX).await.unwrap();
     assert_eq!(first.up_to, Some(1));
     assert_eq!(first.events.len(), 1);
-    let gap = commit_log::after(&mut conn, 1, 1).await.unwrap();
+    let gap = commit_log::after(&mut conn, 1, 1, i64::MAX).await.unwrap();
     assert_eq!(gap.up_to, Some(3));
     assert!(gap.events.is_empty());
     assert!(
-        commit_log::after(&mut conn, 3, 1)
+        commit_log::after(&mut conn, 3, 1, i64::MAX)
             .await
             .unwrap()
             .up_to
             .is_none()
     );
+}
+
+#[devkit::test]
+async fn a_commit_page_ends_once_its_payloads_pass_the_byte_bound(db: devkit::pg::TestDatabase) {
+    let mut conn = <sqlx::PgConnection as sqlx::Connection>::connect(&db.url(None))
+        .await
+        .unwrap();
+    admit_one(
+        &mut conn,
+        &batch((0..3).map(|key| keyed("bytes", key, 1, 1)).collect()),
+    )
+    .await;
+    // Any payload passes one byte: each page holds just its first event.
+    let first = commit_log::after(&mut conn, 0, 10, 1).await.unwrap();
+    assert_eq!(first.events.len(), 1);
+    assert_eq!(first.up_to, Some(first.events[0].commit_seq));
+    let second = commit_log::after(&mut conn, first.up_to.unwrap(), 10, 1)
+        .await
+        .unwrap();
+    assert_eq!(second.events.len(), 1);
+    assert!(second.events[0].commit_seq > first.events[0].commit_seq);
+    let all = commit_log::after(&mut conn, 0, 10, crate::PAGE_BYTES)
+        .await
+        .unwrap();
+    assert_eq!(all.events.len(), 3);
 }

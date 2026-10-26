@@ -52,8 +52,10 @@ pub struct Page {
     pub up_to: Option<i64>,
 }
 
-/// Up to `limit` commit-log entries after `after`, in commit order.
-pub async fn after(conn: &mut PgConnection, after: i64, limit: i64) -> Result<Page> {
+/// Up to `limit` commit-log entries after `after`, in commit order, ending
+/// early once the events' stored payloads pass `bytes` (the first entry is
+/// always read).
+pub async fn after(conn: &mut PgConnection, after: i64, limit: i64, bytes: i64) -> Result<Page> {
     if limit <= 0 {
         return Err(Error::Invalid("commit page limit must be positive".into()));
     }
@@ -66,15 +68,23 @@ pub async fn after(conn: &mut PgConnection, after: i64, limit: i64) -> Result<Pa
              e.record_hash AS "record_hash?", e.record_state AS "record_state?", e.class AS "class?"
            FROM core.counters head
            LEFT JOIN LATERAL (
-             SELECT c.commit_seq,c.event_id FROM core.commit_log c
-             WHERE c.commit_seq > $1 AND c.commit_seq <= head.value
-             ORDER BY c.commit_seq LIMIT $2
+             SELECT p.commit_seq, p.event_id FROM (
+               SELECT q.commit_seq, q.event_id,
+                      (sum(q.size) OVER (ORDER BY q.commit_seq) - q.size)::bigint AS before
+               FROM (
+                 SELECT c.commit_seq, c.event_id, coalesce(pg_column_size(s.payload), 0)::bigint AS size
+                 FROM core.commit_log c LEFT JOIN core.events s ON s.id = c.event_id
+                 WHERE c.commit_seq > $1 AND c.commit_seq <= head.value
+                 ORDER BY c.commit_seq LIMIT $2
+               ) q
+             ) p WHERE p.before < $3::bigint
            ) c ON true
            LEFT JOIN core.events e ON e.id = c.event_id
            WHERE head.name='commit_seq'
            ORDER BY c.commit_seq"#,
         after,
         limit,
+        bytes,
     )
     .fetch_all(&mut *conn)
     .await?;

@@ -590,8 +590,15 @@ async fn windows_read_in_pages_equal_windows_read_alone(db: devkit::pg::TestData
         ),
     ];
     let mut conn = PgConnection::connect(&w.url).await.unwrap();
-    for page in [1, 2, 3, 10_000] {
-        let mut reader = derivations::Windows::new(windows.clone(), page);
+    // The last reads one row per page by size alone, not by count.
+    for (page, bytes) in [
+        (1, i64::MAX),
+        (2, i64::MAX),
+        (3, i64::MAX),
+        (10_000, i64::MAX),
+        (10_000, 1),
+    ] {
+        let mut reader = derivations::Windows::new(windows.clone(), page, bytes);
         let mut read: Vec<Option<Vec<derivations::Committed>>> = vec![None; windows.len()];
         while let Some(done) = reader.next(&mut conn).await.unwrap() {
             for (i, rows) in done {
@@ -607,7 +614,7 @@ async fn windows_read_in_pages_equal_windows_read_alone(db: devkit::pg::TestData
             assert_eq!(
                 ids(got.as_ref().unwrap()),
                 ids(&alone),
-                "{w:?} in pages of {page}"
+                "{w:?} in pages of {page} rows and {bytes} bytes"
             );
         }
         assert_eq!(

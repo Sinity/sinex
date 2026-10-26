@@ -213,27 +213,40 @@ pub async fn read_window(conn: &mut PgConnection, w: &Window) -> Result<Vec<Comm
 }
 
 /// One window page: live events of a window without neighbours after
-/// `after` in (`ts_orig`, commit order), at most `limit`.
+/// `after` in (`ts_orig`, commit order), at most `limit`, ending early once
+/// their stored payloads pass `bytes` (the first is always read). Also how
+/// many matched before the size bound.
 async fn window_page(
     conn: &mut PgConnection,
     w: &Window,
     after: Option<(OffsetDateTime, i64)>,
     limit: i64,
-) -> Result<Vec<Committed>> {
+    bytes: i64,
+) -> Result<(Vec<Committed>, i64)> {
     let (types, contains) = kind_arrays(&w.kinds);
     let (after_ts, after_seq) = after.unzip();
     let rows = sqlx::query!(
         r#"SELECT e.id, e.event_type, e.source, e.material_id, e.anchor, e.output_index, e.parents,
              e.ts_orig, e.ts_quality, e.payload, e.equivalence_key, e.reading_order, e.record_hash,
-             e.record_state, e.class, e.commit_seq
-           FROM core.events e
-           WHERE e.event_type = ANY($1) AND e.ts_orig >= $2 AND e.ts_orig < $3
-             AND EXISTS (SELECT 1 FROM unnest($1::text[], $4::jsonb[]) AS k(event_type, contains)
-                         WHERE k.event_type = e.event_type AND e.payload @> k.contains)
-             AND ($5::timestamptz IS NULL OR (e.ts_orig, e.commit_seq) > ($5, $6::bigint))
-             AND NOT EXISTS (SELECT 1 FROM audit.archived a WHERE a.event_id = e.id)
-           ORDER BY e.ts_orig, e.commit_seq
-           LIMIT $7"#,
+             e.record_state, e.class, e.commit_seq, page.matched AS "matched!"
+           FROM core.events e JOIN (
+             SELECT p.id, p.matched FROM (
+               SELECT q.id, count(*) OVER () AS matched,
+                      (sum(q.size) OVER (ORDER BY q.ts_orig, q.commit_seq) - q.size)::bigint AS before
+               FROM (
+                 SELECT s.id, s.ts_orig, s.commit_seq, pg_column_size(s.payload)::bigint AS size
+                 FROM core.events s
+                 WHERE s.event_type = ANY($1) AND s.ts_orig >= $2 AND s.ts_orig < $3
+                   AND EXISTS (SELECT 1 FROM unnest($1::text[], $4::jsonb[]) AS k(event_type, contains)
+                               WHERE k.event_type = s.event_type AND s.payload @> k.contains)
+                   AND ($5::timestamptz IS NULL OR (s.ts_orig, s.commit_seq) > ($5, $6::bigint))
+                   AND NOT EXISTS (SELECT 1 FROM audit.archived a WHERE a.event_id = s.id)
+                 ORDER BY s.ts_orig, s.commit_seq
+                 LIMIT $7
+               ) q
+             ) p WHERE p.before < $8::bigint
+           ) page ON page.id = e.id
+           ORDER BY e.ts_orig, e.commit_seq"#,
         &types,
         w.start,
         w.end,
@@ -241,17 +254,20 @@ async fn window_page(
         after_ts,
         after_seq,
         limit,
+        bytes,
     )
     .fetch_all(&mut *conn)
     .await?;
+    let matched = rows.first().map_or(0, |r| r.matched);
     let mut out = Vec::with_capacity(rows.len());
     for r in rows {
         out.push(committed!(r));
     }
-    Ok(out)
+    Ok((out, matched))
 }
 
-/// Windows read page by page, `page` rows per query. Windows with the same
+/// Windows read page by page, at most `page` rows and about `bytes` stored
+/// payload bytes per query. Windows with the same
 /// kinds and no neighbours, whose ranges touch or lie within one
 /// window length of each other, share one paged query over their combined
 /// range: one round trip per page for a run of adjacent keys (hours, days)
@@ -263,6 +279,7 @@ async fn window_page(
 pub struct Windows {
     windows: Vec<Window>,
     page: i64,
+    bytes: i64,
     alone: Vec<usize>,
     groups: std::collections::VecDeque<Group>,
 }
@@ -279,7 +296,7 @@ struct Group {
 }
 
 impl Windows {
-    pub fn new(windows: Vec<Window>, page: i64) -> Self {
+    pub fn new(windows: Vec<Window>, page: i64, bytes: i64) -> Self {
         let (alone, mut plain): (Vec<usize>, Vec<usize>) = (0..windows.len())
             .partition(|&i| !windows[i].before.is_empty() || !windows[i].after.is_empty());
         // Group by kinds, then chain by start.
@@ -319,6 +336,7 @@ impl Windows {
         Self {
             windows,
             page: page.max(1),
+            bytes,
             alone,
             groups,
         }
@@ -338,8 +356,11 @@ impl Windows {
                 self.groups.pop_front();
                 continue;
             }
-            let page = window_page(conn, &group.union, group.after, self.page).await?;
-            group.finished = i64::try_from(page.len()).unwrap_or(i64::MAX) < self.page;
+            let (page, matched) =
+                window_page(conn, &group.union, group.after, self.page, self.bytes).await?;
+            // Finished only when the count bound was not reached and the size
+            // bound cut nothing off.
+            group.finished = matched < self.page && page.len() as i64 == matched;
             if let Some(last) = page.last() {
                 group.after = last.event.ts_orig.at.map(|t| (t.0, last.commit_seq));
             }
@@ -475,18 +496,29 @@ pub async fn after_seq(
     event_types: &[String],
     after_seq: i64,
     limit: i64,
+    bytes: i64,
 ) -> Result<Vec<Committed>> {
     let rows = sqlx::query!(
         r#"SELECT e.id, e.event_type, e.source, e.material_id, e.anchor, e.output_index, e.parents,
              e.ts_orig, e.ts_quality, e.payload, e.equivalence_key, e.reading_order, e.record_hash,
              e.record_state, e.class, e.commit_seq
-           FROM core.commit_log l JOIN core.events e ON e.id = l.event_id
-           WHERE l.commit_seq > $2 AND l.event_type = ANY($1)
-             AND NOT EXISTS (SELECT 1 FROM audit.archived a WHERE a.event_id = e.id)
-           ORDER BY l.commit_seq LIMIT $3"#,
+           FROM core.events e JOIN (
+             SELECT p.id, p.seq FROM (
+               SELECT q.id, q.seq, (sum(q.size) OVER (ORDER BY q.seq) - q.size)::bigint AS before
+               FROM (
+                 SELECT l.event_id AS id, l.commit_seq AS seq, pg_column_size(s.payload)::bigint AS size
+                 FROM core.commit_log l JOIN core.events s ON s.id = l.event_id
+                 WHERE l.commit_seq > $2 AND l.event_type = ANY($1)
+                   AND NOT EXISTS (SELECT 1 FROM audit.archived a WHERE a.event_id = s.id)
+                 ORDER BY l.commit_seq LIMIT $3
+               ) q
+             ) p WHERE p.before < $4::bigint
+           ) page ON page.id = e.id
+           ORDER BY page.seq"#,
         event_types,
         after_seq,
         limit,
+        bytes,
     )
     .fetch_all(&mut *conn)
     .await?;
