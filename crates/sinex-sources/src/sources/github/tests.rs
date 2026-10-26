@@ -15,9 +15,7 @@ type Answer = (u16, Vec<(&'static str, String)>, String);
 
 /// A local HTTP server answering each request with `answer`, recording what
 /// it was asked.
-fn serve(
-    answer: impl Fn(&Asked) -> Answer + Send + 'static,
-) -> (String, Arc<Mutex<Vec<Asked>>>) {
+fn serve(answer: impl Fn(&Asked) -> Answer + Send + 'static) -> (String, Arc<Mutex<Vec<Asked>>>) {
     let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
     let url = format!("http://{}", listener.local_addr().unwrap());
     let asked = Arc::new(Mutex::new(Vec::new()));
@@ -202,7 +200,10 @@ fn an_item_updated_in_the_last_read_second_is_still_read() {
     let mut since = Since::default();
     since.advance(7, at);
     assert!(!since.is_new(7, at));
-    assert!(since.is_new(8, at), "another item updated in the same second");
+    assert!(
+        since.is_new(8, at),
+        "another item updated in the same second"
+    );
     since.advance(8, at);
     assert!(!since.is_new(8, at));
     let later = fields::rfc3339("2026-01-02T00:00:01Z").unwrap();
@@ -329,7 +330,11 @@ fn asks_follow_what_changed() {
             return ok(json!([issue(3), pull]));
         }
         if request.path.starts_with("/repos/o/r/actions/runs") {
-            let newest = if phase == 0 { "in_progress" } else { "completed" };
+            let newest = if phase == 0 {
+                "in_progress"
+            } else {
+                "completed"
+            };
             let mut newest = run(100, newest, "2026-01-02T00:00:00Z");
             if phase > 0 {
                 newest["updated_at"] = json!("2026-01-02T00:10:00Z");
@@ -350,9 +355,19 @@ fn asks_follow_what_changed() {
     let reviews = read[0]["item"]["reviews"]["nodes"].as_array().unwrap();
     assert_eq!(reviews.len(), 2, "the reviews are paged to the end");
     assert!(read[0]["item"]["reviews"].get("pageInfo").is_none());
-    assert_eq!(read[1]["item"]["number"], json!(3), "pull requests come from GraphQL");
+    assert_eq!(
+        read[1]["item"]["number"],
+        json!(3),
+        "pull requests come from GraphQL"
+    );
     assert!(read[2]["item"].get("repository").is_none());
-    assert!(asked.lock().unwrap().iter().all(|a| a.authorization == "Bearer t0ken"));
+    assert!(
+        asked
+            .lock()
+            .unwrap()
+            .iter()
+            .all(|a| a.authorization == "Bearer t0ken")
+    );
 
     phase.store(1, Ordering::SeqCst);
     let second = d.poll(&cursor(&first)).unwrap();
@@ -367,10 +382,17 @@ fn asks_follow_what_changed() {
         .filter(|a| a.path.starts_with("/repos/o/r/issues"))
         .map(|a| a.path.clone())
         .collect::<Vec<_>>();
-    assert!(issues[1].ends_with("&since=2026-01-01T09:00:00Z"), "{issues:?}");
+    assert!(
+        issues[1].ends_with("&since=2026-01-01T09:00:00Z"),
+        "{issues:?}"
+    );
 
     let third = d.poll(&cursor(&second)).unwrap();
-    assert!(records(&third).is_empty(), "nothing changed: {:?}", records(&third));
+    assert!(
+        records(&third).is_empty(),
+        "nothing changed: {:?}",
+        records(&third)
+    );
 }
 
 #[devkit::test]
@@ -387,7 +409,10 @@ fn the_interval_holds_asks() {
         .poll(&json!({"api": position, "material": null, "part_index": 0}))
         .unwrap();
     assert!(polled.material.is_none());
-    assert!(asked.lock().unwrap().is_empty(), "asked within the interval");
+    assert!(
+        asked.lock().unwrap().is_empty(),
+        "asked within the interval"
+    );
 }
 
 #[devkit::test]

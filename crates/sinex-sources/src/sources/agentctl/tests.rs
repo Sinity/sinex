@@ -42,18 +42,26 @@ fn a_finished_job_with_its_checkout_heads() {
 
 #[devkit::test]
 fn older_and_other_lines_keep_what_they_have() {
-    let old = parse(json!({"checkout": "default", "completed_at": "2026-08-25T21:35:30.264107+00:00",
+    let old = parse(
+        json!({"checkout": "default", "completed_at": "2026-08-25T21:35:30.264107+00:00",
                            "job_id": "68228212", "kind": "declared-operation",
-                           "phase": "succeeded", "project": "demo"}))
+                           "phase": "succeeded", "project": "demo"}),
+    )
     .unwrap();
     assert_eq!(
         old.at,
         Some(fields::rfc3339("2026-08-25T21:35:30.264107Z").unwrap())
     );
     assert_eq!(old.extra["checkout"], json!("default"));
-    let untimed = parse(json!({"kind": "campaign", "transition": "opened", "wave_id": "w1"}))
-        .unwrap();
-    assert_eq!(untimed.at, None, "a line without a time has an unknown time");
+    let untimed =
+        parse(json!({"kind": "campaign", "transition": "opened", "wave_id": "w1"})).unwrap();
+    assert_eq!(
+        untimed.at, None,
+        "a line without a time has an unknown time"
+    );
     assert_eq!(untimed.extra["wave_id"], json!("w1"));
-    assert!(parse(json!({"phase": "started"})).is_err(), "a line names its kind");
+    assert!(
+        parse(json!({"phase": "started"})).is_err(),
+        "a line names its kind"
+    );
 }

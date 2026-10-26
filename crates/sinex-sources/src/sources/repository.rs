@@ -300,8 +300,7 @@ fn reachable_only_from(
         .with_hidden(hidden.iter().copied())
         .all()
         .map_err(error)?;
-    walk.map(|info| info.map(|i| i.id).map_err(error))
-        .collect()
+    walk.map(|info| info.map(|i| i.id).map_err(error)).collect()
 }
 
 impl Api for Repository {
@@ -381,11 +380,12 @@ impl Api for Repository {
                 let id = info.map_err(error)?.id;
                 let refs = refs_at.get(&id).cloned().unwrap_or_default();
                 let worktrees = checkouts_at.get(&id).cloned().unwrap_or_default();
-                let record = commit_record(&repo, &repository, id, refs, worktrees)
-                    .unwrap_or_else(|reason| {
+                let record = commit_record(&repo, &repository, id, refs, worktrees).unwrap_or_else(
+                    |reason| {
                         json!({"record": "unreadable", "repository": repository,
                                "commit": id.to_string(), "reason": reason})
-                    });
+                    },
+                );
                 match record {
                     Value::Object(object) => records.push(object),
                     _ => unreachable!("a record is an object"),

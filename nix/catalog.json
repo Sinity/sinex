@@ -105,7 +105,68 @@
       "purpose": "work episodes, project attribution and recall",
       "class": "open",
       "eventTypes": [
-        "git.commit"
+        "git.commit",
+        "git.ref_updated"
+      ]
+    },
+    {
+      "name": "code.github",
+      "formats": [
+        "github"
+      ],
+      "drivers": [
+        "api-cursor"
+      ],
+      "purpose": "the outcome of work: pull requests, reviews, checks and CI runs beside the commits",
+      "class": "open",
+      "eventTypes": [
+        "github.pull_request",
+        "github.review",
+        "github.check",
+        "github.workflow_run",
+        "github.issue"
+      ]
+    },
+    {
+      "name": "work.beads",
+      "formats": [
+        "beads"
+      ],
+      "drivers": [
+        "api-cursor"
+      ],
+      "purpose": "the issues work was planned and tracked in, beside the commits and jobs that did it",
+      "class": "open",
+      "eventTypes": [
+        "task.revised"
+      ]
+    },
+    {
+      "name": "work.agentctl",
+      "formats": [
+        "agentctl"
+      ],
+      "drivers": [
+        "append-file"
+      ],
+      "purpose": "the builds, tests and agent jobs run on this host, and how they ended",
+      "class": "open",
+      "eventTypes": [
+        "agentctl.event"
+      ]
+    },
+    {
+      "name": "tasks.taskwarrior",
+      "formats": [
+        "taskwarrior"
+      ],
+      "drivers": [
+        "export-archive"
+      ],
+      "purpose": "tasks and their completion",
+      "class": "open",
+      "eventTypes": [
+        "task.revised"
       ]
     },
     {
@@ -520,6 +581,7 @@
       "class": "open",
       "eventTypes": [
         "health.record",
+        "task.revised",
         "account.row"
       ]
     },

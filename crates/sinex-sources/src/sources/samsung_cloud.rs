@@ -9,6 +9,8 @@
 //!   provider `samsung-health-cloud`, its category the table's directory name.
 //!   Times are `YYYY-MM-DD HH:MM`, UTC as Samsung Health stores them;
 //!   `time_offset` is the local offset in milliseconds.
+//! - The Reminder table is the task list it is: each row a `task.revised`
+//!   identified by its `record_id`.
 //! - Any other table (alarms, settings, backups, store and membership
 //!   records) is an `account.row` of its service and table, every column
 //!   kept, a JSON column decoded. These tables stay explicitly untyped
@@ -26,7 +28,7 @@ use crate::sources::samsung_health::typed;
 use crate::{Parser, RecordContext, RecordError};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
-use sinex_model::event_types::account::AccountRow;
+use sinex_model::event_types::account::{AccountRow, TaskRevised};
 use sinex_model::event_types::health::HealthRecord;
 use sinex_model::{Class, Timestamp};
 use std::path::{Path, PathBuf};
@@ -38,8 +40,8 @@ pub const SPEC: SourceSpec = SourceSpec {
     purpose: "what the operator's Samsung account kept: health sync, settings, backups",
     class: Class::Open,
     parser: "samsung-account-export",
-    parser_version: 4,
-    event_types: &["health.record", "account.row"],
+    parser_version: 5,
+    event_types: &["health.record", "task.revised", "account.row"],
     framer: crate::Framer::export(frame, crate::drivers::export_archive::Framing::Csv),
 };
 
@@ -47,6 +49,7 @@ sinex_model::payload_enum! {
     #[derive(Clone, Debug, PartialEq)]
     pub enum SamsungEvent {
         Health(HealthRecord),
+        Task(TaskRevised),
         Account(AccountRow),
     }
 }
@@ -138,6 +141,9 @@ impl Parser for SamsungCloudParser {
                 carry.clone(),
             ));
         }
+        if table == "Reminder" {
+            return Ok((vec![SamsungEvent::Task(reminder(values)?)], carry.clone()));
+        }
         let native_id = ["KEY", "_id", "id"]
             .iter()
             .find_map(|k| values.get(*k).map(id_text))
@@ -156,6 +162,55 @@ impl Parser for SamsungCloudParser {
             carry.clone(),
         ))
     }
+}
+
+/// A Samsung Reminder row, identified by its `record_id` across exports. Its
+/// status is Samsung's `item_status` code; the other codes stay in `extra`.
+fn reminder(values: Map<String, Value>) -> Result<TaskRevised, RecordError> {
+    let task_id = values
+        .get("record_id")
+        .map(id_text)
+        .ok_or_else(|| RecordError::new("Reminder row without a record_id"))?;
+    let text = |name: &str| {
+        values
+            .get(name)
+            .map(id_text)
+            .map(|t| t.trim().to_owned())
+            .filter(|t| !t.is_empty())
+    };
+    let time = |name: &str| values.get(name).and_then(time_of);
+    let due = time("alarm_reminde_time")
+        .and_then(|t| serde_json::to_value(t).ok())
+        .and_then(|t| t.as_str().map(str::to_owned));
+    const KNOWN: &[&str] = &[
+        "record_id",
+        "category_id",
+        "title",
+        "plainText",
+        "item_status",
+        "time_create",
+        "last_modified_time",
+        "alarm_reminde_time",
+    ];
+    Ok(TaskRevised {
+        service: "samsung-reminder".into(),
+        task_id,
+        list_id: text("category_id").unwrap_or_default(),
+        list_title: None,
+        title: text("title"),
+        notes: text("plainText"),
+        status: text("item_status"),
+        parent: None,
+        created_at: time("time_create"),
+        updated_at: time("last_modified_time"),
+        due,
+        completed_at: None,
+        deleted_at: None,
+        priority: None,
+        labels: Vec::new(),
+        assignee: None,
+        extra: fields::extra(&values, KNOWN),
+    })
 }
 
 fn id_text(v: &Value) -> String {

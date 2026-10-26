@@ -42,10 +42,7 @@ fn cursor(a: &crate::drivers::Acquired) -> Value {
 }
 
 fn ids(records: &[Map<String, Value>]) -> Vec<&str> {
-    records
-        .iter()
-        .map(|r| r["id"].as_str().unwrap())
-        .collect()
+    records.iter().map(|r| r["id"].as_str().unwrap()).collect()
 }
 
 fn file() -> PathBuf {
@@ -94,7 +91,10 @@ fn other_records_and_unreadable_lines() {
 #[devkit::test]
 fn a_changed_issue_is_read_again_and_a_missing_one_is_removed() {
     let path = file();
-    export(&path, &[line("demo-a", "A", "open"), line("demo-b", "B", "open")]);
+    export(
+        &path,
+        &[line("demo-a", "A", "open"), line("demo-b", "B", "open")],
+    );
     let d = driver(path.clone(), "h".into());
     let first = d.poll(&Value::Null).unwrap();
     assert_eq!(ids(&records(&first)), ["demo-a", "demo-b"]);
@@ -103,7 +103,10 @@ fn a_changed_issue_is_read_again_and_a_missing_one_is_removed() {
 
     export(
         &path,
-        &[line("demo-a", "A, renamed", "open"), line("demo-c", "C", "open")],
+        &[
+            line("demo-a", "A, renamed", "open"),
+            line("demo-c", "C", "open"),
+        ],
     );
     let second = d.poll(&at_first).unwrap();
     let read = records(&second);
@@ -117,7 +120,10 @@ fn a_changed_issue_is_read_again_and_a_missing_one_is_removed() {
 #[devkit::test]
 fn after_a_restart_an_unchanged_file_is_only_remembered() {
     let path = file();
-    export(&path, &[line("demo-a", "A", "open"), line("demo-b", "B", "open")]);
+    export(
+        &path,
+        &[line("demo-a", "A", "open"), line("demo-b", "B", "open")],
+    );
     let first = driver(path.clone(), "h".into()).poll(&Value::Null).unwrap();
     let at_first = cursor(&first);
 
@@ -138,7 +144,16 @@ fn asked_again_from_an_older_cursor_every_issue_is_read() {
     export(&path, &[line("demo-a", "A", "open")]);
     let d = driver(path.clone(), "h".into());
     let at_first = cursor(&d.poll(&Value::Null).unwrap());
-    export(&path, &[line("demo-a", "A", "closed"), line("demo-b", "B", "open")]);
-    assert_eq!(ids(&records(&d.poll(&at_first).unwrap())), ["demo-a", "demo-b"]);
-    assert_eq!(ids(&records(&d.poll(&at_first).unwrap())), ["demo-a", "demo-b"]);
+    export(
+        &path,
+        &[line("demo-a", "A", "closed"), line("demo-b", "B", "open")],
+    );
+    assert_eq!(
+        ids(&records(&d.poll(&at_first).unwrap())),
+        ["demo-a", "demo-b"]
+    );
+    assert_eq!(
+        ids(&records(&d.poll(&at_first).unwrap())),
+        ["demo-a", "demo-b"]
+    );
 }

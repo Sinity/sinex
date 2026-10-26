@@ -130,9 +130,7 @@ fn number_at(item: &Map<String, Value>, path: &str) -> Result<u64, RecordError> 
 }
 
 fn time_at(item: &Map<String, Value>, path: &str) -> Result<Option<Timestamp>, RecordError> {
-    text_at(item, path)
-        .map(|t| fields::rfc3339(&t))
-        .transpose()
+    text_at(item, path).map(|t| fields::rfc3339(&t)).transpose()
 }
 
 fn required_time(item: &Map<String, Value>, path: &str) -> Result<Timestamp, RecordError> {
@@ -421,15 +419,20 @@ pub fn repository_of(url: &str) -> Option<String> {
     let rest = rest.trim_end_matches('/');
     let rest = rest.strip_suffix(".git").unwrap_or(rest);
     let (owner, name) = rest.split_once('/')?;
-    (!owner.is_empty() && !name.is_empty() && !name.contains('/')).then(|| format!("{owner}/{name}"))
+    (!owner.is_empty() && !name.is_empty() && !name.contains('/'))
+        .then(|| format!("{owner}/{name}"))
 }
 
 /// The `rel="next"` URL of a `Link` header.
 fn next_link(link: &str) -> Option<String> {
     link.split(',').find_map(|part| {
         let (url, rel) = part.split_once(';')?;
-        rel.contains("rel=\"next\"")
-            .then(|| url.trim().trim_start_matches('<').trim_end_matches('>').to_owned())
+        rel.contains("rel=\"next\"").then(|| {
+            url.trim()
+                .trim_start_matches('<')
+                .trim_end_matches('>')
+                .to_owned()
+        })
     })
 }
 
@@ -560,10 +563,17 @@ impl Github {
             .string(key.as_str())
             .map(|u| u.to_string())
             .ok_or_else(|| {
-                DriverError::Io(format!("{}: no remote {}", self.path.display(), self.remote))
+                DriverError::Io(format!(
+                    "{}: no remote {}",
+                    self.path.display(),
+                    self.remote
+                ))
             })?;
         repository_of(&url).ok_or_else(|| {
-            DriverError::Io(format!("remote {} ({url}) is not a GitHub repository", self.remote))
+            DriverError::Io(format!(
+                "remote {} ({url}) is not a GitHub repository",
+                self.remote
+            ))
         })
     }
 
@@ -573,8 +583,7 @@ impl Github {
         what: &str,
         response: Result<ureq::http::Response<ureq::Body>, ureq::Error>,
     ) -> Result<(Value, Option<String>), DriverError> {
-        let mut response =
-            response.map_err(|e| DriverError::Io(format!("GitHub {what}: {e}")))?;
+        let mut response = response.map_err(|e| DriverError::Io(format!("GitHub {what}: {e}")))?;
         let header = |name: &str| {
             response
                 .headers()
@@ -656,7 +665,10 @@ impl Github {
         if let Some(errors) = answer.get("errors").and_then(Value::as_array)
             && !errors.is_empty()
         {
-            return Err(DriverError::Io(format!("GitHub GraphQL: {}", Value::Array(errors.clone()))));
+            return Err(DriverError::Io(format!(
+                "GitHub GraphQL: {}",
+                Value::Array(errors.clone())
+            )));
         }
         answer
             .get("data")
@@ -693,8 +705,24 @@ impl Github {
                 if !since.is_new(number, updated) {
                     continue;
                 }
-                page_to_end(self, token, &mut node, "/reviews", "/id", MORE_REVIEWS, "reviews")?;
-                page_to_end(self, token, &mut node, CONTEXTS, ROLLUP_ID, MORE_CONTEXTS, "contexts")?;
+                page_to_end(
+                    self,
+                    token,
+                    &mut node,
+                    "/reviews",
+                    "/id",
+                    MORE_REVIEWS,
+                    "reviews",
+                )?;
+                page_to_end(
+                    self,
+                    token,
+                    &mut node,
+                    CONTEXTS,
+                    ROLLUP_ID,
+                    MORE_CONTEXTS,
+                    "contexts",
+                )?;
                 out.push(node);
             }
             if connection.pointer("/pageInfo/hasNextPage") != Some(&json!(true)) {
@@ -723,7 +751,15 @@ impl Github {
                 .ok_or_else(|| DriverError::Io(format!("GitHub has no repository {owner}/{name}")))?
                 .clone();
             for mut node in connection["nodes"].as_array().cloned().unwrap_or_default() {
-                page_to_end(self, token, &mut node, CONTEXTS, ROLLUP_ID, MORE_CONTEXTS, "contexts")?;
+                page_to_end(
+                    self,
+                    token,
+                    &mut node,
+                    CONTEXTS,
+                    ROLLUP_ID,
+                    MORE_CONTEXTS,
+                    "contexts",
+                )?;
                 out.push(node);
             }
             if connection.pointer("/pageInfo/hasNextPage") != Some(&json!(true)) {
@@ -750,7 +786,12 @@ impl Github {
 
     /// Workflow runs, newest first, down to the first page reaching below
     /// `floor`.
-    fn runs(&self, token: &str, repository: &str, floor: Option<Timestamp>) -> Result<Vec<Value>, DriverError> {
+    fn runs(
+        &self,
+        token: &str,
+        repository: &str,
+        floor: Option<Timestamp>,
+    ) -> Result<Vec<Value>, DriverError> {
         let mut out = Vec::new();
         let mut next = Some(format!(
             "{}/repos/{repository}/actions/runs?per_page=100",
@@ -758,10 +799,14 @@ impl Github {
         ));
         while let Some(url) = next {
             let (page, link) = self.get(token, &url)?;
-            let runs = page["workflow_runs"].as_array().cloned().unwrap_or_default();
+            let runs = page["workflow_runs"]
+                .as_array()
+                .cloned()
+                .unwrap_or_default();
             let mut below = false;
             for run in runs {
-                if floor.is_some_and(|floor| item_time(&run, "created_at").is_ok_and(|c| c < floor)) {
+                if floor.is_some_and(|floor| item_time(&run, "created_at").is_ok_and(|c| c < floor))
+                {
                     below = true;
                     continue;
                 }
@@ -840,7 +885,11 @@ impl Api for Github {
 }
 
 impl Github {
-    fn ask(&self, position: &mut Position, now: Timestamp) -> Result<Vec<Map<String, Value>>, DriverError> {
+    fn ask(
+        &self,
+        position: &mut Position,
+        now: Timestamp,
+    ) -> Result<Vec<Map<String, Value>>, DriverError> {
         let token = self.token()?;
         let repository = self.repository()?;
         let (owner, name) = repository.split_once('/').expect("owner/name");

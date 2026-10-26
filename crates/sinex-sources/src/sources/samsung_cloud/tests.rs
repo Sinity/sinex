@@ -166,3 +166,33 @@ fn unkeyed_account_rows_keep_the_original_row_hash_identity() {
     assert!(account.at.is_none());
     assert_eq!(serde_json::to_value(account).unwrap()["untyped"], true);
 }
+
+#[devkit::test]
+fn reminders_are_tasks_identified_by_their_record_id() {
+    let out = run(
+        "/x/samsungcloud_gk000066110887_20260329_access/Reminder/Reminder(1).csv",
+        &[
+            "\u{feff}time_create,last_modified_time,item_status,title,record_id,category_id,plainText,alarm_reminde_time,event_status\n".as_bytes(),
+            b"1720926006171,1720926007000,2,Check in,9719e057-0000,LOCAL_SPACE,\"Check in\n\",1720926000000,3\n",
+        ],
+    );
+    let SamsungEvent::Task(task) = &out[0] else {
+        panic!("a task")
+    };
+    assert_eq!(task.service, "samsung-reminder");
+    assert_eq!(task.task_id, "9719e057-0000");
+    assert_eq!(task.list_id, "LOCAL_SPACE");
+    assert_eq!(task.title.as_deref(), Some("Check in"));
+    assert_eq!(task.notes.as_deref(), Some("Check in"));
+    assert_eq!(task.status.as_deref(), Some("2"));
+    assert_eq!(
+        task.created_at,
+        fields::from_unix_ms(1_720_926_006_171).ok()
+    );
+    assert_eq!(
+        task.updated_at,
+        fields::from_unix_ms(1_720_926_007_000).ok()
+    );
+    assert_eq!(task.due.as_deref(), Some("2024-07-14T03:00:00Z"));
+    assert_eq!(task.extra["event_status"], json!(3));
+}

@@ -39,7 +39,10 @@ fn tasks_by_uuid_with_their_times() {
     assert!(pending.extra.contains_key("annotations"));
     assert_eq!(pending.completed_at, None);
     let completed = &tasks[1];
-    assert_eq!(completed.completed_at, Some(time("20260103T120000Z").unwrap()));
+    assert_eq!(
+        completed.completed_at,
+        Some(time("20260103T120000Z").unwrap())
+    );
     assert_eq!(completed.record_state(), RecordState::Present);
     let deleted = &tasks[2];
     assert_eq!(deleted.deleted_at, Some(time("20260104T080000Z").unwrap()));

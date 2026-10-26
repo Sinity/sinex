@@ -2,11 +2,11 @@ use super::*;
 use std::path::Path;
 use std::process::Command;
 
-fn git_with(dir: &Path, args: &[&str], author: &std::ffi::OsStr) {
+fn git(dir: &Path, args: &[&str]) {
     let status = Command::new("git")
         .args(args)
         .current_dir(dir)
-        .env("GIT_AUTHOR_NAME", author)
+        .env("GIT_AUTHOR_NAME", "A")
         .env("GIT_AUTHOR_EMAIL", "a@example.org")
         .env("GIT_COMMITTER_NAME", "C")
         .env("GIT_COMMITTER_EMAIL", "c@example.org")
@@ -15,10 +15,6 @@ fn git_with(dir: &Path, args: &[&str], author: &std::ffi::OsStr) {
         .status()
         .unwrap();
     assert!(status.success(), "git {args:?}");
-}
-
-fn git(dir: &Path, args: &[&str]) {
-    git_with(dir, args, "A".as_ref());
 }
 
 fn rev(dir: &Path, name: &str) -> String {
@@ -109,7 +105,11 @@ fn only_newly_reachable_commits_are_read() {
         parsed.parents,
         vec![read[1]["commit"].as_str().unwrap().to_owned()]
     );
-    assert_eq!(parsed.files, Some(vec![]), "an empty commit changes nothing");
+    assert_eq!(
+        parsed.files,
+        Some(vec![]),
+        "an empty commit changes nothing"
+    );
 
     let cursor = cursor(&first);
     assert!(d.poll(&cursor).unwrap().material.is_none());
@@ -132,7 +132,10 @@ fn the_first_read_records_where_each_ref_points() {
     assert_eq!(updates[0].ref_name, "refs/heads/main");
     assert_eq!(updates[0].change, RefChange::Created);
     assert_eq!(updates[0].before, None);
-    assert_eq!(updates[0].after.as_deref(), Some(rev(&dir, "main").as_str()));
+    assert_eq!(
+        updates[0].after.as_deref(),
+        Some(rev(&dir, "main").as_str())
+    );
 }
 
 #[devkit::test]
@@ -229,8 +232,10 @@ fn each_commit_lists_its_changed_files_against_its_first_parent() {
     assert_eq!(added[0].change, FileChange::Added);
     assert_eq!(added[0].mode.as_deref(), Some("100644"));
     let changed = parsed[0].files.as_ref().unwrap();
-    let summary: Vec<(&str, FileChange)> =
-        changed.iter().map(|f| (f.path.as_str(), f.change)).collect();
+    let summary: Vec<(&str, FileChange)> = changed
+        .iter()
+        .map(|f| (f.path.as_str(), f.change))
+        .collect();
     assert_eq!(
         summary,
         [
@@ -251,9 +256,18 @@ fn a_linked_worktree_head_is_read_and_named() {
     let linked = dir.with_extension("linked");
     git(
         &dir,
-        &["worktree", "add", "-q", "--detach", linked.to_str().unwrap()],
+        &[
+            "worktree",
+            "add",
+            "-q",
+            "--detach",
+            linked.to_str().unwrap(),
+        ],
     );
-    git(&linked, &["commit", "-q", "--allow-empty", "-m", "detached"]);
+    git(
+        &linked,
+        &["commit", "-q", "--allow-empty", "-m", "detached"],
+    );
     let read = commits(&driver(dir.clone(), "h".into()).poll(&Value::Null).unwrap());
     let detached = read
         .iter()
@@ -269,22 +283,47 @@ fn a_linked_worktree_head_is_read_and_named() {
     );
 }
 
+/// Run git with `input` on stdin and return its output.
+fn git_input(dir: &Path, args: &[&str], input: &[u8]) -> String {
+    use std::io::Write;
+    let mut child = Command::new("git")
+        .args(args)
+        .current_dir(dir)
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    child.stdin.take().unwrap().write_all(input).unwrap();
+    let out = child.wait_with_output().unwrap();
+    assert!(out.status.success(), "git {args:?}");
+    String::from_utf8(out.stdout).unwrap().trim().to_owned()
+}
+
 #[devkit::test]
 fn a_name_that_is_not_utf8_keeps_its_bytes() {
-    use std::os::unix::ffi::OsStrExt;
     let dir = repository();
-    git_with(
-        &dir,
-        &["commit", "-q", "--allow-empty", "-m", "one"],
-        std::ffi::OsStr::from_bytes(b"Andr\xe9"),
+    // Written as raw bytes: git itself would warn and might convert them.
+    let tree = git_input(&dir, &["mktree"], b"");
+    let object = format!(
+        "tree {tree}\nauthor Andr\u{e9} <a@example.org> 1767225600 +0000\ncommitter C <c@example.org> 1767225610 +0000\n\none\n"
     );
+    let latin1: Vec<u8> = object.chars().map(|c| c as u8).collect();
+    let commit = git_input(
+        &dir,
+        &["hash-object", "-t", "commit", "-w", "--stdin"],
+        &latin1,
+    );
+    git(&dir, &["update-ref", "refs/heads/main", &commit]);
     let read = commits(&driver(dir.clone(), "h".into()).poll(&Value::Null).unwrap());
     let GitRecord::Commit(commit) = parse(&read[0]).unwrap() else {
         panic!("a commit")
     };
     assert_eq!(commit.author_name, "Andr\u{fffd}");
     assert_eq!(
-        commit.original_bytes.get("/author_name").map(String::as_str),
+        commit
+            .original_bytes
+            .get("/author_name")
+            .map(String::as_str),
         Some("QW5kcuk=")
     );
 }
