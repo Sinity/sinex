@@ -409,7 +409,8 @@ impl Reader for Appended {
     }
 }
 
-/// A SQLite table read with state about rows that can still change.
+/// A SQLite table, read with state about rows that can still change when
+/// its rows are updated in place.
 pub struct Rows {
     driver: SqliteRows,
     state: RowState,
@@ -423,8 +424,14 @@ pub fn rows(driver: SqliteRows) -> Reading {
 }
 
 impl Reader for Rows {
+    /// An appended table needs only its cursor, so it reads no history.
     fn history_from(&self, cursor: &Value) -> Option<sinex_model::MaterialId> {
-        crate::drivers::cursor_material(cursor).map(|(material, _)| material)
+        match self.driver.changes {
+            crate::drivers::sqlite_rows::Changes::InPlace { .. } => {
+                crate::drivers::cursor_material(cursor).map(|(material, _)| material)
+            }
+            crate::drivers::sqlite_rows::Changes::Appended => None,
+        }
     }
 
     fn restore(&mut self, cursor: &Value, material: StoredMaterial) -> Result<bool, DriverError> {

@@ -4,7 +4,7 @@
 //! command ends (duration, exit) or is deleted (`deleted_at`). Its own row ID
 //! is the equivalence key, so an update is a newer reading of the same record.
 //! Running commands store -1 for duration and exit; those are unknown, not -1.
-use crate::drivers::sqlite_rows::SqliteRows;
+use crate::drivers::sqlite_rows::{Changes, SqliteRows};
 use crate::registry::{DeclaredSource, Driver, SourceSpec};
 use crate::{Parser, RecordError};
 use serde_json::{Map, Value};
@@ -126,8 +126,10 @@ pub fn driver(path: PathBuf, host: String) -> SqliteRows {
             "hostname",
         ],
         // Rows still running, or started in the last day, can still change.
-        mutable: Some("duration = -1 OR timestamp > ?1"),
-        full_pass_secs: 3600,
+        changes: Changes::InPlace {
+            mutable: "duration = -1 OR timestamp > ?1",
+            full_pass_secs: 3600,
+        },
     }
 }
 
