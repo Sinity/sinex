@@ -458,6 +458,8 @@ impl Keyed for HourlyMetrics {
         "mail.fused",
         "journal.entry",
         "visit.fused",
+        "key.pressed",
+        "pointer.button",
     ];
     const OUTPUTS: &'static [&'static str] = &[MetricFigure::EVENT_TYPE];
 

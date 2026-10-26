@@ -1070,7 +1070,9 @@
         "chat.message",
         "mail.fused",
         "journal.entry",
-        "visit.fused"
+        "visit.fused",
+        "key.pressed",
+        "pointer.button"
       ],
       "outputs": [
         "metric.figure"
