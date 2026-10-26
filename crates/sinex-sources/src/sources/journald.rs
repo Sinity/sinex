@@ -30,8 +30,7 @@ use crate::{Parser, RecordError};
 use serde_json::{Map, Value};
 use sinex_model::event_types::machine::JournalEntry;
 use sinex_model::event_types::system::{
-    BootStarted, ShutdownStarted, SleepEnded, SleepStarted, UnitReloaded, UnitStarted,
-    UnitStopped,
+    BootStarted, ShutdownStarted, SleepEnded, SleepStarted, UnitReloaded, UnitStarted, UnitStopped,
 };
 use sinex_model::{Class, InputRef, Timestamp};
 use std::io::{BufRead, BufReader, Read, Seek, SeekFrom};
@@ -180,8 +179,11 @@ fn state_change(entry: &JournalEntry) -> Option<JournalReading> {
         // ID; this one is the system manager's (PID 1).
         message::STARTUP_FINISHED if program == Some("systemd") && entry.pid == Some(1) => {
             let micros = |name: &str| field(name).and_then(|v| v.parse::<i64>().ok());
-            let (kernel_us, initrd_us, userspace_us) =
-                (micros("KERNEL_USEC"), micros("INITRD_USEC"), micros("USERSPACE_USEC"));
+            let (kernel_us, initrd_us, userspace_us) = (
+                micros("KERNEL_USEC"),
+                micros("INITRD_USEC"),
+                micros("USERSPACE_USEC"),
+            );
             // Without an initrd systemd leaves INITRD_USEC out; a missing
             // kernel or userspace phase leaves the start unknown.
             let started_at = match (logged_at, kernel_us, userspace_us) {
@@ -258,8 +260,8 @@ impl Parser for JournaldParser {
             .and_then(|us| Timestamp::from_unix_ns(us * 1_000).ok());
         let unit = take("_SYSTEMD_UNIT");
         let user_unit = take("_SYSTEMD_USER_UNIT");
-        let from_sinex = unit.as_deref().is_some_and(sinex_unit)
-            || user_unit.as_deref().is_some_and(sinex_unit);
+        let from_sinex =
+            unit.as_deref().is_some_and(sinex_unit) || user_unit.as_deref().is_some_and(sinex_unit);
         let entry = JournalEntry {
             cursor,
             logged_at,

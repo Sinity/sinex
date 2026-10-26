@@ -114,7 +114,15 @@ pub(crate) fn call_until(
     method: &str,
     args: &[&str],
 ) -> Option<Value> {
-    call_on(Bus::Session, stop, destination, path, interface, method, args)
+    call_on(
+        Bus::Session,
+        stop,
+        destination,
+        path,
+        interface,
+        method,
+        args,
+    )
 }
 
 /// [`call_until`] on `bus`.

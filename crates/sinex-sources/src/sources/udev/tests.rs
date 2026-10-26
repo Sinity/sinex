@@ -14,7 +14,8 @@ fn read(block: &str) -> Result<Vec<DeviceChanged>, RecordError> {
         .map(|(out, ())| out)
 }
 
-const MONITOR_ADD: &str = "UDEV  [5024.112233] add      /devices/pci0000:00/0000:00:14.0/usb1/1-4 (usb)
+const MONITOR_ADD: &str =
+    "UDEV  [5024.112233] add      /devices/pci0000:00/0000:00:14.0/usb1/1-4 (usb)
 ACTION=add
 DEVPATH=/devices/pci0000:00/0000:00:14.0/usb1/1-4
 SUBSYSTEM=usb

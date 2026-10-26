@@ -248,7 +248,13 @@ fn a_second_start_closes_the_first() {
 
 #[devkit::test]
 fn a_stop_with_no_start_closes_nothing() {
-    assert!(lift("machine.unit", &[unit("unit.stopped", 0, "a.service", "r1")]).is_empty());
+    assert!(
+        lift(
+            "machine.unit",
+            &[unit("unit.stopped", 0, "a.service", "r1")]
+        )
+        .is_empty()
+    );
 }
 
 #[devkit::test]
@@ -318,7 +324,11 @@ fn a_user_unit_is_not_the_system_unit_of_the_same_name() {
 fn sleep_interrupts_focus() {
     let out = lift(
         "desktop.focus",
-        &[focus(0, "0xa", "vim"), sleep(100), focus(9000, "0xb", "web")],
+        &[
+            focus(0, "0xa", "vim"),
+            sleep(100),
+            focus(9000, "0xb", "web"),
+        ],
     );
     assert_eq!(
         out[0].ended_at,

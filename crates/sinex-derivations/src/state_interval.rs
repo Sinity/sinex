@@ -417,9 +417,7 @@ fn fold<'a>(rule: &IntervalRule, events: &[&'a Event]) -> Vec<PendingInterval<'a
                     if let Some(r) = &this_run {
                         stopped_runs.insert(r.clone());
                     }
-                    let other_run = |o: &Open<'_>| {
-                        matches!((&this_run, run_of(o.start)), (Some(a), Some(b)) if *a != b)
-                    };
+                    let other_run = |o: &Open<'_>| matches!((&this_run, run_of(o.start)), (Some(a), Some(b)) if *a != b);
                     // A stop with no open start of its run belongs to an
                     // interval an earlier key emits, or to no interval.
                     if open.get(&subject).is_some_and(|o| !other_run(o))

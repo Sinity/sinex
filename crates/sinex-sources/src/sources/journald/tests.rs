@@ -230,7 +230,10 @@ fn startup_finished_dates_the_boot_from_its_phases() {
         boot.finished_at.unwrap().unix_ns(),
         1_700_000_000_000_000_000
     );
-    assert_eq!(boot.started_at.unwrap().unix_ns(), 1_699_999_990_000_000_000);
+    assert_eq!(
+        boot.started_at.unwrap().unix_ns(),
+        1_699_999_990_000_000_000
+    );
     // No initrd: its phase counts as none. No userspace figure: unknown.
     let out = read(manager_entry(
         "b07a249cd024414a82dd00cd181378ff",
@@ -239,7 +242,10 @@ fn startup_finished_dates_the_boot_from_its_phases() {
     let JournalReading::BootStarted(boot) = &out[1] else {
         panic!()
     };
-    assert_eq!(boot.started_at.unwrap().unix_ns(), 1_699_999_992_000_000_000);
+    assert_eq!(
+        boot.started_at.unwrap().unix_ns(),
+        1_699_999_992_000_000_000
+    );
     let out = read(manager_entry(
         "b07a249cd024414a82dd00cd181378ff",
         json!({"_BOOT_ID": "b1", "KERNEL_USEC": "3000000"}),
@@ -325,7 +331,10 @@ fn capture_resumes_from_the_resume_file_once_the_segments_are_gone() {
     // A segment holding a newer entry wins over the resume file.
     let mut writer = SpoolWriter::open(&spool, Rotation::default()).unwrap();
     writer
-        .append(Timestamp::now(), json!({"__CURSOR": "c3"}).to_string().as_bytes())
+        .append(
+            Timestamp::now(),
+            json!({"__CURSOR": "c3"}).to_string().as_bytes(),
+        )
         .unwrap();
     writer.sync().unwrap();
     assert_eq!(resume_cursor(&spool).unwrap().as_deref(), Some("c3"));

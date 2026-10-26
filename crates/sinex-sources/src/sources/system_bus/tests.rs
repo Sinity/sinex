@@ -44,9 +44,9 @@ fn a_snapshot_reads_the_network_and_its_devices() {
     }}});
     let (out, interfaces) = read(line, &BTreeMap::new());
     assert_eq!(out.len(), 2, "{out:?}");
-    assert!(
-        out.iter().any(|r| matches!(r, SystemBusReading::Network(n) if n.state == "connected_global" && n.snapshot))
-    );
+    assert!(out.iter().any(
+        |r| matches!(r, SystemBusReading::Network(n) if n.state == "connected_global" && n.snapshot)
+    ));
     let device = out
         .iter()
         .find_map(|r| match r {
@@ -104,7 +104,9 @@ fn the_network_state_changes() {
         ),
         &BTreeMap::new(),
     );
-    assert!(matches!(&out[0], SystemBusReading::Network(n) if n.state == "disconnected" && n.state_code == 20));
+    assert!(
+        matches!(&out[0], SystemBusReading::Network(n) if n.state == "disconnected" && n.state_code == 20)
+    );
 }
 
 #[devkit::test]
@@ -163,7 +165,10 @@ fn bluetooth_devices_appear_and_go_away() {
             "org.freedesktop.DBus.ObjectManager",
             "InterfacesRemoved",
             "oas",
-            json!([path, ["org.bluez.Device1", "org.freedesktop.DBus.Properties"]]),
+            json!([
+                path,
+                ["org.bluez.Device1", "org.freedesktop.DBus.Properties"]
+            ]),
         ),
         &BTreeMap::new(),
     );

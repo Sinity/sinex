@@ -288,7 +288,10 @@ fn signal(
         }),
         ("org.freedesktop.DBus.Properties", "PropertiesChanged") => {
             let interface = arg(0).and_then(Value::as_str).unwrap_or_default();
-            let changed = arg(1).and_then(Value::as_object).cloned().unwrap_or_default();
+            let changed = arg(1)
+                .and_then(Value::as_object)
+                .cloned()
+                .unwrap_or_default();
             match interface {
                 BLUETOOTH_DEVICE | BLUETOOTH_BATTERY => {
                     Some(SystemBusReading::Bluetooth(bluetooth(
@@ -314,7 +317,10 @@ fn signal(
         }
         ("org.freedesktop.DBus.ObjectManager", "InterfacesAdded") => {
             let path = arg(0).and_then(Value::as_str).unwrap_or_default();
-            let added = arg(1).and_then(Value::as_object).cloned().unwrap_or_default();
+            let added = arg(1)
+                .and_then(Value::as_object)
+                .cloned()
+                .unwrap_or_default();
             if let Some(name) = added
                 .get(NETWORK_DEVICE)
                 .and_then(|d| d.get("Interface"))
@@ -322,9 +328,9 @@ fn signal(
             {
                 interfaces.insert(path.to_owned(), name.to_owned());
             }
-            added.contains_key(BLUETOOTH_DEVICE).then(|| {
-                SystemBusReading::Bluetooth(bluetooth(received_at, path, "added", added))
-            })
+            added
+                .contains_key(BLUETOOTH_DEVICE)
+                .then(|| SystemBusReading::Bluetooth(bluetooth(received_at, path, "added", added)))
         }
         ("org.freedesktop.DBus.ObjectManager", "InterfacesRemoved") => {
             let path = arg(0).and_then(Value::as_str).unwrap_or_default();
@@ -381,7 +387,9 @@ impl Parser for SystemBusParser {
             return Ok((snapshot(received_at, objects, &mut interfaces), interfaces));
         }
         let m = Message::parse(&bytes).map_err(RecordError::new)?;
-        let out = signal(received_at, m, &mut interfaces).into_iter().collect();
+        let out = signal(received_at, m, &mut interfaces)
+            .into_iter()
+            .collect();
         Ok((out, interfaces))
     }
 }
