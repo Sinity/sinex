@@ -17,6 +17,8 @@ pub mod machine;
 pub mod media;
 pub mod operator;
 pub mod polylogue;
+pub mod records;
+pub mod router;
 pub mod session;
 pub mod shell;
 pub mod social;
@@ -114,6 +116,21 @@ pub const ALL: &[RegisteredEventType] = &[
     info::<machine::FileChanged>(),
     info::<machine::TerminalSession>(),
     info::<machine::TerminalOutput>(),
+    // Machine records and the router
+    info::<records::GenerationActivated>(),
+    info::<records::BackupChecked>(),
+    info::<records::BackupDrilled>(),
+    info::<records::TaskStoreDrilled>(),
+    info::<records::SandboxAuditFinding>(),
+    info::<records::UsageAssessed>(),
+    info::<records::UsageCensusTaken>(),
+    info::<records::ConfigDriftChecked>(),
+    info::<records::ExperimentStarted>(),
+    info::<records::ExperimentRun>(),
+    info::<router::RouterLogLine>(),
+    info::<router::DhcpLeaseSampled>(),
+    info::<router::DeviceTrafficSampled>(),
+    info::<router::WifiClientSampled>(),
     // Code
     info::<code::GitCommit>(),
     // Derived

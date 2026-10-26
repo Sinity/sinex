@@ -34,6 +34,10 @@ these names and no others.
 - **reader memory**: what a reader remembers about its input (each row's hash, each file's size, time and hash), saved with the cursor at the end of a part so a restart reads only the parts after it.
 - **shared pass**: one read of a stored file for every compatible binding of it (export archives); each binding keeps its own parts and cursor.
 - **spool**: a live capture's directory of segment files, which its binding then reads like a growing file.
+- **capture lake**: the files Sinnix capture writes, one directory per **lane** (a producer's stable name) with a **day file** per UTC day of `sinnix-capture-v1` records (`sinnix-lake`, `router`).
+- **machine records**: the files Sinnix keeps about the machine at its machine root (`/realm/device/<host>`): activations, backup checks, restore drills, audits, the usage census, configuration drift and experiment runs (`machine-records`).
+- **sample**: one look at a state that keeps changing (a lease table, a running traffic total), recorded as `<thing>.sampled` with the time it was taken.
+- **DHCP lease**: an address the router lends a device until it expires; the only sense in which "lease" is used.
 
 ## Events
 
