@@ -64,6 +64,22 @@
       ]
     },
     {
+      "name": "machine.telemetry",
+      "formats": [
+        "machine-telemetry"
+      ],
+      "drivers": [
+        "sqlite-rows"
+      ],
+      "purpose": "resource figures and what the machine was doing: power, temperatures, memory, IO and pressure per service and process, and OOM kills",
+      "class": "open",
+      "eventTypes": [
+        "resource.sampled",
+        "process.killed",
+        "hardware.state"
+      ]
+    },
+    {
       "name": "machine.file-watch",
       "formats": [
         "file-watch"

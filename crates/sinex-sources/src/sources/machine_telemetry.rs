@@ -47,10 +47,7 @@ const SPECS: [SourceSpec; 13] = [
     spec("machine-telemetry:gpu_sample", SAMPLED),
     spec("machine-telemetry:block_device_sample", SAMPLED),
     spec("machine-telemetry:service_cgroup_io_sample", SAMPLED),
-    spec(
-        "machine-telemetry:service_cgroup_pressure_sample",
-        SAMPLED,
-    ),
+    spec("machine-telemetry:service_cgroup_pressure_sample", SAMPLED),
     spec("machine-telemetry:cgroup_memory_sample", SAMPLED),
     spec("machine-telemetry:process_io_delta_sample", SAMPLED),
     spec("machine-telemetry:process_memory_sample", SAMPLED),
@@ -103,11 +100,11 @@ impl Parser for TelemetryParser {
         let mut columns = row.clone();
         // The SQLite-row driver's own field, not a column of the table.
         columns.remove("_rowid");
-        let id = take_int(&mut columns, "id")?
-            .ok_or_else(|| RecordError::new("the row has no id"))?;
+        let row_id =
+            take_int(&mut columns, "id")?.ok_or_else(|| RecordError::new("the row has no id"))?;
         let payload = match self.table {
             "kill_event" => Telemetry::Killed(ProcessKilled {
-                id,
+                row_id,
                 observed_at: take_time(&mut columns, "observed_at")?,
                 host: take_text(&mut columns, "host")?,
                 boot_id: take_text(&mut columns, "boot_id")?,
@@ -127,7 +124,7 @@ impl Parser for TelemetryParser {
                 let state = take_text(&mut columns, "payload_json")?
                     .ok_or_else(|| RecordError::new("payload_json is missing"))?;
                 Telemetry::Hardware(HardwareState {
-                    id,
+                    row_id,
                     captured_at: take_time(&mut columns, "captured_at")?,
                     host: take_text(&mut columns, "host")?,
                     boot_id: take_text(&mut columns, "boot_id")?,
@@ -138,7 +135,7 @@ impl Parser for TelemetryParser {
             }
             table => Telemetry::Sampled(ResourceSampled {
                 table: table.to_owned(),
-                id,
+                row_id,
                 observed_at: take_time(&mut columns, "observed_at")?,
                 host: take_text(&mut columns, "host")?,
                 boot_id: take_text(&mut columns, "boot_id")?,
@@ -232,7 +229,10 @@ fn plan(input: &Path, settings: &Settings) -> Result<Vec<Binding>, String> {
         let present = tables(&file);
         for spec in &SPECS {
             let table = table_of(spec.parser)?;
-            if present.as_ref().is_none_or(|tables| tables.iter().any(|t| t == table)) {
+            if present
+                .as_ref()
+                .is_none_or(|tables| tables.iter().any(|t| t == table))
+            {
                 bindings.push(Binding::of(spec, &file, settings.clone()).named(table));
             }
         }

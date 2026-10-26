@@ -27,7 +27,7 @@ fn a_sample_row_is_one_event_with_its_columns() {
     let Telemetry::Sampled(p) = parse("metric_sample", &sample()).unwrap() else {
         panic!("a sample table gives resource.sampled");
     };
-    assert_eq!((p.table.as_str(), p.id), ("metric_sample", 7));
+    assert_eq!((p.table.as_str(), p.row_id), ("metric_sample", 7));
     assert_eq!(
         (p.host.as_deref(), p.boot_id.as_deref()),
         (Some("box"), Some("b-1"))
@@ -51,7 +51,10 @@ fn a_sample_row_is_one_event_with_its_columns() {
         "JSON text that does not parse stays text"
     );
     for gone in ["_rowid", "id", "observed_at", "host", "boot_id"] {
-        assert!(!p.values.contains_key(gone), "{gone} is typed, not repeated");
+        assert!(
+            !p.values.contains_key(gone),
+            "{gone} is typed, not repeated"
+        );
     }
 }
 
@@ -88,7 +91,7 @@ fn a_kill_row_is_a_killed_process() {
     let Telemetry::Killed(p) = parse("kill_event", &r).unwrap() else {
         panic!("kill_event gives process.killed");
     };
-    assert_eq!(p.id, 3);
+    assert_eq!(p.row_id, 3);
     assert_eq!(p.killer, "earlyoom");
     assert_eq!(p.victim_pid, Some(4242));
     assert_eq!(

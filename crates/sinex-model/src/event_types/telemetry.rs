@@ -14,7 +14,7 @@ use serde_json::{Map, Value};
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
 #[event(
     type = "resource.sampled",
-    key = ["table", "id", "host"],
+    key = ["table", "row_id", "host"],
     replace = repeat,
     time = observed_at,
     quality = intrinsic
@@ -23,7 +23,7 @@ pub struct ResourceSampled {
     /// The collector's table the row is from.
     pub table: String,
     /// The row's ID in that table.
-    pub id: i64,
+    pub row_id: i64,
     /// Unknown when the row's `observed_at` is not a time with an offset.
     pub observed_at: Option<Timestamp>,
     pub host: Option<String>,
@@ -39,14 +39,14 @@ pub struct ResourceSampled {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
 #[event(
     type = "process.killed",
-    key = ["id", "host"],
+    key = ["row_id", "host"],
     replace = repeat,
     time = observed_at,
     quality = intrinsic
 )]
 pub struct ProcessKilled {
     /// The row's ID in `kill_event`.
-    pub id: i64,
+    pub row_id: i64,
     pub observed_at: Option<Timestamp>,
     pub host: Option<String>,
     pub boot_id: Option<String>,
@@ -72,14 +72,14 @@ pub struct ProcessKilled {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
 #[event(
     type = "hardware.state",
-    key = ["id", "host"],
+    key = ["row_id", "host"],
     replace = repeat,
     time = captured_at,
     quality = intrinsic
 )]
 pub struct HardwareState {
     /// The row's ID in `hardware_state`.
-    pub id: i64,
+    pub row_id: i64,
     pub captured_at: Option<Timestamp>,
     pub host: Option<String>,
     pub boot_id: Option<String>,

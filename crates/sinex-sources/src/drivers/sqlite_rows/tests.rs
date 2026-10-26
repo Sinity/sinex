@@ -324,7 +324,10 @@ fn an_appended_table_is_read_a_page_at_a_time() {
     let d = appended(path.clone());
     let mut state = RowState::default();
     let first = d.poll(&Value::Null, &mut state).unwrap();
-    assert_eq!(first.material.as_ref().unwrap().records.len(), ROWS_PER_PART);
+    assert_eq!(
+        first.material.as_ref().unwrap().records.len(),
+        ROWS_PER_PART
+    );
     let cursor = end_cursor(&first);
     assert_eq!(cursor["max_rowid"], json!(ROWS_PER_PART));
     let second = d.poll(&cursor, &mut state).unwrap();
@@ -335,7 +338,10 @@ fn an_appended_table_is_read_a_page_at_a_time() {
     assert_eq!(cursor["max_rowid"], json!(ROWS_PER_PART + 3));
     let quiet = d.poll(&cursor, &mut state).unwrap();
     assert!(quiet.material.is_none());
-    assert_eq!(quiet.cursor_without_material["max_rowid"], json!(ROWS_PER_PART + 3));
+    assert_eq!(
+        quiet.cursor_without_material["max_rowid"],
+        json!(ROWS_PER_PART + 3)
+    );
 }
 
 #[devkit::test]

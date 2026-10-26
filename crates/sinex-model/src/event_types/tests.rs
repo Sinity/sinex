@@ -93,3 +93,28 @@ fn catalog_lists_each_type_once() {
     names.dedup();
     assert_eq!(names.len(), ALL.len());
 }
+
+/// Each type's view in `event_types` lists the event's own columns beside the
+/// payload's fields, so a payload field cannot take one of their names.
+#[devkit::test]
+fn payload_fields_do_not_take_event_column_names() {
+    let event_columns = [
+        "id",
+        "source",
+        "ts_orig",
+        "ts_quality",
+        "ts_coided",
+        "record_state",
+    ];
+    for kind in ALL {
+        let schema = (kind.json_schema)();
+        for field in schema["properties"].as_object().into_iter().flatten() {
+            assert!(
+                !event_columns.contains(&field.0.as_str()),
+                "{}: payload field {} is an event column",
+                kind.event_type,
+                field.0
+            );
+        }
+    }
+}
