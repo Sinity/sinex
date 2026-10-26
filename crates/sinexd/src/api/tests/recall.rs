@@ -252,6 +252,7 @@ async fn recall_last_never_invents_a_span_from_untimed_or_withheld_evidence(
             hostname: "box".into(),
             started_at: None,
             header_elapsed: None,
+            paths: vec![],
             n: 0,
         },
         "terminal.zsh",

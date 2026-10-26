@@ -79,7 +79,12 @@ impl Metric {
     }
 }
 
-const SHELLS: &[&str] = &["terminal.atuin-history", "terminal.zsh-history"];
+const SHELLS: &[&str] = &[
+    "terminal.atuin-history",
+    "terminal.zsh-history",
+    "terminal.bash-history",
+    "terminal.fish-history",
+];
 const FOCUS: &[&str] = &["desktop.hyprland", "desktop.activitywatch"];
 const MUSIC: &[&str] = &["media.spotify-history", "media.mpris", "desktop.media"];
 const WEB: &[&str] = &[
@@ -243,6 +248,29 @@ pub static METRICS: &[Metric] = &[
         law: Law::Count,
         dimensions: &["unit"],
         sources: &["machine.journald"],
+        tracked: false,
+    },
+    Metric {
+        name: "input.key_presses",
+        description: "Keys pressed, a held key's repeats included",
+        inputs: || vec![Kind::all("key.pressed")],
+        law: Law::Count,
+        dimensions: &[],
+        sources: &["desktop.input-log"],
+        tracked: true,
+    },
+    Metric {
+        name: "input.clicks",
+        description: "Pointer buttons pressed",
+        inputs: || {
+            vec![Kind {
+                event_type: "pointer.button",
+                equal: vec![("pressed", json!(true))],
+            }]
+        },
+        law: Law::Count,
+        dimensions: &["button"],
+        sources: &["desktop.input-log"],
         tracked: false,
     },
     Metric {
@@ -430,6 +458,8 @@ impl Keyed for HourlyMetrics {
         "mail.fused",
         "journal.entry",
         "visit.fused",
+        "key.pressed",
+        "pointer.button",
     ];
     const OUTPUTS: &'static [&'static str] = &[MetricFigure::EVENT_TYPE];
 

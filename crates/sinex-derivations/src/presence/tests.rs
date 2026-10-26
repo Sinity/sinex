@@ -44,6 +44,7 @@ fn command(at: Timestamp, n: u64) -> Event {
             hostname: "box".into(),
             started_at: Some(at),
             header_elapsed: Some(0),
+            paths: vec![],
             n: 0,
         },
         "terminal.zsh",

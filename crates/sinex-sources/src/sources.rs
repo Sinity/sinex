@@ -3,6 +3,7 @@ pub mod activitywatch;
 pub mod arbtt;
 pub mod asciinema;
 pub mod atuin;
+pub mod bash;
 pub mod calendar;
 pub mod chromium;
 /// The Wayland clipboard and primary selection.
@@ -11,11 +12,16 @@ pub mod clipboard;
 pub mod dbus;
 pub(crate) mod fields;
 pub mod file_watch;
+pub mod fish;
 pub mod forecast;
 pub mod goodreads;
 pub mod google_takeout;
 pub mod hyprland;
+/// The keyboard and pointer log (scribe-tap).
+pub mod input_log;
 pub mod journald;
+/// kitty scrollback snapshots in the Sinnix lake.
+pub mod kitty_scrollback;
 /// The media library: scans of library roots and library requests.
 pub mod library;
 pub mod mail;
@@ -42,11 +48,14 @@ pub mod samsung_health;
 pub mod samsung_sms;
 /// The session integration socket: Neovim and kitty integrations.
 pub mod session_socket;
+/// Numbering shell history records, shared by zsh, bash and fish.
+pub(crate) mod shell_history;
 /// The Sinnix capture lake's lanes.
 pub mod sinnix_lake;
 pub mod sleep_as_android;
 pub mod spotify;
 pub mod takeout_chrome;
+pub(crate) mod terminal_text;
 pub mod weechat;
 pub mod wykop;
 pub mod zsh;
@@ -61,6 +70,8 @@ pub fn formats() -> &'static [&'static InputFormat] {
     &[
         &atuin::FORMAT,
         &zsh::FORMAT,
+        &bash::FORMAT,
+        &fish::FORMAT,
         &hyprland::FORMAT,
         &journald::FORMAT,
         &file_watch::FORMAT,
@@ -89,6 +100,8 @@ pub fn formats() -> &'static [&'static InputFormat] {
         &samsung_cloud::FORMAT,
         &arbtt::FORMAT,
         &asciinema::FORMAT,
+        &kitty_scrollback::FORMAT,
+        &input_log::FORMAT,
         &operator::RAW_LOG_FORMAT,
         &operator::STEERING_FORMAT,
         &sinnix_lake::FORMAT,

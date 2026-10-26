@@ -12,6 +12,7 @@ pub mod desktop;
 pub mod forecast;
 pub mod fused;
 pub mod health;
+pub mod input;
 pub mod library;
 pub mod machine;
 pub mod media;
@@ -114,6 +115,15 @@ pub const ALL: &[RegisteredEventType] = &[
     info::<machine::FileChanged>(),
     info::<machine::TerminalSession>(),
     info::<machine::TerminalOutput>(),
+    info::<machine::ScrollbackCaptured>(),
+    info::<machine::ScrollbackWindow>(),
+    // Keyboard and pointer
+    info::<input::KeyPressed>(),
+    info::<input::KeyReleased>(),
+    info::<input::PointerButton>(),
+    info::<input::PointerMoved>(),
+    info::<input::PointerScrolled>(),
+    info::<input::InputLogger>(),
     // Code
     info::<code::GitCommit>(),
     // Derived

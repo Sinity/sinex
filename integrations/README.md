@@ -10,5 +10,8 @@ and the program never waits.
 - `neovim/`: `require("sinex").setup()` reports buffer, write, directory,
   focus and exit events (`editor.reported`).
 - `kitty/sinex_watcher.py`: `watcher /path/to/sinex_watcher.py` in kitty.conf
-  reports command start and end (with kitty's shell integration), focus,
-  title and close (`terminal.reported`).
+  reports command start and end with the command's output (with kitty's
+  shell integration), focus, title and close (`terminal.reported`), and each
+  window's scrollback lines not sent before, every
+  `$SINEX_KITTY_SCROLLBACK_SECONDS` (180) and when the window closes or kitty
+  quits (`scrollback.captured`).

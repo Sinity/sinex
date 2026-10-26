@@ -27,6 +27,7 @@ impl Parser for Lines {
             hostname: "h".into(),
             started_at: Some(Timestamp::from_unix_secs(i64::from(*carry)).unwrap()),
             header_elapsed: Some(0),
+            paths: vec![],
             n: 0,
         };
         Ok((vec![payload], carry + 1))

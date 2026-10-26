@@ -1,16 +1,15 @@
 //! Plain and extended zsh history (`: <start>:<elapsed>;<command>`), on `AppendFile`.
 //!
 //! The file has no record IDs, so a record is identified by host, start
-//! second, command and its occurrence number among identical (start, command)
-//! pairs in file order. The parser carries the counts; a re-read from the
-//! start (a lost position, a replay) begins with no carry and numbers the same
-//! records the same way. Untimed records keep their material locations instead.
+//! second, command and its number among equal records ([`Seen`]). Untimed records keep
+//! their material locations instead.
 //! zsh metafies bytes 0x83..0x9f (0x83 then the byte xor 0x20) and continues a
 //! multi-line command with a backslash before the newline. With SHARE_HISTORY
 //! the elapsed field is written as 0 before the command ends, so it is kept as
 //! written and never read as a duration.
 use crate::drivers::append_file::AppendFile;
 use crate::registry::{DeclaredSource, Driver, SourceSpec};
+use crate::sources::shell_history::Seen;
 use crate::{Parser, RecordError};
 use sinex_model::{Class, Timestamp, event_types::CommandImported};
 use std::path::PathBuf;
@@ -30,77 +29,6 @@ pub const SPEC: SourceSpec = SourceSpec {
 pub struct ZshParser {
     /// The host whose history file this is; zsh does not record it.
     pub host: String,
-}
-
-/// Occurrences seen per (start second, command). Identical pairs share a start
-/// second, so only starts within a day of the latest are kept: a pair needs a
-/// second record with that exact start, and history lines are written within
-/// minutes of their start. The window decides numbering, never what is kept.
-/// Keys hold a digest of the command, never its text, so the carry does not
-/// copy what the material holds.
-/// The map is persistent: the drain hands each record the carry and takes a
-/// new one back, so a clone must not copy the map.
-#[derive(Clone, Debug, Default, PartialEq, serde::Serialize, serde::Deserialize)]
-pub struct Seen {
-    latest: i64,
-    /// Stored as a list: JSON object keys are strings only.
-    #[serde(with = "pairs")]
-    counts: imbl::OrdMap<(i64, [u8; 32]), u32>,
-}
-
-mod pairs {
-    use serde::{Deserialize, Deserializer, Serialize, Serializer};
-
-    type Counts = imbl::OrdMap<(i64, [u8; 32]), u32>;
-
-    pub(crate) fn serialize<S: Serializer>(
-        m: &imbl::OrdMap<(i64, [u8; 32]), u32>,
-        s: S,
-    ) -> Result<S::Ok, S::Error> {
-        m.iter()
-            .map(|((start, key), n)| (start, key, n))
-            .collect::<Vec<_>>()
-            .serialize(s)
-    }
-
-    pub(crate) fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<Counts, D::Error> {
-        let list = Vec::<(i64, [u8; 32], u32)>::deserialize(d)?;
-        Ok(list
-            .into_iter()
-            .map(|(start, key, n)| ((start, key), n))
-            .collect())
-    }
-}
-
-fn command_key(command: &str) -> [u8; 32] {
-    *blake3::Hasher::new_derive_key("Sinex zsh command occurrence v1")
-        .update(command.as_bytes())
-        .finalize()
-        .as_bytes()
-}
-
-const SEEN_WINDOW_SECS: i64 = 86_400;
-
-impl Seen {
-    fn next(&self, start: i64, command: &str) -> (u32, Self) {
-        let mut seen = self.clone();
-        let key = (start, command_key(command));
-        let n = seen.counts.get(&key).copied().unwrap_or(0);
-        seen.counts.insert(key, n + 1);
-        if start > seen.latest {
-            seen.latest = start;
-            // Keys sort by start, so the expired ones are at the front.
-            let floor = start - SEEN_WINDOW_SECS;
-            while let Some(((oldest, _), _)) = seen.counts.get_min() {
-                if *oldest >= floor {
-                    break;
-                }
-                let first = seen.counts.get_min().map(|(k, _)| *k).expect("checked");
-                seen.counts.remove(&first);
-            }
-        }
-        (n, seen)
-    }
 }
 
 impl Parser for ZshParser {
@@ -168,6 +96,7 @@ impl Parser for ZshParser {
                 hostname: self.host.clone(),
                 started_at,
                 header_elapsed: elapsed,
+                paths: vec![],
                 n,
             }],
             seen,

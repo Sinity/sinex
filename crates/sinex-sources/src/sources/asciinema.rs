@@ -7,13 +7,20 @@
 //! in v3), the command and environment. Each later line is `[time, code,
 //! data]`: in v3 the time is the interval since the previous event, in v2 the
 //! offset from the start. The cast stays whole as the material; its events
-//! are framed into spans (`cast_spans`): consecutive event lines up to
-//! `SPAN_BYTES`, ending early at a resize or the exit, and at a read
-//! boundary. Each span is one `terminal.output` with its plain text and its
-//! start and end; the span's record is its exact byte range, so the stream is
-//! replayable from the material. The parser carries the start and the running
-//! time across spans. The session ID is the capture's
+//! are framed into spans (`cast_spans`), one shell command each: a span
+//! starts at a typed Enter (an `i` event holding a carriage return or a
+//! newline), so it holds the command's output up to the next Enter. It also
+//! ends at `SPAN_BYTES`, at a resize or the exit, and at a read boundary.
+//! Each span is one `terminal.output` with its plain text and its start and
+//! end; the span's record is its exact byte range, so the stream is
+//! replayable from the material. The parser carries the start and the
+//! running time across spans. The session ID is the capture's
 //! `SINNIX_CAPTURE_SESSION_ID`, else the directory name.
+//!
+//! The command boundaries come from the cast itself, not from `events.jsonl`:
+//! a span must be framed from its own material for replay and excision, and
+//! the cast's start is whole seconds, too coarse to place a command's events
+//! by their clock time.
 //!
 //! `events.jsonl` lines become `terminal.reported`, the same type the live kitty
 //! watcher writes: `type` is the event, `ts_ms` its time, `command` its command
@@ -23,6 +30,7 @@
 use crate::drivers::append_file::AppendFile;
 use crate::registry::{DeclaredSource, Driver, SourceSpec};
 use crate::sources::fields;
+use crate::sources::terminal_text::strip_escapes;
 use crate::{Parser, RecordContext, RecordError};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
@@ -38,7 +46,7 @@ pub const CAST: SourceSpec = SourceSpec {
     purpose: "what terminals showed and what was typed, replayable",
     class: sinex_model::Class::Open,
     parser: "asciinema-cast",
-    parser_version: 2,
+    parser_version: 3,
     event_types: &["terminal.session", "terminal.output"],
     framer: crate::Framer::incremental(cast_spans),
 };
@@ -220,50 +228,14 @@ fn span(text: &str, carry: &Carry) -> Result<(Vec<CastEvent>, Carry), RecordErro
     ))
 }
 
-/// Append `data` to `out` without terminal escape sequences (CSI `ESC [ …
-/// final`, OSC `ESC ] … BEL|ST`, two-byte `ESC x`) or other control
-/// characters except newline and tab. A carriage return becomes nothing, so
-/// redrawn lines read as their final text joined.
-fn strip_escapes(data: &str, out: &mut String) {
-    let mut chars = data.chars().peekable();
-    while let Some(c) = chars.next() {
-        match c {
-            '\u{1b}' => match chars.next() {
-                Some('[') => {
-                    for c in chars.by_ref() {
-                        if ('@'..='~').contains(&c) {
-                            break;
-                        }
-                    }
-                }
-                Some(']') => {
-                    while let Some(c) = chars.next() {
-                        if c == '\u{7}' {
-                            break;
-                        }
-                        if c == '\u{1b}' && chars.peek() == Some(&'\\') {
-                            chars.next();
-                            break;
-                        }
-                    }
-                }
-                _ => {}
-            },
-            '\n' | '\t' => out.push(c),
-            c if c.is_control() => {}
-            c => out.push(c),
-        }
-    }
-}
-
 /// The most cast bytes in one span.
 const SPAN_BYTES: usize = 64 << 10;
 
 /// Frame a cast into records: the header line alone, then spans of complete
 /// event lines of at most `SPAN_BYTES` (a longer single line is a span
-/// alone), each ending early after a resize (`"r"`) or the exit (`"x"`).
-/// Only complete lines are framed: a recording still being written ends
-/// mid-line.
+/// alone). A typed Enter starts a new span; a resize (`"r"`) or the exit
+/// (`"x"`) ends one. Only complete lines are framed: a recording still being
+/// written ends mid-line.
 pub fn cast_spans(bytes: &[u8]) -> (Vec<(usize, usize)>, usize) {
     let (lines, consumed) = complete_lines(bytes);
     let mut out = Vec::new();
@@ -277,6 +249,11 @@ pub fn cast_spans(bytes: &[u8]) -> (Vec<(usize, usize)>, usize) {
             }
             out.push((s, e));
             continue;
+        }
+        if is_enter(trimmed)
+            && let Some(span) = open.take()
+        {
+            out.push(span);
         }
         let ends_span = memchr_code(trimmed);
         open = match open {
@@ -305,6 +282,20 @@ fn memchr_code(line: &[u8]) -> bool {
     };
     let rest = line[comma + 1..].trim_ascii_start();
     rest.starts_with(b"\"r\"") || rest.starts_with(b"\"x\"")
+}
+
+/// Whether a cast event line is typed input holding Enter: `[t, "i", data]`
+/// with a carriage return or a newline in `data`. Only input lines are
+/// parsed.
+fn is_enter(line: &[u8]) -> bool {
+    let Some(comma) = line.iter().position(|b| *b == b',') else {
+        return false;
+    };
+    if !line[comma + 1..].trim_ascii_start().starts_with(b"\"i\"") {
+        return false;
+    }
+    serde_json::from_slice::<(Value, String, String)>(line.trim_ascii_end())
+        .is_ok_and(|(_, _, data)| data.contains(['\r', '\n']))
 }
 
 /// The recording's directory name, the session when the header names none.
@@ -347,6 +338,7 @@ impl Parser for EventsParser {
                 cmdline: text("command"),
                 exit_status: row.get("exit_code").and_then(Value::as_i64),
                 title: None,
+                output: None,
                 extra,
             }],
             (),

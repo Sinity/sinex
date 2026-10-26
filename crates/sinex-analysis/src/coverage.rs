@@ -33,7 +33,8 @@ pub enum Completeness {
 }
 
 /// What each source sees of its kind. A shell history sees the commands typed
-/// in that shell, not every command run; a browser profile sees that profile;
+/// in that shell, not every command run; the input log sees the devices it
+/// is set up for; a browser profile sees that profile;
 /// the journal, the compositor and ActivityWatch see this host.
 pub fn completeness(source: &str) -> Completeness {
     match source {
@@ -45,6 +46,9 @@ pub fn completeness(source: &str) -> Completeness {
         | "desktop.media" => Completeness::Complete,
         "terminal.atuin-history"
         | "terminal.zsh-history"
+        | "terminal.bash-history"
+        | "terminal.fish-history"
+        | "desktop.input-log"
         | "code.git"
         | "browser.chromium-visits"
         | "browser.takeout-chrome-history"

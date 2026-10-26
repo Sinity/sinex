@@ -6,11 +6,16 @@
 //! `integrations/neovim` and `integrations/kitty`.
 //!
 //! A line names its producer in `source` (`neovim`, `kitty`) and its
-//! happening in `event`; the rest are fields of that producer.
+//! happening in `event`; the rest are fields of that producer. kitty's
+//! `scrollback` lines carry a window's new scrollback lines and become
+//! `scrollback.captured`, the type the lake's snapshots have; its other
+//! lines are `terminal.reported`, a `cmd_end` with the command's output.
 use crate::drivers::live_stream::{self, LiveStream, Rotation, SpoolWriter};
 use crate::registry::{DeclaredSource, Driver, SourceSpec};
+use crate::sources::terminal_text::strip_escapes;
 use crate::{Parser, RecordError};
 use serde_json::{Map, Value};
+use sinex_model::event_types::machine::ScrollbackCaptured;
 use sinex_model::event_types::session::{EditorReport, TerminalReport};
 use sinex_model::{Class, InputRef, Timestamp};
 use std::io::{BufRead, BufReader};
@@ -24,12 +29,16 @@ pub const SPEC: SourceSpec = SourceSpec {
     name: "session.integrations",
     driver: Driver::LiveStream,
     excisable: true,
-    purpose: "recall: files edited, commands run in the terminal",
-    // Paths and command lines.
+    purpose: "recall: files edited, commands run in the terminal and what they printed",
+    // Paths, command lines and terminal output.
     class: Class::Guarded,
     parser: "session-socket",
-    parser_version: 1,
-    event_types: &["editor.reported", "terminal.reported"],
+    parser_version: 2,
+    event_types: &[
+        "editor.reported",
+        "terminal.reported",
+        "scrollback.captured",
+    ],
     framer: crate::Framer::incremental(crate::drivers::append_file::lines),
 };
 
@@ -38,6 +47,7 @@ sinex_model::payload_enum! {
     pub enum Produced {
         Editor(EditorReport),
         Terminal(TerminalReport),
+        Scrollback(ScrollbackCaptured),
     }
 }
 
@@ -265,6 +275,7 @@ impl Parser for SessionSocketParser {
                 pid: take_i64(&mut m, "pid").and_then(|p| u32::try_from(p).ok()),
                 extra: m,
             }),
+            "kitty" if event == "scrollback" => Produced::Scrollback(scrollback(received_at, m)?),
             "kitty" => Produced::Terminal(TerminalReport {
                 received_at,
                 terminal: source,
@@ -274,12 +285,52 @@ impl Parser for SessionSocketParser {
                 cmdline: take_str(&mut m, "cmdline"),
                 exit_status: take_i64(&mut m, "exit_status"),
                 title: take_str(&mut m, "title"),
+                output: take_str(&mut m, "output").map(|ansi| plain(&ansi)),
                 extra: m,
             }),
             other => return Err(RecordError::new(format!("unknown producer `{other}`"))),
         };
         Ok((vec![out], ()))
     }
+}
+
+fn plain(ansi: &str) -> String {
+    let mut text = String::with_capacity(ansi.len());
+    strip_escapes(ansi, &mut text);
+    text
+}
+
+/// A kitty window's lines from `from_line` on, of the `lines` it held: the
+/// integration sends only lines it has not sent before. The text is read
+/// like a lake snapshot's.
+fn scrollback(
+    received_at: Timestamp,
+    mut m: Map<String, Value>,
+) -> Result<ScrollbackCaptured, RecordError> {
+    let window_id =
+        take_i64(&mut m, "window_id").ok_or_else(|| RecordError::new("no `window_id`"))?;
+    let count = |m: &mut Map<String, Value>, key: &str| {
+        take_i64(m, key)
+            .and_then(|n| u64::try_from(n).ok())
+            .ok_or_else(|| RecordError::new(format!("no `{key}`")))
+    };
+    let lines = count(&mut m, "lines")?;
+    let from_line = count(&mut m, "from_line")?;
+    let text = crate::sources::kitty_scrollback::plain_lines(
+        &take_str(&mut m, "text").unwrap_or_default(),
+    );
+    Ok(ScrollbackCaptured {
+        captured_at: received_at,
+        host: take_str(&mut m, "host"),
+        kitty_pid: take_i64(&mut m, "kitty_pid").and_then(|p| u32::try_from(p).ok()),
+        window_id,
+        title: take_str(&mut m, "title"),
+        cwd: take_str(&mut m, "cwd"),
+        lines,
+        continues: from_line > 0,
+        new_lines: text.len() as u64,
+        text: text.join("\n"),
+    })
 }
 
 pub fn source() -> DeclaredSource<SessionSocketParser> {

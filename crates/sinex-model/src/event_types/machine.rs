@@ -1,4 +1,5 @@
-//! Machine events: journal entries, file changes and capture observations.
+//! Machine events: journal entries, file changes, capture observations and
+//! what terminals showed.
 use crate::Timestamp;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -72,11 +73,14 @@ pub struct TerminalSession {
     pub header: Value,
 }
 
-/// A span of a terminal recording: consecutive cast events (output, input,
-/// markers) up to a size bound, a resize or the exit, as plain text with
-/// escape sequences removed. The cast stays whole as the material, and the
-/// span's record is its exact byte range there, so the original stream is
-/// replayable from the material; per-event detail is a read over it.
+/// A span of a terminal recording, as plain text with escape sequences
+/// removed: one shell command's output where the recording kept input. A span
+/// starts at a typed Enter, so it holds the command's output, the next prompt
+/// and the next command line as typed up to its own Enter; it also ends at a
+/// size bound, a resize or the exit. The cast stays whole as the material,
+/// and the span's record is its exact byte range there, so the original
+/// stream is replayable from the material; per-event detail is a read over
+/// it.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
 #[event(type = "terminal.output", key = location, replace = repeat, time = started_at, quality = intrinsic)]
 pub struct TerminalOutput {
@@ -93,4 +97,52 @@ pub struct TerminalOutput {
     /// The last resize (`r`) or the exit status (`x`) the span ends with.
     pub resize: Option<String>,
     pub exit: Option<String>,
+}
+
+/// What a kitty window's scrollback held when it was captured: a snapshot in
+/// the Sinnix lake (`kitty @ get-text`, every window on a timer), or the kitty
+/// integration's capture of a window's new lines on a cadence and when it
+/// closes. `text` holds only the lines new since the previous capture of the
+/// same window, escape sequences removed; the stored material keeps the
+/// capture as taken.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
+#[event(type = "scrollback.captured", key = location, replace = repeat, time = captured_at, quality = captured)]
+pub struct ScrollbackCaptured {
+    pub captured_at: Timestamp,
+    pub host: Option<String>,
+    /// The kitty process; absent in older lake snapshots.
+    pub kitty_pid: Option<u32>,
+    pub window_id: i64,
+    /// The window's title; for a lake snapshot, as its file name spells it
+    /// (the sidecar's `scrollback.window` has it exactly).
+    pub title: Option<String>,
+    pub cwd: Option<String>,
+    /// Lines the window held at capture, scrollback and screen.
+    pub lines: u64,
+    /// Whether `text` continues the previous capture of this window. False for
+    /// a window's first capture, and when the previous capture is not where
+    /// this one starts (the window was cleared, or resized and its lines
+    /// wrapped again): `text` is then the whole capture.
+    pub continues: bool,
+    /// Lines in `text`.
+    pub new_lines: u64,
+    pub text: String,
+}
+
+/// The window a lake scrollback snapshot was taken of, from the snapshot's
+/// sidecar file: kitty's title and working directory at capture.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
+#[event(type = "scrollback.window", key = location, replace = repeat, time = captured_at, quality = captured)]
+pub struct ScrollbackWindow {
+    pub captured_at: Timestamp,
+    pub host: Option<String>,
+    pub kitty_pid: Option<u32>,
+    pub window_id: i64,
+    pub title: Option<String>,
+    pub cwd: Option<String>,
+    /// The snapshot's file name.
+    pub snapshot: String,
+    /// Any other fields the sidecar has.
+    #[serde(default, skip_serializing_if = "Map::is_empty")]
+    pub extra: Map<String, Value>,
 }

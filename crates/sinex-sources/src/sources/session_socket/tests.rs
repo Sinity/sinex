@@ -33,6 +33,40 @@ fn neovim_and_kitty_lines_become_typed_events() {
 }
 
 #[devkit::test]
+fn kitty_command_output_and_scrollback_are_read_as_plain_text() {
+    let Produced::Terminal(t) = parse(
+        r#"{"source":"kitty","event":"cmd_end","window_id":7,"cmdline":"ls","exit_status":0,"output":"\u001b[32ma\u001b[m b\r\n"}"#,
+    )
+    .unwrap() else {
+        panic!()
+    };
+    assert_eq!(t.output.as_deref(), Some("a b\n"));
+    let Produced::Scrollback(c) = parse(
+        r#"{"source":"kitty","event":"scrollback","window_id":7,"kitty_pid":9,"host":"box","title":"zsh","cwd":"/h","lines":40,"from_line":38,"text":"\u001b[1mx\u001b[m  \r\ny\r\n"}"#,
+    )
+    .unwrap() else {
+        panic!()
+    };
+    assert_eq!(
+        (c.window_id, c.kitty_pid, c.host.as_deref(), c.lines),
+        (7, Some(9), Some("box"), 40)
+    );
+    assert!(c.continues);
+    assert_eq!((c.new_lines, c.text.as_str()), (2, "x\ny"));
+    let Produced::Scrollback(first) = parse(
+        r#"{"source":"kitty","event":"scrollback","window_id":7,"lines":1,"from_line":0,"text":"z"}"#,
+    )
+    .unwrap() else {
+        panic!()
+    };
+    assert!(!first.continues);
+    assert!(parse(r#"{"source":"kitty","event":"scrollback","lines":1,"from_line":0}"#).is_err());
+    assert!(
+        parse(r#"{"source":"kitty","event":"scrollback","window_id":7,"from_line":0}"#).is_err()
+    );
+}
+
+#[devkit::test]
 fn unknown_producers_fail_by_name() {
     assert!(
         parse(r#"{"source":"emacs","event":"x"}"#)
