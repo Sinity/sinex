@@ -63,7 +63,7 @@ fn note(text: &str, path: &str) -> NoteDocument {
         member: Some(&member),
     };
     NotesParser
-        .parse(&text.as_bytes(), &(), &context)
+        .parse(&text.as_bytes(), &NoteIds::default(), &context)
         .unwrap()
         .0
         .remove(0)
@@ -251,7 +251,7 @@ fn payloads_without_metadata_and_removed_notes_do_not_claim_metadata() {
         member: Some(&member),
     };
     let payload = NotesParser
-        .parse(&b"".as_slice(), &(), &context)
+        .parse(&b"".as_slice(), &NoteIds::default(), &context)
         .unwrap()
         .0
         .remove(0);
@@ -269,4 +269,64 @@ fn front_matter_of_any_size_is_parsed() {
         note(&text, "large.md").front_matter,
         Some(NoteFrontMatter::Parsed { .. })
     ));
+}
+
+/// Read `path` (with `text`, or as removed when `text` is `None`) under the
+/// carried IDs, as a scan does.
+fn step(ids: &NoteIds, path: &str, text: Option<&str>) -> (Vec<NoteDocument>, NoteIds) {
+    let manifest = sinex_model::Manifest::from_json(serde_json::json!({"path":"/vault/v"}));
+    let member = match text {
+        Some(_) => serde_json::json!({"path": path}),
+        None => serde_json::json!({"path": path, "removed_at_ns": "1700000000000000000"}),
+    };
+    let member = serde_json::from_value::<sinex_model::Member>(member).unwrap();
+    let context = RecordContext {
+        manifest: &manifest,
+        member: Some(&member),
+    };
+    NotesParser
+        .parse(&text.unwrap_or("").as_bytes(), ids, &context)
+        .unwrap()
+}
+
+fn key(note: &NoteDocument) -> sinex_model::EquivalenceKey {
+    use sinex_model::EventPayload;
+    match note.key_kind() {
+        sinex_model::KeyKind::Fields(fields) => sinex_model::EquivalenceKey::of(
+            NoteDocument::EVENT_TYPE,
+            fields,
+            &serde_json::to_value(note).unwrap(),
+        ),
+        sinex_model::KeyKind::Location => panic!("notes are keyed"),
+    }
+}
+
+#[devkit::test]
+fn a_renamed_note_keeps_one_identity() {
+    let text = "---\nid: projects.alpha\n---\nAlpha\n";
+    let (first, ids) = step(&NoteIds::default(), "alpha.md", Some(text));
+    // The scan reads the moved file, then finds the old path gone.
+    let (moved, ids) = step(&ids, "projects/alpha.md", Some(text));
+    let (gone, ids) = step(&ids, "alpha.md", None);
+    assert_eq!(key(&first[0]), key(&moved[0]), "one note across the rename");
+    assert!(gone.is_empty(), "the old path is not a removal of the note");
+    // Deleting it later removes the note under its ID.
+    let (deleted, _) = step(&ids, "projects/alpha.md", None);
+    assert_eq!(deleted[0].note_id.as_deref(), Some("projects.alpha"));
+    assert!(deleted[0].removed_at.is_some());
+    assert_eq!(key(&deleted[0]), key(&first[0]));
+}
+
+#[devkit::test]
+fn a_note_without_an_id_is_its_path() {
+    let (first, ids) = step(&NoteIds::default(), "plain.md", Some("text\n"));
+    let (renamed, ids) = step(&ids, "other.md", Some("text\n"));
+    let (gone, _) = step(&ids, "plain.md", None);
+    assert_ne!(key(&first[0]), key(&renamed[0]), "equal text never joins");
+    assert_eq!(key(&gone[0]), key(&first[0]));
+    assert!(gone[0].removed_at.is_some());
+    let (empty, _) = step(&NoteIds::default(), "e.md", Some("---\nid: \"\"\n---\n"));
+    assert_eq!(empty[0].note_id.as_deref(), Some(""));
+    let (path_keyed, _) = step(&NoteIds::default(), "e.md", Some("x\n"));
+    assert_eq!(key(&empty[0]), key(&path_keyed[0]), "an empty ID identifies nothing");
 }

@@ -1,4 +1,4 @@
-//! Machine events: journal entries, file changes, capture observations and
+//! Machine events: journal entries, file changes, terminal recordings and
 //! what terminals showed.
 use crate::Timestamp;
 use schemars::JsonSchema;
@@ -54,9 +54,6 @@ pub struct FileChanged {
     /// Why, for an `unwatched` directory.
     pub note: Option<String>,
 }
-
-pub mod capture;
-pub use capture::{CapturePayload, LakeObservation};
 
 /// A terminal recording's session (asciinema): its start, size, command and
 /// environment, from the recording's header. The recording's place is its

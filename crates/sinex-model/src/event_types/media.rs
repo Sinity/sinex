@@ -79,18 +79,12 @@ pub struct BookmarkSaved {
     pub extra: Map<String, Value>,
 }
 
-/// A note file in a notes vault (Obsidian, plain Markdown folders). The vault
-/// and the path inside it identify it; an edit is a newer reading, and a file
+/// A note file in a notes vault (Obsidian, plain Markdown folders). A note
+/// with an ID in its front matter is identified by the vault and that ID, so
+/// it keeps one identity when the file is renamed or moved; a note without
+/// one by the vault and its path. An edit is a newer reading, and a note
 /// missing from a completed scan is removed at the source.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
-#[event(
-    type = "note.document",
-    key = ["vault", "path"],
-    replace = newer,
-    time = modified_at,
-    quality = file_mtime,
-    removed_when = removed_at
-)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct NoteDocument {
     pub vault: String,
     /// Relative to the vault root.
@@ -104,7 +98,9 @@ pub struct NoteDocument {
     /// Absent for a removed file and for a note without one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub title: Option<String>,
-    /// The exact front-matter string, including an explicitly empty ID.
+    /// The ID the front matter declares, exactly as written (an explicitly
+    /// empty ID is kept but identifies nothing). On a removed reading, the ID
+    /// the note had when last read.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub note_id: Option<String>,
     /// Sorted string tags from the parsed header and known body. An invalid
@@ -115,6 +111,36 @@ pub struct NoteDocument {
     pub wikilinks: Option<Vec<String>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub front_matter: Option<NoteFrontMatter>,
+}
+
+impl crate::EventPayload for NoteDocument {
+    const EVENT_TYPE: &'static str = "note.document";
+    const KEY: crate::KeyKind = crate::KeyKind::Fields(&["vault", "path"]);
+    const REPLACE: crate::ReplaceRule = crate::ReplaceRule::ReplaceWhenNewer;
+
+    fn key_kind(&self) -> crate::KeyKind {
+        if self.note_id.as_deref().is_some_and(|id| !id.trim().is_empty()) {
+            crate::KeyKind::Fields(&["vault", "note_id"])
+        } else {
+            Self::KEY
+        }
+    }
+
+    fn ts_orig(&self) -> crate::TsOrig {
+        crate::TsOrig::maybe(self.modified_at, crate::TimeQuality::FileMtime)
+    }
+
+    fn record_state(&self) -> crate::RecordState {
+        if self.removed_at.is_some() {
+            crate::RecordState::Removed
+        } else {
+            crate::RecordState::Present
+        }
+    }
+
+    fn payload_schema() -> Value {
+        serde_json::to_value(schemars::schema_for!(Self)).expect("schemas serialize")
+    }
 }
 
 /// The parsed YAML header, separate from the exact original note text.

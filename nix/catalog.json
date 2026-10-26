@@ -669,7 +669,6 @@
       "purpose": "recall, prompt provenance",
       "class": "guarded",
       "eventTypes": [
-        "lake.observed",
         "clipboard.copied"
       ]
     },
@@ -686,7 +685,6 @@
       "purpose": "recall, interruption analysis",
       "class": "guarded",
       "eventTypes": [
-        "lake.observed",
         "notification.shown",
         "notification.closed",
         "notification.action"
@@ -703,7 +701,7 @@
       "purpose": "listening and attention timeline",
       "class": "open",
       "eventTypes": [
-        "lake.observed"
+        "player.changed"
       ]
     },
     {
@@ -717,7 +715,9 @@
       "purpose": "what was on screen, recall",
       "class": "open",
       "eventTypes": [
-        "lake.observed"
+        "accessibility.focused",
+        "accessibility.text_changed",
+        "accessibility.tree"
       ]
     },
     {
@@ -731,7 +731,7 @@
       "purpose": "presence and AFK evidence",
       "class": "open",
       "eventTypes": [
-        "lake.observed"
+        "idle_inhibitors.reported"
       ]
     },
     {
@@ -745,7 +745,7 @@
       "purpose": "screen recall and OCR",
       "class": "open",
       "eventTypes": [
-        "lake.observed"
+        "frame.captured"
       ]
     },
     {
@@ -759,7 +759,9 @@
       "purpose": "audio recall, speech index, device state",
       "class": "open",
       "eventTypes": [
-        "lake.observed"
+        "audio.recording_state",
+        "audio.graph_changed",
+        "speech.indexed"
       ]
     },
     {
@@ -773,7 +775,7 @@
       "purpose": "browsing trails, recall",
       "class": "open",
       "eventTypes": [
-        "lake.observed"
+        "link.followed"
       ]
     },
     {
@@ -787,7 +789,7 @@
       "purpose": "reading queue",
       "class": "open",
       "eventTypes": [
-        "lake.observed"
+        "reading_stack.changed"
       ]
     },
     {
@@ -801,7 +803,7 @@
       "purpose": "machine state timeline",
       "class": "open",
       "eventTypes": [
-        "lake.observed"
+        "display.sampled"
       ]
     },
     {
@@ -815,7 +817,7 @@
       "purpose": "network flows by connection",
       "class": "open",
       "eventTypes": [
-        "lake.observed"
+        "connection.ended"
       ]
     },
     {
@@ -829,7 +831,8 @@
       "purpose": "battery and audio device state",
       "class": "open",
       "eventTypes": [
-        "lake.observed"
+        "battery.sampled",
+        "bluetooth_audio.sampled"
       ]
     },
     {
@@ -843,7 +846,7 @@
       "purpose": "room air, sleep and focus analysis",
       "class": "open",
       "eventTypes": [
-        "lake.observed"
+        "air.sampled"
       ]
     },
     {
@@ -985,7 +988,7 @@
       "inputs": [
         "browser.visit",
         "browser.history_entry",
-        "lake.observed"
+        "link.followed"
       ],
       "outputs": [
         "visit.fused"
@@ -996,8 +999,7 @@
       "kind": "keyed",
       "inputs": [
         "music.played",
-        "player.changed",
-        "lake.observed"
+        "player.changed"
       ],
       "outputs": [
         "play.fused"
@@ -1007,8 +1009,7 @@
       "name": "clipboard.fusion",
       "kind": "keyed",
       "inputs": [
-        "clipboard.copied",
-        "lake.observed"
+        "clipboard.copied"
       ],
       "outputs": [
         "clipboard.fused"
@@ -1018,8 +1019,7 @@
       "name": "notification.fusion",
       "kind": "keyed",
       "inputs": [
-        "notification.shown",
-        "lake.observed"
+        "notification.shown"
       ],
       "outputs": [
         "notification.fused"

@@ -144,7 +144,7 @@ fn an_enabled_source_emits_its_types_before_any_file_exists() {
         }
     })))
     .unwrap();
-    assert_eq!(types, vec!["command.executed", "lake.observed"]);
+    assert_eq!(types, vec!["clipboard.copied", "command.executed"]);
 }
 
 #[devkit::test]

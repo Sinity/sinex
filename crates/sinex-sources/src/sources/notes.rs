@@ -2,9 +2,13 @@
 //! Markdown file is a `note.document` keyed by the vault and its path, and a
 //! file missing from a completed scan is removed at the source.
 //!
-//! The vault's own folders (`.obsidian`, `.trash`, `.git`) are not notes. A
-//! note renamed in the vault is a removal and a new path; following an
-//! native note ID across renames is a separate identity decision.
+//! The vault's own folders (`.obsidian`, `.trash`, `.git`) are not notes.
+//!
+//! A note whose front matter declares an `id` is identified by that ID, so a
+//! renamed or moved note is a newer reading of the same note, not a removal
+//! and a new one. The parser carries which ID each path last held: a scan
+//! reads the note at its new path before it records the old path missing,
+//! and a missing path whose ID now lives at another path records nothing.
 use crate::drain::RecordContext;
 use crate::drivers::dir_snapshot::DirSnapshot;
 use crate::registry::{DeclaredSource, Driver, SourceSpec};
@@ -12,6 +16,8 @@ use crate::{Parser, RecordError};
 use serde_json::Value;
 use sinex_model::event_types::media::NoteDocument;
 use sinex_model::{Class, Timestamp};
+use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 mod metadata;
@@ -23,7 +29,7 @@ pub const SPEC: SourceSpec = SourceSpec {
     purpose: "note recall and the library",
     class: Class::Open,
     parser: "notes-vault",
-    parser_version: 3,
+    parser_version: 4,
     event_types: &["note.document"],
     framer: crate::Framer::export(
         crate::drivers::export_archive::frame_whole,
@@ -44,17 +50,53 @@ fn nanos(member: &sinex_model::Member, field: &str) -> Option<Timestamp> {
         .and_then(|ns| Timestamp::from_unix_ns(ns).ok())
 }
 
+/// Which note ID each path last held, and where each ID lives now.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct NoteIds {
+    by_path: BTreeMap<String, String>,
+    path_of: BTreeMap<String, String>,
+}
+
+impl NoteIds {
+    /// Record that `path` now holds `id` (or no ID).
+    fn read(&mut self, path: &str, id: Option<&str>) {
+        if let Some(old) = self.by_path.remove(path)
+            && self.path_of.get(&old).is_some_and(|p| p == path)
+        {
+            self.path_of.remove(&old);
+        }
+        if let Some(id) = id.filter(|id| !id.trim().is_empty()) {
+            self.by_path.insert(path.to_owned(), id.to_owned());
+            self.path_of.insert(id.to_owned(), path.to_owned());
+        }
+    }
+
+    /// `path` is gone. The ID it held, unless that ID now lives at another
+    /// path (the note was renamed): `Err(())` then, and nothing is removed.
+    fn remove(&mut self, path: &str) -> Result<Option<String>, ()> {
+        let Some(id) = self.by_path.remove(path) else {
+            return Ok(None);
+        };
+        if self.path_of.get(&id).is_some_and(|p| p == path) {
+            self.path_of.remove(&id);
+            Ok(Some(id))
+        } else {
+            Err(())
+        }
+    }
+}
+
 impl Parser for NotesParser {
     type Record<'a> = &'a [u8];
-    type Carry = ();
+    type Carry = NoteIds;
     type Payload = NoteDocument;
 
     fn parse(
         &self,
         record: &&[u8],
-        _: &(),
+        ids: &NoteIds,
         context: &RecordContext<'_>,
-    ) -> Result<(Vec<NoteDocument>, ()), RecordError> {
+    ) -> Result<(Vec<NoteDocument>, NoteIds), RecordError> {
         let member = context
             .member
             .ok_or_else(|| RecordError::new("a note needs its directory snapshot member"))?;
@@ -70,7 +112,7 @@ impl Parser for NotesParser {
         };
         let metadata::Metadata {
             title,
-            note_id,
+            mut note_id,
             tags,
             wikilinks,
             front_matter,
@@ -78,6 +120,15 @@ impl Parser for NotesParser {
             .as_deref()
             .map(|text| metadata::parse(text, &path))
             .unwrap_or_default();
+        let mut ids = ids.clone();
+        if removed_at.is_some() {
+            match ids.remove(&path) {
+                Ok(id) => note_id = id,
+                Err(()) => return Ok((vec![], ids)),
+            }
+        } else {
+            ids.read(&path, note_id.as_deref());
+        }
         let payload = NoteDocument {
             vault: context
                 .manifest
@@ -97,7 +148,7 @@ impl Parser for NotesParser {
             wikilinks,
             front_matter,
         };
-        Ok((vec![payload], ()))
+        Ok((vec![payload], ids))
     }
 }
 

@@ -34,6 +34,7 @@ these names and no others.
 - **reader memory**: what a reader remembers about its input (each row's hash, each file's size, time and hash), saved with the cursor at the end of a part so a restart reads only the parts after it.
 - **shared pass**: one read of a stored file for every compatible binding of it (export archives); each binding keeps its own parts and cursor.
 - **spool**: a live capture's directory of segment files, which its binding then reads like a growing file.
+- **lake lane**: one stream of the Sinnix capture lake (`clipboard`, `netflow`), written as day files of `sinnix-capture-v1` records and read by the `sinnix-lake` format under its catalog source. A lane emits the event types Sinex's own capture of the same thing emits.
 
 ## Events
 

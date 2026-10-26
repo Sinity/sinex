@@ -86,16 +86,25 @@ does not know which driver a binding uses.
 
 ### Typed payloads
 
-Notes keep the complete text, the file time and `(vault, path)` identity, and
-add a title, a native note ID, sorted tags and wikilinks. The YAML front matter
+Notes keep the complete text and the file time, and add a title, a native
+note ID, sorted tags and wikilinks. A note with an ID is identified by its
+vault and ID, so a rename is a newer reading of the same note; one without
+by its vault and path. The YAML front matter
 is parsed into JSON values or reported as absent, invalid or unsupported, with
 only an error kind and position; the text is kept either way.
 
-Steering rows, Sinnix lake observations and health records are decoded into a
-type chosen by their table, lane or category before their fields are read. A
-malformed known field is a record failure with its bytes kept. Fields the type
-does not know are kept, and the event lists their JSON pointers in
-`unknown_fields`; a category with no type at all is marked `untyped: true`.
+Steering rows and health records are decoded into a type chosen by their
+table or category before their fields are read. A malformed known field is a
+record failure with its bytes kept. Fields the type does not know are kept,
+and the event lists their JSON pointers in `unknown_fields`; a category with
+no type at all is marked `untyped: true`.
+
+Each Sinnix lake lane emits the event types Sinex's own capture of the same
+thing emits (`clipboard.copied`, `notification.shown`, `player.changed`), or
+its own domain type where Sinex has no live capture of it yet
+(`accessibility.tree`, `connection.ended`, `air.sampled`), so lake history and
+live capture are one series. Fields a producer adds later are kept in the
+event's `extra`; a known field of the wrong type is a record failure.
 Samsung account tables other than health stay generic `account.row` rows,
 always marked `untyped`.
 
@@ -147,8 +156,8 @@ through admission. Derived events are the one store for derived results:
 nothing a derivation or an analysis computes is kept anywhere else.
 
 A key reads events of some kinds in a time window: a kind is an event type,
-optionally only the events whose payload fields have given values (Sinnix lake
-observations of one lane, journal entries of one priority), so a key never
+optionally only the events whose payload fields have given values (state
+intervals of one kind, journal entries of one priority), so a key never
 reads a whole type to use a sliver of it.
 
 ### Fusion

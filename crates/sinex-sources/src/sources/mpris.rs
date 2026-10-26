@@ -76,7 +76,9 @@ fn changed(
         length_us: meta
             .and_then(|m| m.get("mpris:length"))
             .and_then(Value::as_i64),
+        position_us: None,
         snapshot,
+        heartbeat: false,
         properties: props.clone(),
     }
 }

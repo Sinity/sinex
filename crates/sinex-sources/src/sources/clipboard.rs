@@ -171,15 +171,18 @@ impl Parser for ClipboardParser {
                             .filter_map(Value::as_str)
                             .map(str::to_owned)
                             .collect()
-                    })
-                    .unwrap_or_default(),
+                    }),
                 mime_type,
                 text,
-                bytes: content.as_ref().map_or(0, |c| c.len() as u64),
+                bytes: content.as_ref().map(|c| c.len() as u64),
                 content_hash: content
                     .as_ref()
                     .map(|c| blake3::hash(c).to_hex().to_string()),
+                sha256: None,
+                window: None,
+                imported_from: None,
                 secret,
+                extra: Map::new(),
             }],
             (),
         ))

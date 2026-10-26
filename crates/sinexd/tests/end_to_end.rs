@@ -1018,3 +1018,191 @@ fn zsh_binding(path: &Path) -> String {
 fn atuin_binding(path: &Path) -> String {
     format!("terminal.atuin-history:{}@{HOST}", path.display())
 }
+
+/// One `sinnix-capture-v1` clipboard record.
+fn lake_line(seq: i64, payload: &str) -> String {
+    format!(
+        r#"{{"schema":"sinnix-capture-v1","schema_version":1,"lane":"clipboard","ts":{}.5,"host":"lake-host","seq":{seq},"payload":{payload},"raw_ref":null}}"#,
+        1_760_000_000 + seq
+    ) + "\n"
+}
+
+fn copied(text: &str) -> String {
+    format!(
+        r#"{{"category":"text","mime":"text/plain","text":"{text}","size":{}}}"#,
+        text.len()
+    )
+}
+
+/// Every line of a lake day file is accounted for: its events cite it, or a
+/// failure names its offset. Re-reading the file after it grows admits only
+/// its new lines.
+#[devkit::test]
+async fn every_lake_line_is_read_once() {
+    let dir = Dir::new();
+    let t = Target::new(&dir);
+    let day = "lake/activity/desktop/clipboard/clipboard-20251009.jsonl";
+    let mut text = lake_line(1, &copied("one")) + &lake_line(2, r#"{"text":4}"#);
+    text += &lake_line(3, &copied("three"));
+    let path = dir.file(day, text.as_bytes());
+    let read = format!("sinnix-lake={}", dir.0.join("lake").display());
+    let backfill = || finish(&mut t.sinexd(&["backfill", "--host", HOST, "--read", &read]));
+    backfill();
+    let mut c = t.connect().await;
+    let accounted = "SELECT count(DISTINCT anchor) FROM (
+        SELECT anchor FROM core.events WHERE material_id IS NOT NULL
+        UNION ALL SELECT anchor FROM raw.failures) a";
+    assert_eq!(scalar(&mut c, "SELECT count(*) FROM core.events WHERE event_type = 'clipboard.copied'").await, 2);
+    assert_eq!(scalar(&mut c, "SELECT count(*) FROM raw.failures").await, 1);
+    assert_eq!(scalar(&mut c, accounted).await, 3, "each line once");
+
+    text += &lake_line(4, &copied("four"));
+    text += &lake_line(5, &copied("five"));
+    std::fs::write(&path, &text).unwrap();
+    backfill();
+    let texts: Vec<String> = sqlx::query_scalar(
+        "SELECT payload->>'text' FROM core.events WHERE event_type = 'clipboard.copied' ORDER BY ts_orig",
+    )
+    .fetch_all(&mut c)
+    .await
+    .unwrap();
+    assert_eq!(texts, ["one", "three", "four", "five"]);
+    assert_eq!(scalar(&mut c, "SELECT count(*) FROM raw.failures").await, 1);
+    assert_eq!(scalar(&mut c, "SELECT count(*) FROM audit.archived").await, 0);
+    consistent(&mut c).await;
+}
+
+/// An ActivityWatch database with a window bucket and its events of (start
+/// seconds, end seconds, app, title).
+fn activitywatch_db(path: &Path, events: &[(i64, i64, &str, &str)]) {
+    let _ = std::fs::remove_file(path);
+    let c = rusqlite::Connection::open(path).unwrap();
+    c.execute_batch(
+        "CREATE TABLE buckets (id INTEGER PRIMARY KEY, name TEXT, type TEXT);
+         CREATE TABLE events (id INTEGER PRIMARY KEY, bucketrow INTEGER, starttime INTEGER, endtime INTEGER, data TEXT);
+         INSERT INTO buckets VALUES (1, 'aw-watcher-window_end-to-end', 'currentwindow');",
+    )
+    .unwrap();
+    for (i, (start, end, app, title)) in events.iter().enumerate() {
+        c.execute(
+            "INSERT INTO events VALUES (?1, 1, ?2, ?3, ?4)",
+            rusqlite::params![
+                i as i64 + 1,
+                start * 1_000_000_000,
+                end * 1_000_000_000,
+                serde_json::json!({"app": app, "title": title}).to_string()
+            ],
+        )
+        .unwrap();
+    }
+}
+
+/// A revision supersedes: when ActivityWatch's last window event grows, the
+/// re-read leaves one live span with the new end, the earlier reading
+/// archived, and the fused focus derived from it recomputed to the new end.
+#[devkit::test]
+async fn a_growing_activitywatch_event_replaces_its_reading_downstream() {
+    let dir = Dir::new();
+    let t = Target::new(&dir);
+    let path = dir.0.join("aw.db");
+    let start = 1_760_000_000;
+    let read = format!("activitywatch={}", path.display());
+    let backfill = || finish(&mut t.sinexd(&["backfill", "--host", HOST, "--read", &read]));
+    activitywatch_db(
+        &path,
+        &[
+            (start, start + 60, "kitty", "shell"),
+            (start + 60, start + 120, "browser", "page"),
+        ],
+    );
+    backfill();
+    t.derive();
+    activitywatch_db(
+        &path,
+        &[
+            (start, start + 60, "kitty", "shell"),
+            (start + 60, start + 900, "browser", "page"),
+        ],
+    );
+    backfill();
+    t.derive();
+    let mut c = t.connect().await;
+    let ends = |event_type: &'static str| {
+        format!(
+            "SELECT e.payload->>'ended_at' FROM core.live_equivalence l JOIN core.events e ON e.id = l.event_id
+             WHERE l.event_type = '{event_type}' AND e.payload->>'app' = 'browser'"
+        )
+    };
+    let span_ends: Vec<String> = sqlx::query_scalar(&ends("window.span"))
+        .fetch_all(&mut c)
+        .await
+        .unwrap();
+    let new_end = "2025-10-09T09:08:20Z";
+    assert_eq!(span_ends, [new_end], "one live span, at its new end");
+    assert_eq!(
+        scalar(
+            &mut c,
+            "SELECT count(*) FROM audit.archived a JOIN core.events e ON e.id = a.event_id
+             WHERE e.event_type = 'window.span' AND a.reason = 'newer_reading'"
+        )
+        .await,
+        1
+    );
+    let fused_ends: Vec<String> = sqlx::query_scalar(&ends("focus.fused"))
+        .fetch_all(&mut c)
+        .await
+        .unwrap();
+    assert_eq!(fused_ends, [new_end], "the derived focus follows");
+    consistent(&mut c).await;
+}
+
+/// The event type registry and the typed views follow the build: a database
+/// whose registry lacks a type, or still has one the build dropped, gets them
+/// back in line on the next apply, without a numbered upgrade.
+#[devkit::test]
+async fn applying_brings_event_types_up_to_the_build() {
+    let dir = Dir::new();
+    let t = Target::new(&dir);
+    let mut c = t.connect().await;
+    sqlx::query("DELETE FROM registry.event_types WHERE name = 'clipboard.copied'")
+        .execute(&mut c)
+        .await
+        .unwrap();
+    sqlx::query("DROP VIEW event_types.clipboard_copied")
+        .execute(&mut c)
+        .await
+        .unwrap();
+    sqlx::query(
+        "INSERT INTO registry.event_types (name, payload_schema, key_kind, key_fields, replace_rule)
+         VALUES ('gone.type', '{}', 'location', '{}', 'suppress_repeat')",
+    )
+    .execute(&mut c)
+    .await
+    .unwrap();
+    sqlx::query("CREATE VIEW event_types.gone_type AS SELECT 1 AS one")
+        .execute(&mut c)
+        .await
+        .unwrap();
+    assert_eq!(
+        sinex_schema::apply(&mut c).await.unwrap(),
+        sinex_schema::Applied::Current {
+            version: sinex_schema::VERSION
+        }
+    );
+    let names: Vec<String> =
+        sqlx::query_scalar("SELECT name FROM registry.event_types ORDER BY name")
+            .fetch_all(&mut c)
+            .await
+            .unwrap();
+    assert!(names.contains(&"clipboard.copied".to_string()));
+    assert!(!names.contains(&"gone.type".to_string()));
+    let views: Vec<String> = sqlx::query_scalar(
+        "SELECT viewname::text FROM pg_views WHERE schemaname = 'event_types'",
+    )
+    .fetch_all(&mut c)
+    .await
+    .unwrap();
+    assert!(views.contains(&"clipboard_copied".to_string()));
+    assert!(!views.contains(&"gone_type".to_string()));
+    assert_eq!(views.len(), names.len());
+}

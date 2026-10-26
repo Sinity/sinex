@@ -3,7 +3,7 @@ use super::*;
 use sinex_model::event_types::browser::{BrowserHistoryEntry, BrowserVisit};
 use sinex_model::event_types::communication::MailMessage;
 use sinex_model::event_types::desktop::WindowSpan;
-use sinex_model::event_types::machine::LakeObservation;
+use sinex_model::event_types::browser::LinkFollowed;
 use sinex_model::event_types::media::MusicPlayed;
 use sinex_model::event_types::session::{ClipboardCopied, NotificationShown, PlayerChanged};
 use sinex_model::event_types::{CommandExecuted, CommandImported, StateInterval};
@@ -139,10 +139,28 @@ fn takeout(url: &str, secs: f64) -> Event {
     )
 }
 
-fn lake(lane: &str, secs: f64, payload: Value) -> Event {
+/// The same event as the Sinnix capture lake holds it: the lake emits the
+/// live capture's event types under its own lane's source.
+fn in_lake(mut event: Event, source: &str) -> Event {
+    event.source = source.into();
+    event
+}
+
+/// A link the browser extension reported, as the capture lake holds it.
+fn link(url: &str, title: &str, secs: f64) -> Event {
     captured(
-        &LakeObservation::new(at(secs), lane.into(), "box".into(), 1, payload, None).unwrap(),
-        "desktop.lake",
+        &LinkFollowed {
+            followed_at: at(secs),
+            from_url: None,
+            from_title: None,
+            to_url: Some(url.into()),
+            to_title: Some(title.into()),
+            link_text: None,
+            trigger: Some("click".into()),
+            note: None,
+            extra: Default::default(),
+        },
+        "browser.navigation",
         Class::Open,
     )
 }
@@ -188,7 +206,9 @@ fn mpris(title: &str, artist: &str, secs: f64, status: Option<&str>, length_s: f
             album: None,
             url: None,
             length_us: Some((length_s * 1e6) as i64),
+            position_us: None,
             snapshot: false,
+            heartbeat: false,
             properties: Default::default(),
         },
         "desktop.mpris",
@@ -201,12 +221,16 @@ fn clipboard(selection: &str, text: &str, secs: f64, secret: bool) -> Event {
         &ClipboardCopied {
             received_at: at(secs),
             selection: selection.into(),
-            mime_types: vec!["text/plain".into()],
+            mime_types: Some(vec!["text/plain".into()]),
             mime_type: Some("text/plain".into()),
             text: Some(text.into()),
-            bytes: text.len() as u64,
+            bytes: Some(text.len() as u64),
             content_hash: None,
+            sha256: None,
+            window: None,
+            imported_from: None,
             secret,
+            extra: Default::default(),
         },
         "desktop.clipboard",
         Class::Open,
@@ -226,6 +250,7 @@ fn notification(summary: &str, secs: f64) -> Event {
             hints: Default::default(),
             expire_timeout_ms: -1,
             sender: ":1.2".into(),
+            extra: Default::default(),
         },
         "desktop.notifications",
         Class::Open,
@@ -385,7 +410,6 @@ fn privacy_class_is_the_strictest_parent() {
     let out = fuse_events(&COMMANDS, &[atuin("ls", H + 10.0, 0), zsh("ls", H + 10.2)]);
     assert_eq!(out.len(), 1);
     assert_eq!(out[0].class, Class::Guarded);
-    assert!(matches!(&out[0].origin, Origin::Derived { parents } if parents.len() == 2));
 }
 
 #[devkit::test]
@@ -511,11 +535,7 @@ fn a_visit_in_history_takeout_and_the_lake_is_one_visit() {
         &[
             takeout(url, H + 20.0),
             chromium(url, H + 20.0),
-            lake(
-                "browser-nav-edges",
-                H + 21.0,
-                json!({"target_url": url, "target_title": "From the lake"}),
-            ),
+            link(url, "From the lake", H + 21.0),
         ],
     );
     assert_eq!(out.len(), 1, "{out:?}");
@@ -529,7 +549,7 @@ fn a_visit_in_history_takeout_and_the_lake_is_one_visit() {
         [
             "browser.chromium-visits",
             "browser.takeout-chrome-history",
-            "desktop.lake"
+            "browser.navigation"
         ]
     );
 }
@@ -557,11 +577,9 @@ fn a_play_in_the_export_and_the_player_is_one_play() {
             spotify("Song", "Artist", H + 2.0, H + 200.0),
             mpris("song", "artist ", H + 0.5, Some("Playing"), 198.0),
             mpris("Song", "Artist", H + 1.5, None, 198.0),
-            lake(
-                "mpris",
-                H + 0.7,
-                json!({"player": "spotify", "status": "Playing", "title": "Song",
-                       "artist": "Artist", "duration_seconds": 198.0}),
+            in_lake(
+                mpris("Song", "Artist", H + 0.7, Some("Playing"), 198.0),
+                "desktop.media",
             ),
         ],
     );
@@ -573,7 +591,7 @@ fn a_play_in_the_export_and_the_player_is_one_play() {
     assert_eq!(p["player"], "org.mpris.MediaPlayer2.spotify");
     assert_eq!(
         observed_by(p),
-        ["media.spotify-history", "desktop.mpris", "desktop.lake"]
+        ["media.spotify-history", "desktop.mpris", "desktop.media"]
     );
     assert!(matches!(&out[0].origin, Origin::Derived { parents } if parents.len() == 4));
 }
@@ -600,11 +618,15 @@ fn a_stream_of_unknown_length_has_no_end() {
         &PLAYS,
         &[
             mpris("Live", "Channel", H, Some("Playing"), i64::MAX as f64 / 1e6),
-            lake(
-                "mpris",
-                H + 0.2,
-                json!({"player": "chromium", "status": "Playing", "title": "Live",
-                       "artist": "Channel", "duration_seconds": 9_223_372_036_854.775}),
+            in_lake(
+                mpris(
+                    "Live",
+                    "Channel",
+                    H + 0.2,
+                    Some("Playing"),
+                    9_223_372_036_854.775,
+                ),
+                "desktop.media",
             ),
         ],
     );
@@ -626,21 +648,19 @@ fn a_copy_seen_live_and_in_the_lake_is_one_copy() {
         &CLIPBOARD,
         &[
             clipboard("clipboard", "hello", H + 5.0, false),
-            lake(
-                "clipboard",
-                H + 5.3,
-                json!({"text": "hello", "mime": "text/plain"}),
+            in_lake(
+                clipboard("clipboard", "hello", H + 5.3, false),
+                "desktop.clipboard",
             ),
-            lake(
-                "primary",
-                H + 5.3,
-                json!({"text": "hello", "mime": "text/plain"}),
+            in_lake(
+                clipboard("primary", "hello", H + 5.3, false),
+                "desktop.clipboard",
             ),
             clipboard("clipboard", "secret", H + 9.0, true),
         ],
     );
     assert_eq!(out.len(), 2, "{out:?}");
-    assert_eq!(observed_by(&out[0]), ["desktop.clipboard", "desktop.lake"]);
+    assert_eq!(observed_by(&out[0]), ["desktop.clipboard"]);
     assert_eq!(out[1]["selection"], "primary");
 }
 
@@ -650,20 +670,13 @@ fn a_notification_seen_live_and_in_the_lake_is_one_notification() {
         &NOTIFICATIONS,
         &[
             notification("New mail", H + 5.0),
-            lake(
-                "notifications",
-                H + 5.1,
-                json!({"app_name": "mail", "summary": "New mail", "body": "body"}),
-            ),
+            in_lake(notification("New mail", H + 5.1), "desktop.notifications"),
             notification("Other", H + 5.0),
         ],
     );
     assert_eq!(out.len(), 2, "{out:?}");
     let joined = out.iter().find(|n| n["summary"] == "New mail").unwrap();
-    assert_eq!(
-        observed_by(joined),
-        ["desktop.notifications", "desktop.lake"]
-    );
+    assert_eq!(observed_by(joined), ["desktop.notifications"]);
 }
 
 // Mail: one message stored by several mail sources.

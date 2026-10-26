@@ -193,7 +193,7 @@ fn visit(event: &Event, url: &str, title: Option<&str>) -> Option<Sighting> {
 
 pub static VISITS: FusionRule = FusionRule {
     derivation: "visit.fusion",
-    version: 1,
+    version: 2,
     output: "visit.fused",
     observers: &[
         Observer {
@@ -211,21 +211,14 @@ pub static VISITS: FusionRule = FusionRule {
             read: |e| visit(e, text(&e.payload, "/url")?, text(&e.payload, "/title")),
         },
         Observer {
-            event_type: "lake.observed",
-            only: &[("lane", "browser-nav-edges")],
+            event_type: "link.followed",
+            only: &[],
             source: None,
             spans: false,
-            read: |e| {
-                let p = &e.payload;
-                visit(
-                    e,
-                    text(p, "/payload/target_url")?,
-                    text(p, "/payload/target_title"),
-                )
-            },
+            read: |e| visit(e, text(&e.payload, "/to_url")?, text(&e.payload, "/to_title")),
         },
     ],
-    inputs: &["browser.visit", "browser.history_entry", "lake.observed"],
+    inputs: &["browser.visit", "browser.history_entry", "link.followed"],
     window_ns: secs(3),
     fallback_ns: secs(30),
     absorb_ns: None,
@@ -275,7 +268,7 @@ fn after(event: &Event, length_ns: Option<f64>) -> Option<Timestamp> {
 
 pub static PLAYS: FusionRule = FusionRule {
     derivation: "play.fusion",
-    version: 2,
+    version: 3,
     output: "play.fused",
     observers: &[
         Observer {
@@ -319,33 +312,8 @@ pub static PLAYS: FusionRule = FusionRule {
                 )
             },
         },
-        Observer {
-            event_type: "lake.observed",
-            only: &[("lane", "mpris")],
-            source: None,
-            spans: false,
-            read: |e| {
-                let p = &e.payload;
-                if !playing(text(p, "/payload/status")) {
-                    return None;
-                }
-                let length = p
-                    .pointer("/payload/duration_seconds")
-                    .and_then(Value::as_f64);
-                play(
-                    e,
-                    text(p, "/payload/title")?,
-                    text(p, "/payload/artist"),
-                    after(e, length.map(|s| s * 1e9)),
-                    [
-                        ("album", p.pointer("/payload/album").cloned()),
-                        ("player", p.pointer("/payload/player").cloned()),
-                    ],
-                )
-            },
-        },
     ],
-    inputs: &["music.played", "player.changed", "lake.observed"],
+    inputs: &["music.played", "player.changed"],
     window_ns: secs(10),
     fallback_ns: secs(60),
     absorb_ns: Some(secs(2 * 3600)),
@@ -354,7 +322,8 @@ pub static PLAYS: FusionRule = FusionRule {
 };
 
 // Clipboard and notifications: the same change seen by Sinex's live capture
-// and the Sinnix capture lake while both run.
+// and the Sinnix capture lake while both run. Both emit the same event types,
+// so one observer reads both.
 
 fn copy(
     event: &Event,
@@ -380,20 +349,9 @@ fn copy(
     )
 }
 
-fn lake_copy(event: &Event, selection: &str) -> Option<Sighting> {
-    let p = &event.payload;
-    copy(
-        event,
-        selection,
-        text(p, "/payload/text"),
-        text(p, "/payload/mime"),
-        p.pointer("/payload/size").and_then(Value::as_u64),
-    )
-}
-
 pub static CLIPBOARD: FusionRule = FusionRule {
     derivation: "clipboard.fusion",
-    version: 1,
+    version: 2,
     output: "clipboard.fused",
     observers: &[
         Observer {
@@ -415,22 +373,8 @@ pub static CLIPBOARD: FusionRule = FusionRule {
                 )
             },
         },
-        Observer {
-            event_type: "lake.observed",
-            only: &[("lane", "clipboard")],
-            source: None,
-            spans: false,
-            read: |e| lake_copy(e, "clipboard"),
-        },
-        Observer {
-            event_type: "lake.observed",
-            only: &[("lane", "primary")],
-            source: None,
-            spans: false,
-            read: |e| lake_copy(e, "primary"),
-        },
     ],
-    inputs: &["clipboard.copied", "lake.observed"],
+    inputs: &["clipboard.copied"],
     window_ns: secs(2),
     fallback_ns: secs(10),
     absorb_ns: None,
@@ -453,7 +397,7 @@ fn notification(event: &Event, app: &str, summary: &str, body: Option<&str>) -> 
 
 pub static NOTIFICATIONS: FusionRule = FusionRule {
     derivation: "notification.fusion",
-    version: 1,
+    version: 2,
     output: "notification.fused",
     observers: &[
         Observer {
@@ -466,23 +410,8 @@ pub static NOTIFICATIONS: FusionRule = FusionRule {
                 notification(e, text(p, "/app")?, text(p, "/summary")?, text(p, "/body"))
             },
         },
-        Observer {
-            event_type: "lake.observed",
-            only: &[("lane", "notifications")],
-            source: None,
-            spans: false,
-            read: |e| {
-                let p = &e.payload;
-                notification(
-                    e,
-                    text(p, "/payload/app_name")?,
-                    text(p, "/payload/summary")?,
-                    text(p, "/payload/body"),
-                )
-            },
-        },
     ],
-    inputs: &["notification.shown", "lake.observed"],
+    inputs: &["notification.shown"],
     window_ns: secs(2),
     fallback_ns: secs(10),
     absorb_ns: None,

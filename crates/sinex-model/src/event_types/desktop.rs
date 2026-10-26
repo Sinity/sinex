@@ -9,6 +9,7 @@
 use crate::Timestamp;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use serde_json::{Map, Value};
 
 /// A window took keyboard focus.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
@@ -188,4 +189,47 @@ pub struct SampledWindow {
     pub active: bool,
     pub title: String,
     pub program: String,
+}
+
+/// What is keeping the screen from idling: the windows that asked the
+/// compositor to stay awake and the system's sleep inhibitors, reported on
+/// each change and periodically.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
+#[event(type = "idle_inhibitors.reported", key = location, replace = repeat, time = received_at, quality = captured)]
+pub struct IdleInhibitorsReported {
+    pub received_at: Timestamp,
+    /// `true` for a periodic report, `false` for a change.
+    pub heartbeat: bool,
+    /// Windows inhibiting idle; `None` when they could not be listed.
+    pub windows: Option<Vec<InhibitingWindow>>,
+    /// The system's (logind) inhibitors; `None` when they could not be listed.
+    pub system: Option<Vec<SystemInhibitor>>,
+    pub focused_window: Option<InhibitingWindow>,
+    /// Each probe that could not answer, with its reason.
+    #[serde(default, skip_serializing_if = "Map::is_empty")]
+    pub unavailable: Map<String, Value>,
+    #[serde(default, skip_serializing_if = "Map::is_empty")]
+    pub extra: Map<String, Value>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct InhibitingWindow {
+    pub address: Option<String>,
+    pub class: Option<String>,
+    pub title: Option<String>,
+    pub pid: Option<i64>,
+    pub workspace_id: Option<i64>,
+    pub workspace_name: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct SystemInhibitor {
+    pub who: Option<String>,
+    /// What is inhibited (`sleep`, `idle`, `shutdown`…).
+    pub what: Option<String>,
+    pub why: Option<String>,
+    /// `block` or `delay`.
+    pub mode: Option<String>,
+    pub pid: Option<i64>,
+    pub uid: Option<i64>,
 }

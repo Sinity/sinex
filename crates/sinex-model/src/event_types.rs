@@ -3,12 +3,15 @@
 //! generated from.
 use crate::EventPayload;
 
+pub mod accessibility;
 pub mod account;
+pub mod audio;
 pub mod browser;
 pub mod code;
 pub mod communication;
 pub mod derived;
 pub mod desktop;
+pub mod environment;
 pub mod forecast;
 pub mod fused;
 pub mod health;
@@ -16,7 +19,9 @@ pub mod input;
 pub mod library;
 pub mod machine;
 pub mod media;
+pub mod network;
 pub mod operator;
+pub mod peripheral;
 pub mod polylogue;
 pub mod session;
 pub mod shell;
@@ -92,6 +97,7 @@ pub const ALL: &[RegisteredEventType] = &[
     info::<desktop::WorkspaceSwitched>(),
     info::<desktop::MonitorFocused>(),
     info::<desktop::DesktopOther>(),
+    info::<desktop::IdleInhibitorsReported>(),
     // Session
     info::<session::NotificationShown>(),
     info::<session::NotificationClosed>(),
@@ -101,6 +107,7 @@ pub const ALL: &[RegisteredEventType] = &[
     info::<session::EditorReport>(),
     info::<session::TerminalReport>(),
     info::<session::MediaSegment>(),
+    info::<session::FrameCaptured>(),
     info::<session::ScreenText>(),
     info::<session::PageFetched>(),
     info::<desktop::WindowSpan>(),
@@ -111,7 +118,6 @@ pub const ALL: &[RegisteredEventType] = &[
     info::<desktop::WindowSampled>(),
     // Machine
     info::<machine::JournalEntry>(),
-    info::<machine::LakeObservation>(),
     info::<machine::FileChanged>(),
     info::<machine::TerminalSession>(),
     info::<machine::TerminalOutput>(),
@@ -124,6 +130,18 @@ pub const ALL: &[RegisteredEventType] = &[
     info::<input::PointerMoved>(),
     info::<input::PointerScrolled>(),
     info::<input::InputLogger>(),
+    // Accessibility, audio, devices, network and the room
+    info::<accessibility::AccessibilityFocused>(),
+    info::<accessibility::AccessibilityTextChanged>(),
+    info::<accessibility::AccessibilityTree>(),
+    info::<audio::AudioRecordingState>(),
+    info::<audio::AudioGraphChanged>(),
+    info::<audio::SpeechIndexed>(),
+    info::<peripheral::DisplaySampled>(),
+    info::<peripheral::BatterySampled>(),
+    info::<peripheral::BluetoothAudioSampled>(),
+    info::<network::ConnectionEnded>(),
+    info::<environment::AirSampled>(),
     // Code
     info::<code::GitCommit>(),
     // Derived
@@ -142,6 +160,8 @@ pub const ALL: &[RegisteredEventType] = &[
     info::<browser::BrowserVisit>(),
     info::<browser::BrowserUrl>(),
     info::<browser::BrowserHistoryEntry>(),
+    info::<browser::LinkFollowed>(),
+    info::<browser::ReadingStackChanged>(),
     info::<media::MusicPlayed>(),
     info::<media::BookmarkSaved>(),
     info::<media::NoteDocument>(),

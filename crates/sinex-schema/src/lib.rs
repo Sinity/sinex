@@ -4,7 +4,9 @@
 //!
 //! Enum CHECK lists come from the Rust enums (`DbCheck`), and the event-type
 //! registry rows and typed views come from `sinex_model::event_types::ALL`, so the
-//! database cannot disagree with the code.
+//! database cannot disagree with the code. The registry and the views hold no
+//! data: every apply rebuilds them when they differ from the build, so adding
+//! or changing an event type needs no numbered upgrade.
 //!
 //! This crate uses no compile-time-checked queries: it builds before any
 //! database exists and provisions the one the store's queries are checked
@@ -283,12 +285,14 @@ pub async fn apply(connection: &mut PgConnection) -> Result<Applied, Error> {
             sqlx::query_scalar("SELECT max(version) FROM sinex_schema.applied")
                 .fetch_one(&mut *connection)
                 .await?;
-        return match found {
-            Some(VERSION) => Ok(Applied::Current { version: VERSION }),
-            Some(found) if (0..VERSION).contains(&found) => upgrade(connection, found).await,
-            Some(found) => Err(Error::Version { found }),
-            None => Err(Error::Unversioned),
+        let applied = match found {
+            Some(VERSION) => Applied::Current { version: VERSION },
+            Some(found) if (0..VERSION).contains(&found) => upgrade(connection, found).await?,
+            Some(found) => return Err(Error::Version { found }),
+            None => return Err(Error::Unversioned),
         };
+        sync_event_types(connection).await?;
+        return Ok(applied);
     }
     let has_core: bool =
         sqlx::query_scalar("SELECT EXISTS (SELECT 1 FROM pg_namespace WHERE nspname='core')")
@@ -310,6 +314,47 @@ pub async fn apply(connection: &mut PgConnection) -> Result<Applied, Error> {
             Err(error)
         }
     }
+}
+
+/// Bring the event type registry and the typed views up to this build's event
+/// types. Both are derived from the Rust types and hold no data, so a new,
+/// changed or removed event type needs no numbered upgrade: they are rebuilt
+/// in one transaction whenever the registry differs from the build's.
+async fn sync_event_types(connection: &mut PgConnection) -> Result<(), Error> {
+    let stored: Vec<(String, serde_json::Value, String, Vec<String>, String)> = sqlx::query_as(
+        "SELECT name, payload_schema, key_kind, key_fields, replace_rule FROM registry.event_types ORDER BY name",
+    )
+    .fetch_all(&mut *connection)
+    .await?;
+    let mut declared: Vec<(String, serde_json::Value, String, Vec<String>, String)> =
+        registry_rows()
+            .into_iter()
+            .map(|(name, schema, kind, fields, replace)| {
+                (name, schema, kind.to_owned(), fields, replace.to_owned())
+            })
+            .collect();
+    declared.sort_by(|a, b| a.0.cmp(&b.0));
+    if stored == declared {
+        return Ok(());
+    }
+    let mut tx = connection.begin().await?;
+    let views: Vec<String> =
+        sqlx::query_scalar("SELECT viewname::text FROM pg_views WHERE schemaname = 'event_types'")
+            .fetch_all(&mut *tx)
+            .await?;
+    for view in views {
+        tx.execute(format!("DROP VIEW event_types.{}", quote_ident(&view)).as_str())
+            .await?;
+    }
+    for statement in kind_views() {
+        tx.execute(statement.as_str()).await?;
+    }
+    tx.execute("GRANT SELECT ON ALL TABLES IN SCHEMA event_types TO sinex_reader, sinex_writer")
+        .await?;
+    tx.execute("DELETE FROM registry.event_types").await?;
+    insert_registry_rows(&mut tx).await?;
+    tx.commit().await?;
+    Ok(())
 }
 
 /// Run the upgrades from `from` to [`VERSION`] in one transaction, while no
@@ -365,6 +410,10 @@ async fn create_schema(connection: &mut PgConnection) -> Result<(), Error> {
         .bind(VERSION)
         .execute(&mut *connection)
         .await?;
+    insert_registry_rows(connection).await
+}
+
+async fn insert_registry_rows(connection: &mut PgConnection) -> Result<(), Error> {
     for (name, schema, key_kind, fields, replace) in registry_rows() {
         sqlx::query(
             "INSERT INTO registry.event_types (name, payload_schema, key_kind, key_fields, replace_rule) VALUES ($1,$2,$3,$4,$5)",

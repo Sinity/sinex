@@ -22,7 +22,7 @@ fn text_is_recorded_with_its_hash() {
     ];
     let c = parse(&frame("clipboard", &types, "héllo".as_bytes()));
     assert_eq!(c.text.as_deref(), Some("héllo"));
-    assert_eq!(c.bytes, 6);
+    assert_eq!(c.bytes, Some(6));
     assert_eq!(c.mime_type.as_deref(), Some("text/plain;charset=utf-8"));
     assert_eq!(
         c.content_hash.unwrap(),
@@ -39,7 +39,7 @@ fn binary_content_stays_out_of_the_event() {
         &[0x89, b'P', 0xff],
     ));
     assert!(c.text.is_none());
-    assert_eq!(c.bytes, 3);
+    assert_eq!(c.bytes, Some(3));
     assert_eq!(c.selection, "primary");
 }
 
@@ -52,5 +52,5 @@ fn secrets_are_not_read() {
     );
     assert!(!String::from_utf8_lossy(&line).contains("hunter2"));
     let c = parse(&line);
-    assert!(c.secret && c.text.is_none() && c.bytes == 0 && c.content_hash.is_none());
+    assert!(c.secret && c.text.is_none() && c.bytes.is_none() && c.content_hash.is_none());
 }

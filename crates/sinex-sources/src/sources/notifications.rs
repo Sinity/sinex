@@ -120,6 +120,7 @@ impl Parser for NotificationsParser {
                         .and_then(|n| i32::try_from(n).ok())
                         .unwrap_or(-1),
                     sender: m.sender,
+                    extra: Map::new(),
                 })]
             }
             ("signal", "NotificationClosed") => vec![Notification::Closed(NotificationClosed {

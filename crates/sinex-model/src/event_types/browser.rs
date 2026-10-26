@@ -84,3 +84,39 @@ pub struct BrowserHistoryEntry {
     #[serde(default, skip_serializing_if = "Map::is_empty")]
     pub extra: Map<String, Value>,
 }
+
+/// A link was followed from one page to another, as the browser extension
+/// reported it: the page it was on, the page it led to and the link's text.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
+#[event(type = "link.followed", key = location, replace = repeat, time = followed_at, quality = captured)]
+pub struct LinkFollowed {
+    pub followed_at: Timestamp,
+    pub from_url: Option<String>,
+    pub from_title: Option<String>,
+    pub to_url: Option<String>,
+    pub to_title: Option<String>,
+    pub link_text: Option<String>,
+    /// How it was followed (`click`, `middle-click`…).
+    pub trigger: Option<String>,
+    pub note: Option<String>,
+    #[serde(default, skip_serializing_if = "Map::is_empty")]
+    pub extra: Map<String, Value>,
+}
+
+/// A page was put on, or taken off, the reading stack.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
+#[event(type = "reading_stack.changed", key = location, replace = repeat, time = changed_at, quality = captured)]
+pub struct ReadingStackChanged {
+    pub changed_at: Timestamp,
+    /// `push` or `pop`.
+    pub action: String,
+    pub url: Option<String>,
+    pub title: Option<String>,
+    /// The page the link to it was found on.
+    pub from_url: Option<String>,
+    pub from_title: Option<String>,
+    pub link_text: Option<String>,
+    pub note: Option<String>,
+    #[serde(default, skip_serializing_if = "Map::is_empty")]
+    pub extra: Map<String, Value>,
+}
