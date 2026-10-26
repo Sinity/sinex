@@ -46,10 +46,10 @@ pub mod repository;
 pub mod samsung_cloud;
 pub mod samsung_health;
 pub mod samsung_sms;
-/// Numbering shell history records, shared by zsh, bash and fish.
-pub(crate) mod shell_history;
 /// The session integration socket: Neovim and kitty integrations.
 pub mod session_socket;
+/// Numbering shell history records, shared by zsh, bash and fish.
+pub(crate) mod shell_history;
 /// The Sinnix capture lake's lanes.
 pub mod sinnix_lake;
 pub mod sleep_as_android;

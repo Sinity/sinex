@@ -34,7 +34,10 @@ fn key_records_keep_the_kernel_time_of_the_keystroke() {
     let Input::Pressed(press) = &out[0] else {
         panic!("not a press")
     };
-    assert_eq!((press.key.as_str(), press.code, press.value), ("KEY_C", Some(46), Some(1)));
+    assert_eq!(
+        (press.key.as_str(), press.code, press.value),
+        ("KEY_C", Some(46), Some(1))
+    );
     assert_eq!(press.changed, Some(true));
     let kernel = Timestamp::from_unix_ns(1_767_348_000_101_234_000).unwrap();
     assert_eq!(press.kernel_at, Some(kernel));
@@ -62,7 +65,10 @@ fn older_presses_without_kernel_time_use_the_logger_time() {
     let Input::Pressed(press) = &out[0] else {
         panic!("not a press")
     };
-    assert_eq!((press.code, press.value, press.kernel_at), (None, None, None));
+    assert_eq!(
+        (press.code, press.value, press.kernel_at),
+        (None, None, None)
+    );
     assert_eq!(press.window.as_deref(), Some("unknown"));
     assert_eq!(press.ts_orig().at, Some(press.logged_at));
 }
@@ -100,7 +106,10 @@ fn pointer_records_are_buttons_motion_and_wheel_steps() {
     let Input::Scrolled(wheel) = &out[5] else {
         panic!("not a wheel step")
     };
-    assert_eq!((wheel.axis.as_str(), wheel.value), ("REL_WHEEL_HI_RES", -120));
+    assert_eq!(
+        (wheel.axis.as_str(), wheel.value),
+        ("REL_WHEEL_HI_RES", -120)
+    );
     let Input::Button(down) = &out[6] else {
         panic!("not a button")
     };
@@ -136,13 +145,31 @@ fn the_logger_records_keep_their_fields() {
 fn malformed_records_fail_by_field() {
     for (line, field) in [
         (r#"{"event":"press","session":"s","keycode":"KEY_A"}"#, "ts"),
-        (r#"{"ts":"yesterday","event":"press","session":"s","keycode":"KEY_A"}"#, "yesterday"),
+        (
+            r#"{"ts":"yesterday","event":"press","session":"s","keycode":"KEY_A"}"#,
+            "yesterday",
+        ),
         (r#"{"ts":"2026-01-02T10:00:00Z","session":"s"}"#, "event"),
-        (r#"{"ts":"2026-01-02T10:00:00Z","event":"press"}"#, "session"),
-        (r#"{"ts":"2026-01-02T10:00:00Z","event":"press","session":"s"}"#, "keycode"),
-        (r#"{"ts":"2026-01-02T10:00:00Z","event":"pointer_rel","session":"s","code":"REL_X"}"#, "value"),
-        (r#"{"ts":"2026-01-02T10:00:00Z","event":"pointer_button_press","session":"s","value":1}"#, "code"),
-        (r#"{"ts":"2026-01-02T10:00:00Z","event":"press","session":"s","keycode":"KEY_A","input_sec":1.5,"input_usec":2}"#, "kernel"),
+        (
+            r#"{"ts":"2026-01-02T10:00:00Z","event":"press"}"#,
+            "session",
+        ),
+        (
+            r#"{"ts":"2026-01-02T10:00:00Z","event":"press","session":"s"}"#,
+            "keycode",
+        ),
+        (
+            r#"{"ts":"2026-01-02T10:00:00Z","event":"pointer_rel","session":"s","code":"REL_X"}"#,
+            "value",
+        ),
+        (
+            r#"{"ts":"2026-01-02T10:00:00Z","event":"pointer_button_press","session":"s","value":1}"#,
+            "code",
+        ),
+        (
+            r#"{"ts":"2026-01-02T10:00:00Z","event":"press","session":"s","keycode":"KEY_A","input_sec":1.5,"input_usec":2}"#,
+            "kernel",
+        ),
     ] {
         assert!(parse_error(line).contains(field), "{line}");
     }

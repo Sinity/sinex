@@ -12,9 +12,9 @@
 //! lines are `terminal.reported`, a `cmd_end` with the command's output.
 use crate::drivers::live_stream::{self, LiveStream, Rotation, SpoolWriter};
 use crate::registry::{DeclaredSource, Driver, SourceSpec};
+use crate::sources::terminal_text::strip_escapes;
 use crate::{Parser, RecordError};
 use serde_json::{Map, Value};
-use crate::sources::terminal_text::strip_escapes;
 use sinex_model::event_types::machine::ScrollbackCaptured;
 use sinex_model::event_types::session::{EditorReport, TerminalReport};
 use sinex_model::{Class, InputRef, Timestamp};
@@ -34,7 +34,11 @@ pub const SPEC: SourceSpec = SourceSpec {
     class: Class::Guarded,
     parser: "session-socket",
     parser_version: 2,
-    event_types: &["editor.reported", "terminal.reported", "scrollback.captured"],
+    event_types: &[
+        "editor.reported",
+        "terminal.reported",
+        "scrollback.captured",
+    ],
     framer: crate::Framer::incremental(crate::drivers::append_file::lines),
 };
 

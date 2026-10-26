@@ -34,7 +34,10 @@ pub struct BashParser {
 /// The start a timestamp line gives, when `line` is one.
 fn timestamp(line: &[u8]) -> Option<&[u8]> {
     let digits = line.strip_prefix(b"#")?;
-    digits.first().is_some_and(u8::is_ascii_digit).then_some(digits)
+    digits
+        .first()
+        .is_some_and(u8::is_ascii_digit)
+        .then_some(digits)
 }
 
 impl Parser for BashParser {

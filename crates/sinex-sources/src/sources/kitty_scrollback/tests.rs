@@ -34,7 +34,8 @@ fn captured(events: &[Snapshot]) -> &ScrollbackCaptured {
 
 #[devkit::test]
 fn file_names_give_time_host_process_and_window() {
-    let named = name("20261026T200909Z-sinnix-prime-pid24601-win11-weechat-scratchpad.ansi").unwrap();
+    let named =
+        name("20261026T200909Z-sinnix-prime-pid24601-win11-weechat-scratchpad.ansi").unwrap();
     assert_eq!(named.host, "sinnix-prime");
     assert_eq!(named.kitty_pid, Some(24601));
     assert_eq!(named.window_id, 11);
@@ -43,9 +44,16 @@ fn file_names_give_time_host_process_and_window() {
         fields::rfc3339("2026-10-26T20:09:09Z").unwrap()
     );
     let older = name("20260204T000204Z-host-a-win1-kitty-win2-capture.meta.json").unwrap();
-    assert_eq!((older.host.as_str(), older.kitty_pid, older.window_id), ("host-a", None, 1));
+    assert_eq!(
+        (older.host.as_str(), older.kitty_pid, older.window_id),
+        ("host-a", None, 1)
+    );
     assert_eq!(name("20260204T000204Z-h-win3.ansi").unwrap().window_id, 3);
-    for bad in ["notes.ansi", "20260204T000204Z-h-window.ansi", "2026020400020400-h-win1-x.ansi"] {
+    for bad in [
+        "notes.ansi",
+        "20260204T000204Z-h-window.ansi",
+        "2026020400020400-h-win1-x.ansi",
+    ] {
         assert_eq!(name(bad), None, "{bad}");
     }
 }
@@ -60,7 +68,11 @@ fn plain_lines_drop_escapes_trailing_spaces_and_empty_screen_rows() {
 fn each_snapshot_holds_only_what_is_new_for_its_window() {
     let path = |stamp: &str| format!("{stamp}-h-pid7-win1-zsh.ansi");
     let first = "$ ls\r\na b\r\n$ \r\n\r\n";
-    let (events, windows) = read(&path("20260101T000000Z"), first.as_bytes(), &Windows::default());
+    let (events, windows) = read(
+        &path("20260101T000000Z"),
+        first.as_bytes(),
+        &Windows::default(),
+    );
     let c = captured(&events);
     assert_eq!((c.continues, c.lines, c.new_lines), (false, 3, 3));
     assert_eq!(c.text, "$ ls\na b\n$");
@@ -75,7 +87,11 @@ fn each_snapshot_holds_only_what_is_new_for_its_window() {
 
     // Another window does not disturb this one's alignment.
     let other = "x\r\n";
-    let (_, windows) = read("20260101T003000Z-h-pid7-win2-x.ansi", other.as_bytes(), &windows);
+    let (_, windows) = read(
+        "20260101T003000Z-h-pid7-win2-x.ansi",
+        other.as_bytes(),
+        &windows,
+    );
 
     // Nothing new: an empty text that still continues.
     let (events, windows) = read(&path("20260101T010000Z"), second.as_bytes(), &windows);
@@ -92,9 +108,17 @@ fn each_snapshot_holds_only_what_is_new_for_its_window() {
 fn long_scrollback_aligns_on_its_prefix_and_last_rows() {
     let mut lines: Vec<String> = (0..1000).map(|i| format!("line {i}")).collect();
     let first = lines.join("\r\n");
-    let (_, windows) = read("20260101T000000Z-h-win1-x.ansi", first.as_bytes(), &Windows::default());
+    let (_, windows) = read(
+        "20260101T000000Z-h-win1-x.ansi",
+        first.as_bytes(),
+        &Windows::default(),
+    );
     lines.extend((1000..1010).map(|i| format!("line {i}")));
-    let (events, _) = read("20260101T001000Z-h-win1-x.ansi", lines.join("\r\n").as_bytes(), &windows);
+    let (events, _) = read(
+        "20260101T001000Z-h-win1-x.ansi",
+        lines.join("\r\n").as_bytes(),
+        &windows,
+    );
     let c = captured(&events);
     assert!(c.continues);
     assert_eq!(c.new_lines, 10);
@@ -103,7 +127,11 @@ fn long_scrollback_aligns_on_its_prefix_and_last_rows() {
 
 #[devkit::test]
 fn windows_unseen_for_a_day_are_forgotten() {
-    let (_, windows) = read("20260101T000000Z-h-win1-x.ansi", b"a\n", &Windows::default());
+    let (_, windows) = read(
+        "20260101T000000Z-h-win1-x.ansi",
+        b"a\n",
+        &Windows::default(),
+    );
     let (_, windows) = read("20260103T000000Z-h-win2-x.ansi", b"b\n", &windows);
     let (events, _) = read("20260103T000100Z-h-win1-x.ansi", b"a\nc\n", &windows);
     assert!(!captured(&events).continues);
@@ -137,7 +165,11 @@ fn sidecars_describe_the_window_and_removals_read_as_nothing() {
         member: Some(&removed),
     };
     let (events, _) = ScrollbackParser
-        .parse(&b"{\"removed\":\"x\"}\n".as_slice(), &Windows::default(), &context)
+        .parse(
+            &b"{\"removed\":\"x\"}\n".as_slice(),
+            &Windows::default(),
+            &context,
+        )
         .unwrap();
     assert!(events.is_empty());
 }

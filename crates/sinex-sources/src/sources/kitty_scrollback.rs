@@ -189,8 +189,9 @@ impl Windows {
             .get(&window)
             .and_then(|previous| previous.continued_at(lines));
         let mut next = self.clone();
-        next.windows
-            .retain(|_, previous| previous.captured_ns >= captured_ns - WINDOW_SECS * 1_000_000_000);
+        next.windows.retain(|_, previous| {
+            previous.captured_ns >= captured_ns - WINDOW_SECS * 1_000_000_000
+        });
         next.windows
             .insert(window, Previous::of(lines, captured_ns));
         (continued.unwrap_or(0), continued.is_some(), next)
@@ -268,8 +269,7 @@ impl Parser for ScrollbackParser {
             named.kitty_pid.map(|p| p.to_string()).unwrap_or_default(),
             named.window_id
         );
-        let (start, continues, next) =
-            windows.read(window, named.captured_at.unix_ns(), &lines);
+        let (start, continues, next) = windows.read(window, named.captured_at.unix_ns(), &lines);
         let title = file
             .split_once(&format!("win{}-", named.window_id))
             .map(|(_, title)| title.strip_suffix(".ansi").unwrap_or(title).to_owned());

@@ -61,7 +61,9 @@ fn kitty_command_output_and_scrollback_are_read_as_plain_text() {
     };
     assert!(!first.continues);
     assert!(parse(r#"{"source":"kitty","event":"scrollback","lines":1,"from_line":0}"#).is_err());
-    assert!(parse(r#"{"source":"kitty","event":"scrollback","window_id":7,"from_line":0}"#).is_err());
+    assert!(
+        parse(r#"{"source":"kitty","event":"scrollback","window_id":7,"from_line":0}"#).is_err()
+    );
 }
 
 #[devkit::test]

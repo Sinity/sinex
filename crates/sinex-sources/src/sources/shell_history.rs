@@ -77,4 +77,3 @@ impl Seen {
         (n, seen)
     }
 }
-
