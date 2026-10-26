@@ -119,7 +119,11 @@ impl crate::EventPayload for NoteDocument {
     const REPLACE: crate::ReplaceRule = crate::ReplaceRule::ReplaceWhenNewer;
 
     fn key_kind(&self) -> crate::KeyKind {
-        if self.note_id.as_deref().is_some_and(|id| !id.trim().is_empty()) {
+        if self
+            .note_id
+            .as_deref()
+            .is_some_and(|id| !id.trim().is_empty())
+        {
             crate::KeyKind::Fields(&["vault", "note_id"])
         } else {
             Self::KEY

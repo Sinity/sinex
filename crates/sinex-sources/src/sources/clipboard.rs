@@ -163,15 +163,12 @@ impl Parser for ClipboardParser {
                     .and_then(Value::as_str)
                     .unwrap_or("clipboard")
                     .to_owned(),
-                mime_types: f
-                    .get("types")
-                    .and_then(Value::as_array)
-                    .map(|xs| {
-                        xs.iter()
-                            .filter_map(Value::as_str)
-                            .map(str::to_owned)
-                            .collect()
-                    }),
+                mime_types: f.get("types").and_then(Value::as_array).map(|xs| {
+                    xs.iter()
+                        .filter_map(Value::as_str)
+                        .map(str::to_owned)
+                        .collect()
+                }),
                 mime_type,
                 text,
                 bytes: content.as_ref().map(|c| c.len() as u64),

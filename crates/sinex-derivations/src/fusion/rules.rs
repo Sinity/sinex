@@ -215,7 +215,13 @@ pub static VISITS: FusionRule = FusionRule {
             only: &[],
             source: None,
             spans: false,
-            read: |e| visit(e, text(&e.payload, "/to_url")?, text(&e.payload, "/to_title")),
+            read: |e| {
+                visit(
+                    e,
+                    text(&e.payload, "/to_url")?,
+                    text(&e.payload, "/to_title"),
+                )
+            },
         },
     ],
     inputs: &["browser.visit", "browser.history_entry", "link.followed"],
@@ -353,27 +359,25 @@ pub static CLIPBOARD: FusionRule = FusionRule {
     derivation: "clipboard.fusion",
     version: 2,
     output: "clipboard.fused",
-    observers: &[
-        Observer {
-            event_type: "clipboard.copied",
-            only: &[],
-            source: None,
-            spans: false,
-            read: |e| {
-                let p = &e.payload;
-                if p.get("secret").and_then(Value::as_bool) == Some(true) {
-                    return None;
-                }
-                copy(
-                    e,
-                    text(p, "/selection")?,
-                    text(p, "/text"),
-                    text(p, "/mime_type"),
-                    p.get("bytes").and_then(Value::as_u64),
-                )
-            },
+    observers: &[Observer {
+        event_type: "clipboard.copied",
+        only: &[],
+        source: None,
+        spans: false,
+        read: |e| {
+            let p = &e.payload;
+            if p.get("secret").and_then(Value::as_bool) == Some(true) {
+                return None;
+            }
+            copy(
+                e,
+                text(p, "/selection")?,
+                text(p, "/text"),
+                text(p, "/mime_type"),
+                p.get("bytes").and_then(Value::as_u64),
+            )
         },
-    ],
+    }],
     inputs: &["clipboard.copied"],
     window_ns: secs(2),
     fallback_ns: secs(10),
@@ -399,18 +403,16 @@ pub static NOTIFICATIONS: FusionRule = FusionRule {
     derivation: "notification.fusion",
     version: 2,
     output: "notification.fused",
-    observers: &[
-        Observer {
-            event_type: "notification.shown",
-            only: &[],
-            source: None,
-            spans: false,
-            read: |e| {
-                let p = &e.payload;
-                notification(e, text(p, "/app")?, text(p, "/summary")?, text(p, "/body"))
-            },
+    observers: &[Observer {
+        event_type: "notification.shown",
+        only: &[],
+        source: None,
+        spans: false,
+        read: |e| {
+            let p = &e.payload;
+            notification(e, text(p, "/app")?, text(p, "/summary")?, text(p, "/body"))
         },
-    ],
+    }],
     inputs: &["notification.shown"],
     window_ns: secs(2),
     fallback_ns: secs(10),

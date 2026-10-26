@@ -1,9 +1,9 @@
 use super::rules::{CLIPBOARD, COMMANDS, FOCUS, MAIL, NOTIFICATIONS, PLAYS, RULES, VISITS};
 use super::*;
+use sinex_model::event_types::browser::LinkFollowed;
 use sinex_model::event_types::browser::{BrowserHistoryEntry, BrowserVisit};
 use sinex_model::event_types::communication::MailMessage;
 use sinex_model::event_types::desktop::WindowSpan;
-use sinex_model::event_types::browser::LinkFollowed;
 use sinex_model::event_types::media::MusicPlayed;
 use sinex_model::event_types::session::{ClipboardCopied, NotificationShown, PlayerChanged};
 use sinex_model::event_types::{CommandExecuted, CommandImported, StateInterval};

@@ -44,11 +44,11 @@ fn a_selection_is_the_live_clipboard_event() {
     assert_eq!(copy.text.as_deref(), Some("synthetic"));
     assert_eq!(copy.mime_type.as_deref(), Some("text/plain"));
     assert_eq!(copy.bytes, Some(9));
-    assert_eq!(copy.mime_types, None, "the lane does not record offered types");
     assert_eq!(
-        copy.window.unwrap().class.as_deref(),
-        Some("synthetic-app")
+        copy.mime_types, None,
+        "the lane does not record offered types"
     );
+    assert_eq!(copy.window.unwrap().class.as_deref(), Some("synthetic-app"));
     assert_eq!(copy.received_at, envelope_time());
     assert!(copy.extra.is_empty(), "the category is the MIME type's");
 
@@ -62,7 +62,11 @@ fn a_selection_is_the_live_clipboard_event() {
     };
     assert_eq!(imported.sha256.as_deref(), Some("ab"));
     assert_eq!(imported.imported_from.as_deref(), Some("clipse-import"));
-    assert_eq!(imported.extra["pinned"], json!(false), "unknown fields kept");
+    assert_eq!(
+        imported.extra["pinned"],
+        json!(false),
+        "unknown fields kept"
+    );
     assert!(imported.text.is_none());
 }
 
@@ -127,11 +131,11 @@ fn an_accessibility_tree_keeps_its_text_once_in_tree_order() {
         "desktop.a11y",
         "a11y",
         json!({"kind":"subtree","app":"synthetic","window":"Window","tree":{
-            "role":"frame","name":"Window","children":[
-                {"role":"button","name":"Back","text":"Back"},
-                {"role":"text","name":"","text":"value","truncated":"max_nodes"},
-                {"role":"panel","name":"Window","children":[{"role":"label","name":"Last"}]}
-            ]}}),
+        "role":"frame","name":"Window","children":[
+            {"role":"button","name":"Back","text":"Back"},
+            {"role":"text","name":"","text":"value","truncated":"max_nodes"},
+            {"role":"panel","name":"Window","children":[{"role":"label","name":"Last"}]}
+        ]}}),
     ) else {
         panic!("not a tree")
     };
@@ -224,7 +228,10 @@ fn audio_lanes_become_recording_graph_and_speech_events() {
         panic!("not a recording state")
     };
     assert_eq!(state.speech_input.as_deref(), Some("mic"));
-    assert_eq!(state.recording[0].since, Some(Timestamp::from_unix_secs(1_760_000_000).unwrap()));
+    assert_eq!(
+        state.recording[0].since,
+        Some(Timestamp::from_unix_secs(1_760_000_000).unwrap())
+    );
     assert!(state.extra.is_empty(), "the kind is the event type's");
 
     let LakeEvent::Graph(port) = one(
@@ -268,7 +275,10 @@ fn browsing_lanes_become_links_and_reading_changes() {
         panic!("not a link")
     };
     assert_eq!(link.to_url.as_deref(), Some("https://example.test/b"));
-    assert_eq!(link.followed_at, Timestamp::from_unix_secs(1_760_000_002).unwrap());
+    assert_eq!(
+        link.followed_at,
+        Timestamp::from_unix_secs(1_760_000_002).unwrap()
+    );
     let LakeEvent::Reading(item) = one(
         "reading.stack",
         "reading-stack",
@@ -299,9 +309,12 @@ fn a_device_sample_is_one_event_per_device() {
     assert_eq!(second.percent, Some(75.5));
     assert_eq!(second.reported_by, "bluez");
     assert!(
-        parse("machine.peripheral", &envelope_line("bt-battery", 2, json!([])))
-            .unwrap()
-            .is_empty(),
+        parse(
+            "machine.peripheral",
+            &envelope_line("bt-battery", 2, json!([]))
+        )
+        .unwrap()
+        .is_empty(),
         "an empty sample has no device to report"
     );
     let LakeEvent::Battery(keyboard) = one(

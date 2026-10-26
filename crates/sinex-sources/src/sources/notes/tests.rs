@@ -328,5 +328,9 @@ fn a_note_without_an_id_is_its_path() {
     let (empty, _) = step(&NoteIds::default(), "e.md", Some("---\nid: \"\"\n---\n"));
     assert_eq!(empty[0].note_id.as_deref(), Some(""));
     let (path_keyed, _) = step(&NoteIds::default(), "e.md", Some("x\n"));
-    assert_eq!(key(&empty[0]), key(&path_keyed[0]), "an empty ID identifies nothing");
+    assert_eq!(
+        key(&empty[0]),
+        key(&path_keyed[0]),
+        "an empty ID identifies nothing"
+    );
 }

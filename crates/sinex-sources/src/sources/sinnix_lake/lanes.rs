@@ -115,10 +115,7 @@ pub(super) fn events(envelope: &Envelope) -> Result<Vec<LakeEvent>, RecordError>
             decode(lane, payload)?,
         )?)],
         "audio-devices" => match kind_of(lane, payload)? {
-            "devices-state" => vec![LakeEvent::Recording(recording(
-                at,
-                decode(lane, payload)?,
-            )?)],
+            "devices-state" => vec![LakeEvent::Recording(recording(at, decode(lane, payload)?)?)],
             other => {
                 return Err(RecordError::new(format!(
                     "audio-devices record of unknown kind {other:?}"
@@ -161,7 +158,10 @@ pub(super) fn events(envelope: &Envelope) -> Result<Vec<LakeEvent>, RecordError>
             .into_iter()
             .map(|t| LakeEvent::BluetoothAudio(bluetooth_audio(at, t)))
             .collect(),
-        "netflow" => vec![LakeEvent::Connection(connection(at, decode(lane, payload)?))],
+        "netflow" => vec![LakeEvent::Connection(connection(
+            at,
+            decode(lane, payload)?,
+        ))],
         "awair" | "environment" => vec![LakeEvent::Air(air(at, decode(lane, payload)?))],
         other => return Err(RecordError::new(format!("lane {other:?} has no mapping"))),
     })
@@ -255,7 +255,11 @@ fn notification(at: Timestamp, n: Notification) -> Result<NotificationShown, Rec
             .filter(|id| *id != 0)
             .map(|id| u32::try_from(id).map_err(|_| RecordError::new("replaces_id beyond u32")))
             .transpose()?,
-        actions: n.actions.into_iter().flat_map(|a| [a.id, a.label]).collect(),
+        actions: n
+            .actions
+            .into_iter()
+            .flat_map(|a| [a.id, a.label])
+            .collect(),
         hints,
         expire_timeout_ms: n
             .expire_timeout
@@ -383,7 +387,11 @@ fn tree(at: Timestamp, s: Subtree) -> AccessibilityTree {
     let mut pending = vec![&s.tree];
     while let Some(control) = pending.pop() {
         controls += 1;
-        if control.truncated.as_ref().is_some_and(|t| t != &Value::Bool(false)) {
+        if control
+            .truncated
+            .as_ref()
+            .is_some_and(|t| t != &Value::Bool(false))
+        {
             truncated += 1;
         }
         for line in [&control.name, &control.text].into_iter().flatten() {

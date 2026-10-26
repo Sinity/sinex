@@ -1052,7 +1052,14 @@ async fn every_lake_line_is_read_once() {
     let accounted = "SELECT count(DISTINCT anchor) FROM (
         SELECT anchor FROM core.events WHERE material_id IS NOT NULL
         UNION ALL SELECT anchor FROM raw.failures) a";
-    assert_eq!(scalar(&mut c, "SELECT count(*) FROM core.events WHERE event_type = 'clipboard.copied'").await, 2);
+    assert_eq!(
+        scalar(
+            &mut c,
+            "SELECT count(*) FROM core.events WHERE event_type = 'clipboard.copied'"
+        )
+        .await,
+        2
+    );
     assert_eq!(scalar(&mut c, "SELECT count(*) FROM raw.failures").await, 1);
     assert_eq!(scalar(&mut c, accounted).await, 3, "each line once");
 
@@ -1068,7 +1075,10 @@ async fn every_lake_line_is_read_once() {
     .unwrap();
     assert_eq!(texts, ["one", "three", "four", "five"]);
     assert_eq!(scalar(&mut c, "SELECT count(*) FROM raw.failures").await, 1);
-    assert_eq!(scalar(&mut c, "SELECT count(*) FROM audit.archived").await, 0);
+    assert_eq!(
+        scalar(&mut c, "SELECT count(*) FROM audit.archived").await,
+        0
+    );
     consistent(&mut c).await;
 }
 
@@ -1196,12 +1206,11 @@ async fn applying_brings_event_types_up_to_the_build() {
             .unwrap();
     assert!(names.contains(&"clipboard.copied".to_string()));
     assert!(!names.contains(&"gone.type".to_string()));
-    let views: Vec<String> = sqlx::query_scalar(
-        "SELECT viewname::text FROM pg_views WHERE schemaname = 'event_types'",
-    )
-    .fetch_all(&mut c)
-    .await
-    .unwrap();
+    let views: Vec<String> =
+        sqlx::query_scalar("SELECT viewname::text FROM pg_views WHERE schemaname = 'event_types'")
+            .fetch_all(&mut c)
+            .await
+            .unwrap();
     assert!(views.contains(&"clipboard_copied".to_string()));
     assert!(!views.contains(&"gone_type".to_string()));
     assert_eq!(views.len(), names.len());

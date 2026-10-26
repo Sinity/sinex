@@ -13,10 +13,10 @@ use crate::drain::RecordContext;
 use crate::drivers::dir_snapshot::DirSnapshot;
 use crate::registry::{DeclaredSource, Driver, SourceSpec};
 use crate::{Parser, RecordError};
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sinex_model::event_types::media::NoteDocument;
 use sinex_model::{Class, Timestamp};
-use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 
