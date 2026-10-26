@@ -33,6 +33,8 @@ these names and no others.
 - **cursor**: how far a binding's input has been admitted.
 - **reader memory**: what a reader remembers about its input (each row's hash, each file's size, time and hash), saved with the cursor at the end of a part so a restart reads only the parts after it.
 - **shared pass**: one read of a stored file for every compatible binding of it (export archives); each binding keeps its own parts and cursor.
+- **ref update**: a git ref seen at a new target (`git.ref_updated`); a **rewrite** is one whose new target does not descend from the old one (a force-push, a reset), listing the commits no ref or checkout reaches any more. Those commits are recorded, never removed.
+- **observed tool**: a tool whose records Sinex reads but does not own (Beads, AgentCTL, GitHub); nothing is written back to it.
 - **spool**: a live capture's directory of segment files, which its binding then reads like a growing file.
 
 ## Events

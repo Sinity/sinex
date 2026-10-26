@@ -125,8 +125,9 @@ pub struct NoteItem {
     pub checked: bool,
 }
 
-/// A task in a task list (Google Tasks); a later export's reading with a newer
-/// `updated` replaces it.
+/// A task in a task list (Google Tasks, Taskwarrior, a Beads store),
+/// identified by the service's own ID; a later reading (a later export, a
+/// changed issue) replaces it.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
 #[event(
     type = "task.revised",
@@ -150,6 +151,15 @@ pub struct TaskRevised {
     pub due: Option<String>,
     pub completed_at: Option<Timestamp>,
     pub deleted_at: Option<Timestamp>,
+    /// The priority as the service writes it (`0` to `4` in Beads, `H`, `M`
+    /// or `L` in Taskwarrior).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub priority: Option<String>,
+    /// Labels or tags.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub labels: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub assignee: Option<String>,
     #[serde(default, skip_serializing_if = "Map::is_empty")]
     pub extra: Map<String, Value>,
 }

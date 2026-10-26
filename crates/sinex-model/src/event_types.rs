@@ -20,6 +20,7 @@ pub mod polylogue;
 pub mod session;
 pub mod shell;
 pub mod social;
+pub mod work;
 
 pub use derived::{FigureValue, HealthFigure, MetricFigure, StateInterval};
 pub use fused::CommandFused;
@@ -114,8 +115,15 @@ pub const ALL: &[RegisteredEventType] = &[
     info::<machine::FileChanged>(),
     info::<machine::TerminalSession>(),
     info::<machine::TerminalOutput>(),
-    // Code
+    // Code and the development tools observed
     info::<code::GitCommit>(),
+    info::<code::GitRefUpdated>(),
+    info::<code::GithubPullRequest>(),
+    info::<code::GithubReview>(),
+    info::<code::GithubCheck>(),
+    info::<code::GithubWorkflowRun>(),
+    info::<code::GithubIssue>(),
+    info::<work::AgentctlEvent>(),
     // Derived
     info::<CommandFused>(),
     info::<fused::FocusFused>(),

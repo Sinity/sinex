@@ -1,8 +1,12 @@
 //! Every source, one module per family, registered in one list.
 pub mod activitywatch;
+/// AgentCTL's event log (`work.agentctl`).
+pub mod agentctl;
 pub mod arbtt;
 pub mod asciinema;
 pub mod atuin;
+/// Beads issue stores, from their JSONL export (`work.beads`).
+pub mod beads;
 pub mod calendar;
 pub mod chromium;
 /// The Wayland clipboard and primary selection.
@@ -12,6 +16,9 @@ pub mod dbus;
 pub(crate) mod fields;
 pub mod file_watch;
 pub mod forecast;
+/// GitHub pull requests, reviews, checks, workflow runs and issues
+/// (`code.github`).
+pub mod github;
 pub mod goodreads;
 pub mod google_takeout;
 pub mod hyprland;
@@ -35,7 +42,7 @@ pub mod outlook;
 pub mod page_crawl;
 pub mod raindrop;
 pub mod reddit;
-/// Commits in local repositories (`code.git`).
+/// Commits and ref updates in local repositories (`code.git`).
 pub mod repository;
 pub mod samsung_cloud;
 pub mod samsung_health;
@@ -47,6 +54,8 @@ pub mod sinnix_lake;
 pub mod sleep_as_android;
 pub mod spotify;
 pub mod takeout_chrome;
+/// Taskwarrior exports (`tasks.taskwarrior`).
+pub mod taskwarrior;
 pub mod weechat;
 pub mod wykop;
 pub mod zsh;
@@ -66,6 +75,10 @@ pub fn formats() -> &'static [&'static InputFormat] {
         &file_watch::FORMAT,
         &activitywatch::FORMAT,
         &repository::FORMAT,
+        &github::FORMAT,
+        &beads::FORMAT,
+        &agentctl::FORMAT,
+        &taskwarrior::FORMAT,
         &chromium::FORMAT,
         &takeout_chrome::FORMAT,
         &spotify::FORMAT,

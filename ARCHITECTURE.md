@@ -99,6 +99,19 @@ does not know are kept, and the event lists their JSON pointers in
 Samsung account tables other than health stay generic `account.row` rows,
 always marked `untyped`.
 
+### Code and observed tools
+
+`code.git` reads a repository's commits with the files each changed
+against its first parent, and compares its refs between polls: a ref
+moved to a commit that does not descend from its old target is a rewrite,
+and the update lists the commits no ref or checkout reaches any more. They
+stay recorded. `code.github` reads the GitHub repository of the same
+checkout with a token from a file; `work.beads` reads a Beads store's JSONL
+export and `work.agentctl` AgentCTL's event log. Sinex never writes to
+these tools. The fields that join them are recorded as they are read: a
+commit's refs and checkouts, a pull request's head branch and commit, a
+job's checkout and its HEAD at start and end.
+
 ### Outside producers
 
 `sinex-session`, `sinex-capture` and Polylogue send frames over the NATS
