@@ -1,4 +1,4 @@
-# The restore drill (w98, jd4u, zumi): data in, dump and Borg backup, both
+# The restore drill: data in, dump and Borg backup, both
 # lost, restored from the backups alone, and the same events and bytes back.
 self: {
   name = "sinex-restore";
@@ -35,7 +35,11 @@ self: {
         return events, blobs
 
     machine.wait_for_unit("sinexd.service")
+    # A backfill takes the writer, so the daemon stops for it.
+    machine.succeed("systemctl stop sinexd.service")
     machine.succeed(f"{sinex} sinexd backfill --database '{url}' --store /var/lib/sinex/store --read zsh=/var/lib/sinex/zsh_history")
+    machine.succeed("systemctl start sinexd.service")
+    machine.wait_for_unit("sinexd.service")
     before = state()
     assert not before[0].startswith("0|"), before
 
@@ -43,7 +47,8 @@ self: {
         machine.succeed("systemctl start sinex-dump.service")
         machine.succeed("test -s /var/lib/sinex/dumps/sinex.dump")
         machine.succeed("test -s /var/lib/sinex/key-dumps/data-keys.dump")
-        machine.succeed("systemctl start borgbackup-job-sinex.service borgbackup-job-sinex-keys.service")
+        # The jobs are simple services: wait for them to finish.
+        machine.succeed("systemctl start --wait borgbackup-job-sinex.service borgbackup-job-sinex-keys.service")
 
     with subtest("lose the database and the content store"):
         machine.succeed("systemctl stop sinexd.service")
