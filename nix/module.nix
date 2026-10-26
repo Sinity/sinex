@@ -571,8 +571,14 @@ in
           Group = node.group;
           UMask = "0007";
           StateDirectory = "sinex-capture";
+          # The private-mode switch: a file here turns capture off. The
+          # capture user cannot create the default /run/sinex, and a switch
+          # it cannot check counts as on.
+          RuntimeDirectory = "sinex-capture";
+          RuntimeDirectoryPreserve = "yes";
           SupplementaryGroups = optional node.journald "systemd-journal";
         };
+        environment.SINEX_PRIVATE_MODE = "/run/sinex-capture/private-mode";
         path = [ config.systemd.package ];
         script = ''
           ${natsUrlScript { user = node.producer; passwordFile = node.passwordFile; address = node.nats; }}
