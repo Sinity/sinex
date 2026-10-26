@@ -1,5 +1,5 @@
-//! Derived activity: state intervals, hourly and daily summaries, and hourly
-//! and daily health figures.
+//! Derived activity: state intervals, metric figures, and hourly and daily
+//! health figures.
 use crate::Timestamp;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -32,37 +32,41 @@ pub struct StateInterval {
     pub attributes: std::collections::BTreeMap<String, String>,
 }
 
-/// What happened in one civil hour or logical day: commands, shell sessions
-/// and time per state, each counted from the derived events of that period.
-/// A count of zero means the source was read and saw nothing; a period with
-/// no inputs at all has no summary.
+/// One metric over one civil hour or logical day: how many input events it
+/// counted and the metric's number for them, in total or for one value of a
+/// breakdown field. Hourly figures are computed from the metric's input
+/// events, daily ones from the day's hourly figures. A period nothing was
+/// counted in has no figure; whether that means zero or unobserved depends on
+/// whether the sources were observing, which is read with the figures.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
 #[event(
-    type = "activity.summary",
-    key = ["grain", "period_start"],
+    type = "metric.figure",
+    key = ["metric", "grain", "period_start", "dimension", "dimension_value"],
     replace = newer,
     time = period_start,
     quality = intrinsic
 )]
-pub struct ActivitySummary {
+pub struct MetricFigure {
+    /// The metric's name (`shell.commands`).
+    pub metric: String,
     /// `hour` or `day`.
     pub grain: String,
     pub period_start: Timestamp,
     pub period_end: Timestamp,
     /// The logical day the period belongs to (`YYYY-MM-DD`).
     pub day: String,
-    pub commands: u32,
-    pub failed_commands: u32,
-    pub sessions: u32,
-    /// Seconds of shell-session time inside the period.
-    pub session_seconds: i64,
-    /// Working directories by command count, most first.
-    pub top_cwds: Vec<(String, u32)>,
-    /// Seconds per state kind inside the period (closed intervals and the
-    /// elapsed part of open ones).
-    pub state_seconds: std::collections::BTreeMap<String, i64>,
-    /// The longest-held subjects: (state kind, label, seconds).
-    pub top_subjects: Vec<(String, String, i64)>,
+    /// The breakdown field (`cwd`), and the value this figure counts for;
+    /// both empty for the total.
+    pub dimension: String,
+    pub dimension_value: String,
+    /// The metric's number; `None` where it is undefined (a ratio of zero
+    /// commands with a known exit code).
+    pub value: Option<f64>,
+    /// A ratio's parts, summed from hours to the day.
+    pub numerator: Option<f64>,
+    pub denominator: Option<f64>,
+    /// Input events counted.
+    pub rows: u64,
 }
 
 /// Figures over one series of health points in one civil hour or logical

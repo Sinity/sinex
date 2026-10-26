@@ -476,14 +476,14 @@ pub const COMMANDS: &[Command] = &[
     },
     Command {
         name: "analysis-catalog",
-        summary: "The analysis catalog: metrics with the sources that observe them, registered methods, recipes.",
+        summary: "The analysis catalog: metrics with the events they count and the sources that observe them, registered methods, recipes.",
         args: &[],
         access: Access::Read,
         mcp: true,
     },
     Command {
         name: "analysis-run",
-        summary: "Run an analysis recipe (correlations, trends, deviations) over logical days and store its result; asking again at the same commit position returns the stored result.",
+        summary: "Run an analysis recipe (correlations, trends, deviations) over the daily metric figures of some logical days; the answer is computed when asked, at one commit position.",
         args: &[
             pos(
                 "recipe",
@@ -493,22 +493,17 @@ pub const COMMANDS: &[Command] = &[
             pos("from", ArgKind::Text, "first logical day, YYYY-MM-DD"),
             pos("to", ArgKind::Text, "last logical day, included"),
             opt(
-                "standing",
-                ArgKind::Bool,
-                "record it as the standing question's newest answer",
-            ),
-            opt(
                 "partial",
                 ArgKind::Text,
                 "also use partly observed days covering at least this fraction (0 to 1)",
             ),
         ],
-        access: Access::Agent,
+        access: Access::Read,
         mcp: true,
     },
     Command {
         name: "analysis-panel",
-        summary: "Metric cells per logical day, each with its observation state, and the coverage behind them.",
+        summary: "Metric cells per logical day from the daily metric figures, each with its observation state, and the coverage behind them.",
         args: &[
             pos("from", ArgKind::Text, "first logical day, YYYY-MM-DD"),
             pos("to", ArgKind::Text, "last logical day, included"),
@@ -537,22 +532,8 @@ pub const COMMANDS: &[Command] = &[
         mcp: true,
     },
     Command {
-        name: "analysis-results",
-        summary: "The newest stored analysis results.",
-        args: &[opt("limit", ArgKind::Integer, "how many (default 20)")],
-        access: Access::Read,
-        mcp: true,
-    },
-    Command {
-        name: "analysis-show",
-        summary: "A stored analysis result: its status, the inputs it read, its tables and findings.",
-        args: &[pos("result", ArgKind::Text, "the result ID")],
-        access: Access::Read,
-        mcp: true,
-    },
-    Command {
         name: "brief",
-        summary: "The brief for one logical day: data quality first, the day's metrics, departures from the recent level, associations, the machine.",
+        summary: "The brief for one logical day: data quality first, the day's metrics, departures from the recent level, associations over the days before, the machine.",
         args: &[
             opt("day", ArgKind::Text, "YYYY-MM-DD; default today"),
             opt(

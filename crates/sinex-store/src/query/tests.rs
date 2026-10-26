@@ -542,8 +542,9 @@ async fn admit_derived<P: sinex_model::EventPayload>(conn: &mut PgConnection, pa
 }
 
 #[devkit::test]
-async fn interval_and_day_aliases_read_what_the_derivations_write(db: devkit::pg::TestDatabase) {
-    use sinex_model::event_types::{ActivitySummary, StateInterval};
+async fn derived_aliases_read_what_the_derivations_write(db: devkit::pg::TestDatabase) {
+    use sinex_model::event_types::fused::FocusFused;
+    use sinex_model::event_types::{MetricFigure, StateInterval};
     let mut conn = <sqlx::PgConnection as sqlx::Connection>::connect(&db.url(None))
         .await
         .unwrap();
@@ -560,20 +561,37 @@ async fn interval_and_day_aliases_read_what_the_derivations_write(db: devkit::pg
         attributes: Default::default(),
     };
     admit_derived(&mut conn, &[interval("a", Some(90)), interval("b", None)]).await;
-    let summary = |grain: &str| ActivitySummary {
+    let figure = |grain: &str, dimension: &str, value: f64| MetricFigure {
+        metric: "shell.commands".into(),
         grain: grain.into(),
         period_start: at(0),
         period_end: at(3600),
         day: "2026-09-14".into(),
-        commands: 3,
-        failed_commands: 1,
-        sessions: 1,
-        session_seconds: 600,
-        top_cwds: vec![],
-        state_seconds: Default::default(),
-        top_subjects: vec![],
+        dimension: dimension.into(),
+        dimension_value: if dimension.is_empty() { "" } else { "/src" }.into(),
+        value: Some(value),
+        numerator: None,
+        denominator: None,
+        rows: value as u64,
     };
-    admit_derived(&mut conn, &[summary("hour"), summary("day")]).await;
+    admit_derived(
+        &mut conn,
+        &[
+            figure("hour", "", 3.0),
+            figure("day", "", 3.0),
+            figure("day", "cwd", 2.0),
+        ],
+    )
+    .await;
+    let focus = FocusFused {
+        record: "r".into(),
+        started_at: at(0),
+        ended_at: Some(at(120)),
+        app: Some("kitty".into()),
+        title: Some("vim".into()),
+        observed_by: vec!["desktop.hyprland".into(), "desktop.activitywatch".into()],
+    };
+    admit_derived(&mut conn, &[focus]).await;
 
     let now = ask(&mut conn, "now").await;
     assert_eq!(now.total, 1);
@@ -585,7 +603,21 @@ async fn interval_and_day_aliases_read_what_the_derivations_write(db: devkit::pg
     .await;
     assert_eq!(closed.total, 1);
     assert_eq!(column(&closed, "state"), vec![json!("desktop.focus")]);
-    let days = ask(&mut conn, "days fields day, commands").await;
+    let days = ask(
+        &mut conn,
+        "figures where grain = day and dimension != cwd fields day, value",
+    )
+    .await;
     assert_eq!(days.total, 1);
-    assert_eq!(column(&days, "commands"), vec![json!(3)]);
+    assert_eq!(column(&days, "value")[0].as_f64(), Some(3.0));
+    let focus = ask(
+        &mut conn,
+        "focus where app = kitty fields duration, observed_by",
+    )
+    .await;
+    assert_eq!(column(&focus, "duration")[0].as_f64(), Some(120.0));
+    assert_eq!(
+        column(&focus, "observed_by"),
+        vec![json!("desktop.hyprland,desktop.activitywatch")]
+    );
 }

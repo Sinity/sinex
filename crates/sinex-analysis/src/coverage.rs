@@ -32,6 +32,46 @@ pub enum Completeness {
     Unknown,
 }
 
+/// What each source sees of its kind. A shell history sees the commands typed
+/// in that shell, not every command run; a browser profile sees that profile;
+/// the journal, the compositor and ActivityWatch see this host.
+pub fn completeness(source: &str) -> Completeness {
+    match source {
+        "machine.journald"
+        | "desktop.activitywatch"
+        | "desktop.hyprland"
+        | "media.spotify-history"
+        | "media.mpris"
+        | "desktop.media" => Completeness::Complete,
+        "terminal.atuin-history"
+        | "terminal.zsh-history"
+        | "code.git"
+        | "browser.chromium-visits"
+        | "browser.takeout-chrome-history"
+        | "browser.navigation"
+        | "communication.weechat-log"
+        | "communication.mbox"
+        | "communication.maildir" => Completeness::Sample,
+        _ => Completeness::Unknown,
+    }
+}
+
+/// How each source captures, which bounds its coverage. The journal and
+/// ActivityWatch are stores with history read through a cursor, so a read
+/// sees everything before it; the compositor socket, the media players and
+/// the filesystem watch see only while they run.
+pub fn capture_mode(source: &str) -> CaptureMode {
+    match source {
+        "desktop.hyprland" | "media.mpris" | "machine.file-watch" => CaptureMode::Live,
+        "media.spotify-history"
+        | "browser.takeout-chrome-history"
+        | "reading.raindrop"
+        | "communication.mbox"
+        | "communication.weechat-log" => CaptureMode::Export,
+        _ => CaptureMode::Polled,
+    }
+}
+
 /// One stretch in which a source could have recorded what it records.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Coverage {

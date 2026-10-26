@@ -117,13 +117,14 @@ impl Keyed for HourlyFigures {
 
     fn inputs(&self, key: &Value, env: &Env) -> Option<InputQuery> {
         let hour = hour_of(key)?;
-        let mut q = InputQuery::window(
-            &[HealthRecord::EVENT_TYPE],
-            hour,
-            env.civil.hour_end(hour).ok()?,
-        );
-        q.equal.push(("provider", json!(PROVIDER)));
-        Some(q)
+        Some(
+            InputQuery::window(
+                &[HealthRecord::EVENT_TYPE],
+                hour,
+                env.civil.hour_end(hour).ok()?,
+            )
+            .only("provider", json!(PROVIDER)),
+        )
     }
 
     fn compute(&self, key: &Value, inputs: &[Event], env: &Env) -> Computed {
@@ -194,14 +195,15 @@ impl Keyed for DailyFigures {
 
     fn inputs(&self, key: &Value, env: &Env) -> Option<InputQuery> {
         let day = day_of(key)?;
-        let mut q = InputQuery::window(
-            &[HealthFigure::EVENT_TYPE],
-            env.civil.day_start(day).ok()?,
-            env.civil.day_end(day).ok()?,
-        );
-        q.equal.push(("grain", json!("hour")));
-        q.equal.push(("provider", json!(PROVIDER)));
-        Some(q)
+        Some(
+            InputQuery::window(
+                &[HealthFigure::EVENT_TYPE],
+                env.civil.day_start(day).ok()?,
+                env.civil.day_end(day).ok()?,
+            )
+            .only("grain", json!("hour"))
+            .only("provider", json!(PROVIDER)),
+        )
     }
 
     fn compute(&self, key: &Value, inputs: &[Event], env: &Env) -> Computed {

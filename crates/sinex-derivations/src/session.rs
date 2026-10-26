@@ -46,13 +46,14 @@ impl Keyed for ShellSessions {
 
     fn inputs(&self, key: &Value, env: &Env) -> Option<InputQuery> {
         let (host, day) = key_parts(key)?;
-        let mut q = InputQuery::window(
-            Self::INPUTS,
-            env.civil.day_start(day).ok()?,
-            env.civil.day_end(day).ok()?,
-        );
-        q.equal.push(("host", Value::String(host)));
-        Some(q)
+        Some(
+            InputQuery::window(
+                Self::INPUTS,
+                env.civil.day_start(day).ok()?,
+                env.civil.day_end(day).ok()?,
+            )
+            .only("host", Value::String(host)),
+        )
     }
 
     fn compute(&self, key: &Value, inputs: &[Event], _env: &Env) -> Computed {

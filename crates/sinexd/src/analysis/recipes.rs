@@ -1,24 +1,25 @@
-//! The shipped recipes, each run over logical days and stored as a result:
+//! The shipped recipes, each run over logical days when asked for:
 //!
-//! - `correlations`: the declared family over the deviation-tracked metrics,
-//!   with Benjamini-Hochberg q-values (Lynchpin's `lifestyle_correlations`);
+//! - `correlations`: the declared family over the tracked metrics, with
+//!   Benjamini-Hochberg q-values (Lynchpin's `lifestyle_correlations`);
 //! - `trends`: Mann-Kendall trend and change points per tracked metric
 //!   (Lynchpin's `life_phase`, without snapping boundaries to events);
 //! - `deviations`: each day against its own prior-only robust baseline
 //!   (Lynchpin's `anomaly_crossref`, prior-only instead of window-relative).
-use super::cells::{coverage, panel};
-use super::{Settings, odt, rfc3339};
+//!
+//! A recipe reads the panel at one commit position, so the same question
+//! asked again at the same position gives the same answer.
+use super::Settings;
+use super::panel::{Panel, panel};
 use serde_json::{Value, json};
 use sinex_analysis::Eligibility;
-use sinex_analysis::catalog;
-use sinex_analysis::finding::{self, Caveat, Check, Checks, Finding, Role, Support, Template};
+use sinex_analysis::finding::{self, Caveat, Finding, Template};
+use sinex_analysis::methods::correlation::family;
 use sinex_analysis::methods::fdr::bh_qvalues;
 use sinex_analysis::methods::{self, MethodInput};
-use sinex_analysis::metric::MetricDef;
-use sinex_analysis::request::{Intent, ReadPlan, Request, output_hash, sorted};
-use sinex_store::analysis as store;
-use sqlx::{Connection, PgConnection};
-use time::OffsetDateTime;
+use sinex_derivations::figures::{METRICS, Metric};
+use sinex_model::query::Context;
+use sqlx::PgConnection;
 
 /// A shipped recipe.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -47,141 +48,56 @@ impl Recipe {
     }
 }
 
-/// A recipe's outcome as stored.
+/// A recipe's answer: what each method estimated or why it refused, the
+/// findings worth reading, and the commit position it was read at.
 pub(crate) struct RecipeRun {
-    pub result: store::StoredResult,
-    pub findings: Vec<Finding>,
     pub tables: Value,
-    pub reused: bool,
+    pub findings: Vec<Finding>,
+    pub as_of: i64,
 }
 
-pub(super) fn tracked() -> Vec<&'static MetricDef> {
-    catalog::METRICS.iter().filter(|m| m.deviation).collect()
+pub(super) fn tracked() -> Vec<&'static Metric> {
+    METRICS.iter().filter(|m| m.tracked).collect()
 }
 
-/// Run a recipe over the logical days `from..=to` at the current commit
-/// position, and store the result (or return the stored one for an
-/// identical request).
+/// The tracked metrics' series from a panel, for the methods.
+pub(super) fn input(p: &Panel, eligibility: Eligibility) -> MethodInput {
+    let mut input = MethodInput {
+        eligibility,
+        ..Default::default()
+    };
+    for m in tracked() {
+        input.series.insert(m.name.to_owned(), p.series(m.name));
+    }
+    input
+}
+
+/// Run a recipe over the logical days `from..=to`.
 pub(crate) async fn run(
     conn: &mut PgConnection,
+    ctx: &Context,
     settings: &Settings,
     recipe: Recipe,
     from: jiff::civil::Date,
     to: jiff::civil::Date,
     eligibility: Eligibility,
-    standing: bool,
 ) -> Result<RecipeRun, String> {
-    let started_at = OffsetDateTime::now_utc();
-    let as_of = store::head(conn).await.map_err(|e| e.to_string())?;
-    let metrics = tracked();
-    let range = settings.day_span(from, to)?;
-    let family: Vec<(&str, &str, i32)> = if recipe == Recipe::Correlations {
-        catalog::correlation_family()
-    } else {
-        Vec::new()
+    let p = panel(conn, ctx, settings, &tracked(), from, to).await?;
+    let input = input(&p, eligibility);
+    let names: Vec<&str> = tracked().iter().map(|m| m.name).collect();
+    let (tables, findings) = match recipe {
+        Recipe::Correlations => correlations(&input, &family(&names))?,
+        Recipe::Trends => trends(&input, &names)?,
+        Recipe::Deviations => deviations(&input, &names)?,
     };
-    let request = Request {
-        recipe: recipe.id().to_owned(),
-        recipe_version: 1,
-        params: json!({"from": from.to_string(), "to": to.to_string(), "eligibility": eligibility}),
-        methods: match recipe {
-            Recipe::Correlations => vec![("lagged_correlation".into(), 1)],
-            Recipe::Trends => vec![("trend".into(), 1), ("change_points".into(), 1)],
-            Recipe::Deviations => vec![("anomaly".into(), 1)],
-        },
-        plans: metrics
-            .iter()
-            .map(|m| ReadPlan {
-                relation: m.relation.to_owned(),
-                from: rfc3339(range.start),
-                to: rfc3339(range.end),
-            })
-            .collect(),
-        as_of,
-        day_setting: settings.label.clone(),
-        family: (!family.is_empty())
-            .then(|| family.iter().map(|(x, y, l)| json!([x, y, l])).collect()),
-        intent: Intent::Exploratory,
-    };
-    let request_id = request.id();
-    if let Some(id) = store::current_result(conn, &request_id)
-        .await
-        .map_err(|e| e.to_string())?
-    {
-        let view = store::result(conn, id)
-            .await
-            .map_err(|e| e.to_string())?
-            .ok_or("result vanished")?;
-        let findings = view.findings.iter().filter_map(stored_finding).collect();
-        return Ok(RecipeRun {
-            result: store::StoredResult {
-                id,
-                state: view.state,
-            },
-            findings,
-            tables: view.tables.unwrap_or(Value::Null),
-            reused: true,
-        });
-    }
-    let covered = coverage(conn, &catalog::coverage_sources(), as_of).await?;
-    let p = panel(conn, settings, &metrics, range, as_of, &covered).await?;
-    let mut input = MethodInput {
-        eligibility,
-        ..Default::default()
-    };
-    for m in &metrics {
-        input.series.insert(m.id.to_owned(), p.series(m.id));
-    }
-    let result_ref = request.id_hex();
-    let (tables, findings, any_estimated) = match recipe {
-        Recipe::Correlations => correlations(&input, &family, &result_ref)?,
-        Recipe::Trends => trends(&input, &metrics, &result_ref)?,
-        Recipe::Deviations => deviations(&input, &metrics, &result_ref)?,
-    };
-    let tables = sorted(tables);
-    let stored = store::NewResult {
-        request_id,
-        request_body: serde_json::to_value(&request).map_err(|e| e.to_string())?,
-        recipe: recipe.id().to_owned(),
-        recipe_version: 1,
-        intent: "exploratory",
-        family: request.family.clone().map(Value::Array),
-        as_of,
-        standing: standing.then(|| recipe.id().to_owned()),
-        requested_by: json!({"kind": "operator", "via": "analysis-run"}),
-        producer: format!("sinexd {}", env!("CARGO_PKG_VERSION")),
-        started_at,
-        status: if any_estimated {
-            "estimated"
-        } else {
-            "not_estimable"
-        },
-        reason: (!any_estimated)
-            .then(|| "no method in the recipe could estimate over this range".into()),
-        inputs_read: serde_json::to_value(&p.inputs_read).map_err(|e| e.to_string())?,
-        tables: tables.clone(),
-        diagnostics: json!({"units": p.units.len(), "coverage_rows": covered.len()}),
-        output_hash: output_hash(&tables),
-        dependencies: metrics
-            .iter()
-            .map(|m| (m.relation.to_owned(), odt(range.start), odt(range.end)))
-            .collect(),
-        findings: findings.iter().map(new_finding).collect(),
-    };
-    let mut tx = conn.begin().await.map_err(|e| e.to_string())?;
-    let result = store::store_result(&mut tx, &stored)
-        .await
-        .map_err(|e| e.to_string())?;
-    tx.commit().await.map_err(|e| e.to_string())?;
     Ok(RecipeRun {
-        result,
-        findings,
         tables,
-        reused: false,
+        findings,
+        as_of: p.as_of,
     })
 }
 
-type Outputs = (Value, Vec<Finding>, bool);
+type Outputs = (Value, Vec<Finding>);
 
 fn method_row(r: &Result<methods::MethodResult, methods::NotEstimable>) -> Value {
     match r {
@@ -201,10 +117,9 @@ fn run_method(
     methods::run(id, &params, input).map_err(|e| e.to_string())
 }
 
-fn correlations(
+pub(super) fn correlations(
     input: &MethodInput,
     family: &[(&str, &str, i32)],
-    result_ref: &str,
 ) -> Result<Outputs, String> {
     let results: Vec<_> = family
         .iter()
@@ -230,31 +145,23 @@ fn correlations(
         rows.push(row);
         if let (Ok(m), Some(q)) = (r, q)
             && *q <= 0.1
-            && let Some(f) = finding::from_correlation(m, Some(*q), family.len(), result_ref)
+            && let Some(f) = finding::from_correlation(m, Some(*q), family.len())
         {
             findings.push(f);
         }
     }
-    let any = results.iter().any(Result::is_ok);
     Ok((
         json!({"family_size": family.len(), "cells": rows}),
         findings,
-        any,
     ))
 }
 
-fn trends(
-    input: &MethodInput,
-    metrics: &[&MetricDef],
-    result_ref: &str,
-) -> Result<Outputs, String> {
+fn trends(input: &MethodInput, metrics: &[&str]) -> Result<Outputs, String> {
     let mut rows = Vec::new();
     let mut findings = Vec::new();
-    let mut any = false;
     for m in metrics {
-        let t = run_method("trend", json!({"metric": m.id}), input)?;
-        let c = run_method("change_points", json!({"metric": m.id}), input)?;
-        any |= t.is_ok() || c.is_ok();
+        let t = run_method("trend", json!({"metric": m}), input)?;
+        let c = run_method("change_points", json!({"metric": m}), input)?;
         if let Ok(r) = &t
             && let (Some(slope), Some(p)) = (
                 r.output["sen_slope_per_unit"].as_f64(),
@@ -262,56 +169,42 @@ fn trends(
             )
             && p < 0.05
         {
-            findings.push(statistic(
-                Template::Trend {
-                    metric: m.id.to_owned(),
-                    slope_per_unit: slope,
-                    p,
-                    from: r.output["first_unit"]
-                        .as_str()
-                        .unwrap_or_default()
-                        .to_owned(),
-                    to: r.output["last_unit"]
-                        .as_str()
-                        .unwrap_or_default()
-                        .to_owned(),
-                    units: r.n,
-                },
-                result_ref,
-            ));
+            findings.push(statistic(Template::Trend {
+                metric: (*m).to_owned(),
+                slope_per_unit: slope,
+                p,
+                from: r.output["first_unit"]
+                    .as_str()
+                    .unwrap_or_default()
+                    .to_owned(),
+                to: r.output["last_unit"]
+                    .as_str()
+                    .unwrap_or_default()
+                    .to_owned(),
+                units: r.n,
+            }));
         }
         if let Ok(r) = &c {
             for cp in r.output["change_points"].as_array().into_iter().flatten() {
-                findings.push(statistic(
-                    Template::LevelShift {
-                        metric: m.id.to_owned(),
-                        boundary: cp["unit"].as_str().unwrap_or_default().to_owned(),
-                        before: cp["before_mean"].as_f64().unwrap_or(f64::NAN),
-                        after: cp["after_mean"].as_f64().unwrap_or(f64::NAN),
-                        method: "binary segmentation, BIC".into(),
-                    },
-                    result_ref,
-                ));
+                findings.push(statistic(Template::LevelShift {
+                    metric: (*m).to_owned(),
+                    boundary: cp["unit"].as_str().unwrap_or_default().to_owned(),
+                    before: cp["before_mean"].as_f64().unwrap_or(f64::NAN),
+                    after: cp["after_mean"].as_f64().unwrap_or(f64::NAN),
+                    method: "binary segmentation, BIC".into(),
+                }));
             }
         }
-        rows.push(
-            json!({"metric": m.id, "trend": method_row(&t), "change_points": method_row(&c)}),
-        );
+        rows.push(json!({"metric": m, "trend": method_row(&t), "change_points": method_row(&c)}));
     }
-    Ok((json!({"metrics": rows}), findings, any))
+    Ok((json!({"metrics": rows}), findings))
 }
 
-pub(super) fn deviations(
-    input: &MethodInput,
-    metrics: &[&MetricDef],
-    result_ref: &str,
-) -> Result<Outputs, String> {
+pub(super) fn deviations(input: &MethodInput, metrics: &[&str]) -> Result<Outputs, String> {
     let mut rows = Vec::new();
     let mut findings = Vec::new();
-    let mut any = false;
     for m in metrics {
-        let r = run_method("anomaly", json!({"metric": m.id}), input)?;
-        any |= r.is_ok();
+        let r = run_method("anomaly", json!({"metric": m}), input)?;
         if let Ok(res) = &r {
             for u in res.output["units"]
                 .as_array()
@@ -319,66 +212,24 @@ pub(super) fn deviations(
                 .flatten()
                 .filter(|u| u["flagged"] == true)
             {
-                findings.push(statistic(
-                    Template::Deviation {
-                        metric: m.id.to_owned(),
-                        unit: u["unit"].as_str().unwrap_or_default().to_owned(),
-                        value: u["value"].as_f64().unwrap_or(f64::NAN),
-                        median: u["median"].as_f64().unwrap_or(f64::NAN),
-                        distance: u["distance"].as_f64().unwrap_or(f64::NAN),
-                    },
-                    result_ref,
-                ));
+                findings.push(statistic(Template::Deviation {
+                    metric: (*m).to_owned(),
+                    unit: u["unit"].as_str().unwrap_or_default().to_owned(),
+                    value: u["value"].as_f64().unwrap_or(f64::NAN),
+                    median: u["median"].as_f64().unwrap_or(f64::NAN),
+                    distance: u["distance"].as_f64().unwrap_or(f64::NAN),
+                }));
             }
         }
-        rows.push(json!({"metric": m.id, "anomaly": method_row(&r)}));
+        rows.push(json!({"metric": m, "anomaly": method_row(&r)}));
     }
-    Ok((json!({"metrics": rows}), findings, any))
+    Ok((json!({"metrics": rows}), findings))
 }
 
-fn statistic(template: Template, result_ref: &str) -> Finding {
+fn statistic(template: Template) -> Finding {
     Finding {
         template,
-        role: Role::DerivedStatistic,
-        status: Support::Supported,
         caveats: vec![Caveat::Exploratory],
-        evidence: vec![format!("sinex:result/{result_ref}")],
-        checks: Checks {
-            references: Check::Passed,
-            calculation: Check::Passed,
-            coverage: Check::Passed,
-            semantics: Check::ByConstruction,
-        },
+        evidence: Vec::new(),
     }
-}
-
-fn new_finding(f: &Finding) -> store::NewFinding {
-    let template = serde_json::to_value(&f.template).unwrap_or(Value::Null);
-    store::NewFinding {
-        template: template["template"].as_str().unwrap_or_default().to_owned(),
-        slots: template,
-        role: serde_json::to_value(f.role)
-            .ok()
-            .and_then(|v| v.as_str().map(str::to_owned))
-            .unwrap_or_default(),
-        status: serde_json::to_value(f.status)
-            .ok()
-            .and_then(|v| v.as_str().map(str::to_owned))
-            .unwrap_or_default(),
-        caveats: serde_json::to_value(&f.caveats).unwrap_or(Value::Null),
-        evidence: serde_json::to_value(&f.evidence).unwrap_or(Value::Null),
-        checks: serde_json::to_value(f.checks).unwrap_or(Value::Null),
-    }
-}
-
-/// A finding read back from its stored row.
-pub(crate) fn stored_finding(row: &Value) -> Option<Finding> {
-    Some(Finding {
-        template: serde_json::from_value(row["slots"].clone()).ok()?,
-        role: serde_json::from_value(row["role"].clone()).ok()?,
-        status: serde_json::from_value(row["status"].clone()).ok()?,
-        caveats: serde_json::from_value(row["caveats"].clone()).ok()?,
-        evidence: serde_json::from_value(row["evidence"].clone()).ok()?,
-        checks: serde_json::from_value(row["checks"].clone()).ok()?,
-    })
 }

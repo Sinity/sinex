@@ -22,8 +22,10 @@ and [docs/vocabulary.md](docs/vocabulary.md) for the names of things.
 - `crates/sinex-sources`: the parser trait, the drain, shared drivers
   (append-only file, SQLite rows, export archive, directory snapshot, live
   stream, API cursor, producer, media) and one module per source.
-- `crates/sinex-derivations`, `crates/sinex-analysis`: derivations and analysis as
-  pure code.
+- `crates/sinex-derivations`: derivations as pure code: fusion rules, metric
+  figures and the rest.
+- `crates/sinex-analysis`: statistics over derived events as pure code:
+  coverage, panels, methods, findings, briefs.
 - `crates/sinex-library`: the media library.
 - `crates/sinexd`: the daemon: the writer task, source tasks, `backfill`.
 - `crates/sinex-session`, `crates/sinex-capture`: the session service and the

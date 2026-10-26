@@ -143,8 +143,56 @@ inserts events.
 
 `sinex-derivations` holds computations over supplied events. The daemon's
 derivation runner reads their inputs and submits each key's new outputs
-through admission. `sinex-analysis` holds the analysis methods as pure code;
-the daemon reads their inputs and stores their results.
+through admission. Derived events are the one store for derived results:
+nothing a derivation or an analysis computes is kept anywhere else.
+
+A key reads events of some kinds in a time window: a kind is an event type,
+optionally only the events whose payload fields have given values (Sinnix lake
+observations of one lane, journal entries of one priority), so a key never
+reads a whole type to use a sliver of it.
+
+### Fusion
+
+Several sources often see the same thing: Atuin and zsh the same command,
+the compositor and ActivityWatch the same focus, a browser's history and its
+Takeout export the same visit, Sinex's live capture and the Sinnix capture
+lake the same clipboard change, notification or track. One mechanism joins
+them (`sinex-derivations/src/fusion.rs`). Each fused kind is a rule in
+`fusion/rules.rs`: its observers in preference order, each reading one
+source's events as sightings of something with an identity, a start and
+perhaps an end, and the windows within which sightings match. Sightings of
+one identity pair closest first within a short window, then within a longer
+one when the pair is unambiguous. For kinds whose sightings are spans or
+repeat (focus, plays), a group whose start falls inside a group led by a more
+preferred source joins it: ActivityWatch's title changes inside a focus the
+compositor reported, a player's reports of a track a streaming export holds.
+The fused event (`command.fused`, `focus.fused`, `visit.fused`, `play.fused`,
+`clipboard.fused`, `notification.fused`) takes its times from its most
+preferred member and each field from the most preferred member that has it,
+names every member as a parent and lists the sources in `observed_by`. A
+record no other source saw is fused alone, so a fused kind counts each thing
+once whichever sources were running. Metrics and aliases read the fused
+kinds.
+
+### Metric figures
+
+A metric (`sinex-derivations/src/figures.rs`) declares the kinds it counts,
+how it counts them (events, seconds of their intervals, or a ratio of two
+counts), the fields it breaks down by, and the sources whose coverage says a
+day was observed. `metric.hourly` writes one `metric.figure` per civil hour
+and breakdown value from a logical day's inputs; `metric.daily` adds a day's
+hourly figures up, never reading the inputs. Each figure names what it
+counted as parents.
+
+`sinex-analysis` reads those figures, never the events under them. A panel
+reads the daily figures through the query language (`figures`) with the
+caller's grants and the coverage of each metric's sources at the same commit
+position, from the store's runs and records; a day is observed, partly
+observed, recorded with unknown coverage, or missing with its reason, so a
+zero is only ever a measured zero. Methods (correlations, trends, change
+points, deviations) and the brief run over panels when asked for. Their
+answers are not stored: they depend on coverage, which is not an event, and
+asking again at the same commit position gives the same answer.
 
 The commit log orders committed events and visibility changes (hide, unhide,
 replacement). Hide and unhide change what is live and append to the visibility
@@ -182,7 +230,7 @@ civil hour of Google Fit points and writes one `health.figure` per data
 source (count, sum, minimum and maximum per value), naming the points as
 parents. `health.daily` reads a logical day's hourly figures, never the points;
 the logical day is the operator's `Civil` setting (Europe/Warsaw, from 04:00),
-the same one the activity summaries use.
+the same one the metric figures use.
 
 The derivation runner reads a pass's keys a page at a time: adjacent keys
 share one paged query, and a key is computed as soon as the pages pass its
@@ -205,6 +253,10 @@ material, stored and then admitted in one batch. The parser takes the caller's
 role and the submission time from the material's manifest. The report reads
 the live issues, resolutions and evidence in one transaction and scores them
 with `sinex-analysis`; nothing about forecasts is cached.
+
+Query aliases read only kinds something produces: `commands`, `focus`,
+`visits` and `plays` the fused kinds, `figures` the metric figures,
+`intervals` and `now` the state intervals.
 
 The `shell-sessions` query alias reads the `shell.session` derivation; `start`
 and `observed_until` cover the recorded commands, including a last command of

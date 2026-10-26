@@ -472,8 +472,6 @@ impl Api {
             | Request::AnalysisRun { .. }
             | Request::AnalysisPanel { .. }
             | Request::AnalysisWhy { .. }
-            | Request::AnalysisResults { .. }
-            | Request::AnalysisShow { .. }
             | Request::Brief { .. } => self.analysis(caller, request).await,
             Request::Follow { .. } => refused("follow streams; use the API's follow stream"),
             Request::Stage { .. } => not_built(

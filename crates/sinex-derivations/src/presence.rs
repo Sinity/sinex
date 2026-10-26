@@ -13,7 +13,7 @@
 //! The spans as reported stay as read; this is a separate judgment with its
 //! evidence counted, never a silent guess.
 use crate::derived_event::derived;
-use crate::{Computed, Env, InputQuery, KeyState, KeyView, Keyed, Neighbour};
+use crate::{Computed, Env, InputQuery, KeyState, KeyView, Keyed, Kind, Neighbour};
 use serde_json::{Value, json};
 use sinex_model::event_types::desktop::{PresenceInterval, PresenceSpan};
 use sinex_model::event_types::{CommandExecuted, CommandImported};
@@ -101,8 +101,7 @@ impl Keyed for Presence {
         );
         // A span that began on an earlier day and still covers this one.
         q.before.push(Neighbour {
-            event_types: vec![PresenceSpan::EVENT_TYPE],
-            equal: vec![],
+            kinds: vec![Kind::all(PresenceSpan::EVENT_TYPE)],
             per: Some("bucket"),
             count: 1,
         });

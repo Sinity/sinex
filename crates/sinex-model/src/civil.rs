@@ -57,6 +57,16 @@ impl Civil {
         &self.zone_name
     }
 
+    /// The setting as people write it: `04:00 Europe/Warsaw`.
+    pub fn label(&self) -> String {
+        format!(
+            "{:02}:{:02} {}",
+            self.day_starts_at.hour(),
+            self.day_starts_at.minute(),
+            self.zone_name
+        )
+    }
+
     fn instant(t: Timestamp) -> Result<jiff::Timestamp, CivilError> {
         jiff::Timestamp::from_nanosecond(t.unix_ns())
             .map_err(|_| CivilError::OutOfRange(format!("{t:?}")))

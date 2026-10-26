@@ -906,6 +906,63 @@
       ]
     },
     {
+      "name": "focus.fusion",
+      "kind": "keyed",
+      "inputs": [
+        "state.interval",
+        "window.span"
+      ],
+      "outputs": [
+        "focus.fused"
+      ]
+    },
+    {
+      "name": "visit.fusion",
+      "kind": "keyed",
+      "inputs": [
+        "browser.visit",
+        "browser.history_entry",
+        "lake.observed"
+      ],
+      "outputs": [
+        "visit.fused"
+      ]
+    },
+    {
+      "name": "play.fusion",
+      "kind": "keyed",
+      "inputs": [
+        "music.played",
+        "player.changed",
+        "lake.observed"
+      ],
+      "outputs": [
+        "play.fused"
+      ]
+    },
+    {
+      "name": "clipboard.fusion",
+      "kind": "keyed",
+      "inputs": [
+        "clipboard.copied",
+        "lake.observed"
+      ],
+      "outputs": [
+        "clipboard.fused"
+      ]
+    },
+    {
+      "name": "notification.fusion",
+      "kind": "keyed",
+      "inputs": [
+        "notification.shown",
+        "lake.observed"
+      ],
+      "outputs": [
+        "notification.fused"
+      ]
+    },
+    {
       "name": "shell.sessions",
       "kind": "keyed",
       "inputs": [
@@ -921,7 +978,6 @@
       "inputs": [
         "window.focused",
         "workspace.switched",
-        "window.span",
         "presence.span"
       ],
       "outputs": [
@@ -929,27 +985,32 @@
       ]
     },
     {
-      "name": "activity.hourly",
+      "name": "metric.hourly",
       "kind": "keyed",
       "inputs": [
         "command.fused",
         "shell.session",
-        "state.interval"
+        "presence.span",
+        "focus.fused",
+        "play.fused",
+        "git.commit",
+        "chat.message",
+        "mail.message",
+        "journal.entry",
+        "visit.fused"
       ],
       "outputs": [
-        "activity.summary"
+        "metric.figure"
       ]
     },
     {
-      "name": "activity.daily",
+      "name": "metric.daily",
       "kind": "keyed",
       "inputs": [
-        "command.fused",
-        "shell.session",
-        "state.interval"
+        "metric.figure"
       ],
       "outputs": [
-        "activity.summary"
+        "metric.figure"
       ]
     },
     {

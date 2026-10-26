@@ -23,10 +23,11 @@ and [docs/vocabulary.md](docs/vocabulary.md) names the concepts.
   Google, Samsung, Spotify, Reddit and others, notes vaults, git, the journal,
   file changes, the Sinnix capture lake, and AI sessions from Polylogue. An export
   archive is stored once and read in one pass for every source that uses it.
-- **Derivations.** Fused shell commands, shell sessions, state intervals,
-  presence, hourly and daily activity summaries, hourly and daily health
-  figures, and text read from screen stills, recomputed per changed key as
-  their inputs arrive.
+- **Derivations.** Fused records (shell commands, window focus, page visits,
+  plays, clipboard changes and notifications, each once however many sources
+  saw it), shell sessions, state intervals, presence, hourly and daily metric
+  figures, hourly and daily health figures, and text read from screen stills,
+  recomputed per changed key as their inputs arrive.
 - **Removal and replay.** Hide and unhide; excision, which deletes a record's
   events and its material's bytes for good, when the record is alone in its
   material and its source never reads a record twice (live streams, media
@@ -40,8 +41,9 @@ and [docs/vocabulary.md](docs/vocabulary.md) names the concepts.
 - **Reading.** One query language, search, recall, provenance and read-only
   SQL, through `sinexctl`, the HTTP API and MCP, all generated from one command
   table. Committed events are published in commit order on a NATS stream.
-- **Analysis.** Metrics per logical day with their coverage, registered
-  methods (correlations, trends, change points, deviations), stored results, a
+- **Analysis.** Panels of the daily metric figures with the coverage that
+  tells a zero from an unobserved day, registered methods (correlations,
+  trends, change points, deviations) run on request over those figures, a
   daily brief, and probability forecasts with a Brier-score report.
 - **Library.** A media library on the same storage: items, renditions, tags,
   properties, collections, ratings and pairwise ranking.

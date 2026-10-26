@@ -1,6 +1,6 @@
 [package]
 name = "sinex-analysis"
-description = "The analysis layer as pure code: metrics, panels, methods, requests, findings, presentation."
+description = "Statistics over derived events as pure code: coverage, panels, methods, findings, presentation."
 version.workspace = true
 edition.workspace = true
 publish.workspace = true
@@ -8,11 +8,11 @@ license.workspace = true
 
 [dependencies]
 sinex-model.workspace = true
+sinex-derivations.workspace = true
 serde.workspace = true
 serde_json.workspace = true
-blake3.workspace = true
 thiserror.workspace = true
-time.workspace = true
+jiff.workspace = true
 
 [dev-dependencies]
 devkit.workspace = true

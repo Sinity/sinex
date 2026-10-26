@@ -27,6 +27,20 @@ fn default_min_pairs() -> u64 {
 pub struct LaggedCorrelation;
 pub struct RankCorrelation;
 
+/// The correlation family over `series`: every pair at lags 0 and 1, fixed
+/// before any result is seen, so the q-values account for every test made.
+pub fn family<'a>(series: &[&'a str]) -> Vec<(&'a str, &'a str, i32)> {
+    let mut out = Vec::new();
+    for (i, x) in series.iter().enumerate() {
+        for y in &series[i + 1..] {
+            for lag in [0, 1] {
+                out.push((*x, *y, lag));
+            }
+        }
+    }
+    out
+}
+
 impl Method for LaggedCorrelation {
     const ID: &'static str = "lagged_correlation";
     const VERSION: u32 = 1;

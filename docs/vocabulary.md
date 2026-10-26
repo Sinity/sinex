@@ -44,7 +44,7 @@ these names and no others.
 - **equivalence key**: the per-type key that recognizes the same thing seen again in another material.
 - **clocks**: `ts_orig` (when it happened, or unknown), `ts_coided` (when Sinex read it, from the UUIDv7 ID), `ts_persisted` (when it was committed).
 - **derived event**: an event computed by a derivation, naming its parents.
-- **fused command**: the `command.fused` event that joins one shell command seen by several sources.
+- **fusion**: joining what several sources observed of one thing into one **fused record**: `command.fused`, `focus.fused`, `visit.fused`, `play.fused`, `clipboard.fused`, `notification.fused`. Each fused kind has one **fusion rule**; an **observer** reads one source's events for it as **sightings** (an identity, a start, maybe an end, the fields it supplies). A **fused command** is a `command.fused` event.
 - **shell session**: the `shell.session` derived event: a run of commands in one terminal; `recall last` reads around the latest one.
 - **batch**: what a producer hands the writer: records with their events or failures, and progress.
 - **run**: one execution of a producer; every event names its run.
@@ -56,12 +56,18 @@ these names and no others.
 - **commit log**: committed events in commit order; each entry has a **commit position**.
 - **visibility change**: a reading leaving or rejoining the live set (archived, hidden, unhidden), numbered by its **change position** in `audit.archive_changes`.
 - **derivation**: keyed (recomputes a **dirty key** when its inputs change; a **computed key** is one key's new output set) or per-event.
+- **kind** (of what a key reads): events of one type, optionally only those whose payload fields have given values.
+- **metric**: a declared count over events (events, seconds of their intervals, or a ratio), with its **dimensions** (payload fields it is broken down by) and the sources that observe it. A **tracked metric** is one the brief compares with its recent level.
+- **figure**: a metric's number over one civil hour or logical day, total or for one **dimension value**, as a `metric.figure` event; a **health figure** (`health.figure`) is the same for one series of health points.
+- **coverage**: the stretches in which a source could have recorded what it records, computed from its runs and records when asked for.
+- **panel**: logical days by metrics, each **cell** observed, partial, recorded or missing with its reason, from the daily figures and coverage.
+- **finding**: a typed statement in a brief or a recipe's answer, with its caveats and the figures it cites.
+- **recipe**: a shipped analysis (correlations, trends, deviations) run over a panel when asked for.
 - **derivation runner**, **binding runner**: the daemon tasks that run derivations and keep configured bindings read.
 - **comparison**: what a recompute with `--compare` would change, kept in `derivation.comparisons` without writing outputs.
 - **replay**: reading stored bytes again with the current parsers, one part sequence per transaction.
 - **query table**: what a query reads (`events`, `archive`, `materials`, `runs`, `sources`, `operations`, `failures`), each with its fields.
 - **reference**: how a command names one event: an event ID or `sinex:ev/<id>`, `sinex:record/<material>/<offset>[/<event type>[/<output index>]]`, or `sinex:key/<source>/<event type>/<equivalence key>`.
-- **product**: a stored analysis result over many events; a **finding** is a statement about one.
 - **operation**: something the operator or an agent did to Sinex, attributed and logged.
 - **purpose**: what a source's events are for (`command fusion and shell recall`).
 
@@ -97,7 +103,7 @@ these names and no others.
 | custody, reservation, pending (for bytes) | unadmitted bytes |
 | publication (for bytes) | write, install |
 | frozen, freeze | fixed, saved, or name the thing itself |
-| canonical | fused (commands), sorted (JSON) |
+| canonical | fused (records), sorted (JSON) |
 | basis | name the thing itself |
 | candidate | selected |
 | authority, lease | access, grant |
@@ -118,6 +124,8 @@ these names and no others.
 | ordinal | output index |
 | unit (of a query) | table |
 | shell group | shell session |
+| standing question, analysis result, product | a recipe's answer, a finding |
+| summary (activity) | figure |
 | envelope (of an event) | metadata |
 | consumer (of a source) | purpose |
 | stage (outside admission) | plan, temporary file, write |

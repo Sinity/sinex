@@ -128,9 +128,8 @@ enum Command {
         identity_file: Option<PathBuf>,
     },
     /// Run every derivation until nothing is dirty, through the writer, and
-    /// report counts and rates. The daemon's runner, run to completion,
-    /// including the maintained metric values. Create the schema first
-    /// with `sinexd admin schema`.
+    /// report counts and rates. The daemon's runner, run to completion.
+    /// Create the schema first with `sinexd admin schema`.
     Derive {
         #[arg(long)]
         database: String,
@@ -216,12 +215,7 @@ async fn run_derive(
     host: String,
     json: bool,
 ) -> Result<(), String> {
-    let (runner, writer_task) = local_runner(&database, &host, store.as_deref()).await?;
-    let mut runner = runner.with_maintained(vec![Box::new(analysis::MetricValues::new(
-        analysis::Settings::operator_default(),
-        2,
-        std::time::Duration::ZERO,
-    ))]);
+    let (mut runner, writer_task) = local_runner(&database, &host, store.as_deref()).await?;
     let started = std::time::Instant::now();
     runner.catch_up().await?;
     let wall = started.elapsed();

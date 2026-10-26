@@ -1,5 +1,5 @@
-//! Shell commands as captured (Atuin, zsh) and as derived: one fused command
-//! from every source that saw it, and shell sessions.
+//! Shell commands as captured (Atuin, zsh) and the shell sessions derived
+//! from fused commands.
 use crate::Timestamp;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -82,34 +82,6 @@ impl crate::EventPayload for CommandImported {
     fn payload_schema() -> Value {
         serde_json::to_value(schemars::schema_for!(Self)).expect("schemas serialize")
     }
-}
-
-/// One command run, combined from every source that saw it (Atuin, zsh,
-/// kitty). Derived by the fusion derivation with every source record as a
-/// parent. Identified by its preferred source record, not by host, time and
-/// text: the same command run twice in one second is two runs (zsh history
-/// holds about a thousand such pairs on the operator's machine).
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
-#[event(
-    type = "command.fused",
-    key = ["host", "record"],
-    replace = newer,
-    time = started_at,
-    quality = intrinsic
-)]
-pub struct CommandFused {
-    /// The preferred member's identity: `<type>:<native id>` when the source
-    /// has one (Atuin), otherwise its record location.
-    pub record: String,
-    pub command: String,
-    pub host: String,
-    pub started_at: Timestamp,
-    pub cwd: Option<String>,
-    pub session: Option<String>,
-    pub duration_ns: Option<i64>,
-    pub exit_code: Option<i64>,
-    /// The sources that observed this command.
-    pub observed_by: Vec<String>,
 }
 
 /// A run of shell commands on one host with no gap longer than the session

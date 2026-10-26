@@ -273,8 +273,7 @@ pub struct Alias {
     /// Whether rows have a span (`start`, `end`), for `during` and `containing`.
     pub spans: bool,
     /// A fixed payload condition beyond the kind, `(field, value)`: `now` is
-    /// `intervals` whose `open` is `true`, `days` are summaries whose `grain`
-    /// is `day`.
+    /// `intervals` whose `open` is `true`.
     pub only: Option<(&'static str, &'static str)>,
 }
 
@@ -348,22 +347,68 @@ pub const ALIASES: &[Alias] = &[
         only: Some(("open", "true")),
     },
     Alias {
-        name: "days",
-        kinds: &["activity.summary"],
-        phrase: "daily activity summaries",
+        name: "figures",
+        kinds: &["metric.figure"],
+        phrase: "metric figures per hour and per day",
         fields: &[
+            f("metric", FieldType::Text, "metric"),
+            f("grain", FieldType::Enum(&["hour", "day"]), "grain"),
             f("day", FieldType::Text, "logical day"),
-            f("commands", FieldType::Integer, "commands"),
-            f("failed_commands", FieldType::Integer, "failed commands"),
-            f("sessions", FieldType::Integer, "shell sessions"),
-            f(
-                "session_seconds",
-                FieldType::Number,
-                "seconds in shell sessions",
-            ),
+            f("dimension", FieldType::Text, "breakdown field"),
+            f("dimension_value", FieldType::Text, "breakdown value"),
+            f("value", FieldType::Number, "value"),
+            f("numerator", FieldType::Number, "numerator"),
+            f("denominator", FieldType::Number, "denominator"),
+            f("rows", FieldType::Integer, "events counted"),
+            f("start", FieldType::Time, "period start"),
+            f("end", FieldType::Time, "period end"),
+        ],
+        spans: true,
+        only: None,
+    },
+    Alias {
+        name: "focus",
+        kinds: &["focus.fused"],
+        phrase: "window focus, each once however many sources saw it",
+        fields: &[
+            f("app", FieldType::Text, "application"),
+            f("title", FieldType::Text, "window title"),
+            f("start", FieldType::Time, "start"),
+            f("end", FieldType::Time, "end"),
+            f("duration", FieldType::Number, "duration in seconds"),
+            f("observed_by", FieldType::Text, "observing sources"),
+        ],
+        spans: true,
+        only: None,
+    },
+    Alias {
+        name: "visits",
+        kinds: &["visit.fused"],
+        phrase: "page visits, each once however many sources saw it",
+        fields: &[
+            f("url", FieldType::Text, "address"),
+            f("title", FieldType::Text, "page title"),
+            f("observed_by", FieldType::Text, "observing sources"),
         ],
         spans: false,
-        only: Some(("grain", "day")),
+        only: None,
+    },
+    Alias {
+        name: "plays",
+        kinds: &["play.fused"],
+        phrase: "tracks played, each once however many sources saw it",
+        fields: &[
+            f("title", FieldType::Text, "track title"),
+            f("artist", FieldType::Text, "artist"),
+            f("album", FieldType::Text, "album"),
+            f("player", FieldType::Text, "player"),
+            f("start", FieldType::Time, "start"),
+            f("end", FieldType::Time, "end"),
+            f("duration", FieldType::Number, "duration in seconds"),
+            f("observed_by", FieldType::Text, "observing sources"),
+        ],
+        spans: true,
+        only: None,
     },
     Alias {
         name: "items",

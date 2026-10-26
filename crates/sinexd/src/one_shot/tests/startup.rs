@@ -136,7 +136,7 @@ async fn empty_database_needs_explicit_initialization_before_ordinary_startup(
     let mut conn = <sqlx::PgConnection as sqlx::Connection>::connect(&url)
         .await
         .unwrap();
-    conn.execute("DROP SCHEMA sinex_schema,core,audit,raw,registry,derivation,privacy,telemetry,event_types,analysis CASCADE").await.unwrap();
+    conn.execute("DROP SCHEMA sinex_schema,core,audit,raw,registry,derivation,privacy,telemetry,event_types CASCADE").await.unwrap();
     let store = tempfile::tempdir().unwrap();
     let refused = match OneShot::open(&url, store.path()).await {
         Err(_) => true,

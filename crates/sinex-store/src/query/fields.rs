@@ -214,11 +214,20 @@ pub(crate) fn alias_field(alias: &str, name: &str) -> Option<String> {
             payload_number("duration_ns")
         ),
         ("commands", "session") => payload_text("session"),
-        ("commands", "observed_by") => {
+        ("commands" | "focus" | "visits" | "plays", "observed_by") => {
             "(SELECT string_agg(x, ',') FROM jsonb_array_elements_text(\
               CASE WHEN jsonb_typeof({t}.payload -> 'observed_by') = 'array' THEN {t}.payload -> 'observed_by' END) x)"
                 .to_string()
         }
+        ("focus", "app" | "title") | ("visits", "url" | "title") => payload_text(name),
+        ("plays", "title" | "artist" | "album" | "player") => payload_text(name),
+        ("focus" | "plays", "start") => payload_time("started_at"),
+        ("focus" | "plays", "end") => payload_time("ended_at"),
+        ("focus" | "plays", "duration") => format!(
+            "extract(epoch from ({} - {}))",
+            payload_time("ended_at"),
+            payload_time("started_at")
+        ),
         ("items", "item" | "label" | "content" | "media_type") => payload_text(name),
         ("items", "revision") => payload_number(name),
         ("media", "path" | "media_type" | "content") => payload_text(name),
@@ -227,9 +236,12 @@ pub(crate) fn alias_field(alias: &str, name: &str) -> Option<String> {
         ("media", "stored") => payload_bool(name),
         ("assignments", "item") => payload_text("target,item"),
         ("assignments", "field" | "value" | "level") => payload_text(name),
-        ("days", "commands" | "failed_commands" | "sessions" | "session_seconds") => {
-            payload_number(name)
+        ("figures", "metric" | "grain" | "day" | "dimension" | "dimension_value") => {
+            payload_text(name)
         }
+        ("figures", "value" | "numerator" | "denominator" | "rows") => payload_number(name),
+        ("figures", "start") => payload_time("period_start"),
+        ("figures", "end") => payload_time("period_end"),
         ("intervals" | "now", "start") => payload_time("started_at"),
         ("intervals" | "now", "end") => payload_time("ended_at"),
         ("intervals" | "now", "duration") => format!(
@@ -242,7 +254,6 @@ pub(crate) fn alias_field(alias: &str, name: &str) -> Option<String> {
         ("intervals" | "now", "open") => {
             "(coalesce(jsonb_typeof({t}.payload -> 'ended_at'), 'null') = 'null')".to_string()
         }
-        ("days", "day" | "grain") => payload_text(name),
         _ => return None,
     })
 }

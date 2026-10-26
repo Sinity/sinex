@@ -724,37 +724,24 @@ async fn sealed_values_need_the_unlocked_operator_and_die_with_their_key(
 }
 
 #[devkit::test]
-async fn analysis_calls_run_store_and_brief_through_the_api(db: devkit::pg::TestDatabase) {
+async fn analysis_calls_run_and_brief_through_the_api(db: devkit::pg::TestDatabase) {
     let w = world(db).await;
     let (status, body) = call(&w, Some(READ), json!({"method": "analysis-catalog"})).await;
     assert_eq!(status, StatusCode::OK, "{body}");
-    assert!(
-        body["result"]["metrics"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .any(|m| m["id"] == "shell.commands")
-    );
+    let commands = body["result"]["metrics"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|m| m["id"] == "shell.commands")
+        .unwrap()
+        .clone();
+    assert_eq!(commands["counts"][0]["event_type"], "command.fused");
 
     let run = json!({"method": "analysis-run", "recipe": "deviations", "from": "2026-09-01", "to": "2026-09-30"});
-    let (status, _) = call(&w, Some(READ), run.clone()).await;
-    assert_eq!(
-        status,
-        StatusCode::FORBIDDEN,
-        "running stores a product: agent access"
-    );
-    let (status, body) = call(&w, Some(AGENT), run).await;
-    assert_eq!(status, StatusCode::OK, "{body}");
-    let id = body["result"]["result"].as_str().unwrap().to_owned();
-    let (status, body) = call(
-        &w,
-        Some(READ),
-        json!({"method": "analysis-show", "result": id}),
-    )
-    .await;
+    let (status, body) = call(&w, Some(READ), run).await;
     assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(
-        body["result"]["status"], "not_estimable",
+        body["result"]["tables"]["metrics"][0]["anomaly"]["status"], "not_estimable",
         "nothing observed: an answer, not a number"
     );
 
@@ -767,13 +754,13 @@ async fn analysis_calls_run_store_and_brief_through_the_api(db: devkit::pg::Test
     assert_eq!(status, StatusCode::OK, "{body}");
     let text = body["result"]["text"].as_str().unwrap();
     assert!(
-        text.contains("## Data quality") && text.contains("days 04:00 UTC"),
+        text.contains("## Data quality") && text.contains("days 04:00 Europe/Warsaw"),
         "{text}"
     );
 
     let (_, body) = call(
         &w,
-        Some(AGENT),
+        Some(READ),
         json!({"method": "analysis-run", "recipe": "astrology", "from": "2026-09-01", "to": "2026-09-02"}),
     )
     .await;
@@ -786,7 +773,7 @@ async fn analysis_calls_run_store_and_brief_through_the_api(db: devkit::pg::Test
 }
 
 #[devkit::test]
-async fn analysis_panel_why_and_results_answer_through_the_api(db: devkit::pg::TestDatabase) {
+async fn analysis_panel_and_why_answer_through_the_api(db: devkit::pg::TestDatabase) {
     let w = world(db).await;
     let (status, body) = call(
         &w,
@@ -835,10 +822,6 @@ async fn analysis_panel_why_and_results_answer_through_the_api(db: devkit::pg::T
             .unwrap()
             .starts_with("no metric astrology")
     );
-
-    let (status, body) = call(&w, Some(READ), json!({"method": "analysis-results"})).await;
-    assert_eq!(status, StatusCode::OK, "{body}");
-    assert_eq!(body["result"]["results"], json!([]));
 }
 
 mod discovery;
