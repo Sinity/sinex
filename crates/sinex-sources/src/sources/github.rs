@@ -893,7 +893,9 @@ impl Github {
         let token = self.token()?;
         let repository = self.repository()?;
         let (owner, name) = repository.split_once('/').ok_or_else(|| {
-            DriverError::Io(format!("GitHub repository {repository:?} is not owner/name"))
+            DriverError::Io(format!(
+                "GitHub repository {repository:?} is not owner/name"
+            ))
         })?;
         let mut records = Vec::new();
 
