@@ -1,6 +1,7 @@
-use super::rules::{CLIPBOARD, COMMANDS, FOCUS, NOTIFICATIONS, PLAYS, RULES, VISITS};
+use super::rules::{CLIPBOARD, COMMANDS, FOCUS, MAIL, NOTIFICATIONS, PLAYS, RULES, VISITS};
 use super::*;
 use sinex_model::event_types::browser::{BrowserHistoryEntry, BrowserVisit};
+use sinex_model::event_types::communication::MailMessage;
 use sinex_model::event_types::desktop::WindowSpan;
 use sinex_model::event_types::machine::LakeObservation;
 use sinex_model::event_types::media::MusicPlayed;
@@ -637,4 +638,54 @@ fn a_notification_seen_live_and_in_the_lake_is_one_notification() {
         observed_by(joined),
         ["desktop.notifications", "desktop.lake"]
     );
+}
+
+// Mail: one message stored by several mail sources.
+
+fn mail(source: &str, id: &str, secs: f64) -> Event {
+    captured(
+        &MailMessage {
+            message_id: id.into(),
+            date: Some(at(secs)),
+            from: vec!["a@example.org".into()],
+            to: vec![],
+            cc: vec![],
+            subject: Some(format!("about {id}")),
+            in_reply_to: None,
+            references: vec![],
+            labels: vec![],
+            thread_id: None,
+            text: None,
+            html_only: false,
+            attachments: vec![],
+            size: 10,
+        },
+        source,
+        Class::Open,
+    )
+}
+
+#[devkit::test]
+fn a_message_in_imap_and_an_mbox_is_one_message() {
+    let out = fuse(
+        &MAIL,
+        &[
+            mail("communication.mbox", "<1@x>", H + 5.0),
+            mail("communication.imap", "<1@x>", H + 5.0),
+            mail("communication.imap", "<2@x>", H + 5.0),
+        ],
+    );
+    assert_eq!(out.len(), 2, "{out:?}");
+    let joined = out.iter().find(|m| m["message_id"] == "<1@x>").unwrap();
+    assert_eq!(
+        observed_by(joined),
+        ["communication.imap", "communication.mbox"]
+    );
+    assert_eq!(joined["subject"], "about <1@x>");
+}
+
+#[devkit::test]
+fn mail_from_a_source_no_observer_names_is_not_fused() {
+    let out = fuse(&MAIL, &[mail("communication.elsewhere", "<1@x>", H + 5.0)]);
+    assert!(out.is_empty());
 }

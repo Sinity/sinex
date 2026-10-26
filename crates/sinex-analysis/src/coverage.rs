@@ -51,7 +51,10 @@ pub fn completeness(source: &str) -> Completeness {
         | "browser.navigation"
         | "communication.weechat-log"
         | "communication.mbox"
-        | "communication.maildir" => Completeness::Sample,
+        | "communication.maildir"
+        | "communication.imap"
+        | "communication.outlook"
+        | "communication.outlook-csv" => Completeness::Sample,
         _ => Completeness::Unknown,
     }
 }
@@ -67,6 +70,8 @@ pub fn capture_mode(source: &str) -> CaptureMode {
         | "browser.takeout-chrome-history"
         | "reading.raindrop"
         | "communication.mbox"
+        | "communication.outlook"
+        | "communication.outlook-csv"
         | "communication.weechat-log" => CaptureMode::Export,
         _ => CaptureMode::Polled,
     }

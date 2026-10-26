@@ -48,6 +48,9 @@ pub struct Observer {
     pub event_type: &'static str,
     /// Payload fields an event must have these values in to be read.
     pub only: &'static [(&'static str, &'static str)],
+    /// The one source whose events it reads, when several sources write the
+    /// same type (mail from IMAP and from an mbox); `None` reads any.
+    pub source: Option<&'static str>,
     /// Whether sightings are spans, so one without an end is still open.
     pub spans: bool,
     pub read: fn(&Event) -> Option<Sighting>,
@@ -138,7 +141,9 @@ fn read<'a>(rule: &FusionRule, event: &'a Event) -> Option<Seen<'a>> {
     if event.record_state == RecordState::Removed {
         return None;
     }
-    let rank = rule.observer(event.event_type, &event.payload)?;
+    let rank = rule.observers.iter().position(|o| {
+        o.admits(event.event_type, &event.payload) && o.source.is_none_or(|s| s == event.source)
+    })?;
     let observer = &rule.observers[rank];
     let sighting = (observer.read)(event)?;
     Some(Seen {

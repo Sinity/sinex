@@ -5,8 +5,9 @@
 //!
 //! Not fused: ActivityWatch's browser-tab spans (they record which tab held
 //! attention, not that a page was visited, so they would add visits nobody
-//! made) and window samples from arbtt (one record every few seconds, not one
-//! per focus).
+//! made), window samples from arbtt (one record every few seconds, not one
+//! per focus), and the terminal's command reports (they carry no host, which
+//! a command's identity needs).
 use super::{FusionRule, Observer, Sighting};
 use serde_json::{Map, Value, json};
 use sinex_model::Event;
@@ -84,6 +85,7 @@ pub static COMMANDS: FusionRule = FusionRule {
         Observer {
             event_type: "command.executed",
             only: &[],
+            source: None,
             spans: false,
             read: |e| {
                 let p = &e.payload;
@@ -101,6 +103,7 @@ pub static COMMANDS: FusionRule = FusionRule {
         Observer {
             event_type: "command.imported",
             only: &[],
+            source: None,
             spans: false,
             read: |e| command(e, Map::new()),
         },
@@ -143,6 +146,7 @@ pub static FOCUS: FusionRule = FusionRule {
         Observer {
             event_type: "state.interval",
             only: &[("state_kind", "desktop.focus")],
+            source: None,
             spans: true,
             read: |e| {
                 let p = &e.payload;
@@ -157,6 +161,7 @@ pub static FOCUS: FusionRule = FusionRule {
         Observer {
             event_type: "window.span",
             only: &[],
+            source: None,
             spans: true,
             read: |e| {
                 let p = &e.payload;
@@ -194,18 +199,21 @@ pub static VISITS: FusionRule = FusionRule {
         Observer {
             event_type: "browser.visit",
             only: &[],
+            source: None,
             spans: false,
             read: |e| visit(e, text(&e.payload, "/url")?, text(&e.payload, "/title")),
         },
         Observer {
             event_type: "browser.history_entry",
             only: &[],
+            source: None,
             spans: false,
             read: |e| visit(e, text(&e.payload, "/url")?, text(&e.payload, "/title")),
         },
         Observer {
             event_type: "lake.observed",
             only: &[("lane", "browser-nav-edges")],
+            source: None,
             spans: false,
             read: |e| {
                 let p = &e.payload;
@@ -269,6 +277,7 @@ pub static PLAYS: FusionRule = FusionRule {
         Observer {
             event_type: "music.played",
             only: &[],
+            source: None,
             spans: true,
             read: |e| {
                 let p = &e.payload;
@@ -286,6 +295,7 @@ pub static PLAYS: FusionRule = FusionRule {
         Observer {
             event_type: "player.changed",
             only: &[],
+            source: None,
             spans: false,
             read: |e| {
                 let p = &e.payload;
@@ -308,6 +318,7 @@ pub static PLAYS: FusionRule = FusionRule {
         Observer {
             event_type: "lake.observed",
             only: &[("lane", "mpris")],
+            source: None,
             spans: false,
             read: |e| {
                 let p = &e.payload;
@@ -384,6 +395,7 @@ pub static CLIPBOARD: FusionRule = FusionRule {
         Observer {
             event_type: "clipboard.copied",
             only: &[],
+            source: None,
             spans: false,
             read: |e| {
                 let p = &e.payload;
@@ -402,12 +414,14 @@ pub static CLIPBOARD: FusionRule = FusionRule {
         Observer {
             event_type: "lake.observed",
             only: &[("lane", "clipboard")],
+            source: None,
             spans: false,
             read: |e| lake_copy(e, "clipboard"),
         },
         Observer {
             event_type: "lake.observed",
             only: &[("lane", "primary")],
+            source: None,
             spans: false,
             read: |e| lake_copy(e, "primary"),
         },
@@ -441,6 +455,7 @@ pub static NOTIFICATIONS: FusionRule = FusionRule {
         Observer {
             event_type: "notification.shown",
             only: &[],
+            source: None,
             spans: false,
             read: |e| {
                 let p = &e.payload;
@@ -450,6 +465,7 @@ pub static NOTIFICATIONS: FusionRule = FusionRule {
         Observer {
             event_type: "lake.observed",
             only: &[("lane", "notifications")],
+            source: None,
             spans: false,
             read: |e| {
                 let p = &e.payload;
@@ -470,6 +486,54 @@ pub static NOTIFICATIONS: FusionRule = FusionRule {
     end_field: None,
 };
 
+// Mail: one message stored by several mail sources.
+
+fn mail(event: &Event) -> Option<Sighting> {
+    let p = &event.payload;
+    let message_id = text(p, "/message_id")?;
+    sighting(
+        event,
+        message_id.to_owned(),
+        None,
+        fields([
+            ("message_id", Some(json!(message_id))),
+            ("subject", p.get("subject").cloned()),
+            ("from", p.get("from").cloned()),
+            ("thread_id", p.get("thread_id").cloned()),
+        ]),
+    )
+}
+
+const fn mail_from(source: &'static str) -> Observer {
+    Observer {
+        event_type: "mail.message",
+        only: &[],
+        source: Some(source),
+        spans: false,
+        read: mail,
+    }
+}
+
+pub static MAIL: FusionRule = FusionRule {
+    derivation: "mail.fusion",
+    version: 1,
+    output: "mail.fused",
+    observers: &[
+        mail_from("communication.imap"),
+        mail_from("communication.maildir"),
+        mail_from("communication.mbox"),
+        mail_from("communication.outlook"),
+        mail_from("communication.outlook-csv"),
+    ],
+    inputs: &["mail.message"],
+    // The same `Date` header wherever the message is stored.
+    window_ns: secs(1),
+    fallback_ns: secs(1),
+    absorb_ns: None,
+    start_field: "sent_at",
+    end_field: None,
+};
+
 /// Every fusion rule.
 pub static RULES: &[&FusionRule] = &[
     &COMMANDS,
@@ -478,4 +542,5 @@ pub static RULES: &[&FusionRule] = &[
     &PLAYS,
     &CLIPBOARD,
     &NOTIFICATIONS,
+    &MAIL,
 ];

@@ -123,6 +123,7 @@ pub const ALL: &[RegisteredEventType] = &[
     info::<fused::PlayFused>(),
     info::<fused::ClipboardFused>(),
     info::<fused::NotificationFused>(),
+    info::<fused::MailFused>(),
     info::<ShellSession>(),
     info::<StateInterval>(),
     info::<MetricFigure>(),

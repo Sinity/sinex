@@ -24,8 +24,8 @@ and [docs/vocabulary.md](docs/vocabulary.md) names the concepts.
   file changes, the Sinnix capture lake, and AI sessions from Polylogue. An export
   archive is stored once and read in one pass for every source that uses it.
 - **Derivations.** Fused records (shell commands, window focus, page visits,
-  plays, clipboard changes and notifications, each once however many sources
-  saw it), shell sessions, state intervals, presence, hourly and daily metric
+  plays, clipboard changes, notifications and mail, each once however many
+  sources saw it), shell sessions, state intervals, presence, hourly and daily metric
   figures, hourly and daily health figures, and text read from screen stills,
   recomputed per changed key as their inputs arrive.
 - **Removal and replay.** Hide and unhide; excision, which deletes a record's
