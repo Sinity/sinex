@@ -140,12 +140,15 @@ pub struct Seen {
     pub modified_ns: i128,
 }
 
+/// Each issue's line, by ID.
+type Issues = BTreeMap<String, Map<String, Value>>;
+
 pub struct Export {
     pub path: PathBuf,
     pub host: String,
     /// The file as last read, with each issue's line by ID: what the cursor
     /// naming that reading stands for. Empty until the first read.
-    issues: Mutex<Option<(Seen, BTreeMap<String, Map<String, Value>>)>>,
+    issues: Mutex<Option<(Seen, Issues)>>,
 }
 
 impl Export {
@@ -199,7 +202,7 @@ impl Api for Export {
             });
         }
         let bytes = std::fs::read(&self.path).map_err(|e| io(&self.path, e))?;
-        let mut current: BTreeMap<String, Map<String, Value>> = BTreeMap::new();
+        let mut current = Issues::new();
         let mut unreadable = Vec::new();
         for line in bytes.split(|b| *b == b'\n').filter(|l| !l.is_empty()) {
             match serde_json::from_slice::<Map<String, Value>>(line) {
