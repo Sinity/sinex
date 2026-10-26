@@ -275,10 +275,10 @@ fn appended_plain_records_keep_distinct_material_locations_on_replay() {
         .unwrap()
         .material
         .unwrap();
-    assert_eq!(first.bytes, b"pwd\n: 10:0;pwd\n");
-    let (_, carry) = observations(&first.bytes, 0, serde_json::Value::Null);
-    let cursor = (first.cursor_at)(first.bytes.len()).unwrap();
-    let mut restarted = AppendState::rebuild([(first.id, first.bytes.as_slice())], SPEC.framer);
+    assert_eq!(first.body(), b"pwd\n: 10:0;pwd\n");
+    let (_, carry) = observations(first.body(), 0, serde_json::Value::Null);
+    let cursor = (first.cursor_at)(first.body().len()).unwrap();
+    let mut restarted = AppendState::rebuild([(first.id, first.body())], SPEC.framer);
     std::fs::OpenOptions::new()
         .append(true)
         .open(&path)
@@ -292,15 +292,15 @@ fn appended_plain_records_keep_distinct_material_locations_on_replay() {
         .unwrap();
     assert_eq!(second.previous_part, Some(first.id));
     assert_ne!(second.id, first.id);
-    assert_eq!(second.bytes, b"printf a\\\nb\npwd\n: 10:0;pwd\n");
-    assert_eq!(second.records, frame(&second.bytes).0);
-    let (actual, _) = observations(&second.bytes, first.bytes.len(), carry.clone());
+    assert_eq!(second.body(), b"printf a\\\nb\npwd\n: 10:0;pwd\n");
+    assert_eq!(second.records, frame(second.body()).0);
+    let (actual, _) = observations(second.body(), first.body().len(), carry.clone());
     assert_eq!(actual[0][1]["command"], "printf a\nb");
     assert_eq!(actual[1][3], "unknown");
     assert_eq!(actual[2][1]["n"], 1);
     assert_eq!(
         actual,
-        observations(&second.bytes, first.bytes.len(), carry).0
+        observations(second.body(), first.body().len(), carry).0
     );
 }
 

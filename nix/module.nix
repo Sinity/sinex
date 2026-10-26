@@ -28,12 +28,10 @@ let
       ${cfg.session.producer} = { passwordFile = cfg.session.passwordFile; };
     };
 
-  # A NATS URL with a user and a password read from a file at start; the
-  # password is URL-encoded so any characters work.
-  natsUrlScript = { user, passwordFile, address }: ''
-    pw=$(${pkgs.jq}/bin/jq -rRs 'rtrimstr("\n") | @uri' < "${passwordFile}")
-    nats_url="nats://${user}:$pw@${address}"
-  '';
+  # The NATS server and user, and the file the password is read from: a
+  # password never appears in a process's arguments.
+  natsArgs = { user, passwordFile, address }:
+    "--nats ${escapeShellArg "nats://${user}@${address}"} --nats-password-file \"${passwordFile}\"";
 
   # A failing service is restarted three times in ten minutes, 30 s apart,
   # then left stopped.
@@ -489,6 +487,9 @@ in
           RuntimeDirectoryPreserve = "yes";
           LoadCredential = [ "nats:${cfg.nats.daemonPasswordFile}" ];
           UMask = "0007";
+          # A schema upgrade can read every stored event; a start timeout
+          # would roll it back and begin it again.
+          TimeoutStartSec = "infinity";
         } // lib.optionalAttrs cfg.readAnyFile {
           AmbientCapabilities = [ "CAP_DAC_READ_SEARCH" ];
           CapabilityBoundingSet = [ "CAP_DAC_READ_SEARCH" ];
@@ -505,11 +506,10 @@ in
           ${cfg.package}/bin/sinexd admin schema --database ${escapeShellArg dbUrl}
         '';
         script = ''
-          ${natsUrlScript { user = "sinexd"; passwordFile = "$CREDENTIALS_DIRECTORY/nats"; address = natsListen; }}
           exec ${cfg.package}/bin/sinexd run \
             --database ${escapeShellArg dbUrl} \
             --store ${escapeShellArg cfg.storeDir} \
-            --nats "$nats_url" \
+            ${natsArgs { user = "sinexd"; passwordFile = "$CREDENTIALS_DIRECTORY/nats"; address = natsListen; }} \
             --subject-root ${escapeShellArg cfg.nats.subjectRoot} \
             --host ${escapeShellArg cfg.host} \
             --socket ${escapeShellArg cfg.api.socket} \
@@ -552,9 +552,8 @@ in
         # busctl, wl-paste, grim, pw-record and ffmpeg run as capture children.
         path = with pkgs; [ systemd wl-clipboard grim pipewire ffmpeg-headless ];
         script = ''
-          ${natsUrlScript { user = cfg.session.producer; passwordFile = cfg.session.passwordFile; address = natsListen; }}
           exec ${cfg.package}/bin/sinex-session run \
-            --nats "$nats_url" \
+            ${natsArgs { user = cfg.session.producer; passwordFile = cfg.session.passwordFile; address = natsListen; }} \
             --subject-root ${escapeShellArg cfg.nats.subjectRoot} \
             --producer ${escapeShellArg cfg.session.producer} \
             --store ${escapeShellArg cfg.storeDir} \
@@ -677,9 +676,8 @@ in
         environment.SINEX_PRIVATE_MODE = "/run/sinex-capture/private-mode";
         path = [ config.systemd.package ];
         script = ''
-          ${natsUrlScript { user = node.producer; passwordFile = node.passwordFile; address = node.nats; }}
           exec ${node.package}/bin/sinex-capture \
-            --nats "$nats_url" \
+            ${natsArgs { user = node.producer; passwordFile = node.passwordFile; address = node.nats; }} \
             --subject-root ${escapeShellArg node.subjectRoot} \
             --producer ${escapeShellArg node.producer} \
             --store ${escapeShellArg node.store} \

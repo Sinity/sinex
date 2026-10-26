@@ -45,9 +45,13 @@ enum Command {
         /// Content store directory.
         #[arg(long)]
         store: PathBuf,
-        /// NATS server URL, with the daemon's credentials when required.
+        /// NATS server URL, with the daemon's user when the server requires
+        /// one (`nats://sinexd@127.0.0.1:4222`).
         #[arg(long)]
         nats: String,
+        /// The NATS user's password, read from this file.
+        #[arg(long)]
+        nats_password_file: Option<PathBuf>,
         /// Subject root on the NATS server.
         #[arg(long, default_value = "sinex")]
         subject_root: String,
@@ -82,6 +86,8 @@ enum Command {
         database: String,
         #[arg(long)]
         nats: String,
+        #[arg(long)]
+        nats_password_file: Option<PathBuf>,
         #[arg(long, default_value = "sinex")]
         subject_root: String,
     },
@@ -258,12 +264,17 @@ pub(crate) fn peak_rss_mb() -> Option<f64> {
         .map(|kb| kb / 1024.0)
 }
 
-async fn publish(database: &str, nats: &str, subject_root: &str) -> Result<(), String> {
+async fn publish(
+    database: &str,
+    nats: &str,
+    nats_password_file: Option<&std::path::Path>,
+    subject_root: &str,
+) -> Result<(), String> {
     use sqlx::Connection;
     let mut conn = sqlx::PgConnection::connect(database)
         .await
         .map_err(|e| format!("database: {e}"))?;
-    let client = sinex_sources::nats::connect(nats).await?;
+    let client = sinex_sources::nats::connect(nats, nats_password_file).await?;
     let js = publisher::context(client);
     let report =
         publisher::drain(&mut conn, &js, &sinex_protocol::Subjects::new(subject_root)).await?;
@@ -308,6 +319,7 @@ async fn main() -> std::process::ExitCode {
             database,
             store,
             nats,
+            nats_password_file,
             subject_root,
             host,
             socket,
@@ -322,6 +334,7 @@ async fn main() -> std::process::ExitCode {
                     database,
                     store,
                     nats,
+                    nats_password_file,
                     subject_root,
                     host,
                     api,
@@ -334,8 +347,17 @@ async fn main() -> std::process::ExitCode {
         Command::Publish {
             database,
             nats,
+            nats_password_file,
             subject_root,
-        } => publish(&database, &nats, &subject_root).await,
+        } => {
+            publish(
+                &database,
+                &nats,
+                nats_password_file.as_deref(),
+                &subject_root,
+            )
+            .await
+        }
         Command::Capture {
             source:
                 Capture::Journald {

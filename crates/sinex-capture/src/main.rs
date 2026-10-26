@@ -20,9 +20,13 @@ use std::time::Duration;
     about = "Capture-only Sinex node for a satellite host"
 )]
 struct Cli {
-    /// The NATS server, with this node's credentials in the URL.
+    /// The NATS server, with this node's user in the URL
+    /// (`nats://NAME@HOST:PORT`).
     #[arg(long)]
     nats: String,
+    /// That user's password, read from this file.
+    #[arg(long)]
+    nats_password_file: Option<PathBuf>,
     #[arg(long, default_value = "sinex")]
     subject_root: String,
     /// This node's producer name, as its credentials allow.
@@ -76,6 +80,7 @@ async fn run(cli: Cli) -> Result<(), String> {
     let store = Store::open(&cli.store).map_err(|e| format!("content store: {e}"))?;
     let mut producer = Producer::connect(
         &cli.nats,
+        cli.nats_password_file.as_deref(),
         sinex_protocol::Subjects::new(cli.subject_root.clone()),
         &cli.producer,
     )

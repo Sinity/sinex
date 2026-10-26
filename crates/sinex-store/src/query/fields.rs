@@ -19,17 +19,12 @@ pub(crate) fn from(table: Table) -> &'static str {
              LEFT JOIN raw.revisions {t}_v ON {t}_v.id = {t}.revision_id"
         }
         Table::Runs => "core.runs {t} LEFT JOIN core.manifests {t}_m ON {t}_m.id = {t}.manifest_id",
-        // Registered sources, and every source that has events, found by a
-        // loose index scan over (source, ts_orig) rather than a full scan.
+        // Registered sources, and every other source that has had events.
         Table::Sources => {
-            "(WITH RECURSIVE seen(name) AS ( \
-                SELECT min(source) FROM core.events \
-                UNION ALL \
-                SELECT (SELECT min(source) FROM core.events WHERE source > seen.name) FROM seen WHERE seen.name IS NOT NULL) \
-              SELECT r.name, r.driver, r.version, r.event_types, r.purpose FROM registry.sources r \
+            "(SELECT r.name, r.driver, r.version, r.event_types, r.purpose FROM registry.sources r \
               UNION ALL \
-              SELECT seen.name, NULL, NULL, NULL, NULL FROM seen \
-              WHERE seen.name IS NOT NULL AND NOT EXISTS (SELECT 1 FROM registry.sources r WHERE r.name = seen.name)) \
+              SELECT c.source, NULL, NULL, NULL, NULL FROM core.source_counts c \
+              WHERE NOT EXISTS (SELECT 1 FROM registry.sources r WHERE r.name = c.source)) \
              {t}(name, driver, version, event_types, purpose)"
         }
         Table::Operations => "core.operations {t}",
@@ -49,9 +44,10 @@ pub(crate) fn tiebreak(table: Table) -> &'static str {
     }
 }
 
-/// Live events by a source: `{t}` is the source row.
-const SOURCE_LIVE: &str = "FROM core.events se WHERE se.source = {t}.name \
-     AND NOT EXISTS (SELECT 1 FROM audit.archived sa WHERE sa.event_id = se.id)";
+/// A column of the source's counts: `{t}` is the source row.
+fn source_count(column: &str) -> String {
+    format!("(SELECT sc.{column} FROM core.source_counts sc WHERE sc.source = {{t}}.name)")
+}
 
 pub(crate) fn field(table: Table, name: &str) -> Option<String> {
     let event = |name: &str| -> Option<&'static str> {
@@ -124,7 +120,7 @@ pub(crate) fn field(table: Table, name: &str) -> Option<String> {
             "started" => "{t}.started_at",
             "ended" => "{t}.ended_at",
             "status" => "(CASE WHEN {t}.ended_at IS NULL THEN 'running' ELSE 'finished' END)",
-            "events" => "(SELECT count(*) FROM core.events re WHERE re.run_id = {t}.id)",
+            "events" => "{t}.events",
             "failed" => "(SELECT count(*) FROM raw.failures rf WHERE rf.run_id = {t}.id)",
             _ => return None,
         },
@@ -135,10 +131,10 @@ pub(crate) fn field(table: Table, name: &str) -> Option<String> {
                 "version" => "{t}.version::bigint".to_string(),
                 "event_types" => "array_to_string({t}.event_types, ',')".to_string(),
                 "purpose" => "{t}.purpose".to_string(),
-                "events" => format!("(SELECT count(*) {SOURCE_LIVE})"),
-                "first" => format!("(SELECT min(se.ts_orig) {SOURCE_LIVE})"),
-                "last_event" => format!("(SELECT max(se.ts_orig) {SOURCE_LIVE})"),
-                "last_seen" => format!("(SELECT max(se.ts_coided) {SOURCE_LIVE})"),
+                "events" => format!("coalesce({}, 0)", source_count("events")),
+                "first" => source_count("first_event"),
+                "last_event" => source_count("last_event"),
+                "last_seen" => source_count("last_seen"),
                 "failed_24h" => "(SELECT count(*) FROM raw.failures sf \
                       JOIN raw.materials sm ON sm.id = sf.material_id \
                       JOIN raw.inputs si ON si.id = sm.input_id \

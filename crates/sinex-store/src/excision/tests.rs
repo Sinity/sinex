@@ -355,6 +355,11 @@ async fn every_reading_goes_and_its_bytes_are_blanked_in_place(db: devkit::pg::T
         count(&mut conn, "SELECT count(*) FROM audit.archived").await,
         0
     );
+    assert_eq!(
+        count(&mut conn, "SELECT events FROM core.source_counts").await,
+        2,
+        "the live reading leaves its source's count, the archived one had left it"
+    );
 }
 
 /// Equal bytes are not the same record: excising one of two equal records

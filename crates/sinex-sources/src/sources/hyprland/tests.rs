@@ -120,7 +120,7 @@ fn spooled_capture_drains_to_typed_events() {
             source: SPEC.name,
             class: SPEC.class,
             material: MaterialId::new(),
-            bytes: m.bytes.as_slice().into(),
+            bytes: m.body().into(),
             records: &m.records,
             carry: Value::Null,
             reading_order: &|a| ReadingOrder(a as i64),

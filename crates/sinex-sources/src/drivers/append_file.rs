@@ -294,6 +294,9 @@ impl AppendFile {
         let mut data = Vec::new();
         let (records, consumed) = loop {
             data.clear();
+            // Exactly the bytes asked for: growing by doubling would hold
+            // up to twice a part.
+            data.reserve_exact(usize::try_from(want).unwrap_or(usize::MAX));
             file.seek(SeekFrom::Start(start))
                 .map_err(|e| DriverError::Io(e.to_string()))?;
             (&mut file)
@@ -376,7 +379,8 @@ impl AppendFile {
             0
         };
         let previous_part = base.material;
-        let bytes = data;
+        // One copy of the bytes, shared by the material and its cursors.
+        let bytes = std::sync::Arc::new(data);
         // The window for any cursor inside this material: hash the bytes
         // before that point, taking the tail of the old window when the
         // material alone is shorter.
@@ -390,9 +394,9 @@ impl AppendFile {
                 .read_to_end(&mut head)
                 .map_err(|e| DriverError::Io(e.to_string()))?;
         }
-        // Parts are capped at PART bytes, so this copy is bounded. Each call
-        // hashes only the WINDOW bytes before `end`, never the whole prefix.
-        let tail_source = bytes.clone();
+        // Each call hashes only the WINDOW bytes before `end`, never the
+        // whole prefix.
+        let tail_source = std::sync::Arc::clone(&bytes);
         let material_len = bytes.len();
         let cursor_at = move |end: usize| -> Value {
             let window = WINDOW as usize;
@@ -435,8 +439,8 @@ impl AppendFile {
             revision,
             material: Some(NewMaterial {
                 id,
-                bytes,
-                stored: None,
+                bytes: Vec::new(),
+                stored: Some(super::StoredBytes::FramedMemory(bytes)),
                 records,
                 part_index,
                 previous_part,

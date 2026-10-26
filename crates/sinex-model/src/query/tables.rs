@@ -119,12 +119,16 @@ const SOURCES: &[Field] = &[
     f("event_types", FieldType::Text, "event types"),
     f("purpose", FieldType::Text, "purpose"),
     f("events", FieldType::Integer, "live events"),
-    f("first", FieldType::Time, "oldest event time"),
-    f("last_event", FieldType::Time, "newest event time"),
+    f("first", FieldType::Time, "oldest event time of any reading"),
+    f(
+        "last_event",
+        FieldType::Time,
+        "newest event time of any reading",
+    ),
     f(
         "last_seen",
         FieldType::Time,
-        "time the newest event was read",
+        "time the newest reading was read",
     ),
     f(
         "failed_24h",

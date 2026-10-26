@@ -50,11 +50,16 @@ self: {
         ).strip())
 
     machine.wait_for_unit("sinex-nats.service")
-    print(machine.succeed("sed 's/password: \"[^\"]*\"/password: <hidden>/g' /run/sinex-nats/nats.conf"))
     machine.wait_for_unit("sinex-db-setup.service")
     machine.wait_for_unit("sinexd.service")
     machine.wait_for_unit("sinex-capture-journald.service")
     machine.wait_for_unit("sinex-session.service", user="alice")
+
+    with subtest("NATS passwords are only hashes in the server config and never in arguments"):
+        machine.succeed("grep -q 'password: \"\\$2a\\$' /run/sinex-nats/nats.conf")
+        for secret in ["/etc/sinex-test/nats-daemon", "/etc/sinex-test/nats-session"]:
+            machine.fail(f"grep -qFf {secret} /run/sinex-nats/nats.conf")
+            machine.fail(f"cat /proc/[0-9]*/cmdline | tr '\\0' ' ' | grep -qFf {secret}")
 
     with subtest("PostgreSQL is set up as the module says"):
         machine.succeed("sudo -u postgres psql -tAc 'show wal_compression' | grep -qx lz4")

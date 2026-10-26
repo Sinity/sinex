@@ -206,10 +206,13 @@ On shutdown the derivation runner finishes its current pass and releases its
 writer handle; the writer drains queued work once every producer has released
 its handle. The supervisor gives tasks ten seconds before stopping them.
 
-`sinex-schema` declares the schema in Rust at version 0. `sinex-schema apply`
-creates it in an empty database; any other version is refused, and no other
-command creates the schema. Numbered changes start with the first deployment.
-Checked SQL in `sinex-store` compiles against that schema.
+`sinex-schema` declares the current schema in Rust. `sinex-schema apply`
+creates it in an empty database, or upgrades a deployed database through the
+numbered forward upgrades in `upgrades.rs`, in one transaction and only while
+no writer holds the database; a newer version is refused, and no other command
+creates or changes the schema. Each upgrade keeps every row, and the
+declarations carry the same change, so a fresh database matches an upgraded
+one. Checked SQL in `sinex-store` compiles against that schema.
 
 ### Volume
 

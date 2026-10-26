@@ -62,9 +62,10 @@ sinexd backfill --database 'postgresql:///sinex' --store /path/to/store \
   --host HOST --read atuin=$HOME/.local/share/atuin/history.db --read zsh="$HISTFILE"
 ```
 
-`sinexd admin schema` does the same as `sinex-schema apply`. No other command
-creates the schema, and every command refuses a database at another schema
-version. `backfill` reads each input to its end. The daemon, `sinexd run`,
+`sinexd admin schema` does the same as `sinex-schema apply`, which also
+upgrades a database at an older schema version while sinexd is stopped. No
+other command creates or upgrades the schema, and every command refuses a
+database at another schema version. `backfill` reads each input to its end. The daemon, `sinexd run`,
 reads the bindings in `--sources` continuously and also needs NATS and a tokens
 directory; the NixOS module sets it up. A sealed source that was left part-way needs
 `--identity-file KEYFILE` to continue.
@@ -98,7 +99,9 @@ That gives these units:
 - `postgresql.service`, with its data in `database.dataDir`, and
   `sinex-db-setup.service`, which adds the extensions and the roles;
 - `sinex-nats.service`, NATS with JetStream under `stateDir/nats`, with one
-  user per producer;
+  user per producer; its config holds only bcrypt hashes of the passwords,
+  and each process reads its own password from its file, never from its
+  arguments;
 - `sinexd.service`, which applies the schema, makes the API tokens under
   `stateDir/tokens` once, and reads every enabled source from
   `/etc/sinex/sources.json`; it plans the sources' paths again every minute,

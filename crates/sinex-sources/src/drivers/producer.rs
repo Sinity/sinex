@@ -205,12 +205,20 @@ pub struct Producer {
 }
 
 impl Producer {
-    /// Connect as `name` (a valid producer name: lowercase, digits, `-`, `_`).
-    pub async fn connect(url: &str, subjects: Subjects, name: &str) -> Result<Self, Error> {
+    /// Connect as `name` (a valid producer name: lowercase, digits, `-`, `_`),
+    /// with the password in `password_file` when the URL names a user.
+    pub async fn connect(
+        url: &str,
+        password_file: Option<&std::path::Path>,
+        subjects: Subjects,
+        name: &str,
+    ) -> Result<Self, Error> {
         if !sinex_protocol::nats::valid_producer(name) {
             return Err(Error::Nats(format!("invalid producer name {name:?}")));
         }
-        let client = crate::nats::connect(url).await.map_err(Error::Nats)?;
+        let client = crate::nats::connect(url, password_file)
+            .await
+            .map_err(Error::Nats)?;
         let acks = client.subscribe(subjects.ack(name)).await.map_err(nats)?;
         let max_message = client.server_info().max_payload;
         Ok(Self {

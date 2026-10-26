@@ -168,7 +168,7 @@ async fn an_unacknowledged_batch_is_resent_with_uploaded_bytes() {
     .save(&state, "b")
     .unwrap();
 
-    let mut producer = Producer::connect(nats.url(), subjects, "node-test")
+    let mut producer = Producer::connect(nats.url(), None, subjects, "node-test")
         .await
         .unwrap()
         .upload_bytes(Store::open(&dir.join("store")).unwrap());
@@ -246,7 +246,7 @@ async fn a_spool_is_produced_once_material_first() {
     let positions = dir.join("positions");
     let driver = hyprland::driver(spool, "h".into());
     let source = hyprland::source();
-    let mut producer = Producer::connect(nats.url(), subjects, "session-test")
+    let mut producer = Producer::connect(nats.url(), None, subjects, "session-test")
         .await
         .unwrap();
 
@@ -333,7 +333,7 @@ async fn streamed_upload_preserves_empty_and_chunk_boundary_materials() {
     let received = standin(&nats, &subjects, "boundaries").await;
     let dir = tempfile::tempdir().unwrap();
     let store = Store::open(dir.path()).unwrap();
-    let mut producer = Producer::connect(nats.url(), subjects, "boundaries")
+    let mut producer = Producer::connect(nats.url(), None, subjects, "boundaries")
         .await
         .unwrap()
         .upload_bytes(Store::open(dir.path()).unwrap());
@@ -373,7 +373,7 @@ async fn damaged_producer_material_sends_no_chunks() {
     let blob = spooled(&store, "damaged", bytes, "damaged-frame");
     let path = frame_bytes::directory(dir.path(), "damaged", "damaged-frame").join(&blob[7..]);
     std::fs::write(&path, b"damaged").unwrap();
-    let mut producer = Producer::connect(nats.url(), subjects, "damaged")
+    let mut producer = Producer::connect(nats.url(), None, subjects, "damaged")
         .await
         .unwrap()
         .upload_bytes(store);

@@ -278,6 +278,27 @@ pub async fn apply(
     )
     .execute(&mut *conn)
     .await?;
+    // Every one leaves its run's count; the live ones leave their source's
+    // count too, archived ones already did.
+    sqlx::query!(
+        r#"UPDATE core.runs r SET events = r.events - gone.n
+           FROM (SELECT run_id, count(*) AS n FROM core.events WHERE id = ANY($1) GROUP BY run_id) gone
+           WHERE r.id = gone.run_id"#,
+        &ids
+    )
+    .execute(&mut *conn)
+    .await?;
+    sqlx::query!(
+        r#"UPDATE core.source_counts c SET events = c.events - gone.n
+           FROM (SELECT e.source, count(*) AS n FROM core.events e
+                 WHERE e.id = ANY($1)
+                   AND NOT EXISTS (SELECT 1 FROM audit.archived a WHERE a.event_id = e.id)
+                 GROUP BY e.source) gone
+           WHERE c.source = gone.source"#,
+        &ids
+    )
+    .execute(&mut *conn)
+    .await?;
     crate::admission::erase_archive_history(conn, &ids).await?;
     sqlx::query!("DELETE FROM core.commit_log WHERE event_id = ANY($1)", &ids)
         .execute(&mut *conn)
