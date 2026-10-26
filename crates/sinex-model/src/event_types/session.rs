@@ -18,6 +18,10 @@ pub struct NotificationShown {
     pub summary: String,
     pub body: String,
     pub icon: Option<String>,
+    /// The id the server gave it, from its reply to the call; `None` when
+    /// no reply was seen.
+    #[serde(default)]
+    pub notification_id: Option<u32>,
     /// The notification this one replaces, when the sender gave one.
     pub replaces_id: Option<u32>,
     /// Action identifiers and labels, in the order sent.

@@ -227,6 +227,18 @@ pub fn driver(path: PathBuf, host: String) -> ExportArchive {
     }
 }
 
+/// The files of a Raindrop export directory that hold bookmarks: the web
+/// app's CSV exports, whatever they are named, and the API export's
+/// `raindrops-*.jsonl`. The API export's other files (collections, tags,
+/// highlights, its manifest) are not bookmarks.
+pub fn bookmark_file(path: &std::path::Path) -> bool {
+    let name = path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or_default();
+    name.ends_with(".csv") || (name.starts_with("raindrops-") && name.ends_with(".jsonl"))
+}
+
 /// `--read raindrop=PATH`: each Raindrop export in PATH.
 pub const FORMAT: crate::binding::InputFormat = crate::binding::InputFormat {
     name: "raindrop",
@@ -237,7 +249,7 @@ pub const FORMAT: crate::binding::InputFormat = crate::binding::InputFormat {
             input,
             settings,
             false,
-            crate::binding::any,
+            bookmark_file,
         ))
     }),
     source: |_| Ok(Box::new(source())),

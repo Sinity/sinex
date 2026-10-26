@@ -15,6 +15,7 @@ fn driver(root: PathBuf, part_bytes: usize) -> DirSnapshot {
         host: "h".into(),
         select: |p| p.ends_with(".md"),
         part_bytes,
+        removed_at_source: false,
     }
 }
 
@@ -486,7 +487,7 @@ fn saved_memory_round_trips_and_newer_bundles_win() {
         ),
         ("unknown.md".to_owned(), None),
     ]);
-    let memory = restore::memory_of(&files);
+    let memory = restore::memory_of(&files, &HashMap::new());
     let mut state = DirState::default();
     // A newer bundle already decided a.md.
     state.remembered.insert("a.md".to_owned());

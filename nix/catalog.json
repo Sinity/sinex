@@ -334,6 +334,20 @@
       ]
     },
     {
+      "name": "google.assistant",
+      "formats": [
+        "takeout"
+      ],
+      "drivers": [
+        "export-archive"
+      ],
+      "purpose": "notes and lists kept through Google Assistant",
+      "class": "open",
+      "eventTypes": [
+        "note.observed"
+      ]
+    },
+    {
       "name": "google.tasks",
       "formats": [
         "takeout"
@@ -432,6 +446,20 @@
       ]
     },
     {
+      "name": "communication.messenger-sqlite",
+      "formats": [
+        "messenger-sqlite"
+      ],
+      "drivers": [
+        "sqlite-rows"
+      ],
+      "purpose": "conversations with people",
+      "class": "open",
+      "eventTypes": [
+        "conversation.message"
+      ]
+    },
+    {
       "name": "health.sleep-as-android",
       "formats": [
         "sleep-as-android"
@@ -478,6 +506,20 @@
         "vote.cast",
         "bookmark.saved",
         "conversation.message"
+      ]
+    },
+    {
+      "name": "social.reddit-archive",
+      "formats": [
+        "reddit-archive"
+      ],
+      "drivers": [
+        "export-archive"
+      ],
+      "purpose": "what the operator wrote at Reddit, including what the GDPR export lacks",
+      "class": "open",
+      "eventTypes": [
+        "post.published"
       ]
     },
     {
@@ -973,6 +1015,26 @@
       ]
     },
     {
+      "name": "post.fusion",
+      "kind": "keyed",
+      "inputs": [
+        "post.published"
+      ],
+      "outputs": [
+        "post.fused"
+      ]
+    },
+    {
+      "name": "conversation.fusion",
+      "kind": "keyed",
+      "inputs": [
+        "conversation.message"
+      ],
+      "outputs": [
+        "conversation.fused"
+      ]
+    },
+    {
       "name": "shell.sessions",
       "kind": "keyed",
       "inputs": [
@@ -1055,6 +1117,16 @@
       ],
       "outputs": [
         "health.figure"
+      ]
+    },
+    {
+      "name": "calendar.instances",
+      "kind": "keyed",
+      "inputs": [
+        "calendar.event"
+      ],
+      "outputs": [
+        "calendar.instance"
       ]
     }
   ]

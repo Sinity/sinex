@@ -14,6 +14,7 @@
           "summary": "Alice",
           "body": "hi",
           "icon": null,
+          "notification_id": null,
           "replaces_id": null,
           "actions": [
             "default",
@@ -43,6 +44,7 @@
           "summary": "Alice",
           "body": "hi again",
           "icon": null,
+          "notification_id": null,
           "replaces_id": 12,
           "actions": [
             "default",

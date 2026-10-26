@@ -19,6 +19,7 @@ fn the_bundle_does_not_hold_whole_file_bodies_in_memory() {
         host: "synthetic".into(),
         select: |path| path.ends_with(".md"),
         part_bytes: 32 << 20,
+        removed_at_source: false,
     };
     let mut state = DirState::default();
     // Counting is local to this synchronous poll. It excludes executable page

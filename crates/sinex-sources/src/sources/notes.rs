@@ -117,6 +117,7 @@ pub fn select(path: &str) -> bool {
 
 pub fn driver(root: PathBuf, host: String) -> DirSnapshot {
     DirSnapshot {
+        removed_at_source: false,
         root,
         host,
         select,

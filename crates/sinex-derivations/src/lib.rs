@@ -14,6 +14,7 @@ use serde_json::Value;
 use sinex_model::civil::Civil;
 use sinex_model::{Event, EventId, Timestamp};
 
+pub mod calendar;
 pub mod derived_event;
 pub mod figures;
 pub mod fusion;
@@ -300,7 +301,7 @@ pub fn keyed() -> Vec<Box<dyn AnyKeyed>> {
         .iter()
         .map(|rule| Box::new(fusion::Fusion(rule)) as Box<dyn AnyKeyed>)
         .collect();
-    all.extend::<[Box<dyn AnyKeyed>; 7]>([
+    all.extend::<[Box<dyn AnyKeyed>; 8]>([
         Box::new(session::ShellSessions),
         Box::new(state_interval::StateIntervals),
         Box::new(figures::HourlyMetrics),
@@ -308,6 +309,7 @@ pub fn keyed() -> Vec<Box<dyn AnyKeyed>> {
         Box::new(presence::Presence),
         Box::new(health::HourlyFigures),
         Box::new(health::DailyFigures),
+        Box::new(calendar::Instances),
     ]);
     all
 }

@@ -1,4 +1,6 @@
-use super::rules::{CLIPBOARD, COMMANDS, FOCUS, MAIL, NOTIFICATIONS, PLAYS, RULES, VISITS};
+use super::rules::{
+    CLIPBOARD, COMMANDS, CONVERSATIONS, FOCUS, MAIL, NOTIFICATIONS, PLAYS, POSTS, RULES, VISITS,
+};
 use super::*;
 use sinex_model::event_types::browser::{BrowserHistoryEntry, BrowserVisit};
 use sinex_model::event_types::communication::MailMessage;
@@ -220,6 +222,7 @@ fn notification(summary: &str, secs: f64) -> Event {
             summary: summary.into(),
             body: "body".into(),
             icon: None,
+            notification_id: None,
             replaces_id: None,
             actions: vec![],
             hints: Default::default(),
@@ -713,4 +716,99 @@ fn a_message_in_imap_and_an_mbox_is_one_message() {
 fn mail_from_a_source_no_observer_names_is_not_fused() {
     let out = fuse(&MAIL, &[mail("communication.elsewhere", "<1@x>", H + 5.0)]);
     assert!(out.is_empty());
+}
+
+// Posts: the GDPR export and the public archive name the same Reddit IDs.
+
+fn post(source: &str, id: &str, secs: f64, body: Option<&str>) -> Event {
+    captured(
+        &sinex_model::event_types::social::PostPublished {
+            service: "reddit".into(),
+            kind: "comment".into(),
+            native_id: id.into(),
+            created_at: Some(at(secs)),
+            title: None,
+            body: body.map(str::to_owned),
+            url: None,
+            parent: None,
+            community: Some("synthetic".into()),
+            tags: vec![],
+            score: None,
+            extra: Default::default(),
+        },
+        source,
+        Class::Open,
+    )
+}
+
+#[devkit::test]
+fn a_comment_in_the_export_and_the_archive_is_one_comment() {
+    let out = fuse(
+        &POSTS,
+        &[
+            post("social.reddit", "c1", H + 5.0, Some("as exported")),
+            post("social.reddit-archive", "c1", H + 5.0, Some("as archived")),
+            post(
+                "social.reddit-archive",
+                "c2",
+                H + 5.0,
+                Some("deleted later"),
+            ),
+        ],
+    );
+    assert_eq!(out.len(), 2, "{out:?}");
+    let joined = out.iter().find(|p| p["native_id"] == "c1").unwrap();
+    assert_eq!(
+        observed_by(joined),
+        ["social.reddit", "social.reddit-archive"]
+    );
+    assert_eq!(joined["body"], "as exported", "the export is preferred");
+    let alone = out.iter().find(|p| p["native_id"] == "c2").unwrap();
+    assert_eq!(observed_by(alone), ["social.reddit-archive"]);
+}
+
+// Conversations: a GDPR export and a database saved by a tool.
+
+fn said(source: &str, sender: &str, text: &str, ms: i128) -> Event {
+    captured(
+        &sinex_model::event_types::communication::ConversationMessage {
+            service: "facebook-messenger".into(),
+            thread: format!("{source} thread"),
+            thread_name: None,
+            participants: vec![],
+            sender: sender.into(),
+            sent_at: Timestamp::from_unix_ns(at(H).unix_ns() + ms * 1_000_000).unwrap(),
+            text: Some(text.into()),
+            kind: None,
+            media: vec![],
+            reactions: vec![],
+            message_id: (source == "communication.messenger-sqlite").then(|| format!("mid.{ms}")),
+            unsent_at: None,
+        },
+        source,
+        Class::Open,
+    )
+}
+
+#[devkit::test]
+fn the_same_text_at_the_same_millisecond_is_one_message() {
+    let out = fuse(
+        &CONVERSATIONS,
+        &[
+            said("communication.messenger", "Ann Example", "see you", 1_000),
+            said("communication.messenger-sqlite", "100", "see you", 1_000),
+            // The same words a second later are another message.
+            said("communication.messenger-sqlite", "100", "see you", 2_000),
+        ],
+    );
+    assert_eq!(out.len(), 2, "{out:?}");
+    let joined = out.iter().find(|m| observed_by(m).len() == 2).unwrap();
+    assert_eq!(
+        joined["sender"], "Ann Example",
+        "the export's names are preferred"
+    );
+    assert_eq!(
+        joined["message_id"], "mid.1000",
+        "the ID comes from the database"
+    );
 }
