@@ -19,6 +19,7 @@ fn imported(source: &str, command: &str, origin: Origin) -> Event {
             hostname: "h".into(),
             started_at: Some(Timestamp::from_unix_secs(1_700_000_000).unwrap()),
             header_elapsed: Some(0),
+            paths: vec![],
             n: 0,
         },
         source,

@@ -11,6 +11,7 @@ fn batch(tag: &str) -> Batch {
             hostname: "h".into(),
             started_at: Some(Timestamp::from_unix_secs(1).unwrap()),
             header_elapsed: Some(0),
+            paths: vec![],
             n: 0,
         },
         "t",

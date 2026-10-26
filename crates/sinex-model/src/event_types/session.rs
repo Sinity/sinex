@@ -125,6 +125,9 @@ pub struct TerminalReport {
     pub cmdline: Option<String>,
     pub exit_status: Option<i64>,
     pub title: Option<String>,
+    /// What the command printed, escape sequences removed (`cmd_end` with
+    /// kitty's shell integration).
+    pub output: Option<String>,
     #[serde(default, skip_serializing_if = "Map::is_empty")]
     pub extra: Map<String, Value>,
 }

@@ -95,3 +95,48 @@ fn spans_are_bounded_and_cover_every_complete_line() {
     let covered: usize = records.iter().map(|(s, e)| e - s).sum();
     assert_eq!(covered, consumed);
 }
+
+#[devkit::test]
+fn a_typed_enter_starts_each_command_span() {
+    let out = run(&[
+        r#"{"version":3,"timestamp":1}"#,
+        r#"[0.1, "o", "$ "]"#,
+        r#"[0.1, "i", "l"]"#,
+        r#"[0.1, "o", "l"]"#,
+        r#"[0.1, "i", "s"]"#,
+        r#"[0.1, "o", "s"]"#,
+        r#"[0.1, "i", "\r"]"#,
+        r#"[0.1, "o", "\r\nfile\r\n$ "]"#,
+        r#"[0.1, "i", "pwd\r"]"#,
+        r#"[0.1, "o", "pwd\r\n/home\r\n$ "]"#,
+        r#"[0.1, "i", "a\\r"]"#,
+    ]);
+    let spans: Vec<(String, String)> = out
+        .iter()
+        .filter_map(|e| match e {
+            CastEvent::Output(o) => Some((o.input.clone(), o.output.clone())),
+            CastEvent::Session(_) => None,
+        })
+        .collect();
+    assert_eq!(
+        spans,
+        [
+            ("ls".to_owned(), "$ ls".to_owned()),
+            (String::new(), "\nfile\n$ ".to_owned()),
+            // A pasted line with its Enter; the escaped `\r` typed last is
+            // text, not Enter.
+            ("pwda\\r".to_owned(), "pwd\n/home\n$ ".to_owned()),
+        ]
+    );
+}
+
+#[devkit::test]
+fn only_input_with_enter_is_a_boundary() {
+    assert!(is_enter(br#"[0.1, "i", "\r"]"#));
+    assert!(is_enter(br#"[0.1, "i", "ls\u000d"]"#));
+    assert!(is_enter(br#"[0.1, "i", "a\nb"]"#));
+    assert!(!is_enter(br#"[0.1, "o", "\r\n"]"#));
+    assert!(!is_enter(br#"[0.1, "i", "\\r"]"#));
+    assert!(!is_enter(br#"[0.1, "i", "x"]"#));
+    assert!(!is_enter(b"[0.1, \"i\", \"cut"));
+}

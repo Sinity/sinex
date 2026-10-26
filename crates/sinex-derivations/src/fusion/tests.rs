@@ -62,6 +62,7 @@ pub(crate) fn zsh(command: &str, secs: f64) -> Event {
             hostname: "box".into(),
             started_at: Some(at(secs)),
             header_elapsed: Some(0),
+            paths: vec![],
             n: 0,
         },
         "terminal.zsh",

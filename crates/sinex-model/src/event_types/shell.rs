@@ -1,5 +1,5 @@
-//! Shell commands as captured (Atuin, zsh) and the shell sessions derived
-//! from fused commands.
+//! Shell commands as captured (Atuin, and the zsh, bash and fish history
+//! files) and the shell sessions derived from fused commands.
 use crate::Timestamp;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -40,19 +40,24 @@ pub struct CommandExecuted {
     pub extra: Map<String, Value>,
 }
 
-/// A command from a plain or extended zsh history file. Timed records keep
-/// their natural key across materials; untimed records use their material
-/// location because neither text nor an unknown start identifies an occurrence.
+/// A command from a shell's history file: zsh (plain or extended), bash
+/// (with or without `#` timestamp lines) or fish. The source names the shell.
+/// Timed records keep their equivalence key across materials; untimed records use
+/// their material location because neither text nor an unknown start
+/// identifies a record.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct CommandImported {
     pub command: String,
     pub hostname: String,
     /// Absent in plain history; acquisition time is not a command start.
     pub started_at: Option<Timestamp>,
-    /// The elapsed seconds field as written. With SHARE_HISTORY zsh writes 0
+    /// zsh's elapsed seconds field as written. With SHARE_HISTORY zsh writes 0
     /// before the command ends, so this is not a duration.
     pub header_elapsed: Option<i64>,
-    /// Which occurrence this is among records with the same start second and
+    /// The arguments fish recorded as existing paths, in its order.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub paths: Vec<String>,
+    /// Which record this is among records with the same start second and
     /// command, in file order (the same command run twice in one second is
     /// two runs). Untimed records use their material location instead; this
     /// discriminator is zero and unused for them.
