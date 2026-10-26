@@ -48,7 +48,7 @@ fn cli() -> Command {
             )
             .version(env!("CARGO_PKG_VERSION"))
             .arg(Arg::new("endpoint").long("endpoint").global(true).help(
-                "unix:/path/to/socket or http://127.0.0.1:PORT (default: the daemon's socket)",
+                "unix:/path/to/socket or http://127.0.0.1:PORT (default: $SINEX_ENDPOINT, else the daemon's socket)",
             ))
             .arg(Arg::new("token-file").long("token-file").global(true).help(
                 "file holding the API token (default: $SINEX_TOKEN_FILE, ~/.config/sinex/token)",
@@ -118,8 +118,12 @@ fn arguments(spec: &sinex_protocol::Command, m: &ArgMatches) -> Map<String, Valu
 }
 
 fn client(m: &ArgMatches) -> Result<Client, String> {
-    let endpoint = match m.get_one::<String>("endpoint") {
-        Some(e) => Endpoint::parse(e)?,
+    let endpoint = match m
+        .get_one::<String>("endpoint")
+        .cloned()
+        .or_else(|| std::env::var("SINEX_ENDPOINT").ok())
+    {
+        Some(e) => Endpoint::parse(&e)?,
         None => Endpoint::Unix(default_socket()),
     };
     let path = m
@@ -242,6 +246,7 @@ async fn main() -> ExitCode {
             };
         }
         "private" => {
+            use sinex_transport::private_mode::State;
             let mode = sinex_transport::private_mode::PrivateMode::default();
             let state = sub
                 .get_one::<String>("state")
@@ -251,15 +256,24 @@ async fn main() -> ExitCode {
             {
                 return fail(1, format!("{}: {e}", mode.path().display()));
             }
-            let on = mode.on();
+            let switch = mode.state();
             if json {
-                print_json(&serde_json::json!({ "private_mode": on, "switch": mode.path() }));
+                print_json(&serde_json::json!({
+                    "private_mode": switch.name(),
+                    "switch": mode.path(),
+                    "reason": switch.reason(),
+                }));
             } else {
-                println!(
-                    "private mode is {} ({})",
-                    if on { "on: nothing is captured" } else { "off" },
-                    mode.path().display()
-                );
+                let said = match &switch {
+                    State::Off => "off".to_string(),
+                    State::On => "on: nothing is captured".to_string(),
+                    State::Unchecked(reason) => {
+                        format!(
+                            "unknown: the switch cannot be checked ({reason}), so nothing is captured"
+                        )
+                    }
+                };
+                println!("private mode is {said} ({})", mode.path().display());
             }
             return ExitCode::SUCCESS;
         }

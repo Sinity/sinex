@@ -16,6 +16,9 @@ let
 
   postgres = cfg.database.package;
   dbUrl = "postgresql:///sinex?host=/run/postgresql";
+  # One private-mode switch for the daemon, the session service and the
+  # operator's sinexctl; the operator reaches it through the sinex group.
+  privateSwitch = "/run/sinex/private-mode";
   natsListen = "${cfg.nats.address}:${toString cfg.nats.port}";
 
   # Producers allowed onto the ingress: those declared, plus the session
@@ -105,6 +108,16 @@ in
       type = types.str;
       default = config.networking.hostName;
       description = "This host's name, recorded with every input.";
+    };
+    readAnyFile = mkOption {
+      type = types.bool;
+      default = false;
+      description = ''
+        Let sinexd read every file on the host (CAP_DAC_READ_SEARCH), so
+        sources in the operator's home and private directories need no
+        permission changes. It can read them, never write them. Without it,
+        every source path must be readable by the sinex user.
+      '';
     };
     zone = mkOption { type = types.nullOr types.str; default = null; description = "IANA zone for days and clock times; the system's when null."; };
     dayStart = mkOption { type = types.str; default = "04:00"; description = "When a logical day starts."; };
@@ -226,6 +239,20 @@ in
       };
     };
 
+    backfills = mkOption {
+      type = types.attrsOf (types.listOf types.str);
+      default = { };
+      example = { takeout-2025 = [ "takeout=/data/takeout-2025.tgz" ]; };
+      description = ''
+        One-shot imports of large exports, each a `sinex-backfill-NAME`
+        service that is started by hand, never at activation. Each entry is a
+        list of `format=path` inputs (`sinexd admin catalog` lists the formats).
+        The database has one writer, so starting a backfill stops sinexd and
+        starts it again when the backfill ends; live captures spool meanwhile.
+        The inputs are mounted read-only for it.
+      '';
+    };
+
     backup = {
       dumpDir = mkOption { type = types.path; default = "${cfg.stateDir}/dumps"; };
       keysDir = mkOption { type = types.path; default = "${cfg.stateDir}/key-dumps"; };
@@ -306,6 +333,13 @@ in
       }];
       users.groups.${cfg.group} = { };
       environment.systemPackages = [ cfg.package ];
+      # sinexctl in a login shell talks to this daemon with the agent token
+      # and flips the daemon's private-mode switch.
+      environment.sessionVariables = {
+        SINEX_ENDPOINT = "unix:${cfg.api.socket}";
+        SINEX_TOKEN_FILE = "${cfg.stateDir}/tokens/agent.token";
+        SINEX_PRIVATE_MODE = privateSwitch;
+      };
 
       # Bindings from the registry-generated options, for the daemon's sources.
       # The journald capture's spool is the journald source's input.
@@ -322,6 +356,9 @@ in
 
       systemd.tmpfiles.rules = [
         "d ${cfg.stateDir} 0750 ${cfg.user} ${cfg.group} -"
+        # The private-mode switch's directory exists before sinexd first runs,
+        # so the session service can check it.
+        "d /run/sinex 0770 ${cfg.user} ${cfg.group} -"
         # Group mode 2770 marks the store root as shared with producers on this
         # host; they write only under incoming/producers (frame directories).
         "d ${cfg.storeDir} 2770 ${cfg.user} ${cfg.group} -"
@@ -436,13 +473,18 @@ in
           User = cfg.user;
           Group = cfg.group;
           RuntimeDirectory = "sinex";
-          RuntimeDirectoryMode = "0750";
-          # It holds the private-mode switch, which a backfill run while the
-          # daemon is stopped checks too; a missing directory counts as on.
+          # It holds the private-mode switch, which the operator sets through
+          # the group and a backfill run while the daemon is stopped checks
+          # too; a missing directory counts as on.
+          RuntimeDirectoryMode = "0770";
           RuntimeDirectoryPreserve = "yes";
           LoadCredential = [ "nats:${cfg.nats.daemonPasswordFile}" ];
           UMask = "0007";
+        } // lib.optionalAttrs cfg.readAnyFile {
+          AmbientCapabilities = [ "CAP_DAC_READ_SEARCH" ];
+          CapabilityBoundingSet = [ "CAP_DAC_READ_SEARCH" ];
         };
+        environment.SINEX_PRIVATE_MODE = privateSwitch;
         preStart = ''
           # Tokens are made once; a missing file disables that level.
           for level in read agent operator; do
@@ -487,14 +529,17 @@ in
         '';
       };
 
-      # The session service runs in the operator's graphical session and reads
-      # home-directory sources itself, so no ACLs on $HOME are needed.
+      # The session service runs in the operator's graphical session for the
+      # live sources that need it (Hyprland, D-Bus, the clipboard, file
+      # changes) and produces them over the ingress. Files the sources read
+      # (shell histories, databases, notes) are read by sinexd.
       systemd.user.services.sinex-session = mkIf cfg.session.enable {
         description = "Sinex session sources";
         wantedBy = cfg.session.wantedBy;
         partOf = cfg.session.wantedBy;
         unitConfig = startLimit // { ConditionUser = cfg.session.user; };
         serviceConfig = restartPolicy;
+        environment.SINEX_PRIVATE_MODE = privateSwitch;
         # busctl, wl-paste, grim, pw-record and ffmpeg run as capture children.
         path = with pkgs; [ systemd wl-clipboard grim pipewire ffmpeg-headless ];
         script = ''
@@ -557,6 +602,44 @@ in
       ];
     })
 
+    # Declared backfills, apart from the attribute set above that names
+    # services one by one.
+    (mkIf cfg.enable {
+      systemd.services = lib.mapAttrs'
+        (name: inputs: lib.nameValuePair "sinex-backfill-${name}" {
+          description = "Sinex backfill ${name}";
+          after = [ "sinex-db-setup.service" "sinexd.service" ];
+          requires = [ "sinex-db-setup.service" ];
+          # The one writer: sinexd stops for the import and starts after it,
+          # whatever the outcome.
+          conflicts = [ "sinexd.service" ];
+          onSuccess = [ "sinexd.service" ];
+          onFailure = [ "sinexd.service" ];
+          restartIfChanged = false;
+          path = [ pkgs.tesseract pkgs.coreutils ];
+          environment.SINEX_PRIVATE_MODE = privateSwitch;
+          serviceConfig = {
+            Type = "oneshot";
+            User = cfg.user;
+            Group = cfg.group;
+            UMask = "0007";
+            ReadOnlyPaths = map (input: lib.last (lib.splitString "=" input)) inputs;
+          } // lib.optionalAttrs cfg.readAnyFile {
+            AmbientCapabilities = [ "CAP_DAC_READ_SEARCH" ];
+            CapabilityBoundingSet = [ "CAP_DAC_READ_SEARCH" ];
+          };
+          script = ''
+            exec ${cfg.package}/bin/sinexd backfill \
+              --database ${escapeShellArg dbUrl} \
+              --store ${escapeShellArg cfg.storeDir} \
+              --host ${escapeShellArg cfg.host} \
+              ${optionalString (cfg.zone != null) "--zone ${escapeShellArg cfg.zone}"} \
+              ${concatMapStringsSep " " (input: "--read ${escapeShellArg input}") inputs}
+          '';
+        })
+        cfg.backfills;
+    })
+
     (mkIf node.enable {
       users.users.${node.user} = {
         isSystemUser = true;
@@ -576,7 +659,7 @@ in
           StateDirectory = "sinex-capture";
           # The private-mode switch: a file here turns capture off. The
           # capture user cannot create the default /run/sinex, and a switch
-          # it cannot check counts as on.
+          # it cannot check counts as on (the node logs why, once).
           RuntimeDirectory = "sinex-capture";
           RuntimeDirectoryPreserve = "yes";
           SupplementaryGroups = optional node.journald "systemd-journal";

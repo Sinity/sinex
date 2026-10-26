@@ -622,3 +622,69 @@ async fn live_events(conn: &mut PgConnection) -> Vec<EventFields> {
 
 mod directory;
 mod long_history;
+
+#[devkit::test]
+async fn an_unchanged_append_only_file_is_not_polled_again(db: devkit::pg::TestDatabase) {
+    let url = db.url(None);
+    let dir = std::env::temp_dir().join(format!("sinex-append-{}", uuid::Uuid::now_v7()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let history = dir.join("zsh_history");
+    std::fs::write(&history, b": 1700000000:0;echo one\n").unwrap();
+    let mut ctx = OneShot::open(&url, &dir.join("store")).await.unwrap();
+    let sink = Sink(ctx.blobs.clone());
+    let (_stop, stop) = watch::channel(false);
+    let format = sinex_sources::sources::format_of("terminal.zsh-history").unwrap();
+    let settings = Settings {
+        host: "h".into(),
+        zone: None,
+        options: Value::Null,
+    };
+    let mut bindings: Vec<Bound> = (format.plan.unwrap())(&history, &settings)
+        .unwrap()
+        .into_iter()
+        .map(|b| Bound::new(format, b).unwrap())
+        .collect();
+    let mut round = async |bindings: &mut Vec<Bound>| {
+        let mut total = Totals::default();
+        for (_, r) in read(
+            &mut ctx.read_conn,
+            &ctx.blobs,
+            &ctx.writer,
+            RunId::new(),
+            &sink,
+            bindings,
+            stop.clone(),
+            Access::default(),
+        )
+        .await
+        {
+            total.add(r.unwrap());
+        }
+        total.to_json()["polls"].as_u64().unwrap()
+    };
+    assert!(
+        round(&mut bindings).await > 0,
+        "the first round reads the file"
+    );
+    assert_eq!(
+        round(&mut bindings).await,
+        0,
+        "an unchanged file is skipped"
+    );
+    let mut file = std::fs::OpenOptions::new()
+        .append(true)
+        .open(&history)
+        .unwrap();
+    file.write_all(b": 1700000005:0;echo two\n").unwrap();
+    drop(file);
+    assert!(round(&mut bindings).await > 0, "an appended file is read");
+    let commands: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM core.events WHERE event_type = 'command.imported'",
+    )
+    .fetch_one(&mut ctx.read_conn)
+    .await
+    .unwrap();
+    assert_eq!(commands, 2);
+    ctx.close().await.unwrap();
+    std::fs::remove_dir_all(&dir).unwrap();
+}

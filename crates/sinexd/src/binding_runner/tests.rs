@@ -87,3 +87,62 @@ fn a_configured_format_chooses_among_formats_sharing_a_name() {
     assert!(e.contains("spotify"), "{e}");
     std::fs::remove_dir_all(&dir).unwrap();
 }
+
+#[devkit::test]
+fn planning_again_starts_files_that_appeared_since() {
+    let dir = std::env::temp_dir().join(format!("sinex-runner-{}", uuid::Uuid::now_v7()));
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("a.zip"), b"x").unwrap();
+    let config = config(serde_json::json!({
+        "sources": {"media.spotify-history": {"enable": true, "paths": [dir.display().to_string()]}}
+    }));
+    let mut bindings = Bindings::default();
+    bindings.extend(&config, "h");
+    assert_eq!(bindings.bound.len(), 1);
+    std::fs::write(dir.join("b.zip"), b"x").unwrap();
+    bindings.extend(&config, "h");
+    bindings.extend(&config, "h");
+    let mut names: Vec<&str> = bindings
+        .bound
+        .iter()
+        .map(|b| b.binding.name.as_str())
+        .collect();
+    names.sort_unstable();
+    names.dedup();
+    assert_eq!(names.len(), 2, "each file is bound once: {names:?}");
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+#[devkit::test]
+fn a_path_with_nothing_to_read_is_reported_until_it_has() {
+    let dir = std::env::temp_dir().join(format!("sinex-runner-{}", uuid::Uuid::now_v7()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let config = config(serde_json::json!({
+        "sources": {"media.spotify-history": {"enable": true, "paths": [dir.display().to_string()]}}
+    }));
+    let mut bindings = Bindings::default();
+    bindings.extend(&config, "h");
+    let key = format!("path media.spotify-history {}", dir.display());
+    assert!(
+        bindings.said[&key].contains("nothing to read"),
+        "{:?}",
+        bindings.said
+    );
+    std::fs::write(dir.join("a.zip"), b"x").unwrap();
+    bindings.extend(&config, "h");
+    assert!(!bindings.said.contains_key(&key));
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+#[devkit::test]
+fn an_enabled_source_emits_its_types_before_any_file_exists() {
+    let types = emitted(&config(serde_json::json!({
+        "sources": {
+            "desktop.clipboard": {"enable": true, "format": "sinnix-lake", "paths": ["/nowhere"]},
+            "terminal.atuin-history": {"enable": true, "paths": ["/nowhere"]},
+            "reading.raindrop": {"enable": false},
+        }
+    })))
+    .unwrap();
+    assert_eq!(types, vec!["command.executed", "lake.observed"]);
+}

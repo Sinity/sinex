@@ -13,7 +13,7 @@
       rustPkgs = import rust-nixpkgs { inherit system; };
       postgres = pkgs.postgresql_18.withPackages (p: [ p.timescaledb ]);
       package = rustPkgs.rustPlatform.buildRustPackage {
-        pname = "sinex-foundation";
+        pname = "sinex";
         version = "0.1.0";
         src = ./.;
         cargoLock = {
