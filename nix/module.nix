@@ -437,6 +437,9 @@ in
           Group = cfg.group;
           RuntimeDirectory = "sinex";
           RuntimeDirectoryMode = "0750";
+          # It holds the private-mode switch, which a backfill run while the
+          # daemon is stopped checks too; a missing directory counts as on.
+          RuntimeDirectoryPreserve = "yes";
           LoadCredential = [ "nats:${cfg.nats.daemonPasswordFile}" ];
           UMask = "0007";
         };
