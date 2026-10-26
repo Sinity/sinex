@@ -88,10 +88,11 @@ self: {
             timeout=120,
         )
 
-    with subtest("the private-mode switch is one file the operator can set"):
-        machine.succeed("su alice -c 'SINEX_PRIVATE_MODE=/run/sinex/private-mode sinexctl private on'")
+    with subtest("the operator's login shell reaches the daemon and its private-mode switch"):
+        machine.succeed("su - alice -c 'sinexctl status'")
+        machine.succeed("su - alice -c 'sinexctl private on'")
         machine.succeed("test -e /run/sinex/private-mode")
-        machine.succeed("su alice -c 'SINEX_PRIVATE_MODE=/run/sinex/private-mode sinexctl private off'")
+        machine.succeed("su - alice -c 'sinexctl private off'")
 
     with subtest("a declared backfill stops sinexd, imports, and starts it again"):
         machine.succeed("systemctl start sinex-backfill-books.service")

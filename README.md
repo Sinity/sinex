@@ -116,13 +116,16 @@ access to every file instead (it never writes them). A path with nothing to
 read is logged once, and again only when that changes.
 
 Activation does not restart sinexd or NATS. After a deploy, restart them by
-hand and check the running binary (`systemctl show -p ExecStart sinexd`) and
-`sinexctl status`. Login shells get `SINEX_ENDPOINT`, `SINEX_TOKEN_FILE` (the
-agent token) and `SINEX_PRIVATE_MODE`, so `sinexctl` talks to the daemon and
-`sinexctl private on` stops every capture on the host; the operator reaches
-both through the `sinex` group. A switch that cannot be checked also stops
-capture: each process logs the reason once, and `sinexctl private` and
-`sinexctl status` show it.
+hand and check the running binary
+(`readlink /proc/$(systemctl show -p MainPID --value sinexd)/exe`) and
+`sinexctl status`. Login shells get `SINEX_ENDPOINT` (the loopback HTTP API;
+the Unix socket is the daemon user's own), `SINEX_TOKEN_FILE` (the agent token)
+and `SINEX_PRIVATE_MODE`, so `sinexctl` talks to the daemon and
+`sinexctl private on` stops every capture on the host. The operator reads the
+token and sets the switch through the `sinex` group, which takes effect at
+their next login. A switch that cannot be checked also stops capture: each
+process logs the reason once, and `sinexctl private` and `sinexctl status`
+show it.
 
 The database has one writer. Starting a backfill
 (`systemctl start sinex-backfill-NAME`) stops sinexd, reads the inputs

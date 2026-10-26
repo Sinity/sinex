@@ -339,9 +339,10 @@ in
       users.groups.${cfg.group} = { };
       environment.systemPackages = [ cfg.package ];
       # sinexctl in a login shell talks to this daemon with the agent token
-      # and flips the daemon's private-mode switch.
+      # and flips the daemon's private-mode switch. The Unix socket is the
+      # daemon user's own; other users reach the API over loopback HTTP.
       environment.sessionVariables = {
-        SINEX_ENDPOINT = "unix:${cfg.api.socket}";
+        SINEX_ENDPOINT = if cfg.api.listen != null then "http://${cfg.api.listen}" else "unix:${cfg.api.socket}";
         SINEX_TOKEN_FILE = "${cfg.stateDir}/tokens/agent.token";
         SINEX_PRIVATE_MODE = privateSwitch;
       };
