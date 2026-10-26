@@ -113,7 +113,8 @@ That gives these units:
 `nix/catalog.json` lists every source with its formats and purpose. A source's
 `paths` must be readable by the `sinex` user; `readAnyFile` gives sinexd read
 access to every file instead (it never writes them). A path with nothing to
-read is logged once, and again only when that changes.
+read, and a binding that fails, is logged when it happens, once, and again
+only when that changes.
 
 Activation does not restart sinexd, NATS or the database setup. After a
 deploy, restart them by hand (`systemctl restart sinex-db-setup sinexd`) and

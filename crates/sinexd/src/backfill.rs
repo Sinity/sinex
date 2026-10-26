@@ -172,6 +172,8 @@ pub(crate) async fn run(o: Options) -> Result<(), String> {
             recipient: None,
             unlock: unlock.as_ref(),
         },
+        // A backfill reports every failure once it has read everything.
+        &mut |_, _| {},
     )
     .await;
     let mut failures = Vec::new();

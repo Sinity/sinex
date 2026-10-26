@@ -29,6 +29,7 @@ async fn restarted_directory_reader_observes_files_removed_after_its_committed_c
         &mut bounds,
         stop.clone(),
         Access::default(),
+        &mut |_, _| {},
     )
     .await;
     for (_, result) in result {
@@ -47,6 +48,7 @@ async fn restarted_directory_reader_observes_files_removed_after_its_committed_c
         &mut restarted,
         stop,
         Access::default(),
+        &mut |_, _| {},
     )
     .await;
     for (_, result) in result {
@@ -75,6 +77,7 @@ async fn turn(ctx: &mut OneShot, bound: &mut [Bound], access: Access<'_>) -> Res
         bound,
         stop,
         access,
+        &mut |_, _| {},
     )
     .await
     {
@@ -315,6 +318,7 @@ async fn stopped_directory_restore_keeps_progress_and_can_be_retried(db: devkit:
         &mut restarted,
         stop,
         Access::default(),
+        &mut |_, _| {},
     )
     .await;
     assert!(result[0].1.as_ref().is_err_and(|e| e.contains("cancelled")));
