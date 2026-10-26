@@ -104,7 +104,10 @@ pub(crate) async fn run(
             Err(e) => eprintln!("sinexd: binding {name}: {e}"),
         }
     }
+    // The daemon treats a task that returns as stopped, so a runner with
+    // nothing to read waits for shutdown like the others.
     if bound.is_empty() {
+        let _ = stop.wait_for(|s| *s).await;
         return Ok(());
     }
     let emits: Vec<&'static str> = {

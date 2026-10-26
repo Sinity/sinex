@@ -54,7 +54,9 @@ self: {
     server.wait_for_unit("sinexd.service")
     server.wait_for_unit("nfs-server.service")
     satellite.wait_for_unit("multi-user.target")
-    satellite.wait_until_succeeds("ls /mnt/sinex-store", timeout=120)
+    # Root is squashed on the export; the capture user reaches the store
+    # through the shared group.
+    satellite.wait_until_succeeds("runuser -u sinex-capture -- ls /mnt/sinex-store", timeout=120)
     satellite.wait_for_unit("sinex-capture.service")
 
     with subtest("a change on the satellite is admitted on the server with the satellite's host"):
