@@ -614,11 +614,6 @@ in
           description = "Sinex backfill ${name}";
           after = [ "sinex-db-setup.service" "sinexd.service" ];
           requires = [ "sinex-db-setup.service" ];
-          # The one writer: sinexd stops for the import and starts after it,
-          # whatever the outcome.
-          conflicts = [ "sinexd.service" ];
-          onSuccess = [ "sinexd.service" ];
-          onFailure = [ "sinexd.service" ];
           restartIfChanged = false;
           path = [ pkgs.tesseract pkgs.coreutils ];
           environment.SINEX_PRIVATE_MODE = privateSwitch;
@@ -628,6 +623,12 @@ in
             Group = cfg.group;
             UMask = "0007";
             ReadOnlyPaths = map (input: lib.last (lib.splitString "=" input)) inputs;
+            # The database has one writer: sinexd stops for the import and
+            # starts after it however it ends, stopped by hand included. A
+            # unit dependency (Conflicts) would cancel this start job when
+            # sinexd starts again.
+            ExecStartPre = "+${config.systemd.package}/bin/systemctl stop sinexd.service";
+            ExecStopPost = "+${config.systemd.package}/bin/systemctl start --no-block sinexd.service";
           } // lib.optionalAttrs cfg.readAnyFile {
             AmbientCapabilities = [ "CAP_DAC_READ_SEARCH" ];
             CapabilityBoundingSet = [ "CAP_DAC_READ_SEARCH" ];
