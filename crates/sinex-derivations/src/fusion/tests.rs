@@ -592,6 +592,31 @@ fn a_player_alone_gives_one_play_per_track_start() {
     assert_eq!(out[1]["started_at"], json!(at(H + 200.0)));
 }
 
+#[devkit::test]
+fn a_stream_of_unknown_length_has_no_end() {
+    // Chromium reports a live stream's length as the largest integer.
+    let out = fuse(
+        &PLAYS,
+        &[
+            mpris("Live", "Channel", H, Some("Playing"), i64::MAX as f64 / 1e6),
+            lake(
+                "mpris",
+                H + 0.2,
+                json!({"player": "chromium", "status": "Playing", "title": "Live",
+                       "artist": "Channel", "duration_seconds": 9_223_372_036_854.775}),
+            ),
+        ],
+    );
+    assert_eq!(out.len(), 1, "{out:?}");
+    assert!(
+        out[0]
+            .get("ended_at")
+            .is_none_or(|end| end.as_str() < Some("2100")),
+        "{:?}",
+        out[0]
+    );
+}
+
 // Clipboard and notifications: live capture against the capture lake.
 
 #[devkit::test]

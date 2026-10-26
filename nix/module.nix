@@ -414,6 +414,10 @@ in
         after = [ "postgresql.service" "postgresql-setup.service" ];
         requires = [ "postgresql.service" ];
         wantedBy = [ "multi-user.target" ];
+        # sinexd requires this unit, so restarting it on every package change
+        # would restart sinexd too, which activation leaves to the operator.
+        # Restart both by hand to apply new extensions or roles.
+        restartIfChanged = false;
         serviceConfig = {
           Type = "oneshot";
           RemainAfterExit = true;

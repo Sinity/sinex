@@ -117,13 +117,35 @@ pub(crate) async fn run(o: Options) -> Result<(), String> {
         ("writer", Ok(()))
     });
 
-    // Every derivation runs in the runner, keyed and per-event (screen text
-    // included).
+    // The configured derivations run in the runner, keyed and per-event
+    // (screen text included).
+    let sources = match &o.sources {
+        Some(file) => binding_runner::Config::load(file)?,
+        None => binding_runner::Config::default(),
+    };
+    let (keyed, per_event) = (sinex_derivations::keyed(), derivation_runner::per_event());
+    if let Some(name) = sources.derivations.keys().find(|name| {
+        !keyed.iter().any(|d| d.name() == name.as_str())
+            && !per_event.iter().any(|d| d.name() == name.as_str())
+    }) {
+        return Err(format!("derivation {name}: no such derivation"));
+    }
+    let keyed: Vec<_> = keyed
+        .into_iter()
+        .filter(|d| sources.runs(d.name()))
+        .collect();
+    let per_event: Vec<_> = per_event
+        .into_iter()
+        .filter(|d| sources.runs(d.name()))
+        .collect();
+    for (name, _) in sources.derivations.iter().filter(|(_, runs)| !**runs) {
+        eprintln!("sinexd: derivation {name} is turned off by the configuration");
+    }
     let runner = derivation_runner::DerivationRunner::start(
         connect(&o.database).await?,
         handle.clone(),
-        sinex_derivations::keyed(),
-        derivation_runner::per_event(),
+        keyed,
+        per_event,
         &o.host,
     )
     .await?
@@ -199,11 +221,10 @@ pub(crate) async fn run(o: Options) -> Result<(), String> {
     });
 
     // The configured sources, read continuously by the binding runner.
-    if let Some(file) = &o.sources {
+    if o.sources.is_some() {
         // A configuration naming an unknown source or format stops the
         // daemon here; the runner plans it again as files appear.
-        let config = binding_runner::Config::load(file)?;
-        binding_runner::plan(&config, &o.host)?;
+        binding_runner::plan(&sources, &o.host)?;
         let (read_conn, b, w, host, s) = (
             connect(&o.database).await?,
             blobs.clone(),
@@ -214,7 +235,7 @@ pub(crate) async fn run(o: Options) -> Result<(), String> {
         tasks.spawn(async move {
             (
                 "binding runner",
-                binding_runner::run(read_conn, b, w, host, config, BINDINGS_EVERY, s).await,
+                binding_runner::run(read_conn, b, w, host, sources, BINDINGS_EVERY, s).await,
             )
         });
     }
