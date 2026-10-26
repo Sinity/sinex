@@ -266,12 +266,16 @@ fn playing(status: Option<&str>) -> bool {
 /// The end of a report from its start and the track's length.
 fn after(event: &Event, length_ns: Option<f64>) -> Option<Timestamp> {
     let start = event.ts_orig.at?.unix_ns();
-    Timestamp::from_unix_ns(start + i128::from(length_ns? as i64)).ok()
+    // MPRIS players report a stream of unknown length (a live stream) as the
+    // largest integer, which no real track reaches in nanoseconds; such a
+    // play's end is unknown, not centuries away.
+    let length = length_ns.filter(|l| l.is_finite() && *l >= 0.0 && *l < i64::MAX as f64)?;
+    Timestamp::from_unix_ns(start + i128::from(length as i64)).ok()
 }
 
 pub static PLAYS: FusionRule = FusionRule {
     derivation: "play.fusion",
-    version: 1,
+    version: 2,
     output: "play.fused",
     observers: &[
         Observer {

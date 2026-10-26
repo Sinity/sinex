@@ -202,7 +202,7 @@ async fn excised_events_never_reach_consumers(db: devkit::pg::TestDatabase) {
     )
     .await;
     let mut conn = PgConnection::connect(&url).await.unwrap();
-    let page = commit_log::after(&mut conn, 0, 10).await.unwrap();
+    let page = commit_log::after(&mut conn, 0, 10, i64::MAX).await.unwrap();
     assert_eq!(page.up_to, Some(2));
     assert_eq!(page.events.len(), 1);
     assert_eq!(

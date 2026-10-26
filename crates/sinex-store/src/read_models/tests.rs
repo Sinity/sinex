@@ -5,7 +5,7 @@ use super::*;
 pub(crate) async fn catch_up_search_text(conn: &mut PgConnection) -> Result<i64> {
     let (mut position, _) = crate::commit_log::consumer_position(conn, SEARCH_TEXT).await?;
     loop {
-        let page = crate::commit_log::after(conn, position, 2_000).await?;
+        let page = crate::commit_log::after(conn, position, 2_000, i64::MAX).await?;
         let Some(up_to) = page.up_to else {
             return Ok(position);
         };

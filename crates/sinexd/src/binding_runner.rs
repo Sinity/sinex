@@ -19,11 +19,15 @@ use std::time::Duration;
 use tokio::sync::watch;
 
 /// `sources.json` as the NixOS module writes it: each source's options by its
-/// registered name.
+/// registered name, and which derivations run.
 #[derive(Debug, Default, Deserialize)]
 pub(crate) struct Config {
     #[serde(default)]
     pub sources: BTreeMap<String, SourceConfig>,
+    /// Derivations by name; one set to false does not run. Its keys are still
+    /// marked as inputs arrive, so it catches up when it is enabled again.
+    #[serde(default)]
+    pub derivations: BTreeMap<String, bool>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -47,6 +51,12 @@ pub(crate) struct SourceConfig {
 }
 
 impl Config {
+    /// Whether the derivation `name` runs; every derivation does unless the
+    /// configuration turns it off.
+    pub(crate) fn runs(&self, derivation: &str) -> bool {
+        self.derivations.get(derivation).copied().unwrap_or(true)
+    }
+
     pub(crate) fn load(path: &Path) -> Result<Self, String> {
         let text = std::fs::read(path).map_err(|e| format!("{}: {e}", path.display()))?;
         serde_json::from_slice(&text).map_err(|e| format!("{}: {e}", path.display()))

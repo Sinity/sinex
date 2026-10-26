@@ -213,9 +213,15 @@ impl DerivationRunner {
         let mut seen: HashSet<String> = HashSet::new();
         let mut after = 0i64;
         loop {
-            let page = derivations::after_seq(&mut self.read, &types, after, 10_000)
-                .await
-                .map_err(|e| e.to_string())?;
+            let page = derivations::after_seq(
+                &mut self.read,
+                &types,
+                after,
+                10_000,
+                sinex_store::PAGE_BYTES,
+            )
+            .await
+            .map_err(|e| e.to_string())?;
             let Some(last) = page.last() else { break };
             after = last.commit_seq;
             for c in &page {
@@ -379,7 +385,7 @@ impl DerivationRunner {
                 None => ready.push((i, Vec::new(), false)),
             }
         }
-        let mut reader = derivations::Windows::new(windows, ROWS_PER_PAGE);
+        let mut reader = derivations::Windows::new(windows, ROWS_PER_PAGE, sinex_store::PAGE_BYTES);
         loop {
             if ready.is_empty() {
                 let t = Instant::now();
@@ -564,9 +570,15 @@ impl DerivationRunner {
         let position = derivations::position(&mut self.read, name)
             .await
             .map_err(|e| e.to_string())?;
-        let events = derivations::after_seq(&mut self.read, &types, position, EVENTS_PER_PASS)
-            .await
-            .map_err(|e| e.to_string())?;
+        let events = derivations::after_seq(
+            &mut self.read,
+            &types,
+            position,
+            EVENTS_PER_PASS,
+            sinex_store::PAGE_BYTES,
+        )
+        .await
+        .map_err(|e| e.to_string())?;
         let Some(last) = events.last().map(|c| c.commit_seq) else {
             return Ok(0);
         };

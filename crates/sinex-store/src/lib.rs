@@ -35,6 +35,13 @@ pub use hashed_blobs::Verified;
 /// depending on the database driver.
 pub use sqlx::PgConnection as Connection;
 
+/// The stored payload bytes one page of events reads at most. Pages of events
+/// are bounded by count and by size together, so a run of large payloads (a
+/// notification carrying its image) never fills memory; a page always holds
+/// its first event, however large. Stored payloads are compressed, and one
+/// parsed in memory can take ten times its stored size.
+pub const PAGE_BYTES: i64 = 8 << 20;
+
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
     #[error(transparent)]

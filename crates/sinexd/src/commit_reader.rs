@@ -62,7 +62,7 @@ pub(crate) async fn run(
         }
         commits.borrow_and_update();
         let from = positions.iter().copied().min().unwrap_or(0);
-        let page = commit_log::after(&mut conn, from, PAGE)
+        let page = commit_log::after(&mut conn, from, PAGE, sinex_store::PAGE_BYTES)
             .await
             .map_err(|e| e.to_string())?;
         let Some(up_to) = page.up_to else {

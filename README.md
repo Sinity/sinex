@@ -115,8 +115,9 @@ That gives these units:
 access to every file instead (it never writes them). A path with nothing to
 read is logged once, and again only when that changes.
 
-Activation does not restart sinexd or NATS. After a deploy, restart them by
-hand and check the running binary
+Activation does not restart sinexd, NATS or the database setup. After a
+deploy, restart them by hand (`systemctl restart sinex-db-setup sinexd`) and
+check the running binary
 (`readlink /proc/$(systemctl show -p MainPID --value sinexd)/exe`) and
 `sinexctl status`. Login shells get `SINEX_ENDPOINT` (the loopback HTTP API;
 the Unix socket is the daemon user's own), `SINEX_TOKEN_FILE` (the agent token)

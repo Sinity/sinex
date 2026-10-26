@@ -146,3 +146,13 @@ fn an_enabled_source_emits_its_types_before_any_file_exists() {
     .unwrap();
     assert_eq!(types, vec!["command.executed", "lake.observed"]);
 }
+
+#[devkit::test]
+fn a_derivation_runs_unless_the_configuration_turns_it_off() {
+    let config = config(serde_json::json!({
+        "derivations": {"metric.hourly": false, "command.fusion": true}
+    }));
+    assert!(!config.runs("metric.hourly"));
+    assert!(config.runs("command.fusion"));
+    assert!(config.runs("shell.sessions"), "absent means it runs");
+}
