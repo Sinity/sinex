@@ -51,6 +51,8 @@ self: {
     };
   };
   testScript = ''
+    import time
+
     server.wait_for_unit("sinexd.service")
     server.wait_for_unit("nfs-server.service")
     satellite.wait_for_unit("multi-user.target")
@@ -60,11 +62,16 @@ self: {
     satellite.wait_for_unit("sinex-capture.service")
 
     with subtest("a change on the satellite is admitted on the server with the satellite's host"):
-        satellite.succeed("echo from-satellite > /srv/watched/x.txt")
-        server.wait_until_succeeds(
-            "test $(sudo -u postgres psql -d sinex -tAc \"select count(*) from core.events where event_type = 'file.changed' and payload::text like '%x.txt%'\") -gt 0",
-            timeout=180,
-        )
+        # The watch starts after the unit does, so a change made before it
+        # is only the starting state: change the file until one arrives.
+        admitted = "test $(sudo -u postgres psql -d sinex -tAc \"select count(*) from core.events where event_type = 'file.changed' and payload::text like '%x.txt%'\") -gt 0"
+        for _ in range(36):
+            satellite.succeed("echo from-satellite >> /srv/watched/x.txt")
+            if server.execute(admitted)[0] == 0:
+                break
+            time.sleep(5)
+        else:
+            raise Exception("no change from the satellite was admitted")
 
     with subtest("the capture does not run as root"):
         satellite.succeed("test $(systemctl show -p User --value sinex-capture.service) = sinex-capture")
