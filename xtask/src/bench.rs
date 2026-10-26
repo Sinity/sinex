@@ -5,13 +5,13 @@
 //! home's `analysis/bench/` (operator data never enters Git):
 //!
 //! ```text
-//! kind <TAB> path <TAB> files|whole
+//! format <TAB> path <TAB> files|whole
 //! ```
 //!
 //! A `files` input is a directory whose files stand alone (a day of casts, a
 //! log directory): the sample takes a stratified subset of its files. A
 //! `whole` input must stay intact (an export with its own layout, a SQLite
-//! database, an archive): the sample takes all of it. Each input's kind is a
+//! database, an archive): the sample takes all of it. Each input's format is a
 //! stratum.
 //!
 //! `bench sample` writes the manifest. `bench run` copies the sample once,
@@ -120,11 +120,11 @@ pub fn execute(command: Bench) -> ExitCode {
 }
 
 struct Input {
-    kind: String,
+    format: String,
     path: PathBuf,
     whole: bool,
-    /// The input's directory under the sample home: its kind, numbered when
-    /// a kind is listed more than once.
+    /// The input's directory under the sample home: its format, numbered
+    /// when a format is listed more than once.
     label: String,
 }
 
@@ -132,7 +132,7 @@ fn inputs() -> Result<Vec<Input>, String> {
     let path = analysis().join("sources.tsv");
     let text = fs::read_to_string(&path).map_err(|e| {
         format!(
-            "{}: {e} (one `kind<TAB>path<TAB>files|whole` per line)",
+            "{}: {e} (one `format<TAB>path<TAB>files|whole` per line)",
             path.display()
         )
     })?;
@@ -142,7 +142,7 @@ fn inputs() -> Result<Vec<Input>, String> {
             continue;
         }
         let f: Vec<&str> = line.split('\t').collect();
-        let [kind, path, mode] = f[..] else {
+        let [format, path, mode] = f[..] else {
             return Err(format!("{}: bad line `{line}`", path.display()));
         };
         let whole = match mode {
@@ -150,15 +150,15 @@ fn inputs() -> Result<Vec<Input>, String> {
             "files" => false,
             other => return Err(format!("mode is files or whole, not {other}")),
         };
-        let n = out.iter().filter(|i| i.kind == kind).count();
+        let n = out.iter().filter(|i| i.format == format).count();
         out.push(Input {
-            kind: kind.into(),
+            format: format.into(),
             path: PathBuf::from(path),
             whole,
             label: if n == 0 {
-                kind.into()
+                format.into()
             } else {
-                format!("{kind}-{n}")
+                format!("{format}-{n}")
             },
         });
     }
@@ -208,7 +208,7 @@ fn files_of(input: &Input) -> Vec<Candidate> {
         .collect()
 }
 
-/// Where an input's sample is handed to `--source`.
+/// Where an input's sample is handed to `--read`.
 fn source_path(home: &Path, input: &Input) -> PathBuf {
     let dir = home.join(&input.label);
     if input.path.is_file() {
@@ -522,7 +522,7 @@ fn synthetic(
         .psql("CREATE EXTENSION pg_stat_statements")
         .ok_or("pg_stat_statements is not available")?;
     let store_dir = out.join("store");
-    let source = format!("zsh={}", input.display());
+    let read = format!("zsh={}", input.display());
     let result = sinexd(
         &binary,
         memory_max,
@@ -534,8 +534,8 @@ fn synthetic(
             store_dir.as_os_str(),
             "--host".as_ref(),
             "bench".as_ref(),
-            "--source".as_ref(),
-            source.as_ref(),
+            "--read".as_ref(),
+            read.as_ref(),
         ],
     );
     let database_mb = cluster.database_mb();
@@ -643,7 +643,7 @@ fn run(storage: &str, memory_max: &str) -> Result<(), String> {
     let mut inputs_out = serde_json::Map::new();
     let mut estimates = Vec::new();
     for input in &inputs {
-        let source = format!("{}={}", input.kind, source_path(&home, input).display());
+        let read = format!("{}={}", input.format, source_path(&home, input).display());
         let args: Vec<&std::ffi::OsStr> = [
             "backfill".as_ref(),
             "--database".as_ref(),
@@ -652,8 +652,8 @@ fn run(storage: &str, memory_max: &str) -> Result<(), String> {
             store_dir.as_os_str(),
             "--host".as_ref(),
             "bench".as_ref(),
-            "--source".as_ref(),
-            source.as_ref(),
+            "--read".as_ref(),
+            read.as_ref(),
         ]
         .to_vec();
         let scale = scale_of(&input.label);
