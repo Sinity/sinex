@@ -29,6 +29,36 @@ fn an_uncheckable_switch_means_on() {
     std::fs::write(&file, b"").unwrap();
     let m = PrivateMode::new(file.join("sub").join("private-mode"));
     assert!(m.on(), "a switch that cannot be checked counts as on");
+    let State::Unchecked(reason) = m.state() else {
+        panic!("expected an uncheckable switch, got {:?}", m.state());
+    };
+    assert!(reason.contains("Not a directory"), "{reason}");
+}
+
+#[devkit::test]
+fn an_uncheckable_switch_is_reported_once_and_its_recovery_once() {
+    let path = dir().join("reported").join("private-mode");
+    let unchecked = State::Unchecked("cannot read: denied".into());
+    let first = report(&path, &unchecked).expect("the first check is reported");
+    assert!(
+        first.contains("cannot be checked (cannot read: denied)"),
+        "{first}"
+    );
+    assert_eq!(
+        report(&path, &unchecked),
+        None,
+        "the same reason is not repeated"
+    );
+    let other = State::Unchecked("cannot create: read-only".into());
+    assert!(report(&path, &other).is_some(), "a new reason is reported");
+    assert_eq!(
+        report(&path, &State::On),
+        Some(format!(
+            "private-mode switch {} can be checked again; capture follows it",
+            path.display()
+        ))
+    );
+    assert_eq!(report(&path, &State::Off), None);
 }
 
 #[devkit::test]

@@ -69,6 +69,69 @@ reads the bindings in `--sources` continuously and also needs NATS and a tokens
 directory; the NixOS module sets it up. A sealed source that was left part-way needs
 `--identity-file KEYFILE` to continue.
 
+## Run on a host
+
+On NixOS, import `nixosModules.default` from this flake and enable it:
+
+```nix
+services.sinex = {
+  enable = true;
+  nats.daemonPasswordFile = "/run/agenix/sinex-nats-daemon";
+  readAnyFile = true;                 # sources under a private home directory
+  sources."terminal.atuin-history" = {
+    enable = true;
+    paths = [ "/home/me/.local/share/atuin/history.db" ];
+  };
+  session = {                         # live desktop sources, as the operator
+    enable = true;
+    user = "me";
+    passwordFile = "/run/agenix/sinex-nats-session";
+    hyprland = true;
+    clipboard = true;
+  };
+  backfills.takeout-2025 = [ "takeout=/data/takeout-2025.tgz" ];
+};
+```
+
+That gives these units:
+
+- `postgresql.service`, with its data in `database.dataDir`, and
+  `sinex-db-setup.service`, which adds the extensions and the roles;
+- `sinex-nats.service`, NATS with JetStream under `stateDir/nats`, with one
+  user per producer;
+- `sinexd.service`, which applies the schema, makes the API tokens under
+  `stateDir/tokens` once, and reads every enabled source from
+  `/etc/sinex/sources.json`; it plans the sources' paths again every minute,
+  so a new day's file or recording is read without a restart;
+- `sinex-capture-journald.service`, when the journald source is enabled;
+- the `sinex-session` user service in the operator's graphical session;
+- `sinex-dump.timer`, the daily database dump into `backup.dumpDir`, and a
+  Borg job when `backup.repo` is set;
+- one `sinex-backfill-NAME.service` per declared backfill, never started at
+  activation.
+
+`nix/catalog.json` lists every source with its formats and purpose. A source's
+`paths` must be readable by the `sinex` user; `readAnyFile` gives sinexd read
+access to every file instead (it never writes them). A path with nothing to
+read is logged once, and again only when that changes.
+
+Activation does not restart sinexd or NATS. After a deploy, restart them by
+hand and check the running binary (`systemctl show -p ExecStart sinexd`) and
+`sinexctl status`. Login shells get `SINEX_ENDPOINT`, `SINEX_TOKEN_FILE` (the
+agent token) and `SINEX_PRIVATE_MODE`, so `sinexctl` talks to the daemon and
+`sinexctl private on` stops every capture on the host; the operator reaches
+both through the `sinex` group. A switch that cannot be checked also stops
+capture: each process logs the reason once, and `sinexctl private` and
+`sinexctl status` show it.
+
+The database has one writer. Starting a backfill
+(`systemctl start sinex-backfill-NAME`) stops sinexd, reads the inputs
+read-only to their end, and starts sinexd again; the session service and the
+journald capture keep spooling meanwhile.
+
+The content store (`storeDir`) and the dumps are what a backup needs; the
+database itself is rebuilt from a dump (`nix/tests/restore.nix` is the drill).
+
 ## Ask
 
 ```sh

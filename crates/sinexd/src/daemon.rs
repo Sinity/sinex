@@ -200,7 +200,10 @@ pub(crate) async fn run(o: Options) -> Result<(), String> {
 
     // The configured sources, read continuously by the binding runner.
     if let Some(file) = &o.sources {
-        let planned = binding_runner::plan(&binding_runner::Config::load(file)?, &o.host)?;
+        // A configuration naming an unknown source or format stops the
+        // daemon here; the runner plans it again as files appear.
+        let config = binding_runner::Config::load(file)?;
+        binding_runner::plan(&config, &o.host)?;
         let (read_conn, b, w, host, s) = (
             connect(&o.database).await?,
             blobs.clone(),
@@ -211,7 +214,7 @@ pub(crate) async fn run(o: Options) -> Result<(), String> {
         tasks.spawn(async move {
             (
                 "binding runner",
-                binding_runner::run(read_conn, b, w, host, planned, BINDINGS_EVERY, s).await,
+                binding_runner::run(read_conn, b, w, host, config, BINDINGS_EVERY, s).await,
             )
         });
     }

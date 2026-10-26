@@ -1,9 +1,10 @@
 //! The binding runner: every binding the sources configuration enables, read
 //! continuously through the writer. Bindings are planned by their source's format
-//! from the configured paths, recorded with their settings, and read in turn; a
-//! binding that fails is reported and retried on the next round, never stopping
-//! the others or the daemon. Private mode pauses every read until it is off
-//! again.
+//! from the configured paths, recorded with their settings, and read in turn; the
+//! paths are planned again every minute, so files a source starts later are
+//! read too. A binding that fails is reported and retried on the next round,
+//! never stopping the others or the daemon. Private mode pauses every read
+//! until it is off again.
 use crate::binding_reader::{self, Bound};
 use crate::material_sink::Sink;
 use crate::writer::WriterHandle;
@@ -58,14 +59,23 @@ pub(crate) fn plan(
     config: &Config,
     host: &str,
 ) -> Result<Vec<(&'static InputFormat, Binding)>, String> {
+    Ok(plan_by_path(config, host)?
+        .into_iter()
+        .flat_map(|planned| planned.bindings)
+        .collect())
+}
+
+/// The bindings one configured path of one source gives.
+struct PathPlan {
+    source: String,
+    path: String,
+    bindings: Vec<(&'static InputFormat, Binding)>,
+}
+
+fn plan_by_path(config: &Config, host: &str) -> Result<Vec<PathPlan>, String> {
     let mut out = Vec::new();
     for (name, source) in config.sources.iter().filter(|(_, s)| s.enable) {
-        let format = match &source.format {
-            Some(k) => sources::format(k)
-                .filter(|k| k.reads(name))
-                .ok_or_else(|| format!("{name}: format {k} does not read it"))?,
-            None => sources::format_of(name).ok_or_else(|| format!("{name}: no such source"))?,
-        };
+        let format = format_of(name, source)?;
         let plan = format
             .plan
             .ok_or_else(|| format!("{name}: not read from a configured path"))?;
@@ -75,50 +85,124 @@ pub(crate) fn plan(
             options: source.options.clone(),
         };
         for path in &source.paths {
-            out.extend(
-                plan(Path::new(path), &settings)?
+            out.push(PathPlan {
+                source: name.clone(),
+                path: path.clone(),
+                bindings: plan(Path::new(path), &settings)?
                     .into_iter()
                     .filter(|b| b.source == *name)
-                    .map(|b| (format, b)),
-            );
+                    .map(|b| (format, b))
+                    .collect(),
+            });
         }
     }
     Ok(out)
 }
 
-/// Read `planned` in rounds every `interval` until `stop`.
+fn format_of(name: &str, source: &SourceConfig) -> Result<&'static InputFormat, String> {
+    match &source.format {
+        Some(k) => sources::format(k)
+            .filter(|k| k.reads(name))
+            .ok_or_else(|| format!("{name}: format {k} does not read it")),
+        None => sources::format_of(name).ok_or_else(|| format!("{name}: no such source")),
+    }
+}
+
+/// The event types the enabled sources can emit, whether or not their paths
+/// hold anything yet.
+fn emitted(config: &Config) -> Result<Vec<&'static str>, String> {
+    let mut types = Vec::new();
+    for (name, source) in config.sources.iter().filter(|(_, s)| s.enable) {
+        let format = format_of(name, source)?;
+        for spec in (format.specs)().into_iter().filter(|s| s.name == name) {
+            types.extend(spec.event_types.iter().copied());
+        }
+    }
+    types.sort_unstable();
+    types.dedup();
+    Ok(types)
+}
+
+/// The bindings being read, and what was last said about each path and
+/// binding, so a path that stays empty or a binding that cannot start is
+/// reported once, not every round.
+#[derive(Default)]
+struct Bindings {
+    bound: Vec<Bound>,
+    said: BTreeMap<String, String>,
+}
+
+impl Bindings {
+    /// Plan `config` again and start the bindings not read yet: files a source
+    /// writes later (a new day's file, a new recording) are read without a
+    /// restart.
+    fn extend(&mut self, config: &Config, host: &str) {
+        let plans = match plan_by_path(config, host) {
+            Ok(plans) => plans,
+            Err(e) => {
+                self.say("plan", format!("sinexd: sources: {e}"));
+                return;
+            }
+        };
+        for planned in plans {
+            let key = format!("path {} {}", planned.source, planned.path);
+            if planned.bindings.is_empty() {
+                self.say(
+                    &key,
+                    format!(
+                        "sinexd: source {}: nothing to read at {} (missing, unreadable or empty)",
+                        planned.source, planned.path
+                    ),
+                );
+                continue;
+            }
+            self.said.remove(&key);
+            for (format, binding) in planned.bindings {
+                if self
+                    .bound
+                    .iter()
+                    .any(|b| b.binding.name == binding.name && b.binding.parser == binding.parser)
+                {
+                    continue;
+                }
+                let name = binding.name.clone();
+                match Bound::new(format, binding) {
+                    Ok(b) => {
+                        self.said.remove(&format!("binding {name}"));
+                        self.bound.push(b);
+                    }
+                    Err(e) => self.say(
+                        &format!("binding {name}"),
+                        format!("sinexd: binding {name}: {e}"),
+                    ),
+                }
+            }
+        }
+    }
+
+    fn say(&mut self, key: &str, message: String) {
+        if self.said.get(key) != Some(&message) {
+            eprintln!("{message}");
+            self.said.insert(key.to_owned(), message);
+        }
+    }
+}
+
+/// How often the sources are planned again for new files.
+const PLAN_EVERY: Duration = Duration::from_secs(60);
+
+/// Read the bindings `config` enables, in rounds every `interval`, until
+/// `stop`.
 pub(crate) async fn run(
     mut read_conn: PgConnection,
     blobs: Blobs,
     writer: WriterHandle,
     host: String,
-    planned: Vec<(&'static InputFormat, Binding)>,
+    config: Config,
     interval: Duration,
     mut stop: watch::Receiver<bool>,
 ) -> Result<(), String> {
-    let mut bound = Vec::new();
-    for (format, binding) in planned {
-        let name = binding.name.clone();
-        match Bound::new(format, binding) {
-            Ok(b) => bound.push(b),
-            Err(e) => eprintln!("sinexd: binding {name}: {e}"),
-        }
-    }
-    // The daemon treats a task that returns as stopped, so a runner with
-    // nothing to read waits for shutdown like the others.
-    if bound.is_empty() {
-        let _ = stop.wait_for(|s| *s).await;
-        return Ok(());
-    }
-    let emits: Vec<&'static str> = {
-        let mut types: Vec<&'static str> = bound
-            .iter()
-            .flat_map(|b| b.source.spec().event_types.iter().copied())
-            .collect();
-        types.sort_unstable();
-        types.dedup();
-        types
-    };
+    let emits = emitted(&config)?;
     let manifest = runs::Manifest {
         name: "sinexd bindings",
         kind: "source",
@@ -131,16 +215,25 @@ pub(crate) async fn run(
         .map_err(|e| e.to_string())?;
     let sink = Sink(blobs.clone());
     let private = sinex_transport::private_mode::PrivateMode::default();
-    eprintln!("sinexd: reading {} bindings", bound.len());
+    let mut bindings = Bindings::default();
+    let mut planned_at: Option<std::time::Instant> = None;
     loop {
         if !private.on() {
+            if planned_at.is_none_or(|at| at.elapsed() >= PLAN_EVERY) {
+                let before = bindings.bound.len();
+                bindings.extend(&config, &host);
+                if bindings.bound.len() != before {
+                    eprintln!("sinexd: reading {} bindings", bindings.bound.len());
+                }
+                planned_at = Some(std::time::Instant::now());
+            }
             for (source, result) in binding_reader::read(
                 &mut read_conn,
                 &blobs,
                 &writer,
                 run,
                 &sink,
-                &mut bound,
+                &mut bindings.bound,
                 stop.clone(),
                 binding_reader::Access::default(),
             )

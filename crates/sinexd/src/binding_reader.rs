@@ -17,6 +17,9 @@ pub(crate) struct Bound {
     reading: Reading,
     remembered: bool,
     history_floor: Class,
+    /// An append-only file's facts when a poll last read it to its end: while
+    /// they hold, nothing was appended and the poll is skipped.
+    settled: Option<sinex_model::ObservationFacts>,
 }
 impl Bound {
     pub(crate) fn new(kind: &InputFormat, binding: Binding) -> Result<Self, String> {
@@ -29,6 +32,7 @@ impl Bound {
             binding,
             remembered: false,
             history_floor: Class::Open,
+            settled: None,
         })
     }
 }
@@ -120,6 +124,16 @@ pub(crate) async fn read(
                 )),
             }
         } else if let Reading::Polled(reader) = &mut b.reading {
+            // Taken before the poll, so bytes appended during it change them.
+            let facts = (b.source.spec().driver == sinex_sources::Driver::AppendFile)
+                .then(|| drivers::file_facts(&b.binding.input).ok())
+                .flatten();
+            if let (Some(now), Some(then)) = (&facts, &b.settled)
+                && same_file(now, then)
+            {
+                results.push((b.binding.source.clone(), Ok(Totals::default())));
+                continue;
+            }
             let result = backfill::drive(
                 conn,
                 writer,
@@ -144,6 +158,7 @@ pub(crate) async fn read(
                 },
                 Err(e) => Err(e),
             };
+            b.settled = if result.is_ok() { facts } else { None };
             results.push((b.binding.source.clone(), result));
         }
     }
