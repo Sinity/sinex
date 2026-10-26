@@ -963,6 +963,16 @@
       ]
     },
     {
+      "name": "mail.fusion",
+      "kind": "keyed",
+      "inputs": [
+        "mail.message"
+      ],
+      "outputs": [
+        "mail.fused"
+      ]
+    },
+    {
       "name": "shell.sessions",
       "kind": "keyed",
       "inputs": [
@@ -995,7 +1005,7 @@
         "play.fused",
         "git.commit",
         "chat.message",
-        "mail.message",
+        "mail.fused",
         "journal.entry",
         "visit.fused"
       ],

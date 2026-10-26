@@ -216,10 +216,16 @@ pub static METRICS: &[Metric] = &[
     Metric {
         name: "mail.messages",
         description: "Mail messages",
-        inputs: || vec![Kind::all("mail.message")],
+        inputs: || vec![Kind::all("mail.fused")],
         law: Law::Count,
         dimensions: &[],
-        sources: &["communication.mbox", "communication.maildir"],
+        sources: &[
+            "communication.imap",
+            "communication.maildir",
+            "communication.mbox",
+            "communication.outlook",
+            "communication.outlook-csv",
+        ],
         tracked: false,
     },
     Metric {
@@ -421,7 +427,7 @@ impl Keyed for HourlyMetrics {
         "play.fused",
         "git.commit",
         "chat.message",
-        "mail.message",
+        "mail.fused",
         "journal.entry",
         "visit.fused",
     ];

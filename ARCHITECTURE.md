@@ -156,7 +156,8 @@ reads a whole type to use a sliver of it.
 Several sources often see the same thing: Atuin and zsh the same command,
 the compositor and ActivityWatch the same focus, a browser's history and its
 Takeout export the same visit, Sinex's live capture and the Sinnix capture
-lake the same clipboard change, notification or track. One mechanism joins
+lake the same clipboard change, notification or track, IMAP and an mbox the
+same mail. One mechanism joins
 them (`sinex-derivations/src/fusion.rs`). Each fused kind is a rule in
 `fusion/rules.rs`: its observers in preference order, each reading one
 source's events as sightings of something with an identity, a start and
@@ -167,7 +168,7 @@ repeat (focus, plays), a group whose start falls inside a group led by a more
 preferred source joins it: ActivityWatch's title changes inside a focus the
 compositor reported, a player's reports of a track a streaming export holds.
 The fused event (`command.fused`, `focus.fused`, `visit.fused`, `play.fused`,
-`clipboard.fused`, `notification.fused`) takes its times from its most
+`clipboard.fused`, `notification.fused`, `mail.fused`) takes its times from its most
 preferred member and each field from the most preferred member that has it,
 names every member as a parent and lists the sources in `observed_by`. A
 record no other source saw is fused alone, so a fused kind counts each thing

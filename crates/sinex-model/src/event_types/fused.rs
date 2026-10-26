@@ -139,3 +139,25 @@ pub struct NotificationFused {
     pub shown_at: Timestamp,
     pub observed_by: Vec<String>,
 }
+
+/// One mail message, from every mail source that holds it (IMAP, Maildir,
+/// mbox, Outlook): its `Message-ID` and `Date` are the same wherever it is
+/// stored.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
+#[event(
+    type = "mail.fused",
+    key = ["record"],
+    replace = newer,
+    time = sent_at,
+    quality = intrinsic
+)]
+pub struct MailFused {
+    pub record: String,
+    pub message_id: String,
+    pub subject: Option<String>,
+    pub from: Vec<String>,
+    pub thread_id: Option<String>,
+    /// The `Date` header.
+    pub sent_at: Timestamp,
+    pub observed_by: Vec<String>,
+}
