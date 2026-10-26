@@ -100,7 +100,7 @@ fn shutdown_drains_sent_records_and_a_partial_line_with_idle_clients_open() {
         .records
         .iter()
         .map(|(start, end)| {
-            let record = serde_json::from_slice(&material.bytes[*start..*end]).unwrap();
+            let record = serde_json::from_slice(&material.body()[*start..*end]).unwrap();
             live_stream::received(&record).unwrap().1
         })
         .collect();
@@ -204,7 +204,7 @@ fn continuously_writing_peer_cannot_extend_shutdown() {
         .records
         .iter()
         .map(|(start, end)| {
-            let record = serde_json::from_slice(&material.bytes[*start..*end]).unwrap();
+            let record = serde_json::from_slice(&material.body()[*start..*end]).unwrap();
             let bytes = live_stream::received(&record).unwrap().1;
             assert!(bytes.iter().all(|b| *b == b'x'));
             bytes.len()

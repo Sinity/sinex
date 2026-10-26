@@ -238,11 +238,7 @@ pub(crate) async fn recall_summary(
     .fetch_all(&mut *conn)
     .await?;
     let known = sqlx::query_scalar!(
-        r#"WITH RECURSIVE seen(name) AS (
-             SELECT min(source) FROM core.events
-             UNION ALL
-             SELECT (SELECT min(source) FROM core.events WHERE source > seen.name) FROM seen WHERE seen.name IS NOT NULL)
-           SELECT name AS "name!" FROM seen WHERE name IS NOT NULL
+        r#"SELECT source AS "name!" FROM core.source_counts
            UNION SELECT name FROM registry.sources ORDER BY 1"#
     )
     .fetch_all(&mut *conn)

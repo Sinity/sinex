@@ -24,7 +24,8 @@ pub(crate) enum Admin {
     Catalog,
     /// Print the NATS server `authorization` block: the daemon user with full
     /// access and one user per producer limited to its own subjects. Passwords
-    /// are read from files, so they never pass through the Nix store.
+    /// are read from files, so they never pass through the Nix store, and the
+    /// block holds only their bcrypt hashes.
     NatsAuthorization {
         #[arg(long, default_value = "sinex")]
         subject_root: String,
@@ -71,12 +72,12 @@ pub(crate) async fn run(command: Admin) -> Result<(), String> {
             daemon_password_file,
             producers,
         } => {
-            let secret = |path: &std::path::Path| {
-                std::fs::read_to_string(path)
-                    .map(|s| s.trim_end().to_owned())
-                    .map_err(|e| format!("{}: {e}", path.display()))
+            let hash_of = |path: &std::path::Path| {
+                let password = std::fs::read_to_string(path)
+                    .map_err(|e| format!("{}: {e}", path.display()))?;
+                password_hash(password.trim_end_matches('\n'))
             };
-            let daemon_password = secret(&daemon_password_file)?;
+            let daemon_hash = hash_of(&daemon_password_file)?;
             let mut users = Vec::new();
             for producer in producers {
                 let (name, file) = producer
@@ -85,20 +86,27 @@ pub(crate) async fn run(command: Admin) -> Result<(), String> {
                 if !sinex_protocol::nats::valid_producer(name) {
                     return Err(format!("--producer {name}: not a valid producer name"));
                 }
-                users.push((name.to_owned(), secret(std::path::Path::new(file))?));
+                users.push((name.to_owned(), hash_of(std::path::Path::new(file))?));
             }
             let users: Vec<(&str, &str)> = users
                 .iter()
-                .map(|(n, p)| (n.as_str(), p.as_str()))
+                .map(|(name, hash)| (name.as_str(), hash.as_str()))
                 .collect();
             println!(
                 "{}",
                 sinex_protocol::Subjects::new(subject_root)
-                    .authorization((&daemon_user, &daemon_password), &users)
+                    .authorization((&daemon_user, &daemon_hash), &users)
             );
             Ok(())
         }
     }
+}
+
+/// The bcrypt hash of a NATS password, in the `$2a$` form the server reads.
+pub(crate) fn password_hash(password: &str) -> Result<String, String> {
+    bcrypt::hash_with_result(password, bcrypt::DEFAULT_COST)
+        .map(|hash| hash.format_for_version(bcrypt::Version::TwoA))
+        .map_err(|e| format!("hashing a NATS password: {e}"))
 }
 
 /// Run one command-table command locally: the daemon's API, built over a

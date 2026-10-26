@@ -1,5 +1,5 @@
-//! Writing what admission admitted: events, the commit log, the live side
-//! tables, archived readings, dirty keys and citations; then failures and the
+//! Writing what admission admitted: events, their source's and run's counts,
+//! the commit log, the live side tables, archived readings, dirty keys and citations; then failures and the
 //! source position.
 use super::classify::Classified;
 use super::derived::{mark_archived_dirty, mark_dirty};
@@ -47,6 +47,27 @@ pub(super) async fn insert_admitted(
         admit_ords,
         first,
         batch.run.0,
+    )
+    .execute(&mut *conn)
+    .await?;
+
+    sqlx::query!(
+        r#"INSERT INTO core.source_counts AS c (source, events, first_event, last_event, last_seen)
+           SELECT source, count(*), min(ts_orig), max(ts_orig), max(uuid_extract_timestamp(id))
+           FROM core.admission_stage WHERE ord = ANY($1) GROUP BY source
+           ON CONFLICT (source) DO UPDATE SET events = c.events + EXCLUDED.events,
+             first_event = least(c.first_event, EXCLUDED.first_event),
+             last_event = greatest(c.last_event, EXCLUDED.last_event),
+             last_seen = greatest(c.last_seen, EXCLUDED.last_seen)"#,
+        admit_ords,
+    )
+    .execute(&mut *conn)
+    .await?;
+
+    sqlx::query!(
+        "UPDATE core.runs SET events = events + $2 WHERE id = $1",
+        batch.run.0,
+        n,
     )
     .execute(&mut *conn)
     .await?;

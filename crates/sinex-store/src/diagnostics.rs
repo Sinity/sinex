@@ -20,7 +20,7 @@ pub struct SourceState {
     pub source: String,
     pub events: i64,
     pub last_event: Option<time::OffsetDateTime>,
-    pub last_seen: Option<time::OffsetDateTime>,
+    pub last_seen: time::OffsetDateTime,
 }
 
 pub async fn connect(url: &str) -> Result<PgConnection> {
@@ -57,16 +57,8 @@ pub async fn snapshot(conn: &mut PgConnection) -> Result<Snapshot> {
     .fetch_one(&mut *tx)
     .await?;
     let sources = sqlx::query!(
-        r#"WITH RECURSIVE seen(name) AS (
-             SELECT min(source) FROM core.events
-             UNION ALL
-             SELECT (SELECT min(source) FROM core.events WHERE source > seen.name) FROM seen WHERE seen.name IS NOT NULL)
-           SELECT seen.name AS "source!",
-             (SELECT count(*) FROM core.events e WHERE e.source = seen.name
-                AND NOT EXISTS (SELECT 1 FROM audit.archived a WHERE a.event_id = e.id)) AS "events!",
-             (SELECT max(e.ts_orig) FROM core.events e WHERE e.source = seen.name) AS last_event,
-             (SELECT max(e.ts_coided) FROM core.events e WHERE e.source = seen.name) AS last_seen
-           FROM seen WHERE seen.name IS NOT NULL ORDER BY 1"#
+        r#"SELECT source, events, last_event, last_seen
+           FROM core.source_counts ORDER BY source"#
     )
     .fetch_all(&mut *tx)
     .await?

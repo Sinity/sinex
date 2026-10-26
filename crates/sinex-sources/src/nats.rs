@@ -1,49 +1,63 @@
-//! Connecting to NATS from one URL. Deployments pass each process its
-//! credentials in the URL (`nats://user:password@host:port`, the password
-//! percent-encoded), but `async_nats::connect` does not authenticate with
-//! URL credentials, so they are taken out here and passed explicitly.
+//! Connecting to NATS. The URL names the server and the user
+//! (`nats://user@host:port`, the user percent-encoded); the password is read
+//! from a file. A password in the URL is refused: process arguments are
+//! readable by every local user.
+use std::path::Path;
 
-/// Connect, authenticating with the URL's user and password when it has them.
-pub async fn connect(url: &str) -> Result<async_nats::Client, String> {
-    let (server, credentials) = split(url);
-    let options = match credentials {
-        Some((user, password)) => {
-            async_nats::ConnectOptions::with_user_and_password(user, password)
-        }
-        None => async_nats::ConnectOptions::new(),
-    };
+/// Connect, as the URL's user with the password in `password_file` when the
+/// URL names a user.
+pub async fn connect(
+    url: &str,
+    password_file: Option<&Path>,
+) -> Result<async_nats::Client, String> {
+    let options = options(url, password_file)?;
+    let (server, _) = split(url)?;
     options
         .connect(server.as_str())
         .await
-        .map_err(|e| format!("NATS at {}: {e}", redacted(url)))
+        .map_err(|e| format!("NATS at {url}: {e}"))
 }
 
-/// The URL with any password replaced, for messages and logs.
-fn redacted(url: &str) -> String {
-    match split(url) {
-        (server, Some((user, _))) => {
-            let (scheme, host) = server.split_once("://").unwrap_or(("nats", &server));
-            format!("{scheme}://{user}:***@{host}")
+fn options(url: &str, password_file: Option<&Path>) -> Result<async_nats::ConnectOptions, String> {
+    let (_, user) = split(url)?;
+    match (user, password_file) {
+        (Some(user), Some(file)) => {
+            let password = std::fs::read_to_string(file)
+                .map_err(|e| format!("NATS password {}: {e}", file.display()))?;
+            Ok(async_nats::ConnectOptions::with_user_and_password(
+                user,
+                password.trim_end_matches('\n').to_owned(),
+            ))
         }
-        (server, None) => server,
+        (None, None) => Ok(async_nats::ConnectOptions::new()),
+        (Some(user), None) => Err(format!(
+            "NATS user {user} needs its password file (--nats-password-file)"
+        )),
+        (None, Some(_)) => Err(format!(
+            "a NATS password file needs a user in the URL (nats://USER@HOST:PORT), not {url}"
+        )),
     }
 }
 
-/// The URL without credentials, and the decoded user and password if present.
-fn split(url: &str) -> (String, Option<(String, String)>) {
+/// The URL without its user, and the decoded user if present.
+fn split(url: &str) -> Result<(String, Option<String>), String> {
     let (scheme, rest) = match url.split_once("://") {
         Some((scheme, rest)) => (Some(scheme), rest),
         None => (None, url),
     };
-    let Some((userinfo, host)) = rest.rsplit_once('@') else {
-        return (url.to_owned(), None);
+    let Some((user, host)) = rest.rsplit_once('@') else {
+        return Ok((url.to_owned(), None));
     };
-    let (user, password) = userinfo.split_once(':').unwrap_or((userinfo, ""));
+    if user.contains(':') {
+        return Err(
+            "the NATS URL holds a password; give it in a file with --nats-password-file".into(),
+        );
+    }
     let server = match scheme {
         Some(scheme) => format!("{scheme}://{host}"),
         None => host.to_owned(),
     };
-    (server, Some((decode(user), decode(password))))
+    Ok((server, Some(decode(user))))
 }
 
 /// Percent-decoding; an invalid escape is kept as written.

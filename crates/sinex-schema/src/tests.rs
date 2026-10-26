@@ -41,8 +41,14 @@ fn declarations_are_deterministic_and_named() {
         "raw.positions",
         "derivation.dirty",
         "core.admission_stage",
+        "core.source_counts",
     ] {
         assert!(all.contains(&format!("TABLE {table} (")), "{table}");
     }
     assert!(all.contains("CREATE VIEW event_types.\"command_executed\""));
+}
+
+#[devkit::test]
+fn each_version_after_0_has_its_upgrade() {
+    assert_eq!(i32::try_from(upgrades::upgrades().len()).unwrap(), VERSION);
 }

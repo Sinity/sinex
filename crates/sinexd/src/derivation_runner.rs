@@ -35,7 +35,7 @@ use sinex_model::civil::Civil;
 use sinex_model::{Batch, BatchKind, Event, ReadingOrder, RecordOutcome, RunId, Timestamp};
 use sinex_store::blobs::Blobs;
 use sinex_store::derivations::{self, Nearest, Window};
-use sinex_store::registry::Derivation;
+use sinex_store::registry::{self, Derivation};
 use sinex_store::{ComputedKey, DerivedScope, material_bytes, runs};
 use sqlx::PgConnection;
 use std::collections::{BTreeMap, HashSet};
@@ -141,9 +141,6 @@ impl DerivationRunner {
                 outputs: d.output_types().iter().map(|s| (*s).to_owned()).collect(),
             }))
             .collect();
-        let changed = sinex_store::registry::write_derivations(&mut read, &catalog)
-            .await
-            .map_err(|e| e.to_string())?;
         let mut runs = BTreeMap::new();
         for d in &catalog {
             let name = derivations::static_type(&d.name);
@@ -175,14 +172,25 @@ impl DerivationRunner {
             runs,
             counts: BTreeMap::new(),
         };
-        for name in changed {
-            if runner.keyed.iter().any(|d| d.name() == name) {
-                runner.recompute_all(&name, None).await?;
-            } else {
-                derivations::reset_position(&mut runner.read, &name)
-                    .await
-                    .map_err(|e| e.to_string())?;
+        // A changed derivation's version is written once its recompute is
+        // marked (dirty keys, or a per-event position reset), so a stop
+        // part-way marks it all again at the next start.
+        for d in &catalog {
+            let current = registry::derivation_current(&mut runner.read, d)
+                .await
+                .map_err(|e| e.to_string())?;
+            if !current {
+                if d.kind == "keyed" {
+                    runner.recompute_all(&d.name, None).await?;
+                } else {
+                    derivations::reset_position(&mut runner.read, &d.name)
+                        .await
+                        .map_err(|e| e.to_string())?;
+                }
             }
+            registry::write_derivation(&mut runner.read, d)
+                .await
+                .map_err(|e| e.to_string())?;
         }
         Ok(runner)
     }

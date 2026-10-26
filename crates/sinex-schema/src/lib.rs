@@ -1,6 +1,6 @@
-//! The declarations create an empty database at schema version 0. No
-//! database has been deployed yet, so there are no ordered upgrades: a
-//! database at any other version is refused.
+//! The declarations create an empty database at the current schema version,
+//! [`VERSION`]. A database at an older version is upgraded by the forward
+//! upgrades in `upgrades.rs`, in one transaction; a newer one is refused.
 //!
 //! Enum CHECK lists come from the Rust enums (`DbCheck`), and the event-type
 //! registry rows and typed views come from `sinex_model::event_types::ALL`, so the
@@ -15,12 +15,14 @@ use sinex_model::{
 use sqlx::{Connection, Executor, PgConnection};
 
 mod tables;
+mod upgrades;
 
 /// The session advisory lock held by the database's one writer.
 pub const WRITER_LOCK: i64 = 0x7369_6e65_7857_5254;
 
-/// The schema version these declarations create.
-pub const VERSION: i32 = 0;
+/// The schema version these declarations create: one more than the last
+/// upgrade starts from.
+pub const VERSION: i32 = 1;
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
@@ -30,6 +32,8 @@ pub enum Error {
     Version { found: i32 },
     #[error("database has Sinex objects but no schema version; refusing to guess")]
     Unversioned,
+    #[error("a writer holds the database; stop sinexd before upgrading its schema")]
+    WriterRunning,
 }
 
 /// What `apply` did.
@@ -37,6 +41,7 @@ pub enum Error {
 pub enum Applied {
     Created { version: i32 },
     Current { version: i32 },
+    Upgraded { from: i32, to: i32 },
 }
 
 impl std::fmt::Display for Applied {
@@ -44,6 +49,9 @@ impl std::fmt::Display for Applied {
         match self {
             Applied::Created { version } => write!(f, "created schema version {version}"),
             Applied::Current { version } => write!(f, "schema version {version} is current"),
+            Applied::Upgraded { from, to } => {
+                write!(f, "upgraded schema version {from} to {to}")
+            }
         }
     }
 }
@@ -261,8 +269,9 @@ pub async fn require_current(connection: &mut PgConnection) -> Result<(), Error>
     }
 }
 
-/// Create the schema in an empty database, or confirm that an existing one is
-/// at this version. Creation is one transaction.
+/// Create the schema in an empty database, upgrade one at an older version,
+/// or confirm that an existing one is at this version. Creation and an
+/// upgrade are each one transaction.
 pub async fn apply(connection: &mut PgConnection) -> Result<Applied, Error> {
     let has_version_table: bool = sqlx::query_scalar(
         "SELECT EXISTS (SELECT 1 FROM pg_tables WHERE schemaname='sinex_schema' AND tablename='applied')",
@@ -270,8 +279,16 @@ pub async fn apply(connection: &mut PgConnection) -> Result<Applied, Error> {
     .fetch_one(&mut *connection)
     .await?;
     if has_version_table {
-        require_current(connection).await?;
-        return Ok(Applied::Current { version: VERSION });
+        let found: Option<i32> =
+            sqlx::query_scalar("SELECT max(version) FROM sinex_schema.applied")
+                .fetch_one(&mut *connection)
+                .await?;
+        return match found {
+            Some(VERSION) => Ok(Applied::Current { version: VERSION }),
+            Some(found) if (0..VERSION).contains(&found) => upgrade(connection, found).await,
+            Some(found) => Err(Error::Version { found }),
+            None => Err(Error::Unversioned),
+        };
     }
     let has_core: bool =
         sqlx::query_scalar("SELECT EXISTS (SELECT 1 FROM pg_namespace WHERE nspname='core')")
@@ -293,6 +310,48 @@ pub async fn apply(connection: &mut PgConnection) -> Result<Applied, Error> {
             Err(error)
         }
     }
+}
+
+/// Run the upgrades from `from` to [`VERSION`] in one transaction, while no
+/// writer holds the database: a writer of an older build would not keep the
+/// new tables current.
+async fn upgrade(connection: &mut PgConnection, from: i32) -> Result<Applied, Error> {
+    let mut tx = connection.begin().await?;
+    match run_upgrades(&mut tx, from).await {
+        Ok(()) => {
+            tx.commit().await?;
+            Ok(Applied::Upgraded { from, to: VERSION })
+        }
+        Err(error) => {
+            tx.rollback().await?;
+            Err(error)
+        }
+    }
+}
+
+async fn run_upgrades(connection: &mut PgConnection, from: i32) -> Result<(), Error> {
+    let free: bool = sqlx::query_scalar("SELECT pg_try_advisory_xact_lock($1)")
+        .bind(WRITER_LOCK)
+        .fetch_one(&mut *connection)
+        .await?;
+    if !free {
+        return Err(Error::WriterRunning);
+    }
+    let all = upgrades::upgrades();
+    let start = usize::try_from(from).expect("an upgrade starts at a version from 0");
+    for (version, statements) in (from..).zip(&all[start..]) {
+        for statement in statements {
+            connection
+                .execute(statement.as_str())
+                .await
+                .map_err(|e| sqlx::Error::Protocol(format!("{e}\nin statement: {statement}")))?;
+        }
+        sqlx::query("INSERT INTO sinex_schema.applied (version) VALUES ($1)")
+            .bind(version + 1)
+            .execute(&mut *connection)
+            .await?;
+    }
+    Ok(())
 }
 
 async fn create_schema(connection: &mut PgConnection) -> Result<(), Error> {

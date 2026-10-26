@@ -1,30 +1,43 @@
 use super::*;
 
 #[devkit::test]
-fn credentials_are_taken_out_and_decoded() {
-    let (server, creds) =
-        split("nats://sinexd:daemon%20secret%3A%20with%20%40%20and%20%2F@127.0.0.1:4222");
-    assert_eq!(server, "nats://127.0.0.1:4222");
+fn the_user_is_taken_out_and_decoded() {
     assert_eq!(
-        creds,
-        Some(("sinexd".into(), "daemon secret: with @ and /".into()))
+        split("nats://session%2Dx@127.0.0.1:4222").unwrap(),
+        ("nats://127.0.0.1:4222".into(), Some("session-x".into()))
     );
 }
 
 #[devkit::test]
-fn a_url_without_credentials_is_unchanged() {
+fn a_url_without_a_user_is_unchanged() {
     assert_eq!(
-        split("nats://127.0.0.1:4222"),
+        split("nats://127.0.0.1:4222").unwrap(),
         ("nats://127.0.0.1:4222".into(), None)
     );
-    assert_eq!(split("127.0.0.1:4222"), ("127.0.0.1:4222".into(), None));
+    assert_eq!(
+        split("127.0.0.1:4222").unwrap(),
+        ("127.0.0.1:4222".into(), None)
+    );
 }
 
 #[devkit::test]
-fn messages_never_show_the_password() {
-    let shown = redacted("nats://session-x:s3cret@host:4222");
-    assert_eq!(shown, "nats://session-x:***@host:4222");
-    assert!(!shown.contains("s3cret"));
+fn a_password_in_the_url_is_refused_without_showing_it() {
+    let error = split("nats://sinexd:s3cret@127.0.0.1:4222").unwrap_err();
+    assert!(error.contains("--nats-password-file"), "{error}");
+    assert!(!error.contains("s3cret"));
+}
+
+#[devkit::test]
+fn a_user_needs_its_password_file_and_a_file_needs_a_user() {
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("password");
+    std::fs::write(&file, "daemon secret: with @ and /\n").unwrap();
+    assert!(options("nats://sinexd@host:4222", Some(&file)).is_ok());
+    assert!(options("nats://sinexd@host:4222", None).is_err());
+    assert!(options("nats://host:4222", Some(&file)).is_err());
+    assert!(options("nats://host:4222", None).is_ok());
+    let missing = dir.path().join("missing");
+    assert!(options("nats://sinexd@host:4222", Some(&missing)).is_err());
 }
 
 #[devkit::test]

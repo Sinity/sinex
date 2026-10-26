@@ -85,7 +85,7 @@ fn capture_sees_changes_including_in_new_directories() {
     let m = acquired.material.unwrap();
     let mut seen = Vec::new();
     for (s, e) in &m.records {
-        let r: Map<String, Value> = serde_json::from_slice(&m.bytes[*s..*e]).unwrap();
+        let r: Map<String, Value> = serde_json::from_slice(&m.body()[*s..*e]).unwrap();
         for c in FileWatchParser
             .parse(&r, &(), &crate::RecordContext::none())
             .unwrap()

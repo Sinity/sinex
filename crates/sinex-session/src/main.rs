@@ -41,10 +41,13 @@ enum Command {
 
 #[derive(clap::Args)]
 struct Run {
-    /// The NATS server, with this producer's credentials in the URL when the
-    /// server requires them.
+    /// The NATS server, with this producer's user in the URL when the server
+    /// requires one (`nats://NAME@HOST:PORT`).
     #[arg(long)]
     nats: String,
+    /// That user's password, read from this file.
+    #[arg(long)]
+    nats_password_file: Option<PathBuf>,
     /// Subject root (`sinex` unless several deployments share a server).
     #[arg(long, default_value = "sinex")]
     subject_root: String,
@@ -230,6 +233,7 @@ async fn produce(run: Run) -> Result<(), String> {
     let store = Store::open(&run.store).map_err(|e| format!("content store: {e}"))?;
     let mut producer = Producer::connect(
         &run.nats,
+        run.nats_password_file.as_deref(),
         sinex_protocol::Subjects::new(run.subject_root.clone()),
         &run.producer,
     )

@@ -1,4 +1,5 @@
-//! Table declarations for version 0.
+//! Table declarations: the whole current schema, which a fresh database is
+//! created with.
 use crate::Checks;
 
 pub(crate) const SCHEMAS: &[&str] = &[
@@ -12,6 +13,18 @@ pub(crate) const SCHEMAS: &[&str] = &[
     "telemetry",
     "event_types",
 ];
+
+/// Per source: its live events, and the oldest and newest event time and the
+/// newest reading time of every event admitted from it. Admission, archival,
+/// unhiding and excision keep it current in their own transactions, so status
+/// reads one row per source instead of counting events.
+pub(crate) const SOURCE_COUNTS: &str = "CREATE TABLE core.source_counts (
+  source text PRIMARY KEY,
+  events bigint NOT NULL CHECK (events >= 0),
+  first_event timestamptz,
+  last_event timestamptz,
+  last_seen timestamptz NOT NULL
+)";
 
 pub(crate) fn tables(c: &Checks) -> Vec<String> {
     let event_columns = format!(
@@ -117,6 +130,7 @@ pub(crate) fn tables(c: &Checks) -> Vec<String> {
         // The writer's counters. One writer, so a row update allocates a range.
         "CREATE TABLE core.counters (name text PRIMARY KEY, value bigint NOT NULL)".into(),
         "INSERT INTO core.counters (name, value) VALUES ('commit_seq', 0)".into(),
+        SOURCE_COUNTS.into(),
         // Positions of the commit-log consumers that are not derivations: the
         // confirmed-stream publisher and the read-model maintainers. Each
         // commits its position with the work it covers.
@@ -291,7 +305,10 @@ pub(crate) fn tables(c: &Checks) -> Vec<String> {
   started_at timestamptz NOT NULL DEFAULT now(),
   ended_at timestamptz,
   -- The newest privacy rule row in force when the run's events were admitted.
-  privacy_rules_seq bigint
+  privacy_rules_seq bigint,
+  -- How many of the run's events are stored, kept by admission and
+  -- excision.
+  events bigint NOT NULL DEFAULT 0
 )".into(),
         "CREATE TABLE core.operations (
   id uuid PRIMARY KEY,

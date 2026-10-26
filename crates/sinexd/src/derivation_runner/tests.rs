@@ -633,3 +633,47 @@ async fn windows_read_in_pages_equal_windows_read_alone(db: devkit::pg::TestData
 }
 
 mod shutdown;
+
+/// A new version's recompute that stops before its keys are marked is marked
+/// again at the next start: the registry keeps the old version until then.
+#[devkit::test]
+async fn a_recompute_stopped_part_way_is_marked_again_at_the_next_start(
+    db: devkit::pg::TestDatabase,
+) {
+    let w = World::new(db).await;
+    w.admit(vec![atuin("1", "make", 0, 0, 1), zsh("make", 1, 10)])
+        .await;
+    let mut d = w.runner().await;
+    d.catch_up().await.unwrap();
+    drop(d);
+    let fusion_dirty = "SELECT count(*) FROM derivation.dirty WHERE derivation = 'command.fusion'";
+    assert_eq!(w.count(fusion_dirty).await, 0);
+    let stored_version =
+        "SELECT version::bigint FROM registry.derivations WHERE name = 'command.fusion'";
+    let version = w.count(stored_version).await;
+
+    // A new version: the stored row is one behind.
+    let mut conn = PgConnection::connect(&w.url).await.unwrap();
+    sqlx::query(
+        "UPDATE registry.derivations SET version = version - 1 WHERE name = 'command.fusion'",
+    )
+    .execute(&mut conn)
+    .await
+    .unwrap();
+    // The daemon stops before the recompute is marked: its writer is gone.
+    let (stopped, queues) = writer::channels();
+    drop(queues);
+    let read = PgConnection::connect(&w.url).await.unwrap();
+    assert!(
+        DerivationRunner::start(read, stopped, sinex_derivations::keyed(), vec![], "test")
+            .await
+            .is_err()
+    );
+    assert_eq!(w.count(stored_version).await, version - 1);
+    assert_eq!(w.count(fusion_dirty).await, 0);
+
+    // The next start marks every key and then records the version.
+    let _d = w.runner().await;
+    assert!(w.count(fusion_dirty).await > 0);
+    assert_eq!(w.count(stored_version).await, version);
+}

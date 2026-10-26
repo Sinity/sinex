@@ -145,8 +145,9 @@ impl Subjects {
     }
 
     /// A NATS server `authorization` block: the daemon user with full access,
-    /// and one user per producer limited to its own subjects. Passwords come
-    /// from the deployment's secrets.
+    /// and one user per producer limited to its own subjects, each given as
+    /// its name and the bcrypt hash of its password, which the server checks
+    /// passwords against.
     pub fn authorization(&self, daemon: (&str, &str), producers: &[(&str, &str)]) -> String {
         let quote = |s: &str| serde_json::to_string(s).expect("strings serialize");
         let list = |items: &[String]| {

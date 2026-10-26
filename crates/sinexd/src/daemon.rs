@@ -33,9 +33,11 @@ const BINDINGS_EVERY: Duration = Duration::from_secs(5);
 pub(crate) struct Options {
     pub database: String,
     pub store: PathBuf,
-    /// The NATS server, with the daemon's credentials in the URL when the
-    /// server requires them.
+    /// The NATS server, with the daemon's user in the URL when the server
+    /// requires one.
     pub nats: String,
+    /// That user's password.
+    pub nats_password_file: Option<PathBuf>,
     /// Subject root: `sinex` unless several deployments share a server.
     pub subject_root: String,
     pub host: String,
@@ -65,7 +67,7 @@ pub(crate) async fn run(o: Options) -> Result<(), String> {
     let blobs = Blobs::open(&o.store).map_err(|e| e.to_string())?;
     let tokens =
         api::Tokens::load(&o.api.tokens).map_err(|e| format!("{}: {e}", o.api.tokens.display()))?;
-    let client = sinex_sources::nats::connect(&o.nats).await?;
+    let client = sinex_sources::nats::connect(&o.nats, o.nats_password_file.as_deref()).await?;
     let js = publisher::context(client.clone());
 
     let (stop_tx, stop) = watch::channel(false);

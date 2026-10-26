@@ -503,13 +503,20 @@ async fn invalid_frames_are_refused_and_recorded(db: devkit::pg::TestDatabase) {
 #[devkit::test]
 async fn producers_are_limited_to_their_own_subjects() {
     let subjects = Subjects::new("sx");
-    let config = subjects.authorization(("daemon", "dpw"), &[("kitty", "kpw"), ("phone", "ppw")]);
+    // The server holds only the passwords' hashes.
+    let hash = |password: &str| crate::admin::password_hash(password).unwrap();
+    let config = subjects.authorization(
+        ("daemon", &hash("dpw")),
+        &[("kitty", &hash("kpw")), ("phone", &hash("ppw"))],
+    );
+    assert!(!config.contains("dpw") && !config.contains("kpw"));
     let server = devkit::nats::Server::start_with(&devkit::nats::Options { config }).unwrap();
     let address = server.url().trim_start_matches("nats://").to_owned();
     let connect = |user: &str, password: &str| {
         async_nats::ConnectOptions::with_user_and_password(user.into(), password.into())
             .connect(address.clone())
     };
+    assert!(connect("daemon", "wrong").await.is_err());
     let daemon = connect("daemon", "dpw").await.unwrap();
     let mut seen = daemon.subscribe("sx.ingress.*").await.unwrap();
     daemon.flush().await.unwrap();

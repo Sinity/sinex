@@ -51,38 +51,35 @@ pub struct Derivation {
     pub outputs: Vec<String>,
 }
 
-/// Write the derivation rows from the Rust catalog at daemon start. Returns the
-/// derivations whose version differs from the stored one (including new
-/// ones), whose outputs must be recomputed.
-pub async fn write_derivations(
-    conn: &mut PgConnection,
-    catalog: &[Derivation],
-) -> Result<Vec<String>> {
-    let mut changed = Vec::new();
-    for d in catalog {
-        let previous = sqlx::query_scalar!(
-            "SELECT version FROM registry.derivations WHERE name = $1",
-            d.name
-        )
-        .fetch_optional(&mut *conn)
-        .await?;
-        if previous != Some(d.version) {
-            changed.push(d.name.clone());
-        }
-        sqlx::query!(
-            r#"INSERT INTO registry.derivations (name, kind, version, inputs, outputs) VALUES ($1, $2, $3, $4, $5)
-               ON CONFLICT (name) DO UPDATE SET kind = EXCLUDED.kind, version = EXCLUDED.version,
-                 inputs = EXCLUDED.inputs, outputs = EXCLUDED.outputs"#,
-            d.name,
-            d.kind,
-            d.version,
-            &d.inputs,
-            &d.outputs,
-        )
-        .execute(&mut *conn)
-        .await?;
-    }
-    Ok(changed)
+/// Whether `derivation` is registered at its version. One that is not (a new
+/// derivation, or a new version of one) has outputs to recompute.
+pub async fn derivation_current(conn: &mut PgConnection, derivation: &Derivation) -> Result<bool> {
+    let stored = sqlx::query_scalar!(
+        "SELECT version FROM registry.derivations WHERE name = $1",
+        derivation.name
+    )
+    .fetch_optional(&mut *conn)
+    .await?;
+    Ok(stored == Some(derivation.version))
+}
+
+/// Write the row of `derivation`. A changed derivation is written only once
+/// its recompute is marked, so a stop before then recomputes it again at the
+/// next start.
+pub async fn write_derivation(conn: &mut PgConnection, derivation: &Derivation) -> Result<()> {
+    sqlx::query!(
+        r#"INSERT INTO registry.derivations (name, kind, version, inputs, outputs) VALUES ($1, $2, $3, $4, $5)
+           ON CONFLICT (name) DO UPDATE SET kind = EXCLUDED.kind, version = EXCLUDED.version,
+             inputs = EXCLUDED.inputs, outputs = EXCLUDED.outputs"#,
+        derivation.name,
+        derivation.kind,
+        derivation.version,
+        &derivation.inputs,
+        &derivation.outputs,
+    )
+    .execute(&mut *conn)
+    .await?;
+    Ok(())
 }
 
 #[cfg(test)]

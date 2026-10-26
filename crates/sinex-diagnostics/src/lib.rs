@@ -28,7 +28,7 @@ fn snapshot_json(s: &Snapshot) -> Value {
             "source": src.source,
             "events": src.events,
             "last_event": time(src.last_event),
-            "last_seen": time(src.last_seen),
+            "last_seen": time(Some(src.last_seen)),
         })).collect::<Vec<_>>(),
     })
 }
