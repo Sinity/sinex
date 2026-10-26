@@ -222,7 +222,5 @@ pub(crate) async fn mark_archived_dirty(
             payload: &row.payload,
         }));
     }
-    // Results whose inputs were archived are stale too.
-    crate::analysis::mark_stale(conn, ids, seq).await?;
     mark_dirty(conn, dirty, seq).await
 }

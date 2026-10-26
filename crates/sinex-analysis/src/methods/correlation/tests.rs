@@ -86,3 +86,12 @@ fn spearman_is_rank_based() {
         .unwrap();
     assert!(pearson_r < 1.0);
 }
+
+#[devkit::test]
+fn the_family_is_every_pair_at_two_lags() {
+    let fam = family(&["a", "b", "c", "d"]);
+    // Four series: 6 pairs × 2 lags.
+    assert_eq!(fam.len(), 12);
+    assert!(fam.contains(&("a", "d", 1)));
+    assert!(!fam.iter().any(|(x, y, _)| x == y));
+}

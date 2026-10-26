@@ -93,7 +93,13 @@ fn a_point_dirties_its_civil_hour_and_only_fit_points_count() {
         .inputs(&json!({"hour": "2024-06-15T01:00:00Z"}), &env())
         .unwrap();
     assert_eq!(query.window, (at(0), at(3_600)));
-    assert_eq!(query.equal, vec![("provider", json!("google-fit"))]);
+    assert_eq!(
+        query.kinds,
+        vec![crate::Kind {
+            event_type: "health.record",
+            equal: vec![("provider", json!("google-fit"))],
+        }]
+    );
 }
 
 #[devkit::test]

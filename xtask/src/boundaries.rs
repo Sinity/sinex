@@ -58,9 +58,9 @@ fn allowed(name: &str) -> Result<&'static [&'static str], String> {
     match name {
         "sinex-macros" | "xtask" => Ok(&[]),
         "sinex-model" => Ok(&["sinex-macros"]),
-        "sinex-protocol" | "sinex-schema" | "sinex-derivations" | "sinex-analysis" => {
-            Ok(&["sinex-model"])
-        }
+        "sinex-protocol" | "sinex-schema" | "sinex-derivations" => Ok(&["sinex-model"]),
+        // Statistics over derived events read the metric declarations.
+        "sinex-analysis" => Ok(&["sinex-model", "sinex-derivations"]),
         "sinex-transport" => Ok(&["sinex-model", "sinex-protocol"]),
         // Drivers include the producer side of the NATS ingress, which speaks
         // the protocol's frames.

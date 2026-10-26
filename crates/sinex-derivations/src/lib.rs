@@ -3,7 +3,7 @@
 //! - a **per-event derivation** reads committed events in commit order and
 //!   writes zero or more outputs for each (document text, OCR, mark linking);
 //! - a **keyed derivation** keeps each key's outputs equal to a function of the
-//!   key's current inputs (fused commands, sessions, intervals, summaries).
+//!   key's current inputs (fused records, sessions, intervals, figures).
 //!
 //! Admission marks keys dirty when an input of a keyed derivation is admitted
 //! or archived; the driver in `sinexd` recomputes only dirty keys and submits
@@ -15,12 +15,12 @@ use sinex_model::civil::Civil;
 use sinex_model::{Event, EventId, Timestamp};
 
 pub mod derived_event;
+pub mod figures;
 pub mod fusion;
 pub mod health;
 pub mod presence;
 pub mod session;
 pub mod state_interval;
-pub mod summary;
 
 /// What a key function sees of an admitted or archived event.
 #[derive(Clone, Copy, Debug)]
@@ -30,16 +30,14 @@ pub struct KeyView<'a> {
     pub payload: &'a Value,
 }
 
-/// Which events `compute` reads for one key: live events of `event_types`
-/// whose `ts_orig` is in `window` and whose payload contains `equal`, plus the
-/// neighbours a key needs from outside its window.
+/// Which events `compute` reads for one key: live events of `kinds` whose
+/// `ts_orig` is in `window`, plus the neighbours a key needs from outside its
+/// window.
 #[derive(Clone, Debug, PartialEq)]
 pub struct InputQuery {
-    pub event_types: Vec<&'static str>,
+    pub kinds: Vec<Kind>,
     /// `ts_orig` window, inclusive start, exclusive end.
     pub window: (Timestamp, Timestamp),
-    /// Payload fields that must equal these values.
-    pub equal: Vec<(&'static str, Value)>,
     /// The latest events before the window: the state a key starts in.
     pub before: Vec<Neighbour>,
     /// The earliest events after the window: what ends a state the key opened.
@@ -47,25 +45,99 @@ pub struct InputQuery {
 }
 
 impl InputQuery {
+    /// Every event of `event_types` in the window.
     pub fn window(event_types: &[&'static str], start: Timestamp, end: Timestamp) -> Self {
+        Self::of(
+            event_types.iter().map(|t| Kind::all(t)).collect(),
+            start,
+            end,
+        )
+    }
+
+    pub fn of(kinds: Vec<Kind>, start: Timestamp, end: Timestamp) -> Self {
         Self {
-            event_types: event_types.to_vec(),
+            kinds,
             window: (start, end),
-            equal: Vec::new(),
             before: Vec::new(),
             after: Vec::new(),
         }
     }
+
+    /// Only events whose payload `field` equals `value`, whatever their type.
+    #[must_use]
+    pub fn only(mut self, field: &'static str, value: Value) -> Self {
+        for k in &mut self.kinds {
+            k.equal.push((field, value.clone()));
+        }
+        self
+    }
+
+    /// Whether `event` is one the window part reads (neighbours aside): what
+    /// the store's query selects, for code that filters events in memory.
+    pub fn admits(&self, event: &Event) -> bool {
+        event
+            .ts_orig
+            .at
+            .is_some_and(|t| t >= self.window.0 && t < self.window.1)
+            && self
+                .kinds
+                .iter()
+                .any(|k| k.admits(event.event_type, &event.payload))
+    }
+
+    /// The event types read, without repeats.
+    pub fn event_types(&self) -> Vec<&'static str> {
+        let mut out: Vec<&'static str> = Vec::new();
+        for k in &self.kinds {
+            if !out.contains(&k.event_type) {
+                out.push(k.event_type);
+            }
+        }
+        out
+    }
 }
 
-/// One neighbour request: of `event_types` (and payload `equal`; an array
-/// value means "one of"), the `count` nearest events to the window edge; with
-/// `per` set, the `count` nearest for each value of that payload field seen
-/// in the window.
+/// Events of one type, only those whose payload fields equal the given
+/// values. Several kinds of one type read the events any of them admits.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Kind {
+    pub event_type: &'static str,
+    pub equal: Vec<(&'static str, Value)>,
+}
+
+impl Kind {
+    pub fn all(event_type: &'static str) -> Self {
+        Self {
+            event_type,
+            equal: Vec::new(),
+        }
+    }
+
+    pub fn only(event_type: &'static str, equal: &[(&'static str, &'static str)]) -> Self {
+        Self {
+            event_type,
+            equal: equal
+                .iter()
+                .map(|(f, v)| (*f, Value::String((*v).to_owned())))
+                .collect(),
+        }
+    }
+
+    pub fn admits(&self, event_type: &str, payload: &Value) -> bool {
+        self.event_type == event_type
+            && self
+                .equal
+                .iter()
+                .all(|(f, v)| payload.get(*f).is_some_and(|p| p == v))
+    }
+}
+
+/// One neighbour request: of `kinds`, the `count` nearest events to the
+/// window edge; with `per` set, the `count` nearest for each value of that
+/// payload field seen in the window.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Neighbour {
-    pub event_types: Vec<&'static str>,
-    pub equal: Vec<(&'static str, Value)>,
+    pub kinds: Vec<Kind>,
     pub per: Option<&'static str>,
     pub count: u32,
 }
@@ -224,16 +296,20 @@ impl<P: PerEvent> AnyPerEvent for P {
 /// Every keyed derivation, in one list. Order matters only for reading the
 /// list: the driver runs whatever is dirty.
 pub fn keyed() -> Vec<Box<dyn AnyKeyed>> {
-    vec![
-        Box::new(fusion::CommandFusion),
+    let mut all: Vec<Box<dyn AnyKeyed>> = fusion::rules::RULES
+        .iter()
+        .map(|rule| Box::new(fusion::Fusion(rule)) as Box<dyn AnyKeyed>)
+        .collect();
+    all.extend::<[Box<dyn AnyKeyed>; 7]>([
         Box::new(session::ShellSessions),
         Box::new(state_interval::StateIntervals),
-        Box::new(summary::HourlySummary),
-        Box::new(summary::DailySummary),
+        Box::new(figures::HourlyMetrics),
+        Box::new(figures::DailyMetrics),
         Box::new(presence::Presence),
         Box::new(health::HourlyFigures),
         Box::new(health::DailyFigures),
-    ]
+    ]);
+    all
 }
 
 /// Every pure per-event derivation. Those that need a local tool (screen text

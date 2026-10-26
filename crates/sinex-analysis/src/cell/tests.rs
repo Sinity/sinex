@@ -25,7 +25,10 @@ fn missing_outranks_partial_when_a_pair_drops_a_unit() {
         Exclusion::Partial.worse(Exclusion::NoCoverage),
         Exclusion::NoCoverage
     );
-    assert_eq!(Exclusion::Gap.worse(Exclusion::Recorded), Exclusion::Gap);
+    assert_eq!(
+        Exclusion::CoverageUnknown.worse(Exclusion::Recorded),
+        Exclusion::CoverageUnknown
+    );
 }
 
 #[devkit::test]

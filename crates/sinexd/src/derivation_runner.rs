@@ -13,15 +13,10 @@
 //!   commit order, and commit the new position with their outputs. One that
 //!   reads stored bytes (screen text from a screen still) gets the bytes of
 //!   the material its input cites; an input that fails is counted and passed.
-//! - **Maintained tables:** derivations whose outputs are store rows rather
-//!   than events (analysis metric values), on the same dirty keys. They run
-//!   once the event derivations have finished, at most every
-//!   [`MAINTAIN_AT_MOST_EVERY`] while the daemon runs, so an import's burst of
-//!   commits is maintained once rather than per commit.
 //!
 //! Derivations run in the order their inputs and outputs give: a derivation
-//! whose inputs another one produces runs after it, so a daily summary is
-//! computed once the commands it counts have been fused, not again for every
+//! whose inputs another one produces runs after it, so a day's figures are
+//! computed once the commands they count have been fused, not again for every
 //! intermediate state. A pass works on the lowest rank that has work; one pass
 //! in [`EVERY_LEVEL_EVERY`] works every rank, so a busy upstream cannot keep a
 //! downstream derivation from running.
@@ -39,13 +34,11 @@ use sinex_derivations::{AnyKeyed, AnyPerEvent, Env, Input, InputQuery, KeyView, 
 use sinex_model::civil::Civil;
 use sinex_model::{Batch, BatchKind, Event, ReadingOrder, RecordOutcome, RunId, Timestamp};
 use sinex_store::blobs::Blobs;
-use sinex_store::derivations::{self, Match, Nearest, Window};
+use sinex_store::derivations::{self, Nearest, Window};
 use sinex_store::registry::Derivation;
 use sinex_store::{ComputedKey, DerivedScope, material_bytes, runs};
 use sqlx::PgConnection;
 use std::collections::{BTreeMap, HashSet};
-use std::future::Future;
-use std::pin::Pin;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::Notify;
@@ -70,29 +63,12 @@ type KeyWork = (Value, i64, bool);
 const KEYS_PER_REQUEST: usize = 5_000;
 /// One pass in this many works every rank, not only the lowest with work.
 const EVERY_LEVEL_EVERY: u32 = 8;
-/// While the daemon runs, maintained tables are brought up to date at most
-/// this often.
-const MAINTAIN_AT_MOST_EVERY: Duration = Duration::from_secs(30);
 /// A key that has waited this long stops waiting.
 const WAITING_HORIZON: time::Duration = time::Duration::days(14);
-
-/// A derivation that keeps store rows (not events) equal to a function of its
-/// inputs, driven by dirty keys admission marks under its own names.
-pub(crate) trait Maintained: Send {
-    fn name(&self) -> &'static str;
-    /// Bring the rows up to date: the dirty keys, plus whatever the
-    /// derivation refreshes with time. Returns how much it recomputed.
-    fn maintain<'a>(
-        &'a mut self,
-        conn: &'a mut PgConnection,
-    ) -> Pin<Box<dyn Future<Output = Result<usize, String>> + Send + 'a>>;
-}
 
 pub(crate) struct DerivationRunner {
     keyed: Vec<Box<dyn AnyKeyed>>,
     per_event: Vec<Box<dyn AnyPerEvent>>,
-    maintained: Vec<Box<dyn Maintained>>,
-    last_maintained: Option<Instant>,
     /// The content store, for per-event derivations that read stored bytes.
     blobs: Option<Blobs>,
     /// Rank of each keyed and per-event derivation, by name: 0 for those
@@ -110,32 +86,29 @@ pub(crate) struct DerivationRunner {
 }
 
 fn to_window(q: &InputQuery) -> Window {
-    let matching = |equal: &[(&'static str, Value)]| {
-        equal
+    let kinds = |kinds: &[sinex_derivations::Kind]| {
+        kinds
             .iter()
-            .map(|(f, v)| match v {
-                Value::Array(values) => Match::OneOf(
-                    f,
-                    values
+            .map(|k| derivations::Kind {
+                event_type: k.event_type.to_owned(),
+                contains: Value::Object(
+                    k.equal
                         .iter()
-                        .map(|v| v.as_str().map_or_else(|| v.to_string(), str::to_owned))
+                        .map(|(f, v)| ((*f).to_owned(), v.clone()))
                         .collect(),
                 ),
-                other => Match::Equals(f, other.clone()),
             })
             .collect()
     };
     let nearest = |n: &Neighbour| Nearest {
-        event_types: n.event_types.iter().map(|s| (*s).to_owned()).collect(),
-        matching: matching(&n.equal),
+        kinds: kinds(&n.kinds),
         per: n.per,
         count: i64::from(n.count),
     };
     Window {
-        event_types: q.event_types.iter().map(|s| (*s).to_owned()).collect(),
+        kinds: kinds(&q.kinds),
         start: q.window.0.0,
         end: q.window.1.0,
-        matching: matching(&q.equal),
         before: q.before.iter().map(nearest).collect(),
         after: q.after.iter().map(nearest).collect(),
     }
@@ -192,8 +165,6 @@ impl DerivationRunner {
         let mut runner = Self {
             keyed,
             per_event,
-            maintained: Vec::new(),
-            last_maintained: None,
             blobs: None,
             ranks,
             passes: 0,
@@ -297,8 +268,6 @@ impl DerivationRunner {
         Ok(Self {
             keyed: vec![d],
             per_event: Vec::new(),
-            maintained: Vec::new(),
-            last_maintained: None,
             blobs: None,
             ranks: BTreeMap::new(),
             passes: 0,
@@ -316,26 +285,6 @@ impl DerivationRunner {
     pub(crate) fn with_blobs(mut self, blobs: Blobs) -> Self {
         self.blobs = Some(blobs);
         self
-    }
-
-    /// Derivations that maintain store rows, run once the others settle.
-    #[must_use]
-    pub(crate) fn with_maintained(mut self, maintained: Vec<Box<dyn Maintained>>) -> Self {
-        self.maintained = maintained;
-        self
-    }
-
-    /// Run every maintained derivation. Returns how much they recomputed.
-    pub(crate) async fn maintain(&mut self) -> Result<usize, String> {
-        let mut work = 0;
-        for m in &mut self.maintained {
-            work += m
-                .maintain(&mut self.read)
-                .await
-                .map_err(|e| format!("{}: {e}", m.name()))?;
-        }
-        self.last_maintained = Some(Instant::now());
-        Ok(work)
     }
 
     /// Mark every key of `name` dirty, through the writer.
@@ -542,7 +491,7 @@ impl DerivationRunner {
     pub(crate) async fn pass(&mut self) -> Result<usize, String> {
         let env = self.env();
         self.passes = self.passes.wrapping_add(1);
-        let every_rank = self.passes % EVERY_LEVEL_EVERY == 0;
+        let every_rank = self.passes.is_multiple_of(EVERY_LEVEL_EVERY);
         let mut levels: Vec<u32> = self.ranks.values().copied().collect();
         levels.sort_unstable();
         levels.dedup();
@@ -710,16 +659,13 @@ impl DerivationRunner {
         blobs.read(&blob).map_err(|e| e.to_string())
     }
 
-    /// Run passes until one does no work, then bring maintained tables up to
-    /// date.
+    /// Run passes until one does no work.
     pub(crate) async fn catch_up(&mut self) -> Result<(), String> {
         while self.pass().await? > 0 {}
-        self.maintain().await?;
         Ok(())
     }
 
-    /// Finish the current pass or maintenance step on shutdown, then release
-    /// the writer handle. Already submitted batches keep their acknowledgments.
+    /// Finish the current pass on shutdown, then release the writer handle. Already submitted batches keep their acknowledgments.
     pub(crate) async fn run(
         mut self,
         wake: Arc<Notify>,
@@ -735,12 +681,6 @@ impl DerivationRunner {
                 break;
             }
             if work == 0 {
-                let due = self
-                    .last_maintained
-                    .is_none_or(|t| t.elapsed() >= MAINTAIN_AT_MOST_EVERY);
-                if !self.maintained.is_empty() && due && self.maintain().await? > 0 {
-                    continue;
-                }
                 tokio::select! {
                     () = wake.notified() => {}
                     () = tokio::time::sleep(idle) => {}

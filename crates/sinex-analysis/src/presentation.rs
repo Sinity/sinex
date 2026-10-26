@@ -45,8 +45,8 @@ pub struct Presentation {
 }
 
 /// Compile sections into a presentation of at most `budget` bytes of
-/// findings. Findings rank by support status, then effect size; ties keep
-/// their given order.
+/// findings. Findings rank observed before partly observed before unknown,
+/// then by effect size; ties keep their given order.
 pub fn compile(ctx: Context, sections: Vec<Section>, budget: usize) -> Presentation {
     let mut used = 0usize;
     let mut rendered = Vec::with_capacity(sections.len());

@@ -1,31 +1,12 @@
-//! Findings: typed statements bound to a result, with slots filled from the
-//! result, an epistemic role, a support status, typed caveats and separate
-//! checks. Rendering comes from the slots, never from improvised text, and
-//! there is no free-floating confidence number.
+//! Findings: typed statements with slots filled from figures and method
+//! results, typed caveats, and the events they cite. Rendering comes from the
+//! slots, never from improvised text, and there is no free-floating
+//! confidence number.
 use crate::cell::Cell;
 use crate::methods::MethodResult;
 use crate::panel::PanelCell;
 use serde::{Deserialize, Serialize};
 use std::fmt::Write as _;
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum Role {
-    MeasuredFact,
-    DerivedStatistic,
-    Association,
-    SelfReport,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum Support {
-    Supported,
-    PartiallySupported,
-    Contested,
-    NotFoundWithCoverage,
-    Unknown,
-}
 
 /// A typed caveat that travels with its claim.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -50,7 +31,7 @@ pub enum Caveat {
     Excluded { units: u64 },
 }
 
-/// Typed predicates with slots.
+/// Statement templates with slots.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "template", rename_all = "snake_case")]
 pub enum Template {
@@ -121,42 +102,20 @@ pub enum Template {
     },
 }
 
-/// Separate checks, never one green tick: a reader sees which check a
-/// finding passed and which it did not.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum Check {
-    Passed,
-    Failed,
-    /// Coverage short of what the claim needs; the claim carries a caveat.
-    Caveated,
-    /// Deterministic templates pass semantics by construction.
-    ByConstruction,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Checks {
-    pub references: Check,
-    pub calculation: Check,
-    pub coverage: Check,
-    pub semantics: Check,
-}
-
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Finding {
     pub template: Template,
-    pub role: Role,
-    pub status: Support,
     pub caveats: Vec<Caveat>,
-    /// Citations of the cells or results the slots came from.
+    /// Citations of the figures the slots came from.
     pub evidence: Vec<String>,
-    pub checks: Checks,
 }
 
 impl Finding {
-    /// The sort key within a section: support status, then effect size
-    /// relative to spread, so two compilations of the same results rank alike.
-    pub fn rank(&self) -> (Support, i64) {
+    /// The sort key within a section: fully observed statements before those
+    /// over partly observed or lower-bound values, before unknown values, then
+    /// effect size relative to spread, so two compilations of the same results
+    /// rank alike.
+    pub fn rank(&self) -> (u8, i64) {
         let effect = match &self.template {
             Template::Association { r, .. } => r.abs(),
             Template::Deviation { distance, .. } => distance.abs() / 10.0,
@@ -170,7 +129,16 @@ impl Finding {
             | Template::Missing { .. }
             | Template::Coverage { .. } => 0.0,
         };
-        (self.status, -(effect * 1e6) as i64)
+        let short_of_coverage = self
+            .caveats
+            .iter()
+            .any(|c| matches!(c, Caveat::PartialCoverage { .. } | Caveat::LowerBound));
+        let tier = match &self.template {
+            Template::Missing { .. } => 2,
+            _ if short_of_coverage => 1,
+            _ => 0,
+        };
+        (tier, -(effect * 1e6) as i64)
     }
 
     /// The finding with its caveats, in Markdown. A finding is rendered whole
@@ -332,78 +300,48 @@ pub fn from_cell(
     sources: &[&str],
     provisional: bool,
 ) -> Finding {
-    let citation = format!(
-        "sinex:metric/{}@{}/{}",
-        cell.metric, cell.metric_version, cell.unit.label
-    );
     let mut caveats = Vec::new();
     if provisional {
         caveats.push(Caveat::Provisional);
     }
-    let (template, status, coverage) = match &cell.cell {
-        Cell::Missing { reason } => (
-            Template::Missing {
-                metric: cell.metric.to_owned(),
-                unit: cell.unit.label.clone(),
-                reason: serde_json::to_value(reason)
-                    .ok()
-                    .and_then(|v| v.as_str().map(str::to_owned))
-                    .unwrap_or_default(),
-            },
-            Support::Unknown,
-            Check::Caveated,
-        ),
+    let template = match &cell.cell {
+        Cell::Missing { reason } => Template::Missing {
+            metric: cell.metric.to_owned(),
+            unit: cell.unit.label.clone(),
+            reason: serde_json::to_value(reason)
+                .ok()
+                .and_then(|v| v.as_str().map(str::to_owned))
+                .unwrap_or_default(),
+        },
         other => {
             let value = *other.value().expect("non-missing cells have values");
-            let coverage = match other {
+            match other {
                 Cell::Partial {
                     observed_fraction, ..
-                } => {
-                    caveats.push(Caveat::PartialCoverage {
-                        observed_fraction: *observed_fraction,
-                    });
-                    Check::Caveated
-                }
-                Cell::Recorded { .. } => {
-                    caveats.push(Caveat::LowerBound);
-                    Check::Caveated
-                }
-                _ => Check::Passed,
-            };
+                } => caveats.push(Caveat::PartialCoverage {
+                    observed_fraction: *observed_fraction,
+                }),
+                Cell::Recorded { .. } => caveats.push(Caveat::LowerBound),
+                _ => {}
+            }
             if sources.len() > 1 {
                 caveats.push(Caveat::Sample {
                     sources: sources.iter().map(|s| (*s).to_owned()).collect(),
                 });
             }
-            (
-                Template::MetricValue {
-                    metric: cell.metric.to_owned(),
-                    unit: cell.unit.label.clone(),
-                    value,
-                    state: other.state_name().to_owned(),
-                    description: description.to_owned(),
-                },
-                if coverage == Check::Passed {
-                    Support::Supported
-                } else {
-                    Support::PartiallySupported
-                },
-                coverage,
-            )
+            Template::MetricValue {
+                metric: cell.metric.to_owned(),
+                unit: cell.unit.label.clone(),
+                value,
+                state: other.state_name().to_owned(),
+                description: description.to_owned(),
+            }
         }
     };
     Finding {
         template,
-        role: Role::MeasuredFact,
-        status,
         caveats,
-        evidence: vec![citation],
-        checks: Checks {
-            references: Check::Passed,
-            calculation: Check::Passed,
-            coverage,
-            semantics: Check::ByConstruction,
-        },
+        evidence: cell.reference.iter().cloned().collect(),
     }
 }
 
@@ -412,7 +350,6 @@ pub fn from_correlation(
     result: &MethodResult,
     q: Option<f64>,
     family_size: usize,
-    result_id: &str,
 ) -> Option<Finding> {
     let o = &result.output;
     let r = o["r"].as_f64()?;
@@ -445,20 +382,8 @@ pub fn from_correlation(
             q,
             family_size,
         },
-        role: Role::Association,
-        status: Support::Supported,
         caveats,
-        evidence: vec![format!("sinex:result/{result_id}")],
-        checks: Checks {
-            references: Check::Passed,
-            calculation: Check::Passed,
-            coverage: if result.n_excluded.total() > 0 {
-                Check::Caveated
-            } else {
-                Check::Passed
-            },
-            semantics: Check::ByConstruction,
-        },
+        evidence: Vec::new(),
     })
 }
 

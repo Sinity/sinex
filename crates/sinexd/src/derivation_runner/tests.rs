@@ -6,7 +6,7 @@ use crate::writer;
 use serde_json::json;
 use sinex_derivations::{Computed, KeyState, Keyed};
 use sinex_model::event_types::{
-    CommandExecuted, CommandFused, CommandImported, ShellSession, StateInterval,
+    CommandExecuted, CommandFused, CommandImported, MetricFigure, ShellSession, StateInterval,
 };
 use sinex_model::{ArchiveRequest, Class, MaterialId, OperationId, Origin, RecordLocation};
 use sqlx::Connection;
@@ -178,7 +178,7 @@ impl World {
 }
 
 #[devkit::test]
-async fn commands_fuse_into_sessions_and_summaries(db: devkit::pg::TestDatabase) {
+async fn commands_fuse_into_sessions_and_figures(db: devkit::pg::TestDatabase) {
     let w = World::new(db).await;
     w.admit(vec![
         atuin("1", "make", 0, 0, 1),
@@ -198,17 +198,14 @@ async fn commands_fuse_into_sessions_and_summaries(db: devkit::pg::TestDatabase)
     assert_eq!(sessions.len(), 2, "{sessions:?}");
     assert_eq!(sessions[0].commands, 2);
     assert_eq!(sessions[0].failed, 1);
-    let daily = w
-        .count(
-            "SELECT count(*) FROM core.events e WHERE event_type = 'activity.summary' AND payload->>'grain' = 'day'
-             AND NOT EXISTS (SELECT 1 FROM audit.archived a WHERE a.event_id = e.id)",
-        )
-        .await;
-    assert_eq!(daily, 1);
-    // Metric days stay dirty for the analysis maintainer, not the runner.
+    let daily: Vec<MetricFigure> = w.live().await;
+    let commands = daily
+        .iter()
+        .find(|f| f.grain == "day" && f.metric == "shell.commands" && f.dimension.is_empty())
+        .unwrap();
+    assert_eq!(commands.value, Some(3.0), "fused commands, each once");
     assert_eq!(
-        w.count("SELECT count(*) FROM derivation.dirty WHERE derivation NOT LIKE 'metric:%'")
-            .await,
+        w.count("SELECT count(*) FROM derivation.dirty").await,
         0,
         "every derivation done"
     );
@@ -305,9 +302,7 @@ impl Keyed for Waiting {
         vec![input.payload["command"].clone()]
     }
     fn inputs(&self, key: &Value, _: &Env) -> Option<InputQuery> {
-        let mut q = InputQuery::window(Self::INPUTS, at(-86_400), at(86_400));
-        q.equal.push(("command", key.clone()));
-        Some(q)
+        Some(InputQuery::window(Self::INPUTS, at(-86_400), at(86_400)).only("command", key.clone()))
     }
     fn compute(&self, key: &Value, inputs: &[Event], _: &Env) -> Computed {
         let record = key.as_str().unwrap_or_default().to_owned();
@@ -564,14 +559,19 @@ async fn windows_read_in_pages_equal_windows_read_alone(db: devkit::pg::TestData
         events.push(atuin(&format!("a{i}"), &format!("a{i}"), secs, 0, 1));
     }
     w.admit(events).await;
-    let hour = |h: i64, types: &[&str]| Window {
-        event_types: types.iter().map(|s| (*s).to_owned()).collect(),
+    let kind = |t: &str, contains: Value| derivations::Kind {
+        event_type: t.to_owned(),
+        contains,
+    };
+    let filtered = |h: i64, kinds: Vec<derivations::Kind>| Window {
+        kinds,
         start: at(h * 3_600).0,
         end: at((h + 1) * 3_600).0,
-        matching: vec![],
         before: vec![],
         after: vec![],
     };
+    let hour =
+        |h: i64, types: &[&str]| filtered(h, types.iter().map(|t| kind(t, json!({}))).collect());
     let windows = vec![
         hour(1, &["command.imported"]),
         hour(0, &["command.imported"]),
@@ -580,6 +580,14 @@ async fn windows_read_in_pages_equal_windows_read_alone(db: devkit::pg::TestData
         hour(111, &["command.imported"]),
         hour(2, &["command.imported"]),
         hour(0, &["command.imported", "command.executed"]),
+        // A condition applies to its own type only.
+        filtered(
+            0,
+            vec![
+                kind("command.imported", json!({"command": "z1"})),
+                kind("command.executed", json!({})),
+            ],
+        ),
     ];
     let mut conn = PgConnection::connect(&w.url).await.unwrap();
     for page in [1, 2, 3, 10_000] {
@@ -607,6 +615,13 @@ async fn windows_read_in_pages_equal_windows_read_alone(db: devkit::pg::TestData
             5,
             "the first hour's five zsh commands"
         );
+        let picked: Vec<&str> = read[7]
+            .as_ref()
+            .unwrap()
+            .iter()
+            .map(|c| c.event.payload["command"].as_str().unwrap())
+            .collect();
+        assert_eq!(picked, ["a0", "z1", "a1", "a2", "a3", "a4"]);
     }
 }
 

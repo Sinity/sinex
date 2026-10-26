@@ -126,8 +126,6 @@ pub(super) async fn insert_admitted(
     }
     outcome.dirty_keys += mark_dirty(conn, dirty, last).await?;
     record_citations(conn, events, admit_ords).await?;
-    let admitted: Vec<Uuid> = outcome.admitted_ids.iter().map(|id| id.0).collect();
-    crate::analysis::mark_stale(conn, &admitted, last).await?;
     Ok(())
 }
 

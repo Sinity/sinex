@@ -910,7 +910,7 @@ fn without_ids(text: &str) -> String {
 
 fn derivation_inputs(dir: &Dir) -> (PathBuf, PathBuf) {
     // The same commands seen by both shells, so fusion pairs them, spread
-    // over two days so sessions and summaries have several keys.
+    // over two days so sessions and figures have several keys.
     let mut text = String::new();
     let mut rows: Vec<AtuinRow> = Vec::new();
     for i in 0..60 {

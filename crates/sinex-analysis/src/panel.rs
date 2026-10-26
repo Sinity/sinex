@@ -1,18 +1,18 @@
-//! Panels: a table of units (logical days or clock hours) by metrics, each
-//! cell with its observation state. A unit is observed when the coverage of
-//! the metric's sources spans it, partial when it spans part, and missing with
-//! its reason otherwise; a zero is only ever a measured zero.
+//! Panels: logical days by metrics, each cell with its observation state,
+//! from the daily metric figures and the coverage of each metric's sources.
+//! A day is observed when the coverage spans it, partial when it spans part
+//! of it, and missing with its reason otherwise; a zero is only ever a
+//! measured zero. A figure exists only for a day something was counted on,
+//! so an observed day without one is a zero.
 use crate::cell::{Cell, Missing};
 use crate::coverage::{Completeness, Coverage};
-use crate::metric::{Aggregate, CoverageRule, MetricDef, Row, UnitGrain, aggregate};
 use crate::span::{MICROS_PER_SECOND, Span, SpanSet};
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
+use sinex_derivations::figures::{Law, Metric};
 use sinex_model::Timestamp;
 use sinex_model::civil::{Civil, CivilError};
-use std::collections::BTreeMap;
 
-/// One unit: a logical day or a clock hour.
+/// One logical day.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct Unit {
     pub label: String,
@@ -23,128 +23,105 @@ fn micros(t: Timestamp) -> i64 {
     i64::try_from(t.unix_ns() / 1000).unwrap_or(i64::MAX)
 }
 
-fn from_micros(us: i64) -> Result<Timestamp, CivilError> {
-    Timestamp::from_unix_ns(i128::from(us) * 1000)
-        .map_err(|e| CivilError::OutOfRange(e.to_string()))
-}
-
-/// The units of `grain` covering `[from, to)` under the day setting.
-pub fn units(civil: &Civil, grain: UnitGrain, from: Span) -> Result<Vec<Unit>, CivilError> {
+/// The logical days from `from` to `to`, both included, under the day setting.
+pub fn days(
+    civil: &Civil,
+    from: jiff::civil::Date,
+    to: jiff::civil::Date,
+) -> Result<Vec<Unit>, CivilError> {
     let mut out = Vec::new();
-    match grain {
-        UnitGrain::Day => {
-            let mut day = civil.day(from_micros(from.start)?)?;
-            loop {
-                let start = micros(civil.day_start(day)?);
-                if start >= from.end {
-                    break;
-                }
-                let end = micros(civil.day_end(day)?);
-                out.push(Unit {
-                    label: day.to_string(),
-                    span: Span::new(start, end),
-                });
-                day = day
-                    .tomorrow()
-                    .map_err(|e| CivilError::OutOfRange(e.to_string()))?;
-            }
-        }
-        UnitGrain::Hour => {
-            let mut start = micros(civil.hour_start(from_micros(from.start)?)?);
-            while start < from.end {
-                let end = micros(civil.hour_end(from_micros(start)?)?);
-                out.push(Unit {
-                    label: format!("{}", from_micros(start)?.0),
-                    span: Span::new(start, end),
-                });
-                start = end;
-            }
-        }
+    let mut day = from;
+    while day <= to {
+        out.push(Unit {
+            label: day.to_string(),
+            span: Span::new(micros(civil.day_start(day)?), micros(civil.day_end(day)?)),
+        });
+        day = day
+            .tomorrow()
+            .map_err(|e| CivilError::OutOfRange(e.to_string()))?;
     }
     Ok(out)
 }
 
-/// The spans a metric's coverage rule gives, and whether any of the coverage
-/// is of unknown completeness (which makes recorded rows lower bounds).
-fn covered_spans(rule: &CoverageRule, rows: &[Coverage]) -> (SpanSet, bool) {
-    let per_source = |src: &str, known: bool| {
-        SpanSet::from_spans(
-            rows.iter()
-                .filter(|o| o.source == src && (o.completeness != Completeness::Unknown) == known)
-                .map(|o| o.span),
-        )
-    };
-    let unknown = rule
-        .sources()
-        .iter()
-        .any(|s| !per_source(s, false).is_empty());
-    let set = match rule {
-        CoverageRule::AnyOf(sources) => sources
-            .iter()
-            .fold(SpanSet::default(), |acc, s| acc.union(&per_source(s, true))),
-        CoverageRule::Sources(sources) => {
-            let mut it = sources.iter();
-            match it.next() {
-                None => SpanSet::default(),
-                Some(first) => it.fold(per_source(first, true), |acc, s| {
-                    acc.intersect(&per_source(s, true))
-                }),
-            }
-        }
-    };
-    (set, unknown)
+/// A daily `metric.figure`, as a panel reads it.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct DayFigure {
+    pub metric: String,
+    pub day: String,
+    pub dimension: String,
+    pub dimension_value: String,
+    pub value: Option<f64>,
+    pub numerator: Option<f64>,
+    pub denominator: Option<f64>,
+    pub rows: u64,
+    /// The figure's citation, `sinex:ev/<id>`.
+    pub reference: String,
 }
 
 /// One cell of a panel.
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct PanelCell {
     pub metric: &'static str,
-    pub metric_version: u32,
     pub unit: Unit,
-    /// The breakdown dimension and its value; empty for the total.
+    /// The breakdown field and its value; empty for the total.
     pub dimension: String,
     pub dimension_value: String,
     pub cell: Cell<f64>,
     pub numerator: Option<f64>,
     pub denominator: Option<f64>,
-    pub n_rows: u64,
+    pub rows: u64,
     pub observed_seconds: f64,
+    /// The figure the value came from; `None` for a zero or a missing day.
+    pub reference: Option<String>,
 }
 
-/// A unit counts as fully observed when coverage misses less than this.
+/// A day counts as fully observed when coverage misses less than this.
 const OBSERVED_FRACTION: f64 = 0.999;
 
-/// The cells of one metric over `units`, from the metric's rows, the
-/// coverage of its sources and the recorded gaps. One total cell per unit, plus
-/// one per value of each declared dimension.
-pub fn compute(
-    def: &MetricDef,
-    units: &[Unit],
-    rows: &[Row<'_>],
-    coverage: &[Coverage],
-    gaps: &SpanSet,
-) -> Vec<PanelCell> {
-    let (spans, unknown_coverage) = covered_spans(&def.coverage, coverage);
-    let rows: Vec<&Row<'_>> = rows
+/// What the metric's sources covered, any of them sufficing, and whether any
+/// of the coverage is of unknown completeness (which makes figures lower
+/// bounds).
+fn covered(metric: &Metric, coverage: &[Coverage]) -> (SpanSet, bool) {
+    let mine = |c: &&Coverage| metric.sources.contains(&c.source.as_str());
+    let known = SpanSet::from_spans(
+        coverage
+            .iter()
+            .filter(mine)
+            .filter(|c| c.completeness != Completeness::Unknown)
+            .map(|c| c.span),
+    );
+    let unknown = coverage
         .iter()
-        .filter(|r| r.payload.is_object() && def.row_matches(r))
-        .collect();
+        .filter(mine)
+        .any(|c| c.completeness == Completeness::Unknown);
+    (known, unknown)
+}
+
+/// The cells of one metric over `units`: one total cell per day, plus one
+/// per breakdown value a figure exists for.
+pub fn cells(
+    metric: &'static Metric,
+    units: &[Unit],
+    figures: &[DayFigure],
+    coverage: &[Coverage],
+) -> Vec<PanelCell> {
+    let (spans, unknown_coverage) = covered(metric, coverage);
     let mut out = Vec::new();
     for unit in units {
-        let covered = spans.clip(unit.span).subtract(gaps);
-        let gap = gaps.clip(unit.span);
-        let fraction = covered.len() as f64 / unit.span.len().max(1) as f64;
-        let allocated: Vec<(Row<'_>, Span)> = rows
-            .iter()
-            .filter_map(|r| def.allocate(r, unit.span).map(|s| (**r, s)))
-            .collect();
-        let state = |agg: Option<Aggregate>, has_rows: bool| -> Cell<f64> {
+        let observed = spans.clip(unit.span);
+        let fraction = observed.len() as f64 / unit.span.len().max(1) as f64;
+        let state = |figure: Option<&DayFigure>| -> Cell<f64> {
+            let value = match figure {
+                Some(f) => f.value,
+                // Nothing counted: zero, unless the metric is a ratio of nothing.
+                None => match metric.law {
+                    Law::Count | Law::Seconds { .. } => Some(0.0),
+                    Law::Ratio { .. } => None,
+                },
+            };
             if fraction <= 0.0 {
-                return match (has_rows, agg.as_ref()) {
-                    (true, Some(a)) => Cell::Recorded { value: a.value },
-                    _ if gap.len() >= unit.span.len() => Cell::Missing {
-                        reason: Missing::Gap,
-                    },
+                return match (figure, value) {
+                    (Some(_), Some(value)) => Cell::Recorded { value },
                     _ if unknown_coverage => Cell::Missing {
                         reason: Missing::CoverageUnknown,
                     },
@@ -153,46 +130,44 @@ pub fn compute(
                     },
                 };
             }
-            match agg {
+            match value {
                 None => Cell::Missing {
                     reason: Missing::NotApplicable,
                 },
-                Some(a) if fraction >= OBSERVED_FRACTION => Cell::Observed { value: a.value },
-                Some(a) => Cell::Partial {
-                    value: a.value,
+                Some(value) if fraction >= OBSERVED_FRACTION => Cell::Observed { value },
+                Some(value) => Cell::Partial {
+                    value,
                     observed_fraction: (fraction * 1000.0).round() / 1000.0,
                 },
             }
         };
-        let mut push = |dimension: &str, value: &str, part: &[(Row<'_>, Span)]| {
-            let agg = aggregate(def, part);
-            out.push(PanelCell {
-                metric: def.id,
-                metric_version: def.version,
-                unit: unit.clone(),
-                dimension: dimension.to_owned(),
-                dimension_value: value.to_owned(),
-                numerator: agg.as_ref().and_then(|a| a.numerator),
-                denominator: agg.as_ref().and_then(|a| a.denominator),
-                n_rows: part.len() as u64,
-                observed_seconds: covered.len() as f64 / MICROS_PER_SECOND as f64,
-                cell: state(agg, !part.is_empty()),
-            });
+        let of_day: Vec<&DayFigure> = figures
+            .iter()
+            .filter(|f| f.metric == metric.name && f.day == unit.label)
+            .collect();
+        let cell = |dimension: &str, value: &str, figure: Option<&DayFigure>| PanelCell {
+            metric: metric.name,
+            unit: unit.clone(),
+            dimension: dimension.to_owned(),
+            dimension_value: value.to_owned(),
+            cell: state(figure),
+            numerator: figure.and_then(|f| f.numerator),
+            denominator: figure.and_then(|f| f.denominator),
+            rows: figure.map_or(0, |f| f.rows),
+            observed_seconds: observed.len() as f64 / MICROS_PER_SECOND as f64,
+            reference: figure.map(|f| f.reference.clone()),
         };
-        push("", "", &allocated);
-        for dim in def.dimensions {
-            let mut groups: BTreeMap<String, Vec<(Row<'_>, Span)>> = BTreeMap::new();
-            for (r, s) in &allocated {
-                let v = match r.payload.get(*dim) {
-                    Some(Value::String(s)) => s.clone(),
-                    Some(v) if !v.is_null() => v.to_string(),
-                    _ => "unknown".to_owned(),
-                };
-                groups.entry(v).or_default().push((*r, *s));
-            }
-            for (v, part) in &groups {
-                push(dim, v, part);
-            }
+        let total = of_day.iter().copied().find(|f| f.dimension.is_empty());
+        out.push(cell("", "", total));
+        let mut parts: Vec<&DayFigure> = of_day
+            .into_iter()
+            .filter(|f| !f.dimension.is_empty())
+            .collect();
+        parts.sort_by(|a, b| {
+            (&a.dimension, &a.dimension_value).cmp(&(&b.dimension, &b.dimension_value))
+        });
+        for f in parts {
+            out.push(cell(&f.dimension, &f.dimension_value, Some(f)));
         }
     }
     out

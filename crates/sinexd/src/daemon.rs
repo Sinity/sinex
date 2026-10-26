@@ -27,10 +27,6 @@ use tokio::task::JoinSet;
 /// keys whose outputs wait on evidence outside their window settle with time.
 const RUNNER_IDLE: Duration = Duration::from_secs(30);
 
-/// The trailing days of metric values are recomputed at least this often
-/// (new opportunity, such as time passing for a live source, changes cells
-/// without a commit); dirty days are recomputed whenever the runner catches up.
-const METRICS_IDLE: Duration = Duration::from_secs(600);
 /// How often the binding runner reads every configured binding again.
 const BINDINGS_EVERY: Duration = Duration::from_secs(5);
 
@@ -121,8 +117,8 @@ pub(crate) async fn run(o: Options) -> Result<(), String> {
         ("writer", Ok(()))
     });
 
-    // Every derivation runs in the runner: events from keyed and per-event
-    // derivations (screen text included), then the maintained metric values.
+    // Every derivation runs in the runner, keyed and per-event (screen text
+    // included).
     let runner = derivation_runner::DerivationRunner::start(
         connect(&o.database).await?,
         handle.clone(),
@@ -131,12 +127,7 @@ pub(crate) async fn run(o: Options) -> Result<(), String> {
         &o.host,
     )
     .await?
-    .with_blobs(blobs.clone())
-    .with_maintained(vec![Box::new(crate::analysis::MetricValues::new(
-        crate::analysis::Settings::operator_default(),
-        2,
-        METRICS_IDLE,
-    ))]);
+    .with_blobs(blobs.clone());
     let wake = Arc::new(Notify::new());
     let (w, mut c, s) = (wake.clone(), commits.clone(), stop.clone());
     tasks.spawn(async move {

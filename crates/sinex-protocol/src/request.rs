@@ -196,8 +196,6 @@ pub enum Request {
         from: String,
         to: String,
         #[serde(default)]
-        standing: Option<bool>,
-        #[serde(default)]
         partial: Option<String>,
     },
     #[serde(rename = "analysis-panel")]
@@ -213,15 +211,6 @@ pub enum Request {
     AnalysisWhy {
         metric: String,
         day: String,
-    },
-    #[serde(rename = "analysis-results")]
-    AnalysisResults {
-        #[serde(default)]
-        limit: Option<u64>,
-    },
-    #[serde(rename = "analysis-show")]
-    AnalysisShow {
-        result: String,
     },
     Brief {
         #[serde(default)]
@@ -371,8 +360,6 @@ impl Request {
             Request::AnalysisRun { .. } => "analysis-run",
             Request::AnalysisPanel { .. } => "analysis-panel",
             Request::AnalysisWhy { .. } => "analysis-why",
-            Request::AnalysisResults { .. } => "analysis-results",
-            Request::AnalysisShow { .. } => "analysis-show",
             Request::Brief { .. } => "brief",
             Request::LibraryAdd { .. } => "library-add",
             Request::LibraryItem { .. } => "library-item",

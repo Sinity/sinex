@@ -29,3 +29,16 @@ fn a_polled_source_is_covered_until_it_was_last_read() {
         .is_empty()
     );
 }
+
+#[devkit::test]
+fn every_source_a_metric_names_declares_what_it_sees() {
+    for m in sinex_derivations::figures::METRICS {
+        for s in m.sources {
+            assert_ne!(
+                completeness(s),
+                Completeness::Unknown,
+                "{s} has no declared completeness"
+            );
+        }
+    }
+}

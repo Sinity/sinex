@@ -2,6 +2,9 @@
 //! sorting, limits and output fields.
 use super::*;
 
+/// A query cannot tell an unobserved period from an empty one yet; a panel can.
+const FILL_NOT_BUILT: &str = "`fill` is not built: a query cannot tell an unobserved period from an empty one; `analysis-panel` can";
+
 impl Parser<'_> {
     pub(super) fn reference(&mut self) -> Result<Reference, QueryError> {
         let t = self.value_token()?;
@@ -197,10 +200,7 @@ impl Parser<'_> {
                     });
                 }
                 if self.is_word("fill") {
-                    return Err(QueryError::not_built(
-                        self.pos(),
-                        "`fill` needs coverage from the analysis layer, which is not built yet",
-                    ));
+                    return Err(QueryError::not_built(self.pos(), FILL_NOT_BUILT));
                 }
                 let group = Group { keys, aggregates };
                 *scope = Scope::Grouped(group_columns(&group));
@@ -216,10 +216,7 @@ impl Parser<'_> {
                 *scope = Scope::Grouped(group_columns(&group));
                 Ok(Stage::Group(group))
             }
-            "fill" => Err(QueryError::not_built(
-                t.at,
-                "`fill` needs coverage from the analysis layer, which is not built yet",
-            )),
+            "fill" => Err(QueryError::not_built(t.at, FILL_NOT_BUILT)),
             "sort" => {
                 let mut keys = Vec::new();
                 loop {

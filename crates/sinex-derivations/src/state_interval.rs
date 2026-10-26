@@ -7,7 +7,7 @@
 //!
 //! - **adjacent transitions** (window focus, workspace): a state holds until
 //!   the next transition to a different subject, or until an interruption;
-//! - **spans** (ActivityWatch window and presence spans, already joined at the
+//! - **spans** (ActivityWatch's presence spans, already joined at the
 //!   source): each span is one interval, cut short by an interruption inside
 //!   it.
 //!
@@ -20,7 +20,7 @@
 //! identified by its start evidence's record location: its end moves as later
 //! evidence arrives, its start does not.
 use crate::derived_event::derived;
-use crate::{Computed, Env, InputQuery, KeyState, KeyView, Keyed, Neighbour};
+use crate::{Computed, Env, InputQuery, KeyState, KeyView, Keyed, Kind, Neighbour};
 use serde_json::{Value, json};
 use sinex_model::event_types::StateInterval;
 use sinex_model::{Event, EventPayload, Origin, Timestamp};
@@ -37,8 +37,7 @@ impl Interruption {
     fn neighbour(self) -> Neighbour {
         match self {
             Self::Afk => Neighbour {
-                event_types: vec!["presence.span"],
-                equal: vec![("status", json!("afk"))],
+                kinds: vec![Kind::only("presence.span", &[("status", "afk")])],
                 per: None,
                 count: 1,
             },
@@ -133,20 +132,6 @@ pub const RULES: &[IntervalRule] = &[
         ended_by: &[Interruption::Afk],
     },
     IntervalRule {
-        state_kind: "desktop.activitywatch.window",
-        event_types: &["window.span"],
-        shape: Shape::Span { end: "ended_at" },
-        subject: |p| match (text(p, "app"), text(p, "title")) {
-            (Some(a), Some(t)) => Some(format!("app:{a}|title:{t}")),
-            (Some(a), None) => Some(format!("app:{a}")),
-            (None, Some(t)) => Some(format!("title:{t}")),
-            (None, None) => None,
-        },
-        label: |p| app_and_title(p, "app", "title"),
-        attributes: &["bucket", "app", "title"],
-        ended_by: &[],
-    },
-    IntervalRule {
         state_kind: "desktop.activitywatch.afk",
         event_types: &["presence.span"],
         shape: Shape::Span { end: "ended_at" },
@@ -162,12 +147,7 @@ pub fn rule(state_kind: &str) -> Option<&'static IntervalRule> {
 }
 
 /// Every event type any rule reads, as transitions, spans or interruptions.
-const INPUT_TYPES: &[&str] = &[
-    "window.focused",
-    "workspace.switched",
-    "window.span",
-    "presence.span",
-];
+const INPUT_TYPES: &[&str] = &["window.focused", "workspace.switched", "presence.span"];
 
 /// An open state during the fold.
 #[derive(Clone, Debug)]
@@ -374,17 +354,16 @@ impl Keyed for StateIntervals {
         let end = env.civil.day_end(day).ok()?;
         let mut types: Vec<&'static str> = r.event_types.to_vec();
         for f in r.ended_by {
-            for t in f.neighbour().event_types {
-                if !types.contains(&t) {
-                    types.push(t);
+            for k in f.neighbour().kinds {
+                if !types.contains(&k.event_type) {
+                    types.push(k.event_type);
                 }
             }
         }
         let mut q = InputQuery::window(&types, start, end);
         match r.shape {
             Shape::AdjacentTransitions => q.after.push(Neighbour {
-                event_types: r.event_types.to_vec(),
-                equal: vec![],
+                kinds: r.event_types.iter().map(|t| Kind::all(t)).collect(),
                 per: None,
                 count: AFTER_COUNT,
             }),

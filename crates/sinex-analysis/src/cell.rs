@@ -24,14 +24,10 @@ pub enum Cell<T> {
 pub enum Missing {
     /// No source feeding the metric was running or exported for the unit.
     NoCoverage,
-    /// A recorded gap covers the unit.
-    Gap,
     /// Coverage cannot be established and nothing was recorded.
     CoverageUnknown,
     /// The metric is undefined here (a ratio with a zero denominator).
     NotApplicable,
-    /// A key the metric's relation depends on is being recomputed.
-    Recomputing,
 }
 
 /// Why a cell was left out of a method's population.
@@ -39,9 +35,7 @@ pub enum Missing {
 #[serde(rename_all = "snake_case")]
 pub enum Exclusion {
     NoCoverage,
-    Gap,
     CoverageUnknown,
-    Recomputing,
     Recorded,
     Partial,
     NotApplicable,
@@ -50,10 +44,8 @@ pub enum Exclusion {
 impl Exclusion {
     fn severity(self) -> u8 {
         match self {
-            Exclusion::NoCoverage => 7,
-            Exclusion::Gap => 6,
-            Exclusion::CoverageUnknown => 5,
-            Exclusion::Recomputing => 4,
+            Exclusion::NoCoverage => 5,
+            Exclusion::CoverageUnknown => 4,
             Exclusion::Recorded => 3,
             Exclusion::Partial => 2,
             Exclusion::NotApplicable => 1,
@@ -74,10 +66,8 @@ impl From<Missing> for Exclusion {
     fn from(m: Missing) -> Self {
         match m {
             Missing::NoCoverage => Exclusion::NoCoverage,
-            Missing::Gap => Exclusion::Gap,
             Missing::CoverageUnknown => Exclusion::CoverageUnknown,
             Missing::NotApplicable => Exclusion::NotApplicable,
-            Missing::Recomputing => Exclusion::Recomputing,
         }
     }
 }
@@ -115,9 +105,6 @@ impl<T> Cell<T> {
             Cell::Observed { .. } => "observed",
             Cell::Partial { .. } => "partial",
             Cell::Recorded { .. } => "recorded",
-            Cell::Missing {
-                reason: Missing::Gap,
-            } => "gap",
             Cell::Missing {
                 reason: Missing::NotApplicable,
             } => "not_applicable",

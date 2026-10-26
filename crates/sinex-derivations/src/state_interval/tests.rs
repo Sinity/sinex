@@ -1,7 +1,7 @@
 //! Interval scenarios on the recompute model: inputs are folded in time order,
 //! so arrival order never matters and there is no carried state to decode.
 //! ActivityWatch heartbeats are joined into spans by the ActivityWatch source,
-//! so those scenarios are span scenarios here.
+//! so its presence scenarios are span scenarios here.
 use super::*;
 use sinex_model::{
     Class, EquivalenceKey, EventId, MaterialId, ReadingOrder, RecordLocation, RecordState,
@@ -56,15 +56,6 @@ fn workspace(secs: i64, id: i64) -> Event {
         "workspace.switched",
         secs,
         json!({"received_at": at(secs), "workspace_id": id, "workspace_name": format!("ws{id}")}),
-    )
-}
-
-fn window_span(secs: i64, end: i64, app: &str, title: &str) -> Event {
-    input(
-        "window.span",
-        secs,
-        json!({"bucket": "aw-watcher-window_box", "span_id": secs, "started_at": at(secs),
-               "ended_at": at(end), "app": app, "title": title, "merged": 3}),
     )
 }
 
@@ -186,22 +177,6 @@ fn next_workspace_closes_the_previous_one_and_same_one_does_not() {
 }
 
 #[devkit::test]
-fn each_activitywatch_span_is_its_own_interval() {
-    let out = lift(
-        "desktop.activitywatch.window",
-        &[
-            window_span(0, 5, "firefox", "docs"),
-            window_span(10, 12, "firefox", "docs"),
-        ],
-    );
-    assert_eq!(out.len(), 2);
-    assert_eq!(out[0].ended_at, Some(at(5)));
-    assert_eq!(out[1].ended_at, Some(at(12)));
-    assert_eq!(out[0].label.as_deref(), Some("firefox: docs"));
-    assert_eq!(out[0].subject_id.as_deref(), Some("app:firefox|title:docs"));
-}
-
-#[devkit::test]
 fn presence_spans_lift_and_not_afk_is_its_own_status() {
     let out = lift(
         "desktop.activitywatch.afk",
@@ -215,10 +190,7 @@ fn presence_spans_lift_and_not_afk_is_its_own_status() {
 
 #[devkit::test]
 fn a_span_ending_before_its_start_is_zero_length() {
-    let out = lift(
-        "desktop.activitywatch.window",
-        &[window_span(10, 5, "kitty", "zsh")],
-    );
+    let out = lift("desktop.activitywatch.afk", &[presence(10, 5, "afk")]);
     assert_eq!(out[0].ended_at, Some(at(10)));
 }
 
@@ -271,9 +243,9 @@ fn inputs_ask_for_the_transitions_after_the_day() {
     let q = StateIntervals.inputs(&key("desktop.focus"), &env).unwrap();
     assert_eq!(q.window.0, at(-6 * 3600));
     assert_eq!(q.window.1, at(18 * 3600));
-    assert!(q.event_types.contains(&"window.focused"));
+    assert!(q.event_types().contains(&"window.focused"));
     assert!(
-        q.event_types.contains(&"presence.span"),
+        q.event_types().contains(&"presence.span"),
         "interruptions are inputs"
     );
     assert_eq!(q.after.len(), 2, "next transitions, next afk");

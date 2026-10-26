@@ -6,7 +6,6 @@ use crate::span::Span;
 fn cell(c: Cell<f64>) -> PanelCell {
     PanelCell {
         metric: "shell.commands",
-        metric_version: 1,
         unit: Unit {
             label: "2026-09-14".into(),
             span: Span::new(0, 1),
@@ -16,8 +15,9 @@ fn cell(c: Cell<f64>) -> PanelCell {
         cell: c,
         numerator: None,
         denominator: None,
-        n_rows: 0,
+        rows: 0,
         observed_seconds: 0.0,
+        reference: Some("sinex:ev/f".into()),
     }
 }
 
@@ -35,7 +35,7 @@ fn a_missing_day_is_rendered_as_unknown_never_zero() {
         f.markdown(),
         "shell.commands on 2026-09-14 is not known: no coverage"
     );
-    assert_eq!(f.status, Support::Unknown);
+    assert_eq!(f.rank().0, 2, "unknown values rank last");
 }
 
 #[devkit::test]
@@ -53,7 +53,8 @@ fn caveats_render_with_their_claim() {
         f.markdown(),
         "Commands run (shell.commands) on 2026-09-14: 6 [the day is not over] [only 83% of the unit was observed] [on atuin, zsh]"
     );
-    assert_eq!(f.checks.coverage, Check::Caveated);
+    assert_eq!(f.evidence, ["sinex:ev/f"]);
+    assert_eq!(f.rank().0, 1);
     let rec = from_cell(
         &cell(Cell::Recorded { value: 3.0 }),
         "Commands run",

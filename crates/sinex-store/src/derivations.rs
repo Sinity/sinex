@@ -21,30 +21,37 @@ pub struct Committed {
     pub commit_seq: i64,
 }
 
-/// Payload filter: field equals a value; a `values` list means "one of".
+/// Events of one type whose payload contains `contains`, a JSON object (`{}`
+/// for every event of the type). An event is read when any kind admits it.
 #[derive(Clone, Debug, PartialEq)]
-pub enum Match {
-    Equals(&'static str, Value),
-    OneOf(&'static str, Vec<String>),
+pub struct Kind {
+    pub event_type: String,
+    pub contains: Value,
+}
+
+/// The parallel arrays the queries unnest: each kind's type and containment.
+fn kind_arrays(kinds: &[Kind]) -> (Vec<String>, Vec<Value>) {
+    kinds
+        .iter()
+        .map(|k| (k.event_type.clone(), k.contains.clone()))
+        .unzip()
 }
 
 /// The nearest events to a window edge.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Nearest {
-    pub event_types: Vec<String>,
-    pub matching: Vec<Match>,
+    pub kinds: Vec<Kind>,
     /// One answer set per value of this payload field seen in the window.
     pub per: Option<&'static str>,
     pub count: i64,
 }
 
-/// Live events of some types in a `ts_orig` window, plus nearest neighbours.
+/// Live events of some kinds in a `ts_orig` window, plus nearest neighbours.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Window {
-    pub event_types: Vec<String>,
+    pub kinds: Vec<Kind>,
     pub start: OffsetDateTime,
     pub end: OffsetDateTime,
-    pub matching: Vec<Match>,
     pub before: Vec<Nearest>,
     pub after: Vec<Nearest>,
 }
@@ -161,41 +168,24 @@ macro_rules! committed {
     };
 }
 
-/// The scalar equalities as one JSON object for `@>`, and the one-of filter.
-fn split(matching: &[Match]) -> (Value, Option<String>, Vec<String>) {
-    let mut object = serde_json::Map::new();
-    let mut one_of: (Option<String>, Vec<String>) = (None, Vec::new());
-    for m in matching {
-        match m {
-            Match::Equals(f, v) => {
-                object.insert((*f).to_owned(), v.clone());
-            }
-            Match::OneOf(f, values) => one_of = (Some((*f).to_owned()), values.clone()),
-        }
-    }
-    (Value::Object(object), one_of.0, one_of.1)
-}
-
 /// Live events in the window, sorted by `ts_orig` then commit order, with the
 /// neighbours appended (also sorted, without repeats).
 pub async fn read_window(conn: &mut PgConnection, w: &Window) -> Result<Vec<Committed>> {
-    let (contains, one_of_field, one_of) = split(&w.matching);
+    let (types, contains) = kind_arrays(&w.kinds);
     let rows = sqlx::query!(
         r#"SELECT e.id, e.event_type, e.source, e.material_id, e.anchor, e.output_index, e.parents,
              e.ts_orig, e.ts_quality, e.payload, e.equivalence_key, e.reading_order, e.record_hash,
              e.record_state, e.class, e.commit_seq
            FROM core.events e
            WHERE e.event_type = ANY($1) AND e.ts_orig >= $2 AND e.ts_orig < $3
-             AND e.payload @> $4
-             AND ($5::text IS NULL OR e.payload->>$5 = ANY($6))
+             AND EXISTS (SELECT 1 FROM unnest($1::text[], $4::jsonb[]) AS k(event_type, contains)
+                         WHERE k.event_type = e.event_type AND e.payload @> k.contains)
              AND NOT EXISTS (SELECT 1 FROM audit.archived a WHERE a.event_id = e.id)
            ORDER BY e.ts_orig, e.commit_seq"#,
-        &w.event_types,
+        &types,
         w.start,
         w.end,
-        contains,
-        one_of_field,
-        &one_of,
+        &contains,
     )
     .fetch_all(&mut *conn)
     .await?;
@@ -230,7 +220,7 @@ async fn window_page(
     after: Option<(OffsetDateTime, i64)>,
     limit: i64,
 ) -> Result<Vec<Committed>> {
-    let (contains, one_of_field, one_of) = split(&w.matching);
+    let (types, contains) = kind_arrays(&w.kinds);
     let (after_ts, after_seq) = after.unzip();
     let rows = sqlx::query!(
         r#"SELECT e.id, e.event_type, e.source, e.material_id, e.anchor, e.output_index, e.parents,
@@ -238,18 +228,16 @@ async fn window_page(
              e.record_state, e.class, e.commit_seq
            FROM core.events e
            WHERE e.event_type = ANY($1) AND e.ts_orig >= $2 AND e.ts_orig < $3
-             AND e.payload @> $4
-             AND ($5::text IS NULL OR e.payload->>$5 = ANY($6))
-             AND ($7::timestamptz IS NULL OR (e.ts_orig, e.commit_seq) > ($7, $8::bigint))
+             AND EXISTS (SELECT 1 FROM unnest($1::text[], $4::jsonb[]) AS k(event_type, contains)
+                         WHERE k.event_type = e.event_type AND e.payload @> k.contains)
+             AND ($5::timestamptz IS NULL OR (e.ts_orig, e.commit_seq) > ($5, $6::bigint))
              AND NOT EXISTS (SELECT 1 FROM audit.archived a WHERE a.event_id = e.id)
            ORDER BY e.ts_orig, e.commit_seq
-           LIMIT $9"#,
-        &w.event_types,
+           LIMIT $7"#,
+        &types,
         w.start,
         w.end,
-        contains,
-        one_of_field,
-        &one_of,
+        &contains,
         after_ts,
         after_seq,
         limit,
@@ -264,7 +252,7 @@ async fn window_page(
 }
 
 /// Windows read page by page, `page` rows per query. Windows with the same
-/// types and filter and no neighbours, whose ranges touch or lie within one
+/// kinds and no neighbours, whose ranges touch or lie within one
 /// window length of each other, share one paged query over their combined
 /// range: one round trip per page for a run of adjacent keys (hours, days)
 /// instead of one per key. Each
@@ -294,11 +282,10 @@ impl Windows {
     pub fn new(windows: Vec<Window>, page: i64) -> Self {
         let (alone, mut plain): (Vec<usize>, Vec<usize>) = (0..windows.len())
             .partition(|&i| !windows[i].before.is_empty() || !windows[i].after.is_empty());
-        // Group by filter, then chain by start.
+        // Group by kinds, then chain by start.
         plain.sort_by(|&a, &b| {
             let (wa, wb) = (&windows[a], &windows[b]);
-            (format!("{:?}{:?}", wa.event_types, wa.matching), wa.start)
-                .cmp(&(format!("{:?}{:?}", wb.event_types, wb.matching), wb.start))
+            (format!("{:?}", wa.kinds), wa.start).cmp(&(format!("{:?}", wb.kinds), wb.start))
         });
         let mut groups = std::collections::VecDeque::new();
         let mut at = 0;
@@ -308,7 +295,7 @@ impl Windows {
             let mut upto = at + 1;
             while upto < plain.len() {
                 let w = &windows[plain[upto]];
-                let same = w.event_types == first.event_types && w.matching == first.matching;
+                let same = w.kinds == first.kinds;
                 if !same || w.start > end + len {
                     break;
                 }
@@ -403,7 +390,7 @@ async fn nearest(
     after: bool,
     window_events: &[Committed],
 ) -> Result<Vec<Committed>> {
-    let (contains, one_of_field, one_of) = split(&n.matching);
+    let (types, contains) = kind_arrays(&n.kinds);
     let edge = if after { w.end } else { w.start };
     let mut out = Vec::new();
     match n.per {
@@ -415,17 +402,15 @@ async fn nearest(
                    FROM core.events e
                    WHERE e.event_type = ANY($1)
                      AND (($2 AND e.ts_orig >= $3) OR (NOT $2 AND e.ts_orig < $3))
-                     AND e.payload @> $4
-                     AND ($5::text IS NULL OR e.payload->>$5 = ANY($6))
+                     AND EXISTS (SELECT 1 FROM unnest($1::text[], $4::jsonb[]) AS k(event_type, contains)
+                                 WHERE k.event_type = e.event_type AND e.payload @> k.contains)
                      AND NOT EXISTS (SELECT 1 FROM audit.archived a WHERE a.event_id = e.id)
                    ORDER BY CASE WHEN $2 THEN e.ts_orig END ASC, CASE WHEN NOT $2 THEN e.ts_orig END DESC
-                   LIMIT $7"#,
-                &n.event_types,
+                   LIMIT $5"#,
+                &types,
                 after,
                 edge,
-                contains,
-                one_of_field,
-                &one_of,
+                &contains,
                 n.count,
             )
             .fetch_all(&mut *conn)
@@ -437,7 +422,7 @@ async fn nearest(
         Some(per) => {
             let mut values: Vec<String> = window_events
                 .iter()
-                .filter(|c| n.event_types.iter().any(|t| t == c.event.event_type))
+                .filter(|c| n.kinds.iter().any(|k| k.event_type == c.event.event_type))
                 .filter_map(|c| match c.event.payload.get(per)? {
                     Value::String(s) => Some(s.clone()),
                     Value::Null => None,
@@ -456,22 +441,20 @@ async fn nearest(
                      x.reading_order AS "reading_order!", x.record_hash AS "record_hash!",
                      x.record_state AS "record_state!", x.class AS "class!",
                      x.commit_seq AS "commit_seq!"
-                   FROM unnest($7::text[]) AS v(val) CROSS JOIN LATERAL (
+                   FROM unnest($5::text[]) AS v(val) CROSS JOIN LATERAL (
                      SELECT e.* FROM core.events e
                      WHERE e.event_type = ANY($1)
                        AND (($2 AND e.ts_orig >= $3) OR (NOT $2 AND e.ts_orig < $3))
-                       AND e.payload->>$8 = v.val
-                       AND e.payload @> $4
-                       AND ($5::text IS NULL OR e.payload->>$5 = ANY($6))
+                       AND e.payload->>$6 = v.val
+                       AND EXISTS (SELECT 1 FROM unnest($1::text[], $4::jsonb[]) AS k(event_type, contains)
+                                   WHERE k.event_type = e.event_type AND e.payload @> k.contains)
                        AND NOT EXISTS (SELECT 1 FROM audit.archived a WHERE a.event_id = e.id)
                      ORDER BY CASE WHEN $2 THEN e.ts_orig END ASC, CASE WHEN NOT $2 THEN e.ts_orig END DESC
-                     LIMIT $9) x"#,
-                &n.event_types,
+                     LIMIT $7) x"#,
+                &types,
                 after,
                 edge,
-                contains,
-                one_of_field,
-                &one_of,
+                &contains,
                 &values,
                 per,
                 n.count,

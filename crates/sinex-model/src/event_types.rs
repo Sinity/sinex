@@ -10,6 +10,7 @@ pub mod communication;
 pub mod derived;
 pub mod desktop;
 pub mod forecast;
+pub mod fused;
 pub mod health;
 pub mod library;
 pub mod machine;
@@ -20,9 +21,10 @@ pub mod session;
 pub mod shell;
 pub mod social;
 
-pub use derived::{ActivitySummary, FigureValue, HealthFigure, StateInterval};
+pub use derived::{FigureValue, HealthFigure, MetricFigure, StateInterval};
+pub use fused::CommandFused;
 use serde_json::Value;
-pub use shell::{CommandExecuted, CommandFused, CommandImported, ShellSession};
+pub use shell::{CommandExecuted, CommandImported, ShellSession};
 
 /// A registered event type, as the schema registry stores it.
 #[derive(Clone, Debug)]
@@ -80,7 +82,6 @@ pub const ALL: &[RegisteredEventType] = &[
     info::<forecast::Resolved>(),
     info::<CommandExecuted>(),
     info::<CommandImported>(),
-    info::<CommandFused>(),
     // Desktop
     info::<desktop::WindowFocused>(),
     info::<desktop::WindowOpened>(),
@@ -116,9 +117,15 @@ pub const ALL: &[RegisteredEventType] = &[
     // Code
     info::<code::GitCommit>(),
     // Derived
+    info::<CommandFused>(),
+    info::<fused::FocusFused>(),
+    info::<fused::VisitFused>(),
+    info::<fused::PlayFused>(),
+    info::<fused::ClipboardFused>(),
+    info::<fused::NotificationFused>(),
     info::<ShellSession>(),
     info::<StateInterval>(),
-    info::<ActivitySummary>(),
+    info::<MetricFigure>(),
     info::<HealthFigure>(),
     // Browsing, listening, reading, notes, communication
     info::<browser::BrowserVisit>(),
