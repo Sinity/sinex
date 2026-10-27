@@ -91,6 +91,14 @@ pub fn discover(context: &DiscoveryContext) -> Result<Vec<DiscoveredInput>, Stri
     Ok(sources::formats()
         .iter()
         .flat_map(|format| (format.discover)(format, context))
+        .map(|mut input| {
+            if let Some(Some(exclusion)) = context.exclude.get(&input.source) {
+                input.availability = Availability::Excluded;
+                input.reason = Some(exclusion.reason.clone());
+                input.bindings.clear();
+            }
+            input
+        })
         .collect())
 }
 
@@ -189,6 +197,7 @@ fn paths(location: &Location, context: &DiscoveryContext) -> Result<Vec<PathBuf>
                     Err(error) => return Err(format!("{}: {error}", root.display())),
                 }
             }
+            out.sort();
             out
         }
         _ => Vec::new(),
@@ -212,6 +221,7 @@ pub fn discover_format(format: &InputFormat, context: &DiscoveryContext) -> Vec<
             input,
             settings: settings.clone(),
             availability,
+            capture: false,
             reason,
             bindings,
         };
@@ -275,9 +285,9 @@ pub fn discover_format(format: &InputFormat, context: &DiscoveryContext) -> Vec<
             }
             out.push(make(Some(input), state, reason, bindings));
         }
-        if format.discovery.owner == Owner::Session {
+        if format.capture.is_some() {
             out.extend(
-                capture_inputs(context, Owner::Session)
+                capture_inputs(context, format.discovery.owner)
                     .into_iter()
                     .filter(|input| input.format == format.name && input.source == spec.name),
             );
@@ -357,16 +367,36 @@ pub fn captures(
     owner: Owner,
 ) -> Result<Vec<(&'static InputFormat, Binding)>, String> {
     validate(context)?;
-    Ok(capture_inputs(context, owner)
-        .into_iter()
-        .flat_map(|input| {
-            let format = sources::format(&input.format).expect("discovered capture format");
-            input
-                .bindings
+    Ok(select_captures(context, owner, sources::formats()))
+}
+
+fn select_captures(
+    context: &DiscoveryContext,
+    owner: Owner,
+    formats: &[&'static InputFormat],
+) -> Vec<(&'static InputFormat, Binding)> {
+    formats
+        .iter()
+        .copied()
+        .filter(|format| format.capture.is_some() && format.discovery.owner == owner)
+        .flat_map(|format| {
+            (format.discover)(format, context)
                 .into_iter()
-                .map(move |binding| (format, binding))
+                .filter(|input| input.capture && input.availability == Availability::Capturing)
+                .flat_map(move |input| {
+                    input
+                        .bindings
+                        .into_iter()
+                        .filter(move |binding| {
+                            !context
+                                .exclude
+                                .get(&binding.source)
+                                .is_some_and(Option::is_some)
+                        })
+                        .map(move |binding| (format, binding))
+                })
         })
-        .collect())
+        .collect()
 }
 
 fn capture_inputs(context: &DiscoveryContext, owner: Owner) -> Vec<DiscoveredInput> {
@@ -414,6 +444,7 @@ fn capture_inputs(context: &DiscoveryContext, owner: Owner) -> Vec<DiscoveredInp
                 input: Some(input.clone()),
                 settings,
                 availability: Availability::WaitingForInput,
+                capture: true,
                 reason: None,
                 bindings: vec![],
             };

@@ -92,6 +92,8 @@ pub struct DiscoveredInput {
     pub input: Option<PathBuf>,
     pub settings: Settings,
     pub availability: Availability,
+    /// True for acquisition into a spool, false for reading an existing input.
+    pub capture: bool,
     pub reason: Option<String>,
     /// Planned bindings preserve each format's distinguishing suffix.
     pub bindings: Vec<Binding>,
