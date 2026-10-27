@@ -130,7 +130,7 @@ fn visit(
                     block_hash: hash.clone(),
                     duplicate: *duplicate,
                     parent: from.clone().map(Box::new),
-                year,
+                    year,
                 };
                 *duplicate += 1;
                 let targets = match resolve(path, target.trim(), settings) {
@@ -165,7 +165,8 @@ fn visit(
                                 Some(from.clone()),
                                 active,
                                 out,
-                            ).err()
+                            )
+                            .err()
                         }
                     };
                     includes

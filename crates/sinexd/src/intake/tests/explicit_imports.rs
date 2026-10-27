@@ -1,6 +1,11 @@
 //! Explicit imports through backfill, intake, admission and stored-byte replay.
 use serde_json::Value;
 
+async fn live(conn: &mut sqlx::PgConnection) -> Vec<(String, String, Value)> {
+    sqlx::query_as("SELECT e.event_type, e.class::text, e.payload FROM (SELECT event_id FROM core.live_locations UNION ALL SELECT event_id FROM core.live_equivalence) l JOIN core.events e ON e.id=l.event_id ORDER BY e.event_type,e.payload::text")
+        .fetch_all(conn).await.unwrap()
+}
+
 #[devkit::test]
 async fn explicit_imports_replay_without_source_files_and_keep_guarded_records(
     db: devkit::pg::TestDatabase,
@@ -37,10 +42,6 @@ async fn explicit_imports_replay_without_source_files_and_keep_guarded_records(
     let mut ctx = crate::reader_context::ReaderContext::open(&db.url(None), &store)
         .await
         .unwrap();
-    async fn live(conn: &mut sqlx::PgConnection) -> Vec<(String, String, Value)> {
-        sqlx::query_as("SELECT e.event_type, e.class::text, e.payload FROM (SELECT event_id FROM core.live_locations UNION ALL SELECT event_id FROM core.live_equivalence) l JOIN core.events e ON e.id=l.event_id ORDER BY e.event_type,e.payload::text")
-            .fetch_all(conn).await.unwrap()
-    }
     let before = live(&mut ctx.read_conn).await;
     assert_eq!(before.len(), 6);
     assert!(before.iter().all(|(_, class, _)| class == "guarded"));
@@ -132,7 +133,11 @@ async fn included_journal_changes_are_read_when_the_parent_is_unchanged_and_repl
     )
     .unwrap();
     crate::backfill::run(options()).await.unwrap();
-    std::fs::write(&parent, "Y2036\ninclude child.journal\ninclude child.journal\n").unwrap();
+    std::fs::write(
+        &parent,
+        "Y2036\ninclude child.journal\ninclude child.journal\n",
+    )
+    .unwrap();
     crate::backfill::run(options()).await.unwrap();
     std::fs::remove_file(&child).unwrap();
     std::fs::remove_file(&parent).unwrap();
@@ -144,6 +149,8 @@ async fn included_journal_changes_are_read_when_the_parent_is_unchanged_and_repl
     let inherited: i64 = sqlx::query_scalar("SELECT count(*) FROM core.events WHERE event_type='transaction.posted' AND payload->>'resolved_date'='2036-03-01'")
         .fetch_one(&mut ctx.read_conn).await.unwrap();
     assert_eq!(inherited, 2);
+    let before = live(&mut ctx.read_conn).await;
+    assert_eq!(before.iter().filter(|(kind, _, _)| kind == "transaction.posted").count(), 6);
     let report = crate::replay::run(
         &mut ctx.read_conn,
         &ctx.blobs,
@@ -167,5 +174,6 @@ async fn included_journal_changes_are_read_when_the_parent_is_unchanged_and_repl
     assert!(report.events_read >= 7);
     let changed: i64 = sqlx::query_scalar("SELECT count(*) FROM (SELECT event_id FROM core.live_equivalence) l JOIN core.events e ON e.id=l.event_id WHERE e.event_type='transaction.posted' AND e.payload->>'resolved_date'='2036-03-01'").fetch_one(&mut ctx.read_conn).await.unwrap();
     assert_eq!(changed, 2);
+    assert_eq!(live(&mut ctx.read_conn).await, before);
     ctx.close().await.unwrap();
 }
