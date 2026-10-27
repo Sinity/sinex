@@ -93,6 +93,7 @@ fn value_param(v: &Value) -> Result<V> {
         Value::Time(t) => time_value(*t)?,
         Value::Id(u) => V::Uuid(Some(*u)),
         Value::List(_) => return Err(invalid("a list inside a list")),
+        Value::PlaceholderText(_) => return Err(invalid("unbound saved-query parameter")),
     })
 }
 

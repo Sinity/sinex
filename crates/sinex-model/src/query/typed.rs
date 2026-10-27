@@ -325,7 +325,7 @@ fn validate_value(v: &mut Value, ty: FieldType, ctx: &Context) -> Result<(), Que
             | (FieldType::Number, Value::Integer(_) | Value::Number(_))
             | (
                 FieldType::Text | FieldType::TextList,
-                Value::Text(_) | Value::Glob(_)
+                Value::Text(_) | Value::Glob(_) | Value::PlaceholderText(_)
             )
             | (FieldType::Time, Value::Time(_))
             | (FieldType::Bool, Value::Bool(_))
@@ -381,8 +381,11 @@ fn expr(e: &mut Expr, kinds: &Option<BTreeSet<String>>, ctx: &Context) -> Result
                                 f.values.as_ref().into_iter().flatten().map(String::as_str)
                             })
                             .collect();
-                        let check =
-                            |v: &Value| matches!(v,Value::Text(s) if values.contains(s.as_str()));
+                        let check = |v: &Value| match v {
+                            Value::PlaceholderText(_) => true,
+                            Value::Text(s) => values.contains(s.as_str()),
+                            _ => false,
+                        };
                         let valid = if let Value::List(items) = rhs {
                             items.iter().all(check)
                         } else {
@@ -510,43 +513,4 @@ pub(super) fn check(q: &mut Query, ctx: &Context) -> Result<(), QueryError> {
         }
     }
     Ok(())
-}
-
-pub(super) fn enum_placeholder(name: &str, input: &[super::lex::Token]) -> Option<String> {
-    let path = name.strip_prefix("payload.")?;
-    let kinds = input.windows(3).rev().find_map(|tokens| {
-        (tokens[0].is_word("event_type") && (tokens[1].is_symbol("=") || tokens[1].is_symbol(":")))
-            .then(|| selected_value(&Value::Text(tokens[2].text.clone())))
-            .flatten()
-    });
-    fields()
-        .iter()
-        .find(|field| {
-            field.path.join(".") == path
-                && field.values.is_some()
-                && kinds
-                    .as_ref()
-                    .is_none_or(|kinds| kinds.contains(field.event_type))
-        })?
-        .values
-        .as_ref()?
-        .first()
-        .cloned()
-}
-
-pub(super) fn event_type_placeholder(input: &[super::lex::Token]) -> Option<String> {
-    let paths: Vec<_> = input
-        .iter()
-        .filter_map(|token| token.text.strip_prefix("payload."))
-        .collect();
-    crate::event_types::ALL
-        .iter()
-        .find(|kind| {
-            paths.iter().all(|path| {
-                fields().iter().any(|field| {
-                    field.event_type == kind.event_type && field.path.join(".") == *path
-                })
-            })
-        })
-        .map(|kind| kind.event_type.into())
 }

@@ -18,6 +18,8 @@ pub(crate) struct Token {
     pub text: String,
     /// Byte offset in the query text, for error messages.
     pub at: usize,
+    /// A sample value used only to validate a saved definition.
+    pub placeholder: bool,
 }
 
 impl Token {
@@ -52,6 +54,7 @@ pub(crate) fn tokens(text: &str) -> Result<Vec<Token>, QueryError> {
                 kind: Kind::Quoted,
                 text: value,
                 at: i,
+                placeholder: false,
             });
             i += stream.byte_offset();
             continue;
@@ -106,6 +109,7 @@ pub(crate) fn tokens(text: &str) -> Result<Vec<Token>, QueryError> {
                     kind: Kind::Word,
                     text: name.to_string(),
                     at: i,
+                    placeholder: false,
                 });
                 out.push(symbol(":", i + colon));
                 // `field:"quoted value"` leaves the quote as the next token.
@@ -115,6 +119,7 @@ pub(crate) fn tokens(text: &str) -> Result<Vec<Token>, QueryError> {
                         kind: Kind::Word,
                         text: text[value_start..end].to_string(),
                         at: value_start,
+                        placeholder: false,
                     });
                 }
                 i = end;
@@ -125,6 +130,7 @@ pub(crate) fn tokens(text: &str) -> Result<Vec<Token>, QueryError> {
             kind: Kind::Word,
             text: word.to_string(),
             at: i,
+            placeholder: false,
         });
         i = end;
     }
@@ -136,6 +142,7 @@ fn symbol(text: &str, at: usize) -> Token {
         kind: Kind::Symbol,
         text: text.to_string(),
         at,
+        placeholder: false,
     }
 }
 

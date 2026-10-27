@@ -221,7 +221,7 @@ fn field_phrase(f: &FieldRef) -> String {
 
 fn value(v: &Value) -> String {
     match v {
-        Value::Text(s) => format!("\"{s}\""),
+        Value::Text(s) | Value::PlaceholderText(s) => format!("\"{s}\""),
         Value::Glob(s) => format!("\"{s}\""),
         Value::Integer(i) => i.to_string(),
         Value::Number(n) => n.to_string(),

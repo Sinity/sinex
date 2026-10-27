@@ -138,6 +138,7 @@ impl SavedQuery {
                     },
                     text: text.into(),
                     at: 0,
+                    placeholder: true,
                 },
             );
         }
@@ -214,19 +215,20 @@ fn substitute(
                 .find(|p| p.name == name)
                 .expect("declared parameter")
                 .field_type;
-            if field_type == ParameterType::Text {
-                value.kind = Kind::Quoted;
-                if validating && let Some(text) = text_placeholder(&input, i) {
-                    value.text = text;
-                }
-            }
-            if validating
-                && field_type == ParameterType::Time
-                && preceding.is_some_and(|t| {
+            value.kind = if field_type == ParameterType::Text {
+                Kind::Quoted
+            } else {
+                Kind::Word
+            };
+            if validating && value.placeholder && field_type == ParameterType::Time {
+                value.text = if preceding.is_some_and(|t| {
                     t.is_word("until") || t.is_word("..") || t.is_symbol("<") || t.is_symbol("<=")
-                })
-            {
-                value.text = "9999-12-30T00:00:00Z".into();
+                }) {
+                    "9999-12-30T00:00:00Z"
+                } else {
+                    "0001-01-01T00:00:00Z"
+                }
+                .into();
             }
             input[i] = value;
             used.insert(name);
@@ -238,42 +240,6 @@ fn substitute(
         }
     }
     Ok(input)
-}
-
-// Constrained text values use examples accepted by their scalar position.
-fn text_placeholder(input: &[Token], at: usize) -> Option<String> {
-    let operator = (0..at).rev().find(|i| {
-        input[*i].kind == Kind::Symbol
-            && ["=", "!=", ":", "<", "<=", ">", ">="].contains(&input[*i].text.as_str())
-    })?;
-    let field_at = operator.checked_sub(1)?;
-    if input[field_at].is_symbol(")") {
-        let function = input.get(field_at.checked_sub(3)?)?;
-        return match TimeFn::from_name(&function.text.to_ascii_lowercase()) {
-            Some(TimeFn::Day | TimeFn::Week) => Some("2026-01-01".into()),
-            Some(TimeFn::Month) => Some("2026-01".into()),
-            Some(TimeFn::Weekday) => Some("mon".into()),
-            Some(TimeFn::MonthDay) => Some("01-01".into()),
-            Some(TimeFn::Hour) => Some("1".into()),
-            None => None,
-        };
-    }
-    let field = input.get(field_at)?;
-    if field.is_word("event_type") {
-        return super::typed::event_type_placeholder(input);
-    }
-    for table in Table::ALL {
-        if let Some(field) = table.field(&field.text) {
-            match field.ty {
-                FieldType::Enum(values) => return values.first().map(|s| (*s).into()),
-                FieldType::Id | FieldType::IdList => {
-                    return Some("00000000-0000-0000-0000-000000000000".into());
-                }
-                _ => {}
-            }
-        }
-    }
-    super::typed::enum_placeholder(&field.text, &input[..operator])
 }
 
 /// The named query at the start of this text, using the ordinary lexer.

@@ -249,6 +249,8 @@ impl Op {
 #[derive(Clone, Debug, PartialEq)]
 pub enum Value {
     Text(String),
+    /// A text parameter checked for its type while saving a definition.
+    PlaceholderText(String),
     /// A text value with `*` wildcards.
     Glob(String),
     Integer(i64),

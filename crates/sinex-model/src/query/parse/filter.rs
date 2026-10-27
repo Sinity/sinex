@@ -311,7 +311,29 @@ impl Parser<'_> {
     pub(super) fn value(&mut self, lhs: &Operand, op: Op) -> Result<Value, QueryError> {
         let t = self.value_token()?;
         let at = t.at;
-        let raw = t.text.clone();
+        let placeholder = t.placeholder && t.kind == Kind::Quoted;
+        let raw = if placeholder {
+            match lhs {
+                Operand::TimeFn(func, _) => match func {
+                    TimeFn::Day | TimeFn::Week => "2026-01-01",
+                    TimeFn::Hour => "1",
+                    TimeFn::Weekday => "mon",
+                    TimeFn::Month => "2026-01",
+                    TimeFn::MonthDay => "01-01",
+                }
+                .to_owned(),
+                Operand::Field(FieldRef::Field(field)) => match field.ty {
+                    FieldType::Id | FieldType::IdList => {
+                        "00000000-0000-0000-0000-000000000000".into()
+                    }
+                    FieldType::Enum(values) => values[0].into(),
+                    _ => "/synthetic".into(),
+                },
+                _ => "/synthetic".into(),
+            }
+        } else {
+            t.text.clone()
+        };
         let quoted = t.kind == Kind::Quoted;
         match lhs {
             Operand::TimeFn(func, _) => {
@@ -325,9 +347,16 @@ impl Parser<'_> {
             }
             Operand::Field(FieldRef::Group(_)) => Ok(infer(&raw, quoted, op)),
             Operand::Field(FieldRef::Payload(_) | FieldRef::TypedPayload { .. }) => {
-                Ok(infer(&raw, quoted, op))
+                if placeholder {
+                    Ok(Value::PlaceholderText(raw))
+                } else {
+                    Ok(infer(&raw, quoted, op))
+                }
             }
             Operand::Field(FieldRef::Field(f)) => {
+                if placeholder && f.name == "event_type" && op == Op::Eq {
+                    return Ok(Value::Glob("*".into()));
+                }
                 let text_like = matches!(
                     f.ty,
                     FieldType::Text | FieldType::TextList | FieldType::Path | FieldType::PathList

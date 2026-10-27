@@ -445,3 +445,14 @@ async fn saving_parameterized_questions_refuses_invalid_fields_and_stages(
     let (_, listed) = call(&w, Some(OPERATOR), json!({"method":"query-list"})).await;
     assert_eq!(listed["result"]["queries"], json!([]));
 }
+
+#[devkit::test]
+async fn nested_saved_query_literals_are_validated_before_admission(db: devkit::pg::TestDatabase) {
+    let w = world(db).await;
+    let (_, saved) = call(&w, Some(OPERATOR), json!({"method":"query-save", "name":"by-class", "query":"events where class = $class count", "parameter":["class:text"]})).await;
+    assert_eq!(saved["outcome"], "ok", "{saved}");
+    let (_, invalid) = call(&w, Some(OPERATOR), json!({"method":"query-save", "name":"invalid-literal", "query":"query:by-class(class=unknown)"})).await;
+    assert_eq!(invalid["outcome"], "refused", "{invalid}");
+    let (_, listed) = call(&w, Some(OPERATOR), json!({"method":"query-list"})).await;
+    assert_eq!(listed["result"]["queries"].as_array().unwrap().len(), 1);
+}

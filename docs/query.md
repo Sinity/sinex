@@ -99,6 +99,9 @@ and `duration`. Every declared parameter must be used and supplied exactly
 once. Parameters stand in value positions, never in field names or clauses;
 a quoted value containing query punctuation stays one value. The ordinary
 parser and schema checker validate fields and stages with typed placeholder values when saving, then bind the supplied values before execution.
+Literal arguments in calls to other saved queries are checked as written.
+A parameter selecting an event type leaves its schema unknown at save time;
+payload fields with different types across schemas need a fixed event-type selection.
 Later clauses operate on the saved question's result, including grouped rows.
 
 A saved definition is a `query.saved` event keyed by name and author. Saving

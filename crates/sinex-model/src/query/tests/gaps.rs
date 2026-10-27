@@ -437,3 +437,95 @@ fn saved_text_parameters_validate_in_constrained_scalar_positions() {
     };
     saved.validate(&ctx()).unwrap();
 }
+
+#[devkit::test]
+fn saved_literal_arguments_are_checked_without_placeholder_values() {
+    let base = SavedQuery {
+        name: "base".into(),
+        query: "events where class = $value".into(),
+        parameters: vec![Parameter {
+            name: "value".into(),
+            field_type: ParameterType::Text,
+        }],
+    };
+    let definitions = BTreeMap::from([("base".into(), base)]);
+    let mut saved = SavedQuery {
+        name: "literal".into(),
+        query: "query:base(value=unknown)".into(),
+        parameters: vec![],
+    };
+    assert!(saved.validate_with(&ctx(), &definitions).is_err());
+    saved.query = "query:base(value=guarded)".into();
+    saved.validate_with(&ctx(), &definitions).unwrap();
+}
+
+#[devkit::test]
+fn nested_parameters_take_examples_from_the_field_that_uses_them() {
+    let base = SavedQuery {
+        name: "base".into(),
+        query: "commands where cwd ^ $class".into(),
+        parameters: vec![Parameter {
+            name: "class".into(),
+            field_type: ParameterType::Text,
+        }],
+    };
+    let saved = SavedQuery {
+        name: "nested".into(),
+        query: "query:base(class=$class)".into(),
+        parameters: base.parameters.clone(),
+    };
+    saved
+        .validate_with(&ctx(), &BTreeMap::from([("base".into(), base)]))
+        .unwrap();
+}
+
+#[devkit::test]
+fn event_type_parameters_use_fields_from_their_own_question() {
+    for query in [
+        r#"events where event_type = $kind and payload.command ~ "payload.absent""#,
+        "events where event_type = $kind and payload.command ~ payload.absent",
+        "events where event_type = $kind and payload.command exists near (events where event_type = state.interval and payload.subject exists) within 1h",
+        "events where event_type = command.executed and payload.command exists near (events where event_type = $kind and payload.subject exists) within 1h",
+    ] {
+        let saved = SavedQuery {
+            name: "by-kind".into(),
+            query: query.into(),
+            parameters: vec![Parameter {
+                name: "kind".into(),
+                field_type: ParameterType::Text,
+            }],
+        };
+        saved
+            .validate(&ctx())
+            .unwrap_or_else(|error| panic!("{query}: {error}"));
+    }
+}
+
+#[devkit::test]
+fn typed_saved_arguments_keep_their_type_when_quoted() {
+    for (query, declaration, value) in [
+        (
+            "events where event_type = command.executed and payload.exit_code = $value",
+            ParameterType::Integer,
+            "1",
+        ),
+        (
+            "events where event_type = state.interval and payload.open = $value",
+            ParameterType::Bool,
+            "true",
+        ),
+    ] {
+        let saved = SavedQuery {
+            name: "typed".into(),
+            query: query.into(),
+            parameters: vec![Parameter {
+                name: "value".into(),
+                field_type: declaration,
+            }],
+        };
+        let definitions = BTreeMap::from([("typed".into(), saved)]);
+        let invocation = format!("query:typed(value=\"{value}\")");
+        bind_saved(&invocation, &ctx(), &definitions)
+            .unwrap_or_else(|error| panic!("{query}: {error}"));
+    }
+}
