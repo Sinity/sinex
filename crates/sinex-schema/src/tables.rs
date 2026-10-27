@@ -153,13 +153,9 @@ pub(crate) fn tables(c: &Checks) -> Vec<String> {
   change_seq bigint NOT NULL DEFAULT 0,
   updated_at timestamptz NOT NULL DEFAULT now()
 )".into(),
-        // Where each published event sits in the confirmed stream, so an
-        // excision can erase it there too: excision reaches every surface. The
-        // row goes once the message is erased.
-        "CREATE TABLE core.published (
-  event_id uuid PRIMARY KEY,
-  stream_seq bigint NOT NULL
-)".into(),
+        // Exact event/stream pairs per publisher page, kept until erased.
+        PUBLISHED.into(),
+        PUBLISHED_BOUNDS.into(),
         // Frames outside producers sent over the NATS ingress and what Sinex
         // did with each, written by admission with the frame's events, so a
         // producer can ask what Sinex holds and a redelivered frame is answered
@@ -517,3 +513,21 @@ BEGIN
   RETURN OLD;
 END $$"
 }
+
+/// Exact event/stream pairs; bounds select pages, never individual messages.
+pub(crate) const PUBLISHED: &str = "CREATE TABLE core.published (
+  id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  first_event uuid NOT NULL,
+  last_event uuid NOT NULL,
+  event_ids uuid[] NOT NULL,
+  stream_seqs bigint[] NOT NULL,
+  CHECK (cardinality(event_ids) > 0 AND cardinality(event_ids) = cardinality(stream_seqs)),
+  CHECK (array_ndims(event_ids) = 1 AND array_lower(event_ids, 1) = 1),
+  CHECK (array_ndims(stream_seqs) = 1 AND array_lower(stream_seqs, 1) = 1),
+  CHECK (array_position(event_ids, NULL) IS NULL AND array_position(stream_seqs, NULL) IS NULL),
+  CHECK (first_event = event_ids[1] AND last_event = event_ids[cardinality(event_ids)]),
+  CHECK (first_event <= ALL(event_ids) AND last_event >= ALL(event_ids))
+)";
+
+pub(crate) const PUBLISHED_BOUNDS: &str =
+    "CREATE INDEX published_bounds ON core.published (first_event, last_event)";
