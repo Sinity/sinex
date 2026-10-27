@@ -17,7 +17,7 @@ async fn evidence_keeps_visibility_positions_unknown_times_and_archived_run_reco
             .bind(run).bind(seconds.map(|s| s as f64)).bind(if seconds.is_some() { "intrinsic" } else { "unknown" })
             .bind(sequence).execute(&mut conn).await.unwrap();
     }
-    let before = sinex_schema::catalog(&mut conn).await.unwrap();
+    let before = crate::test_schema::catalog(&mut conn).await;
     conn.execute("DROP INDEX core.events_coverage")
         .await
         .unwrap();
@@ -26,7 +26,7 @@ async fn evidence_keeps_visibility_positions_unknown_times_and_archived_run_reco
         .await
         .unwrap();
     sinex_schema::apply(&mut conn).await.unwrap();
-    assert_eq!(sinex_schema::catalog(&mut conn).await.unwrap(), before);
+    assert_eq!(crate::test_schema::catalog(&mut conn).await, before);
     let events: i64 = sqlx::query_scalar("SELECT count(*) FROM core.events")
         .fetch_one(&mut conn)
         .await
