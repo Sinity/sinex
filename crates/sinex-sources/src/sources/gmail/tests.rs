@@ -190,6 +190,14 @@ fn a_restarted_gap_keeps_the_complete_committed_cursor_without_provider_requests
     let acquired = reader.poll(&cursor).unwrap();
     assert!(acquired.material.is_none());
     assert_eq!(acquired.cursor_without_material, cursor);
+    assert!(
+        acquired
+            .observation
+            .unavailable
+            .as_deref()
+            .unwrap()
+            .contains("resync")
+    );
 }
 
 #[test]
@@ -224,4 +232,20 @@ fn oversized_message_is_one_complete_record_with_its_full_text() {
         events[0].payload["text"].as_str().unwrap().len(),
         body.len()
     );
+}
+
+#[test]
+fn an_empty_raw_message_still_keeps_its_provider_and_draft_label() {
+    let record = json!({"account":"owner@example.test","kind":"message","response":{"id":"empty-draft","historyId":"history","threadId":"thread","labelIds":["DRAFT"],"raw":""}});
+    let records = parse_record(record.as_object().unwrap()).unwrap();
+    let GmailRecord::Message(message) = &records[0] else {
+        panic!()
+    };
+    assert_eq!(message.size, 0);
+    assert_eq!(message.labels, ["DRAFT"]);
+    assert!(message.date.is_none());
+    let GmailRecord::Provider(provider) = &records[1] else {
+        panic!()
+    };
+    assert_eq!(provider.provider_message_id, "empty-draft");
 }
