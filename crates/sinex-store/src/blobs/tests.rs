@@ -441,7 +441,9 @@ async fn database_changes_and_rollbacks_require_a_full_file_scan(db: devkit::pg:
             .unwrap();
         sqlx::query("UPDATE core.counters SET value = $1 WHERE name = 'blob_changes'")
             .bind(saved["blob_changes"].as_i64().unwrap())
-            .execute(&mut conn).await.unwrap();
+            .execute(&mut conn)
+            .await
+            .unwrap();
         {
             let path = dir.path().join("unadmitted-blobs-ready");
             let mut saved: serde_json::Value =
@@ -542,16 +544,24 @@ async fn unclean_stop_checks_only_recorded_names_after_database_progress(
     let blobs = Blobs::open(dir.path()).unwrap();
     let historical = blobs.put(b"admitted before saved position").unwrap();
     sqlx::query("INSERT INTO core.blobs(hash,size,status) VALUES ($1,1,'present')")
-        .bind(&historical).execute(&mut conn).await.unwrap();
+        .bind(&historical)
+        .execute(&mut conn)
+        .await
+        .unwrap();
     delete_files_without_rows(&mut conn, &blobs).await.unwrap();
     assert_eq!(blobs.recorded_names().unwrap().count(), 0);
     // A full scan would report this file; forward progress must use the markers.
     std::fs::write(dir.path().join("blobs/history.txt"), b"unrelated").unwrap();
     let admitted = blobs.put(b"admitted since saved position").unwrap();
     sqlx::query("INSERT INTO core.blobs(hash,size,status) VALUES ($1,1,'present')")
-        .bind(&admitted).execute(&mut conn).await.unwrap();
+        .bind(&admitted)
+        .execute(&mut conn)
+        .await
+        .unwrap();
     sqlx::query("UPDATE core.counters SET value = value + 1 WHERE name = 'commit_seq'")
-        .execute(&mut conn).await.unwrap();
+        .execute(&mut conn)
+        .await
+        .unwrap();
     let orphan = blobs.put(b"stopped before admission").unwrap();
     let uninstalled = hashed_blobs::Hash::of(b"stopped before installation");
     blobs.note_unadmitted(uninstalled).unwrap();
@@ -559,13 +569,22 @@ async fn unclean_stop_checks_only_recorded_names_after_database_progress(
     drop(blobs);
     let reopened = Blobs::open(dir.path()).unwrap();
     let position = unadmitted::DatabasePosition::read(&mut conn).await.unwrap();
-    let mut names = reopened.unadmitted_names(&position).unwrap()
-        .map(|name| name.unwrap()).collect::<Vec<_>>();
+    let mut names = reopened
+        .unadmitted_names(&position)
+        .unwrap()
+        .map(|name| name.unwrap())
+        .collect::<Vec<_>>();
     names.sort();
-    let mut expected = vec![admitted.clone(), orphan.clone(), format!("blake3:{}", uninstalled.hex())];
+    let mut expected = vec![
+        admitted.clone(),
+        orphan.clone(),
+        format!("blake3:{}", uninstalled.hex()),
+    ];
     expected.sort();
     assert_eq!(names, expected);
-    let found = delete_files_without_rows(&mut conn, &reopened).await.unwrap();
+    let found = delete_files_without_rows(&mut conn, &reopened)
+        .await
+        .unwrap();
     assert_eq!(found.deleted, [orphan.clone()]);
     assert!(found.not_blobs.is_empty());
     assert!(reopened.contains(&historical).unwrap());

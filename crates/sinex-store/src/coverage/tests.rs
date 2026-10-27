@@ -80,13 +80,17 @@ async fn compressed_coverage_keeps_run_results(db: devkit::pg::TestDatabase) {
     let compressed: i64 = sqlx::query_scalar("SELECT count(*) FROM timescaledb_information.chunks WHERE hypertable_schema='core' AND hypertable_name='events' AND is_compressed")
         .fetch_one(&mut conn).await.unwrap();
     assert_eq!(compressed as usize, chunks.len());
-    let evidence = source_evidence(&mut conn, "test.source", 100000).await.unwrap();
+    let evidence = source_evidence(&mut conn, "test.source", 100000)
+        .await
+        .unwrap();
     assert_eq!(evidence.runs.len(), 100);
     for (index, run) in evidence.runs.iter().enumerate() {
         assert_eq!(run.started_at.unix_timestamp(), index as i64 + 1);
         assert!(run.ended_at.is_none());
-        assert_eq!(run.last_record.map(|time| time.unix_timestamp()),
-            (index < 99).then_some((index as i64 + 1) * 1000));
+        assert_eq!(
+            run.last_record.map(|time| time.unix_timestamp()),
+            (index < 99).then_some((index as i64 + 1) * 1000)
+        );
     }
     let earlier = source_evidence(&mut conn, "test.source", 1000)
         .await
