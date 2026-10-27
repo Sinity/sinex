@@ -1,7 +1,14 @@
 //! The deployed version-four description, kept for generating its upgrade.
 //! Table declarations: the whole current schema, which a fresh database is
 //! created with.
-use crate::Checks;
+pub(crate) struct Checks {
+    time_quality: String,
+    record_state: String,
+    class: String,
+    archive_reason: String,
+    archive_change_reason: String,
+    replace_rule: String,
+}
 
 /// Per source: its live events, and the oldest and newest event time and the
 /// newest reading time of every event admitted from it. Admission, archival,
@@ -531,6 +538,7 @@ pub(super) fn checks() -> Checks {
         time_quality:
             "CHECK (ts_quality IN ('intrinsic', 'captured', 'file_mtime', 'operator', 'unknown'))"
                 .into(),
+        replace_rule: "CHECK (replace_rule IN ('replace_when_newer', 'suppress_repeat'))".into(),
         record_state: "CHECK (record_state IN ('present', 'removed'))".into(),
         class: "CHECK (class IN ('open', 'guarded', 'sealed'))".into(),
         archive_reason: "CHECK (reason IN ('replay', 'newer_reading', 'hide', 'recomputed'))"

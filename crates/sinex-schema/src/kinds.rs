@@ -2,7 +2,7 @@
 use crate::Error;
 use serde_json::{Value, json};
 use sinex_model::kinds::{KeyRule, Normalization, RemovedRule, TimeRule};
-use sinex_model::{DbCheck, KindDeclaration, KindRef, event_types};
+use sinex_model::{DbCheck, KindDeclaration, KindRef};
 use sqlx::PgConnection;
 use std::collections::{BTreeMap, HashMap};
 use std::sync::{Arc, Mutex, OnceLock};
