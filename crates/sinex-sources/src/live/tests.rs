@@ -67,14 +67,17 @@ static SYNTHETIC: InputFormat = InputFormat {
     ..sources::hyprland::FORMAT
 };
 
+type ReceivedFrames = Arc<Mutex<HashMap<String, Ingress>>>;
+type ReceivedOrder = Arc<Mutex<Vec<Ingress>>>;
+
 async fn fake_ingress(
     url: &str,
     subjects: &Subjects,
     mut available: tokio::sync::watch::Receiver<bool>,
     timeout: Arc<tokio::sync::Notify>,
 ) -> (
-    Arc<Mutex<HashMap<String, Ingress>>>,
-    Arc<Mutex<Vec<Ingress>>>,
+    ReceivedFrames,
+    ReceivedOrder,
     tokio::task::JoinHandle<()>,
 ) {
     let client = async_nats::connect(url).await.unwrap();
