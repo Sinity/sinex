@@ -16,14 +16,18 @@ fn read(format: Format, text: &[u8]) -> Result<Vec<TranscriptCue>, RecordError> 
     .map(|p| p.0)
 }
 #[devkit::test]
-fn whisper_keeps_written_decimals_defaults_and_distinct_output_indexes() {
-    let rows = read(Format::Whisper, br#"{"segments":[{"text":"same","start":0.0005000,"end":1.23456789},{"text":"same","start":1.23456789,"end":2e1}],"language":"pl","model":"example","recording_started_at":"2026-01-01T00:00:00Z"}"#).unwrap();
+fn whisper_keeps_written_decimals_and_supplied_defaults() {
+    let rows = read(Format::Whisper, br#"{"segments":[{"text":"same","start":0.0005000,"end":1.23456789,"language":"de","confidence":0,"custom":42},{"text":"same","start":1.23456789,"end":2e1}],"language":"pl","model":"example","recording_started_at":"2026-01-01T00:00:00Z"}"#).unwrap();
     assert_eq!(rows.len(), 2);
     assert_eq!(rows[0].start_seconds.as_deref(), Some("0.0005000"));
     assert_eq!(rows[0].end_seconds.as_deref(), Some("1.23456789"));
     assert_eq!(rows[1].end_seconds.as_deref(), Some("2e1"));
     assert_eq!((rows[0].start_ms, rows[0].end_ms), (Some(1), Some(1235)));
-    assert!(rows.iter().all(|r| r.language.as_deref() == Some("pl")));
+    assert_eq!(rows[0].language.as_deref(), Some("de"));
+    assert_eq!(rows[1].language.as_deref(), Some("pl"));
+    assert_eq!(rows[0].confidence, Some(0.0));
+    assert_eq!(rows[1].confidence, None);
+    assert_eq!(rows[0].extra["custom"], 42);
 }
 #[devkit::test]
 fn large_exact_offsets_survive_without_a_millisecond_estimate() {
