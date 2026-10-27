@@ -22,15 +22,16 @@ For example, a synthetic answer file is:
 {"commands":{"opaque-id":"printf 'synthetic command'"}}
 ```
 
-Run the selected case through the declared development-shell operation:
+Run the selected case through its declared operation:
 
 ```sh
-agentctl job start sinex exec --workspace /path/to/checkout -- \
-  env SINEX_TEST_HISTORY_DIR=/path/to/private-fixture \
-  cargo run --locked --quiet -p xtask -- test -p sinexd \
-  --run-ignored only \
-  -E 'test(an_external_history_survives_a_stopped_admission_and_remains_queryable)'
+agentctl job start /path/to/checkout private_history \
+  --workspace /path/to/checkout -- /path/to/private-fixture
 ```
+
+The checkout path selects the operation declared in that checkout. The
+operation passes the directory through `SINEX_TEST_HISTORY_DIR` and runs
+only this ignored test, with one test thread, under the normal Cargo cap.
 
 The fixture and expected answers stay outside Git. The comparison assertions
 report counts and omit command text.

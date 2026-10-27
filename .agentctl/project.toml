@@ -58,6 +58,18 @@ cache = "none"
 cap = "cargo"
 unit_properties = ["MemoryHigh=8G"]
 
+[operations.private_history]
+description = "Copied Atuin acceptance: interrupted admission, public queries and unchanged reread"
+exec = ["bash", ".agentctl/private-history.sh"]
+arguments = "required"
+pool = "normal"
+result = "exit"
+timeout_seconds = 900
+scratch = "tmpfs"
+cache = "none"
+cap = "cargo"
+unit_properties = ["MemoryHigh=8G"]
+
 [operations.package]
 description = "Build the Nix package (runs the tests that need no database inside the builder)"
 exec = ["nix", "build", "--no-link", ".#default", "--print-build-logs", "--max-jobs", "1"]
