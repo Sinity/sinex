@@ -74,6 +74,7 @@ pub const FORMAT: InputFormat = InputFormat {
         capabilities: &[],
         credentials: &[],
         streams: &[],
+        requests: &[],
         request_only: false,
     },
     discover: crate::discovery::discover_format,
