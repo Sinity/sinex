@@ -244,7 +244,7 @@ fn session_captures_available_streams_without_selection_flags() {
     context
         .environment
         .insert("PATH".into(), bin.display().to_string());
-    let selected = captures(&context, Owner::Session).unwrap();
+    let selected = captures(&context, Owner::Session).unwrap().bindings;
     let names: Vec<_> = selected
         .iter()
         .map(|(_, binding)| binding.name.clone())
@@ -274,12 +274,14 @@ fn session_captures_available_streams_without_selection_flags() {
     assert!(
         captures(&context, Owner::Session)
             .unwrap()
+            .bindings
             .iter()
             .all(|(_, binding)| binding.source != "desktop.clipboard")
     );
     assert!(
         captures(&DiscoveryContext::default(), Owner::Session)
             .unwrap()
+            .bindings
             .is_empty()
     );
 }
@@ -364,6 +366,7 @@ fn invalid_capture_settings_do_not_disable_other_streams() {
     assert!(
         captures(&context, Owner::Session)
             .unwrap()
+            .bindings
             .iter()
             .any(|(_, binding)| binding.source == "session.integrations")
     );

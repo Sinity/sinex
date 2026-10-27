@@ -3,6 +3,7 @@
 //! thread, and one loop produces what the spools hold to `sinexd` over the
 //! NATS ingress. Both programs build their sources from the registry's formats
 //! and share this loop.
+use crate::discovery::CapturePlan;
 use crate::sources;
 use serde_json::Value;
 use sinex_source_core::Source;
@@ -109,7 +110,7 @@ pub async fn run<F>(
     until: Option<Instant>,
 ) -> Result<(), String>
 where
-    F: FnMut() -> Result<Vec<(&'static InputFormat, Binding)>, String>,
+    F: FnMut() -> Result<CapturePlan, String>,
 {
     // Register before any capture thread or child can start.
     let shutdown = sinex_source_core::capture::shutdown_signal().map_err(|e| e.to_string())?;
@@ -138,13 +139,9 @@ where
     result
 }
 
-fn extend(lives: &mut Vec<Live>, bindings: Vec<(&'static InputFormat, Binding)>) {
-    lives.retain(|live| {
-        bindings
-            .iter()
-            .any(|(_, binding)| binding.name == live.binding.name)
-    });
-    for (format, binding) in bindings {
+fn extend(lives: &mut Vec<Live>, plan: CapturePlan) {
+    lives.retain(|live| !plan.exclude.contains(&live.binding.source));
+    for (format, binding) in plan.bindings {
         if let Some(existing) = lives
             .iter_mut()
             .find(|live| live.binding.name == binding.name)
@@ -181,7 +178,7 @@ async fn produce_spools<F>(
     select: &mut F,
 ) -> Result<(), String>
 where
-    F: FnMut() -> Result<Vec<(&'static InputFormat, Binding)>, String>,
+    F: FnMut() -> Result<CapturePlan, String>,
 {
     let mut selected_at = Instant::now();
     let private = sinex_transport::private_mode::PrivateMode::default();
