@@ -32,3 +32,34 @@ fn live_bindings_come_from_the_kinds_that_capture() {
     // An export is not a live source.
     assert!(binding("spotify", Path::new("/x"), "h", Value::Null).is_err());
 }
+
+#[devkit::test]
+fn rediscovery_applies_exclusions_and_settings_without_removing_spools() {
+    const FORMAT: InputFormat = InputFormat {
+        capture: Some(|_, stop| {
+            stop.wait(Duration::from_secs(100));
+            Ok(0)
+        }),
+        ..crate::sources::file_watch::FORMAT
+    };
+    let root = tempfile::tempdir().unwrap();
+    let spool = root.path().join("spool");
+    std::fs::create_dir(&spool).unwrap();
+    let kept = spool.join("kept-raw-bytes");
+    std::fs::write(&kept, b"synthetic raw data").unwrap();
+    let (_, mut binding) = binding("file-watch", &spool, "fixture", Value::Null).unwrap();
+    let name = binding.name.clone();
+    let mut lives = Vec::new();
+    extend(&mut lives, vec![(&FORMAT, binding.clone())]);
+    assert_eq!(lives.len(), 1);
+    binding.settings.class = Some(sinex_model::Class::Guarded);
+    extend(&mut lives, vec![(&FORMAT, binding)]);
+    assert_eq!(lives[0].binding.name, name);
+    assert_eq!(
+        lives[0].binding.settings.class,
+        Some(sinex_model::Class::Guarded)
+    );
+    extend(&mut lives, vec![]);
+    assert!(lives.is_empty());
+    assert_eq!(std::fs::read(kept).unwrap(), b"synthetic raw data");
+}

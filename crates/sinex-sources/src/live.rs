@@ -139,6 +139,11 @@ where
 }
 
 fn extend(lives: &mut Vec<Live>, bindings: Vec<(&'static InputFormat, Binding)>) {
+    lives.retain(|live| {
+        bindings
+            .iter()
+            .any(|(_, binding)| binding.name == live.binding.name)
+    });
     for (format, binding) in bindings {
         if let Some(existing) = lives
             .iter_mut()
@@ -149,6 +154,7 @@ fn extend(lives: &mut Vec<Live>, bindings: Vec<(&'static InputFormat, Binding)>)
                 .thread
                 .as_ref()
                 .is_some_and(|thread| !thread.is_finished())
+                && existing.binding.settings == binding.settings
             {
                 continue;
             }
