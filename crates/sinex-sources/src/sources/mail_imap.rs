@@ -454,7 +454,7 @@ pub const FORMAT: sinex_source_core::binding::InputFormat =
             streams: &[],
             request_only: false,
         },
-        discover: discover,
+        discover,
         specs: || vec![&SPEC],
         plan: Some(|input, settings| {
             let config = config(input)?;
