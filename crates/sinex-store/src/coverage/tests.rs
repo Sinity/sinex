@@ -21,9 +21,9 @@ async fn evidence_keeps_visibility_positions_unknown_times_and_archived_run_reco
     sqlx::raw_sql(include_str!(
         "../../../sinex-schema/src/tests/version_two.sql"
     ))
-        .execute(&mut conn)
-        .await
-        .unwrap();
+    .execute(&mut conn)
+    .await
+    .unwrap();
     sinex_schema::apply(&mut conn).await.unwrap();
     assert_eq!(sinex_schema::catalog(&mut conn).await.unwrap(), before);
     let events: i64 = sqlx::query_scalar("SELECT count(*) FROM core.events")

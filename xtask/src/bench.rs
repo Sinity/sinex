@@ -430,20 +430,36 @@ impl Cluster {
             return Ok(0.0);
         }
         let started = Instant::now();
-        let output = Command::new("pg_ctl")
-            .arg("-D")
-            .arg(&self.data)
-            .args(["-m", "fast", "-w", "-t", "3600", "stop"])
-            .output()
-            .map_err(|e| e.to_string())?;
-        if !output.status.success() {
-            return Err(format!(
-                "benchmark PostgreSQL shutdown failed: {}",
+        // A checkpoint may outlast a fast shutdown. Disposable databases can
+        // stop immediately rather than leave their server holding the job.
+        for mode in ["fast", "immediate"] {
+            let output = Command::new("pg_ctl")
+                .arg("-D")
+                .arg(&self.data)
+                .args(["-m", mode, "-w", "-t", "60", "stop"])
+                .output()
+                .map_err(|e| e.to_string())?;
+            if output.status.success() {
+                self.stopped = true;
+                return Ok(started.elapsed().as_secs_f64());
+            }
+            let status = Command::new("pg_ctl")
+                .arg("-D")
+                .arg(&self.data)
+                .arg("status")
+                .stdout(std::process::Stdio::null())
+                .status()
+                .map_err(|e| e.to_string())?;
+            if status.code() == Some(3) {
+                self.stopped = true;
+                return Ok(started.elapsed().as_secs_f64());
+            }
+            eprintln!(
+                "benchmark PostgreSQL {mode} shutdown: {}",
                 String::from_utf8_lossy(&output.stderr)
-            ));
+            );
         }
-        self.stopped = true;
-        Ok(started.elapsed().as_secs_f64())
+        Err("benchmark PostgreSQL did not stop after immediate shutdown".into())
     }
 
     fn url(&self) -> String {

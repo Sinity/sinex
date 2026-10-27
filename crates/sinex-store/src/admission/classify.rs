@@ -139,7 +139,8 @@ pub(super) async fn stage_and_classify(
 }
 
 /// A newer reading keeps the replaced reading's value for the fields its type
-/// declares `keep_known` when it leaves them unknown.
+/// declares `keep_known` when it leaves them unknown. Inherited values retain
+/// the replaced reading's class, since its rules already ran on those values.
 pub(super) async fn keep_known(
     conn: &mut PgConnection,
     events: &mut [Event],
@@ -159,19 +160,32 @@ pub(super) async fn keep_known(
         return Ok(());
     }
     let rows = sqlx::query!(
-        r#"UPDATE core.admission_stage st
-           SET payload = st.payload || coalesce((
+        r#"WITH kept AS (
+           SELECT st.ord, e.class, (
              SELECT jsonb_object_agg(f, e.payload->f)
              FROM jsonb_array_elements_text(r.fields) f
              WHERE coalesce(st.payload->f, 'null'::jsonb) = 'null'::jsonb
-               AND coalesce(e.payload->f, 'null'::jsonb) <> 'null'::jsonb), '{}'::jsonb)
-           FROM jsonb_to_recordset($1::jsonb) AS r(ord integer, live_id uuid, fields jsonb), core.events e
-           WHERE st.ord = r.ord AND e.id = r.live_id
-           RETURNING st.ord, st.payload"#,
+               AND coalesce(e.payload->f, 'null'::jsonb) <> 'null'::jsonb) AS payload
+           FROM jsonb_to_recordset($1::jsonb) AS r(ord integer, live_id uuid, fields jsonb)
+           JOIN core.admission_stage st ON st.ord = r.ord
+           JOIN core.events e ON e.id = r.live_id)
+           UPDATE core.admission_stage st
+           SET payload = st.payload || kept.payload,
+               class = CASE
+                 WHEN st.class = 'sealed' OR kept.class = 'sealed' THEN 'sealed'
+                 WHEN st.class = 'guarded' OR kept.class = 'guarded' THEN 'guarded'
+                 ELSE st.class END
+           FROM kept
+           WHERE st.ord = kept.ord AND kept.payload IS NOT NULL
+           RETURNING st.ord, st.payload, st.class"#,
         serde_json::Value::Array(inputs),
-    ).fetch_all(&mut *conn).await?;
+    )
+    .fetch_all(&mut *conn)
+    .await?;
     for row in rows {
-        events[usize::try_from(row.ord).expect("ord is an index")].payload = row.payload;
+        let event = &mut events[usize::try_from(row.ord).expect("ord is an index")];
+        event.payload = row.payload;
+        event.class = crate::privacy::parse_class(&row.class)?;
     }
     Ok(())
 }

@@ -60,3 +60,70 @@ async fn known_fields_merge_in_one_batch_and_supply_dirty_keys(db: devkit::pg::T
     .unwrap();
     assert_eq!(dirty, vec![json!("kept title"), json!("other title")]);
 }
+
+#[devkit::test]
+async fn inherited_fields_keep_their_class(db: devkit::pg::TestDatabase) {
+    use crate::privacy::{self, Action, NewRule};
+
+    let mut conn = crate::AdmissionContext::connect(&db.url(None))
+        .await
+        .unwrap();
+    privacy::add_rule(
+        &mut conn,
+        &NewRule {
+            name: "guarded titles".into(),
+            source: "youtube".into(),
+            event_type: None,
+            field: Some("/title".into()),
+            matcher: "pattern".into(),
+            matcher_arg: Some("private title".into()),
+            class: Class::Guarded,
+            action: Action::Classify,
+            author: "test".into(),
+        },
+    )
+    .await
+    .unwrap();
+    admit_one(&mut conn, &batch(vec![watched(Some("private title"), 1)])).await;
+    let mut inherited = watched(None, 2);
+    inherited.payload.as_object_mut().unwrap().remove("title");
+    let inherited_id = inherited.id;
+    admit_one(&mut conn, &batch(vec![inherited])).await;
+    let (payload, class): (Value, String) =
+        sqlx::query_as("SELECT payload,class FROM core.events WHERE id=$1")
+            .bind(inherited_id.0)
+            .fetch_one(&mut conn)
+            .await
+            .unwrap();
+    assert_eq!(payload["title"], "private title");
+    assert_eq!(class, "guarded");
+    let visible: Value = sqlx::query_scalar("SELECT payload FROM core.visible_events WHERE id=$1")
+        .bind(inherited_id.0)
+        .fetch_one(&mut conn)
+        .await
+        .unwrap();
+    assert_eq!(visible, json!({"withheld": "guarded"}));
+
+    // Supplying every known field does not inherit the old payload or class.
+    let replacement = watched(Some("public title"), 3);
+    let replacement_id = replacement.id;
+    admit_one(&mut conn, &batch(vec![replacement])).await;
+    let class: String = sqlx::query_scalar("SELECT class FROM core.events WHERE id=$1")
+        .bind(replacement_id.0)
+        .fetch_one(&mut conn)
+        .await
+        .unwrap();
+    assert_eq!(class, "open");
+
+    // A copied value cannot lower the incoming event's higher class.
+    let mut guarded = watched(None, 4);
+    guarded.class = Class::Guarded;
+    let guarded_id = guarded.id;
+    admit_one(&mut conn, &batch(vec![guarded])).await;
+    let class: String = sqlx::query_scalar("SELECT class FROM core.events WHERE id=$1")
+        .bind(guarded_id.0)
+        .fetch_one(&mut conn)
+        .await
+        .unwrap();
+    assert_eq!(class, "guarded");
+}

@@ -350,17 +350,51 @@ pub(super) fn correctness(cluster: &Cluster, events: u64) -> Result<Value, Strin
 }
 
 struct Process(Child, Option<String>);
+impl Process {
+    fn signal(&mut self, signal: &str) -> Result<(), String> {
+        let status = if let Some(unit) = &self.1 {
+            Command::new("systemctl")
+                .args(["--user", "kill", &format!("--signal={signal}"), unit])
+                .status()
+        } else {
+            Command::new("kill")
+                .args([&format!("-{signal}"), &self.0.id().to_string()])
+                .status()
+        }
+        .map_err(|e| e.to_string())?;
+        if status.success() || self.0.try_wait().map_err(|e| e.to_string())?.is_some() {
+            Ok(())
+        } else {
+            Err(format!("benchmark process did not receive {signal}"))
+        }
+    }
+
+    fn stop(&mut self) -> Result<std::process::ExitStatus, String> {
+        if let Some(status) = self.0.try_wait().map_err(|e| e.to_string())? {
+            return Ok(status);
+        }
+        self.signal("TERM")?;
+        let started = Instant::now();
+        while started.elapsed() < Duration::from_secs(30) {
+            if let Some(status) = self.0.try_wait().map_err(|e| e.to_string())? {
+                return Ok(status);
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        // A daemon scope owns its descendants even if its launcher is killed.
+        self.signal("KILL")?;
+        self.0.wait().map_err(|e| e.to_string())
+    }
+}
+
 impl Drop for Process {
     fn drop(&mut self) {
-        if self.0.try_wait().ok().flatten().is_none()
-            && let Some(unit) = &self.1
-        {
-            let _ = Command::new("systemctl")
-                .args(["--user", "kill", "--signal=SIGTERM", unit])
-                .status();
+        if let Err(error) = self.stop() {
+            eprintln!("{error}");
+            let _ = self.signal("KILL");
+            let _ = self.0.kill();
+            let _ = self.0.wait();
         }
-        let _ = self.0.kill();
-        let _ = self.0.wait();
     }
 }
 
@@ -664,36 +698,18 @@ pub(super) fn with_consumers(
             std::thread::sleep(Duration::from_millis(200));
         }
     })();
-    let stopped = Command::new("systemctl")
-        .args([
-            "--user",
-            "kill",
-            "--signal=SIGTERM",
-            &format!("{unit}.scope"),
-        ])
-        .status()
-        .map_err(|e| e.to_string())?;
-    if !stopped.success() && measured.is_ok() {
-        return Err("stopping benchmark scope failed".into());
-    }
-    let status = daemon.0.wait().map_err(|e| e.to_string())?;
-    if !status.success() && measured.is_ok() {
+    let daemon_status = daemon.stop();
+    let nats_status = nats.stop();
+    let measured = measured?;
+    let status = daemon_status?;
+    if !status.success() {
         return Err(format!("benchmark daemon shutdown failed: {status}"));
     }
-    if nats.0.try_wait().map_err(|e| e.to_string())?.is_none() {
-        let signalled = Command::new("kill")
-            .args(["-TERM", &nats.0.id().to_string()])
-            .status()
-            .map_err(|e| e.to_string())?;
-        if !signalled.success() && measured.is_ok() {
-            return Err("stopping benchmark NATS failed".into());
-        }
-        let status = nats.0.wait().map_err(|e| e.to_string())?;
-        if !status.success() && measured.is_ok() {
-            return Err(format!("benchmark NATS shutdown failed: {status}"));
-        }
+    let status = nats_status?;
+    if !status.success() {
+        return Err(format!("benchmark NATS shutdown failed: {status}"));
     }
-    measured
+    Ok(measured)
 }
 
 pub(super) fn stage_summary(out: &Path) -> Result<Value, String> {
@@ -920,3 +936,6 @@ pub(super) fn socket_url(path: &Path) -> String {
         .collect();
     format!("postgresql:///sinex?host={encoded}&user=sinex")
 }
+
+#[cfg(test)]
+mod tests;
