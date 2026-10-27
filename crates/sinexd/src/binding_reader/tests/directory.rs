@@ -26,7 +26,7 @@ async fn empty_directory_files_keep_distinct_paths_bytes_and_locations_through_r
     let binding = Binding::of(&notes::SPEC, &root, Settings::new("synthetic"));
     let name = binding.name.clone();
     let mut b = BindingReader::new(&notes::FORMAT, binding).unwrap();
-    b.source = Box::new(SmallBatches(b.source));
+    b.source = Arc::new(SmallBatches(b.source.clone()));
     let mut bindings = vec![b];
     let (_stop, stop) = watch::channel(false);
     let captured = read(
