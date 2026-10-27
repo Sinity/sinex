@@ -237,7 +237,7 @@ fn an_interval_ending_at_day_start_adds_no_activity_to_the_new_day() {
             },
             &env(),
         );
-        assert_eq!(keys, [previous.clone()]);
+        assert_eq!(keys.as_slice(), std::slice::from_ref(&previous));
         assert_eq!(
             ActivitySpans
                 .compute(&previous, std::slice::from_ref(&input), &env())
@@ -262,7 +262,7 @@ fn an_interval_ending_at_day_start_adds_no_activity_to_the_new_day() {
             },
             &env(),
         );
-        assert_eq!(keys, [next.clone()]);
+        assert_eq!(keys.as_slice(), std::slice::from_ref(&next));
         let output = ActivitySpans.compute(&next, &[moment], &env());
         assert_eq!(output.outputs.len(), 1);
         let span: ActivitySpan = output.outputs[0].payload_as().unwrap();
