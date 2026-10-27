@@ -73,6 +73,7 @@ pub struct DirState {
     /// The newest bundle and the file facts it records once admitted.
     held: Option<HeldSnapshot>,
     failures: HashMap<PathBuf, String>,
+    /// Unstable files need a read even if their size and time return to cached values.
     retries: HashSet<PathBuf>,
     /// Paths a restart has already decided from a newer bundle.
     remembered: HashSet<PathBuf>,
