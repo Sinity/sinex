@@ -398,12 +398,20 @@ async fn a_recorded_invalid_frame_is_skipped_and_the_next_frame_is_sent() {
     .save(&state, "binding")
     .unwrap();
     assert_eq!(
+        Producer::unacknowledged_frames("binding", &state).unwrap(),
+        2
+    );
+    assert_eq!(
         producer
             .position("binding", &state, &store)
             .await
             .unwrap()
             .cursor,
         json!({"segment":3})
+    );
+    assert_eq!(
+        Producer::unacknowledged_frames("binding", &state).unwrap(),
+        0
     );
     assert!(
         UnacknowledgedFrames::load(&state, "binding")

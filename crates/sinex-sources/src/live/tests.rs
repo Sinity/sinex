@@ -176,7 +176,7 @@ async fn acknowledgment_timeout_keeps_capture_writing_and_recovery_drains_withou
     let health: Value =
         serde_json::from_slice(&std::fs::read(positions.join("health.json")).unwrap()).unwrap();
     assert!(
-        health["spools"][0]["unpublished"]["frames"]
+        health["spools"][0]["unpublished"]["records"]
             .as_u64()
             .unwrap()
             > 20
@@ -187,6 +187,7 @@ async fn acknowledgment_timeout_keeps_capture_writing_and_recovery_drains_withou
     let health: Value =
         serde_json::from_slice(&std::fs::read(positions.join("health.json")).unwrap()).unwrap();
     assert_eq!(health["spools"][0]["unpublished"]["frames"], 0);
+    assert_eq!(health["spools"][0]["unpublished"]["records"], 0);
     let captured = std::fs::read_to_string(spool.join("000000000000.ndjson"))
         .unwrap()
         .lines()
