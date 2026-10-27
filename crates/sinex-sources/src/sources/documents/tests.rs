@@ -257,7 +257,10 @@ fn native_document_names_remain_distinct_from_utf8_names() {
     );
     assert_eq!(events.len(), 2);
     assert_ne!(events[0].origin, events[1].origin);
-    assert_ne!(events[0].payload["native_path_bytes"], events[1].payload["native_path_bytes"]);
+    assert_ne!(
+        events[0].payload["native_path_bytes"],
+        events[1].payload["native_path_bytes"]
+    );
     assert_eq!(
         events
             .iter()

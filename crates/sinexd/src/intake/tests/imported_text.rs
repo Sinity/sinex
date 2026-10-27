@@ -131,7 +131,10 @@ async fn imported_json_metadata_survives_writer_restart_and_replay(db: devkit::p
     let before = live(&mut ctx, "transcript.cue").await;
     assert_eq!(before.len(), 4);
     for language in ["pl", "en"] {
-        assert_eq!(before.iter().filter(|p| p["language"] == language).count(), 2);
+        assert_eq!(
+            before.iter().filter(|p| p["language"] == language).count(),
+            2
+        );
     }
     ctx.close().await.unwrap();
     std::fs::remove_file(&path).unwrap();
@@ -162,7 +165,11 @@ async fn document_metadata_changes_keep_distinct_observations_of_the_same_bytes(
     ingest(&mut ctx, &documents::FORMAT, &root, json!({})).await;
     let after = live(&mut ctx, "document.captured").await;
     assert_eq!(after.len(), 2);
-    assert!(after.iter().all(|payload| payload["content"] == before[0]["content"]));
+    assert!(
+        after
+            .iter()
+            .all(|payload| payload["content"] == before[0]["content"])
+    );
     assert_ne!(after[0]["modified_at"], after[1]["modified_at"]);
     std::fs::remove_dir_all(&root).unwrap();
     replay(&mut ctx, &binding).await;

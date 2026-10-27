@@ -54,7 +54,6 @@ pub(crate) fn upgrades() -> Vec<Vec<String>> {
         });
     }
     numbered
-
 }
 
 /// Register payload schemas and views together. Replacing a kind also updates its registry row.
@@ -111,9 +110,11 @@ fn library_scans() -> Vec<String> {
          RAISE EXCEPTION 'library records use request-created item IDs; decide how their references should follow deterministic item IDs before upgrading';
          END IF; END $$".into(),
     ];
-    let names: Vec<_> = sinex_model::event_types::ALL.iter()
+    let names: Vec<_> = sinex_model::event_types::ALL
+        .iter()
         .filter(|kind| source_kind(kind.event_type))
-        .map(|kind| kind.event_type).collect();
+        .map(|kind| kind.event_type)
+        .collect();
     statements.extend(register_kinds(&names, true));
     statements
 }
