@@ -450,7 +450,7 @@ fn changed_file_defaults_change_segment_readings_with_the_same_native_identity()
 }
 
 #[devkit::test]
-fn imported_json_refuses_sealed_member_staging_before_any_material_delivery() {
+fn imported_json_refuses_unprotected_temporary_files_before_delivery() {
     use sinex_source_core::{MaterialSink, shared_pass::SharedPass};
     let bytes = br#"{"segments":[{"text":"synthetic"}],"model":"example"}"#;
     let sink = Sink::default();
