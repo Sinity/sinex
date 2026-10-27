@@ -63,7 +63,7 @@ let
     format = mkOption {
       type = types.nullOr types.str;
       default = null;
-      description = "The format for ${spec.name}'s explicit paths: one of ${concatStringsSep ", " spec.formats}; every applicable format when null. Canonical discovery still considers every format.";
+      description = "The format for ${spec.name}'s explicit paths: one of ${concatStringsSep ", " spec.formats}; every applicable format when null. Discovery at declared locations still considers every format.";
     };
     zone = mkOption {
       type = types.nullOr types.str;
