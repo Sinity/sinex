@@ -79,11 +79,17 @@ does not know which driver a binding uses.
   restart reads no history.
 - **IMAP.** An answer records the UIDs it holds and the server's UID window. A
   cursor inside an answer resumes at its first UID, so a restart fetches the
-  whole answer again and admission drops the repeats.
+  whole answer again and admission drops the repeats. The reader remembers
+  where each UID it read is stored, asks the server which it still holds, and
+  records an expunged message as removed at the source; it saves that memory
+  like the SQLite-row and directory readers.
 - **Directory snapshots.** Changed files stream into one unnamed bundle. Each
   file is preceded by one byte outside its source range, so empty files have
   distinct anchors. The cursor confirms the reader's file facts only at the
-  bundle's last byte.
+  bundle's last byte. A removed file's member holds a marker the parser
+  reads; for a Maildir, whose messages are identified by Message-ID, the
+  reader also remembers where each file was stored and records the removed
+  file's reading as removed at the source.
 - **Export archives.** An archive is stored once and read in one forward pass
   for every compatible binding (same host and class); each binding keeps its
   own record parts and cursor. A sealed archive uses one key per binding.
@@ -191,7 +197,8 @@ Several sources often see the same thing: Atuin and zsh the same command,
 the compositor and ActivityWatch the same focus, a browser's history and its
 Takeout export the same visit, Sinex's live capture and the Sinnix capture
 lake the same clipboard change, notification or track, IMAP and an mbox the
-same mail. One mechanism joins
+same mail, a Reddit export and a public archive the same comment, a Messenger
+export and a saved Messenger database the same message. One mechanism joins
 them (`sinex-derivations/src/fusion.rs`). Each fused kind is a rule in
 `fusion/rules.rs`: its observers in preference order, each reading one
 source's events as sightings of something with an identity, a start and
@@ -202,12 +209,23 @@ repeat (focus, plays), a group whose start falls inside a group led by a more
 preferred source joins it: ActivityWatch's title changes inside a focus the
 compositor reported, a player's reports of a track a streaming export holds.
 The fused event (`command.fused`, `focus.fused`, `visit.fused`, `play.fused`,
-`clipboard.fused`, `notification.fused`, `mail.fused`) takes its times from its most
+`clipboard.fused`, `notification.fused`, `mail.fused`, `post.fused`,
+`conversation.fused`) takes its times from its most
 preferred member and each field from the most preferred member that has it,
 names every member as a parent and lists the sources in `observed_by`. A
 record no other source saw is fused alone, so a fused kind counts each thing
 once whichever sources were running. Metrics and aliases read the fused
 kinds.
+
+### Calendar instances
+
+`calendar.instances` (`sinex-derivations/src/calendar.rs`) expands each
+calendar series into its instances. Its key is one series, and it reads every
+reading of it: the event with its rule and the changed instances. The rule is
+expanded in local time in the series' zone, `EXDATE` starts are left out,
+`RDATE` starts added, and a changed instance replaces the one whose start it
+names. A rule without `COUNT` or `UNTIL` is expanded through 366 days after
+the key is computed. Each `calendar.instance` names the readings it came from.
 
 ### Metric figures
 

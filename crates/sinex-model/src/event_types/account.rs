@@ -187,9 +187,9 @@ pub struct PurchaseObserved {
 }
 
 /// One event of a calendar (RFC 5545 `VEVENT`), from an export or a calendar
-/// API. A recurring series is one event with its rule; a changed occurrence is
-/// its own event with a recurrence ID. Expanding a rule into occurrences is a
-/// derivation.
+/// API. A repeating series is one event with its rule; a changed instance is
+/// its own event with a recurrence ID. Expanding a rule into its instances is
+/// a derivation (`calendar.instance`).
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
 #[event(
     type = "calendar.event",
@@ -203,7 +203,7 @@ pub struct CalendarEvent {
     /// The calendar it belongs to (the export's calendar name).
     pub calendar: String,
     pub uid: String,
-    /// For one changed occurrence of a series, the original start it replaces,
+    /// For one changed instance of a series, the start the series gives it,
     /// as written.
     pub recurrence_id: Option<String>,
     pub summary: Option<String>,
@@ -217,9 +217,23 @@ pub struct CalendarEvent {
     /// `floating` for local times the export ties to no zone, read in the
     /// configured zone.
     pub zone: String,
+    /// The zone floating times and whole days were read in (the binding's
+    /// configured zone); `None` in readings made before it was recorded.
+    #[serde(default)]
+    pub local_zone: Option<String>,
     pub status: Option<String>,
     pub rrule: Option<String>,
+    /// `EXDATE` values, as written.
     pub exdates: Vec<String>,
+    /// The instant `recurrence_id` names, read in its zone.
+    #[serde(default)]
+    pub recurrence_start: Option<Timestamp>,
+    /// The starts `EXDATE` takes out of the series, read in their zone.
+    #[serde(default)]
+    pub excluded_starts: Vec<Timestamp>,
+    /// The starts `RDATE` adds to the series, read in their zone.
+    #[serde(default)]
+    pub added_starts: Vec<Timestamp>,
     pub organizer: Option<String>,
     pub attendees: Vec<String>,
     pub created_at: Option<Timestamp>,
@@ -230,6 +244,38 @@ pub struct CalendarEvent {
     /// Properties not modelled above, by name, as written.
     #[serde(default, skip_serializing_if = "Map::is_empty")]
     pub extra: Map<String, Value>,
+}
+
+/// One dated instance of a calendar event: each start a repeating event's
+/// rule gives, with a changed instance's own times and text when the calendar
+/// holds one, or the single instance of an event that does not repeat. Derived
+/// from the series' `calendar.event` readings, which it names as parents; a
+/// calendar entry is a plan, not evidence that it happened.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
+#[event(
+    type = "calendar.instance",
+    key = ["calendar", "uid", "series_start"],
+    replace = newer,
+    time = start,
+    quality = intrinsic
+)]
+pub struct CalendarInstance {
+    pub calendar: String,
+    pub uid: String,
+    /// The start the series gives this instance (its recurrence ID); for an
+    /// event that does not repeat, its start.
+    pub series_start: Timestamp,
+    pub start: Timestamp,
+    pub end: Option<Timestamp>,
+    pub all_day: bool,
+    pub summary: Option<String>,
+    pub location: Option<String>,
+    pub status: Option<String>,
+    /// Whether the calendar holds a changed version of this instance.
+    pub changed: bool,
+    /// Why the series' rule was not expanded, when it was not; the series
+    /// then gives only its first start and its `RDATE` starts.
+    pub rule_not_expanded: Option<String>,
 }
 
 pub mod record;

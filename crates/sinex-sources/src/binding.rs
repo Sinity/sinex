@@ -493,6 +493,10 @@ impl Reader for Walked {
             _ => reference.length,
         };
         self.state.remember_members(&reference.manifest, admitted)?;
+        if self.driver.removed_at_source {
+            self.state
+                .remember_locations(&reference.manifest, admitted, reference.id)?;
+        }
         Ok(true)
     }
 

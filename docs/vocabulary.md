@@ -54,7 +54,8 @@ these names and no others.
 - **equivalence key**: the per-type key that recognizes the same thing seen again in another material.
 - **clocks**: `ts_orig` (when it happened, or unknown), `ts_coided` (when Sinex read it, from the UUIDv7 ID), `ts_persisted` (when it was committed).
 - **derived event**: an event computed by a derivation, naming its parents.
-- **fusion**: joining what several sources observed of one thing into one **fused record**: `command.fused`, `focus.fused`, `visit.fused`, `play.fused`, `clipboard.fused`, `notification.fused`, `mail.fused`. Each fused kind has one **fusion rule**; an **observer** reads one source's events for it as **sightings** (an identity, a start, maybe an end, the fields it supplies). A **fused command** is a `command.fused` event.
+- **fusion**: joining what several sources observed of one thing into one **fused record**: `command.fused`, `focus.fused`, `visit.fused`, `play.fused`, `clipboard.fused`, `notification.fused`, `mail.fused`, `post.fused`, `conversation.fused`. Each fused kind has one **fusion rule**; an **observer** reads one source's events for it as **sightings** (an identity, a start, maybe an end, the fields it supplies). A **fused command** is a `command.fused` event.
+- **calendar instance**: one dated instance of a calendar event, `calendar.instance`: a start a repeating event's rule gives, with a changed instance's own times, or the one instance of an event that does not repeat; a **series** is a repeating event with its rule and changed instances.
 - **shell session**: the `shell.session` derived event: a run of commands in one terminal; `recall last` reads around the latest one.
 - **batch**: what a producer hands the writer: records with their events or failures, and progress.
 - **run**: one execution of a producer; every event names its run.

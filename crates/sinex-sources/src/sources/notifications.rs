@@ -3,13 +3,19 @@
 //! signals. Nothing keeps notifications after they close, so capture spools
 //! each message as it passes (`dbus`).
 //!
-//! The id a server assigns comes back in the call's reply, which carries no
-//! interface to match on, so a shown notification records the id it replaces
-//! but not its own; closing and actions are recorded by id.
+//! The id a server assigns comes back in its reply to the call, which names
+//! the call by the caller and the call's serial number. Capture also
+//! monitors the server's replies and errors, and the parser holds each
+//! `Notify` call until its reply arrives, then records the shown notification
+//! with its id at the reply's record. A call answered with an error, or with
+//! no answer within D-Bus's default reply timeout (25 seconds) of a later
+//! message, is recorded without an id. Closing and actions are recorded by
+//! id.
 use super::dbus::{self, Message};
 use crate::drivers::live_stream::{self, LiveStream};
 use crate::registry::{DeclaredSource, Driver, SourceSpec};
 use crate::{Parser, RecordError};
+use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use sinex_model::Class;
 use sinex_model::event_types::session::{
@@ -25,7 +31,7 @@ pub const SPEC: SourceSpec = SourceSpec {
     // Message bodies are anything any program chose to show.
     class: Class::Guarded,
     parser: "dbus-notifications",
-    parser_version: 1,
+    parser_version: 2,
     event_types: &[
         "notification.shown",
         "notification.closed",
@@ -39,7 +45,22 @@ pub const MATCHES: &[&str] = &[
     "type=method_call,interface=org.freedesktop.Notifications,member=Notify",
     "type=signal,interface=org.freedesktop.Notifications,member=NotificationClosed",
     "type=signal,interface=org.freedesktop.Notifications,member=ActionInvoked",
+    "type=method_return,sender=org.freedesktop.Notifications",
+    "type=error,sender=org.freedesktop.Notifications",
 ];
+
+/// D-Bus's default reply timeout: a call unanswered this long after it was
+/// made has failed for its caller.
+const REPLY_TIMEOUT_NS: i128 = 25_000_000_000;
+
+/// A `Notify` call waiting for its reply.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Waiting {
+    /// The caller's unique bus name and the call's serial number.
+    pub caller: String,
+    pub serial: u64,
+    pub shown: NotificationShown,
+}
 
 sinex_model::payload_enum! {
     #[derive(Clone, Debug, PartialEq)]
@@ -73,18 +94,46 @@ fn id(v: Option<&Value>) -> Result<u32, RecordError> {
 
 impl Parser for NotificationsParser {
     type Record<'a> = Map<String, Value>;
-    type Carry = ();
+    /// The `Notify` calls waiting for their replies, oldest first.
+    type Carry = Vec<Waiting>;
     type Payload = Notification;
 
     fn parse(
         &self,
         record: &Map<String, Value>,
-        _: &(),
+        waiting: &Vec<Waiting>,
         _context: &crate::RecordContext<'_>,
-    ) -> Result<(Vec<Notification>, ()), RecordError> {
+    ) -> Result<(Vec<Notification>, Vec<Waiting>), RecordError> {
         let (received_at, bytes) = live_stream::received(record).map_err(RecordError::new)?;
         let m = Message::parse(&bytes).map_err(RecordError::new)?;
-        let out = match (m.kind.as_str(), m.member.as_str()) {
+        // Calls whose reply is overdue are recorded without an id.
+        let (overdue, mut waiting): (Vec<Waiting>, Vec<Waiting>) =
+            waiting.iter().cloned().partition(|w| {
+                received_at.unix_ns() - w.shown.received_at.unix_ns() > REPLY_TIMEOUT_NS
+            });
+        let mut out: Vec<Notification> = overdue
+            .into_iter()
+            .map(|w| Notification::Shown(w.shown))
+            .collect();
+        if matches!(m.kind.as_str(), "method_return" | "error") {
+            let answered = waiting
+                .iter()
+                .position(|w| Some(w.serial) == m.reply_serial && w.caller == m.destination);
+            if let Some(i) = answered {
+                let mut shown = waiting.remove(i).shown;
+                if m.kind == "method_return" {
+                    shown.notification_id = m
+                        .args
+                        .first()
+                        .and_then(Value::as_u64)
+                        .and_then(|n| u32::try_from(n).ok());
+                }
+                out.push(Notification::Shown(shown));
+            }
+            // A reply to another call (capabilities, server information).
+            return Ok((out, waiting));
+        }
+        let read = match (m.kind.as_str(), m.member.as_str()) {
             ("method_call", "Notify") => {
                 let a = &m.args;
                 if a.len() != 8 {
@@ -98,9 +147,10 @@ impl Parser for NotificationsParser {
                     .and_then(|n| u32::try_from(n).ok())
                     .filter(|n| *n != 0);
                 let icon = text(a.get(2));
-                vec![Notification::Shown(NotificationShown {
+                let shown = NotificationShown {
                     received_at,
                     app: text(a.first()),
+                    notification_id: None,
                     replaces_id: replaces,
                     icon: (!icon.is_empty()).then_some(icon),
                     summary: text(a.get(3)),
@@ -119,9 +169,21 @@ impl Parser for NotificationsParser {
                         .as_i64()
                         .and_then(|n| i32::try_from(n).ok())
                         .unwrap_or(-1),
-                    sender: m.sender,
+                    sender: m.sender.clone(),
                     extra: Map::new(),
-                })]
+                };
+                match m.serial {
+                    Some(serial) => {
+                        waiting.push(Waiting {
+                            caller: m.sender,
+                            serial,
+                            shown,
+                        });
+                        Vec::new()
+                    }
+                    // Without a serial no reply can name it.
+                    None => vec![Notification::Shown(shown)],
+                }
             }
             ("signal", "NotificationClosed") => vec![Notification::Closed(NotificationClosed {
                 received_at,
@@ -136,7 +198,8 @@ impl Parser for NotificationsParser {
             // Other traffic the rules let through: read, nothing to record.
             _ => Vec::new(),
         };
-        Ok((out, ()))
+        out.extend(read);
+        Ok((out, waiting))
     }
 }
 

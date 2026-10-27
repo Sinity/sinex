@@ -14,6 +14,7 @@
           "summary": "New mail",
           "body": "from a",
           "icon": null,
+          "notification_id": null,
           "replaces_id": null,
           "actions": [],
           "hints": {
@@ -40,6 +41,7 @@
           "summary": "New mail",
           "body": "from b",
           "icon": null,
+          "notification_id": null,
           "replaces_id": null,
           "actions": [],
           "hints": {

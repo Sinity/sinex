@@ -469,6 +469,106 @@ pub static MAIL: FusionRule = FusionRule {
     end_field: None,
 };
 
+// Posts: the operator's GDPR export and a public archive's copy carry the
+// service's own IDs and creation times.
+
+fn post(event: &Event) -> Option<Sighting> {
+    let p = &event.payload;
+    let service = text(p, "/service")?;
+    let kind = text(p, "/kind")?;
+    let native_id = text(p, "/native_id")?;
+    sighting(
+        event,
+        format!("{service}\0{kind}\0{native_id}"),
+        None,
+        fields([
+            ("service", Some(json!(service))),
+            ("kind", Some(json!(kind))),
+            ("native_id", Some(json!(native_id))),
+            ("title", p.get("title").cloned()),
+            ("body", p.get("body").cloned()),
+            ("url", p.get("url").cloned()),
+            ("community", p.get("community").cloned()),
+        ]),
+    )
+}
+
+const fn post_from(source: &'static str) -> Observer {
+    Observer {
+        event_type: "post.published",
+        only: &[],
+        source: Some(source),
+        spans: false,
+        read: post,
+    }
+}
+
+pub static POSTS: FusionRule = FusionRule {
+    derivation: "post.fusion",
+    version: 1,
+    output: "post.fused",
+    observers: &[
+        post_from("social.reddit"),
+        post_from("social.reddit-archive"),
+    ],
+    inputs: &["post.published"],
+    // Both give the service's creation time, to the second.
+    window_ns: secs(1),
+    fallback_ns: secs(1),
+    absorb_ns: None,
+    start_field: "created_at",
+    end_field: None,
+};
+
+// Conversation messages: a GDPR export names people, a tool that saved the
+// same messages names accounts by ID, so the text and the millisecond it was
+// sent are what both share.
+
+fn message(event: &Event) -> Option<Sighting> {
+    let p = &event.payload;
+    let content = text(p, "/text").map(norm).unwrap_or_default();
+    sighting(
+        event,
+        format!("{}\0{content}", text(p, "/service")?),
+        None,
+        fields([
+            ("service", p.get("service").cloned()),
+            ("thread", p.get("thread").cloned()),
+            ("thread_name", p.get("thread_name").cloned()),
+            ("sender", p.get("sender").cloned()),
+            ("text", p.get("text").cloned()),
+            ("message_id", p.get("message_id").cloned()),
+        ]),
+    )
+}
+
+const fn message_from(source: &'static str) -> Observer {
+    Observer {
+        event_type: "conversation.message",
+        only: &[],
+        source: Some(source),
+        spans: false,
+        read: message,
+    }
+}
+
+pub static CONVERSATIONS: FusionRule = FusionRule {
+    derivation: "conversation.fusion",
+    version: 1,
+    output: "conversation.fused",
+    observers: &[
+        message_from("communication.messenger"),
+        message_from("communication.messenger-sqlite"),
+    ],
+    inputs: &["conversation.message"],
+    // Both give Messenger's send time in milliseconds.
+    window_ns: 1_000_000,
+    fallback_ns: 1_000_000,
+    absorb_ns: None,
+    start_field: "sent_at",
+    end_field: None,
+};
+
 /// Every fusion rule.
 pub static RULES: &[&FusionRule] = &[
     &COMMANDS,
@@ -478,4 +578,6 @@ pub static RULES: &[&FusionRule] = &[
     &CLIPBOARD,
     &NOTIFICATIONS,
     &MAIL,
+    &POSTS,
+    &CONVERSATIONS,
 ];

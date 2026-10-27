@@ -189,14 +189,19 @@ pub fn decode(value: &Value) -> Value {
     }
 }
 
-/// One monitored message: its kind, member, interface, path, sender and
-/// decoded payload arguments.
+/// One monitored message: its kind, member, interface, path, sender,
+/// destination, serial numbers and decoded payload arguments.
 pub struct Message {
     pub kind: String,
     pub member: String,
     pub interface: String,
     pub path: String,
     pub sender: String,
+    pub destination: String,
+    /// The sender's serial number for this message (`cookie`).
+    pub serial: Option<u64>,
+    /// For a reply or error, the serial of the call it answers.
+    pub reply_serial: Option<u64>,
     pub args: Vec<Value>,
 }
 
@@ -221,6 +226,9 @@ impl Message {
             interface: text("interface"),
             path: text("path"),
             sender: text("sender"),
+            destination: text("destination"),
+            serial: m.get("cookie").and_then(Value::as_u64),
+            reply_serial: m.get("reply_cookie").and_then(Value::as_u64),
             args,
         })
     }

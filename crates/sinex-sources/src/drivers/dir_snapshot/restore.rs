@@ -35,7 +35,11 @@ impl DirState {
     pub fn remember_saved(&mut self, memory: &[u8]) -> Result<(), DriverError> {
         let mut rest = memory;
         while !rest.is_empty() {
-            let length = u32::from_le_bytes(take(&mut rest)?) as usize;
+            let length = u32::from_le_bytes(take(&mut rest)?);
+            if length == LOCATIONS {
+                return self.remember_saved_locations(rest);
+            }
+            let length = length as usize;
             let path = std::str::from_utf8(take_slice(&mut rest, length)?)
                 .map_err(|_| damaged())?
                 .to_owned();
@@ -55,11 +59,64 @@ impl DirState {
         Ok(())
     }
 
+    /// Remember where the files whose records in the bundle `material`
+    /// end at or before `admitted` were stored, for a driver that records
+    /// removals at the source. Bundles are offered newest first.
+    pub fn remember_locations(
+        &mut self,
+        manifest: &sinex_model::Manifest,
+        admitted: u64,
+        material: MaterialId,
+    ) -> Result<(), DriverError> {
+        for (start, end) in records(manifest)? {
+            if end as u64 > admitted {
+                continue;
+            }
+            let member = manifest
+                .member_at(start)
+                .ok_or_else(|| DriverError::Cursor("directory member is ambiguous".into()))?;
+            if !self.located.insert(member.path.clone()) {
+                continue;
+            }
+            if !removed(member)? {
+                self.locations.insert(
+                    member.path.clone(),
+                    RecordLocation {
+                        material,
+                        anchor: start as u64,
+                    },
+                );
+            }
+        }
+        Ok(())
+    }
+
     /// End of a restart's history.
     pub fn finish_remembering(&mut self) {
         self.remembered = HashSet::new();
+        self.located = HashSet::new();
+    }
+
+    fn remember_saved_locations(&mut self, mut rest: &[u8]) -> Result<(), DriverError> {
+        while !rest.is_empty() {
+            let length = u32::from_le_bytes(take(&mut rest)?) as usize;
+            let path = std::str::from_utf8(take_slice(&mut rest, length)?)
+                .map_err(|_| damaged())?
+                .to_owned();
+            let material = MaterialId(uuid::Uuid::from_bytes(take(&mut rest)?));
+            let anchor = u64::from_le_bytes(take(&mut rest)?);
+            if self.located.insert(path.clone()) {
+                self.locations
+                    .insert(path, RecordLocation { material, anchor });
+            }
+        }
+        Ok(())
     }
 }
+
+/// Where the saved file facts end and the saved locations begin: a path
+/// length no path has.
+const LOCATIONS: u32 = u32::MAX;
 
 fn damaged() -> DriverError {
     DriverError::Cursor("saved directory memory is damaged".into())
@@ -81,8 +138,13 @@ fn take<const N: usize>(rest: &mut &[u8]) -> Result<[u8; N], DriverError> {
 /// The memory to save: for each file, in path order, the path's length
 /// (four bytes, little-endian) and UTF-8 bytes, then 1 and its size (eight
 /// bytes), modification time (sixteen) and content hash (32), or 0 when the
-/// facts are unknown.
-pub(super) fn memory_of(files: &HashMap<String, Facts>) -> Arc<[u8]> {
+/// facts are unknown. When locations are kept, [`LOCATIONS`] follows, then
+/// for each path in order its length and bytes, the material ID (sixteen
+/// bytes) and the anchor (eight).
+pub(super) fn memory_of(
+    files: &HashMap<String, Facts>,
+    locations: &HashMap<String, RecordLocation>,
+) -> Arc<[u8]> {
     let mut paths: Vec<(&String, &Facts)> = files.iter().collect();
     paths.sort_by(|a, b| a.0.cmp(b.0));
     let mut bytes = Vec::new();
@@ -97,6 +159,17 @@ pub(super) fn memory_of(files: &HashMap<String, Facts>) -> Arc<[u8]> {
                 bytes.extend_from_slice(&mtime.to_le_bytes());
                 bytes.extend_from_slice(hash);
             }
+        }
+    }
+    if !locations.is_empty() {
+        bytes.extend_from_slice(&LOCATIONS.to_le_bytes());
+        let mut paths: Vec<(&String, &RecordLocation)> = locations.iter().collect();
+        paths.sort_by(|a, b| a.0.cmp(b.0));
+        for (path, location) in paths {
+            bytes.extend_from_slice(&(path.len() as u32).to_le_bytes());
+            bytes.extend_from_slice(path.as_bytes());
+            bytes.extend_from_slice(location.material.0.as_bytes());
+            bytes.extend_from_slice(&location.anchor.to_le_bytes());
         }
     }
     bytes.into()

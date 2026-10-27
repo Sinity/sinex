@@ -41,6 +41,8 @@ pub mod mail_imap;
 /// Screen stills and audio segments on the `Media` driver.
 pub mod media_capture;
 pub mod messenger;
+/// Messenger messages saved into SQLite by `fbmessengerexport`.
+pub mod messenger_sqlite;
 /// Media players (MPRIS) on the session bus.
 pub mod mpris;
 pub mod notes;
@@ -52,6 +54,8 @@ pub mod outlook;
 pub mod page_crawl;
 pub mod raindrop;
 pub mod reddit;
+/// A public archive's copy of the operator's Reddit items.
+pub mod reddit_archive;
 /// Commits and ref updates in local repositories (`code.git`).
 pub mod repository;
 /// The home router's lanes in the Sinnix capture lake.
@@ -118,9 +122,11 @@ pub fn formats() -> &'static [&'static InputFormat] {
         &google_takeout::FORMAT,
         &goodreads::FORMAT,
         &messenger::FORMAT,
+        &messenger_sqlite::FORMAT,
         &sleep_as_android::FORMAT,
         &wykop::FORMAT,
         &reddit::FORMAT,
+        &reddit_archive::FORMAT,
         &samsung_health::FORMAT,
         &samsung_sms::FORMAT,
         &samsung_cloud::FORMAT,

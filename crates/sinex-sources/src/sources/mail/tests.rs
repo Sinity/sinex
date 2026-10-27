@@ -68,3 +68,142 @@ fn maildir_selects_message_files() {
     assert!(!(d.select)("INBOX/tmp/3"));
     assert!(!(d.select)("dovecot.index"));
 }
+
+fn parse(raw: &[u8]) -> MailMessage {
+    MailParser
+        .parse(&raw, &(), &crate::RecordContext::none())
+        .unwrap()
+        .0
+        .remove(0)
+}
+
+#[devkit::test]
+fn an_mbox_frames_one_record_per_message_and_unquotes_from_lines() {
+    let mbox = b"From a@x Mon Jan  1 00:00:00 2024\n\
+Message-ID: <one@x>\n\
+Subject: one\n\
+\n\
+>From the start\n\
+>>From twice quoted\n\
+\n\
+From b@x Mon Jan  1 00:00:01 2024\n\
+Message-ID: <two@x>\n\
+Subject: two\n\
+\n\
+body\n";
+    let (records, _) = crate::drivers::export_archive::frame_mbox(mbox);
+    assert_eq!(records.len(), 2);
+    let first = parse(&mbox[records[0].0..records[0].1]);
+    assert_eq!(first.message_id, "one@x");
+    assert_eq!(
+        first.text.as_deref().map(str::trim_end),
+        Some("From the start\n>From twice quoted"),
+        "one level of quoting is undone"
+    );
+    assert_eq!(
+        parse(&mbox[records[1].0..records[1].1]).subject.as_deref(),
+        Some("two")
+    );
+}
+
+#[devkit::test]
+fn html_only_groups_and_an_unreadable_date() {
+    let m = parse(
+        b"Message-ID: <h@x>\n\
+Date: not a date\n\
+To: Team: a@x, b@x;\n\
+Content-Type: text/html; charset=utf-8\n\
+\n\
+<p>hi</p>\n",
+    );
+    assert!(m.html_only);
+    assert_eq!(m.text, None);
+    assert_eq!(m.date, None, "an unreadable date stays unknown");
+    assert_eq!(m.to, vec!["a@x", "b@x"]);
+}
+
+#[devkit::test]
+fn a_maildir_file_keeps_its_from_lines() {
+    let m = parse(b"Message-ID: <m@x>\n\n>From here\n");
+    assert_eq!(m.text.as_deref().map(str::trim_end), Some(">From here"));
+}
+
+fn walked(
+    root: &std::path::Path,
+) -> (
+    crate::drivers::dir_snapshot::DirSnapshot,
+    crate::drivers::dir_snapshot::DirState,
+) {
+    (
+        maildir_driver(root.to_path_buf(), "h".into()),
+        crate::drivers::dir_snapshot::DirState::default(),
+    )
+}
+
+#[devkit::test]
+fn a_deleted_maildir_message_is_removed_where_it_was_read() {
+    let owned = tempfile::tempdir().unwrap();
+    let root = owned.path();
+    std::fs::create_dir_all(root.join("cur")).unwrap();
+    std::fs::create_dir_all(root.join("new")).unwrap();
+    std::fs::write(root.join("cur/1.host:2,S"), "Message-ID: <1@x>\n\none\n").unwrap();
+    std::fs::write(root.join("new/2.host"), "Message-ID: <2@x>\n\ntwo\n").unwrap();
+    let (driver, mut state) = walked(root);
+    let first = driver.poll(&serde_json::Value::Null, &mut state).unwrap();
+    let first = first.material.unwrap();
+    let path_at = |m: &crate::drivers::NewMaterial, anchor: u64| {
+        m.manifest
+            .member_at(anchor as usize)
+            .map(|member| member.path.clone())
+    };
+    let admitted = (first.cursor_at)(first.records.last().unwrap().1).unwrap();
+    // A flag change renames the file; a deletion removes it.
+    std::fs::rename(root.join("cur/1.host:2,S"), root.join("cur/1.host:2,RS")).unwrap();
+    std::fs::remove_file(root.join("new/2.host")).unwrap();
+    let second = driver
+        .poll(&admitted, &mut state)
+        .unwrap()
+        .material
+        .unwrap();
+    let mut removed: Vec<Option<String>> = second
+        .removed
+        .iter()
+        .map(|location| {
+            assert_eq!(location.material, first.id);
+            path_at(&first, location.anchor)
+        })
+        .collect();
+    removed.sort();
+    assert_eq!(
+        removed,
+        [
+            Some("cur/1.host:2,S".to_owned()),
+            Some("new/2.host".to_owned())
+        ]
+    );
+    // The renamed file is read again; the removal markers read as nothing.
+    let chunks = crate::drain(
+        &MailParser,
+        crate::DrainInput {
+            source: "communication.maildir",
+            class: Class::Open,
+            material: second.id,
+            bytes: second.record_bytes(),
+            records: &second.records,
+            carry: serde_json::Value::Null,
+            reading_order: &|_| sinex_model::ReadingOrder(0),
+            limits: crate::Limits::default(),
+            manifest: &second.manifest,
+        },
+    )
+    .unwrap();
+    let events: usize = chunks
+        .into_iter()
+        .flat_map(|c| c.outcomes)
+        .map(|o| match o {
+            sinex_model::RecordOutcome::Events { events, .. } => events.len(),
+            sinex_model::RecordOutcome::Failure { reason, .. } => panic!("{reason}"),
+        })
+        .sum();
+    assert_eq!(events, 1);
+}

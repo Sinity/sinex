@@ -12,8 +12,13 @@
 //! as text; attachments are listed with their size, and their bytes stay in the
 //! material.
 //!
-//! A message deleted from a Maildir is not recorded as removed yet: the
-//! removed file's marker names only its path, not its Message-ID.
+//! A message deleted from a Maildir is recorded as removed at the source,
+//! where its file was last read: the removed file's marker names only its
+//! path, and a message is identified by its Message-ID, so the parser reads
+//! the marker as nothing. A flag change renames the file, which reads the
+//! message again under its new name and records the old name's reading as
+//! removed; the new reading is the newer one. A message kept in two folders
+//! and deleted from the one it was last read in is recorded as removed.
 use crate::drain::RecordContext;
 use crate::drivers::dir_snapshot::DirSnapshot;
 use crate::drivers::export_archive::{ExportArchive, Framing, PART_BYTES};
@@ -67,7 +72,7 @@ impl Parser for MailParser {
         _: &(),
         context: &RecordContext<'_>,
     ) -> Result<(Vec<MailMessage>, ()), RecordError> {
-        // A removed Maildir file: nothing to read (see the module note).
+        // A removed Maildir file: its removal is recorded at the source.
         if context
             .member
             .is_some_and(|m| m.details.contains_key("removed_at_ns"))
@@ -94,6 +99,8 @@ pub fn parse_message(raw: &[u8]) -> Result<MailMessage, RecordError> {
         .unwrap_or_else(|| format!("blake3:{}", blake3::hash(&message).to_hex()));
     let date = one("Date")
         .and_then(|d| mailparse::dateparse(&d).ok())
+        // `dateparse` reads text holding no date as the epoch.
+        .filter(|secs| *secs != 0)
         .and_then(|secs| Timestamp::from_unix_secs(secs).ok());
     let addresses = |name: &str| -> Vec<String> {
         headers
@@ -248,6 +255,7 @@ pub fn mbox_driver(path: PathBuf, host: String) -> ExportArchive {
 
 pub fn maildir_driver(root: PathBuf, host: String) -> DirSnapshot {
     DirSnapshot {
+        removed_at_source: true,
         root,
         host,
         select: |p| {
