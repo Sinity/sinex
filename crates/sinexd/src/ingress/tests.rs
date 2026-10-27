@@ -122,7 +122,7 @@ impl Harness {
             ) {
                 return Acknowledgment {
                     frame: frame.frame().into(),
-                    refusal: Some(reason),
+                    refusal: Some(reason.to_string()),
                     ..refused_unrecorded("")
                 };
             }
@@ -483,27 +483,9 @@ async fn invalid_frames_are_refused_and_recorded(db: devkit::pg::TestDatabase) {
         assert!(reason.contains(expected), "{name}: {reason}");
         assert!(ack.admitted.is_empty());
     }
-    // Bytes the producer never placed.
-    let missing_bytes = Ingress::Material {
-        frame: "m-missing".into(),
-        material: Box::new(MaterialFrame {
-            blob: format!("blake3:{}", blake3::hash(b"absent").to_hex()),
-            ..match h.material_frame("unused", b"y").1 {
-                Ingress::Material { material, .. } => *material,
-                _ => unreachable!(),
-            }
-        }),
-    };
-    let ack = h.send("kitty", &missing_bytes).await;
-    assert!(
-        ack.refusal
-            .unwrap()
-            .contains("neither in the content store nor in this frame's directory")
-    );
-
     // Refusals are recorded: asking again gets the same answer.
-    let have = h.recorded("kitty", &["f-type", "m-missing"]).await;
-    assert_eq!(have.len(), 2);
+    let have = h.recorded("kitty", &["f-type"]).await;
+    assert_eq!(have.len(), 1);
     assert!(have.iter().all(|a| a.refusal.is_some()));
     assert_eq!(
         h.count("SELECT count(*) FROM core.events").await,
@@ -875,4 +857,32 @@ async fn frames_flow_while_a_request_waits(db: devkit::pg::TestDatabase) {
     let acks: Vec<Acknowledgment> = serde_json::from_slice(&reply.payload).unwrap();
     assert_eq!(acks.len(), 1);
     assert_eq!(acks[0].frame, "m1");
+}
+
+#[devkit::test]
+async fn storage_faults_stay_unavailable_and_invalid_bytes_are_refused(db: devkit::pg::TestDatabase) {
+    let root = tempfile::tempdir().unwrap();
+    let blobs = Blobs::open(root.path()).unwrap();
+    let (writer, _queues) = writer::channels();
+    let ingest = Ingest::new(Subjects::sinex(), writer, PgConnection::connect(&db.url(None)).await.unwrap(), blobs, "synthetic".into()).unwrap();
+    let bytes = b"synthetic";
+    let blob = format!("blake3:{}", blake3::hash(bytes).to_hex());
+    let material = MaterialFrame {
+        id: MaterialId::new(), input: InputRef {kind:"file".into(), locator:"synthetic".into(),host:"synthetic".into()},
+        blob:blob.clone(),length:bytes.len() as u64, parser:"synthetic".into(),parser_version:1,part_index:0,previous_part:None,manifest:Default::default(),
+    };
+    assert!(matches!(ingest.store_material("node","missing",&material).await,Err(Check::Unavailable(_))));
+    let large = Ingress::LargeFrame {frame:"missing".into(),blob:blob.clone(),length:bytes.len() as u64};
+    assert!(matches!(ingest.unwrap_large_frame("node",large).await,Err(Check::Unavailable(_))));
+    frame_bytes::write(root.path(),"node","wrong-hash",&blob,bytes.len() as u64,bytes.as_slice()).unwrap();
+    let path = frame_bytes::directory(root.path(),"node","wrong-hash").join(&blob[7..]);
+    std::fs::write(path,b"different").unwrap();
+    assert!(matches!(ingest.store_material("node","wrong-hash",&material).await,Err(Check::Refused(_))));
+    // A content store fault must not be recorded as a permanent refusal.
+    std::fs::remove_dir_all(root.path().join("incoming")).unwrap();
+    std::fs::write(root.path().join("incoming"),b"blocked directory").unwrap();
+    let mut chunk = Ingress::Chunk {frame:"chunk".into(),for_frame:"material".into(),blob,offset:0,total:bytes.len() as u64,data:base64::engine::general_purpose::STANDARD.encode(bytes)};
+    assert!(matches!(ingest.receive_chunk("node",&chunk).await,Err(Check::Unavailable(_))));
+    if let Ingress::Chunk { data, .. } = &mut chunk { *data = "not base64!".into(); }
+    assert!(matches!(ingest.receive_chunk("node",&chunk).await,Err(Check::Refused(_))));
 }

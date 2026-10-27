@@ -62,6 +62,7 @@ struct Live {
     reader: Box<dyn Reader>,
     capture: CaptureTask,
     retry: Retry,
+    health: sinex_source_core::drivers::spool_health::Counter,
 }
 
 struct CaptureTask {
@@ -119,6 +120,7 @@ fn check_spool(path: &Path) -> std::io::Result<()> {
 fn start(
     k: &'static InputFormat,
     binding: Binding,
+    positions: &Path,
     failed: tokio::sync::mpsc::UnboundedSender<String>,
 ) -> Result<Live, String> {
     let capture = k.capture.expect("live formats capture");
@@ -131,6 +133,10 @@ fn start(
         .ok_or_else(|| format!("{}: no spool reader", k.name))?)(&binding)?
     .into_polled()?;
     let source = (k.source)(&binding)?;
+    if source.spec().class == sinex_model::Class::Sealed {
+        return Err("sealed producer storage is unsupported".into());
+    }
+    let health = health::initialize(positions, &binding)?;
     let stop = Arc::new(CaptureStop::new(None));
     let b = binding.clone();
     let thread_stop = stop.clone();
@@ -167,6 +173,7 @@ fn start(
         .map_err(|e| e.to_string())?;
     Ok(Live {
         source,
+        health,
         binding,
         reader,
         retry: Retry::default(),
@@ -211,11 +218,12 @@ async fn run_with_private_mode(
     // Register before any capture thread or child can start.
     let shutdown = sinex_source_core::capture::shutdown_signal().map_err(|e| e.to_string())?;
     let (failed, mut failures) = tokio::sync::mpsc::unbounded_channel();
-    let mut lives = bindings
-        .into_iter()
-        .map(|(format, binding)| start(format, binding, failed.clone()))
-        .collect::<Result<Vec<_>, _>>()?;
-    let health_bindings: Vec<_> = lives.iter().map(|live| live.binding.clone()).collect();
+    let state_positions = positions.to_owned();
+    let mut lives = tokio::task::spawn_blocking(move || {
+        bindings.into_iter().map(|(format, binding)| start(format, binding, &state_positions, failed.clone()))
+            .collect::<Result<Vec<_>, _>>()
+    }).await.map_err(|e| e.to_string())??;
+    let health_bindings: Vec<_> = lives.iter().map(|live| (live.binding.clone(), live.health.clone())).collect();
     let deadline = async {
         match until {
             Some(until) => {
@@ -280,17 +288,12 @@ async fn produce_spools(
             }
         }
         let producer = producer.as_mut().expect("connected above");
+        for live in lives.iter() { producer.monitor(&live.binding.name, live.health.clone()); }
         for live in lives.iter_mut().filter(|live| live.retry.ready()) {
             // A failed batch is replayed with its original frame IDs before
             // the reader may advance to newly captured material.
-            loop {
-                match produce_spool(producer, store, positions, live).await {
-                    Ok(had_material) => {
-                        live.retry.recovered(&live.binding.name);
-                        if !had_material {
-                            break;
-                        }
-                    }
+            match produce_spool(producer, store, positions, live).await {
+                    Ok(_) => live.retry.recovered(&live.binding.name),
                     Err(error @ (Error::Nats(_) | Error::NoAck(_) | Error::Refused { .. })) => {
                         let state = match error {
                             Error::NoAck(_) => "awaiting acknowledgment",
@@ -298,13 +301,11 @@ async fn produce_spools(
                             _ => "unavailable",
                         };
                         live.retry.failed(&live.binding.name, state, &error);
-                        break;
                     }
                     // Unwritable spool/state storage or an undecodable local
                     // cursor cannot be repaired by reconnecting to the bus.
                     Err(error) => return Err(error.to_string()),
                 }
-            }
         }
         tokio::time::sleep(every.max(Duration::from_millis(100))).await;
     }
@@ -316,9 +317,14 @@ async fn produce_spool(
     positions: &Path,
     live: &mut Live,
 ) -> Result<bool, Error> {
+    let recovering = Producer::unacknowledged_position(&live.binding.name, positions)?.is_some();
     let position = producer
         .position(&live.binding.name, positions, store)
         .await?;
+    if recovering {
+        live.reader.remove_passed(&position.cursor)?;
+        return Ok(true);
+    }
     let acquired = live.reader.poll(&position.cursor)?;
     let had_material = acquired.material.is_some();
     producer

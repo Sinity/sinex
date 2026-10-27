@@ -204,6 +204,11 @@ in
       enable = mkEnableOption "the session service for the operator's graphical session";
       user = mkOption { type = types.str; default = ""; description = "The operator's account."; };
       producer = mkOption { type = types.str; default = "session-${cfg.host}"; };
+      stateDir = mkOption {
+        type = types.nullOr types.path;
+        default = null;
+        description = "Session spool and positions directory; null uses XDG_STATE_HOME/sinex-session.";
+      };
       passwordFile = mkOption {
         type = types.path;
         description = "The session producer's NATS password, readable by the operator's account.";
@@ -343,6 +348,8 @@ in
         SINEX_ENDPOINT = if cfg.api.listen != null then "http://${cfg.api.listen}" else "unix:${cfg.api.socket}";
         SINEX_TOKEN_FILE = "${cfg.stateDir}/tokens/agent.token";
         SINEX_PRIVATE_MODE = privateSwitch;
+      } // lib.optionalAttrs (cfg.session.enable && cfg.session.stateDir != null) {
+        SINEX_CAPTURE_STATE = cfg.session.stateDir;
       };
 
       # Bindings from the registry-generated options, for the daemon's sources.
@@ -562,7 +569,7 @@ in
             --subject-root ${escapeShellArg cfg.nats.subjectRoot} \
             --producer ${escapeShellArg cfg.session.producer} \
             --store ${escapeShellArg cfg.storeDir} \
-            --state "''${XDG_STATE_HOME:-$HOME/.local/state}/sinex-session" \
+            --state ${if cfg.session.stateDir != null then escapeShellArg cfg.session.stateDir else ''"''${XDG_STATE_HOME:-$HOME/.local/state}/sinex-session"''} \
             --host ${escapeShellArg cfg.host} \
             ${optionalString cfg.session.hyprland "--hyprland"} \
             ${optionalString cfg.session.notifications "--notifications"} \
@@ -665,8 +672,10 @@ in
         after = [ "network-online.target" "remote-fs.target" ];
         wants = [ "network-online.target" ];
         wantedBy = [ "multi-user.target" ];
-        unitConfig = startLimit;
-        serviceConfig = restartPolicy // {
+        unitConfig.StartLimitIntervalSec = 0;
+        serviceConfig = {
+          Restart = "always";
+          RestartSec = "2s";
           User = node.user;
           Group = node.group;
           UMask = "0007";

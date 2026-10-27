@@ -3,7 +3,7 @@
 use std::os::unix::fs::{DirBuilderExt, MetadataExt, PermissionsExt};
 use std::path::Path;
 
-pub(super) fn prepare_directory(root: &Path, leaf: &Path) -> Result<Option<u32>, String> {
+pub(super) fn prepare_directory(root: &Path, leaf: &Path) -> Result<Option<u32>, super::Error> {
     let group = match std::fs::metadata(root) {
         Ok(meta) if meta.is_dir() && meta.mode() & 0o7777 == 0o2770 => meta.gid(),
         Ok(_) => {
@@ -44,7 +44,7 @@ pub(super) fn prepare_directory(root: &Path, leaf: &Path) -> Result<Option<u32>,
     Ok(Some(group))
 }
 
-pub(super) fn share_completed_file(file: &std::fs::File, group: Option<u32>) -> Result<(), String> {
+pub(super) fn share_completed_file(file: &std::fs::File, group: Option<u32>) -> Result<(), super::Error> {
     if let Some(group) = group {
         if file.metadata().map_err(super::error)?.gid() != group {
             return Err("producer frame file does not belong to the store group".into());
@@ -57,7 +57,7 @@ pub(super) fn share_completed_file(file: &std::fs::File, group: Option<u32>) -> 
     Ok(())
 }
 
-pub(super) fn check_existing_file(path: &Path, group: Option<u32>) -> Result<(), String> {
+pub(super) fn check_existing_file(path: &Path, group: Option<u32>) -> Result<(), super::Error> {
     if let Some(group) = group {
         match std::fs::symlink_metadata(path) {
             Ok(meta) if meta.is_file() && meta.gid() == group && meta.mode() & 0o7777 == 0o640 => {}

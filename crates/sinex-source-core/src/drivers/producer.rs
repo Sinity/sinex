@@ -199,6 +199,7 @@ pub struct Sent {
 }
 
 pub struct Producer {
+    health: std::collections::HashMap<String, super::spool_health::Counter>,
     name: String,
     subjects: Subjects,
     client: async_nats::Client,
@@ -212,6 +213,18 @@ pub struct Producer {
 }
 
 impl Producer {
+    pub fn monitor(&mut self, binding: &str, counter: super::spool_health::Counter) {
+        self.health.insert(binding.to_owned(), counter);
+    }
+
+    pub fn unacknowledged_position(binding: &str, state: &Path) -> Result<Option<Position>, Error> {
+        Ok(UnacknowledgedFrames::load(state, binding)?.map(|batch| batch.position))
+    }
+
+    fn frames_changed(&self, binding: &str, frames: usize) {
+        if let Some(counter) = self.health.get(binding) { counter.lock().unwrap().frames = frames; }
+    }
+
     /// Number of prepared transport frames still awaiting acknowledgment.
     /// Reading it needs no connection, so health can report during an outage.
     pub fn unacknowledged_frames(binding: &str, state: &Path) -> Result<usize, Error> {
@@ -235,6 +248,7 @@ impl Producer {
         let acks = client.subscribe(subjects.ack(name)).await.map_err(nats)?;
         let max_message = client.server_info().max_payload;
         Ok(Self {
+            health: Default::default(),
             name: name.to_owned(),
             js: jetstream::new(client.clone()),
             subjects,
@@ -272,6 +286,9 @@ impl Producer {
             .await?;
             unacknowledged.position.save(state, binding)?;
             UnacknowledgedFrames::clear(state, binding)?;
+            if let Some(counter) = self.health.get(binding) {
+                counter.lock().unwrap().recovered(&unacknowledged.position.cursor);
+            }
         }
         Position::load(state, binding)
     }
@@ -288,6 +305,7 @@ impl Producer {
     ) -> Result<Vec<Option<Acknowledgment>>, Error> {
         let mut acknowledgments = Vec::new();
         for (index, frame) in frames.iter().enumerate() {
+            let mut refused = false;
             let mut skip_rest = false;
             match self.deliver(frame.clone(), store).await {
                 Ok(ack) => acknowledgments.push(Some(ack)),
@@ -297,8 +315,21 @@ impl Producer {
                     recorded: true,
                 }) if id == frame.frame() => {
                     acknowledgments.push(None);
+                    refused = true;
+                    write_durably(
+                        &state.join("refused").join(format!("{}.json", blake3::hash(frame.frame().as_bytes()).to_hex())),
+                        &serde_json::to_vec(&UnacknowledgedFrames { frames: frames[index..].to_vec(), position: position.clone() }).expect("frames serialize"),
+                    )?;
                     eprintln!("Sinex refused frame {id}: {reason}; skipping recorded refusal");
-                    skip_rest = matches!(frame, Ingress::Material { .. });
+                    skip_rest = match frame {
+                        Ingress::Material { .. } => true,
+                        Ingress::LargeFrame { blob, length, .. } => {
+                            let bytes = frame_bytes::snapshot(self.frame_root(store), &self.name, frame.frame(), blob, *length)
+                                .map_err(|e| Error::Local(e.to_string()))?;
+                            matches!(serde_json::from_reader::<_, Ingress>(bytes).map_err(|e| Error::Local(e.to_string()))?, Ingress::Material { .. })
+                        }
+                        _ => false,
+                    };
                 }
                 Err(error) => return Err(error),
             }
@@ -311,11 +342,9 @@ impl Producer {
                 position: position.clone(),
             }
             .save(state, binding)?;
-            self.clear_frame_directories(std::slice::from_ref(frame), store)?;
-            if skip_rest {
-                self.clear_frame_directories(&frames[index + 1..], store)?;
-                break;
-            }
+            self.frames_changed(binding, if skip_rest { 0 } else { frames.len() - index - 1 });
+            if !refused { self.clear_frame_directories(std::slice::from_ref(frame), store)?; }
+            if skip_rest { break; }
         }
         Ok(acknowledgments)
     }
@@ -329,7 +358,7 @@ impl Producer {
         for frame in frames {
             if matches!(frame, Ingress::Material { .. } | Ingress::LargeFrame { .. }) {
                 frame_bytes::discard(self.frame_root(shared), &self.name, frame.frame())
-                    .map_err(Error::Local)?;
+                    .map_err(|e| Error::Local(e.to_string()))?;
             }
         }
         Ok(())
@@ -368,7 +397,7 @@ impl Producer {
                 material.length,
                 snapshots.open(&material.blob)?,
             )
-            .map_err(Error::Local)?;
+            .map_err(|e| Error::Local(e.to_string()))?;
         }
         if let Ingress::LargeFrame { blob, length, .. } = &frame {
             frame_bytes::write(
@@ -379,7 +408,7 @@ impl Producer {
                 *length,
                 body.as_slice(),
             )
-            .map_err(Error::Local)?;
+            .map_err(|e| Error::Local(e.to_string()))?;
         }
         Ok(frame)
     }
@@ -426,7 +455,7 @@ impl Producer {
         root: &Path,
     ) -> Result<(), Error> {
         let mut reader = frame_bytes::snapshot(root, &self.name, for_frame, blob, total)
-            .map_err(Error::Local)?;
+            .map_err(|e| Error::Local(e.to_string()))?;
         let attempt = uuid::Uuid::now_v7();
         let mut offset = 0u64;
         let mut bytes = vec![0; total.min(CHUNK_BYTES as u64) as usize];
@@ -535,7 +564,7 @@ impl Producer {
         state: &Path,
     ) -> Result<Sent, Error> {
         if source.spec().class == sinex_model::Class::Sealed {
-            return Err(Error::Nats("sealed producer storage is unsupported".into()));
+            return Err(Error::Local("sealed producer storage is unsupported".into()));
         }
         let snapshots = Snapshots::new()?;
         let position = Position::load(state, binding)?;
@@ -631,15 +660,19 @@ impl Producer {
                 cursor: progress.cursor.clone(),
                 carry: progress.carry.clone(),
             };
+            if let Some(counter) = self.health.get(binding) {
+                counter.lock().unwrap().prepare(&after.cursor, batch.records.len() as u64);
+            }
             if frames.is_empty() {
                 after.save(state, binding)?;
+                if let Some(counter) = self.health.get(binding) { counter.lock().unwrap().recovered(&after.cursor); }
                 continue;
             }
             let class = batch
                 .events()
                 .fold(source.spec().class, |class, event| class.max(event.class));
             if class == sinex_model::Class::Sealed {
-                return Err(Error::Nats("sealed producer storage is unsupported".into()));
+                return Err(Error::Local("sealed producer storage is unsupported".into()));
             }
             let events_frames: Vec<bool> = frames
                 .iter()
@@ -654,6 +687,7 @@ impl Producer {
                 position: after.clone(),
             }
             .save(state, binding)?;
+            self.frames_changed(binding, frames.len());
             let acknowledgments = self
                 .deliver_batch(&frames, &after, state, binding, sink)
                 .await?;
@@ -666,6 +700,9 @@ impl Producer {
                 }
             }
             after.save(state, binding)?;
+            if let Some(counter) = self.health.get(binding) {
+                counter.lock().unwrap().recovered(&after.cursor);
+            }
             UnacknowledgedFrames::clear(state, binding)?;
         }
         Ok(sent)

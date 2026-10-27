@@ -74,14 +74,16 @@ async fn fake_ingress(
     timeout: Arc<tokio::sync::Notify>,
 ) -> (
     Arc<Mutex<HashMap<String, Ingress>>>,
+    Arc<Mutex<Vec<Ingress>>>,
     tokio::task::JoinHandle<()>,
 ) {
     let client = async_nats::connect(url).await.unwrap();
     jetstream_stream(&client, subjects).await;
-    let mut incoming = client
-        .subscribe(subjects.ingress("synthetic"))
-        .await
-        .unwrap();
+    let stream = async_nats::jetstream::new(client.clone()).get_stream(subjects.ingress_stream()).await.unwrap();
+    let consumer = stream.get_or_create_consumer("synthetic", async_nats::jetstream::consumer::pull::Config {
+        durable_name: Some("synthetic".into()), ack_wait: Duration::from_secs(1), ..Default::default()
+    }).await.unwrap();
+    let mut incoming = consumer.messages().await.unwrap();
     let mut queries = client
         .subscribe(subjects.recorded("synthetic"))
         .await
@@ -89,6 +91,8 @@ async fn fake_ingress(
     client.flush().await.unwrap();
     let received = Arc::new(Mutex::new(HashMap::<String, Ingress>::new()));
     let frames = received.clone();
+    let order = Arc::new(Mutex::new(Vec::new()));
+    let received_order = order.clone();
     let ack_subject = subjects.ack("synthetic");
     let task = tokio::spawn(async move {
         let mut pending = Vec::new();
@@ -96,7 +100,10 @@ async fn fake_ingress(
         loop {
             tokio::select! {
                 Some(message) = incoming.next() => {
-                    pending.push(serde_json::from_slice::<Ingress>(&message.payload).unwrap());
+                    if let Ok(message) = message {
+                        let frame = serde_json::from_slice::<Ingress>(&message.payload).unwrap();
+                        pending.push((frame, message));
+                    }
                 }
                 Some(message) = queries.next() => {
                     let query: sinex_protocol::RecordedQuery = serde_json::from_slice(&message.payload).unwrap();
@@ -112,7 +119,7 @@ async fn fake_ingress(
             // Ingress messages stay queued while the receiver is unavailable.
             let receiving = *available.borrow();
             if receiving {
-                for frame in pending.drain(..) {
+                for (frame, message) in pending.drain(..) {
                     let id = frame.frame().to_string();
                     let ack = recorded
                         .entry(id.clone())
@@ -136,7 +143,11 @@ async fn fake_ingress(
                             }
                         })
                         .clone();
-                    frames.lock().unwrap().entry(id).or_insert(frame);
+                    if let std::collections::hash_map::Entry::Vacant(entry) = frames.lock().unwrap().entry(id) {
+                        received_order.lock().unwrap().push(frame.clone());
+                        entry.insert(frame);
+                    }
+                    message.ack().await.unwrap();
                     client
                         .publish(
                             ack_subject.clone(),
@@ -148,7 +159,7 @@ async fn fake_ingress(
             }
         }
     });
-    (received, task)
+    (received, order, task)
 }
 
 struct Running(tokio::task::JoinHandle<Result<(), String>>);
@@ -166,7 +177,7 @@ async fn wait_for(running: &mut Running, mut ready: impl FnMut() -> bool) {
         }
     };
     tokio::select! {
-        _ = observed => {},
+        result = tokio::time::timeout(Duration::from_secs(90), observed) => result.expect("live capture did not make progress"),
         result = &mut running.0 => panic!("live publishing stopped unexpectedly: {result:?}"),
     }
 }
@@ -188,7 +199,7 @@ async fn acknowledgment_timeout_keeps_capture_writing_and_recovery_drains_withou
     let subjects = Subjects::new(nats.prefix());
     let (available, availability) = tokio::sync::watch::channel(false);
     let timeout = Arc::new(tokio::sync::Notify::new());
-    let (received, ingress) =
+    let (received, _, ingress) =
         fake_ingress(nats.url(), &subjects, availability, timeout.clone()).await;
     let dir = tempfile::tempdir().unwrap();
     let spool = dir.path().join("spool");
@@ -236,7 +247,7 @@ async fn acknowledgment_timeout_keeps_capture_writing_and_recovery_drains_withou
     wait_for(&mut running, || spool.join("paused").exists()).await;
     let captured = std::fs::read_to_string(&segment).unwrap().lines().count();
     let captured_bytes = std::fs::metadata(&segment).unwrap().len();
-    let report = positions.join("health.json");
+    let report = positions.parent().unwrap().join("health.json");
     wait_for(&mut running, || {
         std::fs::read(&report)
             .ok()
@@ -405,4 +416,145 @@ async fn an_unwritable_spool_is_a_local_fault_that_ends_the_session() {
     )
     .await;
     assert!(result.unwrap_err().contains("spool"));
+}
+
+static PAUSED: InputFormat = InputFormat {
+    capture: Some(|_, stop| { while !stop.wait(Duration::from_millis(100)) {} Ok(0) }),
+    ..sources::hyprland::FORMAT
+};
+
+#[devkit::test(multi_thread)]
+async fn backlogged_bindings_publish_materials_in_alternating_order() {
+    let nats = devkit::nats::test_nats().unwrap();
+    let subjects = Subjects::new(nats.prefix());
+    let (available, availability) = tokio::sync::watch::channel(true);
+    let (_, order, ingress) = fake_ingress(nats.url(), &subjects, availability, Arc::default()).await;
+    let dir = tempfile::tempdir().unwrap();
+    let mut bindings = Vec::new();
+    for name in ["first", "second"] {
+        let spool = dir.path().join(name);
+        let mut writer = SpoolWriter::open(&spool, Rotation { max_bytes: 1, ..Default::default() }).unwrap()
+            .with_private_mode(sinex_transport::private_mode::PrivateMode::new(dir.path().join("private")));
+        for count in 0..4 {
+            writer.append(sinex_model::Timestamp::now(), format!("workspacev2>>{count},synthetic").as_bytes()).unwrap();
+        }
+        writer.sync().unwrap();
+        let (_, binding) = binding("hyprland", &spool, name, Value::Null).unwrap();
+        bindings.push((&PAUSED, binding));
+    }
+    let store = Store::open(&dir.path().join("store")).unwrap();
+    let positions = dir.path().join("positions");
+    let private = sinex_transport::private_mode::PrivateMode::new(dir.path().join("private"));
+    let mut running = Running(tokio::spawn(async move {
+        run_with_private_mode(Connection { url:nats.url().into(), password_file:None, subjects, producer:"synthetic".into(), upload:false },
+            &store, &positions, bindings, Duration::from_millis(10), None, private).await
+    }));
+    wait_for(&mut running, || order.lock().unwrap().iter().filter(|frame| matches!(frame, Ingress::Material {..})).count() == 8).await;
+    let hosts: Vec<_> = order.lock().unwrap().iter().filter_map(|frame| match frame {
+        Ingress::Material {material,..} => Some(material.input.host.clone()), _ => None,
+    }).collect();
+    assert_eq!(hosts, ["first","second","first","second","first","second","first","second"]);
+    drop(available);
+    ingress.abort();
+}
+
+struct RestartingNats {
+    port: u16,
+    dir: tempfile::TempDir,
+    child: Option<std::process::Child>,
+}
+
+impl RestartingNats {
+    fn new() -> Self {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        Self {port, dir: tempfile::tempdir().unwrap(), child:None}
+    }
+
+    fn url(&self) -> String { format!("nats://127.0.0.1:{}", self.port) }
+
+    async fn start(&mut self) {
+        let log = std::fs::File::create(self.dir.path().join("nats.log")).unwrap();
+        self.child = Some(std::process::Command::new("nats-server")
+            .args(["-a","127.0.0.1","-p",&self.port.to_string(),"-js","-sd"])
+            .arg(self.dir.path().join("jetstream"))
+            .stdout(log.try_clone().unwrap()).stderr(log).spawn().unwrap());
+        tokio::time::timeout(Duration::from_secs(15), async {
+            loop {
+                if async_nats::connect(self.url()).await.is_ok() { break; }
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+        }).await.expect("NATS did not start");
+    }
+
+    fn stop(&mut self) {
+        if let Some(mut child) = self.child.take() { child.kill().unwrap(); child.wait().unwrap(); }
+    }
+}
+
+impl Drop for RestartingNats { fn drop(&mut self) { self.stop(); } }
+
+async fn capture_recovers_when_nats_returns(initially_unavailable: bool) {
+    let mut nats = RestartingNats::new();
+    let subjects = Subjects::new("reconnect");
+    let (available, availability) = tokio::sync::watch::channel(true);
+    let mut previous_frames = HashMap::new();
+    let mut responder = None;
+    if !initially_unavailable {
+        nats.start().await;
+        responder = Some(fake_ingress(&nats.url(), &subjects, availability.clone(), Arc::default()).await);
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let spool = dir.path().join("spool");
+    let (_, binding) = binding("hyprland", &spool, "synthetic", Value::Null).unwrap();
+    let store = Store::open(&dir.path().join("store")).unwrap();
+    let positions = dir.path().join("positions");
+    let connection = Connection { url:nats.url(), password_file:None, subjects:subjects.clone(), producer:"synthetic".into(), upload:false };
+    let private = sinex_transport::private_mode::PrivateMode::new(spool.join("private"));
+    let mut running = Running(tokio::spawn(async move {
+        run_with_private_mode(connection, &store, &positions, vec![(&SYNTHETIC,binding)], Duration::from_millis(20), None, private).await
+    }));
+    let segment = spool.join("000000000000.ndjson");
+    if let Some((frames, _, task)) = responder.take() {
+        wait_for(&mut running, || frames.lock().unwrap().values().any(|frame| matches!(frame, Ingress::Events{..}))).await;
+        nats.stop();
+        previous_frames = frames.lock().unwrap().clone();
+        // The responder is recreated against its durable consumer after restart.
+        task.abort();
+    }
+    wait_for(&mut running, || segment.exists()).await;
+    let before = std::fs::metadata(&segment).unwrap().len();
+    wait_for(&mut running, || std::fs::metadata(&segment).unwrap().len() > before + 500).await;
+    std::fs::write(spool.join("finished"), b"").unwrap();
+    wait_for(&mut running, || spool.join("paused").exists()).await;
+    let captured: std::collections::HashSet<_> = std::fs::read_to_string(&segment).unwrap().lines().map(|line| {
+        let frame: Value = serde_json::from_str(line).unwrap(); frame["line"].as_str().unwrap().to_owned()
+    }).collect();
+    nats.start().await;
+    let (received, _, ingress) = fake_ingress(&nats.url(), &subjects, availability, Arc::default()).await;
+    let report = dir.path().join("health.json");
+    wait_for(&mut running, || {
+        std::fs::read(&report).ok().and_then(|bytes| serde_json::from_slice::<Value>(&bytes).ok()).is_some_and(|health|
+            health["spools"][0]["unpublished"]["records"] == 0 && health["spools"][0]["unpublished"]["frames"] == 0)
+    }).await;
+    // Stream messages from before the drop are kept too. The consumer acknowledged
+    // the earlier events, so collect their payloads before restarting the responder.
+    previous_frames.extend(received.lock().unwrap().clone());
+    let events: Vec<_> = previous_frames.values().filter_map(|frame| match frame { Ingress::Events{events,..} => Some(events), _=>None }).flatten().collect();
+    let payloads: std::collections::HashSet<_> = events.iter().map(|event| event.payload.to_string()).collect();
+    assert_eq!(payloads.len(), events.len());
+    assert_eq!(events.len(), captured.len());
+    assert!(!events.is_empty());
+    drop(available);
+    ingress.abort();
+}
+
+#[devkit::test(multi_thread)]
+async fn capture_keeps_writing_when_nats_drops_and_drains_after_restart() {
+    capture_recovers_when_nats_returns(false).await;
+}
+
+#[devkit::test(multi_thread)]
+async fn capture_drains_after_the_first_connection_fails_and_nats_starts() {
+    capture_recovers_when_nats_returns(true).await;
 }

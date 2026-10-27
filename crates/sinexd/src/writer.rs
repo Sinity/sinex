@@ -340,17 +340,20 @@ async fn admit_checked(
 /// A transaction that could not run must remain pending at the producer.
 /// Only invalid content can be recorded as a final refusal.
 fn admission_error(error: sinex_store::Error) -> WriteError {
-    let invalid = match &error {
-        sinex_store::Error::Invalid(_) | sinex_store::Error::Unsealed(_) => true,
-        sinex_store::Error::Database(sqlx::Error::Database(error)) => error
-            .code()
-            .is_some_and(|code| code.starts_with("22") || code.starts_with("23")),
+    let temporary = match &error {
+        sinex_store::Error::Database(sqlx::Error::Database(error)) => error.code().is_some_and(|code| {
+            ["08", "40", "53", "57", "58"].iter().any(|class| code.starts_with(class))
+        }),
+        sinex_store::Error::Database(error) => matches!(error,
+            sqlx::Error::Io(_) | sqlx::Error::Tls(_) | sqlx::Error::PoolTimedOut
+                | sqlx::Error::PoolClosed | sqlx::Error::WorkerCrashed),
+        sinex_store::Error::Blob(_) => true,
         _ => false,
     };
-    if invalid {
-        WriteError::Refused(error.to_string())
-    } else {
+    if temporary {
         WriteError::Unavailable(error.to_string())
+    } else {
+        WriteError::Refused(error.to_string())
     }
 }
 

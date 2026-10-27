@@ -6,6 +6,20 @@
 //! it, and removes the directory with [`discard`] once the frame is recorded.
 mod permissions;
 
+#[derive(Debug, thiserror::Error)]
+pub enum Error {
+    #[error("{0}")]
+    Invalid(String),
+    #[error("{0}")]
+    Storage(String),
+}
+
+impl From<&str> for Error {
+    fn from(message: &str) -> Self {
+        Self::Invalid(message.into())
+    }
+}
+
 use std::io::{Read, Seek, Write};
 use std::os::unix::fs::OpenOptionsExt;
 use std::path::{Path, PathBuf};
@@ -24,16 +38,16 @@ pub fn directory(root: &Path, producer: &str, frame: &str) -> PathBuf {
 }
 
 /// The file name of the bytes named `blob` (`blake3:<hex>`).
-fn file_name(blob: &str) -> Result<String, String> {
+fn file_name(blob: &str) -> Result<String, Error> {
     let hex = blob
         .strip_prefix("blake3:")
         .filter(|hex| blake3::Hash::from_hex(hex).is_ok())
-        .ok_or_else(|| format!("invalid blob name {blob}"))?;
+        .ok_or_else(|| Error::Invalid(format!("invalid blob name {blob}")))?;
     Ok(hex.to_owned())
 }
 
-fn error(e: impl std::fmt::Display) -> String {
-    e.to_string()
+fn error(e: impl std::fmt::Display) -> Error {
+    Error::Storage(e.to_string())
 }
 
 /// Copy `input` to `output`, checking it is exactly the bytes named `blob`
@@ -43,7 +57,7 @@ fn copy_checked(
     mut output: impl Write,
     blob: &str,
     length: u64,
-) -> Result<(), String> {
+) -> Result<(), Error> {
     let mut hash = blake3::Hasher::new();
     let mut copied = 0u64;
     let mut buffer = [0; 65536];
@@ -75,7 +89,7 @@ pub fn write(
     blob: &str,
     length: u64,
     input: impl Read,
-) -> Result<(), String> {
+) -> Result<(), Error> {
     let name = file_name(blob)?;
     let dir = directory(root, producer, frame);
     let group = permissions::prepare_directory(root, &dir)?;
@@ -97,10 +111,10 @@ pub fn snapshot(
     frame: &str,
     blob: &str,
     length: u64,
-) -> Result<std::fs::File, String> {
+) -> Result<std::fs::File, Error> {
     let path = directory(root, producer, frame).join(file_name(blob)?);
     let input =
-        std::fs::File::open(path).map_err(|e| format!("producer bytes unavailable: {e}"))?;
+        std::fs::File::open(path).map_err(error)?;
     let mut file = tempfile::tempfile().map_err(error)?;
     copy_checked(input, &mut file, blob, length)?;
     file.rewind().map_err(error)?;
@@ -118,7 +132,7 @@ pub fn receive(
     total: u64,
     offset: u64,
     data: &[u8],
-) -> Result<bool, String> {
+) -> Result<bool, Error> {
     let name = file_name(blob)?;
     let end = offset
         .checked_add(data.len() as u64)
@@ -129,7 +143,12 @@ pub fn receive(
     let dir = directory(root, producer, frame);
     let _ = permissions::prepare_directory(root, &dir)?;
     sync_directories(root, &dir)?;
-    if let Ok(mut complete) = std::fs::File::open(dir.join(&name)) {
+    let completed = match std::fs::File::open(dir.join(&name)) {
+        Ok(file) => Some(file),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
+        Err(e) => return Err(error(e)),
+    };
+    if let Some(mut complete) = completed {
         if complete.metadata().map_err(error)?.len() != total {
             return Err("received producer bytes have a different length".into());
         }
@@ -185,7 +204,7 @@ pub fn receive(
 
 /// Whether the next `data.len()` bytes of `file` equal `data`, compared
 /// without allocating in proportion to the chunk.
-fn same_bytes(file: &mut std::fs::File, data: &[u8]) -> Result<bool, String> {
+fn same_bytes(file: &mut std::fs::File, data: &[u8]) -> Result<bool, Error> {
     let mut buffer = [0; 65536];
     let mut at = 0;
     while at < data.len() {
@@ -201,7 +220,7 @@ fn same_bytes(file: &mut std::fs::File, data: &[u8]) -> Result<bool, String> {
 
 /// Remove `frame`'s directory and the bytes in it. A file that is not named
 /// by a hash is left in place, and the directory with it.
-pub fn discard(root: &Path, producer: &str, frame: &str) -> Result<(), String> {
+pub fn discard(root: &Path, producer: &str, frame: &str) -> Result<(), Error> {
     let dir = directory(root, producer, frame);
     let entries = match std::fs::read_dir(&dir) {
         Ok(entries) => entries,
@@ -234,13 +253,13 @@ pub fn discard(root: &Path, producer: &str, frame: &str) -> Result<(), String> {
     sync_directory(dir.parent().expect("frame directory has a parent"))
 }
 
-fn sync_directory(dir: &Path) -> Result<(), String> {
+fn sync_directory(dir: &Path) -> Result<(), Error> {
     std::fs::File::open(dir)
         .and_then(|f| f.sync_all())
         .map_err(error)
 }
 
-fn sync_directories(root: &Path, leaf: &Path) -> Result<(), String> {
+fn sync_directories(root: &Path, leaf: &Path) -> Result<(), Error> {
     let mut at = leaf;
     loop {
         sync_directory(at)?;

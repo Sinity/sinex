@@ -39,6 +39,7 @@ impl Default for Rotation {
 
 /// The capture side: appends received lines to the current segment.
 pub struct SpoolWriter {
+    health: Option<super::spool_health::Counter>,
     dir: PathBuf,
     rotation: Rotation,
     index: u64,
@@ -112,6 +113,7 @@ impl SpoolWriter {
                 Duration::from_millis(250),
             ),
             dropped: 0,
+            health: super::spool_health::counter(&dir),
             dir,
             rotation,
             index,
@@ -133,7 +135,9 @@ impl SpoolWriter {
             self.rotate()?;
         }
         let bytes = frame(received, line);
+        let mut health = self.health.as_ref().map(|counter| counter.lock().unwrap());
         self.file.write_all(&bytes)?;
+        if let Some(health) = &mut health { health.captured_line(self.index, bytes.len() as u64); }
         self.written += bytes.len() as u64;
         self.unsynced += 1;
         Ok(())

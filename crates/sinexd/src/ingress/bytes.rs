@@ -35,7 +35,7 @@ impl Ingest {
         .await
         .map_err(|e| Check::Unavailable(e.to_string()))?
         .map(drop)
-        .map_err(Check::Refused)
+        .map_err(check_bytes)
     }
 
     /// The frame a large frame stands for, read from its frame directory.
@@ -56,9 +56,13 @@ impl Ingest {
         let producer = producer.to_owned();
         let inner = tokio::task::spawn_blocking(move || {
             let file = frame_bytes::snapshot(&root, &producer, &name, &blob, length)
-                .map_err(Check::Refused)?;
+                .map_err(check_bytes)?;
             serde_json::from_reader::<_, Ingress>(std::io::BufReader::new(file))
-                .map_err(|e| Check::Refused(format!("large-frame bytes are not a frame: {e}")))
+                .map_err(|e| {
+                    if e.is_io() { Check::Unavailable(e.to_string()) } else {
+                        Check::Refused(format!("large-frame bytes are not a frame: {e}"))
+                    }
+                })
         })
         .await
         .map_err(|e| Check::Unavailable(e.to_string()))??;
@@ -94,11 +98,8 @@ impl Ingest {
             material.length,
         );
         tokio::task::spawn_blocking(move || {
-            let file = frame_bytes::snapshot(&root, &producer, &frame, &blob, length).map_err(|e| {
-                Check::Refused(format!(
-                    "the bytes {blob} are neither in the content store nor in this frame's directory: {e}"
-                ))
-            })?;
+            let file = frame_bytes::snapshot(&root, &producer, &frame, &blob, length)
+                .map_err(check_bytes)?;
             let stored = blobs
                 .put_seekable(std::io::BufReader::new(file))
                 .map_err(|e| Check::Unavailable(e.to_string()))?;
@@ -133,5 +134,12 @@ impl Ingest {
         if let Err(error) = frame_bytes::discard(self.blobs.root(), producer, frame) {
             eprintln!("sinexd: removing the directory of frame {frame} from {producer}: {error}");
         }
+    }
+}
+
+fn check_bytes(error: frame_bytes::Error) -> Check {
+    match error {
+        frame_bytes::Error::Invalid(reason) => Check::Refused(reason),
+        frame_bytes::Error::Storage(reason) => Check::Unavailable(reason),
     }
 }

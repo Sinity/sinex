@@ -177,18 +177,18 @@ The live producers start capture before connecting to NATS. Connection and
 publishing failures retry with exponential delays from one to 30 seconds while
 capture keeps writing. Each acknowledged frame is removed from the durable
 pending batch before another is sent. Recorded invalid-frame refusals are
-skipped; a refused material also skips the events that cite it. Unrecorded
+skipped; a refused material also skips the events that cite it. Refused frames and their bytes are kept under the producer state and frame directories for inspection. Unrecorded
 refusals and failures to upload chunks remain pending for retry. The writer
 keeps temporary database and storage failures separate from invalid content,
 so the ingress leaves those frames pending rather than recording refusals.
-Capture source failures also restart independently of publishing. Unwritable
+Each pass publishes at most one material per binding, in round-robin order. Capture source failures also restart independently of publishing. Unwritable
 local storage and undecodable state stop production because reconnecting cannot
 repair them.
 
-Every two seconds the producer writes `positions/health.json` in its state
+The producer counts existing spools once at startup. Capture writes and acknowledged batches then update running counters without rereading spools. Every two seconds a blocking worker writes `health.json` in its state
 directory, independently of publishing. It reports the observation time and
 unpublished captured bytes and records for each spool, plus the number of
-prepared transport frames awaiting acknowledgment. Media bytes include the
+prepared transport frames awaiting acknowledgment. `SINEX_CAPTURE_STATE` supplies the module-configured session state path. Media bytes include the
 completed data file and its sidecar. `sinexctl status` includes
 the local session report, including when the daemon is unreachable or refuses
 the status request;
