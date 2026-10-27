@@ -5,6 +5,7 @@ let
   evaluate = extra: (self.inputs.nixpkgs.lib.nixosSystem {
     system = pkgs.stdenv.hostPlatform.system;
     modules = [ self.nixosModules.default ({ ... }: {
+      nixpkgs.pkgs = pkgs;
       boot.loader.grub.enable = false;
       fileSystems."/" = { device = "/dev/vda"; fsType = "ext4"; };
       system.stateVersion = "26.05";
@@ -23,7 +24,7 @@ let
       exclude."desktop.clipboard".reason = "Synthetic operator exclusion";
       sources."terminal.zsh-history".paths = [ "/host-declared/history" ];
       discovery = {
-        subjectRoots.projects = [ "/subjects/project" ];
+        inputRoots.projects = [ "/subjects/project" ];
         inputs.spotify = [ "/exports/current" ];
         environment.ZSH_HISTFILE = "/host-declared/history";
       };
@@ -33,6 +34,7 @@ let
   plan = builtins.fromJSON config.environment.etc."sinex/sources.json".text;
   fails = extra: !(builtins.tryEval (evaluate extra).system.build.toplevel.drvPath).success;
   tests = [
+    (builtins.tryEval (evaluate { }).system.build.toplevel.drvPath).success
     (plan.exclude."desktop.clipboard".reason == "Synthetic operator exclusion")
     (plan.exclude."terminal.atuin-history" == null)
     (!(plan.sources."terminal.atuin-history" ? enable))
