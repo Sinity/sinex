@@ -21,7 +21,7 @@ impl Compiler<'_> {
                 let mut raw = SqlFragment::text(Self::template(cols, "({t}.payload #> "));
                 raw.param(V::String(Some(text_array(path))))
                     .push("::text[])");
-                Ok((Self::typed_json(raw, *ty), Kind::Typed(*ty)))
+                Ok((Self::typed_json(raw, *ty), if *ty == FieldType::Json { Kind::Json } else { Kind::Typed(*ty) }))
             }
             (Cols::Base { .. }, FieldRef::Group(name)) => Err(invalid(format!(
                 "`{name}` names a group column outside a grouping"
@@ -37,7 +37,7 @@ impl Compiler<'_> {
             )),
             (Cols::Named { r, .. }, FieldRef::TypedPayload { ty, .. }) => Ok((
                 SqlFragment::text(format!("{r}.{}", quote(&column_name(f)))),
-                Kind::Typed(*ty),
+                if *ty == FieldType::Json { Kind::Json } else { Kind::Typed(*ty) },
             )),
         }
     }
@@ -50,6 +50,10 @@ impl Compiler<'_> {
                 .push(") = 'array' THEN ARRAY(SELECT jsonb_array_elements_text(")
                 .append(raw)
                 .push(")) END)");
+            return out;
+        }
+        if ty == FieldType::Time {
+            out.push("core.payload_time(").append(raw).push(" #>> '{}')");
             return out;
         }
         let (kind, cast) = match ty {
@@ -132,6 +136,38 @@ impl Compiler<'_> {
         }
     }
 
+    /// A payload JSON value read as the type of `v`.
+    pub(super) fn json_as(j: SqlFragment, v: &Value) -> SqlFragment {
+        let mut out = SqlFragment::new();
+        match v {
+            Value::Integer(_) | Value::Number(_) => {
+                out.push("(CASE WHEN jsonb_typeof(")
+                    .append(j.clone())
+                    .push(") = 'number' THEN (")
+                    .append(j)
+                    .push(" #>> '{}')::numeric END)");
+            }
+            Value::Bool(_) => {
+                out.push("(CASE WHEN jsonb_typeof(")
+                    .append(j.clone())
+                    .push(") = 'boolean' THEN (")
+                    .append(j)
+                    .push(" #>> '{}')::boolean END)");
+            }
+            Value::Time(_) => {
+                out.push("core.payload_time(").append(j).push(" #>> '{}')");
+            }
+            _ => {
+                out.push("(CASE WHEN jsonb_typeof(")
+                    .append(j.clone())
+                    .push(")='string' THEN (")
+                    .append(j)
+                    .push(" #>> '{}') END)");
+            }
+        }
+        out
+    }
+
     pub(super) fn compare(
         &self,
         lhs: SqlFragment,
@@ -177,7 +213,7 @@ impl Compiler<'_> {
                 .push(") END)");
             return Ok(out);
         }
-        let l = lhs;
+        let l = if kind == Kind::Json { Self::json_as(lhs, v) } else { lhs };
         let mut out = SqlFragment::text("(");
         match (op, v, kind) {
             (Op::Eq | Op::Ne, Value::Glob(g), _) => {
@@ -317,7 +353,7 @@ impl Compiler<'_> {
             Expr::Exists(o) => {
                 let (l, kind) = self.operand(cols, o)?;
                 let mut f = SqlFragment::text("(");
-                if kind == Kind::Typed(FieldType::Json) {
+                if matches!(kind, Kind::Json | Kind::Typed(FieldType::Json)) {
                     f.append(l.clone())
                         .push(" IS NOT NULL AND jsonb_typeof(")
                         .append(l)

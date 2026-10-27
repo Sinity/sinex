@@ -215,3 +215,29 @@ fn empty_files_and_long_native_names_have_distinct_restorable_tar_members() {
             .collect::<Vec<_>>()
     );
 }
+
+#[devkit::test]
+fn membership_markers_do_not_replace_a_source_directory_with_the_same_name() {
+    let root = tempfile::tempdir().unwrap();
+    std::fs::create_dir(root.path().join(".sinex-membership")).unwrap();
+    std::fs::write(root.path().join(".sinex-membership/0.md"), "source file").unwrap();
+    std::fs::write(root.path().join("gone.md"), "removed file").unwrap();
+    let d = driver(root.path().to_owned(), 1 << 20);
+    let mut state = DirState::default();
+    let first = d.poll(&Value::Null, &mut state).unwrap();
+    let material = first.material.unwrap();
+    let cursor = (material.cursor_at)(usize::MAX).unwrap();
+    std::fs::remove_file(root.path().join("gone.md")).unwrap();
+    std::fs::write(root.path().join(".sinex-membership/0.md"), "changed source file").unwrap();
+    let second = d.poll(&cursor, &mut state).unwrap();
+    let material = second.material.unwrap();
+    assert_eq!(material.manifest.detail("membership_path"), ".sinex-membership_");
+    let Some(StoredBytes::FramedFile(file)) = &material.stored else { panic!() };
+    let mut input = file.try_clone().unwrap();
+    std::io::Seek::rewind(&mut input).unwrap();
+    let mut archive = ::tar::Archive::new(input);
+    let destination = tempfile::tempdir().unwrap();
+    archive.unpack(destination.path()).unwrap();
+    assert_eq!(std::fs::read_to_string(destination.path().join(".sinex-membership/0.md")).unwrap(), "changed source file");
+    assert!(destination.path().join(".sinex-membership_/1").is_file());
+}

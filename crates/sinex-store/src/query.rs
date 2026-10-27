@@ -121,7 +121,7 @@ pub async fn run(
     ctx.catalog = None;
     let requested = match query {
         Some(query) => query.clone(),
-        None => sinex_model::query::bind(text, &ctx)?,
+        None => sinex_model::query::parse(text, &ctx)?,
     };
     let pinned = page
         .cursor

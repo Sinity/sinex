@@ -125,7 +125,7 @@ async fn upgrading_from_version_0_counts_the_stored_events(db: devkit::pg::TestD
     conn.execute("DROP TABLE core.excised_materials")
         .await
         .unwrap();
-    conn.execute("DROP VIEW event_types.operator_mark, event_types.query_saved")
+    conn.execute("DROP VIEW IF EXISTS event_types.operator_mark, event_types.query_saved")
         .await
         .unwrap();
     conn.execute("DELETE FROM registry.event_types WHERE name IN ('operator.mark','query.saved')")
@@ -170,6 +170,7 @@ async fn an_upgrade_waits_for_no_writer(db: devkit::pg::TestDatabase) {
     let mut conn = <sqlx::PgConnection as sqlx::Connection>::connect(&url)
         .await
         .unwrap();
+    crate::test_schema::downgrade(&mut conn).await;
     conn.execute("DROP TABLE core.source_counts").await.unwrap();
     conn.execute("ALTER TABLE core.runs DROP COLUMN events")
         .await
@@ -177,7 +178,7 @@ async fn an_upgrade_waits_for_no_writer(db: devkit::pg::TestDatabase) {
     conn.execute("DROP TABLE core.excised_materials")
         .await
         .unwrap();
-    conn.execute("DROP VIEW event_types.operator_mark, event_types.query_saved")
+    conn.execute("DROP VIEW IF EXISTS event_types.operator_mark, event_types.query_saved")
         .await
         .unwrap();
     conn.execute("DELETE FROM registry.event_types WHERE name IN ('operator.mark','query.saved')")
@@ -218,7 +219,8 @@ async fn upgrading_from_version_3_registers_query_kinds_and_keeps_events(
         .fetch_all(&mut conn)
         .await
         .unwrap();
-    conn.execute("DROP VIEW event_types.operator_mark, event_types.query_saved")
+    crate::test_schema::downgrade(&mut conn).await;
+    conn.execute("DROP VIEW IF EXISTS event_types.operator_mark, event_types.query_saved")
         .await
         .unwrap();
     conn.execute("DELETE FROM registry.event_types WHERE name IN ('operator.mark','query.saved')")

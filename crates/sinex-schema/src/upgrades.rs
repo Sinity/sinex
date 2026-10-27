@@ -75,8 +75,8 @@ fn query_records() -> Vec<String> {
     use sinex_model::event_types::query::{Mark, Saved};
     use sinex_model::EventPayload;
     let literal = |s: &str| format!("'{}'", s.replace('\'', "''"));
-    [("operator.mark", Mark::json_schema(), "location", "ARRAY[]::text[]", "repeat"),
-     ("query.saved", Saved::json_schema(), "fields", "ARRAY['name','by']::text[]", "newer")]
+    [("operator.mark", Mark::json_schema(), "location", "ARRAY[]::text[]", sinex_model::ReplaceRule::SuppressRepeat.as_db()),
+     ("query.saved", Saved::json_schema(), "fields", "ARRAY['name','by']::text[]", sinex_model::ReplaceRule::ReplaceWhenNewer.as_db())]
         .into_iter()
         .map(|(name, schema, key, fields, rule)| format!(
             "INSERT INTO registry.event_types (name,payload_schema,key_kind,key_fields,replace_rule) VALUES ({},{}::jsonb,{}, {}, {})",

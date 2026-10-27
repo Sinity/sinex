@@ -160,6 +160,10 @@ impl DirSnapshot {
         found: BTreeMap<PathBuf, EntryFacts>,
     ) -> Result<Acquired, DriverError> {
         let now = Timestamp::now();
+        let mut membership_path = ".sinex-membership".to_owned();
+        while found.keys().chain(state.files.keys()).any(|path| path.starts_with(&membership_path)) {
+            membership_path.push('_');
+        }
         let failed: Vec<_> = found
             .iter()
             .filter(|(_, facts)| facts.is_err())
@@ -196,6 +200,7 @@ impl DirSnapshot {
                         &mut records,
                         relative,
                         reason,
+                        &membership_path,
                     )?;
                     continue;
                 }
@@ -245,6 +250,7 @@ impl DirSnapshot {
                         &mut records,
                         relative,
                         &reason,
+                        &membership_path,
                     )?;
                     continue;
                 }
@@ -300,7 +306,7 @@ impl DirSnapshot {
                 let marker = removed_marker(&display);
                 let offset = tar::marker(
                     &mut bundle,
-                    &format!(".sinex-membership/{}", members.len()),
+                    &format!("{membership_path}/{}", members.len()),
                     &marker,
                 )?;
                 members.push(json!({
@@ -350,6 +356,7 @@ impl DirSnapshot {
             "host": self.host,
             "media_type": format::MEDIA_TYPE,
             "scan_complete": complete && failed.is_empty(),
+            "membership_path": membership_path,
             "members": members,
             "records": records,
             "read_at_ns": i64::try_from(now.unix_ns()).unwrap_or(i64::MAX),
@@ -451,12 +458,13 @@ fn entry_failure(
     records: &mut Vec<(usize, usize)>,
     path: &Path,
     reason: &str,
+    membership_path: &str,
 ) -> Result<(), DriverError> {
     let display = paths::display(path);
     let marker = json!({"path": display, "read_error": reason}).to_string();
     let offset = tar::marker(
         bundle,
-        &format!(".sinex-membership/{}", members.len()),
+        &format!("{membership_path}/{}", members.len()),
         marker.as_bytes(),
     )?;
     *length = tar::position(bundle)?;

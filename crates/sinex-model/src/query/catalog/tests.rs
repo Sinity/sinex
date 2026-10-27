@@ -1,4 +1,5 @@
 use super::*;
+use crate::query::{Expr, Value};
 use serde_json::json;
 
 fn declaration(schema: Json) -> KindDeclaration {
@@ -113,5 +114,22 @@ fn declared_non_time_fields_refuse_time_operations_before_sql() {
         "events where payload.label - ts_orig > 1h",
     ] {
         assert!(super::super::bind(query, &ctx).is_err(), "{query}");
+    }
+}
+
+#[test]
+fn declared_fields_bind_sort_projection_and_aggregates_through_the_same_schema() {
+    let mut ctx = Context::utc("2026-10-27T15:00:00Z".parse().unwrap());
+    ctx.catalog = Some(QueryCatalog::new([declaration(json!({"type":"object","properties":{
+        "value":{"type":"integer"}, "label":{"type":"string"}
+    }}))]));
+    for text in [
+        "events sort payload.value fields payload.value",
+        "events sum payload.value",
+    ] {
+        assert!(crate::query::bind(text, &ctx).is_ok(), "{text}");
+    }
+    for text in ["events sum payload.label", "events fields payload.missing"] {
+        assert!(crate::query::bind(text, &ctx).is_err(), "{text}");
     }
 }

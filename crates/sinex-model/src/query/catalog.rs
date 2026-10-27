@@ -1,5 +1,5 @@
 //! Owned field descriptions from one immutable declaration snapshot.
-use super::{Context, Expr, FieldRef, Operand, Query, QueryError, Source, Stage, Value};
+use super::{Context, Query, QueryError};
 use crate::{KindDeclaration, KindRef};
 use serde::{Deserialize, Serialize};
 use serde_json::Value as Json;
@@ -76,109 +76,17 @@ impl QueryCatalog {
     }
 
     pub fn bind(&self, query: &mut Query, ctx: &Context) -> Result<(), QueryError> {
-        if let Some(filter) = &mut query.filter {
-            self.expression(filter, ctx)?;
-        }
-        if let Source::RecallLast {
-            filter: Some(filter),
-        } = &mut query.source
-        {
-            self.expression(filter, ctx)?;
-        }
-        for stage in &mut query.stages {
-            match stage {
-                Stage::Where(e) => self.expression(e, ctx)?,
-                Stage::Join(join) => self.bind(&mut join.inner, ctx)?,
-                _ => {}
-            }
-        }
-        Ok(())
+        let mut ctx = ctx.clone();
+        ctx.catalog = Some(self.clone());
+        super::typed::check(query, &ctx)
     }
-
-    fn expression(&self, e: &mut Expr, ctx: &Context) -> Result<(), QueryError> {
-        match e {
-            Expr::And(a, b) | Expr::Or(a, b) => {
-                self.expression(a, ctx)?;
-                self.expression(b, ctx)?;
-            }
-            Expr::Not(e) => self.expression(e, ctx)?,
-            Expr::Compare {
-                lhs: Operand::Field(FieldRef::Payload(path)),
-                rhs,
-                ..
-            } => {
-                if let Some(field) = self.field(path) {
-                    literal(rhs, field, ctx)?;
-                }
-            }
-            _ => {}
-        }
-        Ok(())
-    }
-}
-
-fn literal(value: &mut Value, field: &FieldDescription, ctx: &Context) -> Result<(), QueryError> {
-    if let Value::List(items) = value {
-        for item in items {
-            literal(item, field, ctx)?;
-        }
-        return Ok(());
-    }
-    if field.ty == DataType::Json {
-        return Ok(());
-    }
-    match (&field.ty, &*value) {
-        (DataType::Text, Value::Integer(n)) => *value = Value::Text(n.to_string()),
-        (DataType::Text, Value::Number(n)) => *value = Value::Text(n.to_string()),
-        (DataType::Text, Value::Bool(n)) => *value = Value::Text(n.to_string()),
-        (DataType::Integer, Value::Text(s)) => {
-            *value = Value::Integer(
-                s.parse()
-                    .map_err(|_| QueryError::new("expected an integer"))?,
-            )
-        }
-        (DataType::Number, Value::Text(s)) => {
-            *value = Value::Number(
-                s.parse()
-                    .map_err(|_| QueryError::new("expected a number"))?,
-            )
-        }
-        (DataType::Bool, Value::Text(s)) => {
-            *value = Value::Bool(
-                s.parse()
-                    .map_err(|_| QueryError::new("expected true or false"))?,
-            )
-        }
-        _ => {}
-    }
-    if let (DataType::Time, Value::Text(text)) = (&field.ty, &value) {
-        *value = Value::Time(super::time::instant(ctx, text).ok_or_else(|| {
-            QueryError::new(format!(
-                "payload.{} needs a date-time",
-                field.path.join(".")
-            ))
-        })?);
-    }
-    let good = matches!(
-        (&field.ty, &value),
-        (DataType::Text, Value::Text(_) | Value::Glob(_))
-            | (DataType::Time, Value::Time(_))
-            | (DataType::Integer, Value::Integer(_))
-            | (DataType::Number, Value::Integer(_) | Value::Number(_))
-            | (DataType::Bool, Value::Bool(_))
-            | (DataType::Array(_), _)
-    );
-    if !good {
-        return Err(QueryError::new(format!(
-            "payload.{} has an incompatible value",
-            field.path.join(".")
-        )));
-    }
-    Ok(())
 }
 
 fn merge(a: &mut FieldDescription, b: FieldDescription) {
-    if a.ty != b.ty {
+    if matches!((&a.ty, &b.ty), (DataType::Integer, DataType::Number) | (DataType::Number, DataType::Integer)) {
+        a.ty = DataType::Number;
+        a.values.clear();
+    } else if a.ty != b.ty {
         a.ty = DataType::Json;
         a.values.clear();
     } else if a.values.is_empty() || b.values.is_empty() {

@@ -22,7 +22,7 @@ async fn evidence_keeps_visibility_positions_unknown_times_and_archived_run_reco
         .await
         .unwrap();
     crate::test_schema::downgrade(&mut conn).await;
-    conn.execute("DROP VIEW event_types.operator_mark, event_types.query_saved")
+    conn.execute("DROP VIEW IF EXISTS event_types.operator_mark, event_types.query_saved")
         .await
         .unwrap();
     conn.execute("DELETE FROM registry.event_types WHERE name IN ('operator.mark','query.saved')")

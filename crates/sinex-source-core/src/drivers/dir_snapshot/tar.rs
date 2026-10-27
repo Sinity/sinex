@@ -405,7 +405,7 @@ fn acl(bytes: &[u8]) -> std::io::Result<String> {
         return Err(std::io::Error::other("invalid POSIX access ACL"));
     }
     let mut entries = Vec::new();
-    for entry in bytes[4..].chunks_exact(8) {
+    for entry in bytes[4..].as_chunks::<8>().0 {
         let tag = u16::from_le_bytes(entry[..2].try_into().unwrap());
         let permissions = u16::from_le_bytes(entry[2..4].try_into().unwrap());
         let id = u32::from_le_bytes(entry[4..].try_into().unwrap());

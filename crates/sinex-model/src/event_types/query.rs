@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
 #[serde(deny_unknown_fields)]
-#[event(type = "operator.mark", key = location, replace = repeat, time = at, quality = operator, class = guarded)]
+#[event(type = "operator.mark", version = 2, key = location, replace = repeat, time = at, quality = operator, class = guarded)]
 pub struct Mark {
     pub host: String,
     pub at: Timestamp,
@@ -21,7 +21,7 @@ pub struct Mark {
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
 #[serde(deny_unknown_fields)]
-#[event(type = "query.saved", key = ["name", "by"], replace = newer, time = written_at, quality = intrinsic, class = guarded)]
+#[event(type = "query.saved", version = 2, key = ["name", "by"], replace = newer, time = written_at, quality = intrinsic, class = guarded)]
 pub struct Saved {
     pub name: String,
     pub query: String,

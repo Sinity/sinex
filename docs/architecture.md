@@ -145,8 +145,9 @@ does not know which driver a binding uses.
   material's bytes; nodes hold their offsets, lengths and hashes. The final record's cursor confirms the file facts.
   A metadata change creates a new material even when the file contents stay
   equal. Failure and removal records are membership facts stored under
-  `.sinex-membership/`, with the source path in the manifest, and are excluded
-  when restoring files with GNU tar. A file that cannot be read contributes
+  the manifest's `membership_path` directory (normally `.sinex-membership/`),
+  with the source path in the manifest. This directory is chosen outside the
+  source paths and excluded when restoring files with GNU tar. A file that cannot be read contributes
   a failure when the failure appears or changes and is retried on the next
   poll. A file that changes during capture is skipped and retried. Walk failures
   suppress removals only within the failed path; a walk cut by the part size

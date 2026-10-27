@@ -6,93 +6,39 @@ use std::sync::OnceLock;
 
 #[derive(Clone, Debug)]
 struct PayloadField {
-    event_type: &'static str,
+    event_type: String,
     path: Vec<String>,
     ty: FieldType,
     values: Option<Vec<String>>,
 }
 
-fn fields() -> &'static [PayloadField] {
+fn fields(ctx: Option<&Context>) -> std::borrow::Cow<'static, [PayloadField]> {
+    use super::catalog::{DataType, QueryCatalog};
+    fn described(catalog: &QueryCatalog, event_type: &str) -> Vec<PayloadField> {
+        catalog.fields.values().map(|f| PayloadField {
+            event_type: event_type.to_owned(),
+            path: f.path.clone(),
+            ty: match &f.ty {
+                DataType::Text => FieldType::Text,
+                DataType::Integer => FieldType::Integer,
+                DataType::Number => FieldType::Number,
+                DataType::Bool => FieldType::Bool,
+                DataType::Time => FieldType::Time,
+                DataType::Array(item) if **item == DataType::Text => FieldType::TextList,
+                _ => FieldType::Json,
+            },
+            values: (!f.values.is_empty()).then(|| f.values.iter().filter_map(Json::as_str).map(str::to_owned).collect()),
+        }).collect()
+    }
+    if let Some(catalog) = ctx.and_then(|c| c.catalog.as_ref()) {
+        return std::borrow::Cow::Owned(described(catalog, ""));
+    }
     static FIELDS: OnceLock<Vec<PayloadField>> = OnceLock::new();
-    FIELDS.get_or_init(|| {
-        let mut out = Vec::new();
-        for event in crate::event_types::ALL {
-            let root = (event.json_schema)();
-            collect(
-                &root,
-                &root,
-                event.event_type,
-                &mut Vec::new(),
-                &mut BTreeSet::new(),
-                &mut out,
-            );
-        }
-        out
-    })
-}
-
-fn collect(
-    root: &Json,
-    schema: &Json,
-    event_type: &'static str,
-    path: &mut Vec<String>,
-    refs: &mut BTreeSet<String>,
-    out: &mut Vec<PayloadField>,
-) {
-    if let Some(reference) = schema["$ref"].as_str().and_then(|s| s.strip_prefix('#')) {
-        if refs.insert(reference.into()) {
-            if let Some(target) = root.pointer(reference) {
-                collect(root, target, event_type, path, refs, out);
-            }
-            refs.remove(reference);
-        }
-        return;
-    }
-    for name in ["anyOf", "oneOf", "allOf"] {
-        if let Some(branches) = schema[name].as_array() {
-            for branch in branches {
-                collect(root, branch, event_type, path, refs, out);
-            }
-            return;
-        }
-    }
-    let ty = schema["type"].as_str().or_else(|| {
-        schema["type"]
-            .as_array()?
-            .iter()
-            .filter_map(Json::as_str)
-            .find(|s| *s != "null")
-    });
-    let ty = match ty {
-        Some("integer") => FieldType::Integer,
-        Some("number") => FieldType::Number,
-        Some("boolean") => FieldType::Bool,
-        Some("string") if schema["format"] == "date-time" => FieldType::Time,
-        Some("string") => FieldType::Text,
-        Some("array") if schema["items"]["type"] == "string" => FieldType::TextList,
-        Some("null") | None => return,
-        _ => FieldType::Json,
-    };
-    if !path.is_empty() {
-        out.push(PayloadField {
-            event_type,
-            path: path.clone(),
-            ty,
-            values: schema["enum"].as_array().map(|vs| {
-                vs.iter()
-                    .filter_map(Json::as_str)
-                    .map(str::to_owned)
-                    .collect()
-            }),
-        });
-    }
-    if let Some(properties) = schema["properties"].as_object() {
-        for (name, field) in properties {
-            path.push(name.clone());
-            collect(root, field, event_type, path, refs, out);
-            path.pop();
-        }
-    }
+    std::borrow::Cow::Borrowed(FIELDS.get_or_init(|| {
+        crate::event_types::declarations().iter().flat_map(|d| {
+            described(&QueryCatalog::new([d.clone()]), &d.kind.name)
+        }).collect()
+    }))
 }
 
 /// A field name offered by every query surface, with its schema type.
@@ -162,9 +108,9 @@ pub fn complete(text: &str) -> Vec<Completion> {
         );
     }
     if table.is_events() {
-        for field in fields()
+        for field in fields(None)
             .iter()
-            .filter(|f| kinds.as_ref().is_none_or(|ks| ks.contains(f.event_type)))
+            .filter(|f| (f.event_type.is_empty() || kinds.as_ref().is_none_or(|ks| ks.contains(&f.event_type))))
         {
             let name = format!("payload.{}", field.path.join("."));
             let field_type = format!("{:?}", field.ty).to_lowercase();
@@ -254,12 +200,16 @@ fn selected(e: &Expr) -> Option<BTreeSet<String>> {
     }
 }
 
-fn field_type(path: &[String], kinds: &Option<BTreeSet<String>>) -> Result<FieldType, QueryError> {
-    let mut types = fields()
+fn field_type(path: &[String], kinds: &Option<BTreeSet<String>>, ctx: &Context) -> Result<FieldType, QueryError> {
+    let described = fields(Some(ctx));
+    let mut types = described
         .iter()
-        .filter(|f| f.path == path && kinds.as_ref().is_none_or(|ks| ks.contains(f.event_type)))
+        .filter(|f| f.path == path && (f.event_type.is_empty() || kinds.as_ref().is_none_or(|ks| ks.contains(&f.event_type))))
         .map(|f| f.ty);
     let Some(mut ty) = types.next() else {
+        if ctx.catalog.as_ref().is_some_and(|c| c.schemaless) {
+            return Ok(FieldType::Json);
+        }
         return Err(QueryError::new(format!(
             "payload.{} is not declared by the selected event schemas",
             path.join(".")
@@ -281,20 +231,20 @@ fn field_type(path: &[String], kinds: &Option<BTreeSet<String>>) -> Result<Field
     Ok(ty)
 }
 
-fn field(f: &mut FieldRef, kinds: &Option<BTreeSet<String>>) -> Result<(), QueryError> {
-    if let FieldRef::Payload(path) = f {
+fn field(f: &mut FieldRef, kinds: &Option<BTreeSet<String>>, ctx: &Context) -> Result<(), QueryError> {
+    if let FieldRef::Payload(path) | FieldRef::TypedPayload { path, .. } = f {
         *f = FieldRef::TypedPayload {
-            ty: field_type(path, kinds)?,
+            ty: field_type(path, kinds, ctx)?,
             path: path.clone(),
         };
     }
     Ok(())
 }
-fn operand(o: &mut Operand, kinds: &Option<BTreeSet<String>>) -> Result<(), QueryError> {
+fn operand(o: &mut Operand, kinds: &Option<BTreeSet<String>>, ctx: &Context) -> Result<(), QueryError> {
     match o {
-        Operand::Field(f) => field(f, kinds),
+        Operand::Field(f) => field(f, kinds, ctx),
         Operand::TimeFn(_, f) => {
-            field(f, kinds)?;
+            field(f, kinds, ctx)?;
             if let FieldRef::TypedPayload { ty, .. } = f
                 && *ty != FieldType::Time
             {
@@ -318,6 +268,9 @@ fn validate_value(v: &mut Value, ty: FieldType, ctx: &Context) -> Result<(), Que
             time::instant(ctx, text)
                 .ok_or_else(|| QueryError::new("a payload time requires an absolute timestamp"))?,
         );
+    }
+    if ty == FieldType::Json {
+        return Ok(());
     }
     let valid = matches!(
         (ty, &*v),
@@ -353,7 +306,7 @@ fn expr(e: &mut Expr, kinds: &Option<BTreeSet<String>>, ctx: &Context) -> Result
         }
         Expr::Not(e) => expr(e, kinds, ctx)?,
         Expr::Compare { lhs, op, rhs } => {
-            operand(lhs, kinds)?;
+            operand(lhs, kinds, ctx)?;
             if let Operand::Field(FieldRef::TypedPayload { ty, .. }) = lhs {
                 if matches!(op, Op::Contains | Op::Prefix)
                     && !matches!(ty, FieldType::Text | FieldType::TextList)
@@ -367,11 +320,12 @@ fn expr(e: &mut Expr, kinds: &Option<BTreeSet<String>>, ctx: &Context) -> Result
                 }
                 validate_value(rhs, *ty, ctx)?;
                 if let Operand::Field(FieldRef::TypedPayload { path, .. }) = lhs {
-                    let definitions: Vec<_> = fields()
+                    let described = fields(Some(ctx));
+                    let definitions: Vec<_> = described
                         .iter()
                         .filter(|f| {
                             f.path == *path
-                                && kinds.as_ref().is_none_or(|ks| ks.contains(f.event_type))
+                                && (f.event_type.is_empty() || kinds.as_ref().is_none_or(|ks| ks.contains(&f.event_type)))
                         })
                         .collect();
                     if !definitions.is_empty() && definitions.iter().all(|f| f.values.is_some()) {
@@ -403,17 +357,20 @@ fn expr(e: &mut Expr, kinds: &Option<BTreeSet<String>>, ctx: &Context) -> Result
             }
         }
         Expr::Within { lhs, .. } => {
-            operand(lhs, kinds)?;
+            operand(lhs, kinds, ctx)?;
             if let Operand::Field(FieldRef::TypedPayload { ty, .. }) = lhs
                 && *ty != FieldType::Time
             {
                 return Err(QueryError::new("in requires a time field"));
             }
         }
-        Expr::Exists(o) => operand(o, kinds)?,
+        Expr::Exists(o) => operand(o, kinds, ctx)?,
         Expr::TimeDiff { a, b, .. } => {
-            field(a, kinds)?;
-            field(b, kinds)?;
+            field(a, kinds, ctx)?;
+            field(b, kinds, ctx)?;
+            if [a, b].iter().any(|f| matches!(f, FieldRef::TypedPayload { ty, .. } if *ty != FieldType::Time)) {
+                return Err(QueryError::new("time differences require time fields"));
+            }
         }
         Expr::Words(_) | Expr::Overlaps { .. } => {}
     }
@@ -457,23 +414,23 @@ pub(super) fn check(q: &mut Query, ctx: &Context) -> Result<(), QueryError> {
             Stage::Join(j) => check(&mut j.inner, ctx)?,
             Stage::Fields(fs) => {
                 for f in fs {
-                    field(f, &kinds)?;
+                    field(f, &kinds, ctx)?;
                 }
             }
             Stage::Sort(keys) => {
                 for k in keys {
                     if let SortBy::Operand(o) = &mut k.key {
-                        operand(o, &kinds)?;
+                        operand(o, &kinds, ctx)?;
                     }
                 }
             }
             Stage::Group(g) => {
                 for k in &mut g.keys {
-                    operand(k, &kinds)?;
+                    operand(k, &kinds, ctx)?;
                 }
                 for a in &mut g.aggregates {
                     if let Some(f) = &mut a.field {
-                        field(f, &kinds)?;
+                        field(f, &kinds, ctx)?;
                         let ty = match f {
                             FieldRef::TypedPayload { ty, .. } => Some(*ty),
                             FieldRef::Field(f) => Some(f.ty),

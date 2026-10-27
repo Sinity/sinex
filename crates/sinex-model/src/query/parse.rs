@@ -87,6 +87,18 @@ pub(super) fn bind_tokens(
     ctx: &Context,
     end: usize,
 ) -> Result<Query, QueryError> {
+    let mut query = parse_tokens(toks, ctx, end)?;
+    super::typed::check(&mut query, ctx)?;
+    super::fill::bind(&mut query, ctx)?;
+    Ok(query)
+}
+
+/// Parse the question before its stored kind declarations have been selected.
+pub fn parse(text: &str, ctx: &Context) -> Result<Query, QueryError> {
+    parse_tokens(tokens(text)?, ctx, text.len())
+}
+
+fn parse_tokens(toks: Vec<Token>, ctx: &Context, end: usize) -> Result<Query, QueryError> {
     if toks.is_empty() {
         return Err(QueryError::new("empty query"));
     }
@@ -96,15 +108,13 @@ pub(super) fn bind_tokens(
         ctx,
         end,
     };
-    let mut query = p.query(false)?;
+    let query = p.query(false)?;
     if let Some(t) = p.peek() {
         return Err(QueryError::at(
             t.at,
             format!("unexpected `{}`; expected a clause or the end", t.text),
         ));
     }
-    super::typed::check(&mut query, ctx)?;
-    super::fill::bind(&mut query, ctx)?;
     Ok(query)
 }
 

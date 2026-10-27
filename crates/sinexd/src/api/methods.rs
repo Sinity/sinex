@@ -552,11 +552,15 @@ impl Api {
         } else {
             std::collections::BTreeMap::new()
         };
-        let bound = match query::saved::bind_saved(text, &ctx, &definitions) {
-            Ok(q) => q,
-            Err(e) => return query_refusal(text, e),
+        let bound = if query::saved::reference_name(text).is_some() {
+            match query::saved::bind_saved(text, &ctx, &definitions) {
+                Ok(q) => Some(q),
+                Err(e) => return query_refusal(text, e),
+            }
+        } else {
+            None
         };
-        match sinex_store::query::run(&mut conn, text, Some(&bound), &ctx, &page).await {
+        match sinex_store::query::run(&mut conn, text, bound.as_ref(), &ctx, &page).await {
             Ok(answer) => data(answer_json(answer)),
             Err(sinex_store::Error::Query(error)) => query_refusal(text, error),
             Err(e) => refused(e.to_string()),
