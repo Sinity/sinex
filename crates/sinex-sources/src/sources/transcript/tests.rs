@@ -286,18 +286,38 @@ fn directory_imports_discover_one_path_identity_for_each_file() {
     let temp = tempfile::tempdir().unwrap();
     std::fs::create_dir(temp.path().join("nested")).unwrap();
     std::fs::write(temp.path().join("a.json"), b"[]").unwrap();
-    std::fs::write(temp.path().join("nested/b.json"), br#"{"segments":[],"model":"example"}"#).unwrap();
+    std::fs::write(
+        temp.path().join("nested/b.json"),
+        br#"{"segments":[],"model":"example"}"#,
+    )
+    .unwrap();
     std::fs::write(temp.path().join("c.txt"), b"text").unwrap();
-    let mut context = DiscoveryContext {host: "example".into(), ..Default::default()};
-    context.inputs.insert("transcripts".into(), vec![temp.path().into()]);
+    let mut context = DiscoveryContext {
+        host: "example".into(),
+        ..Default::default()
+    };
+    context
+        .inputs
+        .insert("transcripts".into(), vec![temp.path().into()]);
     let found = crate::discovery::discover(&context).unwrap();
-    let bindings: Vec<_> = found.iter().filter(|input| input.source == JSON.name).flat_map(|input| &input.bindings).collect();
+    let bindings: Vec<_> = found
+        .iter()
+        .filter(|input| input.source == JSON.name)
+        .flat_map(|input| &input.bindings)
+        .collect();
     assert_eq!(bindings.len(), 3);
     for parser in [JSON.parser, WHISPER.parser, TEXT.parser] {
-        assert_eq!(bindings.iter().filter(|binding| binding.parser == parser).count(), 1);
+        assert_eq!(
+            bindings
+                .iter()
+                .filter(|binding| binding.parser == parser)
+                .count(),
+            1
+        );
     }
     assert!(bindings.iter().all(|binding| binding.input.is_absolute()));
-    let names: std::collections::BTreeSet<_> = bindings.iter().map(|binding| &binding.name).collect();
+    let names: std::collections::BTreeSet<_> =
+        bindings.iter().map(|binding| &binding.name).collect();
     assert_eq!(names.len(), 3);
 }
 

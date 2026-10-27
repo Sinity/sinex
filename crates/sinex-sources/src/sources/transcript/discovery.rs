@@ -32,33 +32,44 @@ pub fn discover(format: &InputFormat, context: &DiscoveryContext) -> Vec<Discove
     let mut found = Vec::new();
     for mut input in crate::discovery::discover_format(format, context) {
         let selected = input.input.as_ref().is_some_and(|path| {
-            context.inputs.get(format.name).is_some_and(|paths| paths.contains(path))
-                || context.sources.get(&input.source).is_some_and(|configuration| {
-                    configuration.format.as_deref() == Some(format.name)
-                        && configuration.paths.iter().any(|configured| Path::new(configured) == path.as_path())
-                })
+            context
+                .inputs
+                .get(format.name)
+                .is_some_and(|paths| paths.contains(path))
+                || context
+                    .sources
+                    .get(&input.source)
+                    .is_some_and(|configuration| {
+                        configuration.format.as_deref() == Some(format.name)
+                            && configuration
+                                .paths
+                                .iter()
+                                .any(|configured| Path::new(configured) == path.as_path())
+                    })
         });
-        let before = found.len();
+        let mut bindings = Vec::new();
+        let mut failures = Vec::new();
         for binding in std::mem::take(&mut input.bindings) {
-            let mut file = input.clone();
-            file.input = Some(binding.input.clone());
-            file.settings = binding.settings.clone();
             if !selected {
                 match matches(format.name, &binding.input) {
                     Ok(true) => {},
                     Ok(false) => continue,
                     Err(reason) => {
-                        file.availability = sinex_source_core::discovery::Availability::Unavailable;
-                        file.reason = Some(reason);
-                        found.push(file);
+                        let mut failed = input.clone();
+                        failed.input = Some(binding.input.clone());
+                        failed.settings = binding.settings.clone();
+                        failed.availability = sinex_source_core::discovery::Availability::Unavailable;
+                        failed.reason = Some(reason);
+                        failures.push(failed);
                         continue;
                     }
                 }
             }
-            file.bindings.push(binding);
-            found.push(file);
+            bindings.push(binding);
         }
-        if found.len() == before { found.push(input); }
+        input.bindings = bindings;
+        found.push(input);
+        found.extend(failures);
     }
     found
 }
