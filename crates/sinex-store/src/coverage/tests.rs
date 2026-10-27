@@ -18,18 +18,9 @@ async fn evidence_keeps_visibility_positions_unknown_times_and_archived_run_reco
             .bind(sequence).execute(&mut conn).await.unwrap();
     }
     let before = sinex_schema::catalog(&mut conn).await.unwrap();
-    // Reconstruct the preceding schema's indexes over populated events.
-    for schema in ["core", "telemetry"] {
-        conn.execute(format!("DROP INDEX {schema}.events_source_ts_orig_idx").as_str())
-            .await
-            .unwrap();
-        conn.execute(
-            format!("CREATE INDEX events_source_ts_orig_idx ON {schema}.events (source, ts_orig)")
-                .as_str(),
-        )
+    conn.execute("DROP INDEX core.events_coverage")
         .await
         .unwrap();
-    }
     conn.execute("UPDATE sinex_schema.applied SET version = 2")
         .await
         .unwrap();
@@ -63,12 +54,12 @@ async fn evidence_keeps_visibility_positions_unknown_times_and_archived_run_reco
 }
 
 #[devkit::test]
-async fn coverage_index_contains_every_event_column_the_queries_read(db: devkit::pg::TestDatabase) {
+async fn coverage_run_index_contains_the_position_filter(db: devkit::pg::TestDatabase) {
     let mut conn = PgConnection::connect(&db.url(None)).await.unwrap();
-    let definition: String = sqlx::query_scalar("SELECT indexdef FROM pg_indexes WHERE schemaname = 'core' AND indexname = 'events_source_ts_orig_idx'")
+    let definition: String = sqlx::query_scalar("SELECT indexdef FROM pg_indexes WHERE schemaname = 'core' AND indexname = 'events_coverage'")
         .fetch_one(&mut conn).await.unwrap();
     assert!(
-        definition.contains("INCLUDE (id, run_id, commit_seq)"),
+        definition.contains("(source, run_id, ts_orig) INCLUDE (commit_seq)"),
         "{definition}"
     );
 }
@@ -82,19 +73,35 @@ async fn measure_coverage_scan(db: devkit::pg::TestDatabase) {
         .unwrap();
     conn.execute("INSERT INTO core.events (id, event_type, source, run_id, material_id, anchor, ts_orig, ts_quality, commit_seq, payload, reading_order, record_hash) SELECT uuidv7(), 'command.executed', 'test.source', (SELECT id FROM core.runs LIMIT 1), uuidv7(), 0, to_timestamp(n), 'intrinsic', n, '{}', 0, decode(repeat('00',32),'hex') FROM generate_series(1,100000) n").await.unwrap();
     conn.execute("VACUUM ANALYZE core.events").await.unwrap();
-    let old = "SELECT min(e.ts_orig), max(e.ts_orig) FROM core.events e WHERE source = 'test.source' AND e.ts_orig IS NOT NULL AND e.commit_seq <= 100000 AND NOT audit.is_archived_at(e.id,100000)";
-    let bounds = "SELECT (SELECT e.ts_orig FROM core.events e WHERE source = 'test.source' AND e.ts_orig IS NOT NULL AND e.commit_seq <= 100000 AND NOT audit.is_archived_at(e.id,100000) ORDER BY ts_orig LIMIT 1), (SELECT e.ts_orig FROM core.events e WHERE source = 'test.source' AND e.ts_orig IS NOT NULL AND e.commit_seq <= 100000 AND NOT audit.is_archived_at(e.id,100000) ORDER BY ts_orig DESC LIMIT 1)";
-    let runs = "SELECT r.started_at, r.ended_at, max(e.ts_orig) FROM core.events e JOIN core.runs r ON r.id = e.run_id WHERE e.source = 'test.source' AND e.commit_seq <= 100000 GROUP BY r.id, r.started_at, r.ended_at ORDER BY r.started_at";
-    for (name, query) in [
-        ("old bounds", old),
-        ("new bounds", bounds),
-        ("run aggregate", runs),
-    ] {
+    let old = "SELECT r.started_at, r.ended_at, max(e.ts_orig) FROM core.events e JOIN core.runs r ON r.id = e.run_id WHERE e.source = 'test.source' AND e.commit_seq <= 100000 GROUP BY r.id, r.started_at, r.ended_at ORDER BY r.started_at";
+    let new = "SELECT r.started_at, r.ended_at, (SELECT max(e.ts_orig) FROM core.events e WHERE e.source = 'test.source' AND e.run_id = r.id AND e.commit_seq <= 100000) AS last_record FROM core.runs r JOIN LATERAL (SELECT 1 FROM core.events e WHERE e.source = 'test.source' AND e.run_id = r.id AND e.commit_seq <= 100000 ORDER BY e.ts_orig DESC LIMIT 1) recorded ON true ORDER BY r.started_at";
+    for (name, query) in [("old runs", old), ("new runs", new)] {
         let plan: serde_json::Value =
             sqlx::query_scalar(&format!("EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) {query}"))
                 .fetch_one(&mut conn)
                 .await
                 .unwrap();
         eprintln!("{name}: {plan}");
+        if name == "new runs" {
+            assert_bounded(&plan[0]["Plan"]);
+        }
+    }
+    let evidence = source_evidence(&mut conn, "test.source", 100000)
+        .await
+        .unwrap();
+    assert_eq!(evidence.runs.len(), 1);
+    assert_eq!(
+        evidence.runs[0].last_record.unwrap().unix_timestamp(),
+        100000
+    );
+}
+
+fn assert_bounded(plan: &serde_json::Value) {
+    // The fixture has one run. Every event probe must stop after one row.
+    assert!(plan["Actual Rows"].as_f64().unwrap_or(0.0) <= 1.0, "{plan}");
+    if let Some(children) = plan["Plans"].as_array() {
+        for child in children {
+            assert_bounded(child);
+        }
     }
 }

@@ -27,25 +27,27 @@ pub async fn source_evidence(
     as_of: i64,
 ) -> Result<SourceEvidence> {
     let bounds = sqlx::query!(
-        r#"SELECT
-          (SELECT e.ts_orig FROM core.events e
+        r#"SELECT min(e.ts_orig) AS first, max(e.ts_orig) AS last
+           FROM core.events e
            WHERE e.source = $1 AND e.ts_orig IS NOT NULL AND e.commit_seq <= $2
-             AND NOT audit.is_archived_at(e.id, $2)
-           ORDER BY e.ts_orig LIMIT 1) AS first,
-          (SELECT e.ts_orig FROM core.events e
-           WHERE e.source = $1 AND e.ts_orig IS NOT NULL AND e.commit_seq <= $2
-             AND NOT audit.is_archived_at(e.id, $2)
-           ORDER BY e.ts_orig DESC LIMIT 1) AS last"#,
+             AND NOT audit.is_archived_at(e.id, $2)"#,
         source,
         as_of,
     )
     .fetch_one(&mut *conn)
     .await?;
+    // The lateral limit keeps one membership probe per run, including runs
+    // whose records all have unknown times, instead of joining every event.
     let runs = sqlx::query!(
-        r#"SELECT r.started_at, r.ended_at, max(e.ts_orig) AS last_record
-           FROM core.events e JOIN core.runs r ON r.id = e.run_id
-           WHERE e.source = $1 AND e.commit_seq <= $2
-           GROUP BY r.id, r.started_at, r.ended_at
+        r#"SELECT r.started_at, r.ended_at,
+             (SELECT max(e.ts_orig) FROM core.events e
+              WHERE e.source = $1 AND e.run_id = r.id AND e.commit_seq <= $2) AS last_record
+           FROM core.runs r
+           JOIN LATERAL (
+             SELECT 1 FROM core.events e
+             WHERE e.source = $1 AND e.run_id = r.id AND e.commit_seq <= $2
+             ORDER BY e.ts_orig DESC LIMIT 1
+           ) recorded ON true
            ORDER BY r.started_at"#,
         source,
         as_of,
