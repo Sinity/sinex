@@ -7,7 +7,7 @@ use crate::writer::WriterHandle;
 use sinex_source_core::{Binding, InputFormat, Settings};
 use sinex_sources::sources;
 use sinex_store::{Blobs, runs};
-use sqlx::PgConnection;
+use sqlx::{Connection, PgConnection};
 use std::collections::BTreeMap;
 use std::time::Duration;
 use tokio::sync::watch;
@@ -51,10 +51,22 @@ fn emitted(config: &Config) -> Result<Vec<&'static str>, String> {
 
 /// A saved name belongs to the source and input, independent of which current
 /// parser discovers it. Reconciliation compares only the proposed parser.
-async fn saved(conn: &mut PgConnection, host: &str) -> Result<Vec<Binding>, String> {
-    let rows = sinex_store::bindings::all(conn)
-        .await
-        .map_err(|error| error.to_string())?;
+async fn saved(
+    conn: &mut PgConnection,
+    database: &str,
+    host: &str,
+) -> Result<Vec<Binding>, String> {
+    let rows = match sinex_store::bindings::all(conn).await {
+        Ok(rows) => rows,
+        Err(_) => {
+            *conn = PgConnection::connect(database)
+                .await
+                .map_err(|error| error.to_string())?;
+            sinex_store::bindings::all(conn)
+                .await
+                .map_err(|error| error.to_string())?
+        }
+    };
     let mut out = Vec::new();
     for row in rows {
         let settings: Settings = match serde_json::from_value(row.settings) {
@@ -190,7 +202,7 @@ const PLAN_EVERY: Duration = Duration::from_secs(60);
 /// Read the bindings `config` enables, in rounds every `interval`, until
 /// `stop`.
 pub(crate) async fn run(
-    mut read_conn: PgConnection,
+    connection: (PgConnection, String),
     blobs: Blobs,
     writer: WriterHandle,
     host: String,
@@ -198,6 +210,7 @@ pub(crate) async fn run(
     interval: Duration,
     mut stop: watch::Receiver<bool>,
 ) -> Result<(), String> {
+    let (mut read_conn, database) = connection;
     let emits = emitted(&config)?;
     let manifest = runs::Manifest {
         name: "sinexd bindings",
@@ -217,7 +230,7 @@ pub(crate) async fn run(
         if !private.on() {
             if planned_at.is_none_or(|at| at.elapsed() >= PLAN_EVERY) {
                 let before = bindings.readers.len();
-                match saved(&mut read_conn, &host).await {
+                match saved(&mut read_conn, &database, &host).await {
                     Ok(saved) => {
                         bindings.said.remove("saved");
                         bindings.extend(&config, &host, &saved);
