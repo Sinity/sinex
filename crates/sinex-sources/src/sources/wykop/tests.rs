@@ -3,7 +3,11 @@ use serde_json::json;
 
 fn one(v: Value) -> WykopEvent {
     WykopParser
-        .parse(v.as_object().unwrap(), &(), &crate::RecordContext::none())
+        .parse(
+            v.as_object().unwrap(),
+            &(),
+            &sinex_source_core::RecordContext::none(),
+        )
         .unwrap()
         .0
         .remove(0)
@@ -35,7 +39,7 @@ fn activity_feed_repeats_own_posts_and_adds_down_votes_and_favourites() {
             .as_object()
             .unwrap(),
             &(),
-            &crate::RecordContext::none(),
+            &sinex_source_core::RecordContext::none(),
         )
         .unwrap()
         .0;
@@ -54,7 +58,7 @@ fn activity_feed_repeats_own_posts_and_adds_down_votes_and_favourites() {
             .as_object()
             .unwrap(),
             &(),
-            &crate::RecordContext::none(),
+            &sinex_source_core::RecordContext::none(),
         )
         .unwrap()
         .0;
@@ -68,7 +72,7 @@ fn activity_feed_repeats_own_posts_and_adds_down_votes_and_favourites() {
             .as_object()
             .unwrap(),
             &(),
-            &crate::RecordContext::none(),
+            &sinex_source_core::RecordContext::none(),
         )
         .unwrap()
         .0;
@@ -119,7 +123,7 @@ fn votes_have_no_time_of_their_own() {
             .parse(
                 json!({"kind": "nope"}).as_object().unwrap(),
                 &(),
-                &crate::RecordContext::none()
+                &sinex_source_core::RecordContext::none()
             )
             .is_err()
     );

@@ -148,8 +148,10 @@ fn secs(s: Option<u64>) -> Option<Duration> {
 }
 
 async fn capture(live: Live) -> Result<u64, String> {
-    let shutdown = sinex_sources::capture::shutdown_signal().map_err(|e| e.to_string())?;
-    let stop = std::sync::Arc::new(sinex_sources::capture::CaptureStop::new(secs(live.seconds)));
+    let shutdown = sinex_source_core::capture::shutdown_signal().map_err(|e| e.to_string())?;
+    let stop = std::sync::Arc::new(sinex_source_core::capture::CaptureStop::new(secs(
+        live.seconds,
+    )));
     let task_stop = stop.clone();
     let mut task = tokio::task::spawn_blocking(move || capture_source(live, &task_stop));
     let result = tokio::select! {
@@ -163,7 +165,10 @@ async fn capture(live: Live) -> Result<u64, String> {
     result
 }
 
-fn capture_source(live: Live, stop: &sinex_sources::capture::CaptureStop) -> Result<u64, String> {
+fn capture_source(
+    live: Live,
+    stop: &sinex_source_core::capture::CaptureStop,
+) -> Result<u64, String> {
     let (format, binding) = live::binding(
         &live.format,
         &live.spool,
@@ -227,7 +232,7 @@ fn requested(run: &Run) -> Vec<(&'static str, &'static str, Value)> {
 
 /// Capture threads write spools; the shared loop produces what they wrote.
 async fn produce(run: Run) -> Result<(), String> {
-    use sinex_sources::drivers::producer::{Producer, Store};
+    use sinex_source_core::drivers::producer::{Producer, Store};
 
     let spools = run.state.join("spool");
     let store = Store::open(&run.store).map_err(|e| format!("content store: {e}"))?;

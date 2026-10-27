@@ -16,7 +16,7 @@ fn git(dir: &std::path::Path, args: &[&str]) {
     assert!(status.success());
 }
 
-fn commits(a: &crate::drivers::Acquired) -> Vec<Map<String, Value>> {
+fn commits(a: &sinex_source_core::drivers::Acquired) -> Vec<Map<String, Value>> {
     let m = a.material.as_ref().unwrap();
     m.records
         .iter()
@@ -50,7 +50,7 @@ fn only_newly_reachable_commits_are_read() {
             .contains(&json!("refs/heads/main"))
     );
     let parsed = GitParser
-        .parse(newest, &(), &crate::RecordContext::none())
+        .parse(newest, &(), &sinex_source_core::RecordContext::none())
         .unwrap()
         .0
         .remove(0);

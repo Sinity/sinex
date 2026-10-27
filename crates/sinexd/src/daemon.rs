@@ -67,7 +67,7 @@ pub(crate) async fn run(o: Options) -> Result<(), String> {
     let blobs = Blobs::open(&o.store).map_err(|e| e.to_string())?;
     let tokens =
         api::Tokens::load(&o.api.tokens).map_err(|e| format!("{}: {e}", o.api.tokens.display()))?;
-    let client = sinex_sources::nats::connect(&o.nats, o.nats_password_file.as_deref()).await?;
+    let client = sinex_source_core::nats::connect(&o.nats, o.nats_password_file.as_deref()).await?;
     let js = publisher::context(client.clone());
 
     let (stop_tx, stop) = watch::channel(false);
@@ -252,7 +252,7 @@ pub(crate) async fn run(o: Options) -> Result<(), String> {
         subjects,
         handle.clone(),
         connect(&o.database).await?,
-        blobs,
+        blobs.clone(),
         o.host.clone(),
     )?;
     let s = stop.clone();
@@ -270,11 +270,19 @@ pub(crate) async fn run(o: Options) -> Result<(), String> {
     };
     let _ = stop_tx.send(true);
     // Give tasks a moment to finish their current step, then stop the rest.
-    let _ = tokio::time::timeout(std::time::Duration::from_secs(10), async {
+    let drained = tokio::time::timeout(std::time::Duration::from_secs(10), async {
         while tasks.join_next().await.is_some() {}
     })
-    .await;
+    .await
+    .is_ok();
     tasks.abort_all();
+    if drained {
+        let mut conn = connect(&o.database).await?;
+        writer::claim(&mut conn).await?;
+        sinex_store::blobs::forget_files_with_rows(&mut conn, &blobs)
+            .await
+            .map_err(|e| format!("forgetting admitted blob names: {e}"))?;
+    }
     outcome
 }
 

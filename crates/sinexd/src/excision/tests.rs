@@ -1,8 +1,8 @@
 //! Excision as the API runs it: planned and checked here, applied by the
 //! writer, on a real database.
 use super::*;
-use crate::material_sink::Sink;
 use crate::reader_context::ReaderContext;
+use crate::sealing::Sink;
 use crate::writer::Priority;
 use serde_json::Value;
 use sinex_model::event_types::machine::FileChanged;
@@ -10,9 +10,9 @@ use sinex_model::{
     Batch, BatchKind, Class, Event, EventId, MaterialId, Origin, ReadingOrder, RecordLocation,
     RecordOutcome, RunId, Timestamp,
 };
-use sinex_sources::drivers::{self, live_stream};
+use sinex_source_core::drivers::{self, live_stream};
+use sinex_source_core::{Binding, Limits, Settings, SourceSpec};
 use sinex_sources::sources::clipboard;
-use sinex_sources::{Binding, Limits, Settings, SourceSpec};
 use sinex_store::positions;
 use std::io::Write;
 

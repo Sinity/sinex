@@ -64,10 +64,17 @@ fn allowed(name: &str) -> Result<&'static [&'static str], String> {
         "sinex-transport" => Ok(&["sinex-model", "sinex-protocol"]),
         // Drivers include the producer side of the NATS ingress, which speaks
         // the protocol's frames.
-        "sinex-sources" => Ok(&["sinex-model", "sinex-protocol", "sinex-transport"]),
-        "sinex-store" => Ok(&["sinex-model", "sinex-schema"]),
+        "sinex-sources" => Ok(&[
+            "sinex-model",
+            "sinex-protocol",
+            "sinex-transport",
+            "sinex-source-core",
+        ]),
+        "sinex-source-core" => Ok(&["sinex-model", "sinex-protocol", "sinex-transport"]),
+        "sinex-sealing" => Ok(&["sinex-model"]),
+        "sinex-store" => Ok(&["sinex-model", "sinex-schema", "sinex-sealing"]),
         "sinex-library" => Ok(&["sinex-model", "sinex-store"]),
-        "sinex-diagnostics" => Ok(&["sinex-model", "sinex-schema", "sinex-store"]),
+        "sinex-diagnostics" => Ok(&[]),
         "sinexd" => Ok(&[
             "sinex-model",
             "sinex-protocol",
@@ -75,18 +82,23 @@ fn allowed(name: &str) -> Result<&'static [&'static str], String> {
             "sinex-schema",
             "sinex-store",
             "sinex-sources",
+            "sinex-source-core",
+            "sinex-sealing",
             "sinex-derivations",
             "sinex-analysis",
             "sinex-library",
         ]),
-        "sinex-session" | "sinex-capture" => {
-            Ok(&["sinex-model", "sinex-protocol", "sinex-sources"])
-        }
+        "sinex-session" | "sinex-capture" => Ok(&[
+            "sinex-model",
+            "sinex-protocol",
+            "sinex-sources",
+            "sinex-source-core",
+        ]),
         "sinexctl" => Ok(&[
+            "sinex-diagnostics",
             "sinex-model",
             "sinex-protocol",
             "sinex-transport",
-            "sinex-diagnostics",
         ]),
         _ => Err(format!("unassigned workspace package: {name}")),
     }
@@ -174,7 +186,10 @@ fn validate(metadata: Metadata) -> Result<(), String> {
         .iter()
         .map(|n| (n.id.as_str(), n))
         .collect();
-    for package in members.iter().filter(|p| pure(&p.name)) {
+    for package in members
+        .iter()
+        .filter(|p| pure(&p.name) || p.name == "sinexctl")
+    {
         let mut pending = vec![package.id.as_str()];
         let mut seen = HashSet::new();
         while let Some(id) = pending.pop() {
@@ -201,7 +216,14 @@ fn validate(metadata: Metadata) -> Result<(), String> {
                 if !activated(dependent, node, &dependency.name) {
                     continue;
                 }
-                if impure(&dependency.name) {
+                let forbidden = if pure(&package.name) {
+                    impure(&dependency.name)
+                } else {
+                    dependency.name == "sinex-store"
+                        || dependency.name == "sqlx"
+                        || dependency.name.starts_with("sqlx-")
+                };
+                if forbidden {
                     return Err(format!(
                         "forbidden transitive dependency: {} -> {}",
                         package.name, dependency.name

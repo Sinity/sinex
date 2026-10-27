@@ -7,12 +7,12 @@
 //! events (the `screen-text` derivation in `sinexd`).
 //!
 //! Private mode stops capture: nothing is recorded while it is on.
-use crate::drivers::media::{self, Media};
-use crate::registry::{DeclaredSource, Driver, SourceSpec};
-use crate::{Parser, RecordContext, RecordError};
 use serde_json::{Value, json};
 use sinex_model::event_types::session::MediaSegment;
 use sinex_model::{Class, InputRef, Timestamp};
+use sinex_source_core::drivers::media::{self, Media};
+use sinex_source_core::registry::{DeclaredSource, Driver, SourceSpec};
+use sinex_source_core::{Parser, RecordContext, RecordError};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
@@ -27,7 +27,10 @@ pub const SPEC: SourceSpec = SourceSpec {
     parser: "media-segment",
     parser_version: 1,
     event_types: &["media.segment"],
-    framer: crate::Framer::export(media::whole, crate::drivers::export_archive::Framing::Whole),
+    framer: sinex_source_core::Framer::export(
+        media::whole,
+        sinex_source_core::drivers::export_archive::Framing::Whole,
+    ),
 };
 
 pub struct MediaParser;
@@ -102,10 +105,10 @@ fn stem(start: Timestamp, end: Timestamp, kind: &str) -> String {
 
 /// Outputs (monitors) and their pixel sizes, from Hyprland.
 pub fn outputs() -> Vec<(String, u32, u32)> {
-    outputs_until(&crate::capture::CaptureStop::new(None))
+    outputs_until(&sinex_source_core::capture::CaptureStop::new(None))
 }
 
-fn outputs_until(stop: &crate::capture::CaptureStop) -> Vec<(String, u32, u32)> {
+fn outputs_until(stop: &sinex_source_core::capture::CaptureStop) -> Vec<(String, u32, u32)> {
     let Ok(Some(out)) = stop.output(Command::new("hyprctl").args(["monitors", "-j"])) else {
         return Vec::new();
     };
@@ -129,7 +132,7 @@ fn private_on() -> bool {
 fn capture_screen(
     spool: &Path,
     every: Duration,
-    stop: &crate::capture::CaptureStop,
+    stop: &sinex_source_core::capture::CaptureStop,
 ) -> std::io::Result<u64> {
     std::fs::create_dir_all(spool)?;
     let mut n = 0;
@@ -188,7 +191,7 @@ fn capture_screen(
 fn capture_audio(
     spool: &Path,
     segment: Duration,
-    stop: &crate::capture::CaptureStop,
+    stop: &sinex_source_core::capture::CaptureStop,
 ) -> std::io::Result<u64> {
     std::fs::create_dir_all(spool)?;
     let encode = stop
@@ -261,7 +264,7 @@ fn capture_audio(
 }
 
 /// What a media binding captures: the `kind` option, `screen` or `audio`.
-fn media(b: &crate::binding::Binding) -> Result<&'static str, String> {
+fn media(b: &sinex_source_core::binding::Binding) -> Result<&'static str, String> {
     match b.settings.option("kind") {
         Some("screen") => Ok("screen"),
         Some("audio") => Ok("audio"),
@@ -272,31 +275,33 @@ fn media(b: &crate::binding::Binding) -> Result<&'static str, String> {
 /// `--read media=SPOOL`: screen stills (option `kind: screen`, every
 /// `every` seconds, 60 by default) or audio segments (`kind: audio`,
 /// `segment` seconds each, 300 by default), captured into SPOOL.
-pub const FORMAT: crate::binding::InputFormat = crate::binding::InputFormat {
-    name: "media",
-    specs: || vec![&SPEC],
-    plan: Some(|spool, settings| {
-        let b = crate::binding::Binding::of(&SPEC, spool, settings.clone());
-        let kind = media(&b)?;
-        Ok(vec![b.named(kind)])
-    }),
-    source: |_| Ok(Box::new(source())),
-    reader: Some(|b| {
-        Ok(crate::binding::polled(driver(
-            b.input.clone(),
-            b.settings.host.clone(),
-            media(b)?,
-        )))
-    }),
-    capture: Some(|b, stop| {
-        let seconds = |key, default| Duration::from_secs(b.settings.number(key).unwrap_or(default));
-        match media(b)? {
-            "screen" => capture_screen(&b.input, seconds("every", 60), stop),
-            _ => capture_audio(&b.input, seconds("segment", 300), stop),
-        }
-        .map_err(|e| e.to_string())
-    }),
-};
+pub const FORMAT: sinex_source_core::binding::InputFormat =
+    sinex_source_core::binding::InputFormat {
+        name: "media",
+        specs: || vec![&SPEC],
+        plan: Some(|spool, settings| {
+            let b = sinex_source_core::binding::Binding::of(&SPEC, spool, settings.clone());
+            let kind = media(&b)?;
+            Ok(vec![b.named(kind)])
+        }),
+        source: |_| Ok(Box::new(source())),
+        reader: Some(|b| {
+            Ok(sinex_source_core::binding::polled(driver(
+                b.input.clone(),
+                b.settings.host.clone(),
+                media(b)?,
+            )))
+        }),
+        capture: Some(|b, stop| {
+            let seconds =
+                |key, default| Duration::from_secs(b.settings.number(key).unwrap_or(default));
+            match media(b)? {
+                "screen" => capture_screen(&b.input, seconds("every", 60), stop),
+                _ => capture_audio(&b.input, seconds("segment", 300), stop),
+            }
+            .map_err(|e| e.to_string())
+        }),
+    };
 
 #[cfg(test)]
 mod tests;

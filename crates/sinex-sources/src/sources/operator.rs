@@ -8,13 +8,13 @@
 //! commitments, activities and reviews, read on `SqliteRows`, one table per
 //! binding; every row can change (a commitment's status), so each poll
 //! compares them all.
-use crate::drivers::append_file::AppendFile;
-use crate::drivers::sqlite_rows::SqliteRows;
-use crate::registry::{DeclaredSource, Driver, SourceSpec};
-use crate::{Parser, RecordError};
 use serde_json::{Map, Value};
 use sinex_model::event_types::operator::{LogEntry, SteeringRow};
 use sinex_model::{Class, Timestamp};
+use sinex_source_core::drivers::append_file::AppendFile;
+use sinex_source_core::drivers::sqlite_rows::SqliteRows;
+use sinex_source_core::registry::{DeclaredSource, Driver, SourceSpec};
+use sinex_source_core::{Parser, RecordError};
 use std::path::PathBuf;
 
 pub const RAW_LOG: SourceSpec = SourceSpec {
@@ -26,7 +26,7 @@ pub const RAW_LOG: SourceSpec = SourceSpec {
     parser: "operator-raw-log",
     parser_version: 2,
     event_types: &["operator_log.entry"],
-    framer: crate::Framer::incremental(frame_log),
+    framer: sinex_source_core::Framer::incremental(frame_log),
 };
 
 const ENTRY: &[u8] = b"\n- **";
@@ -68,7 +68,7 @@ impl Parser for RawLogParser {
         &self,
         record: &&[u8],
         _: &(),
-        _context: &crate::RecordContext<'_>,
+        _context: &sinex_source_core::RecordContext<'_>,
     ) -> Result<(Vec<LogEntry>, ()), RecordError> {
         let text = std::str::from_utf8(record)
             .map_err(|e| RecordError::new(format!("entry is not UTF-8: {e}")))?;
@@ -131,7 +131,7 @@ pub fn raw_log_driver(path: PathBuf, host: String) -> AppendFile {
     AppendFile {
         path,
         host,
-        framer: crate::Framer::incremental(frame_log),
+        framer: sinex_source_core::Framer::incremental(frame_log),
     }
 }
 
@@ -153,7 +153,9 @@ const fn steering_spec(parser: &'static str) -> SourceSpec {
         parser,
         parser_version: 3,
         event_types: &["steering.row"],
-        framer: crate::Framer::incremental(crate::drivers::append_file::lines),
+        framer: sinex_source_core::Framer::incremental(
+            sinex_source_core::drivers::append_file::lines,
+        ),
     }
 }
 
@@ -170,7 +172,7 @@ impl Parser for SteeringParser {
         &self,
         row: &Map<String, Value>,
         _: &(),
-        _context: &crate::RecordContext<'_>,
+        _context: &sinex_source_core::RecordContext<'_>,
     ) -> Result<(Vec<SteeringRow>, ()), RecordError> {
         let mut values = row.clone();
         // The SQLite-row driver's own field, not a column of the table.
@@ -207,28 +209,29 @@ pub fn steering_driver(path: PathBuf, host: String, table: &'static str) -> Sqli
 
 /// `--read raw-log=PATH`: the operator's raw log, read in the binding's
 /// zone, recorded when it is planned.
-pub const RAW_LOG_FORMAT: crate::binding::InputFormat = crate::binding::InputFormat {
-    name: "raw-log",
-    specs: || vec![&RAW_LOG],
-    plan: Some(|input, settings| {
-        Ok(crate::binding::single(
-            &RAW_LOG,
-            input,
-            &settings.clone().with_zone()?,
-        ))
-    }),
-    source: |b| Ok(Box::new(raw_log(b.settings.zone()?))),
-    reader: Some(|b| {
-        Ok(crate::binding::appended(raw_log_driver(
-            b.input.clone(),
-            b.settings.host.clone(),
-        )))
-    }),
-    capture: None,
-};
+pub const RAW_LOG_FORMAT: sinex_source_core::binding::InputFormat =
+    sinex_source_core::binding::InputFormat {
+        name: "raw-log",
+        specs: || vec![&RAW_LOG],
+        plan: Some(|input, settings| {
+            Ok(sinex_source_core::binding::single(
+                &RAW_LOG,
+                input,
+                &settings.clone().with_zone()?,
+            ))
+        }),
+        source: |b| Ok(Box::new(raw_log(b.settings.zone()?))),
+        reader: Some(|b| {
+            Ok(sinex_source_core::binding::appended(raw_log_driver(
+                b.input.clone(),
+                b.settings.host.clone(),
+            )))
+        }),
+        capture: None,
+    };
 
 /// The steering table a binding reads, from its spec name.
-fn steering_table(b: &crate::binding::Binding) -> Result<&'static str, String> {
+fn steering_table(b: &sinex_source_core::binding::Binding) -> Result<&'static str, String> {
     ["commitments", "activities", "reviews"]
         .into_iter()
         .find(|t| b.parser.strip_prefix("steering-") == Some(*t))
@@ -236,34 +239,36 @@ fn steering_table(b: &crate::binding::Binding) -> Result<&'static str, String> {
 }
 
 /// `--read steering=PATH`: the steering store's three tables.
-pub const STEERING_FORMAT: crate::binding::InputFormat = crate::binding::InputFormat {
-    name: "steering",
-    specs: || STEERING.iter().collect(),
-    plan: Some(|input, settings| {
-        // One binding, and so one cursor, per table.
-        Ok(STEERING
-            .iter()
-            .map(|spec| {
-                let table = spec.parser.strip_prefix("steering-").unwrap_or(spec.parser);
-                crate::binding::Binding::of(spec, input, settings.clone()).named(table)
-            })
-            .collect())
-    }),
-    source: |b| {
-        let table = steering_table(b)?;
-        steering(table)
-            .map(|s| Box::new(s) as Box<dyn crate::Source>)
-            .ok_or_else(|| format!("{table}: not a steering table"))
-    },
-    reader: Some(|b| {
-        Ok(crate::binding::rows(steering_driver(
-            b.input.clone(),
-            b.settings.host.clone(),
-            steering_table(b)?,
-        )))
-    }),
-    capture: None,
-};
+pub const STEERING_FORMAT: sinex_source_core::binding::InputFormat =
+    sinex_source_core::binding::InputFormat {
+        name: "steering",
+        specs: || STEERING.iter().collect(),
+        plan: Some(|input, settings| {
+            // One binding, and so one cursor, per table.
+            Ok(STEERING
+                .iter()
+                .map(|spec| {
+                    let table = spec.parser.strip_prefix("steering-").unwrap_or(spec.parser);
+                    sinex_source_core::binding::Binding::of(spec, input, settings.clone())
+                        .named(table)
+                })
+                .collect())
+        }),
+        source: |b| {
+            let table = steering_table(b)?;
+            steering(table)
+                .map(|s| Box::new(s) as Box<dyn sinex_source_core::Source>)
+                .ok_or_else(|| format!("{table}: not a steering table"))
+        },
+        reader: Some(|b| {
+            Ok(sinex_source_core::binding::rows(steering_driver(
+                b.input.clone(),
+                b.settings.host.clone(),
+                steering_table(b)?,
+            )))
+        }),
+        capture: None,
+    };
 
 #[cfg(test)]
 mod tests;

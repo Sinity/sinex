@@ -1,7 +1,7 @@
 use super::*;
-use crate::drivers::dir_snapshot::{DirState, removed_marker};
-use crate::{DrainInput, Limits, drain};
 use sinex_model::{MaterialId, ReadingOrder, RecordOutcome};
+use sinex_source_core::drivers::dir_snapshot::{DirState, removed_marker};
+use sinex_source_core::{DrainInput, Limits, drain};
 
 #[devkit::test]
 fn notes_and_their_removal() {
@@ -13,7 +13,7 @@ fn notes_and_their_removal() {
     let d = driver(root.clone(), "h".into());
     let mut state = DirState::default();
     let parser = NotesParser;
-    let run = |a: &crate::drivers::Acquired| {
+    let run = |a: &sinex_source_core::drivers::Acquired| {
         let m = a.material.as_ref().unwrap();
         let out = drain(
             &parser,

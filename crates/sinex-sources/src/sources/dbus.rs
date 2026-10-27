@@ -3,9 +3,9 @@
 //! per message that matches; capture spools those lines on `LiveStream`
 //! exactly as they arrive. Parsers decode the message and its payload, whose
 //! values `busctl` writes as `{"type": <signature>, "data": <value>}`.
-use crate::drivers::live_stream::{self, LiveStream, Rotation, SpoolWriter};
 use serde_json::{Map, Value};
 use sinex_model::InputRef;
+use sinex_source_core::drivers::live_stream::{self, LiveStream, Rotation, SpoolWriter};
 use std::io::BufReader;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -31,7 +31,7 @@ pub fn capture(
     matches: &[&str],
     initial: &[Vec<u8>],
     spool: &Path,
-    stop: &crate::capture::CaptureStop,
+    stop: &sinex_source_core::capture::CaptureStop,
 ) -> std::io::Result<u64> {
     let mut writer = SpoolWriter::open(spool, Rotation::default())?;
     for line in initial {
@@ -67,7 +67,7 @@ pub fn call(
     args: &[&str],
 ) -> Option<Value> {
     call_until(
-        &crate::capture::CaptureStop::new(None),
+        &sinex_source_core::capture::CaptureStop::new(None),
         destination,
         path,
         interface,
@@ -77,7 +77,7 @@ pub fn call(
 }
 
 pub(crate) fn call_until(
-    stop: &crate::capture::CaptureStop,
+    stop: &sinex_source_core::capture::CaptureStop,
     destination: &str,
     path: &str,
     interface: &str,
@@ -105,10 +105,10 @@ pub(crate) fn call_until(
 
 /// Names on the session bus.
 pub fn names() -> Vec<String> {
-    names_until(&crate::capture::CaptureStop::new(None))
+    names_until(&sinex_source_core::capture::CaptureStop::new(None))
 }
 
-pub(crate) fn names_until(stop: &crate::capture::CaptureStop) -> Vec<String> {
+pub(crate) fn names_until(stop: &sinex_source_core::capture::CaptureStop) -> Vec<String> {
     let Ok(Some(out)) =
         stop.output(Command::new("busctl").args(["--user", "--json=short", "list"]))
     else {

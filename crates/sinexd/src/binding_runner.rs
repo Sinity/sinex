@@ -6,11 +6,12 @@
 //! never stopping the others or the daemon. Private mode pauses every read
 //! until it is off again.
 use crate::binding_reader::{self, BindingReader};
-use crate::material_sink::Sink;
+use crate::sealing::Sink;
 use crate::writer::WriterHandle;
 use serde::Deserialize;
 use serde_json::Value;
-use sinex_sources::{Binding, InputFormat, Settings, sources};
+use sinex_source_core::{Binding, InputFormat, Settings};
+use sinex_sources::sources;
 use sinex_store::{Blobs, runs};
 use sqlx::PgConnection;
 use std::collections::BTreeMap;

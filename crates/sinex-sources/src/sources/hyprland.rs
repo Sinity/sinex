@@ -9,9 +9,6 @@
 //! stored twice. Focus is the exception: `activewindow` carries the class and
 //! title and `activewindowv2` the address, so the first is carried until the
 //! second arrives and they become one `window.focused`.
-use crate::drivers::live_stream::{self, LiveStream, Rotation, SpoolWriter};
-use crate::registry::{DeclaredSource, Driver, SourceSpec};
-use crate::{Parser, RecordError};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use sinex_model::event_types::desktop::{
@@ -19,6 +16,9 @@ use sinex_model::event_types::desktop::{
     WindowTitleChanged, WorkspaceSwitched,
 };
 use sinex_model::{Class, InputRef, Timestamp};
+use sinex_source_core::drivers::live_stream::{self, LiveStream, Rotation, SpoolWriter};
+use sinex_source_core::registry::{DeclaredSource, Driver, SourceSpec};
+use sinex_source_core::{Parser, RecordError};
 use std::io::BufReader;
 use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
@@ -43,7 +43,7 @@ pub const SPEC: SourceSpec = SourceSpec {
         "monitor.focused",
         "desktop.other",
     ],
-    framer: crate::Framer::incremental(crate::drivers::append_file::lines),
+    framer: sinex_source_core::Framer::incremental(sinex_source_core::drivers::append_file::lines),
 };
 
 sinex_model::payload_enum! {
@@ -96,7 +96,7 @@ impl Parser for HyprlandParser {
         &self,
         record: &Map<String, Value>,
         pending: &Option<Pending>,
-        _context: &crate::RecordContext<'_>,
+        _context: &sinex_source_core::RecordContext<'_>,
     ) -> Result<(Vec<Desktop>, Option<Pending>), RecordError> {
         let (received_at, bytes) = live_stream::received(record).map_err(RecordError::new)?;
         let line = String::from_utf8(bytes)
@@ -263,13 +263,17 @@ pub fn driver(spool: PathBuf, host: String) -> LiveStream {
 /// Capture the socket into `spool` until the socket closes (Hyprland exited).
 /// Returns the number of lines captured.
 pub fn capture(socket: &Path, spool: &Path) -> std::io::Result<u64> {
-    capture_until(socket, spool, &crate::capture::CaptureStop::new(None))
+    capture_until(
+        socket,
+        spool,
+        &sinex_source_core::capture::CaptureStop::new(None),
+    )
 }
 
 fn capture_until(
     socket: &Path,
     spool: &Path,
-    stop: &crate::capture::CaptureStop,
+    stop: &sinex_source_core::capture::CaptureStop,
 ) -> std::io::Result<u64> {
     let stream = UnixStream::connect(socket)?;
     stop.shutdown_on_stop(&stream)?;
@@ -278,24 +282,27 @@ fn capture_until(
 }
 
 /// `--read hyprland=SPOOL`: Hyprland's event socket, captured into SPOOL.
-pub const FORMAT: crate::binding::InputFormat = crate::binding::InputFormat {
-    name: "hyprland",
-    specs: || vec![&SPEC],
-    plan: Some(|spool, settings| Ok(crate::binding::single(&SPEC, spool, settings))),
-    source: |_| Ok(Box::new(source())),
-    reader: Some(|b| {
-        Ok(crate::binding::polled(driver(
-            b.input.clone(),
-            b.settings.host.clone(),
-        )))
-    }),
-    capture: Some(|b, stop| {
-        let socket = socket_path().ok_or(
+pub const FORMAT: sinex_source_core::binding::InputFormat =
+    sinex_source_core::binding::InputFormat {
+        name: "hyprland",
+        specs: || vec![&SPEC],
+        plan: Some(|spool, settings| {
+            Ok(sinex_source_core::binding::single(&SPEC, spool, settings))
+        }),
+        source: |_| Ok(Box::new(source())),
+        reader: Some(|b| {
+            Ok(sinex_source_core::binding::polled(driver(
+                b.input.clone(),
+                b.settings.host.clone(),
+            )))
+        }),
+        capture: Some(|b, stop| {
+            let socket = socket_path().ok_or(
             "no Hyprland instance in this environment (HYPRLAND_INSTANCE_SIGNATURE or XDG_RUNTIME_DIR unset)",
         )?;
-        capture_until(&socket, &b.input, stop).map_err(|e| e.to_string())
-    }),
-};
+            capture_until(&socket, &b.input, stop).map_err(|e| e.to_string())
+        }),
+    };
 
 #[cfg(test)]
 mod tests;

@@ -4,13 +4,13 @@
 //! milliseconds as text) or `timestamp` (RFC 3339); coordinates are degrees ×
 //! 10⁷. A later Takeout restates the same fixes, which admission recognizes by
 //! device and instant.
-use crate::drivers::export_archive::{ExportArchive, Framing, PART_BYTES};
-use crate::registry::{DeclaredSource, Driver, SourceSpec};
 use crate::sources::fields;
-use crate::{Parser, RecordError};
 use serde_json::{Map, Value};
 use sinex_model::Class;
 use sinex_model::event_types::account::LocationSample;
+use sinex_source_core::drivers::export_archive::{ExportArchive, Framing, PART_BYTES};
+use sinex_source_core::registry::{DeclaredSource, Driver, SourceSpec};
+use sinex_source_core::{Parser, RecordError};
 use std::path::PathBuf;
 
 pub const SPEC: SourceSpec = SourceSpec {
@@ -22,9 +22,9 @@ pub const SPEC: SourceSpec = SourceSpec {
     parser: "google-location-history",
     parser_version: 1,
     event_types: &["location.sample"],
-    framer: crate::Framer::export(
+    framer: sinex_source_core::Framer::export(
         frame,
-        crate::drivers::export_archive::Framing::JsonArray("/locations"),
+        sinex_source_core::drivers::export_archive::Framing::JsonArray("/locations"),
     ),
 };
 
@@ -52,7 +52,7 @@ impl Parser for LocationParser {
         &self,
         fix: &Map<String, Value>,
         _: &(),
-        _context: &crate::RecordContext<'_>,
+        _context: &sinex_source_core::RecordContext<'_>,
     ) -> Result<(Vec<LocationSample>, ()), RecordError> {
         let at = match fix.get("timestampMs") {
             Some(Value::String(ms)) => fields::from_unix_ms(

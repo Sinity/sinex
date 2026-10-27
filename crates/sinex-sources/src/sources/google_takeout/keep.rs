@@ -2,13 +2,13 @@
 //! writes no note ID and names files after titles, so the creation time is the
 //! identity; a later edit is a newer reading, and a trashed note is removed at
 //! the source.
-use crate::drivers::export_archive::{ExportArchive, Framing, PART_BYTES};
-use crate::registry::{DeclaredSource, Driver, SourceSpec};
 use crate::sources::fields;
-use crate::{Parser, RecordError};
 use serde_json::{Map, Value};
 use sinex_model::Class;
 use sinex_model::event_types::account::{NoteItem, NoteObserved};
+use sinex_source_core::drivers::export_archive::{ExportArchive, Framing, PART_BYTES};
+use sinex_source_core::registry::{DeclaredSource, Driver, SourceSpec};
+use sinex_source_core::{Parser, RecordError};
 use std::path::PathBuf;
 
 pub const SPEC: SourceSpec = SourceSpec {
@@ -20,7 +20,10 @@ pub const SPEC: SourceSpec = SourceSpec {
     parser: "google-keep",
     parser_version: 1,
     event_types: &["note.observed"],
-    framer: crate::Framer::export(frame, crate::drivers::export_archive::Framing::Whole),
+    framer: sinex_source_core::Framer::export(
+        frame,
+        sinex_source_core::drivers::export_archive::Framing::Whole,
+    ),
 };
 
 const KNOWN: &[&str] = &[
@@ -48,7 +51,7 @@ impl Parser for KeepParser {
         &self,
         note: &Map<String, Value>,
         _: &(),
-        _context: &crate::RecordContext<'_>,
+        _context: &sinex_source_core::RecordContext<'_>,
     ) -> Result<(Vec<NoteObserved>, ()), RecordError> {
         let created_at = fields::from_unix_us(fields::int(note, "createdTimestampUsec")?)?;
         let edited_at = note

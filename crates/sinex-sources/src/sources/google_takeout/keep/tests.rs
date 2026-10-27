@@ -12,7 +12,7 @@ fn notes_lists_and_trash() {
         .parse(
             note.as_object().unwrap(),
             &(),
-            &crate::RecordContext::none(),
+            &sinex_source_core::RecordContext::none(),
         )
         .unwrap();
     let n = &out[0];
@@ -26,7 +26,7 @@ fn notes_lists_and_trash() {
             .parse(
                 json!({"title": "x"}).as_object().unwrap(),
                 &(),
-                &crate::RecordContext::none()
+                &sinex_source_core::RecordContext::none()
             )
             .is_err()
     );

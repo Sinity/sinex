@@ -60,7 +60,7 @@ fn protected_group_mode_keeps_plain_encoding_and_sealed_key_checks() {
         std::fs::read(stored(shared.path(), &hash)).unwrap(),
         std::fs::read(stored(private.path(), &hash)).unwrap()
     );
-    let key = crate::sealed::DataKey {
+    let key = sinex_sealing::DataKey {
         key_ref: "synthetic".into(),
         key: [7; 32],
     };

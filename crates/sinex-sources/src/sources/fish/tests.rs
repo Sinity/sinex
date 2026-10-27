@@ -1,6 +1,6 @@
 use super::*;
-use crate::{DrainInput, Limits, drain};
 use sinex_model::{MaterialId, ReadingOrder, RecordOutcome};
+use sinex_source_core::{DrainInput, Limits, drain};
 
 fn parser() -> FishParser {
     FishParser { host: "h".into() }
@@ -8,7 +8,11 @@ fn parser() -> FishParser {
 
 fn parse(record: &[u8]) -> Result<CommandImported, RecordError> {
     parser()
-        .parse(&record, &Seen::default(), &crate::RecordContext::none())
+        .parse(
+            &record,
+            &Seen::default(),
+            &sinex_source_core::RecordContext::none(),
+        )
         .map(|(mut events, _)| events.remove(0))
 }
 
@@ -21,7 +25,7 @@ fn observations(
     let chunks = drain(
         &parser(),
         DrainInput {
-            manifest: crate::RecordContext::none().manifest,
+            manifest: sinex_source_core::RecordContext::none().manifest,
             source: SPEC.name,
             class: Class::Open,
             material: MaterialId(uuid::Uuid::nil()),

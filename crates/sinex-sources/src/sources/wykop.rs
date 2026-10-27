@@ -12,16 +12,16 @@
 //!
 //! Every `*_created_at` is zoneless and is Warsaw local time, as Wykop's own
 //! frontend reads it; read as UTC it would be an hour or two early.
-use crate::drivers::export_archive::{ExportArchive, Framing, PART_BYTES};
-use crate::registry::{DeclaredSource, Driver, SourceSpec};
 use crate::sources::fields;
-use crate::{Parser, RecordError};
 use serde_json::{Map, Value};
 use sinex_model::event_types::media::BookmarkSaved;
 use sinex_model::event_types::social::{
     AccountSetting, NotificationReceived, PostPublished, VoteCast,
 };
 use sinex_model::{Class, Timestamp};
+use sinex_source_core::drivers::export_archive::{ExportArchive, Framing, PART_BYTES};
+use sinex_source_core::registry::{DeclaredSource, Driver, SourceSpec};
+use sinex_source_core::{Parser, RecordError};
 use std::path::PathBuf;
 
 pub const SPEC: SourceSpec = SourceSpec {
@@ -39,7 +39,10 @@ pub const SPEC: SourceSpec = SourceSpec {
         "notification.received",
         "account.setting",
     ],
-    framer: crate::Framer::export(frame, crate::drivers::export_archive::Framing::Lines),
+    framer: sinex_source_core::Framer::export(
+        frame,
+        sinex_source_core::drivers::export_archive::Framing::Lines,
+    ),
 };
 
 sinex_model::payload_enum! {
@@ -91,7 +94,7 @@ impl Parser for WykopParser {
         &self,
         row: &Map<String, Value>,
         _: &(),
-        _context: &crate::RecordContext<'_>,
+        _context: &sinex_source_core::RecordContext<'_>,
     ) -> Result<(Vec<WykopEvent>, ()), RecordError> {
         let kind = fields::text(row, "kind")?;
         let id = |name: &str| -> Result<String, RecordError> {
@@ -472,23 +475,24 @@ pub fn driver(path: PathBuf, host: String) -> ExportArchive {
 }
 
 /// `--read wykop=PATH`: each of the account's own Wykop export files in PATH.
-pub const FORMAT: crate::binding::InputFormat = crate::binding::InputFormat {
-    name: "wykop",
-    specs: || vec![&SPEC],
-    plan: Some(|input, settings| {
-        Ok(crate::binding::per_file(
-            &SPEC, input, settings, false, is_own,
-        ))
-    }),
-    source: |_| Ok(Box::new(source())),
-    reader: Some(|b| {
-        Ok(crate::binding::shared(driver(
-            b.input.clone(),
-            b.settings.host.clone(),
-        )))
-    }),
-    capture: None,
-};
+pub const FORMAT: sinex_source_core::binding::InputFormat =
+    sinex_source_core::binding::InputFormat {
+        name: "wykop",
+        specs: || vec![&SPEC],
+        plan: Some(|input, settings| {
+            Ok(sinex_source_core::binding::per_file(
+                &SPEC, input, settings, false, is_own,
+            ))
+        }),
+        source: |_| Ok(Box::new(source())),
+        reader: Some(|b| {
+            Ok(sinex_source_core::binding::shared(driver(
+                b.input.clone(),
+                b.settings.host.clone(),
+            )))
+        }),
+        capture: None,
+    };
 
 #[cfg(test)]
 mod tests;

@@ -1,9 +1,9 @@
 //! Replay through the real writer and the zsh driver, on a real database.
 use super::*;
-use crate::material_sink::Sink;
 use crate::reader_context::ReaderContext;
+use crate::sealing::Sink;
 use crate::writer::Priority;
-use sinex_sources::drivers::append_file::AppendState;
+use sinex_source_core::drivers::append_file::AppendState;
 use sinex_sources::sources::zsh;
 use sinex_store::positions;
 use sqlx::PgConnection;
@@ -260,7 +260,7 @@ async fn a_rewritten_history_file_is_aligned_and_replays_without_duplicates(
     // zsh expires the older duplicate and appends a new command.
     std::fs::write(&path, ": 2:0;b\n: 3:0;a\n: 4:0;c\n").unwrap();
     // The driver restarts: its state comes back from the stored bytes.
-    let mut restarted = sinex_sources::binding::appended(zsh::driver(path.clone(), "h".into()))
+    let mut restarted = sinex_source_core::binding::appended(zsh::driver(path.clone(), "h".into()))
         .into_polled()
         .unwrap();
     let (_stop, stop) = tokio::sync::watch::channel(false);

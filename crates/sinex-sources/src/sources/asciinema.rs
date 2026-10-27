@@ -27,16 +27,16 @@
 //! line, `exit_code` its status, and the rest (with the recording's session)
 //! is kept. `session.json` restates the header and the capture's own fields;
 //! it is not read.
-use crate::drivers::append_file::AppendFile;
-use crate::registry::{DeclaredSource, Driver, SourceSpec};
 use crate::sources::fields;
 use crate::sources::terminal_text::strip_escapes;
-use crate::{Parser, RecordContext, RecordError};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use sinex_model::Timestamp;
 use sinex_model::event_types::machine::{TerminalOutput, TerminalSession};
 use sinex_model::event_types::session::TerminalReport;
+use sinex_source_core::drivers::append_file::AppendFile;
+use sinex_source_core::registry::{DeclaredSource, Driver, SourceSpec};
+use sinex_source_core::{Parser, RecordContext, RecordError};
 use std::path::PathBuf;
 
 pub const CAST: SourceSpec = SourceSpec {
@@ -48,7 +48,7 @@ pub const CAST: SourceSpec = SourceSpec {
     parser: "asciinema-cast",
     parser_version: 3,
     event_types: &["terminal.session", "terminal.output"],
-    framer: crate::Framer::incremental(cast_spans),
+    framer: sinex_source_core::Framer::incremental(cast_spans),
 };
 
 pub const EVENTS: SourceSpec = SourceSpec {
@@ -60,7 +60,7 @@ pub const EVENTS: SourceSpec = SourceSpec {
     parser: "terminal-capture-events",
     parser_version: 1,
     event_types: &["terminal.reported"],
-    framer: crate::Framer::incremental(complete_lines),
+    framer: sinex_source_core::Framer::incremental(complete_lines),
 };
 
 sinex_model::payload_enum! {
@@ -348,7 +348,7 @@ impl Parser for EventsParser {
 
 /// Complete lines only: a recording still being written ends mid-line.
 fn complete_lines(bytes: &[u8]) -> (Vec<(usize, usize)>, usize) {
-    crate::drivers::export_archive::Framing::Lines.frame(bytes, false)
+    sinex_source_core::drivers::export_archive::Framing::Lines.frame(bytes, false)
 }
 
 pub fn cast_source() -> DeclaredSource<CastParser> {
@@ -375,42 +375,43 @@ pub fn driver(path: PathBuf, host: String, spec: &SourceSpec) -> AppendFile {
 
 /// `--read asciinema=PATH`: each recording directory under PATH, its cast
 /// and the capture's events beside it.
-pub const FORMAT: crate::binding::InputFormat = crate::binding::InputFormat {
-    name: "asciinema",
-    specs: || vec![&CAST, &EVENTS],
-    plan: Some(|input, settings| {
-        Ok(crate::binding::files(input, true, |p| {
-            p.file_name()
-                .is_some_and(|n| n == "session.cast" || n == "events.jsonl")
-        })
-        .into_iter()
-        .map(|f| {
-            let spec = if f.file_name().is_some_and(|n| n == "session.cast") {
-                &CAST
+pub const FORMAT: sinex_source_core::binding::InputFormat =
+    sinex_source_core::binding::InputFormat {
+        name: "asciinema",
+        specs: || vec![&CAST, &EVENTS],
+        plan: Some(|input, settings| {
+            Ok(sinex_source_core::binding::files(input, true, |p| {
+                p.file_name()
+                    .is_some_and(|n| n == "session.cast" || n == "events.jsonl")
+            })
+            .into_iter()
+            .map(|f| {
+                let spec = if f.file_name().is_some_and(|n| n == "session.cast") {
+                    &CAST
+                } else {
+                    &EVENTS
+                };
+                sinex_source_core::binding::Binding::of(spec, &f, settings.clone())
+            })
+            .collect())
+        }),
+        source: |b| {
+            if b.source == CAST.name {
+                Ok(Box::new(cast_source()))
             } else {
-                &EVENTS
-            };
-            crate::binding::Binding::of(spec, &f, settings.clone())
-        })
-        .collect())
-    }),
-    source: |b| {
-        if b.source == CAST.name {
-            Ok(Box::new(cast_source()))
-        } else {
-            Ok(Box::new(events_source()))
-        }
-    },
-    reader: Some(|b| {
-        let spec = if b.source == CAST.name { CAST } else { EVENTS };
-        Ok(crate::binding::appended(driver(
-            b.input.clone(),
-            b.settings.host.clone(),
-            &spec,
-        )))
-    }),
-    capture: None,
-};
+                Ok(Box::new(events_source()))
+            }
+        },
+        reader: Some(|b| {
+            let spec = if b.source == CAST.name { CAST } else { EVENTS };
+            Ok(sinex_source_core::binding::appended(driver(
+                b.input.clone(),
+                b.settings.host.clone(),
+                &spec,
+            )))
+        }),
+        capture: None,
+    };
 
 #[cfg(test)]
 mod tests;

@@ -7,12 +7,12 @@
 //! start is the stop time less the milliseconds played; reading `ts` as the
 //! start would shift every play by its length.
 use super::fields;
-use crate::drivers::export_archive::{ExportArchive, Framing, PART_BYTES};
-use crate::registry::{DeclaredSource, Driver, SourceSpec};
-use crate::{Parser, RecordError};
 use serde_json::{Map, Value};
 use sinex_model::event_types::media::MusicPlayed;
 use sinex_model::{Class, Timestamp};
+use sinex_source_core::drivers::export_archive::{ExportArchive, Framing, PART_BYTES};
+use sinex_source_core::registry::{DeclaredSource, Driver, SourceSpec};
+use sinex_source_core::{Parser, RecordError};
 use std::path::PathBuf;
 
 pub const SPEC: SourceSpec = SourceSpec {
@@ -24,9 +24,9 @@ pub const SPEC: SourceSpec = SourceSpec {
     parser: "spotify-streaming-history",
     parser_version: 1,
     event_types: &["music.played"],
-    framer: crate::Framer::export(
-        crate::drivers::export_archive::frame_json_array,
-        crate::drivers::export_archive::Framing::JsonArray(""),
+    framer: sinex_source_core::Framer::export(
+        sinex_source_core::drivers::export_archive::frame_json_array,
+        sinex_source_core::drivers::export_archive::Framing::JsonArray(""),
     ),
 };
 
@@ -72,7 +72,7 @@ impl Parser for SpotifyParser {
         &self,
         row: &Map<String, Value>,
         _: &(),
-        _context: &crate::RecordContext<'_>,
+        _context: &sinex_source_core::RecordContext<'_>,
     ) -> Result<(Vec<MusicPlayed>, ()), RecordError> {
         let payload = if row.contains_key("ts") {
             extended(row)?
@@ -178,27 +178,28 @@ pub fn driver(path: PathBuf, host: String) -> ExportArchive {
 }
 
 /// `--read spotify=PATH`: each Spotify export archive in PATH.
-pub const FORMAT: crate::binding::InputFormat = crate::binding::InputFormat {
-    name: "spotify",
-    specs: || vec![&SPEC],
-    plan: Some(|input, settings| {
-        Ok(crate::binding::per_file(
-            &SPEC,
-            input,
-            settings,
-            false,
-            crate::binding::any,
-        ))
-    }),
-    source: |_| Ok(Box::new(source())),
-    reader: Some(|b| {
-        Ok(crate::binding::shared(driver(
-            b.input.clone(),
-            b.settings.host.clone(),
-        )))
-    }),
-    capture: None,
-};
+pub const FORMAT: sinex_source_core::binding::InputFormat =
+    sinex_source_core::binding::InputFormat {
+        name: "spotify",
+        specs: || vec![&SPEC],
+        plan: Some(|input, settings| {
+            Ok(sinex_source_core::binding::per_file(
+                &SPEC,
+                input,
+                settings,
+                false,
+                sinex_source_core::binding::any,
+            ))
+        }),
+        source: |_| Ok(Box::new(source())),
+        reader: Some(|b| {
+            Ok(sinex_source_core::binding::shared(driver(
+                b.input.clone(),
+                b.settings.host.clone(),
+            )))
+        }),
+        capture: None,
+    };
 
 #[cfg(test)]
 mod tests;

@@ -1,4 +1,4 @@
-use sinex_sources::drivers::{
+use sinex_source_core::drivers::{
     StoredBytes,
     dir_snapshot::{DirSnapshot, DirState},
 };

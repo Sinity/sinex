@@ -1,8 +1,8 @@
 use super::*;
-use crate::drivers::sqlite_rows::RowState;
 use crate::sources::fields::WEBKIT_EPOCH_OFFSET_US;
 use rusqlite::Connection;
 use serde_json::json;
+use sinex_source_core::drivers::sqlite_rows::RowState;
 
 const NOW_WEBKIT: i64 = 13_370_000_000_000_000;
 
@@ -28,7 +28,8 @@ fn history() -> PathBuf {
 fn rows(d: &SqliteRows) -> (Vec<Map<String, Value>>, sinex_model::Manifest) {
     let a = d.poll(&Value::Null, &mut RowState::default()).unwrap();
     let m = a.material.unwrap();
-    let crate::drivers::StoredBytes::FramedFile(file) = m.stored.as_ref().unwrap() else {
+    let sinex_source_core::drivers::StoredBytes::FramedFile(file) = m.stored.as_ref().unwrap()
+    else {
         panic!("rows use staged bytes")
     };
     use std::os::unix::fs::FileExt;

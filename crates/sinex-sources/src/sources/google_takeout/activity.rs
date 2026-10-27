@@ -7,11 +7,11 @@
 //! title or the time text: Google restates both between exports. The YouTube
 //! history gives `video.watched` and `video.searched`.
 use super::cells::{CELL, Cell};
-use crate::drivers::export_archive::{ExportArchive, Framing, PART_BYTES};
-use crate::registry::{DeclaredSource, Driver, SourceSpec};
-use crate::{Parser, RecordError};
 use sinex_model::Class;
 use sinex_model::event_types::account::{ActionRecorded, VideoSearched, VideoWatched};
+use sinex_source_core::drivers::export_archive::{ExportArchive, Framing, PART_BYTES};
+use sinex_source_core::registry::{DeclaredSource, Driver, SourceSpec};
+use sinex_source_core::{Parser, RecordError};
 use std::path::PathBuf;
 
 pub const MY_ACTIVITY: SourceSpec = SourceSpec {
@@ -23,9 +23,9 @@ pub const MY_ACTIVITY: SourceSpec = SourceSpec {
     parser: "google-my-activity",
     parser_version: 1,
     event_types: &["action.recorded"],
-    framer: crate::Framer::export(
+    framer: sinex_source_core::Framer::export(
         frame,
-        crate::drivers::export_archive::Framing::Delimited(CELL),
+        sinex_source_core::drivers::export_archive::Framing::Delimited(CELL),
     ),
 };
 
@@ -38,9 +38,9 @@ pub const YOUTUBE: SourceSpec = SourceSpec {
     parser: "google-youtube-history",
     parser_version: 2,
     event_types: &["video.watched", "video.searched"],
-    framer: crate::Framer::export(
+    framer: sinex_source_core::Framer::export(
         frame,
-        crate::drivers::export_archive::Framing::Delimited(CELL),
+        sinex_source_core::drivers::export_archive::Framing::Delimited(CELL),
     ),
 };
 
@@ -59,7 +59,7 @@ impl Parser for MyActivityParser {
         &self,
         cell: &Cell,
         _: &(),
-        _context: &crate::RecordContext<'_>,
+        _context: &sinex_source_core::RecordContext<'_>,
     ) -> Result<(Vec<ActionRecorded>, ()), RecordError> {
         let first = &cell.lines[0];
         let (verb, title, title_url, unlinked_text) = match first.links.first() {
@@ -112,7 +112,7 @@ impl Parser for YouTubeParser {
         &self,
         cell: &Cell,
         _: &(),
-        _context: &crate::RecordContext<'_>,
+        _context: &sinex_source_core::RecordContext<'_>,
     ) -> Result<(Vec<YouTubeEvent>, ()), RecordError> {
         let first = &cell.lines[0];
         let service = "youtube".to_owned();

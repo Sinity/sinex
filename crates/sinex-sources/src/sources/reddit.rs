@@ -4,15 +4,15 @@
 //! columns are dropped as read; account metadata files stay in the material,
 //! unread. Exports are cumulative, so an older one adds only older readings of
 //! the same items.
-use crate::drivers::export_archive::{ExportArchive, Framing, PART_BYTES};
-use crate::registry::{DeclaredSource, Driver, SourceSpec};
 use crate::sources::fields;
-use crate::{Parser, RecordContext, RecordError};
 use serde::{Deserialize, Serialize};
 use sinex_model::Class;
 use sinex_model::event_types::communication::ConversationMessage;
 use sinex_model::event_types::media::BookmarkSaved;
 use sinex_model::event_types::social::{PostPublished, VoteCast};
+use sinex_source_core::drivers::export_archive::{ExportArchive, Framing, PART_BYTES};
+use sinex_source_core::registry::{DeclaredSource, Driver, SourceSpec};
+use sinex_source_core::{Parser, RecordContext, RecordError};
 use std::path::PathBuf;
 
 pub const SPEC: SourceSpec = SourceSpec {
@@ -29,7 +29,10 @@ pub const SPEC: SourceSpec = SourceSpec {
         "bookmark.saved",
         "conversation.message",
     ],
-    framer: crate::Framer::export(frame, crate::drivers::export_archive::Framing::Csv),
+    framer: sinex_source_core::Framer::export(
+        frame,
+        sinex_source_core::drivers::export_archive::Framing::Csv,
+    ),
 };
 
 /// The members read; the rest (account metadata) are kept, not parsed.
@@ -261,27 +264,28 @@ pub fn driver(path: PathBuf, host: String) -> ExportArchive {
 }
 
 /// `--read reddit=PATH`: each Reddit export ZIP in PATH.
-pub const FORMAT: crate::binding::InputFormat = crate::binding::InputFormat {
-    name: "reddit",
-    specs: || vec![&SPEC],
-    plan: Some(|input, settings| {
-        Ok(crate::binding::per_file(
-            &SPEC,
-            input,
-            settings,
-            false,
-            |p| p.extension().is_some_and(|e| e == "zip"),
-        ))
-    }),
-    source: |_| Ok(Box::new(source())),
-    reader: Some(|b| {
-        Ok(crate::binding::shared(driver(
-            b.input.clone(),
-            b.settings.host.clone(),
-        )))
-    }),
-    capture: None,
-};
+pub const FORMAT: sinex_source_core::binding::InputFormat =
+    sinex_source_core::binding::InputFormat {
+        name: "reddit",
+        specs: || vec![&SPEC],
+        plan: Some(|input, settings| {
+            Ok(sinex_source_core::binding::per_file(
+                &SPEC,
+                input,
+                settings,
+                false,
+                |p| p.extension().is_some_and(|e| e == "zip"),
+            ))
+        }),
+        source: |_| Ok(Box::new(source())),
+        reader: Some(|b| {
+            Ok(sinex_source_core::binding::shared(driver(
+                b.input.clone(),
+                b.settings.host.clone(),
+            )))
+        }),
+        capture: None,
+    };
 
 #[cfg(test)]
 mod tests;

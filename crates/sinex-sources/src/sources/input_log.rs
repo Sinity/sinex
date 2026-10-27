@@ -11,16 +11,16 @@
 //! `window`. Pointer records carry the axis or button in `code` and the step
 //! in `value`, and no kernel time. Records have no IDs; [`Numbering`]
 //! numbers equal ones.
-use crate::drivers::append_file::{AppendFile, lines};
-use crate::registry::{DeclaredSource, Driver, SourceSpec};
 use crate::sources::fields;
-use crate::{Parser, RecordError};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use sinex_model::event_types::input::{
     InputLogger, KeyPressed, KeyReleased, PointerButton, PointerMoved, PointerScrolled,
 };
 use sinex_model::{Class, Timestamp};
+use sinex_source_core::drivers::append_file::{AppendFile, lines};
+use sinex_source_core::registry::{DeclaredSource, Driver, SourceSpec};
+use sinex_source_core::{Parser, RecordError};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
@@ -41,7 +41,7 @@ pub const SPEC: SourceSpec = SourceSpec {
         "pointer.scrolled",
         "input.logger",
     ],
-    framer: crate::Framer::incremental(lines),
+    framer: sinex_source_core::Framer::incremental(lines),
 };
 
 sinex_model::payload_enum! {
@@ -164,7 +164,7 @@ impl Parser for InputLogParser {
         &self,
         record: &Map<String, Value>,
         numbering: &Numbering,
-        _context: &crate::RecordContext<'_>,
+        _context: &sinex_source_core::RecordContext<'_>,
     ) -> Result<(Vec<Input>, Numbering), RecordError> {
         let mut row = record.clone();
         let logged_at = fields::rfc3339(
@@ -317,27 +317,28 @@ pub fn driver(path: PathBuf, host: String) -> AppendFile {
 }
 
 /// `--read input-log=DIR`: each day's log in DIR, or one log file.
-pub const FORMAT: crate::binding::InputFormat = crate::binding::InputFormat {
-    name: "input-log",
-    specs: || vec![&SPEC],
-    plan: Some(|input, settings| {
-        Ok(crate::binding::per_file(
-            &SPEC,
-            input,
-            settings,
-            false,
-            is_day_file,
-        ))
-    }),
-    source: |_| Ok(Box::new(source())),
-    reader: Some(|b| {
-        Ok(crate::binding::appended(driver(
-            b.input.clone(),
-            b.settings.host.clone(),
-        )))
-    }),
-    capture: None,
-};
+pub const FORMAT: sinex_source_core::binding::InputFormat =
+    sinex_source_core::binding::InputFormat {
+        name: "input-log",
+        specs: || vec![&SPEC],
+        plan: Some(|input, settings| {
+            Ok(sinex_source_core::binding::per_file(
+                &SPEC,
+                input,
+                settings,
+                false,
+                is_day_file,
+            ))
+        }),
+        source: |_| Ok(Box::new(source())),
+        reader: Some(|b| {
+            Ok(sinex_source_core::binding::appended(driver(
+                b.input.clone(),
+                b.settings.host.clone(),
+            )))
+        }),
+        capture: None,
+    };
 
 #[cfg(test)]
 mod tests;

@@ -2,8 +2,8 @@
 use crate::backfill::Totals;
 use crate::writer::{AdmissionCheck, Priority, WriterHandle};
 use serde_json::Value;
-use sinex_model::{BatchKind, Class, MaterialId, RecordOutcome, RunId};
-use sinex_sources::{Limits, Source, drivers};
+use sinex_model::{Class, MaterialId, RecordOutcome, RunId};
+use sinex_source_core::{Limits, Source, drivers};
 use sinex_store::{Blobs, Outcome, bindings};
 use sqlx::PgConnection;
 use std::sync::Arc;
@@ -19,16 +19,13 @@ pub(crate) struct Intake<'a> {
     pub source: &'a dyn Source,
     pub binding: &'a str,
     pub run: RunId,
-    pub sink: &'a dyn drivers::MaterialSink,
-    pub class: Class,
-    pub sealing: Option<&'a crate::material_sink::SealingSink>,
-    pub unlock: Option<&'a crate::sealed_access::Unlock>,
+    pub material: &'a crate::sealing::Materials,
     pub check: AdmissionCheck,
     pub priority: Priority,
     /// Requests commit together and refuse parser failures before admission.
     pub atomic: bool,
     /// The material and its data key are already registered.
-    pub registered: bool,
+    pub registered: Option<MaterialId>,
 }
 
 impl Intake<'_> {
@@ -46,7 +43,7 @@ impl Intake<'_> {
             self.run,
             acquired,
             carry,
-            self.sink,
+            self.material.sink(),
             if self.atomic {
                 Limits {
                     max_events: usize::MAX,
@@ -74,30 +71,8 @@ impl Intake<'_> {
                     return Err("request records failed to read back".into());
                 }
             }
-            for record in &mut batch.records {
-                if let RecordOutcome::Events { events, .. } = record {
-                    for event in events {
-                        event.class = event.class.max(self.class);
-                    }
-                }
-            }
-            if let Some(sealing) = self.sealing {
-                sealing.seal(std::slice::from_mut(&mut batch))?;
-                if self.registered
-                    && let BatchKind::Source(progress) = &mut batch.kind
-                {
-                    progress.data_keys.clear();
-                }
-            }
-            let check = self.check.clone();
-            let unlock = self.unlock.cloned();
-            let check: AdmissionCheck = Arc::new(move || {
-                check()?;
-                if let Some(unlock) = &unlock {
-                    unlock.check()?;
-                }
-                Ok(())
-            });
+            self.material.prepare_batch(&mut batch, self.registered)?;
+            let check = self.material.admission_check(self.check.clone());
             check()?;
             let events = batch.event_count();
             let started = Instant::now();
@@ -154,19 +129,18 @@ pub(crate) async fn request(
     .await
     .map_err(|e| e.to_string())?;
     let class = request_class(conn, source.as_ref()).await?;
+    let material =
+        crate::sealing::Materials::new(blobs.clone(), class, crate::sealing::Access::default())?;
     Intake {
         writer,
         source: source.as_ref(),
         binding,
         run: RunId::new(),
-        sink: &crate::material_sink::Sink(blobs.clone()),
-        class,
-        sealing: None,
-        unlock: None,
+        material: &material,
         check: Arc::new(|| Ok(())),
         priority: Priority::Live,
         atomic: true,
-        registered: false,
+        registered: None,
     }
     .submit(acquired, Value::Null, &mut Totals::default())
     .await

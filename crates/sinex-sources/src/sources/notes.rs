@@ -5,13 +5,13 @@
 //! The vault's own folders (`.obsidian`, `.trash`, `.git`) are not notes. A
 //! note renamed in the vault is a removal and a new path; following an
 //! native note ID across renames is a separate identity decision.
-use crate::drain::RecordContext;
-use crate::drivers::dir_snapshot::DirSnapshot;
-use crate::registry::{DeclaredSource, Driver, SourceSpec};
-use crate::{Parser, RecordError};
 use serde_json::Value;
 use sinex_model::event_types::media::NoteDocument;
 use sinex_model::{Class, Timestamp};
+use sinex_source_core::drain::RecordContext;
+use sinex_source_core::drivers::dir_snapshot::DirSnapshot;
+use sinex_source_core::registry::{DeclaredSource, Driver, SourceSpec};
+use sinex_source_core::{Parser, RecordError};
 use std::path::PathBuf;
 
 mod metadata;
@@ -25,9 +25,9 @@ pub const SPEC: SourceSpec = SourceSpec {
     parser: "notes-vault",
     parser_version: 3,
     event_types: &["note.document"],
-    framer: crate::Framer::export(
-        crate::drivers::export_archive::frame_whole,
-        crate::drivers::export_archive::Framing::Whole,
+    framer: sinex_source_core::Framer::export(
+        sinex_source_core::drivers::export_archive::frame_whole,
+        sinex_source_core::drivers::export_archive::Framing::Whole,
     ),
 };
 
@@ -125,19 +125,22 @@ pub fn driver(root: PathBuf, host: String) -> DirSnapshot {
 }
 
 /// `--read notes=PATH`: the note vault at PATH, walked as one directory.
-pub const FORMAT: crate::binding::InputFormat = crate::binding::InputFormat {
-    name: "notes",
-    specs: || vec![&SPEC],
-    plan: Some(|input, settings| Ok(crate::binding::single(&SPEC, input, settings))),
-    source: |_| Ok(Box::new(source())),
-    reader: Some(|b| {
-        Ok(crate::binding::walked(driver(
-            b.input.clone(),
-            b.settings.host.clone(),
-        )))
-    }),
-    capture: None,
-};
+pub const FORMAT: sinex_source_core::binding::InputFormat =
+    sinex_source_core::binding::InputFormat {
+        name: "notes",
+        specs: || vec![&SPEC],
+        plan: Some(|input, settings| {
+            Ok(sinex_source_core::binding::single(&SPEC, input, settings))
+        }),
+        source: |_| Ok(Box::new(source())),
+        reader: Some(|b| {
+            Ok(sinex_source_core::binding::walked(driver(
+                b.input.clone(),
+                b.settings.host.clone(),
+            )))
+        }),
+        capture: None,
+    };
 
 #[cfg(test)]
 mod tests;
