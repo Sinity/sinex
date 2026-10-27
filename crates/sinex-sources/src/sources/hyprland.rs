@@ -275,10 +275,12 @@ fn capture_until(
     spool: &Path,
     stop: &sinex_source_core::capture::CaptureStop,
 ) -> std::io::Result<u64> {
-    let stream = UnixStream::connect(socket)?;
-    stop.shutdown_on_stop(&stream)?;
     let mut writer = SpoolWriter::open(spool, Rotation::default())?;
-    live_stream::capture_lines(BufReader::new(stream), &mut writer, Duration::from_secs(1))
+    writer.capture(stop, |writer, active| {
+        let stream = UnixStream::connect(socket)?;
+        active.shutdown_on_stop(&stream)?;
+        live_stream::capture_lines(BufReader::new(stream), writer, Duration::from_secs(1))
+    })
 }
 
 /// `--read hyprland=SPOOL`: Hyprland's event socket, captured into SPOOL.

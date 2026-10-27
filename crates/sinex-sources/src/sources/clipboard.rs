@@ -103,24 +103,25 @@ pub fn capture(
     stop: &sinex_source_core::capture::CaptureStop,
 ) -> std::io::Result<u64> {
     let mut writer = SpoolWriter::open(spool, Rotation::default())?;
-    let mut command = Command::new("wl-paste");
-    if selection == "primary" {
-        command.arg("--primary");
-    }
-    command
-        .arg("--watch")
-        .args(helper)
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null());
-    let Some(mut child) = stop.spawn(&mut command)? else {
-        return Ok(0);
-    };
-    let stdout = child.stdout().expect("piped stdout");
-    let n =
-        live_stream::capture_lines(BufReader::new(stdout), &mut writer, Duration::from_secs(1))?;
-    let _ = child.wait();
-    Ok(n)
+    writer.capture(stop, |writer, stop| {
+        let mut command = Command::new("wl-paste");
+        if selection == "primary" {
+            command.arg("--primary");
+        }
+        command
+            .arg("--watch")
+            .args(helper)
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null());
+        let Some(mut child) = stop.spawn(&mut command)? else {
+            return Ok(0);
+        };
+        let stdout = child.stdout().expect("piped stdout");
+        let n = live_stream::capture_lines(BufReader::new(stdout), writer, Duration::from_secs(1))?;
+        let _ = child.wait();
+        Ok(n)
+    })
 }
 
 pub struct ClipboardParser;

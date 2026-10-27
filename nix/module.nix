@@ -321,7 +321,11 @@ in
   config = mkMerge [
     (mkIf (cfg.enable || node.enable) {
       users.groups.sinex = { };
-      systemd.tmpfiles.rules = [ "d /run/sinex 2770 root sinex -" ];
+      environment.sessionVariables.SINEX_PRIVATE_MODE = privateSwitch;
+      systemd.tmpfiles.rules = [
+        "d /run/sinex 2770 root sinex -"
+        "z ${privateSwitch} 0660 - sinex -"
+      ];
     })
     (mkIf cfg.enable {
       users.users = {

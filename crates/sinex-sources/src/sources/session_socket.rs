@@ -82,20 +82,21 @@ fn capture_until(
     if let Some(dir) = socket.parent() {
         std::fs::create_dir_all(dir)?;
     }
-    // A socket left by a previous run is stale: nothing listens on it.
     let _ = std::fs::remove_file(socket);
-    let listener = UnixListener::bind(socket)?;
-    let result = (|| {
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(socket, std::fs::Permissions::from_mode(0o600))?;
-        let writer = Arc::new(Mutex::new(SpoolWriter::open(spool, Rotation::default())?));
-        capture_connections(listener, writer, || stop.stopped())
-    })();
-    let cleanup = std::fs::remove_file(socket);
-    match result {
-        Ok(count) => cleanup.map(|()| count),
-        Err(error) => Err(error),
-    }
+    let writer = Arc::new(Mutex::new(SpoolWriter::open(spool, Rotation::default())?));
+    SpoolWriter::capture_shared(&writer, stop, |active| {
+        let listener = UnixListener::bind(socket)?;
+        let result = (|| {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(socket, std::fs::Permissions::from_mode(0o600))?;
+            capture_connections(listener, writer.clone(), || active.stopped())
+        })();
+        let cleanup = std::fs::remove_file(socket);
+        match result {
+            Ok(count) => cleanup.map(|()| count),
+            Err(error) => Err(error),
+        }
+    })
 }
 
 const ACCEPT_BATCH: usize = 32;

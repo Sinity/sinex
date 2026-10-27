@@ -30,7 +30,8 @@ local function send(line)
     if not ok or c == 0 then return end
     chan = c
   end
-  if not pcall(vim.fn.chansend, chan, line .. "\n") then
+  local ok, written = pcall(vim.fn.chansend, chan, line .. "\n")
+  if not ok or written == 0 then
     -- The listener went away; reconnect on the next event.
     pcall(vim.fn.chanclose, chan)
     chan = nil

@@ -378,8 +378,8 @@ changes. An excised material is no longer listed on
 `<root>.materials.<producer>`. The operator's excision refuses producers'
 materials.
 
-### Private mode
+## Private mode
 
-Every live spool writer and media recorder uses `sinex-source-core::private_mode::Gate`. Writes check the switch directly. A watcher checks quiet streams every 20 ms, keeps the start of an open gap in `.private-gap.json`, and writes `.capture-health.json` with the stream and any switch error. Capture logs report those errors. Completed intervals become gap records in the same spool and the shared drain emits `capture.gap` events before invoking a source parser. Media recorders are interrupted when the gate closes and discard interrupted segments. Buffered line reads spanning a blocked interval are discarded. Producers continue sending spooled records; private mode gates recording at its source.
+Every live spool writer and media recorder uses `sinex-source-core::private_mode::Gate`. Writes check the switch directly. A watcher checks quiet streams every 20 ms, keeps the start of an open gap in `.private-gap.json`, and writes `.capture-health.json` with the stream and any switch error. Capture logs report those errors. Completed intervals become gap records in the same spool and the shared drain emits `capture.gap` events before invoking a source parser. Media recorders are interrupted when the gate closes and discard interrupted segments. Stream acquisition stops across a private interval, closes its connections and child processes, and reopens them when the switch is off. Buffered line reads from an interrupted run are discarded. Journal capture resumes after the latest gap rather than replaying private journal entries. Producers continue sending spooled records; private mode gates recording at its source.
 
 The private switch is `/run/sinex/private-mode` in the Nix module. Its directory is shared through group `sinex`, including session and capture-only accounts. The switch inherits that group when created.

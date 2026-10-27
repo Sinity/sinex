@@ -24,6 +24,13 @@ fn private_mode_works_without_a_daemon_or_database() {
         let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
         assert_eq!(report["private_mode"], expected);
         assert_eq!(report["switch"], switch.to_str().unwrap());
+        if expected == "on" {
+            use std::os::unix::fs::PermissionsExt;
+            assert_eq!(
+                std::fs::metadata(&switch).unwrap().permissions().mode() & 0o777,
+                0o660
+            );
+        }
     }
 }
 

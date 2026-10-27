@@ -29,36 +29,40 @@ pub fn driver(spool: PathBuf, host: String, locator: &str) -> LiveStream {
 /// ends or capture stops. Returns the number of lines captured.
 pub fn capture(
     matches: &[&str],
-    initial: impl FnOnce(&sinex_source_core::capture::CaptureStop) -> Vec<Vec<u8>> + Send,
+    mut initial: impl FnMut(&sinex_source_core::capture::CaptureStop) -> Vec<Vec<u8>> + Send,
     spool: &Path,
     stop: &sinex_source_core::capture::CaptureStop,
 ) -> std::io::Result<u64> {
     let mut writer = SpoolWriter::open(spool, Rotation::default())?;
-    let permit = writer.read_permit()?;
-    let initial = writer
-        .record(stop, |recording| Ok(initial(recording)))?
-        .unwrap_or_default();
-    for line in &initial {
-        writer.append_read(permit, sinex_model::Timestamp::now(), line)?;
-    }
-    writer.sync()?;
-    let mut command = Command::new("busctl");
-    command.args(["--user", "monitor", "--json=short"]);
-    for m in matches {
-        command.arg("--match").arg(m);
-    }
-    command
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null());
-    let Some(mut child) = stop.spawn(&mut command)? else {
-        return Ok(initial.len() as u64);
-    };
-    let stdout = child.stdout().expect("piped stdout");
-    let n =
-        live_stream::capture_lines(BufReader::new(stdout), &mut writer, Duration::from_secs(1))?;
-    let _ = child.wait();
-    Ok(n + initial.len() as u64)
+    writer.capture(stop, |writer, stop| {
+        let permit = writer.read_permit()?;
+        let initial = writer
+            .record(stop, |recording| Ok(initial(recording)))?
+            .unwrap_or_default();
+        let mut initial_count = 0;
+        for line in &initial {
+            let dropped = writer.dropped;
+            writer.append_read(permit, sinex_model::Timestamp::now(), line)?;
+            initial_count += u64::from(writer.dropped == dropped);
+        }
+        writer.sync()?;
+        let mut command = Command::new("busctl");
+        command.args(["--user", "monitor", "--json=short"]);
+        for m in matches {
+            command.arg("--match").arg(m);
+        }
+        command
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null());
+        let Some(mut child) = stop.spawn(&mut command)? else {
+            return Ok(initial_count);
+        };
+        let stdout = child.stdout().expect("piped stdout");
+        let n = live_stream::capture_lines(BufReader::new(stdout), writer, Duration::from_secs(1))?;
+        let _ = child.wait();
+        Ok(n + initial_count)
+    })
 }
 
 /// Call a method with `busctl --user call … --json=short` and return its

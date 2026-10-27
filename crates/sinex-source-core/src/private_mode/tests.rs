@@ -173,3 +173,35 @@ fn gap_records_drain_as_capture_gap_without_calling_the_source_parser() {
     assert_eq!(events[0].payload["reason"], "private_mode");
     assert!(material.manifest.details.contains_key("capture_records"));
 }
+
+#[devkit::test]
+fn starting_in_private_mode_keeps_its_start_unknown() {
+    let dir = tempfile::tempdir().unwrap();
+    let mode = PrivateMode::new(dir.path().join("switch"));
+    mode.set(true).unwrap();
+    let (gate, gaps) = gate(&dir.path().join("spool"), mode.clone());
+    mode.set(false).unwrap();
+    assert!(gate.allowed().unwrap());
+    assert_eq!(
+        gaps.recv_timeout(Duration::from_secs(2)).unwrap().start,
+        None
+    );
+}
+
+#[devkit::test]
+fn finished_records_cannot_be_stored_after_a_private_interval() {
+    let dir = tempfile::tempdir().unwrap();
+    let mode = PrivateMode::new(dir.path().join("switch"));
+    let (gate, _gaps) = gate(&dir.path().join("spool"), mode.clone());
+    let permit = gate.permit().unwrap();
+    mode.set(true).unwrap();
+    assert!(!gate.allowed().unwrap());
+    mode.set(false).unwrap();
+    assert!(
+        gate.store(permit, || -> io::Result<()> {
+            panic!("private read must not be stored")
+        })
+        .unwrap()
+        .is_none()
+    );
+}

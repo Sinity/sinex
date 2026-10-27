@@ -164,14 +164,21 @@ impl PrivateMode {
         }
         if on {
             use std::io::Write;
-            use std::os::unix::fs::OpenOptionsExt;
-            let mut file = std::fs::OpenOptions::new()
+            use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+            match std::fs::OpenOptions::new()
                 .write(true)
-                .create(true)
-                .truncate(true)
+                .create_new(true)
                 .mode(0o660)
-                .open(&self.path)?;
-            file.write_all(b"private mode is on: Sinex captures nothing\n")
+                .open(&self.path)
+            {
+                Ok(mut file) => {
+                    file.set_permissions(std::fs::Permissions::from_mode(0o660))?;
+                    file.write_all(b"private mode is on: Sinex captures nothing\n")?;
+                    file.sync_all()
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => Ok(()),
+                Err(error) => Err(error),
+            }
         } else {
             match std::fs::remove_file(&self.path) {
                 Err(e) if e.kind() != std::io::ErrorKind::NotFound => Err(e),

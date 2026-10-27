@@ -91,9 +91,9 @@ fn an_entry_without_a_cursor_is_a_failure_not_a_guess() {
 }
 
 #[devkit::test]
-fn capture_resumes_after_the_last_spooled_cursor() {
+fn capture_resumes_after_the_resume_argument() {
     let spool = std::env::temp_dir().join(format!("sinex-jd-{}", uuid::Uuid::now_v7()));
-    assert_eq!(last_spooled_cursor(&std::env::temp_dir()).unwrap(), None);
+    assert_eq!(resume_argument(&std::env::temp_dir()).unwrap(), None);
     let mut w = SpoolWriter::open(&spool, Rotation::default()).unwrap();
     for i in 0..3 {
         let line = json!({"__CURSOR": format!("c{i}"), "MESSAGE": "x".repeat(70_000)});
@@ -101,5 +101,47 @@ fn capture_resumes_after_the_last_spooled_cursor() {
             .unwrap();
     }
     w.sync().unwrap();
-    assert_eq!(last_spooled_cursor(&spool).unwrap().as_deref(), Some("c2"));
+    assert_eq!(
+        resume_argument(&spool).unwrap().as_deref(),
+        Some("--after-cursor=c2")
+    );
+}
+
+#[devkit::test]
+fn private_gaps_set_the_journal_resume_boundary() {
+    let directory = tempfile::tempdir().unwrap();
+    let spool = directory.path();
+    let end = Timestamp::from_unix_secs(10).unwrap();
+    let gap = sinex_source_core::private_mode::Gap {
+        stream: "test".into(),
+        start: None,
+        end: Some(end),
+        reason: "private_mode".into(),
+    };
+    let cursor = live_stream::frame(end, br#"{"__CURSOR":"before"}"#);
+    let mut bytes = cursor.clone();
+    bytes.extend(serde_json::to_vec(&serde_json::json!({"capture_gap": gap})).unwrap());
+    bytes.push(b'\n');
+    std::fs::write(spool.join("000000000000.ndjson"), &bytes).unwrap();
+    assert_eq!(
+        resume_argument(spool).unwrap().as_deref(),
+        Some("--since=@10.000001")
+    );
+    bytes.extend(live_stream::frame(end, br#"{"__CURSOR":"after"}"#));
+    std::fs::write(spool.join("000000000000.ndjson"), &bytes).unwrap();
+    assert_eq!(
+        resume_argument(spool).unwrap().as_deref(),
+        Some("--after-cursor=after")
+    );
+    std::fs::write(
+        spool.join(".private-gap.json"),
+        serde_json::to_vec(&gap).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(
+        resume_argument(spool).unwrap().as_deref(),
+        Some("--since=now")
+    );
+    std::fs::write(spool.join(".private-gap.json"), b"interrupted metadata").unwrap();
+    assert!(resume_argument(spool).is_err());
 }

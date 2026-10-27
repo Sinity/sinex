@@ -100,7 +100,7 @@ self: {
 
     with subtest("the operator's login shell reaches the daemon and its private-mode switch"):
         machine.succeed("su - alice -c 'sinexctl status'")
-        machine.succeed("su - alice -c 'sinexctl private on'")
+        machine.succeed("su - alice -c 'umask 077; sinexctl private on'")
         machine.succeed("test -e /run/sinex/private-mode")
         for account in ["alice", "sinex"]:
             machine.succeed(f"runuser -u {account} -- cat /run/sinex/private-mode")

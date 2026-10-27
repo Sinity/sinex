@@ -99,6 +99,13 @@ pub fn driver(spool: PathBuf, host: String, kind: &str) -> Media {
     }
 }
 
+fn remove_partial(path: &Path) -> std::io::Result<()> {
+    match std::fs::remove_file(path) {
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        result => result,
+    }
+}
+
 fn stem(start: Timestamp, end: Timestamp, kind: &str) -> String {
     format!("{:020}-{:020}.{kind}", start.unix_ns(), end.unix_ns())
 }
@@ -145,6 +152,7 @@ fn capture_screen(
                 targets.push((None, 0, 0));
             }
             for (output, width, height) in targets {
+                let permit = gate.permit()?;
                 let at = Timestamp::now();
                 let kind = format!("screen-{}", output.as_deref().unwrap_or("all"));
                 let st = stem(at, at, &kind);
@@ -156,14 +164,19 @@ fn capture_screen(
                 grim.args(["-t", "jpeg", "-q", "75"])
                     .arg(&partial)
                     .stderr(Stdio::null());
-                let ok = gate
-                    .record(stop, |recording| recording.status(&mut grim))?
-                    .is_some_and(|s| s.is_some_and(|s| s.success()));
+                let ok = match gate.record(stop, |recording| recording.status(&mut grim)) {
+                    Ok(Some(status)) => status.is_some_and(|status| status.success()),
+                    Ok(None) => false,
+                    Err(error) => {
+                        remove_partial(&partial)?;
+                        return Err(error);
+                    }
+                };
                 if !ok {
-                    let _ = std::fs::remove_file(&partial);
+                    remove_partial(&partial)?;
                     continue;
                 }
-                media::publish_segment(
+                let published = gate.store(permit, || media::publish_segment(
                     spool,
                     &partial,
                     &st,
@@ -174,8 +187,15 @@ fn capture_screen(
                         "width": (width > 0).then_some(width), "height": (height > 0).then_some(height),
                         "media_type": "image/jpeg",
                     }),
-                )?;
-                n += 1;
+                ));
+                match published {
+                    Ok(Some(_)) => n += 1,
+                    Ok(None) => remove_partial(&partial)?,
+                    Err(error) => {
+                        remove_partial(&partial)?;
+                        return Err(error);
+                    }
+                }
             }
         }
         stop.wait(every.saturating_sub(tick.elapsed()));
@@ -224,12 +244,17 @@ fn capture_audio(
             child.interrupt();
             child.wait()?;
             Ok(())
-        })?;
-        if recorded.is_none() {
-            if wav.exists() {
-                std::fs::remove_file(&wav)?;
+        });
+        match recorded {
+            Ok(Some(())) => {}
+            Ok(None) => {
+                remove_partial(&wav)?;
+                continue;
             }
-            continue;
+            Err(error) => {
+                remove_partial(&wav)?;
+                return Err(error);
+            }
         }
         let end = Timestamp::now();
         if !wav.exists() {
@@ -244,23 +269,26 @@ fn capture_audio(
                 .arg(&wav)
                 .args(["-c:a", "libopus", "-b:a", "24k", "-f", "ogg"])
                 .arg(&ogg);
-            let ok = stop
-                .status(&mut command)
-                .is_ok_and(|s| s.is_some_and(|s| s.success()));
+            let ok = match gate.record(stop, |recording| recording.status(&mut command)) {
+                Ok(Some(status)) => status.is_some_and(|status| status.success()),
+                Ok(None) => false,
+                Err(error) => {
+                    remove_partial(&wav)?;
+                    remove_partial(&ogg)?;
+                    return Err(error);
+                }
+            };
             if ok {
                 std::fs::remove_file(&wav)?;
                 (ogg, "ogg", "audio/ogg")
             } else {
+                remove_partial(&ogg)?;
                 (wav, "wav", "audio/wav")
             }
         } else {
             (wav, "wav", "audio/wav")
         };
-        if !gate.accepts(permit)? {
-            std::fs::remove_file(&file)?;
-            continue;
-        }
-        media::publish_segment(
+        let published = gate.store(permit, || media::publish_segment(
             spool,
             &file,
             &st,
@@ -269,8 +297,15 @@ fn capture_audio(
                 "kind": "audio", "started_ns": start.unix_ns().to_string(), "ended_ns": end.unix_ns().to_string(),
                 "mime": mime, "target": "default", "media_type": mime,
             }),
-        )?;
-        n += 1;
+        ));
+        match published {
+            Ok(Some(_)) => n += 1,
+            Ok(None) => remove_partial(&file)?,
+            Err(error) => {
+                remove_partial(&file)?;
+                return Err(error);
+            }
+        }
     }
     Ok(n)
 }

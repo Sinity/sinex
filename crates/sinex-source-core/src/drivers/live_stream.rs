@@ -42,6 +42,8 @@ pub struct SpoolWriter {
     private: crate::private_mode::Gate,
     state: std::sync::Arc<std::sync::Mutex<SpoolState>>,
     pub dropped: u64,
+    captured: u64,
+    run_permit: Option<crate::private_mode::ReadPermit>,
 }
 
 struct SpoolState {
@@ -125,6 +127,8 @@ impl SpoolWriter {
             private,
             state,
             dropped: 0,
+            captured: 0,
+            run_permit: None,
         })
     }
 
@@ -140,6 +144,67 @@ impl SpoolWriter {
             state.write(&bytes)?;
             state.sync()
         })
+    }
+
+    /// Keep the writer and its gap watcher alive while acquisition is paused.
+    pub fn capture(
+        &mut self,
+        parent: &crate::capture::CaptureStop,
+        mut capture: impl FnMut(&mut Self, &crate::capture::CaptureStop) -> std::io::Result<u64> + Send,
+    ) -> std::io::Result<u64> {
+        let before = self.captured;
+        let gate = self.private.access();
+        while !parent.stopped() {
+            if !gate.allowed()? {
+                parent.wait(Duration::from_millis(20));
+                continue;
+            }
+            let permit = gate.permit()?;
+            self.run_permit = Some(permit);
+            let result = gate.record_permit(parent, permit, |active| capture(self, active));
+            self.run_permit = None;
+            if result?.is_some() {
+                break;
+            }
+        }
+        Ok(self.captured - before)
+    }
+
+    pub fn capture_shared(
+        writer: &std::sync::Mutex<Self>,
+        parent: &crate::capture::CaptureStop,
+        mut capture: impl FnMut(&crate::capture::CaptureStop) -> std::io::Result<u64> + Send,
+    ) -> std::io::Result<u64> {
+        let (gate, before) = {
+            let writer = writer
+                .lock()
+                .map_err(|_| std::io::Error::other("spool lock poisoned"))?;
+            (writer.private.access(), writer.captured)
+        };
+        while !parent.stopped() {
+            if !gate.allowed()? {
+                parent.wait(Duration::from_millis(20));
+                continue;
+            }
+            let permit = gate.permit()?;
+            writer
+                .lock()
+                .map_err(|_| std::io::Error::other("spool lock poisoned"))?
+                .run_permit = Some(permit);
+            let result = gate.record_permit(parent, permit, &mut capture);
+            writer
+                .lock()
+                .map_err(|_| std::io::Error::other("spool lock poisoned"))?
+                .run_permit = None;
+            if result?.is_some() {
+                break;
+            }
+        }
+        Ok(writer
+            .lock()
+            .map_err(|_| std::io::Error::other("spool lock poisoned"))?
+            .captured
+            - before)
     }
 
     pub fn record<T: Send>(
@@ -164,23 +229,30 @@ impl SpoolWriter {
         received: Timestamp,
         line: &[u8],
     ) -> std::io::Result<()> {
-        if !self.private.accepts(permit)? {
+        if let Some(run) = self.run_permit
+            && !self.private.accepts(run)?
+        {
             self.dropped += 1;
             return Ok(());
         }
-        self.append(received, line)
+        let stored = self.private.store(permit, || {
+            self.state
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .write(&frame(received, line))
+        })?;
+        if stored.is_none() {
+            self.dropped += 1;
+        } else {
+            self.captured += 1;
+        }
+        Ok(())
     }
 
     /// Append one received line (without its terminator).
     pub fn append(&mut self, received: Timestamp, line: &[u8]) -> std::io::Result<()> {
-        if !self.private.allowed()? {
-            self.dropped += 1;
-            return Ok(());
-        }
-        self.state
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .write(&frame(received, line))
+        let permit = self.private.permit()?;
+        self.append_read(permit, received, line)
     }
 
     /// Make everything appended so far durable.

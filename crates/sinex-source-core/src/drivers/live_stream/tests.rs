@@ -214,3 +214,41 @@ fn buffered_lines_from_a_private_interval_are_all_discarded() {
         ["after"]
     );
 }
+
+#[devkit::test]
+fn private_mode_restarts_acquisition_and_rejects_the_old_run_buffer() {
+    let directory = tempfile::tempdir().unwrap();
+    let spool = directory.path().join("spool");
+    let switch = crate::private_mode::PrivateMode::new(directory.path().join("switch"));
+    let mut writer = SpoolWriter::open(&spool, Rotation::default())
+        .unwrap()
+        .with_private_mode(switch.clone());
+    let stop = crate::capture::CaptureStop::new(Some(Duration::from_secs(5)));
+    let mut runs = 0;
+    let captured = writer
+        .capture(&stop, |writer, active| {
+            runs += 1;
+            if runs == 1 {
+                writer.append(Timestamp::now(), b"before")?;
+                switch.set(true)?;
+                assert!(active.wait(Duration::from_secs(2)));
+                switch.set(false)?;
+                writer.append(
+                    Timestamp::now(),
+                    b"private bytes queued by the stopped reader",
+                )?;
+            } else {
+                writer.append(Timestamp::now(), b"after")?;
+            }
+            Ok(0)
+        })
+        .unwrap();
+    writer.sync().unwrap();
+    assert_eq!(runs, 2);
+    assert_eq!(captured, 2);
+    assert_eq!(writer.dropped, 1);
+    assert_eq!(
+        lines_of(&stream(&spool).poll(&Value::Null).unwrap()),
+        ["before", "after"]
+    );
+}

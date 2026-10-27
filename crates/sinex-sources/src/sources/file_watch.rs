@@ -125,8 +125,10 @@ fn change_of(kind: &EventKind) -> Option<(&'static str, Option<bool>)> {
     })
 }
 
-fn spool_line(spool: &mut SpoolWriter, line: &Value) -> std::io::Result<()> {
-    spool.append(Timestamp::now(), line.to_string().as_bytes())
+fn spool_line(spool: &mut SpoolWriter, line: &Value) -> std::io::Result<u64> {
+    let dropped = spool.dropped;
+    spool.append(Timestamp::now(), line.to_string().as_bytes())?;
+    Ok(u64::from(spool.dropped == dropped))
 }
 
 /// Watch `roots` and spool every change until `duration` elapses (forever when
@@ -145,6 +147,14 @@ fn capture_until(
     stop: &sinex_source_core::capture::CaptureStop,
 ) -> std::io::Result<u64> {
     let mut writer = SpoolWriter::open(spool, Rotation::default())?;
+    writer.capture(stop, |writer, active| capture_open(roots, writer, active))
+}
+
+fn capture_open(
+    roots: &Roots,
+    writer: &mut SpoolWriter,
+    stop: &sinex_source_core::capture::CaptureStop,
+) -> std::io::Result<u64> {
     let gate = writer.gate_access();
     let (tx, rx) = mpsc::channel();
     let mut watcher = notify::recommended_watcher(move |event: notify::Result<notify::Event>| {
@@ -170,24 +180,22 @@ fn capture_until(
                         ),
                         _ => e.to_string(),
                     };
-                    spool_line(
+                    *count += spool_line(
                         writer,
                         &json!({"kind": "unwatched", "paths": [path_json(&d)], "note": note}),
                     )?;
-                    *count += 1;
                 }
             }
             for (d, why) in unreadable {
-                spool_line(
+                *count += spool_line(
                     writer,
                     &json!({"kind": "unwatched", "paths": [path_json(&d)], "note": why}),
                 )?;
-                *count += 1;
             }
             Ok(())
         };
     for root in &roots.roots {
-        watch_tree(root, &mut writer, &mut count)?;
+        watch_tree(root, writer, &mut count)?;
     }
     writer.sync()?;
     let mut last_sync = Instant::now();
@@ -203,6 +211,7 @@ fn capture_until(
                     continue;
                 };
                 let paths: Vec<Value> = event.paths.iter().map(|p| path_json(p)).collect();
+                let dropped = writer.dropped;
                 writer.append_read(
                     permit,
                     Timestamp::now(),
@@ -210,7 +219,7 @@ fn capture_until(
                         .to_string()
                         .as_bytes(),
                 )?;
-                count += 1;
+                count += u64::from(writer.dropped == dropped);
                 // A new directory (made here or moved in) gets its watches.
                 if matches!(change, "created" | "moved_to" | "renamed")
                     && let Some(path) = event.paths.last()
@@ -220,10 +229,11 @@ fn capture_until(
                         roots.skip.iter().any(|s| s.as_bytes() == name.as_bytes())
                     })
                 {
-                    watch_tree(path, &mut writer, &mut count)?;
+                    watch_tree(path, writer, &mut count)?;
                 }
             }
             Ok((permit, Err(e))) => {
+                let dropped = writer.dropped;
                 writer.append_read(
                     permit?,
                     Timestamp::now(),
@@ -231,7 +241,7 @@ fn capture_until(
                         .to_string()
                         .as_bytes(),
                 )?;
-                count += 1;
+                count += u64::from(writer.dropped == dropped);
             }
             Err(mpsc::RecvTimeoutError::Timeout) => {}
             Err(mpsc::RecvTimeoutError::Disconnected) => break,

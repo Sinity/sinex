@@ -124,49 +124,71 @@ pub fn driver(spool: PathBuf, host: String) -> LiveStream {
     }
 }
 
-/// The cursor of the last complete entry in the spool, to resume after.
-fn last_spooled_cursor(spool: &Path) -> std::io::Result<Option<String>> {
+/// The last cursor or a private interval's later boundary.
+fn resume_argument(spool: &Path) -> std::io::Result<Option<String>> {
+    let pending = spool.join(".private-gap.json");
+    match std::fs::read(&pending) {
+        Ok(bytes) => {
+            let _: sinex_source_core::private_mode::Gap =
+                serde_json::from_slice(&bytes).map_err(std::io::Error::other)?;
+            return Ok(Some("--since=now".into()));
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => return Err(error),
+    }
     if !spool.exists() {
         return Ok(None);
     }
     for index in live_stream::segments(spool)?.into_iter().rev() {
-        let path = spool.join(format!("{index:012}.ndjson"));
-        let mut file = std::fs::File::open(&path)?;
+        let mut file = std::fs::File::open(spool.join(format!("{index:012}.ndjson")))?;
         let len = file.metadata()?.len();
-        // Read backwards in growing windows until a complete line is found.
         let mut window = 64 * 1024u64;
         loop {
             let from = len.saturating_sub(window);
             file.seek(SeekFrom::Start(from))?;
-            let mut buf = Vec::new();
-            (&mut file).take(len - from).read_to_end(&mut buf)?;
-            let complete = match buf.iter().rposition(|b| *b == b'\n') {
-                Some(end) => &buf[..end],
-                None if from == 0 => break,
-                None => {
-                    window *= 4;
-                    continue;
+            let mut bytes = Vec::new();
+            (&mut file).take(len - from).read_to_end(&mut bytes)?;
+            if let Some(end) = bytes.iter().rposition(|b| *b == b'\n') {
+                let begin = if from == 0 {
+                    0
+                } else {
+                    bytes
+                        .iter()
+                        .position(|b| *b == b'\n')
+                        .map_or(end, |i| i + 1)
+                        .min(end)
+                };
+                for raw in bytes[begin..end].rsplit(|b| *b == b'\n') {
+                    let Ok(record) = serde_json::from_slice::<Map<String, Value>>(raw) else {
+                        continue;
+                    };
+                    if let Some(gap) = record.get("capture_gap") {
+                        let gap: sinex_source_core::private_mode::Gap =
+                            serde_json::from_value(gap.clone()).map_err(std::io::Error::other)?;
+                        return Ok(Some(match gap.end {
+                            None => "--since=now".into(),
+                            Some(end) => {
+                                let micros = end.unix_ns().div_euclid(1000) + 1;
+                                format!(
+                                    "--since=@{}.{:06}",
+                                    micros.div_euclid(1_000_000),
+                                    micros.rem_euclid(1_000_000)
+                                )
+                            }
+                        }));
+                    }
+                    if let Ok((_, line)) = live_stream::received(&record)
+                        && let Ok(entry) = serde_json::from_slice::<Map<String, Value>>(&line)
+                        && let Some(Value::String(cursor)) = entry.get("__CURSOR")
+                    {
+                        return Ok(Some(format!("--after-cursor={cursor}")));
+                    }
                 }
-            };
-            let start = complete
-                .iter()
-                .rposition(|b| *b == b'\n')
-                .map_or(0, |p| p + 1);
-            if start == 0 && from > 0 {
-                window *= 4;
-                continue;
             }
-            let record: Map<String, Value> = match serde_json::from_slice(&complete[start..]) {
-                Ok(r) => r,
-                Err(_) => break,
-            };
-            if let Ok((_, line)) = live_stream::received(&record)
-                && let Ok(entry) = serde_json::from_slice::<Map<String, Value>>(&line)
-                && let Some(Value::String(cursor)) = entry.get("__CURSOR")
-            {
-                return Ok(Some(cursor.clone()));
+            if from == 0 {
+                break;
             }
-            break;
+            window = window.saturating_mul(4);
         }
     }
     Ok(None)
@@ -189,40 +211,42 @@ fn capture_until(
     start: Start<'_>,
     stop: &sinex_source_core::capture::CaptureStop,
 ) -> std::io::Result<u64> {
-    let mut command = Command::new("journalctl");
-    command.args(["--output=json", "--all", "--no-pager", "--quiet"]);
-    match last_spooled_cursor(spool)? {
-        Some(cursor) => {
-            command.arg(format!("--after-cursor={cursor}"));
-        }
-        None => match start {
-            Start::Beginning => {}
-            Start::Since(since) => {
-                command.arg(format!("--since={since}"));
-            }
-        },
-    }
-    if follow {
-        command.args(["--follow", "--lines=all"]);
-    }
-    command.stdout(Stdio::piped());
-    let Some(mut child) = stop.spawn(&mut command)? else {
-        return Ok(0);
-    };
-    let stdout = child.stdout().expect("piped stdout");
     let mut writer = SpoolWriter::open(spool, Rotation::default())?;
-    let count = live_stream::capture_lines(
-        BufReader::with_capacity(1 << 20, stdout),
-        &mut writer,
-        Duration::from_secs(1),
-    )?;
-    let status = child.wait()?;
-    if !status.success() && !stop.stopped() {
-        return Err(std::io::Error::other(format!(
-            "journalctl exited with {status}"
-        )));
-    }
-    Ok(count)
+    writer.capture(stop, |writer, stop| {
+        let mut command = Command::new("journalctl");
+        command.args(["--output=json", "--all", "--no-pager", "--quiet"]);
+        match resume_argument(spool)? {
+            Some(argument) => {
+                command.arg(argument);
+            }
+            None => match start {
+                Start::Beginning => {}
+                Start::Since(since) => {
+                    command.arg(format!("--since={since}"));
+                }
+            },
+        }
+        if follow {
+            command.args(["--follow", "--lines=all"]);
+        }
+        command.stdout(Stdio::piped());
+        let Some(mut child) = stop.spawn(&mut command)? else {
+            return Ok(0);
+        };
+        let stdout = child.stdout().expect("piped stdout");
+        let count = live_stream::capture_lines(
+            BufReader::with_capacity(1 << 20, stdout),
+            writer,
+            Duration::from_secs(1),
+        )?;
+        let status = child.wait()?;
+        if !status.success() && !stop.stopped() {
+            return Err(std::io::Error::other(format!(
+                "journalctl exited with {status}"
+            )));
+        }
+        Ok(count)
+    })
 }
 
 /// `--read journald=SPOOL`: the journal, captured into SPOOL. Options:
