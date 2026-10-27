@@ -30,5 +30,8 @@ fn shell_sessions_are_explicit_and_recall_last_filters_the_session() {
             .contains("path lists")
     );
     assert!(q("shell-sessions where cwds != /src/tide").filter.is_some());
-    assert!(err("recall mark").not_built);
+    assert!(matches!(
+        q("recall mark").source,
+        Source::RecallMark { number: 1, .. }
+    ));
 }

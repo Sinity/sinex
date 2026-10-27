@@ -833,3 +833,5 @@ mod cursor;
 mod archive_history;
 
 mod forecast;
+
+mod queries;

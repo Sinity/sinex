@@ -942,6 +942,21 @@
       ]
     },
     {
+      "name": "query.request",
+      "formats": [
+        "query"
+      ],
+      "drivers": [
+        "api-request"
+      ],
+      "purpose": "moment marks and saved queries",
+      "class": "guarded",
+      "eventTypes": [
+        "operator.mark",
+        "query.saved"
+      ]
+    },
+    {
       "name": "browser.page-crawl",
       "formats": [
         "page-crawl"

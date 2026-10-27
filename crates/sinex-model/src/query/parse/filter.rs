@@ -47,6 +47,21 @@ impl Parser<'_> {
             self.expect_symbol(")")?;
             return Ok(e);
         }
+        if self.take_word("overlaps") {
+            let t = self.value_token()?;
+            let from = self.instant_from(&t)?;
+            let to = if self.take_word("..") {
+                let t = self.value_token()?;
+                let to = self.instant_from(&t)?;
+                if from >= to {
+                    return Err(QueryError::at(t.at, "overlap end must follow its start"));
+                }
+                Some(to)
+            } else {
+                None
+            };
+            return Ok(Expr::Overlaps { from, to });
+        }
         if self.take_word("since") {
             return self.since(scope);
         }
@@ -211,6 +226,7 @@ impl Parser<'_> {
     ) -> Result<(), QueryError> {
         match (field, scope) {
             (FieldRef::Field(f), _) if f.ty == FieldType::Time => Ok(()),
+            (FieldRef::Payload(_), _) => Ok(()),
             (FieldRef::Group(_), Scope::Grouped(_)) => Ok(()),
             _ => Err(QueryError::at(
                 at,
@@ -308,7 +324,9 @@ impl Parser<'_> {
                 self.time_fn_value(*func, &raw, at)
             }
             Operand::Field(FieldRef::Group(_)) => Ok(infer(&raw, quoted, op)),
-            Operand::Field(FieldRef::Payload(_)) => Ok(infer(&raw, quoted, op)),
+            Operand::Field(FieldRef::Payload(_) | FieldRef::TypedPayload { .. }) => {
+                Ok(infer(&raw, quoted, op))
+            }
             Operand::Field(FieldRef::Field(f)) => {
                 let text_like = matches!(
                     f.ty,

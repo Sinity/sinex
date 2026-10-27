@@ -150,6 +150,96 @@ pub const COMMANDS: &[Command] = &[
         mcp: true,
     },
     Command {
+        name: "mark",
+        summary: "Mark a moment for recall, with an optional note and client-observed context.",
+        args: &[
+            pos_opt("text", ArgKind::Rest, "note about the moment"),
+            opt("at", ArgKind::Text, "RFC3339 moment; default now"),
+            opt(
+                "cwd",
+                ArgKind::Text,
+                "directory observed by the marking client",
+            ),
+            opt(
+                "command",
+                ArgKind::Text,
+                "command observed by the marking client",
+            ),
+            opt(
+                "app",
+                ArgKind::Text,
+                "focused application observed by the client",
+            ),
+            opt(
+                "title",
+                ArgKind::Text,
+                "focused window title observed by the client",
+            ),
+        ],
+        access: Access::Operator,
+        mcp: false,
+    },
+    Command {
+        name: "query-save",
+        summary: "Save a named query with scalar parameters ($name), attributed to the caller.",
+        args: &[
+            pos("name", ArgKind::Text, "saved query name"),
+            pos("query", ArgKind::Rest, "query text with $name parameters"),
+            opt(
+                "parameter",
+                ArgKind::List,
+                "name:text, integer, number, bool, time or duration; repeatable",
+            ),
+        ],
+        access: Access::Agent,
+        mcp: true,
+    },
+    Command {
+        name: "query-list",
+        summary: "List visible saved queries, names and declared parameters.",
+        args: &[],
+        access: Access::Read,
+        mcp: true,
+    },
+    Command {
+        name: "query-complete",
+        summary: "Complete query fields from the selected table and event schemas.",
+        args: &[pos("query", ArgKind::Rest, "query prefix to complete")],
+        access: Access::Read,
+        mcp: true,
+    },
+    Command {
+        name: "context",
+        summary: "Activity for resuming work, with source gaps; default the past two hours.",
+        args: &[
+            opt("since", ArgKind::Text, "duration or absolute start"),
+            opt(
+                "until",
+                ArgKind::Text,
+                "absolute end; durations count back from it",
+            ),
+            PAGE,
+            CURSOR,
+        ],
+        access: Access::Read,
+        mcp: true,
+    },
+    Command {
+        name: "timeline",
+        summary: "Events in time order, with ordinary query filters and paging.",
+        args: &[
+            pos_opt(
+                "query",
+                ArgKind::Rest,
+                "event clauses, for example where source = machine.journald since 1h",
+            ),
+            PAGE,
+            CURSOR,
+        ],
+        access: Access::Read,
+        mcp: true,
+    },
+    Command {
         name: "query",
         summary: "Run a query in the Sinex query language; returns one page and a cursor.",
         args: &[pos("query", ArgKind::Rest, "the query text"), PAGE, CURSOR],

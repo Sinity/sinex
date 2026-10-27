@@ -126,6 +126,9 @@ pub(crate) fn field(table: Table, name: &str) -> Option<String> {
         },
         Table::Sources => {
             return Some(match name {
+                "continuity" | "gaps" | "drift" | "record_failures" => {
+                    super::source_views::field(name)?
+                }
                 "binding" | "source" => "{t}.name".to_string(),
                 "driver" => "{t}.driver".to_string(),
                 "version" => "{t}.version::bigint".to_string(),
@@ -138,7 +141,8 @@ pub(crate) fn field(table: Table, name: &str) -> Option<String> {
                 "failed_24h" => "(SELECT count(*) FROM raw.failures sf \
                       JOIN raw.materials sm ON sm.id = sf.material_id \
                       JOIN raw.inputs si ON si.id = sm.input_id \
-                      WHERE si.binding = {t}.name AND sf.failed_at > now() - interval '24 hours')"
+                      JOIN raw.bindings sb ON sb.binding = si.binding \
+                      WHERE sb.source = {t}.name AND sf.failed_at > now() - interval '24 hours')"
                     .to_string(),
                 _ => return None,
             });

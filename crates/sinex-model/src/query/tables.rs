@@ -112,6 +112,14 @@ const RUNS: &[Field] = &[
     f("failed", FieldType::Integer, "records that failed"),
 ];
 const SOURCES: &[Field] = &[
+    f("continuity", FieldType::Text, "continuity evidence"),
+    f("gaps", FieldType::Json, "gaps between recorded live runs"),
+    f("drift", FieldType::Json, "recorded payload schema changes"),
+    f(
+        "record_failures",
+        FieldType::Json,
+        "records that failed to parse",
+    ),
     f("binding", FieldType::Text, "binding"),
     f("source", FieldType::Text, "source"),
     f("driver", FieldType::Text, "driver"),

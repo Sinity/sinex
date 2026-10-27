@@ -2,9 +2,6 @@
 //! sorting, limits and output fields.
 use super::*;
 
-/// A query cannot tell an unobserved period from an empty one yet; a panel can.
-const FILL_NOT_BUILT: &str = "`fill` is not built: a query cannot tell an unobserved period from an empty one; `analysis-panel` can";
-
 impl Parser<'_> {
     pub(super) fn reference(&mut self) -> Result<Reference, QueryError> {
         let t = self.value_token()?;
@@ -20,11 +17,17 @@ impl Parser<'_> {
         let Some(t) = self.peek().cloned() else {
             let w = SignedDuration::from_secs_f64(default_window);
             return Ok(Source::Recall {
-                from: ctx.now - w,
-                to: ctx.now + w,
+                from: ctx.now.checked_sub(w).map_err(|_| QueryError::new("recall start exceeds the timestamp range"))?,
+                to: ctx.now.checked_add(w).map_err(|_| QueryError::new("recall end exceeds the timestamp range"))?,
             });
         };
         let word = t.text.to_ascii_lowercase();
+        if word.starts_with("sinex:window/") {
+            self.at += 1;
+            if let Reference::Window { from, to } = parse_reference(&t.text)? {
+                return Ok(Source::Recall { from, to });
+            }
+        }
         if word == "last" {
             self.at += 1;
             let alias = Alias::from_name("shell-sessions").expect("shell sessions are declared");
@@ -33,16 +36,37 @@ impl Parser<'_> {
             });
         }
         if word == "mark" {
-            return Err(QueryError::not_built(
-                t.at,
-                format!("`recall {word}` needs moment marks, which are not built yet"),
-            ));
+            self.at += 1;
+            let number = if self.peek().is_some_and(|t| t.text.parse::<u64>().is_ok()) {
+                let token = self.value_token()?;
+                token
+                    .text
+                    .parse::<u64>()
+                    .ok()
+                    .filter(|n| *n > 0)
+                    .ok_or_else(|| QueryError::at(token.at, "mark number must be positive"))?
+            } else {
+                1
+            };
+            let mut window = default_window;
+            if let Some(t) = self.peek().cloned()
+                && let Some(value) = t
+                    .text
+                    .strip_prefix('±')
+                    .or_else(|| t.text.strip_prefix("+-"))
+            {
+                window = time::duration(value)
+                    .filter(|s| *s > 0.0)
+                    .ok_or_else(|| QueryError::at(t.at, "a positive mark window: ±20m"))?;
+                self.at += 1;
+            }
+            return Ok(Source::RecallMark { number, window });
         }
         if CLAUSE_WORDS.contains(&word.as_str()) {
             let w = SignedDuration::from_secs_f64(default_window);
             return Ok(Source::Recall {
-                from: ctx.now - w,
-                to: ctx.now + w,
+                from: ctx.now.checked_sub(w).map_err(|_| QueryError::new("recall start exceeds the timestamp range"))?,
+                to: ctx.now.checked_add(w).map_err(|_| QueryError::new("recall end exceeds the timestamp range"))?,
             });
         }
         // A whole day.
@@ -76,8 +100,8 @@ impl Parser<'_> {
         }
         let w = SignedDuration::from_secs_f64(window);
         Ok(Source::Recall {
-            from: centre - w,
-            to: centre + w,
+            from: centre.checked_sub(w).map_err(|_| QueryError::at(t.at,"recall start exceeds the timestamp range"))?,
+            to: centre.checked_add(w).map_err(|_| QueryError::at(t.at,"recall end exceeds the timestamp range"))?,
         })
     }
 
@@ -199,10 +223,16 @@ impl Parser<'_> {
                         field: None,
                     });
                 }
-                if self.is_word("fill") {
-                    return Err(QueryError::not_built(self.pos(), FILL_NOT_BUILT));
-                }
-                let group = Group { keys, aggregates };
+                let fill = self.take_word("fill").then_some(Fill {
+                    from: self.ctx.now,
+                    to: self.ctx.now,
+                    sources: Vec::new(),
+                });
+                let group = Group {
+                    keys,
+                    aggregates,
+                    fill,
+                };
                 *scope = Scope::Grouped(group_columns(&group));
                 Ok(Stage::Group(group))
             }
@@ -212,11 +242,15 @@ impl Parser<'_> {
                 let group = Group {
                     keys: Vec::new(),
                     aggregates,
+                    fill: None,
                 };
                 *scope = Scope::Grouped(group_columns(&group));
                 Ok(Stage::Group(group))
             }
-            "fill" => Err(QueryError::not_built(t.at, FILL_NOT_BUILT)),
+            "fill" => Err(QueryError::at(
+                t.at,
+                "fill follows a time-bucketed group by",
+            )),
             "sort" => {
                 let mut keys = Vec::new();
                 loop {
@@ -326,5 +360,6 @@ pub(super) fn group_columns(group: &Group) -> Vec<String> {
         .iter()
         .map(Operand::column)
         .chain(group.aggregates.iter().map(Aggregate::column))
+        .chain(group.fill.iter().map(|_| "coverage".to_owned()))
         .collect()
 }

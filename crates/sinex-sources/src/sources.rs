@@ -39,6 +39,7 @@ pub mod operator;
 pub mod outlook;
 /// The forward crawl of browser-history pages, opt-in per domain.
 pub mod page_crawl;
+pub mod query;
 pub mod raindrop;
 pub mod reddit;
 /// Commits in local repositories (`code.git`).
@@ -112,6 +113,7 @@ pub fn formats() -> &'static [&'static InputFormat] {
         &media_capture::FORMAT,
         &library::FORMAT,
         &forecast::FORMAT,
+        &query::FORMAT,
         &page_crawl::FORMAT,
     ]
 }

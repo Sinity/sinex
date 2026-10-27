@@ -14,6 +14,10 @@ const WALK_DEPTH: i32 = 100;
 /// for `occ` and `eq`, the live reading of the occurrence.
 pub async fn resolve(conn: &mut PgConnection, reference: &Reference) -> Result<Uuid> {
     match reference {
+        Reference::Window { .. } => Err(Error::Invalid(
+            "a time window is a recall query, not one event".into(),
+        )),
+        Reference::At { at, event_type } => resolve_at(conn, *at, event_type).await,
         Reference::Event(id) => {
             let found = sqlx::query_scalar!("SELECT id FROM core.events WHERE id = $1", id)
                 .fetch_optional(&mut *conn)
@@ -218,53 +222,102 @@ pub(crate) async fn recall_summary(
     to: jiff::Timestamp,
     seq: i64,
     inclusive_end: bool,
+    filter: sinex_model::query::Expr,
 ) -> Result<Json> {
-    let convert = |t: jiff::Timestamp| {
-        time::OffsetDateTime::from_unix_timestamp_nanos(t.as_nanosecond())
-            .map_err(|e| Error::Invalid(format!("time out of range: {e}")))
+    use sinex_model::query::{
+        AggFn, Aggregate, Context, FieldRef, Group, Operand, Query, Source, Stage, Table,
     };
-    let (f, t) = (convert(from)?, convert(to)?);
-    let by_source = sqlx::query!(
-        r#"SELECT e.source, count(*) AS "events!", min(e.ts_orig) AS first, max(e.ts_orig) AS last
-           FROM core.events e
-           WHERE e.ts_orig >= $1 AND (e.ts_orig < $2 OR ($4 AND e.ts_orig = $2)) AND e.commit_seq <= $3
-           AND NOT audit.is_archived_at(e.id, $3)
-           GROUP BY e.source ORDER BY e.source"#,
-        f,
-        t,
-        seq,
-        inclusive_end
-    )
-    .fetch_all(&mut *conn)
-    .await?;
+    let field = |name| FieldRef::Field(Table::Events.field(name).expect("event field declared"));
+    let selector = Query {
+        source: Source::Table {
+            table: Table::Events,
+            alias: None,
+        },
+        filter: Some(filter),
+        ranked: false,
+        stages: vec![Stage::Group(Group {
+            keys: vec![Operand::Field(field("source"))],
+            aggregates: vec![
+                Aggregate {
+                    function: AggFn::Count,
+                    field: None,
+                },
+                Aggregate {
+                    function: AggFn::Min,
+                    field: Some(field("when")),
+                },
+                Aggregate {
+                    function: AggFn::Max,
+                    field: Some(field("when")),
+                },
+            ],
+            fill: None,
+        })],
+    };
+    let compiled = super::Compiler::new(&Context::utc(to), seq).compile(&selector)?;
+    let mut rows = super::SqlFragment::text(
+        "SELECT jsonb_build_object('source',q.source,'events',q.count,'first',q.min_when,'last',q.max_when) FROM (",
+    );
+    rows.append(compiled.answer).push(") q");
+    let (sql, values) = rows.render();
+    let by_source: Vec<Json> = super::sql::bind_scalar(sqlx::query_scalar(&sql), values)
+        .fetch_all(&mut *conn)
+        .await?;
     let known = sqlx::query_scalar!(
         r#"SELECT source AS "name!" FROM core.source_counts
            UNION SELECT name FROM registry.sources ORDER BY 1"#
     )
     .fetch_all(&mut *conn)
     .await?;
-    let present: std::collections::HashSet<&str> =
-        by_source.iter().map(|r| r.source.as_str()).collect();
+    let present: std::collections::HashSet<&str> = by_source
+        .iter()
+        .filter_map(|r| r["source"].as_str())
+        .collect();
     let no_data: Vec<&String> = known
         .iter()
         .filter(|s| !present.contains(s.as_str()))
         .collect();
-    let fmt = |t: Option<time::OffsetDateTime>| {
-        t.and_then(|t| {
-            t.format(&time::format_description::well_known::Rfc3339)
-                .ok()
-        })
-    };
     Ok(json!({
         "from": from.to_string(),
         "to": to.to_string(),
         "inclusive_end": inclusive_end,
-        "by_source": by_source.iter().map(|r| json!({
-            "source": r.source,
-            "events": r.events,
-            "first": fmt(r.first),
-            "last": fmt(r.last),
-        })).collect::<Vec<_>>(),
+        "by_source": by_source,
         "no_data": no_data,
     }))
+}
+
+/// A time citation names the current spanning output, independent of its ID.
+async fn resolve_at(
+    conn: &mut PgConnection,
+    at: jiff::Timestamp,
+    event_type: &str,
+) -> Result<Uuid> {
+    let alias = sinex_model::query::ALIASES
+        .iter()
+        .find(|a| a.spans && a.kinds.contains(&event_type))
+        .ok_or_else(|| Error::Invalid(format!("{event_type} has no declared query span")))?;
+    let (start, end, inclusive) =
+        super::fields::span(sinex_model::query::Table::Events, Some(alias.name))
+            .ok_or_else(|| Error::Invalid("event type has no query span".into()))?;
+    let (start, end) = (start.replace("{t}", "e"), end.replace("{t}", "e"));
+    let at = time::OffsetDateTime::from_unix_timestamp_nanos(at.as_nanosecond())
+        .map_err(|e| Error::Invalid(e.to_string()))?;
+    let sql = format!(
+        "SELECT e.id FROM core.visible_events e WHERE e.event_type=$1 AND {start} <= $2 AND ({end} IS NULL OR {end} {} $2) AND e.payload IS NOT NULL AND NOT e.payload ? 'withheld' AND NOT EXISTS (SELECT 1 FROM audit.archived a WHERE a.event_id=e.id) ORDER BY e.id",
+        if inclusive { ">=" } else { ">" }
+    );
+    let ids: Vec<Uuid> = sqlx::query_scalar(&sql)
+        .bind(event_type)
+        .bind(at)
+        .fetch_all(conn)
+        .await?;
+    match ids.as_slice() {
+        [id] => Ok(*id),
+        [] => Err(Error::Invalid(
+            "no visible spanning output contains this time".into(),
+        )),
+        _ => Err(Error::Invalid(
+            "several visible outputs contain this time; cite an event or record instead".into(),
+        )),
+    }
 }

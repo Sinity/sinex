@@ -14,6 +14,7 @@ use sinex_model::query::{
 };
 
 mod expr;
+mod fill;
 mod join;
 
 /// A compiled answer: one SELECT whose rows are numbered `_n` in answer order
@@ -54,8 +55,6 @@ enum Cols {
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Kind {
     Typed(FieldType),
-    /// A payload path: JSON, read according to the literal compared with.
-    Json,
     /// A grouped column: the database knows its type.
     Untyped,
     /// A time function's text or number.
@@ -136,7 +135,7 @@ fn expr_fields(e: &Expr, out: &mut Vec<FieldRef>) {
             out.push(a.clone());
             out.push(b.clone());
         }
-        Expr::Words(_) => {}
+        Expr::Words(_) | Expr::Overlaps { .. } => {}
     }
 }
 
@@ -403,12 +402,7 @@ impl<'c> Compiler<'c> {
                         let mut c = match (&agg.function, &agg.field) {
                             (AggFn::Count, None) => SqlFragment::text("count(*)"),
                             (func, Some(f)) => {
-                                let (sql, kind) = self.field(&gcols, f)?;
-                                let arg = if kind == Kind::Json {
-                                    Self::json_as(sql, &Value::Number(0.0))
-                                } else {
-                                    sql
-                                };
+                                let (arg, _) = self.field(&gcols, f)?;
                                 let mut c = SqlFragment::text(match func {
                                     AggFn::Count => "count(",
                                     AggFn::Sum => "sum(",
@@ -437,6 +431,10 @@ impl<'c> Compiler<'c> {
                         let positions: Vec<String> =
                             (1..=keys.len()).map(|i| i.to_string()).collect();
                         f.push(" GROUP BY ").push(positions.join(", "));
+                    }
+                    if let Some(fill) = &g.fill {
+                        f = self.fill(f, g, fill)?;
+                        names.push("coverage".into());
                     }
                     rel = f;
                     columns = names;

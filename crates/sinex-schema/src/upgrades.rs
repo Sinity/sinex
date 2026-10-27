@@ -37,5 +37,34 @@ pub(crate) fn upgrades() -> Vec<Vec<String>> {
             "GRANT SELECT ON core.excised_materials TO sinex_reader, sinex_writer".into(),
             "GRANT INSERT, UPDATE, DELETE ON core.excised_materials TO sinex_writer".into(),
         ],
+        query_records(),
     ]
+}
+
+fn query_records() -> Vec<String> {
+    let names = ["operator.mark", "query.saved"];
+    let mut statements = Vec::new();
+    for kind in sinex_model::event_types::ALL
+        .iter()
+        .filter(|k| names.contains(&k.event_type))
+    {
+        statements.push(crate::kind_view(kind));
+        statements.push(format!(
+            "GRANT SELECT ON event_types.{} TO sinex_reader, sinex_writer",
+            crate::quote_ident(&kind.event_type.replace('.', "_"))
+        ));
+    }
+    for (name, schema, key_kind, fields, replace) in crate::registry_rows()
+        .into_iter()
+        .filter(|(name, ..)| names.contains(&name.as_str()))
+    {
+        let literal = |s: &str| format!("'{}'", s.replace('\'', "''"));
+        let fields = fields
+            .iter()
+            .map(|s| literal(s))
+            .collect::<Vec<_>>()
+            .join(",");
+        statements.push(format!("INSERT INTO registry.event_types (name,payload_schema,key_kind,key_fields,replace_rule) VALUES ({},{}::jsonb,{},ARRAY[{fields}]::text[],{})",literal(&name),literal(&schema.to_string()),literal(key_kind),literal(replace)));
+    }
+    statements
 }

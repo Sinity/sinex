@@ -196,6 +196,9 @@ Each database test gets its own copy of the schema template. AgentCTL takes
 `CARGO_TARGET_DIR` from the caller; give each target directory one build at a
 time.
 
+The [query guide](docs/query.md) covers typed fields, completion, filled time
+buckets, marks, time citations, saved queries and context views.
+
 ## Benchmarks
 
 `agentctl job start sinex bench -- run` backfills a fixed sample of real

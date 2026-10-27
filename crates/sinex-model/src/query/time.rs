@@ -102,7 +102,9 @@ pub fn duration(word: &str) -> Option<f64> {
         "w" => 604_800.0,
         _ => return None,
     };
-    Some(n * scale)
+    let seconds = n * scale;
+    jiff::SignedDuration::try_from_secs_f64(seconds).ok()?;
+    Some(seconds)
 }
 
 pub fn date(word: &str) -> Option<Date> {

@@ -17,10 +17,14 @@ impl Compiler<'_> {
                     Kind::Typed(field.ty),
                 ))
             }
-            (Cols::Base { .. }, FieldRef::Payload(path)) => {
-                let mut f = SqlFragment::text(Self::template(cols, "({t}.payload #> "));
-                f.param(V::String(Some(text_array(path)))).push("::text[])");
-                Ok((f, Kind::Json))
+            (_, FieldRef::Payload(_)) => {
+                Err(invalid("payload path must be bound to its event schema"))
+            }
+            (Cols::Base { .. }, FieldRef::TypedPayload { path, ty }) => {
+                let mut raw = SqlFragment::text(Self::template(cols, "({t}.payload #> "));
+                raw.param(V::String(Some(text_array(path))))
+                    .push("::text[])");
+                Ok((Self::typed_json(raw, *ty), Kind::Typed(*ty)))
             }
             (Cols::Base { .. }, FieldRef::Group(name)) => Err(invalid(format!(
                 "`{name}` names a group column outside a grouping"
@@ -34,11 +38,33 @@ impl Compiler<'_> {
                 SqlFragment::text(format!("{r}.{}", quote(field.name))),
                 Kind::Typed(field.ty),
             )),
-            (Cols::Named { r, .. }, FieldRef::Payload(_)) => Ok((
+            (Cols::Named { r, .. }, FieldRef::TypedPayload { ty, .. }) => Ok((
                 SqlFragment::text(format!("{r}.{}", quote(&column_name(f)))),
-                Kind::Json,
+                Kind::Typed(*ty),
             )),
         }
+    }
+
+    fn typed_json(raw: SqlFragment, ty: FieldType) -> SqlFragment {
+        let mut out = SqlFragment::new();
+        let (kind, cast) = match ty {
+            FieldType::Integer => ("number", "numeric"),
+            FieldType::Number => ("number", "numeric"),
+            FieldType::Bool => ("boolean", "boolean"),
+            FieldType::Time => ("string", "timestamptz"),
+            FieldType::Text => ("string", "text"),
+            _ => return raw,
+        };
+        out.push("(CASE WHEN jsonb_typeof(")
+            .append(raw.clone())
+            .push(") = '")
+            .push(kind)
+            .push("' THEN (")
+            .append(raw)
+            .push(" #>> '{}')::")
+            .push(cast)
+            .push(" END)");
+        out
     }
 
     pub(super) fn time_fn(&self, func: TimeFn, t: SqlFragment) -> SqlFragment {
@@ -96,31 +122,6 @@ impl Compiler<'_> {
         }
     }
 
-    /// A payload JSON value read as the type of `v`.
-    pub(super) fn json_as(j: SqlFragment, v: &Value) -> SqlFragment {
-        let mut out = SqlFragment::new();
-        match v {
-            Value::Integer(_) | Value::Number(_) => {
-                out.push("(CASE WHEN jsonb_typeof(")
-                    .append(j.clone())
-                    .push(") = 'number' THEN (")
-                    .append(j)
-                    .push(" #>> '{}')::numeric END)");
-            }
-            Value::Bool(_) => {
-                out.push("(CASE WHEN jsonb_typeof(")
-                    .append(j.clone())
-                    .push(") = 'boolean' THEN (")
-                    .append(j)
-                    .push(" #>> '{}')::boolean END)");
-            }
-            _ => {
-                out.push("(").append(j).push(" #>> '{}')");
-            }
-        }
-        out
-    }
-
     pub(super) fn compare(
         &self,
         lhs: SqlFragment,
@@ -159,11 +160,7 @@ impl Compiler<'_> {
                 .push(") END)");
             return Ok(out);
         }
-        let l = if kind == Kind::Json {
-            Self::json_as(lhs, v)
-        } else {
-            lhs
-        };
+        let l = lhs;
         let mut out = SqlFragment::text("(");
         match (op, v, kind) {
             (Op::Eq | Op::Ne, Value::Glob(g), _) => {
@@ -303,7 +300,7 @@ impl Compiler<'_> {
             Expr::Exists(o) => {
                 let (l, kind) = self.operand(cols, o)?;
                 let mut f = SqlFragment::text("(");
-                if kind == Kind::Json {
+                if kind == Kind::Typed(FieldType::Json) {
                     f.append(l.clone())
                         .push(" IS NOT NULL AND jsonb_typeof(")
                         .append(l)
@@ -328,6 +325,7 @@ impl Compiler<'_> {
                     .push(")");
                 f
             }
+            Expr::Overlaps { from, to } => self.overlaps(cols, *from, *to)?,
             Expr::TimeDiff { a, b, op, seconds } => {
                 let (a, _) = self.field(cols, a)?;
                 let (b, _) = self.field(cols, b)?;
@@ -343,6 +341,52 @@ impl Compiler<'_> {
                 f
             }
         })
+    }
+
+    fn overlaps(
+        &self,
+        cols: &Cols,
+        from: jiff::Timestamp,
+        to: Option<jiff::Timestamp>,
+    ) -> Result<SqlFragment> {
+        let Cols::Base { table, alias, .. } = cols else {
+            return Err(invalid("overlaps applies before grouping or limiting"));
+        };
+        if !table.is_events() {
+            return Err(invalid("overlaps requires event spans"));
+        }
+        let mut parts = Vec::new();
+        for a in sinex_model::query::ALIASES
+            .iter()
+            .filter(|a| a.spans && alias.is_none_or(|selected| selected.name == a.name))
+        {
+            let Some((start, end, inclusive)) = fields::span(*table, Some(a.name)) else {
+                continue;
+            };
+            let start = Self::template(cols, &start);
+            let end = Self::template(cols, &end);
+            let mut f = SqlFragment::text(Self::template(cols, "({t}.event_type = ANY("));
+            f.param(V::String(Some(text_array(
+                &a.kinds.iter().map(|s| (*s).into()).collect::<Vec<_>>(),
+            ))))
+            .push(format!(
+                "::text[]) AND {start} {} ",
+                if to.is_some() { "<" } else { "<=" }
+            ))
+            .param(time_value(to.unwrap_or(from))?)
+            .push(format!(
+                " AND ({end} IS NULL OR {end} {} ",
+                if inclusive { ">=" } else { ">" }
+            ))
+            .param(time_value(from)?)
+            .push("))");
+            parts.push(f);
+        }
+        if parts.is_empty() {
+            Ok(SqlFragment::text("false"))
+        } else {
+            Ok(SqlFragment::join(parts, " OR ").parenthesized())
+        }
     }
 
     /// The conditions every base relation carries: live at the commit

@@ -68,6 +68,11 @@ these names and no others.
 - **replay**: reading stored bytes again with the current parsers, one part sequence per transaction.
 - **query table**: what a query reads (`events`, `archive`, `materials`, `runs`, `sources`, `operations`, `failures`), each with its fields.
 - **reference**: how a command names one event: an event ID or `sinex:ev/<id>`, `sinex:record/<material>/<offset>[/<event type>[/<output index>]]`, or `sinex:key/<source>/<event type>/<equivalence key>`.
+- **moment mark**: an operator-authored moment, note and client-observed context (`operator.mark`); `recall mark` reads around it.
+- **saved query**: a named query definition (`query.saved`) with declared scalar parameters, invoked as `query:NAME`.
+- **parameter**: a named scalar value supplied when running a saved query; never a field or a clause.
+- **filled bucket**: a time group emitted even when it has no records, with its observation coverage.
+- **time citation**: `sinex:at/TIME/TYPE`, the live spanning output containing an absolute instant; `sinex:window/FROM/TO` names a recall window.
 - **operation**: something the operator or an agent did to Sinex, attributed and logged.
 - **purpose**: what a source's events are for (`command fusion and shell recall`).
 
