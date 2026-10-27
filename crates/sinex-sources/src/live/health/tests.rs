@@ -122,17 +122,32 @@ fn startup_counts_an_unacknowledged_batch_once_and_then_counts_new_capture() {
     let (_, binding) = super::super::binding("hyprland", &spool, "synthetic", Value::Null).unwrap();
     let before = json!({"segment":0,"inner":{"offset":4}});
     let after = json!({"segment":0,"inner":{"offset":8}});
-    Position {cursor:before,carry:Value::Null}.save(&positions,&binding.name).unwrap();
-    let path = std::fs::read_dir(&positions).unwrap().next().unwrap().unwrap().path().with_extension("unacknowledged.json");
-    std::fs::write(path,serde_json::to_vec(&json!({"frames":[],"position":{"cursor":after,"carry":null}})).unwrap()).unwrap();
-    let counter = initialize(&positions,&binding).unwrap();
+    Position {
+        cursor: before,
+        carry: Value::Null,
+    }
+    .save(&positions, &binding.name)
+    .unwrap();
+    let path = std::fs::read_dir(&positions)
+        .unwrap()
+        .next()
+        .unwrap()
+        .unwrap()
+        .path()
+        .with_extension("unacknowledged.json");
+    std::fs::write(
+        path,
+        serde_json::to_vec(&json!({"frames":[],"position":{"cursor":after,"carry":null}})).unwrap(),
+    )
+    .unwrap();
+    let counter = initialize(&positions, &binding).unwrap();
     let mut counter = counter.lock().unwrap();
-    assert_eq!((counter.counts.bytes,counter.counts.records),(11,1));
+    assert_eq!((counter.counts.bytes, counter.counts.records), (11, 1));
     counter.recovered(&after);
-    assert_eq!((counter.counts.bytes,counter.counts.records),(7,0));
-    counter.captured_line(1,10);
+    assert_eq!((counter.counts.bytes, counter.counts.records), (7, 0));
+    counter.captured_line(1, 10);
     let next = json!({"segment":1,"inner":{"offset":10}});
-    counter.prepare(&next,1);
+    counter.prepare(&next, 1);
     counter.recovered(&next);
-    assert_eq!((counter.counts.bytes,counter.counts.records),(0,0));
+    assert_eq!((counter.counts.bytes, counter.counts.records), (0, 0));
 }
