@@ -20,7 +20,7 @@ fn payload_fields(catalog: &QueryCatalog) -> Vec<PayloadField> {
             kind.fields
                 .iter()
                 .flat_map(|fields| fields.values())
-                .map(|field| PayloadField {
+                .map(move |field| PayloadField {
                     event_type: kind.kind.name.clone(),
                     path: field.path.clone(),
                     ty: match &field.ty {
