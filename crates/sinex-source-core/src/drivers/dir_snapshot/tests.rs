@@ -344,11 +344,11 @@ fn a_restart_remembers_the_files_of_admitted_records_only() {
         .unwrap();
     let empty = Some((
         0,
-        restored.files["a.md"].unwrap().1,
+        restored.files[Path::new("a.md")].unwrap().1,
         *blake3::hash(b"").as_bytes(),
     ));
-    assert_eq!(restored.files.get("a.md"), Some(&empty));
-    assert!(!restored.files.contains_key("sub/b.md"));
+    assert_eq!(restored.files.get(Path::new("a.md")), Some(&empty));
+    assert!(!restored.files.contains_key(Path::new("sub/b.md")));
     let mut malformed = material.manifest.clone();
     malformed.members[0]
         .details
@@ -363,7 +363,7 @@ fn a_restart_remembers_the_files_of_admitted_records_only() {
         .remember_members(&material.manifest, u64::MAX)
         .unwrap();
     assert_eq!(
-        restored.files["sub/b.md"].map(|(size, _, hash)| (size, hash)),
+        restored.files[Path::new("sub/b.md")].map(|(size, _, hash)| (size, hash)),
         Some((4, *blake3::hash(b"beta").as_bytes()))
     );
     assert!(
@@ -395,7 +395,7 @@ fn a_newer_bundle_decides_a_path_before_an_older_one() {
         .remember_members(&older.manifest, u64::MAX)
         .unwrap();
     assert!(
-        !restored.files.contains_key("sub/b.md"),
+        !restored.files.contains_key(Path::new("sub/b.md")),
         "the newer bundle records the file as removed"
     );
 }
@@ -429,7 +429,7 @@ fn failed_disappearance_is_retried_before_a_reappeared_file() {
         )
         .is_err()
     );
-    assert!(state.files.contains_key("a.md"));
+    assert!(state.files.contains_key(Path::new("a.md")));
     std::fs::write(root.join("a.md"), "reappeared").unwrap();
     let retry = d.poll(&cursor, &mut state).unwrap();
     assert_eq!(retry.material.as_ref().unwrap().id, id);
@@ -482,26 +482,186 @@ impl super::super::MaterialSink for FixtureSink {
 
 #[devkit::test]
 fn saved_memory_round_trips_and_newer_bundles_win() {
-    let files: HashMap<String, Option<(u64, i128, [u8; 32])>> = HashMap::from([
-        ("a.md".to_owned(), Some((5, -3, [1; 32]))),
+    let files: FileMemory = HashMap::from([
+        (PathBuf::from("a.md"), Some((5, -3, [1; 32]))),
         (
-            "sub/é.md".to_owned(),
+            PathBuf::from("sub/é.md"),
             Some((0, 1_700_000_000_000_000_000, [2; 32])),
         ),
-        ("unknown.md".to_owned(), None),
+        (PathBuf::from("unknown.md"), None),
     ]);
     let memory = restore::memory_of(&files);
     let mut state = DirState::default();
     // A newer bundle already decided a.md.
-    state.remembered.insert("a.md".to_owned());
-    state.files.insert("a.md".to_owned(), Some((9, 9, [9; 32])));
+    state.remembered.insert(PathBuf::from("a.md"));
+    state
+        .files
+        .insert(PathBuf::from("a.md"), Some((9, 9, [9; 32])));
     state.remember_saved(&memory).unwrap();
-    assert_eq!(state.files["a.md"], Some((9, 9, [9; 32])));
-    assert_eq!(state.files["sub/é.md"], files["sub/é.md"]);
-    assert_eq!(state.files["unknown.md"], None);
+    assert_eq!(state.files[Path::new("a.md")], Some((9, 9, [9; 32])));
+    assert_eq!(
+        state.files[Path::new("sub/é.md")],
+        files[Path::new("sub/é.md")]
+    );
+    assert_eq!(state.files[Path::new("unknown.md")], None);
     assert!(
         DirState::default()
             .remember_saved(&memory[..memory.len() - 1])
             .is_err()
     );
+}
+
+#[devkit::test]
+fn native_names_survive_capture_restart_changes_and_removal() {
+    use std::ffi::OsString;
+    use std::os::unix::ffi::OsStringExt;
+    let dir = tempfile::tempdir().unwrap();
+    let names = [
+        PathBuf::from(OsString::from_vec(b"bad-\xff.md".to_vec())),
+        PathBuf::from(OsString::from_vec(b"bad-\xfe.md".to_vec())),
+        PathBuf::from("bad-�.md"),
+        PathBuf::from("bad-%FF.md"),
+        PathBuf::from("é.md"),
+        PathBuf::from("e\u{301}.md"),
+    ];
+    for (index, name) in names.iter().enumerate() {
+        std::fs::write(dir.path().join(name), index.to_string()).unwrap();
+    }
+    let d = driver(dir.path().to_owned(), 1 << 20);
+    let first = d.poll(&Value::Null, &mut DirState::default()).unwrap();
+    let material = first.material.unwrap();
+    assert_eq!(material.records.len(), names.len());
+    let displays: HashSet<_> = material
+        .manifest
+        .members
+        .iter()
+        .map(|member| member.path.as_str())
+        .collect();
+    assert_eq!(displays.len(), names.len());
+    assert!(displays.contains("bad-%FF.md"));
+    assert!(displays.contains("bad-%25FF.md"));
+    assert!(displays.contains("é.md"));
+    assert!(displays.contains("e\u{301}.md"));
+    for (index, member) in material.manifest.members.iter().enumerate() {
+        let name = paths::native(&member.path).unwrap();
+        let expected = names
+            .iter()
+            .position(|candidate| candidate == &name)
+            .unwrap();
+        assert_eq!(record(&material, index), expected.to_string().as_bytes());
+    }
+    let cursor = (material.cursor_at)(material.records.last().unwrap().1).unwrap();
+    for saved in [false, true] {
+        let mut state = DirState::default();
+        if saved {
+            state
+                .remember_saved(material.memory.as_ref().unwrap())
+                .unwrap();
+        } else {
+            state
+                .remember_members(&material.manifest, u64::MAX)
+                .unwrap();
+        }
+        state.finish_remembering();
+        assert!(d.poll(&cursor, &mut state).unwrap().material.is_none());
+        for name in &names {
+            assert!(state.files.contains_key(name));
+        }
+    }
+    let mut state = DirState::default();
+    state
+        .remember_saved(material.memory.as_ref().unwrap())
+        .unwrap();
+    state.finish_remembering();
+    std::fs::write(dir.path().join(&names[0]), "changed bytes").unwrap();
+    std::fs::remove_file(dir.path().join(&names[1])).unwrap();
+    let changed = d.poll(&cursor, &mut state).unwrap();
+    let material = changed.material.unwrap();
+    assert_eq!(material.records.len(), 2);
+    assert_eq!(record(&material, 0), b"changed bytes");
+    assert_eq!(material.manifest.members[0].path, "bad-%FF.md");
+    assert_eq!(record(&material, 1), removed_marker("bad-%FE.md"));
+}
+
+#[devkit::test]
+fn an_unreadable_entry_fails_only_its_record_and_is_retried() {
+    use crate::{Limits, drain::drain, test_parser::NotesParser};
+    use sinex_model::{Class, ReadingOrder, RecordOutcome};
+    use std::sync::Mutex;
+    static REMOVED: Mutex<Option<PathBuf>> = Mutex::new(None);
+    fn select(path: &str) -> bool {
+        if path == "a.md" {
+            let path = REMOVED.lock().unwrap().take().unwrap();
+            std::fs::remove_file(path).unwrap();
+        }
+        true
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let bad = dir.path().join("a.md");
+    std::fs::write(&bad, "unreadable").unwrap();
+    std::fs::write(dir.path().join("b.md"), "readable").unwrap();
+    *REMOVED.lock().unwrap() = Some(bad.clone());
+    let mut d = driver(dir.path().to_owned(), 1);
+    d.select = select;
+    let mut state = DirState::default();
+    let material = d.poll(&Value::Null, &mut state).unwrap().material.unwrap();
+    assert_eq!(material.records.len(), 2);
+    let chunks = drain(
+        &NotesParser,
+        crate::DrainInput {
+            source: "synthetic",
+            class: Class::Open,
+            material: material.id,
+            bytes: material.record_bytes(),
+            records: &material.records,
+            carry: Value::Null,
+            reading_order: &|_| ReadingOrder(0),
+            limits: Limits::default(),
+            manifest: &material.manifest,
+        },
+    )
+    .unwrap();
+    assert_eq!(chunks[0].failures, 1);
+    assert!(
+        matches!(&chunks[0].outcomes[0], RecordOutcome::Failure {reason, ..} if reason.starts_with("a.md:"))
+    );
+    assert!(
+        matches!(&chunks[0].outcomes[1], RecordOutcome::Events {events, ..} if events[0].payload["text"] == "readable")
+    );
+    let mut restored = DirState::default();
+    restored
+        .remember_members(&material.manifest, u64::MAX)
+        .unwrap();
+    assert!(!restored.files.contains_key(Path::new("a.md")));
+    let cursor = (material.cursor_at)(material.records.last().unwrap().1).unwrap();
+    std::fs::write(&bad, "readable now").unwrap();
+    d.select = |_| true;
+    let retried = d.poll(&cursor, &mut state).unwrap().material.unwrap();
+    assert_eq!(retried.records.len(), 1);
+    assert_eq!(retried.manifest.members[0].path, "a.md");
+    assert_eq!(record(&retried, 0), b"readable now");
+}
+
+#[devkit::test]
+fn path_display_round_trips_every_native_byte() {
+    use std::ffi::OsString;
+    use std::os::unix::ffi::OsStringExt;
+    let path = PathBuf::from(OsString::from_vec((1..=255).collect()));
+    assert_eq!(paths::native(&paths::display(&path)).unwrap(), path);
+    for text in ["%", "%X1", "%1", "%💡"] {
+        assert!(paths::native(text).is_err());
+    }
+}
+
+#[devkit::test]
+fn open_and_read_errors_belong_to_the_entry() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut bundle = tempfile::tempfile().unwrap();
+    assert!(
+        capture(&dir.path().join("missing"), &mut bundle, 0, 0)
+            .unwrap()
+            .is_err()
+    );
+    // On Unix a directory can be opened but cannot be read as file bytes.
+    assert!(capture(dir.path(), &mut bundle, 0, 0).unwrap().is_err());
 }
