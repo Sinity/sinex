@@ -365,9 +365,8 @@ impl LiveStream {
                 .and_then(Value::as_array)
                 .is_some_and(|paths| {
                     paths.iter().any(|p| {
-                        serde_json::from_value::<Vec<u8>>(p.clone()).is_ok_and(|keep| {
-                            path.as_os_str().as_bytes() == keep.as_slice()
-                        })
+                        serde_json::from_value::<Vec<u8>>(p.clone())
+                            .is_ok_and(|keep| path.as_os_str().as_bytes() == keep.as_slice())
                     })
                 });
             if index < state.segment && !keep {
