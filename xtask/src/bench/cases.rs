@@ -6,7 +6,7 @@ pub(super) fn run(events: u64, parent: &Path) -> Result<(), String> {
     if bench::storage_of(&out) != "disk" {
         return Err("case benchmarks require disk storage".into());
     }
-    let (built, build) = sinexd_binary_measured()?;
+    let (built, build) = sinexd_binary_measured(&out)?;
     let binary = out.join("sinexd");
     fs::copy(built, &binary).map_err(|e| e.to_string())?;
     let mut cluster = Cluster::start(&out.join("pg"), true, &[])?;

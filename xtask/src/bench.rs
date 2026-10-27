@@ -294,31 +294,60 @@ fn sample(per_input: u64, seed: u64) -> Result<(), String> {
     Ok(())
 }
 
-fn sinexd_binary() -> Result<PathBuf, String> {
-    sinexd_binary_measured().map(|(binary, _)| binary)
+fn sinexd_binary(out: &Path) -> Result<PathBuf, String> {
+    sinexd_binary_measured(out).map(|(binary, _)| binary)
 }
 
-fn sinexd_binary_measured() -> Result<(PathBuf, Value), String> {
+fn sinexd_binary_measured(out: &Path) -> Result<(PathBuf, Value), String> {
+    let root = env::current_dir().map_err(|e| e.to_string())?;
+    let target = root.join("target/bench");
     let schema_started = Instant::now();
-    // The query macros check against the schema database at compile time,
-    // as `xtask check` does; the server stops on drop if this started it.
-    let (server, databases) =
-        crate::database::prepare(Path::new(".")).map_err(|e| format!("schema database: {e}"))?;
+    // A benchmark must compile against this checkout's declarations, even
+    // when another checkout is building a different schema at the same time.
+    let mut compiler = Cluster::start(&out.join("cp"), false, &[])?;
+    let schema = devkit::cargo_command()
+        .args(["build", "--locked", "-p", "sinex-schema"])
+        .env("CARGO_TARGET_DIR", &target)
+        .status()
+        .map_err(|e| e.to_string())?;
+    if !schema.success() {
+        return Err("building benchmark schema tool failed".into());
+    }
+    let tool = target.join("debug/sinex-schema");
+    let applied = Command::new(&tool)
+        .arg("apply")
+        .arg(compiler.url())
+        .output()
+        .map_err(|e| e.to_string())?;
+    fs::write(out.join("compiler-schema.stdout"), &applied.stdout).map_err(|e| e.to_string())?;
+    fs::write(out.join("compiler-schema.stderr"), &applied.stderr).map_err(|e| e.to_string())?;
+    if !applied.status.success() {
+        return Err("applying benchmark compiler schema failed".into());
+    }
+    let compiler_schema = measurements::query(&compiler,
+        "SELECT json_build_object('version',(SELECT max(version) FROM sinex_schema.applied),
+        'live_key_type',(SELECT data_type FROM information_schema.columns WHERE table_schema='core' AND table_name='live_equivalence' AND column_name='equivalence_key'),
+        'publication_columns',(SELECT array_agg(column_name ORDER BY ordinal_position) FROM information_schema.columns WHERE table_schema='core' AND table_name='published'))")?;
+    measurements::save(out, "compiler-schema.json", &compiler_schema)?;
     let schema_setup_s = schema_started.elapsed().as_secs_f64();
     let compile_started = Instant::now();
-    let ok = devkit::cargo_command()
+    let built = devkit::cargo_command()
         .args(["build", "--locked", "--release", "-p", "sinexd"])
-        .envs(crate::database::env(&server, &databases))
+        .env("CARGO_TARGET_DIR", &target)
+        .env("DATABASE_URL", compiler.url())
         .status()
-        .map_err(|e| e.to_string())?
-        .success();
-    if !ok {
+        .map_err(|e| e.to_string())?;
+    if !built.success() {
         return Err("building sinexd failed".into());
     }
+    let compile_s = compile_started.elapsed().as_secs_f64();
+    let schema_teardown_s = compiler.stop()?;
     Ok((
-        crate::target_dir().join("release/sinexd"),
+        target.join("release/sinexd"),
         json!({
-            "compile_s": compile_started.elapsed().as_secs_f64(), "schema_setup_s": schema_setup_s
+            "compile_s": compile_s, "schema_setup_s": schema_setup_s,
+            "schema_teardown_s": schema_teardown_s, "compiler_schema": compiler_schema,
+            "target": target,
         }),
     ))
 }
@@ -639,7 +668,7 @@ fn synthetic(options: SyntheticOptions) -> Result<(), String> {
         .map_err(|e| e.to_string())?
         .as_secs_f64();
     let build = Instant::now();
-    let (built_binary, build_times) = sinexd_binary_measured()?;
+    let (built_binary, build_times) = sinexd_binary_measured(&out)?;
     let build_s = build.elapsed().as_secs_f64();
     let binary = out.join("sinexd");
     fs::copy(&built_binary, &binary).map_err(|e| e.to_string())?;
@@ -886,7 +915,7 @@ fn run(storage: &str, memory_max: &str) -> Result<(), String> {
         if fresh { ", copied" } else { "" }
     );
     let out = output_dir(storage, manifest.bytes())?;
-    let binary = sinexd_binary()?;
+    let binary = sinexd_binary(&out)?;
     let load = LoadMonitor::start()?;
     let mut cluster = Cluster::start(&out.join("pg"), storage == "disk", &[])?;
     let url = cluster.url();

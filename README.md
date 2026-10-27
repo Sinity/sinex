@@ -232,7 +232,10 @@ sizes, load observations, raw results and correctness counts. Statement time
 per batch uses the actual offered batch count; it stays unknown when the
 producer has not reported that count. Consumer runs also keep daemon and NATS
 logs and sampled consumer positions. Build, setup and execution time are
-reported separately. Disk runs keep fsync, full-page writes and synchronous
+reported separately. Each checkout builds its benchmark binary in
+`target/bench` against a fresh disposable compiler database; it does not use
+the shared development schema cache. Compiler schema facts are retained with
+the run. Disk runs keep fsync, full-page writes and synchronous
 commit enabled. Memory runs are a separate diagnostic series.
 
 For a comparison, freeze both revisions and alternate before/after order for
