@@ -217,6 +217,9 @@ fn document_discovery_excludes_owned_subtrees_and_reports_symlink_roots() {
             ..Default::default()
         },
     );
+    for source in [super::super::notes::SPEC.name, super::super::library::SCAN.name] {
+        context.exclude.insert(source.into(), Some(sinex_source_core::discovery::Exclusion { reason: "separate owner".into() }));
+    }
     let found = discover(&FORMAT, &context);
     let input = found.iter().find(|i| !i.bindings.is_empty()).unwrap();
     assert!(input.reason.as_ref().unwrap().contains("symbolic-link"));

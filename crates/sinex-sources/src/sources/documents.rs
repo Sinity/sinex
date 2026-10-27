@@ -126,9 +126,13 @@ use sinex_source_core::discovery::{
 
 fn discover(format: &InputFormat, context: &DiscoveryContext) -> Vec<DiscoveredInput> {
     let mut found = crate::discovery::discover_format(format, context);
+    // Declared roots retain their owner when that owner's reader is excluded.
+    let mut owners = context.clone();
+    owners.exclude.remove(super::notes::SPEC.name);
+    owners.exclude.remove(super::library::SCAN.name);
     let mut owned = Vec::new();
     for format in [super::notes::FORMAT, super::library::FORMAT] {
-        for input in (format.discover)(&format, context) {
+        for input in (format.discover)(&format, &owners) {
             if let Some(path) = input.input {
                 owned.push(std::fs::canonicalize(&path).unwrap_or(path));
             }
