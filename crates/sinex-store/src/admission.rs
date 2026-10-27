@@ -80,6 +80,34 @@ pub struct Outcome {
     pub admitted_ids: Vec<EventId>,
 }
 
+// Borrowed outcomes add counts and positions; callers take request IDs separately.
+impl std::ops::AddAssign<&Outcome> for Outcome {
+    fn add_assign(&mut self, other: &Self) {
+        self.admitted += other.admitted;
+        self.repeats += other.repeats;
+        self.replaced += other.replaced;
+        self.older += other.older;
+        self.hidden += other.hidden;
+        self.superseded += other.superseded;
+        self.failures += other.failures;
+        self.dirty_keys += other.dirty_keys;
+        self.replay_archived += other.replay_archived;
+        if let Some((start, end)) = other.commit_seq {
+            self.commit_seq = Some(match self.commit_seq {
+                Some((first, last)) => (first.min(start), last.max(end)),
+                None => (start, end),
+            });
+        }
+    }
+}
+
+impl std::ops::AddAssign for Outcome {
+    fn add_assign(&mut self, other: Self) {
+        *self += &other;
+        self.admitted_ids.extend(other.admitted_ids);
+    }
+}
+
 /// Admit `batch` inside the caller's open transaction.
 pub async fn admit(
     conn: &mut PgConnection,

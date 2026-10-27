@@ -27,16 +27,18 @@ request uses one batch and refuses every record if any record fails to parse.
 The caller supplies priority and sealing access. Resuming a registered material
 uses its stored bytes and never registers its data key again.
 
-Library roots are planned by their format; crawl commands supply their URL
-list as binding settings. Both are read by the binding runner. A library file selection
+Library roots are planned by their format. Crawl commands supply their filtered
+URL list to a reader in memory; only the allow list, limit and pause are binding
+settings. Both are read by the binding runner. A library file selection
 is a scan of that file within its root; files beside it are neither read nor
 reported removed. `library-add` then turns the copies into item and rendition
 requests, preserving item identity across moves and revisions. This item
 creation still runs in the library command adapter.
 
 Crawl reads URLs from the `visit.fused` derivation, or from the command's
-explicit URLs. Its format owns domain filtering and the caller's optional
-limit. The journald service uses `sinex-session capture journald`, which builds
+explicit URLs. The command filters allowed domains and already fetched URLs
+before applying the caller's optional limit. Crawl requests run one at a time so the binding's cursor belongs to one
+URL list. The journald service uses `sinex-session capture journald`, which builds
 capture from the format registry and stops it through the shared capture lifetime.
 
 ### Stored bytes and admission
@@ -58,8 +60,12 @@ no row. Before installing a blob, the content store syncs its name in
 `unadmitted-blobs/`. The daemon checks those names against the database at
 start, holding the writer, before any source reads. After draining the writer
 at shutdown it removes the names that have rows. The first start of an existing
-store checks every file once, then syncs `unadmitted-blobs-ready` so later starts
-check only the recorded names.
+store checks every file once, then syncs `unadmitted-blobs-ready` with the
+database system identifier, name, highest event commit position and blob-change
+counter. The counter also advances for material admissions that produce no events.
+Later starts check only the recorded names when these match; a different database
+or position requires a full scan. Clean
+shutdown saves the new position after forgetting admitted names.
 
 A failed admission is retried from the material the reader holds: the append,
 directory, SQLite-row and IMAP readers keep their newest material in memory

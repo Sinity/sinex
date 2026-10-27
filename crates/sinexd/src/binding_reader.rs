@@ -26,9 +26,18 @@ impl BindingReader {
         let reader = kind
             .reader
             .ok_or_else(|| format!("{} is not read by a driver", kind.name))?;
+        let reading = reader(&binding)?;
+        Self::with_reading(kind, binding, reading)
+    }
+
+    pub(crate) fn with_reading(
+        kind: &InputFormat,
+        binding: Binding,
+        reading: Reading,
+    ) -> Result<Self, String> {
         Ok(Self {
             source: (kind.source)(&binding)?,
-            reading: reader(&binding)?,
+            reading,
             binding,
             remembered: false,
             history_floor: Class::Open,

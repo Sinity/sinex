@@ -56,3 +56,14 @@ fn settings_round_trip_and_keep_a_resolved_zone() {
     let resolved = Settings::new("h").with_zone().unwrap();
     assert!(resolved.zone.is_some());
 }
+
+#[devkit::test]
+fn only_declared_boolean_options_convert_strings() {
+    let mut settings = Settings::new("synthetic");
+    settings.options =
+        serde_json::json!({"follow":"true", "reference":false, "kind":"false", "bad":"yes"});
+    assert_eq!(settings.boolean("follow").unwrap(), Some(true));
+    assert_eq!(settings.boolean("reference").unwrap(), Some(false));
+    assert_eq!(settings.option("kind"), Some("false"));
+    assert!(settings.boolean("bad").is_err());
+}

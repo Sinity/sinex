@@ -8,6 +8,7 @@
 //! material holding one record (the whole file), its sidecar as the manifest.
 //! Segments are linked as parts of one input, like a growing file's parts.
 use super::{Acquired, DriverError, NewMaterial};
+use crate::binding::Reader;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use sinex_model::{InputRef, MaterialId, ObservationFacts, RevisionChange, Timestamp};
@@ -54,8 +55,8 @@ pub fn complete(dir: &Path) -> std::io::Result<Vec<(String, PathBuf)>> {
     Ok(out)
 }
 
-impl Media {
-    pub fn poll(&self, cursor: &Value) -> Result<Acquired, DriverError> {
+impl Reader for Media {
+    fn poll(&mut self, cursor: &Value) -> Result<Acquired, DriverError> {
         let previous: Cursor = if cursor.is_null() {
             Cursor::default()
         } else {
@@ -140,22 +141,25 @@ impl Media {
 
     /// Delete segments up to the committed cursor: their bytes are in the
     /// content store.
-    pub fn remove_passed(&self, committed: &Value) -> std::io::Result<usize> {
-        let Ok(Cursor {
-            last: Some(last), ..
-        }) = serde_json::from_value::<Cursor>(committed.clone())
-        else {
-            return Ok(0);
-        };
-        let mut n = 0;
-        for (stem, path) in complete(&self.spool)? {
-            if stem <= last {
-                std::fs::remove_file(&path)?;
-                let _ = std::fs::remove_file(self.spool.join(format!("{stem}.json")));
-                n += 1;
+    fn remove_passed(&self, committed: &Value) -> Result<usize, DriverError> {
+        (|| -> std::io::Result<usize> {
+            let Ok(Cursor {
+                last: Some(last), ..
+            }) = serde_json::from_value::<Cursor>(committed.clone())
+            else {
+                return Ok(0);
+            };
+            let mut n = 0;
+            for (stem, path) in complete(&self.spool)? {
+                if stem <= last {
+                    std::fs::remove_file(&path)?;
+                    let _ = std::fs::remove_file(self.spool.join(format!("{stem}.json")));
+                    n += 1;
+                }
             }
-        }
-        Ok(n)
+            Ok(n)
+        })()
+        .map_err(|e| DriverError::Io(e.to_string()))
     }
 }
 
