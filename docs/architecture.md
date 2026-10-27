@@ -375,7 +375,7 @@ materials.
 
 `services.sinex.enable` starts discovery. Each input format declares its owner,
 canonical locations, capture streams, capabilities and credentials. Runtime
-checks use the operator's declared home/XDG roots, subject roots, provider inputs
+checks use the operator's declared home/XDG roots, input roots, provider inputs
 and filesystem layout. Nix evaluation serializes these facts without probing
 files. Declared backfill inputs are also ordinary discovered inputs.
 
@@ -396,6 +396,8 @@ same exclusions and source settings. Its state directory holds the existing
 spool names and positions. Its default remains the operator's
 `~/.local/state/sinex-session` input spelling. The Nix unit creates it with mode
 0700 and uses umask 0077. Sinnix supplies `/realm` storage during its coordinated
-state relocation, preserving producer binding names and cursors.
-`sinexd admin discover --sources /etc/sinex/sources.json --host HOST --json`
+state relocation; see [session-state.md](session-state.md) for the drain-then-switch procedure.
+Status reports session captures as `producer_reported` until their producer supplies
+status frames. The daemon does not infer their availability from its own environment.
+`sinexd admin discover --sources /etc/sinex/sources.json --host HOST`
 prints the read-only input plan used by the daemon and permission preparation.

@@ -564,6 +564,11 @@ impl Api {
             Reply::Ok { result } => result.get("rows").cloned().unwrap_or(Value::Null),
             Reply::Refused { reason, .. } => json!({ "unavailable": reason }),
         };
+        let context = self.source_config.context(&self.host);
+        let discovery =
+            tokio::task::spawn_blocking(move || sinex_sources::discovery::status(&context))
+                .await
+                .map_err(|error| error.to_string())??;
         let exclusions: std::collections::BTreeMap<_, _> = self
             .source_config
             .exclude
@@ -589,9 +594,8 @@ impl Api {
             "zone": self.context().zone_name(),
             "day_start": self.day_start.to_string(),
             "sources": sources,
-            "discovery": sinex_sources::discovery::discover(&self.source_config.context(&self.host))?,
+            "discovery": discovery,
             "exclusions": exclusions,
-            "health": { "exclusions": exclusions },
         }))
     }
 }

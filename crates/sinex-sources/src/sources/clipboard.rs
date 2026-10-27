@@ -221,10 +221,7 @@ pub const FORMAT: sinex_source_core::binding::InputFormat =
         name: "clipboard",
         discovery: sinex_source_core::discovery::DiscoverySpec {
             owner: sinex_source_core::discovery::Owner::Session,
-            locations: &[sinex_source_core::discovery::Location {
-                root: "session",
-                path: "wayland",
-            }],
+            locations: &[],
             capabilities: &["wayland", "wl-paste"],
             credentials: &[],
             streams: &[

@@ -344,3 +344,67 @@ fn a_first_record_after_saved_empty_polls_reaches_transport_and_reaps_children()
     );
     fixture.all_reaped();
 }
+
+#[devkit::test]
+fn drain_without_spools_exits_without_starting_session_captures() {
+    let nats = devkit::nats::test_nats().unwrap();
+    let fixture = Fixture::new();
+    let output = Session {
+        child: Some(fixture.run(&nats).arg("--drain").spawn().unwrap()),
+    }
+    .finish();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(fixture.pids().is_empty());
+    assert!(!fixture.root.join("state/spool").exists());
+}
+
+#[devkit::test]
+fn drain_reads_a_stopped_spool_without_session_capabilities_and_keeps_unacknowledged_bytes() {
+    use sinex_source_core::drivers::live_stream::{Rotation, SpoolWriter};
+    let nats = devkit::nats::test_nats().unwrap();
+    let fixture = Fixture::new();
+    let spool = fixture.root.join("state/spool/clipboard");
+    let mut writer = SpoolWriter::open(&spool, Rotation::default()).unwrap();
+    writer
+        .append(
+            sinex_model::Timestamp::now(),
+            br#"{"selection":"clipboard","types":[],"secret":false,"text":"synthetic drain"}"#,
+        )
+        .unwrap();
+    writer.sync().unwrap();
+    drop(writer);
+    let before: Vec<_> = std::fs::read_dir(&spool)
+        .unwrap()
+        .map(|entry| {
+            let path = entry.unwrap().path();
+            let bytes = std::fs::read(&path).unwrap();
+            (path, bytes)
+        })
+        .collect();
+    let output = Session {
+        child: Some(
+            fixture
+                .run(&nats)
+                .arg("--drain")
+                .env_remove("WAYLAND_DISPLAY")
+                .spawn()
+                .unwrap(),
+        ),
+    }
+    .finish();
+    // There is no ingress stream, so finished data must remain available to retry.
+    assert!(!output.status.success());
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("no stream found for given subject"),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(fixture.pids().is_empty());
+    for (path, bytes) in before {
+        assert_eq!(std::fs::read(path).unwrap(), bytes);
+    }
+}

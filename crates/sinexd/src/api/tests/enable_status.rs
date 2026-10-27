@@ -17,7 +17,10 @@ async fn status_lists_exclusions_and_reasons_without_source_runs(db: devkit::pg:
         "synthetic operator choice"
     );
     assert_eq!(result["exclusions"].as_object().unwrap().len(), 2);
-    assert_eq!(result["health"]["exclusions"], result["exclusions"]);
+    assert!(result.get("health").is_none());
+    assert!(result["discovery"].as_array().unwrap().iter().any(|input| {
+        input["source"] == "desktop.hyprland" && input["availability"] == "producer_reported"
+    }));
     assert!(
         result["discovery"]
             .as_array()

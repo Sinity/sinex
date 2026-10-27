@@ -30,11 +30,9 @@ pub(crate) enum Admin {
     /// Read-only discovery of this host's inputs and exclusions.
     Discover {
         #[arg(long)]
-        sources: Option<PathBuf>,
+        sources: PathBuf,
         #[arg(long, default_value = "localhost")]
         host: String,
-        #[arg(long)]
-        json: bool,
     },
     /// Print the NATS server `authorization` block: the daemon user with full
     /// access and one user per producer limited to its own subjects. Passwords
@@ -77,22 +75,13 @@ pub(crate) async fn run(command: Admin) -> Result<(), String> {
                 .await
                 .map_err(|e| e.to_string())
         }
-        Admin::Discover {
-            sources,
-            host,
-            json: _,
-        } => {
-            let config = sources
-                .as_deref()
-                .map(crate::binding_runner::Config::load)
-                .transpose()?
-                .unwrap_or_default();
-            let context = if sources.is_some() {
-                config.context(&host)
-            } else {
-                sinex_sources::discovery::DiscoveryContext::for_process(&host, PathBuf::new())
-            };
-            let inputs = sinex_sources::discovery::discover(&context)?;
+        Admin::Discover { sources, host } => {
+            let config = crate::binding_runner::Config::load(&sources)?;
+            let context = config.context(&host);
+            let inputs =
+                tokio::task::spawn_blocking(move || sinex_sources::discovery::status(&context))
+                    .await
+                    .map_err(|error| error.to_string())??;
             println!(
                 "{}",
                 serde_json::to_string_pretty(&inputs).map_err(|error| error.to_string())?

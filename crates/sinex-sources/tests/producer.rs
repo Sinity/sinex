@@ -146,3 +146,62 @@ async fn a_spool_is_produced_once_material_first() {
         "events cite their material"
     );
 }
+
+#[devkit::test(multi_thread)]
+async fn draining_after_physical_state_relocation_preserves_names_and_admitted_positions() {
+    use sinex_source_core::drivers::live_stream::{Rotation, SpoolWriter};
+    use sinex_sources::{discovery, live};
+    use std::os::unix::fs::symlink;
+    let nats = devkit::nats::test_nats().unwrap();
+    let subjects = Subjects::new(nats.prefix());
+    let received = standin(&nats, &subjects, "session-test").await;
+    let root = tempfile::tempdir().unwrap();
+    let state = root.path().join("state");
+    let spool = state.join("spool/hyprland");
+    let mut writer = SpoolWriter::open(&spool, Rotation::default()).unwrap();
+    writer
+        .append(
+            sinex_model::Timestamp::now(),
+            b"activewindow>>kitty,synthetic",
+        )
+        .unwrap();
+    writer.sync().unwrap();
+    drop(writer);
+    let context = discovery::DiscoveryContext {
+        host: "h".into(),
+        spool: state.join("spool"),
+        ..Default::default()
+    };
+    let bindings = discovery::spools(&context, discovery::Owner::Session).unwrap();
+    assert_eq!(bindings.len(), 1);
+    let name = bindings[0].1.name.clone();
+    let store = Store::open(&root.path().join("store")).unwrap();
+    let positions = state.join("positions");
+    let mut producer = Producer::connect(nats.url(), None, subjects, "session-test")
+        .await
+        .unwrap();
+    live::drain(&mut producer, &store, &positions, bindings)
+        .await
+        .unwrap();
+    let admitted = Position::load(&positions, &name).unwrap();
+    let frames = received.lock().unwrap().len();
+    assert!(frames > 0);
+    let destination = root.path().join("relocated-state");
+    std::fs::rename(&state, &destination).unwrap();
+    symlink(&destination, &state).unwrap();
+    let bindings = discovery::spools(&context, discovery::Owner::Session).unwrap();
+    assert_eq!(bindings[0].1.name, name);
+    live::drain(&mut producer, &store, &positions, bindings)
+        .await
+        .unwrap();
+    assert_eq!(
+        received.lock().unwrap().len(),
+        frames,
+        "admitted records are not sent again"
+    );
+    assert_eq!(
+        Position::load(&positions, &name).unwrap().cursor,
+        admitted.cursor
+    );
+    assert!(destination.join("positions").is_dir());
+}

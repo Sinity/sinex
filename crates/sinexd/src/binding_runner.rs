@@ -20,7 +20,7 @@ pub(crate) fn plan(
     host: &str,
 ) -> Result<Vec<(&'static InputFormat, Binding)>, String> {
     let inputs = discovery::discover(&config.context(host))?;
-    discovery::reconcile(
+    Ok(discovery::reconcile(
         inputs
             .into_iter()
             .flat_map(|input| {
@@ -34,6 +34,7 @@ pub(crate) fn plan(
             .collect(),
         &[],
     )
+    .bindings)
 }
 
 fn emitted(config: &Config) -> Result<Vec<&'static str>, String> {
@@ -48,30 +49,29 @@ fn emitted(config: &Config) -> Result<Vec<&'static str>, String> {
     Ok(types)
 }
 
-/// Saved bindings keep their parser identity in their materials, including
-/// bindings planned by several parsers of the same source.
+/// A saved name belongs to the source and input, independent of which current
+/// parser discovers it. Reconciliation compares only the proposed parser.
 async fn saved(conn: &mut PgConnection, host: &str) -> Result<Vec<Binding>, String> {
     let rows = sinex_store::bindings::all(conn)
         .await
         .map_err(|error| error.to_string())?;
     let mut out = Vec::new();
-    for (row, mut parsers) in rows {
-        let settings: Settings =
-            serde_json::from_value(row.settings).map_err(|error| error.to_string())?;
+    for row in rows {
+        let settings: Settings = match serde_json::from_value(row.settings) {
+            Ok(settings) => settings,
+            Err(error) => {
+                eprintln!("sinexd: binding {}: unavailable: {error}", row.binding);
+                continue;
+            }
+        };
         if settings.host != host {
             continue;
         }
-        if parsers.is_empty() {
-            let declared: Vec<_> = sources::specs()
-                .into_iter()
-                .filter(|spec| spec.name == row.source)
-                .map(|spec| spec.parser.to_owned())
-                .collect();
-            if declared.len() != 1 {
-                continue;
-            }
-            parsers = declared;
-        }
+        let parsers: std::collections::BTreeSet<_> = sources::specs()
+            .into_iter()
+            .filter(|spec| spec.name == row.source)
+            .map(|spec| spec.parser.to_owned())
+            .collect();
         for parser in parsers {
             out.push(Binding {
                 name: row.binding.clone(),
@@ -99,7 +99,7 @@ impl Bindings {
     /// writes later (a new day's file, a new recording) are read without a
     /// restart.
     fn extend(&mut self, config: &Config, host: &str, saved: &[Binding]) {
-        let inputs = match discovery::discover(&config.context(host)) {
+        let inputs = match discovery::status(&config.context(host)) {
             Ok(inputs) => inputs,
             Err(error) => {
                 self.say("plan", format!("sinexd: sources: {error}"));
@@ -140,14 +140,16 @@ impl Bindings {
                 proposed.extend(input.bindings.into_iter().map(|binding| (format, binding)));
             }
         }
-        let planned = match discovery::reconcile(proposed, saved) {
-            Ok(planned) => planned,
-            Err(error) => {
-                self.say("plan", format!("sinexd: {error}"));
-                return;
-            }
-        };
-        for (format, binding) in planned {
+        let planned = discovery::reconcile(proposed, saved);
+        for (binding, error) in planned.unavailable {
+            self.readers
+                .retain(|reader| reader.binding.name != binding.name);
+            self.say(
+                &format!("binding {}", binding.name),
+                format!("sinexd: {}: unavailable: {error}", binding.input.display()),
+            );
+        }
+        for (format, binding) in planned.bindings {
             if let Some(old) = self.readers.iter_mut().find(|reader| {
                 reader.binding.name == binding.name && reader.binding.parser == binding.parser
             }) {
@@ -215,8 +217,16 @@ pub(crate) async fn run(
         if !private.on() {
             if planned_at.is_none_or(|at| at.elapsed() >= PLAN_EVERY) {
                 let before = bindings.readers.len();
-                let saved = saved(&mut read_conn, &host).await?;
-                bindings.extend(&config, &host, &saved);
+                match saved(&mut read_conn, &host).await {
+                    Ok(saved) => {
+                        bindings.said.remove("saved");
+                        bindings.extend(&config, &host, &saved);
+                    }
+                    Err(error) => bindings.say(
+                        "saved",
+                        format!("sinexd: saved bindings unavailable: {error}"),
+                    ),
+                }
                 if bindings.readers.len() != before {
                     eprintln!("sinexd: reading {} bindings", bindings.readers.len());
                 }
