@@ -256,22 +256,22 @@ fn whole_json_supports_sealed_routes_and_completed_cursor_restart() {
             vec![driver.route(cursor.clone(), Class::Sealed)],
             &sink,
             &mut |_, acquired| {
-                if let Some(m) = acquired?.material {
-                    if !m.records.is_empty() {
-                        deliveries += 1;
-                        cursor = (m.cursor_at)(m.records.last().unwrap().1)?;
-                        assert_eq!(
-                            read(
-                                Format::Whisper,
-                                &m.record_bytes()
-                                    .record(m.records[0].0, m.records[0].1)
-                                    .unwrap()
-                            )
-                            .unwrap()
-                            .len(),
-                            2
-                        );
-                    }
+                if let Some(material) = acquired?.material
+                    && !material.records.is_empty()
+                {
+                    deliveries += 1;
+                    cursor = (material.cursor_at)(material.records.last().unwrap().1)?;
+                    assert_eq!(
+                        read(
+                            Format::Whisper,
+                            &material.record_bytes()
+                                .record(material.records[0].0, material.records[0].1)
+                                .unwrap()
+                        )
+                        .unwrap()
+                        .len(),
+                        2
+                    );
                 }
                 Ok(true)
             },
