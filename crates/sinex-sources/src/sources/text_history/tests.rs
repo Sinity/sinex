@@ -120,7 +120,9 @@ fn append_restart_replacement_and_missing_source_use_shared_reader() {
     let replacement = driver.poll(&cursor, &mut restarted).unwrap();
     assert_eq!(body(&replacement.material.unwrap()), b"id\nid\n");
     std::fs::remove_file(&path).unwrap();
-    assert!(driver.poll(&cursor, &mut restarted).is_err());
+    let missing = driver.poll(&cursor, &mut restarted).unwrap();
+    assert!(missing.observation.unavailable.is_some());
+    assert!(missing.material.is_none());
     for (start, end) in &first.records {
         assert_eq!(
             TextHistoryParser {
