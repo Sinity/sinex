@@ -42,7 +42,7 @@ async fn explicit_imports_replay_without_source_files_and_keep_guarded_records(
             .fetch_all(conn).await.unwrap()
     }
     let before = live(&mut ctx.read_conn).await;
-    assert_eq!(before.len(), 5);
+    assert_eq!(before.len(), 6);
     assert!(before.iter().all(|(_, class, _)| class == "guarded"));
     let transactions = before
         .iter()
@@ -59,7 +59,7 @@ async fn explicit_imports_replay_without_source_files_and_keep_guarded_records(
         &ctx.writer,
         crate::replay::Options {
             scope: crate::replay::Scope {
-                event_types: Some(vec!["transaction.posted".into(), "command.imported".into()]),
+                event_types: Some(vec!["transaction.posted".into(), "journal.directive".into(), "command.imported".into()]),
                 ..Default::default()
             },
             compare: false,

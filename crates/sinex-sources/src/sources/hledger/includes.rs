@@ -1,0 +1,170 @@
+//! Include planning reads local files only. Every file uses the shared export
+//! reader, so edits to a child are acquired independently of its parent's bytes.
+use super::{SPEC, framing};
+use serde_json::json;
+use sinex_model::event_types::finance::{IncludeTarget, IncludedFrom};
+use sinex_source_core::binding::{Binding, Settings};
+use std::collections::{BTreeMap, BTreeSet};
+use std::path::{Path, PathBuf};
+
+pub(super) fn plan(input: &Path, settings: &Settings) -> Result<Vec<Binding>, String> {
+    let mut out = Vec::new();
+    let mut active = BTreeSet::new();
+    let roots = if input.is_dir() { journals(input)? } else { vec![input.to_path_buf()] };
+    for root in roots {
+        visit(&root, &root, settings, None, None, &mut active, &mut out)?;
+    }
+    Ok(out)
+}
+
+fn journals(root: &Path) -> Result<Vec<PathBuf>, String> {
+    let mut found = Vec::new();
+    let mut dirs = vec![root.to_path_buf()];
+    let mut seen = BTreeSet::new();
+    while let Some(dir) = dirs.pop() {
+        if !seen.insert(std::fs::canonicalize(&dir).map_err(|e| e.to_string())?) { continue; }
+        for entry in std::fs::read_dir(&dir).map_err(|e| e.to_string())? {
+            let path = entry.map_err(|e| e.to_string())?.path();
+            if path.is_dir() { dirs.push(path); }
+            else if matches!(path.extension().and_then(|s| s.to_str()), Some("journal" | "hledger"))
+                || path.file_name().is_some_and(|s| s == "journal_clean") { found.push(path); }
+        }
+    }
+    found.sort();
+    Ok(found)
+}
+
+fn visit(
+    path: &Path, journal: &Path, settings: &Settings, initial_year: Option<i16>,
+    from: Option<IncludedFrom>, active: &mut BTreeSet<PathBuf>, out: &mut Vec<Binding>,
+) -> Result<(), String> {
+    let identity = std::fs::canonicalize(path).map_err(|e| format!("{}: {e}", path.display()))?;
+    active.insert(identity.clone());
+    let bytes = std::fs::read(path).map_err(|e| format!("{}: {e}", path.display()))?;
+    let mut includes = BTreeMap::<String, Vec<IncludeTarget>>::new();
+    let mut year = initial_year;
+    let mut counts = BTreeMap::<String, u64>::new();
+    // Archives are read by the shared archive reader. Native journal include
+    // paths refer to the local filesystem, never to an extracted temporary tree.
+    if let Ok(text) = std::str::from_utf8(&bytes) {
+        for (start, end) in framing::complete(&bytes).0 {
+            let block = &text[start..end];
+            let header = block.lines().next().unwrap_or("").trim();
+            if let Some(value) = header.strip_prefix('Y').or_else(|| header.strip_prefix("year ")) {
+                if let Ok(value) = super::split_comment(value).0.trim().parse::<i16>() { year = Some(value); }
+            }
+            let Some(target) = header.strip_prefix("include ").or_else(|| header.strip_prefix("include\t")) else { continue; };
+            let hash = blake3::hash(block.as_bytes()).to_hex().to_string();
+            let duplicate = counts.entry(hash.clone()).or_default();
+            let from = IncludedFrom { path: path.display().to_string(), block_hash: hash.clone(), duplicate: *duplicate, parent: from.clone().map(Box::new) };
+            *duplicate += 1;
+            let targets = match resolve(path, target.trim(), settings) {
+                Ok(targets) => targets,
+                Err(reason) => {
+                    includes.entry(hash).or_default().push(IncludeTarget { path: target.trim().into(), reason: Some(reason) });
+                    continue;
+                }
+            };
+            for target in targets {
+                let reason = match std::fs::canonicalize(&target) {
+                    Err(e) => Some(format!("{}: {e}", target.display())),
+                    Ok(id) if active.contains(&id) => Some("include cycle".into()),
+                    Ok(_) => match visit(&target, journal, settings, year, Some(from.clone()), active, out) {
+                        Ok(()) => None,
+                        Err(e) => Some(e),
+                    },
+                };
+                includes.entry(hash.clone()).or_default().push(IncludeTarget { path: target.display().to_string(), reason });
+            }
+        }
+    }
+    active.remove(&identity);
+    let mut options = settings.options.as_object().cloned().unwrap_or_default();
+    options.insert("journal".into(), json!(journal.display().to_string()));
+    options.insert("initial_year".into(), json!(initial_year));
+    options.insert("included_from".into(), json!(from));
+    options.insert("includes".into(), json!(includes));
+    let mut binding = Binding::of(&SPEC, path, Settings { options: options.into(), ..settings.clone() });
+    if let Some(from) = from {
+        let parent = blake3::hash(serde_json::to_string(&from).unwrap().as_bytes()).to_hex();
+        binding = binding.named(&format!("include:{parent}"));
+    }
+    out.push(binding);
+    Ok(())
+}
+
+fn resolve(parent: &Path, target: &str, settings: &Settings) -> Result<Vec<PathBuf>, String> {
+    if target.starts_with(['|', '!', '<']) || target.contains("://") {
+        return Err("include requires a local file; commands and remote imports are not executed".into());
+    }
+    let target = if let Some(target) = target.strip_prefix("journal:") { target } else {
+        if let Some((format, _)) = target.split_once(':')
+            && matches!(format, "csv" | "ssv" | "tsv" | "rules" | "timeclock" | "timedot") {
+            return Err(format!("{format} includes are not journal records"));
+        }
+        target
+    };
+    let path = if let Some(rest) = target.strip_prefix("~/") {
+        settings.option("include_home").map(PathBuf::from).or_else(|| std::env::var_os("HOME").map(PathBuf::from)).ok_or("include home directory is unavailable")?.join(rest)
+    } else { parent.parent().unwrap_or(Path::new(".")).join(target) };
+    if !target.contains(['*', '?', '[']) { return Ok(vec![path]); }
+    let pattern = path.to_str().ok_or("include glob is not UTF-8")?;
+    let first = pattern.find(['*', '?', '[']).unwrap();
+    let slash = pattern[..first].rfind('/').unwrap_or(0);
+    let root = Path::new(&pattern[..slash.max(1)]);
+    let expression = glob_expression(pattern)?;
+    let matcher = regex::Regex::new(&expression).map_err(|e| e.to_string())?;
+    let current = std::fs::canonicalize(parent).map_err(|e| e.to_string())?;
+    let mut paths = Vec::new();
+    let mut dirs = vec![root.to_path_buf()];
+    let mut seen = BTreeSet::new();
+    while let Some(dir) = dirs.pop() {
+        let id = std::fs::canonicalize(&dir).map_err(|e| e.to_string())?;
+        if !seen.insert(id) { continue; }
+        for entry in std::fs::read_dir(&dir).map_err(|e| e.to_string())? {
+            let path = entry.map_err(|e| e.to_string())?.path();
+            if path.file_name().is_some_and(|s| s.as_encoded_bytes().starts_with(b".")) {
+                let relative = path.strip_prefix(root).map_err(|e| e.to_string())?;
+                let literal_hidden = pattern.contains("/.");
+                let nested_directory = pattern.contains("**") && path.is_dir() && relative.components().count() > 1;
+                if !literal_hidden && !nested_directory { continue; }
+            }
+            if path.is_dir() {
+                if pattern.contains("**") || dir.components().count() < Path::new(pattern).components().count()-1 { dirs.push(path); }
+            } else if path.to_str().is_some_and(|s| matcher.is_match(s))
+                && std::fs::canonicalize(&path).map_err(|e| e.to_string())? != current { paths.push(path); }
+        }
+    }
+    paths.sort();
+    if paths.is_empty() { return Err("include glob matches no other files".into()); }
+    Ok(paths)
+}
+
+fn glob_expression(pattern: &str) -> Result<String, String> {
+    let mut out = String::from("^");
+    let mut chars = pattern.chars().peekable();
+    while let Some(c) = chars.next() {
+        match c {
+            '*' if chars.peek() == Some(&'*') => {
+                chars.next();
+                if chars.peek() == Some(&'/') { chars.next(); out.push_str("(?:.*/)?"); }
+                else { out.push_str(".*"); }
+            }
+            '*' => out.push_str("[^/]*"),
+            '?' => out.push_str("[^/]"),
+            '[' => {
+                out.push('[');
+                if chars.peek() == Some(&'!') { chars.next(); out.push('^'); }
+                let mut closed = false;
+                for c in chars.by_ref() { out.push(c); if c == ']' { closed = true; break; } }
+                if !closed { return Err("unfinished include glob character class".into()); }
+            }
+            _ => out.push_str(&regex::escape(&c.to_string())),
+        }
+    }
+    out.push('$');
+    Ok(out)
+}
+
+#[cfg(test)]
+mod tests;

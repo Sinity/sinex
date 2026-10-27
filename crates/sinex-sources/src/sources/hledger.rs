@@ -1,11 +1,13 @@
-//! Explicit journal subset: ISO dates, statuses, descriptions, comments and
-//! ordered postings with decimal quantities. Includes are not traversed.
+//! Authored journal transactions and directives. Acquisition follows local includes;
+//! parsing preserves written quantities and never balances or generates postings.
 pub mod framing;
+mod includes;
+mod posting;
 
 use serde::{Deserialize, Serialize};
 use sinex_model::{
     Class,
-    event_types::finance::{Posting, TransactionPosted},
+    event_types::finance::{Posting, TransactionPosted, JournalDirective, JournalRecord, IncludedFrom},
 };
 use sinex_source_core::binding::{self, InputFormat};
 use sinex_source_core::drivers::export_archive::{ExportArchive, Framing, PART_BYTES};
@@ -26,18 +28,22 @@ pub const SPEC: SourceSpec = SourceSpec {
     class: Class::Guarded,
     parser: "hledger",
     parser_version: 1,
-    event_types: &["transaction.posted"],
+    event_types: &["transaction.posted", "journal.directive"],
     framer: sinex_source_core::Framer::export(framing::complete, TRANSACTIONS),
 };
 
 pub struct HledgerParser {
     pub host: String,
     pub journal: String,
+    pub initial_year: Option<i16>,
+    pub included_from: Option<IncludedFrom>,
+    pub includes: std::collections::BTreeMap<String, Vec<sinex_model::event_types::finance::IncludeTarget>>,
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct Carry {
     member: Option<(String, u64)>,
+    year: Option<i16>,
     #[serde(with = "counts")]
     seen: imbl::OrdMap<String, u64>,
 }
@@ -69,14 +75,14 @@ mod counts {
 impl Parser for HledgerParser {
     type Record<'a> = &'a [u8];
     type Carry = Carry;
-    type Payload = TransactionPosted;
+    type Payload = JournalRecord;
 
     fn parse(
         &self,
         record: &&[u8],
         carry: &Carry,
         context: &RecordContext<'_>,
-    ) -> Result<(Vec<TransactionPosted>, Carry), RecordError> {
+    ) -> Result<(Vec<JournalRecord>, Carry), RecordError> {
         let text = std::str::from_utf8(record)
             .map_err(|_| RecordError::new("journal block is not UTF-8"))?;
         let member = context
@@ -103,32 +109,40 @@ impl Parser for HledgerParser {
         } else {
             Carry {
                 member: member.clone(),
+                year: self.initial_year,
                 ..Default::default()
             }
         };
+        if next.year.is_none() { next.year = self.initial_year; }
         let mut lines = text.lines().filter(|line| !line.trim().is_empty());
-        let Some(header) = lines.next() else {
-            return Ok((vec![], next));
-        };
-        if header.trim_start().starts_with([';', '#']) {
-            if lines.any(|line| !line.trim_start().starts_with([';', '#'])) {
-                return Err(RecordError::new(
-                    "unsupported journal directive after comment",
-                ));
+        let Some(header) = lines.next() else { return Ok((vec![], next)); };
+        let hash = blake3::hash(record).to_hex().to_string();
+        let duplicate = next.seen.get(&hash).copied().unwrap_or(0);
+        next.seen.insert(hash.clone(), duplicate.checked_add(1)
+            .ok_or_else(|| RecordError::new("journal duplicate number exceeds u64"))?);
+        let header = header.trim_start();
+        if !header.starts_with(|c: char| c.is_ascii_digit()) {
+            let directive = directive_name(header)?;
+            if directive == "Y" || directive == "year" {
+                let value = header.trim_start_matches(directive).trim();
+                next.year = Some(split_comment(value).0.trim().parse::<i16>()
+                    .map_err(|_| RecordError::new("invalid journal year"))?);
             }
-            return Ok((vec![], next));
+            let includes = self.includes.get(&hash).cloned().unwrap_or_default();
+            return Ok((vec![JournalRecord::Directive(JournalDirective {
+                host: self.host.clone(), journal: self.journal.clone(),
+                member: member.as_ref().map(|(path, _)| path.clone()), member_duplicate,
+                block_hash: hash, duplicate, directive: directive.into(), text: text.into(),
+                included_from: self.included_from.clone(), includes,
+            })], next));
         }
-        let (dates, rest) = header.split_once(char::is_whitespace).ok_or_else(|| {
-            RecordError::new("unsupported journal directive or missing transaction description")
-        })?;
+        let (dates, rest) = header.split_once(char::is_whitespace).unwrap_or((header, ""));
         let (date, effective_date) = match dates.split_once('=') {
             Some((date, effective)) => (date, Some(effective)),
             None => (dates, None),
         };
-        validate_date(date)?;
-        if let Some(date) = effective_date {
-            validate_date(date)?;
-        }
+        let resolved_date = resolve_date(date, next.year)?;
+        let resolved_effective_date = effective_date.map(|date| resolve_date(date, resolved_date.as_deref().and_then(|date| date.split('-').next()?.parse().ok()).or(next.year))).transpose()?.flatten();
         let rest = rest.trim_start();
         let (status, rest) = if let Some(rest) = rest.strip_prefix('*') {
             (Some("*".to_owned()), rest.trim_start())
@@ -137,14 +151,15 @@ impl Parser for HledgerParser {
         } else {
             (None, rest)
         };
+        let (code, rest) = if let Some(code) = rest.strip_prefix('(') {
+            let (code, rest) = code.split_once(')').ok_or_else(|| RecordError::new("unfinished transaction code"))?;
+            (Some(code.into()), rest.trim_start())
+        } else { (None, rest) };
         let (description, comment) = split_comment(rest);
         let (description, narration) = match description.split_once('|') {
             Some((payee, narration)) => (payee.trim(), Some(narration.trim().to_owned())),
             None => (description.trim(), None),
         };
-        if description.is_empty() {
-            return Err(RecordError::new("transaction description is empty"));
-        }
         let mut postings: Vec<Posting> = Vec::new();
         let mut comments: Vec<String> = comment.into_iter().collect();
         for line in lines {
@@ -152,7 +167,7 @@ impl Parser for HledgerParser {
                 return Err(RecordError::new("multiple journal blocks in one record"));
             }
             let line = line.trim();
-            if let Some(comment) = line.strip_prefix(';') {
+            if let Some(comment) = line.strip_prefix(';').or_else(|| line.strip_prefix('#')) {
                 if let Some(posting) = postings.last_mut() {
                     let text = posting.comment.get_or_insert_with(String::new);
                     if !text.is_empty() {
@@ -164,19 +179,8 @@ impl Parser for HledgerParser {
                 }
                 continue;
             }
-            postings.push(posting(line)?);
+            postings.push(posting::parse(line)?);
         }
-        if postings.is_empty() {
-            return Err(RecordError::new("transaction has no postings"));
-        }
-        let hash = blake3::hash(record).to_hex().to_string();
-        let duplicate = next.seen.get(&hash).copied().unwrap_or(0);
-        next.seen.insert(
-            hash.clone(),
-            duplicate
-                .checked_add(1)
-                .ok_or_else(|| RecordError::new("transaction duplicate number exceeds u64"))?,
-        );
         let payload = TransactionPosted {
             host: self.host.clone(),
             journal: self.journal.clone(),
@@ -186,93 +190,65 @@ impl Parser for HledgerParser {
             duplicate,
             date: date.into(),
             effective_date: effective_date.map(str::to_owned),
+            resolved_date, resolved_effective_date, default_year: next.year, code,
+            included_from: self.included_from.clone(),
             status,
             description: description.into(),
             narration,
             comment: (!comments.is_empty()).then(|| comments.join("\n")),
             postings,
         };
-        Ok((vec![payload], next))
+        Ok((vec![JournalRecord::Transaction(payload)], next))
     }
 }
 
-fn validate_date(raw: &str) -> Result<(), RecordError> {
-    let valid_shape = raw.len() == 10
-        && raw.as_bytes()[4] == b'-'
-        && raw.as_bytes()[7] == b'-'
-        && raw
-            .bytes()
-            .enumerate()
-            .all(|(i, b)| i == 4 || i == 7 || b.is_ascii_digit());
-    if !valid_shape || jiff::civil::Date::strptime("%Y-%m-%d", raw).is_err() {
-        return Err(RecordError::new(
-            "invalid journal date or unsupported directive; expected YYYY-MM-DD",
-        ));
+fn directive_name(header: &str) -> Result<&str, RecordError> {
+    if header.starts_with([';', '#', '*']) { return Ok("comment"); }
+    if header.starts_with('~') { return Ok("~"); }
+    if header.starts_with('=') { return Ok("="); }
+    if header.starts_with('Y') && header[1..].starts_with(|c: char| c.is_ascii_digit()) { return Ok("Y"); }
+    let name = header.split_whitespace().next().unwrap_or("");
+    match name {
+        "account" | "commodity" | "P" | "D" | "alias" | "include" | "Y" | "year" |
+        "decimal-mark" | "payee" | "tag" | "apply" | "end" | "assert" | "check" |
+        "comment" | "endcomment" => Ok(name),
+        _ => Err(RecordError::new("unknown journal directive")),
     }
-    Ok(())
+}
+
+fn resolve_date(raw: &str, year: Option<i16>) -> Result<Option<String>, RecordError> {
+    let separator = raw.chars().find(|c| matches!(c, '-' | '/' | '.'))
+        .ok_or_else(|| RecordError::new("invalid journal date"))?;
+    let fields = raw.split(separator).collect::<Vec<_>>();
+    let (year, month, day) = match fields.as_slice() {
+        [y, m, d] => (Some(y.parse::<i16>().map_err(|_| RecordError::new("invalid journal date"))?), *m, *d),
+        [m, d] => (year, *m, *d),
+        _ => return Err(RecordError::new("invalid journal date")),
+    };
+    let month = month.parse::<i8>().map_err(|_| RecordError::new("invalid journal date"))?;
+    let day = day.parse::<i8>().map_err(|_| RecordError::new("invalid journal date"))?;
+    // A leap year checks a partial February 29 without inventing a year.
+    let date = jiff::civil::Date::new(year.unwrap_or(2000), month, day)
+        .map_err(|_| RecordError::new("invalid journal date"))?;
+    Ok(year.map(|_| date.to_string()))
 }
 
 fn split_comment(raw: &str) -> (&str, Option<String>) {
-    match raw.split_once(';') {
-        Some((body, comment)) => (body, Some(comment.trim().into())),
-        None => (raw, None),
+    let mut quoted = false;
+    let mut escaped = false;
+    for (at, c) in raw.char_indices() {
+        if escaped { escaped = false; continue; }
+        if quoted && c == '\\' { escaped = true; continue; }
+        if c == '"' { quoted = !quoted; }
+        if c == ';' && !quoted { return (&raw[..at], Some(raw[at+1..].trim().into())); }
     }
-}
-
-fn posting(raw: &str) -> Result<Posting, RecordError> {
-    let (body, comment) = split_comment(raw);
-    let body = body.trim();
-    let separator = body.as_bytes().iter().enumerate().find_map(|(i, b)| {
-        (*b == b'\t' || (*b == b' ' && body.as_bytes().get(i + 1) == Some(&b' '))).then_some(i)
-    });
-    let (account, amount) = separator.map_or((body, ""), |i| (body[..i].trim(), body[i..].trim()));
-    if account.is_empty()
-        || account.starts_with(['(', '[', '*', '!'])
-        || account.contains(['=', '@'])
-    {
-        return Err(RecordError::new(
-            "unsupported journal posting account or status",
-        ));
-    }
-    let (amount, currency) = if amount.is_empty() {
-        (None, None)
-    } else {
-        quantity(amount)?
-    };
-    Ok(Posting {
-        account: account.into(),
-        amount,
-        currency,
-        comment,
-    })
-}
-
-fn quantity(raw: &str) -> Result<(Option<String>, Option<String>), RecordError> {
-    let unsupported = || {
-        RecordError::new(
-            "unsupported journal amount; expected decimal with optional leading or trailing commodity (no assertions or prices)",
-        )
-    };
-    if raw.contains(['=', '@', ',', '(', ')', '"']) {
-        return Err(unsupported());
-    }
-    static AMOUNT: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
-        regex::Regex::new(r"^(?:(?P<leading>[^\s0-9.+\-;|*!]+)\s*)?(?P<amount>[+-]?(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+))(?:\s*(?P<trailing>[^\s0-9.+\-;|*!]+))?$")
-            .expect("fixed journal quantity expression")
-    });
-    let fields = AMOUNT.captures(raw).ok_or_else(unsupported)?;
-    let amount = fields.name("amount").expect("required decimal").as_str();
-    let currency = match (fields.name("leading"), fields.name("trailing")) {
-        (Some(_), Some(_)) => return Err(unsupported()),
-        (leading, trailing) => leading.or(trailing).map(|m| m.as_str()),
-    };
-    Ok((Some(amount.into()), currency.map(str::to_owned)))
+    (raw, None)
 }
 
 pub fn source(host: String, journal: String) -> DeclaredSource<HledgerParser> {
     DeclaredSource {
         spec: SPEC,
-        parser: HledgerParser { host, journal },
+        parser: HledgerParser { host, journal, initial_year: None, included_from: None, includes: Default::default() },
     }
 }
 
@@ -286,41 +262,37 @@ pub fn driver(path: PathBuf, host: String) -> ExportArchive {
     }
 }
 
-fn validate(settings: &binding::Settings) -> Result<(), String> {
-    match settings.options.get("resolve_includes") {
-        None | Some(serde_json::Value::Bool(false)) => Ok(()),
-        _ => {
-            Err("hledger resolve_includes must be false; include traversal is not supported".into())
-        }
-    }
-}
-
 pub const FORMAT: InputFormat = InputFormat {
     name: "hledger",
-    specs: || vec![&SPEC],
-    plan: Some(|input, settings| {
-        validate(settings)?;
-        Ok(binding::single(&SPEC, input, settings))
-    }),
-    source: |b| {
-        validate(&b.settings)?;
-        Ok(Box::new(source(
-            b.settings.host.clone(),
-            b.input.display().to_string(),
-        )))
+    discovery: sinex_source_core::discovery::DiscoverySpec {
+        owner: sinex_source_core::discovery::Owner::System,
+        locations: &[
+            sinex_source_core::discovery::Location { root: "environment", path: "LEDGER_FILE" },
+            sinex_source_core::discovery::Location { root: "home", path: ".hledger.journal" },
+            sinex_source_core::discovery::Location { root: "declared", path: "finance" },
+        ],
+        capabilities: &[], credentials: &[], streams: &[], requests: &[], request_only: false,
     },
-    reader: Some(|b| {
-        validate(&b.settings)?;
-        Ok(binding::shared(driver(
-            b.input.clone(),
-            b.settings.host.clone(),
-        )))
-    }),
+    discover: |format, context| {
+        let mut context = context.clone();
+        let config = context.sources.entry(SPEC.name.into()).or_default();
+        let mut options = config.options.as_object().cloned().unwrap_or_default();
+        options.insert("include_home".into(), serde_json::json!(context.home));
+        config.options = options.into();
+        crate::discovery::discover_format(format, &context)
+    },
+    specs: || vec![&SPEC],
+    plan: Some(includes::plan),
+    source: |b| {
+        let mut source = source(b.settings.host.clone(), b.settings.option("journal").unwrap_or(&b.input.display().to_string()).into());
+        source.parser.initial_year = b.settings.options.get("initial_year").and_then(serde_json::Value::as_i64).and_then(|n| i16::try_from(n).ok());
+        source.parser.included_from = b.settings.options.get("included_from").filter(|v| !v.is_null()).map(|v| serde_json::from_value(v.clone())).transpose().map_err(|e| e.to_string())?;
+        source.parser.includes = b.settings.options.get("includes").map(|v| serde_json::from_value(v.clone())).transpose().map_err(|e| e.to_string())?.unwrap_or_default();
+        Ok(Box::new(source))
+    },
+    reader: Some(|b| Ok(binding::shared(driver(b.input.clone(), b.settings.host.clone())))),
     capture: None,
 };
 
 #[cfg(test)]
-pub(crate) mod intake_tests;
-
-#[cfg(test)]
-mod tests;
+pub(crate) mod tests;
