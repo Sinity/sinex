@@ -173,7 +173,11 @@ pub fn publish_segment(
     std::fs::write(&tmp, serde_json::to_vec(sidecar).expect("JSON serializes"))?;
     std::fs::rename(&tmp, &side)?;
     let data = dir.join(format!("{stem}.{ext}"));
+    let counter = super::spool_health::counter(dir);
+    let mut health = counter.as_ref().map(|counter| counter.lock().unwrap());
+    let length = std::fs::metadata(partial)?.len() + std::fs::metadata(&side)?.len();
     std::fs::rename(partial, &data)?;
+    if let Some(health) = &mut health { health.captured_media(stem.to_owned(), length); }
     Ok(data)
 }
 

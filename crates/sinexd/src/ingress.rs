@@ -140,7 +140,7 @@ impl Ingest {
             return Ok(refused_unrecorded("a frame needs a name"));
         }
         if let Some(stored) = self.stored(producer, &name).await? {
-            self.discard(producer, &name);
+            if stored.refusal.is_none() { self.discard(producer, &name); }
             return Ok(acknowledgment(stored));
         }
         let run = self.run(producer).await?;
@@ -190,7 +190,7 @@ impl Ingest {
             Err(WriteError::Refused(reason)) => {
                 // Handled meanwhile by a redelivery: answer from the record.
                 if let Some(stored) = self.stored(producer, &name).await? {
-                    self.discard(producer, &name);
+                    if stored.refusal.is_none() { self.discard(producer, &name); }
                     return Ok(acknowledgment(stored));
                 }
                 // Admission refused the content (a NUL in a payload, an
@@ -213,7 +213,7 @@ impl Ingest {
             .stored(producer, &name)
             .await?
             .ok_or_else(|| format!("frame {name} from {producer} was not recorded"))?;
-        self.discard(producer, &name);
+        if stored.refusal.is_none() { self.discard(producer, &name); }
         Ok(acknowledgment(stored))
     }
 
@@ -258,7 +258,7 @@ impl Ingest {
         let present = self
             .blobs
             .contains(&m.blob)
-            .map_err(|e| Check::Refused(e.to_string()))?;
+            .map_err(|e| Check::Unavailable(e.to_string()))?;
         if !present {
             return Err(Check::Refused(format!(
                 "material {} names bytes {} that are not in the content store; place them first",

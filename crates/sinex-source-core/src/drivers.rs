@@ -19,6 +19,7 @@ pub mod held;
 pub mod live_stream;
 pub mod media;
 pub mod producer;
+pub mod spool_health;
 #[cfg(feature = "sqlite")]
 pub mod sqlite_rows;
 

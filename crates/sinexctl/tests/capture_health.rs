@@ -8,7 +8,7 @@ fn status_reports_capture_backlog_when_the_daemon_is_unreachable() {
     std::fs::write(root.join("token"), b"synthetic-token").unwrap();
     let report = json!({"observed_at":"2026-01-01T00:00:00Z", "spools":[{"binding":"synthetic", "unpublished":{"bytes":42,"records":3,"frames":2}}]});
     std::fs::write(
-        state.join("positions/health.json"),
+        state.join("health.json"),
         serde_json::to_vec(&report).unwrap(),
     )
     .unwrap();
@@ -20,7 +20,8 @@ fn status_reports_capture_backlog_when_the_daemon_is_unreachable() {
             .arg(&missing_socket)
             .arg("--token-file")
             .arg(root.join("token"))
-            .env("XDG_STATE_HOME", &root);
+            .env("XDG_STATE_HOME", &root)
+            .env_remove("SINEX_CAPTURE_STATE");
         if !bare {
             command.arg("status").arg("--capture-state").arg(&state);
         }
@@ -47,7 +48,7 @@ fn status_errors_keep_the_local_capture_report() {
     std::fs::write(root.join("token"), b"synthetic-token").unwrap();
     let report = json!({"observed_at":"2026-01-01T00:00:00Z", "spools":[{"binding":"synthetic", "unpublished":{"bytes":42,"records":3,"frames":2}}]});
     std::fs::write(
-        state.join("positions/health.json"),
+        state.join("health.json"),
         serde_json::to_vec(&report).unwrap(),
     )
     .unwrap();
@@ -120,4 +121,21 @@ fn status_errors_keep_the_local_capture_report() {
     assert_eq!(status["local_capture"], report);
     assert!(status["daemon"]["unavailable"].is_string());
     std::fs::remove_dir_all(root).unwrap();
+}
+
+#[devkit::test]
+fn status_uses_the_module_capture_state_path() {
+    let dir = std::env::temp_dir().join(format!("capture-configured-{}",std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let state = dir.join("configured-state");
+    std::fs::create_dir(&state).unwrap();
+    let report = json!({"spools":[],"observed_at":"2026-01-01T00:00:00Z"});
+    std::fs::write(state.join("health.json"),serde_json::to_vec(&report).unwrap()).unwrap();
+    let output = std::process::Command::new(env!("CARGO_BIN_EXE_sinexctl"))
+        .args(["status","--offline","--database","not-a-database-url"])
+        .env("SINEX_CAPTURE_STATE",&state).output().unwrap();
+    assert_eq!(output.status.code(),Some(1));
+    let status: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(status["local_capture"],report);
+    std::fs::remove_dir_all(dir).unwrap();
 }

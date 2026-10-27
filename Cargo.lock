@@ -4406,6 +4406,7 @@ dependencies = [
  "blake3",
  "devkit",
  "tempfile",
+ "thiserror 2.0.21",
 ]
 
 [[package]]
