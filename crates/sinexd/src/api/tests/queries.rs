@@ -310,3 +310,91 @@ async fn recall_digest_obeys_row_filters_and_limits(db: devkit::pg::TestDatabase
         );
     }
 }
+
+#[devkit::test]
+async fn ambiguous_saved_names_do_not_block_other_saved_questions(db: devkit::pg::TestDatabase) {
+    let w = world(db).await;
+    admit(&w, &["synthetic command"], 0).await;
+    let first = command("synthetic parent", 1);
+    let record = sinex_model::Event::build(
+        &sinex_model::event_types::query::Saved {
+            name: "clash".into(),
+            query: "events count".into(),
+            parameters: vec![],
+            by: "synthetic other author".into(),
+            written_at: Timestamp::now(),
+        },
+        "query.request",
+        Origin::Record {
+            location: sinex_model::RecordLocation {
+                material: sinex_model::MaterialId::new(),
+                anchor: 0,
+            },
+            output_index: 0,
+        },
+        ReadingOrder(1),
+        [7; 32],
+        Class::Guarded,
+    )
+    .unwrap();
+    admit_events(&w, vec![first, record]).await;
+    for (name, query, parameters) in [
+        ("clash", "events count", vec![]),
+        (
+            "usable",
+            "events where event_type = command.executed count",
+            vec![],
+        ),
+        (
+            "by-source",
+            "events where source = $source count",
+            vec!["source:text"],
+        ),
+        (
+            "indirect",
+            "query:by-source(source=$source)",
+            vec!["source:text"],
+        ),
+    ] {
+        let (_, answer) = call(
+            &w,
+            Some(OPERATOR),
+            json!({"method":"query-save","name":name,"query":query,"parameter":parameters}),
+        )
+        .await;
+        assert_eq!(answer["outcome"], "ok", "{answer}");
+    }
+    for query in [
+        "events where event_type = command.executed count",
+        "query:usable",
+        " QUERY : usable ",
+        "query:indirect(source=terminal.atuin)",
+    ] {
+        let (_, answer) = call(&w, Some(OPERATOR), json!({"method":"query","query":query})).await;
+        assert_eq!(answer["outcome"], "ok", "{answer}");
+        assert_eq!(answer["result"]["rows"][0]["count"], 2);
+    }
+    let (_, listed) = call(&w, Some(OPERATOR), json!({"method":"query-list"})).await;
+    assert_eq!(listed["outcome"], "ok", "{listed}");
+    let clashes: Vec<_> = listed["result"]["queries"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|q| q["name"] == "clash")
+        .collect();
+    assert_eq!(clashes.len(), 2);
+    assert_ne!(clashes[0]["by"], clashes[1]["by"]);
+    let (_, answer) = call(
+        &w,
+        Some(OPERATOR),
+        json!({"method":"query","query":"query:clash"}),
+    )
+    .await;
+    assert_eq!(answer["outcome"], "refused");
+    assert!(
+        answer["reason"]
+            .as_str()
+            .unwrap()
+            .contains("several authors")
+    );
+}

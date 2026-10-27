@@ -144,6 +144,7 @@ fn parameters_do_not_stand_for_fields_and_text_parameters_stay_text() {
         "events fields id,$value",
         "events sort when,$value",
         "events where $value = x",
+        "query:$value",
     ] {
         let mut invalid = saved.clone();
         invalid.query = query.into();
@@ -314,5 +315,17 @@ fn recall_fill_bounds_apply_only_to_when_and_intersect_row_time_bounds() {
         err("recall yesterday group by day(seen) count fill")
             .message
             .contains("lower time bound")
+    );
+}
+
+#[devkit::test]
+fn saved_query_names_use_the_same_tokens_as_the_query_parser() {
+    assert_eq!(
+        crate::query::saved::reference_name(" QUERY : by-directory(root=x) "),
+        Some("by-directory".into())
+    );
+    assert_eq!(
+        crate::query::saved::reference_name("events where source = synthetic"),
+        None
     );
 }

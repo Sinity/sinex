@@ -104,7 +104,8 @@ Later clauses operate on the saved question's result, including grouped rows.
 A saved definition is a `query.saved` event keyed by name and author. Saving
 again under that name and author replaces its live reading through normal
 admission. Visible definitions from several authors with the same name are
-ambiguous and are refused. Hidden definitions are unavailable, and a changed
+ambiguous and are refused when that name is invoked; other saved queries remain
+available. `query-list` includes each definition with its author. Hidden definitions are unavailable, and a changed
 definition invalidates a continuation of its previous question. Marks and
 saved definitions follow the guarded class used for authored requests.
 

@@ -253,10 +253,8 @@ impl Api {
                     Ok(c) => c,
                     Err(e) => return refused(e.to_string()),
                 };
-                match queries::definitions(&mut conn).await {
-                    Ok(definitions) => {
-                        data(json!({"queries":definitions.values().collect::<Vec<_>>()}))
-                    }
+                match queries::list(&mut conn).await {
+                    Ok(definitions) => data(json!({"queries": definitions})),
                     Err(e) => refused(e),
                 }
             }
@@ -582,8 +580,8 @@ impl Api {
             Ok(c) => c,
             Err(e) => return refused(e.to_string()),
         };
-        let definitions = if text.trim_start().starts_with("query:") {
-            match queries::definitions(&mut conn).await {
+        let definitions = if let Some(name) = query::saved::reference_name(text) {
+            match queries::definitions(&mut conn, &name).await {
                 Ok(d) => d,
                 Err(e) => return refused(e),
             }

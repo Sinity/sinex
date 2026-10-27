@@ -166,6 +166,12 @@ fn substitute(
         }
         if let Some(name) = input[i].text.strip_prefix('$') {
             let name = name.to_owned();
+            if i == 2 && input[0].is_word("query") && input[1].is_symbol(":") {
+                return Err(QueryError::at(
+                    input[i].at,
+                    "parameters stand only in scalar value positions",
+                ));
+            }
             let preceding = i.checked_sub(1).and_then(|j| input.get(j));
             if !preceding.is_some_and(|t| {
                 ["=", "!=", "<", "<=", ">", ">=", "~", "^", ":", "["]
@@ -203,6 +209,18 @@ fn substitute(
         }
     }
     Ok(input)
+}
+
+/// The named query at the start of this text, using the ordinary lexer.
+pub fn reference_name(text: &str) -> Option<String> {
+    let input = tokens(text).ok()?;
+    if input.first().is_some_and(|t| t.is_word("query"))
+        && input.get(1).is_some_and(|t| t.is_symbol(":"))
+    {
+        input.get(2).map(|t| t.text.clone())
+    } else {
+        None
+    }
 }
 
 /// `query:name(root="/src/tide", days=7d)` reads a saved question. Later

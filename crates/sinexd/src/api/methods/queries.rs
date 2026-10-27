@@ -9,10 +9,8 @@ fn error(e: impl std::fmt::Display) -> String {
     e.to_string()
 }
 
-pub(super) async fn definitions(
-    conn: &mut sqlx::PgConnection,
-) -> Result<BTreeMap<String, SavedQuery>, String> {
-    let mut out = BTreeMap::new();
+pub(super) async fn list(conn: &mut sqlx::PgConnection) -> Result<Vec<Saved>, String> {
+    let mut records = Vec::new();
     for row in sinex_store::live::of_types(conn, &["query.saved".into()])
         .await
         .map_err(error)?
@@ -23,23 +21,42 @@ pub(super) async fn definitions(
         else {
             continue;
         };
-        let record: Saved = serde_json::from_value(payload).map_err(error)?;
-        let name = record.name.clone();
-        if out
-            .insert(
-                name.clone(),
-                SavedQuery {
-                    name: record.name,
-                    query: record.query,
-                    parameters: record.parameters,
-                },
-            )
-            .is_some()
-        {
+        records.push(serde_json::from_value::<Saved>(payload).map_err(error)?);
+    }
+    records.sort_by(|a, b| (&a.name, &a.by).cmp(&(&b.name, &b.by)));
+    Ok(records)
+}
+
+pub(super) async fn definitions(
+    conn: &mut sqlx::PgConnection,
+    requested: &str,
+) -> Result<BTreeMap<String, SavedQuery>, String> {
+    let mut all: BTreeMap<String, Vec<SavedQuery>> = BTreeMap::new();
+    for record in list(conn).await? {
+        all.entry(record.name.clone())
+            .or_default()
+            .push(SavedQuery {
+                name: record.name,
+                query: record.query,
+                parameters: record.parameters,
+            });
+    }
+    let mut out = BTreeMap::new();
+    let mut next = Some(requested.to_owned());
+    while let Some(name) = next {
+        if out.contains_key(&name) {
+            break;
+        }
+        let Some(definitions) = all.get(&name) else {
+            break;
+        };
+        let [definition] = definitions.as_slice() else {
             return Err(format!(
                 "several authors have saved query {name}; hide an unwanted definition before running it"
             ));
-        }
+        };
+        next = query::saved::reference_name(&definition.query);
+        out.insert(name, definition.clone());
     }
     Ok(out)
 }
