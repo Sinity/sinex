@@ -400,7 +400,9 @@ error independently of the other inputs.
 
 `sinex-session run` selects every available session stream by default, using the
 same exclusions and source settings. Its state directory holds the existing
-spool names and positions. The Nix unit creates it with mode 0700 and uses umask
-0077. Sinnix supplies a directory under its `/realm` state root.
+spool names and positions. Its default remains the operator's
+`~/.local/state/sinex-session` input spelling. The Nix unit creates it with mode
+0700 and uses umask 0077. Sinnix supplies `/realm` storage during its coordinated
+state relocation, preserving producer binding names and cursors.
 `sinexd admin discover --sources /etc/sinex/sources.json --host HOST --json`
 prints the read-only input plan used by the daemon and permission preparation.
