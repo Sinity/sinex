@@ -38,7 +38,8 @@ pub(super) fn add_native(member: &mut serde_json::Value, path: &Path) {
     use base64::Engine;
     if path.to_str().is_none() {
         member["native_path_bytes"] = base64::engine::general_purpose::STANDARD
-            .encode(path.as_os_str().as_bytes()).into();
+            .encode(path.as_os_str().as_bytes())
+            .into();
     }
 }
 
@@ -47,9 +48,12 @@ pub(super) fn native(member: &sinex_model::Member) -> Result<PathBuf, DriverErro
     match member.details.get("native_path_bytes") {
         None => Ok(PathBuf::from(&member.path)),
         Some(value) => {
-            let bytes = value.as_str().and_then(|text| {
-                base64::engine::general_purpose::STANDARD.decode(text).ok()
-            }).ok_or_else(|| DriverError::Cursor("directory native path bytes are invalid".into()))?;
+            let bytes = value
+                .as_str()
+                .and_then(|text| base64::engine::general_purpose::STANDARD.decode(text).ok())
+                .ok_or_else(|| {
+                    DriverError::Cursor("directory native path bytes are invalid".into())
+                })?;
             Ok(PathBuf::from(OsString::from_vec(bytes)))
         }
     }
