@@ -224,7 +224,7 @@ pub fn discover_format(format: &InputFormat, context: &DiscoveryContext) -> Vec<
             ));
             continue;
         }
-        if format.discovery.request_only || spec.name.ends_with(".request") {
+        if format.discovery.request_only || format.discovery.requests.contains(&spec.name) {
             out.push(make(None, Availability::RequestOnly, None, vec![]));
             continue;
         }
@@ -276,20 +276,11 @@ pub fn discover_format(format: &InputFormat, context: &DiscoveryContext) -> Vec<
             out.push(make(Some(input), state, reason, bindings));
         }
         if format.discovery.owner == Owner::Session {
-            let captures = captures(context, Owner::Session).unwrap_or_default();
-            for (capture_format, binding) in
-                captures.into_iter().filter(|(capture_format, binding)| {
-                    capture_format.name == format.name && binding.source == spec.name
-                })
-            {
-                out.push(make(
-                    Some(binding.input.clone()),
-                    Availability::Capturing,
-                    None,
-                    vec![binding],
-                ));
-                let _ = capture_format;
-            }
+            out.extend(
+                capture_inputs(context, Owner::Session)
+                    .into_iter()
+                    .filter(|input| input.format == format.name && input.source == spec.name),
+            );
         }
         if out.iter().all(|input| input.source != spec.name) {
             out.push(make(
@@ -366,6 +357,19 @@ pub fn captures(
     owner: Owner,
 ) -> Result<Vec<(&'static InputFormat, Binding)>, String> {
     validate(context)?;
+    Ok(capture_inputs(context, owner)
+        .into_iter()
+        .flat_map(|input| {
+            let format = sources::format(&input.format).expect("discovered capture format");
+            input
+                .bindings
+                .into_iter()
+                .map(move |binding| (format, binding))
+        })
+        .collect())
+}
+
+fn capture_inputs(context: &DiscoveryContext, owner: Owner) -> Vec<DiscoveredInput> {
     let mut out = Vec::new();
     for format in sources::formats()
         .iter()
@@ -376,49 +380,64 @@ pub fn captures(
         if context.exclude.get(spec.name).is_some_and(Option::is_some) {
             continue;
         }
-        if !format
-            .discovery
-            .capabilities
-            .iter()
-            .all(|name| capability(context, name))
-        {
-            continue;
-        }
+        let configured = context.sources.get(spec.name).cloned().unwrap_or_default();
         for stream in format.discovery.streams {
-            if !stream
-                .capabilities
-                .iter()
-                .all(|name| capability(context, name))
-            {
-                continue;
-            }
             let mut options: serde_json::Value =
                 serde_json::from_str(stream.options).expect("declared capture options");
             if stream.capabilities.contains(&"watch") {
                 options["roots"] = json!(context.watch);
             }
-            if let Some(configured) = context.sources.get(spec.name)
-                && let Some(configured) = configured.options.as_object()
-            {
+            if let Some(configured) = configured.options.as_object() {
                 if !options.is_object() {
                     options = json!({});
                 }
                 options.as_object_mut().unwrap().extend(configured.clone());
             }
-            let (format, mut binding) = crate::live::binding(
-                format.name,
-                &context.spool.join(stream.spool),
-                &context.host,
-                options,
-            )?;
-            binding.settings.class = context
-                .sources
-                .get(spec.name)
-                .and_then(|source| source.class);
-            out.push((format, binding));
+            let input = context.spool.join(stream.spool);
+            let settings = Settings {
+                host: context.host.clone(),
+                class: configured.class,
+                zone: configured.zone.clone(),
+                options: options.clone(),
+            };
+            let missing: Vec<_> = format
+                .discovery
+                .capabilities
+                .iter()
+                .chain(stream.capabilities)
+                .filter(|name| !capability(context, name))
+                .copied()
+                .collect();
+            let mut found = DiscoveredInput {
+                format: format.name.into(),
+                source: spec.name.into(),
+                input: Some(input.clone()),
+                settings,
+                availability: Availability::WaitingForInput,
+                reason: None,
+                bindings: vec![],
+            };
+            if !missing.is_empty() {
+                found.reason = Some(format!("capture requires {}", missing.join(", ")));
+            } else {
+                match crate::live::binding(format.name, &input, &context.host, options) {
+                    Ok((_, mut binding)) => {
+                        binding.settings.class = configured.class;
+                        binding.settings.zone = configured.zone.clone();
+                        found.settings = binding.settings.clone();
+                        found.bindings.push(binding);
+                        found.availability = Availability::Capturing;
+                    }
+                    Err(error) => {
+                        found.availability = Availability::Unavailable;
+                        found.reason = Some(error);
+                    }
+                }
+            }
+            out.push(found);
         }
     }
-    Ok(out)
+    out
 }
 
 fn suffix(binding: &Binding) -> Option<&str> {

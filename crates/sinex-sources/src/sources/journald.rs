@@ -244,6 +244,7 @@ pub const FORMAT: sinex_source_core::binding::InputFormat =
                 options: "{\"follow\":true}",
                 capabilities: &[],
             }],
+            requests: &[],
             request_only: false,
         },
         discover: crate::discovery::discover_format,
