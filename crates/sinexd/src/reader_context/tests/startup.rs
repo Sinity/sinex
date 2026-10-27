@@ -51,7 +51,7 @@ async fn refuse_other_version(db: devkit::pg::TestDatabase, derive: bool) {
             }
         }
     } else {
-        match OneShot::open(&url, store.path()).await {
+        match ReaderContext::open(&url, store.path()).await {
             Err(error) => Some(error),
             Ok(ctx) => {
                 ctx.close().await.unwrap();
@@ -71,7 +71,9 @@ async fn refuse_other_version(db: devkit::pg::TestDatabase, derive: bool) {
 }
 
 #[devkit::test]
-async fn one_shot_refuses_another_schema_version_without_changing_it(db: devkit::pg::TestDatabase) {
+async fn reader_context_refuses_another_schema_version_without_changing_it(
+    db: devkit::pg::TestDatabase,
+) {
     refuse_other_version(db, false).await;
 }
 
@@ -138,7 +140,7 @@ async fn empty_database_needs_explicit_initialization_before_ordinary_startup(
         .unwrap();
     conn.execute("DROP SCHEMA sinex_schema,core,audit,raw,registry,derivation,privacy,telemetry,event_types CASCADE").await.unwrap();
     let store = tempfile::tempdir().unwrap();
-    let refused = match OneShot::open(&url, store.path()).await {
+    let refused = match ReaderContext::open(&url, store.path()).await {
         Err(_) => true,
         Ok(ctx) => {
             ctx.close().await.unwrap();
@@ -167,6 +169,6 @@ async fn empty_database_needs_explicit_initialization_before_ordinary_startup(
             version: sinex_schema::VERSION
         }
     );
-    let ctx = OneShot::open(&url, store.path()).await.unwrap();
+    let ctx = ReaderContext::open(&url, store.path()).await.unwrap();
     ctx.close().await.unwrap();
 }

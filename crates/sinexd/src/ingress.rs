@@ -535,7 +535,7 @@ impl Requests {
         } else if subject == self.subjects.materials(&producer) {
             match serde_json::from_slice::<Materials>(payload) {
                 Ok(page) => match self.materials(&producer, &page).await {
-                    Ok(held) => serde_json::json!(held),
+                    Ok(materials) => serde_json::json!(materials),
                     Err(error) => serde_json::json!({ "refusal": error }),
                 },
                 Err(error) => {

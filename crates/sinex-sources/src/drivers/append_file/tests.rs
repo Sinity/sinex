@@ -241,7 +241,7 @@ fn the_memory_keeps_a_bounded_tail_of_the_newest_records() {
             state.insert(&r, id, i * 1010);
         }
     }
-    // 1000 records of ~1 KB: held by bytes, the newest only.
+    // 1000 records of ~1 KB: remembered by bytes, the newest only.
     assert!(state.bytes <= SMALL.bytes, "{} bytes kept", state.bytes);
     assert!(state.bytes + 1010 > SMALL.bytes);
     let first = first.unwrap();
@@ -253,12 +253,12 @@ fn the_memory_keeps_a_bounded_tail_of_the_newest_records() {
             .all(|l| l.material != first),
         "the oldest records are gone"
     );
-    let held: usize = state
+    let remembered: usize = state
         .records
         .values()
         .map(|locations| locations.len())
         .sum();
-    assert_eq!(held, state.order.len());
+    assert_eq!(remembered, state.order.len());
 }
 
 #[devkit::test]
@@ -269,15 +269,15 @@ fn short_records_are_bounded_by_count_within_one_material() {
         state.insert(format!("{i}\n").as_bytes(), id, i * 4);
     }
     // 1000 records of 2-4 bytes in one material: far under the byte tail,
-    // held by count.
+    // remembered by count.
     assert_eq!(state.order.len(), SMALL.records);
-    let held: usize = state
+    let remembered: usize = state
         .records
         .values()
         .map(|locations| locations.len())
         .sum();
-    assert_eq!(held, SMALL.records);
-    assert!(state.take(b"999\n"), "the newest record is held");
+    assert_eq!(remembered, SMALL.records);
+    assert!(state.take(b"999\n"), "the newest record is remembered");
     assert!(!state.take(b"0\n"), "the oldest is not");
 }
 

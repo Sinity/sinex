@@ -11,7 +11,7 @@
 //! Order independence holds by construction: `compute` always sees the key's
 //! full current input set, sorted by `ts_orig`.
 use serde_json::Value;
-use sinex_model::civil::Civil;
+use sinex_model::time_settings::TimeSettings;
 use sinex_model::{Event, EventId, Timestamp};
 
 pub mod derived_event;
@@ -155,7 +155,7 @@ pub enum KeyState {
 pub struct Env {
     pub now: Timestamp,
     /// The operator's zone and logical-day start, one setting.
-    pub civil: Civil,
+    pub time_settings: TimeSettings,
     pub settings: Value,
 }
 
@@ -163,7 +163,7 @@ impl Env {
     pub fn at(now: Timestamp) -> Self {
         Self {
             now,
-            civil: Civil::operator_default(),
+            time_settings: TimeSettings::operator_default(),
             settings: Value::Null,
         }
     }

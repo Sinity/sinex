@@ -145,7 +145,7 @@ pub(crate) async fn panel(
     from: jiff::civil::Date,
     to: jiff::civil::Date,
 ) -> Result<Panel, String> {
-    let units = panel::days(&settings.civil, from, to).map_err(|e| e.to_string())?;
+    let units = panel::days(&settings.time_settings, from, to).map_err(|e| e.to_string())?;
     let (figures, as_of) = figures(conn, ctx, metrics, &units).await?;
     let mut sources: Vec<&str> = metrics
         .iter()

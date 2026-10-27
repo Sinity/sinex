@@ -125,7 +125,7 @@ fn every_written_archive_reason_can_be_asked_for() {
     for reason in <crate::ArchiveReason as crate::DbCheck>::VALUES {
         q(&format!("archive where reason = {reason}"));
     }
-    err("archive where reason = version_change");
+    err("archive where reason = unknown_reason");
 }
 
 #[devkit::test]

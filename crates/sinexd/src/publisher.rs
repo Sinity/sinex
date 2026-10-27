@@ -330,7 +330,7 @@ fn archived_message(n: &ArchiveChange) -> Result<Archived, String> {
 
 /// Publish everything pending once and report the rate: for `sinexd publish`
 /// and measurement.
-pub(crate) async fn drain(
+pub(crate) async fn publish_all(
     conn: &mut PgConnection,
     js: &jetstream::Context,
     subjects: &Subjects,

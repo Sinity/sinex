@@ -4,7 +4,6 @@
 mod admin;
 mod analysis;
 mod api;
-mod authored;
 mod backfill;
 mod binding_reader;
 mod binding_runner;
@@ -18,9 +17,10 @@ mod excision;
 mod ingress;
 mod library;
 mod material_sink;
-mod one_shot;
 mod publisher;
+mod reader_context;
 mod replay;
+mod requests;
 mod screen_text;
 mod sealed_access;
 mod stored;
@@ -277,7 +277,8 @@ async fn publish(
     let client = sinex_sources::nats::connect(nats, nats_password_file).await?;
     let js = publisher::context(client);
     let report =
-        publisher::drain(&mut conn, &js, &sinex_protocol::Subjects::new(subject_root)).await?;
+        publisher::publish_all(&mut conn, &js, &sinex_protocol::Subjects::new(subject_root))
+            .await?;
     println!("{report}");
     Ok(())
 }

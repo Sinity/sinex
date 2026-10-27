@@ -6,7 +6,6 @@
 extern crate self as sinex_model;
 
 pub mod batch;
-pub mod civil;
 pub mod clock;
 pub mod event;
 pub mod event_types;
@@ -15,6 +14,7 @@ pub mod manifest;
 pub mod payload;
 pub mod privacy;
 pub mod query;
+pub mod time_settings;
 
 pub use batch::{
     ArchiveReason, ArchiveRequest, Batch, BatchKind, IngressFrame, InputRef, MaterialRef,

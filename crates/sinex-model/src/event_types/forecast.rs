@@ -1,4 +1,4 @@
-//! Authored binary forecasts and separately recorded outcomes.
+//! Submitted binary forecasts and separately recorded outcomes.
 use crate::Timestamp;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};

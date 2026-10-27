@@ -1,5 +1,5 @@
 use super::*;
-use crate::one_shot::OneShot;
+use crate::reader_context::ReaderContext;
 use serde_json::json;
 use sinex_sources::{
     Settings,
@@ -71,20 +71,20 @@ fn pass_cursor(cursor: &Value) -> PassCursor {
 }
 
 /// The polled reader of `b`.
-fn polled(b: &mut Bound) -> &mut dyn Reader {
+fn polled(b: &mut BindingReader) -> &mut dyn Reader {
     let Reading::Polled(reader) = &mut b.reading else {
         panic!("{} is read in a shared pass", b.binding.name)
     };
     reader.as_mut()
 }
 
-fn bound(path: &std::path::Path) -> Vec<Bound> {
+fn readers(path: &std::path::Path) -> Vec<BindingReader> {
     let settings = Settings::new("synthetic");
     [fit::SPEC, tasks::SPEC]
         .iter()
         .map(|spec| {
             let binding = Binding::of(spec, path, settings.clone());
-            let mut b = Bound::new(&google_takeout::FORMAT, binding).unwrap();
+            let mut b = BindingReader::new(&google_takeout::FORMAT, binding).unwrap();
             // Force several ordinary parts without changing the production limits.
             b.reading = Reading::Shared(Box::new(takeout_driver(&b.binding, 400)));
             b
@@ -114,10 +114,10 @@ async fn archive_acquisition_restart_replay_and_privacy_use_real_admission(
     std::fs::create_dir_all(&dir).unwrap();
     let path = dir.join("export.tgz");
     let decoded = archive(&path);
-    let mut ctx = OneShot::open(&url, &dir.join("store")).await.unwrap();
+    let mut ctx = ReaderContext::open(&url, &dir.join("store")).await.unwrap();
     let sink = Sink(ctx.blobs.clone());
     let (_stop, stop) = watch::channel(false);
-    let mut bindings = bound(&path);
+    let mut bindings = readers(&path);
     let result = read(
         &mut ctx.read_conn,
         &ctx.blobs,
@@ -153,7 +153,7 @@ async fn archive_acquisition_restart_replay_and_privacy_use_real_admission(
         .await
         .unwrap();
     // Fresh reader objects model a daemon restart. A completed cursor reads nothing.
-    let mut restarted = bound(&path);
+    let mut restarted = readers(&path);
     let resumed = read(
         &mut ctx.read_conn,
         &ctx.blobs,
@@ -210,11 +210,11 @@ async fn archive_acquisition_separates_effective_privacy_classes(db: devkit::pg:
     std::fs::create_dir_all(&dir).unwrap();
     let path = dir.join("export.tgz");
     archive(&path);
-    let mut ctx = OneShot::open(&url, &dir.join("store")).await.unwrap();
+    let mut ctx = ReaderContext::open(&url, &dir.join("store")).await.unwrap();
     sqlx::query("INSERT INTO privacy.source_classes(source,class,author) VALUES ('google.tasks','guarded','synthetic')").execute(&mut ctx.read_conn).await.unwrap();
     let sink = Sink(ctx.blobs.clone());
     let (_stop, stop) = watch::channel(false);
-    let mut bindings = bound(&path);
+    let mut bindings = readers(&path);
     let mut total = Totals::default();
     for (_, result) in read(
         &mut ctx.read_conn,
@@ -249,10 +249,10 @@ async fn cancelled_archive_worker_joins_and_restart_catches_up(db: devkit::pg::T
     std::fs::create_dir_all(&dir).unwrap();
     let path = dir.join("export.tgz");
     archive(&path);
-    let mut ctx = OneShot::open(&url, &dir.join("store")).await.unwrap();
+    let mut ctx = ReaderContext::open(&url, &dir.join("store")).await.unwrap();
     let sink = Sink(ctx.blobs.clone());
     let (_stop, stop) = watch::channel(true);
-    let mut bindings = bound(&path);
+    let mut bindings = readers(&path);
     let cancelled = tokio::time::timeout(
         std::time::Duration::from_secs(5),
         read(
@@ -271,7 +271,7 @@ async fn cancelled_archive_worker_joins_and_restart_catches_up(db: devkit::pg::T
     .expect("cancelled worker must join");
     assert!(cancelled.iter().all(|(_, result)| result.is_err()));
     let (_stop, stop) = watch::channel(false);
-    let mut restarted = bound(&path);
+    let mut restarted = readers(&path);
     for (_, result) in read(
         &mut ctx.read_conn,
         &ctx.blobs,
@@ -335,14 +335,14 @@ async fn sealed_archive_restart_replay_and_class_changes_preserve_exact_material
         } else {
             archive(&path);
         }
-        let mut ctx = OneShot::open(&url, &dir.join("store")).await.unwrap();
+        let mut ctx = ReaderContext::open(&url, &dir.join("store")).await.unwrap();
         sqlx::query("INSERT INTO privacy.source_classes(source,class,author) VALUES ('google.fit','sealed','synthetic')").execute(&mut ctx.read_conn).await.unwrap();
         let identity = sinex_store::sealed::Identity::generate();
         let recipient = identity.to_public();
         let sink = Sink(ctx.blobs.clone());
         let (_stop, stop) = watch::channel(false);
         let make_bound = || {
-            let mut bindings = bound(&path);
+            let mut bindings = readers(&path);
             bindings.truncate(1);
             let b = &mut bindings[0];
             b.reading = Reading::Shared(Box::new(takeout_driver(&b.binding, 1 << 20)));
@@ -594,13 +594,13 @@ async fn sealed_bindings_never_share_data_keys_or_original_blob_names(
     std::fs::create_dir_all(&dir).unwrap();
     let path = dir.join("export.tgz");
     archive(&path);
-    let mut ctx = OneShot::open(&url, &dir.join("store")).await.unwrap();
+    let mut ctx = ReaderContext::open(&url, &dir.join("store")).await.unwrap();
     sqlx::query("INSERT INTO privacy.source_classes(source,class,author) VALUES ('google.fit','sealed','synthetic'),('google.tasks','sealed','synthetic')").execute(&mut ctx.read_conn).await.unwrap();
     let identity = sinex_store::sealed::Identity::generate();
     let recipient = identity.to_public();
     let sink = Sink(ctx.blobs.clone());
     let (_stop, stop) = watch::channel(false);
-    let mut bindings = bound(&path);
+    let mut bindings = readers(&path);
     for (_, result) in read(
         &mut ctx.read_conn,
         &ctx.blobs,
@@ -641,7 +641,7 @@ async fn an_unchanged_append_only_file_is_not_polled_again(db: devkit::pg::TestD
     std::fs::create_dir_all(&dir).unwrap();
     let history = dir.join("zsh_history");
     std::fs::write(&history, b": 1700000000:0;echo one\n").unwrap();
-    let mut ctx = OneShot::open(&url, &dir.join("store")).await.unwrap();
+    let mut ctx = ReaderContext::open(&url, &dir.join("store")).await.unwrap();
     let sink = Sink(ctx.blobs.clone());
     let (_stop, stop) = watch::channel(false);
     let format = sinex_sources::sources::format_of("terminal.zsh-history").unwrap();
@@ -650,12 +650,12 @@ async fn an_unchanged_append_only_file_is_not_polled_again(db: devkit::pg::TestD
         zone: None,
         options: Value::Null,
     };
-    let mut bindings: Vec<Bound> = (format.plan.unwrap())(&history, &settings)
+    let mut bindings: Vec<BindingReader> = (format.plan.unwrap())(&history, &settings)
         .unwrap()
         .into_iter()
-        .map(|b| Bound::new(format, b).unwrap())
+        .map(|b| BindingReader::new(format, b).unwrap())
         .collect();
-    let mut round = async |bindings: &mut Vec<Bound>| {
+    let mut round = async |bindings: &mut Vec<BindingReader>| {
         let mut total = Totals::default();
         for (_, r) in read(
             &mut ctx.read_conn,

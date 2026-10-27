@@ -62,7 +62,7 @@ fn env() -> Env {
 
 /// The intervals of the logical day `of` falls in.
 fn intervals(of: Timestamp, inputs: &[Event]) -> Vec<PresenceInterval> {
-    let day = env().civil.day(of).unwrap().to_string();
+    let day = env().time_settings.day(of).unwrap().to_string();
     let mut sorted = inputs.to_vec();
     sorted.sort_by_key(|e| e.ts_orig.at);
     Presence
@@ -141,7 +141,13 @@ fn a_span_is_cut_at_logical_day_boundaries() {
     assert_eq!(Presence.keys_for(&view, &env()).len(), 3);
     let middle = intervals(at("12:00", "2026-08-22"), &[s]);
     assert_eq!(middle.len(), 1);
-    let day = env().civil.day(at("12:00", "2026-08-22")).unwrap();
-    assert_eq!(middle[0].started_at, env().civil.day_start(day).unwrap());
-    assert_eq!(middle[0].ended_at, env().civil.day_end(day).unwrap());
+    let day = env().time_settings.day(at("12:00", "2026-08-22")).unwrap();
+    assert_eq!(
+        middle[0].started_at,
+        env().time_settings.day_start(day).unwrap()
+    );
+    assert_eq!(
+        middle[0].ended_at,
+        env().time_settings.day_end(day).unwrap()
+    );
 }

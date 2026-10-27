@@ -109,7 +109,7 @@ impl Keyed for HourlyFigures {
         }
         input
             .ts_orig
-            .and_then(|t| env.civil.hour_start(t).ok())
+            .and_then(|t| env.time_settings.hour_start(t).ok())
             .map(|hour| json!({"hour": hour}))
             .into_iter()
             .collect()
@@ -121,7 +121,7 @@ impl Keyed for HourlyFigures {
             InputQuery::window(
                 &[HealthRecord::EVENT_TYPE],
                 hour,
-                env.civil.hour_end(hour).ok()?,
+                env.time_settings.hour_end(hour).ok()?,
             )
             .only("provider", json!(PROVIDER)),
         )
@@ -131,7 +131,10 @@ impl Keyed for HourlyFigures {
         let Some(hour) = hour_of(key) else {
             return Computed::default();
         };
-        let (Ok(end), Ok(day)) = (env.civil.hour_end(hour), env.civil.day(hour)) else {
+        let (Ok(end), Ok(day)) = (
+            env.time_settings.hour_end(hour),
+            env.time_settings.day(hour),
+        ) else {
             return Computed::default();
         };
         let mut series: BTreeMap<String, Series<'_>> = BTreeMap::new();
@@ -171,7 +174,10 @@ impl Keyed for HourlyFigures {
     }
 
     fn key_state(&self, key: &Value, env: &Env) -> KeyState {
-        closed_after(hour_of(key).and_then(|h| env.civil.hour_end(h).ok()), env)
+        closed_after(
+            hour_of(key).and_then(|h| env.time_settings.hour_end(h).ok()),
+            env,
+        )
     }
 }
 
@@ -198,8 +204,8 @@ impl Keyed for DailyFigures {
         Some(
             InputQuery::window(
                 &[HealthFigure::EVENT_TYPE],
-                env.civil.day_start(day).ok()?,
-                env.civil.day_end(day).ok()?,
+                env.time_settings.day_start(day).ok()?,
+                env.time_settings.day_end(day).ok()?,
             )
             .only("grain", json!("hour"))
             .only("provider", json!(PROVIDER)),
@@ -210,7 +216,10 @@ impl Keyed for DailyFigures {
         let Some(day) = day_of(key) else {
             return Computed::default();
         };
-        let (Ok(start), Ok(end)) = (env.civil.day_start(day), env.civil.day_end(day)) else {
+        let (Ok(start), Ok(end)) = (
+            env.time_settings.day_start(day),
+            env.time_settings.day_end(day),
+        ) else {
             return Computed::default();
         };
         let mut series: BTreeMap<String, Series<'_>> = BTreeMap::new();
@@ -241,7 +250,10 @@ impl Keyed for DailyFigures {
     }
 
     fn key_state(&self, key: &Value, env: &Env) -> KeyState {
-        closed_after(day_of(key).and_then(|d| env.civil.day_end(d).ok()), env)
+        closed_after(
+            day_of(key).and_then(|d| env.time_settings.day_end(d).ok()),
+            env,
+        )
     }
 }
 

@@ -1,4 +1,4 @@
-//! What a one-shot command (backfill, replay, excision, hide) runs with: the
+//! Shared context for readers and commands: the
 //! schema checked, the content store open, and the one writer task. Reads go
 //! through `read_conn`, never the writer's connection.
 use crate::dirty_keys::Registered;
@@ -9,14 +9,14 @@ use std::path::Path;
 use std::sync::Arc;
 use tokio::task::JoinHandle;
 
-pub(crate) struct OneShot {
+pub(crate) struct ReaderContext {
     pub read_conn: PgConnection,
     pub blobs: Blobs,
     pub writer: WriterHandle,
     task: JoinHandle<()>,
 }
 
-impl OneShot {
+impl ReaderContext {
     pub(crate) async fn open(database: &str, store: &Path) -> Result<Self, String> {
         let mut read_conn = PgConnection::connect(database)
             .await

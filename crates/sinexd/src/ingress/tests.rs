@@ -847,7 +847,7 @@ async fn a_producer_excises_only_its_own_whole_materials(db: devkit::pg::TestDat
 #[devkit::test]
 async fn frames_flow_while_a_request_waits(db: devkit::pg::TestDatabase) {
     let h = Harness::start(db).await;
-    let held = h.reads.acquire().await.unwrap();
+    let read_permit = h.reads.acquire().await.unwrap();
     let client = h.client.clone();
     let subject = h.subjects.recorded("kitty");
     let request = tokio::spawn(async move {
@@ -867,7 +867,7 @@ async fn frames_flow_while_a_request_waits(db: devkit::pg::TestDatabase) {
     assert_eq!(h.send("kitty", &frame).await.refusal, None);
     assert!(!request.is_finished());
 
-    drop(held);
+    drop(read_permit);
     let reply = tokio::time::timeout(Duration::from_secs(10), request)
         .await
         .unwrap()
