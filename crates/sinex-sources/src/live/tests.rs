@@ -75,11 +75,7 @@ async fn fake_ingress(
     subjects: &Subjects,
     mut available: tokio::sync::watch::Receiver<bool>,
     timeout: Arc<tokio::sync::Notify>,
-) -> (
-    ReceivedFrames,
-    ReceivedOrder,
-    tokio::task::JoinHandle<()>,
-) {
+) -> (ReceivedFrames, ReceivedOrder, tokio::task::JoinHandle<()>) {
     let client = async_nats::connect(url).await.unwrap();
     jetstream_stream(&client, subjects).await;
     let stream = async_nats::jetstream::new(client.clone())
