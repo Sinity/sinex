@@ -1,5 +1,4 @@
-#[path = "tar_tests.rs"]
-mod tar_tests;
+mod restore_tar;
 
 use super::*;
 
@@ -174,7 +173,7 @@ fn failed_storage_retries_the_same_unnamed_capture_before_new_source_changes() {
         Limits::default(),
     )
     .unwrap();
-    assert_eq!(prepared.material_len(), Some(expected_length));
+    assert_eq!(prepared.material_len(), Some(expected_length as usize));
     let batch = prepared.batches().unwrap().next().unwrap().unwrap();
     let BatchKind::Source(progress) = batch.kind else {
         panic!()
@@ -281,13 +280,13 @@ fn empty_and_nonempty_members_keep_exact_body_ranges_in_every_order() {
     use crate::test_parser as notes;
     use crate::{Limits, drain::drain};
     use sinex_model::{Class, ReadingOrder, RecordOutcome};
-    use std::os::unix::fs::FileExt;
     for bodies in [
         vec!["", "", "gamma"],
         vec!["gamma", "", ""],
         vec!["", "gamma", ""],
         vec![""],
         vec!["", ""],
+        vec![" ", "\n", "  \n"],
     ] {
         let dir = tempfile::tempdir().unwrap();
         for (index, body) in bodies.iter().enumerate() {
@@ -298,14 +297,8 @@ fn empty_and_nonempty_members_keep_exact_body_ranges_in_every_order() {
             .unwrap();
         let m = acquired.material.unwrap();
         assert!(m.records.windows(2).all(|ranges| ranges[0].1 < ranges[1].1));
-        let Some(StoredBytes::FramedFile(file)) = &m.stored else {
-            panic!()
-        };
         for ((start, end), body) in m.records.iter().zip(&bodies) {
             assert_eq!(end - start, body.len());
-            let mut prefix = [1];
-            file.read_exact_at(&mut prefix, (start - 1) as u64).unwrap();
-            assert_eq!(prefix, [0]);
         }
         let chunks = drain(
             &notes::NotesParser,
@@ -708,7 +701,7 @@ fn open_and_read_errors_belong_to_the_entry() {
             dir.path(),
             Path::new("directory"),
             &mut bundle,
-            0,
+            dir.path().metadata().unwrap().len(),
             tar::change_time(&dir.path().metadata().unwrap())
         )
         .unwrap()

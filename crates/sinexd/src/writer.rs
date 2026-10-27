@@ -424,9 +424,10 @@ async fn admit_checked(
         }
         Err(error) => {
             tx.rollback().await.map_err(database_error)?;
-            if record_refusals
-                && content_error(&error)
-                && let Some(failed) = refused_source(batch, &error.to_string())
+            let content = record_refusals && content_error(&error);
+            let refusal = store_error(error);
+            if content
+                && let Some(failed) = refused_source(batch, &refusal.to_string())
             {
                 check().map_err(WriteError::Refused)?;
                 let mut tx = connection.begin().await.map_err(database_error)?;
@@ -437,7 +438,7 @@ async fn admit_checked(
                 tx.commit().await.map_err(database_error)?;
                 return Ok(outcome);
             }
-            Err(store_error(error))
+            Err(refusal)
         }
     }
 }
@@ -455,7 +456,10 @@ fn content_error(error: &sinex_store::Error) -> bool {
 }
 
 fn refused_source(batch: &Batch, reason: &str) -> Option<Batch> {
-    if !matches!(batch.kind, sinex_model::BatchKind::Source(_)) {
+    if !matches!(batch.kind, sinex_model::BatchKind::Source(_))
+        || batch.events().any(|event| !event.owned_blobs.is_empty())
+    {
+        // Separately owned files need a material reference before their events can be discarded.
         return None;
     }
     let mut failed = batch.clone();

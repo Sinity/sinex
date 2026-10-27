@@ -74,7 +74,8 @@ check only the recorded names.
 A content refusal in a source batch records failures at its member locations
 and commits the cursor and reader memory, leaving the material bytes available.
 Unknown kinds, schema failures and database content errors therefore advance.
-API requests retain their atomic refusal behavior. Missing bytes, cancellation,
+A batch with separately owned files remains refused until those bytes have a
+material reference independent of the refused events. API requests retain their atomic refusal behavior. Missing bytes, cancellation,
 unlock expiry and database availability errors still stop submission.
 
 A failed admission is retried from the material the reader holds: the append,
@@ -140,7 +141,8 @@ does not know which driver a binding uses.
   material. Members retain native file names, permissions, ownership, times,
   extended attributes, access ACLs and sparse ranges. Typed file nodes in the
   manifest index member data at its stored offsets; sparse bytes expand for
-  parsing and replay. The final record's cursor confirms the file facts.
+  parsing and replay. Attribute values stay in the tar, protected with the
+  material's bytes; nodes hold their offsets, lengths and hashes. The final record's cursor confirms the file facts.
   A metadata change creates a new material even when the file contents stay
   equal. Failure and removal records are membership facts stored under
   `.sinex-membership/`, with the source path in the manifest, and are excluded

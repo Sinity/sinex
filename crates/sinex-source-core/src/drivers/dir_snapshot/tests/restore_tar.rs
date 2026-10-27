@@ -41,15 +41,21 @@ fn gnu_tar_restores_native_names_sparse_data_attributes_and_access_acl() {
         rustix::fs::XattrFlags::empty(),
     )
     .unwrap();
+    let collision = paths::display(Path::new(&name));
+    std::fs::write(root.path().join(&collision), "literal spelling").unwrap();
+    let hole = std::fs::File::create(root.path().join("hole.md")).unwrap();
+    hole.set_len(1 << 20).unwrap();
     let d = driver(root.path().to_owned(), 16 << 20);
     let acquired = d.poll(&Value::Null, &mut DirState::default()).unwrap();
     let material = acquired.material.as_ref().unwrap();
-    let node = material.manifest.members[0].node.as_ref().unwrap();
+    let index = material.manifest.members.iter().position(|member| member.details.contains_key("native_path_bytes")).unwrap();
+    let node = material.manifest.members[index].node.as_ref().unwrap();
     assert_eq!(node.size, 2 << 20);
     assert!(node.sparse.is_some());
     assert_eq!(node.mode & 0o777, 0o640);
-    let bytes = record(material, 0);
+    let bytes = record(material, index);
     assert_eq!(bytes.len(), 2 << 20);
+    assert_eq!(node.content_hash, *blake3::hash(&bytes).as_bytes());
     assert_eq!(&bytes[..4], b"head");
     assert_eq!(&bytes[(1 << 20) + 3..(1 << 20) + 7], b"tail");
     assert!(bytes[4..(1 << 20) + 3].iter().all(|byte| *byte == 0));
@@ -57,6 +63,18 @@ fn gnu_tar_restores_native_names_sparse_data_attributes_and_access_acl() {
         panic!()
     };
     assert!(tar.metadata().unwrap().len() < node.size);
+    let attribute = node.extended_attributes.iter().find(|attribute| attribute.name == b"user.synthetic").unwrap();
+    let mut value = vec![0; attribute.length as usize];
+    tar.read_exact_at(&mut value, attribute.value_at).unwrap();
+    assert_eq!(value, b"binary\0value\n");
+    assert_eq!(attribute.hash, *blake3::hash(&value).as_bytes());
+    let mut repacked = material.manifest.clone();
+    repacked.members[index].node.as_mut().unwrap().extended_attributes[0].value_at += 4096;
+    repacked.members[index].node.as_mut().unwrap().atime_ns = "999999999".into();
+    let context = crate::RecordContext { manifest: &material.manifest, member: Some(&material.manifest.members[index]) };
+    let other = crate::RecordContext { manifest: &repacked, member: Some(&repacked.members[index]) };
+    assert_eq!(context.hash_with_path(&bytes), other.hash_with_path(&bytes));
+    assert!(serde_json::to_value(node).unwrap()["extended_attributes"].as_array().unwrap().iter().all(|attribute| attribute.get("value").is_none()));
     let archive = destination.path().join("snapshot.tar");
     let mut output = std::fs::File::create(&archive).unwrap();
     // Reading the whole tar starts at its beginning, independently of its shared cursor.
@@ -80,6 +98,11 @@ fn gnu_tar_restores_native_names_sparse_data_attributes_and_access_acl() {
         .status()
         .unwrap();
     assert!(status.success());
+    assert_eq!(std::fs::read_to_string(restored.join(&collision)).unwrap(), "literal spelling");
+    let restored_hole = restored.join("hole.md");
+    assert_eq!(restored_hole.metadata().unwrap().len(), 1 << 20);
+    assert!(restored_hole.metadata().unwrap().blocks() * 512 < 1 << 20);
+    assert!(std::fs::read(restored_hole).unwrap().iter().all(|byte| *byte == 0));
     let restored_path = restored.join(&name);
     assert_eq!(std::fs::read(&restored_path).unwrap(), bytes);
     let restored_file = std::fs::File::open(&restored_path).unwrap();
@@ -116,7 +139,7 @@ fn gnu_tar_restores_native_names_sparse_data_attributes_and_access_acl() {
             manifest: &material.manifest,
         })
         .unwrap();
-    assert_eq!(chunks[0].events, 1);
+    assert_eq!(chunks[0].events, 3);
 }
 
 #[devkit::test]

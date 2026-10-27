@@ -159,7 +159,7 @@ fn take<const N: usize>(rest: &mut &[u8]) -> Result<[u8; N], DriverError> {
 
 /// The memory to save: for each file, in path order, the path's length
 /// (four bytes, little-endian) and native bytes, then 1 and its size (eight
-/// bytes), modification time (sixteen) and content hash (32), or 0 when the
+/// bytes), change time (sixteen) and content hash (32), or 0 when the
 /// facts are unknown. When locations are kept, [`LOCATIONS`] follows, then
 /// for each path in order its length and bytes, the material ID (sixteen
 /// bytes) and the anchor (eight).
@@ -175,10 +175,10 @@ pub(super) fn memory_of(
         bytes.extend_from_slice(path.as_os_str().as_bytes());
         match file {
             None => bytes.push(0),
-            Some((size, mtime, hash)) => {
+            Some((size, changed, hash)) => {
                 bytes.push(1);
                 bytes.extend_from_slice(&size.to_le_bytes());
-                bytes.extend_from_slice(&mtime.to_le_bytes());
+                bytes.extend_from_slice(&changed.to_le_bytes());
                 bytes.extend_from_slice(hash);
             }
         }
@@ -197,32 +197,25 @@ pub(super) fn memory_of(
     bytes.into()
 }
 
-/// A member's size, modification time and content hash.
+/// A member's logical size, change time and content hash.
 fn facts(member: &sinex_model::Member) -> Result<Facts, DriverError> {
     let invalid = || DriverError::Cursor("directory member facts are invalid".into());
-    let Some(hash) = member.details.get("hash") else {
-        return Ok(None);
-    };
-    let hash = hash
-        .as_str()
-        .and_then(|hex| blake3::Hash::from_hex(hex).ok())
-        .ok_or_else(invalid)?;
     let node = member.node.as_ref().ok_or_else(invalid)?;
     let size = node.size;
-    let mtime = node.ctime_ns.parse::<i128>().ok().ok_or_else(invalid)?;
-    Ok(Some((size, mtime, *hash.as_bytes())))
+    let changed = node.ctime_ns.parse::<i128>().ok().ok_or_else(invalid)?;
+    Ok(Some((size, changed, node.content_hash)))
 }
 
 fn records(manifest: &sinex_model::Manifest) -> Result<Vec<(usize, usize)>, DriverError> {
-    if manifest.media_type.as_deref() != Some(format::MEDIA_TYPE) {
+    if !format::is_directory(manifest) {
         return Err(DriverError::Cursor(
-            "stored material is not a directory bundle".into(),
+            "stored material is not a directory tar".into(),
         ));
     }
     let records = manifest
         .records
         .clone()
-        .ok_or_else(|| DriverError::Cursor("directory bundle lists no records".into()))?;
+        .ok_or_else(|| DriverError::Cursor("directory tar lists no records".into()))?;
     format::validate(manifest, &records).map_err(|e| DriverError::Cursor(e.to_string()))?;
     Ok(records)
 }

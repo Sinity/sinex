@@ -39,7 +39,7 @@ mod format;
 mod paths;
 mod restore;
 mod tar;
-pub(crate) use format::{decode as decode_record, validate as validate_records};
+pub(crate) use format::{decode as decode_record, is_directory, validate as validate_records};
 
 pub struct DirSnapshot {
     pub root: PathBuf,
@@ -70,7 +70,7 @@ pub struct Cursor {
     pub changed_since_memory: u64,
 }
 
-/// What was already read, by relative path: size, modification time, hash.
+/// What was already read, by relative path: size, change time, content hash.
 #[derive(Default)]
 pub struct DirState {
     files: FileMemory,
@@ -251,7 +251,7 @@ impl DirSnapshot {
             };
             next_failures.remove(relative);
             next_retries.remove(relative);
-            next_files.insert(relative.clone(), Some((*size, *changed, captured.hash)));
+            next_files.insert(relative.clone(), Some((*size, *changed, captured.node.content_hash)));
             let offset = captured.offset;
             let end = offset
                 .checked_add(captured.length)
@@ -261,7 +261,6 @@ impl DirSnapshot {
                 "stream_offset": offset,
                 "length": captured.length,
                 "mtime_ns": captured.node.mtime_ns,
-                "hash": blake3::Hash::from(captured.hash).to_hex().as_str(),
                 "node": captured.node,
             }));
             paths::add_native(members.last_mut().expect("member added"), relative);
@@ -309,7 +308,6 @@ impl DirSnapshot {
                 }));
                 paths::add_native(members.last_mut().expect("member added"), &relative);
                 records.push((offset, offset + marker.len()));
-                length = tar::position(&mut bundle)?;
             }
         }
         if complete {

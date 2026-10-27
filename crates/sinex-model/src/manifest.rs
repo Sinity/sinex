@@ -60,7 +60,7 @@ pub struct Manifest {
 }
 
 /// One member of a material made of members: an archive member or a file of
-/// a directory bundle.
+/// a directory tar.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Member {
     pub path: String,
@@ -89,6 +89,7 @@ pub struct FileNode {
     pub mtime_ns: String,
     pub atime_ns: String,
     pub ctime_ns: String,
+    pub content_hash: [u8; 32],
     pub extended_attributes: Vec<ExtendedAttribute>,
     /// Data ranges of a sparse file; absent for a dense file.
     pub sparse: Option<Vec<FileExtent>>,
@@ -97,7 +98,10 @@ pub struct FileNode {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ExtendedAttribute {
     pub name: Vec<u8>,
-    pub value: Vec<u8>,
+    /// The value remains in the tar, protected with the material's bytes.
+    pub value_at: u64,
+    pub length: u64,
+    pub hash: [u8; 32],
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

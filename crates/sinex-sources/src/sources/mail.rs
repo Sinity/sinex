@@ -52,7 +52,7 @@ pub const MAILDIR: SourceSpec = SourceSpec {
     purpose: "mail recall and correspondence history",
     class: Class::Open,
     parser: "rfc5322-mail",
-    parser_version: 5,
+    parser_version: 6,
     event_types: &["mail.message"],
     framer: sinex_source_core::Framer::export(
         sinex_source_core::drivers::export_archive::frame_whole,
