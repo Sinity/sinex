@@ -2762,6 +2762,36 @@
             "requests": [],
             "streams": []
           },
+          "format": "query"
+        }
+      ],
+      "drivers": [
+        "api-request"
+      ],
+      "eventTypes": [
+        "operator.mark",
+        "query.saved"
+      ],
+      "formats": [
+        "query"
+      ],
+      "name": "query.request",
+      "purpose": "moment marks and saved queries"
+    },
+    {
+      "class": "guarded",
+      "discovery": [
+        {
+          "capture": false,
+          "description": {
+            "capabilities": [],
+            "credentials": [],
+            "locations": [],
+            "owner": "system",
+            "request_only": true,
+            "requests": [],
+            "streams": []
+          },
           "format": "page-crawl"
         }
       ],
