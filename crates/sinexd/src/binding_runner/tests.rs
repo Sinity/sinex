@@ -127,7 +127,7 @@ async fn rediscovery_reuses_saved_alias_and_cursor_after_restart(db: devkit::pg:
         json!({"sources":{"terminal.zsh-history":{"paths":[real],"zone":"UTC","class":"guarded"}}}),
     );
     for _ in 0..2 {
-        let saved = saved(&mut conn, "h").await.unwrap();
+        let saved = saved(&mut conn, &db.url(None), "h").await.unwrap();
         let proposed = plan(&config, "h").unwrap();
         let planned = discovery::reconcile(proposed, &saved).bindings;
         assert_eq!(planned.len(), 1);
@@ -188,7 +188,7 @@ async fn rediscovery_keeps_location_admissions_and_progress(db: devkit::pg::Test
     context.close().await.unwrap();
     let configuration = config(json!({"sources":{"terminal.zsh-history":{"paths":[history]}}}));
     let mut context = ReaderContext::open(&url, &store).await.unwrap();
-    let saved = saved(&mut context.read_conn, "h").await.unwrap();
+    let saved = saved(&mut context.read_conn, &url, "h").await.unwrap();
     let planned = discovery::reconcile(plan(&configuration, "h").unwrap(), &saved).bindings;
     assert_eq!(planned[0].1.name, original.name);
     let readers = planned
@@ -283,7 +283,46 @@ async fn saved_names_need_no_material_scan_and_a_bad_row_does_not_hide_other_bin
         .unwrap();
     }
     // A binding can be recorded before it produces any materials.
-    let bindings = saved(&mut conn, "h").await.unwrap();
+    let bindings = saved(&mut conn, &db.url(None), "h").await.unwrap();
     assert_eq!(bindings.len(), 1);
     assert_eq!(bindings[0].name, "valid");
+}
+
+#[devkit::test]
+async fn saved_bindings_reconnect_after_the_database_connection_is_lost(
+    db: devkit::pg::TestDatabase,
+) {
+    use sqlx::Connection;
+    let url = db.url(None);
+    let mut conn = PgConnection::connect(&url).await.unwrap();
+    sinex_store::bindings::save(
+        &mut conn,
+        &sinex_store::bindings::Stored {
+            binding: "saved-name".into(),
+            source: "terminal.zsh-history".into(),
+            input: "/synthetic/history".into(),
+            settings: json!({"host":"h"}),
+        },
+    )
+    .await
+    .unwrap();
+    let pid: i32 = sqlx::query_scalar("SELECT pg_backend_pid()")
+        .fetch_one(&mut conn)
+        .await
+        .unwrap();
+    let mut control = PgConnection::connect(&url).await.unwrap();
+    let terminated: bool = sqlx::query_scalar("SELECT pg_terminate_backend($1)")
+        .bind(pid)
+        .fetch_one(&mut control)
+        .await
+        .unwrap();
+    assert!(terminated);
+    let bindings = saved(&mut conn, &url, "h").await.unwrap();
+    assert_eq!(bindings.len(), 1);
+    assert_eq!(bindings[0].name, "saved-name");
+    let alive: i32 = sqlx::query_scalar("SELECT 1")
+        .fetch_one(&mut conn)
+        .await
+        .unwrap();
+    assert_eq!(alive, 1);
 }
