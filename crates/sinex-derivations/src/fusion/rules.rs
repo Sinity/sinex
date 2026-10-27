@@ -575,7 +575,7 @@ pub static REST: FusionRule = FusionRule {
     derivation: "rest.fusion",
     version: 1,
     output: "rest.fused",
-    observers: &[
+    fusion_inputs: &[
         rest_from(
             &[("provider", "sleep-as-android"), ("category", "sleep")],
             false,
