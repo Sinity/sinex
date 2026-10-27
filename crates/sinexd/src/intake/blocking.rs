@@ -27,7 +27,28 @@ pub(super) struct Parsed {
     pub batch: Batch,
     pub elapsed: Duration,
     pub material_length: Option<Option<usize>>,
-    pub _permit: OwnedSemaphorePermit,
+    pub permit: BatchPermit,
+}
+
+pub(super) struct BatchPermit {
+    _permit: OwnedSemaphorePermit,
+    permits: Arc<Semaphore>,
+    committed: bool,
+}
+
+impl BatchPermit {
+    pub fn committed(&mut self) {
+        self.committed = true;
+    }
+}
+
+impl Drop for BatchPermit {
+    fn drop(&mut self) {
+        // Close parsing before releasing a failed or abandoned batch's slot.
+        if !self.committed {
+            self.permits.close();
+        }
+    }
 }
 
 pub(super) struct BatchSender {
@@ -37,10 +58,16 @@ pub(super) struct BatchSender {
 }
 
 impl BatchSender {
-    pub fn permit(&self) -> Option<OwnedSemaphorePermit> {
-        self.runtime
+    pub fn permit(&self) -> Option<BatchPermit> {
+        let permit = self
+            .runtime
             .block_on(self.permits.clone().acquire_owned())
-            .ok()
+            .ok()?;
+        Some(BatchPermit {
+            _permit: permit,
+            permits: self.permits.clone(),
+            committed: false,
+        })
     }
 
     pub fn send(&self, batch: Parsed) -> bool {

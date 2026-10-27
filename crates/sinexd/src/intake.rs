@@ -86,7 +86,7 @@ impl Intake<'_> {
         let result = async {
             while let Some(parsed) = batches.next().await {
                 let parsed = parsed?;
-                let _permit = parsed._permit;
+                let mut permit = parsed.permit;
                 if let Some(length) = parsed.material_length {
                     totals.poll(length);
                 }
@@ -134,6 +134,7 @@ impl Intake<'_> {
                 if self.atomic {
                     outcome.admitted_ids = admitted.admitted_ids;
                 }
+                permit.committed();
             }
             Ok(Submission { outcome, material })
         }
@@ -292,7 +293,7 @@ impl Preparation {
                 batch,
                 elapsed,
                 material_length: material_length.take(),
-                _permit: permit,
+                permit,
             }) {
                 return Ok(());
             }

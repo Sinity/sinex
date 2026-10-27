@@ -268,7 +268,7 @@ pub(super) async fn read_shared(
         let result = async {
             let mut acquired = delivery.acquired.map_err(|e| e.to_string())?;
             if sinex_transport::private_mode::PrivateMode::default().on() {
-                return Err("private mode is on; admission stopped".into());
+                return Err("capture cancelled or private mode is on; admission stopped".into());
             }
             if let Some(unlock) = access.unlock {
                 unlock.check()?;
@@ -310,7 +310,7 @@ pub(super) async fn read_shared(
                     if *checked_stop.borrow()
                         || sinex_transport::private_mode::PrivateMode::default().on()
                     {
-                        Err("private mode is on; admission stopped".into())
+                        Err("capture cancelled or private mode is on; admission stopped".into())
                     } else {
                         Ok(())
                     }
