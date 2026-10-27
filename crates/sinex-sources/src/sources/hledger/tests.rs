@@ -362,8 +362,16 @@ fn three_authored_transactions_keep_multicurrency_postings_and_optional_narratio
 #[devkit::test]
 fn default_year_affects_identity_only_when_used_by_the_date() {
     let read = |year| {
-        let raw = format!("Y{year}\n03/01 Partial\n  Assets:Example\n\n2030-01-01 Complete\n  Assets:Example\n");
-        intake::export_restart(raw.as_bytes(), driver("example.journal".into(), "example-host".into()), &source("example-host".into(),"example.journal".into()),3,0)
+        let raw = format!(
+            "Y{year}\n03/01 Partial\n  Assets:Example\n\n2030-01-01 Complete\n  Assets:Example\n"
+        );
+        intake::export_restart(
+            raw.as_bytes(),
+            driver("example.journal".into(), "example-host".into()),
+            &source("example-host".into(), "example.journal".into()),
+            3,
+            0,
+        )
     };
     let first = read(2032);
     let second = read(2036);

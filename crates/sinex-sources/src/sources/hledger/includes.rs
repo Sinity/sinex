@@ -192,7 +192,12 @@ fn visit(
             },
         );
         if let Some(from) = from {
-            let parent = blake3::hash(serde_json::to_string(&(from, initial_year)).unwrap().as_bytes()).to_hex();
+            let parent = blake3::hash(
+                serde_json::to_string(&(from, initial_year))
+                    .unwrap()
+                    .as_bytes(),
+            )
+            .to_hex();
             binding = binding.named(&format!("include:{parent}"));
         }
         out.push(binding);
