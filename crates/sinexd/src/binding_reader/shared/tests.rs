@@ -1,7 +1,7 @@
 use super::*;
 
 #[devkit::test]
-fn checked_reads_share_private_mode_checks_and_still_honor_cancellation() {
+fn interruptible_reads_share_private_mode_checks_and_still_honor_cancellation() {
     let dir = tempfile::tempdir().unwrap();
     let mode = sinex_transport::private_mode::PrivateMode::new(dir.path().join("private"));
     let private = Arc::new(std::sync::Mutex::new(
@@ -11,12 +11,12 @@ fn checked_reads_share_private_mode_checks_and_still_honor_cancellation() {
         ),
     ));
     let stop = Arc::new(AtomicBool::new(false));
-    let mut first = Checked {
+    let mut first = InterruptibleReader {
         input: std::io::repeat(1),
         stop: stop.clone(),
         private: private.clone(),
     };
-    let mut second = Checked {
+    let mut second = InterruptibleReader {
         input: std::io::repeat(2),
         stop: stop.clone(),
         private,
@@ -45,7 +45,7 @@ fn measure_private_mode_reads() {
     let private = Arc::new(std::sync::Mutex::new(
         sinex_transport::private_mode::Cached::new(mode, std::time::Duration::from_millis(250)),
     ));
-    let mut input = Checked {
+    let mut input = InterruptibleReader {
         input: std::io::repeat(1),
         stop: Arc::new(AtomicBool::new(false)),
         private,

@@ -171,7 +171,7 @@ fn tail_range_measurement(bounded: bool) {
             let n = out.len().min(self.0 as usize);
             // Read chunks ending on the ten-byte record boundary.
             let n = n - n % 10;
-            for chunk in out[..n].chunks_exact_mut(10) {
+            for chunk in out[..n].as_chunks_mut::<10>().0 {
                 chunk.copy_from_slice(b"123456789\n");
             }
             self.0 -= n as u64;
