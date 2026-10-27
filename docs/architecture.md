@@ -247,7 +247,7 @@ numbered forward upgrades in `upgrades.rs`, in one transaction and only while
 no writer holds the database; a newer version is refused, and no other command
 creates or changes the schema. Each upgrade keeps every row, and the
 declarations carry the same change, so a fresh database matches an upgraded
-one. From version 2, upgrades convert only live equivalence keys to full-width
+one. After version 3, upgrades convert only live equivalence keys to full-width
 binary values, add search-index eligibility, then pack exact confirmed-stream
 pairs into pages. Historical keys, stored search text and every recorded
 stream copy retain their meaning. Each step has populated preservation and
