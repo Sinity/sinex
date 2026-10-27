@@ -1,6 +1,5 @@
 use super::*;
 use sinex_model::event_types::library::{Assignment, Level, Target};
-use sqlx::Executor;
 
 #[devkit::test]
 async fn a_populated_library_upgrade_keeps_every_record_until_id_continuity_is_decided(
@@ -37,7 +36,10 @@ async fn a_populated_library_upgrade_keeps_every_record_until_id_continuity_is_d
     )
     .unwrap();
     admit_one(&mut conn, &batch(vec![event.clone()])).await;
-    conn.execute("UPDATE sinex_schema.applied SET version = 3")
+    let previous_version = sinex_schema::VERSION - 1;
+    sqlx::query("UPDATE sinex_schema.applied SET version = $1")
+        .bind(previous_version)
+        .execute(&mut conn)
         .await
         .unwrap();
     let before = sinex_schema::catalog(&mut conn).await.unwrap();
@@ -58,5 +60,5 @@ async fn a_populated_library_upgrade_keeps_every_record_until_id_continuity_is_d
         .fetch_one(&mut conn)
         .await
         .unwrap();
-    assert_eq!(version, 3);
+    assert_eq!(version, previous_version);
 }
