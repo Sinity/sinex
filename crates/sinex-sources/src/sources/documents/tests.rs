@@ -202,3 +202,19 @@ impl sinex_source_core::drain::RecordRead for Bytes {
         Ok(())
     }
 }
+
+#[devkit::test]
+fn planned_document_paths_are_absolute_and_file_selection_has_its_own_progress() {
+    let mut settings = Settings::new("example-host");
+    settings.options = serde_json::json!({"capture_documents":true,"existing_roots":[]});
+    let directory = (FORMAT.plan.unwrap())(Path::new("synthetic-document-path"), &settings)
+        .unwrap()
+        .remove(0);
+    settings.options["file"] = Value::Bool(true);
+    let file = (FORMAT.plan.unwrap())(Path::new("synthetic-document-path"), &settings)
+        .unwrap()
+        .remove(0);
+    assert!(directory.input.is_absolute());
+    assert_eq!(directory.input, file.input);
+    assert_ne!(directory.name, file.name);
+}
