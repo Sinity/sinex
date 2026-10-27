@@ -7,6 +7,7 @@ use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 mod plain_seek;
+mod seekable;
 mod unadmitted;
 
 #[derive(Clone)]
@@ -87,15 +88,6 @@ impl Blobs {
     /// places a material's bytes before registering it).
     pub fn contains(&self, name: &str) -> Result<bool> {
         Ok(self.0.contains(&parse(name)?))
-    }
-
-    /// Store bytes read from `reader` (an export archive of any size) without
-    /// holding them in memory, and return their name.
-    pub fn put_reader(&self, reader: impl std::io::Read) -> Result<String> {
-        let prepared = self.0.prepare_plain(reader, 3)?;
-        self.note_unadmitted(prepared.hash())?;
-        let hash = prepared.install()?;
-        Ok(format!("blake3:{}", hash.hex()))
     }
 
     pub fn read_range(&self, name: &str, offset: u64, len: u64) -> Result<Vec<u8>> {
