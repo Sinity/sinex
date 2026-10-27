@@ -442,7 +442,8 @@ fn library_format_plans_one_file_without_reading_its_neighbours() {
     let material = acquired.material.unwrap();
     assert_eq!(material.records.len(), 1);
     assert!(material.owned_files.is_empty());
-    let line: serde_json::Value = serde_json::from_slice(material.body()).unwrap();
+    let line: serde_json::Value =
+        serde_json::from_slice(crate::test_support::body(&material)).unwrap();
     assert!(line["path"].as_str().unwrap().ends_with("selected.txt"));
     assert_eq!(line["stored"], false);
 }
