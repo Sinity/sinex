@@ -248,7 +248,8 @@ async fn an_unacknowledged_batch_is_resent_with_uploaded_bytes() {
             blob: blob.clone(),
         }],
         mismatch: None,
-        skip_position: None, records: 0,
+        skip_position: None,
+        records: 0,
     }
     .save(&state, "b")
     .unwrap();
@@ -479,7 +480,8 @@ async fn a_recorded_invalid_frame_is_skipped_and_the_next_frame_is_sent() {
         },
         sources: Vec::new(),
         mismatch: None,
-        skip_position: None, records: 0,
+        skip_position: None,
+        records: 0,
     }
     .save(&state, "binding")
     .unwrap();
@@ -629,7 +631,8 @@ async fn a_byte_refusal_rebuilds_a_large_frame_and_succeeds_on_the_next_attempt(
         },
         sources: vec![],
         mismatch: None,
-        skip_position: None, records: 0,
+        skip_position: None,
+        records: 0,
     }
     .save(&state, "binding")
     .unwrap();
@@ -686,7 +689,8 @@ async fn a_malformed_frame_stays_an_error_without_advancing_the_binding() {
         },
         sources: vec![],
         mismatch: None,
-        skip_position: None, records: 0,
+        skip_position: None,
+        records: 0,
     }
     .save(&state, "binding")
     .unwrap();
@@ -788,7 +792,8 @@ async fn byte_mismatch_count_survives_a_producer_restart() {
         },
         sources,
         mismatch: Some(mismatch),
-        skip_position: None, records: 0,
+        skip_position: None,
+        records: 0,
     }
     .save(&state, "binding")
     .unwrap();

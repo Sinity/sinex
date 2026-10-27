@@ -327,9 +327,16 @@ impl Producer {
         store: &Store,
     ) -> Result<Position, Error> {
         if let Some(mut batch) = UnacknowledgedFrames::load(state, binding)? {
-            let delivered = self.deliver_batch(&mut batch, state, binding, store, None).await?;
-            if delivered.skipped_material && let Some(counter) = self.health.get(binding) {
-                counter.lock().unwrap().prepare(&batch.position.cursor, batch.records);
+            let delivered = self
+                .deliver_batch(&mut batch, state, binding, store, None)
+                .await?;
+            if delivered.skipped_material
+                && let Some(counter) = self.health.get(binding)
+            {
+                counter
+                    .lock()
+                    .unwrap()
+                    .prepare(&batch.position.cursor, batch.records);
             }
             batch.position.save(state, binding)?;
             UnacknowledgedFrames::clear(state, binding)?;
@@ -406,10 +413,14 @@ impl Producer {
                         ranges: batch.sources.clone(),
                         reason: format!("three identical byte refusals: {reason}"),
                     });
-                    let skipped_material = batch.frames.iter().any(|frame| matches!(frame, Ingress::Material { .. }));
+                    let skipped_material = batch
+                        .frames
+                        .iter()
+                        .any(|frame| matches!(frame, Ingress::Material { .. }));
                     if skipped_material {
                         if let Some(mut position) = batch.skip_position.take() {
-                            position.capture_failures = std::mem::take(&mut batch.position.capture_failures);
+                            position.capture_failures =
+                                std::mem::take(&mut batch.position.capture_failures);
                             batch.position = position;
                         }
                         skip_material(
@@ -422,7 +433,10 @@ impl Producer {
                     batch.frames.clear();
                     batch.save(state, binding)?;
                     self.frames_changed(binding, 0);
-                    return Ok(Delivered { acknowledgments, skipped_material });
+                    return Ok(Delivered {
+                        acknowledgments,
+                        skipped_material,
+                    });
                 }
                 Err(error) => return Err(error),
             }
@@ -434,7 +448,10 @@ impl Producer {
                 self.clear_frame_directories(std::slice::from_ref(transfer), store)?;
             }
         }
-        Ok(Delivered { acknowledgments, skipped_material: false })
+        Ok(Delivered {
+            acknowledgments,
+            skipped_material: false,
+        })
     }
 
     fn rebuild(
@@ -687,11 +704,22 @@ impl Producer {
             &snapshots,
             Limits::default(),
         )?;
-        let class = batches.iter().flat_map(|batch| batch.events()).fold(source.spec().class, |class, event| class.max(event.class));
-        if class == sinex_model::Class::Sealed { return Err(Error::Configuration("sealed producer storage is unsupported".into())); }
+        let class = batches
+            .iter()
+            .flat_map(|batch| batch.events())
+            .fold(source.spec().class, |class, event| class.max(event.class));
+        if class == sinex_model::Class::Sealed {
+            return Err(Error::Configuration(
+                "sealed producer storage is unsupported".into(),
+            ));
+        }
         let records: u64 = batches.iter().map(|batch| batch.records.len() as u64).sum();
         let skip_position = batches.last().and_then(|batch| match &batch.kind {
-            BatchKind::Source(progress) => Some(Position { cursor: progress.cursor.clone(), carry: progress.carry.clone(), capture_failures: Vec::new() }),
+            BatchKind::Source(progress) => Some(Position {
+                cursor: progress.cursor.clone(),
+                carry: progress.carry.clone(),
+                capture_failures: Vec::new(),
+            }),
             _ => None,
         });
         let mut sent = Sent::default();
@@ -787,34 +815,60 @@ impl Producer {
                 });
             }
             let after = Position {
-                cursor: progress.cursor.clone(), carry: progress.carry.clone(),
+                cursor: progress.cursor.clone(),
+                carry: progress.carry.clone(),
                 capture_failures: Position::load(state, binding)?.capture_failures,
             };
-            if let Some(counter) = self.health.get(binding) { counter.lock().unwrap().prepare(&after.cursor, batch.records.len() as u64); }
+            if let Some(counter) = self.health.get(binding) {
+                counter
+                    .lock()
+                    .unwrap()
+                    .prepare(&after.cursor, batch.records.len() as u64);
+            }
             if frames.is_empty() {
                 after.save(state, binding)?;
-                if let Some(counter) = self.health.get(binding) { counter.lock().unwrap().recovered(&after.cursor); }
+                if let Some(counter) = self.health.get(binding) {
+                    counter.lock().unwrap().recovered(&after.cursor);
+                }
                 continue;
             }
-            let events_frames: Vec<_> = frames.iter().map(|frame| matches!(frame, Ingress::Events { .. })).collect();
+            let events_frames: Vec<_> = frames
+                .iter()
+                .map(|frame| matches!(frame, Ingress::Events { .. }))
+                .collect();
             let mut pending = UnacknowledgedFrames {
-                frames, position: after, sources: sources.clone(), mismatch: None,
-                skip_position: skip_position.clone(), records,
+                frames,
+                position: after,
+                sources: sources.clone(),
+                mismatch: None,
+                skip_position: skip_position.clone(),
+                records,
             };
             pending.save(state, binding)?;
             self.frames_changed(binding, pending.frames.len());
-            let delivered = self.deliver_batch(&mut pending, state, binding, sink, Some(&snapshots)).await?;
+            let delivered = self
+                .deliver_batch(&mut pending, state, binding, sink, Some(&snapshots))
+                .await?;
             for (ack, is_events) in delivered.acknowledgments.iter().zip(events_frames) {
-                if is_events { sent.frames += 1; if let Some(ack) = ack { sent.admitted += ack.admitted.len(); } }
+                if is_events {
+                    sent.frames += 1;
+                    if let Some(ack) = ack {
+                        sent.admitted += ack.admitted.len();
+                    }
+                }
             }
             pending.position.save(state, binding)?;
             if let Some(counter) = self.health.get(binding) {
                 let mut counter = counter.lock().unwrap();
-                if delivered.skipped_material { counter.prepare(&pending.position.cursor, records); }
+                if delivered.skipped_material {
+                    counter.prepare(&pending.position.cursor, records);
+                }
                 counter.recovered(&pending.position.cursor);
             }
             UnacknowledgedFrames::clear(state, binding)?;
-            if delivered.skipped_material { break; }
+            if delivered.skipped_material {
+                break;
+            }
         }
         Ok(sent)
     }
