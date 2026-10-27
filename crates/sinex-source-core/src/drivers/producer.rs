@@ -142,6 +142,13 @@ struct UnacknowledgedFrames {
     position: Position,
     sources: Vec<CapturedRange>,
     mismatch: Option<ByteMismatch>,
+    skip_position: Option<Position>,
+    records: u64,
+}
+
+struct Delivered {
+    acknowledgments: Vec<Option<Acknowledgment>>,
+    skipped_material: bool,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -320,8 +327,10 @@ impl Producer {
         store: &Store,
     ) -> Result<Position, Error> {
         if let Some(mut batch) = UnacknowledgedFrames::load(state, binding)? {
-            self.deliver_batch(&mut batch, state, binding, store, None)
-                .await?;
+            let delivered = self.deliver_batch(&mut batch, state, binding, store, None).await?;
+            if delivered.skipped_material && let Some(counter) = self.health.get(binding) {
+                counter.lock().unwrap().prepare(&batch.position.cursor, batch.records);
+            }
             batch.position.save(state, binding)?;
             UnacknowledgedFrames::clear(state, binding)?;
             if let Some(counter) = self.health.get(binding) {
@@ -340,7 +349,7 @@ impl Producer {
         binding: &str,
         store: &Store,
         mut captured: Option<&Snapshots>,
-    ) -> Result<Vec<Option<Acknowledgment>>, Error> {
+    ) -> Result<Delivered, Error> {
         let mut acknowledgments = Vec::new();
         while let Some(frame) = batch.frames.first().cloned() {
             let prepared = match captured.take() {
@@ -397,11 +406,12 @@ impl Producer {
                         ranges: batch.sources.clone(),
                         reason: format!("three identical byte refusals: {reason}"),
                     });
-                    if batch
-                        .frames
-                        .iter()
-                        .any(|frame| matches!(frame, Ingress::Material { .. }))
-                    {
+                    let skipped_material = batch.frames.iter().any(|frame| matches!(frame, Ingress::Material { .. }));
+                    if skipped_material {
+                        if let Some(mut position) = batch.skip_position.take() {
+                            position.capture_failures = std::mem::take(&mut batch.position.capture_failures);
+                            batch.position = position;
+                        }
                         skip_material(
                             &mut batch.position.cursor,
                             &Position::load(state, binding)?.cursor,
@@ -412,7 +422,7 @@ impl Producer {
                     batch.frames.clear();
                     batch.save(state, binding)?;
                     self.frames_changed(binding, 0);
-                    return Ok(acknowledgments);
+                    return Ok(Delivered { acknowledgments, skipped_material });
                 }
                 Err(error) => return Err(error),
             }
@@ -424,7 +434,7 @@ impl Producer {
                 self.clear_frame_directories(std::slice::from_ref(transfer), store)?;
             }
         }
-        Ok(acknowledgments)
+        Ok(Delivered { acknowledgments, skipped_material: false })
     }
 
     fn rebuild(
@@ -677,20 +687,21 @@ impl Producer {
             &snapshots,
             Limits::default(),
         )?;
+        let class = batches.iter().flat_map(|batch| batch.events()).fold(source.spec().class, |class, event| class.max(event.class));
+        if class == sinex_model::Class::Sealed { return Err(Error::Configuration("sealed producer storage is unsupported".into())); }
+        let records: u64 = batches.iter().map(|batch| batch.records.len() as u64).sum();
+        let skip_position = batches.last().and_then(|batch| match &batch.kind {
+            BatchKind::Source(progress) => Some(Position { cursor: progress.cursor.clone(), carry: progress.carry.clone(), capture_failures: Vec::new() }),
+            _ => None,
+        });
         let mut sent = Sent::default();
-        let mut frames = Vec::new();
         let mut sources = Vec::new();
-        let mut after = Position::load(state, binding)?;
-        let mut records = 0;
-        let mut class = source.spec().class;
+        let mut material = String::new();
         for (index, batch) in batches.into_iter().enumerate() {
+            let mut frames = Vec::new();
             let BatchKind::Source(progress) = &batch.kind else {
                 unreachable!("drivers build source batches")
             };
-            records += batch.records.len() as u64;
-            class = batch
-                .events()
-                .fold(class, |class, event| class.max(event.class));
             if let Some(m) = &progress.material {
                 let path = m
                     .manifest
@@ -705,6 +716,7 @@ impl Producer {
                     })
                     .or_else(|| m.manifest.path.as_ref().map(PathBuf::from))
                     .unwrap_or_else(|| spool.to_owned());
+                material = m.id.to_string();
                 sources.push(CapturedRange {
                     path,
                     offset: m.manifest.file_offset.unwrap_or(0),
@@ -758,13 +770,6 @@ impl Producer {
                 }
             }
             sent.unread += failures.len();
-            let material = frames
-                .iter()
-                .find_map(|frame| match frame {
-                    Ingress::Material { material, .. } => Some(material.id.to_string()),
-                    _ => None,
-                })
-                .unwrap_or_default();
             let mut chunks = split(events);
             if chunks.is_empty() && !failures.is_empty() {
                 chunks.push(Vec::new());
@@ -781,45 +786,36 @@ impl Producer {
                     },
                 });
             }
-            after.cursor = progress.cursor.clone();
-            after.carry = progress.carry.clone();
-        }
-        if class == sinex_model::Class::Sealed {
-            return Err(Error::Configuration(
-                "sealed producer storage is unsupported".into(),
-            ));
-        }
-        if let Some(counter) = self.health.get(binding) {
-            counter.lock().unwrap().prepare(&after.cursor, records);
-        }
-        let events_frames: Vec<_> = frames
-            .iter()
-            .map(|frame| matches!(frame, Ingress::Events { .. }))
-            .collect();
-        let mut batch = UnacknowledgedFrames {
-            frames,
-            position: after,
-            sources,
-            mismatch: None,
-        };
-        batch.save(state, binding)?;
-        self.frames_changed(binding, batch.frames.len());
-        let acknowledgments = self
-            .deliver_batch(&mut batch, state, binding, sink, Some(&snapshots))
-            .await?;
-        for (ack, is_events) in acknowledgments.iter().zip(events_frames) {
-            if is_events {
-                sent.frames += 1;
-                if let Some(ack) = ack {
-                    sent.admitted += ack.admitted.len();
-                }
+            let after = Position {
+                cursor: progress.cursor.clone(), carry: progress.carry.clone(),
+                capture_failures: Position::load(state, binding)?.capture_failures,
+            };
+            if let Some(counter) = self.health.get(binding) { counter.lock().unwrap().prepare(&after.cursor, batch.records.len() as u64); }
+            if frames.is_empty() {
+                after.save(state, binding)?;
+                if let Some(counter) = self.health.get(binding) { counter.lock().unwrap().recovered(&after.cursor); }
+                continue;
             }
+            let events_frames: Vec<_> = frames.iter().map(|frame| matches!(frame, Ingress::Events { .. })).collect();
+            let mut pending = UnacknowledgedFrames {
+                frames, position: after, sources: sources.clone(), mismatch: None,
+                skip_position: skip_position.clone(), records,
+            };
+            pending.save(state, binding)?;
+            self.frames_changed(binding, pending.frames.len());
+            let delivered = self.deliver_batch(&mut pending, state, binding, sink, Some(&snapshots)).await?;
+            for (ack, is_events) in delivered.acknowledgments.iter().zip(events_frames) {
+                if is_events { sent.frames += 1; if let Some(ack) = ack { sent.admitted += ack.admitted.len(); } }
+            }
+            pending.position.save(state, binding)?;
+            if let Some(counter) = self.health.get(binding) {
+                let mut counter = counter.lock().unwrap();
+                if delivered.skipped_material { counter.prepare(&pending.position.cursor, records); }
+                counter.recovered(&pending.position.cursor);
+            }
+            UnacknowledgedFrames::clear(state, binding)?;
+            if delivered.skipped_material { break; }
         }
-        batch.position.save(state, binding)?;
-        if let Some(counter) = self.health.get(binding) {
-            counter.lock().unwrap().recovered(&batch.position.cursor);
-        }
-        UnacknowledgedFrames::clear(state, binding)?;
         Ok(sent)
     }
 }

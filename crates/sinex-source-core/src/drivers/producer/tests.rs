@@ -248,6 +248,7 @@ async fn an_unacknowledged_batch_is_resent_with_uploaded_bytes() {
             blob: blob.clone(),
         }],
         mismatch: None,
+        skip_position: None, records: 0,
     }
     .save(&state, "b")
     .unwrap();
@@ -478,6 +479,7 @@ async fn a_recorded_invalid_frame_is_skipped_and_the_next_frame_is_sent() {
         },
         sources: Vec::new(),
         mismatch: None,
+        skip_position: None, records: 0,
     }
     .save(&state, "binding")
     .unwrap();
@@ -559,13 +561,16 @@ async fn three_identical_byte_refusals_keep_the_spool_and_advance_without_a_part
     producer.max_message = 1;
     UnacknowledgedFrames {
         frames: vec![logical, Ingress::Events { frame: "dependent".into(), events: vec![event(1)], failures: vec![] }],
-        position: Position { cursor: json!({"segment":0,"last_material":material,"part_base":0,"inner":{"offset":bytes.len(),"material":material,"part_index":0,"through":bytes.len()}}), ..Position::default() },
+        position: Position { cursor: json!({"segment":0,"last_material":material,"part_base":0,"inner":{"offset":4,"material":material,"part_index":0,"through":4}}), ..Position::default() },
+        skip_position: Some(Position { cursor: json!({"segment":0,"last_material":material,"part_base":0,"inner":{"offset":bytes.len(),"material":material,"part_index":0,"through":bytes.len()}}), carry: json!({"after":"whole material"}), ..Position::default() }),
+        records: 2,
         sources: vec![CapturedRange { path: path.clone(), offset: 0, length: bytes.len() as u64, blob }], mismatch: None,
     }.save(&state, "binding").unwrap();
     let position = producer.position("binding", &state, &store).await.unwrap();
     assert_eq!(position.capture_failures.len(), 1);
     assert_eq!(position.capture_failures[0].ranges[0].path, path);
     assert_eq!(position.cursor["inner"]["offset"], bytes.len());
+    assert_eq!(position.carry, json!({"after":"whole material"}));
     assert!(position.cursor["inner"]["material"].is_null());
     assert!(position.cursor["last_material"].is_null());
     assert_eq!(std::fs::read(&path).unwrap(), bytes);
@@ -624,6 +629,7 @@ async fn a_byte_refusal_rebuilds_a_large_frame_and_succeeds_on_the_next_attempt(
         },
         sources: vec![],
         mismatch: None,
+        skip_position: None, records: 0,
     }
     .save(&state, "binding")
     .unwrap();
@@ -680,6 +686,7 @@ async fn a_malformed_frame_stays_an_error_without_advancing_the_binding() {
         },
         sources: vec![],
         mismatch: None,
+        skip_position: None, records: 0,
     }
     .save(&state, "binding")
     .unwrap();
@@ -781,6 +788,7 @@ async fn byte_mismatch_count_survives_a_producer_restart() {
         },
         sources,
         mismatch: Some(mismatch),
+        skip_position: None, records: 0,
     }
     .save(&state, "binding")
     .unwrap();

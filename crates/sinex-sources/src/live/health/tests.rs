@@ -143,7 +143,7 @@ fn startup_counts_an_unacknowledged_batch_once_and_then_counts_new_capture() {
         .with_extension("unacknowledged.json");
     std::fs::write(
         path,
-        serde_json::to_vec(&json!({"frames":[],"position":{"cursor":after,"carry":null,"capture_failures":[]},"sources":[],"mismatch":null})).unwrap(),
+        serde_json::to_vec(&json!({"frames":[],"position":{"cursor":after,"carry":null,"capture_failures":[]},"sources":[],"mismatch":null,"skip_position":null,"records":0})).unwrap(),
     )
     .unwrap();
     let counter = initialize(&positions, &binding).unwrap();
