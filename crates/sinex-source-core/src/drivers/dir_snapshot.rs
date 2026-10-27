@@ -187,6 +187,7 @@ impl DirSnapshot {
             if let Some(Some((s, m, _))) = state.files.get(relative)
                 && *s == *size
                 && *m == *mtime
+                && !state.failures.contains_key(relative)
             {
                 next_failures.remove(relative);
                 continue;
@@ -203,6 +204,9 @@ impl DirSnapshot {
             let (actual_size, hash) = match captured {
                 Ok(Some(captured)) => captured,
                 Ok(None) => {
+                    if let Some(facts) = next_files.get_mut(relative) {
+                        *facts = None;
+                    }
                     bundle.set_len(length as u64).map_err(io)?;
                     bundle
                         .seek(std::io::SeekFrom::Start(length as u64))
