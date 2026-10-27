@@ -212,6 +212,12 @@ pub struct Producer {
 }
 
 impl Producer {
+    /// Number of prepared transport frames still awaiting acknowledgment.
+    /// Reading it needs no connection, so health can report during an outage.
+    pub fn unacknowledged_frames(binding: &str, state: &Path) -> Result<usize, Error> {
+        Ok(UnacknowledgedFrames::load(state, binding)?.map_or(0, |batch| batch.frames.len()))
+    }
+
     /// Connect as `name` (a valid producer name: lowercase, digits, `-`, `_`),
     /// with the password in `password_file` when the URL names a user.
     pub async fn connect(
