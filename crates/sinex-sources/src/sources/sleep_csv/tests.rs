@@ -160,8 +160,7 @@ fn multiline_ranges_and_header_carry_survive_restart() {
     );
 }
 
-#[path = "../hledger/intake_tests.rs"]
-mod intake;
+use crate::sources::hledger::intake_tests as intake;
 
 #[devkit::test]
 fn shared_intake_restart_and_replay_keep_header_and_corrected_session_keys() {
