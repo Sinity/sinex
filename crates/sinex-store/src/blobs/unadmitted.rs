@@ -3,7 +3,7 @@ use super::*;
 use std::fs::{File, OpenOptions};
 use std::os::unix::fs::OpenOptionsExt;
 type Result<T> = hashed_blobs::Result<T>;
-type Names<'a> = Box<dyn Iterator<Item = hashed_blobs::Result<String>> + 'a>;
+type Names<'a> = Box<dyn Iterator<Item = hashed_blobs::Result<String>> + Send + 'a>;
 
 impl Blobs {
     fn unadmitted_dir(&self) -> PathBuf {

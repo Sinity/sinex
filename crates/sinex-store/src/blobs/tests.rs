@@ -248,5 +248,5 @@ async fn later_sweeps_check_only_names_written_since_the_previous_sweep(
     assert!(found.not_blobs.is_empty());
     assert!(blobs.contains(&name).unwrap());
     assert_eq!(blobs.unadmitted_names().unwrap().count(), 0);
-    eprintln!("sweep candidates: initial=1 unchanged=0 new=1");
+    eprintln!("sweep names: initial=1 unchanged=0 installed=1 uninstalled=1");
 }
