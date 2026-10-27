@@ -281,24 +281,26 @@ fn whole_json_supports_sealed_routes_and_completed_cursor_restart() {
     assert_eq!(deliveries, 1);
 }
 #[devkit::test]
-fn directory_imports_plan_one_path_identity_for_each_matching_file() {
+fn directory_imports_discover_one_path_identity_for_each_file() {
+    use sinex_source_core::discovery::DiscoveryContext;
     let temp = tempfile::tempdir().unwrap();
     std::fs::create_dir(temp.path().join("nested")).unwrap();
     std::fs::write(temp.path().join("a.json"), b"[]").unwrap();
-    std::fs::write(
-        temp.path().join("nested/b.json"),
-        br#"{"segments":[],"model":"example"}"#,
-    )
-    .unwrap();
+    std::fs::write(temp.path().join("nested/b.json"), br#"{"segments":[],"model":"example"}"#).unwrap();
     std::fs::write(temp.path().join("c.txt"), b"text").unwrap();
-    let settings = Settings::new("example");
-    let generic = plan(&JSON, temp.path(), &settings).unwrap();
-    let whisper = plan(&WHISPER, temp.path(), &settings).unwrap();
-    let text = plan(&TEXT, temp.path(), &settings).unwrap();
-    assert_eq!((generic.len(), whisper.len(), text.len()), (1, 1, 1));
-    assert_ne!(generic[0].name, whisper[0].name);
-    assert!(generic[0].input.is_absolute());
+    let mut context = DiscoveryContext {host: "example".into(), ..Default::default()};
+    context.inputs.insert("transcripts".into(), vec![temp.path().into()]);
+    let found = crate::discovery::discover(&context).unwrap();
+    let bindings: Vec<_> = found.iter().filter(|input| input.source == JSON.name).flat_map(|input| &input.bindings).collect();
+    assert_eq!(bindings.len(), 3);
+    for parser in [JSON.parser, WHISPER.parser, TEXT.parser] {
+        assert_eq!(bindings.iter().filter(|binding| binding.parser == parser).count(), 1);
+    }
+    assert!(bindings.iter().all(|binding| binding.input.is_absolute()));
+    let names: std::collections::BTreeSet<_> = bindings.iter().map(|binding| &binding.name).collect();
+    assert_eq!(names.len(), 3);
 }
+
 #[devkit::test]
 fn named_import_roots_are_validated_and_registered_for_discovery() {
     use sinex_source_core::discovery::DiscoveryContext;
@@ -403,16 +405,29 @@ fn an_automatically_discovered_file_has_one_transcript_format() {
     let temp = tempfile::tempdir().unwrap();
     let path = temp.path().join("example.json");
     std::fs::write(&path, br#"{"segments":[{"text":"same"}]}"#).unwrap();
-    let mut context = DiscoveryContext { host: "example".into(), ..Default::default() };
-    context.inputs.insert("transcripts".into(), vec![path.clone()]);
+    let mut context = DiscoveryContext {
+        host: "example".into(),
+        ..Default::default()
+    };
+    context
+        .inputs
+        .insert("transcripts".into(), vec![path.clone()]);
     let found = crate::discovery::discover(&context).unwrap();
-    let bindings: Vec<_> = found.iter().filter(|input| input.source == WHISPER.name).flat_map(|input| &input.bindings).collect();
+    let bindings: Vec<_> = found
+        .iter()
+        .filter(|input| input.source == WHISPER.name)
+        .flat_map(|input| &input.bindings)
+        .collect();
     assert_eq!(bindings.len(), 1);
     assert_eq!(bindings[0].parser, WHISPER.parser);
     context.inputs.clear();
     context.inputs.insert("transcript-text".into(), vec![path]);
     let found = crate::discovery::discover(&context).unwrap();
-    let bindings: Vec<_> = found.iter().filter(|input| input.source == TEXT.name).flat_map(|input| &input.bindings).collect();
+    let bindings: Vec<_> = found
+        .iter()
+        .filter(|input| input.source == TEXT.name)
+        .flat_map(|input| &input.bindings)
+        .collect();
     assert_eq!(bindings.len(), 1);
     assert_eq!(bindings[0].parser, TEXT.parser);
 }

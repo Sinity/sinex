@@ -29,24 +29,36 @@ pub const fn spec(transcripts: bool) -> DiscoverySpec {
 }
 
 pub fn discover(format: &InputFormat, context: &DiscoveryContext) -> Vec<DiscoveredInput> {
-    let mut found = crate::discovery::discover_format(format, context);
-    for input in &mut found {
-        let Some(path) = input.input.as_ref().filter(|path| path.is_file()) else { continue; };
-        let selected = context.inputs.get(format.name).is_some_and(|paths| paths.contains(path))
-            || context.sources.get(&input.source).is_some_and(|configuration| {
-                configuration.format.as_deref() == Some(format.name)
-                    && configuration.paths.iter().any(|configured| Path::new(configured) == path.as_path())
-            });
-        if selected { continue; }
-        match matches(format.name, path) {
-            Ok(true) => {},
-            Ok(false) => input.bindings.clear(),
-            Err(reason) => {
-                input.bindings.clear();
-                input.availability = sinex_source_core::discovery::Availability::Unavailable;
-                input.reason = Some(reason);
+    let mut found = Vec::new();
+    for mut input in crate::discovery::discover_format(format, context) {
+        let selected = input.input.as_ref().is_some_and(|path| {
+            context.inputs.get(format.name).is_some_and(|paths| paths.contains(path))
+                || context.sources.get(&input.source).is_some_and(|configuration| {
+                    configuration.format.as_deref() == Some(format.name)
+                        && configuration.paths.iter().any(|configured| Path::new(configured) == path.as_path())
+                })
+        });
+        let before = found.len();
+        for binding in std::mem::take(&mut input.bindings) {
+            let mut file = input.clone();
+            file.input = Some(binding.input.clone());
+            file.settings = binding.settings.clone();
+            if !selected {
+                match matches(format.name, &binding.input) {
+                    Ok(true) => {},
+                    Ok(false) => continue,
+                    Err(reason) => {
+                        file.availability = sinex_source_core::discovery::Availability::Unavailable;
+                        file.reason = Some(reason);
+                        found.push(file);
+                        continue;
+                    }
+                }
             }
+            file.bindings.push(binding);
+            found.push(file);
         }
+        if found.len() == before { found.push(input); }
     }
     found
 }
@@ -65,9 +77,6 @@ pub fn plan(spec: &SourceSpec, input: &Path, settings: &Settings) -> Result<Vec<
     files.sort();
     let mut bindings = Vec::new();
     for path in files {
-        if input.is_dir() && !matches(spec.parser, &path)? {
-            continue;
-        }
         bindings.push(Binding::of(spec, &path, settings.clone()).named(spec.parser));
     }
     Ok(bindings)
