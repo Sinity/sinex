@@ -80,16 +80,14 @@ services.sinex = {
   nats.daemonPasswordFile = "/run/agenix/sinex-nats-daemon";
   readAnyFile = true;                 # sources under a private home directory
   sources."terminal.atuin-history" = {
-    enable = true;
     paths = [ "/home/me/.local/share/atuin/history.db" ];
   };
   session = {                         # live desktop sources, as the operator
-    enable = true;
     user = "me";
     passwordFile = "/run/agenix/sinex-nats-session";
-    hyprland = true;
-    clipboard = true;
+    stateDir = "/realm/state/sinex-session/me";
   };
+  exclude."session.media".reason = "This example host captures no screen or audio.";
   backfills.takeout-2025 = [ "takeout=/data/takeout-2025.tgz" ];
 };
 ```
@@ -103,10 +101,10 @@ That gives these units:
   and each process reads its own password from its file, never from its
   arguments;
 - `sinexd.service`, which applies the schema, makes the API tokens under
-  `stateDir/tokens` once, and reads every enabled source from
+  `stateDir/tokens` once, and discovers every applicable source from
   `/etc/sinex/sources.json`; it plans the sources' paths again every minute,
   so a new day's file or recording is read without a restart;
-- `sinex-capture-journald.service`, when the journald source is enabled;
+- `sinex-capture-journald.service`, unless the journald source is excluded;
 - the `sinex-session` user service in the operator's graphical session;
 - `sinex-dump.timer`, the daily database dump into `backup.dumpDir`, and a
   Borg job when `backup.repo` is set;
@@ -114,7 +112,7 @@ That gives these units:
   activation.
 
 `nix/catalog.json` lists every source with its formats and purpose. A source's
-`paths` must be readable by the `sinex` user; `readAnyFile` gives sinexd read
+`paths` add explicit inputs to discovery and must be readable by the `sinex` user; `readAnyFile` gives sinexd read
 access to every file instead (it never writes them). A path with nothing to
 read, and a binding that fails, is logged when it happens, once, and again
 only when that changes.

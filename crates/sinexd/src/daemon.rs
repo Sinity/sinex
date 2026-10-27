@@ -195,6 +195,7 @@ pub(crate) async fn run(o: Options) -> Result<(), String> {
         .await
         .map_err(|e| format!("read pool: {e}"))?;
     let reader_api = Api {
+        source_config: Arc::new(sources.clone()),
         reads: reads.clone(),
         writer: Some(handle.clone()),
         blobs: blobs.clone(),

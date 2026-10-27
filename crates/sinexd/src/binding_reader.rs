@@ -27,7 +27,7 @@ impl BindingReader {
             .reader
             .ok_or_else(|| format!("{} is not read by a driver", kind.name))?;
         Ok(Self {
-            source: (kind.source)(&binding)?,
+            source: sinex_sources::sources::source_for(&binding)?,
             reading: reader(&binding)?,
             binding,
             remembered: false,

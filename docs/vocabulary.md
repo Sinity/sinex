@@ -7,6 +7,8 @@ these names and no others.
 
 - **input**: something Sinex observes repeatedly: a file, a database, a socket, an API collection.
 - **source**: a named kind of record Sinex reads, `<area>.<name>` (`terminal.zsh-history`), with its parser, its event types and its purpose. Events carry the source's name. Several declarations can share one source name: one per table it reads (`operator.steering`) or one per format that reads it (the live clipboard and its lake lane).
+- **discovery**: checking a format's declared host locations and capabilities for inputs, preserving saved binding names.
+- **exclusion**: an operator-provided reason to omit every binding of one source from discovery and capture.
 - **format**: how an input is laid out and which sources it feeds (`zsh`, `takeout`, `sinnix-lake`); `--read FORMAT=PATH` plans the bindings for an input in that format.
 - **binding**: one configured instance of a source: the source, its input and its settings.
 - **driver**: shared code that reads one input shape (append-only file, SQLite rows, export archive, directory snapshot, live stream, API cursor, media, producer, API request).
@@ -33,6 +35,7 @@ these names and no others.
 - **cursor**: how far a binding's input has been admitted.
 - **reader memory**: what a reader remembers about its input (each row's hash, each file's size, time and hash), saved with the cursor at the end of a part so a restart reads only the parts after it.
 - **shared pass**: one read of a stored file for every compatible binding of it (export archives); each binding keeps its own parts and cursor.
+- **capture stream**: one live input captured into its own spool, such as the clipboard selection or screen stills.
 - **spool**: a live capture's directory of segment files, which its binding then reads like a growing file.
 
 ## Events

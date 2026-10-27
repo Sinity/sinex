@@ -285,6 +285,22 @@ fn capture_until(
 pub const FORMAT: sinex_source_core::binding::InputFormat =
     sinex_source_core::binding::InputFormat {
         name: "hyprland",
+        discovery: sinex_source_core::discovery::DiscoverySpec {
+            owner: sinex_source_core::discovery::Owner::Session,
+            locations: &[sinex_source_core::discovery::Location {
+                root: "session",
+                path: "hyprland",
+            }],
+            capabilities: &["hyprland"],
+            credentials: &[],
+            streams: &[sinex_source_core::discovery::CaptureStream {
+                spool: "hyprland",
+                options: "{}",
+                capabilities: &[],
+            }],
+            request_only: false,
+        },
+        discover: crate::discovery::discover_format,
         specs: || vec![&SPEC],
         plan: Some(|spool, settings| {
             Ok(sinex_source_core::binding::single(&SPEC, spool, settings))

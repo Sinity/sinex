@@ -75,7 +75,7 @@ fn start(k: &'static InputFormat, binding: Binding) -> Result<Live, String> {
         .reader
         .ok_or_else(|| format!("{}: no spool reader", k.name))?)(&binding)?
     .into_polled()?;
-    let source = (k.source)(&binding)?;
+    let source = sources::source_for(&binding)?;
     let stop = Arc::new(CaptureStop::new(None));
     let b = binding.clone();
     let thread_stop = stop.clone();
@@ -99,20 +99,22 @@ fn start(k: &'static InputFormat, binding: Binding) -> Result<Live, String> {
 
 /// Produce what every spool holds, every `every`, until `until` (forever
 /// otherwise). Private mode pauses capture and production until it is off.
-pub async fn run(
+/// Recheck source selection without interrupting existing captures or their spools.
+pub async fn run<F>(
     producer: &mut Producer,
     store: &Store,
     positions: &Path,
-    bindings: Vec<(&'static InputFormat, Binding)>,
+    mut select: F,
     every: Duration,
     until: Option<Instant>,
-) -> Result<(), String> {
+) -> Result<(), String>
+where
+    F: FnMut() -> Result<Vec<(&'static InputFormat, Binding)>, String>,
+{
     // Register before any capture thread or child can start.
     let shutdown = sinex_source_core::capture::shutdown_signal().map_err(|e| e.to_string())?;
-    let mut lives = bindings
-        .into_iter()
-        .map(|(format, binding)| start(format, binding))
-        .collect::<Result<Vec<_>, _>>()?;
+    let mut lives = Vec::new();
+    extend(&mut lives, select()?);
     let deadline = async {
         match until {
             Some(until) => {
@@ -122,7 +124,7 @@ pub async fn run(
         }
     };
     let result = tokio::select! {
-        result = produce_spools(producer, store, positions, &mut lives, every) => result,
+        result = produce_spools(producer, store, positions, &mut lives, every, &mut select) => result,
         _ = shutdown => Ok(()),
         _ = deadline => Ok(()),
     };
@@ -136,15 +138,55 @@ pub async fn run(
     result
 }
 
-async fn produce_spools(
+fn extend(lives: &mut Vec<Live>, bindings: Vec<(&'static InputFormat, Binding)>) {
+    for (format, binding) in bindings {
+        if let Some(existing) = lives
+            .iter_mut()
+            .find(|live| live.binding.name == binding.name)
+        {
+            if existing
+                .capture
+                .thread
+                .as_ref()
+                .is_some_and(|thread| !thread.is_finished())
+            {
+                continue;
+            }
+            existing.capture.stop();
+            match start(format, binding) {
+                Ok(live) => *existing = live,
+                Err(error) => eprintln!("{}: {error}", format.name),
+            }
+        } else {
+            match start(format, binding) {
+                Ok(live) => lives.push(live),
+                Err(error) => eprintln!("{}: {error}", format.name),
+            }
+        }
+    }
+}
+
+async fn produce_spools<F>(
     producer: &mut Producer,
     store: &Store,
     positions: &Path,
-    lives: &mut [Live],
+    lives: &mut Vec<Live>,
     every: Duration,
-) -> Result<(), String> {
+    select: &mut F,
+) -> Result<(), String>
+where
+    F: FnMut() -> Result<Vec<(&'static InputFormat, Binding)>, String>,
+{
+    let mut selected_at = Instant::now();
     let private = sinex_transport::private_mode::PrivateMode::default();
     loop {
+        if selected_at.elapsed() >= Duration::from_secs(60) {
+            match select() {
+                Ok(bindings) => extend(lives, bindings),
+                Err(error) => eprintln!("source discovery: {error}"),
+            }
+            selected_at = Instant::now();
+        }
         if private.on() {
             tokio::time::sleep(Duration::from_secs(1)).await;
             continue;

@@ -644,6 +644,7 @@ async fn an_unchanged_append_only_file_is_not_polled_again(db: devkit::pg::TestD
     let (_stop, stop) = watch::channel(false);
     let format = sinex_sources::sources::format_of("terminal.zsh-history").unwrap();
     let settings = Settings {
+        class: None,
         host: "h".into(),
         zone: None,
         options: Value::Null,
