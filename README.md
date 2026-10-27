@@ -7,7 +7,7 @@ questions about all of it. Stored bytes are the record of truth: every event
 points at the byte range it came from, or at the events it was derived from,
 and can be read again when a parser or rule changes.
 
-[ARCHITECTURE.md](ARCHITECTURE.md) describes how the crates divide the work,
+[docs/architecture.md](docs/architecture.md) describes how the crates divide the work,
 and [docs/vocabulary.md](docs/vocabulary.md) names the concepts.
 
 ## What it does
@@ -108,7 +108,7 @@ That gives these units:
   so a new day's file or recording is read without a restart;
 - `sinex-capture-journald.service`, `sinex-capture-udev.service` and
   `sinex-capture-system-bus.service`, when the journald, udev and system-bus
-  sources are enabled: each spools its live stream (`sinexd capture FORMAT`)
+  sources are enabled: each spools its live stream (`sinex-session capture FORMAT`)
   for sinexd to read; the system-bus capture runs as root without
   capabilities, because only root may monitor the system bus;
 - the `sinex-session` user service in the operator's graphical session;
@@ -146,7 +146,7 @@ are captured once into a spool of their own and then read like the live
 journal; an entry both hold is one entry, by its cursor:
 
 ```sh
-sinexd capture journald --spool /var/lib/sinex/spool/journal-2026-05 \
+sinex-session capture journald --spool /var/lib/sinex/spool/journal-2026-05 \
   --option directory=/data/journal-2026-05
 # then declare: backfills.journal-2026-05 = [ "journald=/var/lib/sinex/spool/journal-2026-05" ];
 ```

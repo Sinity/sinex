@@ -566,7 +566,7 @@ in
         };
         path = [ config.systemd.package ];
         script = ''
-          exec ${cfg.package}/bin/sinexd capture journald \
+          exec ${cfg.package}/bin/sinex-session capture journald \
             --spool ${cfg.stateDir}/spool/journald --option since=-1d --option follow=true
         '';
       };
@@ -582,7 +582,7 @@ in
         };
         path = [ config.systemd.package ];
         script = ''
-          exec ${cfg.package}/bin/sinexd capture udev --spool ${cfg.stateDir}/spool/udev
+          exec ${cfg.package}/bin/sinex-session capture udev --spool ${cfg.stateDir}/spool/udev
         '';
       };
 
@@ -606,7 +606,7 @@ in
         };
         path = [ config.systemd.package ];
         script = ''
-          exec ${cfg.package}/bin/sinexd capture system-bus --spool ${cfg.stateDir}/spool/system-bus
+          exec ${cfg.package}/bin/sinex-session capture system-bus --spool ${cfg.stateDir}/spool/system-bus
         '';
       };
 

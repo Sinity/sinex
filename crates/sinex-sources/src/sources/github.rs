@@ -1093,7 +1093,7 @@ pub const FORMAT: crate::binding::InputFormat = crate::binding::InputFormat {
     specs: || vec![&SPEC],
     plan: Some(|input, settings| Ok(crate::binding::single(&SPEC, input, settings))),
     source: |_| Ok(Box::new(source())),
-    reader: Some(|b| Ok(crate::binding::stateless(reader(b)?))),
+    reader: Some(|b| Ok(crate::binding::polled(reader(b)?))),
     capture: None,
 };
 

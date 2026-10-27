@@ -15,12 +15,12 @@ mod derivation_runner;
 mod dirty_keys;
 mod excision;
 mod ingress;
+mod intake;
 mod library;
 mod material_sink;
 mod publisher;
 mod reader_context;
 mod replay;
-mod requests;
 mod screen_text;
 mod sealed_access;
 mod stored;
@@ -91,18 +91,6 @@ enum Command {
         #[arg(long, default_value = "sinex")]
         subject_root: String,
     },
-    /// Capture a live system source into its spool until it ends or a signal
-    /// stops it: `journald`, `udev`, `system-bus` (`sinexd admin catalog`
-    /// lists the formats). The daemon reads the spool as the source's input.
-    Capture {
-        format: String,
-        #[arg(long)]
-        spool: PathBuf,
-        /// A capture option as `key=value` (journald's `since=-1d`,
-        /// `follow=true`, `directory=PATH`); repeatable.
-        #[arg(long = "option")]
-        options: Vec<String>,
-    },
     /// Administration that needs the database but not the running daemon.
     Admin {
         #[command(subcommand)]
@@ -155,32 +143,6 @@ enum Command {
         #[arg(long)]
         json: bool,
     },
-}
-
-/// Run one live format's capture into `spool` on a blocking thread, stopping
-/// it on SIGINT or SIGTERM so it syncs what it spooled.
-async fn capture(format: String, spool: PathBuf, options: Vec<String>) -> Result<(), String> {
-    use sinex_sources::capture::{CaptureStop, shutdown_signal};
-    let shutdown = shutdown_signal().map_err(|e| e.to_string())?;
-    let (format, binding) = sinex_sources::live::binding(
-        &format,
-        &spool,
-        "localhost",
-        sinex_sources::live::options(&options)?,
-    )?;
-    let capture = format.capture.ok_or("not a live source")?;
-    let stop = std::sync::Arc::new(CaptureStop::new(None));
-    let task_stop = stop.clone();
-    let mut task = tokio::task::spawn_blocking(move || capture(&binding, &task_stop));
-    let captured = tokio::select! {
-        result = &mut task => result.map_err(|e| e.to_string())?,
-        _ = shutdown => {
-            stop.stop();
-            task.await.map_err(|e| e.to_string())?
-        }
-    }?;
-    println!("captured {captured}");
-    Ok(())
 }
 
 /// A writer and a derivation runner for a one-shot command, with the content
@@ -374,11 +336,6 @@ async fn main() -> std::process::ExitCode {
             )
             .await
         }
-        Command::Capture {
-            format,
-            spool,
-            options,
-        } => capture(format, spool, options).await,
         Command::Admin { command } => admin::run(command).await,
         Command::Backfill {
             database,

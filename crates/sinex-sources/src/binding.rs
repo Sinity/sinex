@@ -264,30 +264,9 @@ pub fn files(path: &Path, recursive: bool, keep: fn(&Path) -> bool) -> Vec<PathB
     out
 }
 
-/// A driver with no state of its own: exports, spools, API cursors.
-pub struct Stateless<D>(pub D);
-
-/// The polls a memoryless driver offers.
-pub trait StatelessDriver: Send {
-    fn poll_once(&self, cursor: &Value) -> Result<Acquired, DriverError>;
-    fn remove_passed_files(&self, _committed: &Value) -> Result<usize, DriverError> {
-        Ok(0)
-    }
-}
-
-impl<D: StatelessDriver> Reader for Stateless<D> {
-    fn poll(&mut self, cursor: &Value) -> Result<Acquired, DriverError> {
-        self.0.poll_once(cursor)
-    }
-
-    fn remove_passed(&self, committed: &Value) -> Result<usize, DriverError> {
-        self.0.remove_passed_files(committed)
-    }
-}
-
-/// `driver`, polled alone with no memory of its own.
-pub fn stateless<D: StatelessDriver + 'static>(driver: D) -> Reading {
-    Reading::Polled(Box::new(Stateless(driver)))
+/// A driver polled independently of other bindings.
+pub fn polled(driver: impl Reader + 'static) -> Reading {
+    Reading::Polled(Box::new(driver))
 }
 
 /// An export archive, read in a pass shared with the other bindings of it.
@@ -295,33 +274,31 @@ pub fn shared(driver: crate::drivers::export_archive::ExportArchive) -> Reading 
     Reading::Shared(Box::new(driver))
 }
 
-impl StatelessDriver for crate::drivers::live_stream::LiveStream {
-    fn poll_once(&self, cursor: &Value) -> Result<Acquired, DriverError> {
-        self.poll(cursor)
+impl Reader for crate::drivers::live_stream::LiveStream {
+    fn poll(&mut self, cursor: &Value) -> Result<Acquired, DriverError> {
+        Self::poll(self, cursor)
     }
 
-    fn remove_passed_files(&self, committed: &Value) -> Result<usize, DriverError> {
-        self.remove_passed(committed)
-            .map_err(|e| DriverError::Io(e.to_string()))
-    }
-}
-
-impl StatelessDriver for crate::drivers::media::Media {
-    fn poll_once(&self, cursor: &Value) -> Result<Acquired, DriverError> {
-        self.poll(cursor)
-    }
-
-    fn remove_passed_files(&self, committed: &Value) -> Result<usize, DriverError> {
-        self.remove_passed(committed)
-            .map_err(|e| DriverError::Io(e.to_string()))
+    fn remove_passed(&self, committed: &Value) -> Result<usize, DriverError> {
+        Self::remove_passed(self, committed).map_err(|e| DriverError::Io(e.to_string()))
     }
 }
 
-impl<A: crate::drivers::api_cursor::Api + Send + Sync + 'static> StatelessDriver
+impl Reader for crate::drivers::media::Media {
+    fn poll(&mut self, cursor: &Value) -> Result<Acquired, DriverError> {
+        Self::poll(self, cursor)
+    }
+
+    fn remove_passed(&self, committed: &Value) -> Result<usize, DriverError> {
+        Self::remove_passed(self, committed).map_err(|e| DriverError::Io(e.to_string()))
+    }
+}
+
+impl<A: crate::drivers::api_cursor::Api + Send + Sync + 'static> Reader
     for crate::drivers::api_cursor::ApiCursor<A>
 {
-    fn poll_once(&self, cursor: &Value) -> Result<Acquired, DriverError> {
-        self.poll(cursor)
+    fn poll(&mut self, cursor: &Value) -> Result<Acquired, DriverError> {
+        Self::poll(self, cursor)
     }
 }
 

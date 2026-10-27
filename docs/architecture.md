@@ -1,6 +1,6 @@
 # Architecture
 
-How the crates divide the work today. [docs/vocabulary.md](docs/vocabulary.md)
+How the crates divide the work today. [vocabulary.md](vocabulary.md)
 defines the terms; planned work is in Beads.
 
 ## Reading sources
@@ -17,7 +17,32 @@ binding runner reads them continuously. Both hand batches to the writer. A curso
 records admitted progress; bytes being stored does not mean their records were
 read.
 
+`sinexd/src/intake.rs` is the one acquisition submission path. It stores the
+material through `drivers::prepare`, drains it, applies the effective class,
+seals when required, and sends each batch through the writer with the caller's
+cancellation and unlock checks. Bindings stream one batch at a time; an API
+request uses one batch and refuses every record if any record fails to parse.
+The caller supplies priority and sealing access. Resuming a registered material
+uses its stored bytes and never registers its data key again.
+
+Library roots are planned by their format; crawl commands supply their URL
+list as binding settings. Both are read by the binding runner. A library file selection
+is a scan of that file within its root; files beside it are neither read nor
+reported removed. `library-add` then turns the copies into item and rendition
+requests, preserving item identity across moves and revisions. This item
+creation still runs in the library command adapter.
+
+Crawl reads URLs from the `visit.fused` derivation, or from the command's
+explicit URLs. Its format owns domain filtering and the caller's optional
+limit. The journald service uses `sinex-session capture journald`, which builds
+capture from the format registry and stops it through the shared capture lifetime.
+
 ### Stored bytes and admission
+
+`StoredBytes` has three forms: an unnamed file of framed records, shared
+in-memory records, or a stored blob. A stored blob can supply its decoded
+record reader when reopened; an archive instead supplies decoded records
+separately. Storing and draining use those same bytes on retries.
 
 A driver's bytes are written to the content store before the batch that cites
 them is admitted. Admission inserts the material and its `core.blobs` row in
@@ -59,7 +84,10 @@ at most 1,000 parts, and an unchanged row or file is not stored again.
 
 A binding is either polled alone through `Reader` or read in a pass over a
 stored file shared with every compatible binding of that file (`SharedPass`,
-export archives). A shared-pass binding keeps no memory: its cursor names the
+export archives). These are the two reader interfaces. A polled driver
+implements `Reader` directly, including drivers with no reader memory. Capture
+is a separate operation that fills a spool, not an alternate reading path.
+A shared-pass binding keeps no memory: its cursor names the
 stored copy and the next record, so a restart reads on from there, and a
 cursor that already covers the unchanged file reads nothing.
 
@@ -319,7 +347,7 @@ are generated from the command table. `sinex-diagnostics` works while the
 daemon is down.
 
 Forecast issues and resolutions are ordinary `forecast.request` records. Both
-commands write through `sinexd/src/requests.rs`, as library requests do: one
+commands use `sinexd/src/intake.rs`, as library requests do: one
 material, stored and then admitted in one batch. The parser takes the caller's
 role and the submission time from the material's manifest. The report reads
 the live issues, resolutions and evidence in one transaction and scores them

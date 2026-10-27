@@ -73,30 +73,28 @@ impl Acquired {
 /// Bytes already stored, apart from the current decoded records.
 #[derive(Clone)]
 pub enum StoredBytes {
-    File(std::path::PathBuf),
     /// The framed bytes, in an unnamed temporary file. The
     /// decoded record body is read from this file, not `NewMaterial::bytes`.
     FramedFile(std::sync::Arc<std::fs::File>),
     /// Owned decoded bytes kept across retries without copying the body.
     FramedMemory(std::sync::Arc<Vec<u8>>),
-    FramedReader(StoredRecords),
     Blob {
         name: String,
         length: u64,
+        /// Decoded records reopened from the content store, when they are the stored body.
+        records: Option<std::sync::Arc<dyn crate::drain::RecordRead>>,
     },
 }
 
 impl std::fmt::Debug for StoredBytes {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::File(path) => f.debug_tuple("File").field(path).finish(),
             Self::FramedFile(file) => f.debug_tuple("FramedFile").field(file).finish(),
             Self::FramedMemory(bytes) => f
                 .debug_struct("FramedMemory")
                 .field("length", &bytes.len())
                 .finish(),
-            Self::FramedReader(records) => f.debug_tuple("FramedReader").field(records).finish(),
-            Self::Blob { name, length } => f
+            Self::Blob { name, length, .. } => f
                 .debug_struct("Blob")
                 .field("name", name)
                 .field("length", length)
@@ -105,26 +103,12 @@ impl std::fmt::Debug for StoredBytes {
     }
 }
 
-#[derive(Clone)]
-pub struct StoredRecords {
-    pub blob: String,
-    pub bytes: std::sync::Arc<dyn crate::drain::RecordRead>,
-}
-impl std::fmt::Debug for StoredRecords {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("StoredRecords")
-            .field("blob", &self.blob)
-            .field("length", &self.bytes.length())
-            .finish()
-    }
-}
-
 pub struct NewMaterial {
     pub id: MaterialId,
     /// In-memory decoded record bytes. `FramedFile` supplies these ranges
     /// from its owned file instead; its `bytes` vector stays empty.
     pub bytes: Vec<u8>,
-    /// Where the stored bytes are. `File` and `Blob` may hold an original export while
+    /// Where the stored bytes are. `Blob` may hold an original export while
     /// `bytes` holds its decoded stream. `FramedFile` supplies both the stored
     /// body and the record ranges, without a second in-memory copy.
     pub stored: Option<StoredBytes>,
@@ -191,11 +175,13 @@ impl NewMaterial {
     }
 
     fn decoded_len(&self, stored_len: u64) -> usize {
-        match self.stored {
+        match &self.stored {
             Some(
                 StoredBytes::FramedFile(_)
                 | StoredBytes::FramedMemory(_)
-                | StoredBytes::FramedReader(_),
+                | StoredBytes::Blob {
+                    records: Some(_), ..
+                },
             ) => stored_len as usize,
             _ => self.bytes.len(),
         }
@@ -205,9 +191,10 @@ impl NewMaterial {
         match &self.stored {
             Some(StoredBytes::FramedFile(file)) => crate::drain::RecordBytes::File(file),
             Some(StoredBytes::FramedMemory(bytes)) => bytes.as_slice().into(),
-            Some(StoredBytes::FramedReader(stored)) => {
-                crate::drain::RecordBytes::Reader(stored.bytes.as_ref())
-            }
+            Some(StoredBytes::Blob {
+                records: Some(bytes),
+                ..
+            }) => crate::drain::RecordBytes::Reader(bytes.as_ref()),
             _ => self.bytes.as_slice().into(),
         }
     }
@@ -266,12 +253,6 @@ pub fn prepare<'s>(
         None => None,
         Some(m) => {
             let (blob, length) = match &m.stored {
-                Some(StoredBytes::File(path)) => {
-                    let length = std::fs::metadata(path)
-                        .map_err(|e| DriverError::Io(format!("{}: {e}", path.display())))?
-                        .len();
-                    (sink.put_file(path).map_err(DriverError::Store)?, length)
-                }
                 Some(StoredBytes::FramedFile(file)) => {
                     use std::os::fd::AsRawFd;
                     let length = file
@@ -288,10 +269,7 @@ pub fn prepare<'s>(
                     sink.put(bytes).map_err(DriverError::Store)?,
                     bytes.len() as u64,
                 ),
-                Some(StoredBytes::FramedReader(stored)) => {
-                    (stored.blob.clone(), stored.bytes.length())
-                }
-                Some(StoredBytes::Blob { name, length }) => (name.clone(), *length),
+                Some(StoredBytes::Blob { name, length, .. }) => (name.clone(), *length),
                 None => (
                     sink.put(&m.bytes).map_err(DriverError::Store)?,
                     m.bytes.len() as u64,

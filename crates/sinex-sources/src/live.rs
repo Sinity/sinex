@@ -190,20 +190,23 @@ async fn produce_spools(
     }
 }
 
-/// `key=value` pairs as source options: numbers and `true`/`false` keep their
-/// type, a repeated key collects a list, and directory lists (`roots`,
-/// `skip`) are lists even with one entry.
+/// `key=value` pairs as source options: numbers and booleans keep their types, a repeated key
+/// collects a list, and directory lists (`roots`, `skip`) are lists even with
+/// one entry.
 pub fn options(pairs: &[String]) -> Result<Value, String> {
     let mut map = serde_json::Map::new();
     for pair in pairs {
         let (k, v) = pair
             .split_once('=')
             .ok_or_else(|| format!("option {pair}: expected key=value"))?;
-        let value = v
-            .parse::<u64>()
-            .map(Value::from)
-            .or_else(|_| v.parse::<bool>().map(Value::from))
-            .unwrap_or_else(|_| Value::from(v));
+        let value = match v {
+            "true" => Value::Bool(true),
+            "false" => Value::Bool(false),
+            _ => v
+                .parse::<u64>()
+                .map(Value::from)
+                .unwrap_or_else(|_| Value::from(v)),
+        };
         match map.get_mut(k) {
             Some(Value::Array(list)) => list.push(value),
             Some(first) => *first = Value::Array(vec![first.take(), value]),
