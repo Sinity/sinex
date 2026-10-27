@@ -313,6 +313,18 @@ fn empty_and_nonempty_members_keep_exact_body_ranges_in_every_order() {
         .unwrap();
         let outcomes: Vec<_> = chunks.into_iter().flat_map(|c| c.outcomes).collect();
         assert_eq!(outcomes.len(), bodies.len());
+        let hashes: std::collections::BTreeSet<_> = outcomes
+            .iter()
+            .filter_map(|outcome| match outcome {
+                RecordOutcome::Events { events, .. } => Some(events[0].record_hash),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            hashes.len(),
+            bodies.len(),
+            "distinct paths keep distinct readings even with equal bytes"
+        );
         for (index, (outcome, body)) in outcomes.iter().zip(&bodies).enumerate() {
             let RecordOutcome::Events { location, events } = outcome else {
                 panic!("{outcome:?}")
@@ -320,10 +332,7 @@ fn empty_and_nonempty_members_keep_exact_body_ranges_in_every_order() {
             assert_eq!(location.unwrap().anchor, m.records[index].0 as u64);
             assert_eq!(events[0].payload["path"], format!("{index}.md"));
             assert_eq!(events[0].payload["text"], *body);
-            assert_eq!(
-                &events[0].record_hash,
-                blake3::hash(body.as_bytes()).as_bytes()
-            );
+            assert_eq!(record(&m, index), body.as_bytes());
         }
     }
 }
