@@ -2,10 +2,7 @@ use super::*;
 use crate::reader_context::ReaderContext;
 use serde_json::json;
 use sinex_source_core::Settings;
-use sinex_sources::sources::{
-    self,
-    google_takeout::{self, fit, tasks},
-};
+use sinex_sources::sources::google_takeout::{self, fit, tasks};
 use std::io::Write;
 
 fn archive(path: &std::path::Path) -> usize {

@@ -144,7 +144,7 @@ pub(super) async fn read_shared(
             if verify_stop.load(Ordering::Relaxed)
                 || sinex_transport::private_mode::PrivateMode::default().on()
             {
-                return Err(std::io::Error::other("verification cancelled").into());
+                return Err(std::io::Error::other("verification cancelled"));
             }
             operation.check().map_err(std::io::Error::other)?;
             Ok(())
