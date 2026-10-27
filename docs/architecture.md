@@ -138,7 +138,7 @@ does not know which driver a binding uses.
   records an expunged message as removed at the source; it saves that memory
   like the SQLite-row and directory readers.
 - **Directory snapshots.** Changed files stream into one unnamed POSIX PAX tar
-  material. Members retain native file names, permissions, ownership, times,
+  material. Members keep native file names, permissions, ownership, times,
   extended attributes, access ACLs and sparse ranges. Typed file nodes in the
   manifest index member data at its stored offsets; sparse bytes expand for
   parsing and replay. Attribute values stay in the tar, protected with the

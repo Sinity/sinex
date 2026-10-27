@@ -1345,7 +1345,7 @@ async fn freedom_exports_read_completed_and_rewritten_days() {
     backfill();
     let days: Vec<(String, String)> = sqlx::query_as(
         "SELECT e.payload->>'day', e.payload->>'seconds' FROM core.events e
-         JOIN core.live_equivalences l ON l.event_id=e.id
+         JOIN core.live_equivalence l ON l.event_id=e.id
          WHERE e.event_type='domain.usage' ORDER BY e.payload->>'day'",
     )
     .fetch_all(&mut connection)
