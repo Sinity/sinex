@@ -551,8 +551,8 @@ in
         description = "Sinex session sources";
         wantedBy = cfg.session.wantedBy;
         partOf = cfg.session.wantedBy;
-        unitConfig = startLimit // { ConditionUser = cfg.session.user; };
-        serviceConfig = restartPolicy;
+        unitConfig = { ConditionUser = cfg.session.user; StartLimitIntervalSec = 0; };
+        serviceConfig = { Restart = "always"; RestartSec = "2s"; };
         environment.SINEX_PRIVATE_MODE = privateSwitch;
         # busctl, wl-paste, grim, pw-record and ffmpeg run as capture children.
         path = with pkgs; [ systemd wl-clipboard grim pipewire ffmpeg-headless ];
@@ -562,7 +562,7 @@ in
             --subject-root ${escapeShellArg cfg.nats.subjectRoot} \
             --producer ${escapeShellArg cfg.session.producer} \
             --store ${escapeShellArg cfg.storeDir} \
-            --state "$HOME/.local/state/sinex-session" \
+            --state "''${XDG_STATE_HOME:-$HOME/.local/state}/sinex-session" \
             --host ${escapeShellArg cfg.host} \
             ${optionalString cfg.session.hyprland "--hyprland"} \
             ${optionalString cfg.session.notifications "--notifications"} \
