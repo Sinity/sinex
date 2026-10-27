@@ -44,8 +44,10 @@ evidence as parents. Hiding a scan invalidates its derived outputs; the runner
 recomputes them from the remaining visible scans. An item and its renditions
 stay visible when another scan supplies their evidence. Revisions are content
 hashes, so hiding an earlier scan cannot change their identities.
-Library commands wait for their requested keys to be computed through the
-ordinary runner query and admission scope before returning.
+Library commands wait for their requested keys through the same batched
+computation engine as the background runner. A shared lock serializes keyed
+computations before reading inputs, so an older read cannot overwrite a
+command's newer outputs. Command runs end on both success and failure.
 
 Schema version 3 adds the scan identity fields and the preview evidence type.
 It upgrades databases without library records. A database containing library
