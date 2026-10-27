@@ -294,10 +294,7 @@ impl DirSnapshot {
                 next_retries.remove(&relative);
                 let display = paths::display(&relative);
                 let marker = removed_marker(&display);
-                let offset = tar::marker(
-                    &mut bundle,
-                    &marker,
-                )?;
+                let offset = tar::marker(&mut bundle, &marker)?;
                 members.push(json!({
                     "path": display,
                     "stream_offset": offset,
@@ -451,10 +448,7 @@ fn entry_failure(
 ) -> Result<(), DriverError> {
     let display = paths::display(path);
     let marker = json!({"path": display, "read_error": reason}).to_string();
-    let offset = tar::marker(
-        bundle,
-        marker.as_bytes(),
-    )?;
+    let offset = tar::marker(bundle, marker.as_bytes())?;
     *length = tar::position(bundle)?;
     members.push(json!({
         "path": display,

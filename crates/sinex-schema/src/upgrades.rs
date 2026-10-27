@@ -119,5 +119,7 @@ fn library_scans() -> Vec<String> {
 }
 
 fn source_kind(name: &str) -> bool {
-    ["library.", "document.", "transcript.", "ocr."].iter().any(|prefix| name.starts_with(prefix))
+    ["library.", "document.", "transcript.", "ocr."]
+        .iter()
+        .any(|prefix| name.starts_with(prefix))
 }

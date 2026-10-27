@@ -300,9 +300,15 @@ impl<'a, P: Parser> Drainer<'a, P> {
 }
 
 /// A parser hash failure must not stop reading later records.
-pub(crate) fn record_hash<P: Parser>(parser: &P, raw: &[u8], context: &RecordContext<'_>) -> [u8; 32] {
-    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| parser.record_hash(raw, context)))
-        .unwrap_or_else(|_| *blake3::hash(raw).as_bytes())
+pub(crate) fn record_hash<P: Parser>(
+    parser: &P,
+    raw: &[u8],
+    context: &RecordContext<'_>,
+) -> [u8; 32] {
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        parser.record_hash(raw, context)
+    }))
+    .unwrap_or_else(|_| *blake3::hash(raw).as_bytes())
 }
 
 fn empty_chunk() -> DrainOutput {

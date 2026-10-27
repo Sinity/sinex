@@ -167,27 +167,73 @@ fn membership_facts_do_not_replace_native_files_when_tar_is_extracted() {
     std::fs::create_dir(root.path().join(".sinex-membership")).unwrap();
     std::fs::write(root.path().join(".sinex-membership/0"), b"original bytes").unwrap();
     std::fs::write(root.path().join("removed.md"), b"removed bytes").unwrap();
-    let d = DirSnapshot { root: root.path().to_owned(), host: "host".into(), select: |_| true, part_bytes: 1 << 20 };
+    let d = DirSnapshot {
+        root: root.path().to_owned(),
+        host: "host".into(),
+        select: |_| true,
+        part_bytes: 1 << 20,
+    };
     let mut state = DirState::default();
     let first = d.poll(&Value::Null, &mut state).unwrap();
     let cursor = final_cursor(&first);
     std::fs::remove_file(root.path().join("removed.md")).unwrap();
-    std::fs::write(root.path().join(".sinex-membership/0"), b"new original bytes").unwrap();
-    let second = poll_entries(&d, &cursor, &mut state, BTreeMap::from([
-        (PathBuf::from(".sinex-membership/0"), Ok((18, tar::change_time(&std::fs::metadata(root.path().join(".sinex-membership/0")).unwrap())))),
-        (PathBuf::from("unreadable.md"), Err("synthetic error".into())),
-    ]));
+    std::fs::write(
+        root.path().join(".sinex-membership/0"),
+        b"new original bytes",
+    )
+    .unwrap();
+    let second = poll_entries(
+        &d,
+        &cursor,
+        &mut state,
+        BTreeMap::from([
+            (
+                PathBuf::from(".sinex-membership/0"),
+                Ok((
+                    18,
+                    tar::change_time(
+                        &std::fs::metadata(root.path().join(".sinex-membership/0")).unwrap(),
+                    ),
+                )),
+            ),
+            (
+                PathBuf::from("unreadable.md"),
+                Err("synthetic error".into()),
+            ),
+        ]),
+    );
     let material = second.material.as_ref().unwrap();
     assert_eq!(material.records.len(), 3);
-    let Some(StoredBytes::FramedFile(file)) = &material.stored else { panic!() };
+    let Some(StoredBytes::FramedFile(file)) = &material.stored else {
+        panic!()
+    };
     let archive = tempfile::NamedTempFile::new().unwrap();
     let mut input = file.try_clone().unwrap();
     std::io::Seek::rewind(&mut input).unwrap();
     std::io::copy(&mut input, &mut archive.reopen().unwrap()).unwrap();
-    let output = Command::new("tar").arg("--extract").arg("--file").arg(archive.path()).arg("--directory").arg(destination.path()).output().unwrap();
-    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
-    assert_eq!(std::fs::read(destination.path().join(".sinex-membership/0")).unwrap(), b"new original bytes");
+    let output = Command::new("tar")
+        .arg("--extract")
+        .arg("--file")
+        .arg(archive.path())
+        .arg("--directory")
+        .arg(destination.path())
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        std::fs::read(destination.path().join(".sinex-membership/0")).unwrap(),
+        b"new original bytes"
+    );
     assert!(!destination.path().join("removed.md").exists());
     assert!(!destination.path().join("unreadable.md").exists());
-    assert_eq!(std::fs::read_dir(destination.path().join(".sinex-membership")).unwrap().count(), 1);
+    assert_eq!(
+        std::fs::read_dir(destination.path().join(".sinex-membership"))
+            .unwrap()
+            .count(),
+        1
+    );
 }

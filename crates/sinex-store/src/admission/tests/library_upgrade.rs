@@ -70,27 +70,68 @@ async fn source_kind_upgrade_adds_import_views_without_changing_stored_records(
     let mut conn = PgConnection::connect(&db.url(None)).await.unwrap();
     let event = Event::build(
         &sinex_model::event_types::documents::DocumentCaptured {
-            host: "host".into(), root: "/documents".into(), path: "document.txt".into(),
-            native_path_bytes: None, size: Some(4), modified_at: None,
-            media_type: Some("text/plain".into()), content: Some("example-digest".into()), removed_at: None,
+            host: "host".into(),
+            root: "/documents".into(),
+            path: "document.txt".into(),
+            native_path_bytes: None,
+            size: Some(4),
+            modified_at: None,
+            media_type: Some("text/plain".into()),
+            content: Some("example-digest".into()),
+            removed_at: None,
         },
         "knowledge.documents",
-        Origin::Record { location: RecordLocation { material: MaterialId::new(), anchor: 0 }, output_index: 0 },
-        ReadingOrder(1), [1; 32], Class::Open,
-    ).unwrap();
+        Origin::Record {
+            location: RecordLocation {
+                material: MaterialId::new(),
+                anchor: 0,
+            },
+            output_index: 0,
+        },
+        ReadingOrder(1),
+        [1; 32],
+        Class::Open,
+    )
+    .unwrap();
     admit_one(&mut conn, &batch(vec![event.clone()])).await;
     for name in ["document.captured", "transcript.cue", "ocr.text"] {
-        sqlx::query(&format!("DROP VIEW event_types.{}", name.replace('.', "_"))).execute(&mut conn).await.unwrap();
-        sqlx::query("DELETE FROM registry.event_types WHERE name = $1").bind(name).execute(&mut conn).await.unwrap();
+        sqlx::query(&format!("DROP VIEW event_types.{}", name.replace('.', "_")))
+            .execute(&mut conn)
+            .await
+            .unwrap();
+        sqlx::query("DELETE FROM registry.event_types WHERE name = $1")
+            .bind(name)
+            .execute(&mut conn)
+            .await
+            .unwrap();
     }
-    sqlx::query("UPDATE sinex_schema.applied SET version = $1").bind(sinex_schema::VERSION - 1).execute(&mut conn).await.unwrap();
+    sqlx::query("UPDATE sinex_schema.applied SET version = $1")
+        .bind(sinex_schema::VERSION - 1)
+        .execute(&mut conn)
+        .await
+        .unwrap();
     sinex_schema::apply(&mut conn).await.unwrap();
-    let payload: serde_json::Value = sqlx::query_scalar("SELECT payload FROM core.events WHERE id = $1").bind(event.id.0).fetch_one(&mut conn).await.unwrap();
+    let payload: serde_json::Value =
+        sqlx::query_scalar("SELECT payload FROM core.events WHERE id = $1")
+            .bind(event.id.0)
+            .fetch_one(&mut conn)
+            .await
+            .unwrap();
     assert_eq!(payload, event.payload);
     for name in ["document.captured", "transcript.cue", "ocr.text"] {
-        let registered: bool = sqlx::query_scalar("SELECT EXISTS (SELECT 1 FROM registry.event_types WHERE name = $1)").bind(name).fetch_one(&mut conn).await.unwrap();
+        let registered: bool = sqlx::query_scalar(
+            "SELECT EXISTS (SELECT 1 FROM registry.event_types WHERE name = $1)",
+        )
+        .bind(name)
+        .fetch_one(&mut conn)
+        .await
+        .unwrap();
         assert!(registered, "{name}");
-        let view: Option<String> = sqlx::query_scalar("SELECT to_regclass($1)::text").bind(format!("event_types.{}", name.replace('.', "_"))).fetch_one(&mut conn).await.unwrap();
+        let view: Option<String> = sqlx::query_scalar("SELECT to_regclass($1)::text")
+            .bind(format!("event_types.{}", name.replace('.', "_")))
+            .fetch_one(&mut conn)
+            .await
+            .unwrap();
         assert!(view.is_some(), "{name}");
     }
 }

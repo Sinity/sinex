@@ -186,10 +186,13 @@ fn discover(format: &InputFormat, context: &DiscoveryContext) -> Vec<DiscoveredI
                         continue;
                     }
                 };
-                options.excluded_roots.extend(excluded.iter().map(|path| path.as_path().to_path_buf()));
+                options
+                    .excluded_roots
+                    .extend(excluded.iter().map(|path| path.as_path().to_path_buf()));
                 options.excluded_roots.sort();
                 options.excluded_roots.dedup();
-                binding.settings.options = serde_json::to_value(options).expect("document options serialize");
+                binding.settings.options =
+                    serde_json::to_value(options).expect("document options serialize");
             }
         }
     }

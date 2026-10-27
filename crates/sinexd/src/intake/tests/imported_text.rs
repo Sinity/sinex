@@ -128,18 +128,23 @@ async fn imported_json_metadata_survives_writer_restart_and_replay(db: devkit::p
 }
 
 #[devkit::test]
-async fn document_metadata_changes_replace_readings_without_changing_bytes(db: devkit::pg::TestDatabase) {
+async fn document_metadata_changes_replace_readings_without_changing_bytes(
+    db: devkit::pg::TestDatabase,
+) {
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path().join("documents");
     std::fs::create_dir(&root).unwrap();
     let path = root.join("example.txt");
     std::fs::write(&path, b"same bytes").unwrap();
-    let mut ctx = ReaderContext::open(&db.url(None), &dir.path().join("store")).await.unwrap();
+    let mut ctx = ReaderContext::open(&db.url(None), &dir.path().join("store"))
+        .await
+        .unwrap();
     let binding = ingest(&mut ctx, &documents::FORMAT, &root, json!({})).await;
     let before = live(&mut ctx, "document.captured").await;
     assert_eq!(before.len(), 1);
     let file = std::fs::File::open(&path).unwrap();
-    file.set_modified(std::time::UNIX_EPOCH + std::time::Duration::from_secs(1_700_000_000)).unwrap();
+    file.set_modified(std::time::UNIX_EPOCH + std::time::Duration::from_secs(1_700_000_000))
+        .unwrap();
     ingest(&mut ctx, &documents::FORMAT, &root, json!({})).await;
     let after = live(&mut ctx, "document.captured").await;
     assert_eq!(after.len(), 1);
@@ -152,24 +157,42 @@ async fn document_metadata_changes_replace_readings_without_changing_bytes(db: d
 }
 
 #[devkit::test]
-async fn imported_text_refusal_keeps_bytes_and_advances_before_the_next_revision(db: devkit::pg::TestDatabase) {
+async fn imported_text_refusal_keeps_bytes_and_advances_before_the_next_revision(
+    db: devkit::pg::TestDatabase,
+) {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("transcript.json");
     let malformed = b"[{malformed JSON";
     std::fs::write(&path, malformed).unwrap();
-    let mut ctx = ReaderContext::open(&db.url(None), &dir.path().join("store")).await.unwrap();
+    let mut ctx = ReaderContext::open(&db.url(None), &dir.path().join("store"))
+        .await
+        .unwrap();
     let binding = ingest(&mut ctx, &transcript::JSON_FORMAT, &path, json!({})).await;
-    let (cursor, _) = sinex_store::positions::load(&mut ctx.read_conn, &binding.name).await.unwrap().unwrap();
+    let (cursor, _) = sinex_store::positions::load(&mut ctx.read_conn, &binding.name)
+        .await
+        .unwrap()
+        .unwrap();
     assert_eq!(cursor["done"], true);
-    let (blob, length): (String, i64) = sqlx::query_as("SELECT m.blob, m.length FROM raw.failures f JOIN raw.materials m ON m.id=f.material_id").fetch_one(&mut ctx.read_conn).await.unwrap();
-    assert_eq!(ctx.blobs.read_range(&blob, 0, length as u64).unwrap(), malformed);
+    let (blob, length): (String, i64) = sqlx::query_as(
+        "SELECT m.blob, m.length FROM raw.failures f JOIN raw.materials m ON m.id=f.material_id",
+    )
+    .fetch_one(&mut ctx.read_conn)
+    .await
+    .unwrap();
+    assert_eq!(
+        ctx.blobs.read_range(&blob, 0, length as u64).unwrap(),
+        malformed
+    );
     assert!(live(&mut ctx, "transcript.cue").await.is_empty());
     std::fs::write(&path, br#"[{"text":"after the refusal"}]"#).unwrap();
     ingest(&mut ctx, &transcript::JSON_FORMAT, &path, json!({})).await;
     let after = live(&mut ctx, "transcript.cue").await;
     assert_eq!(after.len(), 1);
     assert_eq!(after[0]["text"], "after the refusal");
-    let failures: i64 = sqlx::query_scalar("SELECT count(*) FROM raw.failures").fetch_one(&mut ctx.read_conn).await.unwrap();
+    let failures: i64 = sqlx::query_scalar("SELECT count(*) FROM raw.failures")
+        .fetch_one(&mut ctx.read_conn)
+        .await
+        .unwrap();
     assert_eq!(failures, 1);
     ctx.close().await.unwrap();
 }

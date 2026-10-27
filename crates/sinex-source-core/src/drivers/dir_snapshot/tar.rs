@@ -185,7 +185,8 @@ pub(super) fn capture(
 pub(super) fn marker(output: &mut Archive, bytes: &[u8]) -> Result<usize, DriverError> {
     let body = pax_record(b"SINEX.membership", bytes).map_err(io)?;
     let prefix = body.len() - bytes.len() - 1;
-    let offset = position(output)?.checked_add(512 + prefix)
+    let offset = position(output)?
+        .checked_add(512 + prefix)
         .ok_or_else(|| DriverError::Io("tar offset exceeds addressable size".into()))?;
     let mut header = tar::Header::new_ustar();
     header.set_entry_type(tar::EntryType::XGlobalHeader);
@@ -246,7 +247,9 @@ fn pax_record(key: &[u8], value: &[u8]) -> std::io::Result<Vec<u8>> {
     let mut length = rest + 1;
     loop {
         let next = rest + length.to_string().len();
-        if next == length { break; }
+        if next == length {
+            break;
+        }
         length = next;
     }
     let mut bytes = Vec::new();
@@ -269,25 +272,37 @@ fn attributes(input: &File) -> std::io::Result<Vec<ExtendedAttribute>> {
         };
         names.resize(length, 0);
         match flistxattr(input, names.as_mut_slice()) {
-            Ok(length) => { names.truncate(length); break; }
+            Ok(length) => {
+                names.truncate(length);
+                break;
+            }
             Err(rustix::io::Errno::RANGE) => continue,
             Err(error) => return Err(error.into()),
         }
     }
     let mut attributes = Vec::new();
-    for name in names.split(|byte| *byte == 0).filter(|name| !name.is_empty()) {
+    for name in names
+        .split(|byte| *byte == 0)
+        .filter(|name| !name.is_empty())
+    {
         let name_arg = std::ffi::OsStr::from_bytes(name);
         let mut value = Vec::new();
         loop {
             let length = fgetxattr(input, name_arg, &mut [] as &mut [u8])?;
             value.resize(length, 0);
             match fgetxattr(input, name_arg, value.as_mut_slice()) {
-                Ok(length) => { value.truncate(length); break; }
+                Ok(length) => {
+                    value.truncate(length);
+                    break;
+                }
                 Err(rustix::io::Errno::RANGE) => continue,
                 Err(error) => return Err(error.into()),
             }
         }
-        attributes.push(ExtendedAttribute { name: name.to_vec(), value });
+        attributes.push(ExtendedAttribute {
+            name: name.to_vec(),
+            value,
+        });
     }
     attributes.sort_by(|a, b| a.name.cmp(&b.name));
     Ok(attributes)

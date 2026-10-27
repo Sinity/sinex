@@ -460,7 +460,11 @@ fn imported_text_options_are_typed_and_do_not_enable_models() {
     for format in [&JSON_FORMAT, &super::super::ocr_import::JSON_FORMAT] {
         settings.options = serde_json::json!({});
         assert!((format.plan.unwrap())(input.path(), &settings).is_ok());
-        for options in [serde_json::json!("{}"), serde_json::json!({"run_model": true}), serde_json::json!({"input": "recording"})] {
+        for options in [
+            serde_json::json!("{}"),
+            serde_json::json!({"run_model": true}),
+            serde_json::json!({"input": "recording"}),
+        ] {
             settings.options = options;
             assert!((format.plan.unwrap())(input.path(), &settings).is_err());
         }
