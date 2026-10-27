@@ -370,3 +370,7 @@ material another producer or a binding registered is refused, and nothing
 changes. An excised material is no longer listed on
 `<root>.materials.<producer>`. The operator's excision refuses producers'
 materials.
+
+Journal transactions and untimed command history
+use the shared export and append readers. Their supported syntax and explicit
+configuration are documented in [imported records](imported-records.md).

@@ -180,6 +180,8 @@ pub fn read_input(
         routes: Vec::new(),
         sink,
         emit,
+        member_names: std::collections::BTreeMap::new(),
+        member_duplicate: 0,
         work: ArchivePassStats::default(),
         stop: Arc::clone(&stop),
     };
@@ -289,6 +291,8 @@ struct Context<'a, 'b> {
     routes: Vec<RouteState>,
     sink: &'a dyn MaterialSink,
     emit: &'a mut Emit<'b>,
+    member_names: std::collections::BTreeMap<String, u64>,
+    member_duplicate: u64,
     work: ArchivePassStats,
     stop: Arc<AtomicBool>,
 }
@@ -340,6 +344,11 @@ impl Context<'_, '_> {
         name: String,
         reader: &mut dyn Read,
     ) -> Result<(), DriverError> {
+        let duplicate = self.member_names.entry(name.clone()).or_default();
+        self.member_duplicate = *duplicate;
+        *duplicate = duplicate.checked_add(1).ok_or_else(|| {
+            DriverError::Cursor("archive member duplicate number exceeds u64".into())
+        })?;
         let single = matches!(
             self.capture.container,
             Container::Gzip | Container::Stateless
@@ -510,7 +519,7 @@ impl Context<'_, '_> {
             let manifest = sinex_model::Manifest::from_json(json!({"role": "records",
                 "source_container": self.capture.container, "path": state.driver.path, "host": state.driver.host,
                 "framing": state.driver.framing.name(), "records": records, "order_base": after.capture.reading_order_base.saturating_add(i64::try_from(after.order_offset.saturating_add(part_offset)).unwrap_or(i64::MAX)),
-                "members": [{"path": path, "stream_offset": 0, "length": bytes.len(), "record_start": after.part_start}]}));
+                "members": [{"path": path, "member_index": member, "member_duplicate": self.member_duplicate, "stream_offset": 0, "length": bytes.len(), "record_start": after.part_start}]}));
             let acquired = Acquired {
                 input: state.driver.input(),
                 observation: ObservationFacts {
