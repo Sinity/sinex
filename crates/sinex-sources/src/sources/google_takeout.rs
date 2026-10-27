@@ -78,7 +78,11 @@ pub const FORMAT: InputFormat = InputFormat {
         request_only: false,
     },
     discover: crate::discovery::discover_format,
-    specs: || PRODUCTS.iter().map(|p| p.0).collect(),
+    specs: || {
+        std::iter::once(&super::calendar::SPEC)
+            .chain(PRODUCTS.iter().map(|p| p.0))
+            .collect()
+    },
     plan: Some(|input, settings| {
         let zoned = settings.clone().with_zone()?;
         let mut out = Vec::new();

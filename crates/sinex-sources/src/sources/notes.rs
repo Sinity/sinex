@@ -131,7 +131,7 @@ pub const FORMAT: sinex_source_core::binding::InputFormat =
         discovery: sinex_source_core::discovery::DiscoverySpec {
             owner: sinex_source_core::discovery::Owner::System,
             locations: &[sinex_source_core::discovery::Location {
-                root: "subject",
+                root: "declared",
                 path: "notes",
             }],
             capabilities: &[],

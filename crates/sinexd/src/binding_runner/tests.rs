@@ -127,7 +127,7 @@ async fn rediscovery_reuses_saved_alias_and_cursor_after_restart(db: devkit::pg:
     for _ in 0..2 {
         let saved = saved(&mut conn, "h").await.unwrap();
         let proposed = plan(&config, "h").unwrap();
-        let planned = discovery::reconcile(proposed, &saved).unwrap();
+        let planned = discovery::reconcile(proposed, &saved).bindings;
         assert_eq!(planned.len(), 1);
         assert_eq!(planned[0].1.name, original.name);
         assert_eq!(planned[0].1.input, alias);
@@ -187,7 +187,7 @@ async fn rediscovery_keeps_location_admissions_and_progress(db: devkit::pg::Test
     let configuration = config(json!({"sources":{"terminal.zsh-history":{"paths":[history]}}}));
     let mut context = ReaderContext::open(&url, &store).await.unwrap();
     let saved = saved(&mut context.read_conn, "h").await.unwrap();
-    let planned = discovery::reconcile(plan(&configuration, "h").unwrap(), &saved).unwrap();
+    let planned = discovery::reconcile(plan(&configuration, "h").unwrap(), &saved).bindings;
     assert_eq!(planned[0].1.name, original.name);
     let readers = planned
         .into_iter()
@@ -215,4 +215,73 @@ async fn rediscovery_keeps_location_admissions_and_progress(db: devkit::pg::Test
         position
     );
     context.close().await.unwrap();
+}
+
+#[devkit::test]
+fn conflicting_saved_aliases_leave_other_inputs_reading_and_retry_when_resolved() {
+    use std::os::unix::fs::symlink;
+    let root = tempfile::tempdir().unwrap();
+    let input = root.path().join("history");
+    let alias = root.path().join("alias");
+    let independent = root.path().join("other-history");
+    for path in [&input, &independent] {
+        std::fs::write(path, b"").unwrap();
+    }
+    symlink(&input, &alias).unwrap();
+    let format = sources::format("zsh").unwrap();
+    let saved: Vec<_> = [&input, &alias]
+        .into_iter()
+        .map(|path| {
+            (format.plan.unwrap())(path, &Settings::new("h"))
+                .unwrap()
+                .remove(0)
+        })
+        .collect();
+    let config = config(json!({"sources":{"terminal.zsh-history":{"paths":[input, independent]}}}));
+    let mut bindings = Bindings::default();
+    bindings.extend(&config, "h", &saved);
+    assert_eq!(bindings.readers.len(), 1);
+    assert_eq!(bindings.readers[0].binding.input, independent);
+    assert!(
+        bindings
+            .said
+            .values()
+            .any(|message| message.contains("unavailable: discovery conflict"))
+    );
+    bindings.extend(&config, "h", &saved[..1]);
+    assert_eq!(bindings.readers.len(), 2);
+    bindings.extend(&config, "h", &saved);
+    assert_eq!(
+        bindings.readers.len(),
+        1,
+        "a newly conflicting input stops reading"
+    );
+}
+
+#[devkit::test]
+async fn saved_names_need_no_material_scan_and_a_bad_row_does_not_hide_other_bindings(
+    db: devkit::pg::TestDatabase,
+) {
+    use sqlx::Connection;
+    let mut conn = PgConnection::connect(&db.url(None)).await.unwrap();
+    for (name, settings) in [
+        ("valid", json!({"host":"h"})),
+        ("invalid", json!({"host":7})),
+    ] {
+        sinex_store::bindings::save(
+            &mut conn,
+            &sinex_store::bindings::Stored {
+                binding: name.into(),
+                source: "terminal.zsh-history".into(),
+                input: format!("/synthetic/{name}"),
+                settings,
+            },
+        )
+        .await
+        .unwrap();
+    }
+    // A binding can be recorded before it produces any materials.
+    let bindings = saved(&mut conn, "h").await.unwrap();
+    assert_eq!(bindings.len(), 1);
+    assert_eq!(bindings[0].name, "valid");
 }

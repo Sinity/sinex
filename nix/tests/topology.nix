@@ -48,7 +48,6 @@ self: {
         nats = "server:4222";
         passwordFile = "/etc/sinex-test/nats";
         store = "/mnt/sinex-store";
-
         watch = [ "/srv/watched" ];
       };
     };

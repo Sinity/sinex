@@ -164,10 +164,7 @@ pub const FORMAT: sinex_source_core::binding::InputFormat =
         name: "notifications",
         discovery: sinex_source_core::discovery::DiscoverySpec {
             owner: sinex_source_core::discovery::Owner::Session,
-            locations: &[sinex_source_core::discovery::Location {
-                root: "session",
-                path: "session_bus",
-            }],
+            locations: &[],
             capabilities: &["session_bus", "busctl"],
             credentials: &[],
             streams: &[sinex_source_core::discovery::CaptureStream {

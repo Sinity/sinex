@@ -25,7 +25,9 @@ fn binding(context: &DiscoveryContext, source: &str) -> Vec<Binding> {
 fn every_format_declares_discovery_or_a_request_only_role() {
     for format in sources::formats() {
         assert!(
-            format.discovery.request_only || !format.discovery.locations.is_empty(),
+            format.discovery.request_only
+                || !format.discovery.locations.is_empty()
+                || !format.discovery.streams.is_empty(),
             "{}",
             format.name
         );
@@ -145,12 +147,12 @@ fn keeps_saved_spelling_suffix_and_name_when_settings_change() {
         vec![(format, proposed.clone())],
         std::slice::from_ref(&saved),
     )
-    .unwrap();
+    .bindings;
     assert_eq!(planned[0].1.name, saved.name);
     assert_eq!(planned[0].1.input, alias);
     assert_eq!(planned[0].1.settings.class, Some(Class::Guarded));
     assert_eq!(
-        reconcile(planned.clone(), std::slice::from_ref(&saved)).unwrap()[0]
+        reconcile(planned.clone(), std::slice::from_ref(&saved)).bindings[0]
             .1
             .name,
         saved.name
@@ -158,7 +160,7 @@ fn keeps_saved_spelling_suffix_and_name_when_settings_change() {
     let mut other = proposed.clone();
     other.name = other.name.replace("#table", "#other");
     assert_eq!(
-        reconcile(vec![(format, other.clone())], std::slice::from_ref(&saved)).unwrap()[0]
+        reconcile(vec![(format, other.clone())], std::slice::from_ref(&saved)).bindings[0]
             .1
             .name,
         other.name
@@ -168,12 +170,13 @@ fn keeps_saved_spelling_suffix_and_name_when_settings_change() {
             vec![(format, proposed.clone())],
             &[saved.clone(), proposed.clone()]
         )
-        .unwrap_err()
-        .contains("several saved")
+        .unavailable
+        .iter()
+        .any(|(_, reason)| reason.contains("several saved"))
     );
     std::fs::remove_file(alias).unwrap();
     assert_eq!(
-        reconcile(vec![(format, proposed.clone())], &[saved]).unwrap()[0]
+        reconcile(vec![(format, proposed.clone())], &[saved]).bindings[0]
             .1
             .name,
         proposed.name
@@ -196,7 +199,7 @@ fn new_aliases_are_deduplicated_only_within_the_same_parser() {
         .remove(0);
     assert_eq!(
         reconcile(vec![(format, first.clone()), (format, second.clone())], &[])
-            .unwrap()
+            .bindings
             .len(),
         1
     );
@@ -204,7 +207,7 @@ fn new_aliases_are_deduplicated_only_within_the_same_parser() {
     other.parser = "different-parser".into();
     assert_eq!(
         reconcile(vec![(format, first.clone()), (format, other)], &[])
-            .unwrap()
+            .bindings
             .len(),
         2
     );
@@ -212,8 +215,9 @@ fn new_aliases_are_deduplicated_only_within_the_same_parser() {
     changed.settings.options = json!({"changed":true});
     assert!(
         reconcile(vec![(format, first), (format, changed)], &[])
-            .unwrap_err()
-            .contains("conflicting settings")
+            .unavailable
+            .iter()
+            .any(|(_, reason)| reason.contains("conflicting settings"))
     );
 }
 
@@ -300,7 +304,7 @@ fn named_capture_paths_come_from_the_host_layout() {
     .unwrap();
     context.layout_file = Some(layout);
     context
-        .subject_roots
+        .input_roots
         .insert("realm".into(), vec![root.path().into()]);
     let inputs = discover(&context).unwrap();
     assert!(inputs.iter().any(|input| input.format == "kitty-scrollback"
@@ -415,4 +419,58 @@ fn capture_selection_uses_the_formats_discovery_callback() {
         }),
     );
     assert!(select_captures(&context, Owner::Session, &[&FORMAT]).is_empty());
+}
+
+#[devkit::test]
+fn takeout_keeps_calendar_bindings_and_applies_calendar_settings_and_exclusions() {
+    let root = tempfile::tempdir().unwrap();
+    let archive = root.path().join("takeout.zip");
+    std::fs::write(&archive, b"synthetic archive").unwrap();
+    let mut context = context(root.path());
+    context
+        .inputs
+        .insert("takeout".into(), vec![archive.clone()]);
+    context.sources.insert(
+        "calendar.export".into(),
+        SourceConfig {
+            zone: Some("Europe/Warsaw".into()),
+            class: Some(Class::Guarded),
+            ..Default::default()
+        },
+    );
+    let calendars = binding(&context, "calendar.export");
+    assert_eq!(calendars.len(), 1);
+    assert_eq!(calendars[0].input, archive);
+    assert_eq!(calendars[0].settings.zone.as_deref(), Some("Europe/Warsaw"));
+    assert_eq!(calendars[0].settings.class, Some(Class::Guarded));
+    context.exclude.insert(
+        "calendar.export".into(),
+        Some(Exclusion {
+            reason: "fixture".into(),
+        }),
+    );
+    assert!(binding(&context, "calendar.export").is_empty());
+    assert!(!binding(&context, "google.fit").is_empty());
+}
+
+#[devkit::test]
+fn daemon_status_reports_session_ownership_without_session_capabilities() {
+    let root = tempfile::tempdir().unwrap();
+    let context = context(root.path());
+    let inputs = status(&context).unwrap();
+    let captures: Vec<_> = inputs.iter().filter(|input| input.capture).collect();
+    assert!(!captures.is_empty());
+    for input in captures {
+        if sources::format(&input.format).unwrap().discovery.owner == Owner::Session {
+            assert_eq!(input.availability, Availability::ProducerReported);
+            assert!(input.bindings.is_empty());
+            assert!(
+                input
+                    .reason
+                    .as_deref()
+                    .unwrap()
+                    .contains("no status frame received")
+            );
+        }
+    }
 }
