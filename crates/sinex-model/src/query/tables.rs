@@ -456,7 +456,11 @@ pub const ALIASES: &[Alias] = &[
         fields: &[
             f("item", FieldType::Text, "item"),
             f("label", FieldType::Text, "label"),
-            f("revision", FieldType::Integer, "revision"),
+            f(
+                "revision",
+                FieldType::Text,
+                "content hash naming the revision",
+            ),
             f("content", FieldType::Text, "content hash"),
             f("media_type", FieldType::Text, "media type"),
         ],

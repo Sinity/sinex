@@ -572,7 +572,7 @@ impl LibraryScan {
                     vanished_at_ns: None,
                 };
                 if self.keep_bytes && !known.stored {
-                    owned_files.push(crate::drivers::OwnedFile {
+                    owned_files.push(sinex_source_core::drivers::OwnedFile {
                         path: full,
                         blob: known.content.clone(),
                     });

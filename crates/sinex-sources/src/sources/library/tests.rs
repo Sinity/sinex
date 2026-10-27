@@ -526,7 +526,7 @@ fn a_copy_then_removal_keeps_identity_without_the_same_inode() {
 
 #[devkit::test]
 fn full_rescans_record_every_file_without_hashing_unchanged_bytes() {
-    use crate::binding::Reader;
+    use sinex_source_core::binding::Reader;
     let root = tmp();
     std::fs::write(root.join("one.png"), png(10, 10)).unwrap();
     std::fs::write(root.join("two.png"), png(20, 20)).unwrap();

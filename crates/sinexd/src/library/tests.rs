@@ -161,7 +161,7 @@ async fn the_library_end_to_end(db: devkit::pg::TestDatabase) {
     let ia = w.item_at(&a).await;
     let ib = w.item_at(&b).await;
 
-    // Adding again changes nothing.
+    // Another scan keeps the items and adds independent file evidence.
     let again = w
         .ok(Request::LibraryAdd {
             path: w.root.display().to_string(),
@@ -333,11 +333,22 @@ async fn the_library_end_to_end(db: devkit::pg::TestDatabase) {
     let vb = w.ok(Request::LibraryItem { item: ib.clone() }).await;
     assert_eq!(vb["properties"]["medium"]["state"], "empty");
 
-    // The library through the query language.
+    // Items are derived once; media keeps both scans of each image.
     assert_eq!(rows(&mut w.conn, "items").await, 3);
     assert_eq!(
+        rows(
+            &mut w.conn,
+            &format!(
+                "items where revision = \"{}\"",
+                view["revision"].as_str().unwrap()
+            )
+        )
+        .await,
+        1
+    );
+    assert_eq!(
         rows(&mut w.conn, "media where media_type = \"image/png\"").await,
-        2
+        4
     );
     assert!(rows(&mut w.conn, "assignments where level = import").await >= 4);
 
