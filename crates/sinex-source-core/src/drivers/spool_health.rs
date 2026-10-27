@@ -16,6 +16,7 @@ pub struct Backlog {
     pub frames: usize,
     pub error: Option<String>,
     pub capture_failures: usize,
+    pub last_capture_failure: Option<String>,
     pub cursor: Value,
     pub recovery: Counts,
     pub media: BTreeMap<String, u64>,

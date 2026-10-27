@@ -67,6 +67,7 @@ impl Ingest {
         })
         .await
         .map_err(|e| Check::Unavailable(e.to_string()))??;
+        if inner.frame().is_empty() { return Err(Check::Malformed("a large frame's inner frame needs a name".into())); }
         match inner {
             Ingress::Material { .. } | Ingress::Events { .. } => Ok(inner),
             _ => Err(Check::Malformed(
@@ -125,7 +126,8 @@ impl Ingest {
 
 fn check_bytes(error: frame_bytes::Error) -> Check {
     match error {
-        frame_bytes::Error::Invalid(reason) => Check::Bytes(reason),
+        frame_bytes::Error::Invalid(reason) => Check::Malformed(reason),
+        frame_bytes::Error::Mismatch(reason) => Check::Bytes(reason),
         frame_bytes::Error::Storage(reason) => Check::Unavailable(reason),
     }
 }

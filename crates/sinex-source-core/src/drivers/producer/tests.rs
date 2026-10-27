@@ -142,7 +142,7 @@ async fn standin_with_refusal(
                 Some(1)
             };
             let ack = Acknowledgment {
-                frame: frame.frame().to_owned(),
+                frame: if refusal.is_some() && refusal_kind == FrameRefusal::Malformed { "malformed/synthetic".into() } else { frame.frame().to_owned() },
                 material,
                 admitted,
                 outcome: if refusal.is_some() {
@@ -741,4 +741,28 @@ fn failed_spool_segments_survive_cleanup_and_native_paths_survive_position_resta
     assert_eq!(driver.remove_passed(&protected).unwrap(), 1);
     assert!(failed.exists());
     assert!(!accepted.exists());
+}
+
+#[devkit::test(multi_thread)]
+async fn byte_mismatch_count_survives_a_producer_restart() {
+    let nats = devkit::nats::test_nats().unwrap();
+    let subjects = Subjects::new(nats.prefix());
+    let received = standin_with_refusal(&nats, &subjects, "restart", None, 1, FrameRefusal::Bytes).await;
+    let dir = tempfile::tempdir().unwrap();
+    let store = Store::open(dir.path()).unwrap();
+    let state = dir.path().join("positions");
+    let spool = dir.path().join("spool.ndjson");
+    std::fs::write(&spool, b"synthetic spool range\n").unwrap();
+    let sources = vec![CapturedRange { path: spool.clone(), offset: 0, length: 22, blob: "synthetic".into() }];
+    let mismatch = ByteMismatch { fingerprint: fingerprint(&sources).unwrap(), reason: "synthetic invalid event".into(), attempts: 2 };
+    UnacknowledgedFrames {
+        frames: vec![Ingress::Events { frame: "events".into(), events: vec![event(1)], failures: vec![] }],
+        position: Position { cursor: json!({"segment":1}), ..Default::default() },
+        sources, mismatch: Some(mismatch),
+    }.save(&state, "binding").unwrap();
+    let mut producer = Producer::connect(nats.url(), None, subjects, "restart", &ProducerHello::default()).await.unwrap();
+    let position = producer.position("binding", &state, &store).await.unwrap();
+    assert_eq!(received.lock().unwrap().len(), 1);
+    assert_eq!(position.capture_failures.len(), 1);
+    assert_eq!(position.capture_failures[0].ranges[0].path, spool);
 }

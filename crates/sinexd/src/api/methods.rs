@@ -631,6 +631,7 @@ impl Api {
                 "behind": row.commit_seq - row.search_position.unwrap_or(0),
             },
             "schema_version": row.schema_version,
+            "failures_24h": row.failures_24h,
             "writer": self.writer.is_some(),
             "zone": self.context().zone_name(),
             "day_start": self.day_start.to_string(),

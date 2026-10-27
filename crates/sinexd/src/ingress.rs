@@ -136,9 +136,7 @@ impl Ingest {
             .map(str::to_owned)
             .unwrap_or_else(|| format!("malformed/{}", blake3::hash(body).to_hex()));
         if let Some(stored) = self.stored(producer, &name).await? {
-            if stored.refusal.is_none() {
-                self.discard(producer, &name);
-            }
+            self.discard_recorded(producer, &stored, decoded.as_ref().ok());
             return Ok(acknowledgment(stored));
         }
         let run = self.run(producer).await?;
@@ -195,9 +193,7 @@ impl Ingest {
             Err(WriteError::Refused(reason)) => {
                 // Handled meanwhile by a redelivery: answer from the record.
                 if let Some(stored) = self.stored(producer, &name).await? {
-                    if stored.refusal.is_none() {
-                        self.discard(producer, &name);
-                    }
+                    self.discard_recorded(producer, &stored, decoded.as_ref().ok());
                     return Ok(acknowledgment(stored));
                 }
                 let refused = self
@@ -219,10 +215,18 @@ impl Ingest {
             .stored(producer, &name)
             .await?
             .ok_or_else(|| format!("frame {name} from {producer} was not recorded"))?;
-        if stored.refusal.is_none() {
-            self.discard(producer, &name);
-        }
+        self.discard_recorded(producer, &stored, decoded.as_ref().ok());
         Ok(acknowledgment(stored))
+    }
+
+    fn discard_recorded(&self, producer: &str, stored: &StoredFrame, frame: Option<&Ingress>) {
+        let kind = serde_json::from_value::<FrameRefusal>(stored.outcome["refusal_kind"].clone()).ok();
+        if stored.refusal.is_none() || matches!(kind, Some(FrameRefusal::Content | FrameRefusal::Bytes)) {
+            self.discard(producer, &stored.frame);
+        }
+        if kind == Some(FrameRefusal::Bytes) && let Some(Ingress::Chunk { for_frame, .. }) = frame {
+            self.discard(producer, for_frame);
+        }
     }
 
     async fn refusal(

@@ -372,7 +372,7 @@ impl Producer {
                         .mismatch
                         .as_ref()
                         .filter(|m| m.fingerprint == fingerprint && m.reason == reason)
-                        .map_or(1, |m| m.attempts + 1);
+                        .map_or(1, |m| m.attempts.saturating_add(1));
                     batch.mismatch = Some(ByteMismatch {
                         fingerprint,
                         reason: reason.clone(),
@@ -617,10 +617,10 @@ impl Producer {
         if ack.refusal.is_some()
             && !recorded
             && let Some(stored) = self
-                .recorded(std::slice::from_ref(&id))
+                .recorded(std::slice::from_ref(&ack.frame))
                 .await?
                 .into_iter()
-                .find(|ack| ack.frame == id)
+                .find(|stored| stored.frame == ack.frame)
         {
             ack = stored;
             recorded = true;

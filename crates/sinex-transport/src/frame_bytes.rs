@@ -11,6 +11,8 @@ pub enum Error {
     #[error("{0}")]
     Invalid(String),
     #[error("{0}")]
+    Mismatch(String),
+    #[error("{0}")]
     Storage(String),
 }
 
@@ -70,13 +72,13 @@ fn copy_checked(
             .checked_add(n as u64)
             .ok_or("producer byte length overflow")?;
         if copied > length {
-            return Err("producer bytes are longer than their declared length".into());
+            return Err(Error::Mismatch("producer bytes are longer than their declared length".into()));
         }
         hash.update(&buffer[..n]);
         output.write_all(&buffer[..n]).map_err(error)?;
     }
     if copied != length || format!("blake3:{}", hash.finalize().to_hex()) != blob {
-        return Err("producer bytes differ from their name or length".into());
+        return Err(Error::Mismatch("producer bytes differ from their name or length".into()));
     }
     Ok(())
 }
@@ -149,13 +151,13 @@ pub fn receive(
     };
     if let Some(mut complete) = completed {
         if complete.metadata().map_err(error)?.len() != total {
-            return Err("received producer bytes have a different length".into());
+            return Err(Error::Mismatch("received producer bytes have a different length".into()));
         }
         complete
             .seek(std::io::SeekFrom::Start(offset))
             .map_err(error)?;
         if !same_bytes(&mut complete, data)? {
-            return Err("producer resend differs from the received bytes".into());
+            return Err(Error::Mismatch("producer resend differs from the received bytes".into()));
         }
         return Ok(true);
     }
@@ -176,7 +178,7 @@ pub fn receive(
     let overlap = (have.min(end) - offset) as usize;
     file.seek(std::io::SeekFrom::Start(offset)).map_err(error)?;
     if !same_bytes(&mut file, &data[..overlap])? {
-        return Err("producer resend differs from the received prefix".into());
+        return Err(Error::Mismatch("producer resend differs from the received prefix".into()));
     }
     file.seek(std::io::SeekFrom::End(0)).map_err(error)?;
     file.write_all(&data[overlap..]).map_err(error)?;
@@ -194,7 +196,7 @@ pub fn receive(
         drop(file);
         std::fs::remove_file(&path).map_err(error)?;
         sync_directory(&dir)?;
-        return Err("producer bytes differ from their name or length".into());
+        return Err(Error::Mismatch("producer bytes differ from their name or length".into()));
     }
     std::fs::rename(&path, dir.join(name)).map_err(error)?;
     sync_directory(&dir)?;

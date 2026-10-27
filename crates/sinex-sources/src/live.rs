@@ -400,7 +400,11 @@ async fn produce_spool(
 }
 
 fn remove_passed(live: &mut Live, position: &Position) -> Result<(), Error> {
-    live.health.lock().unwrap().capture_failures = position.capture_failures.len();
+    {
+        let mut health = live.health.lock().unwrap();
+        health.capture_failures = position.capture_failures.len();
+        health.last_capture_failure = position.capture_failures.last().map(|failure| failure.reason.clone());
+    }
     let mut cursor = position.cursor.clone();
     if !position.capture_failures.is_empty() {
         cursor["keep_files"] = serde_json::to_value(

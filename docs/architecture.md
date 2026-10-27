@@ -210,7 +210,9 @@ prepared transport frames awaiting acknowledgment. `SINEX_CAPTURE_STATE` supplie
 completed data file and its sidecar. `sinexctl status` includes
 the local session report, including when the daemon is unreachable or refuses
 the status request;
-`--capture-state PATH` selects another local producer's state directory.
+`--capture-state PATH` selects another local producer's state directory. The
+local report includes binding errors, the capture failure count and its newest
+reason. Online status also counts material failures in `failures_24h`.
 `status --offline --database URL` includes the same report even when its
 database query fails. The observation time
 must be checked because the last report remains on disk after capture stops.

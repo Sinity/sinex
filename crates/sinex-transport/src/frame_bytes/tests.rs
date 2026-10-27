@@ -166,6 +166,6 @@ fn storage_faults_and_invalid_content_have_different_errors() {
             length,
             b"different".as_slice()
         ),
-        Err(Error::Invalid(_))
+        Err(Error::Mismatch(_))
     ));
 }
