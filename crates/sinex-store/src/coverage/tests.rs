@@ -18,10 +18,10 @@ async fn evidence_keeps_visibility_positions_unknown_times_and_archived_run_reco
             .bind(sequence).execute(&mut conn).await.unwrap();
     }
     let before = sinex_schema::catalog(&mut conn).await.unwrap();
-    conn.execute("DROP INDEX core.events_coverage")
-        .await
-        .unwrap();
-    conn.execute("UPDATE sinex_schema.applied SET version = 2")
+    sqlx::raw_sql(include_str!(
+        "../../../sinex-schema/src/tests/version_two.sql"
+    ))
+        .execute(&mut conn)
         .await
         .unwrap();
     sinex_schema::apply(&mut conn).await.unwrap();
