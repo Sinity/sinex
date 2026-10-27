@@ -37,7 +37,9 @@ impl Intake<'_> {
     ) -> Result<Submission, String> {
         self.submit_using(acquired, carry, totals, |batch, check| async move {
             let result = if self.atomic {
-                self.writer.submit_checked(self.priority, batch, check).await
+                self.writer
+                    .submit_checked(self.priority, batch, check)
+                    .await
             } else {
                 self.writer.submit_source(self.priority, batch, check).await
             };

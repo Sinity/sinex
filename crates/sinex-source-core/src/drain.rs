@@ -356,9 +356,16 @@ impl<P: Parser> Iterator for Drainer<'_, P> {
                     ))));
                 }
             };
-            let raw = match crate::drivers::dir_snapshot::decode_record(self.input.manifest, start, raw) {
+            let raw = match crate::drivers::dir_snapshot::decode_record(
+                self.input.manifest,
+                start,
+                raw,
+            ) {
                 Ok(raw) => raw,
-                Err(error) => { self.finished = true; return Some(Err(error)); }
+                Err(error) => {
+                    self.finished = true;
+                    return Some(Err(error));
+                }
             };
             // Only spaces and newlines: no record is there, so nothing is
             // read and nothing fails.

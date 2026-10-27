@@ -466,8 +466,7 @@ fn capture_inputs(
         }
         let configured = context.sources.get(spec.name).cloned().unwrap_or_default();
         for stream in format.discovery.streams {
-            let mut options: serde_json::Value =
-                stream.settings();
+            let mut options: serde_json::Value = stream.settings();
             if stream.capabilities.contains(&"watch") {
                 options["roots"] = json!(context.watch);
             }

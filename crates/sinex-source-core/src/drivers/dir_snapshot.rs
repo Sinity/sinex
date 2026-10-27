@@ -37,8 +37,8 @@ type FileMemory = HashMap<PathBuf, Option<(u64, i128, [u8; 32])>>;
 
 mod format;
 mod paths;
-mod tar;
 mod restore;
+mod tar;
 pub(crate) use format::{decode as decode_record, validate as validate_records};
 
 pub struct DirSnapshot {
@@ -217,7 +217,13 @@ impl DirSnapshot {
             }
             // Source failures leave this file's remembered facts unchanged, so
             // the next poll retries it. Bundle writes still fail the poll.
-            let captured = tar::capture(&self.root.join(relative), relative, &mut bundle, *size, *changed)?;
+            let captured = tar::capture(
+                &self.root.join(relative),
+                relative,
+                &mut bundle,
+                *size,
+                *changed,
+            )?;
             let captured = match captured {
                 Ok(Some(captured)) => captured,
                 Ok(None) => {
@@ -247,7 +253,9 @@ impl DirSnapshot {
             next_retries.remove(relative);
             next_files.insert(relative.clone(), Some((*size, *changed, captured.hash)));
             let offset = captured.offset;
-            let end = offset.checked_add(captured.length).ok_or_else(|| DriverError::Io("tar exceeds addressable size".into()))?;
+            let end = offset
+                .checked_add(captured.length)
+                .ok_or_else(|| DriverError::Io("tar exceeds addressable size".into()))?;
             members.push(json!({
                 "path": display,
                 "stream_offset": offset,
@@ -288,7 +296,11 @@ impl DirSnapshot {
                 next_retries.remove(&relative);
                 let display = paths::display(&relative);
                 let marker = removed_marker(&display);
-                let offset = tar::marker(&mut bundle, &format!(".sinex-membership/{}", members.len()), &marker)?;
+                let offset = tar::marker(
+                    &mut bundle,
+                    &format!(".sinex-membership/{}", members.len()),
+                    &marker,
+                )?;
                 members.push(json!({
                     "path": display,
                     "stream_offset": offset,
@@ -398,7 +410,9 @@ impl DirSnapshot {
             material: Some(NewMaterial {
                 id,
                 bytes: Vec::new(),
-                stored: Some(StoredBytes::FramedFile(Arc::new(bundle.into_inner().map_err(io)?))),
+                stored: Some(StoredBytes::FramedFile(Arc::new(
+                    bundle.into_inner().map_err(io)?,
+                ))),
                 records,
                 part_index,
                 previous_part,
@@ -439,7 +453,11 @@ fn entry_failure(
 ) -> Result<(), DriverError> {
     let display = paths::display(path);
     let marker = json!({"path": display, "read_error": reason}).to_string();
-    let offset = tar::marker(bundle, &format!(".sinex-membership/{}", members.len()), marker.as_bytes())?;
+    let offset = tar::marker(
+        bundle,
+        &format!(".sinex-membership/{}", members.len()),
+        marker.as_bytes(),
+    )?;
     *length = tar::position(bundle)?;
     members.push(json!({
         "path": display,

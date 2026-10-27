@@ -286,12 +286,18 @@ pub const FORMAT: sinex_source_core::binding::InputFormat =
             streams: &[
                 sinex_source_core::discovery::CaptureStream {
                     spool: "screen",
-                    options: &[sinex_source_core::discovery::CaptureOption { name: "kind", value: sinex_source_core::discovery::CaptureValue::Text("screen") }],
+                    options: &[sinex_source_core::discovery::CaptureOption {
+                        name: "kind",
+                        value: sinex_source_core::discovery::CaptureValue::Text("screen"),
+                    }],
                     capabilities: &["wayland", "grim"],
                 },
                 sinex_source_core::discovery::CaptureStream {
                     spool: "audio",
-                    options: &[sinex_source_core::discovery::CaptureOption { name: "kind", value: sinex_source_core::discovery::CaptureValue::Text("audio") }],
+                    options: &[sinex_source_core::discovery::CaptureOption {
+                        name: "kind",
+                        value: sinex_source_core::discovery::CaptureValue::Text("audio"),
+                    }],
                     capabilities: &["pipewire", "pw-record"],
                 },
             ],

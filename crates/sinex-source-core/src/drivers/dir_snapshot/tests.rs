@@ -104,7 +104,9 @@ fn record(m: &NewMaterial, index: usize) -> Vec<u8> {
     let (start, end) = m.records[index];
     let mut bytes = vec![0; end - start];
     file.read_exact_at(&mut bytes, start as u64).unwrap();
-    format::decode(&m.manifest, start, bytes.into()).unwrap().into_owned()
+    format::decode(&m.manifest, start, bytes.into())
+        .unwrap()
+        .into_owned()
 }
 
 struct Refuse;
@@ -690,12 +692,28 @@ fn open_and_read_errors_belong_to_the_entry() {
     let dir = tempfile::tempdir().unwrap();
     let mut bundle = tar::Archive::new(tempfile::tempfile().unwrap());
     assert!(
-        tar::capture(&dir.path().join("missing"), Path::new("missing"), &mut bundle, 0, 0)
-            .unwrap()
-            .is_err()
+        tar::capture(
+            &dir.path().join("missing"),
+            Path::new("missing"),
+            &mut bundle,
+            0,
+            0
+        )
+        .unwrap()
+        .is_err()
     );
     // On Unix a directory can be opened but cannot be read as file bytes.
-    assert!(tar::capture(dir.path(), Path::new("directory"), &mut bundle, 0, tar::change_time(&dir.path().metadata().unwrap())).unwrap().is_err());
+    assert!(
+        tar::capture(
+            dir.path(),
+            Path::new("directory"),
+            &mut bundle,
+            0,
+            tar::change_time(&dir.path().metadata().unwrap())
+        )
+        .unwrap()
+        .is_err()
+    );
 }
 
 fn final_cursor(acquired: &Acquired) -> Value {
@@ -734,18 +752,31 @@ fn poll_entries(
 #[devkit::test]
 fn tar_members_with_verbatim_percent_names_restore_without_new_records() {
     let dir = tempfile::tempdir().unwrap();
-    for name in ["100% done.md", "foo%20bar.md"] { std::fs::write(dir.path().join(name), "text").unwrap(); }
+    for name in ["100% done.md", "foo%20bar.md"] {
+        std::fs::write(dir.path().join(name), "text").unwrap();
+    }
     let d = driver(dir.path().to_owned(), 1 << 20);
     let first = d.poll(&Value::Null, &mut DirState::default()).unwrap();
     let material = first.material.as_ref().unwrap();
     let mut state = DirState::default();
-    state.remember_members(&material.manifest, material.records.last().unwrap().1 as u64).unwrap();
+    state
+        .remember_members(
+            &material.manifest,
+            material.records.last().unwrap().1 as u64,
+        )
+        .unwrap();
     state.finish_remembering();
     assert!(d.poll(&Value::Null, &mut state).unwrap().material.is_none());
     assert!(state.files.contains_key(Path::new("100% done.md")));
     assert!(state.files.contains_key(Path::new("foo%20bar.md")));
     assert_eq!(paths(&first), ["100% done.md", "foo%20bar.md"]);
-    assert!(material.manifest.members.iter().all(|member| !member.details.contains_key("native_path_bytes")));
+    assert!(
+        material
+            .manifest
+            .members
+            .iter()
+            .all(|member| !member.details.contains_key("native_path_bytes"))
+    );
 }
 
 #[devkit::test]

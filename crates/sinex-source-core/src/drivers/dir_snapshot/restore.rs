@@ -209,8 +209,7 @@ fn facts(member: &sinex_model::Member) -> Result<Facts, DriverError> {
         .ok_or_else(invalid)?;
     let node = member.node.as_ref().ok_or_else(invalid)?;
     let size = node.size;
-    let mtime = node.ctime_ns.parse::<i128>().ok()
-        .ok_or_else(invalid)?;
+    let mtime = node.ctime_ns.parse::<i128>().ok().ok_or_else(invalid)?;
     Ok(Some((size, mtime, *hash.as_bytes())))
 }
 

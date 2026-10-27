@@ -42,9 +42,17 @@ pub enum CaptureValue {
 
 impl CaptureStream {
     pub fn settings(&self) -> Value {
-        Value::Object(self.options.iter().map(|option| {
-            (option.name.to_owned(), serde_json::to_value(option.value).expect("capture value"))
-        }).collect())
+        Value::Object(
+            self.options
+                .iter()
+                .map(|option| {
+                    (
+                        option.name.to_owned(),
+                        serde_json::to_value(option.value).expect("capture value"),
+                    )
+                })
+                .collect(),
+        )
     }
 }
 

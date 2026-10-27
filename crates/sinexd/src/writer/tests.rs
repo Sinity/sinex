@@ -321,7 +321,9 @@ async fn a_batch_whose_bytes_are_not_stored_is_refused(db: devkit::pg::TestDatab
 }
 
 #[devkit::test]
-async fn source_content_refusals_keep_material_failures_and_advance_the_cursor(db: devkit::pg::TestDatabase) {
+async fn source_content_refusals_keep_material_failures_and_advance_the_cursor(
+    db: devkit::pg::TestDatabase,
+) {
     use sinex_model::{InputRef, Manifest, MaterialRef, RevisionChange, SourceProgress};
     let url = db.url(None);
     let connection = PgConnection::connect(&url).await.unwrap();
@@ -331,32 +333,79 @@ async fn source_content_refusals_keep_material_failures_and_advance_the_cursor(d
     let bytes = b"unknown source kind";
     let blob = blobs.put(bytes).unwrap();
     let material = MaterialId::new();
-    let location = RecordLocation { material, anchor: 0 };
+    let location = RecordLocation {
+        material,
+        anchor: 0,
+    };
     let mut bad = batch("x");
-    if let RecordOutcome::Events { location: record_location, events } = &mut bad.records[0] {
+    if let RecordOutcome::Events {
+        location: record_location,
+        events,
+    } = &mut bad.records[0]
+    {
         *record_location = Some(location);
-        events[0].origin = Origin::Record { location, output_index: 0 };
+        events[0].origin = Origin::Record {
+            location,
+            output_index: 0,
+        };
         events[0].event_type = "synthetic.unknown".into();
     }
     bad.kind = BatchKind::Source(Box::new(SourceProgress {
-        binding: "synthetic-refusal".into(), data_keys: vec![],
-        input: InputRef { kind: "file".into(), locator: "synthetic".into(), host: "h".into() },
-        observation: Default::default(), revision: RevisionChange::Appended,
-        material: Some(MaterialRef { id: material, input: None, blob: blob.clone(), length: bytes.len() as u64,
-            part_index: 0, previous_part: None, parser: "synthetic".into(), parser_version: 1, manifest: Manifest::default() }),
-        cursor: serde_json::json!({"offset": bytes.len()}), carry: serde_json::Value::Null, memory: None,
+        binding: "synthetic-refusal".into(),
+        data_keys: vec![],
+        input: InputRef {
+            kind: "file".into(),
+            locator: "synthetic".into(),
+            host: "h".into(),
+        },
+        observation: Default::default(),
+        revision: RevisionChange::Appended,
+        material: Some(MaterialRef {
+            id: material,
+            input: None,
+            blob: blob.clone(),
+            length: bytes.len() as u64,
+            part_index: 0,
+            previous_part: None,
+            parser: "synthetic".into(),
+            parser_version: 1,
+            manifest: Manifest::default(),
+        }),
+        cursor: serde_json::json!({"offset": bytes.len()}),
+        carry: serde_json::Value::Null,
+        memory: None,
     }));
     let (handle, queues) = channels();
-    let writer = tokio::spawn(run(url, connection, queues, Arc::new(sinex_store::NoDerivations), Some(blobs.clone())));
-    let outcome = handle.submit_source(Priority::Live, bad, Arc::new(|| Ok(()))).await.unwrap();
+    let writer = tokio::spawn(run(
+        url,
+        connection,
+        queues,
+        Arc::new(sinex_store::NoDerivations),
+        Some(blobs.clone()),
+    ));
+    let outcome = handle
+        .submit_source(Priority::Live, bad, Arc::new(|| Ok(())))
+        .await
+        .unwrap();
     assert_eq!(outcome.admitted, 0);
     assert_eq!(outcome.failures, 1);
     let failures: i64 = sqlx::query_scalar("SELECT count(*) FROM raw.failures WHERE material_id=$1 AND anchor=0 AND reason LIKE 'content refused:%'").bind(material.0).fetch_one(&mut reader).await.unwrap();
     assert_eq!(failures, 1);
-    let cursor: Value = sqlx::query_scalar("SELECT cursor FROM raw.positions WHERE binding='synthetic-refusal'").fetch_one(&mut reader).await.unwrap();
+    let cursor: Value =
+        sqlx::query_scalar("SELECT cursor FROM raw.positions WHERE binding='synthetic-refusal'")
+            .fetch_one(&mut reader)
+            .await
+            .unwrap();
     assert_eq!(cursor["offset"], bytes.len());
     assert!(blobs.contains(&blob).unwrap());
-    assert_eq!(handle.submit(Priority::Live, batch("after refusal")).await.unwrap().admitted, 1);
+    assert_eq!(
+        handle
+            .submit(Priority::Live, batch("after refusal"))
+            .await
+            .unwrap()
+            .admitted,
+        1
+    );
     drop(handle);
     writer.await.unwrap();
 }

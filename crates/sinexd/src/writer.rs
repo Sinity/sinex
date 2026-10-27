@@ -141,7 +141,10 @@ impl WriterHandle {
     }
     /// A source advances past refused content, retaining its bytes and failures.
     pub(crate) async fn submit_source(
-        &self, priority: Priority, batch: Batch, check: AdmissionCheck,
+        &self,
+        priority: Priority,
+        batch: Batch,
+        check: AdmissionCheck,
     ) -> Result<Outcome, WriteError> {
         match self.send(priority, WriterJob::Source(batch, check)).await? {
             Done::Admitted(outcome) => Ok(outcome),
@@ -325,19 +328,30 @@ pub(crate) async fn run_notifying(
             else => return,
         };
         let result = match job.work {
-            WriterJob::Admit(batch) => {
-                admit_checked(&mut connection, &batch, keys.as_ref(), store, &|| Ok(()), false)
-                    .await
-                    .map(Done::Admitted)
-            }
-            WriterJob::Checked(batch, check) => {
-                admit_checked(&mut connection, &batch, keys.as_ref(), store, &*check, false)
-                    .await
-                    .map(Done::Admitted)
-            }
+            WriterJob::Admit(batch) => admit_checked(
+                &mut connection,
+                &batch,
+                keys.as_ref(),
+                store,
+                &|| Ok(()),
+                false,
+            )
+            .await
+            .map(Done::Admitted),
+            WriterJob::Checked(batch, check) => admit_checked(
+                &mut connection,
+                &batch,
+                keys.as_ref(),
+                store,
+                &*check,
+                false,
+            )
+            .await
+            .map(Done::Admitted),
             WriterJob::Source(batch, check) => {
                 admit_checked(&mut connection, &batch, keys.as_ref(), store, &*check, true)
-                    .await.map(Done::Admitted)
+                    .await
+                    .map(Done::Admitted)
             }
             WriterJob::Replay(mut sequence) => {
                 replay_sequence(&mut connection, &mut sequence, keys.as_ref())
@@ -410,12 +424,15 @@ async fn admit_checked(
         }
         Err(error) => {
             tx.rollback().await.map_err(database_error)?;
-            if record_refusals && content_error(&error)
+            if record_refusals
+                && content_error(&error)
                 && let Some(failed) = refused_source(batch, &error.to_string())
             {
                 check().map_err(WriteError::Refused)?;
                 let mut tx = connection.begin().await.map_err(database_error)?;
-                let outcome = sinex_store::admit(&mut tx, &failed, keys).await.map_err(store_error)?;
+                let outcome = sinex_store::admit(&mut tx, &failed, keys)
+                    .await
+                    .map_err(store_error)?;
                 check().map_err(WriteError::Refused)?;
                 tx.commit().await.map_err(database_error)?;
                 return Ok(outcome);
@@ -427,19 +444,26 @@ async fn admit_checked(
 
 fn content_error(error: &sinex_store::Error) -> bool {
     match error {
-        sinex_store::Error::Invalid(_) | sinex_store::Error::Schema(sinex_schema::Error::Declaration(_)) => true,
-        sinex_store::Error::Database(error) => error.as_database_error().and_then(|error| error.code()).is_some_and(|code| code.starts_with("22") || code.starts_with("23")),
+        sinex_store::Error::Invalid(_)
+        | sinex_store::Error::Schema(sinex_schema::Error::Declaration(_)) => true,
+        sinex_store::Error::Database(error) => error
+            .as_database_error()
+            .and_then(|error| error.code())
+            .is_some_and(|code| code.starts_with("22") || code.starts_with("23")),
         _ => false,
     }
 }
 
 fn refused_source(batch: &Batch, reason: &str) -> Option<Batch> {
-    if !matches!(batch.kind, sinex_model::BatchKind::Source(_)) { return None; }
+    if !matches!(batch.kind, sinex_model::BatchKind::Source(_)) {
+        return None;
+    }
     let mut failed = batch.clone();
     for record in &mut failed.records {
         if let sinex_model::RecordOutcome::Events { location, .. } = record {
             *record = sinex_model::RecordOutcome::Failure {
-                location: (*location)?, reason: format!("content refused: {reason}"),
+                location: (*location)?,
+                reason: format!("content refused: {reason}"),
             };
         }
     }

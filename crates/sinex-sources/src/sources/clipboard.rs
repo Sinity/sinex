@@ -228,12 +228,18 @@ pub const FORMAT: sinex_source_core::binding::InputFormat =
             streams: &[
                 sinex_source_core::discovery::CaptureStream {
                     spool: "clipboard",
-                    options: &[sinex_source_core::discovery::CaptureOption { name: "selection", value: sinex_source_core::discovery::CaptureValue::Text("clipboard") }],
+                    options: &[sinex_source_core::discovery::CaptureOption {
+                        name: "selection",
+                        value: sinex_source_core::discovery::CaptureValue::Text("clipboard"),
+                    }],
                     capabilities: &[],
                 },
                 sinex_source_core::discovery::CaptureStream {
                     spool: "primary",
-                    options: &[sinex_source_core::discovery::CaptureOption { name: "selection", value: sinex_source_core::discovery::CaptureValue::Text("primary") }],
+                    options: &[sinex_source_core::discovery::CaptureOption {
+                        name: "selection",
+                        value: sinex_source_core::discovery::CaptureValue::Text("primary"),
+                    }],
                     capabilities: &[],
                 },
             ],
