@@ -585,7 +585,7 @@ async fn unclean_stop_checks_only_recorded_names_after_database_progress(
     let found = delete_files_without_rows(&mut conn, &reopened)
         .await
         .unwrap();
-    assert_eq!(found.deleted, [orphan.clone()]);
+    assert_eq!(found.deleted.as_slice(), std::slice::from_ref(&orphan));
     assert!(found.not_blobs.is_empty());
     assert!(reopened.contains(&historical).unwrap());
     assert!(reopened.contains(&admitted).unwrap());
