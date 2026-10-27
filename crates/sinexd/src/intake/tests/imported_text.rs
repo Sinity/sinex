@@ -53,14 +53,21 @@ async fn replay(ctx: &mut ReaderContext, binding: &Binding) {
 }
 
 #[devkit::test]
-async fn binary_document_is_admitted_guarded_and_replayed_without_the_root(
+async fn sparse_binary_document_is_admitted_guarded_and_replayed_without_the_root(
     db: devkit::pg::TestDatabase,
 ) {
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path().join("documents");
     std::fs::create_dir(&root).unwrap();
-    let bytes = vec![0xff; (2 << 20) + 1];
-    std::fs::write(root.join("example.bin"), &bytes).unwrap();
+    use std::os::unix::fs::FileExt;
+    let mut bytes = vec![0; (2 << 20) + 1];
+    bytes[..4].copy_from_slice(b"head");
+    let tail = bytes.len() - 4;
+    bytes[tail..].copy_from_slice(b"tail");
+    let file = std::fs::File::create(root.join("example.bin")).unwrap();
+    file.set_len(bytes.len() as u64).unwrap();
+    file.write_all_at(b"head", 0).unwrap();
+    file.write_all_at(b"tail", tail as u64).unwrap();
     let mut ctx = ReaderContext::open(&db.url(None), &dir.path().join("store"))
         .await
         .unwrap();
@@ -82,12 +89,14 @@ async fn binary_document_is_admitted_guarded_and_replayed_without_the_root(
             .unwrap();
     let manifest: sinex_model::Manifest = serde_json::from_value(manifest).unwrap();
     let member = manifest.member_at(row.1 as usize).unwrap();
-    assert_eq!(
-        ctx.blobs
-            .read_range(&blob, member.stream_offset, member.length)
-            .unwrap(),
-        bytes
-    );
+    let node = member.node.as_ref().unwrap();
+    assert_eq!(node.size, bytes.len() as u64);
+    assert!(node.sparse.is_some());
+    assert!(member.length < node.size);
+    let stored = ctx.blobs.read_range(&blob, member.stream_offset, member.length).unwrap();
+    assert!(stored.starts_with(b"head"));
+    assert!(stored.ends_with(b"tail"));
+
     std::fs::remove_dir_all(&root).unwrap();
     replay(&mut ctx, &binding).await;
     assert_eq!(live(&mut ctx, "document.captured").await, before);

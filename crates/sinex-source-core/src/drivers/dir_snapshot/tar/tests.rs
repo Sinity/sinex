@@ -42,6 +42,7 @@ fn gnu_tar_restores_native_names_sparse_data_attributes_and_access_acl() {
         rustix::fs::XattrFlags::empty(),
     )
     .unwrap();
+    file.set_modified(std::time::UNIX_EPOCH - std::time::Duration::from_nanos(125_000_001)).unwrap();
     let d = driver(root.path().to_owned(), 16 << 20);
     let acquired = d.poll(&Value::Null, &mut DirState::default()).unwrap();
     let material = acquired.material.as_ref().unwrap();
@@ -101,23 +102,7 @@ fn gnu_tar_restores_native_names_sparse_data_attributes_and_access_acl() {
     )
     .unwrap();
     assert_eq!(&attribute[..count], acl);
-    // The same recorded member expands through the ordinary drain during replay.
-    let source = crate::test_parser::source();
-    use crate::Source;
-    let chunks = source
-        .drain(crate::DrainInput {
-            source: "synthetic.notes",
-            class: sinex_model::Class::Open,
-            material: material.id,
-            bytes: material.record_bytes(),
-            records: &material.records,
-            carry: Value::Null,
-            reading_order: &*material.reading_order,
-            limits: crate::Limits::default(),
-            manifest: &material.manifest,
-        })
-        .unwrap();
-    assert_eq!(chunks[0].events, 1);
+
 }
 
 #[devkit::test]

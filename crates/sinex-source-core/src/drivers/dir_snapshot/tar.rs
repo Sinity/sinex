@@ -189,6 +189,7 @@ pub(super) fn marker(output: &mut Archive, bytes: &[u8]) -> Result<usize, Driver
         .checked_add(512 + prefix)
         .ok_or_else(|| DriverError::Io("tar offset exceeds addressable size".into()))?;
     let mut header = tar::Header::new_ustar();
+    header.set_path("PaxHeaders/membership").map_err(io)?;
     header.set_entry_type(tar::EntryType::XGlobalHeader);
     header.set_size(body.len() as u64);
     header.set_cksum();
@@ -229,8 +230,14 @@ fn header(
     Ok(header)
 }
 
-fn extensions(output: &mut Archive, fields: BTreeMap<Vec<u8>, Vec<u8>>) -> std::io::Result<()> {
+fn extensions(output: &mut Archive, mut fields: BTreeMap<Vec<u8>, Vec<u8>>) -> std::io::Result<()> {
     let mut bytes = Vec::new();
+    // GNU tar reads the sparse count before allocating its map.
+    for key in [b"GNU.sparse.size".as_slice(), b"GNU.sparse.numblocks", b"GNU.sparse.name", b"GNU.sparse.map"] {
+        if let Some(value) = fields.remove(key) {
+            bytes.extend(pax_record(key, &value)?);
+        }
+    }
     for (key, value) in fields {
         bytes.extend(pax_record(&key, &value)?);
     }

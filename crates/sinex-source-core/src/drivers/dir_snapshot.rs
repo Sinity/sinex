@@ -303,7 +303,6 @@ impl DirSnapshot {
                 }));
                 paths::add_native(members.last_mut().expect("member added"), &relative);
                 records.push((offset, offset + marker.len()));
-                length = tar::position(&mut bundle)?;
             }
         }
         if complete {
