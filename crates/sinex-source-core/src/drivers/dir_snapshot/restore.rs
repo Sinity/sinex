@@ -24,7 +24,7 @@ impl DirState {
             if member.details.contains_key("read_error") {
                 continue;
             }
-            let path = paths::native(&member.path)?;
+            let path = paths::native(member)?;
             if !self.remembered.insert(path.to_owned()) {
                 continue;
             }
