@@ -222,6 +222,15 @@ pub async fn drain(
         return Err("private mode pauses spool production".into());
     }
     for (format, binding) in bindings {
+        producer
+            .position(&binding.name, positions, store)
+            .await
+            .map_err(|error| error.to_string())?;
+        match std::fs::metadata(&binding.input) {
+            Ok(_) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(error) => return Err(format!("{}: {error}", binding.input.display())),
+        }
         let source = sources::source_for(&binding)?;
         let mut reader =
             (format

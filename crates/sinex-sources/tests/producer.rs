@@ -173,8 +173,13 @@ async fn draining_after_physical_state_relocation_preserves_names_and_admitted_p
         ..Default::default()
     };
     let bindings = discovery::spools(&context, discovery::Owner::Session).unwrap();
-    assert_eq!(bindings.len(), 1);
-    let name = bindings[0].1.name.clone();
+    let name = bindings
+        .iter()
+        .find(|(_, binding)| binding.source == "desktop.hyprland")
+        .unwrap()
+        .1
+        .name
+        .clone();
     let store = Store::open(&root.path().join("store")).unwrap();
     let positions = state.join("positions");
     let mut producer = Producer::connect(nats.url(), None, subjects, "session-test")
@@ -190,7 +195,7 @@ async fn draining_after_physical_state_relocation_preserves_names_and_admitted_p
     std::fs::rename(&state, &destination).unwrap();
     symlink(&destination, &state).unwrap();
     let bindings = discovery::spools(&context, discovery::Owner::Session).unwrap();
-    assert_eq!(bindings[0].1.name, name);
+    assert!(bindings.iter().any(|(_, binding)| binding.name == name));
     live::drain(&mut producer, &store, &positions, bindings)
         .await
         .unwrap();
@@ -204,4 +209,75 @@ async fn draining_after_physical_state_relocation_preserves_names_and_admitted_p
         admitted.cursor
     );
     assert!(destination.join("positions").is_dir());
+}
+
+#[devkit::test(multi_thread)]
+async fn drain_retries_pending_frames_even_when_the_spool_directory_is_absent() {
+    use sinex_source_core::drivers::live_stream::{Rotation, SpoolWriter};
+    use sinex_sources::{discovery, live};
+    let nats = devkit::nats::test_nats().unwrap();
+    let subjects = Subjects::new(nats.prefix());
+    let root = tempfile::tempdir().unwrap();
+    let spool_root = root.path().join("spool");
+    let spool = spool_root.join("hyprland");
+    let mut writer = SpoolWriter::open(&spool, Rotation::default()).unwrap();
+    writer
+        .append(
+            sinex_model::Timestamp::now(),
+            b"activewindow>>kitty,synthetic retry",
+        )
+        .unwrap();
+    writer.sync().unwrap();
+    drop(writer);
+    let context = discovery::DiscoveryContext {
+        host: "h".into(),
+        spool: spool_root,
+        ..Default::default()
+    };
+    let store = Store::open(&root.path().join("store")).unwrap();
+    let positions = root.path().join("positions");
+    let mut producer = Producer::connect(nats.url(), None, subjects.clone(), "session-test")
+        .await
+        .unwrap();
+    let error = live::drain(
+        &mut producer,
+        &store,
+        &positions,
+        discovery::spools(&context, discovery::Owner::Session).unwrap(),
+    )
+    .await
+    .unwrap_err();
+    assert!(
+        error.contains("no stream found for given subject"),
+        "{error}"
+    );
+    drop(producer);
+    std::fs::rename(&spool, root.path().join("retained-spool")).unwrap();
+    let received = standin(&nats, &subjects, "session-test").await;
+    let mut producer = Producer::connect(nats.url(), None, subjects, "session-test")
+        .await
+        .unwrap();
+    live::drain(
+        &mut producer,
+        &store,
+        &positions,
+        discovery::spools(&context, discovery::Owner::Session).unwrap(),
+    )
+    .await
+    .unwrap();
+    assert!(
+        received
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|frame| matches!(frame, Ingress::Events { .. }))
+    );
+    assert!(std::fs::read_dir(&positions).unwrap().all(|entry| {
+        !entry
+            .unwrap()
+            .file_name()
+            .to_string_lossy()
+            .contains("unacknowledged")
+    }));
+    assert!(!spool.exists());
 }
