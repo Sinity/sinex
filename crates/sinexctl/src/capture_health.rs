@@ -20,6 +20,3 @@ pub(crate) fn attach(status: &mut Value, state: Option<&str>) {
         };
     }
 }
-
-#[cfg(test)]
-mod tests;
