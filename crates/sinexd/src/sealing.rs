@@ -322,15 +322,15 @@ pub(crate) fn seal_records(
     Ok(())
 }
 
-pub(crate) async fn replay_keys<'a>(
+pub(crate) async fn replay_keys(
     conn: &mut PgConnection,
     blobs: &Blobs,
-    materials: impl IntoIterator<Item = (uuid::Uuid, &'a str)>,
+    materials: Vec<(uuid::Uuid, String)>,
     unlock: Option<&Unlock>,
 ) -> Result<std::collections::HashMap<uuid::Uuid, sinex_sealing::DataKey>, String> {
     let mut keys = std::collections::HashMap::new();
     for (material, blob) in materials {
-        if blobs.is_sealed(blob).map_err(|e| e.to_string())? {
+        if blobs.is_sealed(&blob).map_err(|e| e.to_string())? {
             let unlock = unlock.ok_or_else(|| {
                 format!("material {material}: sealed replay needs an operator unlock and --sealed")
             })?;

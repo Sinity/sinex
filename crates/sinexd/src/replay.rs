@@ -199,7 +199,8 @@ pub(crate) async fn run(
                 .filter(|material| {
                     material.manifest.role != sinex_model::MaterialRole::OriginalArchive
                 })
-                .map(|material| (material.id, material.blob.as_str())),
+                .map(|material| (material.id, material.blob.clone()))
+                .collect(),
             o.unlock.as_ref(),
         )
         .await?;

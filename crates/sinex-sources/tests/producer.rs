@@ -86,7 +86,7 @@ async fn standin_with_refusal(
 /// Produce a Hyprland spool against the stand-in: material first, once.
 #[devkit::test(multi_thread)]
 async fn a_spool_is_produced_once_material_first() {
-    use crate::drivers::live_stream::{Rotation, SpoolWriter, capture_lines};
+    use sinex_source_core::drivers::live_stream::{Rotation, SpoolWriter, capture_lines};
     use sinex_sources::sources::hyprland;
 
     let nats = devkit::nats::test_nats().unwrap();
