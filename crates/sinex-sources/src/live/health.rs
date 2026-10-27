@@ -2,12 +2,12 @@
 use super::*;
 use std::io::{BufRead, Seek};
 
-/// Count captured frames (lines or completed media segments) after the
-/// acknowledged spool cursor. Partial lines contribute bytes, not frames.
+/// Count captured records (lines or completed media segments) after the
+/// acknowledged spool cursor. Partial lines contribute bytes, not records.
 fn backlog(binding: &Binding, cursor: &Value) -> Result<Value, String> {
     let media = sources::source_for(binding)?.spec().driver == sinex_source_core::Driver::Media;
     let mut bytes = 0u64;
-    let mut frames = 0u64;
+    let mut records = 0u64;
     let result = (|| -> std::io::Result<()> {
         if media {
             let last = cursor.get("last").and_then(Value::as_str);
@@ -19,7 +19,7 @@ fn backlog(binding: &Binding, cursor: &Value) -> Result<Value, String> {
                         Err(error) => return Err(error),
                     };
                     bytes += length;
-                    frames += 1;
+                    records += 1;
                 }
             }
         } else {
@@ -49,7 +49,7 @@ fn backlog(binding: &Binding, cursor: &Value) -> Result<Value, String> {
                     if buffer.is_empty() {
                         break;
                     }
-                    frames += buffer.iter().filter(|&&byte| byte == b'\n').count() as u64;
+                    records += buffer.iter().filter(|&&byte| byte == b'\n').count() as u64;
                     let length = buffer.len();
                     reader.consume(length);
                 }
@@ -58,7 +58,7 @@ fn backlog(binding: &Binding, cursor: &Value) -> Result<Value, String> {
         Ok(())
     })();
     match result {
-        Ok(()) => Ok(serde_json::json!({"bytes": bytes, "frames": frames})),
+        Ok(()) => Ok(serde_json::json!({"bytes": bytes, "records": records})),
         Err(e) => Err(format!("{}: {e}", binding.input.display())),
     }
 }
@@ -67,7 +67,11 @@ fn snapshot(positions: &Path, bindings: &[Binding]) -> Result<(), String> {
     let spools = bindings.iter().map(|binding| {
         // A corrupt position cannot be repaired by publishing or reconnecting.
         let position = Position::load(positions, &binding.name).map_err(|e| e.to_string())?;
-        let status = backlog(binding, &position.cursor);
+        let frames = Producer::unacknowledged_frames(&binding.name, positions).map_err(|e| e.to_string())?;
+        let status = backlog(binding, &position.cursor).map(|mut status| {
+            status["frames"] = serde_json::json!(frames);
+            status
+        });
         Ok(serde_json::json!({
             "binding": binding.name,
             "spool": binding.input,

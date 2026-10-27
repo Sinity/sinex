@@ -184,7 +184,8 @@ repair them.
 
 Every two seconds the producer writes `positions/health.json` in its state
 directory, independently of publishing. It reports the observation time and
-unpublished captured bytes and frames for each spool. `sinexctl status` includes
+unpublished captured bytes and records for each spool, plus the number of
+prepared transport frames awaiting acknowledgment. `sinexctl status` includes
 the local session report, including when the daemon is unreachable;
 `--capture-state PATH` selects another local producer's state directory.
 `status --offline --database URL` includes the same report. The observation time

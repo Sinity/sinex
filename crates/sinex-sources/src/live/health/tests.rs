@@ -3,7 +3,7 @@ use serde_json::json;
 use sinex_source_core::drivers::live_stream::{Rotation, SpoolWriter};
 
 #[devkit::test]
-fn report_counts_only_frames_after_the_acknowledged_position() {
+fn report_counts_only_records_after_the_acknowledged_position() {
     let dir = tempfile::tempdir().unwrap();
     let spool = dir.path().join("spool");
     let positions = dir.path().join("positions");
@@ -36,7 +36,7 @@ fn report_counts_only_frames_after_the_acknowledged_position() {
         serde_json::from_slice(&std::fs::read(positions.join("health.json")).unwrap()).unwrap();
     assert_eq!(
         report["spools"][0]["unpublished"],
-        json!({"bytes": total_bytes - first_bytes, "frames": 1})
+        json!({"bytes": total_bytes - first_bytes, "records": 1, "frames": 0})
     );
     assert!(report["observed_at"].is_string());
 }
@@ -52,7 +52,7 @@ fn media_backlog_excludes_committed_segments() {
     }
     assert_eq!(
         backlog(&binding, &json!({"last":"1-2.screen"})).unwrap(),
-        json!({"bytes":14,"frames":1})
+        json!({"bytes":14,"records":1})
     );
 }
 
@@ -66,7 +66,7 @@ fn a_player_uses_line_backlog_and_a_corrupt_position_stops_reporting() {
     std::fs::write(spool.join("000000000000.ndjson"), b"synthetic\n").unwrap();
     assert_eq!(
         backlog(&binding, &Value::Null).unwrap(),
-        json!({"bytes":10,"frames":1})
+        json!({"bytes":10,"records":1})
     );
     Position::default().save(&positions, &binding.name).unwrap();
     let position_file = std::fs::read_dir(&positions)
