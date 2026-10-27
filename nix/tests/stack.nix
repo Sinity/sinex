@@ -6,6 +6,8 @@ self: {
   name = "sinex-stack";
   nodes.machine = { pkgs, ... }: {
     imports = [ self.nixosModules.default ];
+    # This VM has 3 GiB total; use a smaller database buffer pool.
+    services.postgresql.settings.shared_buffers = "128MB";
     virtualisation = { memorySize = 3072; cores = 2; diskSize = 4096; };
     environment.etc."sinex-test/nats-daemon".text = "daemon secret: with @ and /";
     environment.etc."sinex-test/nats-session".text = "session-secret";
@@ -64,6 +66,9 @@ self: {
     with subtest("PostgreSQL is set up as the module says"):
         machine.succeed("sudo -u postgres psql -tAc 'show wal_compression' | grep -qx lz4")
         machine.succeed("sudo -u postgres psql -tAc 'show full_page_writes' | grep -qx on")
+        for setting, expected in {"shared_buffers": "128MB", "max_wal_size": "16GB", "checkpoint_timeout": "30min", "work_mem": "64MB", "log_temp_files": "16MB"}.items():
+            shown = machine.succeed(f"sudo -u postgres psql -tAc 'show {setting}'").strip()
+            assert shown == expected, f"{setting}: {shown!r}"
         # PostgreSQL 18 made log_connections a list; off may show as empty.
         shown = machine.succeed("sudo -u postgres psql -tAc 'show log_connections'").strip()
         assert shown in ("", "off", "false", "no"), f"log_connections is {shown!r}"
