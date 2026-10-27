@@ -367,135 +367,24 @@ impl DerivationRunner {
         Ok(computed)
     }
 
-    /// Recompute these keys of one derivation and submit their complete
-    /// output sets, several keys per writer batch.
+    /// Recompute keys through the shared batched computation engine.
     async fn compute_keys(
         &mut self,
         index: usize,
         work: Vec<KeyWork>,
         env: &Env,
     ) -> Result<(), String> {
-        let mut scopes: Vec<ComputedKey> = Vec::new();
-        let mut records: Vec<RecordOutcome> = Vec::new();
-        let mut outputs = 0usize;
         let name = self.keyed[index].name();
-        // Keys without a query have no inputs; the rest are read page by
-        // page and computed as soon as their rows are complete.
-        let mut ready: Vec<(usize, Vec<Event>, bool)> = Vec::new();
-        let mut windows: Vec<Window> = Vec::new();
-        let mut window_keys: Vec<usize> = Vec::new();
-        for (i, (key, _, _)) in work.iter().enumerate() {
-            match self.keyed[index].inputs(key, env) {
-                Some(q) => {
-                    windows.push(to_window(&q));
-                    window_keys.push(i);
-                }
-                None => ready.push((i, Vec::new(), false)),
-            }
+        let run = self.run_of(name)?;
+        KeyComputation {
+            read: &mut self.read,
+            writer: &self.writer,
+            derivation: self.keyed[index].as_ref(),
+            run,
+            counts: self.counts.entry(name).or_default(),
         }
-        let mut reader = derivations::Windows::new(windows, ROWS_PER_PAGE, sinex_store::PAGE_BYTES);
-        loop {
-            if ready.is_empty() {
-                let t = Instant::now();
-                let next = reader
-                    .next(&mut self.read)
-                    .await
-                    .map_err(|e| e.to_string())?;
-                self.counts.entry(name).or_default().read += t.elapsed();
-                let Some(done) = next else { break };
-                ready.extend(done.into_iter().map(|(w, rows)| {
-                    (
-                        window_keys[w],
-                        rows.into_iter().map(|c| c.event).collect(),
-                        true,
-                    )
-                }));
-            }
-            for (i, input, queried) in std::mem::take(&mut ready) {
-                let (key, dirty_seq, give_up) = &work[i];
-                let t = Instant::now();
-                let mut computed = if queried {
-                    self.keyed[index].compute(key, &input, env)
-                } else {
-                    sinex_derivations::Computed::default()
-                };
-                let c = self.counts.entry(name).or_default();
-                c.compute += t.elapsed();
-                c.inputs += input.len();
-                if *give_up {
-                    computed.waiting = false;
-                }
-                outputs += computed.outputs.len();
-                scopes.push(ComputedKey {
-                    key: key.clone(),
-                    dirty_seq: *dirty_seq,
-                    waiting: computed.waiting,
-                });
-                records.push(RecordOutcome::Events {
-                    location: None,
-                    events: computed.outputs,
-                });
-                if scopes.len() >= KEYS_PER_BATCH || outputs >= OUTPUTS_PER_BATCH {
-                    self.submit_keys(
-                        index,
-                        std::mem::take(&mut scopes),
-                        std::mem::take(&mut records),
-                    )
-                    .await?;
-                    outputs = 0;
-                }
-            }
-        }
-        if !scopes.is_empty() {
-            self.submit_keys(index, scopes, records).await?;
-        }
-        Ok(())
-    }
-
-    async fn submit_keys(
-        &mut self,
-        index: usize,
-        scopes: Vec<ComputedKey>,
-        mut records: Vec<RecordOutcome>,
-    ) -> Result<(), String> {
-        let name = self.keyed[index].name();
-        let head = derivations::head(&mut self.read)
-            .await
-            .map_err(|e| e.to_string())?;
-        let mut n = 0;
-        for record in &mut records {
-            if let RecordOutcome::Events { events, .. } = record {
-                n += events.len();
-                for e in events {
-                    // A recompute is a newer reading than any before it.
-                    e.reading_order = ReadingOrder(head);
-                }
-            }
-        }
-        let keys = scopes.len();
-        let batch = Batch {
-            run: self.run_of(name)?,
-            kind: BatchKind::Derived {
-                derivation: name.to_owned(),
-                scope: DerivedScope::Keys { keys: scopes }.to_value(),
-            },
-            records,
-            archive: vec![],
-        };
-        let t = Instant::now();
-        let out = self
-            .writer
-            .submit(Priority::Derived, batch)
-            .await
-            .map_err(|e| format!("{name}: {e}"))?;
-        let c = self.counts.entry(name).or_default();
-        c.write += t.elapsed();
-        c.keys += keys;
-        c.outputs += n;
-        c.admitted += out.admitted;
-        c.repeats += out.repeats;
-        c.replaced += out.replaced;
-        Ok(())
+        .compute(work, env)
+        .await
     }
 
     /// One pass over the lowest rank with work (every rank, one pass in
@@ -856,8 +745,139 @@ pub(crate) fn per_event() -> Vec<Box<dyn AnyPerEvent>> {
     all
 }
 
-/// Compute explicitly requested keys through the same query and admission
-/// scope as the background runner. Commands use this before returning reads.
+/// Key computations serialize before reading, so a command and the
+/// background runner cannot overwrite newer outputs with older inputs.
+struct KeyComputation<'a> {
+    read: &'a mut PgConnection,
+    writer: &'a WriterHandle,
+    derivation: &'a dyn AnyKeyed,
+    run: RunId,
+    counts: &'a mut Counts,
+}
+
+impl KeyComputation<'_> {
+    async fn compute(&mut self, work: Vec<KeyWork>, env: &Env) -> Result<(), String> {
+        let mut scopes: Vec<ComputedKey> = Vec::new();
+        let mut records: Vec<RecordOutcome> = Vec::new();
+        let mut outputs = 0usize;
+        let _lock = self.writer.lock_derivations().await;
+        // Keys without a query have no inputs; the rest are read page by
+        // page and computed as soon as their rows are complete.
+        let mut ready: Vec<(usize, Vec<Event>, bool)> = Vec::new();
+        let mut windows: Vec<Window> = Vec::new();
+        let mut window_keys: Vec<usize> = Vec::new();
+        for (i, (key, _, _)) in work.iter().enumerate() {
+            match self.derivation.inputs(key, env) {
+                Some(q) => {
+                    windows.push(to_window(&q));
+                    window_keys.push(i);
+                }
+                None => ready.push((i, Vec::new(), false)),
+            }
+        }
+        let mut reader = derivations::Windows::new(windows, ROWS_PER_PAGE, sinex_store::PAGE_BYTES);
+        loop {
+            if ready.is_empty() {
+                let t = Instant::now();
+                let next = reader
+                    .next(&mut *self.read)
+                    .await
+                    .map_err(|e| e.to_string())?;
+                self.counts.read += t.elapsed();
+                let Some(done) = next else { break };
+                ready.extend(done.into_iter().map(|(w, rows)| {
+                    (
+                        window_keys[w],
+                        rows.into_iter().map(|c| c.event).collect(),
+                        true,
+                    )
+                }));
+            }
+            for (i, input, queried) in std::mem::take(&mut ready) {
+                let (key, dirty_seq, give_up) = &work[i];
+                let t = Instant::now();
+                let mut computed = if queried {
+                    self.derivation.compute(key, &input, env)
+                } else {
+                    sinex_derivations::Computed::default()
+                };
+                let c = &mut *self.counts;
+                c.compute += t.elapsed();
+                c.inputs += input.len();
+                if *give_up {
+                    computed.waiting = false;
+                }
+                outputs += computed.outputs.len();
+                scopes.push(ComputedKey {
+                    key: key.clone(),
+                    dirty_seq: *dirty_seq,
+                    waiting: computed.waiting,
+                });
+                records.push(RecordOutcome::Events {
+                    location: None,
+                    events: computed.outputs,
+                });
+                if scopes.len() >= KEYS_PER_BATCH || outputs >= OUTPUTS_PER_BATCH {
+                    self.submit(std::mem::take(&mut scopes), std::mem::take(&mut records))
+                        .await?;
+                    outputs = 0;
+                }
+            }
+        }
+        if !scopes.is_empty() {
+            self.submit(scopes, records).await?;
+        }
+        Ok(())
+    }
+
+    async fn submit(
+        &mut self,
+        scopes: Vec<ComputedKey>,
+        mut records: Vec<RecordOutcome>,
+    ) -> Result<(), String> {
+        let name = self.derivation.name();
+        let head = derivations::head(&mut *self.read)
+            .await
+            .map_err(|e| e.to_string())?;
+        let mut n = 0;
+        for record in &mut records {
+            if let RecordOutcome::Events { events, .. } = record {
+                n += events.len();
+                for e in events {
+                    // A recompute is a newer reading than any before it.
+                    e.reading_order = ReadingOrder(head);
+                }
+            }
+        }
+        let keys = scopes.len();
+        let batch = Batch {
+            run: self.run,
+            kind: BatchKind::Derived {
+                derivation: name.to_owned(),
+                scope: DerivedScope::Keys { keys: scopes }.to_value(),
+            },
+            records,
+            archive: vec![],
+        };
+        let t = Instant::now();
+        let out = self
+            .writer
+            .submit(Priority::Derived, batch)
+            .await
+            .map_err(|e| format!("{name}: {e}"))?;
+        let c = &mut *self.counts;
+        c.write += t.elapsed();
+        c.keys += keys;
+        c.outputs += n;
+        c.admitted += out.admitted;
+        c.repeats += out.repeats;
+        c.replaced += out.replaced;
+        Ok(())
+    }
+}
+
+/// Compute requested keys with the background runner's batching and ordering.
+/// Commands wait for their outputs before returning reads.
 pub(crate) async fn compute_now(
     conn: &mut PgConnection,
     writer: &WriterHandle,
@@ -876,46 +896,29 @@ pub(crate) async fn compute_now(
     let run = runs::start(conn, &manifest, host)
         .await
         .map_err(|e| e.to_string())?;
-    let env = Env::at(Timestamp::now());
-    for key in keys {
-        let Some(query) = derivation.inputs(&key, &env) else {
-            continue;
-        };
-        let head = derivations::head(conn).await.map_err(|e| e.to_string())?;
-        let inputs = derivations::read_window(conn, &to_window(&query))
-            .await
-            .map_err(|e| e.to_string())?;
-        let inputs: Vec<_> = inputs.into_iter().map(|row| row.event).collect();
-        let mut computed = derivation.compute(&key, &inputs, &env);
-        for event in &mut computed.outputs {
-            event.reading_order = ReadingOrder(head);
+    let result = async {
+        let env = Env::at(Timestamp::now());
+        let mut counts = Counts::default();
+        for chunk in keys.chunks(KEYS_PER_BATCH) {
+            let head = derivations::head(conn).await.map_err(|e| e.to_string())?;
+            let work = chunk
+                .iter()
+                .cloned()
+                .map(|key| (key, head, false))
+                .collect();
+            KeyComputation {
+                read: conn,
+                writer,
+                derivation,
+                run,
+                counts: &mut counts,
+            }
+            .compute(work, &env)
+            .await?;
         }
-        writer
-            .submit(
-                Priority::Derived,
-                Batch {
-                    run,
-                    kind: BatchKind::Derived {
-                        derivation: derivation.name().into(),
-                        scope: DerivedScope::Keys {
-                            keys: vec![ComputedKey {
-                                key,
-                                dirty_seq: head,
-                                waiting: computed.waiting,
-                            }],
-                        }
-                        .to_value(),
-                    },
-                    records: vec![RecordOutcome::Events {
-                        location: None,
-                        events: computed.outputs,
-                    }],
-                    archive: vec![],
-                },
-            )
-            .await
-            .map_err(|e| e.to_string())?;
+        Ok(())
     }
-    runs::end(conn, run).await.map_err(|e| e.to_string())?;
-    Ok(())
+    .await;
+    let ended = runs::end(conn, run).await.map_err(|e| e.to_string());
+    result.and(ended)
 }
