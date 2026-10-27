@@ -195,7 +195,9 @@ impl Parser for SleepCsvParser {
 
 impl SleepCsvParser {
     fn resolve(&self, raw: &str) -> Result<(Option<Timestamp>, Option<String>), RecordError> {
-        if let Ok(at) = super::fields::rfc3339(raw) {
+        if let Ok(at) = raw.parse::<jiff::Timestamp>() {
+            let at = Timestamp::from_unix_ns(at.as_nanosecond())
+                .map_err(|_| RecordError::new("sleep CSV timestamp is out of range"))?;
             return Ok((Some(at), None));
         }
         let bad =
