@@ -18,7 +18,7 @@ async fn tombstone(conn: &mut PgConnection, id: Uuid) {
          VALUES ($1, 'test.source', 'test.event', $2)",
     )
     .bind(id)
-    .bind(Uuid::new_v4())
+    .bind(Uuid::now_v7())
     .execute(conn)
     .await
     .unwrap();
@@ -79,7 +79,7 @@ async fn exact_pairs_survive_overlapping_bounds_gaps_and_partial_erasure(
 #[devkit::test]
 async fn recording_and_position_commit_or_roll_back_together(db: devkit::pg::TestDatabase) {
     let mut conn = PgConnection::connect(&db.url(None)).await.unwrap();
-    let id = Uuid::new_v4();
+    let id = Uuid::now_v7();
     let mut tx = conn.begin().await.unwrap();
     record_published(&mut tx, &[(id, 9)]).await.unwrap();
     set_consumer_position(&mut tx, "publisher", 12, 3)
@@ -109,8 +109,8 @@ async fn duplicate_pairs_across_pages_are_erased_without_losing_other_copies(
     db: devkit::pg::TestDatabase,
 ) {
     let mut conn = PgConnection::connect(&db.url(None)).await.unwrap();
-    let id = Uuid::new_v4();
-    let other = Uuid::new_v4();
+    let id = Uuid::now_v7();
+    let other = Uuid::now_v7();
     record_published(&mut conn, &[(id, 1), (id, 4), (other, 6)])
         .await
         .unwrap();

@@ -14,17 +14,30 @@ async fn version_two(conn: &mut PgConnection) {
     .unwrap();
 }
 
-async fn other_rows(conn: &mut PgConnection) -> std::collections::BTreeMap<String, serde_json::Value> {
+async fn other_rows(
+    conn: &mut PgConnection,
+) -> std::collections::BTreeMap<String, serde_json::Value> {
     let tables: Vec<(String, String)> = sqlx::query_as(
         "SELECT schemaname, tablename FROM pg_tables
          WHERE schemaname IN ('core', 'raw', 'audit', 'privacy', 'derivation')
            AND NOT (schemaname = 'core' AND tablename = 'published')",
-    ).fetch_all(&mut *conn).await.unwrap();
+    )
+    .fetch_all(&mut *conn)
+    .await
+    .unwrap();
     let mut rows = std::collections::BTreeMap::new();
     for (schema, table) in tables {
         let name = format!("{schema}.{table}");
-        let sql = format!("SELECT coalesce(jsonb_agg(to_jsonb(t) ORDER BY to_jsonb(t)), '[]'::jsonb) FROM \"{schema}\".\"{table}\" t");
-        rows.insert(name, sqlx::query_scalar(&sql).fetch_one(&mut *conn).await.unwrap());
+        let sql = format!(
+            "SELECT coalesce(jsonb_agg(to_jsonb(t) ORDER BY to_jsonb(t)), '[]'::jsonb) FROM \"{schema}\".\"{table}\" t"
+        );
+        rows.insert(
+            name,
+            sqlx::query_scalar(&sql)
+                .fetch_one(&mut *conn)
+                .await
+                .unwrap(),
+        );
     }
     rows
 }
@@ -34,11 +47,19 @@ async fn upgrade_packs_every_mapping_including_tombstones_without_commit_rows(
     db: devkit::pg::TestDatabase,
 ) {
     let mut conn = PgConnection::connect(&db.url(None)).await.unwrap();
-    let ids = crate::query::tests::admit_commands(&mut conn, &[("pwd", "/sample"), ("echo example", "/sample")]).await;
-    crate::read_models::tests::catch_up_search_text(&mut conn).await.unwrap();
+    let ids = crate::query::tests::admit_commands(
+        &mut conn,
+        &[("pwd", "/sample"), ("echo example", "/sample")],
+    )
+    .await;
+    crate::read_models::tests::catch_up_search_text(&mut conn)
+        .await
+        .unwrap();
     let batch = sinex_model::Batch {
         run: sinex_model::RunId::new(),
-        kind: sinex_model::BatchKind::Api { actor: "test".into() },
+        kind: sinex_model::BatchKind::Api {
+            actor: "test".into(),
+        },
         records: vec![],
         archive: vec![sinex_model::ArchiveRequest::Hide {
             target: sinex_model::EventId(ids[0].1),
@@ -46,7 +67,9 @@ async fn upgrade_packs_every_mapping_including_tombstones_without_commit_rows(
         }],
     };
     let mut tx = conn.begin().await.unwrap();
-    crate::admit(&mut tx, &batch, &crate::NoDerivations).await.unwrap();
+    crate::admit(&mut tx, &batch, &crate::NoDerivations)
+        .await
+        .unwrap();
     tx.commit().await.unwrap();
     sqlx::raw_sql(
         "INSERT INTO core.blobs(hash, size, status) VALUES ('blake3:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', 9, 'present');
@@ -122,7 +145,7 @@ async fn upgrade_packs_every_mapping_including_tombstones_without_commit_rows(
         .execute(&mut conn)
         .await
         .unwrap();
-    record_published(&mut conn, &[(Uuid::new_v4(), 99999)])
+    record_published(&mut conn, &[(Uuid::now_v7(), 99999)])
         .await
         .unwrap();
     forget_published(&mut conn, &[before[1000]]).await.unwrap();
@@ -167,7 +190,7 @@ async fn empty_publication_table_upgrades_and_accepts_a_page(db: devkit::pg::Tes
     version_two(&mut conn).await;
     sinex_schema::apply(&mut conn).await.unwrap();
     assert!(pairs(&mut conn).await.is_empty());
-    record_published(&mut conn, &[(Uuid::new_v4(), 8)])
+    record_published(&mut conn, &[(Uuid::now_v7(), 8)])
         .await
         .unwrap();
     assert_eq!(pairs(&mut conn).await.len(), 1);
