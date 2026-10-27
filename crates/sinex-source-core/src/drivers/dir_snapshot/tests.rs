@@ -853,25 +853,36 @@ fn changing_files_are_skipped_without_failures_and_retried() {
     );
 }
 
-
 #[devkit::test]
 fn a_part_cut_keeps_failures_of_files_not_yet_retried() {
     let dir = tempfile::tempdir().unwrap();
     let d = driver(dir.path().to_owned(), 1);
     let mut state = DirState::default();
     let missing = (PathBuf::from("z.md"), Ok((1, 0)));
-    let failed = poll_entries(&d, &Value::Null, &mut state, BTreeMap::from([missing.clone()]));
+    let failed = poll_entries(
+        &d,
+        &Value::Null,
+        &mut state,
+        BTreeMap::from([missing.clone()]),
+    );
     let cursor = final_cursor(&failed);
     std::fs::write(dir.path().join("a.md"), "a").unwrap();
     let facts = file_facts(&dir.path().join("a.md")).unwrap();
     let entries = BTreeMap::from([
-        (PathBuf::from("a.md"), Ok((facts.size.unwrap(), facts.mtime_ns.unwrap()))),
+        (
+            PathBuf::from("a.md"),
+            Ok((facts.size.unwrap(), facts.mtime_ns.unwrap())),
+        ),
         missing,
     ]);
     let cut = poll_entries(&d, &cursor, &mut state, entries.clone());
     assert_eq!(paths(&cut), vec!["a.md"]);
     let cursor = final_cursor(&cut);
     // The missing file is actually retried now, with the same read error.
-    assert!(poll_entries(&d, &cursor, &mut state, entries).material.is_none());
+    assert!(
+        poll_entries(&d, &cursor, &mut state, entries)
+            .material
+            .is_none()
+    );
     assert!(state.failures.contains_key(Path::new("z.md")));
 }
