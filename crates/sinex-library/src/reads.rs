@@ -24,7 +24,12 @@ fn latest_copies(rows: Vec<serde_json::Value>) -> Result<Vec<FileCopy>> {
     let mut latest = std::collections::BTreeMap::new();
     for copy in decode::<FileCopy>(COPY, rows)? {
         let key = (copy.host.clone(), copy.root.clone(), copy.path.clone());
-        latest.insert(key, copy);
+        if latest
+            .get(&key)
+            .is_none_or(|old: &FileCopy| copy.part_index >= old.part_index)
+        {
+            latest.insert(key, copy);
+        }
     }
     Ok(latest.into_values().collect())
 }
@@ -116,7 +121,7 @@ pub async fn revisions(conn: &mut Conn, item: &str) -> Result<Vec<Item>> {
             rendition.role == sinex_model::event_types::library::RenditionRole::Original
         })
         .collect();
-    originals.sort_by_key(|rendition| rendition.at);
+    originals.sort_by_key(|rendition| rendition.part_index);
     let mut previous = None;
     let mut all = Vec::new();
     for rendition in originals {
@@ -222,3 +227,6 @@ pub async fn comparisons(conn: &mut Conn, scale: &str) -> Result<Vec<Comparison>
     .await?;
     decode("library.comparison", rows)
 }
+
+#[cfg(test)]
+mod tests;

@@ -17,7 +17,7 @@ fn png(w: u32, h: u32) -> Vec<u8> {
     b
 }
 
-fn read(a: &Acquired, parser: &ScanParser) -> Vec<FileCopy> {
+fn read_events(a: &Acquired, parser: &ScanParser) -> Vec<sinex_model::Event> {
     let m = a.material.as_ref().expect("a material");
     let out = drain(
         parser,
@@ -40,10 +40,14 @@ fn read(a: &Acquired, parser: &ScanParser) -> Vec<FileCopy> {
             RecordOutcome::Events { events, .. } => events,
             RecordOutcome::Failure { reason, .. } => panic!("{reason}"),
         })
-        .map(|e| {
-            assert_eq!(e.event_type, "library.copy");
-            e.payload_as::<FileCopy>().unwrap()
-        })
+        .inspect(|event| assert_eq!(event.event_type, "library.copy"))
+        .collect()
+}
+
+fn read(a: &Acquired, parser: &ScanParser) -> Vec<FileCopy> {
+    read_events(a, parser)
+        .into_iter()
+        .map(|event| event.payload_as().unwrap())
         .collect()
 }
 
@@ -556,5 +560,39 @@ fn full_rescans_record_every_file_without_hashing_unchanged_bytes() {
         restarted.state.files_hashed, 1,
         "only the edited file is hashed"
     );
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[devkit::test]
+fn scans_with_equal_timestamps_are_independent_evidence() {
+    let root = tmp();
+    std::fs::write(root.join("one.txt"), "one").unwrap();
+    let scanner = scan(&root);
+    let mut state = ScanState::default();
+    let mut first = scanner.poll(&Value::Null, &mut state).unwrap();
+    let (_, cursor) = stored(&first);
+    assert!(
+        scanner
+            .poll(&cursor, &mut state)
+            .unwrap()
+            .material
+            .is_none()
+    );
+    let mut second = scanner.poll(&cursor, &mut state).unwrap();
+    for acquired in [&mut first, &mut second] {
+        acquired.material.as_mut().unwrap().manifest.read_at_ns = Some(1_000_000_000);
+    }
+
+    let first = read_events(&first, &ScanParser);
+    let second = read_events(&second, &ScanParser);
+    assert_eq!(
+        first[0].payload["scanned_at"],
+        second[0].payload["scanned_at"]
+    );
+    assert_eq!(first[0].record_hash, second[0].record_hash);
+    assert_ne!(first[0].equivalence_key, second[0].equivalence_key);
+    assert_ne!(first[0].payload["scan"], second[0].payload["scan"]);
+    assert_eq!(first[0].payload["part_index"], 0);
+    assert_eq!(second[0].payload["part_index"], 1);
     std::fs::remove_dir_all(root).unwrap();
 }

@@ -35,7 +35,7 @@ impl Keyed for LibraryItems {
     }
 
     fn compute(&self, _: &Value, inputs: &[Event], _: &Env) -> Computed {
-        let copies: Vec<(&Event, FileCopy)> = inputs
+        let mut copies: Vec<(&Event, FileCopy)> = inputs
             .iter()
             .filter(|event| event.event_type == "library.copy")
             .filter_map(|event| {
@@ -44,6 +44,15 @@ impl Keyed for LibraryItems {
                     .map(|copy| (event, copy))
             })
             .collect();
+        copies.sort_by_key(|(event, copy)| {
+            (
+                copy.part_index,
+                event
+                    .location()
+                    .map(|(location, index)| (location.anchor, index))
+                    .unwrap_or_default(),
+            )
+        });
         // Removal describes availability, never loss of the stored original.
         let present: Vec<_> = copies
             .iter()
@@ -67,6 +76,7 @@ impl Keyed for LibraryItems {
                 rendition: format!("{}:{}", first.item, copy.content),
                 item: first.item.clone(),
                 revision: copy.content.clone(),
+                part_index: copy.part_index,
                 role: RenditionRole::Original,
                 content: copy.content.clone(),
                 media_type: copy.media_type.clone(),
@@ -85,11 +95,15 @@ impl Keyed for LibraryItems {
             .iter()
             .filter(|event| event.event_type == "library.preview")
         {
-            if let Some((_, evidence)) = preview.payload["revision"]
+            let Some((copy, evidence)) = preview.payload["revision"]
                 .as_str()
                 .and_then(|revision| revisions.get(revision))
-                && let Ok(rendition) = serde_json::from_value::<Rendition>(preview.payload.clone())
-            {
+            else {
+                continue;
+            };
+            let mut payload = preview.payload.clone();
+            payload["part_index"] = Value::from(copy.part_index);
+            if let Ok(rendition) = serde_json::from_value::<Rendition>(payload) {
                 outputs.push(derived(
                     &rendition,
                     Self::NAME,

@@ -128,12 +128,26 @@ impl Parser for ScanParser {
         let key = d.item_key.clone();
         let scanned_at = context
             .manifest
-            .details
-            .get("read_at_ns")
-            .and_then(Value::as_i64)
+            .read_at_ns
             .and_then(|n| Timestamp::from_unix_ns(i128::from(n)).ok())
             .ok_or_else(|| RecordError::new("library scan has no acquisition time"))?;
+        let scan = context
+            .manifest
+            .details
+            .get("scan")
+            .and_then(Value::as_str)
+            .ok_or_else(|| RecordError::new("library scan has no identity"))?
+            .to_owned();
+        let part_index = context
+            .manifest
+            .details
+            .get("part_index")
+            .and_then(Value::as_u64)
+            .and_then(|index| u32::try_from(index).ok())
+            .ok_or_else(|| RecordError::new("library scan has no part index"))?;
         let payload = FileCopy {
+            scan,
+            part_index,
             item: sinex_model::event_types::library::item_id(&key),
             item_key: key,
             scanned_at,
@@ -719,20 +733,18 @@ impl LibraryScan {
             });
         }
         let read_at = i64::try_from(now.unix_ns()).unwrap_or(i64::MAX);
-        let manifest = sinex_model::Manifest::from_json(json!({
-            "path": root,
-            "host": self.host,
-            "media_type": "application/x-sinex-library-scan",
-            "keep_bytes": self.keep_bytes,
-            "walk_complete": walk_done,
-            "read_at_ns": read_at,
-        }));
         let id = MaterialId::new();
         let part_index = if previous.material.is_some() {
             previous.part_index + 1
         } else {
             0
         };
+        let manifest = sinex_model::Manifest::from_json(json!({
+            "path": root, "host": self.host,
+            "media_type": "application/x-sinex-library-scan", "keep_bytes": self.keep_bytes,
+            "walk_complete": walk_done, "read_at_ns": read_at,
+            "scan": id.to_string(), "part_index": part_index,
+        }));
         let changed = previous
             .changed_since_memory
             .saturating_add(records.len() as u64);

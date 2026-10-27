@@ -3,8 +3,21 @@ use sinex_model::event_types::library::{item_id, item_key};
 use sinex_model::{Class, MaterialId, Origin, ReadingOrder, RecordLocation};
 
 fn copy(path: &str, content: &str, seconds: i64, original: &str) -> Event {
+    copy_at(
+        path,
+        content,
+        u32::try_from(seconds).unwrap(),
+        seconds,
+        original,
+    )
+}
+
+fn copy_at(path: &str, content: &str, part_index: u32, seconds: i64, original: &str) -> Event {
+    let material = MaterialId::new();
     let key = item_key("h", "/r", original);
     let payload = FileCopy {
+        scan: material.to_string(),
+        part_index,
         item: item_id(&key),
         item_key: key,
         scanned_at: Timestamp::from_unix_secs(seconds).unwrap(),
@@ -32,7 +45,7 @@ fn copy(path: &str, content: &str, seconds: i64, original: &str) -> Event {
         "library.scan",
         Origin::Record {
             location: RecordLocation {
-                material: MaterialId::new(),
+                material,
                 anchor: 0,
             },
             output_index: 0,
@@ -140,4 +153,13 @@ fn returning_to_the_same_bytes_reuses_the_revision_and_original() {
             .count(),
         2
     );
+}
+
+#[devkit::test]
+fn clock_corrections_do_not_change_capture_order() {
+    let first = copy_at("/r/a.png", "blake3:a", 0, 2, "a.png");
+    let second = copy_at("/r/a.png", "blake3:b", 1, 1, "a.png");
+    let output = compute(&[second, first]);
+    assert_eq!(item(&output).revision, "blake3:b");
+    assert_eq!(item(&output).replaces.as_deref(), Some("blake3:a"));
 }

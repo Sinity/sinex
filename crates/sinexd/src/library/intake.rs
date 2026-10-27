@@ -54,12 +54,7 @@ impl Library<'_> {
             let old = before
                 .iter()
                 .filter(|old| old.item == copy.item)
-                .min_by_key(|old| {
-                    (
-                        old.vanished_at.is_some(),
-                        std::cmp::Reverse(old.scanned_at.0),
-                    )
-                });
+                .min_by_key(|old| (old.vanished_at.is_some(), std::cmp::Reverse(old.part_index)));
             if copy.vanished_at.is_some() {
                 continue;
             }

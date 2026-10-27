@@ -39,7 +39,9 @@ list as binding settings. Both are read by the binding runner. A library file se
 is a scan of that file within its root; files beside it are neither read nor
 reported removed. Each completed scan records every present file, including
 unchanged files, with a key made from the host, resolved root and original
-relative path. Unchanged size, modification time, device and inode reuse the
+relative path. The captured material identifies each scan part; its part
+index orders observations even when clocks repeat or move backwards.
+Unchanged size, modification time, device and inode reuse the
 previous hashes and media metadata; the new scan still records that file. A move within the root keeps that key when the old path is
 missing and the bytes match; matching device and inode take precedence over
 another new copy of those bytes. Changed bytes at the same key create a new

@@ -17,7 +17,7 @@ use serde_json::{Map, Value};
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
 #[event(
     type = "library.copy",
-    key = ["host", "root", "path", "scanned_at"],
+    key = ["host", "root", "path", "scan"],
     replace = newer,
     time = scanned_at,
     quality = intrinsic,
@@ -25,6 +25,10 @@ use serde_json::{Map, Value};
     owns(field = content, size = size, when = stored)
 )]
 pub struct FileCopy {
+    /// The material identifying this captured scan part.
+    pub scan: String,
+    /// Capture order within the root.
+    pub part_index: u32,
     /// The root and original relative path, kept across moves.
     pub item_key: String,
     /// Deterministic opaque identifier of `item_key`.
@@ -117,6 +121,8 @@ pub struct Rendition {
     pub rendition: String,
     pub item: String,
     pub revision: String,
+    /// The first visible scan part observing this revision.
+    pub part_index: u32,
     pub role: RenditionRole,
     pub content: String,
     pub media_type: String,
