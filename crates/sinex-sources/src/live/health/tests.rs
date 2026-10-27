@@ -52,7 +52,11 @@ fn media_counters_include_empty_files_and_sidecars_and_exclude_acknowledged_segm
     let counter = initialize(&dir.path().join("positions"), &binding).unwrap();
     for stem in ["1-2.screen", "3-4.screen"] {
         let partial = spool.join("capture.partial");
-        let bytes: &[u8] = if stem == "1-2.screen" { b"" } else { b"synthetic image" };
+        let bytes: &[u8] = if stem == "1-2.screen" {
+            b""
+        } else {
+            b"synthetic image"
+        };
         std::fs::write(&partial, bytes).unwrap();
         sinex_source_core::drivers::media::publish_segment(
             &spool,
