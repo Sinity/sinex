@@ -92,9 +92,8 @@ impl Blobs {
     }
 
     pub(super) fn unadmitted_names(&self, position: &DatabasePosition) -> Result<Names<'_>> {
-        let saved = self.saved_position()?;
-        if saved.as_ref() != Some(position) {
-            // A different database or commit position can leave historical files without rows.
+        if !self.can_advance_position(position)? {
+            // A different database or rollback can leave historical files without rows.
             return Ok(Box::new(
                 self.names()
                     .map_err(|e| hashed_blobs::Error::Io(std::io::Error::other(e)))?

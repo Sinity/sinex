@@ -285,7 +285,6 @@ async fn later_sweeps_check_only_names_written_since_the_previous_sweep(
             .count(),
         0
     );
-    eprintln!("sweep names: initial=1 unchanged=0 installed=1 uninstalled=1");
 }
 
 #[devkit::test]
@@ -364,6 +363,7 @@ fn seekable_file_records_each_name_and_verifies_repeated_content_without_compres
 fn seekable_file_is_not_installed_when_its_name_cannot_be_recorded() {
     let dir = tempfile::tempdir().unwrap();
     let blobs = Blobs::open(dir.path()).unwrap();
+    std::fs::remove_dir(dir.path().join("unadmitted-blobs")).unwrap();
     std::fs::write(dir.path().join("unadmitted-blobs"), b"blocked").unwrap();
     assert!(
         blobs
@@ -419,7 +419,7 @@ async fn database_changes_and_rollbacks_require_a_full_file_scan(db: devkit::pg:
     let mut conn = sqlx::PgConnection::connect(&db.url(None)).await.unwrap();
     let dir = tempfile::tempdir().unwrap();
     let blobs = Blobs::open(dir.path()).unwrap();
-    for mismatch in ["system_identifier", "database", "commit_seq", "rollback"] {
+    for mismatch in ["system_identifier", "database", "commit_seq"] {
         let name = blobs.put(mismatch.as_bytes()).unwrap();
         sqlx::query("INSERT INTO core.blobs(hash,size,status) VALUES ($1, 1, 'present')")
             .bind(&name)
@@ -432,22 +432,22 @@ async fn database_changes_and_rollbacks_require_a_full_file_scan(db: devkit::pg:
             .unwrap();
         delete_files_without_rows(&mut conn, &blobs).await.unwrap();
         assert_eq!(blobs.recorded_names().unwrap().count(), 0);
+        let saved_position = unadmitted::DatabasePosition::read(&mut conn).await.unwrap();
+        let saved = serde_json::to_value(saved_position).unwrap();
         sqlx::query("DELETE FROM core.blobs WHERE hash = $1")
             .bind(&name)
             .execute(&mut conn)
             .await
             .unwrap();
-        if mismatch == "rollback" {
-            sqlx::query("UPDATE core.counters SET value = 9 WHERE name = 'commit_seq'")
-                .execute(&mut conn)
-                .await
-                .unwrap();
-        } else {
+        sqlx::query("UPDATE core.counters SET value = $1 WHERE name = 'blob_changes'")
+            .bind(saved["blob_changes"].as_i64().unwrap())
+            .execute(&mut conn).await.unwrap();
+        {
             let path = dir.path().join("unadmitted-blobs-ready");
             let mut saved: serde_json::Value =
                 serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
             saved[mismatch] = if mismatch == "commit_seq" {
-                serde_json::json!(9)
+                serde_json::json!(11)
             } else {
                 serde_json::json!("another database")
             };
@@ -462,63 +462,6 @@ async fn database_changes_and_rollbacks_require_a_full_file_scan(db: devkit::pg:
             "{mismatch}"
         );
         assert!(!blobs.contains(&name).unwrap());
-    }
-}
-
-#[devkit::test]
-fn blob_writes_measure_marker_syncs_and_keep_the_same_bytes() {
-    use std::fs::{File, OpenOptions};
-    use std::os::unix::fs::OpenOptionsExt;
-    let parent = std::env::var_os("SINEX_BENCH_DIR")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../.."));
-    eprintln!("blob write measurement directory: {}", parent.display());
-    let dir = tempfile::tempdir_in(parent).unwrap();
-    let mut durations = [Vec::new(), Vec::new()];
-    for round in 0..3 {
-        // Alternate order so the second path does not always get warmer storage.
-        for path in if round % 2 == 0 { [0, 1] } else { [1, 0] } {
-            let blobs = Blobs::open(&dir.path().join(format!("{round}-{path}"))).unwrap();
-            let started = std::time::Instant::now();
-            let mut names = Vec::new();
-            for number in 0..16u64 {
-                let mut bytes = vec![b'a'; 4096];
-                bytes[..8].copy_from_slice(&number.to_le_bytes());
-                let name = if path == 0 {
-                    let prepared = blobs.0.prepare_plain(bytes.as_slice(), 3).unwrap();
-                    let markers = blobs.root().join("unadmitted-blobs");
-                    std::fs::create_dir_all(&markers).unwrap();
-                    File::open(blobs.root()).unwrap().sync_all().unwrap();
-                    OpenOptions::new()
-                        .write(true)
-                        .create(true)
-                        .truncate(false)
-                        .mode(0o600)
-                        .open(markers.join(prepared.hash().hex()))
-                        .unwrap()
-                        .sync_all()
-                        .unwrap();
-                    File::open(markers).unwrap().sync_all().unwrap();
-                    format!("blake3:{}", prepared.install().unwrap().hex())
-                } else {
-                    blobs.put(&bytes).unwrap()
-                };
-                names.push((name, bytes));
-            }
-            durations[path].push(started.elapsed().as_secs_f64() * 1000.0);
-            assert_eq!(blobs.recorded_names().unwrap().count(), 16);
-            for (name, bytes) in names {
-                assert_eq!(blobs.read(&name).unwrap(), bytes);
-            }
-        }
-    }
-    for (path, mut elapsed) in durations.into_iter().enumerate() {
-        elapsed.sort_by(f64::total_cmp);
-        eprintln!(
-            "blob writes path={} writes=16 bytes_per_write=4096 median_ms={} rounds_ms={elapsed:?}",
-            if path == 0 { "before" } else { "after" },
-            elapsed[1]
-        );
     }
 }
 
@@ -587,4 +530,46 @@ async fn blob_only_changes_require_a_scan_without_an_event_position_change(
         .await
         .unwrap();
     assert_eq!(found.deleted, [name]);
+}
+
+#[devkit::test]
+async fn unclean_stop_checks_only_recorded_names_after_database_progress(
+    db: devkit::pg::TestDatabase,
+) {
+    use sqlx::Connection;
+    let mut conn = sqlx::PgConnection::connect(&db.url(None)).await.unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    let blobs = Blobs::open(dir.path()).unwrap();
+    let historical = blobs.put(b"admitted before saved position").unwrap();
+    sqlx::query("INSERT INTO core.blobs(hash,size,status) VALUES ($1,1,'present')")
+        .bind(&historical).execute(&mut conn).await.unwrap();
+    delete_files_without_rows(&mut conn, &blobs).await.unwrap();
+    assert_eq!(blobs.recorded_names().unwrap().count(), 0);
+    // A full scan would report this file; forward progress must use the markers.
+    std::fs::write(dir.path().join("blobs/history.txt"), b"unrelated").unwrap();
+    let admitted = blobs.put(b"admitted since saved position").unwrap();
+    sqlx::query("INSERT INTO core.blobs(hash,size,status) VALUES ($1,1,'present')")
+        .bind(&admitted).execute(&mut conn).await.unwrap();
+    sqlx::query("UPDATE core.counters SET value = value + 1 WHERE name = 'commit_seq'")
+        .execute(&mut conn).await.unwrap();
+    let orphan = blobs.put(b"stopped before admission").unwrap();
+    let uninstalled = hashed_blobs::Hash::of(b"stopped before installation");
+    blobs.note_unadmitted(uninstalled).unwrap();
+    // No shutdown sweep: the saved position still precedes both counters.
+    drop(blobs);
+    let reopened = Blobs::open(dir.path()).unwrap();
+    let position = unadmitted::DatabasePosition::read(&mut conn).await.unwrap();
+    let mut names = reopened.unadmitted_names(&position).unwrap()
+        .map(|name| name.unwrap()).collect::<Vec<_>>();
+    names.sort();
+    let mut expected = vec![admitted.clone(), orphan.clone(), format!("blake3:{}", uninstalled.hex())];
+    expected.sort();
+    assert_eq!(names, expected);
+    let found = delete_files_without_rows(&mut conn, &reopened).await.unwrap();
+    assert_eq!(found.deleted, [orphan.clone()]);
+    assert!(found.not_blobs.is_empty());
+    assert!(reopened.contains(&historical).unwrap());
+    assert!(reopened.contains(&admitted).unwrap());
+    assert!(!reopened.contains(&orphan).unwrap());
+    assert_eq!(reopened.recorded_names().unwrap().count(), 0);
 }

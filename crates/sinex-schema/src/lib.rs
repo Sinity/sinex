@@ -20,9 +20,8 @@ mod upgrades;
 /// The session advisory lock held by the database's one writer.
 pub const WRITER_LOCK: i64 = 0x7369_6e65_7857_5254;
 
-/// The schema version these declarations create: one more than the last
-/// upgrade starts from.
-pub const VERSION: i32 = 4;
+/// The schema version these declarations create, from the ordered upgrade steps.
+pub const VERSION: i32 = upgrades::STEPS.len() as i32;
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {

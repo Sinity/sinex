@@ -70,7 +70,7 @@ async fn coverage_run_index_contains_the_position_filter(db: devkit::pg::TestDat
 }
 
 #[devkit::test]
-async fn compressed_coverage_keeps_results_and_measures_both_queries(db: devkit::pg::TestDatabase) {
+async fn compressed_coverage_keeps_run_results(db: devkit::pg::TestDatabase) {
     let mut conn = PgConnection::connect(&db.url(None)).await.unwrap();
     conn.execute("INSERT INTO core.runs (id, name, host, started_at) SELECT uuidv7(), n::text, 'synthetic', to_timestamp(n) FROM generate_series(1,1000) n").await.unwrap();
     conn.execute("INSERT INTO core.events (id, event_type, source, run_id, material_id, anchor, ts_orig, ts_quality, commit_seq, payload, reading_order, record_hash) SELECT uuidv7(), 'command.executed', CASE WHEN r.name::int <= 100 THEN 'test.source' ELSE 'another.source' END, r.id, uuidv7(), 0, CASE WHEN r.name::int = 100 THEN NULL ELSE to_timestamp((r.name::int-1)*1000+n) END, CASE WHEN r.name::int = 100 THEN 'unknown' ELSE 'intrinsic' END, (r.name::int-1)*1000+n, '{}', 0, decode(repeat('00',32),'hex') FROM core.runs r CROSS JOIN generate_series(1,1000) n WHERE r.name::int <= 100 OR n = 1").await.unwrap();
@@ -80,47 +80,13 @@ async fn compressed_coverage_keeps_results_and_measures_both_queries(db: devkit:
     let compressed: i64 = sqlx::query_scalar("SELECT count(*) FROM timescaledb_information.chunks WHERE hypertable_schema='core' AND hypertable_name='events' AND is_compressed")
         .fetch_one(&mut conn).await.unwrap();
     assert_eq!(compressed as usize, chunks.len());
-    conn.execute("ANALYZE core.events; ANALYZE core.runs")
-        .await
-        .unwrap();
-    let old = "SELECT r.started_at, r.ended_at, (SELECT max(e.ts_orig) FROM core.events e WHERE e.source = $1 AND e.run_id = r.id AND e.commit_seq <= $2) AS last_record FROM core.runs r JOIN LATERAL (SELECT 1 FROM core.events e WHERE e.source = $1 AND e.run_id = r.id AND e.commit_seq <= $2 ORDER BY e.ts_orig DESC LIMIT 1) recorded ON true ORDER BY r.started_at";
-    let grouped = "SELECT r.started_at, r.ended_at, max(e.ts_orig) FROM core.events e JOIN core.runs r ON r.id = e.run_id WHERE e.source = $1 AND e.commit_seq <= $2 GROUP BY r.id, r.started_at, r.ended_at ORDER BY r.started_at";
-    let new = include_str!("runs.sql");
-    type Span = (
-        OffsetDateTime,
-        Option<OffsetDateTime>,
-        Option<OffsetDateTime>,
-    );
-    let mut expected: Option<Vec<Span>> = None;
-    for (name, query) in [
-        ("before_grouped", grouped),
-        ("before_lateral", old),
-        ("after", new),
-    ] {
-        let rows: Vec<Span> = sqlx::query_as(query)
-            .bind("test.source")
-            .bind(100000i64)
-            .fetch_all(&mut conn)
-            .await
-            .unwrap();
-        assert_eq!(rows.len(), 100);
-        assert_eq!(rows.iter().filter(|row| row.2.is_none()).count(), 1);
-        if let Some(expected) = &expected {
-            assert_eq!(&rows, expected);
-        } else {
-            expected = Some(rows);
-        }
-        for repeat in 0..3 {
-            let plan: serde_json::Value =
-                sqlx::query_scalar(&format!("EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) {query}"))
-                    .bind("test.source")
-                    .bind(100000i64)
-                    .fetch_one(&mut conn)
-                    .await
-                    .unwrap();
-            assert_eq!(plan[0]["Plan"]["Actual Rows"].as_f64(), Some(100.0));
-            eprintln!("compressed coverage {name} repeat={repeat}: {plan}");
-        }
+    let evidence = source_evidence(&mut conn, "test.source", 100000).await.unwrap();
+    assert_eq!(evidence.runs.len(), 100);
+    for (index, run) in evidence.runs.iter().enumerate() {
+        assert_eq!(run.started_at.unix_timestamp(), index as i64 + 1);
+        assert!(run.ended_at.is_none());
+        assert_eq!(run.last_record.map(|time| time.unix_timestamp()),
+            (index < 99).then_some((index as i64 + 1) * 1000));
     }
     let earlier = source_evidence(&mut conn, "test.source", 1000)
         .await

@@ -46,7 +46,7 @@ pub(crate) async fn run(
     if allow.is_empty() {
         return Err("nothing is crawled without an allow list (--allow DOMAIN)".into());
     }
-    let _crawl = CRAWL_LOCK.lock().await;
+    let _crawl = CRAWL_LOCK.try_lock().map_err(|_| "a crawl is running")?;
     let fetched: BTreeSet<String> =
         payloads::live_all(read_conn, "page.fetched", RecordStates::Any)
             .await

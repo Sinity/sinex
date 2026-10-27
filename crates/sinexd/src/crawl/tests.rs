@@ -154,3 +154,31 @@ fn crawl_filters_domains_and_fetched_urls_before_applying_the_limit() {
     );
     assert_eq!(selected, ["https://sub.allowed.test/first"]);
 }
+
+#[devkit::test]
+async fn a_second_crawl_refuses_without_waiting(db: devkit::pg::TestDatabase) {
+    let dir = tempfile::tempdir().unwrap();
+    let mut ctx = crate::reader_context::ReaderContext::open(&db.url(None), dir.path())
+        .await
+        .unwrap();
+    let active = CRAWL_LOCK.lock().await;
+    let result = tokio::time::timeout(
+        Duration::from_secs(1),
+        run(
+            &mut ctx.read_conn,
+            &ctx.blobs,
+            &ctx.writer,
+            "synthetic",
+            vec!["allowed.test".into()],
+            vec![],
+            Some(0),
+            Duration::ZERO,
+        ),
+    )
+    .await
+    .expect("a second crawl must answer while the first still holds the binding");
+    assert_eq!(result.unwrap_err(), "a crawl is running");
+    drop(active);
+    run_crawl(&mut ctx).await;
+    ctx.close().await.unwrap();
+}

@@ -45,7 +45,7 @@ creation still runs in the library command adapter.
 Crawl reads URLs from the `visit.fused` derivation, or from the command's
 explicit URLs. The command filters allowed domains and already fetched URLs
 before applying the caller's optional limit. Crawl requests run one at a time so the binding's cursor belongs to one
-URL list. The journald service uses `sinex-session capture journald`, which builds
+URL list. A second request refuses with "a crawl is running". The journald service uses `sinex-session capture journald`, which builds
 capture from the format registry and stops it through the shared capture lifetime.
 
 ### Stored bytes and admission
@@ -73,8 +73,9 @@ at shutdown it removes the names that have rows. The first start of an existing
 store checks every file once, then syncs `unadmitted-blobs-ready` with the
 database system identifier, name, highest event commit position and blob-change
 counter. The counter also advances for material admissions that produce no events.
-Later starts check only the recorded names when these match; a different database
-or position requires a full scan. Clean
+Later starts check only the recorded names when the database identity matches
+and both positions have stayed the same or advanced; a different database or
+a rollback requires a full scan. Clean
 shutdown saves the new position after forgetting admitted names.
 
 A failed admission is retried from the material the reader holds: the append,

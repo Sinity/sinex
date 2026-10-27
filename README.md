@@ -119,13 +119,10 @@ access to every file instead (it never writes them). A path with nothing to
 read, and a binding that fails, is logged when it happens, once, and again
 only when that changes.
 
-`services.sinex.database.sharedBuffers`, `maxWalSize`, `checkpointTimeout` and
-`workMem` configure PostgreSQL. The module defaults to `shared_buffers = 128MB`, `max_wal_size = 1GB`,
-`checkpoint_timeout = 5min`, `work_mem = 4MB` and `log_temp_files = 16MB`.
-These settings support bulk admission and record temporary files of at least
-16 MB in the PostgreSQL log. `work_mem` applies to each sort or hash operation,
-so concurrent queries can use several allocations. Deployments can override
-these defaults through `services.postgresql.settings`.
+PostgreSQL keeps its stock memory and checkpoint defaults. Deployments tune
+these through `services.postgresql.settings`. The module sets
+`log_temp_files = 16MB` to record temporary files of at least 16 MB in the
+PostgreSQL log.
 
 Activation does not restart sinexd, NATS or the database setup. After a
 deploy, restart them by hand (`systemctl restart sinex-db-setup sinexd`) and
