@@ -831,12 +831,14 @@
       ]
     },
     {
-      "name": "desktop.lake-clipboard",
+      "name": "desktop.clipboard",
       "formats": [
-        "sinnix-lake"
+        "sinnix-lake",
+        "clipboard"
       ],
       "drivers": [
-        "append-file"
+        "append-file",
+        "live-stream"
       ],
       "purpose": "recall, prompt provenance",
       "class": "guarded",
@@ -845,17 +847,21 @@
       ]
     },
     {
-      "name": "desktop.lake-notifications",
+      "name": "desktop.notifications",
       "formats": [
-        "sinnix-lake"
+        "sinnix-lake",
+        "notifications"
       ],
       "drivers": [
-        "append-file"
+        "append-file",
+        "live-stream"
       ],
       "purpose": "recall, interruption analysis",
       "class": "guarded",
       "eventTypes": [
-        "notification.shown"
+        "notification.shown",
+        "notification.closed",
+        "notification.action"
       ]
     },
     {
@@ -1018,22 +1024,6 @@
       ]
     },
     {
-      "name": "desktop.notifications",
-      "formats": [
-        "notifications"
-      ],
-      "drivers": [
-        "live-stream"
-      ],
-      "purpose": "recall and the day's interruptions",
-      "class": "guarded",
-      "eventTypes": [
-        "notification.shown",
-        "notification.closed",
-        "notification.action"
-      ]
-    },
-    {
       "name": "media.mpris",
       "formats": [
         "players"
@@ -1045,20 +1035,6 @@
       "class": "guarded",
       "eventTypes": [
         "player.changed"
-      ]
-    },
-    {
-      "name": "desktop.clipboard",
-      "formats": [
-        "clipboard"
-      ],
-      "drivers": [
-        "live-stream"
-      ],
-      "purpose": "recall: what was copied where",
-      "class": "guarded",
-      "eventTypes": [
-        "clipboard.copied"
       ]
     },
     {
@@ -1135,7 +1111,7 @@
       "drivers": [
         "api-request"
       ],
-      "purpose": "authored probability forecasts",
+      "purpose": "submitted probability forecasts",
       "class": "guarded",
       "eventTypes": [
         "forecast.issued",

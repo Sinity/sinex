@@ -1,6 +1,6 @@
 //! `sinexd admin`: administration that needs the database but not the running
 //! daemon, and any command of the command table run locally.
-use crate::{api, catalog, one_shot};
+use crate::{api, catalog, reader_context};
 use clap::Subcommand;
 use std::path::PathBuf;
 
@@ -168,7 +168,7 @@ async fn admin_table(args: Vec<String>) -> Result<(), String> {
     } else {
         None
     };
-    let ctx = one_shot::OneShot::open(database, store).await?;
+    let ctx = reader_context::ReaderContext::open(database, store).await?;
     let reads = sqlx::postgres::PgPoolOptions::new()
         .max_connections(4)
         .connect(database)

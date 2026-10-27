@@ -10,7 +10,7 @@ use crate::span::{MICROS_PER_SECOND, Span, SpanSet};
 use serde::{Deserialize, Serialize};
 use sinex_derivations::figures::{Law, Metric};
 use sinex_model::Timestamp;
-use sinex_model::civil::{Civil, CivilError};
+use sinex_model::time_settings::{TimeSettings, TimeSettingsError};
 
 /// One logical day.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
@@ -25,20 +25,23 @@ fn micros(t: Timestamp) -> i64 {
 
 /// The logical days from `from` to `to`, both included, under the day setting.
 pub fn days(
-    civil: &Civil,
+    time_settings: &TimeSettings,
     from: jiff::civil::Date,
     to: jiff::civil::Date,
-) -> Result<Vec<Unit>, CivilError> {
+) -> Result<Vec<Unit>, TimeSettingsError> {
     let mut out = Vec::new();
     let mut day = from;
     while day <= to {
         out.push(Unit {
             label: day.to_string(),
-            span: Span::new(micros(civil.day_start(day)?), micros(civil.day_end(day)?)),
+            span: Span::new(
+                micros(time_settings.day_start(day)?),
+                micros(time_settings.day_end(day)?),
+            ),
         });
         day = day
             .tomorrow()
-            .map_err(|e| CivilError::OutOfRange(e.to_string()))?;
+            .map_err(|e| TimeSettingsError::OutOfRange(e.to_string()))?;
     }
     Ok(out)
 }

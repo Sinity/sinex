@@ -48,28 +48,22 @@ const fn spec(
 /// audit, phone) have their own formats and readers.
 const LAKE_SOURCES: &[LakeSource] = &[
     LakeSource {
-        spec: SourceSpec {
-            class: Class::Guarded,
-            ..spec(
-                "desktop.lake-clipboard",
-                "sinnix-lake:desktop.lake-clipboard",
+        spec: spec(
+                "desktop.clipboard",
+                "sinnix-lake:desktop.clipboard",
                 "recall, prompt provenance",
                 &["clipboard.copied"],
-            )
-        },
+        ),
         dirs: &["activity/desktop/clipboard", "activity/desktop/selection"],
         lane_values: &["clipboard", "primary"],
     },
     LakeSource {
-        spec: SourceSpec {
-            class: Class::Guarded,
-            ..spec(
-                "desktop.lake-notifications",
-                "sinnix-lake:desktop.lake-notifications",
+        spec: spec(
+                "desktop.notifications",
+                "sinnix-lake:desktop.notifications",
                 "recall, interruption analysis",
                 &["notification.shown"],
-            )
-        },
+        ),
         dirs: &["activity/desktop/notification"],
         lane_values: &["notifications"],
     },

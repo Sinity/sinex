@@ -9,6 +9,7 @@
         "key": null,
         "state": "Present",
         "payload": {
+          "captured_by": "sinex",
           "received_at": "2023-11-14T22:13:20Z",
           "app": "mail",
           "summary": "New mail",
@@ -36,6 +37,7 @@
         "key": null,
         "state": "Present",
         "payload": {
+          "captured_by": "sinex",
           "received_at": "2023-11-14T22:14:20Z",
           "app": "mail",
           "summary": "New mail",

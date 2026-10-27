@@ -145,6 +145,7 @@ fn takeout(url: &str, secs: f64) -> Event {
 /// live capture's event types under its own lane's source.
 fn in_lake(mut event: Event, source: &str) -> Event {
     event.source = source.into();
+    event.payload["captured_by"] = json!("sinnix");
     event
 }
 
@@ -200,6 +201,7 @@ fn spotify(track: &str, artist: &str, from: f64, to: f64) -> Event {
 fn mpris(title: &str, artist: &str, secs: f64, status: Option<&str>, length_s: f64) -> Event {
     captured(
         &PlayerChanged {
+        captured_by: sinex_model::event_types::session::CaptureProgram::Sinex,
             received_at: at(secs),
             player: "org.mpris.MediaPlayer2.spotify".into(),
             status: status.map(str::to_owned),
@@ -221,6 +223,7 @@ fn mpris(title: &str, artist: &str, secs: f64, status: Option<&str>, length_s: f
 fn clipboard(selection: &str, text: &str, secs: f64, secret: bool) -> Event {
     captured(
         &ClipboardCopied {
+        captured_by: sinex_model::event_types::session::CaptureProgram::Sinex,
             received_at: at(secs),
             selection: selection.into(),
             mime_types: Some(vec!["text/plain".into()]),
@@ -242,6 +245,7 @@ fn clipboard(selection: &str, text: &str, secs: f64, secret: bool) -> Event {
 fn notification(summary: &str, secs: f64) -> Event {
     captured(
         &NotificationShown {
+        captured_by: sinex_model::event_types::session::CaptureProgram::Sinex,
             received_at: at(secs),
             app: "mail".into(),
             summary: summary.into(),
@@ -312,7 +316,7 @@ fn observed_by(v: &Value) -> Vec<&str> {
 fn every_rule_reads_and_writes_registered_types() {
     for rule in RULES {
         let mut types: Vec<&str> = Vec::new();
-        for o in rule.observers {
+        for o in rule.fusion_inputs {
             if !types.contains(&o.event_type) {
                 types.push(o.event_type);
             }
@@ -323,7 +327,7 @@ fn every_rule_reads_and_writes_registered_types() {
             "{}",
             rule.output
         );
-        for o in rule.observers {
+        for o in rule.fusion_inputs {
             assert!(
                 sinex_model::event_types::find(o.event_type).is_some(),
                 "{}",
@@ -653,11 +657,11 @@ fn a_copy_seen_live_and_in_the_lake_is_one_copy() {
             clipboard("clipboard", "hello", H + 5.0, false),
             in_lake(
                 clipboard("clipboard", "hello", H + 5.3, false),
-                "desktop.lake-clipboard",
+                "desktop.clipboard",
             ),
             in_lake(
                 clipboard("primary", "hello", H + 5.3, false),
-                "desktop.lake-clipboard",
+                "desktop.clipboard",
             ),
             clipboard("clipboard", "secret", H + 9.0, true),
         ],
@@ -665,7 +669,7 @@ fn a_copy_seen_live_and_in_the_lake_is_one_copy() {
     assert_eq!(out.len(), 2, "{out:?}");
     assert_eq!(
         observed_by(&out[0]),
-        ["desktop.clipboard", "desktop.lake-clipboard"]
+        ["desktop.clipboard"]
     );
     assert_eq!(out[1]["selection"], "primary");
 }
@@ -678,7 +682,7 @@ fn a_notification_seen_live_and_in_the_lake_is_one_notification() {
             notification("New mail", H + 5.0),
             in_lake(
                 notification("New mail", H + 5.1),
-                "desktop.lake-notifications",
+                "desktop.notifications",
             ),
             notification("Other", H + 5.0),
         ],
@@ -687,7 +691,7 @@ fn a_notification_seen_live_and_in_the_lake_is_one_notification() {
     let joined = out.iter().find(|n| n["summary"] == "New mail").unwrap();
     assert_eq!(
         observed_by(joined),
-        ["desktop.notifications", "desktop.lake-notifications"]
+        ["desktop.notifications"]
     );
 }
 
@@ -736,7 +740,7 @@ fn a_message_in_imap_and_an_mbox_is_one_message() {
 }
 
 #[devkit::test]
-fn mail_from_a_source_no_observer_names_is_not_fused() {
+fn mail_from_a_source_no_input_names_is_not_fused() {
     let out = fuse(&MAIL, &[mail("communication.elsewhere", "<1@x>", H + 5.0)]);
     assert!(out.is_empty());
 }
@@ -845,11 +849,11 @@ fn repeated_copies_from_one_capture_stay_separate() {
             clipboard("clipboard", "hello", H + 5.4, false),
             in_lake(
                 clipboard("clipboard", "hello", H + 5.1, false),
-                "desktop.lake-clipboard",
+                "desktop.clipboard",
             ),
             in_lake(
                 clipboard("clipboard", "hello", H + 5.5, false),
-                "desktop.lake-clipboard",
+                "desktop.clipboard",
             ),
         ],
     );
@@ -857,7 +861,7 @@ fn repeated_copies_from_one_capture_stay_separate() {
     for copy in out {
         assert_eq!(
             observed_by(&copy),
-            ["desktop.clipboard", "desktop.lake-clipboard"]
+            ["desktop.clipboard"]
         );
     }
     assert_eq!(
@@ -882,11 +886,11 @@ fn repeated_notifications_from_one_capture_stay_separate() {
             notification("New mail", H + 5.4),
             in_lake(
                 notification("New mail", H + 5.1),
-                "desktop.lake-notifications",
+                "desktop.notifications",
             ),
             in_lake(
                 notification("New mail", H + 5.5),
-                "desktop.lake-notifications",
+                "desktop.notifications",
             ),
         ],
     );
@@ -894,7 +898,7 @@ fn repeated_notifications_from_one_capture_stay_separate() {
     for notification in out {
         assert_eq!(
             observed_by(&notification),
-            ["desktop.notifications", "desktop.lake-notifications"]
+            ["desktop.notifications"]
         );
     }
     assert_eq!(
@@ -908,4 +912,16 @@ fn repeated_notifications_from_one_capture_stay_separate() {
         .len(),
         2
     );
+}
+
+#[devkit::test]
+fn capture_program_distinguishes_records_after_ingress_assigns_the_producer_name() {
+    let mut live = clipboard("clipboard", "hello", H + 5.0, false);
+    live.source = "session-example-host".into();
+    let out = fuse(&CLIPBOARD, &[
+        live,
+        in_lake(clipboard("clipboard", "hello", H + 5.1, false), "desktop.clipboard"),
+    ]);
+    assert_eq!(out.len(), 1, "{out:?}");
+    assert_eq!(observed_by(&out[0]), ["session-example-host", "desktop.clipboard"]);
 }

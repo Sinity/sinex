@@ -85,7 +85,7 @@ impl Library<'_> {
             .map_err(e)?;
             reader = Some(r);
             let (next, acquired) = out.map_err(e)?;
-            let admitted = crate::authored::submit(
+            let admitted = crate::requests::submit(
                 conn,
                 self.writer,
                 self.blobs,

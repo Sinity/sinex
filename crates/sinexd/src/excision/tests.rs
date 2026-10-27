@@ -2,7 +2,7 @@
 //! writer, on a real database.
 use super::*;
 use crate::material_sink::Sink;
-use crate::one_shot::OneShot;
+use crate::reader_context::ReaderContext;
 use crate::writer::Priority;
 use serde_json::Value;
 use sinex_model::event_types::machine::FileChanged;
@@ -97,7 +97,7 @@ pub(crate) async fn excise_directly(
 struct Clipboard {
     _db: devkit::pg::TestDatabase,
     _dir: tempfile::TempDir,
-    ctx: OneShot,
+    ctx: ReaderContext,
     binding: Binding,
     copies: i64,
 }
@@ -105,7 +105,7 @@ struct Clipboard {
 impl Clipboard {
     async fn new(db: devkit::pg::TestDatabase) -> Self {
         let dir = tempfile::tempdir().unwrap();
-        let mut ctx = OneShot::open(&db.url(None), &dir.path().join("store"))
+        let mut ctx = ReaderContext::open(&db.url(None), &dir.path().join("store"))
             .await
             .unwrap();
         let spool = dir.path().join("spool");
@@ -300,7 +300,7 @@ async fn records_of_sources_that_read_again_are_refused_without_changes(
 ) {
     use sinex_sources::sources::{atuin, library, mail_imap, notes, takeout_chrome, zsh};
     let dir = tempfile::tempdir().unwrap();
-    let mut ctx = OneShot::open(&db.url(None), &dir.path().join("store"))
+    let mut ctx = ReaderContext::open(&db.url(None), &dir.path().join("store"))
         .await
         .unwrap();
     let bytes = b"synthetic record\n";

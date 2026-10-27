@@ -9,6 +9,7 @@
         "key": null,
         "state": "Present",
         "payload": {
+          "captured_by": "sinex",
           "received_at": "2023-11-14T22:13:20Z",
           "app": "chat",
           "summary": "Alice",
@@ -39,6 +40,7 @@
         "key": null,
         "state": "Present",
         "payload": {
+          "captured_by": "sinex",
           "received_at": "2023-11-14T22:13:21Z",
           "app": "chat",
           "summary": "Alice",

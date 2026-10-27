@@ -24,7 +24,7 @@ impl StoredReader {
         length: u64,
         check: impl FnMut() -> std::io::Result<()> + Send + 'static,
     ) -> Self {
-        Self::new(Checked { reader, check }, length)
+        Self::new(ValidatedReader { reader, check }, length)
     }
     pub(crate) fn records(
         &self,
@@ -50,17 +50,17 @@ impl sinex_sources::drain::RecordRead for StoredReader {
     }
 }
 
-struct Checked<R, C> {
+struct ValidatedReader<R, C> {
     reader: R,
     check: C,
 }
-impl<R: Read, C: FnMut() -> std::io::Result<()>> Read for Checked<R, C> {
+impl<R: Read, C: FnMut() -> std::io::Result<()>> Read for ValidatedReader<R, C> {
     fn read(&mut self, out: &mut [u8]) -> std::io::Result<usize> {
         (self.check)()?;
         self.reader.read(out)
     }
 }
-impl<R: Seek, C: FnMut() -> std::io::Result<()>> Seek for Checked<R, C> {
+impl<R: Seek, C: FnMut() -> std::io::Result<()>> Seek for ValidatedReader<R, C> {
     fn seek(&mut self, from: SeekFrom) -> std::io::Result<u64> {
         (self.check)()?;
         self.reader.seek(from)

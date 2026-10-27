@@ -148,6 +148,7 @@ impl Parser for NotificationsParser {
                     .filter(|n| *n != 0);
                 let icon = text(a.get(2));
                 let shown = NotificationShown {
+        captured_by: sinex_model::event_types::session::CaptureProgram::Sinex,
                     received_at,
                     app: text(a.first()),
                     notification_id: None,

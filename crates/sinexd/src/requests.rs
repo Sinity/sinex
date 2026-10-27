@@ -8,7 +8,7 @@ use sinex_store::{Blobs, Outcome, bindings};
 use sqlx::PgConnection;
 use std::sync::Arc;
 
-pub(crate) struct Authored {
+pub(crate) struct Submission {
     pub outcome: Outcome,
     pub material: Option<MaterialId>,
 }
@@ -25,9 +25,9 @@ pub(crate) async fn submit(
     source: Arc<dyn Source>,
     binding: &str,
     acquired: drivers::Acquired,
-) -> Result<Authored, String> {
+) -> Result<Submission, String> {
     if let Some(reason) = &acquired.observation.unavailable {
-        return Err(format!("authored records are unavailable: {reason}"));
+        return Err(format!("request records are unavailable: {reason}"));
     }
     bindings::save(
         conn,
@@ -49,7 +49,7 @@ pub(crate) async fn submit(
         .unwrap_or_default();
     let class = source.spec().class.max(floor);
     if class == Class::Sealed {
-        return Err("authored records cannot be stored sealed".into());
+        return Err("request records cannot be stored sealed".into());
     }
     let batch = {
         let (binding, blobs) = (binding.to_owned(), blobs.clone());
@@ -64,7 +64,7 @@ pub(crate) async fn submit(
         _ => unreachable!("drivers build source batches"),
     };
     let outcome = writer.submit(Priority::Live, batch).await.map_err(error)?;
-    Ok(Authored { outcome, material })
+    Ok(Submission { outcome, material })
 }
 
 /// Store the bytes and build the one batch.
@@ -91,17 +91,17 @@ fn prepare(
     let mut batches = prepared.batches().map_err(error)?;
     let mut batch = batches
         .next()
-        .ok_or("authored records produced no batch")?
+        .ok_or("request records produced no batch")?
         .map_err(error)?;
     if batches.next().is_some() {
-        return Err("authored records must fit one batch".into());
+        return Err("request records must fit one batch".into());
     }
     if batch
         .records
         .iter()
         .any(|record| matches!(record, sinex_model::RecordOutcome::Failure { .. }))
     {
-        return Err("authored records failed to read back".into());
+        return Err("request records failed to read back".into());
     }
     for record in &mut batch.records {
         if let sinex_model::RecordOutcome::Events { events, .. } = record {

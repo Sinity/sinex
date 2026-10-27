@@ -6,10 +6,10 @@
 //!
 //! A rewritten file (zsh expiring duplicates, an editor saving the whole
 //! file) is aligned against the previous revision: records whose bytes the
-//! previous revision already held were read before, and only the others are
+//! previous revision already contained were read before, and only the others are
 //! read as new. The file has no record IDs, so without this every record
 //! would come back as a new event at a new location. Records the previous
-//! revision held and the rewrite dropped are reported by where they were read,
+//! revision contained and the rewrite dropped are reported by where they were read,
 //! and become removed-at-source readings.
 use super::{Acquired, DriverError, NewMaterial, file_facts};
 use serde::{Deserialize, Serialize};
@@ -86,7 +86,7 @@ impl Default for TailBounds {
 pub struct AppendState {
     bounds: TailBounds,
     records: HashMap<[u8; 32], std::collections::VecDeque<RecordLocation>>,
-    /// Every held record in reading order, with its length, so the oldest
+    /// Every remembered record in reading order, with its length, so the oldest
     /// is dropped first when the tail grows past a bound.
     order: std::collections::VecDeque<([u8; 32], RecordLocation, usize)>,
     bytes: usize,
@@ -144,27 +144,27 @@ impl AppendState {
         {
             let (hash, location, n) = self.order.pop_front().expect("not empty");
             self.bytes -= n;
-            if let Some(held) = self.records.get_mut(&hash) {
-                held.retain(|l| *l != location);
-                if held.is_empty() {
+            if let Some(locations) = self.records.get_mut(&hash) {
+                locations.retain(|l| *l != location);
+                if locations.is_empty() {
                     self.records.remove(&hash);
                 }
             }
         }
     }
 
-    /// Whether an equal record was held, consuming one occurrence of it.
+    /// Whether an equal record was remembered, consuming one occurrence of it.
     fn take(&mut self, record: &[u8]) -> bool {
         match self.records.get_mut(blake3::hash(record).as_bytes()) {
-            Some(held) if !held.is_empty() => {
-                held.pop_front();
+            Some(locations) if !locations.is_empty() => {
+                locations.pop_front();
                 true
             }
             _ => false,
         }
     }
 
-    /// Where the records still held were read: after a rewrite is aligned,
+    /// Where the records still remembered were read: after a rewrite is aligned,
     /// the ones it dropped.
     fn remaining(self) -> Vec<RecordLocation> {
         let mut out: Vec<RecordLocation> = self.records.into_values().flatten().collect();
@@ -352,7 +352,7 @@ impl AppendFile {
         }
         data.truncate(consumed);
         // A restart from the beginning (rewritten or truncated) is aligned
-        // against what the previous revision held; then the state becomes
+        // against what the previous revision contained; then the state becomes
         // the new revision's records.
         let restarted_records = start == 0 && !cursor.is_null();
         let id = MaterialId::new();

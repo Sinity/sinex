@@ -8,7 +8,7 @@ use std::time::Instant;
 /// Parts each binding stores before the restart.
 const PARTS: usize = 300;
 
-async fn turn(ctx: &mut OneShot, bound: &mut [Bound]) {
+async fn turn(ctx: &mut ReaderContext, readers: &mut [BindingReader]) {
     let sink = Sink(ctx.blobs.clone());
     let (_stop, stop) = watch::channel(false);
     for (_, result) in read(
@@ -17,7 +17,7 @@ async fn turn(ctx: &mut OneShot, bound: &mut [Bound]) {
         &ctx.writer,
         RunId::new(),
         &sink,
-        bound,
+        readers,
         stop,
         Access::default(),
         &mut |_, _| {},
@@ -45,14 +45,14 @@ async fn saved_memories(conn: &mut PgConnection, binding: &str) -> i64 {
 }
 
 /// Rebuild a fresh reader's memory the way a restart does; how long it took.
-async fn restore(ctx: &mut OneShot, bound: &mut Bound) -> std::time::Duration {
+async fn restore(ctx: &mut ReaderContext, readers: &mut BindingReader) -> std::time::Duration {
     let (_stop, stop) = watch::channel(false);
-    let name = bound.binding.name.clone();
+    let name = readers.binding.name.clone();
     let started = Instant::now();
     restore_reader(
         &mut ctx.read_conn,
         &ctx.blobs,
-        polled(bound),
+        polled(readers),
         &name,
         None,
         &stop,
@@ -72,11 +72,11 @@ async fn a_restarted_row_reader_remembers_every_stored_row(db: devkit::pg::TestD
             "CREATE TABLE history (id TEXT PRIMARY KEY, timestamp INTEGER, duration INTEGER, exit INTEGER, command TEXT, cwd TEXT, session TEXT, hostname TEXT, deleted_at INTEGER)",
         )
         .unwrap();
-    let mut ctx = OneShot::open(&db.url(None), &dir.path().join("store"))
+    let mut ctx = ReaderContext::open(&db.url(None), &dir.path().join("store"))
         .await
         .unwrap();
     let binding = Binding::of(&atuin::SPEC, &path, Settings::new("synthetic"));
-    let mut bound = vec![Bound::new(&atuin::FORMAT, binding.clone()).unwrap()];
+    let mut readers = vec![BindingReader::new(&atuin::FORMAT, binding.clone()).unwrap()];
     for n in 0..PARTS {
         sqlite
             .execute(
@@ -88,12 +88,12 @@ async fn a_restarted_row_reader_remembers_every_stored_row(db: devkit::pg::TestD
                 ],
             )
             .unwrap();
-        turn(&mut ctx, &mut bound).await;
+        turn(&mut ctx, &mut readers).await;
     }
     assert_eq!(parts(&mut ctx.read_conn).await, PARTS as i64);
     assert_eq!(saved_memories(&mut ctx.read_conn, &binding.name).await, 1);
 
-    let mut restarted = Bound::new(&atuin::FORMAT, binding.clone()).unwrap();
+    let mut restarted = BindingReader::new(&atuin::FORMAT, binding.clone()).unwrap();
     let took = restore(&mut ctx, &mut restarted).await;
     eprintln!("restored a row reader over {PARTS} parts in {took:?}");
     // The first poll after a start reads every row; none differs from what
@@ -117,20 +117,20 @@ async fn a_restarted_directory_reader_stores_nothing_unchanged_and_sees_old_remo
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path().join("vault");
     std::fs::create_dir_all(&root).unwrap();
-    let mut ctx = OneShot::open(&db.url(None), &dir.path().join("store"))
+    let mut ctx = ReaderContext::open(&db.url(None), &dir.path().join("store"))
         .await
         .unwrap();
     let binding = Binding::of(&notes::SPEC, &root, Settings::new("synthetic"));
-    let mut bound = vec![Bound::new(&notes::FORMAT, binding.clone()).unwrap()];
+    let mut readers = vec![BindingReader::new(&notes::FORMAT, binding.clone()).unwrap()];
     for n in 0..PARTS {
         std::fs::write(root.join(format!("{n:06}.md")), format!("note {n}")).unwrap();
-        turn(&mut ctx, &mut bound).await;
+        turn(&mut ctx, &mut readers).await;
     }
     assert_eq!(parts(&mut ctx.read_conn).await, PARTS as i64);
     assert_eq!(saved_memories(&mut ctx.read_conn, &binding.name).await, 1);
-    drop(bound);
+    drop(readers);
 
-    let mut restarted = Bound::new(&notes::FORMAT, binding.clone()).unwrap();
+    let mut restarted = BindingReader::new(&notes::FORMAT, binding.clone()).unwrap();
     let took = restore(&mut ctx, &mut restarted).await;
     eprintln!("restored a directory reader over {PARTS} parts in {took:?}");
     let (cursor, _) = positions::load(&mut ctx.read_conn, &binding.name)

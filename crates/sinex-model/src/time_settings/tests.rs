@@ -4,13 +4,13 @@ fn ts(unix: i64) -> Timestamp {
     Timestamp::from_unix_secs(unix).unwrap()
 }
 
-fn midnight_civil() -> Civil {
-    Civil::new("Europe/Warsaw", 0, 0).unwrap()
+fn midnight_settings() -> TimeSettings {
+    TimeSettings::new("Europe/Warsaw", 0, 0).unwrap()
 }
 
 #[devkit::test]
 fn spring_forward_day_is_23_hours() {
-    let c = midnight_civil();
+    let c = midnight_settings();
     // 2024-03-31 noon local.
     let day = c.day(ts(1_711_879_200)).unwrap();
     let len = c.day_end(day).unwrap().unix_ns() - c.day_start(day).unwrap().unix_ns();
@@ -19,7 +19,7 @@ fn spring_forward_day_is_23_hours() {
 
 #[devkit::test]
 fn fall_back_day_is_25_hours() {
-    let c = midnight_civil();
+    let c = midnight_settings();
     let day = c.day(ts(1_730_026_800)).unwrap();
     // Local midnight 2024-10-27 00:00 CEST is 2024-10-26 22:00 UTC.
     assert_eq!(c.day_start(day).unwrap(), ts(1_729_980_000));
@@ -29,7 +29,7 @@ fn fall_back_day_is_25_hours() {
 
 #[devkit::test]
 fn repeated_hour_at_fall_back_is_two_buckets() {
-    let c = midnight_civil();
+    let c = midnight_settings();
     // 2024-10-27: 02:30 CEST is 00:30 UTC; 02:30 CET is 01:30 UTC.
     let first = c.hour_start(ts(1_729_989_000)).unwrap();
     let second = c.hour_start(ts(1_729_992_600)).unwrap();
@@ -40,7 +40,7 @@ fn repeated_hour_at_fall_back_is_two_buckets() {
 
 #[devkit::test]
 fn late_evening_stays_in_its_local_day() {
-    let c = midnight_civil();
+    let c = midnight_settings();
     // 2024-06-15 23:30 CEST.
     assert_eq!(
         c.day(ts(1_718_487_000)).unwrap(),
@@ -51,7 +51,7 @@ fn late_evening_stays_in_its_local_day() {
 
 #[devkit::test]
 fn logical_day_starts_at_four() {
-    let c = Civil::operator_default();
+    let c = TimeSettings::operator_default();
     // 2024-06-15 03:59 CEST belongs to the 14th; 04:00 to the 15th.
     assert_eq!(
         c.day(ts(1_718_416_740)).unwrap(),
@@ -70,11 +70,11 @@ fn logical_day_starts_at_four() {
 #[devkit::test]
 fn unknown_zone_is_an_error_not_utc() {
     assert!(matches!(
-        Civil::new("Not/A_Zone", 4, 0),
-        Err(CivilError::UnknownZone(_))
+        TimeSettings::new("Not/A_Zone", 4, 0),
+        Err(TimeSettingsError::UnknownZone(_))
     ));
     assert!(matches!(
-        Civil::new("UTC", 24, 0),
-        Err(CivilError::BadDayStart(24, 0))
+        TimeSettings::new("UTC", 24, 0),
+        Err(TimeSettingsError::BadDayStart(24, 0))
     ));
 }

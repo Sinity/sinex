@@ -23,7 +23,7 @@ pub trait SharedPass: Send + Sync {
         cursor: &Value,
         facts: &ObservationFacts,
         class: Class,
-    ) -> Result<Resume, DriverError>;
+    ) -> Result<SharedReadStart, DriverError>;
 
     /// This binding's part in a pass that starts from `cursor`.
     fn route(&self, cursor: Value, class: Class) -> Route;
@@ -31,17 +31,17 @@ pub trait SharedPass: Send + Sync {
 
 /// What a binding needs from the next pass.
 #[derive(Debug, PartialEq, Eq)]
-pub enum Resume {
+pub enum SharedReadStart {
     /// The cursor already covers the whole file as it is now.
     Finished,
     /// Read the file: from the stored copy the cursor names, or from a new
     /// copy when it names none of this file.
-    Read(Option<StoredCopy>),
+    Read(Option<StoredFile>),
 }
 
 /// The stored copy of the file a cursor names.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct StoredCopy {
+pub struct StoredFile {
     pub blob: String,
     pub length: u64,
     /// The material that holds it, whose key opens a sealed copy.

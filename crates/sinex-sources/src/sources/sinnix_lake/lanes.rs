@@ -197,6 +197,7 @@ struct Window {
 
 fn selection(lane: &str, at: Timestamp, s: Selection) -> ClipboardCopied {
     ClipboardCopied {
+        captured_by: sinex_model::event_types::session::CaptureProgram::Sinnix,
         received_at: at,
         selection: lane.to_owned(),
         mime_types: None,
@@ -249,6 +250,7 @@ fn notification(at: Timestamp, n: Notification) -> Result<NotificationShown, Rec
         hints.entry("urgency").or_insert(urgency.into());
     }
     Ok(NotificationShown {
+        captured_by: sinex_model::event_types::session::CaptureProgram::Sinnix,
         received_at: n.timestamp.map(seconds).transpose()?.unwrap_or(at),
         app: n.app_name.unwrap_or_default(),
         summary: n.summary.unwrap_or_default(),
@@ -299,6 +301,7 @@ fn micros(seconds: f64) -> Option<i64> {
 
 fn player(at: Timestamp, p: Player) -> PlayerChanged {
     PlayerChanged {
+        captured_by: sinex_model::event_types::session::CaptureProgram::Sinnix,
         received_at: at,
         player: p.player,
         status: p.status,

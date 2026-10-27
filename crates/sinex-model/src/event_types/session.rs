@@ -8,10 +8,19 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
+/// The program that observed a record, independent of the ingress producer.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum CaptureProgram {
+    Sinex,
+    Sinnix,
+}
+
 /// A desktop notification was asked for (`org.freedesktop.Notifications.Notify`).
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
 #[event(type = "notification.shown", key = location, replace = repeat, time = received_at, quality = captured)]
 pub struct NotificationShown {
+    pub captured_by: CaptureProgram,
     pub received_at: Timestamp,
     /// The application name the sender gave.
     pub app: String,
@@ -62,6 +71,7 @@ pub struct NotificationAction {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
 #[event(type = "clipboard.copied", key = location, replace = repeat, time = received_at, quality = captured)]
 pub struct ClipboardCopied {
+    pub captured_by: CaptureProgram,
     pub received_at: Timestamp,
     /// `clipboard` or `primary`.
     pub selection: String,
@@ -105,6 +115,7 @@ pub struct FocusedWindow {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
 #[event(type = "player.changed", key = location, replace = repeat, time = received_at, quality = captured)]
 pub struct PlayerChanged {
+    pub captured_by: CaptureProgram,
     pub received_at: Timestamp,
     /// The player's well-known name (`org.mpris.MediaPlayer2.spotify`) when
     /// known, else its unique bus name.

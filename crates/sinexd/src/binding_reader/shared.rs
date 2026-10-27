@@ -1,7 +1,7 @@
 //! One pass over a stored file shared by every compatible binding of it:
 //! the file is stored once (sealed when the bindings' class is), read forward
 //! once, and each binding's acquisitions are admitted as the pass reaches them.
-use super::{Access, Bound};
+use super::{Access, BindingReader};
 use crate::backfill::{self, Totals};
 use crate::material_sink::Sink;
 use crate::writer::WriterHandle;
@@ -9,7 +9,7 @@ use serde_json::Value;
 use sinex_model::{Class, ObservationFacts, RunId};
 use sinex_sources::Reading;
 use sinex_sources::drivers;
-use sinex_sources::shared_pass::{self, StoredCopy};
+use sinex_sources::shared_pass::{self, StoredFile};
 use sinex_store::{Blobs, positions};
 use sqlx::PgConnection;
 use std::io::Read;
@@ -20,10 +20,10 @@ use std::sync::{
 use tokio::sync::{mpsc, watch};
 
 /// Bindings read in one shared pass over the same file.
-pub(super) struct Pass {
+pub(super) struct SharedFileRead {
     pub(super) indices: Vec<usize>,
     /// The stored copy of the file a binding's cursor names, if any.
-    pub(super) stored: Option<StoredCopy>,
+    pub(super) stored: Option<StoredFile>,
     pub(super) facts: ObservationFacts,
     pub(super) class: Class,
     pub(super) host: String,
@@ -48,11 +48,11 @@ impl Drop for Cancel {
         self.0.store(true, Ordering::Relaxed);
     }
 }
-struct Checked<R> {
+struct InterruptibleReader<R> {
     input: R,
     stop: Arc<AtomicBool>,
 }
-impl<R: Read> Read for Checked<R> {
+impl<R: Read> Read for InterruptibleReader<R> {
     fn read(&mut self, bytes: &mut [u8]) -> std::io::Result<usize> {
         if self.stop.load(Ordering::Relaxed)
             || sinex_transport::private_mode::PrivateMode::default().on()
@@ -70,8 +70,8 @@ pub(super) async fn read_shared(
     writer: &WriterHandle,
     run: RunId,
     sink: &Sink,
-    bound: &mut [Bound],
-    pass: &Pass,
+    readers: &mut [BindingReader],
+    pass: &SharedFileRead,
     mut stop: watch::Receiver<bool>,
     access: Access<'_>,
 ) -> Result<Vec<Result<Totals, String>>, String> {
@@ -118,7 +118,7 @@ pub(super) async fn read_shared(
         pass.indices.iter().map(|_| Ok(Totals::default())).collect();
     for (slot, &index) in pass.indices.iter().enumerate() {
         let route = async {
-            let b = &mut bound[index];
+            let b = &mut readers[index];
             let cursor = positions::load(conn, &b.binding.name)
                 .await
                 .map_err(|e| e.to_string())?
@@ -141,7 +141,7 @@ pub(super) async fn read_shared(
     if routes.is_empty() {
         return Ok(totals);
     }
-    let Reading::Shared(shared) = &bound[pass.indices[slots[0]]].reading else {
+    let Reading::Shared(shared) = &readers[pass.indices[slots[0]]].reading else {
         unreachable!("only bindings read in a shared pass are grouped")
     };
     let path = shared.path().to_owned();
@@ -158,7 +158,7 @@ pub(super) async fn read_shared(
             Some(captured) => captured,
             None => {
                 let input = std::fs::File::open(&path).map_err(|e| e.to_string())?;
-                let input = Checked {
+                let input = InterruptibleReader {
                     input,
                     stop: Arc::clone(&cancelled),
                 };
@@ -190,7 +190,7 @@ pub(super) async fn read_shared(
         let input = match &worker_sealing {
             Some(sealing) => {
                 let key = sealing.key(&blob)?;
-                shared_pass::Input::Seekable(Box::new(Checked {
+                shared_pass::Input::Seekable(Box::new(InterruptibleReader {
                     input: store
                         .read_sealed(
                             &blob,
@@ -203,7 +203,7 @@ pub(super) async fn read_shared(
                     stop: Arc::clone(&cancelled),
                 }))
             }
-            None => shared_pass::Input::Sequential(Box::new(Checked {
+            None => shared_pass::Input::Sequential(Box::new(InterruptibleReader {
                 input: store
                     .read_plain(&blob, Some(length), check)
                     .map_err(|e| e.to_string())?,
@@ -246,7 +246,7 @@ pub(super) async fn read_shared(
         };
         let slot = slots[delivery.index];
         let index = pass.indices[slot];
-        let b = &mut bound[index];
+        let b = &mut readers[index];
         let result = async {
             let mut acquired = delivery.acquired.map_err(|e| e.to_string())?;
             if sinex_transport::private_mode::PrivateMode::default().on() {
@@ -322,7 +322,7 @@ pub(super) async fn read_shared(
     Ok(totals)
 }
 
-impl<R: Read + std::io::Seek> std::io::Seek for Checked<R> {
+impl<R: Read + std::io::Seek> std::io::Seek for InterruptibleReader<R> {
     fn seek(&mut self, position: std::io::SeekFrom) -> std::io::Result<u64> {
         if self.stop.load(Ordering::Relaxed) {
             return Err(std::io::Error::other("capture cancelled"));

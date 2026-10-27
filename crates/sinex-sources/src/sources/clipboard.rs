@@ -27,7 +27,7 @@ pub const SPEC: SourceSpec = SourceSpec {
     // Anything the operator copies, passwords included unless marked secret.
     class: Class::Guarded,
     parser: "wl-clipboard",
-    parser_version: 1,
+    parser_version: 2,
     event_types: &["clipboard.copied"],
     framer: crate::Framer::incremental(crate::drivers::append_file::lines),
 };
@@ -157,6 +157,7 @@ impl Parser for ClipboardParser {
             .map(str::to_owned);
         Ok((
             vec![ClipboardCopied {
+        captured_by: sinex_model::event_types::session::CaptureProgram::Sinex,
                 received_at,
                 selection: f
                     .get("selection")

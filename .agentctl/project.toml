@@ -107,7 +107,6 @@ timeout_seconds = 14400
 scratch = "nvme"
 cache = "none"
 cap = "cargo"
-max_io_pressure = 5
 
 [operations.compile]
 description = "Selected package or target compilation against the schema database"

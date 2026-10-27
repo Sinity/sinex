@@ -24,7 +24,7 @@ pub const SPEC: SourceSpec = SourceSpec {
     // Titles and URLs of what is playing.
     class: Class::Guarded,
     parser: "dbus-mpris",
-    parser_version: 1,
+    parser_version: 2,
     event_types: &["player.changed"],
     framer: crate::Framer::incremental(crate::drivers::append_file::lines),
 };
@@ -53,6 +53,7 @@ fn changed(
             .map(str::to_owned)
     };
     PlayerChanged {
+        captured_by: sinex_model::event_types::session::CaptureProgram::Sinex,
         received_at,
         player,
         status: props

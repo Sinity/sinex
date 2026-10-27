@@ -13,12 +13,12 @@ async fn restarted_directory_reader_observes_files_removed_after_its_committed_c
     std::fs::create_dir_all(&root).unwrap();
     std::fs::write(root.join("a.md"), "alpha").unwrap();
     std::fs::write(root.join("b.md"), "beta").unwrap();
-    let mut ctx = OneShot::open(&url, &dir.path().join("store"))
+    let mut ctx = ReaderContext::open(&url, &dir.path().join("store"))
         .await
         .unwrap();
     let sink = Sink(ctx.blobs.clone());
     let binding = Binding::of(&notes::SPEC, &root, Settings::new("synthetic"));
-    let mut bounds = vec![Bound::new(&notes::FORMAT, binding.clone()).unwrap()];
+    let mut readers = vec![BindingReader::new(&notes::FORMAT, binding.clone()).unwrap()];
     let (_stop, stop) = watch::channel(false);
     let result = read(
         &mut ctx.read_conn,
@@ -26,7 +26,7 @@ async fn restarted_directory_reader_observes_files_removed_after_its_committed_c
         &ctx.writer,
         RunId::new(),
         &sink,
-        &mut bounds,
+        &mut readers,
         stop.clone(),
         Access::default(),
         &mut |_, _| {},
@@ -36,9 +36,9 @@ async fn restarted_directory_reader_observes_files_removed_after_its_committed_c
         result.unwrap();
     }
     assert_eq!(current_notes(&mut ctx.read_conn).await.len(), 2);
-    drop(bounds);
+    drop(readers);
     std::fs::remove_file(root.join("a.md")).unwrap();
-    let mut restarted = vec![Bound::new(&notes::FORMAT, binding).unwrap()];
+    let mut restarted = vec![BindingReader::new(&notes::FORMAT, binding).unwrap()];
     let result = read(
         &mut ctx.read_conn,
         &ctx.blobs,
@@ -65,7 +65,11 @@ async fn restarted_directory_reader_observes_files_removed_after_its_committed_c
     );
 }
 
-async fn turn(ctx: &mut OneShot, bound: &mut [Bound], access: Access<'_>) -> Result<(), String> {
+async fn turn(
+    ctx: &mut ReaderContext,
+    readers: &mut [BindingReader],
+    access: Access<'_>,
+) -> Result<(), String> {
     let sink = Sink(ctx.blobs.clone());
     let (_stop, stop) = watch::channel(false);
     for (_, result) in read(
@@ -74,7 +78,7 @@ async fn turn(ctx: &mut OneShot, bound: &mut [Bound], access: Access<'_>) -> Res
         &ctx.writer,
         RunId::new(),
         &sink,
-        bound,
+        readers,
         stop,
         access,
         &mut |_, _| {},
@@ -87,8 +91,8 @@ async fn turn(ctx: &mut OneShot, bound: &mut [Bound], access: Access<'_>) -> Res
 }
 
 async fn prefix(
-    ctx: &mut OneShot,
-    b: &mut Bound,
+    ctx: &mut ReaderContext,
+    b: &mut BindingReader,
     sink: &dyn drivers::MaterialSink,
     sealing: Option<&crate::material_sink::SealingSink>,
 ) -> MaterialRef {
@@ -141,7 +145,7 @@ async fn sealed_history_needs_no_private_key_and_keeps_the_binding_sealed(
     std::fs::write(root.join("a.md"), "synthetic sealed alpha").unwrap();
     let identity = sinex_store::sealed::Identity::generate();
     let recipient = identity.to_public();
-    let mut ctx = OneShot::open(&url, &dir.path().join("store"))
+    let mut ctx = ReaderContext::open(&url, &dir.path().join("store"))
         .await
         .unwrap();
     sinex_store::privacy::set_source_class(
@@ -153,10 +157,10 @@ async fn sealed_history_needs_no_private_key_and_keeps_the_binding_sealed(
     .await
     .unwrap();
     let binding = Binding::of(&notes::SPEC, &root, Settings::new("synthetic"));
-    let mut bounds = vec![Bound::new(&notes::FORMAT, binding.clone()).unwrap()];
+    let mut readers = vec![BindingReader::new(&notes::FORMAT, binding.clone()).unwrap()];
     turn(
         &mut ctx,
-        &mut bounds,
+        &mut readers,
         Access {
             recipient: Some(&recipient),
             unlock: None,
@@ -164,9 +168,9 @@ async fn sealed_history_needs_no_private_key_and_keeps_the_binding_sealed(
     )
     .await
     .unwrap();
-    drop(bounds);
+    drop(readers);
     std::fs::remove_file(root.join("a.md")).unwrap();
-    let mut restarted = vec![Bound::new(&notes::FORMAT, binding.clone()).unwrap()];
+    let mut restarted = vec![BindingReader::new(&notes::FORMAT, binding.clone()).unwrap()];
     turn(
         &mut ctx,
         &mut restarted,
@@ -191,7 +195,7 @@ async fn sealed_history_needs_no_private_key_and_keeps_the_binding_sealed(
     drop(restarted);
     // Sealed history keeps the binding sealed after its class is lowered,
     // and remembering it needs no private key.
-    let mut lowered = vec![Bound::new(&notes::FORMAT, binding.clone()).unwrap()];
+    let mut lowered = vec![BindingReader::new(&notes::FORMAT, binding.clone()).unwrap()];
     std::fs::write(
         root.join("b.md"),
         "synthetic beta after the class was lowered",
@@ -237,7 +241,7 @@ impl sinex_sources::Parser for IgnoreFirst {
         sinex_sources::Parser::parse(&notes::NotesParser, record, carry, context)
     }
 }
-fn ignore_first(b: &mut Bound) {
+fn ignore_first(b: &mut BindingReader) {
     let mut spec = notes::SPEC;
     spec.parser_version = 99;
     b.source = Box::new(sinex_sources::DeclaredSource {
@@ -254,12 +258,12 @@ async fn a_restart_remembers_a_file_whose_record_produced_no_event(db: devkit::p
     std::fs::create_dir_all(&root).unwrap();
     std::fs::write(root.join("a.md"), "ignored alpha").unwrap();
     std::fs::write(root.join("b.md"), "beta").unwrap();
-    let mut ctx = OneShot::open(&url, &dir.path().join("store"))
+    let mut ctx = ReaderContext::open(&url, &dir.path().join("store"))
         .await
         .unwrap();
     let sink = Sink(ctx.blobs.clone());
     let binding = Binding::of(&notes::SPEC, &root, Settings::new("synthetic"));
-    let mut b = Bound::new(&notes::FORMAT, binding.clone()).unwrap();
+    let mut b = BindingReader::new(&notes::FORMAT, binding.clone()).unwrap();
     ignore_first(&mut b);
     prefix(&mut ctx, &mut b, &sink, None).await;
     let checkpoint = positions::load(&mut ctx.read_conn, &binding.name)
@@ -269,7 +273,7 @@ async fn a_restart_remembers_a_file_whose_record_produced_no_event(db: devkit::p
     assert!(checkpoint.0["through"].as_u64().unwrap() > 0);
     drop(b);
     std::fs::remove_file(root.join("a.md")).unwrap();
-    let mut restarted = vec![Bound::new(&notes::FORMAT, binding).unwrap()];
+    let mut restarted = vec![BindingReader::new(&notes::FORMAT, binding).unwrap()];
     ignore_first(&mut restarted[0]);
     turn(&mut ctx, &mut restarted, Access::default())
         .await
@@ -292,22 +296,22 @@ async fn stopped_directory_restore_keeps_progress_and_can_be_retried(db: devkit:
     let root = dir.path().join("vault");
     std::fs::create_dir_all(&root).unwrap();
     std::fs::write(root.join("a.md"), "alpha").unwrap();
-    let mut ctx = OneShot::open(&url, &dir.path().join("store"))
+    let mut ctx = ReaderContext::open(&url, &dir.path().join("store"))
         .await
         .unwrap();
     let sink = Sink(ctx.blobs.clone());
     let binding = Binding::of(&notes::SPEC, &root, Settings::new("synthetic"));
-    let mut bounds = vec![Bound::new(&notes::FORMAT, binding.clone()).unwrap()];
-    turn(&mut ctx, &mut bounds, Access::default())
+    let mut readers = vec![BindingReader::new(&notes::FORMAT, binding.clone()).unwrap()];
+    turn(&mut ctx, &mut readers, Access::default())
         .await
         .unwrap();
-    drop(bounds);
+    drop(readers);
     let checkpoint = positions::load(&mut ctx.read_conn, &binding.name)
         .await
         .unwrap()
         .unwrap();
     std::fs::remove_file(root.join("a.md")).unwrap();
-    let mut restarted = vec![Bound::new(&notes::FORMAT, binding.clone()).unwrap()];
+    let mut restarted = vec![BindingReader::new(&notes::FORMAT, binding.clone()).unwrap()];
     let (_stop, stop) = watch::channel(true);
     let result = read(
         &mut ctx.read_conn,
@@ -345,7 +349,7 @@ async fn a_removed_guarded_member_keeps_its_class_after_the_source_floor_is_lowe
     let root = dir.path().join("vault");
     std::fs::create_dir_all(&root).unwrap();
     std::fs::write(root.join("a.md"), "synthetic guarded alpha").unwrap();
-    let mut ctx = OneShot::open(&url, &dir.path().join("store"))
+    let mut ctx = ReaderContext::open(&url, &dir.path().join("store"))
         .await
         .unwrap();
     sinex_store::privacy::set_source_class(
@@ -357,11 +361,11 @@ async fn a_removed_guarded_member_keeps_its_class_after_the_source_floor_is_lowe
     .await
     .unwrap();
     let binding = Binding::of(&notes::SPEC, &root, Settings::new("synthetic"));
-    let mut bounds = vec![Bound::new(&notes::FORMAT, binding.clone()).unwrap()];
-    turn(&mut ctx, &mut bounds, Access::default())
+    let mut readers = vec![BindingReader::new(&notes::FORMAT, binding.clone()).unwrap()];
+    turn(&mut ctx, &mut readers, Access::default())
         .await
         .unwrap();
-    drop(bounds);
+    drop(readers);
     sinex_store::privacy::set_source_class(
         &mut ctx.read_conn,
         notes::SPEC.name,
@@ -371,7 +375,7 @@ async fn a_removed_guarded_member_keeps_its_class_after_the_source_floor_is_lowe
     .await
     .unwrap();
     std::fs::remove_file(root.join("a.md")).unwrap();
-    let mut restarted = vec![Bound::new(&notes::FORMAT, binding).unwrap()];
+    let mut restarted = vec![BindingReader::new(&notes::FORMAT, binding).unwrap()];
     turn(&mut ctx, &mut restarted, Access::default())
         .await
         .unwrap();

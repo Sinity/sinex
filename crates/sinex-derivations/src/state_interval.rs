@@ -464,7 +464,7 @@ impl Keyed for StateIntervals {
         let Some(t) = input.ts_orig else {
             return vec![];
         };
-        let Ok(day) = env.civil.day(t) else {
+        let Ok(day) = env.time_settings.day(t) else {
             return vec![];
         };
         let interruption = Interruption::of(input.event_type, input.payload);
@@ -480,8 +480,8 @@ impl Keyed for StateIntervals {
 
     fn inputs(&self, key: &Value, env: &Env) -> Option<InputQuery> {
         let (r, day) = key_parts(key)?;
-        let start = env.civil.day_start(day).ok()?;
-        let end = env.civil.day_end(day).ok()?;
+        let start = env.time_settings.day_start(day).ok()?;
+        let end = env.time_settings.day_end(day).ok()?;
         let mut types: Vec<&'static str> = r.event_types.to_vec();
         for f in r.ended_by {
             for k in f.neighbour().kinds {
@@ -514,7 +514,10 @@ impl Keyed for StateIntervals {
         let Some((r, day)) = key_parts(key) else {
             return Computed::default();
         };
-        let (Ok(start), Ok(end)) = (env.civil.day_start(day), env.civil.day_end(day)) else {
+        let (Ok(start), Ok(end)) = (
+            env.time_settings.day_start(day),
+            env.time_settings.day_end(day),
+        ) else {
             return Computed::default();
         };
         let mut events: Vec<&Event> = inputs.iter().filter(|e| e.ts_orig.at.is_some()).collect();

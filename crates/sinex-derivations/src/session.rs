@@ -38,7 +38,7 @@ impl Keyed for ShellSessions {
         ) else {
             return vec![];
         };
-        match env.civil.day(t) {
+        match env.time_settings.day(t) {
             Ok(day) => vec![json!({"host": host, "day": day.to_string()})],
             Err(_) => vec![],
         }
@@ -49,8 +49,8 @@ impl Keyed for ShellSessions {
         Some(
             InputQuery::window(
                 Self::INPUTS,
-                env.civil.day_start(day).ok()?,
-                env.civil.day_end(day).ok()?,
+                env.time_settings.day_start(day).ok()?,
+                env.time_settings.day_end(day).ok()?,
             )
             .only("host", Value::String(host)),
         )
@@ -124,7 +124,7 @@ impl Keyed for ShellSessions {
     }
 
     fn key_state(&self, key: &Value, env: &Env) -> KeyState {
-        match key_parts(key).and_then(|(_, day)| env.civil.day_end(day).ok()) {
+        match key_parts(key).and_then(|(_, day)| env.time_settings.day_end(day).ok()) {
             Some(end) if env.now.unix_ns() >= end.unix_ns() + GAP_NS => KeyState::Closed,
             Some(_) => KeyState::Open,
             None => KeyState::Closed,

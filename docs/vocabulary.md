@@ -47,6 +47,8 @@ these names and no others.
 
 ## Events
 
+- **capture program**: the program that observed a record (`captured_by`: `sinex` or `sinnix`), kept independently of the source and ingress producer.
+
 - **domain usage**: seconds a provider attributed to one domain on a civil date (`domain.usage`); a date without a zone supplies no instant.
 
 - **event**: one reading of a record, or of parent events: a typed payload, an origin and three clocks.
@@ -56,7 +58,7 @@ these names and no others.
 - **equivalence key**: the per-type key that recognizes the same thing seen again in another material.
 - **clocks**: `ts_orig` (when it happened, or unknown), `ts_coided` (when Sinex read it, from the UUIDv7 ID), `ts_persisted` (when it was committed).
 - **derived event**: an event computed by a derivation, naming its parents.
-- **fusion**: joining what several sources observed of one thing into one **fused record**: `command.fused`, `focus.fused`, `visit.fused`, `play.fused`, `clipboard.fused`, `notification.fused`, `mail.fused`, `post.fused`, `conversation.fused`. Each fused kind has one **fusion rule**; an **observer** reads one source's events for it as **sightings** (an identity, a start, maybe an end, the fields it supplies). A **fused command** is a `command.fused` event.
+- **fusion**: joining what several sources observed of one thing into one **fused record**: `command.fused`, `focus.fused`, `visit.fused`, `play.fused`, `clipboard.fused`, `notification.fused`, `mail.fused`, `post.fused`, `conversation.fused`. Each fused kind has one **fusion rule**; a **fusion input** (`FusionInput`) reads one source's events for it as **fusion records** (`FusionRecord`) (an identity, a start, maybe an end, the fields it supplies). A **fused command** is a `command.fused` event.
 - **calendar instance**: one dated instance of a calendar event, `calendar.instance`: a start a repeating event's rule gives, with a changed instance's own times, or the one instance of an event that does not repeat; a **series** is a repeating event with its rule and changed instances.
 - **shell session**: the `shell.session` derived event: a run of commands in one terminal; `recall last` reads around the latest one.
 - **batch**: what a producer hands the writer: records with their events or failures, and progress.
@@ -143,3 +145,17 @@ these names and no others.
 | consumer (of a source) | purpose |
 | stage (outside admission) | plan, temporary file, write |
 | physical | name the thing: record ranges, archive pass |
+
+## Reader implementation names
+
+- **time settings** (`TimeSettings`): the time zone and local start of a logical day, also used to group local hours.
+- **binding reader** (`BindingReader`): a configured binding together with its source, reader and remembered progress.
+- **reader context** (`ReaderContext`): the open content store, read connection and writer used by readers and commands.
+- **shared file read** (`SharedFileRead`): compatible bindings grouped for one read of their stored file.
+- **shared read start** (`SharedReadStart`): whether a binding has finished a file or needs to read it from a stored file or the input.
+- **stored file** (`StoredFile`): the blob, length and material named by a shared reader's cursor.
+- **interruptible reader** (`InterruptibleReader`): a reader that checks for a stop request before reading.
+- **validated reader** (`ValidatedReader`): a reader that runs the supplied validation before reading.
+- **submission** (`Submission`): the admission outcome and material of a submitted request.
+- **authored at** (`authored_at`): the author timestamp supplied by a Git commit, distinct from its commit timestamp.
+- **request record**: a forecast or library request submitted as a material and admitted through the writer.

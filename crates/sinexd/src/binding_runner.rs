@@ -5,7 +5,7 @@
 //! read too. A binding that fails is reported and retried on the next round,
 //! never stopping the others or the daemon. Private mode pauses every read
 //! until it is off again.
-use crate::binding_reader::{self, Bound};
+use crate::binding_reader::{self, BindingReader};
 use crate::material_sink::Sink;
 use crate::writer::WriterHandle;
 use serde::Deserialize;
@@ -138,7 +138,7 @@ fn emitted(config: &Config) -> Result<Vec<&'static str>, String> {
 /// reported once, not every round.
 #[derive(Default)]
 struct Bindings {
-    bound: Vec<Bound>,
+    readers: Vec<BindingReader>,
     said: BTreeMap<String, String>,
 }
 
@@ -169,17 +169,17 @@ impl Bindings {
             self.said.remove(&key);
             for (format, binding) in planned.bindings {
                 if self
-                    .bound
+                    .readers
                     .iter()
                     .any(|b| b.binding.name == binding.name && b.binding.parser == binding.parser)
                 {
                     continue;
                 }
                 let name = binding.name.clone();
-                match Bound::new(format, binding) {
+                match BindingReader::new(format, binding) {
                     Ok(b) => {
                         self.said.remove(&format!("binding {name}"));
-                        self.bound.push(b);
+                        self.readers.push(b);
                     }
                     Err(e) => self.say(
                         &format!("binding {name}"),
@@ -230,10 +230,10 @@ pub(crate) async fn run(
     loop {
         if !private.on() {
             if planned_at.is_none_or(|at| at.elapsed() >= PLAN_EVERY) {
-                let before = bindings.bound.len();
+                let before = bindings.readers.len();
                 bindings.extend(&config, &host);
-                if bindings.bound.len() != before {
-                    eprintln!("sinexd: reading {} bindings", bindings.bound.len());
+                if bindings.readers.len() != before {
+                    eprintln!("sinexd: reading {} bindings", bindings.readers.len());
                 }
                 planned_at = Some(std::time::Instant::now());
             }
@@ -246,7 +246,7 @@ pub(crate) async fn run(
                 &writer,
                 run,
                 &sink,
-                &mut bindings.bound,
+                &mut bindings.readers,
                 stop.clone(),
                 binding_reader::Access::default(),
                 &mut |binding, result| {
