@@ -160,6 +160,7 @@ async fn compressed_upgrade_keeps_immutable_rows_and_historical_metadata(
     db: devkit::pg::TestDatabase,
 ) {
     let mut conn = PgConnection::connect(&db.url(None)).await.unwrap();
+    let schema_before = crate::test_schema::catalog(&mut conn).await;
     admit_one(&mut conn, &batch(vec![keyed("example", 1, 1, 1)])).await;
     conn.execute("INSERT INTO telemetry.events (id,event_type,source,run_id,material_id,anchor,output_index,parents,ts_orig,ts_quality,ts_persisted,commit_seq,payload,equivalence_key,reading_order,record_hash,record_state,class,kind_version,validation) SELECT id,event_type,source,run_id,material_id,anchor,output_index,parents,ts_orig,ts_quality,ts_persisted,commit_seq,payload,equivalence_key,reading_order,record_hash,record_state,class,kind_version,validation FROM core.events")
         .await
@@ -179,6 +180,7 @@ async fn compressed_upgrade_keeps_immutable_rows_and_historical_metadata(
             to: sinex_schema::VERSION
         }
     );
+    assert_eq!(crate::test_schema::catalog(&mut conn).await, schema_before);
     let still_compressed:i64=sqlx::query_scalar("SELECT count(*) FROM timescaledb_information.chunks WHERE hypertable_name='events' AND is_compressed").fetch_one(&mut conn).await.unwrap();
     assert_eq!(still_compressed, compressed);
     let after:Vec<(uuid::Uuid,Value,Vec<u8>)>=sqlx::query_as("SELECT id,payload,record_hash FROM core.events UNION ALL SELECT id,payload,record_hash FROM telemetry.events ORDER BY id").fetch_all(&mut conn).await.unwrap();
