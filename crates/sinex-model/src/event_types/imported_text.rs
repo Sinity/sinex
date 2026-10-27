@@ -11,6 +11,7 @@ pub struct TranscriptSegment {
     /// Whether this ID identifies the segment across revisions of the configured input.
     #[serde(default)]
     pub provider_id_stable: bool,
+    /// Record position within the member, including any header or hierarchy records.
     pub segment_index: u64,
     pub text: String,
     pub start_ms: Option<u64>,
@@ -42,6 +43,7 @@ pub struct OcrSegment {
     /// Whether this ID identifies the segment across revisions of the configured input.
     #[serde(default)]
     pub provider_id_stable: bool,
+    /// Record position within the member, including any header or hierarchy records.
     pub segment_index: u64,
     pub text: String,
     pub page: Option<u64>,

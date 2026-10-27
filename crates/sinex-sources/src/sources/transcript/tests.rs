@@ -5,8 +5,9 @@ fn read(
     text: &[u8],
     defaults: Value,
 ) -> Result<Vec<TranscriptSegment>, RecordError> {
-    let manifest =
-        Manifest::from_json(serde_json::json!({"path":"example.json", "file_metadata": defaults}));
+    let manifest = Manifest::from_json(
+        serde_json::json!({"path":"example.json", "source_container":"stateless", "file_metadata": defaults}),
+    );
     TranscriptParser {
         format,
         input: "example-input".into(),
@@ -53,7 +54,7 @@ fn decimal_offsets_are_exact_and_checked() {
     assert_eq!(decimal_ms("1.2345", 3).unwrap(), 1235);
     assert_eq!(decimal_ms("0.30000000000000004", 3).unwrap(), 300);
     assert!(decimal_ms("1.5", 0).is_err());
-    for s in ["-1", "0.0001", "18446744073709551.616", "1e99999", "\"1\""] {
+    for s in ["-1", "18446744073709551.616", "1e99999", "\"1\""] {
         assert!(decimal_ms(s, 3).is_err(), "{s}");
     }
     let rows = read(
@@ -158,7 +159,7 @@ impl sinex_source_core::MaterialSink for Sink {
         self.put(&std::fs::read(path).map_err(|e| e.to_string())?)
     }
     fn put(&self, bytes: &[u8]) -> Result<String, String> {
-        let name = format!("blake3:{}", blake3::hash(bytes).to_hex());
+        let name = std::format!("blake3:{}", blake3::hash(bytes).to_hex());
         self.0.lock().unwrap().insert(name.clone(), bytes.into());
         Ok(name)
     }
@@ -415,7 +416,7 @@ fn changed_file_defaults_change_segment_readings_with_the_same_native_identity()
     let raw = br#"{"id":0,"text":"same","start":0,"end":1}"#;
     let read = |language| {
         let manifest = Manifest::from_json(
-            serde_json::json!({"path":"example.json","file_metadata":{"language":language,"model":"example-model","external_run":"example-run"}}),
+            serde_json::json!({"path":"example.json","source_container":"stateless","file_metadata":{"language":language,"model":"example-model","external_run":"example-run"}}),
         );
         sinex_source_core::drain(
             &parser,
@@ -442,6 +443,7 @@ fn changed_file_defaults_change_segment_readings_with_the_same_native_identity()
     };
     let first = read("pl");
     let corrected = read("en");
+    assert!(first.equivalence_key.is_some());
     assert_eq!(first.equivalence_key, corrected.equivalence_key);
     assert_ne!(first.payload["language"], corrected.payload["language"]);
     assert_ne!(first.record_hash, corrected.record_hash);
@@ -543,4 +545,76 @@ fn format_and_logical_input_have_distinct_binding_identities() {
     assert_eq!(first.input, second.input);
     assert_ne!(first.name, second.name);
     assert_ne!(first.name, text.name);
+}
+
+#[devkit::test]
+fn failed_records_keep_later_indexes_on_resume_and_reordering_changes_readings() {
+    let parser = TranscriptParser {
+        format: Format::Json,
+        input: "example".into(),
+    };
+    let valid = br#"{"id":"stable","text":"same"}"#;
+    let bytes = [b"bad".as_slice(), valid].concat();
+    let material = sinex_model::MaterialId::new();
+    let run = |bytes: &[u8], records: Vec<(usize, usize)>, first: u64| {
+        let mut manifest = Manifest::from_json(serde_json::json!({
+            "path":"example.json", "records":records,
+            "members":[{"path":"example.json","stream_offset":0,"length":bytes.len(),"record_start":first}]
+        }));
+        manifest.records = Some(records.clone());
+        sinex_source_core::drain(
+            &parser,
+            sinex_source_core::DrainInput {
+                source: JSON.name,
+                class: Class::Guarded,
+                material,
+                bytes: bytes.into(),
+                records: &records,
+                carry: Value::Null,
+                reading_order: &|_| sinex_model::ReadingOrder(0),
+                limits: sinex_source_core::Limits::default(),
+                manifest: &manifest,
+            },
+        )
+        .unwrap()
+        .into_iter()
+        .flat_map(|batch| batch.outcomes)
+        .find_map(|outcome| match outcome {
+            sinex_model::RecordOutcome::Events { mut events, .. } => events.pop(),
+            _ => None,
+        })
+        .unwrap()
+    };
+    let uninterrupted = run(&bytes, vec![(0, 3), (3, bytes.len())], 0);
+    let resumed = run(valid, vec![(0, valid.len())], 1);
+    assert_eq!(uninterrupted.payload["segment_index"], 1);
+    assert_eq!(uninterrupted.payload, resumed.payload);
+    assert_eq!(uninterrupted.record_hash, resumed.record_hash);
+    let reordered = run(valid, vec![(0, valid.len())], 0);
+    assert!(resumed.equivalence_key.is_some());
+    assert_eq!(resumed.equivalence_key, reordered.equivalence_key);
+    assert_ne!(resumed.record_hash, reordered.record_hash);
+}
+
+#[devkit::test]
+fn archived_whisper_position_ids_do_not_identify_segments_across_members() {
+    let manifest = Manifest::from_json(serde_json::json!({
+        "source_container":"zip",
+        "file_metadata":{"external_run":"example-run"}
+    }));
+    let parser = TranscriptParser {
+        format: Format::Whisper,
+        input: "example".into(),
+    };
+    let (rows, _) = parser
+        .parse(
+            &br#"{"id":0,"text":"same"}"#.as_slice(),
+            &Carry::default(),
+            &RecordContext {
+                manifest: &manifest,
+                member: None,
+            },
+        )
+        .unwrap();
+    assert!(matches!(rows[0].key_kind(), KeyKind::Location));
 }

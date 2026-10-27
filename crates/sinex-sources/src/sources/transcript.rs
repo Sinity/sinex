@@ -111,6 +111,7 @@ impl Parser for TranscriptParser {
     type Record<'a> = &'a [u8];
     type Carry = Carry;
     type Payload = TranscriptSegment;
+    const READS_RECORD_INDEX: bool = true;
     fn record_hash(&self, raw: &[u8], context: &RecordContext<'_>) -> [u8; 32] {
         hash_with_metadata(raw, context)
     }
@@ -123,7 +124,8 @@ impl Parser for TranscriptParser {
         let text =
             std::str::from_utf8(record).map_err(|_| RecordError::new("transcript is not UTF-8"))?;
         let mut carry = carry.at(context);
-        let index = carry.next;
+        let index = record_index(context).unwrap_or(carry.next);
+        carry.next = index;
         carry.advance()?;
         let mut payload = TranscriptSegment {
             input: self.input.clone(),
@@ -194,7 +196,12 @@ impl Parser for TranscriptParser {
                         .and_then(|ns| Timestamp::from_unix_ns(ns).ok());
                 }
                 payload.provider_id_stable = payload.provider_segment_id.is_some()
-                    && (self.format == Format::Json || payload.external_run.is_some());
+                    && (self.format == Format::Json
+                        || (payload.external_run.is_some()
+                            && matches!(
+                                context.manifest.detail("source_container").as_str(),
+                                Some("stateless" | "gzip")
+                            )));
                 payload.extra = object;
             }
             Format::Text => {
@@ -469,13 +476,22 @@ mod tests;
 /// File metadata supplies part of a segment's meaning even when its text is unchanged.
 pub fn hash_with_metadata(raw: &[u8], context: &RecordContext<'_>) -> [u8; 32] {
     let metadata = context.manifest.detail("file_metadata");
-    if metadata.is_null() || metadata.as_object().is_some_and(Map::is_empty) {
+    let metadata = (!metadata.is_null() && !metadata.as_object().is_some_and(Map::is_empty))
+        .then_some(metadata);
+    let index = record_index(context);
+    if metadata.is_none() && index.is_none() {
         return *blake3::hash(raw).as_bytes();
     }
-    let metadata = serde_json::to_vec(metadata).expect("JSON metadata serializes");
+    let values = serde_json::to_vec(&(metadata, index)).expect("JSON metadata serializes");
     let mut hash = blake3::Hasher::new();
     hash.update(&(raw.len() as u64).to_le_bytes());
     hash.update(raw);
-    hash.update(&metadata);
+    hash.update(&values);
     *hash.finalize().as_bytes()
+}
+pub(super) fn record_index(context: &RecordContext<'_>) -> Option<u64> {
+    context
+        .member
+        .and_then(|member| member.details.get("record_index"))
+        .and_then(Value::as_u64)
 }
