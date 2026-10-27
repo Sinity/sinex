@@ -1,5 +1,5 @@
 //! A selected file is read alone; its neighbours are never acquired or removed.
-use crate::binding::{Reader, StoredMaterial};
+use crate::binding::Reader;
 use crate::drivers::{Acquired, DriverError, NewMaterial, StoredBytes, file_facts};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -75,6 +75,9 @@ impl Reader for FileReader {
             .parent()
             .ok_or_else(|| DriverError::Io("document file needs a parent directory".into()))?;
         let mut bytes = tempfile::tempfile().map_err(|e| DriverError::Io(e.to_string()))?;
+        bytes
+            .write_all(&[0])
+            .map_err(|e| DriverError::Io(e.to_string()))?;
         let now = Timestamp::now();
         let mut facts = match file_facts(&self.path) {
             Ok(facts) => facts,
@@ -166,7 +169,7 @@ impl Reader for FileReader {
         } else {
             0
         };
-        let mut member = json!({"path":name,"stream_offset":0,"length":length});
+        let mut member = json!({"path":name,"stream_offset":1,"length":length});
         if missing {
             member["removed_at_ns"] = json!(now.unix_ns().to_string());
         } else {
@@ -175,17 +178,20 @@ impl Reader for FileReader {
                 member["mtime_ns"] = json!(mtime.to_string());
             }
         }
+        let end = length
+            .checked_add(1)
+            .ok_or_else(|| DriverError::Io("document exceeds address space".into()))?;
         let records = vec![(
-            0,
-            usize::try_from(length)
+            1,
+            usize::try_from(end)
                 .map_err(|_| DriverError::Io("document exceeds address space".into()))?,
         )];
         let manifest = sinex_model::Manifest::from_json(
-            json!({"path":root,"host":self.host,"records":records,"members":[member],"read_at_ns":i64::try_from(now.unix_ns()).unwrap_or(i64::MAX)}),
+            json!({"path":root,"host":self.host,"media_type":"application/x-sinex-file-bundle","records":records,"members":[member],"read_at_ns":i64::try_from(now.unix_ns()).unwrap_or(i64::MAX)}),
         );
         let next = Cursor {
             material: Some(id),
-            through: Some(length),
+            through: Some(end),
             part_index,
             content,
             missing,
@@ -217,9 +223,6 @@ impl Reader for FileReader {
         let result = held.acquired(cursor)?;
         self.held = Some(held);
         Ok(result)
-    }
-    fn restore(&mut self, _: &Value, _: StoredMaterial) -> Result<bool, DriverError> {
-        Ok(false)
     }
 }
 #[cfg(test)]
