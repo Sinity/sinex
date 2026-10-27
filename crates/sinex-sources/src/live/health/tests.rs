@@ -197,5 +197,8 @@ fn binding_errors_are_reported_with_the_reason_and_capture_failure_count() {
         "error: large-frame bytes are not a frame"
     );
     assert_eq!(report["spools"][0]["capture_failures"], 1);
-    assert_eq!(report["spools"][0]["last_capture_failure"], "three identical byte refusals");
+    assert_eq!(
+        report["spools"][0]["last_capture_failure"],
+        "three identical byte refusals"
+    );
 }

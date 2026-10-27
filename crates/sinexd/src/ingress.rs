@@ -220,11 +220,16 @@ impl Ingest {
     }
 
     fn discard_recorded(&self, producer: &str, stored: &StoredFrame, frame: Option<&Ingress>) {
-        let kind = serde_json::from_value::<FrameRefusal>(stored.outcome["refusal_kind"].clone()).ok();
-        if stored.refusal.is_none() || matches!(kind, Some(FrameRefusal::Content | FrameRefusal::Bytes)) {
+        let kind =
+            serde_json::from_value::<FrameRefusal>(stored.outcome["refusal_kind"].clone()).ok();
+        if stored.refusal.is_none()
+            || matches!(kind, Some(FrameRefusal::Content | FrameRefusal::Bytes))
+        {
             self.discard(producer, &stored.frame);
         }
-        if kind == Some(FrameRefusal::Bytes) && let Some(Ingress::Chunk { for_frame, .. }) = frame {
+        if kind == Some(FrameRefusal::Bytes)
+            && let Some(Ingress::Chunk { for_frame, .. }) = frame
+        {
             self.discard(producer, for_frame);
         }
     }

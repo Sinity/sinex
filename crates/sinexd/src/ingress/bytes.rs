@@ -67,7 +67,11 @@ impl Ingest {
         })
         .await
         .map_err(|e| Check::Unavailable(e.to_string()))??;
-        if inner.frame().is_empty() { return Err(Check::Malformed("a large frame's inner frame needs a name".into())); }
+        if inner.frame().is_empty() {
+            return Err(Check::Malformed(
+                "a large frame's inner frame needs a name".into(),
+            ));
+        }
         match inner {
             Ingress::Material { .. } | Ingress::Events { .. } => Ok(inner),
             _ => Err(Check::Malformed(

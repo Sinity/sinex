@@ -1005,7 +1005,13 @@ async fn a_refused_event_between_good_frames_is_a_queryable_material_failure_and
         offset += lines[index].len() as u64;
     }
     assert_eq!(h.count("SELECT count(*) FROM raw.failures").await, 1);
-    assert_eq!(sinex_store::diagnostics::positions(&mut PgConnection::connect(&h.url).await.unwrap()).await.unwrap().failures_24h, 1);
+    assert_eq!(
+        sinex_store::diagnostics::positions(&mut PgConnection::connect(&h.url).await.unwrap())
+            .await
+            .unwrap()
+            .failures_24h,
+        1
+    );
     assert_eq!(h.stored(material).await, bytes.as_bytes());
     let mut conn = PgConnection::connect(&h.url).await.unwrap();
     let context = sinex_model::query::Context::new(
@@ -1133,23 +1139,52 @@ async fn malformed_frames_with_no_name_are_recorded_once(db: devkit::pg::TestDat
 }
 
 #[devkit::test]
-async fn malformed_large_frames_are_errors_and_byte_refusals_remove_transfer_bytes(db: devkit::pg::TestDatabase) {
+async fn malformed_large_frames_are_errors_and_byte_refusals_remove_transfer_bytes(
+    db: devkit::pg::TestDatabase,
+) {
     let h = Harness::start(db).await;
     for (name, inner) in [
-        ("no-inner-name", json!({"kind":"events","frame":"","events":[]})),
-        ("wrong-inner-kind", json!({"kind":"chunk","frame":"chunk","for_frame":"m","blob":"invalid","offset":0,"total":0,"data":""})),
+        (
+            "no-inner-name",
+            json!({"kind":"events","frame":"","events":[]}),
+        ),
+        (
+            "wrong-inner-kind",
+            json!({"kind":"chunk","frame":"chunk","for_frame":"m","blob":"invalid","offset":0,"total":0,"data":""}),
+        ),
     ] {
         let bytes = serde_json::to_vec(&inner).unwrap();
         let blob = h.fixture_blob(&bytes);
-        let ack = h.send("session", &Ingress::LargeFrame { frame: name.into(), blob, length: bytes.len() as u64 }).await;
+        let ack = h
+            .send(
+                "session",
+                &Ingress::LargeFrame {
+                    frame: name.into(),
+                    blob,
+                    length: bytes.len() as u64,
+                },
+            )
+            .await;
         assert_eq!(ack.refusal_kind(), Some(FrameRefusal::Malformed));
     }
     let (_, material) = h.material_frame("damaged", b"synthetic");
-    let Ingress::Material { material: m, .. } = &material else { unreachable!() };
-    frame_bytes::write(&h.store_dir, "session", "damaged", &m.blob, m.length, b"synthetic".as_slice()).unwrap();
+    let Ingress::Material { material: m, .. } = &material else {
+        unreachable!()
+    };
+    frame_bytes::write(
+        &h.store_dir,
+        "session",
+        "damaged",
+        &m.blob,
+        m.length,
+        b"synthetic".as_slice(),
+    )
+    .unwrap();
     let dir = frame_bytes::directory(&h.store_dir, "session", "damaged");
     std::fs::write(dir.join(&m.blob[7..]), b"different").unwrap();
-    let ack = h.send_raw("session", serde_json::to_vec(&material).unwrap()).await;
+    let ack = h
+        .send_raw("session", serde_json::to_vec(&material).unwrap())
+        .await;
     assert_eq!(ack.refusal_kind(), Some(FrameRefusal::Bytes));
     assert!(!dir.exists());
     assert_eq!(h.recorded("session", &["damaged"]).await, vec![ack]);

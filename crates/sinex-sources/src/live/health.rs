@@ -127,7 +127,10 @@ pub(super) fn initialize(positions: &Path, binding: &Binding) -> Result<Counter,
     )?;
     initial.cursor = position.cursor;
     initial.capture_failures = position.capture_failures.len();
-    initial.last_capture_failure = position.capture_failures.last().map(|failure| failure.reason.clone());
+    initial.last_capture_failure = position
+        .capture_failures
+        .last()
+        .map(|failure| failure.reason.clone());
     initial.frames =
         Producer::unacknowledged_frames(&binding.name, positions).map_err(|e| e.to_string())?;
     Ok(spool_health::register(&binding.input, initial))
