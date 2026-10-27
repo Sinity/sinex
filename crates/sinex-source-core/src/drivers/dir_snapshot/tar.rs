@@ -233,7 +233,12 @@ fn header(
 fn extensions(output: &mut Archive, mut fields: BTreeMap<Vec<u8>, Vec<u8>>) -> std::io::Result<()> {
     let mut bytes = Vec::new();
     // GNU tar reads the sparse count before allocating its map.
-    for key in [b"GNU.sparse.size".as_slice(), b"GNU.sparse.numblocks", b"GNU.sparse.name", b"GNU.sparse.map"] {
+    for key in [
+        b"GNU.sparse.size".as_slice(),
+        b"GNU.sparse.numblocks",
+        b"GNU.sparse.name",
+        b"GNU.sparse.map",
+    ] {
         if let Some(value) = fields.remove(key) {
             bytes.extend(pax_record(key, &value)?);
         }

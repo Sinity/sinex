@@ -70,9 +70,17 @@ async fn source_kind_upgrade_adds_import_views_without_changing_stored_records(
     let mut conn = PgConnection::connect(&db.url(None)).await.unwrap();
     let event = Event::build(
         &sinex_model::event_types::media::NoteDocument {
-            vault: "synthetic".into(), path: "existing.md".into(), text: Some("stored text".into()),
-            size: 11, modified_at: None, removed_at: None,
-            title: None, note_id: None, tags: None, wikilinks: None, front_matter: None,
+            vault: "synthetic".into(),
+            path: "existing.md".into(),
+            text: Some("stored text".into()),
+            size: 11,
+            modified_at: None,
+            removed_at: None,
+            title: None,
+            note_id: None,
+            tags: None,
+            wikilinks: None,
+            front_matter: None,
         },
         "knowledge.notes-vault",
         Origin::Record {

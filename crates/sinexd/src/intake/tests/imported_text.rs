@@ -93,7 +93,10 @@ async fn sparse_binary_document_is_admitted_guarded_and_replayed_without_the_roo
     assert_eq!(node.size, bytes.len() as u64);
     assert!(node.sparse.is_some());
     assert!(member.length < node.size);
-    let stored = ctx.blobs.read_range(&blob, member.stream_offset, member.length).unwrap();
+    let stored = ctx
+        .blobs
+        .read_range(&blob, member.stream_offset, member.length)
+        .unwrap();
     assert!(stored.starts_with(b"head"));
     assert!(stored.ends_with(b"tail"));
 

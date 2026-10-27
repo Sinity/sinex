@@ -42,7 +42,8 @@ fn gnu_tar_restores_native_names_sparse_data_attributes_and_access_acl() {
         rustix::fs::XattrFlags::empty(),
     )
     .unwrap();
-    file.set_modified(std::time::UNIX_EPOCH - std::time::Duration::from_nanos(125_000_001)).unwrap();
+    file.set_modified(std::time::UNIX_EPOCH - std::time::Duration::from_nanos(125_000_001))
+        .unwrap();
     let d = driver(root.path().to_owned(), 16 << 20);
     let acquired = d.poll(&Value::Null, &mut DirState::default()).unwrap();
     let material = acquired.material.as_ref().unwrap();
@@ -102,7 +103,6 @@ fn gnu_tar_restores_native_names_sparse_data_attributes_and_access_acl() {
     )
     .unwrap();
     assert_eq!(&attribute[..count], acl);
-
 }
 
 #[devkit::test]
