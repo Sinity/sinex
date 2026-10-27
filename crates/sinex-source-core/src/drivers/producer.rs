@@ -222,7 +222,9 @@ impl Producer {
     }
 
     fn frames_changed(&self, binding: &str, frames: usize) {
-        if let Some(counter) = self.health.get(binding) { counter.lock().unwrap().frames = frames; }
+        if let Some(counter) = self.health.get(binding) {
+            counter.lock().unwrap().frames = frames;
+        }
     }
 
     /// Number of prepared transport frames still awaiting acknowledgment.
@@ -287,7 +289,10 @@ impl Producer {
             unacknowledged.position.save(state, binding)?;
             UnacknowledgedFrames::clear(state, binding)?;
             if let Some(counter) = self.health.get(binding) {
-                counter.lock().unwrap().recovered(&unacknowledged.position.cursor);
+                counter
+                    .lock()
+                    .unwrap()
+                    .recovered(&unacknowledged.position.cursor);
             }
         }
         Position::load(state, binding)
@@ -317,16 +322,33 @@ impl Producer {
                     acknowledgments.push(None);
                     refused = true;
                     write_durably(
-                        &state.join("refused").join(format!("{}.json", blake3::hash(frame.frame().as_bytes()).to_hex())),
-                        &serde_json::to_vec(&UnacknowledgedFrames { frames: frames[index..].to_vec(), position: position.clone() }).expect("frames serialize"),
+                        &state.join("refused").join(format!(
+                            "{}.json",
+                            blake3::hash(frame.frame().as_bytes()).to_hex()
+                        )),
+                        &serde_json::to_vec(&UnacknowledgedFrames {
+                            frames: frames[index..].to_vec(),
+                            position: position.clone(),
+                        })
+                        .expect("frames serialize"),
                     )?;
                     eprintln!("Sinex refused frame {id}: {reason}; skipping recorded refusal");
                     skip_rest = match frame {
                         Ingress::Material { .. } => true,
                         Ingress::LargeFrame { blob, length, .. } => {
-                            let bytes = frame_bytes::snapshot(self.frame_root(store), &self.name, frame.frame(), blob, *length)
-                                .map_err(|e| Error::Local(e.to_string()))?;
-                            matches!(serde_json::from_reader::<_, Ingress>(bytes).map_err(|e| Error::Local(e.to_string()))?, Ingress::Material { .. })
+                            let bytes = frame_bytes::snapshot(
+                                self.frame_root(store),
+                                &self.name,
+                                frame.frame(),
+                                blob,
+                                *length,
+                            )
+                            .map_err(|e| Error::Local(e.to_string()))?;
+                            matches!(
+                                serde_json::from_reader::<_, Ingress>(bytes)
+                                    .map_err(|e| Error::Local(e.to_string()))?,
+                                Ingress::Material { .. }
+                            )
                         }
                         _ => false,
                     };
@@ -342,9 +364,20 @@ impl Producer {
                 position: position.clone(),
             }
             .save(state, binding)?;
-            self.frames_changed(binding, if skip_rest { 0 } else { frames.len() - index - 1 });
-            if !refused { self.clear_frame_directories(std::slice::from_ref(frame), store)?; }
-            if skip_rest { break; }
+            self.frames_changed(
+                binding,
+                if skip_rest {
+                    0
+                } else {
+                    frames.len() - index - 1
+                },
+            );
+            if !refused {
+                self.clear_frame_directories(std::slice::from_ref(frame), store)?;
+            }
+            if skip_rest {
+                break;
+            }
         }
         Ok(acknowledgments)
     }
@@ -564,7 +597,9 @@ impl Producer {
         state: &Path,
     ) -> Result<Sent, Error> {
         if source.spec().class == sinex_model::Class::Sealed {
-            return Err(Error::Local("sealed producer storage is unsupported".into()));
+            return Err(Error::Local(
+                "sealed producer storage is unsupported".into(),
+            ));
         }
         let snapshots = Snapshots::new()?;
         let position = Position::load(state, binding)?;
@@ -661,18 +696,25 @@ impl Producer {
                 carry: progress.carry.clone(),
             };
             if let Some(counter) = self.health.get(binding) {
-                counter.lock().unwrap().prepare(&after.cursor, batch.records.len() as u64);
+                counter
+                    .lock()
+                    .unwrap()
+                    .prepare(&after.cursor, batch.records.len() as u64);
             }
             if frames.is_empty() {
                 after.save(state, binding)?;
-                if let Some(counter) = self.health.get(binding) { counter.lock().unwrap().recovered(&after.cursor); }
+                if let Some(counter) = self.health.get(binding) {
+                    counter.lock().unwrap().recovered(&after.cursor);
+                }
                 continue;
             }
             let class = batch
                 .events()
                 .fold(source.spec().class, |class, event| class.max(event.class));
             if class == sinex_model::Class::Sealed {
-                return Err(Error::Local("sealed producer storage is unsupported".into()));
+                return Err(Error::Local(
+                    "sealed producer storage is unsupported".into(),
+                ));
             }
             let events_frames: Vec<bool> = frames
                 .iter()

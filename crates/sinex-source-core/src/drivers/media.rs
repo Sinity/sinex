@@ -177,7 +177,9 @@ pub fn publish_segment(
     let mut health = counter.as_ref().map(|counter| counter.lock().unwrap());
     let length = std::fs::metadata(partial)?.len() + std::fs::metadata(&side)?.len();
     std::fs::rename(partial, &data)?;
-    if let Some(health) = &mut health { health.captured_media(stem.to_owned(), length); }
+    if let Some(health) = &mut health {
+        health.captured_media(stem.to_owned(), length);
+    }
     Ok(data)
 }
 

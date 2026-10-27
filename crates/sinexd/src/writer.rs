@@ -341,12 +341,21 @@ async fn admit_checked(
 /// Only invalid content can be recorded as a final refusal.
 fn admission_error(error: sinex_store::Error) -> WriteError {
     let temporary = match &error {
-        sinex_store::Error::Database(sqlx::Error::Database(error)) => error.code().is_some_and(|code| {
-            ["08", "40", "53", "57", "58"].iter().any(|class| code.starts_with(class))
-        }),
-        sinex_store::Error::Database(error) => matches!(error,
-            sqlx::Error::Io(_) | sqlx::Error::Tls(_) | sqlx::Error::PoolTimedOut
-                | sqlx::Error::PoolClosed | sqlx::Error::WorkerCrashed),
+        sinex_store::Error::Database(sqlx::Error::Database(error)) => {
+            error.code().is_some_and(|code| {
+                ["08", "40", "53", "57", "58"]
+                    .iter()
+                    .any(|class| code.starts_with(class))
+            })
+        }
+        sinex_store::Error::Database(error) => matches!(
+            error,
+            sqlx::Error::Io(_)
+                | sqlx::Error::Tls(_)
+                | sqlx::Error::PoolTimedOut
+                | sqlx::Error::PoolClosed
+                | sqlx::Error::WorkerCrashed
+        ),
         sinex_store::Error::Blob(_) => true,
         _ => false,
     };

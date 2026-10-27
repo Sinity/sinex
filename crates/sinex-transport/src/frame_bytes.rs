@@ -113,8 +113,7 @@ pub fn snapshot(
     length: u64,
 ) -> Result<std::fs::File, Error> {
     let path = directory(root, producer, frame).join(file_name(blob)?);
-    let input =
-        std::fs::File::open(path).map_err(error)?;
+    let input = std::fs::File::open(path).map_err(error)?;
     let mut file = tempfile::tempfile().map_err(error)?;
     copy_checked(input, &mut file, blob, length)?;
     file.rewind().map_err(error)?;

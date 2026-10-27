@@ -143,10 +143,29 @@ fn storage_faults_and_invalid_content_have_different_errors() {
     let bytes = b"synthetic";
     let blob = name(bytes);
     let length = bytes.len() as u64;
-    assert!(matches!(snapshot(root.path(), "node", "missing", &blob, length), Err(Error::Storage(_))));
+    assert!(matches!(
+        snapshot(root.path(), "node", "missing", &blob, length),
+        Err(Error::Storage(_))
+    ));
     let blocked = root.path().join("not-a-directory");
     std::fs::write(&blocked, b"file").unwrap();
-    assert!(matches!(receive(&blocked, "node", "frame", &blob, length, 0, bytes), Err(Error::Storage(_))));
-    assert!(matches!(receive(root.path(), "node", "frame", "invalid", length, 0, bytes), Err(Error::Invalid(_))));
-    assert!(matches!(write(root.path(), "node", "frame", &blob, length, b"different".as_slice()), Err(Error::Invalid(_))));
+    assert!(matches!(
+        receive(&blocked, "node", "frame", &blob, length, 0, bytes),
+        Err(Error::Storage(_))
+    ));
+    assert!(matches!(
+        receive(root.path(), "node", "frame", "invalid", length, 0, bytes),
+        Err(Error::Invalid(_))
+    ));
+    assert!(matches!(
+        write(
+            root.path(),
+            "node",
+            "frame",
+            &blob,
+            length,
+            b"different".as_slice()
+        ),
+        Err(Error::Invalid(_))
+    ));
 }

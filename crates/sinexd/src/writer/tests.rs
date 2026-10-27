@@ -362,12 +362,37 @@ async fn temporary_database_errors_remain_retryable(db: devkit::pg::TestDatabase
 #[devkit::test]
 async fn only_transient_sqlstates_are_retryable(db: devkit::pg::TestDatabase) {
     let mut conn = PgConnection::connect(&db.url(None)).await.unwrap();
-    for (code, temporary) in [("08006",true),("40001",true),("40P01",true),("53100",true),("57014",true),("58030",true),("22021",false),("23505",false),("54000",false),("42601",false)] {
-        let query = format!("DO $$ BEGIN RAISE EXCEPTION USING ERRCODE = '{code}', MESSAGE = 'synthetic admission failure'; END $$");
+    for (code, temporary) in [
+        ("08006", true),
+        ("40001", true),
+        ("40P01", true),
+        ("53100", true),
+        ("57014", true),
+        ("58030", true),
+        ("22021", false),
+        ("23505", false),
+        ("54000", false),
+        ("42601", false),
+    ] {
+        let query = format!(
+            "DO $$ BEGIN RAISE EXCEPTION USING ERRCODE = '{code}', MESSAGE = 'synthetic admission failure'; END $$"
+        );
         let error = sqlx::query(&query).execute(&mut conn).await.unwrap_err();
-        assert_eq!(matches!(admission_error(error.into()), WriteError::Unavailable(_)), temporary, "{code}");
+        assert_eq!(
+            matches!(admission_error(error.into()), WriteError::Unavailable(_)),
+            temporary,
+            "{code}"
+        );
     }
-    for error in [sqlx::Error::Io(std::io::Error::other("synthetic")), sqlx::Error::PoolClosed, sqlx::Error::PoolTimedOut, sqlx::Error::WorkerCrashed] {
-        assert!(matches!(admission_error(error.into()), WriteError::Unavailable(_)));
+    for error in [
+        sqlx::Error::Io(std::io::Error::other("synthetic")),
+        sqlx::Error::PoolClosed,
+        sqlx::Error::PoolTimedOut,
+        sqlx::Error::WorkerCrashed,
+    ] {
+        assert!(matches!(
+            admission_error(error.into()),
+            WriteError::Unavailable(_)
+        ));
     }
 }

@@ -57,12 +57,13 @@ impl Ingest {
         let inner = tokio::task::spawn_blocking(move || {
             let file = frame_bytes::snapshot(&root, &producer, &name, &blob, length)
                 .map_err(check_bytes)?;
-            serde_json::from_reader::<_, Ingress>(std::io::BufReader::new(file))
-                .map_err(|e| {
-                    if e.is_io() { Check::Unavailable(e.to_string()) } else {
-                        Check::Refused(format!("large-frame bytes are not a frame: {e}"))
-                    }
-                })
+            serde_json::from_reader::<_, Ingress>(std::io::BufReader::new(file)).map_err(|e| {
+                if e.is_io() {
+                    Check::Unavailable(e.to_string())
+                } else {
+                    Check::Refused(format!("large-frame bytes are not a frame: {e}"))
+                }
+            })
         })
         .await
         .map_err(|e| Check::Unavailable(e.to_string()))??;

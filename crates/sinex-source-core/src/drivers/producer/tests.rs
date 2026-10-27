@@ -475,27 +475,78 @@ async fn a_refused_large_material_keeps_its_bytes_and_skips_dependent_events() {
     let dir = tempfile::tempdir().unwrap();
     let store = Store::open(&dir.path().join("store")).unwrap();
     let state = dir.path().join("positions");
-    let mut producer = Producer::connect(nats.url(), None, subjects, "invalid-material").await.unwrap();
+    let mut producer = Producer::connect(nats.url(), None, subjects, "invalid-material")
+        .await
+        .unwrap();
     let snapshots = Snapshots::new().unwrap();
     let bytes = b"synthetic captured material";
     let blob = snapshots.put(bytes).unwrap();
     let mut manifest = sinex_model::Manifest::default();
-    manifest.details.insert("synthetic".into(), json!("x".repeat(2 * producer.max_message)));
-    let frame = producer.prepare(Ingress::Material {
-        frame:"invalid-material".into(),
-        material:Box::new(MaterialFrame {
-            id:sinex_model::MaterialId::new(),input:sinex_model::InputRef {kind:"file".into(),locator:"synthetic".into(),host:"synthetic".into()},
-            blob:blob.clone(),length:bytes.len() as u64,parser:"synthetic".into(),parser_version:1,part_index:0,previous_part:None,manifest,
-        }),
-    }, &snapshots, &store).unwrap();
-    assert!(matches!(frame, Ingress::LargeFrame {..}));
+    manifest.details.insert(
+        "synthetic".into(),
+        json!("x".repeat(2 * producer.max_message)),
+    );
+    let frame = producer
+        .prepare(
+            Ingress::Material {
+                frame: "invalid-material".into(),
+                material: Box::new(MaterialFrame {
+                    id: sinex_model::MaterialId::new(),
+                    input: sinex_model::InputRef {
+                        kind: "file".into(),
+                        locator: "synthetic".into(),
+                        host: "synthetic".into(),
+                    },
+                    blob: blob.clone(),
+                    length: bytes.len() as u64,
+                    parser: "synthetic".into(),
+                    parser_version: 1,
+                    part_index: 0,
+                    previous_part: None,
+                    manifest,
+                }),
+            },
+            &snapshots,
+            &store,
+        )
+        .unwrap();
+    assert!(matches!(frame, Ingress::LargeFrame { .. }));
     let frame_id = frame.frame().to_owned();
-    UnacknowledgedFrames {frames:vec![frame,Ingress::Events {frame:"dependent".into(),events:vec![event(1)],failures:vec![]}],position:Position {cursor:json!({"segment":3}),carry:Value::Null}}
-        .save(&state,"binding").unwrap();
-    producer.position("binding",&state,&store).await.unwrap();
-    assert_eq!(received.lock().unwrap().len(),1);
-    assert!(frame_bytes::snapshot(&store.0,"invalid-material",&frame_id,&blob,bytes.len() as u64).is_ok());
-    let saved = std::fs::read_dir(state.join("refused")).unwrap().next().unwrap().unwrap().path();
-    let refused: UnacknowledgedFrames = serde_json::from_slice(&std::fs::read(saved).unwrap()).unwrap();
-    assert_eq!(refused.frames.len(),2);
+    UnacknowledgedFrames {
+        frames: vec![
+            frame,
+            Ingress::Events {
+                frame: "dependent".into(),
+                events: vec![event(1)],
+                failures: vec![],
+            },
+        ],
+        position: Position {
+            cursor: json!({"segment":3}),
+            carry: Value::Null,
+        },
+    }
+    .save(&state, "binding")
+    .unwrap();
+    producer.position("binding", &state, &store).await.unwrap();
+    assert_eq!(received.lock().unwrap().len(), 1);
+    assert!(
+        frame_bytes::snapshot(
+            &store.0,
+            "invalid-material",
+            &frame_id,
+            &blob,
+            bytes.len() as u64
+        )
+        .is_ok()
+    );
+    let saved = std::fs::read_dir(state.join("refused"))
+        .unwrap()
+        .next()
+        .unwrap()
+        .unwrap()
+        .path();
+    let refused: UnacknowledgedFrames =
+        serde_json::from_slice(&std::fs::read(saved).unwrap()).unwrap();
+    assert_eq!(refused.frames.len(), 2);
 }
