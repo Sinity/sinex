@@ -22,7 +22,7 @@ pub const WRITER_LOCK: i64 = 0x7369_6e65_7857_5254;
 
 /// The schema version these declarations create: one more than the last
 /// upgrade starts from.
-pub const VERSION: i32 = 3;
+pub const VERSION: i32 = 4;
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {

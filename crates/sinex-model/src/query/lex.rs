@@ -18,6 +18,8 @@ pub(crate) struct Token {
     pub text: String,
     /// Byte offset in the query text, for error messages.
     pub at: usize,
+    /// A sample value used only to validate a saved definition.
+    pub placeholder: bool,
 }
 
 impl Token {
@@ -52,8 +54,14 @@ pub(crate) fn tokens(text: &str) -> Result<Vec<Token>, QueryError> {
                 kind: Kind::Quoted,
                 text: value,
                 at: i,
+                placeholder: false,
             });
             i += stream.byte_offset();
+            continue;
+        }
+        if c == ':' {
+            out.push(symbol(":", i));
+            i += 1;
             continue;
         }
         if rest.starts_with("->") {
@@ -90,16 +98,18 @@ pub(crate) fn tokens(text: &str) -> Result<Vec<Token>, QueryError> {
         if let Some(colon) = word.find(':') {
             let name = &word[..colon];
             let field_like = !name.is_empty()
-                && name != "sinex"
+                && !name.eq_ignore_ascii_case("sinex")
                 && name.bytes().all(|b| {
                     b.is_ascii_lowercase() || b == b'_' || b == b'.' || b.is_ascii_digit()
                 })
                 && name.as_bytes()[0].is_ascii_lowercase();
+            let field_like = field_like || name.eq_ignore_ascii_case("query");
             if field_like {
                 out.push(Token {
                     kind: Kind::Word,
                     text: name.to_string(),
                     at: i,
+                    placeholder: false,
                 });
                 out.push(symbol(":", i + colon));
                 // `field:"quoted value"` leaves the quote as the next token.
@@ -109,6 +119,7 @@ pub(crate) fn tokens(text: &str) -> Result<Vec<Token>, QueryError> {
                         kind: Kind::Word,
                         text: text[value_start..end].to_string(),
                         at: value_start,
+                        placeholder: false,
                     });
                 }
                 i = end;
@@ -119,6 +130,7 @@ pub(crate) fn tokens(text: &str) -> Result<Vec<Token>, QueryError> {
             kind: Kind::Word,
             text: word.to_string(),
             at: i,
+            placeholder: false,
         });
         i = end;
     }
@@ -130,6 +142,7 @@ fn symbol(text: &str, at: usize) -> Token {
         kind: Kind::Symbol,
         text: text.to_string(),
         at,
+        placeholder: false,
     }
 }
 

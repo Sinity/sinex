@@ -54,13 +54,37 @@ pub fn parse_reference(raw: &str) -> Result<Reference, QueryError> {
             key: key.to_string(),
         });
     }
-    if raw.starts_with("sinex:at/") {
-        return Err(QueryError {
-            not_built: true,
-            ..QueryError::new("sinex:at citations need spanning outputs, which are not built yet")
+    if let Some(rest) = raw.strip_prefix("sinex:at/") {
+        let (time, event_type) = rest
+            .split_once('/')
+            .ok_or_else(|| QueryError::new("sinex:at/<RFC3339 time>/<event type>"))?;
+        let at = time.parse::<Timestamp>().map_err(|_| {
+            QueryError::new("sinex:at requires an absolute RFC3339 time with offset")
+        })?;
+        if event_type.is_empty() || event_type.contains('/') {
+            return Err(QueryError::new("sinex:at requires one event type"));
+        }
+        return Ok(Reference::At {
+            at,
+            event_type: event_type.into(),
         });
     }
+    if let Some(rest) = raw.strip_prefix("sinex:window/") {
+        let (from, to) = rest
+            .split_once('/')
+            .ok_or_else(|| QueryError::new("sinex:window/<from>/<to>"))?;
+        let from = from
+            .parse::<Timestamp>()
+            .map_err(|_| QueryError::new("window start requires an absolute RFC3339 time"))?;
+        let to = to
+            .parse::<Timestamp>()
+            .map_err(|_| QueryError::new("window end requires an absolute RFC3339 time"))?;
+        if from >= to {
+            return Err(QueryError::new("window end must follow its start"));
+        }
+        return Ok(Reference::Window { from, to });
+    }
     Err(QueryError::new(format!(
-        "`{raw}` is not a reference; use an event ID, sinex:ev/<id>, sinex:record/... or sinex:key/..."
+        "`{raw}` is not a reference; use an event ID, sinex:ev/<id>, sinex:record/..., sinex:key/..., sinex:at/... or sinex:window/..."
     )))
 }

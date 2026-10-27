@@ -116,12 +116,18 @@ async fn upgrading_from_version_0_counts_the_stored_events(db: devkit::pg::TestD
         .await
         .unwrap();
 
-    // Version 0 is this schema without the counts.
+    // Remove the declarations added after version 0.
     conn.execute("DROP TABLE core.source_counts").await.unwrap();
     conn.execute("ALTER TABLE core.runs DROP COLUMN events")
         .await
         .unwrap();
     conn.execute("DROP TABLE core.excised_materials")
+        .await
+        .unwrap();
+    conn.execute("DROP VIEW event_types.operator_mark, event_types.query_saved")
+        .await
+        .unwrap();
+    conn.execute("DELETE FROM registry.event_types WHERE name IN ('operator.mark','query.saved')")
         .await
         .unwrap();
     conn.execute("UPDATE sinex_schema.applied SET version = 0")
@@ -170,6 +176,12 @@ async fn an_upgrade_waits_for_no_writer(db: devkit::pg::TestDatabase) {
     conn.execute("DROP TABLE core.excised_materials")
         .await
         .unwrap();
+    conn.execute("DROP VIEW event_types.operator_mark, event_types.query_saved")
+        .await
+        .unwrap();
+    conn.execute("DELETE FROM registry.event_types WHERE name IN ('operator.mark','query.saved')")
+        .await
+        .unwrap();
     conn.execute("UPDATE sinex_schema.applied SET version = 0")
         .await
         .unwrap();
@@ -190,4 +202,41 @@ async fn an_upgrade_waits_for_no_writer(db: devkit::pg::TestDatabase) {
         .await
         .unwrap();
     assert_eq!(version, Some(0));
+}
+
+#[devkit::test]
+async fn upgrading_from_version_3_registers_query_kinds_and_keeps_events(
+    db: devkit::pg::TestDatabase,
+) {
+    let mut conn = <sqlx::PgConnection as sqlx::Connection>::connect(&db.url(None))
+        .await
+        .unwrap();
+    under_run(&mut conn, vec![keyed("synthetic", 1, 1, 1)]).await;
+    let fresh = sinex_schema::catalog(&mut conn).await.unwrap();
+    let before: Vec<Uuid> = sqlx::query_scalar("SELECT id FROM core.events ORDER BY id")
+        .fetch_all(&mut conn)
+        .await
+        .unwrap();
+    conn.execute("DROP VIEW event_types.operator_mark, event_types.query_saved")
+        .await
+        .unwrap();
+    conn.execute("DELETE FROM registry.event_types WHERE name IN ('operator.mark','query.saved')")
+        .await
+        .unwrap();
+    conn.execute("UPDATE sinex_schema.applied SET version=3")
+        .await
+        .unwrap();
+    assert_eq!(
+        sinex_schema::apply(&mut conn).await.unwrap(),
+        sinex_schema::Applied::Upgraded {
+            from: 3,
+            to: sinex_schema::VERSION
+        }
+    );
+    let after: Vec<Uuid> = sqlx::query_scalar("SELECT id FROM core.events ORDER BY id")
+        .fetch_all(&mut conn)
+        .await
+        .unwrap();
+    assert_eq!(before, after);
+    assert_eq!(sinex_schema::catalog(&mut conn).await.unwrap(), fresh);
 }

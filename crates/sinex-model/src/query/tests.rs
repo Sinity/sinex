@@ -183,13 +183,13 @@ fn a_bare_duration_with_an_ordering_is_refused() {
 }
 
 #[devkit::test]
-fn payload_paths_take_their_type_from_the_literal() {
+fn payload_paths_use_their_schema_types() {
     let query = q("events where payload.exit_code > 0 and payload.url ~ github");
     let Some(Expr::And(a, b)) = query.filter else {
         panic!()
     };
     assert!(
-        matches!(*a, Expr::Compare { lhs: Operand::Field(FieldRef::Payload(ref p)), rhs: Value::Integer(0), .. } if p == &["exit_code"])
+        matches!(*a, Expr::Compare { lhs: Operand::Field(FieldRef::TypedPayload { path: ref p, ty: FieldType::Integer }), rhs: Value::Integer(0), .. } if p == &["exit_code"])
     );
     assert!(matches!(
         *b,
@@ -282,7 +282,11 @@ fn grouping_makes_a_relation_of_groups() {
     assert!(
         matches!(&query.stages[0], Stage::Group(g) if g.aggregates[0].column() == "sum_duration")
     );
-    assert!(err("commands group by cwd fill").not_built);
+    assert!(
+        err("commands group by cwd fill")
+            .message
+            .contains("time-bucket")
+    );
     let query = q("commands count");
     assert!(matches!(&query.stages[0], Stage::Group(g) if g.keys.is_empty()));
 }
@@ -328,11 +332,7 @@ fn walks_and_references() {
     ));
     let r = parse_reference("sinex:key/terminal.atuin/command.executed/a/b").unwrap();
     assert!(matches!(r, Reference::Key { ref key, .. } if key == "a/b"));
-    assert!(
-        parse_reference("sinex:at/2026-09-14/session")
-            .unwrap_err()
-            .not_built
-    );
+    assert!(parse_reference("sinex:at/2026-09-14/session").is_err());
 }
 
 #[devkit::test]
@@ -357,7 +357,10 @@ fn recall_windows() {
         q("recall last").source,
         Source::RecallLast { filter: None }
     ));
-    assert!(err("recall mark").not_built);
+    assert!(matches!(
+        q("recall mark").source,
+        Source::RecallMark { number: 1, .. }
+    ));
 }
 
 #[devkit::test]
@@ -417,3 +420,5 @@ fn every_alias_reads_registered_event_types() {
         }
     }
 }
+
+mod gaps;

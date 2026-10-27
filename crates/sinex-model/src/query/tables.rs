@@ -9,6 +9,7 @@ use crate::{ArchiveReason, Class, DbCheck, RecordState, TimeQuality};
 pub enum FieldType {
     Id,
     Text,
+    TextList,
     /// A path: `^` means "is or lies under", by whole components.
     Path,
     /// Recorded paths: equality or component-prefix matches any member.
@@ -112,6 +113,22 @@ const RUNS: &[Field] = &[
     f("failed", FieldType::Integer, "records that failed"),
 ];
 const SOURCES: &[Field] = &[
+    f(
+        "continuity",
+        FieldType::Enum(&["run_lifetimes", "unknown"]),
+        "continuity evidence",
+    ),
+    f(
+        "gaps",
+        FieldType::Integer,
+        "gaps between recorded live runs",
+    ),
+    f("drift", FieldType::Json, "recorded payload schema changes"),
+    f(
+        "record_failures",
+        FieldType::Integer,
+        "records that failed to parse",
+    ),
     f("binding", FieldType::Text, "binding"),
     f("source", FieldType::Text, "source"),
     f("driver", FieldType::Text, "driver"),
@@ -135,6 +152,13 @@ const SOURCES: &[Field] = &[
         FieldType::Integer,
         "failures in the last 24 hours",
     ),
+];
+const GAPS: &[Field] = &[
+    f("source", FieldType::Text, "source"),
+    f("run", FieldType::Id, "run after the gap"),
+    f("start", FieldType::Time, "previous recorded run end"),
+    f("end", FieldType::Time, "next recorded run start"),
+    f("reason", FieldType::Text, "reason"),
 ];
 const OPERATIONS: &[Field] = &[
     f("id", FieldType::Id, "operation ID"),
@@ -161,10 +185,12 @@ pub enum Table {
     Sources,
     Operations,
     Failures,
+    Gaps,
+    Drift,
 }
 
 impl Table {
-    pub const ALL: [Table; 7] = [
+    pub const ALL: [Table; 9] = [
         Table::Events,
         Table::Archive,
         Table::Materials,
@@ -172,6 +198,8 @@ impl Table {
         Table::Sources,
         Table::Operations,
         Table::Failures,
+        Table::Gaps,
+        Table::Drift,
     ];
 
     pub fn name(self) -> &'static str {
@@ -183,6 +211,8 @@ impl Table {
             Table::Sources => "sources",
             Table::Operations => "operations",
             Table::Failures => "failures",
+            Table::Gaps => "gaps",
+            Table::Drift => "drift",
         }
     }
 
@@ -200,12 +230,15 @@ impl Table {
             Table::Sources => "sources",
             Table::Operations => "operations",
             Table::Failures => "records that failed",
+            Table::Gaps => "gaps between recorded live runs",
+            Table::Drift => "events with parser-recorded unknown fields",
         }
     }
 
     pub fn fields(self) -> &'static [Field] {
         match self {
-            Table::Events => EVENTS,
+            Table::Events | Table::Drift => EVENTS,
+            Table::Gaps => GAPS,
             Table::Archive => ARCHIVE,
             Table::Materials => MATERIALS,
             Table::Runs => RUNS,
@@ -218,7 +251,8 @@ impl Table {
     /// The time `since`, `until` and `in` apply to when no field is named.
     pub fn main_time(self) -> &'static str {
         match self {
-            Table::Events | Table::Archive | Table::Failures => "when",
+            Table::Events | Table::Archive | Table::Drift | Table::Failures => "when",
+            Table::Gaps => "start",
             Table::Materials => "stored",
             Table::Runs | Table::Operations => "started",
             Table::Sources => "last_event",
@@ -227,13 +261,14 @@ impl Table {
 
     /// Whether rows are events, with payloads, text and provenance.
     pub fn is_events(self) -> bool {
-        matches!(self, Table::Events | Table::Archive)
+        matches!(self, Table::Events | Table::Archive | Table::Drift)
     }
 
     /// Fields shown when the query names none.
     pub fn default_fields(self) -> &'static [&'static str] {
         match self {
-            Table::Events => &["id", "event_type", "source", "when", "payload"],
+            Table::Gaps => &["source", "run", "start", "end", "reason"],
+            Table::Events | Table::Drift => &["id", "event_type", "source", "when", "payload"],
             Table::Archive => &[
                 "id",
                 "event_type",
@@ -488,7 +523,6 @@ pub const COMMAND_WORDS: &[&str] = &[
     "descendants",
     "parents",
     "walk",
-    "gaps",
     "duplicates",
 ];
 

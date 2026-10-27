@@ -18,6 +18,7 @@ pub mod machine;
 pub mod media;
 pub mod operator;
 pub mod polylogue;
+pub mod query;
 pub mod session;
 pub mod shell;
 pub mod social;
@@ -79,6 +80,8 @@ fn build_from_json<P: EventPayload>(
 
 /// Every event type Sinex stores.
 pub const ALL: &[RegisteredEventType] = &[
+    info::<query::Mark>(),
+    info::<query::Saved>(),
     info::<forecast::Issued>(),
     info::<forecast::Resolved>(),
     info::<CommandExecuted>(),

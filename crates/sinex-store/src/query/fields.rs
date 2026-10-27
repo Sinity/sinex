@@ -10,7 +10,8 @@ use sinex_model::query::Table;
 /// The `FROM` clause of a table, with `{t}` (and `{a}`) for its aliases.
 pub(crate) fn from(table: Table) -> &'static str {
     match table {
-        Table::Events => "core.visible_events {t}",
+        Table::Events | Table::Drift => "core.visible_events {t}",
+        Table::Gaps => super::source_views::GAPS,
         Table::Archive => {
             "core.visible_events {t} JOIN audit.archive_changes {a} ON {a}.event_id = {t}.id"
         }
@@ -40,6 +41,7 @@ pub(crate) fn from(table: Table) -> &'static str {
 pub(crate) fn tiebreak(table: Table) -> &'static str {
     match table {
         Table::Sources => "{t}.name",
+        Table::Gaps => "{t}.source || '/' || {t}.run::text",
         _ => "{t}.id",
     }
 }
@@ -77,7 +79,15 @@ pub(crate) fn field(table: Table, name: &str) -> Option<String> {
         })
     };
     let sql: &str = match table {
-        Table::Events => event(name)?,
+        Table::Events | Table::Drift => event(name)?,
+        Table::Gaps => match name {
+            "source" => "{t}.source",
+            "run" => "{t}.run",
+            "start" => "{t}.start",
+            "end" => "{t}.end",
+            "reason" => "{t}.reason",
+            _ => return None,
+        },
         Table::Archive => match name {
             "archived" => "{a}.recorded_at",
             "reason" => "{a}.reason",
@@ -126,6 +136,9 @@ pub(crate) fn field(table: Table, name: &str) -> Option<String> {
         },
         Table::Sources => {
             return Some(match name {
+                "continuity" | "gaps" | "drift" | "record_failures" => {
+                    super::source_views::field(name)?
+                }
                 "binding" | "source" => "{t}.name".to_string(),
                 "driver" => "{t}.driver".to_string(),
                 "version" => "{t}.version::bigint".to_string(),
@@ -138,7 +151,8 @@ pub(crate) fn field(table: Table, name: &str) -> Option<String> {
                 "failed_24h" => "(SELECT count(*) FROM raw.failures sf \
                       JOIN raw.materials sm ON sm.id = sf.material_id \
                       JOIN raw.inputs si ON si.id = sm.input_id \
-                      WHERE si.binding = {t}.name AND sf.failed_at > now() - interval '24 hours')"
+                      JOIN raw.bindings sb ON sb.binding = si.binding \
+                      WHERE sb.source = {t}.name AND sf.failed_at > now() - interval '24 hours')"
                     .to_string(),
                 _ => return None,
             });
@@ -154,7 +168,7 @@ pub(crate) fn field(table: Table, name: &str) -> Option<String> {
         Table::Failures => match name {
             "id" => "{t}.id",
             "when" => "{t}.failed_at",
-            "source" => "{t}_i.binding",
+            "source" => "(SELECT b.source FROM raw.bindings b WHERE b.binding={t}_i.binding)",
             "material" => "{t}.material_id",
             "offset" => "{t}.anchor",
             "reason" => "{t}.reason",

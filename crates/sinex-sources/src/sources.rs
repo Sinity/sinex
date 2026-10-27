@@ -60,6 +60,8 @@ pub mod outlook;
 #[cfg(feature = "full")]
 pub mod page_crawl;
 #[cfg(feature = "full")]
+pub mod query;
+#[cfg(feature = "full")]
 pub mod raindrop;
 #[cfg(feature = "full")]
 pub mod reddit;
@@ -181,6 +183,8 @@ pub fn formats() -> &'static [&'static InputFormat] {
         &library::FORMAT,
         #[cfg(feature = "full")]
         &forecast::FORMAT,
+        #[cfg(feature = "full")]
+        &query::FORMAT,
         #[cfg(feature = "full")]
         &page_crawl::FORMAT,
     ]
