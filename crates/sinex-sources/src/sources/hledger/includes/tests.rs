@@ -316,6 +316,6 @@ fn a_changed_parent_year_changes_the_child_binding_identity() {
     let first = first.iter().find(|b| b.input == child).unwrap();
     let second = second.iter().find(|b| b.input == child).unwrap();
     assert_ne!(first.name, second.name);
-    assert_eq!(first.settings.options["included_from"]["year"], 2032);
-    assert_eq!(second.settings.options["included_from"]["year"], 2036);
+    assert_eq!(first.settings.options["initial_year"], 2032);
+    assert_eq!(second.settings.options["initial_year"], 2036);
 }

@@ -150,7 +150,13 @@ async fn included_journal_changes_are_read_when_the_parent_is_unchanged_and_repl
         .fetch_one(&mut ctx.read_conn).await.unwrap();
     assert_eq!(inherited, 2);
     let before = live(&mut ctx.read_conn).await;
-    assert_eq!(before.iter().filter(|(kind, _, _)| kind == "transaction.posted").count(), 6);
+    assert_eq!(
+        before
+            .iter()
+            .filter(|(kind, _, _)| kind == "transaction.posted")
+            .count(),
+        6
+    );
     let report = crate::replay::run(
         &mut ctx.read_conn,
         &ctx.blobs,

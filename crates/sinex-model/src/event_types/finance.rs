@@ -29,7 +29,6 @@ pub struct IncludedFrom {
     pub block_hash: String,
     pub duplicate: u64,
     pub parent: Option<Box<IncludedFrom>>,
-    pub year: Option<i16>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
@@ -39,7 +38,7 @@ pub struct IncludeTarget {
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
-#[event(type = "transaction.posted", key = ["host", "journal", "member", "member_duplicate", "block_hash", "duplicate", "included_from"], replace = repeat)]
+#[event(type = "transaction.posted", key = ["host", "journal", "member", "member_duplicate", "block_hash", "duplicate", "included_from", "resolved_date", "resolved_effective_date"], replace = repeat)]
 pub struct TransactionPosted {
     pub host: String,
     pub journal: String,
