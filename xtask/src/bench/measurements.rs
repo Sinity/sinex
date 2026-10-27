@@ -846,7 +846,7 @@ pub(super) fn relation_size(snapshot: &Value, relation: &str, field: &str) -> Op
 }
 
 pub(super) fn query_probes(cluster: &Cluster, out: &Path) -> Result<Value, String> {
-    let partial = query(cluster, "SELECT EXISTS(SELECT 1 FROM information_schema.columns WHERE table_schema='core' AND table_name='search_text' AND column_name='trigram_indexed')")?.as_bool().ok_or("missing search policy")?;
+    let partial = query(cluster, "SELECT to_jsonb(EXISTS(SELECT 1 FROM information_schema.columns WHERE table_schema='core' AND table_name='search_text' AND column_name='trigram_indexed'))")?.as_bool().ok_or("missing search policy")?;
     let mut observations = Vec::new();
     for (kind, shape, pattern) in [
         ("command", "prefix", "(^| )echo synthetic 12345"),
