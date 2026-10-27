@@ -7,6 +7,7 @@ pub(crate) mod records;
 
 use super::DriverError;
 use serde::{Deserialize, Serialize};
+#[cfg(feature = "archives")]
 use sinex_model::InputRef;
 use std::path::PathBuf;
 
@@ -31,6 +32,7 @@ pub enum Framing {
 }
 
 impl Framing {
+    #[cfg(feature = "archives")]
     fn name(self) -> String {
         match self {
             Self::Lines => "lines".into(),
@@ -89,6 +91,7 @@ pub struct ExportArchive {
 /// Default target size for decoded record parts. One record can exceed it.
 pub const PART_BYTES: usize = 64 << 20;
 
+#[cfg(feature = "archives")]
 impl ExportArchive {
     fn input(&self) -> InputRef {
         InputRef {
@@ -99,10 +102,12 @@ impl ExportArchive {
     }
 }
 
+#[cfg(feature = "archives")]
 fn is_tar(head: &[u8]) -> bool {
     head.len() >= 262 && &head[257..262] == b"ustar"
 }
 
+#[cfg(feature = "archives")]
 fn file_name(path: &std::path::Path) -> String {
     path.file_name()
         .map(|n| n.to_string_lossy().into_owned())

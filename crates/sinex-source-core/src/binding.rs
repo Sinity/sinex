@@ -294,6 +294,7 @@ pub fn stateless<D: StatelessDriver + 'static>(driver: D) -> Reading {
 }
 
 /// An export archive, read in a pass shared with the other bindings of it.
+#[cfg(feature = "archives")]
 pub fn shared(driver: crate::drivers::export_archive::ExportArchive) -> Reading {
     Reading::Shared(Box::new(driver))
 }
