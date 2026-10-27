@@ -12,6 +12,7 @@ use sqlx::PgPool;
 
 mod analysis;
 mod forecast;
+mod kinds;
 mod operations;
 mod privacy;
 mod queries;
@@ -32,6 +33,7 @@ pub(crate) struct Api {
     pub unlock: std::sync::Arc<tokio::sync::Mutex<Option<Unlocked>>>,
     /// This machine's name, for library requests and scans.
     pub host: String,
+    pub source_config: std::sync::Arc<crate::binding_runner::Config>,
 }
 
 /// An unlock session: the operator's identity until it expires, and the data
@@ -191,6 +193,12 @@ impl Api {
     async fn dispatch(&self, request: Request, caller: &Caller) -> Reply {
         let actor = caller.actor;
         match request {
+            Request::Kinds { kind, page, cursor } => {
+                self.kind_fields(caller, kind, page, cursor, false).await
+            }
+            Request::Fields { kind, page, cursor } => {
+                self.kind_fields(caller, kind, page, cursor, true).await
+            }
             Request::Status => match self.status(caller).await {
                 Ok(v) => Reply::Ok { result: v },
                 Err(e) => refused(e.to_string()),
@@ -548,8 +556,9 @@ impl Api {
             Ok(q) => q,
             Err(e) => return query_refusal(text, e),
         };
-        match sinex_store::query::run(&mut conn, text, &bound, &ctx, &page).await {
+        match sinex_store::query::run(&mut conn, text, Some(&bound), &ctx, &page).await {
             Ok(answer) => data(answer_json(answer)),
+            Err(sinex_store::Error::Query(error)) => query_refusal(text, error),
             Err(e) => refused(e.to_string()),
         }
     }
@@ -616,6 +625,17 @@ impl Api {
             Reply::Ok { result } => result.get("rows").cloned().unwrap_or(Value::Null),
             Reply::Refused { reason, .. } => json!({ "unavailable": reason }),
         };
+        let context = self.source_config.context(&self.host);
+        let discovery =
+            tokio::task::spawn_blocking(move || sinex_sources::discovery::status(&context))
+                .await
+                .map_err(|error| error.to_string())??;
+        let exclusions: std::collections::BTreeMap<_, _> = self
+            .source_config
+            .exclude
+            .iter()
+            .filter_map(|(name, exclusion)| exclusion.as_ref().map(|exclusion| (name, exclusion)))
+            .collect();
         // The daemon's own switch, which pauses the binding runner.
         let private = sinex_transport::private_mode::PrivateMode::default();
         let switch = private.state();
@@ -635,6 +655,8 @@ impl Api {
             "zone": self.context().zone_name(),
             "day_start": self.day_start.to_string(),
             "sources": sources,
+            "discovery": discovery,
+            "exclusions": exclusions,
         }))
     }
 }

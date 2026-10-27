@@ -33,7 +33,7 @@ impl BindingReader {
             .reader
             .ok_or_else(|| format!("{} is not read by a driver", kind.name))?;
         Ok(Self {
-            source: (kind.source)(&binding)?.into(),
+            source: sinex_sources::sources::source_for(&binding)?.into(),
             reading: match reader(&binding)? {
                 sinex_source_core::Reading::Polled(reader) => {
                     Reading::Polled(PolledReader::new(reader))

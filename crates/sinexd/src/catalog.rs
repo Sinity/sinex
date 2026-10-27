@@ -23,6 +23,7 @@ pub(crate) fn catalog() -> Value {
         })
     });
     json!({
+        "eventKinds": sinex_model::event_types::declarations(),
         "sources": sources,
         "derivations": keyed.chain(per_event).collect::<Vec<_>>(),
     })
@@ -39,6 +40,7 @@ struct CatalogSource {
     /// The newest parser version among its declarations.
     version: u32,
     event_types: Vec<&'static str>,
+    discovery: Vec<Value>,
 }
 
 impl CatalogSource {
@@ -50,6 +52,7 @@ impl CatalogSource {
             "purpose": self.purpose,
             "class": self.class,
             "eventTypes": self.event_types,
+            "discovery": self.discovery,
         })
     }
 }
@@ -69,11 +72,23 @@ fn sources() -> Vec<CatalogSource> {
                         class: spec.class,
                         version: spec.parser_version,
                         event_types: Vec::new(),
+                        discovery: Vec::new(),
                     });
                     out.len() - 1
                 }
             };
             let entry = &mut out[at];
+            assert!(
+                format.discovery.request_only
+                    || !format.discovery.locations.is_empty()
+                    || !format.discovery.streams.is_empty(),
+                "{}: no discovery or request-only role",
+                format.name
+            );
+            let description = json!({"format": format.name, "capture": format.capture.is_some(), "description": format.discovery});
+            if !entry.discovery.contains(&description) {
+                entry.discovery.push(description);
+            }
             entry.version = entry.version.max(spec.parser_version);
             // A source read several ways is as private as its most private
             // declaration.
@@ -112,7 +127,9 @@ pub(crate) fn registry_sources() -> Vec<sinex_store::registry::Source> {
 
 /// The catalog as committed: pretty JSON with a trailing newline.
 pub(crate) fn render() -> String {
-    let mut text = serde_json::to_string_pretty(&catalog()).expect("catalog serializes");
+    let mut catalog = catalog();
+    catalog.sort_all_objects();
+    let mut text = serde_json::to_string_pretty(&catalog).expect("catalog serializes");
     text.push('\n');
     text
 }

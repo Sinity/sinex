@@ -15,6 +15,8 @@ pub(crate) enum Admin {
     Schema {
         #[arg(long)]
         database: String,
+        #[arg(long = "kind-owner")]
+        kind_owners: Vec<String>,
     },
     /// As the database superuser: create the extensions and roles the schema
     /// needs, and give `owner` the roles. The owner then applies the schema.
@@ -27,6 +29,13 @@ pub(crate) enum Admin {
     /// Print every source and derivation as JSON, for the NixOS module's
     /// generated options (`nix/catalog.json`).
     Catalog,
+    /// Read-only discovery of this host's inputs and exclusions.
+    Discover {
+        #[arg(long)]
+        sources: PathBuf,
+        #[arg(long, default_value = "localhost")]
+        host: String,
+    },
     /// Print the NATS server `authorization` block: the daemon user with full
     /// access and one user per producer limited to its own subjects. Passwords
     /// are read from files, so they never pass through the Nix store, and the
@@ -55,10 +64,29 @@ pub(crate) async fn run(command: Admin) -> Result<(), String> {
     match command {
         Admin::Diagnostics { command } => crate::diagnostics::run(command).await,
         Admin::Table(args) => admin_table(args).await,
-        Admin::Schema { database } => sinex_schema::apply_url(&database)
-            .await
-            .map(|applied| println!("{applied}"))
-            .map_err(|e| e.to_string()),
+        Admin::Schema {
+            database,
+            kind_owners,
+        } => {
+            use sqlx::Connection;
+            let mut owners = sinex_schema::kinds::Owners::default();
+            for mapping in kind_owners {
+                let (prefix, producer) = mapping
+                    .split_once('=')
+                    .ok_or("--kind-owner needs polylogue=PRODUCER")?;
+                if prefix != "polylogue" || !sinex_protocol::nats::valid_producer(producer) {
+                    return Err("invalid kind owner".into());
+                }
+                owners.prefixes.insert(prefix.into(), producer.into());
+            }
+            let mut connection = sqlx::PgConnection::connect(&database)
+                .await
+                .map_err(|e| e.to_string())?;
+            sinex_schema::apply_with_owners(&mut connection, &owners)
+                .await
+                .map(|applied| println!("{applied}"))
+                .map_err(|e| e.to_string())
+        }
         Admin::PrepareDatabase { database, owner } => {
             use sqlx::Connection;
             let mut connection = sqlx::PgConnection::connect(&database)
@@ -67,6 +95,19 @@ pub(crate) async fn run(command: Admin) -> Result<(), String> {
             sinex_schema::prepare(&mut connection, &owner)
                 .await
                 .map_err(|e| e.to_string())
+        }
+        Admin::Discover { sources, host } => {
+            let config = crate::binding_runner::Config::load(&sources)?;
+            let context = config.context(&host);
+            let inputs =
+                tokio::task::spawn_blocking(move || sinex_sources::discovery::status(&context))
+                    .await
+                    .map_err(|error| error.to_string())??;
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&inputs).map_err(|error| error.to_string())?
+            );
+            Ok(())
         }
         Admin::Catalog => {
             print!("{}", catalog::render());
@@ -181,6 +222,7 @@ async fn admin_table(args: Vec<String>) -> Result<(), String> {
         .await
         .map_err(|e| e.to_string())?;
     let local = api::Api {
+        source_config: Default::default(),
         reads,
         writer: Some(ctx.writer.clone()),
         blobs: ctx.blobs.clone(),

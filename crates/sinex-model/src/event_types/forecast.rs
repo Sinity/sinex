@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
 #[serde(deny_unknown_fields)]
-#[event(type = "forecast.issued", key = ["forecast"], replace = repeat, time = at, quality = intrinsic)]
+#[event(version = 2, type = "forecast.issued", key = ["forecast"], replace = repeat, time = at, quality = intrinsic)]
 pub struct Issued {
     pub forecast: String,
     pub target: String,
@@ -22,7 +22,7 @@ pub struct Issued {
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
 #[serde(deny_unknown_fields)]
-#[event(type = "forecast.resolved", key = location, replace = repeat, time = at, quality = intrinsic)]
+#[event(version = 2, type = "forecast.resolved", key = location, replace = repeat, time = at, quality = intrinsic)]
 pub struct Resolved {
     pub forecast: String,
     /// An unknown outcome is recorded explicitly and is never scored as false.

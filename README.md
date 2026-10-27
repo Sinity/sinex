@@ -80,16 +80,14 @@ services.sinex = {
   nats.daemonPasswordFile = "/run/agenix/sinex-nats-daemon";
   readAnyFile = true;                 # sources under a private home directory
   sources."terminal.atuin-history" = {
-    enable = true;
     paths = [ "/home/me/.local/share/atuin/history.db" ];
   };
   session = {                         # live desktop sources, as the operator
-    enable = true;
     user = "me";
     passwordFile = "/run/agenix/sinex-nats-session";
-    hyprland = true;
-    clipboard = true;
+    stateDir = "/realm/state/sinex-session/me";
   };
+  exclude."session.media".reason = "This example host captures no screen or audio.";
   backfills.takeout-2025 = [ "takeout=/data/takeout-2025.tgz" ];
 };
 ```
@@ -103,10 +101,10 @@ That gives these units:
   and each process reads its own password from its file, never from its
   arguments;
 - `sinexd.service`, which applies the schema, makes the API tokens under
-  `stateDir/tokens` once, and reads every enabled source from
+  `stateDir/tokens` once, and discovers every applicable source from
   `/etc/sinex/sources.json`; it plans the sources' paths again every minute,
   so a new day's file or recording is read without a restart;
-- `sinex-capture-journald.service`, when the journald source is enabled;
+- `sinex-capture-journald.service`, unless the journald source is excluded;
 - the `sinex-session` user service in the operator's graphical session;
 - `sinex-dump.timer`, the daily database dump into `backup.dumpDir`, and a
   Borg job when `backup.repo` is set;
@@ -114,7 +112,7 @@ That gives these units:
   activation.
 
 `nix/catalog.json` lists every source with its formats and purpose. A source's
-`paths` must be readable by the `sinex` user; `readAnyFile` gives sinexd read
+`paths` add explicit inputs to discovery and must be readable by the `sinex` user; `readAnyFile` gives sinexd read
 access to every file instead (it never writes them). A path with nothing to
 read, and a binding that fails, is logged when it happens, once, and again
 only when that changes.
@@ -139,10 +137,21 @@ their next login. A switch that cannot be checked also stops capture: each
 process logs the reason once, and `sinexctl private` and `sinexctl status`
 show it.
 
-The database has one writer. Starting a backfill
+Declared backfill paths also enter automatic discovery, so present exports
+are read by the binding runner. The database has one writer. Starting a backfill
 (`systemctl start sinex-backfill-NAME`) stops sinexd, reads the inputs
 read-only to their end, and starts sinexd again; the session service and the
-journald capture keep spooling meanwhile.
+system captures keep spooling meanwhile.
+
+Archived journal files (a copied `/var/log/journal`, a recovered machine's)
+are captured once into a spool of their own and then read like the live
+journal; an entry both hold is one entry, by its cursor:
+
+```sh
+sinex-session capture journald --spool /var/lib/sinex/spool/journal-2026-05 \
+  --option directory=/data/journal-2026-05
+# then declare: backfills.journal-2026-05 = [ "journald=/var/lib/sinex/spool/journal-2026-05" ];
+```
 
 The content store (`storeDir`) and the dumps are what a backup needs; the
 database itself is rebuilt from a dump (`nix/tests/restore.nix` is the drill).

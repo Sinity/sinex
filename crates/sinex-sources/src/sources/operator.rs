@@ -12,7 +12,7 @@ use serde_json::{Map, Value};
 use sinex_model::event_types::operator::{LogEntry, SteeringRow};
 use sinex_model::{Class, Timestamp};
 use sinex_source_core::drivers::append_file::AppendFile;
-use sinex_source_core::drivers::sqlite_rows::SqliteRows;
+use sinex_source_core::drivers::sqlite_rows::{Changes, SqliteRows};
 use sinex_source_core::registry::{DeclaredSource, Driver, SourceSpec};
 use sinex_source_core::{Parser, RecordError};
 use std::path::PathBuf;
@@ -202,8 +202,10 @@ pub fn steering_driver(path: PathBuf, host: String, table: &'static str) -> Sqli
         from: None,
         required: &["id"],
         // A small store whose every row can change: all of it, each poll.
-        mutable: Some("1 = 1"),
-        full_pass_secs: 3600,
+        changes: Changes::InPlace {
+            mutable: "1 = 1",
+            full_pass_secs: 3600,
+        },
     }
 }
 
@@ -212,6 +214,19 @@ pub fn steering_driver(path: PathBuf, host: String, table: &'static str) -> Sqli
 pub const RAW_LOG_FORMAT: sinex_source_core::binding::InputFormat =
     sinex_source_core::binding::InputFormat {
         name: "raw-log",
+        discovery: sinex_source_core::discovery::DiscoverySpec {
+            owner: sinex_source_core::discovery::Owner::System,
+            locations: &[sinex_source_core::discovery::Location {
+                root: "declared",
+                path: "raw-log",
+            }],
+            capabilities: &[],
+            credentials: &[],
+            streams: &[],
+            requests: &[],
+            request_only: false,
+        },
+        discover: crate::discovery::discover_format,
         specs: || vec![&RAW_LOG],
         plan: Some(|input, settings| {
             Ok(sinex_source_core::binding::single(
@@ -242,6 +257,19 @@ fn steering_table(b: &sinex_source_core::binding::Binding) -> Result<&'static st
 pub const STEERING_FORMAT: sinex_source_core::binding::InputFormat =
     sinex_source_core::binding::InputFormat {
         name: "steering",
+        discovery: sinex_source_core::discovery::DiscoverySpec {
+            owner: sinex_source_core::discovery::Owner::System,
+            locations: &[sinex_source_core::discovery::Location {
+                root: "declared",
+                path: "steering",
+            }],
+            capabilities: &[],
+            credentials: &[],
+            streams: &[],
+            requests: &[],
+            request_only: false,
+        },
+        discover: crate::discovery::discover_format,
         specs: || STEERING.iter().collect(),
         plan: Some(|input, settings| {
             // One binding, and so one cursor, per table.

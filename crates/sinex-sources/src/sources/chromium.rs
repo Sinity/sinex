@@ -13,7 +13,7 @@ use serde_json::{Map, Value};
 use sinex_model::Class;
 use sinex_model::event_types::browser::{BrowserUrl, BrowserVisit};
 use sinex_source_core::drain::RecordContext;
-use sinex_source_core::drivers::sqlite_rows::SqliteRows;
+use sinex_source_core::drivers::sqlite_rows::{Changes, SqliteRows};
 use sinex_source_core::registry::{DeclaredSource, Driver, SourceSpec};
 use sinex_source_core::{Parser, RecordError};
 use std::path::{Path, PathBuf};
@@ -190,8 +190,10 @@ pub fn visits_driver(history: PathBuf, host: String) -> SqliteRows {
             "transition",
             "visit_duration",
         ],
-        mutable: Some(RECENT_VISIT),
-        full_pass_secs: 3600,
+        changes: Changes::InPlace {
+            mutable: RECENT_VISIT,
+            full_pass_secs: 3600,
+        },
     }
 }
 
@@ -210,8 +212,10 @@ pub fn urls_driver(history: PathBuf, host: String) -> SqliteRows {
             "last_visit_time",
             "hidden",
         ],
-        mutable: Some(RECENT_URL),
-        full_pass_secs: 3600,
+        changes: Changes::InPlace {
+            mutable: RECENT_URL,
+            full_pass_secs: 3600,
+        },
     }
 }
 
@@ -239,6 +243,37 @@ fn profiles(user_data: &Path) -> Vec<(String, PathBuf)> {
 pub const FORMAT: sinex_source_core::binding::InputFormat =
     sinex_source_core::binding::InputFormat {
         name: "chromium",
+        discovery: sinex_source_core::discovery::DiscoverySpec {
+            owner: sinex_source_core::discovery::Owner::System,
+            locations: &[
+                sinex_source_core::discovery::Location {
+                    root: "config",
+                    path: "chromium",
+                },
+                sinex_source_core::discovery::Location {
+                    root: "config",
+                    path: "google-chrome",
+                },
+                sinex_source_core::discovery::Location {
+                    root: "config",
+                    path: "google-chrome-beta",
+                },
+                sinex_source_core::discovery::Location {
+                    root: "config",
+                    path: "BraveSoftware/Brave-Browser",
+                },
+                sinex_source_core::discovery::Location {
+                    root: "input",
+                    path: "chromium",
+                },
+            ],
+            capabilities: &[],
+            credentials: &[],
+            streams: &[],
+            requests: &[],
+            request_only: false,
+        },
+        discover: crate::discovery::discover_format,
         specs: || vec![&VISITS, &URLS],
         plan: Some(|input, settings| {
             Ok(profiles(input)

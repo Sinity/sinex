@@ -302,7 +302,7 @@ impl RuleSet {
             )));
         }
         let source = event.source.clone();
-        let event_type = event.event_type;
+        let event_type = event.event_type.clone();
         for rule in self.rules.iter().filter(|r| {
             r.source == source && r.event_type.as_deref().is_none_or(|t| t == event_type)
         }) {

@@ -74,15 +74,15 @@ pub(crate) struct DerivationRunner {
     /// Rank of each keyed and per-event derivation, by name: 0 for those
     /// reading only captured events, one more than the highest rank of any
     /// derivation producing an input.
-    ranks: BTreeMap<&'static str, u32>,
+    ranks: BTreeMap<String, u32>,
     passes: u32,
     /// The time derivations see; the current time unless a test sets it.
     pub(crate) clock: Option<Timestamp>,
     time_settings: TimeSettings,
     read: PgConnection,
     writer: WriterHandle,
-    runs: BTreeMap<&'static str, RunId>,
-    pub counts: BTreeMap<&'static str, Counts>,
+    runs: BTreeMap<String, RunId>,
+    pub counts: BTreeMap<String, Counts>,
 }
 
 fn to_window(q: &InputQuery) -> Window {
@@ -143,11 +143,11 @@ impl DerivationRunner {
             .collect();
         let mut runs = BTreeMap::new();
         for d in &catalog {
-            let name = derivations::static_type(&d.name);
+            let name = d.name.clone();
             let version = d.version.to_string();
             let emits: Vec<&str> = d.outputs.iter().map(String::as_str).collect();
             let manifest = runs::Manifest {
-                name,
+                name: &name,
                 kind: "derivation",
                 version: &version,
                 build: option_env!("SINEX_BUILD").unwrap_or("dev"),
@@ -240,7 +240,7 @@ impl DerivationRunner {
                     continue;
                 }
                 let view = KeyView {
-                    event_type: c.event.event_type,
+                    event_type: &c.event.event_type,
                     ts_orig: t,
                     payload: &c.event.payload,
                 };
@@ -278,7 +278,7 @@ impl DerivationRunner {
         let run = runs::start(&mut read, &manifest, host)
             .await
             .map_err(|e| e.to_string())?;
-        let runs = BTreeMap::from([(d.name(), run)]);
+        let runs = BTreeMap::from([(d.name().to_string(), run)]);
         Ok(Self {
             keyed: vec![d],
             per_event: Vec::new(),
@@ -360,7 +360,10 @@ impl DerivationRunner {
         let read = t.elapsed();
         let t = Instant::now();
         let computed = self.keyed[index].compute(key, &inputs, env);
-        let c = self.counts.entry(name).or_default();
+        if let Some(error) = &computed.error {
+            return Err(error.to_string());
+        }
+        let c = self.counts.entry(name.to_owned()).or_default();
         c.read += read;
         c.compute += t.elapsed();
         c.inputs += inputs.len();
@@ -401,7 +404,7 @@ impl DerivationRunner {
                     .next(&mut self.read)
                     .await
                     .map_err(|e| e.to_string())?;
-                self.counts.entry(name).or_default().read += t.elapsed();
+                self.counts.entry(name.to_owned()).or_default().read += t.elapsed();
                 let Some(done) = next else { break };
                 ready.extend(done.into_iter().map(|(w, rows)| {
                     (
@@ -419,7 +422,10 @@ impl DerivationRunner {
                 } else {
                     sinex_derivations::Computed::default()
                 };
-                let c = self.counts.entry(name).or_default();
+                if let Some(error) = &computed.error {
+                    return Err(error.to_string());
+                }
+                let c = self.counts.entry(name.to_owned()).or_default();
                 c.compute += t.elapsed();
                 c.inputs += input.len();
                 if *give_up {
@@ -488,7 +494,7 @@ impl DerivationRunner {
             .submit(Priority::Derived, batch)
             .await
             .map_err(|e| format!("{name}: {e}"))?;
-        let c = self.counts.entry(name).or_default();
+        let c = self.counts.entry(name.to_owned()).or_default();
         c.write += t.elapsed();
         c.keys += keys;
         c.outputs += n;
@@ -654,7 +660,7 @@ impl DerivationRunner {
             .submit(Priority::Derived, batch)
             .await
             .map_err(|e| format!("{name}: {e}"))?;
-        let c = self.counts.entry(name).or_default();
+        let c = self.counts.entry(name.to_owned()).or_default();
         c.inputs += events.len();
         c.failed += failed;
         c.outputs += n;
@@ -809,7 +815,7 @@ impl DerivationRunner {
 /// Each derivation's rank: 0 when no derivation produces any of its inputs,
 /// otherwise one more than the highest rank among those that do. A cycle
 /// (which no catalog should have) settles at the catalog's size.
-fn ranks(catalog: &[Derivation]) -> BTreeMap<&'static str, u32> {
+fn ranks(catalog: &[Derivation]) -> BTreeMap<String, u32> {
     let limit = u32::try_from(catalog.len()).unwrap_or(u32::MAX);
     let mut rank: BTreeMap<&str, u32> = catalog.iter().map(|d| (d.name.as_str(), 0)).collect();
     for _ in 0..catalog.len() {
@@ -832,7 +838,7 @@ fn ranks(catalog: &[Derivation]) -> BTreeMap<&'static str, u32> {
         }
     }
     rank.into_iter()
-        .map(|(name, r)| (derivations::static_type(name), r))
+        .map(|(name, r)| (name.to_string(), r))
         .collect()
 }
 

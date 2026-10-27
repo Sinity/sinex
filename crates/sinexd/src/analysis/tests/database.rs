@@ -38,6 +38,9 @@ fn commit(id: &str, hours: i64) -> Event {
             committed_at: at(hours),
             message: "m".into(),
             refs: vec![],
+            worktrees: vec![],
+            files: None,
+            original_bytes: Default::default(),
         },
         "code.git",
         Origin::Record {

@@ -59,6 +59,7 @@
       # VM tests: the deployed stack, a satellite capture node, the restore
       # drill. Built on demand, not by `package`.
       checks.${system} = {
+        module = import ./nix/tests/module.nix self pkgs;
         vm-stack = pkgs.testers.runNixOSTest (import ./nix/tests/stack.nix self);
         vm-topology = pkgs.testers.runNixOSTest (import ./nix/tests/topology.nix self);
         vm-restore = pkgs.testers.runNixOSTest (import ./nix/tests/restore.nix self);

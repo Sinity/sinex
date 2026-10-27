@@ -11,10 +11,13 @@
 //! because it never sees the bookkeeping.
 pub mod binding;
 pub mod capture;
+pub mod discovery;
 pub mod drain;
 pub mod drivers;
+pub mod gaps;
 pub mod nats;
 pub mod registry;
+pub mod sampling;
 #[cfg(feature = "archives")]
 pub mod shared_pass;
 
@@ -92,6 +95,12 @@ pub trait Parser: Send + Sync + 'static {
     /// Fields left out of the record hash because they change without the
     /// record changing (a last-seen time).
     const VOLATILE: &'static [&'static str] = &[];
+
+    /// Hash the fields that distinguish readings of this record. A parser
+    /// whose payload depends on its file path includes that context too.
+    fn record_hash(&self, raw: &[u8], _context: &RecordContext<'_>) -> [u8; 32] {
+        <Self::Record<'_> as RecordShape>::hash(raw, Self::VOLATILE)
+    }
 
     /// Map one framed record to its events. `context` is the record's
     /// material: its manifest and, for a material made of several members

@@ -52,7 +52,10 @@ async fn standin_with_refusal(
                     None,
                     events.iter().map(|_| sinex_model::EventId::new()).collect(),
                 ),
-                Ingress::Chunk { .. } | Ingress::LargeFrame { .. } => (None, vec![]),
+                Ingress::Chunk { .. }
+                | Ingress::LargeFrame { .. }
+                | Ingress::RegisterKinds { .. }
+                | Ingress::ReplaySequence { .. } => (None, vec![]),
             };
             let refusal = match &frame {
                 Ingress::Chunk { offset, .. } if refuse_offset == Some(*offset) => {
@@ -139,10 +142,145 @@ async fn a_spool_is_produced_once_material_first() {
     let Some(Ingress::Events { events, .. }) = frames.get(1) else {
         panic!("events after the material: {frames:?}")
     };
-    let types: Vec<&str> = events.iter().map(|e| e.event_type.as_str()).collect();
+    let types: Vec<&str> = events.iter().map(|e| e.kind.name.as_str()).collect();
     assert_eq!(types, vec!["window.focused", "window.closed"]);
     assert!(
         events.iter().all(|e| e.location.is_some()),
         "events cite their material"
     );
+}
+
+#[devkit::test(multi_thread)]
+async fn draining_after_physical_state_relocation_preserves_names_and_admitted_positions() {
+    use sinex_source_core::drivers::live_stream::{Rotation, SpoolWriter};
+    use sinex_sources::{discovery, live};
+    use std::os::unix::fs::symlink;
+    let nats = devkit::nats::test_nats().unwrap();
+    let subjects = Subjects::new(nats.prefix());
+    let received = standin(&nats, &subjects, "session-test").await;
+    let root = tempfile::tempdir().unwrap();
+    let state = root.path().join("state");
+    let spool = state.join("spool/hyprland");
+    let mut writer = SpoolWriter::open(&spool, Rotation::default()).unwrap();
+    writer
+        .append(
+            sinex_model::Timestamp::now(),
+            b"activewindow>>kitty,synthetic",
+        )
+        .unwrap();
+    writer.sync().unwrap();
+    drop(writer);
+    let context = discovery::DiscoveryContext {
+        host: "h".into(),
+        spool: state.join("spool"),
+        ..Default::default()
+    };
+    let bindings = discovery::spools(&context, discovery::Owner::Session).unwrap();
+    let name = bindings
+        .iter()
+        .find(|(_, binding)| binding.source == "desktop.hyprland")
+        .unwrap()
+        .1
+        .name
+        .clone();
+    let store = Store::open(&root.path().join("store")).unwrap();
+    let positions = state.join("positions");
+    let mut producer = Producer::connect(nats.url(), None, subjects, "session-test")
+        .await
+        .unwrap();
+    live::drain(&mut producer, &store, &positions, bindings)
+        .await
+        .unwrap();
+    let admitted = Position::load(&positions, &name).unwrap();
+    let frames = received.lock().unwrap().len();
+    assert!(frames > 0);
+    let destination = root.path().join("relocated-state");
+    std::fs::rename(&state, &destination).unwrap();
+    symlink(&destination, &state).unwrap();
+    let bindings = discovery::spools(&context, discovery::Owner::Session).unwrap();
+    assert!(bindings.iter().any(|(_, binding)| binding.name == name));
+    live::drain(&mut producer, &store, &positions, bindings)
+        .await
+        .unwrap();
+    assert_eq!(
+        received.lock().unwrap().len(),
+        frames,
+        "admitted records are not sent again"
+    );
+    assert_eq!(
+        Position::load(&positions, &name).unwrap().cursor,
+        admitted.cursor
+    );
+    assert!(destination.join("positions").is_dir());
+}
+
+#[devkit::test(multi_thread)]
+async fn drain_retries_pending_frames_even_when_the_spool_directory_is_absent() {
+    use sinex_source_core::drivers::live_stream::{Rotation, SpoolWriter};
+    use sinex_sources::{discovery, live};
+    let nats = devkit::nats::test_nats().unwrap();
+    let subjects = Subjects::new(nats.prefix());
+    let root = tempfile::tempdir().unwrap();
+    let spool_root = root.path().join("spool");
+    let spool = spool_root.join("hyprland");
+    let mut writer = SpoolWriter::open(&spool, Rotation::default()).unwrap();
+    writer
+        .append(
+            sinex_model::Timestamp::now(),
+            b"activewindow>>kitty,synthetic retry",
+        )
+        .unwrap();
+    writer.sync().unwrap();
+    drop(writer);
+    let context = discovery::DiscoveryContext {
+        host: "h".into(),
+        spool: spool_root,
+        ..Default::default()
+    };
+    let store = Store::open(&root.path().join("store")).unwrap();
+    let positions = root.path().join("positions");
+    let mut producer = Producer::connect(nats.url(), None, subjects.clone(), "session-test")
+        .await
+        .unwrap();
+    let error = live::drain(
+        &mut producer,
+        &store,
+        &positions,
+        discovery::spools(&context, discovery::Owner::Session).unwrap(),
+    )
+    .await
+    .unwrap_err();
+    assert!(
+        error.contains("no stream found for given subject"),
+        "{error}"
+    );
+    drop(producer);
+    std::fs::rename(&spool, root.path().join("retained-spool")).unwrap();
+    let received = standin(&nats, &subjects, "session-test").await;
+    let mut producer = Producer::connect(nats.url(), None, subjects, "session-test")
+        .await
+        .unwrap();
+    live::drain(
+        &mut producer,
+        &store,
+        &positions,
+        discovery::spools(&context, discovery::Owner::Session).unwrap(),
+    )
+    .await
+    .unwrap();
+    assert!(
+        received
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|frame| matches!(frame, Ingress::Events { .. }))
+    );
+    assert!(std::fs::read_dir(&positions).unwrap().all(|entry| {
+        !entry
+            .unwrap()
+            .file_name()
+            .to_string_lossy()
+            .contains("unacknowledged")
+    }));
+    assert!(!spool.exists());
 }

@@ -142,7 +142,7 @@ fn read<'a>(rule: &FusionRule, event: &'a Event) -> Option<Seen<'a>> {
         return None;
     }
     let rank = rule.fusion_inputs.iter().position(|o| {
-        o.admits(event.event_type, &event.payload) && o.source.is_none_or(|s| s == event.source)
+        o.admits(&event.event_type, &event.payload) && o.source.is_none_or(|s| s == event.source)
     })?;
     let input = &rule.fusion_inputs[rank];
     let fusion_record = (input.read)(event)?;
@@ -322,7 +322,12 @@ fn absorb(
     }
 }
 
-fn fused(rule: &FusionRule, group: &[usize], seen: &[Seen<'_>]) -> Option<Event> {
+fn fused(
+    rule: &FusionRule,
+    group: &[usize],
+    seen: &[Seen<'_>],
+    registered: &sinex_model::event_types::RegisteredEventType,
+) -> Result<Event, sinex_model::BuildError> {
     // Members are in preference order; the first with a value wins.
     let lead = &seen[group[0]];
     let mut payload = Map::new();
@@ -347,7 +352,8 @@ fn fused(rule: &FusionRule, group: &[usize], seen: &[Seen<'_>]) -> Option<Event>
     }
     payload.insert("observed_by".into(), json!(observed_by));
     derived_json(
-        rule.output,
+        &(registered.declaration)(),
+        Some(registered.build),
         &Value::Object(payload),
         rule.derivation,
         group.iter().map(|&m| seen[m].event),
@@ -417,15 +423,34 @@ impl AnyKeyed for Fusion {
         };
         let mut seen: Vec<Seen<'_>> = inputs.iter().filter_map(|e| read(rule, e)).collect();
         seen.sort_by_key(|s| (s.at, s.rank));
+        let Some(registered) = sinex_model::event_types::find(rule.output) else {
+            return Computed {
+                error: Some(sinex_model::BuildError::Declaration(format!(
+                    "validator_unavailable: {}",
+                    rule.output
+                ))),
+                ..Computed::default()
+            };
+        };
         let outputs = group(&seen, rule)
             .into_iter()
             .filter(|g| {
                 let first = g.iter().map(|&m| seen[m].at).min().unwrap_or(i128::MIN);
                 (start..start + HOUR_NS).contains(&first)
             })
-            .filter_map(|g| fused(rule, &g, &seen))
-            .collect();
+            .map(|g| fused(rule, &g, &seen, registered))
+            .collect::<Result<Vec<_>, _>>();
+        let outputs = match outputs {
+            Ok(outputs) => outputs,
+            Err(error) => {
+                return Computed {
+                    error: Some(error),
+                    ..Computed::default()
+                };
+            }
+        };
         Computed {
+            error: None,
             outputs,
             waiting: false,
         }

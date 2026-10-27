@@ -96,6 +96,38 @@ pub mod wykop;
 #[cfg(feature = "full")]
 pub mod zsh;
 
+#[cfg(feature = "full")]
+pub mod agentctl;
+
+#[cfg(feature = "full")]
+pub mod beads;
+
+#[cfg(feature = "full")]
+pub mod freedom;
+
+#[cfg(feature = "full")]
+pub mod github;
+
+#[cfg(feature = "full")]
+pub mod machine_records;
+
+#[cfg(feature = "full")]
+pub mod machine_telemetry;
+
+#[cfg(feature = "full")]
+pub mod messenger_sqlite;
+
+#[cfg(feature = "full")]
+pub mod reddit_archive;
+
+#[cfg(feature = "full")]
+pub mod router;
+
+#[cfg(feature = "full")]
+pub mod taskwarrior;
+
+pub mod udev;
+
 use sinex_source_core::binding::{Binding, InputFormat, Settings};
 use sinex_source_core::registry::{Source, SourceSpec};
 
@@ -104,6 +136,27 @@ use sinex_source_core::registry::{Source, SourceSpec};
 /// work from.
 pub fn formats() -> &'static [&'static InputFormat] {
     &[
+        &udev::FORMAT,
+        #[cfg(feature = "full")]
+        &taskwarrior::FORMAT,
+        #[cfg(feature = "full")]
+        &router::FORMAT,
+        #[cfg(feature = "full")]
+        &reddit_archive::FORMAT,
+        #[cfg(feature = "full")]
+        &messenger_sqlite::FORMAT,
+        #[cfg(feature = "full")]
+        &machine_telemetry::FORMAT,
+        #[cfg(feature = "full")]
+        &machine_records::FORMAT,
+        #[cfg(feature = "full")]
+        &github::FORMAT,
+        #[cfg(feature = "full")]
+        &freedom::FORMAT,
+        #[cfg(feature = "full")]
+        &beads::FORMAT,
+        #[cfg(feature = "full")]
+        &agentctl::FORMAT,
         #[cfg(feature = "full")]
         &atuin::FORMAT,
         #[cfg(feature = "full")]
@@ -211,15 +264,6 @@ pub fn format(name: &str) -> Option<&'static InputFormat> {
     formats().iter().copied().find(|k| k.name == name)
 }
 
-/// The format that reads the source `spec_name`.
-///
-/// Several formats can read one source name (the live clipboard and its lake
-/// lane); this is the first registered, and a configuration names the format
-/// to choose another.
-pub fn format_of(spec_name: &str) -> Option<&'static InputFormat> {
-    formats().iter().copied().find(|k| k.reads(spec_name))
-}
-
 /// The format reading the source `name` with `parser`. Neither is unique
 /// alone: a name is shared by one source read two ways (the live clipboard
 /// and its lake lane), a parser by sources of one format (mbox, Maildir and
@@ -245,7 +289,39 @@ pub fn source_for(binding: &Binding) -> Result<Box<dyn Source>, String> {
             binding.source, binding.parser
         )
     })?;
-    (format.source)(binding)
+    let source = (format.source)(binding)?;
+    let Some(class) = binding.settings.class else {
+        return Ok(source);
+    };
+    let mut spec = source.spec().clone();
+    spec.class = spec.class.max(class);
+    Ok(Box::new(ConfiguredSource { source, spec }))
+}
+
+struct ConfiguredSource {
+    source: Box<dyn Source>,
+    spec: SourceSpec,
+}
+
+impl Source for ConfiguredSource {
+    fn spec(&self) -> &SourceSpec {
+        &self.spec
+    }
+    fn drainer<'a>(
+        &'a self,
+        mut input: sinex_source_core::DrainInput<'a>,
+    ) -> Result<
+        Box<
+            dyn Iterator<
+                    Item = Result<sinex_source_core::DrainOutput, sinex_source_core::RecordError>,
+                > + Send
+                + 'a,
+        >,
+        sinex_source_core::RecordError,
+    > {
+        input.class = input.class.max(self.spec.class);
+        self.source.drainer(input)
+    }
 }
 
 /// The binding a material read by `parser` on `host` had, for a material

@@ -89,7 +89,7 @@ async fn rows(conn: &mut PgConnection, text: &str) -> usize {
         size: Some(100),
         cursor: None,
     };
-    let answer = sinex_store::query::run(conn, text, &bound, &ctx, &page)
+    let answer = sinex_store::query::run(conn, text, Some(&bound), &ctx, &page)
         .await
         .unwrap_or_else(|e| panic!("{text}: {e}"));
     serde_json::to_value(answer).unwrap()["rows"]

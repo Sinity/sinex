@@ -120,7 +120,7 @@ impl Keyed for Presence {
         };
         let evidence: Vec<(i128, &Event)> = inputs
             .iter()
-            .filter(|e| THRESHOLDS.evidence.contains(&e.event_type))
+            .filter(|e| THRESHOLDS.evidence.contains(&e.event_type.as_str()))
             .filter_map(|e| Some((e.ts_orig.at?.unix_ns(), e)))
             .collect();
         let mut outputs = Vec::new();
@@ -168,6 +168,7 @@ impl Keyed for Presence {
             ));
         }
         Computed {
+            error: None,
             outputs,
             waiting: false,
         }

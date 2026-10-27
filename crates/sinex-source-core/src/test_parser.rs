@@ -24,6 +24,18 @@ impl Parser for NotesParser {
         Ok((
             vec![NoteDocument {
                 vault: "synthetic".into(),
+                host: context.manifest.detail("host").as_str().map(str::to_owned),
+                vault_path: context.manifest.path.clone(),
+                native_vault_path_bytes: context
+                    .manifest
+                    .detail("native_path_bytes")
+                    .as_str()
+                    .map(str::to_owned),
+                native_path_bytes: member
+                    .details
+                    .get("native_path_bytes")
+                    .and_then(serde_json::Value::as_str)
+                    .map(str::to_owned),
                 path: member.path.clone(),
                 text: removed_at
                     .is_none()

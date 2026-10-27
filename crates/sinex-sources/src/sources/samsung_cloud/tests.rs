@@ -166,3 +166,73 @@ fn unkeyed_account_rows_keep_the_original_row_hash_identity() {
     assert!(account.at.is_none());
     assert_eq!(serde_json::to_value(account).unwrap()["untyped"], true);
 }
+
+#[devkit::test]
+fn the_call_log_is_read_as_calls() {
+    let header = b"\xef\xbb\xbfITEM_DATA,FILE_LIST,TIMESTAMP,SIZE,VALUE,CREATETIME,KEY\n";
+    let missed = br#""",,1755081462183,468,"""{\""_id\"":\""12\"",\""date\"":\""1737110847678\"",\""duration\"":\""0\"",\""number\"":\""+10000000000\"",\""type\"":\""3\"",\""logtype\"":\""100\"",\""name\"":\""Synthetic Person\"",\""is_read\"":\""1\""}""",1755081462183,k1"#;
+    let message = br#""",,1755081462183,468,"""{\""_id\"":\""13\"",\""date\"":\""1737110847000\"",\""duration\"":\""0\"",\""number\"":\""\"",\""type\"":\""1\"",\""logtype\"":\""300\"",\""cnap_name\"":\""Service\"",\""m_content\"":\""synthetic text\""}""",1755081462183,k2"#;
+    let out = run(
+        "/x/samsungcloud_gk000066110887_20260329_access/Call Log/CALLLOGS_1.csv",
+        &[header, missed, message],
+    );
+    let SamsungEvent::Call(call) = &out[0] else {
+        panic!("not a call: {out:?}")
+    };
+    assert_eq!(call.account_key, "k1");
+    assert_eq!(call.direction.as_deref(), Some("missed"));
+    assert_eq!(call.duration_seconds, Some(0));
+    assert_eq!(call.name.as_deref(), Some("Synthetic Person"));
+    assert_eq!(call.at, fields::from_unix_ms(1_737_110_847_678).ok());
+    assert_eq!(call.extra["is_read"], json!("1"));
+    assert!(!call.extra.contains_key("number"));
+    let SamsungEvent::Call(text) = &out[1] else {
+        panic!("not a call")
+    };
+    assert_eq!(text.number, None, "an empty number is unknown");
+    assert_eq!(text.name.as_deref(), Some("Service"));
+    assert_eq!(text.text.as_deref(), Some("synthetic text"));
+    assert_eq!(text.log_type, Some(300));
+}
+
+#[devkit::test]
+fn reminders_are_tasks_identified_by_their_record_id() {
+    let out = run(
+        "/x/samsungcloud_gk000066110887_20260329_access/Reminder/Reminder(1).csv",
+        &[
+            "\u{feff}time_create,last_modified_time,item_status,title,record_id,category_id,plainText,alarm_reminde_time,event_status\n".as_bytes(),
+            b"1720926006171,1720926007000,2,Check in,9719e057-0000,LOCAL_SPACE,\"Check in\n\",1720926000000,3\n",
+        ],
+    );
+    let SamsungEvent::Task(task) = &out[0] else {
+        panic!("a task")
+    };
+    assert_eq!(task.service, "samsung-reminder");
+    assert_eq!(task.task_id, "9719e057-0000");
+    assert_eq!(task.list_id, "LOCAL_SPACE");
+    assert_eq!(task.title.as_deref(), Some("Check in"));
+    assert_eq!(task.notes.as_deref(), Some("Check in"));
+    assert_eq!(task.status.as_deref(), Some("2"));
+    assert_eq!(
+        task.created_at,
+        fields::from_unix_ms(1_720_926_006_171).ok()
+    );
+    assert_eq!(
+        task.updated_at,
+        fields::from_unix_ms(1_720_926_007_000).ok()
+    );
+    assert_eq!(task.due.as_deref(), Some("2024-07-14T03:00:00Z"));
+    assert_eq!(task.extra["event_status"], json!(3));
+}
+
+#[devkit::test]
+fn malformed_call_fields_fail_instead_of_becoming_unknown() {
+    for (field, value) in [
+        ("number", json!(42)),
+        ("date", json!({})),
+        ("duration", json!("bad")),
+    ] {
+        let row = Map::from_iter([("VALUE".into(), json!({field: value}))]);
+        assert!(call("synthetic-id".into(), &row).is_err(), "{field}");
+    }
+}

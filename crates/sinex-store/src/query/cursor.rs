@@ -1,14 +1,15 @@
 //! A continuation describes one question, clock, the answer's size and the
 //! rows already handed out.
 use super::*;
-use base64::Engine as _;
+use sinex_model::query::cursor as encoding;
 
-const VERSION: u8 = 1;
+const VERSION: u8 = 3;
 
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(super) struct Cursor {
     version: u8,
+    pub declarations: Vec<(sinex_model::KindRef, String)>,
     question: String,
     now: String,
     zone: String,
@@ -38,13 +39,7 @@ fn zone(ctx: &Context) -> Result<String> {
 
 impl Cursor {
     pub(crate) fn decode(raw: &str) -> Result<Self> {
-        if raw.len() > 4096 {
-            return Err(invalid());
-        }
-        let bytes = base64::engine::general_purpose::URL_SAFE_NO_PAD
-            .decode(raw)
-            .map_err(|_| invalid())?;
-        let cursor: Self = serde_json::from_slice(&bytes).map_err(|_| invalid())?;
+        let cursor: Self = encoding::decode(raw).map_err(|_| invalid())?;
         if cursor.version != VERSION
             || cursor.seq < 0
             || cursor.offset == 0
@@ -98,6 +93,11 @@ impl Cursor {
     ) -> Result<String> {
         let cursor = Self {
             version: VERSION,
+            declarations: ctx
+                .catalog
+                .as_ref()
+                .map(|c| c.declarations.clone())
+                .unwrap_or_default(),
             question: question.into(),
             now: ctx.now.to_string(),
             zone: zone(ctx)?,
@@ -107,8 +107,7 @@ impl Cursor {
             total,
             view: view.into(),
         };
-        Ok(base64::engine::general_purpose::URL_SAFE_NO_PAD
-            .encode(serde_json::to_vec(&cursor).map_err(|_| invalid())?))
+        encoding::encode(&cursor).map_err(|_| invalid())
     }
 }
 
