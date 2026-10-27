@@ -21,8 +21,9 @@ and [docs/vocabulary.md](docs/vocabulary.md) for the names of things.
   positions, privacy rules, runs, queries. Knows no source by name.
 - `crates/sinex-source-core`: the parser trait, drain and shared drivers;
   archive and SQLite drivers are selected by features.
-- `crates/sinex-sources`: source families and the live capture loop. Capture
-  nodes build without its `full` feature.
+- `crates/sinex-sources`: source families and the live capture loop. Its `full`
+  feature adds file, database, archive and network readers to live capture.
+  Capture binaries build separately without it.
 - `crates/sinex-sealing`: sealed payloads, keys and encryption.
 - `crates/sinex-derivations`: derivations as pure code: fusion rules, metric
   figures and the rest.
@@ -32,8 +33,8 @@ and [docs/vocabulary.md](docs/vocabulary.md) for the names of things.
 - `crates/sinexd`: the daemon: the writer task, source tasks, `backfill`.
 - `crates/sinex-session`, `crates/sinex-capture`: the session service and the
   capture-only node, outside producers over the NATS ingress.
-- `crates/sinexctl`, `crates/sinex-diagnostics`: the CLI and MCP server, and
-  diagnostics that work while the daemon is down.
+- `crates/sinexctl`: the CLI and MCP server, including diagnostics that run
+  the sibling `sinexd` executable while the daemon is down.
 - `xtask`: developer commands (`check`, `test`, `db`, `boundaries`), built on
   `devkit` from polylogue-sinex-common. Every run is recorded; `xtask status`
   shows what failed last time and `xtask history` reads more.
@@ -62,7 +63,8 @@ Optimize for fast integration.
   [--tests]`, which prepares the schema database when needed and runs `cargo check --locked`
   without adding workspace selection. Package selection limits the build; a
   name filter alone still builds the workspace. `fmt` formats; `check` runs
-  fmt, boundaries and clippy against the schema database; `test` runs every
+  fmt, boundaries, workspace clippy against the schema database and reduced
+  capture/source-core clippy; `test` runs every
   Rust test under nextest; `package` is the Nix build.
 - Start a job, then wait for it in the background with `agentctl job wait
   <id>` and keep working. A failed wait prints the failing tests and the

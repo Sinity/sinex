@@ -5,7 +5,7 @@
 pub mod group;
 pub(crate) mod records;
 
-#[cfg(any(feature = "archives", test))]
+#[cfg(feature = "archives")]
 use super::DriverError;
 use serde::{Deserialize, Serialize};
 #[cfg(feature = "archives")]
@@ -115,7 +115,7 @@ fn file_name(path: &std::path::Path) -> String {
         .unwrap_or_default()
 }
 
-#[cfg(any(feature = "archives", test))]
+#[cfg(feature = "archives")]
 fn io(e: impl std::fmt::Display) -> DriverError {
     DriverError::Io(e.to_string())
 }

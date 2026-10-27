@@ -1,5 +1,6 @@
 //! One forward archive traversal shared by compatible logical bindings.
-use super::{Container, DriverError, ExportArchive, Framing, file_name, io, is_tar, records};
+use super::{Container, DriverError, ExportArchive, Framing, file_name, io, is_tar};
+mod records;
 use crate::drivers::{Acquired, MaterialSink, NewMaterial, StoredBytes};
 use crate::shared_pass::{SharedReadStart, StoredFile};
 use serde::{Deserialize, Serialize};

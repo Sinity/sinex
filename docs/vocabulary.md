@@ -133,6 +133,7 @@ these names and no others.
 
 ## Reader implementation names
 
+- **material access** (`MaterialAccess`): the content store, effective class and operation access used to store and open material bytes.
 - **time settings** (`TimeSettings`): the time zone and local start of a logical day, also used to group local hours.
 - **binding reader** (`BindingReader`): a configured binding together with its source, reader and remembered progress.
 - **reader context** (`ReaderContext`): the open content store, read connection and writer used by readers and commands.

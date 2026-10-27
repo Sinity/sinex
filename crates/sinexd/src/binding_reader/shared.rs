@@ -1,9 +1,9 @@
 //! One pass over a stored file shared by every compatible binding of it:
 //! the file is stored once (sealed when the bindings' class is), read forward
 //! once, and each binding's acquisitions are admitted as the pass reaches them.
-use super::Reading;
-use super::{Access, BindingReader};
+use super::{BindingReader, Reading};
 use crate::backfill::Totals;
+use crate::material_access::Access;
 use crate::writer::WriterHandle;
 use serde_json::Value;
 use sinex_model::{Class, ObservationFacts, RunId};
@@ -86,7 +86,8 @@ pub(super) async fn read_shared(
         ),
     ));
     let cancel = Cancel(Arc::new(AtomicBool::new(false)));
-    let material = crate::sealing::Materials::archive(blobs.clone(), pass.class, access)?;
+    let material =
+        crate::material_access::MaterialAccess::archive(blobs.clone(), pass.class, access)?;
     material.restore_archive(conn, pass.stored.as_ref()).await?;
     let stored_copy = pass
         .stored
@@ -226,7 +227,7 @@ pub(super) async fn read_shared(
                 .unwrap_or((Value::Null, Value::Null));
             drivers::note_previous_through(&cursor, &mut acquired);
             let carry = material
-                .shared_carry(conn, &b.binding.name, carry, &acquired)
+                .carry(conn, &b.binding.name, carry, &acquired)
                 .await?;
             let total = totals[slot].as_mut().map_err(|e| e.clone())?;
             let checked_stop = stop.clone();
@@ -247,7 +248,16 @@ pub(super) async fn read_shared(
                 }),
                 priority: crate::writer::Priority::Bulk,
                 atomic: false,
-                registered: crate::sealing::registered(&acquired),
+                registered: acquired.material.as_ref().and_then(|material| {
+                    matches!(
+                        &material.stored,
+                        Some(drivers::StoredBytes::Blob {
+                            records: Some(_),
+                            ..
+                        })
+                    )
+                    .then_some(material.id)
+                }),
             }
             .submit(acquired, carry, total)
             .await

@@ -7,8 +7,8 @@ defines the terms; planned work is in Beads.
 
 `sinex-source-core` holds the parser traits, drain, shared drivers and record
 framing. `sinex-sources` holds source declarations, parsers and the live loop.
-Its `full` feature selects archive, database, repository and network source
-families; capture-only nodes leave it off. A driver gets bytes from an input; a parser reads one
+Its `full` feature adds file, database, archive and network readers to the live
+capture formats; capture-only nodes leave it off. A driver gets bytes from an input; a parser reads one
 framed record and opens no files, sockets or clocks. The drain around the
 parser attaches record locations, hashes, carry and record failures to each
 batch. Anything specific to one provider lives here, not in the store or the
@@ -290,7 +290,7 @@ keys by hour.
 public commands and wire types without IO. `sinex-transport` holds the
 private-mode switch and the frame directories, so the daemon, drivers and CLI
 share them without the wire types touching the filesystem. CLI, MCP and HTTP
-are generated from the command table. `sinex-diagnostics` is a database-free client of `sinexd admin diagnostics`.
+are generated from the command table. `sinexctl::diagnostics` invokes `sinexd admin diagnostics`.
 Offline commands invoke the sibling daemon executable without starting the
 daemon. The database work lives in the daemon; the CLI has no store or SQLx
 dependency.
@@ -330,9 +330,10 @@ released `polylogue-sinex-common` versions.
 
 ## Sealing and excision
 
-`sinex-sealing` owns age and payload cryptography. The daemon's `sealing`
-module handles material keys, stored reads and batch protection through one
-material-reading interface. The store holds only the wrapped-key queries.
+`sinex-sealing` owns age and payload cryptography. The daemon's
+`material_access` module stores and opens material bytes. Its `sealing`
+submodule handles data keys and encrypts records and carry when required.
+The store holds the wrapped-key queries.
 
 A sealed source encrypts each material under its own data key, wrapped for the
 sealed class key; its events' payloads are encrypted under the same key, and

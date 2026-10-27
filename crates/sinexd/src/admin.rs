@@ -190,8 +190,8 @@ async fn admin_table(args: Vec<String>) -> Result<(), String> {
         unlock: Default::default(),
         host: host.clone(),
     };
-    if let Some(identity) = identity {
-        if let sinex_protocol::Reply::Refused { reason, .. } = local
+    if let Some(identity) = identity
+        && let sinex_protocol::Reply::Refused { reason, .. } = local
             .call(
                 sinex_protocol::Request::Unlock {
                     identity: identity.trim().to_owned(),
@@ -200,11 +200,10 @@ async fn admin_table(args: Vec<String>) -> Result<(), String> {
                 sinex_protocol::Access::Operator,
             )
             .await
-        {
-            drop(local);
-            ctx.close().await?;
-            return Err(reason);
-        }
+    {
+        drop(local);
+        ctx.close().await?;
+        return Err(reason);
     }
     let reply = local.call(request, sinex_protocol::Access::Operator).await;
     drop(local);

@@ -6,7 +6,7 @@
 //! never stopping the others or the daemon. Private mode pauses every read
 //! until it is off again.
 use crate::binding_reader::{self, BindingReader};
-use crate::sealing::Sink;
+use crate::material_access::Sink;
 use crate::writer::WriterHandle;
 use serde::Deserialize;
 use serde_json::Value;
@@ -249,7 +249,7 @@ pub(crate) async fn run(
                 &sink,
                 &mut bindings.readers,
                 stop.clone(),
-                binding_reader::Access::default(),
+                crate::material_access::Access::default(),
                 &mut |binding, result| {
                     let key = format!("binding {binding}");
                     match result {

@@ -1,5 +1,5 @@
 use super::*;
-use crate::sealing::Sink;
+use crate::material_access::Sink;
 use serde_json::Value;
 use sinex_source_core::{Limits, drivers};
 

@@ -416,8 +416,11 @@ async fn sealed_archive_restart_replay_and_class_changes_preserve_exact_material
                 .unwrap(),
             checkpoint
         );
-        let unlock =
-            crate::sealing::Unlock::new(identity, std::time::Duration::from_secs(60)).unwrap();
+        let unlock = crate::material_access::sealing::Unlock::new(
+            identity,
+            std::time::Duration::from_secs(60),
+        )
+        .unwrap();
         let mut restarted = make_bound();
         let unlocked = read(
             &mut ctx.read_conn,
