@@ -23,6 +23,7 @@ fn every_source_has_discovery_and_shared_formats_keep_their_descriptions() {
             let description = &discovery["description"];
             assert!(
                 description["request_only"] == true
+                    || !description["streams"].as_array().unwrap().is_empty()
                     || !description["locations"].as_array().unwrap().is_empty(),
                 "{}",
                 source["name"]

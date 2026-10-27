@@ -35,6 +35,7 @@ these names and no others.
 - **cursor**: how far a binding's input has been admitted.
 - **reader memory**: what a reader remembers about its input (each row's hash, each file's size, time and hash), saved with the cursor at the end of a part so a restart reads only the parts after it.
 - **shared pass**: one read of a stored file for every compatible binding of it (export archives); each binding keeps its own parts and cursor.
+- **input root**: a host-declared filesystem location used to discover inputs, such as projects or notes.
 - **capture plan**: available capture bindings and excluded sources; unavailable inputs keep their existing spool readers.
 - **capture stream**: one live input captured into its own spool, such as the clipboard selection or screen stills.
 - **spool**: a live capture's directory of segment files, which its binding then reads like a growing file.

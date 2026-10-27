@@ -103,6 +103,26 @@ pub fn discover(context: &DiscoveryContext) -> Result<Vec<DiscoveredInput>, Stri
         .collect())
 }
 
+/// Session capabilities are known by the producer, not the daemon's account.
+pub fn status(context: &DiscoveryContext) -> Result<Vec<DiscoveredInput>, String> {
+    let mut inputs = discover(context)?;
+    for input in &mut inputs {
+        if input.capture
+            && sources::format(&input.format)
+                .is_some_and(|format| format.discovery.owner == Owner::Session)
+            && input.availability != Availability::Excluded
+        {
+            input.availability = Availability::ProducerReported;
+            input.reason = Some(
+                "session capture status is reported by the producer; no status frame received"
+                    .into(),
+            );
+            input.bindings.clear();
+        }
+    }
+    Ok(inputs)
+}
+
 /// Available files are opened for reading; no input is created or changed.
 fn availability(path: &Path) -> (Availability, Option<String>) {
     let result = std::fs::metadata(path).and_then(|metadata| {
@@ -132,7 +152,6 @@ fn paths(location: &Location, context: &DiscoveryContext) -> Result<Vec<PathBuf>
         "home" => joined(&context.home),
         "data" => joined(&context.data_home),
         "config" => joined(&context.config_home),
-        "state" => joined(&context.state_home),
         "runtime" => joined(&context.runtime_dir),
         "environment" => context
             .environment
@@ -145,8 +164,8 @@ fn paths(location: &Location, context: &DiscoveryContext) -> Result<Vec<PathBuf>
             .get(location.path)
             .cloned()
             .unwrap_or_default(),
-        "subject" => context
-            .subject_roots
+        "declared" => context
+            .input_roots
             .get(location.path)
             .cloned()
             .unwrap_or_default(),
@@ -169,7 +188,7 @@ fn paths(location: &Location, context: &DiscoveryContext) -> Result<Vec<PathBuf>
                 {
                     out.extend(
                         context
-                            .subject_roots
+                            .input_roots
                             .get("realm")
                             .into_iter()
                             .flatten()
@@ -181,7 +200,7 @@ fn paths(location: &Location, context: &DiscoveryContext) -> Result<Vec<PathBuf>
         }
         "projects" => {
             let mut out = Vec::new();
-            for root in context.subject_roots.get("projects").into_iter().flatten() {
+            for root in context.input_roots.get("projects").into_iter().flatten() {
                 match std::fs::read_dir(root) {
                     Ok(entries) => {
                         for entry in entries {
@@ -288,7 +307,7 @@ pub fn discover_format(format: &InputFormat, context: &DiscoveryContext) -> Vec<
         }
         if format.capture.is_some() {
             out.extend(
-                capture_inputs(context, format.discovery.owner)
+                capture_inputs(context, format.discovery.owner, true)
                     .into_iter()
                     .filter(|input| input.format == format.name && input.source == spec.name),
             );
@@ -383,6 +402,30 @@ pub fn captures(context: &DiscoveryContext, owner: Owner) -> Result<CapturePlan,
     })
 }
 
+/// Existing spools can drain after their session capabilities have disappeared.
+pub fn spools(
+    context: &DiscoveryContext,
+    owner: Owner,
+) -> Result<Vec<(&'static InputFormat, Binding)>, String> {
+    validate(context)?;
+    let inputs = capture_inputs(context, owner, false);
+    let mut bindings = Vec::new();
+    for input in inputs {
+        if input.availability == Availability::Unavailable {
+            return Err(input.reason.unwrap_or_else(|| "spool unavailable".into()));
+        }
+        let format = sources::format(&input.format).expect("capture format");
+        bindings.extend(
+            input
+                .bindings
+                .into_iter()
+                .filter(|binding| binding.input.is_dir())
+                .map(|binding| (format, binding)),
+        );
+    }
+    Ok(bindings)
+}
+
 fn select_captures(
     context: &DiscoveryContext,
     owner: Owner,
@@ -412,7 +455,11 @@ fn select_captures(
         .collect()
 }
 
-fn capture_inputs(context: &DiscoveryContext, owner: Owner) -> Vec<DiscoveredInput> {
+fn capture_inputs(
+    context: &DiscoveryContext,
+    owner: Owner,
+    check_capabilities: bool,
+) -> Vec<DiscoveredInput> {
     let mut out = Vec::new();
     for format in sources::formats()
         .iter()
@@ -448,7 +495,7 @@ fn capture_inputs(context: &DiscoveryContext, owner: Owner) -> Vec<DiscoveredInp
                 .capabilities
                 .iter()
                 .chain(stream.capabilities)
-                .filter(|name| !capability(context, name))
+                .filter(|name| check_capabilities && !capability(context, name))
                 .copied()
                 .collect();
             let mut found = DiscoveredInput {
@@ -503,41 +550,64 @@ fn same_input(left: &Path, right: &Path) -> bool {
             .is_some_and(|(left, right)| left == right)
 }
 
-/// Reuse persisted spellings and names. Ambiguous matches leave every cursor untouched.
+/// Reconciled bindings and inputs that cannot be read without choosing a cursor.
+#[derive(Default)]
+pub struct BindingPlan {
+    pub bindings: Vec<(&'static InputFormat, Binding)>,
+    pub unavailable: Vec<(Binding, String)>,
+}
+
+/// Reuse persisted spellings and names. A conflict leaves that input's cursors untouched.
 pub fn reconcile(
-    proposed: Vec<(&'static InputFormat, Binding)>,
+    mut proposed: Vec<(&'static InputFormat, Binding)>,
     saved: &[Binding],
-) -> Result<Vec<(&'static InputFormat, Binding)>, String> {
-    let mut out: Vec<(&'static InputFormat, Binding)> = Vec::new();
-    for (format, mut binding) in proposed {
+) -> BindingPlan {
+    let mut out = BindingPlan::default();
+    while !proposed.is_empty() {
+        let (format, mut binding) = proposed.remove(0);
+        let mut aliases = vec![];
+        let mut index = 0;
+        while index < proposed.len() {
+            if same_identity(&proposed[index].1, &binding)
+                && same_input(&proposed[index].1.input, &binding.input)
+            {
+                aliases.push(proposed.remove(index).1);
+            } else {
+                index += 1;
+            }
+        }
         let candidates: Vec<_> = saved
             .iter()
             .filter(|old| same_identity(old, &binding) && same_input(&old.input, &binding.input))
             .collect();
-        if candidates.len() > 1 {
-            return Err(format!(
-                "discovery conflict for {}: several saved bindings match",
-                binding.name
-            ));
+        let reason = if candidates.len() > 1 {
+            Some("several saved bindings match")
+        } else if aliases
+            .iter()
+            .any(|alias| alias.settings != binding.settings)
+        {
+            Some("conflicting settings")
+        } else {
+            None
+        };
+        if let Some(reason) = reason {
+            let reason = format!("discovery conflict for {}: {reason}", binding.name);
+            for alias in aliases
+                .into_iter()
+                .chain(candidates.into_iter().cloned())
+                .chain(std::iter::once(binding))
+            {
+                out.unavailable.push((alias, reason.clone()));
+            }
+            continue;
         }
         if let Some(old) = candidates.first() {
             binding.name.clone_from(&old.name);
             binding.input.clone_from(&old.input);
         }
-        if let Some((_, previous)) = out.iter().find(|(_, previous)| {
-            same_identity(previous, &binding) && same_input(&previous.input, &binding.input)
-        }) {
-            if previous.settings != binding.settings {
-                return Err(format!(
-                    "discovery conflict for {}: conflicting settings",
-                    binding.name
-                ));
-            }
-            continue;
-        }
-        out.push((format, binding));
+        out.bindings.push((format, binding));
     }
-    Ok(out)
+    out
 }
 
 #[cfg(test)]

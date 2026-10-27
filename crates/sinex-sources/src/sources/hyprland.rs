@@ -287,10 +287,7 @@ pub const FORMAT: sinex_source_core::binding::InputFormat =
         name: "hyprland",
         discovery: sinex_source_core::discovery::DiscoverySpec {
             owner: sinex_source_core::discovery::Owner::Session,
-            locations: &[sinex_source_core::discovery::Location {
-                root: "session",
-                path: "hyprland",
-            }],
+            locations: &[],
             capabilities: &["hyprland"],
             credentials: &[],
             streams: &[sinex_source_core::discovery::CaptureStream {

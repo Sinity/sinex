@@ -78,7 +78,9 @@ fn sources() -> Vec<CatalogSource> {
             };
             let entry = &mut out[at];
             assert!(
-                format.discovery.request_only || !format.discovery.locations.is_empty(),
+                format.discovery.request_only
+                    || !format.discovery.locations.is_empty()
+                    || !format.discovery.streams.is_empty(),
                 "{}: no discovery or request-only role",
                 format.name
             );

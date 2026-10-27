@@ -70,6 +70,9 @@ struct Run {
     /// Seconds between productions of what was captured.
     #[arg(long, default_value_t = 2)]
     every: u64,
+    /// Drain existing spools and exit, without starting capture. Stop the service first.
+    #[arg(long, conflicts_with = "seconds")]
+    drain: bool,
     /// Stop after this many seconds.
     #[arg(long)]
     seconds: Option<u64>,
@@ -172,6 +175,12 @@ fn requested(run: &Run) -> Result<sinex_sources::discovery::CapturePlan, String>
     context.exclude = configuration.exclude;
     context.watch = run.watch.clone();
     context.watch.extend(configuration.discovery.watch);
+    if run.drain {
+        return Ok(discovery::CapturePlan {
+            bindings: discovery::spools(&context, Owner::Session)?,
+            ..Default::default()
+        });
+    }
     discovery::captures(&context, Owner::Session)
 }
 
@@ -189,6 +198,15 @@ async fn produce(run: Run) -> Result<(), String> {
     )
     .await
     .map_err(|e| e.to_string())?;
+    if run.drain {
+        return live::drain(
+            &mut producer,
+            &store,
+            &run.state.join("positions"),
+            requested(&run)?.bindings,
+        )
+        .await;
+    }
     let until = run
         .seconds
         .map(|s| std::time::Instant::now() + Duration::from_secs(s));

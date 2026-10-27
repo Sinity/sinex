@@ -313,12 +313,7 @@
               "hyprland"
             ],
             "credentials": [],
-            "locations": [
-              {
-                "path": "hyprland",
-                "root": "session"
-              }
-            ],
+            "locations": [],
             "owner": "session",
             "request_only": false,
             "requests": [],
@@ -402,12 +397,7 @@
           "description": {
             "capabilities": [],
             "credentials": [],
-            "locations": [
-              {
-                "path": "watch",
-                "root": "session"
-              }
-            ],
+            "locations": [],
             "owner": "session",
             "request_only": false,
             "requests": [],
@@ -720,7 +710,7 @@
             "locations": [
               {
                 "path": "notes",
-                "root": "subject"
+                "root": "declared"
               }
             ],
             "owner": "system",
@@ -969,6 +959,24 @@
             "streams": []
           },
           "format": "calendar"
+        },
+        {
+          "capture": false,
+          "description": {
+            "capabilities": [],
+            "credentials": [],
+            "locations": [
+              {
+                "path": "takeout",
+                "root": "input"
+              }
+            ],
+            "owner": "system",
+            "request_only": false,
+            "requests": [],
+            "streams": []
+          },
+          "format": "takeout"
         }
       ],
       "drivers": [
@@ -978,7 +986,8 @@
         "calendar.event"
       ],
       "formats": [
-        "calendar"
+        "calendar",
+        "takeout"
       ],
       "name": "calendar.export",
       "purpose": "planned events beside what happened"
@@ -1724,7 +1733,7 @@
             "locations": [
               {
                 "path": "raw-log",
-                "root": "subject"
+                "root": "declared"
               }
             ],
             "owner": "system",
@@ -1758,7 +1767,7 @@
             "locations": [
               {
                 "path": "steering",
-                "root": "subject"
+                "root": "declared"
               }
             ],
             "owner": "system",
@@ -1792,7 +1801,7 @@
             "locations": [
               {
                 "path": "realm",
-                "root": "subject"
+                "root": "declared"
               }
             ],
             "owner": "system",
@@ -1810,12 +1819,7 @@
               "wl-paste"
             ],
             "credentials": [],
-            "locations": [
-              {
-                "path": "wayland",
-                "root": "session"
-              }
-            ],
+            "locations": [],
             "owner": "session",
             "request_only": false,
             "requests": [],
@@ -1861,7 +1865,7 @@
             "locations": [
               {
                 "path": "realm",
-                "root": "subject"
+                "root": "declared"
               }
             ],
             "owner": "system",
@@ -1879,12 +1883,7 @@
               "busctl"
             ],
             "credentials": [],
-            "locations": [
-              {
-                "path": "session_bus",
-                "root": "session"
-              }
-            ],
+            "locations": [],
             "owner": "session",
             "request_only": false,
             "requests": [],
@@ -1927,7 +1926,7 @@
             "locations": [
               {
                 "path": "realm",
-                "root": "subject"
+                "root": "declared"
               }
             ],
             "owner": "system",
@@ -1961,7 +1960,7 @@
             "locations": [
               {
                 "path": "realm",
-                "root": "subject"
+                "root": "declared"
               }
             ],
             "owner": "system",
@@ -1995,7 +1994,7 @@
             "locations": [
               {
                 "path": "realm",
-                "root": "subject"
+                "root": "declared"
               }
             ],
             "owner": "system",
@@ -2029,7 +2028,7 @@
             "locations": [
               {
                 "path": "realm",
-                "root": "subject"
+                "root": "declared"
               }
             ],
             "owner": "system",
@@ -2063,7 +2062,7 @@
             "locations": [
               {
                 "path": "realm",
-                "root": "subject"
+                "root": "declared"
               }
             ],
             "owner": "system",
@@ -2097,7 +2096,7 @@
             "locations": [
               {
                 "path": "realm",
-                "root": "subject"
+                "root": "declared"
               }
             ],
             "owner": "system",
@@ -2131,7 +2130,7 @@
             "locations": [
               {
                 "path": "realm",
-                "root": "subject"
+                "root": "declared"
               }
             ],
             "owner": "system",
@@ -2165,7 +2164,7 @@
             "locations": [
               {
                 "path": "realm",
-                "root": "subject"
+                "root": "declared"
               }
             ],
             "owner": "system",
@@ -2199,7 +2198,7 @@
             "locations": [
               {
                 "path": "realm",
-                "root": "subject"
+                "root": "declared"
               }
             ],
             "owner": "system",
@@ -2233,7 +2232,7 @@
             "locations": [
               {
                 "path": "realm",
-                "root": "subject"
+                "root": "declared"
               }
             ],
             "owner": "system",
@@ -2267,7 +2266,7 @@
             "locations": [
               {
                 "path": "realm",
-                "root": "subject"
+                "root": "declared"
               }
             ],
             "owner": "system",
@@ -2301,12 +2300,7 @@
               "busctl"
             ],
             "credentials": [],
-            "locations": [
-              {
-                "path": "session_bus",
-                "root": "session"
-              }
-            ],
+            "locations": [],
             "owner": "session",
             "request_only": false,
             "requests": [],
@@ -2343,12 +2337,7 @@
               "runtime"
             ],
             "credentials": [],
-            "locations": [
-              {
-                "path": "runtime",
-                "root": "session"
-              }
-            ],
+            "locations": [],
             "owner": "session",
             "request_only": false,
             "requests": [],
@@ -2385,12 +2374,7 @@
           "description": {
             "capabilities": [],
             "credentials": [],
-            "locations": [
-              {
-                "path": "media",
-                "root": "session"
-              }
-            ],
+            "locations": [],
             "owner": "session",
             "request_only": false,
             "requests": [],
@@ -2439,7 +2423,7 @@
             "locations": [
               {
                 "path": "library",
-                "root": "subject"
+                "root": "declared"
               }
             ],
             "owner": "system",
@@ -2475,7 +2459,7 @@
             "locations": [
               {
                 "path": "library",
-                "root": "subject"
+                "root": "declared"
               }
             ],
             "owner": "system",

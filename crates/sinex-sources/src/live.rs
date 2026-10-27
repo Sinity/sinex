@@ -195,45 +195,86 @@ where
             continue;
         }
         for live in lives.iter_mut() {
-            // Drain everything captured so far, one material at a time.
-            loop {
-                let position = producer
-                    .position(&live.binding.name, positions, store)
-                    .await
-                    .map_err(|e| e.to_string())?;
-                let acquired = live
-                    .reader
-                    .poll(&position.cursor)
-                    .map_err(|e| e.to_string())?;
-                let had_material = acquired.material.is_some();
-                let sent = producer
-                    .produce(
-                        live.source.as_ref(),
-                        &live.binding.name,
-                        acquired,
-                        store,
-                        positions,
-                    )
-                    .await
-                    .map_err(|e| e.to_string())?;
-                if had_material {
-                    println!(
-                        "{}: {} events in {} frames, {} admitted, {} unread",
-                        live.binding.name, sent.events, sent.frames, sent.admitted, sent.unread
-                    );
-                }
-                let committed =
-                    Position::load(positions, &live.binding.name).map_err(|e| e.to_string())?;
-                live.reader
-                    .remove_passed(&committed.cursor)
-                    .map_err(|e| e.to_string())?;
-                if !had_material {
-                    break;
-                }
-            }
+            produce_spool(
+                producer,
+                store,
+                positions,
+                &live.binding,
+                live.source.as_ref(),
+                live.reader.as_mut(),
+            )
+            .await?;
         }
         tokio::time::sleep(every).await;
     }
+}
+
+/// Drain finished spools without starting any capture threads. The caller stops
+/// the running producer first, so its positions have one writer.
+pub async fn drain(
+    producer: &mut Producer,
+    store: &Store,
+    positions: &Path,
+    bindings: Vec<(&'static InputFormat, Binding)>,
+) -> Result<(), String> {
+    let private = sinex_transport::private_mode::PrivateMode::default();
+    if private.on() {
+        return Err("private mode pauses spool production".into());
+    }
+    for (format, binding) in bindings {
+        let source = sources::source_for(&binding)?;
+        let mut reader =
+            (format
+                .reader
+                .ok_or_else(|| format!("{}: no spool reader", format.name))?)(&binding)?
+            .into_polled()?;
+        produce_spool(
+            producer,
+            store,
+            positions,
+            &binding,
+            source.as_ref(),
+            reader.as_mut(),
+        )
+        .await?;
+    }
+    Ok(())
+}
+
+async fn produce_spool(
+    producer: &mut Producer,
+    store: &Store,
+    positions: &Path,
+    binding: &Binding,
+    source: &dyn Source,
+    reader: &mut dyn Reader,
+) -> Result<(), String> {
+    loop {
+        let position = producer
+            .position(&binding.name, positions, store)
+            .await
+            .map_err(|e| e.to_string())?;
+        let acquired = reader.poll(&position.cursor).map_err(|e| e.to_string())?;
+        let had_material = acquired.material.is_some();
+        let sent = producer
+            .produce(source, &binding.name, acquired, store, positions)
+            .await
+            .map_err(|e| e.to_string())?;
+        if had_material {
+            println!(
+                "{}: {} events in {} frames, {} admitted, {} unread",
+                binding.name, sent.events, sent.frames, sent.admitted, sent.unread
+            );
+        }
+        let committed = Position::load(positions, &binding.name).map_err(|e| e.to_string())?;
+        reader
+            .remove_passed(&committed.cursor)
+            .map_err(|e| e.to_string())?;
+        if !had_material {
+            break;
+        }
+    }
+    Ok(())
 }
 
 /// `key=value` pairs as source options: numbers and booleans keep their types, a repeated key
