@@ -266,8 +266,9 @@ impl Ingest {
             if locations.is_empty() || locations.iter().any(|l| !known.contains(&l.material.0)) {
                 // A producer can send a wrong location after registering its material.
                 // Keep the failure on that producer's last registered material.
-                let material: Option<Uuid> = sqlx::query_scalar("SELECT material_id FROM core.ingress_frames WHERE producer = $1 AND material_id IS NOT NULL ORDER BY number DESC LIMIT 1")
-                    .bind(producer).fetch_optional(&mut self.conn).await.map_err(|e| e.to_string())?;
+                let material = commit_log::last_producer_material(&mut self.conn, producer)
+                    .await
+                    .map_err(|e| e.to_string())?;
                 if let Some(material) = material {
                     for location in &mut locations {
                         if !known.contains(&location.material.0) {

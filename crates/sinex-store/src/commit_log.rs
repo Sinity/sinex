@@ -285,6 +285,20 @@ pub async fn frames(
     .await?)
 }
 
+/// The last material registered by a producer, for a refusal with a bad record location.
+pub async fn last_producer_material(
+    conn: &mut PgConnection,
+    producer: &str,
+) -> Result<Option<Uuid>> {
+    Ok(sqlx::query_scalar!(
+        r#"SELECT material_id AS "material_id!" FROM core.ingress_frames
+           WHERE producer = $1 AND material_id IS NOT NULL ORDER BY number DESC LIMIT 1"#,
+        producer,
+    )
+    .fetch_optional(&mut *conn)
+    .await?)
+}
+
 /// One material a producer registered, as its frame described it.
 #[derive(Clone, Debug, PartialEq)]
 pub struct ProducerMaterial {
