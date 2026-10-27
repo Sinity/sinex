@@ -1,0 +1,17 @@
+ALTER TABLE core.live_equivalence ALTER COLUMN equivalence_key TYPE text USING core.decode_equivalence_key(equivalence_key);
+DROP FUNCTION core.encode_equivalence_key(text), core.decode_equivalence_key(bytea);
+DROP VIEW core.visible_search_text;
+DROP INDEX core.search_text_trigram;
+ALTER TABLE core.search_text DROP COLUMN trigram_indexed;
+CREATE INDEX search_text_trigram ON core.search_text USING gin (text gin_trgm_ops);
+CREATE VIEW core.visible_search_text AS SELECT s.event_id, s.text, s.tsv FROM core.search_text s JOIN core.events e ON e.id=s.event_id WHERE core.class_visible(e.class);
+GRANT SELECT ON core.visible_search_text TO sinex_reader, sinex_writer;
+ALTER TABLE core.published RENAME TO published_pages;
+ALTER TABLE core.published_pages RENAME CONSTRAINT published_pkey TO published_pages_pkey;
+CREATE TABLE core.published (event_id uuid PRIMARY KEY, stream_seq bigint NOT NULL);
+INSERT INTO core.published SELECT pairs.event_id, pairs.stream_seq FROM core.published_pages p CROSS JOIN LATERAL unnest(p.event_ids,p.stream_seqs) pairs(event_id,stream_seq);
+DROP TABLE core.published_pages;
+GRANT SELECT ON core.published TO sinex_reader, sinex_writer;
+GRANT INSERT, UPDATE, DELETE ON core.published TO sinex_writer;
+DELETE FROM sinex_schema.applied;
+INSERT INTO sinex_schema.applied (version) VALUES (2);

@@ -14,6 +14,7 @@ self: {
     ];
     services.sinex = {
       enable = true;
+      database.sharedBuffers = "128MB";
       nats.daemonPasswordFile = "/etc/sinex-test/nats-daemon";
       backup = {
         repo = "/backup/sinex";

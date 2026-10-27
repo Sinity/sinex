@@ -202,3 +202,42 @@ time.
 inputs and reports source-file bytes, stored bytes per source, database size
 and blob-store size, with timings and sampled memory and load. Estimates for
 the full inputs assume time grows linearly with input bytes.
+
+
+`agentctl job start sinex bench -- synthetic --events 1000000` measures a
+deterministic shell-history import. Add `--mixed` for location-keyed commands
+and keyed journal records with varying text widths. Add `--consumers` to run
+the daemon's search reader and confirmed-stream publisher alongside admission
+against disposable PostgreSQL, JetStream and content storage. Derivations are
+disabled for this comparison. Completion requires the event counts, source
+and run counts, consumer positions, searchable row count and acknowledged
+stream count to agree.
+
+The module and benchmark share `nix/postgres.json`. Host declarations may
+override `services.sinex.database.sharedBuffers`, `effectiveCacheSize`,
+`workMem`, `maintenanceWorkMem`, `maxWalSize`, `checkpointTimeout`,
+`checkpointCompletionTarget` and `jit`, or PostgreSQL settings directly.
+`sharedBuffers` requires a PostgreSQL restart. `effectiveCacheSize` is a
+planner estimate; `workMem` applies per operation and parallel worker;
+`maxWalSize` is a checkpoint target. See PostgreSQL's
+[resource settings](https://www.postgresql.org/docs/18/runtime-config-resource.html)
+and [WAL settings](https://www.postgresql.org/docs/18/runtime-config-wal.html).
+Statement collection and I/O timing are enabled only in benchmark clusters.
+
+Use repeated `--postgres name=value` options for explicit comparisons and
+`--output /realm/path/to/results` to retain each synthetic run under a unique
+directory. The artifacts include all effective PostgreSQL settings, complete
+statement statistics, before/after I/O and WAL counters, relation and index
+sizes, load observations, raw results and correctness counts. Statement time
+per batch uses the actual offered batch count; it stays unknown when the
+producer has not reported that count. Consumer runs also keep daemon and NATS
+logs and sampled consumer positions. Build, setup and execution time are
+reported separately. Disk runs keep fsync, full-page writes and synchronous
+commit enabled. Memory runs are a separate diagnostic series.
+
+For a comparison, freeze both revisions and alternate before/after order for
+at least three matched pairs, one measurement at a time. Keep settings,
+workload and storage equal; compare individual runs and the median paired
+ratio. A failed load check is a loaded observation. Admission-only rates do
+not establish throughput with search and publication, and consumer completion
+includes their later catch-up time.

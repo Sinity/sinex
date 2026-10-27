@@ -28,14 +28,16 @@
 //! `bench synthetic` measures admission alone: it backfills a generated shell
 //! history of small events into its own PostgreSQL and records the rate under
 //! `synthetic-admission`.
+mod measurements;
+
 use devkit::bench::{self, Candidate, LoadMonitor, Manifest};
 use devkit::history::Store;
 use serde_json::{Value, json};
-use std::io::Write as _;
 use std::{
     env, fs,
     path::{Path, PathBuf},
     process::{Command, ExitCode},
+    time::{Instant, SystemTime, UNIX_EPOCH},
 };
 
 fn bench_home() -> PathBuf {
@@ -90,6 +92,21 @@ pub enum Bench {
         /// repeatable. Recorded with the run.
         #[arg(long = "postgres")]
         settings: Vec<String>,
+        /// Parent directory for retained run artifacts.
+        #[arg(long)]
+        output: Option<PathBuf>,
+        /// Check that an older sinexd refuses the resulting schema.
+        #[arg(long)]
+        older_binary: Option<PathBuf>,
+        /// Populate and consume this many live keyed journal events before measurement.
+        #[arg(long, default_value_t = 0)]
+        prefill_keys: u64,
+        /// Measure admission while search and publication consume it.
+        #[arg(long)]
+        consumers: bool,
+        /// Add keyed journal records and variable payload widths.
+        #[arg(long)]
+        mixed: bool,
     },
     #[command(flatten)]
     Shared(devkit::cli::Bench),
@@ -107,7 +124,22 @@ pub fn execute(command: Bench) -> ExitCode {
             storage,
             memory_max,
             settings,
-        } => synthetic(events, &storage, &memory_max, &settings),
+            output,
+            older_binary,
+            prefill_keys,
+            consumers,
+            mixed,
+        } => synthetic(SyntheticOptions {
+            events,
+            storage,
+            memory_max,
+            settings,
+            output,
+            older_binary,
+            prefill_keys,
+            consumers,
+            mixed,
+        }),
         Bench::Shared(b) => return devkit::cli::bench("sinex", b),
     };
     match result {
@@ -249,10 +281,17 @@ fn sample(per_input: u64, seed: u64) -> Result<(), String> {
 }
 
 fn sinexd_binary() -> Result<PathBuf, String> {
+    sinexd_binary_measured().map(|(binary, _)| binary)
+}
+
+fn sinexd_binary_measured() -> Result<(PathBuf, Value), String> {
+    let schema_started = Instant::now();
     // The query macros check against the schema database at compile time,
     // as `xtask check` does; the server stops on drop if this started it.
     let (server, databases) =
         crate::database::prepare(Path::new(".")).map_err(|e| format!("schema database: {e}"))?;
+    let schema_setup_s = schema_started.elapsed().as_secs_f64();
+    let compile_started = Instant::now();
     let ok = devkit::cargo_command()
         .args(["build", "--locked", "--release", "-p", "sinexd"])
         .envs(crate::database::env(&server, &databases))
@@ -262,7 +301,12 @@ fn sinexd_binary() -> Result<PathBuf, String> {
     if !ok {
         return Err("building sinexd failed".into());
     }
-    Ok(crate::target_dir().join("release/sinexd"))
+    Ok((
+        crate::target_dir().join("release/sinexd"),
+        json!({
+            "compile_s": compile_started.elapsed().as_secs_f64(), "schema_setup_s": schema_setup_s
+        }),
+    ))
 }
 
 /// A throwaway PostgreSQL cluster for one bench run, stopped when dropped.
@@ -295,20 +339,9 @@ impl Cluster {
         if !ok {
             return Err("initdb failed".into());
         }
-        let mut options = format!(
-            "-k {} -c listen_addresses= -c shared_preload_libraries=timescaledb,pg_stat_statements \
-             -c timescaledb.enable_chunk_skipping=on -c timescaledb.telemetry_level=off -c fsync={} \
-             -c wal_compression=lz4",
-            socket.display(),
-            if fsync { "on" } else { "off" }
-        );
-        for setting in settings {
-            if !setting.contains('=') || setting.contains(char::is_whitespace) {
-                return Err(format!("--postgres {setting}: expected name=value"));
-            }
-            options.push_str(" -c ");
-            options.push_str(setting);
-        }
+        let configuration = measurements::postgres_configuration(fsync, settings)?;
+        fs::write(data.join("postgresql.auto.conf"), configuration).map_err(|e| e.to_string())?;
+        let options = format!("-k {} -c listen_addresses=", socket.display());
         let ok = Command::new("pg_ctl")
             .arg("-D")
             .arg(&data)
@@ -394,7 +427,17 @@ impl Drop for Cluster {
 /// Runs `sinexd <args> --json` under a memory cap and the real-data lock
 /// inside the admitted AgentCTL job, and returns its JSON line.
 fn sinexd(binary: &Path, memory_max: &str, args: &[&std::ffi::OsStr]) -> Result<Value, String> {
+    sinexd_recorded(binary, memory_max, args, None)
+}
+
+fn sinexd_recorded(
+    binary: &Path,
+    memory_max: &str,
+    args: &[&std::ffi::OsStr],
+    out: Option<&Path>,
+) -> Result<Value, String> {
     let output = Command::new("systemd-run")
+        .env("SINEX_BENCH_TIMINGS", "1")
         .args(["--user", "--scope", "--quiet", "-p"])
         .arg(format!("MemoryMax={memory_max}"))
         .args(["-p", "MemorySwapMax=0", "--", "flock", "-o", LOCK])
@@ -403,6 +446,10 @@ fn sinexd(binary: &Path, memory_max: &str, args: &[&std::ffi::OsStr]) -> Result<
         .arg("--json")
         .output()
         .map_err(|e| e.to_string())?;
+    if let Some(out) = out {
+        fs::write(out.join("backfill.stdout"), &output.stdout).map_err(|e| e.to_string())?;
+        fs::write(out.join("backfill.stderr"), &output.stderr).map_err(|e| e.to_string())?;
+    }
     let parsed = String::from_utf8_lossy(&output.stdout)
         .lines()
         .rev()
@@ -469,10 +516,7 @@ fn output_dir(storage: &str, input_bytes: u64) -> Result<PathBuf, String> {
             input_bytes as f64 / 1e6
         ));
     }
-    if out.exists() {
-        fs::remove_dir_all(&out).map_err(|e| e.to_string())?;
-    }
-    fs::create_dir_all(&out).map_err(|e| e.to_string())?;
+    let out = measurements::run_directory(&out)?;
     Ok(out)
 }
 
@@ -490,80 +534,153 @@ fn apply_schema(binary: &Path, url: &str) -> Result<(), String> {
     Ok(())
 }
 
-/// A zsh extended history of `events` distinct commands a minute apart: the
-/// spacing of real shell history, so the parser's per-second carry stays
-/// realistic.
-fn synthetic_history(events: u64) -> Vec<u8> {
-    let mut text = Vec::with_capacity(usize::try_from(events).unwrap_or(0) * 48);
-    for i in 0..events {
-        let start = 1_600_000_000 + i * 60;
-        let _ = writeln!(text, ": {start}:0;echo synthetic {i}");
-    }
-    text
+struct SyntheticOptions {
+    events: u64,
+    storage: String,
+    memory_max: String,
+    settings: Vec<String>,
+    output: Option<PathBuf>,
+    older_binary: Option<PathBuf>,
+    prefill_keys: u64,
+    consumers: bool,
+    mixed: bool,
 }
 
-fn synthetic(
-    events: u64,
-    storage: &str,
-    memory_max: &str,
-    settings: &[String],
-) -> Result<(), String> {
-    let history = synthetic_history(events);
-    let out = output_dir(storage, history.len() as u64)?;
-    let input = out.join("zsh_history");
-    fs::write(&input, &history).map_err(|e| format!("{}: {e}", input.display()))?;
-    drop(history);
-    let binary = sinexd_binary()?;
-    let load = LoadMonitor::start()?;
-    let cluster = Cluster::start(&out.join("pg"), storage == "disk", settings)?;
+fn synthetic(options: SyntheticOptions) -> Result<(), String> {
+    let SyntheticOptions {
+        events,
+        storage,
+        memory_max,
+        settings,
+        output,
+        older_binary,
+        prefill_keys,
+        consumers,
+        mixed,
+    } = options;
+    let out = match output {
+        Some(parent) => measurements::run_directory(&parent)?,
+        None => output_dir(
+            &storage,
+            events.saturating_mul(if mixed { 1024 } else { 48 }),
+        )?,
+    };
+    let build = Instant::now();
+    let (built_binary, build_times) = sinexd_binary_measured()?;
+    let build_s = build.elapsed().as_secs_f64();
+    let binary = out.join("sinexd");
+    fs::copy(&built_binary, &binary).map_err(|e| e.to_string())?;
+    let setup = Instant::now();
+    let inputs = measurements::synthetic_inputs(&out, events, mixed)?;
+    let cluster = Cluster::start(&out.join("pg"), storage == "disk", &settings)?;
     let url = cluster.url();
     apply_schema(&binary, &url)?;
+    if let Some(older) = older_binary {
+        let output = Command::new(older)
+            .args(["admin", "schema", "--database", &url])
+            .output()
+            .map_err(|e| e.to_string())?;
+        fs::write(out.join("older-binary.stderr"), &output.stderr).map_err(|e| e.to_string())?;
+        let error = String::from_utf8_lossy(&output.stderr);
+        if output.status.success()
+            || !error.contains("database is at schema version")
+            || !error.contains("this build declares version")
+        {
+            return Err("older binary did not refuse the new schema with a version error".into());
+        }
+    }
     cluster
         .psql("CREATE EXTENSION pg_stat_statements")
         .ok_or("pg_stat_statements is not available")?;
-    let store_dir = out.join("store");
-    let read = format!("zsh={}", input.display());
-    let result = sinexd(
-        &binary,
-        memory_max,
-        &[
-            "backfill".as_ref(),
-            "--database".as_ref(),
-            url.as_ref(),
-            "--store".as_ref(),
-            store_dir.as_os_str(),
-            "--host".as_ref(),
-            "bench".as_ref(),
-            "--read".as_ref(),
-            read.as_ref(),
-        ],
-    );
-    let database_mb = cluster.database_mb();
-    // Where admission's time went, by statement.
-    let statements = cluster.psql(
-        "SELECT coalesce(json_agg(s), '[]') FROM (SELECT calls, round(total_exec_time) AS ms, rows, \
-         left(regexp_replace(query, '\\s+', ' ', 'g'), 200) AS query FROM pg_stat_statements \
-         ORDER BY total_exec_time DESC LIMIT 20) s",
-    );
-    drop(cluster);
+    if prefill_keys > 0 {
+        let prefill = out.join("prefill");
+        fs::create_dir(&prefill).map_err(|e| e.to_string())?;
+        let input = measurements::journal_input(&prefill, prefill_keys, "prefill")?;
+        measurements::with_consumers(&binary, &cluster, &out, &[input], prefill_keys, &memory_max)?;
+        for name in ["daemon.log", "nats.log", "sources.json", "consumer-positions.json", "nats.json"] {
+            fs::rename(out.join(name), prefill.join(name)).map_err(|e| e.to_string())?;
+        }
+        measurements::save(&prefill, "before-measurement.json", &measurements::snapshot(&cluster)?)?;
+    }
+    let effective = measurements::settings(&cluster)?;
+    measurements::save(&out, "settings.json", &effective)?;
+    measurements::save(&out, "environment.json", &measurements::environment(&out))?;
+    let setup_s = setup.elapsed().as_secs_f64();
+    cluster
+        .psql("SELECT pg_stat_statements_reset()")
+        .ok_or("resetting statement statistics failed")?;
+    let before = measurements::snapshot(&cluster)?;
+    measurements::save(&out, "before.json", &before)?;
+    let load = LoadMonitor::start()?;
+    let started = Instant::now();
+    let execution = if consumers {
+        measurements::with_consumers(&binary, &cluster, &out, &inputs, events.checked_add(prefill_keys).ok_or("event count overflow")?, &memory_max)
+    } else {
+        let store = out.join("store");
+        let mut args: Vec<std::ffi::OsString> = ["backfill", "--database", &url, "--store"]
+            .into_iter()
+            .map(Into::into)
+            .collect();
+        args.push(store.into_os_string());
+        args.extend(["--host".into(), "bench".into()]);
+        for input in &inputs {
+            args.extend([
+                "--read".into(),
+                format!("{}={}", input.format, input.path.display()).into(),
+            ]);
+        }
+        let args: Vec<_> = args.iter().map(|s| s.as_os_str()).collect();
+        sinexd_recorded(&binary, &memory_max, &args, Some(&out))
+    };
+    let execution_s = started.elapsed().as_secs_f64();
     let load = load.finish()?;
-    let result = result?;
-    let totals = &result["sources"]["terminal.zsh-history"];
-    let complete = totals["admitted"].as_u64() == Some(events);
+    let statements = measurements::statements(&cluster)?;
+    let after = measurements::snapshot(&cluster)?;
+    measurements::save(&out, "statements.json", &statements)?;
+    measurements::save(&out, "after.json", &after)?;
+    measurements::save(&out, "load.json", &load.to_json())?;
+    let result = match execution {
+        Ok(result) => result,
+        Err(error) => {
+            measurements::save(
+                &out,
+                "failure.json",
+                &json!({"error": error, "build_s": build_s, "setup_s": setup_s, "execution_s": execution_s}),
+            )?;
+            return Err(format!("{error}; artifacts: {}", out.display()));
+        }
+    };
+    measurements::save(&out, "result.json", &result)?;
+    let stages = measurements::stage_summary(&out)?;
+    let totals = if result["sources"].is_object() {
+        measurements::source_totals(&result)
+    } else {
+        stages["admission"]["totals"].clone()
+    };
+    let correctness = measurements::correctness(&cluster, events.checked_add(prefill_keys).ok_or("event count overflow")?)?;
+    let complete = correctness["complete"] == true
+        && (consumers || totals["admitted"].as_u64() == Some(events));
+    let batches = totals["batches"].as_u64();
+    let normalized = measurements::normalize_statements(&statements, batches);
+    measurements::save(&out, "statements-per-batch.json", &normalized)?;
     let metrics = json!({
-        "complete": complete,
-        "events": events,
-        "admitted": totals["admitted"],
-        "batches": totals["batches"],
-        "wall_s": totals["wall_s"],
-        "admission_s": totals["admission_s"],
+        "complete": complete, "events": events, "prefill_keys": prefill_keys, "offered": totals["events_offered"],
+        "admitted": correctness["events"].as_u64().and_then(|n| n.checked_sub(prefill_keys)), "batches": batches,
+        "build_s": build_s, "build": build_times, "setup_s": setup_s, "execution_s": execution_s,
+        "wall_s": totals["wall_s"], "admission_s": totals["admission_s"],
         "admission_events_per_s": totals["admission_events_per_s"],
-        "events_per_s": totals["events_per_s"],
-        "peak_rss_mb": result["peak_rss_mb"],
-        "database_mb": database_mb,
-        "memory_max": memory_max,
-        "postgres": settings,
+        "events_per_s": events as f64 / execution_s,
+        "peak_rss_mb": result["peak_rss_mb"], "source_totals": totals, "stages": stages,
+        "consumers": result["consumers"], "correctness": correctness,
+        "database_mb": cluster.database_mb(), "memory_max": memory_max,
+        "postgres_overrides": settings, "effective_postgres": effective,
+        "workload": if mixed { "mixed-command-journal" } else { "zsh" },
+        "batch_limits": {"events": 10000, "bytes": 16777216},
+        "wal_bytes": measurements::wal_delta(&before, &after),
+        "wal_bytes_per_event": measurements::wal_delta(&before, &after).map(|b| b as f64 / events.max(1) as f64),
+        "artifacts": out,
     });
+    measurements::save(&out, "metrics.json", &metrics)?;
     let id = if complete {
         let store = Store::open().map_err(|e| e.to_string())?;
         let checkout = env::current_dir().map_err(|e| e.to_string())?;
@@ -572,8 +689,12 @@ fn synthetic(
                 &store,
                 &checkout,
                 "sinex",
-                "synthetic-admission",
-                &format!("zsh-{events}"),
+                if consumers {
+                    "synthetic-consumers"
+                } else {
+                    "synthetic-admission"
+                },
+                &format!("{}-{events}", if mixed { "mixed" } else { "zsh" }),
                 &out,
                 &load,
                 &metrics,
@@ -586,18 +707,14 @@ fn synthetic(
     println!(
         "{}",
         json!({"run": id, "storage": bench::storage_of(&out),
-               "load_checks_passed": load.checks_passed(), "load": load.to_json(), "metrics": metrics,
-               "statements": statements.and_then(|s| serde_json::from_str::<Value>(&s).ok())})
+        "load_checks_passed": load.checks_passed(), "metrics": metrics})
     );
-    if storage == "memory" {
-        let _ = fs::remove_dir_all(&out);
-    }
     if complete {
         Ok(())
     } else {
         Err(format!(
-            "admitted {} of {events} synthetic events; no record was saved",
-            totals["admitted"]
+            "synthetic correctness checks failed; artifacts: {}",
+            out.display()
         ))
     }
 }

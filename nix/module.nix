@@ -11,6 +11,7 @@ let
   cfg = config.services.sinex;
   node = config.services.sinex.captureNode;
   catalog = lib.importJSON ./catalog.json;
+  postgresDefaults = lib.importJSON ./postgres.json;
   system = pkgs.stdenv.hostPlatform.system;
   defaultPackage = self.packages.${system}.default;
 
@@ -146,8 +147,48 @@ in
       };
       maxConnections = mkOption {
         type = types.int;
-        default = 64;
+        default = postgresDefaults.max_connections;
         description = "Room for the writer, the readers, the API pool and admin commands.";
+      };
+      sharedBuffers = mkOption {
+        type = types.str;
+        default = postgresDefaults.shared_buffers;
+        description = "Shared PostgreSQL cache. Changing it requires a server restart.";
+      };
+      effectiveCacheSize = mkOption {
+        type = types.str;
+        default = postgresDefaults.effective_cache_size;
+        description = "Planner estimate of available database and operating-system cache; this allocates no memory.";
+      };
+      workMem = mkOption {
+        type = types.str;
+        default = postgresDefaults.work_mem;
+        description = "Memory per sort or hash operation and parallel worker, rather than a cluster memory limit.";
+      };
+      maintenanceWorkMem = mkOption {
+        type = types.str;
+        default = postgresDefaults.maintenance_work_mem;
+        description = "Memory per maintenance operation, including index builds.";
+      };
+      maxWalSize = mkOption {
+        type = types.str;
+        default = postgresDefaults.max_wal_size;
+        description = "Checkpoint target for WAL size; this is not a hard disk-use bound.";
+      };
+      checkpointTimeout = mkOption {
+        type = types.str;
+        default = postgresDefaults.checkpoint_timeout;
+        description = "Maximum interval between automatic WAL checkpoints.";
+      };
+      checkpointCompletionTarget = mkOption {
+        type = types.numbers.between 0.0 1.0;
+        default = postgresDefaults.checkpoint_completion_target;
+        description = "Fraction of the checkpoint interval used to spread writes.";
+      };
+      jit = mkOption {
+        type = types.bool;
+        default = postgresDefaults.jit;
+        description = "Enable PostgreSQL just-in-time query compilation.";
       };
     };
 
@@ -385,7 +426,15 @@ in
         enableTCPIP = false;
         ensureDatabases = [ "sinex" ];
         ensureUsers = [{ name = cfg.user; ensureDBOwnership = true; }];
-        settings = {
+        settings = mapAttrs (_: value: lib.mkDefault value) (postgresDefaults // {
+          shared_buffers = cfg.database.sharedBuffers;
+          effective_cache_size = cfg.database.effectiveCacheSize;
+          work_mem = cfg.database.workMem;
+          maintenance_work_mem = cfg.database.maintenanceWorkMem;
+          max_wal_size = cfg.database.maxWalSize;
+          checkpoint_timeout = cfg.database.checkpointTimeout;
+          checkpoint_completion_target = cfg.database.checkpointCompletionTarget;
+          jit = cfg.database.jit;
           shared_preload_libraries = "timescaledb";
           "timescaledb.telemetry_level" = "off";
           "timescaledb.enable_chunk_skipping" = "on";
@@ -396,7 +445,7 @@ in
           # Connection logs would feed back into the journald source.
           log_connections = false;
           log_disconnections = false;
-        };
+        });
         authentication = lib.mkBefore ''
           local sinex ${cfg.user} peer
           local all postgres peer

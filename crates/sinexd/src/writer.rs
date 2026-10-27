@@ -259,6 +259,11 @@ pub(crate) async fn run_notifying(
             Some(job) = queues.bulk.recv() => job,
             else => return,
         };
+        let offered = match &job.work {
+            WriterJob::Admit(batch) | WriterJob::Checked(batch, _) => Some(batch.event_count()),
+            _ => None,
+        };
+        let service_started = std::time::Instant::now();
         let result = match job.work {
             WriterJob::Admit(batch) => {
                 admit_checked(&mut connection, &batch, keys.as_ref(), store, &|| Ok(()))
@@ -290,6 +295,20 @@ pub(crate) async fn run_notifying(
                 return;
             }
             connection = fresh;
+        }
+        if let (Some(events), Ok(Done::Admitted(outcome))) = (offered, &result)
+            && std::env::var_os("SINEX_BENCH_TIMINGS").is_some()
+        {
+            eprintln!(
+                "{}",
+                serde_json::json!({"admission_batch": {
+                    "events": events, "admitted": outcome.admitted,
+                    "repeats": outcome.repeats, "replaced": outcome.replaced,
+                    "older": outcome.older, "hidden": outcome.hidden,
+                    "superseded": outcome.superseded, "failures": outcome.failures,
+                    "timings_ms": {"service": service_started.elapsed().as_secs_f64() * 1000.0}
+                }})
+            );
         }
         if result.is_ok() {
             commits.send_modify(|n| *n += 1);
