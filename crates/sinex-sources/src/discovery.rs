@@ -78,7 +78,7 @@ pub fn validate(context: &DiscoveryContext) -> Result<(), String> {
                     .discovery
                     .locations
                     .iter()
-                    .any(|location| location.root == "capture" && location.path == name)
+                    .any(|location| matches!(location.root, "capture" | "input") && location.path == name)
             })
         {
             return Err(format!("input format {name}: no such format"));

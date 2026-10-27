@@ -6,7 +6,7 @@
 //! An item follows its root and original relative path across revisions and
 //! moves. Its opaque ID is deterministic; equal bytes at unrelated paths are
 //! separate items.
-use crate::Timestamp;
+use crate::{EventId, Timestamp};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};

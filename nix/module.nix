@@ -216,8 +216,8 @@ in
       home = mkOption { type = types.nullOr types.path; default = if cfg.session.user == "" then null else config.users.users.${cfg.session.user}.home; };
       dataHome = mkOption { type = types.nullOr types.path; default = if cfg.discovery.home == null then null else "${cfg.discovery.home}/.local/share"; };
       configHome = mkOption { type = types.nullOr types.path; default = if cfg.discovery.home == null then null else "${cfg.discovery.home}/.config"; };
-      inputRoots = mkOption { type = types.attrsOf (types.listOf types.str); default = { }; description = "Canonical input roots: realm, projects, notes, raw-log, steering and library."; };
-      inputs = mkOption { type = types.attrsOf (types.listOf types.str); default = { }; description = "Provider-owned inputs by catalog format, and named capture roots."; };
+      inputRoots = mkOption { type = types.attrsOf (types.listOf types.str); default = { }; description = "Canonical input roots: realm, projects, notes, raw-log, steering, library, documents and downloads."; };
+      inputs = mkOption { type = types.attrsOf (types.listOf types.str); default = { }; description = "Provider-owned inputs by catalog format, transcript and OCR import roots, and named capture roots."; };
       environment = mkOption { type = types.attrsOf types.str; default = { }; description = "Resolved application paths, including ZSH_HISTFILE and BASH_HISTFILE."; };
     };
 
