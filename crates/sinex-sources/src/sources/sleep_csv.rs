@@ -1,9 +1,9 @@
 //! Optional joined sleep CSV. Supplied civil times and unresolved DST cases
 //! remain distinct from native health records and known instants.
-use crate::binding::{self, InputFormat, Settings};
-use crate::drivers::export_archive::{ExportArchive, Framing, PART_BYTES};
-use crate::registry::{DeclaredSource, Driver, SourceSpec};
-use crate::{Parser, RecordContext, RecordError};
+use sinex_source_core::binding::{self, InputFormat, Settings};
+use sinex_source_core::drivers::export_archive::{ExportArchive, Framing, PART_BYTES};
+use sinex_source_core::registry::{DeclaredSource, Driver, SourceSpec};
+use sinex_source_core::{Parser, RecordContext, RecordError};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use sinex_model::{Class, Timestamp, event_types::sleep_import::SleepSessionImported};
@@ -18,7 +18,7 @@ pub const SPEC: SourceSpec = SourceSpec {
     parser: "sleep-csv",
     parser_version: 1,
     event_types: &["sleep.session_imported"],
-    framer: crate::Framer::export(frame, Framing::Csv),
+    framer: sinex_source_core::Framer::export(frame, Framing::Csv),
 };
 
 pub struct SleepCsvParser {

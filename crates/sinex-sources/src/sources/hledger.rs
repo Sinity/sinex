@@ -2,16 +2,21 @@
 //! ordered postings with decimal quantities. Includes are not traversed.
 pub mod framing;
 
-use crate::binding::{self, InputFormat};
-use crate::drivers::export_archive::{ExportArchive, Framing, PART_BYTES};
-use crate::registry::{DeclaredSource, Driver, SourceSpec};
-use crate::{Parser, RecordContext, RecordError};
+use sinex_source_core::binding::{self, InputFormat};
+use sinex_source_core::drivers::export_archive::{ExportArchive, Framing, PART_BYTES};
+use sinex_source_core::registry::{DeclaredSource, Driver, SourceSpec};
+use sinex_source_core::{Parser, RecordContext, RecordError};
 use serde::{Deserialize, Serialize};
 use sinex_model::{
     Class,
     event_types::finance::{Posting, TransactionPosted},
 };
 use std::path::PathBuf;
+
+const TRANSACTIONS: Framing = Framing::Custom {
+    name: "hledger-transactions",
+    frame: framing::frame,
+};
 
 pub const SPEC: SourceSpec = SourceSpec {
     name: "finance.hledger",
@@ -22,7 +27,7 @@ pub const SPEC: SourceSpec = SourceSpec {
     parser: "hledger",
     parser_version: 1,
     event_types: &["transaction.posted"],
-    framer: crate::Framer::export(framing::complete, Framing::HledgerTransactions),
+    framer: sinex_source_core::Framer::export(framing::complete, TRANSACTIONS),
 };
 
 pub struct HledgerParser {
@@ -268,7 +273,7 @@ pub fn driver(path: PathBuf, host: String) -> ExportArchive {
         path,
         host,
         select: |_| true,
-        framing: Framing::HledgerTransactions,
+        framing: TRANSACTIONS,
         part_bytes: PART_BYTES,
     }
 }

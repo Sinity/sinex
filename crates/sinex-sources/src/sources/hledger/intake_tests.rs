@@ -1,10 +1,10 @@
 //! Exercise shared acquisition, stored parts and committed restart progress.
-use crate::drivers::export_archive::{
+use sinex_source_core::drivers::export_archive::{
     ExportArchive,
     group::{self, Input, Route},
 };
-use crate::drivers::{self, MaterialSink};
-use crate::{DrainInput, Limits, Source};
+use sinex_source_core::drivers::{self, MaterialSink};
+use sinex_source_core::{DrainInput, Limits, Source};
 use serde_json::Value;
 use sinex_model::{
     BatchKind, Class, Event, MaterialRef, MaterialRole, ObservationFacts, ReadingOrder,

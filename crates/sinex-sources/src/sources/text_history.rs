@@ -1,8 +1,8 @@
 //! Explicit plain history. Every nonempty complete line is an untimed command.
-use crate::binding::{self, InputFormat};
-use crate::drivers::append_file::AppendFile;
-use crate::registry::{DeclaredSource, Driver, SourceSpec};
-use crate::{Parser, RecordContext, RecordError};
+use sinex_source_core::binding::{self, InputFormat};
+use sinex_source_core::drivers::append_file::AppendFile;
+use sinex_source_core::registry::{DeclaredSource, Driver, SourceSpec};
+use sinex_source_core::{Parser, RecordContext, RecordError};
 use sinex_model::{Class, event_types::CommandImported};
 use std::path::PathBuf;
 
@@ -15,7 +15,7 @@ pub const SPEC: SourceSpec = SourceSpec {
     parser: "text-history",
     parser_version: 1,
     event_types: &["command.imported"],
-    framer: crate::Framer::incremental(frame),
+    framer: sinex_source_core::Framer::incremental(frame),
 };
 
 pub struct TextHistoryParser {
@@ -57,7 +57,7 @@ impl Parser for TextHistoryParser {
 }
 
 pub fn frame(bytes: &[u8]) -> (Vec<(usize, usize)>, usize) {
-    crate::drivers::export_archive::Framing::Lines.frame(bytes, false)
+    sinex_source_core::drivers::export_archive::Framing::Lines.frame(bytes, false)
 }
 
 pub fn source(host: String) -> DeclaredSource<TextHistoryParser> {

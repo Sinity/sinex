@@ -1,5 +1,6 @@
 use super::*;
-use crate::{DrainInput, Limits};
+use crate::test_support::body;
+use sinex_source_core::{DrainInput, Limits};
 use sinex_model::{EventPayload, MaterialId, ReadingOrder, RecordOutcome};
 
 #[devkit::test]
@@ -50,7 +51,7 @@ fn every_append_split_keeps_complete_utf8_lines_and_duplicate_locations() {
         assert_eq!((first, through + covered), expected);
     }
     let records = frame(raw).0;
-    let events = crate::drain(
+    let events = sinex_source_core::drain(
         &TextHistoryParser {
             host: "example-host".into(),
         },
@@ -87,7 +88,7 @@ fn every_append_split_keeps_complete_utf8_lines_and_duplicate_locations() {
 
 #[devkit::test]
 fn append_restart_replacement_and_missing_source_use_shared_reader() {
-    use crate::drivers::append_file::AppendState;
+    use sinex_source_core::drivers::append_file::AppendState;
     use std::io::Write;
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("history");
@@ -99,9 +100,9 @@ fn append_restart_replacement_and_missing_source_use_shared_reader() {
         .unwrap()
         .material
         .unwrap();
-    assert_eq!(first.body(), b"pwd\npwd\n");
-    let cursor = (first.cursor_at)(first.body().len()).unwrap();
-    let mut restarted = AppendState::rebuild([(first.id, first.body())], SPEC.framer);
+    assert_eq!(body(&first), b"pwd\npwd\n");
+    let cursor = (first.cursor_at)(body(&first).len()).unwrap();
+    let mut restarted = AppendState::rebuild([(first.id, body(&first))], SPEC.framer);
     std::fs::OpenOptions::new()
         .append(true)
         .open(&path)
@@ -113,11 +114,11 @@ fn append_restart_replacement_and_missing_source_use_shared_reader() {
         .unwrap()
         .material
         .unwrap();
-    assert_eq!(second.body(), b"partial line\npwd\n");
-    let cursor = (second.cursor_at)(second.body().len()).unwrap();
+    assert_eq!(body(&second), b"partial line\npwd\n");
+    let cursor = (second.cursor_at)(body(&second).len()).unwrap();
     std::fs::write(&path, b"id\nid\n").unwrap();
     let replacement = driver.poll(&cursor, &mut restarted).unwrap();
-    assert_eq!(replacement.material.unwrap().body(), b"id\nid\n");
+    assert_eq!(body(&replacement.material.unwrap()), b"id\nid\n");
     std::fs::remove_file(&path).unwrap();
     assert!(driver.poll(&cursor, &mut restarted).is_err());
     for (start, end) in &first.records {
@@ -125,7 +126,7 @@ fn append_restart_replacement_and_missing_source_use_shared_reader() {
             TextHistoryParser {
                 host: "example-host".into()
             }
-            .parse(&&first.body()[*start..*end], &(), &RecordContext::none())
+            .parse(&&body(&first)[*start..*end], &(), &RecordContext::none())
             .unwrap()
             .0[0]
                 .command,
@@ -164,9 +165,9 @@ fn binding_reader_retries_held_bytes_before_reading_an_append() {
         .material
         .unwrap();
     assert_eq!(retry.id, first.id);
-    assert_eq!(retry.body(), first.body());
-    let cursor = (first.cursor_at)(first.body().len()).unwrap();
+    assert_eq!(body(&retry), body(&first));
+    let cursor = (first.cursor_at)(body(&first).len()).unwrap();
     let next = reader.poll(&cursor).unwrap().material.unwrap();
-    assert_eq!(next.body(), b"pwd\n");
+    assert_eq!(body(&next), b"pwd\n");
     assert_ne!(next.id, first.id);
 }
