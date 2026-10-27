@@ -333,7 +333,7 @@ fn request_citation_facts_preserve_payload_identity_and_refuse_supplied_invalid_
     let record = LibraryRecord::Preview(Preview {
         rendition: "r".into(),
         item: "i".into(),
-        revision: 1,
+        revision: "blake3:x".into(),
         role: sinex_model::event_types::library::RenditionRole::Preview,
         content: blob.clone(),
         media_type: "image/webp".into(),
@@ -432,4 +432,89 @@ fn library_format_plans_one_file_without_reading_its_neighbours() {
     let line: serde_json::Value = serde_json::from_slice(material.body()).unwrap();
     assert!(line["path"].as_str().unwrap().ends_with("selected.txt"));
     assert_eq!(line["stored"], false);
+}
+
+#[devkit::test]
+fn equal_content_moves_prefer_each_files_device_and_inode() {
+    let root = tmp();
+    std::fs::write(root.join("one.png"), png(10, 10)).unwrap();
+    std::fs::write(root.join("two.png"), png(10, 10)).unwrap();
+    let scanner = scan(&root);
+    let mut state = ScanState::default();
+    let first = read(
+        &scanner.poll(&Value::Null, &mut state).unwrap(),
+        &ScanParser,
+    );
+    let one = first
+        .iter()
+        .find(|copy| copy.path.ends_with("one.png"))
+        .unwrap();
+    let two = first
+        .iter()
+        .find(|copy| copy.path.ends_with("two.png"))
+        .unwrap();
+    assert_ne!(one.item, two.item);
+    assert!(
+        scanner
+            .poll(&Value::Null, &mut state)
+            .unwrap()
+            .material
+            .is_none()
+    );
+    std::fs::rename(root.join("one.png"), root.join("z.png")).unwrap();
+    std::fs::rename(root.join("two.png"), root.join("a.png")).unwrap();
+    let moved = read(
+        &scanner.poll(&Value::Null, &mut state).unwrap(),
+        &ScanParser,
+    );
+    assert_eq!(
+        moved
+            .iter()
+            .find(|copy| copy.path.ends_with("z.png"))
+            .unwrap()
+            .item,
+        one.item
+    );
+    assert_eq!(
+        moved
+            .iter()
+            .find(|copy| copy.path.ends_with("a.png"))
+            .unwrap()
+            .item,
+        two.item
+    );
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[devkit::test]
+fn a_copy_then_removal_keeps_identity_without_the_same_inode() {
+    let root = tmp();
+    std::fs::write(root.join("one.png"), png(10, 10)).unwrap();
+    let scanner = scan(&root);
+    let mut state = ScanState::default();
+    let first = read(
+        &scanner.poll(&Value::Null, &mut state).unwrap(),
+        &ScanParser,
+    );
+    assert!(
+        scanner
+            .poll(&Value::Null, &mut state)
+            .unwrap()
+            .material
+            .is_none()
+    );
+    std::fs::copy(root.join("one.png"), root.join("two.png")).unwrap();
+    std::fs::remove_file(root.join("one.png")).unwrap();
+    let moved = read(
+        &scanner.poll(&Value::Null, &mut state).unwrap(),
+        &ScanParser,
+    );
+    let present = moved
+        .iter()
+        .find(|copy| copy.vanished_at.is_none())
+        .unwrap();
+    assert_eq!(present.item, first[0].item);
+    assert_eq!(present.item_key, first[0].item_key);
+    assert_ne!(present.inode, first[0].inode);
+    std::fs::remove_dir_all(root).unwrap();
 }

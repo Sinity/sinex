@@ -69,7 +69,6 @@ pub const REQUEST: SourceSpec = SourceSpec {
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 struct ScannedFile {
     pub item_key: String,
-    pub revision: u32,
     pub host: String,
     pub root: String,
     pub path: String,
@@ -137,7 +136,6 @@ impl Parser for ScanParser {
         let payload = FileCopy {
             item: sinex_model::event_types::library::item_id(&key),
             item_key: key,
-            revision: d.revision,
             scanned_at,
             modified_at: nanos(&d.mtime_ns),
             vanished_at: nanos(&d.vanished_at_ns),
@@ -189,7 +187,6 @@ pub struct LibraryScan {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Known {
     pub item_key: String,
-    pub revision: u32,
     pub size: u64,
     pub mtime_ns: i128,
     pub device: Option<u64>,
@@ -266,7 +263,6 @@ impl ScanState {
             self.files.insert(
                 relative,
                 Known {
-                    revision: d.revision,
                     item_key: d.item_key,
                     size: d.size,
                     mtime_ns,
@@ -531,7 +527,10 @@ impl LibraryScan {
             let moved_from = state
                 .missing
                 .iter()
-                .find(|(_, k)| before.is_none() && k.content == content)
+                .filter(|(_, known)| before.is_none() && known.content == content)
+                .min_by_key(|(_, known)| {
+                    !(ino.is_some() && known.inode == ino && known.device == dev)
+                })
                 .map(|(p, _)| p.clone());
             let item_key = before
                 .as_ref()
@@ -545,21 +544,6 @@ impl LibraryScan {
                 .unwrap_or_else(|| {
                     sinex_model::event_types::library::item_key(&self.host, &root, &relative)
                 });
-            let revision = if let Some(known) = &before {
-                if known.content == content {
-                    known.revision
-                } else {
-                    known
-                        .revision
-                        .checked_add(1)
-                        .ok_or_else(|| DriverError::Io("library revision exceeds u32".into()))?
-                }
-            } else {
-                moved_from
-                    .as_ref()
-                    .and_then(|path| state.missing.get(path))
-                    .map_or(1, |known| known.revision)
-            };
             if let Some(old) = &moved_from {
                 // The old path is gone; its line comes after this one's, so
                 // whoever reads the move sees the new path first.
@@ -570,7 +554,7 @@ impl LibraryScan {
             }
             let previous_content = before
                 .as_ref()
-                .filter(|k| k.content != content && k.device == dev && k.inode == ino)
+                .filter(|known| known.content != content)
                 .map(|k| k.content.clone());
             let (width, height, mut duration_ms) = dimensions(&digests.head, &digests.media_type);
             let (mut width, mut height) = (width, height);
@@ -585,7 +569,6 @@ impl LibraryScan {
             }
             let line = ScannedFile {
                 item_key: item_key.clone(),
-                revision,
                 host: self.host.clone(),
                 root: root.clone(),
                 path: full.display().to_string(),
@@ -616,7 +599,6 @@ impl LibraryScan {
                 relative,
                 Known {
                     item_key,
-                    revision,
                     size,
                     mtime_ns: mtime,
                     device: dev,
@@ -639,7 +621,6 @@ impl LibraryScan {
                 state.files.remove(&relative);
                 let line = ScannedFile {
                     item_key: known.item_key,
-                    revision: known.revision,
                     host: self.host.clone(),
                     root: root.clone(),
                     path: self.root.join(&relative).display().to_string(),

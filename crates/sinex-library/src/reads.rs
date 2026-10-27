@@ -109,22 +109,28 @@ pub async fn revisions(conn: &mut Conn, item: &str) -> Result<Vec<Item>> {
     let Some(current) = self::item(conn, item).await? else {
         return Ok(Vec::new());
     };
-    let mut all: Vec<Item> = renditions(conn, item)
+    let mut originals: Vec<_> = renditions(conn, item)
         .await?
         .into_iter()
         .filter(|rendition| {
             rendition.role == sinex_model::event_types::library::RenditionRole::Original
         })
-        .map(|rendition| Item {
-            revision: rendition.revision,
-            replaces: (rendition.revision > 1).then_some(rendition.revision.saturating_sub(1)),
+        .collect();
+    originals.sort_by_key(|rendition| rendition.at);
+    let mut previous = None;
+    let mut all = Vec::new();
+    for rendition in originals {
+        let revision = Item {
+            revision: rendition.revision.clone(),
+            replaces: previous,
             content: rendition.content,
             media_type: rendition.media_type,
             at: rendition.at,
             ..current.clone()
-        })
-        .collect();
-    all.sort_by_key(|item| item.revision);
+        };
+        previous = Some(rendition.revision);
+        all.push(revision);
+    }
     Ok(all)
 }
 

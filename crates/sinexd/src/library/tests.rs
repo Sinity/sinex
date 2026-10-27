@@ -416,7 +416,7 @@ async fn the_library_end_to_end(db: devkit::pg::TestDatabase) {
             .any(|t| t["tag"] == "colour:red")
     );
     let vb = w.ok(Request::LibraryItem { item: ib.clone() }).await;
-    assert_eq!(vb["revision"], 2);
+    assert_eq!(vb["revision"], vb["content"]);
     assert_eq!(vb["revisions"].as_array().unwrap().len(), 2);
 
     // Bytes gone from disk are still openable from the content store.

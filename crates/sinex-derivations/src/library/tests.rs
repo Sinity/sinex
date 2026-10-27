@@ -7,7 +7,6 @@ fn copy(path: &str, content: &str, seconds: i64, original: &str) -> Event {
     let payload = FileCopy {
         item: item_id(&key),
         item_key: key,
-        revision: if content == "blake3:b" { 2 } else { 1 },
         scanned_at: Timestamp::from_unix_secs(seconds).unwrap(),
         host: "h".into(),
         root: "/r".into(),
@@ -75,7 +74,7 @@ fn rescans_and_rebuilds_keep_ids_and_equal_bytes_at_other_paths_stay_separate() 
     let two = compute(&[first.clone(), again]);
     assert_eq!(item(&one).item, item(&two).item);
     assert_eq!(one[0].payload["rendition"], two[0].payload["rendition"]);
-    assert_eq!(item(&two).revision, 1);
+    assert_eq!(item(&two).revision, "blake3:a");
     let other = compute(&[copy("/r/b.png", "blake3:a", 1, "b.png")]);
     assert_ne!(item(&one).item, item(&other).item);
     let rebuilt = compute(&[first]);
@@ -91,9 +90,9 @@ fn edits_are_revisions_even_when_the_file_was_replaced() {
     let outputs = compute(&inputs);
     let latest = item(&outputs);
     assert_eq!(latest.item, inputs[0].payload["item"].as_str().unwrap());
-    assert_eq!(latest.revision, 2);
-    assert_eq!(latest.replaces, Some(1));
-    assert_eq!(item(&compute(&inputs[1..])).revision, 2);
+    assert_eq!(latest.revision, "blake3:b");
+    assert_eq!(latest.replaces.as_deref(), Some("blake3:a"));
+    assert_eq!(item(&compute(&inputs[1..])).revision, "blake3:b");
     assert_eq!(
         outputs
             .iter()
@@ -122,4 +121,23 @@ fn hiding_the_only_scan_removes_every_output_and_another_scan_keeps_them() {
     assert_eq!(compute(&[second]).len(), 2);
     assert_eq!(compute(&[first]).len(), 2);
     assert!(compute(&[]).is_empty());
+}
+
+#[devkit::test]
+fn returning_to_the_same_bytes_reuses_the_revision_and_original() {
+    let inputs = [
+        copy("/r/a.png", "blake3:a", 1, "a.png"),
+        copy("/r/a.png", "blake3:b", 2, "a.png"),
+        copy("/r/a.png", "blake3:a", 3, "a.png"),
+    ];
+    let output = compute(&inputs);
+    assert_eq!(item(&output).revision, "blake3:a");
+    assert_eq!(item(&output).replaces.as_deref(), Some("blake3:b"));
+    assert_eq!(
+        output
+            .iter()
+            .filter(|event| event.event_type == "library.rendition")
+            .count(),
+        2
+    );
 }
