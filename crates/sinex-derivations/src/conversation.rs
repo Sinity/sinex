@@ -18,6 +18,8 @@ use std::collections::BTreeMap;
 
 pub struct ConversationDays;
 
+type Messages<'a> = Vec<(&'a Event, String, Timestamp)>;
+
 /// A subject as its thread: without leading reply and forward prefixes, case
 /// and spacing ignored.
 fn thread_subject(subject: &str) -> String {
@@ -114,8 +116,7 @@ impl Keyed for ConversationDays {
         let Some(day) = day_of(key) else {
             return Computed::default();
         };
-        let mut days: BTreeMap<(&'static str, String), Vec<(&Event, String, Timestamp)>> =
-            BTreeMap::new();
+        let mut days: BTreeMap<(&'static str, String), Messages<'_>> = BTreeMap::new();
         for e in inputs {
             if let Some((channel, conversation, sender, at)) = message(e) {
                 days.entry((channel, conversation))
