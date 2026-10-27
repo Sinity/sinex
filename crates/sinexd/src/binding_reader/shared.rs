@@ -61,6 +61,19 @@ impl<R: Read> Read for InterruptibleReader<R> {
     }
 }
 
+fn admission_check(
+    private: sinex_transport::private_mode::PrivateMode,
+    stop: watch::Receiver<bool>,
+) -> crate::writer::AdmissionCheck {
+    Arc::new(move || {
+        if *stop.borrow() || private.on() {
+            Err("capture cancelled or private mode is on; admission stopped".into())
+        } else {
+            Ok(())
+        }
+    })
+}
+
 #[allow(clippy::too_many_arguments)]
 pub(super) async fn read_shared(
     conn: &mut PgConnection,
@@ -77,17 +90,10 @@ pub(super) async fn read_shared(
         sinex_transport::private_mode::PrivateMode::default(),
         std::time::Duration::from_millis(250),
     ));
-    let check: crate::writer::AdmissionCheck = Arc::new({
-        let private = private.clone();
-        let stop = stop.clone();
-        move || {
-            if *stop.borrow() || private.on() {
-                Err("capture cancelled or private mode is on; admission stopped".into())
-            } else {
-                Ok(())
-            }
-        }
-    });
+    let check = admission_check(
+        sinex_transport::private_mode::PrivateMode::default(),
+        stop.clone(),
+    );
     let cancel = Cancel(Arc::new(AtomicBool::new(false)));
     let material = crate::sealing::Materials::archive(blobs.clone(), pass.class, access)?;
     material.restore_archive(conn, pass.stored.as_ref()).await?;

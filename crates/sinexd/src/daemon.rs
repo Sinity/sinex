@@ -276,10 +276,8 @@ pub(crate) async fn run(o: Options) -> Result<(), String> {
     .await
     .is_ok();
     tasks.abort_all();
-    if drained {
-        if let Err(error) = forget_admitted(&o.database, &blobs).await {
-            eprintln!("sinexd: forgetting admitted blob names at shutdown: {error}");
-        }
+    if drained && let Err(error) = forget_admitted(&o.database, &blobs).await {
+        eprintln!("sinexd: forgetting admitted blob names at shutdown: {error}");
     }
 
     outcome
