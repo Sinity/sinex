@@ -4,7 +4,8 @@ CLI, MCP and HTTP run the same query text. `sinexctl query '…'` returns rows,
 the total, resolved clock and commit position, and a cursor. `--page` changes
 transport size; `limit` in the query changes the answer. `read_as` explains the
 question that ran. Existing filters, time joins, grouping, sorting, provenance
-walks and `as of` compose as stages.
+walks and `as of` compose as stages. Keywords ignore letter case, and spaces
+around the colon in `query:name` are optional.
 
 ## Typed payload fields and completion
 

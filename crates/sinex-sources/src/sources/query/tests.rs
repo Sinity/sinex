@@ -1,6 +1,6 @@
 use super::*;
-use sinex_source_core::{DrainInput, Limits, drain};
 use sinex_model::RecordOutcome;
+use sinex_source_core::{DrainInput, Limits, drain};
 
 #[devkit::test]
 fn query_requests_keep_bytes_and_use_manifest_authorship_without_changing_the_marked_time() {

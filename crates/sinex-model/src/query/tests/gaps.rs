@@ -320,10 +320,16 @@ fn recall_fill_bounds_apply_only_to_when_and_intersect_row_time_bounds() {
 
 #[devkit::test]
 fn saved_query_names_use_the_same_tokens_as_the_query_parser() {
-    assert_eq!(
-        crate::query::saved::reference_name(" QUERY : by-directory(root=x) "),
-        Some("by-directory".into())
-    );
+    for text in [
+        " QUERY : by-directory(root=x) ",
+        "QUERY:by-directory(root=x)",
+        "query :by-directory(root=x)",
+    ] {
+        assert_eq!(
+            crate::query::saved::reference_name(text),
+            Some("by-directory".into())
+        );
+    }
     assert_eq!(
         crate::query::saved::reference_name("events where source = synthetic"),
         None

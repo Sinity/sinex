@@ -368,6 +368,8 @@ async fn ambiguous_saved_names_do_not_block_other_saved_questions(db: devkit::pg
         "events where event_type = command.executed count",
         "query:usable",
         " QUERY : usable ",
+        "QUERY:usable",
+        "query :usable",
         "query:indirect(source=terminal.atuin)",
     ] {
         let (_, answer) = call(&w, Some(OPERATOR), json!({"method":"query","query":query})).await;

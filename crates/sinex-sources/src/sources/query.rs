@@ -1,14 +1,14 @@
 //! Authenticated moment marks and saved queries stored as JSON-line materials.
-use sinex_source_core::drain::RecordContext;
-use sinex_source_core::drivers::{Acquired, NewMaterial};
-use sinex_source_core::registry::{DeclaredSource, Driver, SourceSpec};
-use sinex_source_core::{Parser, RecordError};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 use sinex_model::event_types::query::{Mark, QueryRecord, Saved};
 use sinex_model::{
     Class, InputRef, MaterialId, ObservationFacts, ReadingOrder, RevisionChange, Timestamp,
 };
+use sinex_source_core::drain::RecordContext;
+use sinex_source_core::drivers::{Acquired, NewMaterial};
+use sinex_source_core::registry::{DeclaredSource, Driver, SourceSpec};
+use sinex_source_core::{Parser, RecordError};
 
 pub const REQUEST: SourceSpec = SourceSpec {
     name: "query.request",
@@ -142,14 +142,15 @@ pub fn request_material(record: QueryRecord, actor: &str, host: &str, at: Timest
         cursor_without_material: Value::Null,
     }
 }
-pub const FORMAT: sinex_source_core::binding::InputFormat = sinex_source_core::binding::InputFormat {
-    name: "query",
-    specs: || vec![&REQUEST],
-    plan: None,
-    source: |_| Ok(Box::new(request_source())),
-    reader: None,
-    capture: None,
-};
+pub const FORMAT: sinex_source_core::binding::InputFormat =
+    sinex_source_core::binding::InputFormat {
+        name: "query",
+        specs: || vec![&REQUEST],
+        plan: None,
+        source: |_| Ok(Box::new(request_source())),
+        reader: None,
+        capture: None,
+    };
 
 #[cfg(test)]
 mod tests;
