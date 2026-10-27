@@ -47,7 +47,7 @@ cap = "cargo"
 unit_properties = ["MemoryHigh=8G"]
 
 [operations.focused]
-description = "Selected package/tests under nextest; pass -p PACKAGE and filters; full suites use bulk test"
+description = "Selected tests under nextest; pass --changed for changed files and dependents, or -p PACKAGE and filters; full suites use bulk test"
 exec = ["cargo", "run", "--locked", "--quiet", "-p", "xtask", "--", "test"]
 arguments = "required"
 pool = "normal"
