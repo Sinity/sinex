@@ -325,7 +325,9 @@ async fn produce_spools(
             tokio::task::yield_now().await;
         } else {
             let next_retry = lives.iter().filter_map(|live| live.retry.after).min();
-            let wait = next_retry.map_or(every, |after| every.min(after.saturating_duration_since(Instant::now())));
+            let wait = next_retry.map_or(every, |after| {
+                every.min(after.saturating_duration_since(Instant::now()))
+            });
             tokio::time::sleep(wait.max(Duration::from_millis(100))).await;
         }
     }

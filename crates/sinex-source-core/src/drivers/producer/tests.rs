@@ -468,7 +468,7 @@ async fn a_recorded_invalid_frame_is_skipped_and_the_next_frame_is_sent() {
 }
 
 #[devkit::test(multi_thread)]
-async fn a_refused_large_material_keeps_its_bytes_and_skips_dependent_events() {
+async fn a_refused_large_material_keeps_its_bytes_and_batch_pending() {
     let nats = devkit::nats::test_nats().unwrap();
     let subjects = Subjects::new(nats.prefix());
     let received = standin_with_refusal(&nats, &subjects, "invalid-material", None, true).await;
@@ -528,7 +528,8 @@ async fn a_refused_large_material_keeps_its_bytes_and_skips_dependent_events() {
     }
     .save(&state, "binding")
     .unwrap();
-    producer.position("binding", &state, &store).await.unwrap();
+    assert!(matches!(producer.position("binding", &state, &store).await, Err(Error::Refused {recorded:true,..})));
+    assert!(Position::load(&state,"binding").unwrap().cursor.is_null());
     assert_eq!(received.lock().unwrap().len(), 1);
     assert!(
         frame_bytes::snapshot(
@@ -540,13 +541,7 @@ async fn a_refused_large_material_keeps_its_bytes_and_skips_dependent_events() {
         )
         .is_ok()
     );
-    let saved = std::fs::read_dir(state.join("refused"))
-        .unwrap()
-        .next()
-        .unwrap()
-        .unwrap()
-        .path();
-    let refused: UnacknowledgedFrames =
-        serde_json::from_slice(&std::fs::read(saved).unwrap()).unwrap();
-    assert_eq!(refused.frames.len(), 2);
+    let pending = UnacknowledgedFrames::load(&state,"binding").unwrap().unwrap();
+    assert_eq!(pending.frames.len(),2);
+    assert_eq!(Producer::unacknowledged_frames("binding",&state).unwrap(),2);
 }

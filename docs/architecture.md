@@ -176,8 +176,7 @@ asks for. Sinex has no AI-chat parser of its own.
 The live producers start capture before connecting to NATS. Connection and
 publishing failures retry with exponential delays from one to 30 seconds while
 capture keeps writing. Each acknowledged frame is removed from the durable
-pending batch before another is sent. Recorded invalid-frame refusals are
-skipped; a refused material also skips the events that cite it. Refused frames and their bytes are kept under the producer state and frame directories for inspection. Unrecorded
+pending batch before another is sent. Recorded invalid event-frame refusals are skipped and kept for inspection. A refused material keeps its whole batch pending, with its captured bytes, because later parts and events may name that material. Unrecorded
 refusals and failures to upload chunks remain pending for retry. The writer
 keeps temporary database and storage failures separate from invalid content,
 so the ingress leaves those frames pending rather than recording refusals.
