@@ -310,10 +310,10 @@ async fn saved_bindings_reconnect_after_the_database_connection_is_lost(
         .fetch_one(&mut conn)
         .await
         .unwrap();
-    let mut control = PgConnection::connect(&url).await.unwrap();
+    let mut second_connection = PgConnection::connect(&url).await.unwrap();
     let terminated: bool = sqlx::query_scalar("SELECT pg_terminate_backend($1)")
         .bind(pid)
-        .fetch_one(&mut control)
+        .fetch_one(&mut second_connection)
         .await
         .unwrap();
     assert!(terminated);
