@@ -166,22 +166,33 @@ impl Api for Export {
         let previous: Option<Position> = if cursor.is_null() {
             None
         } else {
-            Some(serde_json::from_value(cursor.clone())
-                .map_err(|error| DriverError::Cursor(error.to_string()))?)
+            Some(
+                serde_json::from_value(cursor.clone())
+                    .map_err(|error| DriverError::Cursor(error.to_string()))?,
+            )
         };
         let facts = |metadata: &std::fs::Metadata| -> Result<(u64, i128), DriverError> {
             let modified = metadata.modified().map_err(|error| io(&self.path, error))?;
-            let modified_ns = modified.duration_since(std::time::UNIX_EPOCH)
-                .map_err(|error| io(&self.path, error))?.as_nanos();
-            Ok((metadata.len(), i128::try_from(modified_ns)
-                .map_err(|error| io(&self.path, error))?))
+            let modified_ns = modified
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_err(|error| io(&self.path, error))?
+                .as_nanos();
+            Ok((
+                metadata.len(),
+                i128::try_from(modified_ns).map_err(|error| io(&self.path, error))?,
+            ))
         };
         let mut file = std::fs::File::open(&self.path).map_err(|error| io(&self.path, error))?;
         let metadata = file.metadata().map_err(|error| io(&self.path, error))?;
         let (size, modified_ns) = facts(&metadata)?;
-        if previous.as_ref().is_some_and(|position|
-            position.size == size && position.modified_ns == modified_ns) {
-            return Ok(Page { records: Vec::new(), next: cursor.clone() });
+        if previous
+            .as_ref()
+            .is_some_and(|position| position.size == size && position.modified_ns == modified_ns)
+        {
+            return Ok(Page {
+                records: Vec::new(),
+                next: cursor.clone(),
+            });
         }
         let mut bytes = Vec::new();
         std::io::Read::read_to_end(&mut file, &mut bytes).map_err(|error| io(&self.path, error))?;
@@ -192,7 +203,11 @@ impl Api for Export {
         let mut issues = BTreeMap::new();
         let mut records = Vec::new();
         let mut unreadable = Vec::new();
-        for line in bytes.split(|byte| *byte == b'\n').filter(|line| !line.is_empty()) {
+        let mut complete = true;
+        for line in bytes
+            .split(|byte| *byte == b'\n')
+            .filter(|line| !line.is_empty())
+        {
             match serde_json::from_slice::<Map<String, Value>>(line) {
                 Ok(issue) => match issue.get("id").and_then(Value::as_str) {
                     Some(id) if issue.get("_type").and_then(Value::as_str) == Some("issue") => {
@@ -204,27 +219,48 @@ impl Api for Export {
                             return Err(io(&self.path, format!("duplicate issue ID {id:?}")));
                         }
                     }
-                    _ => unreadable.push(issue),
+                    _ => {
+                        if issue.get("_type").and_then(Value::as_str) == Some("issue") {
+                            complete = false;
+                        }
+                        unreadable.push(issue);
+                    }
                 },
-                Err(_) => unreadable.push(Map::from_iter([(
-                    "unreadable".into(), json!(String::from_utf8_lossy(line)),
-                )])),
+                Err(_) => {
+                    complete = false;
+                    unreadable.push(Map::from_iter([(
+                        "unreadable".into(),
+                        json!(String::from_utf8_lossy(line)),
+                    )]));
+                }
             }
         }
         if let Some(previous) = previous {
-            let removed_at = serde_json::to_value(Timestamp::now()).map_err(|error| io(&self.path, error))?;
+            let removed_at =
+                serde_json::to_value(Timestamp::now()).map_err(|error| io(&self.path, error))?;
             for id in previous.issues.keys() {
-                if !issues.contains_key(id) {
-                    records.push(serde_json::from_value(json!({
-                        "_type": "issue", "id": id, "removed_at": removed_at,
-                    })).expect("JSON object"));
+                if !issues.contains_key(id) && !complete {
+                    issues.insert(id.clone(), previous.issues[id].clone());
+                } else if !issues.contains_key(id) {
+                    records.push(
+                        serde_json::from_value(json!({
+                            "_type": "issue", "id": id, "removed_at": removed_at,
+                        }))
+                        .expect("JSON object"),
+                    );
                 }
             }
         }
         records.extend(unreadable);
-        Ok(Page { records, next: json!(Position { size, modified_ns, issues }) })
+        Ok(Page {
+            records,
+            next: json!(Position {
+                size,
+                modified_ns,
+                issues
+            }),
+        })
     }
-
 }
 
 pub fn driver(path: PathBuf, host: String) -> ApiCursor<Export> {

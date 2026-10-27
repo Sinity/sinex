@@ -178,6 +178,20 @@
       ]
     },
     {
+      "name": "desktop.freedom",
+      "formats": [
+        "freedom"
+      ],
+      "drivers": [
+        "append-file"
+      ],
+      "purpose": "domain usage reported by Freedom, for attention analysis",
+      "class": "guarded",
+      "eventTypes": [
+        "domain.usage"
+      ]
+    },
+    {
       "name": "code.git",
       "formats": [
         "repository"

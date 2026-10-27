@@ -47,6 +47,8 @@ these names and no others.
 
 ## Events
 
+- **domain usage**: seconds a provider attributed to one domain on a civil date (`domain.usage`); a date without a zone supplies no instant.
+
 - **event**: one reading of a record, or of parent events: a typed payload, an origin and three clocks.
 - **event type**: the registered name of a payload type, `<thing>.<what>` (`command.executed`, `note.document`). An occurrence is named with a past participle (`window.opened`), a state or record with a noun (`journal.entry`). A **span** is a state a source observed with its end; an **interval** is one a derivation computed.
 - **reading**: the event a record produced on one read; the **live reading** is the current one, older ones are **archived**, each with an archive reason (`replay`, `newer_reading`, `hide`, `recomputed`).

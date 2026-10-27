@@ -149,6 +149,10 @@ these tools. The fields that join them are recorded as they are read: a
 commit's refs and checkouts, a pull request's head branch and commit, a
 job's checkout and its HEAD at start and end.
 
+Freedom's daily domain-seconds export yields one `domain.usage` per domain
+and day. A civil date without its zone stays a date in the payload, with no
+event instant.
+
 ### Outside producers
 
 `sinex-session`, `sinex-capture` and Polylogue send frames over the NATS

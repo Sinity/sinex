@@ -18,6 +18,7 @@ pub(crate) mod fields;
 pub mod file_watch;
 pub mod fish;
 pub mod forecast;
+pub mod freedom;
 /// GitHub pull requests, reviews, checks, workflow runs and issues
 /// (`code.github`).
 pub mod github;
@@ -74,11 +75,11 @@ pub mod spotify;
 /// Machine state on the system bus: network, Bluetooth, batteries.
 pub mod system_bus;
 pub mod takeout_chrome;
+/// Taskwarrior exports (`tasks.taskwarrior`).
+pub mod taskwarrior;
 pub(crate) mod terminal_text;
 /// Devices from udev.
 pub mod udev;
-/// Taskwarrior exports (`tasks.taskwarrior`).
-pub mod taskwarrior;
 pub mod weechat;
 pub mod wykop;
 pub mod zsh;
@@ -102,6 +103,7 @@ pub fn formats() -> &'static [&'static InputFormat] {
         &machine_telemetry::FORMAT,
         &file_watch::FORMAT,
         &activitywatch::FORMAT,
+        &freedom::FORMAT,
         &repository::FORMAT,
         &github::FORMAT,
         &beads::FORMAT,

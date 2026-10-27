@@ -30,8 +30,8 @@ use crate::sources::samsung_health::typed;
 use crate::{Parser, RecordContext, RecordError};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
-use sinex_model::event_types::communication::CallLogged;
 use sinex_model::event_types::account::{AccountRow, TaskRevised};
+use sinex_model::event_types::communication::CallLogged;
 use sinex_model::event_types::health::HealthRecord;
 use sinex_model::{Class, Timestamp};
 use std::path::{Path, PathBuf};
@@ -44,7 +44,12 @@ pub const SPEC: SourceSpec = SourceSpec {
     class: Class::Open,
     parser: "samsung-account-export",
     parser_version: 6,
-    event_types: &["health.record", "call.logged", "task.revised", "account.row"],
+    event_types: &[
+        "health.record",
+        "call.logged",
+        "task.revised",
+        "account.row",
+    ],
     framer: crate::Framer::export(frame, crate::drivers::export_archive::Framing::Csv),
 };
 
@@ -198,8 +203,9 @@ fn call(account_key: String, values: &Map<String, Value>) -> Result<CallLogged, 
     let integer = |field: &str, value: Option<String>| {
         value
             .map(|v| {
-                v.parse::<i64>()
-                    .map_err(|_| RecordError::new(format!("call log {field} {v:?} is not a number")))
+                v.parse::<i64>().map_err(|_| {
+                    RecordError::new(format!("call log {field} {v:?} is not a number"))
+                })
             })
             .transpose()
     };

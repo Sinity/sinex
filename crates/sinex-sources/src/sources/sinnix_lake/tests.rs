@@ -384,7 +384,13 @@ fn an_air_sample_is_keyed_by_the_sensor_clock_under_either_lane_name() {
 
 #[devkit::test]
 fn unbound_lanes_and_bad_envelopes_fail() {
-    assert!(parse("desktop.lake-clipboard", &envelope_line("mpris", 1, text_copy())).is_err());
+    assert!(
+        parse(
+            "desktop.lake-clipboard",
+            &envelope_line("mpris", 1, text_copy())
+        )
+        .is_err()
+    );
     let mut bad = envelope_line("clipboard", 1, text_copy());
     bad.insert("schema".into(), json!("other"));
     assert!(parse("desktop.lake-clipboard", &bad).is_err());
@@ -469,9 +475,13 @@ fn malformed_envelope_coordinates_and_out_of_range_times_fail() {
     let source = "desktop.lake-clipboard";
     let valid = envelope_line("clipboard", 1, text_copy());
     for (field, value) in [
-        ("host", json!(null)), ("host", json!("")),
-        ("seq", json!(-1)), ("seq", json!("1")),
-        ("raw_ref", json!({})), ("ts", json!(1e300)), ("ts", json!(-1e300)),
+        ("host", json!(null)),
+        ("host", json!("")),
+        ("seq", json!(-1)),
+        ("seq", json!("1")),
+        ("raw_ref", json!({})),
+        ("ts", json!(1e300)),
+        ("ts", json!(-1e300)),
     ] {
         let mut record = valid.clone();
         record.insert(field.into(), value);
@@ -485,13 +495,24 @@ fn an_unreadable_lane_directory_is_not_an_empty_lake() {
     let path = dir.path().join("activity/desktop");
     std::fs::create_dir_all(&path).unwrap();
     std::fs::write(path.join("clipboard"), "not a directory").unwrap();
-    let error = (FORMAT.plan.unwrap())(dir.path(), &crate::binding::Settings::default()).unwrap_err();
+    let error =
+        (FORMAT.plan.unwrap())(dir.path(), &crate::binding::Settings::default()).unwrap_err();
     assert!(error.contains("clipboard"), "{error}");
 }
 
 #[devkit::test]
 fn a_missing_lake_root_is_not_an_empty_lake() {
     let directory = tempfile::tempdir().unwrap();
-    assert!((FORMAT.plan.unwrap())(&directory.path().join("missing"), &crate::binding::Settings::default()).is_err());
-    assert!((FORMAT.plan.unwrap())(directory.path(), &crate::binding::Settings::default()).unwrap().is_empty());
+    assert!(
+        (FORMAT.plan.unwrap())(
+            &directory.path().join("missing"),
+            &crate::binding::Settings::default()
+        )
+        .is_err()
+    );
+    assert!(
+        (FORMAT.plan.unwrap())(directory.path(), &crate::binding::Settings::default())
+            .unwrap()
+            .is_empty()
+    );
 }

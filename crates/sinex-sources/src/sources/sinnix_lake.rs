@@ -51,11 +51,11 @@ const LAKE_SOURCES: &[LakeSource] = &[
         spec: SourceSpec {
             class: Class::Guarded,
             ..spec(
-            "desktop.lake-clipboard",
-            "sinnix-lake:desktop.lake-clipboard",
-            "recall, prompt provenance",
-            &["clipboard.copied"],
-        )
+                "desktop.lake-clipboard",
+                "sinnix-lake:desktop.lake-clipboard",
+                "recall, prompt provenance",
+                &["clipboard.copied"],
+            )
         },
         dirs: &["activity/desktop/clipboard", "activity/desktop/selection"],
         lane_values: &["clipboard", "primary"],
@@ -64,11 +64,11 @@ const LAKE_SOURCES: &[LakeSource] = &[
         spec: SourceSpec {
             class: Class::Guarded,
             ..spec(
-            "desktop.lake-notifications",
-            "sinnix-lake:desktop.lake-notifications",
-            "recall, interruption analysis",
-            &["notification.shown"],
-        )
+                "desktop.lake-notifications",
+                "sinnix-lake:desktop.lake-notifications",
+                "recall, interruption analysis",
+                &["notification.shown"],
+            )
         },
         dirs: &["activity/desktop/notification"],
         lane_values: &["notifications"],
@@ -240,13 +240,20 @@ fn envelope(record: &Map<String, Value>, source: &LakeSource) -> Result<Envelope
             source.lane_values.join(", ")
         )));
     }
-    if record.get("host").and_then(Value::as_str).is_none_or(str::is_empty) {
+    if record
+        .get("host")
+        .and_then(Value::as_str)
+        .is_none_or(str::is_empty)
+    {
         return Err(RecordError::new("envelope host is not a nonempty string"));
     }
     if record.get("seq").and_then(Value::as_u64).is_none() {
         return Err(RecordError::new("envelope seq is not an unsigned integer"));
     }
-    if record.get("raw_ref").is_some_and(|value| !value.is_null() && !value.is_string()) {
+    if record
+        .get("raw_ref")
+        .is_some_and(|value| !value.is_null() && !value.is_string())
+    {
         return Err(RecordError::new("envelope raw_ref is not a string or null"));
     }
     let ts = record
@@ -341,28 +348,29 @@ fn lake_source_of(b: &crate::binding::Binding) -> Result<&'static LakeSource, St
 
 /// `--read sinnix-lake=ROOT`: every lane's day files under the lake root
 /// (`/realm`); each lane's directories are its configuration.
-pub const FORMAT: crate::binding::InputFormat = crate::binding::InputFormat {
-    name: "sinnix-lake",
-    specs: || LAKE_SOURCES.iter().map(|l| &l.spec).collect(),
-    plan: Some(|input, settings| {
-        std::fs::read_dir(input).map_err(|error| format!("{}: {error}", input.display()))?;
-        let mut bindings = Vec::new();
-        for source in LAKE_SOURCES {
-            bindings.extend(day_files(input, source)?.into_iter().map(|file| {
-                crate::binding::Binding::of(&source.spec, &file, settings.clone())
-            }));
-        }
-        Ok(bindings)
-    }),
-    source: |b| Ok(Box::new(source(lake_source_of(b)?))),
-    reader: Some(|b| {
-        Ok(crate::binding::appended(driver(
-            b.input.clone(),
-            b.settings.host.clone(),
-        )))
-    }),
-    capture: None,
-};
+pub const FORMAT: crate::binding::InputFormat =
+    crate::binding::InputFormat {
+        name: "sinnix-lake",
+        specs: || LAKE_SOURCES.iter().map(|l| &l.spec).collect(),
+        plan: Some(|input, settings| {
+            std::fs::read_dir(input).map_err(|error| format!("{}: {error}", input.display()))?;
+            let mut bindings = Vec::new();
+            for source in LAKE_SOURCES {
+                bindings.extend(day_files(input, source)?.into_iter().map(|file| {
+                    crate::binding::Binding::of(&source.spec, &file, settings.clone())
+                }));
+            }
+            Ok(bindings)
+        }),
+        source: |b| Ok(Box::new(source(lake_source_of(b)?))),
+        reader: Some(|b| {
+            Ok(crate::binding::appended(driver(
+                b.input.clone(),
+                b.settings.host.clone(),
+            )))
+        }),
+        capture: None,
+    };
 
 mod lanes;
 

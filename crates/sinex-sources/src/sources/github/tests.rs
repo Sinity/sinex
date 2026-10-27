@@ -438,15 +438,26 @@ fn a_rate_limit_holds_asks_until_its_reset() {
 
 #[devkit::test]
 fn labels_are_read_past_the_first_page() {
-    let (url, asked) = serve(|_| ok(json!({"data": {"node": {"labels": {
-        "pageInfo": {"hasNextPage": false, "endCursor": null},
-        "nodes": [{"name": "last-label"}],
-    }}}})));
+    let (url, asked) = serve(|_| {
+        ok(json!({"data": {"node": {"labels": {
+            "pageInfo": {"hasNextPage": false, "endCursor": null},
+            "nodes": [{"name": "last-label"}],
+        }}}}))
+    });
     let github = github(&url);
     let mut node = pull_request(false, Vec::new());
     node["labels"] = json!({"pageInfo": {"hasNextPage": true, "endCursor": "labels-100"},
         "nodes": (0..100).map(|i| json!({"name": format!("label-{i}")})).collect::<Vec<_>>()});
-    page_to_end(&github, "synthetic-token", &mut node, "/labels", "/id", MORE_LABELS, "labels").unwrap();
+    page_to_end(
+        &github,
+        "synthetic-token",
+        &mut node,
+        "/labels",
+        "/id",
+        MORE_LABELS,
+        "labels",
+    )
+    .unwrap();
     let labels = node["labels"]["nodes"].as_array().unwrap();
     assert_eq!(labels.len(), 101);
     assert_eq!(labels[100]["name"], "last-label");
@@ -457,14 +468,27 @@ fn labels_are_read_past_the_first_page() {
 fn malformed_lists_and_page_information_are_errors() {
     let (url, _) = serve(|_| ok(json!({"data": {"repository": {"pullRequests": {}}}})));
     let github = github(&url);
-    assert!(github.pull_requests("synthetic", "o", "r", &Since::default()).is_err());
+    assert!(
+        github
+            .pull_requests("synthetic", "o", "r", &Since::default())
+            .is_err()
+    );
     assert!(github.open_checks("synthetic", "o", "r").is_err());
     assert!(github.list("synthetic", format!("{url}/issues")).is_err());
     assert!(github.runs("synthetic", "o/r", None).is_err());
     let mut seen = BTreeSet::new();
-    assert!(next_cursor(&json!({"pageInfo": {"hasNextPage": true, "endCursor": null}}), &mut seen).is_err());
+    assert!(
+        next_cursor(
+            &json!({"pageInfo": {"hasNextPage": true, "endCursor": null}}),
+            &mut seen
+        )
+        .is_err()
+    );
     let page = json!({"pageInfo": {"hasNextPage": true, "endCursor": "same"}});
-    assert_eq!(next_cursor(&page, &mut seen).unwrap().as_deref(), Some("same"));
+    assert_eq!(
+        next_cursor(&page, &mut seen).unwrap().as_deref(),
+        Some("same")
+    );
     assert!(next_cursor(&page, &mut seen).is_err());
 }
 
@@ -472,6 +496,10 @@ fn malformed_lists_and_page_information_are_errors() {
 fn pagination_never_sends_the_token_to_another_api() {
     let (url, asked) = serve(|_| ok(json!([])));
     let github = github("https://api.github.com");
-    assert!(github.list("synthetic-secret", format!("{url}/issues")).is_err());
+    assert!(
+        github
+            .list("synthetic-secret", format!("{url}/issues"))
+            .is_err()
+    );
     assert!(asked.lock().unwrap().is_empty());
 }

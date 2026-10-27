@@ -455,14 +455,25 @@ fn item_number(item: &Value, name: &str) -> Result<u64, DriverError> {
 }
 
 fn array<'a>(value: &'a Value, name: &str) -> Result<&'a Vec<Value>, DriverError> {
-    value.as_array().ok_or_else(|| DriverError::Io(format!("GitHub {name} is not an array")))
+    value
+        .as_array()
+        .ok_or_else(|| DriverError::Io(format!("GitHub {name} is not an array")))
 }
 
-fn next_cursor(connection: &Value, seen: &mut std::collections::BTreeSet<String>) -> Result<Option<String>, DriverError> {
-    let has_next = connection.pointer("/pageInfo/hasNextPage").and_then(Value::as_bool)
+fn next_cursor(
+    connection: &Value,
+    seen: &mut std::collections::BTreeSet<String>,
+) -> Result<Option<String>, DriverError> {
+    let has_next = connection
+        .pointer("/pageInfo/hasNextPage")
+        .and_then(Value::as_bool)
         .ok_or_else(|| DriverError::Io("GitHub connection has no page information".into()))?;
-    if !has_next { return Ok(None); }
-    let cursor = connection.pointer("/pageInfo/endCursor").and_then(Value::as_str)
+    if !has_next {
+        return Ok(None);
+    }
+    let cursor = connection
+        .pointer("/pageInfo/endCursor")
+        .and_then(Value::as_str)
         .filter(|cursor| !cursor.is_empty())
         .ok_or_else(|| DriverError::Io("GitHub next page has no cursor".into()))?;
     if !seen.insert(cursor.to_owned()) {
@@ -526,20 +537,32 @@ fn page_to_end(
     let mut seen = std::collections::BTreeSet::new();
     loop {
         let Some(current) = node.pointer(pointer).filter(|value| !value.is_null()) else {
-            if pointer == CONTEXTS { return Ok(()); }
+            if pointer == CONTEXTS {
+                return Ok(());
+            }
             return Err(DriverError::Io(format!("GitHub node without {pointer}")));
         };
         array(&current["nodes"], connection)?;
-        let Some(after) = next_cursor(current, &mut seen)? else { break; };
-        let id = node.pointer(id_pointer).and_then(Value::as_str)
-            .ok_or_else(|| DriverError::Io(format!("GitHub node without {id_pointer}")))?.to_owned();
+        let Some(after) = next_cursor(current, &mut seen)? else {
+            break;
+        };
+        let id = node
+            .pointer(id_pointer)
+            .and_then(Value::as_str)
+            .ok_or_else(|| DriverError::Io(format!("GitHub node without {id_pointer}")))?
+            .to_owned();
         let answer = github.graphql(token, query, json!({"id": id, "after": after}))?;
-        let more = answer.pointer(&format!("/node/{connection}"))
+        let more = answer
+            .pointer(&format!("/node/{connection}"))
             .ok_or_else(|| DriverError::Io(format!("GitHub answer without {connection}")))?;
         let new = array(&more["nodes"], connection)?;
-        let target = node.pointer_mut(pointer).and_then(Value::as_object_mut)
+        let target = node
+            .pointer_mut(pointer)
+            .and_then(Value::as_object_mut)
             .ok_or_else(|| DriverError::Io(format!("GitHub node without {pointer}")))?;
-        let have = target.get_mut("nodes").and_then(Value::as_array_mut)
+        let have = target
+            .get_mut("nodes")
+            .and_then(Value::as_array_mut)
             .ok_or_else(|| DriverError::Io(format!("GitHub {connection} has no nodes")))?;
         have.extend(new.iter().cloned());
         target.insert("pageInfo".into(), more["pageInfo"].clone());
@@ -642,7 +665,9 @@ impl Github {
 
     fn get(&self, token: &str, url: &str) -> Result<(Value, Option<String>), DriverError> {
         if !url.starts_with(&format!("{}/", self.api.trim_end_matches('/'))) {
-            return Err(DriverError::Io("GitHub next page is outside the configured API".into()));
+            return Err(DriverError::Io(
+                "GitHub next page is outside the configured API".into(),
+            ));
         }
         let response = self
             .agent
@@ -710,7 +735,10 @@ impl Github {
                 .pointer("/repository/pullRequests")
                 .ok_or_else(|| DriverError::Io(format!("GitHub has no repository {owner}/{name}")))?
                 .clone();
-            for mut node in array(&connection["nodes"], "pull requests")?.iter().cloned() {
+            for mut node in array(&connection["nodes"], "pull requests")?
+                .iter()
+                .cloned()
+            {
                 let number = item_number(&node, "number")?;
                 let updated = item_time(&node, "updatedAt")?;
                 if since.at.is_some_and(|at| updated < at) {
@@ -728,7 +756,15 @@ impl Github {
                     MORE_REVIEWS,
                     "reviews",
                 )?;
-                page_to_end(self, token, &mut node, "/labels", "/id", MORE_LABELS, "labels")?;
+                page_to_end(
+                    self,
+                    token,
+                    &mut node,
+                    "/labels",
+                    "/id",
+                    MORE_LABELS,
+                    "labels",
+                )?;
                 page_to_end(
                     self,
                     token,
@@ -740,7 +776,9 @@ impl Github {
                 )?;
                 out.push(node);
             }
-            let Some(cursor) = next_cursor(&connection, &mut seen)? else { break; };
+            let Some(cursor) = next_cursor(&connection, &mut seen)? else {
+                break;
+            };
             after = json!(cursor);
         }
         Ok(out)
@@ -761,7 +799,10 @@ impl Github {
                 .pointer("/repository/pullRequests")
                 .ok_or_else(|| DriverError::Io(format!("GitHub has no repository {owner}/{name}")))?
                 .clone();
-            for mut node in array(&connection["nodes"], "pull requests")?.iter().cloned() {
+            for mut node in array(&connection["nodes"], "pull requests")?
+                .iter()
+                .cloned()
+            {
                 page_to_end(
                     self,
                     token,
@@ -773,7 +814,9 @@ impl Github {
                 )?;
                 out.push(node);
             }
-            let Some(cursor) = next_cursor(&connection, &mut seen)? else { return Ok(out); };
+            let Some(cursor) = next_cursor(&connection, &mut seen)? else {
+                return Ok(out);
+            };
             after = json!(cursor);
         }
     }
@@ -784,7 +827,9 @@ impl Github {
         let mut next = Some(url);
         let mut seen = std::collections::BTreeSet::new();
         while let Some(url) = next {
-            if !seen.insert(url.clone()) { return Err(DriverError::Io("GitHub repeated a page URL".into())); }
+            if !seen.insert(url.clone()) {
+                return Err(DriverError::Io("GitHub repeated a page URL".into()));
+            }
             let (page, link) = self.get(token, &url)?;
             out.extend(array(&page, "REST list")?.iter().cloned());
             next = link;
@@ -807,9 +852,13 @@ impl Github {
         ));
         let mut seen = std::collections::BTreeSet::new();
         while let Some(url) = next {
-            if !seen.insert(url.clone()) { return Err(DriverError::Io("GitHub repeated a page URL".into())); }
+            if !seen.insert(url.clone()) {
+                return Err(DriverError::Io("GitHub repeated a page URL".into()));
+            }
             let (page, link) = self.get(token, &url)?;
-            let runs = array(&page["workflow_runs"], "workflow runs")?.iter().cloned();
+            let runs = array(&page["workflow_runs"], "workflow runs")?
+                .iter()
+                .cloned();
             let mut below = false;
             for run in runs {
                 if floor.is_some_and(|floor| item_time(&run, "created_at").is_ok_and(|c| c < floor))

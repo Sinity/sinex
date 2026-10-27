@@ -233,3 +233,13 @@ pub struct SystemInhibitor {
     pub pid: Option<i64>,
     pub uid: Option<i64>,
 }
+
+/// Seconds attributed to a domain on one civil day by a usage export. The
+/// source supplies no zone, so the civil day does not identify an instant.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
+#[event(type = "domain.usage", key = ["day", "domain"], replace = newer)]
+pub struct DomainUsage {
+    pub day: String,
+    pub domain: String,
+    pub seconds: u64,
+}

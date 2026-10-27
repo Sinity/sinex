@@ -128,6 +128,7 @@ pub const ALL: &[RegisteredEventType] = &[
     info::<machine::TerminalOutput>(),
     info::<machine::ScrollbackCaptured>(),
     info::<machine::ScrollbackWindow>(),
+    info::<desktop::DomainUsage>(),
     // Keyboard and pointer
     info::<input::KeyPressed>(),
     info::<input::KeyReleased>(),
