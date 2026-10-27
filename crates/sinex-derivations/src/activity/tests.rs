@@ -223,3 +223,49 @@ fn commands_and_absences_crossing_a_day_start_are_read_in_both_days() {
         assert!(query.admits(input));
     }
 }
+
+#[devkit::test]
+fn an_interval_ending_at_day_start_adds_no_activity_to_the_new_day() {
+    let previous = json!({"day": "2024-06-15"});
+    let next = json!({"day": "2024-06-16"});
+    for input in [command(64_000, 800), focus(64_000, Some(64_800), "kitty")] {
+        let keys = ActivitySpans.keys_for(
+            &KeyView {
+                event_type: input.event_type,
+                ts_orig: input.ts_orig.at,
+                payload: &input.payload,
+            },
+            &env(),
+        );
+        assert_eq!(keys, [previous.clone()]);
+        assert_eq!(
+            ActivitySpans
+                .compute(&previous, std::slice::from_ref(&input), &env())
+                .outputs
+                .len(),
+            1
+        );
+        assert!(
+            ActivitySpans
+                .compute(&next, &[input], &env())
+                .outputs
+                .is_empty()
+        );
+    }
+
+    for moment in [visit(64_800), command(64_800, 0)] {
+        let keys = ActivitySpans.keys_for(
+            &KeyView {
+                event_type: moment.event_type,
+                ts_orig: moment.ts_orig.at,
+                payload: &moment.payload,
+            },
+            &env(),
+        );
+        assert_eq!(keys, [next.clone()]);
+        let output = ActivitySpans.compute(&next, &[moment], &env());
+        assert_eq!(output.outputs.len(), 1);
+        let span: ActivitySpan = output.outputs[0].payload_as().unwrap();
+        assert_eq!((span.started_at, span.ended_at), (at(64_800), at(64_800)));
+    }
+}

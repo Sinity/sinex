@@ -1,8 +1,8 @@
 //! Document text (`document.text`): a per-event derivation over library copies
 //! that reads each stored document's bytes and writes its text, so documents
-//! are found by the same search as everything else. A PDF is read page by
-//! page with the local PDF reader (`pdftotext`, from Poppler) and gives one
-//! event per page; text, Markdown, HTML, Word (`.docx`) and OpenDocument
+//! are found by the same search as everything else. A PDF is read with the
+//! local PDF reader (`pdftotext`, from Poppler) and gives one event per page;
+//! text, Markdown, HTML, Word (`.docx`) and OpenDocument
 //! (`.odt`) files are read here, whole. The format comes from the bytes and,
 //! for text, the file's extension; a copy that is not a document, or whose
 //! bytes were not stored, gives nothing.

@@ -1,7 +1,5 @@
-//! Activity spans: the attention stream. The operator's own activity, as the
-//! fused kinds record it whichever sources saw it (commands with their
-//! duration, window focus with its end, page visits and copies as moments),
-//! is joined into spans while each piece starts no more than [`GAP_NS`] after
+//! Activity spans join recorded commands, window focus, page visits and
+//! copies while each piece starts no more than [`GAP_NS`] after
 //! the latest end so far; then the stretches presence calls `absent` are cut
 //! out. A span names every record it covers as a parent and counts them by
 //! type.
@@ -104,7 +102,7 @@ fn cut(spans: Vec<(i128, i128)>, absent: &[(i128, i128)]) -> Vec<(i128, i128)> {
 
 impl Keyed for ActivitySpans {
     const NAME: &'static str = "activity.spans";
-    const VERSION: u32 = 1;
+    const VERSION: u32 = 2;
     const INPUTS: &'static [&'static str] = &[
         CommandFused::EVENT_TYPE,
         FocusFused::EVENT_TYPE,
@@ -127,7 +125,12 @@ impl Keyed for ActivitySpans {
         .unwrap_or(start)
         .max(start);
         let mut out = Vec::new();
-        let (Ok(first), Ok(last)) = (env.time_settings.day(start), env.time_settings.day(end))
+        let last = if end > start {
+            Timestamp::from_unix_ns(end.unix_ns() - 1).expect("an instant within the interval")
+        } else {
+            end
+        };
+        let (Ok(first), Ok(last)) = (env.time_settings.day(start), env.time_settings.day(last))
         else {
             return out;
         };
@@ -176,7 +179,9 @@ impl Keyed for ActivitySpans {
         let mut absence_events: Vec<(i128, i128, &Event)> = Vec::new();
         for e in inputs {
             match piece(e) {
-                Some(Piece::Active { start, end }) if end >= from && start < until => {
+                Some(Piece::Active { start, end })
+                    if (end > from || start >= from) && start < until =>
+                {
                     active.push((start.max(from), end.min(until), e));
                 }
                 Some(Piece::Absent { start, end }) => {
