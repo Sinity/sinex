@@ -264,7 +264,8 @@ fn whole_json_supports_sealed_routes_and_completed_cursor_restart() {
                     assert_eq!(
                         read(
                             Format::Whisper,
-                            &material.record_bytes()
+                            &material
+                                .record_bytes()
                                 .record(material.records[0].0, material.records[0].1)
                                 .unwrap()
                         )
