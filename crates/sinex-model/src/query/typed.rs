@@ -120,7 +120,7 @@ pub fn complete(text: &str) -> Vec<Completion> {
     }
     if table.is_events() {
         for field in fields(None).iter().filter(|f| {
-            (f.event_type.is_empty() || kinds.as_ref().is_none_or(|ks| ks.contains(&f.event_type)))
+            f.event_type.is_empty() || kinds.as_ref().is_none_or(|ks| ks.contains(&f.event_type))
         }) {
             let name = format!("payload.{}", field.path.join("."));
             let field_type = format!("{:?}", field.ty).to_lowercase();

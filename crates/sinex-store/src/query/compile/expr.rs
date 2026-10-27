@@ -23,11 +23,7 @@ impl Compiler<'_> {
                     .push("::text[])");
                 Ok((
                     Self::typed_json(raw, *ty),
-                    if *ty == FieldType::Json {
-                        Kind::Json
-                    } else {
-                        Kind::Typed(*ty)
-                    },
+                    Kind::Typed(*ty),
                 ))
             }
             (Cols::Base { .. }, FieldRef::Group(name)) => Err(invalid(format!(
@@ -44,11 +40,7 @@ impl Compiler<'_> {
             )),
             (Cols::Named { r, .. }, FieldRef::TypedPayload { ty, .. }) => Ok((
                 SqlFragment::text(format!("{r}.{}", quote(&column_name(f)))),
-                if *ty == FieldType::Json {
-                    Kind::Json
-                } else {
-                    Kind::Typed(*ty)
-                },
+                Kind::Typed(*ty),
             )),
         }
     }
@@ -139,7 +131,7 @@ impl Compiler<'_> {
             Operand::Field(f) => self.field(cols, f),
             Operand::TimeFn(func, f) => {
                 let (t, kind) = self.field(cols, f)?;
-                let t = if kind == Kind::Json {
+                let t = if kind == Kind::Typed(FieldType::Json) {
                     Self::typed_json(t, FieldType::Time)
                 } else {
                     t
@@ -226,7 +218,7 @@ impl Compiler<'_> {
                 .push(") END)");
             return Ok(out);
         }
-        let l = if kind == Kind::Json {
+        let l = if kind == Kind::Typed(FieldType::Json) {
             Self::json_as(lhs, v)
         } else {
             lhs
@@ -370,7 +362,7 @@ impl Compiler<'_> {
             Expr::Exists(o) => {
                 let (l, kind) = self.operand(cols, o)?;
                 let mut f = SqlFragment::text("(");
-                if matches!(kind, Kind::Json | Kind::Typed(FieldType::Json)) {
+                if matches!(kind, Kind::Typed(FieldType::Json)) {
                     f.append(l.clone())
                         .push(" IS NOT NULL AND jsonb_typeof(")
                         .append(l)
@@ -384,7 +376,7 @@ impl Compiler<'_> {
             Expr::Words(w) => self.words(cols, w)?,
             Expr::Within { lhs, from, to } => {
                 let (l, kind) = self.operand(cols, lhs)?;
-                let l = if kind == Kind::Json {
+                let l = if kind == Kind::Typed(FieldType::Json) {
                     Self::typed_json(l, FieldType::Time)
                 } else {
                     l
@@ -404,12 +396,12 @@ impl Compiler<'_> {
             Expr::TimeDiff { a, b, op, seconds } => {
                 let (a, a_kind) = self.field(cols, a)?;
                 let (b, b_kind) = self.field(cols, b)?;
-                let a = if a_kind == Kind::Json {
+                let a = if a_kind == Kind::Typed(FieldType::Json) {
                     Self::typed_json(a, FieldType::Time)
                 } else {
                     a
                 };
-                let b = if b_kind == Kind::Json {
+                let b = if b_kind == Kind::Typed(FieldType::Json) {
                     Self::typed_json(b, FieldType::Time)
                 } else {
                     b
