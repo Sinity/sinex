@@ -1,11 +1,13 @@
-//! Reversible directory paths. Valid Unicode is kept as written; percent signs
-//! and bytes outside UTF-8 are escaped as percent followed by two hex digits.
+//! Unicode paths keep their spelling. Other paths carry their native bytes.
 use super::DriverError;
 use std::ffi::OsString;
 use std::os::unix::ffi::{OsStrExt, OsStringExt};
 use std::path::{Path, PathBuf};
 
 pub(super) fn display(path: &Path) -> String {
+    if let Some(text) = path.to_str() {
+        return text.to_owned();
+    }
     let mut bytes = path.as_os_str().as_bytes();
     let mut text = String::new();
     while !bytes.is_empty() {
@@ -32,22 +34,23 @@ pub(super) fn display(path: &Path) -> String {
     text
 }
 
-pub(super) fn native(text: &str) -> Result<PathBuf, DriverError> {
-    let mut bytes = Vec::new();
-    let mut rest = text.as_bytes();
-    while let Some((&byte, after)) = rest.split_first() {
-        if byte == b'%' {
-            let hex = after
-                .get(..2)
-                .and_then(|hex| std::str::from_utf8(hex).ok())
-                .and_then(|hex| u8::from_str_radix(hex, 16).ok())
-                .ok_or_else(|| DriverError::Cursor("directory path escape is invalid".into()))?;
-            bytes.push(hex);
-            rest = &after[2..];
-        } else {
-            bytes.push(byte);
-            rest = after;
+pub(super) fn add_native(member: &mut serde_json::Value, path: &Path) {
+    use base64::Engine;
+    if path.to_str().is_none() {
+        member["native_path_bytes"] = base64::engine::general_purpose::STANDARD
+            .encode(path.as_os_str().as_bytes()).into();
+    }
+}
+
+pub(super) fn native(member: &sinex_model::Member) -> Result<PathBuf, DriverError> {
+    use base64::Engine;
+    match member.details.get("native_path_bytes") {
+        None => Ok(PathBuf::from(&member.path)),
+        Some(value) => {
+            let bytes = value.as_str().and_then(|text| {
+                base64::engine::general_purpose::STANDARD.decode(text).ok()
+            }).ok_or_else(|| DriverError::Cursor("directory native path bytes are invalid".into()))?;
+            Ok(PathBuf::from(OsString::from_vec(bytes)))
         }
     }
-    Ok(PathBuf::from(OsString::from_vec(bytes)))
 }

@@ -32,7 +32,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 type EntryFacts = Result<(u64, i128), String>;
-type CaptureResult = Result<(u64, [u8; 32]), String>;
+type CaptureResult = Result<Option<(u64, [u8; 32])>, String>;
 type FileMemory = HashMap<PathBuf, Option<(u64, i128, [u8; 32])>>;
 
 mod format;
@@ -43,7 +43,7 @@ pub(crate) use format::validate as validate_records;
 pub struct DirSnapshot {
     pub root: PathBuf,
     pub host: String,
-    /// Which files to read, by reversible display path relative to the root.
+    /// Which files to read, by display path relative to the root.
     pub select: fn(&str) -> bool,
     /// Bytes per material; a walk that reaches it continues on the next poll.
     pub part_bytes: usize,
@@ -71,9 +71,16 @@ pub struct Cursor {
 pub struct DirState {
     files: FileMemory,
     /// The newest bundle and the file facts it records once admitted.
-    held: Option<(super::held::HeldMaterial, FileMemory)>,
+    held: Option<HeldSnapshot>,
+    failures: HashMap<PathBuf, String>,
     /// Paths a restart has already decided from a newer bundle.
     remembered: HashSet<PathBuf>,
+}
+
+struct HeldSnapshot {
+    material: super::held::HeldMaterial,
+    files: FileMemory,
+    failures: HashMap<PathBuf, String>,
 }
 
 /// The marker a removed file's member holds.
@@ -99,16 +106,17 @@ impl DirSnapshot {
             serde_json::from_value(cursor.clone())
                 .map_err(|e| DriverError::Cursor(e.to_string()))?
         };
-        if let Some((held, files)) = state.held.take() {
-            if held.admitted(cursor) {
-                state.files = files;
+        if let Some(held) = state.held.take() {
+            if held.material.admitted(cursor) {
+                state.files = held.files;
+                state.failures = held.failures;
             } else {
-                let acquired = held.acquired(cursor)?;
-                state.held = Some((held, files));
+                let acquired = held.material.acquired(cursor)?;
+                state.held = Some(held);
                 return Ok(acquired);
             }
         }
-        let mut facts = match file_facts(&self.root) {
+        let facts = match file_facts(&self.root) {
             Ok(f) => f,
             Err(e) => {
                 return Ok(Acquired {
@@ -125,17 +133,31 @@ impl DirSnapshot {
                 });
             }
         };
-        let now = Timestamp::now();
         // Sorted walk: a stable order makes materials and part cuts repeatable.
         let mut found = BTreeMap::new();
-        let walked = walk(&self.root, &self.root, self.select, &mut found);
+        walk(&self.root, &self.root, self.select, &mut found);
+        self.poll_entries(cursor, state, previous, facts, found)
+    }
+
+    fn poll_entries(
+        &self,
+        cursor: &Value,
+        state: &mut DirState,
+        previous: Cursor,
+        mut facts: ObservationFacts,
+        found: BTreeMap<PathBuf, EntryFacts>,
+    ) -> Result<Acquired, DriverError> {
+        let now = Timestamp::now();
+        let failed: Vec<_> = found.iter().filter(|(_, facts)| facts.is_err())
+            .map(|(path, _)| path.clone()).collect();
 
         let mut bundle = tempfile::tempfile().map_err(io)?;
         let mut length = 0usize;
         let mut next_files = state.files.clone();
+        let mut next_failures = state.failures.clone();
         let mut records = Vec::new();
         let mut members = Vec::new();
-        let mut complete = walked;
+        let mut complete = true;
         let mut seen = HashSet::new();
         let mut files_read = false;
         for (relative, entry) in &found {
@@ -144,17 +166,22 @@ impl DirSnapshot {
             let (size, mtime) = match entry {
                 Ok(facts) => facts,
                 Err(reason) => {
+                    if next_failures.get(relative) == Some(reason) {
+                        continue;
+                    }
+                    next_failures.insert(relative.clone(), reason.clone());
                     entry_failure(
                         &mut bundle,
                         &mut length,
                         &mut members,
                         &mut records,
-                        &display,
+                        relative,
                         reason,
                     )?;
                     continue;
                 }
             };
+            next_failures.remove(relative);
             if let Some(Some((s, m, _))) = state.files.get(relative)
                 && *s == *size
                 && *m == *mtime
@@ -171,18 +198,28 @@ impl DirSnapshot {
             // the next poll retries it. Bundle writes still fail the poll.
             let captured = capture(&self.root.join(relative), &mut bundle, *size, *mtime)?;
             let (actual_size, hash) = match captured {
-                Ok(captured) => captured,
+                Ok(Some(captured)) => captured,
+                Ok(None) => {
+                    bundle.set_len(length as u64).map_err(io)?;
+                    bundle.seek(std::io::SeekFrom::Start(length as u64)).map_err(io)?;
+                    continue;
+                },
                 Err(reason) => {
                     bundle.set_len(length as u64).map_err(io)?;
                     bundle
                         .seek(std::io::SeekFrom::Start(length as u64))
                         .map_err(io)?;
+                    if state.failures.get(relative) == Some(&reason) {
+                        next_failures.insert(relative.clone(), reason);
+                        continue;
+                    }
+                    next_failures.insert(relative.clone(), reason.clone());
                     entry_failure(
                         &mut bundle,
                         &mut length,
                         &mut members,
                         &mut records,
-                        &display,
+                        relative,
                         &reason,
                     )?;
                     continue;
@@ -210,6 +247,7 @@ impl DirSnapshot {
                 "mtime_ns": mtime.to_string(),
                 "hash": blake3::Hash::from(hash).to_hex().as_str(),
             }));
+            paths::add_native(members.last_mut().expect("member added"), relative);
             length =
                 offset
                     .checked_add(usize::try_from(actual_size).map_err(|_| {
@@ -225,7 +263,7 @@ impl DirSnapshot {
             let mut gone: Vec<PathBuf> = state
                 .files
                 .keys()
-                .filter(|p| !seen.contains(*p))
+                .filter(|p| !seen.contains(*p) && !failed.iter().any(|prefix| p.starts_with(prefix)))
                 .cloned()
                 .collect();
             gone.sort();
@@ -241,13 +279,17 @@ impl DirSnapshot {
                     "length": marker.len(),
                     "removed_at_ns": now.unix_ns().to_string(),
                 }));
+                paths::add_native(members.last_mut().expect("member added"), &relative);
                 records.push((offset, offset + marker.len()));
                 bundle.write_all(&marker).map_err(io)?;
                 length = offset + marker.len();
             }
         }
+        if complete {
+            next_failures.retain(|path, _| seen.contains(path) || failed.iter().any(|prefix| path.starts_with(prefix)));
+        }
         let mut scanned = Cursor {
-            last_complete_scan_ns: if complete {
+            last_complete_scan_ns: if complete && failed.is_empty() {
                 Some(now.unix_ns())
             } else {
                 previous.last_complete_scan_ns
@@ -256,6 +298,7 @@ impl DirSnapshot {
         };
         if records.is_empty() {
             state.files = next_files;
+            state.failures = next_failures;
             facts.changed = false;
             return Ok(Acquired {
                 input: self.input(),
@@ -271,7 +314,7 @@ impl DirSnapshot {
             "path": paths::display(&self.root),
             "host": self.host,
             "media_type": format::MEDIA_TYPE,
-            "scan_complete": complete,
+            "scan_complete": complete && failed.is_empty(),
             "members": members,
             "records": records,
             "read_at_ns": i64::try_from(now.unix_ns()).unwrap_or(i64::MAX),
@@ -346,7 +389,7 @@ impl DirSnapshot {
         };
         let held = super::held::HeldMaterial::hold(acquired, cursor)?;
         let acquired = held.acquired(cursor)?;
-        state.held = Some((held, next_files));
+        state.held = Some(HeldSnapshot { material: held, files: next_files, failures: next_failures });
         Ok(acquired)
     }
 }
@@ -392,9 +435,9 @@ fn capture(
         Err(error) => return Ok(Err(error.to_string())),
     };
     if !same_file(&before, &after) || length != size || metadata_mtime(&before) != mtime {
-        return Ok(Err("changed during capture".into()));
+        return Ok(Ok(None));
     }
-    Ok(Ok((length, *hash.finalize().as_bytes())))
+    Ok(Ok(Some((length, *hash.finalize().as_bytes()))))
 }
 
 fn entry_failure(
@@ -402,20 +445,22 @@ fn entry_failure(
     length: &mut usize,
     members: &mut Vec<Value>,
     records: &mut Vec<(usize, usize)>,
-    path: &str,
+    path: &Path,
     reason: &str,
 ) -> Result<(), DriverError> {
-    let marker = json!({"path": path, "read_error": reason}).to_string();
+    let display = paths::display(path);
+    let marker = json!({"path": display, "read_error": reason}).to_string();
     bundle.write_all(&[format::PREFIX]).map_err(io)?;
     let offset = *length + 1;
     bundle.write_all(marker.as_bytes()).map_err(io)?;
     *length = offset + marker.len();
     members.push(json!({
-        "path": path,
+        "path": display,
         "stream_offset": offset,
         "length": marker.len(),
         "read_error": reason,
     }));
+    paths::add_native(members.last_mut().expect("member added"), path);
     records.push((offset, *length));
     Ok(())
 }
@@ -441,7 +486,7 @@ fn walk(
     dir: &Path,
     select: fn(&str) -> bool,
     found: &mut BTreeMap<PathBuf, EntryFacts>,
-) -> bool {
+) {
     let entries = match std::fs::read_dir(dir) {
         Ok(entries) => entries,
         Err(error) => {
@@ -449,10 +494,9 @@ fn walk(
                 dir.strip_prefix(root).expect("within root").to_owned(),
                 Err(error.to_string()),
             );
-            return false;
+            return;
         }
     };
-    let mut complete = true;
     for entry in entries {
         let entry = match entry {
             Ok(entry) => entry,
@@ -461,7 +505,6 @@ fn walk(
                     dir.strip_prefix(root).expect("within root").to_owned(),
                     Err(error.to_string()),
                 );
-                complete = false;
                 continue;
             }
         };
@@ -471,12 +514,11 @@ fn walk(
             Ok(kind) => kind,
             Err(error) => {
                 found.insert(relative, Err(error.to_string()));
-                complete = false;
                 continue;
             }
         };
         if kind.is_dir() {
-            complete &= walk(root, &path, select, found);
+            walk(root, &path, select, found);
         } else if kind.is_file() && select(&paths::display(&relative)) {
             let facts = file_facts(&path)
                 .map(|facts| (facts.size.unwrap_or(0), facts.mtime_ns.unwrap_or(0)))
@@ -484,7 +526,6 @@ fn walk(
             found.insert(relative, facts);
         }
     }
-    complete
 }
 
 #[cfg(test)]
