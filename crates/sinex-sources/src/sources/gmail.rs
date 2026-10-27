@@ -52,13 +52,8 @@ impl Config {
         let bytes = std::fs::read(path).map_err(|_| "Gmail account configuration unavailable")?;
         let mut config: Self =
             serde_json::from_slice(&bytes).map_err(|_| "invalid Gmail account configuration")?;
-        if config.account.trim().is_empty()
-            || config.account == "me"
-        {
-            return Err(
-                "Gmail requires an account email"
-                    .into(),
-            );
+        if config.account.trim().is_empty() || config.account == "me" {
+            return Err("Gmail requires an account email".into());
         }
         let parent = path.parent().unwrap_or(Path::new("."));
         for file in [
@@ -145,8 +140,10 @@ fn parse_record(record: &Map<String, Value>) -> Result<Vec<GmailRecord>, RecordE
             let mut message = super::mail::parse_message(&bytes)?;
             let provider_message_id = required(response, "id")?.to_owned();
             message.account = Some(account.clone());
-            message.native_id = Some(serde_json::to_string(&(&account, &provider_message_id))
-                .expect("message coordinates serialize"));
+            message.native_id = Some(
+                serde_json::to_string(&(&account, &provider_message_id))
+                    .expect("message coordinates serialize"),
+            );
             let labels = strings(response, "labelIds")?;
             let names = record
                 .get("labels")
@@ -307,7 +304,10 @@ pub const FORMAT: sinex_source_core::binding::InputFormat =
         name: "gmail",
         discovery: sinex_source_core::discovery::DiscoverySpec {
             owner: sinex_source_core::discovery::Owner::System,
-            locations: &[sinex_source_core::discovery::Location { root: "input", path: "gmail" }],
+            locations: &[sinex_source_core::discovery::Location {
+                root: "input",
+                path: "gmail",
+            }],
             capabilities: &[],
             credentials: &["client_id_file", "client_secret_file", "refresh_token_file"],
             streams: &[],
@@ -352,7 +352,9 @@ fn discover(
         if input.availability != Availability::Reading {
             continue;
         }
-        let checked = input.input.as_deref()
+        let checked = input
+            .input
+            .as_deref()
             .ok_or_else(|| "missing Gmail account configuration".to_string())
             .and_then(Config::load)
             .and_then(|account| {

@@ -76,8 +76,12 @@ impl Parser for MailParser {
             return Ok((vec![], ()));
         }
         let mut message = parse_message(record)?;
-        message.account = context.manifest.details.get("account")
-            .and_then(serde_json::Value::as_str).map(str::to_owned);
+        message.account = context
+            .manifest
+            .details
+            .get("account")
+            .and_then(serde_json::Value::as_str)
+            .map(str::to_owned);
         Ok((vec![message], ()))
     }
 }

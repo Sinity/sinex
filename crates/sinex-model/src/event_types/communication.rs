@@ -73,7 +73,7 @@ pub struct MailMessage {
 
 impl crate::EventPayload for MailMessage {
     const EVENT_TYPE: &'static str = "mail.message";
-    const KEY: crate::KeyKind = crate::KeyKind::Fields(&["message_id"]);
+    const KEY: crate::KeyKind = crate::KeyKind::Fields(&["account", "message_id"]);
     const REPLACE: crate::ReplaceRule = crate::ReplaceRule::ReplaceWhenNewer;
 
     fn key_kind(&self) -> crate::KeyKind {

@@ -191,7 +191,10 @@ fn automatic_reconciliation_preserves_the_admitted_byte_position() {
     let acquired = reader.poll(&cursor).unwrap();
     assert!(acquired.observation.unavailable.is_none());
     let material = acquired.material.unwrap();
-    assert_eq!(material.previous_part, serde_json::from_value(cursor["material"].clone()).ok());
+    assert_eq!(
+        material.previous_part,
+        serde_json::from_value(cursor["material"].clone()).ok()
+    );
     assert_eq!(material.part_index, 5);
     let next = (material.cursor_at)(material.bytes.len()).unwrap();
     assert_eq!(next["api"]["mode"], "list");
@@ -254,15 +257,22 @@ fn an_empty_raw_message_still_keeps_its_provider_and_draft_label() {
 fn provider_ids_identify_messages_without_rfc_ids_and_isolate_accounts() {
     use sinex_model::EventPayload;
     let mut record = message_record();
-    record.get_mut("response").unwrap()["raw"] = json!(base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(b"Subject: No ID\r\n\r\nbody"));
+    record.get_mut("response").unwrap()["raw"] = json!(
+        base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(b"Subject: No ID\r\n\r\nbody")
+    );
     let parse = |record: &Map<String, Value>| {
-        let GmailRecord::Message(message) = parse_record(record).unwrap().remove(0) else { panic!() };
+        let GmailRecord::Message(message) = parse_record(record).unwrap().remove(0) else {
+            panic!()
+        };
         message
     };
     let first = parse(&record);
     assert!(first.message_id.is_none());
     assert_eq!(first.account.as_deref(), Some("owner@example.test"));
-    assert_eq!(first.key_kind(), sinex_model::KeyKind::Fields(&["account", "native_id"]));
+    assert_eq!(
+        first.key_kind(),
+        sinex_model::KeyKind::Fields(&["account", "native_id"])
+    );
     record.insert("account".into(), json!("other@example.test"));
     assert_ne!(first.native_id, parse(&record).native_id);
     record.insert("account".into(), json!("owner@example.test"));
@@ -275,22 +285,40 @@ fn discovery_waits_for_input_and_credentials_then_plans_the_account() {
     use sinex_source_core::discovery::{Availability, DiscoveryContext};
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("account.json");
-    let mut context = DiscoveryContext { host: "test-host".into(), ..Default::default() };
-    assert_eq!(discover(&FORMAT, &context)[0].availability, Availability::WaitingForInput);
+    let mut context = DiscoveryContext {
+        host: "test-host".into(),
+        ..Default::default()
+    };
+    assert_eq!(
+        discover(&FORMAT, &context)[0].availability,
+        Availability::WaitingForInput
+    );
     context.inputs.insert("gmail".into(), vec![path.clone()]);
     std::fs::write(&path, json!({"account":"owner@example.test", "credentials":{"client_id_file":"id","client_secret_file":"secret","refresh_token_file":"refresh"}}).to_string()).unwrap();
     for name in ["id", "secret", "refresh"] {
         let inputs = discover(&FORMAT, &context);
         assert_eq!(inputs.len(), 1);
         assert_eq!(inputs[0].availability, Availability::Unavailable);
-        assert!(inputs[0].reason.as_ref().unwrap().contains("awaiting credentials"));
+        assert!(
+            inputs[0]
+                .reason
+                .as_ref()
+                .unwrap()
+                .contains("awaiting credentials")
+        );
         assert!(inputs[0].bindings.is_empty());
         std::fs::write(dir.path().join(name), "synthetic").unwrap();
     }
     let inputs = discover(&FORMAT, &context);
     assert_eq!(inputs[0].availability, Availability::Reading);
     assert_eq!(inputs[0].bindings.len(), 1);
-    assert_eq!(inputs[0].bindings[0].settings.option("account"), Some("owner@example.test"));
+    assert_eq!(
+        inputs[0].bindings[0].settings.option("account"),
+        Some("owner@example.test")
+    );
     std::fs::remove_file(dir.path().join("refresh")).unwrap();
-    assert_eq!(discover(&FORMAT, &context)[0].availability, Availability::Unavailable);
+    assert_eq!(
+        discover(&FORMAT, &context)[0].availability,
+        Availability::Unavailable
+    );
 }

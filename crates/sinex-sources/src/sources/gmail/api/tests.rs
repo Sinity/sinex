@@ -198,23 +198,40 @@ fn history_baseline_stays_fixed_through_multiple_empty_pages() {
 #[test]
 fn gap_is_stored_before_restart_automatically_lists_from_a_new_baseline() {
     let fake = Fake::new();
-    fake.add("/history", &[("maxResults", "500"), ("startHistoryId", "184467440737095516169999")], Err(Error::Status(404)));
+    fake.add(
+        "/history",
+        &[
+            ("maxResults", "500"),
+            ("startHistoryId", "184467440737095516169999"),
+        ],
+        Err(Error::Status(404)),
+    );
     let api = gmail(fake.clone());
     let mut state = initial();
     state.mode = Mode::History;
     state.page_token = Some("expired-page".into());
     // A failed later page must start a new listing, never reuse its token.
-    fake.steps.lock().unwrap()[0].query.push(("pageToken".into(), "expired-page".into()));
+    fake.steps.lock().unwrap()[0]
+        .query
+        .push(("pageToken".into(), "expired-page".into()));
     let gap = api.fetch(&value(state)).unwrap();
     assert_eq!(gap.records[0]["kind"], "gap");
     assert_eq!(gap.next["mode"], "baseline");
-    fake.add("/profile", &[], Ok(json!({"emailAddress":"owner@example.test", "historyId":"new-baseline"})));
+    fake.add(
+        "/profile",
+        &[],
+        Ok(json!({"emailAddress":"owner@example.test", "historyId":"new-baseline"})),
+    );
     let restarted = gmail(fake.clone());
     let baseline = restarted.fetch(&gap.next).unwrap();
     assert_eq!(baseline.records[0]["kind"], "profile");
     assert_eq!(baseline.next["mode"], "list");
     assert!(baseline.next["page_token"].is_null());
-    fake.add("/messages", &[("maxResults", "500"), ("includeSpamTrash", "true")], Ok(json!({})));
+    fake.add(
+        "/messages",
+        &[("maxResults", "500"), ("includeSpamTrash", "true")],
+        Ok(json!({})),
+    );
     labels(&fake);
     let listed = restarted.fetch(&baseline.next).unwrap();
     assert_eq!(listed.next["mode"], "history");

@@ -5,14 +5,12 @@ fn gmail_labels_and_rfc_identity_survive_imap_and_mbox_overlap() {
     let mut gmail = mail("communication.gmail", "rfc@example.test", H + 5.0);
     gmail.payload["labels"] = json!(["Sent", "Draft", "Work / Research"]);
     gmail.payload["thread_id"] = json!("gmail-thread");
-    let output = fuse(
-        &MAIL,
-        &[
-            mail("communication.mbox", "rfc@example.test", H + 5.0),
-            mail("communication.imap", "rfc@example.test", H + 5.0),
-            gmail,
-        ],
-    );
+    let mut mbox = mail("communication.mbox", "rfc@example.test", H + 5.0);
+    let mut imap = mail("communication.imap", "rfc@example.test", H + 5.0);
+    for event in [&mut gmail, &mut mbox, &mut imap] {
+        event.payload["account"] = json!("owner@example.test");
+    }
+    let output = fuse(&MAIL, &[mbox, imap, gmail]);
     assert_eq!(output.len(), 1);
     assert_eq!(output[0]["message_id"], "rfc@example.test");
     assert_eq!(output[0]["thread_id"], "gmail-thread");
