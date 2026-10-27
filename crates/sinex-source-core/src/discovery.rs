@@ -33,6 +33,7 @@ pub struct DiscoverySpec {
     pub capabilities: &'static [&'static str],
     pub credentials: &'static [&'static str],
     pub request_only: bool,
+    pub requests: &'static [&'static str],
     pub streams: &'static [CaptureStream],
 }
 

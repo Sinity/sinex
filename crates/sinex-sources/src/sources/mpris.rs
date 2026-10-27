@@ -215,6 +215,7 @@ pub const FORMAT: sinex_source_core::binding::InputFormat =
                 options: "{}",
                 capabilities: &[],
             }],
+            requests: &[],
             request_only: false,
         },
         discover: crate::discovery::discover_format,

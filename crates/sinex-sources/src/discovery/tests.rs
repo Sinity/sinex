@@ -329,3 +329,44 @@ fn missing_imap_credentials_are_unavailable_without_disabling_other_inputs() {
                 && input.availability == Availability::RequestOnly)
     );
 }
+
+#[devkit::test]
+fn invalid_capture_settings_do_not_disable_other_streams() {
+    let root = tempfile::tempdir().unwrap();
+    let mut context = context(root.path());
+    let runtime = root.path().join("run");
+    std::fs::create_dir(&runtime).unwrap();
+    std::fs::write(runtime.join("wayland-test"), b"").unwrap();
+    context.runtime_dir = Some(runtime);
+    context
+        .environment
+        .insert("WAYLAND_DISPLAY".into(), "wayland-test".into());
+    let bin = root.path().join("bin");
+    std::fs::create_dir(&bin).unwrap();
+    let grim = bin.join("grim");
+    std::fs::write(&grim, b"#!/bin/sh\n").unwrap();
+    std::fs::set_permissions(grim, std::fs::Permissions::from_mode(0o700)).unwrap();
+    context
+        .environment
+        .insert("PATH".into(), bin.display().to_string());
+    context.sources.insert(
+        "session.media".into(),
+        SourceConfig {
+            options: json!({"kind":"invalid"}),
+            ..Default::default()
+        },
+    );
+    let inputs = discover(&context).unwrap();
+    assert!(
+        inputs.iter().any(|input| input.source == "session.media"
+            && input.availability == Availability::Unavailable)
+    );
+    assert!(
+        captures(&context, Owner::Session)
+            .unwrap()
+            .iter()
+            .any(|(_, binding)| binding.source == "session.integrations")
+    );
+    assert!(inputs.iter().any(|input| input.source == "library.request"
+        && input.availability == Availability::RequestOnly));
+}

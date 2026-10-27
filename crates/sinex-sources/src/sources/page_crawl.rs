@@ -385,6 +385,7 @@ pub const FORMAT: sinex_source_core::binding::InputFormat =
             capabilities: &[],
             credentials: &[],
             streams: &[],
+            requests: &[],
             request_only: true,
         },
         discover: crate::discovery::discover_format,

@@ -452,6 +452,7 @@ pub const FORMAT: sinex_source_core::binding::InputFormat =
             capabilities: &[],
             credentials: &["token_file or password_file"],
             streams: &[],
+            requests: &[],
             request_only: false,
         },
         discover,

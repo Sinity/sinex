@@ -6,7 +6,7 @@ self:
 { config, lib, pkgs, ... }:
 let
   inherit (lib) mkOption mkEnableOption mkIf mkMerge types optional optionals optionalString
-    concatStringsSep concatMapStringsSep mapAttrs mapAttrsToList filterAttrs escapeShellArg;
+    concatStringsSep concatMapStringsSep mapAttrs mapAttrsToList escapeShellArg;
 
   cfg = config.services.sinex;
   node = config.services.sinex.captureNode;
