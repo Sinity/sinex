@@ -299,12 +299,37 @@ fn directory_imports_plan_one_path_identity_for_each_matching_file() {
 #[devkit::test]
 fn named_import_roots_are_validated_and_registered_for_discovery() {
     use sinex_source_core::discovery::DiscoveryContext;
-    let temp=tempfile::tempdir().unwrap();
-    std::fs::write(temp.path().join("example.json"),br#"{"segments":[{"text":"same"}]}"#).unwrap();
-    let mut context=DiscoveryContext {host:"example".into(),..Default::default()};
-    context.inputs.insert("transcripts".into(),vec![temp.path().into()]);
-    context.inputs.insert("ocr".into(),vec![temp.path().into()]);
-    let found=crate::discovery::discover(&context).unwrap();
-    assert_eq!(found.iter().filter(|i|i.source==WHISPER.name).flat_map(|i|&i.bindings).count(),1);
-    assert_eq!(found.iter().filter(|i|i.source==super::super::ocr_import::JSON.name).flat_map(|i|&i.bindings).count(),1);
+    let temp = tempfile::tempdir().unwrap();
+    std::fs::write(
+        temp.path().join("example.json"),
+        br#"{"segments":[{"text":"same"}]}"#,
+    )
+    .unwrap();
+    let mut context = DiscoveryContext {
+        host: "example".into(),
+        ..Default::default()
+    };
+    context
+        .inputs
+        .insert("transcripts".into(), vec![temp.path().into()]);
+    context
+        .inputs
+        .insert("ocr".into(), vec![temp.path().into()]);
+    let found = crate::discovery::discover(&context).unwrap();
+    assert_eq!(
+        found
+            .iter()
+            .filter(|i| i.source == WHISPER.name)
+            .flat_map(|i| &i.bindings)
+            .count(),
+        1
+    );
+    assert_eq!(
+        found
+            .iter()
+            .filter(|i| i.source == super::super::ocr_import::JSON.name)
+            .flat_map(|i| &i.bindings)
+            .count(),
+        1
+    );
 }

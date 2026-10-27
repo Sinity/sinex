@@ -229,7 +229,6 @@ fn isolated(text: &str, length: usize, accept: impl Fn(u8) -> bool) -> Option<&s
     None
 }
 
-
 #[cfg(test)]
 #[path = "library/filename_hints_tests.rs"]
 mod filename_hints_tests;

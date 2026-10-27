@@ -38,7 +38,9 @@ impl Parser for DocumentParser {
             .member
             .ok_or_else(|| RecordError::new("document needs its directory member"))?;
         if let Some(reason) = member.details.get("read_error").and_then(Value::as_str) {
-            return Err(RecordError::new(format!("document could not be read: {reason}")));
+            return Err(RecordError::new(format!(
+                "document could not be read: {reason}"
+            )));
         }
         let time = |key: &str| -> Result<Option<Timestamp>, RecordError> {
             member

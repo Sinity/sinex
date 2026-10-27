@@ -74,11 +74,9 @@ pub fn validate(context: &DiscoveryContext) -> Result<(), String> {
     for name in context.inputs.keys() {
         if !known_format(name, None)
             && !sources::formats().iter().any(|format| {
-                format
-                    .discovery
-                    .locations
-                    .iter()
-                    .any(|location| matches!(location.root, "capture" | "input") && location.path == name)
+                format.discovery.locations.iter().any(|location| {
+                    matches!(location.root, "capture" | "input") && location.path == name
+                })
             })
         {
             return Err(format!("input format {name}: no such format"));

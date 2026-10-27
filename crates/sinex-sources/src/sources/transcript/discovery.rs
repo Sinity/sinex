@@ -85,8 +85,14 @@ fn matches(parser: &str, path: &Path) -> Result<bool, String> {
                 Err(_) => return Ok(matches!(parser, "transcript-json" | "ocr-json")),
             };
             match shape {
-                Shape::Array(rows) => { let _ = rows; parser == "transcript-json" },
-                Shape::Object(object) => { let _ = object; matches!(parser, "whisper-json" | "ocr-json") },
+                Shape::Array(rows) => {
+                    let _ = rows;
+                    parser == "transcript-json"
+                }
+                Shape::Object(object) => {
+                    let _ = object;
+                    matches!(parser, "whisper-json" | "ocr-json")
+                }
             }
         }
         _ => false,

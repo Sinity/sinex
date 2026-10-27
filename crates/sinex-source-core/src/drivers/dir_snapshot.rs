@@ -106,7 +106,12 @@ impl DirSnapshot {
         self.poll_excluding(cursor, state, &[])
     }
 
-    pub fn poll_excluding(&self, cursor: &Value, state: &mut DirState, excluded: &[PathBuf]) -> Result<Acquired, DriverError> {
+    pub fn poll_excluding(
+        &self,
+        cursor: &Value,
+        state: &mut DirState,
+        excluded: &[PathBuf],
+    ) -> Result<Acquired, DriverError> {
         let previous: Cursor = if cursor.is_null() {
             Cursor::default()
         } else {
@@ -144,7 +149,14 @@ impl DirSnapshot {
         // Sorted walk: a stable order makes materials and part cuts repeatable.
         let mut found = BTreeMap::new();
         let boundary = std::fs::canonicalize(&self.root).unwrap_or_else(|_| self.root.clone());
-        let excluded: Vec<_> = excluded.iter().filter_map(|path| path.strip_prefix(&boundary).ok().map(|relative| self.root.join(relative))).collect();
+        let excluded: Vec<_> = excluded
+            .iter()
+            .filter_map(|path| {
+                path.strip_prefix(&boundary)
+                    .ok()
+                    .map(|relative| self.root.join(relative))
+            })
+            .collect();
         walk(&self.root, &self.root, self.select, &excluded, &mut found);
         self.poll_entries(cursor, state, previous, facts, found)
     }
@@ -545,7 +557,9 @@ fn walk(
             }
         };
         let path = entry.path();
-        if excluded.iter().any(|root| path.starts_with(root)) { continue; }
+        if excluded.iter().any(|root| path.starts_with(root)) {
+            continue;
+        }
         let relative = path.strip_prefix(root).expect("within root").to_owned();
         let kind = match entry.file_type() {
             Ok(kind) => kind,
