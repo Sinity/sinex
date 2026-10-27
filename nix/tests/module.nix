@@ -13,12 +13,13 @@ let
         enable = true;
         package = pkgs.hello;
         nats.daemonPasswordFile = "/run/fixture-daemon";
-        session = { user = "alice"; passwordFile = "/run/fixture-session"; stateDir = "/realm/state/sinex-session/alice"; };
+        session = { user = "alice"; passwordFile = "/run/fixture-session"; };
       };
     }) extra ];
   }).config;
   config = evaluate {
     services.sinex = {
+      session.stateDir = "/realm/state/sinex-session/alice";
       exclude."desktop.clipboard".reason = "Synthetic operator exclusion";
       sources."terminal.zsh-history".paths = [ "/host-declared/history" ];
       discovery = {
@@ -38,6 +39,7 @@ let
     (plan.sources."terminal.zsh-history".paths == [ "/host-declared/history" ])
     (plan.discovery.inputs.spotify == [ "/exports/current" "/exports/earlier" ])
     (plan.discovery.home == "/home/alice")
+    ((evaluate { }).services.sinex.session.stateDir == "/home/alice/.local/state/sinex-session")
     (plan.discovery.environment.ZSH_HISTFILE == "/host-declared/history")
     (config.systemd.user.services.sinex-session.serviceConfig.UMask == "0077")
     (lib.hasInfix "--state /realm/state/sinex-session/alice" config.systemd.user.services.sinex-session.script)
