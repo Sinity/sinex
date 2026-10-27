@@ -117,6 +117,20 @@ impl RecordContext<'static> {
 }
 
 impl RecordContext<'_> {
+    /// A moved file is a new reading even when its bytes are unchanged.
+    /// Bundle offsets are excluded: packing files must not change a reading.
+    pub fn hash_with_path(&self, raw: &[u8]) -> [u8; 32] {
+        let bytes_hash = blake3::hash(raw);
+        let Some(path) = self.path() else {
+            return *bytes_hash.as_bytes();
+        };
+        let mut hash = blake3::Hasher::new();
+        hash.update(b"record path\0");
+        hash.update(bytes_hash.as_bytes());
+        hash.update(path.as_bytes());
+        *hash.finalize().as_bytes()
+    }
+
     /// The member's path, or the material's own `path`.
     pub fn path(&self) -> Option<&str> {
         self.member
@@ -220,9 +234,8 @@ impl<'a, P: Parser> Drainer<'a, P> {
         match parse_one(self.parser, raw, &self.carry, &context) {
             Ok((payloads, next)) => {
                 self.carry = next;
-                // A record shape's own hash that panics falls back to the
-                // bytes' hash rather than stopping the run.
-                let hash = record_hash::<P>(raw);
+                // A hash panic falls back to bytes rather than stopping the run.
+                let hash = record_hash(self.parser, raw, &context);
                 let order = (input.reading_order)(start);
                 let mut events = Vec::with_capacity(payloads.len());
                 let mut failure = None;
@@ -273,10 +286,15 @@ impl<'a, P: Parser> Drainer<'a, P> {
     }
 }
 
-/// Shared with acquisition exclusion matching, including records emitting no events.
-pub(crate) fn record_hash<P: Parser>(raw: &[u8]) -> [u8; 32] {
-    std::panic::catch_unwind(|| <P::Record<'_> as RecordShape>::hash(raw, P::VOLATILE))
-        .unwrap_or_else(|_| *blake3::hash(raw).as_bytes())
+pub(crate) fn record_hash<P: Parser>(
+    parser: &P,
+    raw: &[u8],
+    context: &RecordContext<'_>,
+) -> [u8; 32] {
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        parser.record_hash(raw, context)
+    }))
+    .unwrap_or_else(|_| *blake3::hash(raw).as_bytes())
 }
 
 fn empty_chunk() -> DrainOutput {

@@ -25,6 +25,8 @@ these names and no others.
 - **held material**: the newest material a reader keeps in memory until its final cursor is admitted, so a failed admission retries the same bytes.
 - **framing**: splitting a material's bytes into records (lines, delimiters, archive members); a **framer** is a source's framing, used alike by its driver, replay and excision.
 - **record**: one unit a parser reads from a material (a line, a row, a file, a message).
+- **record hash**: the record bytes, excluding declared volatile fields, hashed together with any source-declared context that changes its reading (a file path).
+- **vault**: one notes root; its capturing host and root path scope note identities. Its folder name is for display.
 - **record location**: `(material, anchor)`, where a record starts; the **anchor** is its byte offset. The query language and references call it the offset.
 - **output index**: which of a record's events an event is, when one record yields several.
 - **record failure**: a record the parser could not read, stored with its bytes.

@@ -6,7 +6,7 @@
         "type": "note.document",
         "ts": "2023-11-14T22:13:20Z",
         "time": "FileMtime",
-        "key": "b7aeae078d307698b110208dbdb86be1e2920e245b9f32e47e7856ba358e90bb",
+        "key": null,
         "state": "Present",
         "payload": {
           "vault": "MyVault",
@@ -36,7 +36,8 @@
                 "#planning"
               ]
             }
-          }
+          },
+          "vault_path": "/home/me/vaults/MyVault"
         }
       }
     ]

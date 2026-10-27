@@ -86,16 +86,23 @@ pub struct BookmarkSaved {
 /// missing from a completed scan is removed at the source.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct NoteDocument {
+    /// Display name; equal folder names do not identify a vault.
     pub vault: String,
+    /// The host recorded for this vault root.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub host: Option<String>,
+    /// The complete root path recorded with the captured file.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub vault_path: Option<String>,
     /// Relative to the vault root.
     pub path: String,
-    /// The file's text; `None` for a removed file.
+    /// The last captured text; `None` when unavailable.
     pub text: Option<String>,
     pub size: u64,
     pub modified_at: Option<Timestamp>,
-    /// When a completed scan first found the file gone.
+    /// The source's removal time, when supplied separately.
     pub removed_at: Option<Timestamp>,
-    /// Absent for a removed file and for a note without one.
+    /// Absent when not supplied or unavailable.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub title: Option<String>,
     /// The ID the front matter declares, exactly as written (an explicitly
@@ -115,16 +122,21 @@ pub struct NoteDocument {
 
 impl crate::EventPayload for NoteDocument {
     const EVENT_TYPE: &'static str = "note.document";
-    const KEY: crate::KeyKind = crate::KeyKind::Fields(&["vault", "path"]);
+    const KEY: crate::KeyKind = crate::KeyKind::Fields(&["host", "vault_path", "path"]);
     const REPLACE: crate::ReplaceRule = crate::ReplaceRule::ReplaceWhenNewer;
 
     fn key_kind(&self) -> crate::KeyKind {
+        if self.host.as_deref().is_none_or(str::is_empty)
+            || self.vault_path.as_deref().is_none_or(str::is_empty)
+        {
+            return crate::KeyKind::Location;
+        }
         if self
             .note_id
             .as_deref()
             .is_some_and(|id| !id.trim().is_empty())
         {
-            crate::KeyKind::Fields(&["vault", "note_id"])
+            crate::KeyKind::Fields(&["host", "vault_path", "note_id"])
         } else {
             Self::KEY
         }

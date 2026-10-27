@@ -224,19 +224,22 @@ async fn sealed_history_needs_no_private_key_and_keeps_the_binding_sealed(
 struct IgnoreFirst;
 impl sinex_sources::Parser for IgnoreFirst {
     type Record<'a> = &'a [u8];
-    type Carry = notes::NoteIds;
+    type Carry = ();
     type Payload = sinex_model::event_types::media::NoteDocument;
+    fn record_hash(&self, raw: &[u8], context: &sinex_sources::RecordContext<'_>) -> [u8; 32] {
+        sinex_sources::Parser::record_hash(&notes::NotesParser, raw, context)
+    }
     fn parse(
         &self,
         record: &&[u8],
-        carry: &notes::NoteIds,
+        carry: &(),
         context: &sinex_sources::drain::RecordContext<'_>,
-    ) -> Result<(Vec<Self::Payload>, notes::NoteIds), sinex_sources::RecordError> {
+    ) -> Result<(Vec<Self::Payload>, ()), sinex_sources::RecordError> {
         if context
             .member
             .is_some_and(|m| m.path == "a.md" && !m.details.contains_key("removed_at_ns"))
         {
-            return Ok((Vec::new(), carry.clone()));
+            return Ok((Vec::new(), ()));
         }
         sinex_sources::Parser::parse(&notes::NotesParser, record, carry, context)
     }

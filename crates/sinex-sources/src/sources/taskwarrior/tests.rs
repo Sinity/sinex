@@ -55,7 +55,13 @@ fn the_working_set_number_and_urgency_do_not_change_a_task() {
     let one = json!({"id": 1, "urgency": 9.1, "uuid": "u", "status": "pending"}).to_string();
     let two = json!({"id": 4, "urgency": 2.0, "uuid": "u", "status": "pending"}).to_string();
     let other = json!({"id": 1, "urgency": 9.1, "uuid": "u", "status": "completed"}).to_string();
-    let hash = |raw: &str| crate::drain::record_hash::<TaskwarriorParser>(raw.as_bytes());
+    let hash = |raw: &str| {
+        crate::drain::record_hash(
+            &TaskwarriorParser,
+            raw.as_bytes(),
+            &crate::RecordContext::none(),
+        )
+    };
     assert_eq!(hash(&one), hash(&two));
     assert_ne!(hash(&one), hash(&other));
 }

@@ -129,7 +129,11 @@ does not know which driver a binding uses.
 Notes keep the complete text and the file time, and add a title, a native
 note ID, sorted tags and wikilinks. A note with an ID is identified by its
 vault and ID, so a rename is a newer reading of the same note; one without
-by its vault and path. The YAML front matter
+by its vault and path. The capturing host and vault root scope this identity;
+the folder name is for display. Notes and Maildir records include their path
+in the record hash so a move updates the live reading even when bytes stay
+equal. Directory removals cite stored locations and preserve sealed history
+without opening parser carry. The YAML front matter
 is parsed into JSON values or reported as absent, invalid or unsupported, with
 only an error kind and position; the text is kept either way.
 

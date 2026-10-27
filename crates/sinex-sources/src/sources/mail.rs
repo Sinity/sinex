@@ -52,7 +52,7 @@ pub const MAILDIR: SourceSpec = SourceSpec {
     purpose: "mail recall and correspondence history",
     class: Class::Open,
     parser: "rfc5322-mail",
-    parser_version: 4,
+    parser_version: 5,
     event_types: &["mail.message"],
     framer: crate::Framer::export(
         crate::drivers::export_archive::frame_whole,
@@ -263,6 +263,10 @@ impl Parser for MaildirParser {
     type Record<'a> = &'a [u8];
     type Carry = ();
     type Payload = MailMessage;
+
+    fn record_hash(&self, raw: &[u8], context: &RecordContext<'_>) -> [u8; 32] {
+        context.hash_with_path(raw)
+    }
 
     fn parse(
         &self,

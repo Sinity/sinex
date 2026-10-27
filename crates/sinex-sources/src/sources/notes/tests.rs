@@ -1,7 +1,7 @@
 use super::*;
-use crate::drivers::dir_snapshot::{DirState, removed_marker};
+use crate::drivers::dir_snapshot::DirState;
 use crate::{DrainInput, Limits, drain};
-use sinex_model::{MaterialId, ReadingOrder, RecordOutcome};
+use sinex_model::{ReadingOrder, RecordOutcome};
 
 #[devkit::test]
 fn notes_and_their_removal() {
@@ -20,7 +20,7 @@ fn notes_and_their_removal() {
             DrainInput {
                 source: "t",
                 class: Class::Open,
-                material: MaterialId(uuid::Uuid::nil()),
+                material: m.id,
                 bytes: m.record_bytes(),
                 records: &m.records,
                 carry: Value::Null,
@@ -32,8 +32,11 @@ fn notes_and_their_removal() {
         .unwrap();
         out.into_iter()
             .flat_map(|c| c.outcomes)
-            .map(|o| match o {
-                RecordOutcome::Events { events, .. } => events[0].payload.clone(),
+            .flat_map(|o| match o {
+                RecordOutcome::Events { events, .. } => events
+                    .into_iter()
+                    .map(|event| event.payload)
+                    .collect::<Vec<_>>(),
                 RecordOutcome::Failure { reason, .. } => panic!("{reason}"),
             })
             .collect::<Vec<_>>()
@@ -47,15 +50,26 @@ fn notes_and_their_removal() {
     assert_eq!(first[0]["text"], "# A\n");
     assert!(first[0]["modified_at"].is_string());
     std::fs::remove_file(root.join("a.md")).unwrap();
-    let second = run(&d.poll(&cursor, &mut state).unwrap());
-    assert_eq!(second[0]["path"], "a.md");
-    assert!(second[0]["removed_at"].is_string());
-    assert!(second[0]["text"].is_null());
-    assert!(!removed_marker("a.md").is_empty());
+    let removed = d.poll(&cursor, &mut state).unwrap();
+    assert!(
+        run(&removed).is_empty(),
+        "removal markers carry no invented note text"
+    );
+    assert_eq!(
+        removed.material.unwrap().removed,
+        vec![sinex_model::RecordLocation {
+            material: m.id,
+            anchor: m.records[0].0 as u64,
+        }]
+    );
 }
 
 fn note(text: &str, path: &str) -> NoteDocument {
-    let manifest = sinex_model::Manifest::from_json(serde_json::json!({"path":"/vault/MyVault"}));
+    note_in_vault(text, path, "/vault/MyVault", "synthetic")
+}
+
+fn note_in_vault(text: &str, path: &str, root: &str, host: &str) -> NoteDocument {
+    let manifest = sinex_model::Manifest::from_json(serde_json::json!({"path":root,"host":host}));
     let member =
         serde_json::from_value::<sinex_model::Member>(serde_json::json!({"path":path})).unwrap();
     let context = RecordContext {
@@ -63,7 +77,7 @@ fn note(text: &str, path: &str) -> NoteDocument {
         member: Some(&member),
     };
     NotesParser
-        .parse(&text.as_bytes(), &NoteIds::default(), &context)
+        .parse(&text.as_bytes(), &(), &context)
         .unwrap()
         .0
         .remove(0)
@@ -235,12 +249,14 @@ fn unsupported_yaml_values_and_expansion_keep_text_with_structural_diagnostics()
 }
 
 #[devkit::test]
-fn payloads_without_metadata_and_removed_notes_do_not_claim_metadata() {
-    let old = serde_json::json!({"vault":"v","path":"a.md","text":"","size":0,"modified_at":null,"removed_at":null});
-    let payload: NoteDocument = serde_json::from_value(old.clone()).unwrap();
+fn payloads_without_metadata_and_removed_markers_keep_unknown_information() {
+    use sinex_model::EventPayload;
+    let partial = serde_json::json!({"vault":"v","path":"a.md","text":"","size":0,"modified_at":null,"removed_at":null});
+    let payload: NoteDocument = serde_json::from_value(partial.clone()).unwrap();
     assert_eq!(payload.front_matter, None);
     assert_eq!(payload.tags, None);
-    assert_eq!(serde_json::to_value(payload).unwrap(), old);
+    assert_eq!(payload.key_kind(), sinex_model::KeyKind::Location);
+    assert_eq!(serde_json::to_value(payload).unwrap(), partial);
     let manifest = sinex_model::Manifest::from_json(serde_json::json!({"path":"/vault/v"}));
     let member = serde_json::from_value::<sinex_model::Member>(
         serde_json::json!({"path":"a.md","removed_at_ns":"1700000000000000000"}),
@@ -250,15 +266,8 @@ fn payloads_without_metadata_and_removed_notes_do_not_claim_metadata() {
         manifest: &manifest,
         member: Some(&member),
     };
-    let payload = NotesParser
-        .parse(&b"".as_slice(), &NoteIds::default(), &context)
-        .unwrap()
-        .0
-        .remove(0);
-    assert_eq!(payload.text, None);
-    assert_eq!(payload.front_matter, None);
-    assert_eq!(payload.title, None);
-    assert_eq!(payload.tags, None);
+    let (payloads, ()) = NotesParser.parse(&b"".as_slice(), &(), &context).unwrap();
+    assert!(payloads.is_empty());
 }
 
 #[devkit::test]
@@ -271,24 +280,6 @@ fn front_matter_of_any_size_is_parsed() {
     ));
 }
 
-/// Read `path` (with `text`, or as removed when `text` is `None`) under the
-/// carried IDs, as a scan does.
-fn step(ids: &NoteIds, path: &str, text: Option<&str>) -> (Vec<NoteDocument>, NoteIds) {
-    let manifest = sinex_model::Manifest::from_json(serde_json::json!({"path":"/vault/v"}));
-    let member = match text {
-        Some(_) => serde_json::json!({"path": path}),
-        None => serde_json::json!({"path": path, "removed_at_ns": "1700000000000000000"}),
-    };
-    let member = serde_json::from_value::<sinex_model::Member>(member).unwrap();
-    let context = RecordContext {
-        manifest: &manifest,
-        member: Some(&member),
-    };
-    NotesParser
-        .parse(&text.unwrap_or("").as_bytes(), ids, &context)
-        .unwrap()
-}
-
 fn key(note: &NoteDocument) -> sinex_model::EquivalenceKey {
     use sinex_model::EventPayload;
     match note.key_kind() {
@@ -297,40 +288,40 @@ fn key(note: &NoteDocument) -> sinex_model::EquivalenceKey {
             fields,
             &serde_json::to_value(note).unwrap(),
         ),
-        sinex_model::KeyKind::Location => panic!("notes are keyed"),
+        sinex_model::KeyKind::Location => panic!("this fixture has a known vault"),
     }
 }
 
 #[devkit::test]
 fn a_renamed_note_keeps_one_identity() {
     let text = "---\nid: projects.alpha\n---\nAlpha\n";
-    let (first, ids) = step(&NoteIds::default(), "alpha.md", Some(text));
-    // The scan reads the moved file, then finds the old path gone.
-    let (moved, ids) = step(&ids, "projects/alpha.md", Some(text));
-    let (gone, ids) = step(&ids, "alpha.md", None);
-    assert_eq!(key(&first[0]), key(&moved[0]), "one note across the rename");
-    assert!(gone.is_empty(), "the old path is not a removal of the note");
-    // Deleting it later removes the note under its ID.
-    let (deleted, _) = step(&ids, "projects/alpha.md", None);
-    assert_eq!(deleted[0].note_id.as_deref(), Some("projects.alpha"));
-    assert!(deleted[0].removed_at.is_some());
-    assert_eq!(key(&deleted[0]), key(&first[0]));
+    let first = note(text, "alpha.md");
+    let moved = note(text, "projects/alpha.md");
+    assert_eq!(key(&first), key(&moved));
 }
 
 #[devkit::test]
 fn a_note_without_an_id_is_its_path() {
-    let (first, ids) = step(&NoteIds::default(), "plain.md", Some("text\n"));
-    let (renamed, ids) = step(&ids, "other.md", Some("text\n"));
-    let (gone, _) = step(&ids, "plain.md", None);
-    assert_ne!(key(&first[0]), key(&renamed[0]), "equal text never joins");
-    assert_eq!(key(&gone[0]), key(&first[0]));
-    assert!(gone[0].removed_at.is_some());
-    let (empty, _) = step(&NoteIds::default(), "e.md", Some("---\nid: \"\"\n---\n"));
-    assert_eq!(empty[0].note_id.as_deref(), Some(""));
-    let (path_keyed, _) = step(&NoteIds::default(), "e.md", Some("x\n"));
-    assert_eq!(
-        key(&empty[0]),
-        key(&path_keyed[0]),
-        "an empty ID identifies nothing"
-    );
+    let first = note("text\n", "plain.md");
+    let renamed = note("text\n", "other.md");
+    assert_ne!(key(&first), key(&renamed), "equal text never joins");
+    let empty = note("---\nid: \"\"\n---\n", "e.md");
+    assert_eq!(empty.note_id.as_deref(), Some(""));
+    assert_eq!(key(&empty), key(&note("x\n", "e.md")));
+}
+
+#[devkit::test]
+fn equally_named_vaults_do_not_join_notes() {
+    use sinex_model::EventPayload;
+    let text = "---\nid: synthetic\n---\nA note\n";
+    let first = note_in_vault(text, "a.md", "/one/MyVault", "one");
+    let other_root = note_in_vault(text, "a.md", "/two/MyVault", "one");
+    let other_host = note_in_vault(text, "a.md", "/one/MyVault", "two");
+    assert_eq!(first.vault, other_root.vault);
+    assert_eq!(first.vault, other_host.vault);
+    assert_ne!(key(&first), key(&other_root));
+    assert_ne!(key(&first), key(&other_host));
+    let mut unknown = first;
+    unknown.host = None;
+    assert_eq!(unknown.key_kind(), sinex_model::KeyKind::Location);
 }

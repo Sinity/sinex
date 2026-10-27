@@ -1295,3 +1295,41 @@ async fn a_note_keeps_its_identity_when_renamed_between_backfills() {
     assert_eq!(states, ["removed"]);
     consistent(&mut connection).await;
 }
+
+#[devkit::test]
+async fn maildir_flag_renames_keep_messages_present_and_later_deletions_remove_them() {
+    let dir = Dir::new();
+    let target = Target::new(&dir);
+    let mut connection = target.connect().await;
+    for (name, header) in [
+        ("with-id", "Message-ID: <synthetic-mail@example.org>\n"),
+        ("without-id", ""),
+    ] {
+        let subject = format!("synthetic-{name}");
+        let bytes = format!(
+            "{header}Subject: {subject}\nDate: Mon, 18 Mar 2024 08:00:00 +0000\n\nA message\n"
+        );
+        let first = dir.file(&format!("{name}/new/one"), bytes.as_bytes());
+        std::fs::create_dir_all(dir.0.join(name).join("cur")).unwrap();
+        let renamed = dir.0.join(name).join("cur/one:2,S");
+        let read = format!("maildir={}", dir.0.join(name).display());
+        let backfill =
+            || finish(&mut target.sinexd(&["backfill", "--host", HOST, "--read", &read]));
+        backfill();
+        std::fs::rename(&first, &renamed).unwrap();
+        backfill();
+        let state: String = sqlx::query_scalar(
+            "SELECT e.record_state FROM core.live_equivalence l JOIN core.events e ON e.id=l.event_id
+             WHERE l.event_type='mail.message' AND e.payload->>'subject'=$1",
+        ).bind(&subject).fetch_one(&mut connection).await.unwrap();
+        assert_eq!(state, "present", "{name}");
+        std::fs::remove_file(renamed).unwrap();
+        backfill();
+        let state: String = sqlx::query_scalar(
+            "SELECT e.record_state FROM core.live_equivalence l JOIN core.events e ON e.id=l.event_id
+             WHERE l.event_type='mail.message' AND e.payload->>'subject'=$1",
+        ).bind(&subject).fetch_one(&mut connection).await.unwrap();
+        assert_eq!(state, "removed", "{name}");
+    }
+    consistent(&mut connection).await;
+}
