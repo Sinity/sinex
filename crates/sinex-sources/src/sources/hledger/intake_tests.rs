@@ -7,7 +7,7 @@ use crate::drivers::{self, MaterialSink};
 use crate::{DrainInput, Limits, Source};
 use serde_json::Value;
 use sinex_model::{
-    BatchKind, Class, Event, MaterialId, MaterialRef, MaterialRole, ObservationFacts, ReadingOrder,
+    BatchKind, Class, Event, MaterialRef, MaterialRole, ObservationFacts, ReadingOrder,
     RecordOutcome, RunId,
 };
 use std::collections::BTreeMap;
@@ -33,7 +33,6 @@ struct Seen {
     events: Vec<Event>,
     failures: Vec<String>,
     materials: Vec<MaterialRef>,
-    through: BTreeMap<MaterialId, usize>,
 }
 
 fn pass(
@@ -64,11 +63,13 @@ fn pass(
         }],
         sink,
         &mut |_, acquired| {
+            let mut acquired = acquired?;
+            drivers::note_previous_through(&seen.cursor, &mut acquired);
             let prepared = drivers::prepare(
                 source,
                 "example-binding",
                 RunId::new(),
-                acquired?,
+                acquired,
                 seen.carry.clone(),
                 sink,
                 Limits {
@@ -82,18 +83,9 @@ fn pass(
                     panic!("source batch")
                 };
                 if let Some(material) = progress.material {
-                    let through = progress
-                        .cursor
-                        .get("through")
-                        .and_then(Value::as_u64)
-                        .unwrap_or(material.length) as usize;
-                    seen.through.insert(material.id, through);
                     if !seen.materials.iter().any(|m| m.id == material.id) {
                         seen.materials.push(material);
                     }
-                }
-                if let Some((id, Some(end))) = drivers::cursor_material(&progress.cursor) {
-                    seen.through.insert(id, end as usize);
                 }
                 seen.cursor = progress.cursor;
                 seen.carry = progress.carry;
@@ -167,7 +159,12 @@ pub(super) fn export_restart(
             continue;
         }
         let bytes = sink.0.lock().unwrap()[&material.blob].clone();
-        let through = parts.through[&material.id];
+        let through = parts
+            .materials
+            .iter()
+            .find(|next| next.previous_part == Some(material.id))
+            .and_then(|next| next.manifest.previous_through)
+            .unwrap_or(material.length) as usize;
         let records = material
             .manifest
             .records
