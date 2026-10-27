@@ -110,7 +110,6 @@ impl Api {
             writer.clone(),
             derivation,
             &self.host,
-            self.derivations.as_ref(),
         )
         .await
         {

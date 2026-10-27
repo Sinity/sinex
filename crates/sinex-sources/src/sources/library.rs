@@ -16,8 +16,8 @@
 //! parser takes the author and time from the material's manifest, which the
 //! daemon fills from the authenticated caller, never from the lines.
 use crate::registry::{Driver, SourceSpec};
-use sinex_model::Class;
 use serde_json::{Value, json};
+use sinex_model::Class;
 
 mod files;
 mod requests;

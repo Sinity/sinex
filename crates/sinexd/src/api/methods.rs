@@ -31,9 +31,6 @@ pub(crate) struct Api {
     pub unlock: std::sync::Arc<tokio::sync::Mutex<Option<Unlocked>>>,
     /// This machine's name, for library requests and scans.
     pub host: String,
-    /// The derivation configuration the daemon runs with (its tag rules);
-    /// `None` where none was read, which refuses recomputing the tag applier.
-    pub derivations: Option<sinex_derivations::Configuration>,
 }
 
 /// An unlock session: the operator's identity until it expires, and the data

@@ -176,4 +176,3 @@ async fn sigterm_finishes_empty_source_daemon_and_releases_writer_for_restart() 
         );
     }
 }
-
