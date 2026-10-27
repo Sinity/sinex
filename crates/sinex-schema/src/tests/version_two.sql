@@ -1,3 +1,4 @@
+DROP INDEX core.events_coverage;
 ALTER TABLE core.live_equivalence ALTER COLUMN equivalence_key TYPE text USING core.decode_equivalence_key(equivalence_key);
 DROP FUNCTION core.encode_equivalence_key(text), core.decode_equivalence_key(bytea);
 DROP VIEW core.visible_search_text;

@@ -11,5 +11,6 @@
   "fsync": true,
   "full_page_writes": true,
   "wal_compression": "lz4",
-  "max_connections": 64
+  "max_connections": 64,
+  "log_temp_files": "16MB"
 }
