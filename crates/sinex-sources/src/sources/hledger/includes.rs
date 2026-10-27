@@ -5,8 +5,8 @@ use serde_json::json;
 use sinex_model::event_types::finance::{IncludeTarget, IncludedFrom};
 use sinex_source_core::binding::{Binding, Settings};
 use std::collections::{BTreeMap, BTreeSet};
-use std::path::{Path, PathBuf};
 use std::io::{BufRead, BufReader, Read, Seek, SeekFrom};
+use std::path::{Path, PathBuf};
 
 pub(super) fn plan(input: &Path, settings: &Settings) -> Result<Vec<Binding>, String> {
     if settings
@@ -64,11 +64,17 @@ fn visit(
 ) -> Result<(), String> {
     let identity = std::fs::canonicalize(path).map_err(|e| format!("{}: {e}", path.display()))?;
     let mut file = std::fs::File::open(path).map_err(|e| format!("{}: {e}", path.display()))?;
-    let mut prefix=Vec::new();
-    file.by_ref().take(512).read_to_end(&mut prefix).map_err(|e| e.to_string())?;
-    let archive=prefix.starts_with(&[0x1f,0x8b]) || prefix.starts_with(b"PK\x03\x04")
-        || prefix.starts_with(b"PK\x05\x06") || prefix.get(257..262)==Some(b"ustar");
+    let mut prefix = Vec::new();
+    file.by_ref()
+        .take(512)
+        .read_to_end(&mut prefix)
+        .map_err(|e| e.to_string())?;
+    let archive = prefix.starts_with(&[0x1f, 0x8b])
+        || prefix.starts_with(b"PK\x03\x04")
+        || prefix.starts_with(b"PK\x05\x06")
+        || prefix.get(257..262) == Some(b"ustar");
     active.insert(identity.clone());
+    let result = (|| -> Result<(), String> {
     let mut includes = BTreeMap::<String, Vec<IncludeTarget>>::new();
     let mut year = initial_year;
     let mut counts = BTreeMap::<String, u64>::new();
@@ -76,16 +82,20 @@ fn visit(
     // paths refer to the local filesystem, never to an extracted temporary tree.
     if !archive && settings.option("journal_format").unwrap_or("journal") == "journal" {
         file.rewind().map_err(|e| e.to_string())?;
-        let ranges=SPEC.framer.ranges(&mut file).map_err(|e|e.to_string())?;
+        let ranges = SPEC.framer.ranges(&mut file).map_err(|e| e.to_string())?;
         for (start, end) in ranges {
-            file.seek(SeekFrom::Start(start as u64)).map_err(|e|e.to_string())?;
-            let mut header=String::new();
-            let read=BufReader::new(file.by_ref().take((end-start) as u64)).read_line(&mut header);
-            if let Err(error)=read {
-                if error.kind()==std::io::ErrorKind::InvalidData { continue; }
+            file.seek(SeekFrom::Start(start as u64))
+                .map_err(|e| e.to_string())?;
+            let mut header = String::new();
+            let read =
+                BufReader::new(file.by_ref().take((end - start) as u64)).read_line(&mut header);
+            if let Err(error) = read {
+                if error.kind() == std::io::ErrorKind::InvalidData {
+                    continue;
+                }
                 return Err(error.to_string());
             }
-            let header=header.trim();
+            let header = header.trim();
             if let Some(value) = header
                 .strip_prefix('Y')
                 .or_else(|| header.strip_prefix("year "))
@@ -101,16 +111,19 @@ fn visit(
             else {
                 continue;
             };
-            file.seek(SeekFrom::Start(start as u64)).map_err(|e|e.to_string())?;
-            let mut hash=blake3::Hasher::new();
-            let mut block=file.by_ref().take((end-start) as u64);
-            let mut buffer=[0;8192];
+            file.seek(SeekFrom::Start(start as u64))
+                .map_err(|e| e.to_string())?;
+            let mut hash = blake3::Hasher::new();
+            let mut block = file.by_ref().take((end - start) as u64);
+            let mut buffer = [0; 8192];
             loop {
-                let count=block.read(&mut buffer).map_err(|e|e.to_string())?;
-                if count==0 { break; }
+                let count = block.read(&mut buffer).map_err(|e| e.to_string())?;
+                if count == 0 {
+                    break;
+                }
                 hash.update(&buffer[..count]);
             }
-            let hash=hash.finalize().to_hex().to_string();
+            let hash = hash.finalize().to_hex().to_string();
             let duplicate = counts.entry(hash.clone()).or_default();
             let key = format!("{hash}:{}", *duplicate);
             let from = IncludedFrom {
@@ -168,7 +181,6 @@ fn visit(
             }
         }
     }
-    active.remove(&identity);
     let mut options = settings.options.as_object().cloned().unwrap_or_default();
     options.insert("journal".into(), json!(journal.display().to_string()));
     options.insert("initial_year".into(), json!(initial_year));
@@ -188,6 +200,9 @@ fn visit(
     }
     out.push(binding);
     Ok(())
+    })();
+    active.remove(&identity);
+    result
 }
 
 fn target_format(header: &str, path: &Path) -> &'static str {
