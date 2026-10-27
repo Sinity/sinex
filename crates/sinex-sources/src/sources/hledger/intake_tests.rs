@@ -6,9 +6,10 @@ use sinex_model::{
 };
 use sinex_source_core::drivers::export_archive::{
     ExportArchive,
-    group::{self, Input, Route},
+    group::{self, Input},
 };
 use sinex_source_core::drivers::{self, MaterialSink};
+use sinex_source_core::shared_pass::SharedPass;
 use sinex_source_core::{DrainInput, Limits, Source};
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex, atomic::AtomicBool};
@@ -56,11 +57,7 @@ fn pass(
             ..Default::default()
         },
         Arc::new(AtomicBool::new(false)),
-        vec![Route {
-            class: Class::Guarded,
-            driver,
-            cursor: seen.cursor.clone(),
-        }],
+        vec![driver.route(seen.cursor.clone(), Class::Guarded)],
         sink,
         &mut |_, acquired| {
             let mut acquired = acquired?;

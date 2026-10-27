@@ -228,3 +228,15 @@ fn empty_csv_separator_lines_do_not_change_the_header() {
         serde_json::to_value(carry).unwrap()
     );
 }
+
+#[devkit::test]
+fn dates_without_clock_times_are_not_resolved_as_midnight() {
+    for (start, end) in [
+        ("2030-01-01", "2030-01-02"),
+        ("2030-01-01T01", "2030-01-01T02"),
+        ("2030-01-01T01+01:00", "2030-01-01T02+01:00"),
+    ] {
+        let row = format!("example,{start},{end},,,,,,,,,,,,\n");
+        assert!(parse(row.as_bytes()).is_err(), "{row}");
+    }
+}
