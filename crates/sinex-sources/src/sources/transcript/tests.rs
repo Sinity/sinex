@@ -6,7 +6,7 @@ fn read(
     defaults: Value,
 ) -> Result<Vec<TranscriptSegment>, RecordError> {
     let manifest =
-        Manifest::from_json(serde_json::json!({"path":"example.json", "imported_text": defaults}));
+        Manifest::from_json(serde_json::json!({"path":"example.json", "file_metadata": defaults}));
     TranscriptParser {
         format,
         input: "example-input".into(),
@@ -148,7 +148,7 @@ fn equal_plain_lines_remain_distinct_across_carry_restart_and_member_change() {
 
 #[derive(Default)]
 struct Sink(std::sync::Mutex<std::collections::BTreeMap<String, Vec<u8>>>);
-impl crate::MaterialSink for Sink {
+impl sinex_source_core::MaterialSink for Sink {
     fn put_file(&self, path: &Path) -> Result<String, String> {
         self.put(&std::fs::read(path).map_err(|e| e.to_string())?)
     }
@@ -160,7 +160,7 @@ impl crate::MaterialSink for Sink {
 }
 #[devkit::test]
 fn all_explicit_formats_read_stored_parts_with_exact_record_citations() {
-    use crate::MaterialSink;
+    use sinex_source_core::MaterialSink;
     let formats = [
         (
             &JSON_FORMAT,
@@ -210,15 +210,19 @@ fn all_explicit_formats_read_stored_parts_with_exact_record_citations() {
             .unwrap()
             .remove(0);
         let source = (format.source)(&binding).unwrap();
-        let crate::Reading::Shared(reader) = (format.reader.unwrap())(&binding).unwrap() else {
+        let sinex_source_core::Reading::Shared(reader) =
+            (format.reader.unwrap())(&binding).unwrap()
+        else {
             panic!()
         };
         let sink = Sink::default();
         let blob = sink.put(bytes).unwrap();
         let mut carry = Value::Null;
         let mut events = Vec::new();
-        crate::shared_pass::read(
-            crate::shared_pass::Input::Sequential(Box::new(std::io::Cursor::new(bytes.to_vec()))),
+        sinex_source_core::shared_pass::read(
+            sinex_source_core::shared_pass::Input::Sequential(Box::new(std::io::Cursor::new(
+                bytes.to_vec(),
+            ))),
             blob,
             bytes.len() as u64,
             sinex_model::ObservationFacts::default(),
@@ -232,7 +236,7 @@ fn all_explicit_formats_read_stored_parts_with_exact_record_citations() {
                 {
                     assert!(m.records.iter().all(|(start, end)| *start < *end));
                     for batch in source
-                        .drain(crate::DrainInput {
+                        .drain(sinex_source_core::DrainInput {
                             source: source.spec().name,
                             class: Class::Guarded,
                             material: m.id,
@@ -240,7 +244,7 @@ fn all_explicit_formats_read_stored_parts_with_exact_record_citations() {
                             records: &m.records,
                             carry: carry.clone(),
                             reading_order: &|_| sinex_model::ReadingOrder(0),
-                            limits: crate::Limits::default(),
+                            limits: sinex_source_core::Limits::default(),
                             manifest: &m.manifest,
                         })
                         .unwrap()
@@ -272,13 +276,13 @@ fn all_explicit_formats_read_stored_parts_with_exact_record_citations() {
 
 #[devkit::test]
 fn json_file_metadata_and_progress_survive_part_restart() {
-    use crate::{MaterialSink, shared_pass::SharedPass};
+    use sinex_source_core::{MaterialSink, shared_pass::SharedPass};
     let bytes = include_bytes!("../../../tests/sources/imported-text/whisper.json").to_vec();
     let driver = ExportArchive {
         path: "/example/missing.json".into(),
         host: "example-host".into(),
         select: |_| true,
-        framing: Framing::ImportedJson("/segments"),
+        framing: JSON_FRAMING,
         part_bytes: 1,
     };
     let sink = Sink::default();
@@ -288,8 +292,10 @@ fn json_file_metadata_and_progress_survive_part_restart() {
     let mut events = Vec::new();
     for pass in 0..2 {
         let mut next_cursor = cursor.clone();
-        crate::shared_pass::read(
-            crate::shared_pass::Input::Sequential(Box::new(std::io::Cursor::new(bytes.clone()))),
+        sinex_source_core::shared_pass::read(
+            sinex_source_core::shared_pass::Input::Sequential(Box::new(std::io::Cursor::new(
+                bytes.clone(),
+            ))),
             blob.clone(),
             bytes.len() as u64,
             sinex_model::ObservationFacts::default(),
@@ -305,9 +311,9 @@ fn json_file_metadata_and_progress_survive_part_restart() {
                         format: Format::Whisper,
                         input: "example-input".into(),
                     };
-                    for batch in crate::drain(
+                    for batch in sinex_source_core::drain(
                         &parser,
-                        crate::DrainInput {
+                        sinex_source_core::DrainInput {
                             source: WHISPER.name,
                             class: Class::Guarded,
                             material: m.id,
@@ -315,7 +321,7 @@ fn json_file_metadata_and_progress_survive_part_restart() {
                             records: &m.records,
                             carry: carry.clone(),
                             reading_order: &|_| sinex_model::ReadingOrder(0),
-                            limits: crate::Limits::default(),
+                            limits: sinex_source_core::Limits::default(),
                             manifest: &m.manifest,
                         },
                     )
@@ -404,11 +410,11 @@ fn changed_file_defaults_change_segment_readings_with_the_same_native_identity()
     let raw = br#"{"id":0,"text":"same","start":0,"end":1}"#;
     let read = |language| {
         let manifest = Manifest::from_json(
-            serde_json::json!({"path":"example.json","imported_text":{"language":language,"model":"example-model","external_run":"example-run"}}),
+            serde_json::json!({"path":"example.json","file_metadata":{"language":language,"model":"example-model","external_run":"example-run"}}),
         );
-        crate::drain(
+        sinex_source_core::drain(
             &parser,
-            crate::DrainInput {
+            sinex_source_core::DrainInput {
                 source: WHISPER.name,
                 class: Class::Guarded,
                 material: sinex_model::MaterialId::new(),
@@ -416,7 +422,7 @@ fn changed_file_defaults_change_segment_readings_with_the_same_native_identity()
                 records: &[(0, raw.len())],
                 carry: Value::Null,
                 reading_order: &|_| sinex_model::ReadingOrder(0),
-                limits: crate::Limits::default(),
+                limits: sinex_source_core::Limits::default(),
                 manifest: &manifest,
             },
         )
@@ -438,7 +444,7 @@ fn changed_file_defaults_change_segment_readings_with_the_same_native_identity()
 
 #[devkit::test]
 fn imported_json_refuses_sealed_member_staging_before_any_material_delivery() {
-    use crate::{MaterialSink, shared_pass::SharedPass};
+    use sinex_source_core::{MaterialSink, shared_pass::SharedPass};
     let bytes = br#"{"segments":[{"text":"synthetic"}],"model":"example"}"#;
     let sink = Sink::default();
     let blob = sink.put(bytes).unwrap();
@@ -446,12 +452,14 @@ fn imported_json_refuses_sealed_member_staging_before_any_material_delivery() {
         path: "/example/missing.json".into(),
         host: "example".into(),
         select: |_| true,
-        framing: Framing::ImportedJson("/segments"),
+        framing: JSON_FRAMING,
         part_bytes: 1,
     };
     let mut deliveries = 0;
-    let result = crate::shared_pass::read(
-        crate::shared_pass::Input::Sequential(Box::new(std::io::Cursor::new(bytes.to_vec()))),
+    let result = sinex_source_core::shared_pass::read(
+        sinex_source_core::shared_pass::Input::Sequential(Box::new(std::io::Cursor::new(
+            bytes.to_vec(),
+        ))),
         blob,
         bytes.len() as u64,
         sinex_model::ObservationFacts::default(),
@@ -467,7 +475,7 @@ fn imported_json_refuses_sealed_member_staging_before_any_material_delivery() {
         result
             .unwrap_err()
             .to_string()
-            .contains("sealed imported JSON")
+            .contains("sealed JSON metadata")
     );
     assert_eq!(deliveries, 0);
     assert_eq!(sink.0.lock().unwrap().len(), 1);

@@ -1,9 +1,9 @@
 //! A selected file is read alone; its neighbours are never acquired or removed.
-use crate::binding::Reader;
-use crate::drivers::{Acquired, DriverError, NewMaterial, StoredBytes, file_facts};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use sinex_model::{InputRef, MaterialId, ObservationFacts, RevisionChange, Timestamp};
+use sinex_source_core::binding::Reader;
+use sinex_source_core::drivers::{Acquired, DriverError, NewMaterial, StoredBytes, file_facts};
 use std::io::{Read, Write};
 use std::os::unix::fs::MetadataExt;
 use std::path::PathBuf;
@@ -20,7 +20,7 @@ struct Cursor {
 pub struct FileReader {
     path: PathBuf,
     host: String,
-    held: Option<crate::drivers::held::HeldMaterial>,
+    held: Option<sinex_source_core::drivers::held::HeldMaterial>,
 }
 impl FileReader {
     pub fn new(path: PathBuf, host: String) -> Self {
@@ -97,7 +97,7 @@ impl Reader for FileReader {
         };
         let missing = facts.size.is_none();
         let (length, content) = if missing {
-            let marker = crate::drivers::dir_snapshot::removed_marker(name);
+            let marker = sinex_source_core::drivers::dir_snapshot::removed_marker(name);
             bytes
                 .write_all(&marker)
                 .map_err(|e| DriverError::Io(e.to_string()))?;
@@ -208,7 +208,7 @@ impl Reader for FileReader {
                 manifest: manifest.clone(),
                 part_index,
                 previous_part: previous.material,
-                reading_order: crate::drivers::reading_order(&manifest),
+                reading_order: sinex_source_core::drivers::reading_order(&manifest),
                 cursor_at: Box::new(move |_| {
                     serde_json::to_value(&next).map_err(|e| DriverError::Cursor(e.to_string()))
                 }),
@@ -219,7 +219,7 @@ impl Reader for FileReader {
             }),
             cursor_without_material: Value::Null,
         };
-        let held = crate::drivers::held::HeldMaterial::hold(acquired, cursor)?;
+        let held = sinex_source_core::drivers::held::HeldMaterial::hold(acquired, cursor)?;
         let result = held.acquired(cursor)?;
         self.held = Some(held);
         Ok(result)
