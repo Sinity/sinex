@@ -206,3 +206,28 @@ fn native_time_formats_are_kept_as_written_records_without_generating_transactio
         );
     }
 }
+
+#[devkit::test]
+fn declared_home_is_used_and_an_unknown_home_stays_unavailable() {
+    let dir = tempfile::tempdir().unwrap();
+    let parent = dir.path().join("main.journal");
+    std::fs::write(&parent, "").unwrap();
+    let mut settings = Settings::new("example-host");
+    settings.options = json!({"include_home":dir.path()});
+    assert_eq!(resolve(&parent,"~/child.journal",&settings).unwrap(),vec![dir.path().join("child.journal")]);
+    settings.options = json!({"include_home":null});
+    assert!(resolve(&parent,"~/child.journal",&settings).unwrap_err().contains("unavailable"));
+}
+
+#[devkit::test]
+fn glob_dot_names_are_matched_at_their_own_path_component() {
+    let dir = tempfile::tempdir().unwrap();
+    let parent = dir.path().join("main.journal");
+    std::fs::write(&parent, "").unwrap();
+    for name in ["visible/.child", ".hidden/.child"] {
+        std::fs::create_dir_all(dir.path().join(name)).unwrap();
+        std::fs::write(dir.path().join(name).join("leaf.journal"),"; leaf\n").unwrap();
+    }
+    assert_eq!(resolve(&parent,"*/.child/*.journal",&Settings::new("example-host")).unwrap(),vec![dir.path().join("visible/.child/leaf.journal")]);
+    assert_eq!(resolve(&parent,"**.journal",&Settings::new("example-host")).unwrap(),vec![dir.path().join("visible/.child/leaf.journal")]);
+}
