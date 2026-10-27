@@ -398,7 +398,22 @@ impl Drop for Process {
     }
 }
 
-fn scope_memory(unit: &str, binary: &Path) -> Option<(f64, u64)> {
+struct DaemonState {
+    peak_rss_mb: f64,
+    memory_peak_bytes: u64,
+    handles_termination: bool,
+}
+
+fn handles_termination(status: &str) -> bool {
+    // Linux's caught-signal mask puts SIGTERM (signal 15) at bit 14.
+    status
+        .lines()
+        .find_map(|line| line.strip_prefix("SigCgt:"))
+        .and_then(|mask| u64::from_str_radix(mask.trim(), 16).ok())
+        .is_some_and(|mask| mask & (1 << 14) != 0)
+}
+
+fn daemon_state(unit: &str, binary: &Path) -> Option<DaemonState> {
     let output = Command::new("systemctl")
         .args([
             "--user",
@@ -440,7 +455,11 @@ fn scope_memory(unit: &str, binary: &Path) -> Option<(f64, u64)> {
             .parse::<f64>()
             .ok()?
             / 1024.0;
-        return Some((rss, memory));
+        return Some(DaemonState {
+            peak_rss_mb: rss,
+            memory_peak_bytes: memory,
+            handles_termination: handles_termination(&status),
+        });
     }
     None
 }
@@ -631,9 +650,11 @@ pub(super) fn with_consumers(
                 'search', coalesce((SELECT commit_seq FROM core.consumer_positions WHERE consumer='read.search_text'),0),
                 'publisher', coalesce((SELECT commit_seq FROM core.consumer_positions WHERE consumer='publisher'),0))")?;
             let elapsed = started.elapsed().as_secs_f64();
-            if let Some((rss, memory)) = scope_memory(&unit, binary) {
-                peak_rss_mb = Some(peak_rss_mb.unwrap_or(0.0).max(rss));
-                memory_peak_bytes = Some(memory_peak_bytes.unwrap_or(0).max(memory));
+            let state = daemon_state(&unit, binary);
+            if let Some(state) = &state {
+                peak_rss_mb = Some(peak_rss_mb.unwrap_or(0.0).max(state.peak_rss_mb));
+                memory_peak_bytes =
+                    Some(memory_peak_bytes.unwrap_or(0).max(state.memory_peak_bytes));
             }
             let count = positions["admitted"].as_u64().unwrap_or(0)
                 + positions["search"].as_u64().unwrap_or(0)
@@ -649,19 +670,26 @@ pub(super) fn with_consumers(
                 );
             }
             let full = positions["admitted"].as_u64() == Some(expected.live);
-            if full && admission_s.is_none() {
+            // Saved positions can cover the workload before this daemon starts.
+            let ready = state.is_some_and(|state| state.handles_termination);
+            if full && ready && admission_s.is_none() {
                 admission_s = Some(elapsed);
             }
-            if full && positions["search"] == positions["final_commit"] && search_s.is_none() {
+            if full
+                && ready
+                && positions["search"] == positions["final_commit"]
+                && search_s.is_none()
+            {
                 search_s = Some(elapsed);
             }
             if full
+                && ready
                 && positions["publisher"] == positions["final_commit"]
                 && publication_s.is_none()
             {
                 publication_s = Some(elapsed);
             }
-            samples.push(json!({"seconds": elapsed, "positions": positions}));
+            samples.push(json!({"seconds": elapsed, "ready": ready, "positions": positions}));
             if admission_s.is_some() && search_s.is_some() && publication_s.is_some() {
                 save(out, "consumer-positions.json", &json!(samples))?;
                 let nats = monitor(monitoring)?;

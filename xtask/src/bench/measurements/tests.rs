@@ -19,6 +19,40 @@ fn nats_is_reaped_when_a_measurement_returns_an_error() {
 }
 
 #[devkit::test]
+fn readiness_waits_for_the_termination_handler() {
+    use std::io::{BufRead, Write as _};
+
+    let child = Command::new("python3")
+        .args([
+            "-c",
+            "import signal, sys\nsignal.signal(signal.SIGTERM, signal.SIG_DFL)\nprint('starting', flush=True)\nsys.stdin.readline()\nsignal.signal(signal.SIGTERM, lambda *_: sys.exit(0))\nprint('ready', flush=True)\nsignal.pause()\n",
+        ])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let mut child = Process(child, None);
+    let mut output = std::io::BufReader::new(child.0.stdout.take().unwrap());
+    let status = PathBuf::from(format!("/proc/{}/status", child.0.id()));
+    let mut line = String::new();
+    output.read_line(&mut line).unwrap();
+    assert_eq!(line, "starting\n");
+    assert!(!handles_termination(&fs::read_to_string(&status).unwrap()));
+    child
+        .0
+        .stdin
+        .as_mut()
+        .unwrap()
+        .write_all(b"continue\n")
+        .unwrap();
+    line.clear();
+    output.read_line(&mut line).unwrap();
+    assert_eq!(line, "ready\n");
+    assert!(handles_termination(&fs::read_to_string(&status).unwrap()));
+    assert!(child.stop().unwrap().success());
+}
+
+#[devkit::test]
 fn query_probes_keep_results_across_search_upgrade() {
     let root = env::temp_dir().join(format!("qp-{}", std::process::id()));
     fs::create_dir(&root).unwrap();
