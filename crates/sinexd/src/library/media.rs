@@ -138,7 +138,7 @@ impl Library<'_> {
         let r = Preview {
             rendition: items::new_id(),
             item: item.to_owned(),
-            revision: it.revision,
+            revision: it.revision.clone(),
             role: RenditionRole::Preview,
             content: content.clone(),
             media_type: "image/webp".into(),

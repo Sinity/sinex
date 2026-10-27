@@ -30,8 +30,6 @@ pub struct FileCopy {
     /// Deterministic opaque identifier of `item_key`.
     pub item: String,
     pub scanned_at: Timestamp,
-    /// The item revision observed by this scan.
-    pub revision: u32,
     pub host: String,
     /// The library root the scan walked.
     pub root: String,
@@ -80,9 +78,9 @@ pub struct FileCopy {
 pub struct Item {
     /// Opaque identifier computed from the item key.
     pub item: String,
-    pub revision: u32,
+    pub revision: String,
     /// The revision this one replaces.
-    pub replaces: Option<u32>,
+    pub replaces: Option<String>,
     /// The original rendition's bytes, `blake3:<hex>`.
     pub content: String,
     pub media_type: String,
@@ -118,7 +116,7 @@ pub enum RenditionRole {
 pub struct Rendition {
     pub rendition: String,
     pub item: String,
-    pub revision: u32,
+    pub revision: String,
     pub role: RenditionRole,
     pub content: String,
     pub media_type: String,
@@ -148,7 +146,7 @@ pub struct Rendition {
 pub struct Preview {
     pub rendition: String,
     pub item: String,
-    pub revision: u32,
+    pub revision: String,
     pub role: RenditionRole,
     pub content: String,
     pub media_type: String,
@@ -171,7 +169,7 @@ pub struct Preview {
 pub struct Target {
     pub item: String,
     /// Fixed revision; `None` follows the item.
-    pub revision: Option<u32>,
+    pub revision: Option<String>,
     pub rendition: Option<String>,
     /// A selector inside the rendition: `t=12.5-40` (seconds, half-open) or
     /// `xywh=10,10,200,120` (pixels).

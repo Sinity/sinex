@@ -41,8 +41,8 @@ reported removed. Each completed scan records every present file, including
 unchanged files, with a key made from the host, resolved root and original
 relative path. A move within the root keeps that key when the old path is
 missing and the bytes match; matching device and inode take precedence over
-another new copy of those bytes. Changed bytes at the same key advance the
-revision, including replacement by a different inode.
+another new copy of those bytes. Changed bytes at the same key create a new
+revision, named by the content hash, including replacement by a different inode.
 
 `library.items` derives items and original renditions from visible scan
 records. Item IDs are hashes of their keys; original rendition IDs also name
@@ -50,8 +50,8 @@ the content hash. Rendering a preview records `library.preview`, which the
 same derivation turns into a rendition with both the rendering and its scan
 evidence as parents. Hiding a scan invalidates its derived outputs; the runner
 recomputes them from the remaining visible scans. An item and its renditions
-stay visible when another scan supplies their evidence. Revision numbers are
-recorded by the scanner, so hiding an earlier scan does not renumber them.
+stay visible when another scan supplies their evidence. Revisions are content
+hashes, so hiding an earlier scan cannot change their identities.
 Library commands wait for their requested keys to be computed through the
 ordinary runner query and admission scope before returning.
 

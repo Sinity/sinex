@@ -1,4 +1,4 @@
-//! Library items and their original renditions, computed from visible scans.
+//! Library items and renditions computed from visible scans and previews.
 use crate::derived_event::derived;
 use crate::{Computed, Env, InputQuery, KeyState, KeyView, Keyed};
 use serde_json::Value;
@@ -52,23 +52,21 @@ impl Keyed for LibraryItems {
         let Some((_, first)) = present.first().copied() else {
             return Computed::default();
         };
-        let mut revisions: Vec<(&FileCopy, Vec<&Event>)> = Vec::new();
-        for (event, copy) in present {
-            if let Some((last, evidence)) = revisions.last_mut()
-                && last.content == copy.content
-            {
-                evidence.push(event);
-            } else {
-                revisions.push((copy, vec![event]));
-            }
+        let (_, latest) = present.last().copied().expect("present scan");
+        let mut revisions: BTreeMap<&str, (&FileCopy, Vec<&Event>)> = BTreeMap::new();
+        for (event, copy) in &present {
+            revisions
+                .entry(&copy.content)
+                .or_insert_with(|| (copy, Vec::new()))
+                .1
+                .push(event);
         }
         let mut outputs = Vec::new();
-        for (copy, evidence) in &revisions {
-            let revision = copy.revision;
+        for (copy, evidence) in revisions.values() {
             let original = Rendition {
-                rendition: format!("{}:{}:{}", first.item, copy.revision, copy.content),
+                rendition: format!("{}:{}", first.item, copy.content),
                 item: first.item.clone(),
-                revision,
+                revision: copy.content.clone(),
                 role: RenditionRole::Original,
                 content: copy.content.clone(),
                 media_type: copy.media_type.clone(),
@@ -87,11 +85,10 @@ impl Keyed for LibraryItems {
             .iter()
             .filter(|event| event.event_type == "library.preview")
         {
-            if let Some((_, (_, evidence))) = revisions.iter().enumerate().find(|(index, _)| {
-                preview.payload["revision"].as_u64()
-                    == Some(u64::from(revisions[*index].0.revision))
-            }) && let Ok(rendition) =
-                serde_json::from_value::<Rendition>(preview.payload.clone())
+            if let Some((_, evidence)) = preview.payload["revision"]
+                .as_str()
+                .and_then(|revision| revisions.get(revision))
+                && let Ok(rendition) = serde_json::from_value::<Rendition>(preview.payload.clone())
             {
                 outputs.push(derived(
                     &rendition,
@@ -100,15 +97,20 @@ impl Keyed for LibraryItems {
                 ));
             }
         }
-        let (latest, _) = revisions.last().expect("at least one revision");
         let mut paths = BTreeMap::new();
         for (_, copy) in &copies {
             paths.insert(&copy.path, copy);
         }
+        let replaces = present
+            .iter()
+            .rev()
+            .find(|(_, copy)| copy.content != latest.content)
+            .map(|(_, copy)| copy.content.clone())
+            .or_else(|| latest.previous_content.clone());
         let item = Item {
             item: first.item.clone(),
-            revision: latest.revision,
-            replaces: (latest.revision > 1).then_some(latest.revision.saturating_sub(1)),
+            revision: latest.content.clone(),
+            replaces,
             content: latest.content.clone(),
             media_type: latest.media_type.clone(),
             copies: paths
@@ -121,7 +123,6 @@ impl Keyed for LibraryItems {
             at: latest.scanned_at,
             withdrawn_at: None,
         };
-        // Path removals and moves also affect the current item's reading.
         outputs.push(derived(
             &item,
             Self::NAME,

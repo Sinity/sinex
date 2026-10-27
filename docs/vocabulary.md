@@ -155,5 +155,6 @@ these names and no others.
 ## Library
 
 - **item key**: the host, resolved library root and original relative path of a file. A move within that root keeps the key when the bytes match and the old path is gone.
-- **scan record**: one file observed during a library scan, with its item key, content hash, revision number and acquisition time.
+- **scan record**: one file observed during a library scan, with its item key, content hash and acquisition time.
+- **item revision**: one content hash of an item. Returning to the same bytes returns to that revision.
 - **preview evidence**: the stored output of rendering an item revision; the library derivation produces its rendition.
