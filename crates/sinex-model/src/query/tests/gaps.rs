@@ -484,8 +484,8 @@ fn event_type_parameters_use_fields_from_their_own_question() {
     for query in [
         r#"events where event_type = $kind and payload.command ~ "payload.absent""#,
         "events where event_type = $kind and payload.command ~ payload.absent",
-        "events where event_type = $kind and payload.command exists near (events where event_type = state.interval and payload.subject exists) within 1h",
-        "events where event_type = command.executed and payload.command exists near (events where event_type = $kind and payload.subject exists) within 1h",
+        "events where event_type = $kind and payload.command exists near (events where event_type = state.interval and payload.subject_id exists) within 1h",
+        "events where event_type = command.executed and payload.command exists near (events where event_type = $kind and payload.subject_id exists) within 1h",
     ] {
         let saved = SavedQuery {
             name: "by-kind".into(),
@@ -510,7 +510,7 @@ fn typed_saved_arguments_keep_their_type_when_quoted() {
             "1",
         ),
         (
-            "events where event_type = state.interval and payload.open = $value",
+            "events where event_type = browser.url and payload.hidden = $value",
             ParameterType::Bool,
             "true",
         ),
