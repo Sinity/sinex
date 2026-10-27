@@ -1,0 +1,174 @@
+use super::*;
+
+async fn version_two(conn: &mut PgConnection) {
+    sqlx::raw_sql(
+        "DROP TABLE core.published;
+         CREATE TABLE core.published (event_id uuid PRIMARY KEY, stream_seq bigint NOT NULL);
+         GRANT SELECT ON core.published TO sinex_reader, sinex_writer;
+         GRANT INSERT, UPDATE, DELETE ON core.published TO sinex_writer;
+         DELETE FROM sinex_schema.applied;
+         INSERT INTO sinex_schema.applied (version) VALUES (2)",
+    )
+    .execute(conn)
+    .await
+    .unwrap();
+}
+
+async fn other_rows(conn: &mut PgConnection) -> std::collections::BTreeMap<String, serde_json::Value> {
+    let tables: Vec<(String, String)> = sqlx::query_as(
+        "SELECT schemaname, tablename FROM pg_tables
+         WHERE schemaname IN ('core', 'raw', 'audit', 'privacy', 'derivation')
+           AND NOT (schemaname = 'core' AND tablename = 'published')",
+    ).fetch_all(&mut *conn).await.unwrap();
+    let mut rows = std::collections::BTreeMap::new();
+    for (schema, table) in tables {
+        let name = format!("{schema}.{table}");
+        let sql = format!("SELECT coalesce(jsonb_agg(to_jsonb(t) ORDER BY to_jsonb(t)), '[]'::jsonb) FROM \"{schema}\".\"{table}\" t");
+        rows.insert(name, sqlx::query_scalar(&sql).fetch_one(&mut *conn).await.unwrap());
+    }
+    rows
+}
+
+#[devkit::test]
+async fn upgrade_packs_every_mapping_including_tombstones_without_commit_rows(
+    db: devkit::pg::TestDatabase,
+) {
+    let mut conn = PgConnection::connect(&db.url(None)).await.unwrap();
+    let ids = crate::query::tests::admit_commands(&mut conn, &[("pwd", "/sample"), ("echo example", "/sample")]).await;
+    crate::read_models::tests::catch_up_search_text(&mut conn).await.unwrap();
+    let batch = sinex_model::Batch {
+        run: sinex_model::RunId::new(),
+        kind: sinex_model::BatchKind::Api { actor: "test".into() },
+        records: vec![],
+        archive: vec![sinex_model::ArchiveRequest::Hide {
+            target: sinex_model::EventId(ids[0].1),
+            operation: sinex_model::OperationId::new(),
+        }],
+    };
+    let mut tx = conn.begin().await.unwrap();
+    crate::admit(&mut tx, &batch, &crate::NoDerivations).await.unwrap();
+    tx.commit().await.unwrap();
+    sqlx::raw_sql(
+        "INSERT INTO core.blobs(hash, size, status) VALUES ('blake3:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', 9, 'present');
+         INSERT INTO raw.materials(id, blob, length, manifest, parser, parser_version)
+           VALUES ('00000000-0000-0000-0000-000000000099', 'blake3:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', 9, '{}', 'example', 1);
+         INSERT INTO raw.failures(material_id, anchor, reason, run_id)
+           VALUES ('00000000-0000-0000-0000-000000000099', 3, 'synthetic malformed record', '00000000-0000-0000-0000-000000000098');
+         INSERT INTO raw.bindings(binding, source, input, settings) VALUES ('example', 'test.source', 'example', '{}');
+         INSERT INTO raw.positions(binding, cursor, carry, committed_seq) VALUES ('example', '{\"offset\":9}', '{}', 4);
+         INSERT INTO raw.reader_memory(binding, material_id, memory) VALUES ('example', '00000000-0000-0000-0000-000000000099', decode('010203', 'hex'));
+         INSERT INTO privacy.source_classes(source, class, author) VALUES ('test.source', 'guarded', 'example');
+         INSERT INTO privacy.rules(id, name, source, matcher, class, action, author)
+           VALUES ('00000000-0000-0000-0000-000000000097', 'example', 'test.source', 'all', 'guarded', 'classify', 'example')",
+    ).execute(&mut conn).await.unwrap();
+    version_two(&mut conn).await;
+    sqlx::query("INSERT INTO core.published SELECT md5(i::text)::uuid, i * 3 FROM generate_series(1, 2503) i")
+        .execute(&mut conn).await.unwrap();
+    let before: Vec<(Uuid, i64)> =
+        sqlx::query_as("SELECT event_id, stream_seq FROM core.published ORDER BY event_id")
+            .fetch_all(&mut conn)
+            .await
+            .unwrap();
+    tombstone(&mut conn, before[1000].0).await;
+    set_consumer_position(&mut conn, "publisher", 4500, 150)
+        .await
+        .unwrap();
+    let tombstones: serde_json::Value =
+        sqlx::query_scalar("SELECT jsonb_agg(t) FROM core.event_tombstones t")
+            .fetch_one(&mut conn)
+            .await
+            .unwrap();
+    let other_before = other_rows(&mut conn).await;
+    let mut writer = PgConnection::connect(&db.url(None)).await.unwrap();
+    sqlx::query("SELECT pg_advisory_lock($1)")
+        .bind(sinex_schema::WRITER_LOCK)
+        .execute(&mut writer)
+        .await
+        .unwrap();
+    assert!(matches!(
+        sinex_schema::apply(&mut conn).await,
+        Err(sinex_schema::Error::WriterRunning)
+    ));
+    sqlx::query("SELECT pg_advisory_unlock($1)")
+        .bind(sinex_schema::WRITER_LOCK)
+        .execute(&mut writer)
+        .await
+        .unwrap();
+    assert_eq!(
+        sinex_schema::apply(&mut conn).await.unwrap(),
+        sinex_schema::Applied::Upgraded { from: 2, to: 3 }
+    );
+    assert_eq!(pairs(&mut conn).await, before);
+    assert_eq!(other_rows(&mut conn).await, other_before);
+    assert_eq!(
+        consumer_position(&mut conn, "publisher").await.unwrap(),
+        (4500, 150)
+    );
+    let after: serde_json::Value =
+        sqlx::query_scalar("SELECT jsonb_agg(t) FROM core.event_tombstones t")
+            .fetch_one(&mut conn)
+            .await
+            .unwrap();
+    assert_eq!(after, tombstones);
+    let lengths: Vec<i32> =
+        sqlx::query_scalar("SELECT cardinality(event_ids) FROM core.published ORDER BY id")
+            .fetch_all(&mut conn)
+            .await
+            .unwrap();
+    assert_eq!(lengths, [1000, 1000, 503]);
+    let erased = excised_on_stream(&mut conn, 10).await.unwrap();
+    assert_eq!((erased[0].event_id, erased[0].stream_seq), before[1000]);
+    sqlx::query("SET ROLE sinex_writer")
+        .execute(&mut conn)
+        .await
+        .unwrap();
+    record_published(&mut conn, &[(Uuid::new_v4(), 99999)])
+        .await
+        .unwrap();
+    forget_published(&mut conn, &[before[1000]]).await.unwrap();
+    sqlx::query("RESET ROLE").execute(&mut conn).await.unwrap();
+    assert_eq!(pairs(&mut conn).await.len(), before.len());
+    assert_eq!(
+        sinex_schema::apply(&mut conn).await.unwrap(),
+        sinex_schema::Applied::Current { version: 3 }
+    );
+}
+
+#[devkit::test]
+async fn failed_packing_rolls_back_the_table_rename_and_every_mapping(
+    db: devkit::pg::TestDatabase,
+) {
+    let mut conn = PgConnection::connect(&db.url(None)).await.unwrap();
+    version_two(&mut conn).await;
+    sqlx::raw_sql("INSERT INTO core.published VALUES ('00000000-0000-0000-0000-000000000001', 99); CREATE INDEX published_bounds ON core.consumer_positions(commit_seq)")
+        .execute(&mut conn).await.unwrap();
+    assert!(sinex_schema::apply(&mut conn).await.is_err());
+    let version: i32 = sqlx::query_scalar("SELECT max(version) FROM sinex_schema.applied")
+        .fetch_one(&mut conn)
+        .await
+        .unwrap();
+    assert_eq!(version, 2);
+    let seq: i64 = sqlx::query_scalar("SELECT stream_seq FROM core.published")
+        .fetch_one(&mut conn)
+        .await
+        .unwrap();
+    assert_eq!(seq, 99);
+    sqlx::query("DROP INDEX core.published_bounds")
+        .execute(&mut conn)
+        .await
+        .unwrap();
+    sinex_schema::apply(&mut conn).await.unwrap();
+    assert_eq!(pairs(&mut conn).await, [(Uuid::from_u128(1), 99)]);
+}
+
+#[devkit::test]
+async fn empty_publication_table_upgrades_and_accepts_a_page(db: devkit::pg::TestDatabase) {
+    let mut conn = PgConnection::connect(&db.url(None)).await.unwrap();
+    version_two(&mut conn).await;
+    sinex_schema::apply(&mut conn).await.unwrap();
+    assert!(pairs(&mut conn).await.is_empty());
+    record_published(&mut conn, &[(Uuid::new_v4(), 8)])
+        .await
+        .unwrap();
+    assert_eq!(pairs(&mut conn).await.len(), 1);
+}
