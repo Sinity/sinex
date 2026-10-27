@@ -40,7 +40,7 @@ pub struct Carry {
 mod counts {
     use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
-    pub fn serialize<S: Serializer>(
+    pub(super) fn serialize<S: Serializer>(
         counts: &imbl::OrdMap<String, u64>,
         serializer: S,
     ) -> Result<S::Ok, S::Error> {
@@ -50,7 +50,7 @@ mod counts {
             .serialize(serializer)
     }
 
-    pub fn deserialize<'de, D: Deserializer<'de>>(
+    pub(super) fn deserialize<'de, D: Deserializer<'de>>(
         deserializer: D,
     ) -> Result<imbl::OrdMap<String, u64>, D::Error> {
         Ok(
@@ -244,7 +244,7 @@ fn quantity(raw: &str) -> Result<(Option<String>, Option<String>), RecordError> 
         return Err(unsupported());
     }
     static AMOUNT: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
-        regex::Regex::new(r"^(?:(?P<leading>[^\s0-9.+\-;|*!]+)\s*)?(?P<amount>[+-]?[0-9]+(?:\.[0-9]+)?)(?:\s*(?P<trailing>[^\s0-9.+\-;|*!]+))?$")
+        regex::Regex::new(r"^(?:(?P<leading>[^\s0-9.+\-;|*!]+)\s*)?(?P<amount>[+-]?(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+))(?:\s*(?P<trailing>[^\s0-9.+\-;|*!]+))?$")
             .expect("fixed journal quantity expression")
     });
     let fields = AMOUNT.captures(raw).ok_or_else(unsupported)?;

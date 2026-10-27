@@ -205,3 +205,26 @@ fn repeated_archive_member_names_start_with_their_own_headers() {
     assert_eq!(events[1].payload["provider_session_id"], "example-2");
     assert_eq!(events[1].payload["hr_avg"], 71.0);
 }
+
+#[devkit::test]
+fn empty_csv_separator_lines_do_not_change_the_header() {
+    let parser = validate(&settings()).unwrap();
+    let (_, carry) = parser
+        .parse(
+            &b"\r\n".as_slice(),
+            &Carry::default(),
+            &RecordContext::none(),
+        )
+        .unwrap();
+    let (_, carry) = parser
+        .parse(&HEADER, &carry, &RecordContext::none())
+        .unwrap();
+    let (events, after_blank) = parser
+        .parse(&b"\n".as_slice(), &carry, &RecordContext::none())
+        .unwrap();
+    assert!(events.is_empty());
+    assert_eq!(
+        serde_json::to_value(after_blank).unwrap(),
+        serde_json::to_value(carry).unwrap()
+    );
+}

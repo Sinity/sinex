@@ -61,6 +61,9 @@ impl Parser for SleepCsvParser {
         carry: &Carry,
         context: &RecordContext<'_>,
     ) -> Result<(Vec<SleepSessionImported>, Carry), RecordError> {
+        if record.iter().all(|byte| matches!(byte, b'\r' | b'\n')) {
+            return Ok((vec![], carry.clone()));
+        }
         let mut cells = super::fields::csv_cells(record)?;
         if let Some(first) = cells.first_mut() {
             *first = first.trim_start_matches('\u{feff}').into();
