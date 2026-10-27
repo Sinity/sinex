@@ -120,9 +120,11 @@ fn declared_non_time_fields_refuse_time_operations_before_sql() {
 #[test]
 fn declared_fields_bind_sort_projection_and_aggregates_through_the_same_schema() {
     let mut ctx = Context::utc("2026-10-27T15:00:00Z".parse().unwrap());
-    ctx.catalog = Some(QueryCatalog::new([declaration(json!({"type":"object","properties":{
-        "value":{"type":"integer"}, "label":{"type":"string"}
-    }}))]));
+    ctx.catalog = Some(QueryCatalog::new([declaration(
+        json!({"type":"object","properties":{
+            "value":{"type":"integer"}, "label":{"type":"string"}
+        }}),
+    )]));
     for text in [
         "events sort payload.value fields payload.value",
         "events sum payload.value",

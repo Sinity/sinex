@@ -21,7 +21,14 @@ impl Compiler<'_> {
                 let mut raw = SqlFragment::text(Self::template(cols, "({t}.payload #> "));
                 raw.param(V::String(Some(text_array(path))))
                     .push("::text[])");
-                Ok((Self::typed_json(raw, *ty), if *ty == FieldType::Json { Kind::Json } else { Kind::Typed(*ty) }))
+                Ok((
+                    Self::typed_json(raw, *ty),
+                    if *ty == FieldType::Json {
+                        Kind::Json
+                    } else {
+                        Kind::Typed(*ty)
+                    },
+                ))
             }
             (Cols::Base { .. }, FieldRef::Group(name)) => Err(invalid(format!(
                 "`{name}` names a group column outside a grouping"
@@ -37,7 +44,11 @@ impl Compiler<'_> {
             )),
             (Cols::Named { r, .. }, FieldRef::TypedPayload { ty, .. }) => Ok((
                 SqlFragment::text(format!("{r}.{}", quote(&column_name(f)))),
-                if *ty == FieldType::Json { Kind::Json } else { Kind::Typed(*ty) },
+                if *ty == FieldType::Json {
+                    Kind::Json
+                } else {
+                    Kind::Typed(*ty)
+                },
             )),
         }
     }
@@ -53,7 +64,9 @@ impl Compiler<'_> {
             return out;
         }
         if ty == FieldType::Time {
-            out.push("core.payload_time(").append(raw).push(" #>> '{}')");
+            out.push("core.payload_time(")
+                .append(raw)
+                .push(" #>> '{}')");
             return out;
         }
         let (kind, cast) = match ty {
@@ -213,7 +226,11 @@ impl Compiler<'_> {
                 .push(") END)");
             return Ok(out);
         }
-        let l = if kind == Kind::Json { Self::json_as(lhs, v) } else { lhs };
+        let l = if kind == Kind::Json {
+            Self::json_as(lhs, v)
+        } else {
+            lhs
+        };
         let mut out = SqlFragment::text("(");
         match (op, v, kind) {
             (Op::Eq | Op::Ne, Value::Glob(g), _) => {

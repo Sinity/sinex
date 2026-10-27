@@ -83,7 +83,10 @@ impl QueryCatalog {
 }
 
 fn merge(a: &mut FieldDescription, b: FieldDescription) {
-    if matches!((&a.ty, &b.ty), (DataType::Integer, DataType::Number) | (DataType::Number, DataType::Integer)) {
+    if matches!(
+        (&a.ty, &b.ty),
+        (DataType::Integer, DataType::Number) | (DataType::Number, DataType::Integer)
+    ) {
         a.ty = DataType::Number;
         a.values.clear();
     } else if a.ty != b.ty {

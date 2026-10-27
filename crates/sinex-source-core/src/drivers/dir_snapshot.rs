@@ -161,7 +161,11 @@ impl DirSnapshot {
     ) -> Result<Acquired, DriverError> {
         let now = Timestamp::now();
         let mut membership_path = ".sinex-membership".to_owned();
-        while found.keys().chain(state.files.keys()).any(|path| path.starts_with(&membership_path)) {
+        while found
+            .keys()
+            .chain(state.files.keys())
+            .any(|path| path.starts_with(&membership_path))
+        {
             membership_path.push('_');
         }
         let failed: Vec<_> = found
