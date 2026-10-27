@@ -277,7 +277,11 @@ async fn an_open_interval_waits_and_closes_on_the_next_transition(db: devkit::pg
     let open: Vec<StateInterval> = w.live().await;
     assert_eq!(open.len(), 1);
     assert_eq!(open[0].ended_at, None);
-    assert_eq!(w.count("SELECT count(*) FROM derivation.waiting").await, 1);
+    assert_eq!(
+        w.count("SELECT count(*) FROM derivation.waiting WHERE derivation = 'state.intervals'")
+            .await,
+        1
+    );
 
     // The next focus arrives three days later: a different day's key, which
     // runs the derivation and so recomputes the waiting one.
@@ -634,6 +638,7 @@ async fn windows_read_in_pages_equal_windows_read_alone(db: devkit::pg::TestData
     }
 }
 
+mod portfolio;
 mod shutdown;
 mod superseded_inputs;
 mod versions;

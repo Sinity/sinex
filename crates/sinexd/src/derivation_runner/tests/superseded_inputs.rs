@@ -125,7 +125,7 @@ async fn a_per_event_output_of_an_input_archived_meanwhile_is_dropped(
             &Echo,
             sinex_derivations::Input {
                 event: e,
-                material: None,
+                bytes: None,
             },
             &env,
         )

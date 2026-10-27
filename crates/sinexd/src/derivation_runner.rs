@@ -30,7 +30,7 @@
 //! also looks for work every so often, for keys that settle with time.
 use crate::writer::{Priority, WriterHandle};
 use serde_json::Value;
-use sinex_derivations::{AnyKeyed, AnyPerEvent, Env, Input, InputQuery, KeyView, Neighbour};
+use sinex_derivations::{AnyKeyed, AnyPerEvent, Env, Input, InputQuery, KeyView, Neighbour, Reads};
 use sinex_model::time_settings::TimeSettings;
 use sinex_model::{Batch, BatchKind, Event, ReadingOrder, RecordOutcome, RunId, Timestamp};
 use sinex_store::blobs::Blobs;
@@ -82,6 +82,8 @@ pub(crate) struct DerivationRunner {
     read: PgConnection,
     writer: WriterHandle,
     runs: BTreeMap<&'static str, RunId>,
+    /// Largest stored reading order when each per-event run began.
+    previous_orders: BTreeMap<&'static str, i64>,
     pub counts: BTreeMap<&'static str, Counts>,
 }
 
@@ -142,6 +144,7 @@ impl DerivationRunner {
             }))
             .collect();
         let mut runs = BTreeMap::new();
+        let mut previous_orders = BTreeMap::new();
         for d in &catalog {
             let name = derivations::static_type(&d.name);
             let version = d.version.to_string();
@@ -157,6 +160,14 @@ impl DerivationRunner {
                 .await
                 .map_err(|e| e.to_string())?;
             runs.insert(name, run);
+            if d.kind == "per_event" {
+                previous_orders.insert(
+                    name,
+                    derivations::latest_reading_order(&mut read, name)
+                        .await
+                        .map_err(|e| e.to_string())?,
+                );
+            }
         }
         let ranks = ranks(&catalog);
         let mut runner = Self {
@@ -170,6 +181,7 @@ impl DerivationRunner {
             read,
             writer,
             runs,
+            previous_orders,
             counts: BTreeMap::new(),
         };
         // A changed derivation's version is written once its recompute is
@@ -303,6 +315,7 @@ impl DerivationRunner {
             read,
             writer,
             runs,
+            previous_orders: BTreeMap::new(),
             counts: BTreeMap::new(),
         })
     }
@@ -594,7 +607,6 @@ impl DerivationRunner {
     async fn per_event_pass(&mut self, index: usize, env: &Env) -> Result<usize, String> {
         let d = &self.per_event[index];
         let name = d.name();
-        let version = i64::from(d.version());
         let types: Vec<String> = d.inputs_types().iter().map(|s| (*s).to_owned()).collect();
         let position = derivations::position(&mut self.read, name)
             .await
@@ -614,31 +626,38 @@ impl DerivationRunner {
         let Some(last) = events.last().map(|c| c.commit_seq) else {
             return Ok(0);
         };
-        let reads_material = self.per_event[index].reads_material();
+        let head = derivations::head(&mut self.read)
+            .await
+            .map_err(|e| e.to_string())?;
+        let reading_order = self
+            .previous_orders
+            .get(name)
+            .copied()
+            .unwrap_or(0)
+            .checked_add(head)
+            .ok_or("derived reading order exhausted")?;
         let mut outputs = Vec::new();
         let mut computed_inputs = Vec::new();
         let mut failed = 0;
         for c in &events {
-            let material = if reads_material {
-                match self.material_of(&c.event).await {
-                    Ok(bytes) => Some(bytes),
-                    Err(reason) => {
-                        eprintln!("{name}: event {}: {reason}", c.event.id);
-                        failed += 1;
-                        continue;
-                    }
+            let reads = self.per_event[index].reads(&c.event);
+            let bytes = match self.bytes_of(reads, &c.event).await {
+                Ok(bytes) => bytes,
+                Err(reason) => {
+                    eprintln!("{name}: event {}: {reason}", c.event.id);
+                    failed += 1;
+                    continue;
                 }
-            } else {
-                None
             };
             let input = Input {
                 event: &c.event,
-                material: material.as_deref(),
+                bytes: bytes.as_deref(),
             };
             let d = &self.per_event[index];
-            // A derivation that runs a local tool (OCR) blocks for a while;
-            // keep it off the runtime's other tasks where the runtime allows.
-            let derived = if reads_material
+            // A derivation that reads stored bytes runs a local tool (OCR, PDF
+            // text) and blocks for a while; keep it off the runtime's other
+            // tasks where the runtime allows.
+            let derived = if reads != Reads::Nothing
                 && tokio::runtime::Handle::current().runtime_flavor()
                     == tokio::runtime::RuntimeFlavor::MultiThread
             {
@@ -652,7 +671,7 @@ impl DerivationRunner {
                     for mut e in derived {
                         // A new derivation version reads every input again; its
                         // outputs must be newer readings than the old version's.
-                        e.reading_order = ReadingOrder((version << 40) | c.commit_seq);
+                        e.reading_order = ReadingOrder(reading_order);
                         outputs.push(e);
                     }
                 }
@@ -693,6 +712,30 @@ impl DerivationRunner {
         c.repeats += out.repeats;
         c.superseded_input += out.superseded_input;
         Ok(events.len())
+    }
+
+    /// The stored bytes a derivation that `reads` them reads for `event`.
+    async fn bytes_of(&mut self, reads: Reads, event: &Event) -> Result<Option<Vec<u8>>, String> {
+        match reads {
+            Reads::Nothing => Ok(None),
+            Reads::Material => self.material_of(event).await.map(Some),
+            Reads::Blob(field) => {
+                let Some(blob) = event.payload.get(field).and_then(Value::as_str) else {
+                    return Ok(None);
+                };
+                let blobs = self
+                    .blobs
+                    .as_ref()
+                    .ok_or("no content store was given to the runner")?;
+                if !material_bytes::blob_stored(&mut self.read, blob)
+                    .await
+                    .map_err(|e| e.to_string())?
+                {
+                    return Ok(None);
+                }
+                blobs.read(blob).map(Some).map_err(|e| e.to_string())
+            }
+        }
     }
 
     /// The stored bytes of the material `event` cites.
@@ -877,20 +920,26 @@ pub(crate) use counts::Counts;
 #[cfg(test)]
 mod tests;
 
-/// Every per-event derivation `sinexd` runs: the pure ones, plus screen text
-/// when a local OCR engine is installed (said once when it is not).
-pub(crate) fn available_per_event() -> Vec<Box<dyn AnyPerEvent>> {
-    let mut all = sinex_derivations::per_event();
+/// Every available per-event derivation with the declared rules.
+pub(crate) fn per_event_with(
+    configuration: &sinex_derivations::Configuration,
+) -> Result<Vec<Box<dyn AnyPerEvent>>, String> {
+    let mut all = sinex_derivations::per_event_with(configuration)?;
+    let pdf_reader = crate::document_text::pdf_reader()
+        .inspect_err(|reason| eprintln!("sinexd: document text reads no PDFs: {reason}"))
+        .ok();
+    all.push(Box::new(crate::document_text::DocumentText { pdf_reader }));
     match crate::screen_text::engine() {
         Ok(engine) => all.push(Box::new(crate::screen_text::ScreenText { engine })),
         Err(reason) => eprintln!("sinexd: screen text off: {reason}"),
     }
-    all
+    Ok(all)
 }
 
-/// Per-event derivations enabled for an unconfigured one-shot run.
+/// Derivations enabled without configuration.
 pub(crate) fn per_event() -> Vec<Box<dyn AnyPerEvent>> {
-    available_per_event()
+    per_event_with(&sinex_derivations::Configuration::default())
+        .expect("empty rules are valid")
         .into_iter()
         .filter(|d| sinex_derivations::enabled_by_default(d.name()))
         .collect()

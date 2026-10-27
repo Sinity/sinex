@@ -197,8 +197,12 @@ async fn remove_version_3(conn: &mut PgConnection) {
     for sql in [
         "DROP VIEW event_types.sinex_telemetry",
         "DROP VIEW event_types.tag_applied",
+        "DROP VIEW event_types.activity_span",
+        "DROP VIEW event_types.conversation_day",
+        "DROP VIEW event_types.rest_fused",
+        "DROP VIEW event_types.document_text",
         "DROP VIEW telemetry.visible_events",
-        "DELETE FROM registry.event_types WHERE name IN ('sinex.telemetry', 'tag.applied')",
+        "DELETE FROM registry.event_types WHERE name IN ('sinex.telemetry', 'tag.applied', 'activity.span', 'conversation.day', 'rest.fused', 'document.text')",
     ] {
         conn.execute(sql).await.unwrap();
     }
@@ -210,9 +214,31 @@ async fn upgrading_from_version_2_keeps_activity_and_telemetry(db: devkit::pg::T
         .await
         .unwrap();
     admit_one(&mut conn, &batch(vec![keyed("source", 1, 1, 1)])).await;
-    conn.execute("INSERT INTO telemetry.events SELECT * FROM core.events")
-        .await
-        .unwrap();
+    let telemetry = Event::build(
+        &sinex_model::event_types::telemetry::SinexTelemetry {
+            component: "writer".into(),
+            name: String::new(),
+            sampled_at: Timestamp::from_unix_secs(1_700_000_000).unwrap(),
+            measures: [("events".into(), 1.0)].into(),
+        },
+        "sinex.telemetry",
+        Origin::Record {
+            location: RecordLocation {
+                material: MaterialId::new(),
+                anchor: 0,
+            },
+            output_index: 0,
+        },
+        ReadingOrder(0),
+        [0; 32],
+        Class::Open,
+    )
+    .unwrap();
+    let mut sample = batch(vec![telemetry]);
+    sample.kind = BatchKind::Replay {
+        operation: OperationId::new(),
+    };
+    admit_one(&mut conn, &sample).await;
     let before: Vec<Value> = sqlx::query_scalar("SELECT to_jsonb(e) FROM core.events e UNION ALL SELECT to_jsonb(t) FROM telemetry.events t")
         .fetch_all(&mut conn).await.unwrap();
     remove_version_3(&mut conn).await;
@@ -229,9 +255,9 @@ async fn upgrading_from_version_2_keeps_activity_and_telemetry(db: devkit::pg::T
     let after: Vec<Value> = sqlx::query_scalar("SELECT to_jsonb(e) FROM core.events e UNION ALL SELECT to_jsonb(t) FROM telemetry.events t")
         .fetch_all(&mut conn).await.unwrap();
     assert_eq!(before, after);
-    let kinds: i64 = sqlx::query_scalar("SELECT count(*) FROM registry.event_types WHERE name IN ('sinex.telemetry', 'tag.applied')")
+    let kinds: i64 = sqlx::query_scalar("SELECT count(*) FROM registry.event_types WHERE name IN ('sinex.telemetry', 'tag.applied', 'activity.span', 'conversation.day', 'rest.fused', 'document.text')")
         .fetch_one(&mut conn).await.unwrap();
-    assert_eq!(kinds, 2);
+    assert_eq!(kinds, 6);
     assert!(matches!(
         sinex_schema::apply(&mut conn).await.unwrap(),
         sinex_schema::Applied::Current { .. }

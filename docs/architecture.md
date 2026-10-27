@@ -215,14 +215,24 @@ kinds.
 
 ### Tag rules
 
-The opt-in `tags` per-event derivation reads captured events and applies the
-source, file extension and MIME rules in `sinex-derivations/src/tags.rs`.
-Every matching tag becomes a `tag.applied` event naming the record and rules,
-with the captured reading as its parent and its original time and class.
-`services.sinex.derivations.tags.enable = true` enables it. Its rule table is
-part of the derivation version. A changed per-event version reads the inputs
-again and archives outputs it no longer produces, with its progress in the
-same transaction.
+The opt-in `tag.applier` per-event derivation applies the `tags` list in the
+sources configuration. Each rule names an event type, a tag and literal
+comparisons over payload values addressed by JSON pointers. Every matching
+tag becomes a `tag.applied` event naming its record and matching rules, with
+the input reading as its parent and its original time and class. Unknown
+times stay unknown. `services.sinex.derivations."tag.applier".enable = true`
+enables the configured rules. Changing the rule list reprocesses the inputs;
+admission replaces each input's output set and saves progress together, even
+when no rule matches any more. Hidden or replaced inputs lose their per-event
+outputs; unhiding an input computes them again.
+
+Document text is a per-event derivation over stored library copies. It reads
+the content blob for PDF, HTML, Markdown, plain text, Word (`.docx`) and
+OpenDocument (`.odt`), and writes searchable `document.text` events with their
+input as parent. PDF text and screen OCR run at idle priority. Activity spans
+join observed activity within logical days, excluding absent intervals;
+conversation days group a provider's messages, and rest fusion joins sleep
+and nap records from health providers.
 
 ### Metric figures
 

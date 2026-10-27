@@ -3,6 +3,7 @@
 //! `nix/catalog.json`, so adding a source to the registry adds its option; a
 //! test keeps the file current.
 use serde_json::{Value, json};
+use sinex_derivations::AnyPerEvent;
 
 pub(crate) fn catalog() -> Value {
     let sources: Vec<Value> = sources().into_iter().map(|s| s.to_json()).collect();
@@ -15,7 +16,11 @@ pub(crate) fn catalog() -> Value {
             "outputs": d.output_types(),
         })
     });
-    let per_event = sinex_derivations::per_event().into_iter().map(|d| {
+    let mut per_event = sinex_derivations::per_event();
+    per_event.push(
+        Box::new(crate::document_text::DocumentText { pdf_reader: None }) as Box<dyn AnyPerEvent>,
+    );
+    let per_event = per_event.into_iter().map(|d| {
         json!({
             "name": d.name(),
             "enabledByDefault": sinex_derivations::enabled_by_default(d.name()),

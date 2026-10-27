@@ -159,6 +159,6 @@ fn a_derivation_runs_unless_the_configuration_turns_it_off() {
 
 #[devkit::test]
 fn tags_require_an_explicit_choice() {
-    assert!(!Config::default().runs("tags"));
-    assert!(config(serde_json::json!({"derivations": {"tags": true}})).runs("tags"));
+    assert!(!Config::default().runs("tag.applier"));
+    assert!(config(serde_json::json!({"derivations": {"tag.applier": true}})).runs("tag.applier"));
 }

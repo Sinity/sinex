@@ -3,7 +3,8 @@
 //! - a **per-event derivation** reads committed events in commit order and
 //!   writes zero or more outputs for each (document text, OCR, mark linking);
 //! - a **keyed derivation** keeps each key's outputs equal to a function of the
-//!   key's current inputs (fused records, sessions, intervals, figures).
+//!   key's current inputs (fused records, sessions, activity spans, intervals,
+//!   figures).
 //!
 //! Admission marks keys dirty when an input of a keyed derivation is admitted
 //! or archived; the driver in `sinexd` recomputes only dirty keys and submits
@@ -14,6 +15,8 @@ use serde_json::Value;
 use sinex_model::time_settings::TimeSettings;
 use sinex_model::{Event, EventId, Timestamp};
 
+pub mod activity;
+pub mod conversation;
 pub mod derived_event;
 pub mod figures;
 pub mod fusion;
@@ -201,11 +204,24 @@ pub trait Keyed: Send + Sync {
 }
 
 /// One input of a per-event derivation: the committed event, and the stored
-/// bytes of the material it cites when the derivation reads them.
+/// bytes the derivation reads for it ([`Reads`]), when there are any.
 #[derive(Clone, Copy, Debug)]
 pub struct Input<'a> {
     pub event: &'a Event,
-    pub material: Option<&'a [u8]>,
+    pub bytes: Option<&'a [u8]>,
+}
+
+/// Which stored bytes a per-event derivation reads for each input. Stored
+/// bytes are content-addressed and never change, so the output is still a
+/// function of the input.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Reads {
+    Nothing,
+    /// The material the input cites (a screen still).
+    Material,
+    /// The stored blob a payload field names (a library copy's `content`);
+    /// none when the field is absent or the bytes were not stored.
+    Blob(&'static str),
 }
 
 pub trait PerEvent: Send + Sync {
@@ -213,15 +229,17 @@ pub trait PerEvent: Send + Sync {
     const VERSION: u32;
     const INPUTS: &'static [&'static str];
     const OUTPUTS: &'static [&'static str];
-    /// Registered input kinds. A rule over every registered kind can build
-    /// this list from the event registry.
-    fn input_types(&self) -> &'static [&'static str] {
-        Self::INPUTS
+    /// A tool's availability and version may change what this run can read.
+    fn version(&self) -> u32 {
+        Self::VERSION
     }
-    /// Whether `derive` reads the bytes of the material the input cites
-    /// (screen text from a screen still). The bytes are content-addressed and
-    /// never change, so the output is still a function of the input.
-    const READS_MATERIAL: bool = false;
+    /// The stored bytes `derive` reads for each input.
+    const READS: Reads = Reads::Nothing;
+    /// Select bytes before the runner reads them: a document reader does not
+    /// read an image or video simply because both are library copies.
+    fn reads_for(&self, _: &Event) -> Reads {
+        Self::READS
+    }
 
     /// The input's outputs. An error fails this input alone; the driver counts
     /// it and moves on.
@@ -274,7 +292,7 @@ pub trait AnyPerEvent: Send + Sync {
     fn version(&self) -> u32;
     fn inputs_types(&self) -> &'static [&'static str];
     fn output_types(&self) -> &'static [&'static str];
-    fn reads_material(&self) -> bool;
+    fn reads(&self, event: &Event) -> Reads;
     fn derive(&self, input: Input<'_>, env: &Env) -> Result<Vec<Event>, String>;
 }
 
@@ -283,31 +301,43 @@ impl<P: PerEvent> AnyPerEvent for P {
         P::NAME
     }
     fn version(&self) -> u32 {
-        P::VERSION
+        PerEvent::version(self)
     }
     fn inputs_types(&self) -> &'static [&'static str] {
-        PerEvent::input_types(self)
+        P::INPUTS
     }
     fn output_types(&self) -> &'static [&'static str] {
         P::OUTPUTS
     }
-    fn reads_material(&self) -> bool {
-        P::READS_MATERIAL
+    fn reads(&self, event: &Event) -> Reads {
+        PerEvent::reads_for(self, event)
     }
     fn derive(&self, input: Input<'_>, env: &Env) -> Result<Vec<Event>, String> {
         PerEvent::derive(self, input, env)
     }
 }
 
-/// Every keyed derivation, in one list. Order matters only for reading the
-/// list: the driver runs whatever is dirty.
+/// What the configuration declares for derivations: the tag rules.
+#[derive(Clone, Debug, Default, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct Configuration {
+    #[serde(default)]
+    pub tags: Vec<tags::TagRule>,
+}
+
+/// Every keyed derivation, in dependency order.
 pub fn keyed() -> Vec<Box<dyn AnyKeyed>> {
+    builtin()
+}
+
+fn builtin() -> Vec<Box<dyn AnyKeyed>> {
     let mut all: Vec<Box<dyn AnyKeyed>> = fusion::rules::RULES
         .iter()
         .map(|rule| Box::new(fusion::Fusion(rule)) as Box<dyn AnyKeyed>)
         .collect();
-    all.extend::<[Box<dyn AnyKeyed>; 7]>([
+    all.extend::<[Box<dyn AnyKeyed>; 9]>([
         Box::new(session::ShellSessions),
+        Box::new(activity::ActivitySpans),
+        Box::new(conversation::ConversationDays),
         Box::new(state_interval::StateIntervals),
         Box::new(figures::HourlyMetrics),
         Box::new(figures::DailyMetrics),
@@ -321,12 +351,19 @@ pub fn keyed() -> Vec<Box<dyn AnyKeyed>> {
 /// Every pure per-event derivation. Those that need a local tool (screen text
 /// through an OCR engine) are added by `sinexd`, which may run them.
 pub fn per_event() -> Vec<Box<dyn AnyPerEvent>> {
-    vec![Box::new(tags::Tags)]
+    per_event_with(&Configuration::default()).expect("empty rules are valid")
 }
 
-/// Whether a derivation runs without an explicit configuration entry.
+/// Pure per-event derivations using the declared rules.
+pub fn per_event_with(configuration: &Configuration) -> Result<Vec<Box<dyn AnyPerEvent>>, String> {
+    Ok(vec![Box::new(tags::TagApplier::new(
+        configuration.tags.clone(),
+    )?)])
+}
+
+/// The tag applier runs only when explicitly enabled.
 pub fn enabled_by_default(name: &str) -> bool {
-    name != tags::Tags::NAME
+    name != tags::TagApplier::NAME
 }
 
 /// The parent IDs of a set of input events, in input order, without repeats.

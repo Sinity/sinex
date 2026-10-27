@@ -1,12 +1,22 @@
 use super::*;
+use serde_json::json;
 use sinex_model::event_types::CommandImported;
-use sinex_model::event_types::machine::FileChanged;
-use sinex_model::{Class, MaterialId, ReadingOrder, RecordLocation, Timestamp};
+use sinex_model::{Class, MaterialId, Origin, ReadingOrder, RecordLocation, Timestamp};
 
-fn captured<P: EventPayload>(payload: &P, source: &str) -> Event {
+fn applier(rules: Value) -> TagApplier {
+    TagApplier::new(serde_json::from_value(rules).unwrap()).unwrap()
+}
+fn event() -> Event {
     Event::build(
-        payload,
-        source,
+        &CommandImported {
+            command: "echo hello".into(),
+            hostname: "test".into(),
+            started_at: None,
+            header_elapsed: None,
+            paths: vec![],
+            n: 0,
+        },
+        "terminal.zsh",
         Origin::Record {
             location: RecordLocation {
                 material: MaterialId::new(),
@@ -20,143 +30,118 @@ fn captured<P: EventPayload>(payload: &P, source: &str) -> Event {
     )
     .unwrap()
 }
-
-fn file(path: &str) -> Event {
-    captured(
-        &FileChanged {
-            received_at: Timestamp::from_unix_secs(1_700_000_000).unwrap(),
-            change: "written".into(),
-            path: Some(path.into()),
-            path_hex: None,
-            to: None,
-            is_dir: Some(false),
-            note: None,
-        },
-        "machine.file-watch",
-    )
+fn read(applier: &TagApplier, event: &Event) -> Vec<Event> {
+    applier
+        .derive(Input { event, bytes: None }, &Env::at(Timestamp::now()))
+        .unwrap()
 }
-
-fn read(event: &Event) -> Vec<Event> {
-    Tags.derive(
-        Input {
-            event,
-            material: None,
-        },
-        &Env::at(Timestamp::now()),
-    )
-    .unwrap()
+fn rules() -> Value {
+    json!([
+        {"tag": "terminal", "event_type": "command.imported"},
+        {"tag": "echo", "event_type": "command.imported", "when": [{"field": "/command", "starts_with": "ECHO "}]},
+        {"tag": "echo", "event_type": "command.imported", "when": [{"field": "/command", "contains": "hello"}]}
+    ])
 }
 
 #[devkit::test]
-fn every_matching_rule_is_applied_with_its_parent_and_class() {
-    let event = file("/project/main.rs");
-    let tags = read(&event);
+fn all_matches_are_attributed_and_unknown_time_and_class_are_preserved() {
+    let applier = applier(rules());
+    let event = event();
+    let tags = read(&applier, &event);
     let names: Vec<_> = tags
         .iter()
         .map(|tag| tag.payload["tag"].as_str().unwrap())
         .collect();
-    assert_eq!(names, ["inferred.file-type.rust", "sys.source.file"]);
+    assert_eq!(names, ["echo", "terminal"]);
+    assert_eq!(tags[0].payload["rules"].as_array().unwrap().len(), 2);
     for tag in tags {
-        assert_eq!(tag.class, Class::Guarded);
+        assert_eq!(tag.class, event.class);
+        assert_eq!(tag.ts_orig, event.ts_orig);
         assert_eq!(
             tag.origin,
             Origin::Derived {
                 parents: vec![event.id]
             }
         );
-        assert_eq!(tag.ts_orig, event.ts_orig);
-        assert!(!tag.payload["rules"].as_array().unwrap().is_empty());
     }
 }
 
 #[devkit::test]
-fn unknown_extensions_and_dots_in_directories_are_not_file_types() {
-    for path in ["/project/file.xyz", "/project.rs/README", "/project/.rs"] {
-        let names: Vec<_> = read(&file(path))
-            .into_iter()
-            .map(|tag| tag.payload["tag"].clone())
-            .collect();
-        assert_eq!(names, [serde_json::json!("sys.source.file")], "{path}");
-    }
-}
-
-#[devkit::test]
-fn repeats_and_replay_keep_the_tag_identity_and_unknown_time() {
-    let event = captured(
-        &CommandImported {
-            command: "ls".into(),
-            hostname: "test".into(),
-            started_at: None,
-            header_elapsed: None,
-            paths: vec![],
-            n: 0,
-        },
-        "terminal.zsh",
+fn rule_order_repeats_and_replay_keep_the_tag_identity() {
+    let input = event();
+    let first = read(&applier(rules()), &input);
+    let mut reversed = rules().as_array().unwrap().clone();
+    reversed.reverse();
+    let reordered = applier(json!(reversed));
+    assert_eq!(reordered.version(), applier(rules()).version());
+    let same = read(&reordered, &input);
+    assert_eq!(
+        first
+            .iter()
+            .map(|e| (&e.payload, &e.record_hash))
+            .collect::<Vec<_>>(),
+        same.iter()
+            .map(|e| (&e.payload, &e.record_hash))
+            .collect::<Vec<_>>()
     );
-    let first = read(&event).remove(0);
-    let repeat = read(&event).remove(0);
-    assert_eq!(first.record_hash, repeat.record_hash);
-    assert_eq!(first.equivalence_key, repeat.equivalence_key);
-    assert_eq!(first.ts_orig.at, None);
-    let mut replay = event.clone();
+    let mut replay = input;
     replay.id = sinex_model::EventId::new();
-    let reread = read(&replay).remove(0);
-    assert_eq!(first.payload, reread.payload);
-    assert_eq!(first.equivalence_key, reread.equivalence_key);
-    assert_ne!(first.record_hash, reread.record_hash);
-}
-
-#[devkit::test]
-fn tags_ignore_derived_events_and_the_input_registry_has_no_self_output() {
-    let tag = read(&file("/project/main.rs")).remove(0);
-    assert!(read(&tag).is_empty());
-    assert!(inputs().contains(&"command.imported"));
-    assert!(!inputs().contains(&"tag.applied"));
-    assert!(!inputs().contains(&"sinex.telemetry"));
-}
-
-#[devkit::test]
-fn input_order_and_incremental_reads_give_the_same_tags() {
-    let events = [file("/p/a.rs"), file("/p/b.md"), file("/p/c.xyz")];
-    let normalized = |outputs: Vec<Event>| {
-        let mut values: Vec<_> = outputs.into_iter().map(|e| e.payload.to_string()).collect();
-        values.sort();
-        values
-    };
-    let full = normalized(events.iter().flat_map(read).collect());
-    let shuffled = normalized(
-        [&events[2], &events[0], &events[1]]
-            .into_iter()
-            .flat_map(read)
-            .collect(),
-    );
-    let incremental = normalized(
-        events
-            .chunks(1)
-            .flat_map(|chunk| chunk.iter().flat_map(read))
-            .collect(),
-    );
-    assert_eq!(full, shuffled);
-    assert_eq!(full, incremental);
-}
-
-#[devkit::test]
-fn mime_rules_match_declared_media_types_only() {
-    let mut event = file("/p/README");
-    for (mime, expected) in [
-        ("text/markdown", Some("sys.mime.text-markdown")),
-        ("application/pdf", Some("sys.mime.pdf")),
-        ("image/png", None),
-    ] {
-        event.payload["media_type"] = serde_json::json!(mime);
-        let tags: Vec<_> = read(&event)
-            .into_iter()
-            .filter_map(|tag| tag.payload["tag"].as_str().map(str::to_owned))
-            .filter(|tag| tag.starts_with("sys.mime."))
-            .collect();
-        assert_eq!(
-            tags,
-            expected.into_iter().map(str::to_owned).collect::<Vec<_>>()
-        );
+    let again = read(&reordered, &replay);
+    for (before, after) in first.iter().zip(&again) {
+        assert_eq!(before.payload, after.payload);
+        assert_eq!(before.equivalence_key, after.equivalence_key);
+        assert_ne!(before.record_hash, after.record_hash);
     }
+}
+
+#[devkit::test]
+fn conditions_compare_literals_and_missing_values() {
+    let tests: Vec<Condition> = serde_json::from_value(json!([
+        {"field": "/app", "is": "kitty"},
+        {"field": "/title", "contains": "PROJECT"},
+        {"field": "/title", "starts_with": "editor:"},
+        {"field": "/title", "ends_with": ".RS"},
+        {"field": "/missing", "exists": false},
+        {"field": "/null", "exists": false},
+        {"field": "/app", "exists": true}
+    ]))
+    .unwrap();
+    let payload = json!({"app": "kitty", "title": "Editor: project/main.rs", "null": null});
+    assert!(tests.iter().all(|condition| condition.holds(&payload)));
+    assert!(!tests[0].holds(&json!({"app": "Kitty"})));
+    assert!(!tests[1].holds(&json!({"title": 2})));
+    assert!(!tests[2].holds(&json!({})));
+}
+
+#[devkit::test]
+fn invalid_rules_are_refused_and_empty_rules_are_valid() {
+    assert!(read(&applier(json!([])), &event()).is_empty());
+    for rule in [
+        json!({"tag": " ", "event_type": "command.imported"}),
+        json!({"tag": "x", "event_type": "unknown"}),
+        json!({"tag": "x", "event_type": "tag.applied"}),
+        json!({"tag": "x", "event_type": "sinex.telemetry"}),
+        json!({"tag": "x", "event_type": "command.imported", "when": [{"field": "command", "exists": true}]}),
+        json!({"tag": "x", "event_type": "command.imported", "when": [{"field": "/a~2b", "exists": true}]}),
+    ] {
+        let rules = serde_json::from_value(json!([rule])).unwrap();
+        assert!(TagApplier::new(rules).is_err());
+    }
+    assert!(valid_pointer(""));
+    assert!(valid_pointer("/a~0b/~1"));
+}
+
+#[devkit::test]
+fn declared_file_extension_and_mime_rules_keep_the_ported_cases() {
+    let rules = applier(json!([
+        {"tag": "inferred.file-type.rust", "event_type": "command.imported", "when": [{"field": "/path", "ends_with": ".rs"}]},
+        {"tag": "sys.mime.text-markdown", "event_type": "command.imported", "when": [{"field": "/media_type", "is": "text/markdown"}]}
+    ]));
+    let mut input = event();
+    input.payload["path"] = json!("/p/main.rs");
+    input.payload["media_type"] = json!("text/markdown");
+    assert_eq!(read(&rules, &input).len(), 2);
+    input.payload["path"] = json!("/p/file.xyz");
+    input.payload["media_type"] = json!("image/png");
+    assert!(read(&rules, &input).is_empty());
 }
