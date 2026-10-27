@@ -111,3 +111,28 @@ fn a_binding_named_health_cannot_overwrite_the_report() {
     );
     assert!(dir.path().join("health.json").exists());
 }
+
+#[devkit::test]
+fn startup_counts_an_unacknowledged_batch_once_and_then_counts_new_capture() {
+    let dir = tempfile::tempdir().unwrap();
+    let spool = dir.path().join("spool");
+    let positions = dir.path().join("positions");
+    std::fs::create_dir(&spool).unwrap();
+    std::fs::write(spool.join("000000000000.ndjson"), b"one\ntwo\npartial").unwrap();
+    let (_, binding) = super::super::binding("hyprland", &spool, "synthetic", Value::Null).unwrap();
+    let before = json!({"segment":0,"inner":{"offset":4}});
+    let after = json!({"segment":0,"inner":{"offset":8}});
+    Position {cursor:before,carry:Value::Null}.save(&positions,&binding.name).unwrap();
+    let path = std::fs::read_dir(&positions).unwrap().next().unwrap().unwrap().path().with_extension("unacknowledged.json");
+    std::fs::write(path,serde_json::to_vec(&json!({"frames":[],"position":{"cursor":after,"carry":null}})).unwrap()).unwrap();
+    let counter = initialize(&positions,&binding).unwrap();
+    let mut counter = counter.lock().unwrap();
+    assert_eq!((counter.counts.bytes,counter.counts.records),(11,1));
+    counter.recovered(&after);
+    assert_eq!((counter.counts.bytes,counter.counts.records),(7,0));
+    counter.captured_line(1,10);
+    let next = json!({"segment":1,"inner":{"offset":10}});
+    counter.prepare(&next,1);
+    counter.recovered(&next);
+    assert_eq!((counter.counts.bytes,counter.counts.records),(0,0));
+}
