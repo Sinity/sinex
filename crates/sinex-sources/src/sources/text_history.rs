@@ -1,9 +1,9 @@
 //! Explicit plain history. Every nonempty complete line is an untimed command.
+use sinex_model::{Class, event_types::CommandImported};
 use sinex_source_core::binding::{self, InputFormat};
 use sinex_source_core::drivers::append_file::AppendFile;
 use sinex_source_core::registry::{DeclaredSource, Driver, SourceSpec};
 use sinex_source_core::{Parser, RecordContext, RecordError};
-use sinex_model::{Class, event_types::CommandImported};
 use std::path::PathBuf;
 
 pub const SPEC: SourceSpec = SourceSpec {

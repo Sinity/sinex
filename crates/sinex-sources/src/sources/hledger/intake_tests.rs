@@ -1,15 +1,15 @@
 //! Exercise shared acquisition, stored parts and committed restart progress.
+use serde_json::Value;
+use sinex_model::{
+    BatchKind, Class, Event, MaterialRef, MaterialRole, ObservationFacts, ReadingOrder,
+    RecordOutcome, RunId,
+};
 use sinex_source_core::drivers::export_archive::{
     ExportArchive,
     group::{self, Input, Route},
 };
 use sinex_source_core::drivers::{self, MaterialSink};
 use sinex_source_core::{DrainInput, Limits, Source};
-use serde_json::Value;
-use sinex_model::{
-    BatchKind, Class, Event, MaterialRef, MaterialRole, ObservationFacts, ReadingOrder,
-    RecordOutcome, RunId,
-};
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex, atomic::AtomicBool};
 
@@ -198,7 +198,7 @@ pub(super) fn export_restart(
     }
     assert_eq!(values(&replayed), values(&parts.events));
     for event in &parts.events {
-        let location = event.location().unwrap();
+        let (location, _) = event.location().unwrap();
         let material = parts
             .materials
             .iter()
