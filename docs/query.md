@@ -39,7 +39,9 @@ The grouping needs one time-bucket key and a finite range on its time field.
 A lower bound is required; an omitted upper bound resolves to the query's
 `now`. Calendar buckets use the configured zone and logical day start.
 Dimension combinations come from the groups that were recorded in the range.
-Every filled row has `coverage`: `recorded` for a group with records,
+Recorded groups remain in the answer, including states whose start precedes
+a recall window. Recall bounds intersect any narrower filter on `when`; other
+bucket fields need their own bounds. Every filled row has `coverage`: `recorded` for a group with records,
 `observed` when the selected live source's recorded run covers the bucket's selected
 range, or `no_data` when that opportunity is unknown. Empty counts and sums become
 zero only for `observed` rows; other empty aggregates remain null. A filled

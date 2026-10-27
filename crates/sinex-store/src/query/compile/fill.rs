@@ -1,6 +1,6 @@
 //! Fill the requested calendar buckets in SQL, before later filters and paging.
 use super::*;
-use sinex_model::query::{Fill, Group};
+use sinex_model::query::{Aggregate, Fill, Group};
 
 impl Compiler<'_> {
     pub(super) fn fill(
@@ -79,9 +79,11 @@ impl Compiler<'_> {
             at
         };
         let bucket = self.time_fn(func, wall_time(false));
-        let mut out = SqlFragment::text("WITH filled_groups AS (");
+        let mut out = SqlFragment::text(
+            "WITH filled_groups AS (SELECT filled_input.*, true AS _recorded FROM (",
+        );
         out.append(grouped)
-            .push("), filled_ticks AS (")
+            .push(") filled_input), filled_ticks AS (")
             .append(ticks)
             .push("), filled_buckets AS (SELECT ")
             .append(bucket)
@@ -112,12 +114,11 @@ impl Compiler<'_> {
         let known_opportunity = self.fill_opportunity(fill, field)?;
         let mut select: Vec<SqlFragment> = all_keys
             .iter()
-            .map(|k| SqlFragment::text(format!("b.{}", quote(k))))
+            .map(|k| SqlFragment::text(format!("coalesce(b.{0}, g.{0}) AS {0}", quote(k))))
             .collect();
         for aggregate in &group.aggregates {
             let mut value = SqlFragment::text(format!(
-                "CASE WHEN g.{} IS NOT NULL THEN g.{}",
-                quote(key),
+                "CASE WHEN g._recorded IS TRUE THEN g.{}",
                 quote(&aggregate.column())
             ));
             if matches!(
@@ -132,24 +133,32 @@ impl Compiler<'_> {
             value.push(format!(" ELSE NULL END AS {}", quote(&aggregate.column())));
             select.push(value);
         }
-        let mut coverage = SqlFragment::text(format!(
-            "CASE WHEN g.{} IS NOT NULL THEN 'recorded' WHEN ",
-            quote(key)
-        ));
+        let mut coverage = SqlFragment::text("CASE WHEN g._recorded IS TRUE THEN 'recorded' WHEN ");
         coverage
             .append(known_opportunity)
             .push(" THEN 'observed' ELSE 'no_data' END AS coverage");
         select.push(coverage);
+        let same_keys = all_keys
+            .iter()
+            .map(|k| format!("b.{0} IS NOT DISTINCT FROM g.{0}", quote(k)))
+            .collect::<Vec<_>>()
+            .join(" AND ");
         out.push(" SELECT ")
             .append(SqlFragment::join(select, ", "))
-            .push(" FROM filled_keys b LEFT JOIN filled_groups g ON ");
-        out.push(
-            all_keys
-                .iter()
-                .map(|k| format!("b.{0} IS NOT DISTINCT FROM g.{0}", quote(k)))
-                .collect::<Vec<_>>()
-                .join(" AND "),
-        );
+            .push(" FROM filled_keys b LEFT JOIN filled_groups g ON ")
+            .push(same_keys.clone());
+        let recorded: Vec<String> = all_keys
+            .iter()
+            .cloned()
+            .chain(group.aggregates.iter().map(Aggregate::column))
+            .map(|name| format!("g.{}", quote(&name)))
+            .chain(std::iter::once("'recorded'".into()))
+            .collect();
+        out.push(" UNION ALL SELECT ")
+            .push(recorded.join(", "))
+            .push(" FROM filled_groups g WHERE NOT EXISTS (SELECT 1 FROM filled_keys b WHERE ")
+            .push(same_keys)
+            .push(")");
         Ok(out)
     }
 

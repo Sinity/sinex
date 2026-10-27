@@ -298,3 +298,21 @@ fn saved_definition_errors_do_not_point_inside_unicode_arguments() {
     let error = QueryError::at(1, "synthetic error");
     assert_eq!(error.render("界"), "synthetic error");
 }
+
+#[devkit::test]
+fn recall_fill_bounds_apply_only_to_when_and_intersect_row_time_bounds() {
+    let query = q(
+        "recall sinex:window/2026-09-13T04:00:00Z/2026-09-16T04:00:00Z where when >= 2026-09-14T04:00:00Z and when < 2026-09-15T04:00:00Z group by day(when) count fill",
+    );
+    let Stage::Group(group) = query.stages.last().unwrap() else {
+        panic!()
+    };
+    let fill = group.fill.as_ref().unwrap();
+    assert_eq!(fill.from, ts("2026-09-14T04:00:00Z"));
+    assert_eq!(fill.to, ts("2026-09-15T04:00:00Z"));
+    assert!(
+        err("recall yesterday group by day(seen) count fill")
+            .message
+            .contains("lower time bound")
+    );
+}

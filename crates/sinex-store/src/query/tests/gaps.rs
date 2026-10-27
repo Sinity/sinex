@@ -202,16 +202,42 @@ async fn source_gaps_merge_overlapping_runs_and_drift_keeps_recorded_changes(
 async fn text_lists_compare_members_and_return_the_declared_array(db: devkit::pg::TestDatabase) {
     let mut conn = PgConnection::connect(&db.url(None)).await.unwrap();
     world(&mut conn).await;
+    spanning_session(&mut conn).await;
+    for (condition, total) in [
+        ("payload.cwds = /src/tide", 1),
+        ("payload.cwds != /src/tide", 0),
+        ("payload.cwds != /src/absent", 1),
+        ("payload.cwds ~ TiDe", 1),
+        ("payload.cwds ^ /src/o", 1),
+        (r#"payload.cwds ~ ",""#, 0),
+        ("payload.cwds = [/src/absent, /src/other]", 1),
+    ] {
+        let answer = ask(
+            &mut conn,
+            &format!("events where event_type = shell.session and {condition} fields payload.cwds"),
+        )
+        .await;
+        assert_eq!(answer.total, total, "{condition}");
+        if total == 1 {
+            assert_eq!(
+                answer.rows[0]["payload.cwds"],
+                json!(["/src/tide", "/src/other"])
+            );
+        }
+    }
+}
+
+async fn spanning_session(conn: &mut PgConnection) {
     let parent: Uuid = sqlx::query_scalar("SELECT id FROM core.events LIMIT 1")
-        .fetch_one(&mut conn)
+        .fetch_one(&mut *conn)
         .await
         .unwrap();
     let event = Event::build(
         &sinex_model::event_types::ShellSession {
             host: "synthetic-list".into(),
-            started_at: Timestamp::from_unix_secs(BASE).unwrap(),
-            ended_at: Timestamp::from_unix_secs(BASE + 60).unwrap(),
-            day: "2026-09-14".into(),
+            started_at: Timestamp::from_unix_secs(BASE - 86400).unwrap(),
+            ended_at: Timestamp::from_unix_secs(BASE + 3600).unwrap(),
+            day: "2026-09-13".into(),
             commands: 1,
             failed: 0,
             cwds: vec!["/src/tide".into(), "/src/other".into()],
@@ -239,26 +265,24 @@ async fn text_lists_compare_members_and_return_the_declared_array(db: devkit::pg
     let mut tx = conn.begin().await.unwrap();
     admit(&mut tx, &batch, &NoDerivations).await.unwrap();
     tx.commit().await.unwrap();
-    for (condition, total) in [
-        ("payload.cwds = /src/tide", 1),
-        ("payload.cwds != /src/tide", 0),
-        ("payload.cwds != /src/absent", 1),
-        ("payload.cwds ~ TiDe", 1),
-        ("payload.cwds ^ /src/o", 1),
-        (r#"payload.cwds ~ ",""#, 0),
-        ("payload.cwds = [/src/absent, /src/other]", 1),
-    ] {
-        let answer = ask(
-            &mut conn,
-            &format!("events where event_type = shell.session and {condition} fields payload.cwds"),
-        )
-        .await;
-        assert_eq!(answer.total, total, "{condition}");
-        if total == 1 {
-            assert_eq!(
-                answer.rows[0]["payload.cwds"],
-                json!(["/src/tide", "/src/other"])
-            );
-        }
-    }
+}
+
+#[devkit::test]
+async fn filled_recall_keeps_recorded_buckets_before_its_window_and_intersects_filters(
+    db: devkit::pg::TestDatabase,
+) {
+    let mut conn = PgConnection::connect(&db.url(None)).await.unwrap();
+    world(&mut conn).await;
+    spanning_session(&mut conn).await;
+    let answer = ask(&mut conn, "recall sinex:window/2026-09-14T08:30:00Z/2026-09-14T09:00:00Z group by day(when) count fill").await;
+    assert_eq!(answer.total, 2);
+    assert_eq!(answer.rows[0]["day"], "2026-09-13");
+    assert_eq!(answer.rows[0]["count"], 1);
+    assert_eq!(answer.rows[0]["coverage"], "recorded");
+    assert_eq!(answer.rows[1]["day"], "2026-09-14");
+    assert!(answer.rows[1]["count"].is_null());
+    let answer = ask(&mut conn, "recall sinex:window/2026-09-13T04:00:00Z/2026-09-16T04:00:00Z where when >= 2026-09-14T04:00:00Z and when < 2026-09-15T04:00:00Z group by day(when) count fill").await;
+    assert_eq!(answer.total, 1);
+    assert_eq!(answer.rows[0]["day"], "2026-09-14");
+    assert_eq!(answer.rows[0]["count"], 10);
 }

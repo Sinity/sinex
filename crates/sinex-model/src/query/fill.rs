@@ -109,9 +109,11 @@ pub(super) fn bind(q: &mut Query, ctx: &Context) -> Result<(), QueryError> {
                         }
                     }
                     fill.sources = selected.unwrap_or_default().into_iter().collect();
-                    if let Source::Recall { from: f, to: t } = q.source {
-                        from = Some(f);
-                        to = Some(t);
+                    if let Source::Recall { from: f, to: t } = q.source
+                        && field.name() == "when"
+                    {
+                        from = Some(from.map_or(f, |bound| bound.max(f)));
+                        to = Some(to.map_or(t, |bound| bound.min(t)));
                     }
                     fill.from = from.ok_or_else(|| {
                         QueryError::new(
