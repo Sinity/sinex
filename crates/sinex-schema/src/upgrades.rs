@@ -42,5 +42,7 @@ pub(crate) fn upgrades() -> Vec<Vec<String>> {
             "DROP INDEX IF EXISTS core.events_coverage".into(),
             crate::tables::COVERAGE_RUNS.into(),
         ],
+        // 3 to 4: track blob-row changes even when admission produces no events.
+        crate::tables::blob_changes(),
     ]
 }

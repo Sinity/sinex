@@ -144,6 +144,26 @@ in
         default = "/var/lib/postgresql/sinex";
         description = "PostgreSQL's data directory; postgres must be able to reach it, so not under the 0750 state directory.";
       };
+      sharedBuffers = mkOption {
+        type = types.str;
+        default = "128MB";
+        description = "PostgreSQL's shared buffer pool; size it for the host's available RAM.";
+      };
+      workMem = mkOption {
+        type = types.str;
+        default = "4MB";
+        description = "Memory for each PostgreSQL sort or hash operation.";
+      };
+      maxWalSize = mkOption {
+        type = types.str;
+        default = "1GB";
+        description = "PostgreSQL WAL size before requesting a checkpoint.";
+      };
+      checkpointTimeout = mkOption {
+        type = types.str;
+        default = "5min";
+        description = "Maximum time between PostgreSQL checkpoints.";
+      };
       maxConnections = mkOption {
         type = types.int;
         default = 64;
@@ -393,10 +413,10 @@ in
           wal_compression = "lz4";
           password_encryption = "scram-sha-256";
           max_connections = cfg.database.maxConnections;
-          shared_buffers = lib.mkDefault "4GB";
-          max_wal_size = lib.mkDefault "16GB";
-          checkpoint_timeout = lib.mkDefault "30min";
-          work_mem = lib.mkDefault "64MB";
+          shared_buffers = lib.mkDefault cfg.database.sharedBuffers;
+          max_wal_size = lib.mkDefault cfg.database.maxWalSize;
+          checkpoint_timeout = lib.mkDefault cfg.database.checkpointTimeout;
+          work_mem = lib.mkDefault cfg.database.workMem;
           log_temp_files = lib.mkDefault "16MB";
           # Connection logs would feed back into the journald source.
           log_connections = false;

@@ -119,8 +119,9 @@ access to every file instead (it never writes them). A path with nothing to
 read, and a binding that fails, is logged when it happens, once, and again
 only when that changes.
 
-The module defaults PostgreSQL to `shared_buffers = 4GB`, `max_wal_size = 16GB`,
-`checkpoint_timeout = 30min`, `work_mem = 64MB` and `log_temp_files = 16MB`.
+`services.sinex.database.sharedBuffers`, `maxWalSize`, `checkpointTimeout` and
+`workMem` configure PostgreSQL. The module defaults to `shared_buffers = 128MB`, `max_wal_size = 1GB`,
+`checkpoint_timeout = 5min`, `work_mem = 4MB` and `log_temp_files = 16MB`.
 These settings support bulk admission and record temporary files of at least
 16 MB in the PostgreSQL log. `work_mem` applies to each sort or hash operation,
 so concurrent queries can use several allocations. Deployments can override
@@ -195,6 +196,9 @@ agentctl job start sinex focused -- -p sinex-sources -E 'test(session_socket)'
 agentctl job start sinex focused -- -p sinexd --bin sinexd -E 'test(derivation_runner::tests)'
 agentctl job start sinex compile -- -p sinex-store --tests
 ```
+
+`agentctl job start sinex verify` runs the full Rust test suite and full check in
+one job, using the test suite's tmpfs scratch and each command's time limit.
 
 `xtask test` passes its arguments to `cargo nextest run`. `-p` limits what is
 built; a name or `-E` filter alone still builds the whole workspace, and within

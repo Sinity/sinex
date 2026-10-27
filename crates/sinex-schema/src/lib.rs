@@ -22,7 +22,7 @@ pub const WRITER_LOCK: i64 = 0x7369_6e65_7857_5254;
 
 /// The schema version these declarations create: one more than the last
 /// upgrade starts from.
-pub const VERSION: i32 = 3;
+pub const VERSION: i32 = 4;
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
@@ -75,6 +75,9 @@ pub async fn prepare(connection: &mut PgConnection, owner: &str) -> Result<(), E
     for statement in privileged() {
         connection.execute(statement.as_str()).await?;
     }
+    connection
+        .execute("GRANT EXECUTE ON FUNCTION pg_control_system() TO sinex_writer")
+        .await?;
     connection
         .execute(format!("GRANT sinex_writer, sinex_reader TO {}", quote_ident(owner)).as_str())
         .await?;
