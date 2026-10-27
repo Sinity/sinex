@@ -52,22 +52,29 @@ fn unreadable_switch_blocks_and_reports_stream_and_cause() {
 }
 
 #[devkit::test]
-fn quiet_stream_and_shutdown_still_write_a_gap() {
+fn quiet_stream_keeps_its_gap_open_across_restart() {
     let dir = tempfile::tempdir().unwrap();
+    let spool = dir.path().join("spool");
     let mode = PrivateMode::new(dir.path().join("switch"));
-    let (gate, gaps) = gate(&dir.path().join("spool"), mode.clone());
+    let (capture, gaps) = gate(&spool, mode.clone());
     mode.set(true).unwrap();
-    // Wait for the gate's persisted start, without sending captured records.
     let until = std::time::Instant::now() + Duration::from_secs(2);
-    while !dir.path().join("spool/.private-gap.json").exists() {
+    while !spool.join(".private-gap.json").exists() {
         assert!(std::time::Instant::now() < until);
         std::thread::yield_now();
     }
-    drop(gate);
-    assert_eq!(
-        gaps.recv_timeout(Duration::from_secs(2)).unwrap().stream,
-        "test-stream"
-    );
+    drop(capture);
+    assert!(gaps.try_recv().is_err());
+    let pending: Gap =
+        serde_json::from_slice(&std::fs::read(spool.join(".private-gap.json")).unwrap()).unwrap();
+    assert_eq!(pending.end, None);
+    let (capture, resumed) = gate(&spool, mode.clone());
+    assert!(!capture.allowed().unwrap());
+    mode.set(false).unwrap();
+    assert!(capture.allowed().unwrap());
+    let gap = resumed.recv_timeout(Duration::from_secs(2)).unwrap();
+    assert_eq!(gap.start, pending.start);
+    assert!(gap.end.is_some());
 }
 
 #[devkit::test]
@@ -136,7 +143,7 @@ fn gap_records_drain_as_capture_gap_without_calling_the_source_parser() {
         .unwrap()
         .material
         .unwrap();
-    assert!(!String::from_utf8_lossy(&material.bytes).contains("private content"));
+    assert!(!String::from_utf8_lossy(material.body()).contains("private content"));
     struct Never;
     impl crate::Parser for Never {
         type Record<'a> = &'a [u8];
@@ -157,7 +164,7 @@ fn gap_records_drain_as_capture_gap_without_calling_the_source_parser() {
             source: "test",
             class: Class::Open,
             material: MaterialId::new(),
-            bytes: material.bytes.as_slice().into(),
+            bytes: material.body().into(),
             records: &material.records,
             carry: serde_json::Value::Null,
             reading_order: &|_| ReadingOrder(0),
@@ -203,5 +210,39 @@ fn finished_records_cannot_be_stored_after_a_private_interval() {
         })
         .unwrap()
         .is_none()
+    );
+}
+
+#[devkit::test]
+fn failed_health_writes_do_not_reopen_private_buffers() {
+    let directory = tempfile::tempdir().unwrap();
+    let spool = directory.path().join("spool");
+    let mode = PrivateMode::new(directory.path().join("switch"));
+    let (gate, gaps) = gate(&spool, mode.clone());
+    let permit = gate.permit().unwrap();
+    let health = spool.join(".capture-health.json");
+    {
+        let _held = gate.shared.0.lock().unwrap();
+        std::fs::remove_file(&health).unwrap();
+        std::fs::create_dir(&health).unwrap();
+    }
+    mode.set(true).unwrap();
+    assert!(gate.allowed().is_err());
+    mode.set(false).unwrap();
+    {
+        let _held = gate.shared.0.lock().unwrap();
+        std::fs::remove_dir(&health).unwrap();
+    }
+    assert!(gate.allowed().unwrap());
+    assert!(
+        gate.store(permit, || -> io::Result<()> {
+            panic!("a failed metadata write must not reopen old buffers")
+        })
+        .unwrap()
+        .is_none()
+    );
+    assert_eq!(
+        gaps.recv_timeout(Duration::from_secs(2)).unwrap().reason,
+        "private_mode"
     );
 }

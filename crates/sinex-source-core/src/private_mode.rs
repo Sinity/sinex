@@ -46,6 +46,7 @@ struct Inner {
     gap_path: PathBuf,
     health: Health,
     gap: Option<Gap>,
+    gap_saved: bool,
     checked: bool,
     private_changes: u64,
     sink: Sink,
@@ -93,22 +94,11 @@ impl GateAccess {
         if permit.0.is_none() || parent.stopped() || !self.accepts(permit)? {
             return Ok(None);
         }
-        // Stop acquisition before waiting for gap metadata to reach disk.
-        let mode = self
-            .0
-            .0
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .mode
-            .clone();
         let stop = crate::capture::CaptureStop::new(None);
         std::thread::scope(|scope| {
             let task = scope.spawn(|| capture(&stop));
             while !task.is_finished() {
-                if parent.stopped()
-                    || mode.state() != State::Off
-                    || !self.accepts(permit).unwrap_or(false)
-                {
+                if parent.stopped() || !self.accepts(permit).unwrap_or(false) {
                     stop.stop();
                 }
                 std::thread::sleep(Duration::from_millis(10));
@@ -144,6 +134,7 @@ impl Gate {
             Err(error) if error.kind() == io::ErrorKind::NotFound => None,
             Err(error) => return Err(error),
         };
+        let gap_saved = gap.is_some();
         let mut inner = Inner {
             mode,
             stream: stream.clone(),
@@ -155,6 +146,7 @@ impl Gate {
             },
             gap_path,
             gap,
+            gap_saved,
             checked: false,
             private_changes: 0,
             sink: Box::new(sink),
@@ -281,6 +273,20 @@ impl Gate {
 impl Inner {
     fn check(&mut self) -> io::Result<bool> {
         let state = self.mode.state();
+        let now = Timestamp::now();
+        let blocked = state != State::Off;
+        if blocked && self.gap.is_none() {
+            // Invalidate active reads before metadata IO can fail or block.
+            self.private_changes += 1;
+            self.gap = Some(Gap {
+                stream: self.stream.clone(),
+                start: self.checked.then_some(now),
+                end: None,
+                reason: "private_mode".into(),
+            });
+            self.gap_saved = false;
+        }
+        self.checked = true;
         let health = Health {
             stream: self.stream.clone(),
             state: state.name().into(),
@@ -295,40 +301,38 @@ impl Inner {
             save_health(&self.health_path, &health)?;
             self.health = health;
         }
-        let now = Timestamp::now();
-        if state != State::Off {
-            if self.gap.is_none() {
-                let gap = Gap {
-                    stream: self.stream.clone(),
-                    start: self.checked.then_some(now),
-                    end: None,
-                    reason: "private_mode".into(),
-                };
+        if blocked {
+            if !self.gap_saved {
                 let temporary = self.gap_path.with_extension("partial");
                 let file = std::fs::File::create(&temporary)?;
-                serde_json::to_writer(&file, &gap)?;
+                serde_json::to_writer(
+                    &file,
+                    self.gap.as_ref().expect("blocked capture has a gap"),
+                )?;
                 file.sync_all()?;
                 std::fs::rename(&temporary, &self.gap_path)?;
                 std::fs::File::open(self.gap_path.parent().expect("spool directory"))?
                     .sync_all()?;
-                self.gap = Some(gap);
-                self.private_changes += 1;
+                self.gap_saved = true;
             }
-            self.checked = true;
-            return Ok(false);
+            Ok(false)
+        } else {
+            self.close_gap(Some(now))?;
+            Ok(true)
         }
-        self.checked = true;
-        self.close_gap(Some(now))?;
-        Ok(true)
     }
 
     fn close_gap(&mut self, end: Option<Timestamp>) -> io::Result<()> {
         if let Some(mut gap) = self.gap.clone() {
             gap.end = end;
             (self.sink)(gap)?;
-            std::fs::remove_file(&self.gap_path)?;
+            match std::fs::remove_file(&self.gap_path) {
+                Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+                result => result?,
+            }
             std::fs::File::open(self.gap_path.parent().expect("spool directory"))?.sync_all()?;
             self.gap = None;
+            self.gap_saved = false;
         }
         Ok(())
     }
@@ -339,7 +343,7 @@ impl Drop for Gate {
         {
             let mut inner = self.shared.0.lock().unwrap_or_else(|e| e.into_inner());
             inner.stopped = true;
-            if let Err(error) = inner.close_gap(Some(Timestamp::now())) {
+            if let Err(error) = inner.check() {
                 eprintln!("capture health: {}: {error}", inner.stream);
             }
             self.shared.1.notify_all();
@@ -350,11 +354,11 @@ impl Drop for Gate {
     }
 }
 
-#[cfg(test)]
-mod tests;
-
 fn save_health(path: &Path, health: &Health) -> io::Result<()> {
     let temporary = path.with_extension("partial");
     std::fs::write(&temporary, serde_json::to_vec(health)?)?;
     std::fs::rename(temporary, path)
 }
+
+#[cfg(test)]
+mod tests;
