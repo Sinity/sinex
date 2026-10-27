@@ -1,8 +1,5 @@
-//! The media library's operations, shared by the API and
-//! `sinexd admin library-*`. Every change is a library request: its records
-//! are stored as the request's own bytes and admitted through the one writer
-//! (`sinex-sources`'s `library.request`), attributed to the caller. Reads
-//! come from live events through `sinex_library::reads`.
+//! Media library commands. Scans and previews feed the library derivation;
+//! authored curation goes through request intake. Reads use live events.
 use crate::writer::WriterHandle;
 use serde_json::{Value, json};
 use sinex_library::{items, reads};
@@ -19,9 +16,6 @@ mod media;
 mod views;
 
 use views::{collection_view, item_view, rank_view};
-
-/// Who intake's own records are attributed to.
-pub(crate) const INTAKE: &str = "library-intake";
 
 /// What a library operation writes with.
 pub(crate) struct Library<'a> {

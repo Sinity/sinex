@@ -678,3 +678,5 @@ async fn a_recompute_stopped_part_way_is_marked_again_at_the_next_start(
     assert!(w.count(fusion_dirty).await > 0);
     assert_eq!(w.count(stored_version).await, version);
 }
+
+mod commands;

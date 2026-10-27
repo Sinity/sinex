@@ -1,25 +1,25 @@
 //! The media library's two sources.
 //!
-//! **Scan** (`library.scan`): a walk of a library root. Each new or changed
-//! file is hashed once (BLAKE3, SHA-256, MD5), its type sniffed from its
+//! **Scan** (`library.scan`): a walk of a library root. Every changed file is hashed once (BLAKE3, SHA-256, MD5), its type sniffed from its
 //! bytes, its bytes streamed into the content store unless the root is
 //! indexed by reference only, and described by one JSON line. The material is
-//! those lines; one line is one `library.copy`. A file that left its
-//! path but whose device and inode turned up at a new path with the same bytes
-//! is a rename (`moved_from`); a file whose bytes changed in place names the
+//! those lines; a file line is one `library.copy`. A completion line closes
+//! each changed scan once, without another copy event. A file that left its
+//! path and whose bytes turned up at a new path is a move (`moved_from`);
+//! matching device and inode are considered first. An edited file names the
 //! bytes it held (`previous_content`). A file gone from a completed walk, and
 //! not moved, gets a vanished line.
 //!
 //! **Requests** (`library.request`): what the operator or an agent writes to
-//! the library (items, assignments, collections, ratings, views), stored as
+//! the library (previews, assignments, collections, ratings, views), stored as
 //! the request's own JSON lines and read back by the request parser. The
 //! parser takes the author and time from the material's manifest, which the
 //! daemon fills from the authenticated caller, never from the lines.
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 use sinex_model::event_types::library::{
-    Assignment, Collection, Comparison, Dismissal, Entry, FileCopy, Item, LibraryRecord, Rating,
-    Rendition, View,
+    Assignment, Collection, Comparison, Dismissal, Entry, FileCopy, LibraryRecord, Preview, Rating,
+    View,
 };
 use sinex_model::{
     Class, InputRef, MaterialId, ObservationFacts, ReadingOrder, RevisionChange, Timestamp,
@@ -39,7 +39,7 @@ pub const SCAN: SourceSpec = SourceSpec {
     purpose: "the media library",
     class: Class::Open,
     parser: "library-scan",
-    parser_version: 1,
+    parser_version: 2,
     event_types: &["library.copy"],
     framer: sinex_source_core::Framer::export(
         sinex_source_core::drivers::export_archive::frame_lines,
@@ -54,7 +54,7 @@ pub const REQUEST: SourceSpec = SourceSpec {
     purpose: "the media library",
     class: Class::Open,
     parser: "library-request",
-    parser_version: 1,
+    parser_version: 2,
     event_types: sinex_model::event_types::library::REQUEST_TYPES,
     framer: sinex_source_core::Framer::export(
         sinex_source_core::drivers::export_archive::frame_lines,
@@ -68,6 +68,7 @@ pub const REQUEST: SourceSpec = SourceSpec {
 /// One scanned file as the driver describes it: the stored record.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 struct ScannedFile {
+    pub item_key: String,
     pub host: String,
     pub root: String,
     pub path: String,
@@ -89,6 +90,18 @@ struct ScannedFile {
     pub vanished_at_ns: Option<String>,
 }
 
+/// File changes and the end of a completed walk share its stored material.
+#[derive(Serialize, Deserialize)]
+#[serde(tag = "record", rename_all = "snake_case")]
+enum ScanLine {
+    File(Box<ScannedFile>),
+    Complete {
+        host: String,
+        root: String,
+        only: Option<String>,
+    },
+}
+
 fn nanos(text: &Option<String>) -> Option<Timestamp> {
     text.as_deref()
         .and_then(|s| s.parse::<i128>().ok())
@@ -102,10 +115,7 @@ impl Parser for ScanParser {
     type Carry = ();
     type Payload = FileCopy;
 
-    /// Where a file is and how it was found are left out of the record hash,
-    /// so equal bytes hash equal at any path: a rescan of an unchanged file is
-    /// a repeat, and an excised file's bytes stay excised wherever they turn
-    /// up again.
+    /// Location and file facts do not change the hash of the captured bytes.
     const VOLATILE: &'static [&'static str] = &[
         "host",
         "root",
@@ -122,11 +132,40 @@ impl Parser for ScanParser {
         &self,
         record: &Map<String, Value>,
         _: &(),
-        _context: &sinex_source_core::RecordContext<'_>,
+        context: &sinex_source_core::RecordContext<'_>,
     ) -> Result<(Vec<FileCopy>, ()), RecordError> {
-        let d: ScannedFile = serde_json::from_value(Value::Object(record.clone()))
+        let line: ScanLine = serde_json::from_value(Value::Object(record.clone()))
             .map_err(|e| RecordError::new(format!("not a library scan line: {e}")))?;
+        let ScanLine::File(d) = line else {
+            return Ok((Vec::new(), ()));
+        };
+        let d = *d;
+        let key = d.item_key.clone();
+        let scanned_at = context
+            .manifest
+            .read_at_ns
+            .and_then(|n| Timestamp::from_unix_ns(i128::from(n)).ok())
+            .ok_or_else(|| RecordError::new("library scan has no acquisition time"))?;
+        let scan = context
+            .manifest
+            .details
+            .get("scan")
+            .and_then(Value::as_str)
+            .ok_or_else(|| RecordError::new("library scan has no identity"))?
+            .to_owned();
+        let part_index = context
+            .manifest
+            .details
+            .get("part_index")
+            .and_then(Value::as_u64)
+            .and_then(|index| u32::try_from(index).ok())
+            .ok_or_else(|| RecordError::new("library scan has no part index"))?;
         let payload = FileCopy {
+            scan,
+            part_index,
+            item: sinex_model::event_types::library::item_id(&key),
+            item_key: key,
+            scanned_at,
             modified_at: nanos(&d.mtime_ns),
             vanished_at: nanos(&d.vanished_at_ns),
             host: d.host,
@@ -165,7 +204,7 @@ pub struct LibraryScan {
     pub keep_bytes: bool,
     /// Ask `ffprobe` for dimensions and duration of video and audio.
     pub probe: bool,
-    /// File bytes hashed per poll, so one poll's material stays a sensible size
+    /// File bytes described per poll, so one poll's material stays a sensible size
     /// and progress commits as it goes. A file larger than this is read alone.
     pub bytes_per_poll: u64,
     /// Scan only this file (a path relative to `root`); the rest of the root
@@ -176,6 +215,14 @@ pub struct LibraryScan {
 /// What a scan knows about a file it already read.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Known {
+    pub item_key: String,
+    pub sha256: String,
+    pub md5: String,
+    pub media_type: String,
+    pub width: Option<u32>,
+    pub height: Option<u32>,
+    pub duration_ms: Option<u64>,
+    pub stored: bool,
     pub size: u64,
     pub mtime_ns: i128,
     pub device: Option<u64>,
@@ -183,7 +230,7 @@ pub struct Known {
     pub content: String,
 }
 
-/// A file the walk found changed: relative path, size, mtime, device, inode.
+/// A file the walk found: relative path, size, mtime, device, inode.
 type Pending = (String, u64, i128, Option<u64>, Option<u64>);
 
 /// The scan's state: the files read, by path, and the work left from the
@@ -196,6 +243,10 @@ pub struct ScanState {
     /// Paths missing from the current walk, with the file identity they had.
     missing: BTreeMap<String, Known>,
     walk_pending: bool,
+    walk_changed: bool,
+    completed: bool,
+    #[cfg(test)]
+    files_hashed: usize,
     /// Paths a restart has already decided from a newer part.
     remembered: std::collections::HashSet<String>,
 }
@@ -228,8 +279,12 @@ impl ScanState {
             bytes
                 .read_exact_at(start as u64, &mut line)
                 .map_err(|e| DriverError::Io(e.to_string()))?;
-            let d: ScannedFile = serde_json::from_slice(&line)
+            let line: ScanLine = serde_json::from_slice(&line)
                 .map_err(|e| DriverError::Cursor(format!("stored scan line: {e}")))?;
+            let ScanLine::File(d) = line else {
+                continue;
+            };
+            let d = *d;
             let Ok(relative) = Path::new(&d.path).strip_prefix(root) else {
                 continue;
             };
@@ -251,6 +306,14 @@ impl ScanState {
             self.files.insert(
                 relative,
                 Known {
+                    item_key: d.item_key,
+                    sha256: d.sha256,
+                    md5: d.md5,
+                    media_type: d.media_type,
+                    width: d.width,
+                    height: d.height,
+                    duration_ms: d.duration_ms,
+                    stored: d.stored,
                     size: d.size,
                     mtime_ns,
                     device: d.device,
@@ -403,7 +466,21 @@ impl LibraryScan {
     /// Walk the root and queue what changed; note what is missing.
     fn walk(&self, state: &mut ScanState) -> Result<(), DriverError> {
         let mut found = BTreeMap::new();
-        walk(&self.root, &self.root, &mut found)?;
+        if let Some(only) = &self.only {
+            let path = self.root.join(only);
+            match std::fs::symlink_metadata(&path) {
+                Ok(metadata) if !skipped(only) && metadata.is_file() => {
+                    found.insert(only.clone(), file_identity(&metadata));
+                }
+                Ok(_) => {}
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                Err(error) => {
+                    return Err(DriverError::Io(format!("{}: {error}", path.display())));
+                }
+            }
+        } else {
+            walk(&self.root, &self.root, &mut found)?;
+        }
         // Sidecars (`a.jpg.json`, `a.jpg.txt`, `a.json`) describe the file
         // beside them; library import reads them. They are not items.
         let stems: std::collections::BTreeSet<String> = found
@@ -419,9 +496,6 @@ impl LibraryScan {
         for s in sidecars {
             found.remove(&s);
         }
-        if let Some(only) = &self.only {
-            found.retain(|path, _| path == only);
-        }
         let mut missing = BTreeMap::new();
         for (path, known) in &state.files {
             if self.only.as_ref().is_some_and(|o| o != path) {
@@ -432,14 +506,24 @@ impl LibraryScan {
             }
         }
         for (path, (size, mtime, dev, ino)) in found {
-            let unchanged = state
-                .files
-                .get(&path)
-                .is_some_and(|k| k.size == size && k.mtime_ns == mtime);
-            if !unchanged {
+            if state.files.get(&path).is_none_or(|known| {
+                known.size != size
+                    || known.mtime_ns != mtime
+                    || known.device != dev
+                    || known.inode != ino
+                    || known.stored != self.keep_bytes
+            }) {
                 state.queue.push_back((path, size, mtime, dev, ino));
             }
         }
+        state
+            .queue
+            .make_contiguous()
+            .sort_by_key(|(_, _, _, device, inode)| {
+                !missing.values().any(|known| {
+                    inode.is_some() && known.inode == *inode && known.device == *device
+                })
+            });
         state.missing = missing;
         state.walk_pending = true;
         Ok(())
@@ -487,6 +571,52 @@ impl LibraryScan {
             state.queue.pop_front();
             budget += size.max(1);
             let full = self.root.join(&relative);
+            let before = state.files.get(&relative).cloned();
+            if let Some(known) = &before
+                && known.size == size
+                && known.mtime_ns == mtime
+                && known.device == dev
+                && known.inode == ino
+            {
+                let line = ScannedFile {
+                    item_key: known.item_key.clone(),
+                    host: self.host.clone(),
+                    root: root.clone(),
+                    path: full.display().to_string(),
+                    content: known.content.clone(),
+                    size,
+                    sha256: known.sha256.clone(),
+                    md5: known.md5.clone(),
+                    media_type: known.media_type.clone(),
+                    width: known.width,
+                    height: known.height,
+                    duration_ms: known.duration_ms,
+                    stored: self.keep_bytes,
+                    device: dev,
+                    inode: ino,
+                    mtime_ns: Some(mtime.to_string()),
+                    moved_from: None,
+                    previous_content: None,
+                    vanished_at_ns: None,
+                };
+                if self.keep_bytes && !known.stored {
+                    owned_files.push(sinex_source_core::drivers::OwnedFile {
+                        path: full,
+                        blob: known.content.clone(),
+                    });
+                }
+                push_line(
+                    &mut lines,
+                    &mut records,
+                    &ScanLine::File(Box::new(line.clone())),
+                );
+                state.files.get_mut(&relative).expect("known file").stored = self.keep_bytes;
+                continue;
+            }
+            #[cfg(test)]
+            {
+                state.files_hashed += 1;
+            }
             let digests = match digest(&full) {
                 Ok(d) => d,
                 // Gone or unreadable between the walk and the read: the next
@@ -495,16 +625,38 @@ impl LibraryScan {
             };
             let content = format!("blake3:{}", digests.blake3);
             let stored = self.keep_bytes;
-            let before = state.files.get(&relative).cloned();
-            // Moved: a missing path held this very file (device and inode)
-            // with these bytes.
-            let moved_from = state
+            // Only a missing path with unchanged bytes can continue at a
+            // new path. The walk orders matching inodes before new copies.
+            let matches: Vec<_> = state
                 .missing
                 .iter()
-                .find(|(_, k)| {
-                    k.content == content && k.device == dev && k.inode == ino && ino.is_some()
+                .filter(|(_, known)| before.is_none() && known.content == content)
+                .collect();
+            let identities: Vec<_> = matches
+                .iter()
+                .copied()
+                .filter(|(_, known)| ino.is_some() && known.inode == ino && known.device == dev)
+                .collect();
+            let selected = if identities.len() == 1 {
+                identities.first()
+            } else if matches.len() == 1 {
+                matches.first()
+            } else {
+                None
+            };
+            let moved_from = selected.map(|(path, _)| (*path).clone());
+            let item_key = before
+                .as_ref()
+                .map(|k| k.item_key.clone())
+                .or_else(|| {
+                    moved_from
+                        .as_ref()
+                        .and_then(|p| state.missing.get(p))
+                        .map(|k| k.item_key.clone())
                 })
-                .map(|(p, _)| p.clone());
+                .unwrap_or_else(|| {
+                    sinex_model::event_types::library::item_key(&self.host, &root, &relative)
+                });
             if let Some(old) = &moved_from {
                 // The old path is gone; its line comes after this one's, so
                 // whoever reads the move sees the new path first.
@@ -515,22 +667,8 @@ impl LibraryScan {
             }
             let previous_content = before
                 .as_ref()
-                .filter(|k| k.content != content && k.device == dev && k.inode == ino)
+                .filter(|known| known.content != content)
                 .map(|k| k.content.clone());
-            if before.as_ref().is_some_and(|k| k.content == content) {
-                // Touched, not changed.
-                state.files.insert(
-                    relative.clone(),
-                    Known {
-                        size,
-                        mtime_ns: mtime,
-                        device: dev,
-                        inode: ino,
-                        content,
-                    },
-                );
-                continue;
-            }
             let (width, height, mut duration_ms) = dimensions(&digests.head, &digests.media_type);
             let (mut width, mut height) = (width, height);
             if self.probe
@@ -543,6 +681,7 @@ impl LibraryScan {
                 duration_ms = duration_ms.or(p.2);
             }
             let line = ScannedFile {
+                item_key: item_key.clone(),
                 host: self.host.clone(),
                 root: root.clone(),
                 path: full.display().to_string(),
@@ -562,7 +701,11 @@ impl LibraryScan {
                 previous_content,
                 vanished_at_ns: None,
             };
-            push_line(&mut lines, &mut records, &line);
+            push_line(
+                &mut lines,
+                &mut records,
+                &ScanLine::File(Box::new(line.clone())),
+            );
             if stored {
                 owned_files.push(sinex_source_core::drivers::OwnedFile {
                     path: full.clone(),
@@ -572,6 +715,14 @@ impl LibraryScan {
             state.files.insert(
                 relative,
                 Known {
+                    item_key,
+                    sha256: line.sha256,
+                    md5: line.md5,
+                    media_type: line.media_type,
+                    width: line.width,
+                    height: line.height,
+                    duration_ms: line.duration_ms,
+                    stored: line.stored,
                     size,
                     mtime_ns: mtime,
                     device: dev,
@@ -592,6 +743,7 @@ impl LibraryScan {
             for (relative, known) in gone {
                 state.files.remove(&relative);
                 let line = ScannedFile {
+                    item_key: known.item_key,
                     host: self.host.clone(),
                     root: root.clone(),
                     path: self.root.join(&relative).display().to_string(),
@@ -604,9 +756,28 @@ impl LibraryScan {
                     media_type: String::new(),
                     ..Default::default()
                 };
-                push_line(&mut lines, &mut records, &line);
+                push_line(
+                    &mut lines,
+                    &mut records,
+                    &ScanLine::File(Box::new(line.clone())),
+                );
             }
         }
+        let files_described = records.len() as u64;
+        state.walk_changed |= files_described > 0;
+        if walk_done && (state.walk_changed || (previous.material.is_none() && !state.completed)) {
+            push_line(
+                &mut lines,
+                &mut records,
+                &ScanLine::Complete {
+                    host: self.host.clone(),
+                    root: root.clone(),
+                    only: self.only.clone(),
+                },
+            );
+            state.walk_changed = false;
+        }
+        state.completed |= walk_done;
         let scanned = ScanCursor {
             last_complete_walk_ns: if walk_done {
                 Some(now.unix_ns().to_string())
@@ -626,23 +797,21 @@ impl LibraryScan {
             });
         }
         let read_at = i64::try_from(now.unix_ns()).unwrap_or(i64::MAX);
-        let manifest = sinex_model::Manifest::from_json(json!({
-            "path": root,
-            "host": self.host,
-            "media_type": "application/x-sinex-library-scan",
-            "keep_bytes": self.keep_bytes,
-            "walk_complete": walk_done,
-            "read_at_ns": read_at,
-        }));
         let id = MaterialId::new();
         let part_index = if previous.material.is_some() {
             previous.part_index + 1
         } else {
             0
         };
+        let manifest = sinex_model::Manifest::from_json(json!({
+            "path": root, "host": self.host,
+            "media_type": "application/x-sinex-library-scan", "keep_bytes": self.keep_bytes,
+            "walk_complete": walk_done, "only": self.only, "read_at_ns": read_at,
+            "scan": id.to_string(), "part_index": part_index,
+        }));
         let changed = previous
             .changed_since_memory
-            .saturating_add(records.len() as u64);
+            .saturating_add(files_described);
         let due = sinex_source_core::drivers::memory_due(
             part_index,
             previous.memory_part,
@@ -702,7 +871,7 @@ impl LibraryScan {
     }
 }
 
-fn push_line(lines: &mut Vec<u8>, records: &mut Vec<(usize, usize)>, line: &ScannedFile) {
+fn push_line(lines: &mut Vec<u8>, records: &mut Vec<(usize, usize)>, line: &ScanLine) {
     let start = lines.len();
     serde_json::to_writer(&mut *lines, line).expect("scan lines serialize");
     lines.push(b'\n');
@@ -711,11 +880,23 @@ fn push_line(lines: &mut Vec<u8>, records: &mut Vec<(usize, usize)>, line: &Scan
 
 type Found = BTreeMap<String, (u64, i128, Option<u64>, Option<u64>)>;
 
-fn walk(root: &Path, dir: &Path, found: &mut Found) -> Result<(), DriverError> {
+fn file_identity(metadata: &std::fs::Metadata) -> (u64, i128, Option<u64>, Option<u64>) {
     use std::os::unix::fs::MetadataExt;
+    let modified = i128::from(metadata.mtime()) * 1_000_000_000 + i128::from(metadata.mtime_nsec());
+    (
+        metadata.len(),
+        modified,
+        Some(metadata.dev()),
+        Some(metadata.ino()),
+    )
+}
+
+fn walk(root: &Path, dir: &Path, found: &mut Found) -> Result<(), DriverError> {
     let entries =
         std::fs::read_dir(dir).map_err(|e| DriverError::Io(format!("{}: {e}", dir.display())))?;
-    for entry in entries.flatten() {
+    for entry in entries {
+        let entry =
+            entry.map_err(|error| DriverError::Io(format!("{}: {error}", dir.display())))?;
         let path = entry.path();
         let Ok(relative) = path.strip_prefix(root) else {
             continue;
@@ -726,17 +907,12 @@ fn walk(root: &Path, dir: &Path, found: &mut Found) -> Result<(), DriverError> {
         }
         // Symlinks are not followed: a link can point anywhere, including
         // outside the root.
-        let Ok(meta) = std::fs::symlink_metadata(&path) else {
-            continue;
-        };
+        let meta = std::fs::symlink_metadata(&path)
+            .map_err(|error| DriverError::Io(format!("{}: {error}", path.display())))?;
         if meta.is_dir() {
             walk(root, &path, found)?;
         } else if meta.is_file() {
-            let mtime = i128::from(meta.mtime()) * 1_000_000_000 + i128::from(meta.mtime_nsec());
-            found.insert(
-                relative,
-                (meta.len(), mtime, Some(meta.dev()), Some(meta.ino())),
-            );
+            found.insert(relative, file_identity(&meta));
         }
     }
     Ok(())
@@ -959,8 +1135,7 @@ fn ffprobe(path: &Path) -> Option<(Option<u32>, Option<u32>, Option<u64>)> {
 #[derive(Deserialize, Serialize)]
 #[serde(tag = "record", rename_all = "snake_case")]
 enum Line {
-    Item(Item),
-    Rendition(Rendition),
+    Preview(Preview),
     Assignment(Assignment),
     Collection(Collection),
     Entry(Entry),
@@ -977,8 +1152,7 @@ fn request_bytes(records: &[LibraryRecord]) -> (Vec<u8>, Vec<(usize, usize)>) {
     let mut spans = Vec::new();
     for r in records {
         let line = match r.clone() {
-            LibraryRecord::Item(x) => Line::Item(x),
-            LibraryRecord::Rendition(x) => Line::Rendition(x),
+            LibraryRecord::Preview(x) => Line::Preview(x),
             LibraryRecord::Assignment(x) => Line::Assignment(x),
             LibraryRecord::Collection(x) => Line::Collection(x),
             LibraryRecord::Entry(x) => Line::Entry(x),
@@ -1068,8 +1242,7 @@ impl Parser for RequestParser {
         let line: Line = serde_json::from_value(Value::Object(object))
             .map_err(|e| RecordError::new(format!("not a library record: {e}")))?;
         let record = match line {
-            Line::Item(x) => LibraryRecord::Item(x),
-            Line::Rendition(x) => LibraryRecord::Rendition(x),
+            Line::Preview(x) => LibraryRecord::Preview(x),
             Line::Assignment(x) => LibraryRecord::Assignment(x),
             Line::Collection(x) => LibraryRecord::Collection(x),
             Line::Entry(x) => LibraryRecord::Entry(x),
@@ -1099,7 +1272,7 @@ impl Parser for RequestParser {
                     ));
                 }
                 match &record {
-                    LibraryRecord::Rendition(rendition) => Some(
+                    LibraryRecord::Preview(rendition) => Some(
                         facts
                             .into_iter()
                             .find(|fact| fact.blob == rendition.content)
