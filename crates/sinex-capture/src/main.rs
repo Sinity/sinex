@@ -8,7 +8,7 @@
 //! with `--upload`, the node keeps its own store and sends each material's
 //! bytes over the link in chunk frames first.
 use clap::Parser;
-use sinex_sources::drivers::producer::{Producer, Store};
+use sinex_source_core::drivers::producer::{Producer, Store};
 use sinex_sources::live;
 use std::path::PathBuf;
 use std::process::ExitCode;

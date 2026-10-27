@@ -38,7 +38,8 @@ fn a_shared_source_name_resolves_by_parser() {
         .into_iter()
         .find(|s| s.name == "desktop.clipboard" && s.parser.starts_with("sinnix-lake:"))
         .expect("the lake's clipboard lane");
-    let b = crate::Binding::of(lake, std::path::Path::new("/realm"), Settings::new("h"));
+    let b =
+        sinex_source_core::Binding::of(lake, std::path::Path::new("/realm"), Settings::new("h"));
     assert_eq!(source_for(&b).unwrap().spec().parser, lake.parser);
     assert_eq!(
         format_of_source(lake.name, lake.parser).unwrap().name,
@@ -49,7 +50,11 @@ fn a_shared_source_name_resolves_by_parser() {
 #[devkit::test]
 fn a_shared_parser_resolves_by_name() {
     let outlook = spec("communication.outlook").expect("Outlook is registered");
-    let b = crate::Binding::of(outlook, std::path::Path::new("/x.mbox"), Settings::new("h"));
+    let b = sinex_source_core::Binding::of(
+        outlook,
+        std::path::Path::new("/x.mbox"),
+        Settings::new("h"),
+    );
     assert_eq!(
         format_of_source(&b.source, &b.parser).unwrap().name,
         "outlook"

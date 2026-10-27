@@ -7,13 +7,14 @@ publish.workspace = true
 license.workspace = true
 
 [dependencies]
+sinex-sealing.workspace = true
+sinex-source-core.workspace = true
 sinex-transport.workspace = true
-age.workspace = true
 tempfile = "3"
 sinex-model.workspace = true
 sinex-schema.workspace = true
 sinex-store.workspace = true
-sinex-sources.workspace = true
+sinex-sources = { workspace = true, features = ["full"] }
 sinex-library.workspace = true
 sinex-derivations.workspace = true
 sinex-analysis.workspace = true

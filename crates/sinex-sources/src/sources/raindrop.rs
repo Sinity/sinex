@@ -5,12 +5,12 @@
 //! ID, so they are one source: every export, in either format, is a reading of
 //! the same bookmarks, and the newest export's reading is the live one.
 use super::fields;
-use crate::drivers::export_archive::{ExportArchive, Framing, PART_BYTES};
-use crate::registry::{DeclaredSource, Driver, SourceSpec};
-use crate::{Parser, RecordError};
 use serde_json::{Map, Value};
 use sinex_model::Class;
 use sinex_model::event_types::media::BookmarkSaved;
+use sinex_source_core::drivers::export_archive::{ExportArchive, Framing, PART_BYTES};
+use sinex_source_core::registry::{DeclaredSource, Driver, SourceSpec};
+use sinex_source_core::{Parser, RecordError};
 use std::path::PathBuf;
 
 pub const SPEC: SourceSpec = SourceSpec {
@@ -22,7 +22,7 @@ pub const SPEC: SourceSpec = SourceSpec {
     parser: "raindrop-export",
     parser_version: 1,
     event_types: &["bookmark.saved"],
-    framer: crate::Framer::detected(frame, framing),
+    framer: sinex_source_core::Framer::detected(frame, framing),
 };
 
 /// Raindrop's trash collection.
@@ -41,7 +41,7 @@ impl Parser for RaindropParser {
         &self,
         record: &&[u8],
         header: &Vec<String>,
-        _context: &crate::RecordContext<'_>,
+        _context: &sinex_source_core::RecordContext<'_>,
     ) -> Result<(Vec<BookmarkSaved>, Vec<String>), RecordError> {
         if record.trim_ascii_start().starts_with(b"{") {
             let row: Map<String, Value> = serde_json::from_slice(record)
@@ -228,27 +228,28 @@ pub fn driver(path: PathBuf, host: String) -> ExportArchive {
 }
 
 /// `--read raindrop=PATH`: each Raindrop export in PATH.
-pub const FORMAT: crate::binding::InputFormat = crate::binding::InputFormat {
-    name: "raindrop",
-    specs: || vec![&SPEC],
-    plan: Some(|input, settings| {
-        Ok(crate::binding::per_file(
-            &SPEC,
-            input,
-            settings,
-            false,
-            crate::binding::any,
-        ))
-    }),
-    source: |_| Ok(Box::new(source())),
-    reader: Some(|b| {
-        Ok(crate::binding::shared(driver(
-            b.input.clone(),
-            b.settings.host.clone(),
-        )))
-    }),
-    capture: None,
-};
+pub const FORMAT: sinex_source_core::binding::InputFormat =
+    sinex_source_core::binding::InputFormat {
+        name: "raindrop",
+        specs: || vec![&SPEC],
+        plan: Some(|input, settings| {
+            Ok(sinex_source_core::binding::per_file(
+                &SPEC,
+                input,
+                settings,
+                false,
+                sinex_source_core::binding::any,
+            ))
+        }),
+        source: |_| Ok(Box::new(source())),
+        reader: Some(|b| {
+            Ok(sinex_source_core::binding::shared(driver(
+                b.input.clone(),
+                b.settings.host.clone(),
+            )))
+        }),
+        capture: None,
+    };
 
 #[cfg(test)]
 mod tests;

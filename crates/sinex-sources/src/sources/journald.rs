@@ -12,12 +12,12 @@
 //! Every entry is kept, including the daemon's own log lines and PostgreSQL's
 //! connection noise: those are journal entries like any other, and filtering
 //! them belongs in views, not in capture.
-use crate::drivers::live_stream::{self, LiveStream, Rotation, SpoolWriter};
-use crate::registry::{DeclaredSource, Driver, SourceSpec};
-use crate::{Parser, RecordError};
 use serde_json::{Map, Value};
 use sinex_model::event_types::machine::JournalEntry;
 use sinex_model::{Class, InputRef, Timestamp};
+use sinex_source_core::drivers::live_stream::{self, LiveStream, Rotation, SpoolWriter};
+use sinex_source_core::registry::{DeclaredSource, Driver, SourceSpec};
+use sinex_source_core::{Parser, RecordError};
 use std::io::{BufReader, Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -33,7 +33,7 @@ pub const SPEC: SourceSpec = SourceSpec {
     parser: "journald-json",
     parser_version: 1,
     event_types: &["journal.entry"],
-    framer: crate::Framer::incremental(crate::drivers::append_file::lines),
+    framer: sinex_source_core::Framer::incremental(sinex_source_core::drivers::append_file::lines),
 };
 
 pub struct JournaldParser;
@@ -65,7 +65,7 @@ impl Parser for JournaldParser {
         &self,
         record: &Map<String, Value>,
         _: &(),
-        _context: &crate::RecordContext<'_>,
+        _context: &sinex_source_core::RecordContext<'_>,
     ) -> Result<(Vec<JournalEntry>, ()), RecordError> {
         let (_, line) = live_stream::received(record).map_err(RecordError::new)?;
         if line.iter().all(u8::is_ascii_whitespace) {
@@ -187,7 +187,7 @@ fn capture_until(
     spool: &Path,
     follow: bool,
     start: Start<'_>,
-    stop: &crate::capture::CaptureStop,
+    stop: &sinex_source_core::capture::CaptureStop,
 ) -> std::io::Result<u64> {
     let mut command = Command::new("journalctl");
     command.args(["--output=json", "--all", "--no-pager", "--quiet"]);
@@ -228,31 +228,34 @@ fn capture_until(
 /// `--read journald=SPOOL`: the journal, captured into SPOOL. Options:
 /// `since` (a `journalctl --since` expression; the whole journal otherwise)
 /// and `follow`.
-pub const FORMAT: crate::binding::InputFormat = crate::binding::InputFormat {
-    name: "journald",
-    specs: || vec![&SPEC],
-    plan: Some(|spool, settings| Ok(crate::binding::single(&SPEC, spool, settings))),
-    source: |_| Ok(Box::new(source())),
-    reader: Some(|b| {
-        Ok(crate::binding::polled(driver(
-            b.input.clone(),
-            b.settings.host.clone(),
-        )))
-    }),
-    capture: Some(|b, stop| {
-        let start = match b.settings.option("since") {
-            Some(s) => Start::Since(s),
-            None => Start::Beginning,
-        };
-        let follow = b
-            .settings
-            .options
-            .get("follow")
-            .and_then(serde_json::Value::as_bool)
-            .unwrap_or(false);
-        capture_until(&b.input, follow, start, stop).map_err(|e| e.to_string())
-    }),
-};
+pub const FORMAT: sinex_source_core::binding::InputFormat =
+    sinex_source_core::binding::InputFormat {
+        name: "journald",
+        specs: || vec![&SPEC],
+        plan: Some(|spool, settings| {
+            Ok(sinex_source_core::binding::single(&SPEC, spool, settings))
+        }),
+        source: |_| Ok(Box::new(source())),
+        reader: Some(|b| {
+            Ok(sinex_source_core::binding::polled(driver(
+                b.input.clone(),
+                b.settings.host.clone(),
+            )))
+        }),
+        capture: Some(|b, stop| {
+            let start = match b.settings.option("since") {
+                Some(s) => Start::Since(s),
+                None => Start::Beginning,
+            };
+            let follow = b
+                .settings
+                .options
+                .get("follow")
+                .and_then(serde_json::Value::as_bool)
+                .unwrap_or(false);
+            capture_until(&b.input, follow, start, stop).map_err(|e| e.to_string())
+        }),
+    };
 
 #[cfg(test)]
 mod tests;

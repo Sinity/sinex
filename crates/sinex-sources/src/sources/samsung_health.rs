@@ -16,14 +16,14 @@
 //! member gives one `health.record` per element (one bin) and an object member
 //! one record, each of category `<type>.<column>` and identified by the row's
 //! `datauuid`, the column and the element's position.
-use crate::drivers::export_archive::{ExportArchive, Framing, PART_BYTES};
-use crate::registry::{DeclaredSource, Driver, SourceSpec};
 use crate::sources::fields;
-use crate::{Parser, RecordContext, RecordError};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 use sinex_model::event_types::health::HealthRecord;
 use sinex_model::{Class, Timestamp};
+use sinex_source_core::drivers::export_archive::{ExportArchive, Framing, PART_BYTES};
+use sinex_source_core::registry::{DeclaredSource, Driver, SourceSpec};
+use sinex_source_core::{Parser, RecordContext, RecordError};
 use std::path::PathBuf;
 
 pub const SPEC: SourceSpec = SourceSpec {
@@ -35,7 +35,10 @@ pub const SPEC: SourceSpec = SourceSpec {
     parser: "samsung-health-export",
     parser_version: 2,
     event_types: &["health.record"],
-    framer: crate::Framer::export(frame, crate::drivers::export_archive::Framing::Csv),
+    framer: sinex_source_core::Framer::export(
+        frame,
+        sinex_source_core::drivers::export_archive::Framing::Csv,
+    ),
 };
 
 /// The `jsons/` members: the columns Samsung stores beside a row.
@@ -48,7 +51,10 @@ pub const ATTACHMENTS: SourceSpec = SourceSpec {
     parser: "samsung-health-attachments",
     parser_version: 1,
     event_types: &["health.record"],
-    framer: crate::Framer::export(whole, crate::drivers::export_archive::Framing::Whole),
+    framer: sinex_source_core::Framer::export(
+        whole,
+        sinex_source_core::drivers::export_archive::Framing::Whole,
+    ),
 };
 
 /// The member being read, its type (line 1) and header (line 2).
@@ -327,39 +333,40 @@ pub fn driver(path: PathBuf, host: String) -> ExportArchive {
 }
 
 /// `--read samsung-health=PATH`: each Samsung Health export ZIP under PATH.
-pub const FORMAT: crate::binding::InputFormat = crate::binding::InputFormat {
-    name: "samsung-health",
-    specs: || vec![&SPEC, &ATTACHMENTS],
-    plan: Some(|input, settings| {
-        let zip = |p: &std::path::Path| p.extension().is_some_and(|e| e == "zip");
-        let mut out = crate::binding::per_file(&SPEC, input, settings, true, zip);
-        out.extend(
-            crate::binding::per_file(&ATTACHMENTS, input, settings, true, zip)
-                .into_iter()
-                .map(|b| b.named("attachments")),
-        );
-        Ok(out)
-    }),
-    source: |b| {
-        if b.parser == ATTACHMENTS.parser {
-            Ok(Box::new(attachments_source()))
-        } else {
-            Ok(Box::new(source()))
-        }
-    },
-    reader: Some(|b| {
-        let read = if b.parser == ATTACHMENTS.parser {
-            attachments_driver
-        } else {
-            driver
-        };
-        Ok(crate::binding::shared(read(
-            b.input.clone(),
-            b.settings.host.clone(),
-        )))
-    }),
-    capture: None,
-};
+pub const FORMAT: sinex_source_core::binding::InputFormat =
+    sinex_source_core::binding::InputFormat {
+        name: "samsung-health",
+        specs: || vec![&SPEC, &ATTACHMENTS],
+        plan: Some(|input, settings| {
+            let zip = |p: &std::path::Path| p.extension().is_some_and(|e| e == "zip");
+            let mut out = sinex_source_core::binding::per_file(&SPEC, input, settings, true, zip);
+            out.extend(
+                sinex_source_core::binding::per_file(&ATTACHMENTS, input, settings, true, zip)
+                    .into_iter()
+                    .map(|b| b.named("attachments")),
+            );
+            Ok(out)
+        }),
+        source: |b| {
+            if b.parser == ATTACHMENTS.parser {
+                Ok(Box::new(attachments_source()))
+            } else {
+                Ok(Box::new(source()))
+            }
+        },
+        reader: Some(|b| {
+            let read = if b.parser == ATTACHMENTS.parser {
+                attachments_driver
+            } else {
+                driver
+            };
+            Ok(sinex_source_core::binding::shared(read(
+                b.input.clone(),
+                b.settings.host.clone(),
+            )))
+        }),
+        capture: None,
+    };
 
 #[cfg(test)]
 mod tests;

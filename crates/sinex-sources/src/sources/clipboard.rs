@@ -6,13 +6,13 @@
 //! An owner can mark content secret with the `x-kde-passwordManagerHint` type
 //! (password managers do); its content is then not read, only that a secret
 //! was copied.
-use crate::drivers::live_stream::{self, LiveStream, Rotation, SpoolWriter};
-use crate::registry::{DeclaredSource, Driver, SourceSpec};
-use crate::{Parser, RecordError};
 use base64::Engine;
 use serde_json::{Map, Value, json};
 use sinex_model::event_types::session::ClipboardCopied;
 use sinex_model::{Class, InputRef};
+use sinex_source_core::drivers::live_stream::{self, LiveStream, Rotation, SpoolWriter};
+use sinex_source_core::registry::{DeclaredSource, Driver, SourceSpec};
+use sinex_source_core::{Parser, RecordError};
 use std::ffi::OsString;
 use std::io::{BufReader, Read};
 use std::path::{Path, PathBuf};
@@ -29,7 +29,7 @@ pub const SPEC: SourceSpec = SourceSpec {
     parser: "wl-clipboard",
     parser_version: 1,
     event_types: &["clipboard.copied"],
-    framer: crate::Framer::incremental(crate::drivers::append_file::lines),
+    framer: sinex_source_core::Framer::incremental(sinex_source_core::drivers::append_file::lines),
 };
 
 const SECRET_HINT: &str = "x-kde-passwordManagerHint";
@@ -100,7 +100,7 @@ pub fn capture(
     selection: &str,
     helper: &[OsString],
     spool: &Path,
-    stop: &crate::capture::CaptureStop,
+    stop: &sinex_source_core::capture::CaptureStop,
 ) -> std::io::Result<u64> {
     let mut writer = SpoolWriter::open(spool, Rotation::default())?;
     let mut command = Command::new("wl-paste");
@@ -134,7 +134,7 @@ impl Parser for ClipboardParser {
         &self,
         record: &Map<String, Value>,
         _: &(),
-        _context: &crate::RecordContext<'_>,
+        _context: &sinex_source_core::RecordContext<'_>,
     ) -> Result<(Vec<ClipboardCopied>, ()), RecordError> {
         let (received_at, bytes) = live_stream::received(record).map_err(RecordError::new)?;
         let f: Map<String, Value> = serde_json::from_slice(&bytes)
@@ -206,7 +206,7 @@ pub fn driver(spool: PathBuf, host: String, selection: &str) -> LiveStream {
 
 /// The selection a binding captures: the `selection` option, `clipboard` by
 /// default.
-fn selection(b: &crate::binding::Binding) -> &'static str {
+fn selection(b: &sinex_source_core::binding::Binding) -> &'static str {
     match b.settings.option("selection") {
         Some("primary") => "primary",
         _ => "clipboard",
@@ -216,38 +216,39 @@ fn selection(b: &crate::binding::Binding) -> &'static str {
 /// `--read clipboard=SPOOL`: the clipboard (or, with the option
 /// `selection: primary`, the primary selection), captured into SPOOL. The
 /// frame printer is this program's own `clipboard-frame` command.
-pub const FORMAT: crate::binding::InputFormat = crate::binding::InputFormat {
-    name: "clipboard",
-    specs: || vec![&SPEC],
-    plan: Some(|spool, settings| {
-        Ok(crate::binding::single(&SPEC, spool, settings)
-            .into_iter()
-            .map(|b| {
-                let s = selection(&b);
-                b.named(s)
-            })
-            .collect())
-    }),
-    source: |_| Ok(Box::new(source())),
-    reader: Some(|b| {
-        Ok(crate::binding::polled(driver(
-            b.input.clone(),
-            b.settings.host.clone(),
-            selection(b),
-        )))
-    }),
-    capture: Some(|b, stop| {
-        let s = selection(b);
-        let exe = std::env::current_exe().map_err(|e| e.to_string())?;
-        let helper: Vec<OsString> = vec![
-            exe.into(),
-            "clipboard-frame".into(),
-            "--selection".into(),
-            s.into(),
-        ];
-        capture(s, &helper, &b.input, stop).map_err(|e| e.to_string())
-    }),
-};
+pub const FORMAT: sinex_source_core::binding::InputFormat =
+    sinex_source_core::binding::InputFormat {
+        name: "clipboard",
+        specs: || vec![&SPEC],
+        plan: Some(|spool, settings| {
+            Ok(sinex_source_core::binding::single(&SPEC, spool, settings)
+                .into_iter()
+                .map(|b| {
+                    let s = selection(&b);
+                    b.named(s)
+                })
+                .collect())
+        }),
+        source: |_| Ok(Box::new(source())),
+        reader: Some(|b| {
+            Ok(sinex_source_core::binding::polled(driver(
+                b.input.clone(),
+                b.settings.host.clone(),
+                selection(b),
+            )))
+        }),
+        capture: Some(|b, stop| {
+            let s = selection(b);
+            let exe = std::env::current_exe().map_err(|e| e.to_string())?;
+            let helper: Vec<OsString> = vec![
+                exe.into(),
+                "clipboard-frame".into(),
+                "--selection".into(),
+                s.into(),
+            ];
+            capture(s, &helper, &b.input, stop).map_err(|e| e.to_string())
+        }),
+    };
 
 #[cfg(test)]
 mod tests;

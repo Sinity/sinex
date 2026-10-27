@@ -3,11 +3,12 @@
 //! thread, and one loop produces what the spools hold to `sinexd` over the
 //! NATS ingress. Both programs build their sources from the registry's formats
 //! and share this loop.
-use crate::binding::{Binding, InputFormat, Reader, Settings};
-use crate::capture::CaptureStop;
-use crate::drivers::producer::{Position, Producer, Store};
-use crate::{Source, sources};
+use crate::sources;
 use serde_json::Value;
+use sinex_source_core::Source;
+use sinex_source_core::binding::{Binding, InputFormat, Reader, Settings};
+use sinex_source_core::capture::CaptureStop;
+use sinex_source_core::drivers::producer::{Position, Producer, Store};
 use std::path::Path;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -107,7 +108,7 @@ pub async fn run(
     until: Option<Instant>,
 ) -> Result<(), String> {
     // Register before any capture thread or child can start.
-    let shutdown = crate::capture::shutdown_signal().map_err(|e| e.to_string())?;
+    let shutdown = sinex_source_core::capture::shutdown_signal().map_err(|e| e.to_string())?;
     let mut lives = bindings
         .into_iter()
         .map(|(format, binding)| start(format, binding))

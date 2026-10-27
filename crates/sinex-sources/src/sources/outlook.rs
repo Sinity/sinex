@@ -11,12 +11,12 @@
 //! body and a few Outlook fields. Each row is one message identified by a hash
 //! of its decoded cells; the same message in the PST is a separate record,
 //! combined by fusion if at all.
-use crate::drivers::export_archive::{ExportArchive, Framing, PART_BYTES};
-use crate::registry::{DeclaredSource, Driver, SourceSpec};
 use crate::sources::{fields, mail};
-use crate::{Parser, RecordError};
 use sinex_model::Class;
 use sinex_model::event_types::communication::MailMessage;
+use sinex_source_core::drivers::export_archive::{ExportArchive, Framing, PART_BYTES};
+use sinex_source_core::registry::{DeclaredSource, Driver, SourceSpec};
+use sinex_source_core::{Parser, RecordError};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -29,9 +29,9 @@ pub const PST: SourceSpec = SourceSpec {
     parser: "rfc5322-mail",
     parser_version: 1,
     event_types: &["mail.message"],
-    framer: crate::Framer::export(
-        crate::drivers::export_archive::frame_mbox,
-        crate::drivers::export_archive::Framing::Mbox,
+    framer: sinex_source_core::Framer::export(
+        sinex_source_core::drivers::export_archive::frame_mbox,
+        sinex_source_core::drivers::export_archive::Framing::Mbox,
     ),
 };
 
@@ -44,7 +44,10 @@ pub const CSV: SourceSpec = SourceSpec {
     parser: "outlook-csv",
     parser_version: 1,
     event_types: &["mail.message"],
-    framer: crate::Framer::export(frame_csv, crate::drivers::export_archive::Framing::Csv),
+    framer: sinex_source_core::Framer::export(
+        frame_csv,
+        sinex_source_core::drivers::export_archive::Framing::Csv,
+    ),
 };
 
 pub fn pst_source() -> DeclaredSource<mail::MailParser> {
@@ -124,7 +127,7 @@ impl Parser for CsvParser {
         &self,
         record: &&[u8],
         header: &Header,
-        _context: &crate::RecordContext<'_>,
+        _context: &sinex_source_core::RecordContext<'_>,
     ) -> Result<(Vec<MailMessage>, Header), RecordError> {
         let (decoded, _, _) = encoding_rs::WINDOWS_1250.decode(record);
         let cells = fields::csv_cells(decoded.as_bytes())?;
@@ -221,49 +224,59 @@ fn staging() -> PathBuf {
 
 /// `--read outlook=PATH`: each `.pst` under PATH, converted with `readpst`
 /// to one mbox per folder, each folder its own binding.
-pub const FORMAT: crate::binding::InputFormat = crate::binding::InputFormat {
-    name: "outlook",
-    specs: || vec![&PST],
-    plan: Some(|input, settings| {
-        let stage = staging();
-        let mut out = Vec::new();
-        for pst in crate::binding::files(input, true, |p| {
-            p.extension().is_some_and(|e| e.eq_ignore_ascii_case("pst"))
-        }) {
-            for mbox in stage_pst(&pst, &stage)? {
-                out.push(crate::binding::Binding::of(&PST, &mbox, settings.clone()));
+pub const FORMAT: sinex_source_core::binding::InputFormat =
+    sinex_source_core::binding::InputFormat {
+        name: "outlook",
+        specs: || vec![&PST],
+        plan: Some(|input, settings| {
+            let stage = staging();
+            let mut out = Vec::new();
+            for pst in sinex_source_core::binding::files(input, true, |p| {
+                p.extension().is_some_and(|e| e.eq_ignore_ascii_case("pst"))
+            }) {
+                for mbox in stage_pst(&pst, &stage)? {
+                    out.push(sinex_source_core::binding::Binding::of(
+                        &PST,
+                        &mbox,
+                        settings.clone(),
+                    ));
+                }
             }
-        }
-        Ok(out)
-    }),
-    source: |_| Ok(Box::new(pst_source())),
-    reader: Some(|b| {
-        Ok(crate::binding::shared(pst_driver(
-            b.input.clone(),
-            b.settings.host.clone(),
-        )))
-    }),
-    capture: None,
-};
+            Ok(out)
+        }),
+        source: |_| Ok(Box::new(pst_source())),
+        reader: Some(|b| {
+            Ok(sinex_source_core::binding::shared(pst_driver(
+                b.input.clone(),
+                b.settings.host.clone(),
+            )))
+        }),
+        capture: None,
+    };
 
 /// `--read outlook-csv=PATH`: each Outlook CSV export under PATH.
-pub const CSV_FORMAT: crate::binding::InputFormat = crate::binding::InputFormat {
-    name: "outlook-csv",
-    specs: || vec![&CSV],
-    plan: Some(|input, settings| {
-        Ok(crate::binding::per_file(&CSV, input, settings, true, |p| {
-            p.extension().is_some_and(|e| e.eq_ignore_ascii_case("csv"))
-        }))
-    }),
-    source: |_| Ok(Box::new(csv_source())),
-    reader: Some(|b| {
-        Ok(crate::binding::shared(csv_driver(
-            b.input.clone(),
-            b.settings.host.clone(),
-        )))
-    }),
-    capture: None,
-};
+pub const CSV_FORMAT: sinex_source_core::binding::InputFormat =
+    sinex_source_core::binding::InputFormat {
+        name: "outlook-csv",
+        specs: || vec![&CSV],
+        plan: Some(|input, settings| {
+            Ok(sinex_source_core::binding::per_file(
+                &CSV,
+                input,
+                settings,
+                true,
+                |p| p.extension().is_some_and(|e| e.eq_ignore_ascii_case("csv")),
+            ))
+        }),
+        source: |_| Ok(Box::new(csv_source())),
+        reader: Some(|b| {
+            Ok(sinex_source_core::binding::shared(csv_driver(
+                b.input.clone(),
+                b.settings.host.clone(),
+            )))
+        }),
+        capture: None,
+    };
 
 #[cfg(test)]
 mod tests;

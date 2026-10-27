@@ -7,11 +7,11 @@
 //! multi-line command with a backslash before the newline. With SHARE_HISTORY
 //! the elapsed field is written as 0 before the command ends, so it is kept as
 //! written and never read as a duration.
-use crate::drivers::append_file::AppendFile;
-use crate::registry::{DeclaredSource, Driver, SourceSpec};
 use crate::sources::shell_history::Seen;
-use crate::{Parser, RecordError};
 use sinex_model::{Class, Timestamp, event_types::CommandImported};
+use sinex_source_core::drivers::append_file::AppendFile;
+use sinex_source_core::registry::{DeclaredSource, Driver, SourceSpec};
+use sinex_source_core::{Parser, RecordError};
 use std::path::PathBuf;
 
 pub const SPEC: SourceSpec = SourceSpec {
@@ -23,7 +23,7 @@ pub const SPEC: SourceSpec = SourceSpec {
     parser: "zsh-extended-history",
     parser_version: 3,
     event_types: &["command.imported"],
-    framer: crate::Framer::incremental(frame),
+    framer: sinex_source_core::Framer::incremental(frame),
 };
 
 pub struct ZshParser {
@@ -40,7 +40,7 @@ impl Parser for ZshParser {
         &self,
         record: &&[u8],
         seen: &Seen,
-        _context: &crate::RecordContext<'_>,
+        _context: &sinex_source_core::RecordContext<'_>,
     ) -> Result<(Vec<CommandImported>, Seen), RecordError> {
         let decoded = unmetafy(record)?;
         let text = std::str::from_utf8(&decoded)
@@ -147,24 +147,27 @@ pub fn driver(path: PathBuf, host: String) -> AppendFile {
     AppendFile {
         path,
         host,
-        framer: crate::Framer::incremental(frame),
+        framer: sinex_source_core::Framer::incremental(frame),
     }
 }
 
 /// `--read zsh=PATH`: a zsh history file.
-pub const FORMAT: crate::binding::InputFormat = crate::binding::InputFormat {
-    name: "zsh",
-    specs: || vec![&SPEC],
-    plan: Some(|input, settings| Ok(crate::binding::single(&SPEC, input, settings))),
-    source: |b| Ok(Box::new(source(b.settings.host.clone()))),
-    reader: Some(|b| {
-        Ok(crate::binding::appended(driver(
-            b.input.clone(),
-            b.settings.host.clone(),
-        )))
-    }),
-    capture: None,
-};
+pub const FORMAT: sinex_source_core::binding::InputFormat =
+    sinex_source_core::binding::InputFormat {
+        name: "zsh",
+        specs: || vec![&SPEC],
+        plan: Some(|input, settings| {
+            Ok(sinex_source_core::binding::single(&SPEC, input, settings))
+        }),
+        source: |b| Ok(Box::new(source(b.settings.host.clone()))),
+        reader: Some(|b| {
+            Ok(sinex_source_core::binding::appended(driver(
+                b.input.clone(),
+                b.settings.host.clone(),
+            )))
+        }),
+        capture: None,
+    };
 
 #[cfg(test)]
 mod tests;

@@ -1,6 +1,6 @@
 use super::*;
-use crate::{DrainInput, Limits, drain};
 use sinex_model::RecordOutcome;
+use sinex_source_core::{DrainInput, Limits, drain};
 
 #[devkit::test]
 fn forecast_requests_keep_bytes_but_take_author_and_time_from_manifest() {

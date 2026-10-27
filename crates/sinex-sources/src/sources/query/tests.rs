@@ -1,5 +1,5 @@
 use super::*;
-use crate::{DrainInput, Limits, drain};
+use sinex_source_core::{DrainInput, Limits, drain};
 use sinex_model::RecordOutcome;
 
 #[devkit::test]

@@ -6,13 +6,17 @@ fn double_encoded_values() {
         .parse(
             &&b"\xef\xbb\xbfITEM_DATA,FILE_LIST,TIMESTAMP,SIZE,VALUE,CREATETIME,KEY\n"[..],
             &vec![],
-            &crate::RecordContext::none(),
+            &sinex_source_core::RecordContext::none(),
         )
         .unwrap();
     let row = br#""",,1659525740863,723,"""{\""_id\"":\""639\"",\""thread_id\"":\""59\"",\""address\"":\""4860\"",\""date\"":\""1659525740863\"",\""type\"":\""1\"",\""body\"":\""Hi\\n\""}""",1,k
 "#;
     let (out, _) = SmsParser
-        .parse(&&row[..], &header, &crate::RecordContext::none())
+        .parse(
+            &&row[..],
+            &header,
+            &sinex_source_core::RecordContext::none(),
+        )
         .unwrap();
     let m = &out[0];
     assert_eq!(m.message_id.as_deref(), Some("639"));

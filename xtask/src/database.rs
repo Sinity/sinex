@@ -27,16 +27,28 @@ pub fn schema_hash(root: &Path) -> Result<String> {
     let version = Command::new("postgres")
         .arg("--version")
         .output()
-        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_owned())
         .map_err(|e| format!("postgres --version: {e}"))?;
-    Ok(devkit::pg::schema_hash(
-        &[
-            root.join("crates/sinex-schema/src"),
-            root.join("crates/sinex-model/src"),
-            root.join("crates/sinex-macros/src"),
-        ],
-        &[&version],
-    )?)
+    if !version.status.success() {
+        return Err(format!("postgres --version failed: {}", version.status));
+    }
+    let version = String::from_utf8(version.stdout).map_err(|e| e.to_string())?;
+    let status = devkit::cargo_command()
+        .args(["build", "--locked", "-p", "sinex-schema"])
+        .current_dir(root)
+        .status()
+        .map_err(|e| format!("building schema declarations: {e}"))?;
+    if !status.success() {
+        return Err(format!("building schema declarations failed: {status}"));
+    }
+    let output = Command::new(crate::target_dir().join("debug/sinex-schema"))
+        .arg("hash")
+        .output()
+        .map_err(|e| format!("schema declarations: {e}"))?;
+    if !output.status.success() {
+        return Err(format!("schema declarations failed: {}", output.status));
+    }
+    let declarations = String::from_utf8(output.stdout).map_err(|e| e.to_string())?;
+    devkit::pg::schema_hash(&[], &[version.trim(), declarations.trim()])
 }
 
 /// Build the query-free schema tool and apply the schema to `database`.

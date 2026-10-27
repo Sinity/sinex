@@ -13,11 +13,11 @@
 //! `\n`. `when` is the start in epoch seconds. fish appends blocks and now and
 //! then rewrites the file without duplicates; records are numbered like zsh's
 //! ([`Seen`]), so a block read again is a repeat.
-use crate::drivers::append_file::AppendFile;
-use crate::registry::{DeclaredSource, Driver, SourceSpec};
 use crate::sources::shell_history::Seen;
-use crate::{Parser, RecordError};
 use sinex_model::{Class, Timestamp, event_types::CommandImported};
+use sinex_source_core::drivers::append_file::AppendFile;
+use sinex_source_core::registry::{DeclaredSource, Driver, SourceSpec};
+use sinex_source_core::{Parser, RecordError};
 use std::path::PathBuf;
 
 pub const SPEC: SourceSpec = SourceSpec {
@@ -29,7 +29,7 @@ pub const SPEC: SourceSpec = SourceSpec {
     parser: "fish-history",
     parser_version: 1,
     event_types: &["command.imported"],
-    framer: crate::Framer::incremental(frame),
+    framer: sinex_source_core::Framer::incremental(frame),
 };
 
 pub struct FishParser {
@@ -69,7 +69,7 @@ impl Parser for FishParser {
         &self,
         record: &&[u8],
         seen: &Seen,
-        _context: &crate::RecordContext<'_>,
+        _context: &sinex_source_core::RecordContext<'_>,
     ) -> Result<(Vec<CommandImported>, Seen), RecordError> {
         let text = std::str::from_utf8(record)
             .map_err(|_| RecordError::new("fish history record is not UTF-8"))?;
@@ -163,19 +163,22 @@ pub fn driver(path: PathBuf, host: String) -> AppendFile {
 }
 
 /// `--read fish=PATH`: a fish history file.
-pub const FORMAT: crate::binding::InputFormat = crate::binding::InputFormat {
-    name: "fish",
-    specs: || vec![&SPEC],
-    plan: Some(|input, settings| Ok(crate::binding::single(&SPEC, input, settings))),
-    source: |b| Ok(Box::new(source(b.settings.host.clone()))),
-    reader: Some(|b| {
-        Ok(crate::binding::appended(driver(
-            b.input.clone(),
-            b.settings.host.clone(),
-        )))
-    }),
-    capture: None,
-};
+pub const FORMAT: sinex_source_core::binding::InputFormat =
+    sinex_source_core::binding::InputFormat {
+        name: "fish",
+        specs: || vec![&SPEC],
+        plan: Some(|input, settings| {
+            Ok(sinex_source_core::binding::single(&SPEC, input, settings))
+        }),
+        source: |b| Ok(Box::new(source(b.settings.host.clone()))),
+        reader: Some(|b| {
+            Ok(sinex_source_core::binding::appended(driver(
+                b.input.clone(),
+                b.settings.host.clone(),
+            )))
+        }),
+        capture: None,
+    };
 
 #[cfg(test)]
 mod tests;

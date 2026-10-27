@@ -139,8 +139,8 @@ fn an_unsealed_event_of_a_sealed_class_fails_closed() {
         Err(Error::Unsealed(_))
     ));
     let mut sealed = event("ls");
-    let key = crate::sealed::new_key().unwrap();
-    crate::sealed::seal_event(&mut sealed, &key).unwrap();
+    let key = sinex_sealing::new_key().unwrap();
+    sinex_sealing::seal_event(&mut sealed, &key).unwrap();
     let mask = rule(None, Matcher::All, Class::Open, Action::Mask);
     let before = sealed.payload.clone();
     set(vec![mask]).apply(&mut sealed).unwrap();

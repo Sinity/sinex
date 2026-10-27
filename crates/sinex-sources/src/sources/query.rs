@@ -1,6 +1,8 @@
 //! Authenticated moment marks and saved queries stored as JSON-line materials.
-use crate::drivers::{Acquired, NewMaterial};
-use crate::{DeclaredSource, Driver, Parser, RecordContext, RecordError, SourceSpec};
+use sinex_source_core::drain::RecordContext;
+use sinex_source_core::drivers::{Acquired, NewMaterial};
+use sinex_source_core::registry::{DeclaredSource, Driver, SourceSpec};
+use sinex_source_core::{Parser, RecordError};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 use sinex_model::event_types::query::{Mark, QueryRecord, Saved};
@@ -17,9 +19,9 @@ pub const REQUEST: SourceSpec = SourceSpec {
     parser: "query-request",
     parser_version: 1,
     event_types: &["operator.mark", "query.saved"],
-    framer: crate::Framer::export(
-        crate::drivers::export_archive::frame_lines,
-        crate::drivers::export_archive::Framing::Lines,
+    framer: sinex_source_core::Framer::export(
+        sinex_source_core::drivers::export_archive::frame_lines,
+        sinex_source_core::drivers::export_archive::Framing::Lines,
     ),
 };
 
@@ -140,7 +142,7 @@ pub fn request_material(record: QueryRecord, actor: &str, host: &str, at: Timest
         cursor_without_material: Value::Null,
     }
 }
-pub const FORMAT: crate::binding::InputFormat = crate::binding::InputFormat {
+pub const FORMAT: sinex_source_core::binding::InputFormat = sinex_source_core::binding::InputFormat {
     name: "query",
     specs: || vec![&REQUEST],
     plan: None,

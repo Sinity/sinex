@@ -55,7 +55,7 @@ pub(crate) async fn plan(
 
 /// The declaration of the source that read a material, when its records can
 /// be excised.
-fn excisable(source: &str, parser: &str) -> Result<&'static sinex_sources::SourceSpec, String> {
+fn excisable(source: &str, parser: &str) -> Result<&'static sinex_source_core::SourceSpec, String> {
     let spec = sources::specs()
         .into_iter()
         .find(|s| s.name == source && s.parser == parser)
@@ -74,7 +74,7 @@ fn excisable(source: &str, parser: &str) -> Result<&'static sinex_sources::Sourc
 /// removes only materials that hold nothing else.
 fn holds_only_the_record(
     blobs: &Blobs,
-    spec: &sinex_sources::SourceSpec,
+    spec: &sinex_source_core::SourceSpec,
     m: &Material,
 ) -> Result<(), String> {
     let mut file = tempfile::tempfile().map_err(|e| e.to_string())?;

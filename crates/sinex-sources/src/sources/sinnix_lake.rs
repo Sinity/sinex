@@ -3,12 +3,12 @@
 //! directories relative to the lake root and the accepted envelope lanes. An
 //! unbound lane is a record failure. Every record is one event, network flows
 //! included.
-use crate::drivers::append_file::{AppendFile, lines};
-use crate::registry::{DeclaredSource, Driver, SourceSpec};
-use crate::{Parser, RecordError};
 use serde_json::{Map, Value};
 use sinex_model::event_types::machine::LakeObservation;
 use sinex_model::{Class, Timestamp};
+use sinex_source_core::drivers::append_file::{AppendFile, lines};
+use sinex_source_core::registry::{DeclaredSource, Driver, SourceSpec};
+use sinex_source_core::{Parser, RecordError};
 use std::path::{Path, PathBuf};
 
 /// One catalog source of the lake: the directories it is written to and the
@@ -34,7 +34,7 @@ const fn spec(name: &'static str, parser: &'static str, purpose: &'static str) -
         parser,
         parser_version: 2,
         event_types: &["lake.observed"],
-        framer: crate::Framer::incremental(lines),
+        framer: sinex_source_core::Framer::incremental(lines),
     }
 }
 
@@ -245,7 +245,7 @@ impl Parser for EnvelopeParser {
         &self,
         record: &Map<String, Value>,
         _: &(),
-        _context: &crate::RecordContext<'_>,
+        _context: &sinex_source_core::RecordContext<'_>,
     ) -> Result<(Vec<LakeObservation>, ()), RecordError> {
         Ok((vec![envelope(record, self.lake_source)?], ()))
     }
@@ -293,12 +293,12 @@ pub fn driver(path: PathBuf, host: String) -> AppendFile {
     AppendFile {
         path,
         host,
-        framer: crate::Framer::incremental(lines),
+        framer: sinex_source_core::Framer::incremental(lines),
     }
 }
 
 /// The lake source a binding reads, from its spec name.
-fn lake_source_of(b: &crate::binding::Binding) -> Result<&'static LakeSource, String> {
+fn lake_source_of(b: &sinex_source_core::binding::Binding) -> Result<&'static LakeSource, String> {
     LAKE_SOURCES
         .iter()
         .find(|l| l.spec.parser == b.parser)
@@ -307,28 +307,29 @@ fn lake_source_of(b: &crate::binding::Binding) -> Result<&'static LakeSource, St
 
 /// `--read sinnix-lake=ROOT`: every lane's day files under the lake root
 /// (`/realm`); each lane's directories are its configuration.
-pub const FORMAT: crate::binding::InputFormat = crate::binding::InputFormat {
-    name: "sinnix-lake",
-    specs: || LAKE_SOURCES.iter().map(|l| &l.spec).collect(),
-    plan: Some(|input, settings| {
-        Ok(LAKE_SOURCES
-            .iter()
-            .flat_map(|source| {
-                day_files(input, source)
-                    .into_iter()
-                    .map(|f| crate::binding::Binding::of(&source.spec, &f, settings.clone()))
-            })
-            .collect())
-    }),
-    source: |b| Ok(Box::new(source(lake_source_of(b)?))),
-    reader: Some(|b| {
-        Ok(crate::binding::appended(driver(
-            b.input.clone(),
-            b.settings.host.clone(),
-        )))
-    }),
-    capture: None,
-};
+pub const FORMAT: sinex_source_core::binding::InputFormat =
+    sinex_source_core::binding::InputFormat {
+        name: "sinnix-lake",
+        specs: || LAKE_SOURCES.iter().map(|l| &l.spec).collect(),
+        plan: Some(|input, settings| {
+            Ok(LAKE_SOURCES
+                .iter()
+                .flat_map(|source| {
+                    day_files(input, source).into_iter().map(|f| {
+                        sinex_source_core::binding::Binding::of(&source.spec, &f, settings.clone())
+                    })
+                })
+                .collect())
+        }),
+        source: |b| Ok(Box::new(source(lake_source_of(b)?))),
+        reader: Some(|b| {
+            Ok(sinex_source_core::binding::appended(driver(
+                b.input.clone(),
+                b.settings.host.clone(),
+            )))
+        }),
+        capture: None,
+    };
 
 #[cfg(test)]
 mod tests;

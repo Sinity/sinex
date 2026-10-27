@@ -4,11 +4,11 @@
 //! command ends (duration, exit) or is deleted (`deleted_at`). Its own row ID
 //! is the equivalence key, so an update is a newer reading of the same record.
 //! Running commands store -1 for duration and exit; those are unknown, not -1.
-use crate::drivers::sqlite_rows::SqliteRows;
-use crate::registry::{DeclaredSource, Driver, SourceSpec};
-use crate::{Parser, RecordError};
 use serde_json::{Map, Value};
 use sinex_model::{Class, Timestamp, event_types::CommandExecuted};
+use sinex_source_core::drivers::sqlite_rows::SqliteRows;
+use sinex_source_core::registry::{DeclaredSource, Driver, SourceSpec};
+use sinex_source_core::{Parser, RecordError};
 use std::path::PathBuf;
 
 pub const SPEC: SourceSpec = SourceSpec {
@@ -20,7 +20,7 @@ pub const SPEC: SourceSpec = SourceSpec {
     parser: "atuin-history",
     parser_version: 1,
     event_types: &["command.executed"],
-    framer: crate::Framer::incremental(crate::drivers::append_file::lines),
+    framer: sinex_source_core::Framer::incremental(sinex_source_core::drivers::append_file::lines),
 };
 
 const KNOWN: &[&str] = &[
@@ -50,7 +50,7 @@ impl Parser for AtuinParser {
         &self,
         row: &Map<String, Value>,
         _: &(),
-        _context: &crate::RecordContext<'_>,
+        _context: &sinex_source_core::RecordContext<'_>,
     ) -> Result<(Vec<CommandExecuted>, ()), RecordError> {
         let text = |name: &str| -> Result<String, RecordError> {
             match row.get(name) {
@@ -132,19 +132,22 @@ pub fn driver(path: PathBuf, host: String) -> SqliteRows {
 }
 
 /// `--read atuin=PATH`: Atuin's history database.
-pub const FORMAT: crate::binding::InputFormat = crate::binding::InputFormat {
-    name: "atuin",
-    specs: || vec![&SPEC],
-    plan: Some(|input, settings| Ok(crate::binding::single(&SPEC, input, settings))),
-    source: |_| Ok(Box::new(source())),
-    reader: Some(|b| {
-        Ok(crate::binding::rows(driver(
-            b.input.clone(),
-            b.settings.host.clone(),
-        )))
-    }),
-    capture: None,
-};
+pub const FORMAT: sinex_source_core::binding::InputFormat =
+    sinex_source_core::binding::InputFormat {
+        name: "atuin",
+        specs: || vec![&SPEC],
+        plan: Some(|input, settings| {
+            Ok(sinex_source_core::binding::single(&SPEC, input, settings))
+        }),
+        source: |_| Ok(Box::new(source())),
+        reader: Some(|b| {
+            Ok(sinex_source_core::binding::rows(driver(
+                b.input.clone(),
+                b.settings.host.clone(),
+            )))
+        }),
+        capture: None,
+    };
 
 #[cfg(test)]
 mod tests;

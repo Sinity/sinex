@@ -51,7 +51,7 @@
         # process of its own, which nextest gives it and `cargo test` does not.
         checkFlags = [ "--skip" "drivers::tests::backfill_of_a_large_file_peaks_well_under_its_size" ];
         # Database tests need devkit's server; they run under `xtask test`.
-        cargoTestFlags = [ "-p" "sinex-model" "-p" "sinex-protocol" "-p" "sinex-schema" "-p" "sinex-sources" "-p" "sinex-derivations" ];
+        cargoTestFlags = [ "-p" "sinex-model" "-p" "sinex-protocol" "-p" "sinex-schema" "-p" "sinex-sources" "-p" "sinex-source-core" "-p" "sinex-sealing" "-p" "sinex-derivations" ];
       };
     in {
       packages.${system} = { default = package; sinexd = package; sinexctl = package; };

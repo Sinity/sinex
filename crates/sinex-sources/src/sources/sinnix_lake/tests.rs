@@ -19,7 +19,11 @@ fn reads_the_envelope_under_the_catalog_source() {
         lake_source: lake_source("desktop.clipboard").unwrap(),
     };
     let (out, ()) = p
-        .parse(&line("primary", 7), &(), &crate::RecordContext::none())
+        .parse(
+            &line("primary", 7),
+            &(),
+            &sinex_source_core::RecordContext::none(),
+        )
         .unwrap();
     assert_eq!(out[0].lane(), "primary");
     assert_eq!(out[0].seq, 7);
@@ -39,15 +43,25 @@ fn unbound_lanes_and_bad_envelopes_fail() {
         lake_source: lake_source("desktop.clipboard").unwrap(),
     };
     assert!(
-        p.parse(&line("mpris", 1), &(), &crate::RecordContext::none())
-            .is_err()
+        p.parse(
+            &line("mpris", 1),
+            &(),
+            &sinex_source_core::RecordContext::none()
+        )
+        .is_err()
     );
     let mut bad = line("clipboard", 1);
     bad.insert("schema".into(), json!("other"));
-    assert!(p.parse(&bad, &(), &crate::RecordContext::none()).is_err());
+    assert!(
+        p.parse(&bad, &(), &sinex_source_core::RecordContext::none())
+            .is_err()
+    );
     bad = line("clipboard", 1);
     bad.remove("seq");
-    assert!(p.parse(&bad, &(), &crate::RecordContext::none()).is_err());
+    assert!(
+        p.parse(&bad, &(), &sinex_source_core::RecordContext::none())
+            .is_err()
+    );
 }
 
 #[devkit::test]
@@ -60,16 +74,25 @@ fn network_flows_are_typed_events() {
         "payload".into(),
         json!({"bytes":1367,"dport":5600,"dst":"192.0.2.1","packets":10,"proto":"tcp","sport":58550,"src":"192.0.2.2"}),
     );
-    let (out, ()) = p.parse(&flow, &(), &crate::RecordContext::none()).unwrap();
+    let (out, ()) = p
+        .parse(&flow, &(), &sinex_source_core::RecordContext::none())
+        .unwrap();
     assert_eq!(out.len(), 1);
     let wire = serde_json::to_value(&out[0]).unwrap();
     assert_eq!(wire["payload"], flow["payload"]);
     assert!(wire.get("untyped").is_none());
     flow["payload"]["dport"] = json!("http");
-    assert!(p.parse(&flow, &(), &crate::RecordContext::none()).is_err());
     assert!(
-        p.parse(&line("mpris", 1), &(), &crate::RecordContext::none())
+        p.parse(&flow, &(), &sinex_source_core::RecordContext::none())
             .is_err()
+    );
+    assert!(
+        p.parse(
+            &line("mpris", 1),
+            &(),
+            &sinex_source_core::RecordContext::none()
+        )
+        .is_err()
     );
 }
 
@@ -113,13 +136,13 @@ fn known_payload_failures_are_not_untyped_successes() {
     bad.insert("payload".into(), json!({"text":4}));
     assert!(
         parser
-            .parse(&bad, &(), &crate::RecordContext::none())
+            .parse(&bad, &(), &sinex_source_core::RecordContext::none())
             .is_err()
     );
     let mut extended = line("clipboard", 1);
     extended["payload"]["future"] = json!({"raw":false});
     let (out, ()) = parser
-        .parse(&extended, &(), &crate::RecordContext::none())
+        .parse(&extended, &(), &sinex_source_core::RecordContext::none())
         .unwrap();
     let wire = serde_json::to_value(&out[0]).unwrap();
     assert_eq!(wire["payload"], extended["payload"]);

@@ -37,8 +37,8 @@ pub(crate) struct Api {
 /// An unlock session: the operator's identity until it expires, and the data
 /// keys it has unwrapped.
 pub(crate) struct Unlocked {
-    unlock: crate::sealed_access::Unlock,
-    keys: std::collections::HashMap<String, age::secrecy::zeroize::Zeroizing<[u8; 32]>>,
+    unlock: crate::sealing::Unlock,
+    keys: std::collections::HashMap<String, sinex_sealing::Zeroizing<[u8; 32]>>,
 }
 
 impl Drop for Unlocked {
@@ -86,50 +86,6 @@ fn data(result: Value) -> Reply {
         o.extend(r);
     }
     Reply::Ok { result: out }
-}
-
-fn collect_sealed(value: &Value, out: &mut Vec<String>) {
-    if let Some(r) = sinex_store::sealed::key_ref(value) {
-        out.push(r.to_string());
-        return;
-    }
-    match value {
-        Value::String(text) => {
-            if let Some(value) = sinex_store::sealed::sealed_text(text) {
-                collect_sealed(&value, out);
-            }
-        }
-        Value::Array(items) => items.iter().for_each(|v| collect_sealed(v, out)),
-        Value::Object(map) => map.values().for_each(|v| collect_sealed(v, out)),
-        _ => {}
-    }
-}
-
-fn unseal_in(
-    value: &mut Value,
-    keys: &std::collections::HashMap<String, age::secrecy::zeroize::Zeroizing<[u8; 32]>>,
-) {
-    if let Some(r) = sinex_store::sealed::key_ref(value) {
-        if let Some(key) = keys.get(r)
-            && let Ok(plain) = sinex_store::sealed::unseal_payload(value, key)
-        {
-            *value = plain;
-        }
-        return;
-    }
-    match value {
-        Value::String(text) => {
-            if let Some(mut sealed) = sinex_store::sealed::sealed_text(text) {
-                unseal_in(&mut sealed, keys);
-                if !sinex_store::sealed::is_sealed(&sealed) {
-                    *value = sealed;
-                }
-            }
-        }
-        Value::Array(items) => items.iter_mut().for_each(|v| unseal_in(v, keys)),
-        Value::Object(map) => map.values_mut().for_each(|v| unseal_in(v, keys)),
-        _ => {}
-    }
 }
 
 impl Api {
@@ -205,7 +161,7 @@ impl Api {
     /// each data key once per session.
     async fn unseal(&self, value: &mut Value) -> Result<(), String> {
         let mut refs = Vec::new();
-        collect_sealed(value, &mut refs);
+        crate::sealing::collect_sealed(value, &mut refs);
         if refs.is_empty() {
             return Ok(());
         }
@@ -224,11 +180,11 @@ impl Api {
                 .map_err(|e| e.to_string())?
             {
                 let key = s.unlock.unwrap(&wrapped)?;
-                s.keys.insert(r, age::secrecy::zeroize::Zeroizing::new(key));
+                s.keys.insert(r, sinex_sealing::Zeroizing::new(key));
             }
         }
         s.unlock.check()?;
-        unseal_in(value, &s.keys);
+        crate::sealing::unseal_in(value, &s.keys);
         Ok(())
     }
 

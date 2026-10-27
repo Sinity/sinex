@@ -8,7 +8,7 @@ fn parse(line: &[u8]) -> ClipboardCopied {
     ))
     .unwrap();
     ClipboardParser
-        .parse(&rec, &(), &crate::RecordContext::none())
+        .parse(&rec, &(), &sinex_source_core::RecordContext::none())
         .unwrap()
         .0
         .remove(0)

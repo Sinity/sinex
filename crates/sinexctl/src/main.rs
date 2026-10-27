@@ -204,7 +204,10 @@ async fn main() -> ExitCode {
         "doctor" => {
             let database = sub.get_one::<String>("database").expect("required");
             let store = sub.get_one::<PathBuf>("store").expect("required");
-            let report = sinex_diagnostics::doctor(database, store).await;
+            let report = match sinex_diagnostics::run("doctor", database, Some(store)).await {
+                Ok(report) => report,
+                Err(error) => return fail(1, error),
+            };
             if json {
                 print_json(&report);
             } else {
@@ -233,7 +236,7 @@ async fn main() -> ExitCode {
             };
             let database = v.get_one::<String>("database").expect("required");
             let store = v.get_one::<PathBuf>("store").expect("required");
-            return match sinex_diagnostics::verify_store(database, store).await {
+            return match sinex_diagnostics::run("verify-store", database, Some(store)).await {
                 Ok(report) => {
                     print_json(&report);
                     if report["ok"] == Value::Bool(true) {
@@ -281,7 +284,7 @@ async fn main() -> ExitCode {
             let Some(database) = sub.get_one::<String>("database") else {
                 return fail(1, "status --offline needs --database");
             };
-            return match sinex_diagnostics::status(database).await {
+            return match sinex_diagnostics::run("status", database, None).await {
                 Ok(v) => {
                     print_json(&v);
                     ExitCode::SUCCESS

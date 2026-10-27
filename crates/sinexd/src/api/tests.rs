@@ -440,8 +440,8 @@ async fn replay_is_offered_through_the_api(db: devkit::pg::TestDatabase) {
         .await;
         assert_eq!(body["outcome"], "refused", "{body}");
     }
-    let identity = sinex_store::sealed::Identity::generate();
-    use age::secrecy::ExposeSecret;
+    let identity = sinex_sealing::Identity::generate();
+    use sinex_sealing::ExposeSecret;
     let (_, body) = call(
         &w,
         Some(OPERATOR),
@@ -658,8 +658,8 @@ async fn sealed_values_need_the_unlocked_operator_and_die_with_their_key(
 ) {
     use sinex_store::sealed;
     let w = world(db).await;
-    let identity = sealed::Identity::generate();
-    let key = sealed::new_key().unwrap();
+    let identity = sinex_sealing::Identity::generate();
+    let key = sinex_sealing::new_key().unwrap();
     let material = MaterialId::new();
     let mut e = command("gpg --decrypt diary.age", 0);
     e.origin = Origin::Record {
@@ -669,10 +669,10 @@ async fn sealed_values_need_the_unlocked_operator_and_die_with_their_key(
         },
         output_index: 0,
     };
-    sealed::seal_event(&mut e, &key).unwrap();
+    sinex_sealing::seal_event(&mut e, &key).unwrap();
     {
         let mut conn = w.reads.acquire().await.unwrap();
-        let wrapped = sealed::wrap(&key, &identity.to_public()).unwrap();
+        let wrapped = sinex_sealing::wrap(&key, &identity.to_public()).unwrap();
         sealed::store_key(&mut conn, material, &key.key_ref, &wrapped)
             .await
             .unwrap();
@@ -704,7 +704,7 @@ async fn sealed_values_need_the_unlocked_operator_and_die_with_their_key(
     let query = json!({"method": "query", "query": "events"});
     let (_, locked) = call(&w, Some(OPERATOR), query.clone()).await;
     assert!(!first(&locked).contains("diary"), "locked: {locked}");
-    use age::secrecy::ExposeSecret;
+    use sinex_sealing::ExposeSecret;
     let (_, body) = call(
         &w,
         Some(OPERATOR),
