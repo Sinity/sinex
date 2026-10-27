@@ -37,6 +37,27 @@ pub(crate) const EXCISED_MATERIALS: &str = "CREATE TABLE core.excised_materials 
 pub(crate) const EXCISED_MATERIALS_BLOB: &str =
     "CREATE INDEX excised_materials_blob ON core.excised_materials (blob)";
 
+/// Live keys keep all digest bits and distinguish their logical string forms.
+pub(crate) const ENCODE_EQUIVALENCE_KEY: &str = r#"CREATE FUNCTION core.encode_equivalence_key(key text)
+RETURNS bytea LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE AS $$
+  SELECT CASE
+    WHEN length(key) = 64 AND key COLLATE "C" ~ '^[0-9a-f]{64}$' THEN decode('00' || key, 'hex')
+    WHEN length(key) = 69 AND key COLLATE "C" ~ '^hash:[0-9a-f]{64}$' THEN decode('01' || substr(key, 6), 'hex')
+    WHEN length(key) = 71 AND key COLLATE "C" ~ '^sealed:[0-9a-f]{64}$' THEN decode('02' || substr(key, 8), 'hex')
+    ELSE decode('03', 'hex') || convert_to(key, 'UTF8')
+  END
+$$"#;
+
+pub(crate) const DECODE_EQUIVALENCE_KEY: &str = r#"CREATE FUNCTION core.decode_equivalence_key(key bytea)
+RETURNS text LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE AS $$
+  SELECT CASE get_byte(key, 0)
+    WHEN 0 THEN encode(substring(key FROM 2), 'hex')
+    WHEN 1 THEN 'hash:' || encode(substring(key FROM 2), 'hex')
+    WHEN 2 THEN 'sealed:' || encode(substring(key FROM 2), 'hex')
+    WHEN 3 THEN convert_from(substring(key FROM 2), 'UTF8')
+  END
+$$"#;
+
 pub(crate) fn tables(c: &Checks) -> Vec<String> {
     let event_columns = format!(
         "id uuid NOT NULL,
@@ -70,6 +91,8 @@ pub(crate) fn tables(c: &Checks) -> Vec<String> {
         class = c.class,
     );
     vec![
+        ENCODE_EQUIVALENCE_KEY.into(),
+        DECODE_EQUIVALENCE_KEY.into(),
         // Events. No foreign key points into a hypertable.
         format!("CREATE TABLE core.events (\n  {event_columns},\n  PRIMARY KEY (id)\n)"),
         format!("CREATE TABLE telemetry.events (\n  {event_columns},\n  PRIMARY KEY (id)\n)"),
@@ -88,7 +111,7 @@ pub(crate) fn tables(c: &Checks) -> Vec<String> {
         "CREATE TABLE core.live_equivalence (
   source text NOT NULL,
   event_type text NOT NULL,
-  equivalence_key text NOT NULL,
+  equivalence_key bytea NOT NULL,
   event_id uuid NOT NULL,
   reading_order bigint NOT NULL,
   record_hash bytea NOT NULL,

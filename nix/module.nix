@@ -582,8 +582,8 @@ in
         };
         path = [ config.systemd.package ];
         script = ''
-          exec ${cfg.package}/bin/sinexd capture journald \
-            --spool ${cfg.stateDir}/spool/journald --since=-1d --follow
+          exec ${cfg.package}/bin/sinex-session capture journald \
+            --spool ${cfg.stateDir}/spool/journald --option since=-1d --option follow=true
         '';
       };
 

@@ -183,15 +183,6 @@ pub enum Start<'a> {
 /// Run `journalctl` into the spool. With `follow`, it keeps running until the
 /// child exits; without, it stops at the end of the journal. Returns the number
 /// of entries captured.
-pub fn capture(spool: &Path, follow: bool, start: Start<'_>) -> std::io::Result<u64> {
-    capture_until(
-        spool,
-        follow,
-        start,
-        &crate::capture::CaptureStop::new(None),
-    )
-}
-
 fn capture_until(
     spool: &Path,
     follow: bool,
@@ -243,7 +234,7 @@ pub const FORMAT: crate::binding::InputFormat = crate::binding::InputFormat {
     plan: Some(|spool, settings| Ok(crate::binding::single(&SPEC, spool, settings))),
     source: |_| Ok(Box::new(source())),
     reader: Some(|b| {
-        Ok(crate::binding::stateless(driver(
+        Ok(crate::binding::polled(driver(
             b.input.clone(),
             b.settings.host.clone(),
         )))

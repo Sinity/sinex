@@ -194,7 +194,7 @@ impl Api {
             &self.host,
             now,
         );
-        let done = crate::requests::submit(
+        let done = crate::intake::request(
             &mut conn,
             writer,
             &self.blobs,

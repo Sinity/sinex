@@ -10,7 +10,7 @@ async fn ask_at(conn: &mut PgConnection, text: &str, ctx: &Context, page: Page) 
 async fn continuation_keeps_relative_time_at_the_original_logical_day(
     db: devkit::pg::TestDatabase,
 ) {
-    let mut conn = <sqlx::PgConnection as sqlx::Connection>::connect(&db.url(None))
+    let mut conn = crate::AdmissionContext::connect(&db.url(None))
         .await
         .unwrap();
     world(&mut conn).await;
@@ -54,7 +54,7 @@ async fn continuation_keeps_relative_time_at_the_original_logical_day(
 async fn continuation_refuses_changed_time_settings_and_a_different_bound_ast(
     db: devkit::pg::TestDatabase,
 ) {
-    let mut conn = <sqlx::PgConnection as sqlx::Connection>::connect(&db.url(None))
+    let mut conn = crate::AdmissionContext::connect(&db.url(None))
         .await
         .unwrap();
     world(&mut conn).await;
@@ -131,7 +131,7 @@ async fn runs(conn: &mut PgConnection) -> Vec<RunId> {
 async fn duplicate_projected_rows_cannot_cancel_the_view_change_check(
     db: devkit::pg::TestDatabase,
 ) {
-    let mut conn = <sqlx::PgConnection as sqlx::Connection>::connect(&db.url(None))
+    let mut conn = crate::AdmissionContext::connect(&db.url(None))
         .await
         .unwrap();
     let ids = runs(&mut conn).await;
@@ -168,7 +168,7 @@ async fn duplicate_projected_rows_cannot_cancel_the_view_change_check(
 
 #[devkit::test]
 async fn walk_pages_use_the_same_question_and_visible_result_checks(db: devkit::pg::TestDatabase) {
-    let mut conn = <sqlx::PgConnection as sqlx::Connection>::connect(&db.url(None))
+    let mut conn = crate::AdmissionContext::connect(&db.url(None))
         .await
         .unwrap();
     let ids = world(&mut conn).await;
@@ -221,7 +221,7 @@ async fn cursor_sizes_and_offsets_are_checked_before_integer_conversion(
     db: devkit::pg::TestDatabase,
 ) {
     use base64::Engine as _;
-    let mut conn = <sqlx::PgConnection as sqlx::Connection>::connect(&db.url(None))
+    let mut conn = crate::AdmissionContext::connect(&db.url(None))
         .await
         .unwrap();
     world(&mut conn).await;
@@ -280,7 +280,7 @@ async fn page_count_and_rows_keep_one_snapshot_across_concurrent_run_completion(
     db: devkit::pg::TestDatabase,
 ) {
     use std::time::{Duration, Instant};
-    let mut conn = <sqlx::PgConnection as sqlx::Connection>::connect(&db.url(None))
+    let mut conn = crate::AdmissionContext::connect(&db.url(None))
         .await
         .unwrap();
     world(&mut conn).await;
@@ -366,7 +366,7 @@ async fn page_count_and_rows_keep_one_snapshot_across_concurrent_run_completion(
 
 #[devkit::test]
 async fn provenance_walks_refuse_stages_the_reader_does_not_execute(db: devkit::pg::TestDatabase) {
-    let mut conn = <sqlx::PgConnection as sqlx::Connection>::connect(&db.url(None))
+    let mut conn = crate::AdmissionContext::connect(&db.url(None))
         .await
         .unwrap();
     let ids = world(&mut conn).await;
@@ -381,7 +381,7 @@ async fn provenance_walks_refuse_stages_the_reader_does_not_execute(db: devkit::
 /// not yet handed out shows on its page instead of refusing the question.
 #[devkit::test]
 async fn a_change_after_the_rows_handed_out_shows_on_a_later_page(db: devkit::pg::TestDatabase) {
-    let mut conn = <sqlx::PgConnection as sqlx::Connection>::connect(&db.url(None))
+    let mut conn = crate::AdmissionContext::connect(&db.url(None))
         .await
         .unwrap();
     let ids = runs(&mut conn).await;

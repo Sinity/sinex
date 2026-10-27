@@ -36,7 +36,7 @@ async fn run_events(conn: &mut PgConnection, run: RunId) -> i64 {
 }
 
 /// A batch under a run that has its row.
-async fn under_run(conn: &mut PgConnection, events: Vec<Event>) -> RunId {
+async fn under_run(conn: &mut crate::AdmissionContext, events: Vec<Event>) -> RunId {
     let run = RunId::new();
     sqlx::query("INSERT INTO core.runs (id, name, host) VALUES ($1, 'test', 'h')")
         .bind(run.0)
@@ -78,7 +78,7 @@ fn change(target: sinex_model::EventId, hide: bool) -> Batch {
 
 #[devkit::test]
 async fn counts_follow_admission_replacement_hiding_and_unhiding(db: devkit::pg::TestDatabase) {
-    let mut conn = <sqlx::PgConnection as sqlx::Connection>::connect(&db.url(None))
+    let mut conn = crate::AdmissionContext::connect(&db.url(None))
         .await
         .unwrap();
     let first: Vec<Event> = (0..4).map(|key| keyed("a", key, 1, 1)).collect();
@@ -101,7 +101,7 @@ async fn counts_follow_admission_replacement_hiding_and_unhiding(db: devkit::pg:
 /// the schema a fresh database has.
 #[devkit::test]
 async fn upgrading_from_version_0_counts_the_stored_events(db: devkit::pg::TestDatabase) {
-    let mut conn = <sqlx::PgConnection as sqlx::Connection>::connect(&db.url(None))
+    let mut conn = crate::AdmissionContext::connect(&db.url(None))
         .await
         .unwrap();
     let first: Vec<Event> = (0..3).map(|key| keyed("a", key, 1, 1)).collect();
@@ -116,6 +116,7 @@ async fn upgrading_from_version_0_counts_the_stored_events(db: devkit::pg::TestD
         .await
         .unwrap();
 
+    super::equivalence::version_two_keys(&mut conn).await;
     // Version 0 is this schema without the counts.
     conn.execute("DROP TABLE core.source_counts").await.unwrap();
     conn.execute("ALTER TABLE core.runs DROP COLUMN events")
@@ -160,9 +161,8 @@ async fn upgrading_from_version_0_counts_the_stored_events(db: devkit::pg::TestD
 #[devkit::test]
 async fn an_upgrade_waits_for_no_writer(db: devkit::pg::TestDatabase) {
     let url = db.url(None);
-    let mut conn = <sqlx::PgConnection as sqlx::Connection>::connect(&url)
-        .await
-        .unwrap();
+    let mut conn = PgConnection::connect(&url).await.unwrap();
+    super::equivalence::version_two_keys(&mut conn).await;
     conn.execute("DROP TABLE core.source_counts").await.unwrap();
     conn.execute("ALTER TABLE core.runs DROP COLUMN events")
         .await
@@ -173,9 +173,7 @@ async fn an_upgrade_waits_for_no_writer(db: devkit::pg::TestDatabase) {
     conn.execute("UPDATE sinex_schema.applied SET version = 0")
         .await
         .unwrap();
-    let mut writer = <sqlx::PgConnection as sqlx::Connection>::connect(&url)
-        .await
-        .unwrap();
+    let mut writer = PgConnection::connect(&url).await.unwrap();
     sqlx::query("SELECT pg_advisory_lock($1)")
         .bind(sinex_schema::WRITER_LOCK)
         .execute(&mut writer)

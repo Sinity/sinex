@@ -15,12 +15,12 @@ mod derivation_runner;
 mod dirty_keys;
 mod excision;
 mod ingress;
+mod intake;
 mod library;
 mod material_sink;
 mod publisher;
 mod reader_context;
 mod replay;
-mod requests;
 mod screen_text;
 mod sealed_access;
 mod stored;
@@ -91,12 +91,6 @@ enum Command {
         #[arg(long, default_value = "sinex")]
         subject_root: String,
     },
-    /// Capture a live system source into its spool (the daemon runs the same
-    /// capture as a task).
-    Capture {
-        #[command(subcommand)]
-        source: Capture,
-    },
     /// Administration that needs the database but not the running daemon.
     Admin {
         #[command(subcommand)]
@@ -151,23 +145,6 @@ enum Command {
     },
 }
 
-#[derive(Subcommand)]
-enum Capture {
-    /// The systemd journal through `journalctl -o json`, resuming after the
-    /// last spooled cursor.
-    Journald {
-        #[arg(long)]
-        spool: PathBuf,
-        /// On a first capture, start here (a `journalctl --since` value, such
-        /// as `-1d`); the whole journal otherwise.
-        #[arg(long)]
-        since: Option<String>,
-        /// Keep following new entries.
-        #[arg(long)]
-        follow: bool,
-    },
-}
-
 /// A writer and a derivation runner for a one-shot command, with the content
 /// store when `store` names one.
 async fn local_runner(
@@ -182,10 +159,10 @@ async fn local_runner(
     String,
 > {
     use sqlx::Connection;
-    let mut writer_conn = sqlx::PgConnection::connect(database)
+    let writer_conn = sqlx::PgConnection::connect(database)
         .await
         .map_err(|e| e.to_string())?;
-    writer::claim(&mut writer_conn).await?;
+    let writer_conn = writer::claim(writer_conn).await?;
     let blobs = store
         .map(sinex_store::blobs::Blobs::open)
         .transpose()
@@ -358,22 +335,6 @@ async fn main() -> std::process::ExitCode {
                 &subject_root,
             )
             .await
-        }
-        Command::Capture {
-            source:
-                Capture::Journald {
-                    spool,
-                    since,
-                    follow,
-                },
-        } => {
-            let start = match &since {
-                Some(s) => sinex_sources::sources::journald::Start::Since(s),
-                None => sinex_sources::sources::journald::Start::Beginning,
-            };
-            sinex_sources::sources::journald::capture(&spool, follow, start)
-                .map(|n| println!("captured {n} journal entries"))
-                .map_err(|e| e.to_string())
         }
         Command::Admin { command } => admin::run(command).await,
         Command::Backfill {

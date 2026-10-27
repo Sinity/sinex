@@ -115,7 +115,7 @@ async fn world(db: devkit::pg::TestDatabase) -> World {
     let (handle, queues) = writer::channels();
     tokio::spawn(writer::run(
         url.clone(),
-        connection,
+        writer::claim(connection).await.unwrap(),
         queues,
         Arc::new(sinex_store::NoDerivations),
         Some(blobs.clone()),

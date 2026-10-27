@@ -8,7 +8,7 @@ history for reference.
 
 ## Structure
 
-Read [ARCHITECTURE.md](ARCHITECTURE.md) for how the crates divide the work
+Read [docs/architecture.md](docs/architecture.md) for how the crates divide the work
 and [docs/vocabulary.md](docs/vocabulary.md) for the names of things.
 
 - `crates/sinex-macros`: the `EventPayload` and `DbCheck` derives.

@@ -78,15 +78,17 @@ pub struct Outcome {
     /// The commit sequence range given to admitted events.
     pub commit_seq: Option<(i64, i64)>,
     pub admitted_ids: Vec<EventId>,
+    /// Monotonic stage durations, without payloads or database identities.
+    pub timings: std::collections::BTreeMap<&'static str, std::time::Duration>,
 }
 
 /// Admit `batch` inside the caller's open transaction.
-pub async fn admit(
+pub(crate) async fn admit(
     conn: &mut PgConnection,
+    cache: &mut privacy::Cache,
     batch: &Batch,
     keys: &dyn DirtyKeys,
 ) -> Result<Outcome> {
-    sinex_schema::require_current(conn).await?;
     let mut outcome = Outcome::default();
     // The live reading each offered event ends as: itself when admitted, the
     // reading it repeats when suppressed. A derived batch's keys own these.
@@ -102,6 +104,7 @@ pub async fn admit(
             "producer protocol does not authorize archive-owned source state".into(),
         ));
     }
+    let started = std::time::Instant::now();
     match &batch.kind {
         BatchKind::Source(progress) => register::source(conn, progress).await?,
         BatchKind::Ingress(frame) => {
@@ -111,6 +114,8 @@ pub async fn admit(
         }
         BatchKind::Derived { .. } | BatchKind::Api { .. } | BatchKind::Replay { .. } => {}
     }
+    outcome.timings.insert("registration", started.elapsed());
+    let started = std::time::Instant::now();
     for request in &batch.archive {
         if let ArchiveRequest::Replay { scope, operation } = request {
             let (archived, dirty) = archive::replay_scope(conn, scope, *operation, keys).await?;
@@ -119,23 +124,45 @@ pub async fn admit(
         }
     }
 
+    outcome.timings.insert("replay_archive", started.elapsed());
     let mut events: Vec<Event> = batch.events().cloned().collect();
-    apply_privacy(conn, batch, &mut events).await?;
+    let started = std::time::Instant::now();
+    apply_privacy(conn, cache, batch, &mut events).await?;
+    outcome.timings.insert("privacy", started.elapsed());
+    let started = std::time::Instant::now();
     removed_at_source(conn, batch, &mut events).await?;
+    outcome
+        .timings
+        .insert("removed_at_source", started.elapsed());
 
     if !events.is_empty() {
         let classified = classify::stage_and_classify(conn, &events, &mut outcome).await?;
-        classify::keep_known(conn, &events, &classified.replaced).await?;
+        let started = std::time::Instant::now();
+        sqlx::query!(
+            "DELETE FROM core.admission_stage AS staged
+             WHERE NOT EXISTS (SELECT 1 FROM unnest($1::integer[]) AS admitted(ord)
+               WHERE admitted.ord = staged.ord)",
+            &classified.admit
+        )
+        .execute(&mut *conn)
+        .await?;
+        outcome.timings.insert("discard", started.elapsed());
+        let started = std::time::Instant::now();
+        classify::keep_known(conn, &mut events, &classified.replaced).await?;
+        outcome.timings.insert("keep_known", started.elapsed());
         if !classified.admit.is_empty() {
             write::insert_admitted(conn, batch, &events, &classified, keys, &mut outcome).await?;
         }
         resolved = classified.resolved;
     }
 
+    let started = std::time::Instant::now();
     if let BatchKind::Derived { derivation, scope } = &batch.kind {
         outcome.dirty_keys +=
             derived::apply_derived(conn, derivation, scope, batch, &resolved, keys).await?;
     }
+    outcome.timings.insert("derived", started.elapsed());
+    let started = std::time::Instant::now();
     outcome.failures = write::record_failures(conn, batch).await?;
     if let BatchKind::Source(progress) = &batch.kind {
         write::save_position(conn, progress).await?;
@@ -146,12 +173,18 @@ pub async fn admit(
     if let BatchKind::Ingress(frame) = &batch.kind {
         register::frame(conn, frame, &outcome).await?;
     }
+    outcome.timings.insert("progress", started.elapsed());
     Ok(outcome)
 }
 
 /// Apply the privacy rules to every event, once: reads never apply a rule
 /// again.
-async fn apply_privacy(conn: &mut PgConnection, batch: &Batch, events: &mut [Event]) -> Result<()> {
+async fn apply_privacy(
+    conn: &mut PgConnection,
+    cache: &mut privacy::Cache,
+    batch: &Batch,
+    events: &mut [Event],
+) -> Result<()> {
     if events.is_empty() {
         return Ok(());
     }
@@ -185,7 +218,7 @@ async fn apply_privacy(conn: &mut PgConnection, batch: &Batch, events: &mut [Eve
             }
         }
     }
-    let rules = privacy::load(conn, events.iter().map(|e| e.source.as_str())).await?;
+    let rules = cache.load(conn).await?;
     for event in events.iter_mut() {
         rules.apply(event)?;
     }
@@ -229,7 +262,7 @@ async fn keep_removed_class(conn: &mut PgConnection, events: &mut [Event]) -> Re
     let live = sqlx::query!(
         r#"SELECT r.ord AS "ord!", e.class AS "class!"
            FROM unnest($1::text[], $2::text[], $3::text[]) WITH ORDINALITY AS r(source, event_type, key, ord)
-           JOIN core.live_equivalence l ON l.source = r.source AND l.event_type = r.event_type AND l.equivalence_key = r.key
+           JOIN core.live_equivalence l ON l.source = r.source AND l.event_type = r.event_type AND l.equivalence_key = core.encode_equivalence_key(r.key)
            JOIN core.events e ON e.id = l.event_id"#,
         &sources,
         &types,

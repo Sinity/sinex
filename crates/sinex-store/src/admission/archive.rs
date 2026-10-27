@@ -175,7 +175,7 @@ pub(super) async fn request(
             match &event.equivalence_key {
                 Some(key) => {
                     sqlx::query!(
-                        "INSERT INTO core.live_equivalence (source, event_type, equivalence_key, event_id, reading_order, record_hash) VALUES ($1,$2,$3,$4,$5,$6)",
+                        "INSERT INTO core.live_equivalence (source, event_type, equivalence_key, event_id, reading_order, record_hash) VALUES ($1,$2,core.encode_equivalence_key($3),$4,$5,$6)",
                         event.source, event.event_type, key, r.id, r.reading_order, r.record_hash,
                     )
                     .execute(&mut *conn)
@@ -207,7 +207,7 @@ async fn live_reading(
 ) -> Result<Vec<Uuid>> {
     Ok(match key {
         Some(key) => sqlx::query_scalar!(
-            "SELECT event_id FROM core.live_equivalence WHERE source = $1 AND event_type = $2 AND equivalence_key = $3",
+            "SELECT event_id FROM core.live_equivalence WHERE source = $1 AND event_type = $2 AND equivalence_key = core.encode_equivalence_key($3)",
             source, event_type, key
         )
         .fetch_all(&mut *conn)

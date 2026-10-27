@@ -37,5 +37,27 @@ pub(crate) fn upgrades() -> Vec<Vec<String>> {
             "GRANT SELECT ON core.excised_materials TO sinex_reader, sinex_writer".into(),
             "GRANT INSERT, UPDATE, DELETE ON core.excised_materials TO sinex_writer".into(),
         ],
+        vec![
+            crate::tables::ENCODE_EQUIVALENCE_KEY.into(),
+            crate::tables::DECODE_EQUIVALENCE_KEY.into(),
+            "CREATE TEMPORARY TABLE live_keys_before ON COMMIT DROP AS TABLE core.live_equivalence".into(),
+            "DO $$ BEGIN
+               IF EXISTS (SELECT 1 FROM core.live_equivalence
+                 WHERE core.decode_equivalence_key(core.encode_equivalence_key(equivalence_key)) IS DISTINCT FROM equivalence_key)
+               THEN RAISE EXCEPTION 'equivalence key encoding does not round trip'; END IF;
+               IF EXISTS (SELECT 1 FROM core.live_equivalence GROUP BY source, event_type, core.encode_equivalence_key(equivalence_key) HAVING count(*) > 1)
+               THEN RAISE EXCEPTION 'equivalence key encoding changes identity'; END IF;
+             END $$".into(),
+            "ALTER TABLE core.live_equivalence ALTER COLUMN equivalence_key TYPE bytea USING core.encode_equivalence_key(equivalence_key)".into(),
+            "DO $$ BEGIN
+               IF EXISTS (
+                 (SELECT source, event_type, core.decode_equivalence_key(equivalence_key), event_id, reading_order, record_hash FROM core.live_equivalence
+                  EXCEPT ALL SELECT * FROM live_keys_before)
+                 UNION ALL
+                 (SELECT * FROM live_keys_before EXCEPT ALL
+                  SELECT source, event_type, core.decode_equivalence_key(equivalence_key), event_id, reading_order, record_hash FROM core.live_equivalence))
+               THEN RAISE EXCEPTION 'equivalence key conversion changed stored rows'; END IF;
+             END $$".into(),
+        ],
     ]
 }

@@ -31,21 +31,26 @@ pub(super) async fn stage_and_classify(
     events: &[Event],
     outcome: &mut Outcome,
 ) -> Result<Classified> {
+    let started = std::time::Instant::now();
     sqlx::query!("TRUNCATE core.admission_stage")
         .execute(&mut *conn)
         .await?;
+    outcome.timings.insert("reset", started.elapsed());
     let numbered: Vec<(i32, &Event)> = events
         .iter()
         .enumerate()
         .map(|(i, e)| (i32::try_from(i).expect("batch fits i32"), e))
         .collect();
+    let started = std::time::Instant::now();
     stage::copy(conn, &numbered).await?;
+    outcome.timings.insert("copy", started.elapsed());
+    let started = std::time::Instant::now();
 
     let rows = sqlx::query!(
         r#"WITH s AS (
              SELECT st.*,
                row_number() OVER (
-                 PARTITION BY st.source, st.event_type,
+                 PARTITION BY st.source, st.event_type, st.equivalence_key IS NOT NULL,
                    coalesce(st.equivalence_key, st.material_id::text || ':' || st.anchor || ':' || st.output_index)
                  -- Equal reading orders with different content: the
                  -- greater content hash wins, here and against the live
@@ -79,7 +84,7 @@ pub(super) async fn stage_and_classify(
              AND hl.anchor = s.anchor AND hl.event_type = s.event_type AND hl.output_index = s.output_index
            LEFT JOIN core.live_equivalence le
              ON s.equivalence_key IS NOT NULL AND le.source = s.source
-             AND le.event_type = s.event_type AND le.equivalence_key = s.equivalence_key
+             AND le.event_type = s.event_type AND le.equivalence_key = core.encode_equivalence_key(s.equivalence_key)
            LEFT JOIN core.live_locations lc
              ON s.equivalence_key IS NULL AND s.material_id IS NOT NULL
              AND lc.material_id = s.material_id AND lc.anchor = s.anchor
@@ -89,6 +94,7 @@ pub(super) async fn stage_and_classify(
     .fetch_all(&mut *conn)
     .await?;
 
+    outcome.timings.insert("classification", started.elapsed());
     let mut resolved = vec![None; events.len()];
     let mut admit_ords: Vec<i32> = Vec::new();
     let mut replaced: Vec<(i32, Uuid)> = Vec::new();
@@ -136,31 +142,36 @@ pub(super) async fn stage_and_classify(
 /// declares `keep_known` when it leaves them unknown.
 pub(super) async fn keep_known(
     conn: &mut PgConnection,
-    events: &[Event],
+    events: &mut [Event],
     replaced: &[(i32, Uuid)],
 ) -> Result<()> {
-    for (ord, live) in replaced {
-        let event_type = &events[usize::try_from(*ord).expect("ord is an index")].event_type;
-        let keep = sinex_model::event_types::find(event_type).map_or(&[][..], |k| k.keep_known);
-        if keep.is_empty() {
-            continue;
-        }
-        let keep: Vec<String> = keep.iter().map(|f| (*f).to_owned()).collect();
-        sqlx::query!(
-            r#"UPDATE core.admission_stage st
-               SET payload = st.payload || coalesce((
-                 SELECT jsonb_object_agg(f, e.payload->f)
-                 FROM unnest($3::text[]) f
-                 WHERE coalesce(st.payload->f, 'null'::jsonb) = 'null'::jsonb
-                   AND coalesce(e.payload->f, 'null'::jsonb) <> 'null'::jsonb), '{}'::jsonb)
-               FROM core.events e
-               WHERE st.ord = $1 AND e.id = $2"#,
-            ord,
-            live,
-            &keep,
-        )
-        .execute(&mut *conn)
-        .await?;
+    let inputs: Vec<_> = replaced
+        .iter()
+        .filter_map(|(ord, live)| {
+            let event = &events[usize::try_from(*ord).expect("ord is an index")];
+            let fields = sinex_model::event_types::find(event.event_type)
+                .map_or(&[][..], |kind| kind.keep_known);
+            (!fields.is_empty())
+                .then(|| serde_json::json!({"ord": ord, "live_id": live, "fields": fields}))
+        })
+        .collect();
+    if inputs.is_empty() {
+        return Ok(());
+    }
+    let rows = sqlx::query!(
+        r#"UPDATE core.admission_stage st
+           SET payload = st.payload || coalesce((
+             SELECT jsonb_object_agg(f, e.payload->f)
+             FROM jsonb_array_elements_text(r.fields) f
+             WHERE coalesce(st.payload->f, 'null'::jsonb) = 'null'::jsonb
+               AND coalesce(e.payload->f, 'null'::jsonb) <> 'null'::jsonb), '{}'::jsonb)
+           FROM jsonb_to_recordset($1::jsonb) AS r(ord integer, live_id uuid, fields jsonb), core.events e
+           WHERE st.ord = r.ord AND e.id = r.live_id
+           RETURNING st.ord, st.payload"#,
+        serde_json::Value::Array(inputs),
+    ).fetch_all(&mut *conn).await?;
+    for row in rows {
+        events[usize::try_from(row.ord).expect("ord is an index")].payload = row.payload;
     }
     Ok(())
 }
