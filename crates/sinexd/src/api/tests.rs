@@ -133,6 +133,7 @@ async fn world(db: devkit::pg::TestDatabase) -> World {
         day_start: jiff::civil::Time::constant(4, 0, 0, 0),
         agent_grants: vec![],
         unlock: Default::default(),
+        derivations: None,
         host: "h".into(),
     };
     let (commits, rx) = watch::channel(0u64);

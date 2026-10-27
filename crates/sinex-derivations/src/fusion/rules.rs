@@ -543,6 +543,89 @@ pub static MAIL: FusionRule = FusionRule {
     end_field: None,
 };
 
+// Rest: sleep and naps as the health providers recorded them. Rest is
+// exclusive, so every rest record uses one identity, as focus does.
+
+fn rest(event: &Event, kind: &str) -> Option<FusionRecord> {
+    let p = &event.payload;
+    let end = time(p, "/end");
+    fusion_record(
+        event,
+        String::new(),
+        end,
+        fields([("kind", Some(json!(kind)))]),
+    )
+}
+
+const fn rest_from(provider: &'static [(&'static str, &'static str)], nap: bool) -> FusionInput {
+    FusionInput {
+        event_type: "health.record",
+        only: provider,
+        source: None,
+        spans: true,
+        read: if nap {
+            |e| rest(e, "nap")
+        } else {
+            |e| rest(e, "sleep")
+        },
+    }
+}
+
+pub static REST: FusionRule = FusionRule {
+    derivation: "rest.fusion",
+    version: 1,
+    output: "rest.fused",
+    observers: &[
+        rest_from(
+            &[("provider", "sleep-as-android"), ("category", "sleep")],
+            false,
+        ),
+        rest_from(
+            &[("provider", "samsung-health"), ("category", "Sleep")],
+            false,
+        ),
+        rest_from(
+            &[("provider", "samsung-health-cloud"), ("category", "Sleep")],
+            false,
+        ),
+        rest_from(
+            &[
+                ("provider", "samsung-health"),
+                ("category", "Sleep Combined"),
+            ],
+            false,
+        ),
+        rest_from(
+            &[
+                ("provider", "samsung-health-cloud"),
+                ("category", "sleep_combined"),
+            ],
+            false,
+        ),
+        rest_from(
+            &[
+                ("provider", "samsung-health"),
+                ("category", "Shealth Vitality Nap Data"),
+            ],
+            true,
+        ),
+        rest_from(
+            &[
+                ("provider", "samsung-health-cloud"),
+                ("category", "Shealth Vitality Nap Data"),
+            ],
+            true,
+        ),
+    ],
+    inputs: &["health.record"],
+    // Watches and phones start a night minutes apart.
+    window_ns: secs(30 * 60),
+    fallback_ns: secs(2 * 3600),
+    absorb_ns: Some(secs(16 * 3600)),
+    start_field: "started_at",
+    end_field: Some("ended_at"),
+};
+
 /// Every fusion rule.
 pub static RULES: &[&FusionRule] = &[
     &COMMANDS,
@@ -552,4 +635,5 @@ pub static RULES: &[&FusionRule] = &[
     &CLIPBOARD,
     &NOTIFICATIONS,
     &MAIL,
+    &REST,
 ];

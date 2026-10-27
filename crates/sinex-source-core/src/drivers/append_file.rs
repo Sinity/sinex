@@ -328,6 +328,40 @@ impl AppendFile {
             }
             want = (want * 2).min(available);
         };
+        if consumed > 0 {
+            let after = file_facts(&self.path).map_err(|e| DriverError::Io(e.to_string()))?;
+            let same_file = after.inode == facts.inode;
+            let changed = after.size != facts.size
+                || after.mtime_ns != facts.mtime_ns
+                || after.ctime_ns != facts.ctime_ns;
+            let racy = looked < mtime.max(ctime) + RACY_NS;
+            let stable = same_file
+                && if changed || racy {
+                    let expected = if start > 0 {
+                        kept.as_ref()
+                            .expect("an appended prefix was checked")
+                            .digest_after(&data[..consumed])
+                    } else {
+                        Prefix::empty().digest_after(&data[..consumed])
+                    };
+                    Prefix::read(&mut file, start + consumed as u64)?.digest() == expected
+                } else {
+                    true
+                };
+            if !stable {
+                return Ok(Acquired {
+                    input: self.input(),
+                    observation: ObservationFacts {
+                        unavailable: Some("the file changed while it was read".into()),
+                        changed: false,
+                        ..facts
+                    },
+                    revision: RevisionChange::Same,
+                    material: None,
+                    cursor_without_material: cursor.clone(),
+                });
+            }
+        }
         let read_to_end = start + consumed as u64 == size || want >= available;
         let restarted = start == 0 && !cursor.is_null();
         let base = Cursor {

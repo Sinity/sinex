@@ -1,297 +1,186 @@
-//! Declared rules attach tags to captured events. Every matching tag is an
-//! attributed derived record; rules never change the captured payload.
+//! Declared rules attach tags to events, including events with unknown time.
+//! Every matching tag is an attributed derived record; rules never change
+//! the input payload. A rule change gives a new derivation version.
 use crate::derived_event::{derived, record_identity};
-use crate::{Env, Input, PerEvent};
-use sinex_model::event_types::derived::TagApplied;
-use sinex_model::{Event, EventPayload, Origin};
+use crate::{AnyPerEvent, Env, Input, Reads};
+use serde::{Deserialize, Serialize};
+use serde_json::Value;
+use sinex_model::event_types::TagApplied;
+use sinex_model::{Event, EventPayload};
 use std::collections::BTreeMap;
-use std::sync::OnceLock;
 
-/// The part of an event a rule reads.
-#[derive(Clone, Copy)]
-pub enum Field {
-    Source,
-    Payload(&'static str),
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TagRule {
+    pub tag: String,
+    pub event_type: String,
+    /// Every condition must hold. No conditions match every event of the type.
+    #[serde(default)]
+    pub when: Vec<Condition>,
 }
 
-/// A literal comparison, with no inference about what text means.
-#[derive(Clone, Copy)]
-pub enum Match {
-    Prefix(&'static str),
-    Extension(&'static str),
-    Equal(&'static str),
+/// One payload value, addressed by a JSON pointer.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(try_from = "Value")]
+pub struct Condition {
+    pub field: String,
+    #[serde(flatten)]
+    pub test: Test,
 }
 
-pub struct Rule {
-    pub name: &'static str,
-    pub field: Field,
-    pub matches: Match,
-    pub tag: &'static str,
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Test {
+    Is(Value),
+    /// Literal text comparisons lowercase both sides.
+    Contains(String),
+    StartsWith(String),
+    EndsWith(String),
+    /// Present and not null, or absent or null.
+    Exists(bool),
 }
 
-/// Source, file extension and MIME rules. Their names are recorded with tags.
-pub const RULES: &[Rule] = &[
-    Rule {
-        name: "terminal source",
-        field: Field::Source,
-        matches: Match::Prefix("terminal."),
-        tag: "sys.source.terminal",
-    },
-    Rule {
-        name: "browser source",
-        field: Field::Source,
-        matches: Match::Prefix("browser."),
-        tag: "sys.source.browser",
-    },
-    Rule {
-        name: "desktop source",
-        field: Field::Source,
-        matches: Match::Prefix("desktop."),
-        tag: "sys.source.desktop",
-    },
-    Rule {
-        name: "file source",
-        field: Field::Source,
-        matches: Match::Equal("machine.file-watch"),
-        tag: "sys.source.file",
-    },
-    Rule {
-        name: "Rust file",
-        field: Field::Payload("path"),
-        matches: Match::Extension("rs"),
-        tag: "inferred.file-type.rust",
-    },
-    Rule {
-        name: "Nix file",
-        field: Field::Payload("path"),
-        matches: Match::Extension("nix"),
-        tag: "inferred.file-type.nix",
-    },
-    Rule {
-        name: "Markdown file",
-        field: Field::Payload("path"),
-        matches: Match::Extension("md"),
-        tag: "inferred.file-type.markdown",
-    },
-    Rule {
-        name: "Python file",
-        field: Field::Payload("path"),
-        matches: Match::Extension("py"),
-        tag: "inferred.file-type.python",
-    },
-    Rule {
-        name: "JavaScript file",
-        field: Field::Payload("path"),
-        matches: Match::Extension("js"),
-        tag: "inferred.file-type.javascript",
-    },
-    Rule {
-        name: "TypeScript file",
-        field: Field::Payload("path"),
-        matches: Match::Extension("ts"),
-        tag: "inferred.file-type.javascript",
-    },
-    Rule {
-        name: "JSX file",
-        field: Field::Payload("path"),
-        matches: Match::Extension("jsx"),
-        tag: "inferred.file-type.javascript",
-    },
-    Rule {
-        name: "TSX file",
-        field: Field::Payload("path"),
-        matches: Match::Extension("tsx"),
-        tag: "inferred.file-type.javascript",
-    },
-    Rule {
-        name: "JSON file",
-        field: Field::Payload("path"),
-        matches: Match::Extension("json"),
-        tag: "inferred.file-type.json",
-    },
-    Rule {
-        name: "TOML file",
-        field: Field::Payload("path"),
-        matches: Match::Extension("toml"),
-        tag: "inferred.file-type.toml",
-    },
-    Rule {
-        name: "YAML file",
-        field: Field::Payload("path"),
-        matches: Match::Extension("yaml"),
-        tag: "inferred.file-type.yaml",
-    },
-    Rule {
-        name: "YML file",
-        field: Field::Payload("path"),
-        matches: Match::Extension("yml"),
-        tag: "inferred.file-type.yaml",
-    },
-    Rule {
-        name: "HTML file",
-        field: Field::Payload("path"),
-        matches: Match::Extension("html"),
-        tag: "inferred.file-type.html",
-    },
-    Rule {
-        name: "HTM file",
-        field: Field::Payload("path"),
-        matches: Match::Extension("htm"),
-        tag: "inferred.file-type.html",
-    },
-    Rule {
-        name: "CSS file",
-        field: Field::Payload("path"),
-        matches: Match::Extension("css"),
-        tag: "inferred.file-type.css",
-    },
-    Rule {
-        name: "SQL file",
-        field: Field::Payload("path"),
-        matches: Match::Extension("sql"),
-        tag: "inferred.file-type.sql",
-    },
-    Rule {
-        name: "Shell file",
-        field: Field::Payload("path"),
-        matches: Match::Extension("sh"),
-        tag: "inferred.file-type.shell",
-    },
-    Rule {
-        name: "Bash file",
-        field: Field::Payload("path"),
-        matches: Match::Extension("bash"),
-        tag: "inferred.file-type.shell",
-    },
-    Rule {
-        name: "Zsh file",
-        field: Field::Payload("path"),
-        matches: Match::Extension("zsh"),
-        tag: "inferred.file-type.shell",
-    },
-    Rule {
-        name: "plain text MIME",
-        field: Field::Payload("media_type"),
-        matches: Match::Equal("text/plain"),
-        tag: "sys.mime.text-plain",
-    },
-    Rule {
-        name: "HTML MIME",
-        field: Field::Payload("media_type"),
-        matches: Match::Equal("text/html"),
-        tag: "sys.mime.text-html",
-    },
-    Rule {
-        name: "CSS MIME",
-        field: Field::Payload("media_type"),
-        matches: Match::Equal("text/css"),
-        tag: "sys.mime.text-css",
-    },
-    Rule {
-        name: "CSV MIME",
-        field: Field::Payload("media_type"),
-        matches: Match::Equal("text/csv"),
-        tag: "sys.mime.text-csv",
-    },
-    Rule {
-        name: "text XML MIME",
-        field: Field::Payload("media_type"),
-        matches: Match::Equal("text/xml"),
-        tag: "sys.mime.xml",
-    },
-    Rule {
-        name: "application XML MIME",
-        field: Field::Payload("media_type"),
-        matches: Match::Equal("application/xml"),
-        tag: "sys.mime.xml",
-    },
-    Rule {
-        name: "JSON MIME",
-        field: Field::Payload("media_type"),
-        matches: Match::Equal("application/json"),
-        tag: "sys.mime.json",
-    },
-    Rule {
-        name: "PDF MIME",
-        field: Field::Payload("media_type"),
-        matches: Match::Equal("application/pdf"),
-        tag: "sys.mime.pdf",
-    },
-    Rule {
-        name: "Word MIME",
-        field: Field::Payload("media_type"),
-        matches: Match::Equal(
-            "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-        ),
-        tag: "sys.mime.docx",
-    },
-    Rule {
-        name: "Excel MIME",
-        field: Field::Payload("media_type"),
-        matches: Match::Equal("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"),
-        tag: "sys.mime.xlsx",
-    },
-    Rule {
-        name: "PowerPoint MIME",
-        field: Field::Payload("media_type"),
-        matches: Match::Equal(
-            "application/vnd.openxmlformats-officedocument.presentationml.presentation",
-        ),
-        tag: "sys.mime.pptx",
-    },
-    Rule {
-        name: "Markdown MIME",
-        field: Field::Payload("media_type"),
-        matches: Match::Equal("text/markdown"),
-        tag: "sys.mime.text-markdown",
-    },
-];
-
-fn matches(rule: &Rule, event: &Event) -> bool {
-    let value = match rule.field {
-        Field::Source => Some(event.source.as_str()),
-        Field::Payload(field) => event.payload.get(field).and_then(|v| v.as_str()),
-    };
-    let Some(value) = value else { return false };
-    match rule.matches {
-        Match::Prefix(prefix) => value.starts_with(prefix),
-        Match::Equal(expected) => value == expected,
-        Match::Extension(extension) => std::path::Path::new(value)
-            .extension()
-            .is_some_and(|found| found == extension),
+impl Condition {
+    fn holds(&self, payload: &Value) -> bool {
+        let value = payload.pointer(&self.field);
+        let text = || value.and_then(Value::as_str).map(str::to_lowercase);
+        match &self.test {
+            Test::Is(expected) => value == Some(expected),
+            Test::Contains(part) => text().is_some_and(|t| t.contains(&part.to_lowercase())),
+            Test::StartsWith(prefix) => {
+                text().is_some_and(|t| t.starts_with(&prefix.to_lowercase()))
+            }
+            Test::EndsWith(suffix) => text().is_some_and(|t| t.ends_with(&suffix.to_lowercase())),
+            Test::Exists(present) => value.is_some_and(|v| !v.is_null()) == *present,
+        }
     }
 }
 
-pub struct Tags;
+fn valid_pointer(pointer: &str) -> bool {
+    if !pointer.is_empty() && !pointer.starts_with('/') {
+        return false;
+    }
+    let mut chars = pointer.chars();
+    while let Some(ch) = chars.next() {
+        if ch == '~' && !matches!(chars.next(), Some('0' | '1')) {
+            return false;
+        }
+    }
+    true
+}
 
-impl PerEvent for Tags {
-    const NAME: &'static str = "tags";
-    /// The rules and their meaning are part of this version.
-    const VERSION: u32 = 1;
-    // The registered kinds are read through `input_types`.
-    const INPUTS: &'static [&'static str] = &[];
-    const OUTPUTS: &'static [&'static str] = &[TagApplied::EVENT_TYPE];
+impl TryFrom<Value> for Condition {
+    type Error = String;
+    fn try_from(value: Value) -> Result<Self, Self::Error> {
+        let Value::Object(mut fields) = value else {
+            return Err("a condition must be an object".into());
+        };
+        let field = fields
+            .remove("field")
+            .and_then(|v| v.as_str().map(str::to_owned))
+            .ok_or("a condition field must be a JSON pointer string")?;
+        let test =
+            serde_json::from_value(Value::Object(fields)).map_err(|e| format!("condition: {e}"))?;
+        Ok(Self { field, test })
+    }
+}
 
-    fn input_types(&self) -> &'static [&'static str] {
-        inputs()
+/// Every registered kind except this derivation's output and telemetry.
+fn taggable() -> &'static [&'static str] {
+    static TYPES: std::sync::LazyLock<Vec<&'static str>> = std::sync::LazyLock::new(|| {
+        let mut types: Vec<_> = sinex_model::event_types::ALL
+            .iter()
+            .map(|kind| kind.event_type)
+            .filter(|kind| {
+                *kind != TagApplied::EVENT_TYPE && !sinex_model::event_types::is_telemetry(kind)
+            })
+            .collect();
+        types.sort_unstable();
+        types
+    });
+    &TYPES
+}
+
+pub struct TagApplier {
+    rules: Vec<TagRule>,
+    version: u32,
+}
+
+impl TagApplier {
+    pub const NAME: &'static str = "tag.applier";
+
+    pub fn new(mut rules: Vec<TagRule>) -> Result<Self, String> {
+        for rule in &rules {
+            if rule.tag.trim().is_empty() {
+                return Err("a tag rule has an empty tag".into());
+            }
+            if !taggable().contains(&rule.event_type.as_str()) {
+                return Err(format!(
+                    "tag {}: {} is not a type a tag can read",
+                    rule.tag, rule.event_type
+                ));
+            }
+            if let Some(condition) = rule.when.iter().find(|c| !valid_pointer(&c.field)) {
+                return Err(format!(
+                    "tag {}: field {} is not a JSON pointer",
+                    rule.tag, condition.field
+                ));
+            }
+        }
+        // Rule order has no meaning; one tag lists every matching declaration.
+        rules.sort_by_cached_key(|rule| serde_json::to_string(rule).expect("rules serialize"));
+        rules.dedup();
+        let hash = blake3::hash(&serde_json::to_vec(&rules).expect("rules serialize"));
+        let bytes: [u8; 4] = hash.as_bytes()[..4].try_into().expect("four bytes");
+        let version = if rules.is_empty() {
+            1
+        } else {
+            2 + (u32::from_le_bytes(bytes) >> 2)
+        };
+        Ok(Self { rules, version })
+    }
+}
+
+impl AnyPerEvent for TagApplier {
+    fn name(&self) -> &'static str {
+        Self::NAME
+    }
+    fn version(&self) -> u32 {
+        self.version
+    }
+    fn inputs_types(&self) -> &'static [&'static str] {
+        taggable()
+    }
+    fn output_types(&self) -> &'static [&'static str] {
+        &[TagApplied::EVENT_TYPE]
+    }
+    fn reads(&self, _: &Event) -> Reads {
+        Reads::Nothing
     }
 
     fn derive(&self, input: Input<'_>, _: &Env) -> Result<Vec<Event>, String> {
         let event = input.event;
-        if !matches!(event.origin, Origin::Record { .. }) {
-            return Ok(Vec::new());
+        let mut assignments: BTreeMap<&str, Vec<String>> = BTreeMap::new();
+        for rule in self.rules.iter().filter(|rule| {
+            rule.event_type == event.event_type
+                && rule
+                    .when
+                    .iter()
+                    .all(|condition| condition.holds(&event.payload))
+        }) {
+            assignments
+                .entry(&rule.tag)
+                .or_default()
+                .push(serde_json::to_string(rule).expect("rules serialize"));
         }
-        let mut tags: BTreeMap<&str, Vec<String>> = BTreeMap::new();
-        for rule in RULES.iter().filter(|r| matches(r, event)) {
-            tags.entry(rule.tag).or_default().push(rule.name.to_owned());
-        }
-        Ok(tags
+        Ok(assignments
             .into_iter()
             .map(|(tag, rules)| {
                 let mut output = derived(
                     &TagApplied {
-                        record: record_identity(event),
                         tag: tag.to_owned(),
+                        record: record_identity(event),
+                        event_type: event.event_type.to_owned(),
                         rules,
                         at: event.ts_orig.at,
                     },
@@ -303,23 +192,6 @@ impl PerEvent for Tags {
             })
             .collect())
     }
-}
-
-/// Registry input types, including future captured kinds, excluding telemetry
-/// and this derivation's own output. Derived inputs are ignored by `derive`.
-pub fn inputs() -> &'static [&'static str] {
-    static TYPES: OnceLock<Vec<&'static str>> = OnceLock::new();
-    TYPES.get_or_init(|| {
-        let mut types: Vec<_> = sinex_model::event_types::ALL
-            .iter()
-            .map(|kind| kind.event_type)
-            .filter(|kind| {
-                *kind != TagApplied::EVENT_TYPE && !sinex_model::event_types::is_telemetry(kind)
-            })
-            .collect();
-        types.sort_unstable();
-        types
-    })
 }
 
 #[cfg(test)]

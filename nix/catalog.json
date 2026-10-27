@@ -1057,6 +1057,17 @@
       ]
     },
     {
+      "name": "rest.fusion",
+      "enabledByDefault": true,
+      "kind": "keyed",
+      "inputs": [
+        "health.record"
+      ],
+      "outputs": [
+        "rest.fused"
+      ]
+    },
+    {
       "name": "shell.sessions",
       "enabledByDefault": true,
       "kind": "keyed",
@@ -1065,6 +1076,34 @@
       ],
       "outputs": [
         "shell.session"
+      ]
+    },
+    {
+      "name": "activity.spans",
+      "enabledByDefault": true,
+      "kind": "keyed",
+      "inputs": [
+        "command.fused",
+        "focus.fused",
+        "visit.fused",
+        "clipboard.fused",
+        "presence.interval"
+      ],
+      "outputs": [
+        "activity.span"
+      ]
+    },
+    {
+      "name": "conversation.days",
+      "enabledByDefault": true,
+      "kind": "keyed",
+      "inputs": [
+        "chat.message",
+        "conversation.message",
+        "mail.fused"
+      ],
+      "outputs": [
+        "conversation.day"
       ]
     },
     {
@@ -1094,9 +1133,7 @@
         "chat.message",
         "mail.fused",
         "journal.entry",
-        "visit.fused",
-        "key.pressed",
-        "pointer.button"
+        "visit.fused"
       ],
       "outputs": [
         "metric.figure"
@@ -1151,13 +1188,14 @@
       ]
     },
     {
-      "name": "tags",
+      "name": "tag.applier",
       "enabledByDefault": false,
       "kind": "per-event",
       "inputs": [
         "account.row",
         "account.setting",
         "action.recorded",
+        "activity.span",
         "activitywatch.other",
         "book.status",
         "bookmark.saved",
@@ -1172,8 +1210,10 @@
         "command.executed",
         "command.fused",
         "command.imported",
+        "conversation.day",
         "conversation.message",
         "desktop.other",
+        "document.text",
         "editor.reported",
         "file.changed",
         "focus.fused",
@@ -1232,6 +1272,7 @@
         "presence.interval",
         "presence.span",
         "purchase.observed",
+        "rest.fused",
         "screen.text",
         "scrollback.captured",
         "scrollback.window",
@@ -1257,6 +1298,17 @@
       ],
       "outputs": [
         "tag.applied"
+      ]
+    },
+    {
+      "name": "document.text",
+      "enabledByDefault": true,
+      "kind": "per-event",
+      "inputs": [
+        "library.copy"
+      ],
+      "outputs": [
+        "document.text"
       ]
     }
   ]

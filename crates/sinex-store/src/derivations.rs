@@ -506,9 +506,9 @@ pub async fn after_seq(
              SELECT p.id, p.seq FROM (
                SELECT q.id, q.seq, (sum(q.size) OVER (ORDER BY q.seq) - q.size)::bigint AS before
                FROM (
-                 SELECT l.event_id AS id, l.commit_seq AS seq, pg_column_size(s.payload)::bigint AS size
-                 FROM core.commit_log l JOIN core.events s ON s.id = l.event_id
-                 WHERE l.commit_seq > $2 AND l.event_type = ANY($1)
+                 SELECT s.id, s.commit_seq AS seq, pg_column_size(s.payload)::bigint AS size
+                 FROM core.events s
+                 WHERE s.commit_seq > $2 AND s.event_type = ANY($1)
                    AND NOT EXISTS (SELECT 1 FROM audit.archived a WHERE a.event_id = s.id)
                  UNION ALL
                  SELECT c.event_id AS id, c.commit_seq AS seq, pg_column_size(s.payload)::bigint AS size
@@ -561,6 +561,17 @@ pub async fn live_at(conn: &mut PgConnection, locations: &[RecordLocation]) -> R
         out.push(committed!(r).event);
     }
     Ok(out)
+}
+
+/// The largest stored reading order of this producer, before a new run.
+pub async fn latest_reading_order(conn: &mut PgConnection, producer: &str) -> Result<i64> {
+    Ok(sqlx::query_scalar!(
+        r#"SELECT coalesce(max(e.reading_order), 0) AS "order!"
+           FROM core.events e JOIN core.runs r ON r.id = e.run_id WHERE r.name = $1"#,
+        producer,
+    )
+    .fetch_one(conn)
+    .await?)
 }
 
 /// The highest commit sequence so far.
