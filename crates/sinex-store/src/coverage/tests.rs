@@ -51,6 +51,25 @@ async fn evidence_keeps_visibility_positions_unknown_times_and_archived_run_reco
     let hidden = source_evidence(&mut conn, "test.source", 5).await.unwrap();
     assert!(hidden.records.is_none());
     assert_eq!(hidden.runs[0].last_record.unwrap().unix_timestamp(), 20);
+    let unknown = uuid::Uuid::now_v7();
+    sqlx::query("INSERT INTO core.runs (id, name, host) VALUES ($1, 'unknown', 'synthetic')")
+        .bind(unknown)
+        .execute(&mut conn)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO core.events (id, event_type, source, run_id, material_id, anchor, ts_orig, ts_quality, commit_seq, payload, reading_order, record_hash) VALUES (uuidv7(), 'command.executed', 'test.source', $1, uuidv7(), 0, NULL, 'unknown', 6, '{}', 0, decode(repeat('00',32),'hex'))")
+        .bind(unknown).execute(&mut conn).await.unwrap();
+    assert_eq!(
+        source_evidence(&mut conn, "test.source", 5)
+            .await
+            .unwrap()
+            .runs
+            .len(),
+        1
+    );
+    let unknown = source_evidence(&mut conn, "test.source", 6).await.unwrap();
+    assert_eq!(unknown.runs.len(), 2);
+    assert!(unknown.runs.iter().any(|run| run.last_record.is_none()));
 }
 
 #[devkit::test]
@@ -68,11 +87,10 @@ async fn coverage_run_index_contains_the_position_filter(db: devkit::pg::TestDat
 #[ignore = "100,000-event coverage measurement"]
 async fn measure_coverage_scan(db: devkit::pg::TestDatabase) {
     let mut conn = PgConnection::connect(&db.url(None)).await.unwrap();
-    conn.execute("INSERT INTO core.runs (id, name, host) VALUES (uuidv7(), 'test', 'synthetic')")
-        .await
-        .unwrap();
-    conn.execute("INSERT INTO core.events (id, event_type, source, run_id, material_id, anchor, ts_orig, ts_quality, commit_seq, payload, reading_order, record_hash) SELECT uuidv7(), 'command.executed', 'test.source', (SELECT id FROM core.runs LIMIT 1), uuidv7(), 0, to_timestamp(n), 'intrinsic', n, '{}', 0, decode(repeat('00',32),'hex') FROM generate_series(1,100000) n").await.unwrap();
+    conn.execute("INSERT INTO core.runs (id, name, host) SELECT uuidv7(), n::text, 'synthetic' FROM generate_series(1,100) n").await.unwrap();
+    conn.execute("INSERT INTO core.events (id, event_type, source, run_id, material_id, anchor, ts_orig, ts_quality, commit_seq, payload, reading_order, record_hash) SELECT uuidv7(), 'command.executed', 'test.source', r.id, uuidv7(), 0, to_timestamp((r.name::int-1)*1000+n), 'intrinsic', (r.name::int-1)*1000+n, '{}', 0, decode(repeat('00',32),'hex') FROM core.runs r CROSS JOIN generate_series(1,1000) n").await.unwrap();
     conn.execute("VACUUM ANALYZE core.events").await.unwrap();
+    conn.execute("ANALYZE core.runs").await.unwrap();
     let old = "SELECT r.started_at, r.ended_at, max(e.ts_orig) FROM core.events e JOIN core.runs r ON r.id = e.run_id WHERE e.source = 'test.source' AND e.commit_seq <= 100000 GROUP BY r.id, r.started_at, r.ended_at ORDER BY r.started_at";
     let new = "SELECT r.started_at, r.ended_at, (SELECT max(e.ts_orig) FROM core.events e WHERE e.source = 'test.source' AND e.run_id = r.id AND e.commit_seq <= 100000) AS last_record FROM core.runs r JOIN LATERAL (SELECT 1 FROM core.events e WHERE e.source = 'test.source' AND e.run_id = r.id AND e.commit_seq <= 100000 ORDER BY e.ts_orig DESC LIMIT 1) recorded ON true ORDER BY r.started_at";
     for (name, query) in [("old runs", old), ("new runs", new)] {
@@ -84,21 +102,36 @@ async fn measure_coverage_scan(db: devkit::pg::TestDatabase) {
         eprintln!("{name}: {plan}");
         if name == "new runs" {
             assert_bounded(&plan[0]["Plan"]);
+            assert!(plan.to_string().contains("events_coverage"), "{plan}");
         }
     }
     let evidence = source_evidence(&mut conn, "test.source", 100000)
         .await
         .unwrap();
-    assert_eq!(evidence.runs.len(), 1);
+    assert_eq!(evidence.runs.len(), 100);
     assert_eq!(
-        evidence.runs[0].last_record.unwrap().unix_timestamp(),
-        100000
+        evidence
+            .runs
+            .iter()
+            .filter_map(|run| run.last_record)
+            .map(|time| time.unix_timestamp())
+            .max(),
+        Some(100000)
     );
 }
 
 fn assert_bounded(plan: &serde_json::Value) {
-    // The fixture has one run. Every event probe must stop after one row.
-    assert!(plan["Actual Rows"].as_f64().unwrap_or(0.0) <= 1.0, "{plan}");
+    if plan["Relation Name"]
+        .as_str()
+        .is_some_and(|relation| relation != "runs")
+    {
+        assert!(plan["Actual Rows"].as_f64().unwrap_or(0.0) <= 1.0, "{plan}");
+        assert_eq!(
+            plan["Rows Removed by Filter"].as_f64().unwrap_or(0.0),
+            0.0,
+            "{plan}"
+        );
+    }
     if let Some(children) = plan["Plans"].as_array() {
         for child in children {
             assert_bounded(child);

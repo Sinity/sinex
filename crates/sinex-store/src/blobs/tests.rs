@@ -201,9 +201,10 @@ async fn files_without_a_row_are_deleted_and_the_rest_kept(db: devkit::pg::TestD
     // A second start checks no historical files, even though the store keeps
     // more names than one database page.
     assert_eq!(blobs.unadmitted_names().unwrap().count(), 0);
+    let full = blobs.names().unwrap().filter_map(|name| name.ok()).count();
+    assert_eq!(full, with_rows.len());
     eprintln!(
-        "startup names checked: before={} after=0 kept={}",
-        NAMES_PER_QUERY + 200,
+        "startup names checked: full_walk={full} tracked=0 kept={}",
         with_rows.len()
     );
     let again = delete_files_without_rows(&mut conn, &blobs).await.unwrap();
