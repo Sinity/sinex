@@ -51,7 +51,11 @@ impl Backlog {
                 .range(..segment)
                 .map(|(_, counts)| counts.records)
                 .sum();
-            while self.segments.first_key_value().is_some_and(|(index, _)| *index < segment) {
+            while self
+                .segments
+                .first_key_value()
+                .is_some_and(|(index, _)| *index < segment)
+            {
                 let _ = self.segments.pop_first();
             }
             if let Some(counts) = self.segments.get_mut(&segment) {
@@ -77,7 +81,11 @@ impl Backlog {
         self.recovery = Counts::default();
         self.cursor = cursor.clone();
         if let Some(last) = cursor.get("last").and_then(Value::as_str) {
-            while self.media.first_key_value().is_some_and(|(stem, _)| stem.as_str() <= last) {
+            while self
+                .media
+                .first_key_value()
+                .is_some_and(|(stem, _)| stem.as_str() <= last)
+            {
                 let _ = self.media.pop_first();
             }
         }
@@ -97,7 +105,10 @@ impl Backlog {
             })
             .unwrap_or_default();
         let bytes = if let Some(last) = cursor.get("last").and_then(Value::as_str) {
-            self.media.range(..=last.to_owned()).map(|(_, size)| *size).sum()
+            self.media
+                .range(..=last.to_owned())
+                .map(|(_, size)| *size)
+                .sum()
         } else {
             let offset = cursor
                 .pointer("/inner/offset")
