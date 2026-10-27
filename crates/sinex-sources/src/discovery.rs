@@ -48,15 +48,30 @@ fn known_format(name: &str, source: Option<&str>) -> bool {
 }
 
 fn known_input(name: &str) -> bool {
-    if known_format(name, None) || sources::formats().iter().any(|format| {
-        format.discovery.locations.iter().any(|location| matches!(location.root, "capture" | "input") && location.path == name)
-    }) { return true; }
+    if known_format(name, None)
+        || sources::formats().iter().any(|format| {
+            format.discovery.locations.iter().any(|location| {
+                matches!(location.root, "capture" | "input") && location.path == name
+            })
+        })
+    {
+        return true;
+    }
     #[cfg(not(feature = "full"))]
-    return catalog_sources().iter().any(|source| source["discovery"].as_array().is_some_and(|descriptions| descriptions.iter().any(|description| {
-        description["description"]["locations"].as_array().is_some_and(|locations| locations.iter().any(|location| {
-            (location["root"] == "capture" || location["root"] == "input") && location["path"] == name
-        }))
-    })));
+    return catalog_sources().iter().any(|source| {
+        source["discovery"].as_array().is_some_and(|descriptions| {
+            descriptions.iter().any(|description| {
+                description["description"]["locations"]
+                    .as_array()
+                    .is_some_and(|locations| {
+                        locations.iter().any(|location| {
+                            (location["root"] == "capture" || location["root"] == "input")
+                                && location["path"] == name
+                        })
+                    })
+            })
+        })
+    });
     #[cfg(feature = "full")]
     false
 }

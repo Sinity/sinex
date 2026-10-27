@@ -9,9 +9,9 @@ use sinex_source_core::registry::{DeclaredSource, Driver, SourceSpec};
 use sinex_source_core::{Parser, RecordContext, RecordError};
 use std::path::Path;
 
+mod decimal;
 pub(super) mod discovery;
 pub mod framing;
-mod decimal;
 
 pub const CUE_FRAMING: Framing = Framing::Custom {
     name: "cue-blocks",
@@ -190,11 +190,11 @@ impl TranscriptParser {
                     })
                     .transpose()?;
                 let offset_ns = if self.format == Format::Whisper {
-                    payload
-                        .start_seconds
-                        .as_deref()
-                        .and_then(|text| scaled_offset(text, 9, false).ok().and_then(|ns| i128::try_from(ns).ok()))
-    
+                    payload.start_seconds.as_deref().and_then(|text| {
+                        scaled_offset(text, 9, false)
+                            .ok()
+                            .and_then(|ns| i128::try_from(ns).ok())
+                    })
                 } else {
                     payload.start_ms.map(|ms| i128::from(ms) * 1_000_000)
                 };
@@ -329,7 +329,8 @@ fn raw_offset(value: Option<&str>, seconds: bool) -> Result<Option<u64>, RecordE
 /// Whisper seconds round to the nearest millisecond without floating point arithmetic.
 /// Explicit millisecond fields must be integral.
 pub fn decimal_ms(text: &str, places: u32) -> Result<u64, RecordError> {
-    u64::try_from(scaled_offset(text, places, true)?).map_err(|_| RecordError::new("offset exceeds u64 milliseconds"))
+    u64::try_from(scaled_offset(text, places, true)?)
+        .map_err(|_| RecordError::new("offset exceeds u64 milliseconds"))
 }
 fn scaled_offset(text: &str, places: u32, round: bool) -> Result<u128, RecordError> {
     let invalid = || RecordError::new("offset cannot be represented at the requested precision");
@@ -373,8 +374,11 @@ fn scaled_offset(text: &str, places: u32, round: bool) -> Result<u128, RecordErr
         } else {
             digits[..split].parse::<u128>().map_err(|_| invalid())?
         };
-        let round_up = round && places > 0 && cut <= digits.len() && discarded.as_bytes()[0] >= b'5';
-        whole.checked_add(u128::from(round_up)).ok_or_else(invalid)?
+        let round_up =
+            round && places > 0 && cut <= digits.len() && discarded.as_bytes()[0] >= b'5';
+        whole
+            .checked_add(u128::from(round_up))
+            .ok_or_else(invalid)?
     } else {
         let shift = u32::try_from(shift).map_err(|_| invalid())?;
         digits
