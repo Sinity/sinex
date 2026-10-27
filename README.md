@@ -284,5 +284,5 @@ erasure, relation size and host-load observations.
 measures synthetic source changes separately: new YouTube records, the same
 records in another material, hidden records, replacements that omit known
 titles and channels, and derivations with retained parent links. It checks
-search and publication catch-up after each phase. These serial scenario
+search and publication catch-up, including archive notices, after each phase. These serial scenario
 timings are supplementary to the concurrent pipeline comparison.

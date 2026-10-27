@@ -93,3 +93,39 @@ fn query_probes_keep_results_across_search_upgrade() {
     cluster.stop().unwrap();
     fs::remove_dir_all(root).unwrap();
 }
+
+#[devkit::test]
+fn publisher_completion_waits_for_archive_notices() {
+    let root = env::temp_dir().join(format!("pa-{}", std::process::id()));
+    fs::create_dir(&root).unwrap();
+    let mut cluster =
+        Cluster::start(&root.join("pg"), true, &["shared_buffers=16MB".into()]).unwrap();
+    cluster
+        .psql(
+            "CREATE SCHEMA core; CREATE SCHEMA audit;
+             CREATE TABLE core.source_counts(events bigint NOT NULL);
+             CREATE TABLE core.counters(name text PRIMARY KEY,value bigint NOT NULL);
+             CREATE TABLE core.consumer_positions(consumer text PRIMARY KEY,commit_seq bigint NOT NULL,change_seq bigint NOT NULL);
+             CREATE TABLE audit.archive_changes(change_seq bigint PRIMARY KEY);
+             INSERT INTO core.source_counts VALUES(17);
+             INSERT INTO core.counters VALUES('commit_seq',11);
+             INSERT INTO core.consumer_positions VALUES('read.search_text',11,0),('publisher',11,1);
+             INSERT INTO audit.archive_changes VALUES(1),(7);",
+        )
+        .unwrap();
+    let positions = consumer_positions(&cluster).unwrap();
+    assert_eq!(positions["publisher"], positions["final_commit"]);
+    assert_eq!(positions["publisher_change"], 1);
+    assert_eq!(positions["final_change"], 7);
+    assert!(!publisher_caught_up(&positions));
+    cluster
+        .psql("UPDATE core.consumer_positions SET change_seq=7 WHERE consumer='publisher'")
+        .unwrap();
+    assert!(publisher_caught_up(&consumer_positions(&cluster).unwrap()));
+    cluster
+        .psql("DELETE FROM core.consumer_positions WHERE consumer='publisher'")
+        .unwrap();
+    assert!(!publisher_caught_up(&consumer_positions(&cluster).unwrap()));
+    cluster.stop().unwrap();
+    fs::remove_dir_all(root).unwrap();
+}

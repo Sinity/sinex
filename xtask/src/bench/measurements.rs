@@ -508,6 +508,29 @@ impl ConsumerCounts {
     }
 }
 
+fn consumer_positions(cluster: &Cluster) -> Result<Value, String> {
+    query(cluster, "SELECT json_build_object('admitted', (SELECT coalesce(sum(events),0) FROM core.source_counts),
+        'final_commit', (SELECT value FROM core.counters WHERE name='commit_seq'),
+        'final_change', (SELECT coalesce(max(change_seq),0) FROM audit.archive_changes),
+        'search', coalesce((SELECT commit_seq FROM core.consumer_positions WHERE consumer='read.search_text'),0),
+        'publisher', coalesce((SELECT commit_seq FROM core.consumer_positions WHERE consumer='publisher'),0),
+        'publisher_change', coalesce((SELECT change_seq FROM core.consumer_positions WHERE consumer='publisher'),0))")
+}
+
+fn publisher_caught_up(positions: &Value) -> bool {
+    [
+        ("publisher", "final_commit"),
+        ("publisher_change", "final_change"),
+    ]
+    .into_iter()
+    .all(|(position, head)| {
+        positions[position]
+            .as_u64()
+            .zip(positions[head].as_u64())
+            .is_some_and(|(position, head)| position == head)
+    })
+}
+
 pub(super) fn with_consumers(
     binary: &Path,
     cluster: &Cluster,
@@ -645,10 +668,7 @@ pub(super) fn with_consumers(
             if let Some(status) = daemon.0.try_wait().map_err(|e| e.to_string())? {
                 return Err(format!("benchmark daemon exited: {status}"));
             }
-            let positions = query(cluster, "SELECT json_build_object('admitted', (SELECT coalesce(sum(events),0) FROM core.source_counts),
-                'final_commit', (SELECT value FROM core.counters WHERE name='commit_seq'),
-                'search', coalesce((SELECT commit_seq FROM core.consumer_positions WHERE consumer='read.search_text'),0),
-                'publisher', coalesce((SELECT commit_seq FROM core.consumer_positions WHERE consumer='publisher'),0))")?;
+            let positions = consumer_positions(cluster)?;
             let elapsed = started.elapsed().as_secs_f64();
             let state = daemon_state(&unit, binary);
             if let Some(state) = &state {
@@ -658,7 +678,8 @@ pub(super) fn with_consumers(
             }
             let count = positions["admitted"].as_u64().unwrap_or(0)
                 + positions["search"].as_u64().unwrap_or(0)
-                + positions["publisher"].as_u64().unwrap_or(0);
+                + positions["publisher"].as_u64().unwrap_or(0)
+                + positions["publisher_change"].as_u64().unwrap_or(0);
             if count != last_count {
                 last_count = count;
                 last_progress = Instant::now();
@@ -682,11 +703,7 @@ pub(super) fn with_consumers(
             {
                 search_s = Some(elapsed);
             }
-            if full
-                && ready
-                && positions["publisher"] == positions["final_commit"]
-                && publication_s.is_none()
-            {
+            if full && ready && publisher_caught_up(&positions) && publication_s.is_none() {
                 publication_s = Some(elapsed);
             }
             samples.push(json!({"seconds": elapsed, "ready": ready, "positions": positions}));
@@ -701,7 +718,8 @@ pub(super) fn with_consumers(
                     .flat_map(|a| a["stream_detail"].as_array().into_iter().flatten())
                     .find(|s| s["name"] == "BENCH_CONFIRMED")
                     .and_then(|s| s["state"]["messages"].as_u64());
-                if messages.is_none() {
+                if messages.is_none_or(|messages| messages < expected.messages) {
+                    publication_s = None;
                     std::thread::sleep(Duration::from_millis(200));
                     continue;
                 }
