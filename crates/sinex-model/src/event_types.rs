@@ -26,6 +26,7 @@ pub mod polylogue;
 pub mod session;
 pub mod shell;
 pub mod social;
+pub mod system;
 
 pub use derived::{FigureValue, HealthFigure, MetricFigure, StateInterval};
 pub use fused::CommandFused;
@@ -142,6 +143,19 @@ pub const ALL: &[RegisteredEventType] = &[
     info::<peripheral::BluetoothAudioSampled>(),
     info::<network::ConnectionEnded>(),
     info::<environment::AirSampled>(),
+    info::<system::UnitStarted>(),
+    info::<system::UnitStopped>(),
+    info::<system::UnitReloaded>(),
+    info::<system::BootStarted>(),
+    info::<system::SleepStarted>(),
+    info::<system::SleepEnded>(),
+    info::<system::ShutdownStarted>(),
+    info::<system::DeviceChanged>(),
+    info::<system::BusSignal>(),
+    info::<system::NetworkChanged>(),
+    info::<system::NetworkDeviceChanged>(),
+    info::<system::BluetoothDeviceChanged>(),
+    info::<system::BatteryChanged>(),
     // Code
     info::<code::GitCommit>(),
     // Derived

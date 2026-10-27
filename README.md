@@ -106,7 +106,11 @@ That gives these units:
   `stateDir/tokens` once, and reads every enabled source from
   `/etc/sinex/sources.json`; it plans the sources' paths again every minute,
   so a new day's file or recording is read without a restart;
-- `sinex-capture-journald.service`, when the journald source is enabled;
+- `sinex-capture-journald.service`, `sinex-capture-udev.service` and
+  `sinex-capture-system-bus.service`, when the journald, udev and system-bus
+  sources are enabled: each spools its live stream (`sinexd capture FORMAT`)
+  for sinexd to read; the system-bus capture runs as root without
+  capabilities, because only root may monitor the system bus;
 - the `sinex-session` user service in the operator's graphical session;
 - `sinex-dump.timer`, the daily database dump into `backup.dumpDir`, and a
   Borg job when `backup.repo` is set;
@@ -135,7 +139,17 @@ show it.
 The database has one writer. Starting a backfill
 (`systemctl start sinex-backfill-NAME`) stops sinexd, reads the inputs
 read-only to their end, and starts sinexd again; the session service and the
-journald capture keep spooling meanwhile.
+system captures keep spooling meanwhile.
+
+Archived journal files (a copied `/var/log/journal`, a recovered machine's)
+are captured once into a spool of their own and then read like the live
+journal; an entry both hold is one entry, by its cursor:
+
+```sh
+sinexd capture journald --spool /var/lib/sinex/spool/journal-2026-05 \
+  --option directory=/data/journal-2026-05
+# then declare: backfills.journal-2026-05 = [ "journald=/var/lib/sinex/spool/journal-2026-05" ];
+```
 
 The content store (`storeDir`) and the dumps are what a backup needs; the
 database itself is rebuilt from a dump (`nix/tests/restore.nix` is the drill).

@@ -35,6 +35,8 @@ these names and no others.
 - **shared pass**: one read of a stored file for every compatible binding of it (export archives); each binding keeps its own parts and cursor.
 - **spool**: a live capture's directory of segment files, which its binding then reads like a growing file.
 - **lake lane**: one stream of the Sinnix capture lake (`clipboard`, `netflow`), written as day files of `sinnix-capture-v1` records and read by the `sinnix-lake` format under its catalog source. A lane emits the event types Sinex's own capture of the same thing emits.
+- **snapshot** (of a live source): what its capture reads of the current state when it starts (players present, devices attached, the system bus's objects), spooled before the changes that follow.
+- **reflection**: what Sinex records about itself, such as its own journal entries (`from_sinex`); kept out of figures about the machine's activity.
 
 ## Events
 
