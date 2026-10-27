@@ -124,9 +124,15 @@ impl Backlog {
             };
             offset.saturating_sub(previous)
         };
+        // A completed media file is one captured record, including an empty file.
+        let records = if let Some(last) = cursor.get("last").and_then(Value::as_str) {
+            self.media.range(..=last.to_owned()).count() as u64
+        } else {
+            records + passed.records
+        };
         self.recovery = Counts {
             bytes: bytes + passed.bytes,
-            records: records + passed.records,
+            records,
         };
     }
 }
