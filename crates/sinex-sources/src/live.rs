@@ -222,13 +222,25 @@ pub async fn drain(
         return Err("private mode pauses spool production".into());
     }
     for (format, binding) in bindings {
-        producer
+        let position = producer
             .position(&binding.name, positions, store)
             .await
             .map_err(|error| error.to_string())?;
         match std::fs::metadata(&binding.input) {
             Ok(_) => {}
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(error)
+                if error.kind() == std::io::ErrorKind::NotFound
+                    && position.cursor.is_null()
+                    && position.carry.is_null() =>
+            {
+                continue;
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                return Err(format!(
+                    "spool {} is absent after saved progress; restore it before draining",
+                    binding.input.display()
+                ));
+            }
             Err(error) => return Err(format!("{}: {error}", binding.input.display())),
         }
         let source = sources::source_for(&binding)?;

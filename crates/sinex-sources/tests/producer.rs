@@ -159,12 +159,12 @@ async fn draining_after_moving_session_storage_keeps_names_and_positions() {
     let state = root.path().join("state");
     let spool = state.join("spool/hyprland");
     let mut writer = SpoolWriter::open(&spool, Rotation::default()).unwrap();
-    writer
-        .append(
-            sinex_model::Timestamp::now(),
-            b"activewindow>>kitty,synthetic",
-        )
-        .unwrap();
+    for line in [
+        &b"activewindow>>kitty,synthetic"[..],
+        &b"activewindowv2>>55aa"[..],
+    ] {
+        writer.append(sinex_model::Timestamp::now(), line).unwrap();
+    }
     writer.sync().unwrap();
     drop(writer);
     let context = discovery::DiscoveryContext {
@@ -191,6 +191,19 @@ async fn draining_after_moving_session_storage_keeps_names_and_positions() {
     let admitted = Position::load(&positions, &name).unwrap();
     let frames = received.lock().unwrap().len();
     assert!(frames > 0);
+    assert_eq!(
+        received
+            .lock()
+            .unwrap()
+            .iter()
+            .flat_map(|frame| match frame {
+                Ingress::Events { events, .. } => events.as_slice(),
+                _ => &[],
+            })
+            .filter(|event| event.event_type == "window.focused")
+            .count(),
+        1
+    );
     let destination = root.path().join("relocated-state");
     std::fs::rename(&state, &destination).unwrap();
     symlink(&destination, &state).unwrap();
@@ -212,7 +225,7 @@ async fn draining_after_moving_session_storage_keeps_names_and_positions() {
 }
 
 #[devkit::test(multi_thread)]
-async fn drain_retries_pending_frames_even_when_the_spool_directory_is_absent() {
+async fn drain_retries_pending_frames_then_requires_the_missing_spool() {
     use sinex_source_core::drivers::live_stream::{Rotation, SpoolWriter};
     use sinex_sources::{discovery, live};
     let nats = devkit::nats::test_nats().unwrap();
@@ -221,12 +234,12 @@ async fn drain_retries_pending_frames_even_when_the_spool_directory_is_absent() 
     let spool_root = root.path().join("spool");
     let spool = spool_root.join("hyprland");
     let mut writer = SpoolWriter::open(&spool, Rotation::default()).unwrap();
-    writer
-        .append(
-            sinex_model::Timestamp::now(),
-            b"activewindow>>kitty,synthetic retry",
-        )
-        .unwrap();
+    for line in [
+        &b"activewindow>>kitty,synthetic retry"[..],
+        &b"activewindowv2>>55aa"[..],
+    ] {
+        writer.append(sinex_model::Timestamp::now(), line).unwrap();
+    }
     writer.sync().unwrap();
     drop(writer);
     let context = discovery::DiscoveryContext {
@@ -257,14 +270,18 @@ async fn drain_retries_pending_frames_even_when_the_spool_directory_is_absent() 
     let mut producer = Producer::connect(nats.url(), None, subjects, "session-test")
         .await
         .unwrap();
-    live::drain(
+    let missing = live::drain(
         &mut producer,
         &store,
         &positions,
         discovery::spools(&context, discovery::Owner::Session).unwrap(),
     )
     .await
-    .unwrap();
+    .unwrap_err();
+    assert!(
+        missing.contains("is absent after saved progress"),
+        "{missing}"
+    );
     assert!(
         received
             .lock()
@@ -279,5 +296,33 @@ async fn drain_retries_pending_frames_even_when_the_spool_directory_is_absent() 
             .to_string_lossy()
             .contains("unacknowledged")
     }));
-    assert!(!spool.exists());
+    let frames = received.lock().unwrap().len();
+    assert_eq!(
+        received
+            .lock()
+            .unwrap()
+            .iter()
+            .flat_map(|frame| match frame {
+                Ingress::Events { events, .. } => events.as_slice(),
+                _ => &[],
+            })
+            .filter(|event| event.event_type == "window.focused")
+            .count(),
+        1
+    );
+    std::fs::rename(root.path().join("kept-spool"), &spool).unwrap();
+    live::drain(
+        &mut producer,
+        &store,
+        &positions,
+        discovery::spools(&context, discovery::Owner::Session).unwrap(),
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        received.lock().unwrap().len(),
+        frames,
+        "acknowledged records are not sent again"
+    );
+    assert!(spool.exists());
 }

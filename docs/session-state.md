@@ -21,6 +21,7 @@ replacement:
    This command opens only existing spools, starts no captures, retries pending
    frames and exits after admission acknowledges the finished segments. Keep
    the same exclusions and credentials. Private mode refuses this operation.
+   An absent spool with saved progress holds the move even after frame retries.
    Exclusions are not permission to delete or transmit their queued bytes.
    If an included spool cannot drain, preserve it and hold the relocation.
 4. Require the drain to finish successfully: it saves each position only after
