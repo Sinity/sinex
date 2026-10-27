@@ -43,6 +43,8 @@ pub(crate) fn upgrades() -> Vec<Vec<String>> {
             crate::tables::COVERAGE_RUNS.into(),
         ],
         register_kinds(&["operator.mark", "query.saved"], false),
+        // 3 to 4: track blob-row changes even when admission produces no events.
+        crate::tables::blob_changes(),
     ]
 }
 

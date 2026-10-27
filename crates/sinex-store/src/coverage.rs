@@ -36,24 +36,10 @@ pub async fn source_evidence(
     )
     .fetch_one(&mut *conn)
     .await?;
-    // The lateral limit keeps one membership probe per run, including runs
-    // whose records all have unknown times, instead of joining every event.
-    let runs = sqlx::query!(
-        r#"SELECT r.started_at, r.ended_at,
-             (SELECT max(e.ts_orig) FROM core.events e
-              WHERE e.source = $1 AND e.run_id = r.id AND e.commit_seq <= $2) AS last_record
-           FROM core.runs r
-           JOIN LATERAL (
-             SELECT 1 FROM core.events e
-             WHERE e.source = $1 AND e.run_id = r.id AND e.commit_seq <= $2
-             ORDER BY e.ts_orig DESC LIMIT 1
-           ) recorded ON true
-           ORDER BY r.started_at"#,
-        source,
-        as_of,
-    )
-    .fetch_all(&mut *conn)
-    .await?;
+    // Find this source's runs before probing for records visible at the requested position.
+    let runs = sqlx::query_file!("src/coverage/runs.sql", source, as_of)
+        .fetch_all(&mut *conn)
+        .await?;
     Ok(SourceEvidence {
         records: bounds.first.zip(bounds.last),
         runs: runs

@@ -11,7 +11,10 @@ use sqlx::PgConnection;
 use std::collections::BTreeSet;
 use std::time::Duration;
 
-/// URLs the browser sources stored, newest reading order first deduplicated.
+// One binding has one committed cursor, so requests cannot interleave URL lists.
+static CRAWL_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
+/// URLs from live browser records, deduplicated in commit order.
 async fn history_urls(read_conn: &mut PgConnection) -> Result<Vec<String>, String> {
     let mut out = Vec::new();
     let mut seen = BTreeSet::new();
@@ -43,6 +46,7 @@ pub(crate) async fn run(
     if allow.is_empty() {
         return Err("nothing is crawled without an allow list (--allow DOMAIN)".into());
     }
+    let _crawl = CRAWL_LOCK.lock().await;
     let fetched: BTreeSet<String> =
         payloads::live_all(read_conn, "page.fetched", RecordStates::Any)
             .await
@@ -59,26 +63,51 @@ pub(crate) async fn run(
     } else {
         urls
     };
-    let todo: Vec<String> = wanted
-        .into_iter()
-        .filter(|u| !fetched.contains(u))
-        .collect();
+    let todo = select_urls(wanted, &fetched, &allow, limit);
     let format = sources::format("page-crawl").ok_or("page-crawl format is not registered")?;
     let mut settings = Settings::new(host);
-    settings.options =
-        serde_json::json!({"urls":todo, "allow":allow, "pause":pause.as_secs(), "limit":limit});
+    settings.options = serde_json::json!({"allow":allow, "pause":pause.as_secs(), "limit":limit});
     let spec = (format.specs)()
         .into_iter()
         .next()
         .ok_or("crawl format has no source")?;
-    let binding = Binding::of(spec, std::path::Path::new("page-crawl"), settings)
-        .named(&uuid::Uuid::now_v7().to_string());
+    let reader =
+        sinex_sources::sources::page_crawl::Crawl::new(todo, allow, pause, host.to_owned());
+    let binding = Binding::of(spec, std::path::Path::new("page-crawl"), settings);
     crate::binding_reader::once(
         read_conn,
         blobs,
         writer,
         host,
-        vec![crate::binding_reader::BindingReader::new(format, binding)?],
+        vec![crate::binding_reader::BindingReader::with_reading(
+            format,
+            binding,
+            sinex_source_core::binding::polled(reader),
+        )?],
     )
     .await
 }
+
+fn select_urls(
+    urls: Vec<String>,
+    fetched: &BTreeSet<String>,
+    allow: &[String],
+    limit: Option<usize>,
+) -> Vec<String> {
+    let mut todo: Vec<String> = urls
+        .into_iter()
+        .filter(|u| !fetched.contains(u))
+        .filter(|url| {
+            sinex_sources::sources::page_crawl::split(url).is_some_and(|(_, host, _)| {
+                sinex_sources::sources::page_crawl::allowed(&host, allow)
+            })
+        })
+        .collect();
+    if let Some(limit) = limit {
+        todo.truncate(limit);
+    }
+    todo
+}
+
+#[cfg(test)]
+mod tests;

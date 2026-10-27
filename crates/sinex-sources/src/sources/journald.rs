@@ -247,12 +247,7 @@ pub const FORMAT: sinex_source_core::binding::InputFormat =
                 Some(s) => Start::Since(s),
                 None => Start::Beginning,
             };
-            let follow = b
-                .settings
-                .options
-                .get("follow")
-                .and_then(serde_json::Value::as_bool)
-                .unwrap_or(false);
+            let follow = b.settings.boolean("follow")?.unwrap_or(false);
             capture_until(&b.input, follow, start, stop).map_err(|e| e.to_string())
         }),
     };
