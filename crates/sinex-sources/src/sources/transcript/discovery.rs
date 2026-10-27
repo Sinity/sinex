@@ -75,7 +75,11 @@ pub(crate) fn discover(format: &InputFormat, context: &DiscoveryContext) -> Vec<
     found
 }
 
-pub(super) fn plan(spec: &SourceSpec, input: &Path, settings: &Settings) -> Result<Vec<Binding>, String> {
+pub(super) fn plan(
+    spec: &SourceSpec,
+    input: &Path,
+    settings: &Settings,
+) -> Result<Vec<Binding>, String> {
     if input.as_os_str().is_empty() {
         return Err("import needs a path".into());
     }

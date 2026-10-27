@@ -990,8 +990,17 @@ fn excluded_subtrees_do_not_turn_old_observations_into_removals() {
     let cursor = final_cursor(&acquired);
     std::fs::remove_file(owned.join("note.md")).unwrap();
     for excluded in [owned, resolved] {
-        let acquired = driver.poll_excluding(&cursor, &mut state, &[excluded]).unwrap();
-        assert!(acquired.material.is_none(), "unexpected capture: {:?}", acquired.material.as_ref().map(|material| &material.manifest));
+        let acquired = driver
+            .poll_excluding(&cursor, &mut state, &[excluded])
+            .unwrap();
+        assert!(
+            acquired.material.is_none(),
+            "unexpected capture: {:?}",
+            acquired
+                .material
+                .as_ref()
+                .map(|material| &material.manifest)
+        );
     }
     let removed = driver.poll(&cursor, &mut state).unwrap();
     assert_eq!(paths(&removed), vec!["owned/note.md"]);
