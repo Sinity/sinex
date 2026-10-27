@@ -189,7 +189,11 @@ fn binding_errors_are_reported_with_the_reason_and_capture_failure_count() {
     counter.lock().unwrap().error = Some("large-frame bytes are not a frame".into());
     counter.lock().unwrap().capture_failures = 1;
     snapshot(&positions, &[(binding, counter)]).unwrap();
-    let report: Value = serde_json::from_slice(&std::fs::read(dir.path().join("health.json")).unwrap()).unwrap();
-    assert_eq!(report["spools"][0]["state"], "error: large-frame bytes are not a frame");
+    let report: Value =
+        serde_json::from_slice(&std::fs::read(dir.path().join("health.json")).unwrap()).unwrap();
+    assert_eq!(
+        report["spools"][0]["state"],
+        "error: large-frame bytes are not a frame"
+    );
     assert_eq!(report["spools"][0]["capture_failures"], 1);
 }

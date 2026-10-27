@@ -28,7 +28,15 @@ async fn standin_with_refusal(
     let declarer = client.clone();
     tokio::spawn(async move {
         while let Some(message) = declarations.next().await {
-            declarer.publish(message.reply.unwrap(), serde_json::to_vec(&sinex_protocol::ProducerWelcome { refusal: None }).unwrap().into()).await.unwrap();
+            declarer
+                .publish(
+                    message.reply.unwrap(),
+                    serde_json::to_vec(&sinex_protocol::ProducerWelcome { refusal: None })
+                        .unwrap()
+                        .into(),
+                )
+                .await
+                .unwrap();
         }
     });
     let js = jetstream::new(client.clone());
@@ -72,7 +80,11 @@ async fn standin_with_refusal(
                 frame: frame.frame().to_owned(),
                 material,
                 admitted,
-                outcome: if refusal.is_some() { json!({"refusal_kind": if matches!(frame, Ingress::Chunk { .. }) { "bytes" } else { "content" }, "failures": 1}) } else { json!({}) },
+                outcome: if refusal.is_some() {
+                    json!({"refusal_kind": if matches!(frame, Ingress::Chunk { .. }) { "bytes" } else { "content" }, "failures": 1})
+                } else {
+                    json!({})
+                },
                 refusal,
                 commit_seq: Some(1),
             };
@@ -113,16 +125,29 @@ async fn a_spool_is_produced_once_material_first() {
     let positions = dir.join("positions");
     let driver = hyprland::driver(spool, "h".into());
     let source = hyprland::source();
-    let mut producer = Producer::connect(nats.url(), None, subjects, "session-test", &sinex_protocol::ProducerHello::default())
-        .await
-        .unwrap();
+    let mut producer = Producer::connect(
+        nats.url(),
+        None,
+        subjects,
+        "session-test",
+        &sinex_protocol::ProducerHello::default(),
+    )
+    .await
+    .unwrap();
 
     let poll = |producer_positions: &Path| {
         let p = Position::load(producer_positions, "hyprland@h").unwrap();
         driver.poll(&p.cursor).unwrap()
     };
     let sent = producer
-        .produce(&source, "hyprland@h", poll(&positions), &store, &positions, &driver.spool)
+        .produce(
+            &source,
+            "hyprland@h",
+            poll(&positions),
+            &store,
+            &positions,
+            &driver.spool,
+        )
         .await
         .unwrap();
     assert_eq!(
@@ -130,7 +155,14 @@ async fn a_spool_is_produced_once_material_first() {
         (1, 2, 2, 0)
     );
     let again = producer
-        .produce(&source, "hyprland@h", poll(&positions), &store, &positions, &driver.spool)
+        .produce(
+            &source,
+            "hyprland@h",
+            poll(&positions),
+            &store,
+            &positions,
+            &driver.spool,
+        )
         .await
         .unwrap();
     assert_eq!(

@@ -350,7 +350,11 @@ pub struct ProducerHello {
 
 impl Default for ProducerHello {
     fn default() -> Self {
-        Self { version: PRODUCER_VERSION, event_types: Vec::new(), class: Class::Open }
+        Self {
+            version: PRODUCER_VERSION,
+            event_types: Vec::new(),
+            class: Class::Open,
+        }
     }
 }
 

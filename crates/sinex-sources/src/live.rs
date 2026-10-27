@@ -9,8 +9,8 @@ use sinex_source_core::Source;
 use sinex_source_core::binding::{Binding, InputFormat, Reader, Settings};
 use sinex_source_core::capture::CaptureStop;
 use sinex_source_core::drivers::producer::{Error, Position, Producer, Store};
-use std::path::Path;
 use std::os::unix::ffi::OsStrExt;
+use std::path::Path;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -265,7 +265,13 @@ async fn produce_spools(
     let mut declaration = sinex_protocol::ProducerHello::default();
     for live in lives.iter() {
         declaration.class = declaration.class.max(live.source.spec().class);
-        declaration.event_types.extend(live.source.spec().event_types.iter().map(|name| (*name).to_owned()));
+        declaration.event_types.extend(
+            live.source
+                .spec()
+                .event_types
+                .iter()
+                .map(|name| (*name).to_owned()),
+        );
     }
     declaration.event_types.sort();
     declaration.event_types.dedup();
@@ -295,7 +301,9 @@ async fn produce_spools(
                     retry.recovered(&connection.producer);
                 }
                 Err(Error::Configuration(reason)) => {
-                    for live in lives.iter() { live.health.lock().unwrap().error = Some(reason.clone()); }
+                    for live in lives.iter() {
+                        live.health.lock().unwrap().error = Some(reason.clone());
+                    }
                     notifier::raise(&connection.producer, &reason).await;
                     return std::future::pending().await;
                 }
@@ -310,7 +318,10 @@ async fn produce_spools(
             producer.monitor(&live.binding.name, live.health.clone());
         }
         let mut had_material = false;
-        for live in lives.iter_mut().filter(|live| live.retry.ready() && live.health.lock().unwrap().error.is_none()) {
+        for live in lives
+            .iter_mut()
+            .filter(|live| live.retry.ready() && live.health.lock().unwrap().error.is_none())
+        {
             // A failed batch is replayed with its original frame IDs before
             // the reader may advance to newly captured material.
             match produce_spool(producer, store, positions, live).await {
@@ -318,7 +329,16 @@ async fn produce_spools(
                     had_material |= produced;
                     live.retry.recovered(&live.binding.name);
                 }
-                Err(Error::Refused { reason, kind: sinex_model::FrameRefusal::Malformed | sinex_model::FrameRefusal::Content, recorded: true, .. } | Error::Configuration(reason)) => {
+                Err(
+                    Error::Refused {
+                        reason,
+                        kind:
+                            sinex_model::FrameRefusal::Malformed | sinex_model::FrameRefusal::Content,
+                        recorded: true,
+                        ..
+                    }
+                    | Error::Configuration(reason),
+                ) => {
                     live.health.lock().unwrap().error = Some(reason.clone());
                     notifier::raise(&live.binding.name, &reason).await;
                 }
@@ -383,7 +403,19 @@ fn remove_passed(live: &mut Live, position: &Position) -> Result<(), Error> {
     live.health.lock().unwrap().capture_failures = position.capture_failures.len();
     let mut cursor = position.cursor.clone();
     if !position.capture_failures.is_empty() {
-        cursor["keep_files"] = serde_json::to_value(position.capture_failures.iter().flat_map(|failure| failure.ranges.iter().map(|range| range.path.as_os_str().as_bytes().to_vec())).collect::<Vec<_>>()).expect("paths serialize");
+        cursor["keep_files"] = serde_json::to_value(
+            position
+                .capture_failures
+                .iter()
+                .flat_map(|failure| {
+                    failure
+                        .ranges
+                        .iter()
+                        .map(|range| range.path.as_os_str().as_bytes().to_vec())
+                })
+                .collect::<Vec<_>>(),
+        )
+        .expect("paths serialize");
     }
     live.reader.remove_passed(&cursor)?;
     Ok(())

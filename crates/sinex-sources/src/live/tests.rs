@@ -77,11 +77,22 @@ async fn fake_ingress(
     timeout: Arc<tokio::sync::Notify>,
 ) -> (ReceivedFrames, ReceivedOrder, tokio::task::JoinHandle<()>) {
     let client = async_nats::connect(url).await.unwrap();
-    let mut declarations = client.subscribe(subjects.connect("synthetic")).await.unwrap();
+    let mut declarations = client
+        .subscribe(subjects.connect("synthetic"))
+        .await
+        .unwrap();
     let declarer = client.clone();
     tokio::spawn(async move {
         while let Some(message) = declarations.next().await {
-            declarer.publish(message.reply.unwrap(), serde_json::to_vec(&sinex_protocol::ProducerWelcome { refusal: None }).unwrap().into()).await.unwrap();
+            declarer
+                .publish(
+                    message.reply.unwrap(),
+                    serde_json::to_vec(&sinex_protocol::ProducerWelcome { refusal: None })
+                        .unwrap()
+                        .into(),
+                )
+                .await
+                .unwrap();
         }
     });
     jetstream_stream(&client, subjects).await;
@@ -721,14 +732,27 @@ async fn a_connect_refusal_is_reported_once_while_capture_continues() {
     let nats = devkit::nats::test_nats().unwrap();
     let subjects = Subjects::new(nats.prefix());
     let client = async_nats::connect(nats.url()).await.unwrap();
-    let mut declarations = client.subscribe(subjects.connect("synthetic")).await.unwrap();
+    let mut declarations = client
+        .subscribe(subjects.connect("synthetic"))
+        .await
+        .unwrap();
     client.flush().await.unwrap();
     let count = Arc::new(std::sync::atomic::AtomicUsize::new(0));
     let received = count.clone();
     let responder = tokio::spawn(async move {
         while let Some(message) = declarations.next().await {
             received.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-            client.publish(message.reply.unwrap(), serde_json::to_vec(&sinex_protocol::ProducerWelcome { refusal: Some("producer bytes cannot be stored sealed".into()) }).unwrap().into()).await.unwrap();
+            client
+                .publish(
+                    message.reply.unwrap(),
+                    serde_json::to_vec(&sinex_protocol::ProducerWelcome {
+                        refusal: Some("producer bytes cannot be stored sealed".into()),
+                    })
+                    .unwrap()
+                    .into(),
+                )
+                .await
+                .unwrap();
         }
     });
     let dir = tempfile::tempdir().unwrap();
@@ -737,10 +761,35 @@ async fn a_connect_refusal_is_reported_once_while_capture_continues() {
     let (_, binding) = super::binding("hyprland", &spool, "synthetic", Value::Null).unwrap();
     let store = Store::open(&dir.path().join("store")).unwrap();
     let mode = sinex_transport::private_mode::PrivateMode::new(dir.path().join("private"));
-    run_with_private_mode(Connection { url: nats.url().into(), password_file: None, subjects, producer: "synthetic".into(), upload: false }, &store, &positions, vec![(&SYNTHETIC, binding)], Duration::from_millis(50), Some(Instant::now() + Duration::from_secs(3)), mode).await.unwrap();
+    run_with_private_mode(
+        Connection {
+            url: nats.url().into(),
+            password_file: None,
+            subjects,
+            producer: "synthetic".into(),
+            upload: false,
+        },
+        &store,
+        &positions,
+        vec![(&SYNTHETIC, binding)],
+        Duration::from_millis(50),
+        Some(Instant::now() + Duration::from_secs(3)),
+        mode,
+    )
+    .await
+    .unwrap();
     assert_eq!(count.load(std::sync::atomic::Ordering::SeqCst), 1);
-    let report: Value = serde_json::from_slice(&std::fs::read(dir.path().join("health.json")).unwrap()).unwrap();
-    assert_eq!(report["spools"][0]["state"], "error: producer bytes cannot be stored sealed");
-    assert!(report["spools"][0]["unpublished"]["records"].as_u64().unwrap() >= 10);
+    let report: Value =
+        serde_json::from_slice(&std::fs::read(dir.path().join("health.json")).unwrap()).unwrap();
+    assert_eq!(
+        report["spools"][0]["state"],
+        "error: producer bytes cannot be stored sealed"
+    );
+    assert!(
+        report["spools"][0]["unpublished"]["records"]
+            .as_u64()
+            .unwrap()
+            >= 10
+    );
     responder.abort();
 }

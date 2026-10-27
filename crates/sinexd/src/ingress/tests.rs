@@ -975,37 +975,77 @@ async fn a_refused_event_between_good_frames_is_a_queryable_material_failure_and
     db: devkit::pg::TestDatabase,
 ) {
     let h = Harness::start(db).await;
-    let lines = [": 1760788800:0;first\n", ": 1760788801:0;second\n", ": 1760788802:0;third\n"];
+    let lines = [
+        ": 1760788800:0;first\n",
+        ": 1760788801:0;second\n",
+        ": 1760788802:0;third\n",
+    ];
     let bytes = lines.concat();
     let (material, frame) = h.material_frame("material", bytes.as_bytes());
     assert!(h.send("session", &frame).await.refusal.is_none());
     let mut offset = 0;
     for (index, command) in ["first", "second", "third"].iter().enumerate() {
         let mut event = imported(material, offset, command);
-        if index == 1 { event.event_type = "not.declared".into(); }
-        let frame = Ingress::Events { frame: format!("events-{index}"), events: vec![event], failures: vec![] };
+        if index == 1 {
+            event.event_type = "not.declared".into();
+        }
+        let frame = Ingress::Events {
+            frame: format!("events-{index}"),
+            events: vec![event],
+            failures: vec![],
+        };
         let ack = h.send("session", &frame).await;
         if index == 1 {
             assert_eq!(ack.refusal_kind(), Some(FrameRefusal::Content));
             assert_eq!(ack.outcome["failures"], 1);
             assert_eq!(h.send("session", &frame).await, ack);
-        } else { assert_eq!(ack.admitted.len(), 1); }
+        } else {
+            assert_eq!(ack.admitted.len(), 1);
+        }
         offset += lines[index].len() as u64;
     }
     assert_eq!(h.count("SELECT count(*) FROM raw.failures").await, 1);
     assert_eq!(h.stored(material).await, bytes.as_bytes());
     let mut conn = PgConnection::connect(&h.url).await.unwrap();
-    let context = sinex_model::query::Context::new(jiff::Timestamp::now(), jiff::tz::TimeZone::UTC, jiff::civil::Time::constant(4, 0, 0, 0));
+    let context = sinex_model::query::Context::new(
+        jiff::Timestamp::now(),
+        jiff::tz::TimeZone::UTC,
+        jiff::civil::Time::constant(4, 0, 0, 0),
+    );
     let bound = sinex_model::query::bind("failures", &context).unwrap();
-    let answer = sinex_store::query::run(&mut conn, "failures", &bound, &context, &sinex_store::query::Page { size: None, cursor: None }).await.unwrap();
+    let answer = sinex_store::query::run(
+        &mut conn,
+        "failures",
+        &bound,
+        &context,
+        &sinex_store::query::Page {
+            size: None,
+            cursor: None,
+        },
+    )
+    .await
+    .unwrap();
     let rows = serde_json::to_value(answer).unwrap()["rows"].clone();
     assert_eq!(rows.as_array().unwrap().len(), 1);
     assert!(rows.to_string().contains("not.declared"));
     // The current parser emits the corrected declared type from the kept bytes.
-    let report = crate::replay::run(&mut conn, &h.blobs, &h.writer, crate::replay::Options {
-        scope: crate::replay::Scope { materials: vec![material.0], ..Default::default() },
-        compare: false, resume: None, actor: "synthetic".into(), unlock: None,
-    }).await.unwrap();
+    let report = crate::replay::run(
+        &mut conn,
+        &h.blobs,
+        &h.writer,
+        crate::replay::Options {
+            scope: crate::replay::Scope {
+                materials: vec![material.0],
+                ..Default::default()
+            },
+            compare: false,
+            resume: None,
+            actor: "synthetic".into(),
+            unlock: None,
+        },
+    )
+    .await
+    .unwrap();
     assert_eq!(report.admitted, 3);
     assert_eq!(report.failures, 0);
     assert_eq!(h.count("SELECT count(*) FROM raw.failures").await, 0);
@@ -1013,15 +1053,29 @@ async fn a_refused_event_between_good_frames_is_a_queryable_material_failure_and
 }
 
 #[devkit::test]
-async fn admission_content_errors_and_missing_locations_are_record_failures(db: devkit::pg::TestDatabase) {
+async fn admission_content_errors_and_missing_locations_are_record_failures(
+    db: devkit::pg::TestDatabase,
+) {
     let h = Harness::start(db).await;
     let (material, frame) = h.material_frame("material", b": 1760788800:0;synthetic\n");
     h.send("session", &frame).await;
     for (name, event) in [
         ("nul", imported(material, 0, "a\0b")),
-        ("unknown-material", imported(MaterialId::new(), 0, "synthetic")),
+        (
+            "unknown-material",
+            imported(MaterialId::new(), 0, "synthetic"),
+        ),
     ] {
-        let ack = h.send("session", &Ingress::Events { frame: name.into(), events: vec![event], failures: vec![] }).await;
+        let ack = h
+            .send(
+                "session",
+                &Ingress::Events {
+                    frame: name.into(),
+                    events: vec![event],
+                    failures: vec![],
+                },
+            )
+            .await;
         assert_eq!(ack.refusal_kind(), Some(FrameRefusal::Content), "{ack:?}");
         assert_eq!(ack.outcome["failures"], 1, "{ack:?}");
     }
@@ -1030,7 +1084,9 @@ async fn admission_content_errors_and_missing_locations_are_record_failures(db: 
 }
 
 #[devkit::test]
-async fn producer_configuration_is_refused_at_connect_before_any_frame(db: devkit::pg::TestDatabase) {
+async fn producer_configuration_is_refused_at_connect_before_any_frame(
+    db: devkit::pg::TestDatabase,
+) {
     let h = Harness::start(db).await;
     let mut hello = ProducerHello::default();
     hello.version += 1;
@@ -1041,8 +1097,20 @@ async fn producer_configuration_is_refused_at_connect_before_any_frame(db: devki
     hello = ProducerHello::default();
     hello.event_types = vec!["not.declared".into()];
     for declaration in [unknown_version, sealed, hello] {
-        let connected = sinex_source_core::drivers::producer::Producer::connect(h.nats.url(), None, h.subjects.clone(), "session", &declaration).await;
-        assert!(matches!(connected, Err(sinex_source_core::drivers::producer::Error::Configuration(_))));
+        let connected = sinex_source_core::drivers::producer::Producer::connect(
+            h.nats.url(),
+            None,
+            h.subjects.clone(),
+            "session",
+            &declaration,
+        )
+        .await;
+        assert!(matches!(
+            connected,
+            Err(sinex_source_core::drivers::producer::Error::Configuration(
+                _
+            ))
+        ));
     }
     assert_eq!(h.count("SELECT count(*) FROM core.ingress_frames").await, 0);
     assert_eq!(h.count("SELECT count(*) FROM raw.materials").await, 0);
@@ -1051,7 +1119,10 @@ async fn producer_configuration_is_refused_at_connect_before_any_frame(db: devki
 #[devkit::test]
 async fn malformed_frames_with_no_name_are_recorded_once(db: devkit::pg::TestDatabase) {
     let h = Harness::start(db).await;
-    for bytes in [b"{not json".as_slice(), br#"{"kind":"events","frame":"","events":[]}"#.as_slice()] {
+    for bytes in [
+        b"{not json".as_slice(),
+        br#"{"kind":"events","frame":"","events":[]}"#.as_slice(),
+    ] {
         let ack = h.send_raw("session", bytes.to_vec()).await;
         assert_eq!(ack.refusal_kind(), Some(FrameRefusal::Malformed));
         assert_eq!(h.send_raw("session", bytes.to_vec()).await, ack);
