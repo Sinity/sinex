@@ -105,7 +105,13 @@ impl crate::EventPayload for CommandImported {
                 fields: vec!["started_at".into()],
                 quality: crate::TimeQuality::Intrinsic,
             }),
-            field_hints: Self::FIELD_HINTS.iter().map(|(field, class)| crate::kinds::FieldHint { field: (*field).into(), class: *class }).collect(),
+            field_hints: Self::FIELD_HINTS
+                .iter()
+                .map(|(field, class)| crate::kinds::FieldHint {
+                    field: (*field).into(),
+                    class: *class,
+                })
+                .collect(),
             removed_rule: Some(crate::kinds::RemovedRule::Never),
             keep_known: vec![],
             owned_blobs: vec![],

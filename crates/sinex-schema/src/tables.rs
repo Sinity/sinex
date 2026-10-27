@@ -1,7 +1,10 @@
 //! Table declarations: the whole current schema, which a fresh database is
 //! created with.
 use crate::Checks;
-use sinex_model::{DbCheck, Validation, kinds::{Search, Normalization}};
+use sinex_model::{
+    DbCheck, Validation,
+    kinds::{Normalization, Search},
+};
 
 pub(crate) const SCHEMAS: &[&str] = &[
     "sinex_schema",
@@ -530,7 +533,8 @@ pub(crate) const KIND_PREFIXES: &str = "CREATE TABLE registry.kind_prefixes (
 )";
 
 fn kind_declarations() -> String {
-    format!("CREATE TABLE registry.event_types (
+    format!(
+        "CREATE TABLE registry.event_types (
   name text NOT NULL,
   version bigint NOT NULL CHECK (version > 0),
   declaring_producer text NOT NULL,
@@ -547,7 +551,10 @@ fn kind_declarations() -> String {
   definition_hash text NOT NULL,
   registered_at timestamptz NOT NULL DEFAULT now(),
   PRIMARY KEY (name, version)
-)", normalization = Normalization::check("normalization"), search = Search::check("search"))
+)",
+        normalization = Normalization::check("normalization"),
+        search = Search::check("search")
+    )
 }
 
 pub(crate) const REPLAY_REFUSALS: &str = "CREATE TABLE core.replay_refusals (
@@ -562,6 +569,10 @@ CREATE TRIGGER keep_definition BEFORE UPDATE OR DELETE ON registry.event_types F
 CREATE TRIGGER keep_owner BEFORE UPDATE OR DELETE ON registry.kind_prefixes FOR EACH ROW EXECUTE FUNCTION registry.keep_definition()";
 
 fn kind_columns() -> String {
-    format!("kind_version bigint NOT NULL DEFAULT 1 CHECK (kind_version > 0),
-  validation text NOT NULL DEFAULT '{}' {}", Validation::Unvalidated.as_db(), Validation::check("validation"))
+    format!(
+        "kind_version bigint NOT NULL DEFAULT 1 CHECK (kind_version > 0),
+  validation text NOT NULL DEFAULT '{}' {}",
+        Validation::Unvalidated.as_db(),
+        Validation::check("validation")
+    )
 }

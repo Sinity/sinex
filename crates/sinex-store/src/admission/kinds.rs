@@ -92,7 +92,6 @@ pub(super) async fn prepare(
                     event.id = id;
                 }
                 event.validation = Validation::Validated;
-                
             }
             Normalization::Json => {
                 let validator = &json_validators[&d.kind];

@@ -118,16 +118,20 @@ async fn every_saved_bundled_rule_matches_the_typed_constructor(db: devkit::pg::
     }
 }
 
-
 #[test]
 fn field_hints_need_distinct_valid_pointers() {
     let mut declaration = sinex_model::event_types::CommandExecuted::declaration();
-    declaration.field_hints = vec![sinex_model::kinds::FieldHint { field: "command".into(), class: Class::Guarded }];
+    declaration.field_hints = vec![sinex_model::kinds::FieldHint {
+        field: "command".into(),
+        class: Class::Guarded,
+    }];
     assert!(kinds::check(&declaration).is_err());
     declaration.field_hints[0].field = "/command~2".into();
     assert!(kinds::check(&declaration).is_err());
     declaration.field_hints[0].field = "/command".into();
     assert!(kinds::check(&declaration).is_ok());
-    declaration.field_hints.push(declaration.field_hints[0].clone());
+    declaration
+        .field_hints
+        .push(declaration.field_hints[0].clone());
     assert!(kinds::check(&declaration).is_err());
 }

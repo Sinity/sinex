@@ -176,7 +176,10 @@ pub async fn admit(
 
 /// Apply the privacy rules to every event, once: reads never apply a rule
 /// again.
-async fn apply_privacy(conn: &mut PgConnection, batch: &Batch, events: &mut [Event],
+async fn apply_privacy(
+    conn: &mut PgConnection,
+    batch: &Batch,
+    events: &mut [Event],
     declarations: &std::collections::BTreeMap<sinex_model::KindRef, sinex_model::KindDeclaration>,
 ) -> Result<()> {
     if events.is_empty() {

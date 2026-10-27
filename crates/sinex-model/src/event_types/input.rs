@@ -72,10 +72,17 @@ impl crate::EventPayload for KeyPressed {
     const KEY: KeyKind = KeyKind::Fields(KEY_FIELDS);
     const REPLACE: ReplaceRule = ReplaceRule::SuppressRepeat;
     const FIELD_HINTS: &'static [(&'static str, Class)] = &[
-        ("/session", Class::Guarded), ("/logged_at", Class::Guarded),
-        ("/kernel_at", Class::Guarded), ("/key", Class::Guarded),
-        ("/code", Class::Guarded), ("/value", Class::Guarded),
-        ("/changed", Class::Guarded), ("/clipboard", Class::Guarded), ("/window", Class::Guarded), ("/n", Class::Guarded), ("/extra", Class::Guarded),
+        ("/session", Class::Guarded),
+        ("/logged_at", Class::Guarded),
+        ("/kernel_at", Class::Guarded),
+        ("/key", Class::Guarded),
+        ("/code", Class::Guarded),
+        ("/value", Class::Guarded),
+        ("/changed", Class::Guarded),
+        ("/clipboard", Class::Guarded),
+        ("/window", Class::Guarded),
+        ("/n", Class::Guarded),
+        ("/extra", Class::Guarded),
     ];
 
     fn ts_orig(&self) -> TsOrig {
@@ -99,7 +106,13 @@ impl crate::EventPayload for KeyPressed {
                 fields: vec!["kernel_at".into(), "logged_at".into()],
                 quality: crate::TimeQuality::Captured,
             }),
-            field_hints: Self::FIELD_HINTS.iter().map(|(field, class)| crate::kinds::FieldHint { field: (*field).into(), class: *class }).collect(),
+            field_hints: Self::FIELD_HINTS
+                .iter()
+                .map(|(field, class)| crate::kinds::FieldHint {
+                    field: (*field).into(),
+                    class: *class,
+                })
+                .collect(),
             removed_rule: Some(crate::kinds::RemovedRule::Never),
             keep_known: vec![],
             owned_blobs: vec![],
@@ -118,10 +131,15 @@ impl crate::EventPayload for KeyReleased {
     const KEY: KeyKind = KeyKind::Fields(KEY_FIELDS);
     const REPLACE: ReplaceRule = ReplaceRule::SuppressRepeat;
     const FIELD_HINTS: &'static [(&'static str, Class)] = &[
-        ("/session", Class::Guarded), ("/logged_at", Class::Guarded),
-        ("/kernel_at", Class::Guarded), ("/key", Class::Guarded),
-        ("/code", Class::Guarded), ("/value", Class::Guarded),
-        ("/changed", Class::Guarded), ("/n", Class::Guarded), ("/extra", Class::Guarded),
+        ("/session", Class::Guarded),
+        ("/logged_at", Class::Guarded),
+        ("/kernel_at", Class::Guarded),
+        ("/key", Class::Guarded),
+        ("/code", Class::Guarded),
+        ("/value", Class::Guarded),
+        ("/changed", Class::Guarded),
+        ("/n", Class::Guarded),
+        ("/extra", Class::Guarded),
     ];
 
     fn ts_orig(&self) -> TsOrig {
@@ -145,7 +163,13 @@ impl crate::EventPayload for KeyReleased {
                 fields: vec!["kernel_at".into(), "logged_at".into()],
                 quality: crate::TimeQuality::Captured,
             }),
-            field_hints: Self::FIELD_HINTS.iter().map(|(field, class)| crate::kinds::FieldHint { field: (*field).into(), class: *class }).collect(),
+            field_hints: Self::FIELD_HINTS
+                .iter()
+                .map(|(field, class)| crate::kinds::FieldHint {
+                    field: (*field).into(),
+                    class: *class,
+                })
+                .collect(),
             removed_rule: Some(crate::kinds::RemovedRule::Never),
             keep_known: vec![],
             owned_blobs: vec![],

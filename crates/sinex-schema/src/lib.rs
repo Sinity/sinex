@@ -12,9 +12,9 @@
 use sinex_model::{ArchiveReason, Class, DbCheck, RecordState, TimeQuality, event_types};
 use sqlx::{Connection, Executor, PgConnection};
 
+mod description;
 pub mod kinds;
 mod tables;
-mod description;
 mod upgrades;
 
 /// The session advisory lock held by the database's one writer.
@@ -193,17 +193,29 @@ fn kind_view(kind: &event_types::RegisteredEventType) -> description::View {
     columns.push("e.kind_version".into());
     columns.push("e.validation".into());
     let name = kind.event_type.replace('.', "_");
-    let mut names = vec!["id", "source", "ts_orig", "ts_quality", "ts_coided", "record_state"]
-        .into_iter().map(String::from).collect::<Vec<_>>();
+    let mut names = vec![
+        "id",
+        "source",
+        "ts_orig",
+        "ts_quality",
+        "ts_coided",
+        "record_state",
+    ]
+    .into_iter()
+    .map(String::from)
+    .collect::<Vec<_>>();
     if let Some(props) = schema.get("properties").and_then(|p| p.as_object()) {
         names.extend(props.keys().cloned());
     }
     names.extend(["kind_version".into(), "validation".into()]);
     description::View {
-        name: name.clone(), columns: names,
+        name: name.clone(),
+        columns: names,
         statement: format!(
             "CREATE VIEW event_types.{} AS SELECT {} FROM core.visible_events e WHERE e.event_type='{}' AND NOT EXISTS (SELECT 1 FROM audit.archived a WHERE a.event_id=e.id)",
-            quote_ident(&name), columns.join(", "), kind.event_type
+            quote_ident(&name),
+            columns.join(", "),
+            kind.event_type
         ),
     }
 }
@@ -362,7 +374,9 @@ async fn run_upgrades(
             .await?;
     }
     kinds::upgrade_historical(connection, owners).await?;
-    description::Description::current().apply(connection, owners).await?;
+    description::Description::current()
+        .apply(connection, owners)
+        .await?;
     Ok(())
 }
 
@@ -379,7 +393,9 @@ async fn apply_current(
         tx.rollback().await?;
         return Err(Error::WriterRunning);
     }
-    let result = description::Description::current().apply(&mut tx, owners).await;
+    let result = description::Description::current()
+        .apply(&mut tx, owners)
+        .await;
     match result {
         Ok(()) => {
             tx.commit().await?;
@@ -392,7 +408,10 @@ async fn apply_current(
     }
 }
 
-async fn apply_views(connection: &mut PgConnection, description: &description::Description) -> Result<(), Error> {
+async fn apply_views(
+    connection: &mut PgConnection,
+    description: &description::Description,
+) -> Result<(), Error> {
     for statement in &description.visibility {
         connection
             .execute(
@@ -473,7 +492,11 @@ async fn apply_views(connection: &mut PgConnection, description: &description::D
 async fn create_schema(connection: &mut PgConnection, owners: &kinds::Owners) -> Result<(), Error> {
     let description = description::Description::current();
     let mut statements = privileged();
-    statements.extend(tables::SCHEMAS.iter().map(|schema| format!("CREATE SCHEMA {schema}")));
+    statements.extend(
+        tables::SCHEMAS
+            .iter()
+            .map(|schema| format!("CREATE SCHEMA {schema}")),
+    );
     statements.push("CREATE TABLE sinex_schema.applied (version integer PRIMARY KEY, applied_at timestamptz NOT NULL DEFAULT now())".into());
     statements.extend(description.tables.clone());
     statements.extend(description.after_tables.clone());

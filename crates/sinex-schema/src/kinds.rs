@@ -237,9 +237,18 @@ async fn register_checked(
         .collect())
 }
 
-pub(crate) async fn install(conn: &mut PgConnection, owners: &Owners, declarations: &[KindDeclaration]) -> Result<(), Error> {
+pub(crate) async fn install(
+    conn: &mut PgConnection,
+    owners: &Owners,
+    declarations: &[KindDeclaration],
+) -> Result<(), Error> {
     for declaration in declarations {
-        let p = declaration.kind.name.split_once('.').expect("bundled name").0;
+        let p = declaration
+            .kind
+            .name
+            .split_once('.')
+            .expect("bundled name")
+            .0;
         prefix(conn, p, "sinex").await?;
     }
     for (p, owner) in &owners.prefixes {
@@ -354,10 +363,17 @@ pub fn check(d: &KindDeclaration) -> Result<(), String> {
     if let Some(schema) = &d.payload_schema {
         let properties = declared_fields(schema, schema, &mut std::collections::BTreeSet::new());
         for hint in &d.field_hints {
-            let root_field = hint.field[1..].split('/').next().expect("pointer has a field")
-                .replace("~1", "/").replace("~0", "~");
+            let root_field = hint.field[1..]
+                .split('/')
+                .next()
+                .expect("pointer has a field")
+                .replace("~1", "/")
+                .replace("~0", "~");
             if !properties.contains(&root_field) {
-                return Err(format!("hint field {} is absent from the schema", hint.field));
+                return Err(format!(
+                    "hint field {} is absent from the schema",
+                    hint.field
+                ));
             }
         }
         if let Some(field) = fields.iter().find(|field| !properties.contains(**field)) {
@@ -455,11 +471,17 @@ pub async fn owners(conn: &mut PgConnection) -> Result<Owners, Error> {
 /// Writer startup reads the installed description; only schema apply writes it.
 pub async fn require_bundled(conn: &mut PgConnection) -> Result<(), Error> {
     let expected = crate::description::Description::current().kinds;
-    let references: Vec<_> = expected.iter().map(|declaration| declaration.kind.clone()).collect();
+    let references: Vec<_> = expected
+        .iter()
+        .map(|declaration| declaration.kind.clone())
+        .collect();
     let saved = load(conn, &references).await?;
     for declaration in expected {
         if saved.get(&declaration.kind) != Some(&declaration) {
-            return Err(invalid(format!("definition_conflict: {} version {}; apply this build's schema before starting the writer", declaration.kind.name, declaration.kind.version)));
+            return Err(invalid(format!(
+                "definition_conflict: {} version {}; apply this build's schema before starting the writer",
+                declaration.kind.name, declaration.kind.version
+            )));
         }
     }
     Ok(())

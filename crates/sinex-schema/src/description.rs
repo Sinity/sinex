@@ -36,12 +36,21 @@ impl Description {
         Self {
             tables: version_three::tables(&version_three::checks()),
             after_tables: version_three::after_tables(),
-            visibility: vec![], views: vec![], kinds: vec![],
-            previous_producer_views: version_three::MOVED_VIEWS.iter().map(|name| (*name).into()).collect(),
+            visibility: vec![],
+            views: vec![],
+            kinds: vec![],
+            previous_producer_views: version_three::MOVED_VIEWS
+                .iter()
+                .map(|name| (*name).into())
+                .collect(),
         }
     }
 
-    pub async fn apply(&self, connection: &mut sqlx::PgConnection, owners: &crate::kinds::Owners) -> Result<(), crate::Error> {
+    pub async fn apply(
+        &self,
+        connection: &mut sqlx::PgConnection,
+        owners: &crate::kinds::Owners,
+    ) -> Result<(), crate::Error> {
         crate::kinds::install(connection, owners, &self.kinds).await?;
         crate::apply_views(connection, self).await
     }
@@ -57,26 +66,52 @@ impl Description {
     /// Table renames that preserve rows for a data transformation happen first.
     /// Every other structural change is derived from the two descriptions.
     pub fn changes_from(&self, before: &Self, renamed: &[&str]) -> Vec<String> {
-        let before_tables: BTreeMap<_, _> = before.tables.iter()
+        let before_tables: BTreeMap<_, _> = before
+            .tables
+            .iter()
             .filter_map(|statement| Table::read(statement))
             .filter(|table| !renamed.contains(&table.name.as_str()))
-            .map(|table| (table.name.clone(), table)).collect();
-        let mut changes: Vec<String> = before.previous_producer_views.iter().map(|name|
-            format!("DROP VIEW IF EXISTS event_types.{}", crate::quote_ident(name))).collect();
+            .map(|table| (table.name.clone(), table))
+            .collect();
+        let mut changes: Vec<String> = before
+            .previous_producer_views
+            .iter()
+            .map(|name| {
+                format!(
+                    "DROP VIEW IF EXISTS event_types.{}",
+                    crate::quote_ident(name)
+                )
+            })
+            .collect();
         for statement in &self.tables {
             if let Some(table) = Table::read(statement) {
                 if let Some(prior) = before_tables.get(&table.name) {
                     for (name, definition) in &table.columns {
                         match prior.columns.get(name) {
-                            Some(previous) => assert_eq!(previous, definition,
-                                "column changes need a declared transformation: {}.{name}", table.name),
-                            None => changes.push(format!("ALTER TABLE {} ADD COLUMN {name} {definition}", table.name)),
+                            Some(previous) => assert_eq!(
+                                previous, definition,
+                                "column changes need a declared transformation: {}.{name}",
+                                table.name
+                            ),
+                            None => changes.push(format!(
+                                "ALTER TABLE {} ADD COLUMN {name} {definition}",
+                                table.name
+                            )),
                         }
                     }
-                    assert!(prior.columns.keys().all(|name| table.columns.contains_key(name)),
-                        "column removals need a declared transformation: {}", table.name);
-                    assert_eq!(prior.constraints, table.constraints,
-                        "constraint changes need a declared transformation: {}", table.name);
+                    assert!(
+                        prior
+                            .columns
+                            .keys()
+                            .all(|name| table.columns.contains_key(name)),
+                        "column removals need a declared transformation: {}",
+                        table.name
+                    );
+                    assert_eq!(
+                        prior.constraints, table.constraints,
+                        "constraint changes need a declared transformation: {}",
+                        table.name
+                    );
                 } else {
                     changes.push(statement.clone());
                 }
@@ -103,17 +138,29 @@ struct Table {
 
 impl Table {
     fn read(statement: &str) -> Option<Self> {
-        let rest = statement.strip_prefix("CREATE TABLE ")
+        let rest = statement
+            .strip_prefix("CREATE TABLE ")
             .or_else(|| statement.strip_prefix("CREATE UNLOGGED TABLE "))?;
         let (name, body) = rest.split_once('(').expect("table has columns");
         let body = body.trim().strip_suffix(')').expect("table closes columns");
-        let mut table = Self { name: name.trim().into(), columns: BTreeMap::new(), constraints: vec![] };
+        let mut table = Self {
+            name: name.trim().into(),
+            columns: BTreeMap::new(),
+            constraints: vec![],
+        };
         for entry in entries(body) {
-            let (name, definition) = entry.split_once(char::is_whitespace).expect("column has a type");
+            let (name, definition) = entry
+                .split_once(char::is_whitespace)
+                .expect("column has a type");
             if ["PRIMARY", "CONSTRAINT", "UNIQUE", "CHECK", "FOREIGN"].contains(&name) {
-                table.constraints.push(entry.split_whitespace().collect::<Vec<_>>().join(" "));
+                table
+                    .constraints
+                    .push(entry.split_whitespace().collect::<Vec<_>>().join(" "));
             } else {
-                table.columns.insert(name.into(), definition.split_whitespace().collect::<Vec<_>>().join(" "));
+                table.columns.insert(
+                    name.into(),
+                    definition.split_whitespace().collect::<Vec<_>>().join(" "),
+                );
             }
         }
         Some(table)
@@ -129,15 +176,21 @@ fn entries(body: &str) -> Vec<&str> {
     while let Some((at, byte)) = bytes.next() {
         if let Some(quoted) = quote {
             if byte == quoted {
-                if bytes.peek().is_some_and(|(_, next)| *next == quoted) { bytes.next(); }
-                else { quote = None; }
+                if bytes.peek().is_some_and(|(_, next)| *next == quoted) {
+                    bytes.next();
+                } else {
+                    quote = None;
+                }
             }
         } else {
             match byte {
                 b'\'' | b'"' => quote = Some(byte),
                 b'(' | b'[' => depth += 1,
                 b')' | b']' => depth -= 1,
-                b',' if depth == 0 => { entries.push(body[start..at].trim()); start = at + 1; }
+                b',' if depth == 0 => {
+                    entries.push(body[start..at].trim());
+                    start = at + 1;
+                }
                 _ => {}
             }
         }

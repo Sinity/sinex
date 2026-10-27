@@ -122,7 +122,6 @@ fn expand_event_payload(input: &DeriveInput) -> syn::Result<proc_macro2::TokenSt
                 syn::bracketed!(content in value);
                 let list = content.parse_terminated(|p| p.parse::<LitStr>(), syn::Token![,])?;
                 keep_known = list.into_iter().collect();
-
             } else if meta.path.is_ident("owns") {
                 let (mut field, mut size, mut when) = (None, None, None);
                 meta.parse_nested_meta(|inner| {
@@ -202,7 +201,9 @@ fn expand_event_payload(input: &DeriveInput) -> syn::Result<proc_macro2::TokenSt
                 }
                 let class: Ident = meta.value()?.parse()?;
                 let variant = match class.to_string().as_str() {
-                    "open" => quote!(Open), "guarded" => quote!(Guarded), "sealed" => quote!(Sealed),
+                    "open" => quote!(Open),
+                    "guarded" => quote!(Guarded),
+                    "sealed" => quote!(Sealed),
                     _ => return Err(meta.error("class is `open`, `guarded` or `sealed`")),
                 };
                 let field_name = field.ident.as_ref().expect("named field").to_string();
@@ -294,11 +295,19 @@ fn expand_event_payload(input: &DeriveInput) -> syn::Result<proc_macro2::TokenSt
         None => None,
         Some(value) => {
             let variant = match value.to_string().as_str() {
-                "none" => quote!(None), "words" => quote!(Words),
+                "none" => quote!(None),
+                "words" => quote!(Words),
                 "words_and_trigram" => quote!(WordsAndTrigram),
-                _ => return Err(syn::Error::new_spanned(value, "search is `none`, `words` or `words_and_trigram`")),
+                _ => {
+                    return Err(syn::Error::new_spanned(
+                        value,
+                        "search is `none`, `words` or `words_and_trigram`",
+                    ));
+                }
             };
-            Some(quote!(const SEARCH: ::sinex_model::kinds::Search = ::sinex_model::kinds::Search::#variant;))
+            Some(
+                quote!(const SEARCH: ::sinex_model::kinds::Search = ::sinex_model::kinds::Search::#variant;),
+            )
         }
     };
     Ok(quote! {

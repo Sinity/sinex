@@ -3,7 +3,6 @@
 //! created with.
 use crate::Checks;
 
-
 /// Per source: its live events, and the oldest and newest event time and the
 /// newest reading time of every event admitted from it. Admission, archival,
 /// unhiding and excision keep it current in their own transactions, so status
@@ -515,17 +514,28 @@ END $$"
 
 /// Views whose kinds are now declared by their outside producer.
 pub(super) const MOVED_VIEWS: &[&str] = &[
-    "polylogue_session", "polylogue_message", "polylogue_tool_call", "polylogue_turn",
-    "polylogue_delivery", "polylogue_delivery_outcome", "polylogue_note", "polylogue_setting",
-    "polylogue_kept_result", "polylogue_excision",
+    "polylogue_session",
+    "polylogue_message",
+    "polylogue_tool_call",
+    "polylogue_turn",
+    "polylogue_delivery",
+    "polylogue_delivery_outcome",
+    "polylogue_note",
+    "polylogue_setting",
+    "polylogue_kept_result",
+    "polylogue_excision",
 ];
 
 pub(super) fn checks() -> Checks {
     Checks {
-        time_quality: "CHECK (ts_quality IN ('intrinsic', 'captured', 'file_mtime', 'operator', 'unknown'))".into(),
+        time_quality:
+            "CHECK (ts_quality IN ('intrinsic', 'captured', 'file_mtime', 'operator', 'unknown'))"
+                .into(),
         record_state: "CHECK (record_state IN ('present', 'removed'))".into(),
         class: "CHECK (class IN ('open', 'guarded', 'sealed'))".into(),
-        archive_reason: "CHECK (reason IN ('replay', 'newer_reading', 'hide', 'recomputed'))".into(),
-        archive_change_reason: "CHECK (reason IN ('replay', 'newer_reading', 'hide', 'recomputed', 'unhide'))".into(),
+        archive_reason: "CHECK (reason IN ('replay', 'newer_reading', 'hide', 'recomputed'))"
+            .into(),
+        archive_change_reason:
+            "CHECK (reason IN ('replay', 'newer_reading', 'hide', 'recomputed', 'unhide'))".into(),
     }
 }

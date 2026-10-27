@@ -294,9 +294,13 @@ async fn search_modes_apply_to_live_indexing_and_its_rebuild(db: devkit::pg::Tes
     let mut words = declared("example.words", 9);
     words.search = sinex_model::kinds::Search::Words;
     let mut tx = conn.begin().await.unwrap();
-    sinex_schema::kinds::register(&mut tx, "example", &[excluded.clone(), searchable.clone(), words.clone()])
-        .await
-        .unwrap();
+    sinex_schema::kinds::register(
+        &mut tx,
+        "example",
+        &[excluded.clone(), searchable.clone(), words.clone()],
+    )
+    .await
+    .unwrap();
     tx.commit().await.unwrap();
     let events = [&excluded, &searchable, &words]
         .into_iter()
@@ -494,36 +498,67 @@ async fn applying_a_changed_bundled_definition_refuses_startup(db: devkit::pg::T
     );
 }
 
-
 #[devkit::test]
 async fn operator_rules_can_lower_and_raise_field_defaults(db: devkit::pg::TestDatabase) {
     let mut conn = PgConnection::connect(&db.url(None)).await.unwrap();
     let mut declaration = declared("example.field_classes", 2);
     declaration.field_hints = vec![sinex_model::kinds::FieldHint {
-        field: "/value".into(), class: Class::Guarded,
+        field: "/value".into(),
+        class: Class::Guarded,
     }];
     let mut tx = conn.begin().await.unwrap();
-    sinex_schema::kinds::register(&mut tx, "example", std::slice::from_ref(&declaration)).await.unwrap();
+    sinex_schema::kinds::register(&mut tx, "example", std::slice::from_ref(&declaration))
+        .await
+        .unwrap();
     tx.commit().await.unwrap();
-    for (index, expected) in ["guarded", "guarded", "open", "guarded"].into_iter().enumerate() {
+    for (index, expected) in ["guarded", "guarded", "open", "guarded"]
+        .into_iter()
+        .enumerate()
+    {
         if index > 0 {
-            crate::privacy::add_rule(&mut conn, &crate::privacy::NewRule {
-                name: "value-class".into(), source: "example".into(),
-                event_type: Some(declaration.kind.name.clone()), field: Some("/value".into()),
-                matcher: "all".into(), matcher_arg: None,
-                class: if index < 3 { Class::Open } else { Class::Guarded },
-                action: crate::privacy::Action::Classify, author: if index == 1 { "agent" } else { "operator" }.into(),
-            }).await.unwrap();
+            crate::privacy::add_rule(
+                &mut conn,
+                &crate::privacy::NewRule {
+                    name: "value-class".into(),
+                    source: "example".into(),
+                    event_type: Some(declaration.kind.name.clone()),
+                    field: Some("/value".into()),
+                    matcher: "all".into(),
+                    matcher_arg: None,
+                    class: if index < 3 {
+                        Class::Open
+                    } else {
+                        Class::Guarded
+                    },
+                    action: crate::privacy::Action::Classify,
+                    author: if index == 1 { "agent" } else { "operator" }.into(),
+                },
+            )
+            .await
+            .unwrap();
         }
-        let event = Event::submitted(declaration.kind.clone(),
+        let event = Event::submitted(
+            declaration.kind.clone(),
             json!({"id":index.to_string(),"at":"2026-10-27T12:00:00Z","value":index}),
-            "example".into(), Origin::Record { location: RecordLocation {
-                material: MaterialId::new(), anchor: 0 }, output_index: 0 },
-            ReadingOrder(1), [index as u8;32], Class::Open);
+            "example".into(),
+            Origin::Record {
+                location: RecordLocation {
+                    material: MaterialId::new(),
+                    anchor: 0,
+                },
+                output_index: 0,
+            },
+            ReadingOrder(1),
+            [index as u8; 32],
+            Class::Open,
+        );
         let id = event.id;
         assert_eq!(admit_one(&mut conn, &batch(vec![event])).await.admitted, 1);
         let class: String = sqlx::query_scalar("SELECT class FROM core.events WHERE id=$1")
-            .bind(id.0).fetch_one(&mut conn).await.unwrap();
+            .bind(id.0)
+            .fetch_one(&mut conn)
+            .await
+            .unwrap();
         assert_eq!(class, expected);
     }
 }

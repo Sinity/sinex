@@ -25,7 +25,7 @@ pub use batch::{
 pub use clock::{TimeQuality, Timestamp, TsOrig};
 pub use event::{BuildError, Event, Origin, ReadingOrder, RecordLocation, RecordState};
 pub use id::{EventId, InputId, MaterialId, ObservationId, OperationId, RevisionId, RunId};
-pub use kinds::{FieldHint, Search, KindDeclaration, KindRef, Validation};
+pub use kinds::{FieldHint, KindDeclaration, KindRef, Search, Validation};
 pub use manifest::{Manifest, MaterialRole, Member};
 pub use payload::{
     DbCheck, EquivalenceKey, EventPayload, KeyKind, OwnedBlob, Payloads, ReplaceRule,

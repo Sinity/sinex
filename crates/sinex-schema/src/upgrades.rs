@@ -52,7 +52,8 @@ pub(crate) fn upgrades() -> Vec<Vec<String>> {
     let mut steps = landed();
     let before = crate::description::Description::version_three();
     let after = crate::description::Description::current();
-    let mut statements = vec!["ALTER TABLE registry.event_types RENAME TO unversioned_event_types".into()];
+    let mut statements =
+        vec!["ALTER TABLE registry.event_types RENAME TO unversioned_event_types".into()];
     statements.extend(after.changes_from(&before, &["registry.event_types"]));
     steps.push(statements);
     steps

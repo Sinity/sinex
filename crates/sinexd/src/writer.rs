@@ -256,7 +256,8 @@ pub(crate) async fn claim(connection: &mut PgConnection) -> Result<(), String> {
             .map_err(|e| format!("database: {e}"))?;
         if won {
             sinex_schema::kinds::require_bundled(connection)
-                .await.map_err(|error| error.to_string())?;
+                .await
+                .map_err(|error| error.to_string())?;
             return Ok(());
         }
         if tokio::time::Instant::now() >= deadline {
