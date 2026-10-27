@@ -1,0 +1,44 @@
+//! Complete journal blocks. Only true EOF completes an undecided last block.
+
+pub fn frame(bytes: &[u8], eof: bool) -> (Vec<(usize, usize)>, usize) {
+    let mut records = Vec::new();
+    let mut block = None;
+    let mut offset = 0;
+    let mut consumed = 0;
+    while offset < bytes.len() {
+        let end = match bytes[offset..].iter().position(|b| *b == b'\n') {
+            Some(n) => offset + n + 1,
+            None if eof => bytes.len(),
+            None => break,
+        };
+        let line = bytes[offset..end].trim_ascii_end();
+        if line.is_empty() {
+            if let Some(start) = block.take() {
+                records.push((start, end));
+            }
+            consumed = end;
+        } else if !matches!(line.first(), Some(b' ' | b'\t')) {
+            if let Some(start) = block.replace(offset) {
+                records.push((start, offset));
+                consumed = offset;
+            }
+        } else if block.is_none() {
+            block = Some(offset);
+        }
+        offset = end;
+    }
+    if eof {
+        if let Some(start) = block {
+            records.push((start, bytes.len()));
+        }
+        consumed = bytes.len();
+    }
+    (records, consumed)
+}
+
+pub fn complete(bytes: &[u8]) -> (Vec<(usize, usize)>, usize) {
+    frame(bytes, true)
+}
+
+#[cfg(test)]
+mod tests;
