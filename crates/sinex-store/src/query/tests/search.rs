@@ -4,7 +4,7 @@ use super::*;
 async fn every_search_kind_keeps_words_phrases_prefixes_text_and_snippets(
     db: devkit::pg::TestDatabase,
 ) {
-    let mut conn = PgConnection::connect(&db.url(None)).await.unwrap();
+    let mut conn = crate::AdmissionContext::connect(&db.url(None)).await.unwrap();
     crate::read_models::tests::admit_search_kinds(&mut conn, Class::Open).await;
     catch_up_search_text(&mut conn).await.unwrap();
     for text in [
@@ -36,7 +36,7 @@ async fn every_search_kind_keeps_words_phrases_prefixes_text_and_snippets(
 
 #[devkit::test]
 async fn both_prefix_branches_obey_class_grants(db: devkit::pg::TestDatabase) {
-    let mut conn = PgConnection::connect(&db.url(None)).await.unwrap();
+    let mut conn = crate::AdmissionContext::connect(&db.url(None)).await.unwrap();
     crate::read_models::tests::admit_search_kinds(&mut conn, Class::Guarded).await;
     catch_up_search_text(&mut conn).await.unwrap();
     for grants in ["", "guarded", ""] {
@@ -80,7 +80,7 @@ async fn both_prefix_branches_obey_class_grants(db: devkit::pg::TestDatabase) {
 
 #[devkit::test]
 async fn eligible_prefix_branch_can_use_partial_index(db: devkit::pg::TestDatabase) {
-    let mut conn = PgConnection::connect(&db.url(None)).await.unwrap();
+    let mut conn = crate::AdmissionContext::connect(&db.url(None)).await.unwrap();
     crate::read_models::tests::admit_search_kinds(&mut conn, Class::Open).await;
     catch_up_search_text(&mut conn).await.unwrap();
     // Tiny fixtures otherwise favor a sequential scan. Force index choice to

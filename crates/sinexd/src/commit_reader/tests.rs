@@ -233,10 +233,9 @@ impl ReadModel for FailingSearch {
 async fn search_failure_rolls_back_text_and_restart_covers_same_position(
     db: devkit::pg::TestDatabase,
 ) {
-    let mut conn = PgConnection::connect(&db.url(None)).await.unwrap();
+    let mut conn = sinex_store::AdmissionContext::connect(&db.url(None)).await.unwrap();
     let mut tx = conn.begin().await.unwrap();
-    sinex_store::admit(
-        &mut tx,
+    tx.admit(
         &api_batch(vec![imported("cargo test", 0)]),
         &sinex_store::NoDerivations,
     )
@@ -298,16 +297,17 @@ async fn maintenance_batches_immediate_backlog_and_flushes_small_tail(
     db: devkit::pg::TestDatabase,
 ) {
     let url = db.url(None);
-    let mut conn = PgConnection::connect(&url).await.unwrap();
+    let mut conn = sinex_store::AdmissionContext::connect(&url).await.unwrap();
     let mut tx = conn.begin().await.unwrap();
-    sinex_store::admit(
-        &mut tx,
+    tx.admit(
         &api_batch((0..10_001).map(|n| imported("cargo", n)).collect()),
         &sinex_store::NoDerivations,
     )
     .await
     .unwrap();
     tx.commit().await.unwrap();
+    drop(conn);
+    let conn = PgConnection::connect(&url).await.unwrap();
     let (sender, mut batches) = tokio::sync::mpsc::unbounded_channel();
     let (_commits, commits) = watch::channel(0);
     let (stop_tx, stop) = watch::channel(false);
@@ -345,7 +345,7 @@ async fn maintenance_batches_immediate_backlog_and_flushes_small_tail(
 async fn maintenance_byte_budget_accepts_oversized_first_event_and_commit_gaps(
     db: devkit::pg::TestDatabase,
 ) {
-    let mut conn = PgConnection::connect(&db.url(None)).await.unwrap();
+    let mut conn = sinex_store::AdmissionContext::connect(&db.url(None)).await.unwrap();
     let mut tx = conn.begin().await.unwrap();
     // Random-looking bytes keep PostgreSQL from compressing the payload
     // below the byte budget before commit-log pagination measures it.
@@ -353,8 +353,7 @@ async fn maintenance_byte_budget_accepts_oversized_first_event_and_commit_gaps(
     for n in 0u64..200_000 {
         command.push_str(blake3::hash(&n.to_le_bytes()).to_hex().as_str());
     }
-    sinex_store::admit(
-        &mut tx,
+    tx.admit(
         &api_batch(vec![imported(&command, 0), imported("tail", 1)]),
         &sinex_store::NoDerivations,
     )

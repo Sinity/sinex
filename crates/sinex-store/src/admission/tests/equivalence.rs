@@ -62,14 +62,7 @@ async fn every_key_form_keeps_its_identity_and_public_spelling(db: devkit::pg::T
 }
 
 pub(super) async fn version_two_keys(conn: &mut PgConnection) {
-    sqlx::query("ALTER TABLE core.live_equivalence ALTER COLUMN equivalence_key TYPE text USING core.decode_equivalence_key(equivalence_key)")
-        .execute(&mut *conn).await.unwrap();
-    sqlx::query(
-        "DROP FUNCTION core.encode_equivalence_key(text),core.decode_equivalence_key(bytea)",
-    )
-    .execute(&mut *conn)
-    .await
-    .unwrap();
+    sqlx::raw_sql(include_str!("../../../../sinex-schema/src/tests/version_two.sql")).execute(conn).await.unwrap();
 }
 
 async fn rows(conn: &mut PgConnection) -> Vec<Value> {
@@ -86,6 +79,10 @@ async fn rows(conn: &mut PgConnection) -> Vec<Value> {
             format!(
                 "SELECT to_jsonb(t)||jsonb_build_object('equivalence_key',core.decode_equivalence_key(t.equivalence_key)) FROM {name} t ORDER BY 1"
             )
+        } else if table == "published" {
+            format!("SELECT to_jsonb(pair) FROM {name} t CROSS JOIN LATERAL unnest(event_ids,stream_seqs) pair(event_id,stream_seq) ORDER BY 1")
+        } else if table == "search_text" {
+            format!("SELECT to_jsonb(t)-'trigram_indexed' FROM {name} t ORDER BY 1")
         } else {
             format!("SELECT to_jsonb(t) FROM {name} t ORDER BY 1")
         };
@@ -157,12 +154,7 @@ async fn populated_key_upgrade_preserves_all_rows_and_matches_fresh_schema(
     let removed = Uuid::now_v7();
     sqlx::query("INSERT INTO core.event_tombstones(event_id,source,event_type,operation_id) VALUES($1,'s','command.executed',$2)")
         .bind(removed).bind(Uuid::now_v7()).execute(&mut conn).await.unwrap();
-    sqlx::query("INSERT INTO core.published VALUES($1,17),($2,29)")
-        .bind(events[1].id.0)
-        .bind(removed)
-        .execute(&mut conn)
-        .await
-        .unwrap();
+    crate::commit_log::record_published(&mut conn, &[(events[1].id.0,17),(removed,29)]).await.unwrap();
     let mut derived = keyed("derived", 1, 1, 1);
     derived.origin = Origin::Derived {
         parents: vec![events[2].id],
@@ -194,7 +186,7 @@ async fn populated_key_upgrade_preserves_all_rows_and_matches_fresh_schema(
         .unwrap();
     assert_eq!(
         sinex_schema::apply(&mut conn).await.unwrap(),
-        sinex_schema::Applied::Upgraded { from: 2, to: 3 }
+        sinex_schema::Applied::Upgraded { from: 2, to: sinex_schema::VERSION }
     );
     assert_eq!(rows(&mut conn).await, before);
     assert_eq!(sinex_schema::catalog(&mut conn).await.unwrap(), catalog);

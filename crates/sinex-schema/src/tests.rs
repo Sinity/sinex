@@ -55,21 +55,7 @@ fn each_version_after_0_has_its_upgrade() {
 }
 
 async fn search_version_two(conn: &mut PgConnection) {
-    for statement in [
-        "DROP VIEW core.visible_search_text",
-        "DROP TABLE core.search_text",
-        "CREATE TABLE core.search_text (event_id uuid PRIMARY KEY, text text NOT NULL, tsv tsvector GENERATED ALWAYS AS (to_tsvector('simple', text)) STORED)",
-        "CREATE INDEX search_text_tsv ON core.search_text USING gin (tsv)",
-        "CREATE INDEX search_text_trigram ON core.search_text USING gin (text gin_trgm_ops)",
-        "GRANT SELECT, INSERT, UPDATE, DELETE ON core.search_text TO sinex_writer",
-        "CREATE VIEW core.visible_search_text AS SELECT s.event_id, s.text, s.tsv FROM core.search_text s JOIN core.events e ON e.id=s.event_id WHERE core.class_visible(e.class)",
-        "GRANT SELECT ON core.visible_search_text TO sinex_reader, sinex_writer",
-        "GRANT INSERT, UPDATE, DELETE ON core.visible_search_text TO sinex_writer",
-        "DELETE FROM sinex_schema.applied WHERE version=3",
-        "INSERT INTO sinex_schema.applied (version) VALUES (2) ON CONFLICT DO NOTHING",
-    ] {
-        conn.execute(statement).await.unwrap();
-    }
+    sqlx::raw_sql(include_str!("tests/version_two.sql")).execute(conn).await.unwrap();
 }
 
 #[devkit::test]
@@ -100,7 +86,7 @@ async fn search_upgrade_preserves_populated_text_and_other_rows(db: devkit::pg::
             .unwrap();
     assert_eq!(
         apply(&mut conn).await.unwrap(),
-        Applied::Upgraded { from: 2, to: 3 }
+        Applied::Upgraded { from: 2, to: VERSION }
     );
     let after: Vec<serde_json::Value> = sqlx::query_scalar(
         "SELECT to_jsonb(s)-'trigram_indexed' FROM core.search_text s ORDER BY event_id",
@@ -206,6 +192,8 @@ async fn search_upgrade_refuses_writer_and_rolls_back_failed_index_build(
     );
     assert_eq!(
         apply(&mut conn).await.unwrap(),
-        Applied::Upgraded { from: 2, to: 3 }
+        Applied::Upgraded { from: 2, to: VERSION }
     );
 }
+
+mod preservation;
