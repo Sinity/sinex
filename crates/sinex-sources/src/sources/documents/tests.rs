@@ -113,6 +113,27 @@ fn acquisition_requires_scope_and_rejects_notes_library_and_symlink_overlap() {
 }
 
 #[devkit::test]
+fn missing_paths_are_compared_through_their_existing_parents() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path().join("documents");
+    std::fs::create_dir(&root).unwrap();
+    let alias = temp.path().join("alias");
+    std::os::unix::fs::symlink(&root, &alias).unwrap();
+    let mut settings = Settings::new("example-host");
+    settings.options = serde_json::json!({
+        "capture_documents": true,
+        "existing_roots": [alias.join("not-created")]
+    });
+    assert!(validate(&root, &settings).is_err());
+    settings.options["existing_roots"] = serde_json::json!([alias.join("child/..")]);
+    assert!(validate(&root, &settings).is_err());
+    settings.options["existing_roots"] = serde_json::json!([temp.path().join("other")]);
+    assert!(validate(&root, &settings).is_ok());
+    settings.options["existing_roots"] = serde_json::json!([""]);
+    assert!(validate(&root, &settings).is_err());
+}
+
+#[devkit::test]
 fn reader_restart_rebuilds_file_facts_and_keeps_held_bytes() {
     use sinex_model::{BatchKind, RunId};
     use sinex_source_core::drivers::prepare;
