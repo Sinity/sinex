@@ -1,7 +1,14 @@
+use super::files::sniff;
 use super::*;
+use crate::Parser;
+use crate::drivers::Acquired;
+use crate::{DrainInput, Limits, drain};
+use serde_json::{Map, Value, json};
+use sinex_model::Timestamp;
+use sinex_model::event_types::library::{Assignment, FileCopy, Item, LibraryRecord, Rendition};
 use sinex_model::event_types::library::{Level, Target};
 use sinex_model::{RecordOutcome, RecordState};
-use sinex_source_core::{DrainInput, Limits, drain};
+use std::path::{Path, PathBuf};
 
 fn tmp() -> PathBuf {
     let d = std::env::temp_dir().join(format!("sinex-library-{}", uuid::Uuid::now_v7()));
@@ -165,7 +172,7 @@ fn scan_describes_stores_and_follows_renames_edits_and_removals() {
 }
 
 struct Body(Vec<u8>);
-impl sinex_source_core::drain::RecordRead for Body {
+impl crate::drain::RecordRead for Body {
     fn length(&self) -> u64 {
         self.0.len() as u64
     }
@@ -177,11 +184,11 @@ impl sinex_source_core::drain::RecordRead for Body {
 
 /// What the store holds for the material `acquired` read, and the cursor
 /// once all of it is admitted.
-fn stored(acquired: &Acquired) -> (sinex_source_core::binding::StoredMaterial, Value) {
+fn stored(acquired: &Acquired) -> (crate::binding::StoredMaterial, Value) {
     let m = acquired.material.as_ref().unwrap();
     let length = m.records.last().unwrap().1;
     let bytes = m.record_bytes().record(0, length).unwrap().into_owned();
-    let stored = sinex_source_core::binding::StoredMaterial {
+    let stored = crate::binding::StoredMaterial {
         reference: sinex_model::MaterialRef {
             id: m.id,
             input: None,
@@ -201,7 +208,7 @@ fn stored(acquired: &Acquired) -> (sinex_source_core::binding::StoredMaterial, V
 
 #[devkit::test]
 fn a_restarted_scan_reads_only_what_changed_since_its_stored_parts() {
-    use sinex_source_core::binding::Reader;
+    use crate::binding::Reader;
     let root = tmp();
     std::fs::write(root.join("one.png"), png(10, 10)).unwrap();
     std::fs::write(root.join("two.png"), png(20, 20)).unwrap();
@@ -245,7 +252,7 @@ fn equal_bytes_hash_equal_wherever_they_are() {
     let b = json!({"host": "h", "root": "/q", "path": "/q/b", "content": "blake3:x", "size": 1,
         "sha256": "s", "md5": "m", "media_type": "image/png", "stored": false});
     let hash = |v: &Value| {
-        <Map<String, Value> as sinex_source_core::RecordShape>::hash(
+        <Map<String, Value> as crate::RecordShape>::hash(
             v.to_string().as_bytes(),
             ScanParser::VOLATILE,
         )
@@ -421,7 +428,7 @@ fn library_format_plans_one_file_without_reading_its_neighbours() {
     let dir = tempfile::tempdir().unwrap();
     std::fs::write(dir.path().join("selected.txt"), b"synthetic selected file").unwrap();
     std::fs::write(dir.path().join("other.txt"), b"synthetic other file").unwrap();
-    let mut settings = sinex_source_core::Settings::new("synthetic");
+    let mut settings = crate::Settings::new("synthetic");
     settings.options = serde_json::json!({"reference": true});
     let bindings = (FORMAT.plan.unwrap())(&dir.path().join("selected.txt"), &settings).unwrap();
     assert_eq!(bindings.len(), 1);
@@ -435,8 +442,7 @@ fn library_format_plans_one_file_without_reading_its_neighbours() {
     let material = acquired.material.unwrap();
     assert_eq!(material.records.len(), 1);
     assert!(material.owned_files.is_empty());
-    let line: serde_json::Value =
-        serde_json::from_slice(crate::test_support::body(&material)).unwrap();
+    let line: serde_json::Value = serde_json::from_slice(material.body()).unwrap();
     assert!(line["path"].as_str().unwrap().ends_with("selected.txt"));
     assert_eq!(line["stored"], false);
 }

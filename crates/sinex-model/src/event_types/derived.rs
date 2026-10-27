@@ -106,3 +106,14 @@ pub struct FigureValue {
     pub min: f64,
     pub max: f64,
 }
+
+/// A tag attached by declared rules to one captured record. The parent is
+/// the reading the rules matched; the record identity survives replay.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
+#[event(type = "tag.applied", key = ["record", "tag"], replace = newer, time = at, quality = intrinsic)]
+pub struct TagApplied {
+    pub record: String,
+    pub tag: String,
+    pub rules: Vec<String>,
+    pub at: Option<Timestamp>,
+}

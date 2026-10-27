@@ -954,11 +954,26 @@
       "eventTypes": [
         "page.fetched"
       ]
+    },
+    {
+      "name": "sinex.telemetry",
+      "formats": [
+        "sinex-telemetry"
+      ],
+      "drivers": [
+        "live-stream"
+      ],
+      "purpose": "Sinex's own state, apart from the activity record",
+      "class": "open",
+      "eventTypes": [
+        "sinex.telemetry"
+      ]
     }
   ],
   "derivations": [
     {
       "name": "command.fusion",
+      "enabledByDefault": true,
       "kind": "keyed",
       "inputs": [
         "command.executed",
@@ -970,6 +985,7 @@
     },
     {
       "name": "focus.fusion",
+      "enabledByDefault": true,
       "kind": "keyed",
       "inputs": [
         "state.interval",
@@ -981,6 +997,7 @@
     },
     {
       "name": "visit.fusion",
+      "enabledByDefault": true,
       "kind": "keyed",
       "inputs": [
         "browser.visit",
@@ -993,6 +1010,7 @@
     },
     {
       "name": "play.fusion",
+      "enabledByDefault": true,
       "kind": "keyed",
       "inputs": [
         "music.played",
@@ -1005,6 +1023,7 @@
     },
     {
       "name": "clipboard.fusion",
+      "enabledByDefault": true,
       "kind": "keyed",
       "inputs": [
         "clipboard.copied",
@@ -1016,6 +1035,7 @@
     },
     {
       "name": "notification.fusion",
+      "enabledByDefault": true,
       "kind": "keyed",
       "inputs": [
         "notification.shown",
@@ -1027,6 +1047,7 @@
     },
     {
       "name": "mail.fusion",
+      "enabledByDefault": true,
       "kind": "keyed",
       "inputs": [
         "mail.message"
@@ -1037,6 +1058,7 @@
     },
     {
       "name": "shell.sessions",
+      "enabledByDefault": true,
       "kind": "keyed",
       "inputs": [
         "command.fused"
@@ -1047,6 +1069,7 @@
     },
     {
       "name": "state.intervals",
+      "enabledByDefault": true,
       "kind": "keyed",
       "inputs": [
         "window.focused",
@@ -1059,6 +1082,7 @@
     },
     {
       "name": "metric.hourly",
+      "enabledByDefault": true,
       "kind": "keyed",
       "inputs": [
         "command.fused",
@@ -1080,6 +1104,7 @@
     },
     {
       "name": "metric.daily",
+      "enabledByDefault": true,
       "kind": "keyed",
       "inputs": [
         "metric.figure"
@@ -1090,6 +1115,7 @@
     },
     {
       "name": "presence.intervals",
+      "enabledByDefault": true,
       "kind": "keyed",
       "inputs": [
         "presence.span",
@@ -1104,6 +1130,7 @@
     },
     {
       "name": "health.hourly",
+      "enabledByDefault": true,
       "kind": "keyed",
       "inputs": [
         "health.record"
@@ -1114,12 +1141,122 @@
     },
     {
       "name": "health.daily",
+      "enabledByDefault": true,
       "kind": "keyed",
       "inputs": [
         "health.figure"
       ],
       "outputs": [
         "health.figure"
+      ]
+    },
+    {
+      "name": "tags",
+      "enabledByDefault": false,
+      "kind": "per-event",
+      "inputs": [
+        "account.row",
+        "account.setting",
+        "action.recorded",
+        "activitywatch.other",
+        "book.status",
+        "bookmark.saved",
+        "browser.history_entry",
+        "browser.tab_active",
+        "browser.url",
+        "browser.visit",
+        "calendar.event",
+        "chat.message",
+        "clipboard.copied",
+        "clipboard.fused",
+        "command.executed",
+        "command.fused",
+        "command.imported",
+        "conversation.message",
+        "desktop.other",
+        "editor.reported",
+        "file.changed",
+        "focus.fused",
+        "forecast.issued",
+        "forecast.resolved",
+        "git.commit",
+        "health.figure",
+        "health.record",
+        "input.logger",
+        "journal.entry",
+        "key.pressed",
+        "key.released",
+        "lake.observed",
+        "library.assignment",
+        "library.collection",
+        "library.comparison",
+        "library.copy",
+        "library.dismissal",
+        "library.entry",
+        "library.item",
+        "library.rating",
+        "library.rendition",
+        "library.view",
+        "location.sample",
+        "mail.fused",
+        "mail.message",
+        "media.segment",
+        "metric.figure",
+        "monitor.focused",
+        "music.played",
+        "note.document",
+        "note.observed",
+        "notification.action",
+        "notification.closed",
+        "notification.fused",
+        "notification.received",
+        "notification.shown",
+        "operator_log.entry",
+        "page.fetched",
+        "play.fused",
+        "player.changed",
+        "pointer.button",
+        "pointer.moved",
+        "pointer.scrolled",
+        "polylogue.delivery",
+        "polylogue.delivery_outcome",
+        "polylogue.excision",
+        "polylogue.kept_result",
+        "polylogue.message",
+        "polylogue.note",
+        "polylogue.session",
+        "polylogue.setting",
+        "polylogue.tool_call",
+        "polylogue.turn",
+        "post.published",
+        "presence.interval",
+        "presence.span",
+        "purchase.observed",
+        "screen.text",
+        "scrollback.captured",
+        "scrollback.window",
+        "shell.session",
+        "state.interval",
+        "steering.row",
+        "task.revised",
+        "terminal.output",
+        "terminal.reported",
+        "terminal.session",
+        "video.searched",
+        "video.watched",
+        "visit.fused",
+        "vote.cast",
+        "window.closed",
+        "window.focused",
+        "window.moved",
+        "window.opened",
+        "window.sampled",
+        "window.span",
+        "window.title_changed",
+        "workspace.switched"
+      ],
+      "outputs": [
+        "tag.applied"
       ]
     }
   ]

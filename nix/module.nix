@@ -187,7 +187,7 @@ in
         name = d.name;
         value.enable = mkOption {
           type = types.bool;
-          default = true;
+          default = d.enabledByDefault;
           description = "The ${d.kind} derivation ${d.name} (${concatStringsSep ", " d.inputs} → ${concatStringsSep ", " d.outputs}); analytics are on by default.";
         };
       })
@@ -371,6 +371,9 @@ in
         "d ${cfg.stateDir}/tokens 0750 ${cfg.user} ${cfg.group} -"
         "d ${cfg.stateDir}/nats 0750 ${cfg.user} ${cfg.group} -"
         "d ${cfg.stateDir}/spool 0750 ${cfg.user} ${cfg.group} -"
+        # Scratch the daemon writes while reading an input (an Outlook PST
+        # converted to mbox files); /tmp may be a small tmpfs.
+        "d ${cfg.stateDir}/tmp 0750 ${cfg.user} ${cfg.group} -"
         "d ${cfg.backup.dumpDir} 0750 ${cfg.user} ${cfg.group} -"
         "d ${cfg.backup.keysDir} 0700 ${cfg.user} ${cfg.group} -"
         "d ${cfg.database.dataDir} 0700 postgres postgres -"
@@ -500,6 +503,7 @@ in
           CapabilityBoundingSet = [ "CAP_DAC_READ_SEARCH" ];
         };
         environment.SINEX_PRIVATE_MODE = privateSwitch;
+        environment.TMPDIR = "${cfg.stateDir}/tmp";
         preStart = ''
           # Tokens are made once; a missing file disables that level.
           for level in read agent operator; do
@@ -522,6 +526,7 @@ in
             --tokens ${cfg.stateDir}/tokens \
             ${optionalString (cfg.zone != null) "--zone ${escapeShellArg cfg.zone}"} \
             --day-start ${escapeShellArg cfg.dayStart} \
+            --telemetry-spool ${cfg.stateDir}/spool/telemetry \
             --sources /etc/sinex/sources.json
         '';
       };

@@ -144,7 +144,7 @@ async fn newer_replaces_older_suppresses_one_live_per_key() {
                     *g += 1;
                     *g
                 };
-                let source = format!("law-{n}");
+                let source = format!("source-{n}");
                 let got = tokio::task::block_in_place(|| {
                     rt.block_on(async {
                         let mut conn = conn.lock().await;
@@ -652,4 +652,6 @@ async fn untimed_zsh_occurrences_coexist_and_only_same_locations_repeat(
 }
 
 mod archive_history;
+mod commit_order;
+mod compressed;
 mod source_counts;

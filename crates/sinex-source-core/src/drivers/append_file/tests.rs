@@ -433,3 +433,175 @@ fn saved_unknown_prefixes_refuse_even_when_the_offset_is_zero() {
         }
     }
 }
+
+/// What a generated write did to the file, and how the next look must class it.
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum FileWrite {
+    Append,
+    /// A same-length edit of one line, in place.
+    Edit,
+    /// Cut to fewer lines, in place.
+    Truncate,
+    /// A new file renamed over the old one.
+    Replace,
+    /// The whole file written again, longer, in place.
+    Rewrite,
+}
+
+/// Change classification under generated write histories: after every write,
+/// one look classes it as the write was (an in-place same-length edit is a
+/// rewrite, never an append or unchanged, however soon after the last look it
+/// came), and every line the file now holds has been read.
+#[devkit::test]
+fn generated_write_histories_are_classified_and_nothing_is_missed() {
+    let mut seed: u64 = 0x5eed_cafe;
+    let mut next = move |n: u64| {
+        seed ^= seed << 13;
+        seed ^= seed >> 7;
+        seed ^= seed << 17;
+        seed % n
+    };
+    let mut fresh_id = 0u64;
+    let mut line = || {
+        fresh_id += 1;
+        format!("line {fresh_id:08}\n")
+    };
+    for history in 0..60 {
+        let path = temp(&format!("history-{history}"));
+        let d = AppendFile {
+            path: path.clone(),
+            host: "h".into(),
+            framer: crate::Framer::incremental(lines),
+        };
+        let mut content: Vec<String> = (0..1 + next(5)).map(|_| line()).collect();
+        std::fs::write(&path, content.concat()).unwrap();
+        let mut state = AppendState::default();
+        let mut cursor = Value::Null;
+        let mut read: std::collections::HashSet<String> = std::collections::HashSet::new();
+        let look = |cursor: &mut Value,
+                    state: &mut AppendState,
+                    read: &mut std::collections::HashSet<String>|
+         -> RevisionChange {
+            let a = d.poll(cursor, state).unwrap();
+            match &a.material {
+                Some(m) => {
+                    read.extend(records(&a));
+                    *cursor = (m.cursor_at)(m.body().len()).unwrap();
+                    a.revision
+                }
+                None => {
+                    *cursor = a.cursor_without_material.clone();
+                    RevisionChange::Same
+                }
+            }
+        };
+        assert_eq!(
+            look(&mut cursor, &mut state, &mut read),
+            RevisionChange::Appended
+        );
+        for step in 0..25 {
+            let write = match next(5) {
+                0 => FileWrite::Append,
+                1 => FileWrite::Edit,
+                2 if content.len() > 1 => FileWrite::Truncate,
+                3 => FileWrite::Replace,
+                4 => FileWrite::Rewrite,
+                _ => FileWrite::Append,
+            };
+            match write {
+                FileWrite::Append => {
+                    let added: Vec<String> = (0..1 + next(3)).map(|_| line()).collect();
+                    let mut f = std::fs::OpenOptions::new()
+                        .append(true)
+                        .open(&path)
+                        .unwrap();
+                    f.write_all(added.concat().as_bytes()).unwrap();
+                    content.extend(added);
+                }
+                FileWrite::Edit => {
+                    use std::os::unix::fs::FileExt;
+                    let i = usize::try_from(next(content.len() as u64)).unwrap();
+                    let at: usize = content[..i].iter().map(String::len).sum();
+                    content[i] = line();
+                    std::fs::OpenOptions::new()
+                        .write(true)
+                        .open(&path)
+                        .unwrap()
+                        .write_all_at(content[i].as_bytes(), at as u64)
+                        .unwrap();
+                }
+                FileWrite::Truncate => {
+                    let keep = 1 + usize::try_from(next(content.len() as u64 - 1)).unwrap();
+                    content.truncate(keep);
+                    std::fs::OpenOptions::new()
+                        .write(true)
+                        .open(&path)
+                        .unwrap()
+                        .set_len(content.concat().len() as u64)
+                        .unwrap();
+                }
+                FileWrite::Replace => {
+                    let i = usize::try_from(next(content.len() as u64)).unwrap();
+                    content[i] = line();
+                    let staged = path.with_extension("new");
+                    std::fs::write(&staged, content.concat()).unwrap();
+                    std::fs::rename(&staged, &path).unwrap();
+                }
+                FileWrite::Rewrite => {
+                    let i = usize::try_from(next(content.len() as u64)).unwrap();
+                    content[i] = line();
+                    content.push(line());
+                    let mut f = std::fs::OpenOptions::new()
+                        .write(true)
+                        .truncate(true)
+                        .open(&path)
+                        .unwrap();
+                    f.write_all(content.concat().as_bytes()).unwrap();
+                }
+            }
+            let class = look(&mut cursor, &mut state, &mut read);
+            let expected = match write {
+                FileWrite::Append => RevisionChange::Appended,
+                FileWrite::Edit | FileWrite::Rewrite => RevisionChange::Rewritten,
+                FileWrite::Truncate => RevisionChange::Truncated,
+                FileWrite::Replace => RevisionChange::Replaced,
+            };
+            // A truncation whose kept lines were all read before reads
+            // nothing new: no material, so no revision is recorded for it.
+            let quiet = write == FileWrite::Truncate && class == RevisionChange::Same;
+            assert!(
+                class == expected || quiet,
+                "history {history} step {step}: {write:?} classed as {class:?}"
+            );
+            let missed: Vec<&String> = content.iter().filter(|l| !read.contains(*l)).collect();
+            assert!(
+                missed.is_empty(),
+                "history {history} step {step} after {write:?}: never read {missed:?}"
+            );
+            // A look straight after changes nothing.
+            assert_eq!(
+                look(&mut cursor, &mut state, &mut read),
+                RevisionChange::Same
+            );
+        }
+    }
+}
+
+/// A middle edit beyond the ordinary part size still changes the prefix.
+#[devkit::test]
+fn large_prefixes_are_hashed_whole_without_changing_the_digest_at_a_part_boundary() {
+    let mut file = tempfile::tempfile().unwrap();
+    let length = (64 << 20) + 8192;
+    file.set_len(length).unwrap();
+    let before = Prefix::read(&mut file, length).unwrap();
+    file.seek(SeekFrom::Start(length / 2)).unwrap();
+    file.write_all(b"changed").unwrap();
+    let after = Prefix::read(&mut file, length).unwrap();
+    assert_ne!(before.digest(), after.digest());
+    file.seek(SeekFrom::End(0)).unwrap();
+    file.write_all(b"appended").unwrap();
+    assert_eq!(
+        after.digest_after(b"appended"),
+        Prefix::read(&mut file, length + 8).unwrap().digest(),
+    );
+}

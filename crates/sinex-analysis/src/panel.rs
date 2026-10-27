@@ -8,7 +8,7 @@ use crate::cell::{Cell, Missing};
 use crate::coverage::{Completeness, Coverage};
 use crate::span::{MICROS_PER_SECOND, Span, SpanSet};
 use serde::{Deserialize, Serialize};
-use sinex_derivations::figures::{Law, Metric};
+use sinex_derivations::figures::{Calculation, Metric};
 use sinex_model::Timestamp;
 use sinex_model::time_settings::{TimeSettings, TimeSettingsError};
 
@@ -117,9 +117,9 @@ pub fn cells(
             let value = match figure {
                 Some(f) => f.value,
                 // Nothing counted: zero, unless the metric is a ratio of nothing.
-                None => match metric.law {
-                    Law::Count | Law::Seconds { .. } => Some(0.0),
-                    Law::Ratio { .. } => None,
+                None => match metric.calculation {
+                    Calculation::Count | Calculation::Seconds { .. } => Some(0.0),
+                    Calculation::Ratio { .. } => None,
                 },
             };
             if fraction <= 0.0 {

@@ -36,7 +36,7 @@ use sinex_model::{Batch, BatchKind, Event, ReadingOrder, RecordOutcome, RunId, T
 use sinex_store::blobs::Blobs;
 use sinex_store::derivations::{self, Nearest, Window};
 use sinex_store::registry::{self, Derivation};
-use sinex_store::{ComputedKey, DerivedScope, material_bytes, runs};
+use sinex_store::{ComputedKey, DerivedScope, ReadMark, material_bytes, runs};
 use sqlx::PgConnection;
 use std::collections::{BTreeMap, HashSet};
 use std::sync::Arc;
@@ -204,7 +204,10 @@ impl DerivationRunner {
     }
 
     /// Every key the inputs of `name` touch, optionally only for inputs whose
-    /// `ts_orig` is in `range`.
+    /// `ts_orig` is in `range`. Without a range, also every key the
+    /// derivation has outputs under: a version that keys differently
+    /// computes an old key to nothing, so its outputs are archived and no
+    /// input stays counted under both versions.
     async fn all_keys(
         &mut self,
         name: &str,
@@ -248,6 +251,16 @@ impl DerivationRunner {
                     if seen.insert(k.to_string()) {
                         keys.push(k);
                     }
+                }
+            }
+        }
+        if range.is_none() {
+            for k in derivations::output_keys(&mut self.read, name)
+                .await
+                .map_err(|e| e.to_string())?
+            {
+                if seen.insert(k.to_string()) {
+                    keys.push(k);
                 }
             }
         }
@@ -379,6 +392,11 @@ impl DerivationRunner {
         let mut records: Vec<RecordOutcome> = Vec::new();
         let mut outputs = 0usize;
         let name = self.keyed[index].name();
+        // Before any input is read, so admission can tell whether one may
+        // have been archived since.
+        let read = ReadMark::now(&mut self.read)
+            .await
+            .map_err(|e| e.to_string())?;
         // Keys without a query have no inputs; the rest are read page by
         // page and computed as soon as their rows are complete.
         let mut ready: Vec<(usize, Vec<Event>, bool)> = Vec::new();
@@ -440,6 +458,7 @@ impl DerivationRunner {
                         index,
                         std::mem::take(&mut scopes),
                         std::mem::take(&mut records),
+                        read,
                     )
                     .await?;
                     outputs = 0;
@@ -447,7 +466,7 @@ impl DerivationRunner {
             }
         }
         if !scopes.is_empty() {
-            self.submit_keys(index, scopes, records).await?;
+            self.submit_keys(index, scopes, records, read).await?;
         }
         Ok(())
     }
@@ -457,6 +476,7 @@ impl DerivationRunner {
         index: usize,
         scopes: Vec<ComputedKey>,
         mut records: Vec<RecordOutcome>,
+        read: ReadMark,
     ) -> Result<(), String> {
         let name = self.keyed[index].name();
         let head = derivations::head(&mut self.read)
@@ -477,7 +497,7 @@ impl DerivationRunner {
             run: self.run_of(name)?,
             kind: BatchKind::Derived {
                 derivation: name.to_owned(),
-                scope: DerivedScope::Keys { keys: scopes }.to_value(),
+                scope: DerivedScope::Keys { keys: scopes, read }.to_value(),
             },
             records,
             archive: vec![],
@@ -495,6 +515,7 @@ impl DerivationRunner {
         c.admitted += out.admitted;
         c.repeats += out.repeats;
         c.replaced += out.replaced;
+        c.superseded_input += out.superseded_input;
         Ok(())
     }
 
@@ -578,6 +599,9 @@ impl DerivationRunner {
         let position = derivations::position(&mut self.read, name)
             .await
             .map_err(|e| e.to_string())?;
+        let read = ReadMark::now(&mut self.read)
+            .await
+            .map_err(|e| e.to_string())?;
         let events = derivations::after_seq(
             &mut self.read,
             &types,
@@ -592,6 +616,7 @@ impl DerivationRunner {
         };
         let reads_material = self.per_event[index].reads_material();
         let mut outputs = Vec::new();
+        let mut computed_inputs = Vec::new();
         let mut failed = 0;
         for c in &events {
             let material = if reads_material {
@@ -623,6 +648,7 @@ impl DerivationRunner {
             };
             match derived {
                 Ok(derived) => {
+                    computed_inputs.push(c.event.id.0);
                     for mut e in derived {
                         // A new derivation version reads every input again; its
                         // outputs must be newer readings than the old version's.
@@ -641,7 +667,12 @@ impl DerivationRunner {
             run: self.run_of(name)?,
             kind: BatchKind::Derived {
                 derivation: name.to_owned(),
-                scope: DerivedScope::Position { position: last }.to_value(),
+                scope: DerivedScope::Position {
+                    inputs: computed_inputs,
+                    position: last,
+                    read,
+                }
+                .to_value(),
             },
             records: vec![RecordOutcome::Events {
                 location: None,
@@ -660,6 +691,7 @@ impl DerivationRunner {
         c.outputs += n;
         c.admitted += out.admitted;
         c.repeats += out.repeats;
+        c.superseded_input += out.superseded_input;
         Ok(events.len())
     }
 
@@ -847,11 +879,19 @@ mod tests;
 
 /// Every per-event derivation `sinexd` runs: the pure ones, plus screen text
 /// when a local OCR engine is installed (said once when it is not).
-pub(crate) fn per_event() -> Vec<Box<dyn AnyPerEvent>> {
+pub(crate) fn available_per_event() -> Vec<Box<dyn AnyPerEvent>> {
     let mut all = sinex_derivations::per_event();
     match crate::screen_text::engine() {
         Ok(engine) => all.push(Box::new(crate::screen_text::ScreenText { engine })),
         Err(reason) => eprintln!("sinexd: screen text off: {reason}"),
     }
     all
+}
+
+/// Per-event derivations enabled for an unconfigured one-shot run.
+pub(crate) fn per_event() -> Vec<Box<dyn AnyPerEvent>> {
+    available_per_event()
+        .into_iter()
+        .filter(|d| sinex_derivations::enabled_by_default(d.name()))
+        .collect()
 }

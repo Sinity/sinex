@@ -107,7 +107,7 @@ fn commands(bytes: &[u8], base: usize) -> Vec<(usize, String)> {
 }
 
 proptest! {
-    /// Source law: reading the file in pieces gives the same records, at the
+    /// Reading the file in pieces gives the same records, at the
     /// same file offsets, as reading it at once.
     #[devkit::test]
     fn pieces_equal_whole(cmds in prop::collection::vec("[a-z \\\\]{0,6}", 1..12), cut in 0usize..400) {
@@ -123,7 +123,7 @@ proptest! {
         prop_assert_eq!(whole, pieces);
     }
 
-    /// Source law: an anchor reads back exactly its record.
+    /// An anchor reads back exactly its record.
     #[devkit::test]
     fn anchors_read_back_records(cmds in prop::collection::vec("[a-z]{1,5}", 1..8)) {
         let mut file = Vec::new();

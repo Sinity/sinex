@@ -28,7 +28,7 @@ use std::collections::BTreeMap;
 
 /// How a metric counts the events of a period.
 #[derive(Clone, Copy)]
-pub enum Law {
+pub enum Calculation {
     /// How many events started in the period.
     Count,
     /// The seconds of the period covered by the events' intervals, each
@@ -51,7 +51,7 @@ pub struct Metric {
     pub description: &'static str,
     /// The events it counts.
     pub inputs: fn() -> Vec<Kind>,
-    pub law: Law,
+    pub calculation: Calculation,
     /// Payload fields it is also broken down by.
     pub dimensions: &'static [&'static str],
     /// The sources that observe its inputs; a period is observed while any
@@ -103,7 +103,7 @@ pub static METRICS: &[Metric] = &[
         name: "shell.commands",
         description: "Commands run",
         inputs: || vec![Kind::all("command.fused")],
-        law: Law::Count,
+        calculation: Calculation::Count,
         dimensions: &["host", "cwd"],
         sources: SHELLS,
         tracked: true,
@@ -112,7 +112,7 @@ pub static METRICS: &[Metric] = &[
         name: "shell.failed_ratio",
         description: "Share of commands with a known exit code that failed",
         inputs: || vec![Kind::all("command.fused")],
-        law: Law::Ratio {
+        calculation: Calculation::Ratio {
             numerator: |p| exit_known(p) && p["exit_code"] != 0,
             denominator: exit_known,
         },
@@ -124,7 +124,7 @@ pub static METRICS: &[Metric] = &[
         name: "shell.sessions",
         description: "Shell sessions",
         inputs: || vec![Kind::all("shell.session")],
-        law: Law::Count,
+        calculation: Calculation::Count,
         dimensions: &["host"],
         sources: SHELLS,
         tracked: false,
@@ -133,7 +133,7 @@ pub static METRICS: &[Metric] = &[
         name: "shell.session_seconds",
         description: "Time in shell sessions",
         inputs: || vec![Kind::all("shell.session")],
-        law: Law::Seconds {
+        calculation: Calculation::Seconds {
             end: "ended_at",
             open: false,
         },
@@ -145,7 +145,7 @@ pub static METRICS: &[Metric] = &[
         name: "activity.active_seconds",
         description: "Time at the machine",
         inputs: || vec![Kind::only("presence.span", &[("status", "not-afk")])],
-        law: Law::Seconds {
+        calculation: Calculation::Seconds {
             end: "ended_at",
             open: false,
         },
@@ -157,7 +157,7 @@ pub static METRICS: &[Metric] = &[
         name: "focus.seconds",
         description: "Time some window had focus, time away from the machine included",
         inputs: || vec![Kind::all("focus.fused")],
-        law: Law::Seconds {
+        calculation: Calculation::Seconds {
             end: "ended_at",
             open: true,
         },
@@ -169,7 +169,7 @@ pub static METRICS: &[Metric] = &[
         name: "focus.switches",
         description: "Window focus changes",
         inputs: || vec![Kind::all("focus.fused")],
-        law: Law::Count,
+        calculation: Calculation::Count,
         dimensions: &[],
         sources: FOCUS,
         tracked: true,
@@ -178,7 +178,7 @@ pub static METRICS: &[Metric] = &[
         name: "music.listen_seconds",
         description: "Time listening",
         inputs: || vec![Kind::all("play.fused")],
-        law: Law::Seconds {
+        calculation: Calculation::Seconds {
             end: "ended_at",
             open: false,
         },
@@ -190,7 +190,7 @@ pub static METRICS: &[Metric] = &[
         name: "music.plays",
         description: "Tracks played",
         inputs: || vec![Kind::all("play.fused")],
-        law: Law::Count,
+        calculation: Calculation::Count,
         dimensions: &["artist"],
         sources: MUSIC,
         tracked: false,
@@ -199,7 +199,7 @@ pub static METRICS: &[Metric] = &[
         name: "git.commits",
         description: "Commits made",
         inputs: || vec![Kind::all("git.commit")],
-        law: Law::Count,
+        calculation: Calculation::Count,
         dimensions: &["repository"],
         sources: &["code.git"],
         tracked: false,
@@ -213,7 +213,7 @@ pub static METRICS: &[Metric] = &[
                 Kind::only("chat.message", &[("kind", "action")]),
             ]
         },
-        law: Law::Count,
+        calculation: Calculation::Count,
         dimensions: &["buffer"],
         sources: &["communication.weechat-log"],
         tracked: false,
@@ -222,7 +222,7 @@ pub static METRICS: &[Metric] = &[
         name: "mail.messages",
         description: "Mail messages",
         inputs: || vec![Kind::all("mail.fused")],
-        law: Law::Count,
+        calculation: Calculation::Count,
         dimensions: &[],
         sources: &[
             "communication.imap",
@@ -245,7 +245,7 @@ pub static METRICS: &[Metric] = &[
                 })
                 .collect()
         },
-        law: Law::Count,
+        calculation: Calculation::Count,
         dimensions: &["unit"],
         sources: &["machine.journald"],
         tracked: false,
@@ -254,7 +254,7 @@ pub static METRICS: &[Metric] = &[
         name: "input.key_presses",
         description: "Keys pressed, a held key's repeats included",
         inputs: || vec![Kind::all("key.pressed")],
-        law: Law::Count,
+        calculation: Calculation::Count,
         dimensions: &[],
         sources: &["desktop.input-log"],
         tracked: true,
@@ -268,7 +268,7 @@ pub static METRICS: &[Metric] = &[
                 equal: vec![("pressed", json!(true))],
             }]
         },
-        law: Law::Count,
+        calculation: Calculation::Count,
         dimensions: &["button"],
         sources: &["desktop.input-log"],
         tracked: false,
@@ -277,7 +277,7 @@ pub static METRICS: &[Metric] = &[
         name: "web.visits",
         description: "Pages visited",
         inputs: || vec![Kind::all("visit.fused")],
-        law: Law::Count,
+        calculation: Calculation::Count,
         dimensions: &[],
         sources: WEB,
         tracked: true,
@@ -315,15 +315,15 @@ fn open_end(start: Timestamp, env: &Env) -> Timestamp {
 
 /// The span an input covers in nanoseconds: an instant for counted events,
 /// its interval for seconds.
-fn span(law: Law, start: Timestamp, payload: &Value, env: &Env) -> (i128, i128) {
-    let end = match law {
-        Law::Seconds { end, open } => payload
+fn span(calculation: Calculation, start: Timestamp, payload: &Value, env: &Env) -> (i128, i128) {
+    let end = match calculation {
+        Calculation::Seconds { end, open } => payload
             .get(end)
             .and_then(|v| serde_json::from_value::<Option<Timestamp>>(v.clone()).ok())
             .flatten()
             .unwrap_or_else(|| if open { open_end(start, env) } else { start })
             .max(start),
-        Law::Count | Law::Ratio { .. } => start,
+        Calculation::Count | Calculation::Ratio { .. } => start,
     };
     (start.unix_ns(), end.unix_ns())
 }
@@ -359,10 +359,10 @@ impl Sum<'_> {
         day: &str,
         dimension: (&str, &str),
     ) -> MetricFigure {
-        let (value, numerator, denominator) = match m.law {
-            Law::Count => (Some(self.value), None, None),
-            Law::Seconds { .. } => (Some(self.value + union_secs(&self.spans)), None, None),
-            Law::Ratio { .. } => (
+        let (value, numerator, denominator) = match m.calculation {
+            Calculation::Count => (Some(self.value), None, None),
+            Calculation::Seconds { .. } => (Some(self.value + union_secs(&self.spans)), None, None),
+            Calculation::Ratio { .. } => (
                 (self.denominator > 0.0).then(|| self.numerator / self.denominator),
                 Some(self.numerator),
                 Some(self.denominator),
@@ -421,10 +421,10 @@ fn add<'a>(m: &Metric, sums: &mut Figures<'a>, event: &'a Event, part: (i128, i1
         let sum = sums.entry(b).or_default();
         sum.rows += 1;
         sum.parents.push(event);
-        match m.law {
-            Law::Count => sum.value += 1.0,
-            Law::Seconds { .. } => sum.spans.push(part),
-            Law::Ratio {
+        match m.calculation {
+            Calculation::Count => sum.value += 1.0,
+            Calculation::Seconds { .. } => sum.spans.push(part),
+            Calculation::Ratio {
                 numerator,
                 denominator,
             } => {
@@ -472,7 +472,7 @@ impl Keyed for HourlyMetrics {
             .iter()
             .filter(|m| m.admits(input.event_type, input.payload))
         {
-            let (_, end) = span(m.law, start, input.payload, env);
+            let (_, end) = span(m.calculation, start, input.payload, env);
             let Ok(mut day) = env.time_settings.day(start) else {
                 continue;
             };
@@ -499,7 +499,7 @@ impl Keyed for HourlyMetrics {
             env.time_settings.day_start(day).ok()?,
             env.time_settings.day_end(day).ok()?,
         );
-        if let Law::Seconds { .. } = m.law {
+        if let Calculation::Seconds { .. } = m.calculation {
             // The interval that may still run when the day starts.
             q.before.push(Neighbour {
                 kinds,
@@ -534,11 +534,13 @@ impl Keyed for HourlyMetrics {
                 if !m.admits(e.event_type, &e.payload) {
                     continue;
                 }
-                let (s, f) = span(m.law, at, &e.payload, env);
+                let (s, f) = span(m.calculation, at, &e.payload, env);
                 let part = (s.max(period.0), f.min(period.1));
-                let counted = match m.law {
-                    Law::Seconds { .. } => part.1 > part.0,
-                    Law::Count | Law::Ratio { .. } => (period.0..period.1).contains(&s),
+                let counted = match m.calculation {
+                    Calculation::Seconds { .. } => part.1 > part.0,
+                    Calculation::Count | Calculation::Ratio { .. } => {
+                        (period.0..period.1).contains(&s)
+                    }
                 };
                 if counted {
                     add(m, &mut sums, e, part);
@@ -609,9 +611,11 @@ impl Keyed for DailyMetrics {
             let sum = sums.entry((f.dimension, f.dimension_value)).or_default();
             sum.rows += f.rows;
             sum.parents.push(hourly);
-            match m.law {
-                Law::Count | Law::Seconds { .. } => sum.value += f.value.unwrap_or(0.0),
-                Law::Ratio { .. } => {
+            match m.calculation {
+                Calculation::Count | Calculation::Seconds { .. } => {
+                    sum.value += f.value.unwrap_or(0.0)
+                }
+                Calculation::Ratio { .. } => {
                     sum.numerator += f.numerator.unwrap_or(0.0);
                     sum.denominator += f.denominator.unwrap_or(0.0);
                 }

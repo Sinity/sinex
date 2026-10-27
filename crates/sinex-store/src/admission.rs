@@ -14,7 +14,13 @@
 //! 9. apply hide and unhide requests.
 //!
 //! A replay's request to archive the readings it re-reads runs first, before
-//! staging, so the new readings are classified against what remains.
+//! staging, so the new readings are classified against what remains. A
+//! derived batch first drops the outputs whose inputs stopped being live
+//! after the derivation read them (a replay or excision in between).
+//!
+//! Sinex's own telemetry goes to `telemetry.events` instead, by its event
+//! type: no side tables, commit log or derivations, and a
+//! record read again is stored once.
 //!
 //! The caller commits; events and progress are then durable together.
 use crate::{Result, privacy};
@@ -32,7 +38,7 @@ mod write;
 
 pub(crate) use archive::remove_live;
 pub(crate) use derived::mark_archived_dirty;
-pub use derived::{ComputedKey, DerivedScope};
+pub use derived::{ComputedKey, DerivedScope, ReadMark};
 
 /// What a keyed derivation's key function sees of an admitted or archived event.
 #[derive(Clone, Debug)]
@@ -71,6 +77,9 @@ pub struct Outcome {
     pub hidden: usize,
     /// Superseded by a newer reading of the same record in this batch.
     pub superseded: usize,
+    /// Derived outputs dropped because an input they cite stopped being live
+    /// after the derivation read it; the replacement input gets its own.
+    pub superseded_input: usize,
     pub failures: usize,
     pub dirty_keys: usize,
     /// Live readings a replay archived before admitting its new readings.
@@ -88,6 +97,15 @@ pub async fn admit(
 ) -> Result<Outcome> {
     sinex_schema::require_current(conn).await?;
     let mut outcome = Outcome::default();
+    let kept_batch;
+    let batch = match derived::without_superseded_inputs(conn, batch).await? {
+        Some((kept, dropped)) => {
+            outcome.superseded_input = dropped;
+            kept_batch = kept;
+            &kept_batch
+        }
+        None => batch,
+    };
     // The live reading each offered event ends as: itself when admitted, the
     // reading it repeats when suppressed. A derived batch's keys own these.
     let mut resolved: Vec<Option<Uuid>> = Vec::new();
@@ -120,7 +138,29 @@ pub async fn admit(
     }
 
     let mut events: Vec<Event> = batch.events().cloned().collect();
+    let telemetry = events
+        .iter()
+        .filter(|e| sinex_model::event_types::is_telemetry(e.event_type))
+        .count();
+    if telemetry > 0 && telemetry < events.len() {
+        return Err(crate::Error::Invalid(
+            "a batch holds telemetry and activity events together".into(),
+        ));
+    }
     apply_privacy(conn, batch, &mut events).await?;
+    if telemetry > 0 {
+        if !matches!(batch.kind, BatchKind::Source(_) | BatchKind::Replay { .. }) {
+            return Err(crate::Error::Invalid(
+                "telemetry is read only from the daemon's own spool".into(),
+            ));
+        }
+        outcome.admitted = write::insert_telemetry(conn, batch, &events).await?;
+        outcome.failures = write::record_failures(conn, batch).await?;
+        if let BatchKind::Source(progress) = &batch.kind {
+            write::save_position(conn, progress).await?;
+        }
+        return Ok(outcome);
+    }
     removed_at_source(conn, batch, &mut events).await?;
 
     if !events.is_empty() {

@@ -150,6 +150,45 @@ pub(super) async fn insert_admitted(
     Ok(())
 }
 
+/// Store telemetry events in `telemetry.events`, apart from the activity
+/// record and outside the commit log (commit position 0). A sample already
+/// stored (the spool read again or replayed) is not stored again. Returns how
+/// many were.
+pub(super) async fn insert_telemetry(
+    conn: &mut PgConnection,
+    batch: &Batch,
+    events: &[Event],
+) -> Result<usize> {
+    sqlx::query!("TRUNCATE core.admission_stage")
+        .execute(&mut *conn)
+        .await?;
+    let numbered: Vec<(i32, &Event)> = events
+        .iter()
+        .enumerate()
+        .map(|(i, e)| (i32::try_from(i).expect("batch fits i32"), e))
+        .collect();
+    crate::stage::copy(conn, &numbered).await?;
+    let stored = sqlx::query!(
+        r#"INSERT INTO telemetry.events (id, event_type, source, run_id, material_id, anchor,
+             output_index, parents, ts_orig, ts_quality, commit_seq, payload, equivalence_key,
+             reading_order, record_hash, record_state, class)
+           SELECT DISTINCT ON (s.source, s.ts_orig, s.equivalence_key)
+             s.id, s.event_type, s.source, $1, s.material_id, s.anchor, s.output_index,
+             s.parents, s.ts_orig, s.ts_quality, 0, s.payload, s.equivalence_key, s.reading_order,
+             s.record_hash, s.record_state, s.class
+           FROM core.admission_stage s
+           WHERE NOT EXISTS (SELECT 1 FROM telemetry.events t
+             WHERE t.source = s.source AND t.ts_orig = s.ts_orig
+               AND t.equivalence_key = s.equivalence_key)
+           ORDER BY s.source, s.ts_orig, s.equivalence_key, s.ord"#,
+        batch.run.0,
+    )
+    .execute(&mut *conn)
+    .await?
+    .rows_affected();
+    Ok(usize::try_from(stored).expect("count fits usize"))
+}
+
 /// Record the batch's failed records; returns how many.
 pub(super) async fn record_failures(conn: &mut PgConnection, batch: &Batch) -> Result<usize> {
     let failures: Vec<(Uuid, i64, &str)> = batch

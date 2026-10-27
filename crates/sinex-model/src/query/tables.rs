@@ -38,6 +38,10 @@ const fn f(name: &'static str, ty: FieldType, phrase: &'static str) -> Field {
 
 const ORIGINS: &[&str] = &["material", "derived"];
 const RUN_STATUS: &[&str] = &["running", "finished"];
+/// Why a stated time looks implausible: later than Sinex read it, or the
+/// Unix epoch itself, which a reader that found no time often writes. A label
+/// only; the time is kept as stated.
+const TIME_SUSPECT: &[&str] = &["future", "epoch zero"];
 
 macro_rules! event_fields {
     ($($extra:expr),* $(,)?) => {
@@ -48,6 +52,7 @@ macro_rules! event_fields {
             f("host", FieldType::Text, "host"),
             f("when", FieldType::Time, "time it happened"),
             f("time_quality", FieldType::Enum(TimeQuality::VALUES), "time quality"),
+            f("time_suspect", FieldType::Enum(TIME_SUSPECT), "why its time looks wrong"),
             f("seen", FieldType::Time, "time Sinex read it"),
             f("written", FieldType::Time, "time it was written"),
             f("origin", FieldType::Enum(ORIGINS), "origin"),
@@ -56,6 +61,7 @@ macro_rules! event_fields {
             f("output", FieldType::Integer, "output number"),
             f("parents", FieldType::IdList, "parent events"),
             f("producer", FieldType::Text, "producer"),
+            f("producer_version", FieldType::Text, "producer version"),
             f("run", FieldType::Id, "run"),
             f("text", FieldType::Text, "text"),
             f("key", FieldType::Text, "equivalence key"),
@@ -69,6 +75,19 @@ macro_rules! event_fields {
 }
 
 const EVENTS: &[Field] = event_fields!();
+/// Sinex's own telemetry: events, outside the commit log and the live set.
+const TELEMETRY: &[Field] = &[
+    f("id", FieldType::Id, "event ID"),
+    f("event_type", FieldType::Text, "event type"),
+    f("source", FieldType::Text, "source"),
+    f("host", FieldType::Text, "host"),
+    f("when", FieldType::Time, "time it was sampled"),
+    f("seen", FieldType::Time, "time Sinex read it"),
+    f("material", FieldType::Id, "material"),
+    f("offset", FieldType::Integer, "byte offset"),
+    f("run", FieldType::Id, "run"),
+    f("payload", FieldType::Json, "payload"),
+];
 const ARCHIVE: &[Field] = event_fields!(
     f("archived", FieldType::Time, "time it left the live set"),
     f(
@@ -161,10 +180,11 @@ pub enum Table {
     Sources,
     Operations,
     Failures,
+    Telemetry,
 }
 
 impl Table {
-    pub const ALL: [Table; 7] = [
+    pub const ALL: [Table; 8] = [
         Table::Events,
         Table::Archive,
         Table::Materials,
@@ -172,6 +192,7 @@ impl Table {
         Table::Sources,
         Table::Operations,
         Table::Failures,
+        Table::Telemetry,
     ];
 
     pub fn name(self) -> &'static str {
@@ -183,6 +204,7 @@ impl Table {
             Table::Sources => "sources",
             Table::Operations => "operations",
             Table::Failures => "failures",
+            Table::Telemetry => "telemetry",
         }
     }
 
@@ -200,6 +222,7 @@ impl Table {
             Table::Sources => "sources",
             Table::Operations => "operations",
             Table::Failures => "records that failed",
+            Table::Telemetry => "samples of Sinex's own state",
         }
     }
 
@@ -212,13 +235,14 @@ impl Table {
             Table::Sources => SOURCES,
             Table::Operations => OPERATIONS,
             Table::Failures => FAILURES,
+            Table::Telemetry => TELEMETRY,
         }
     }
 
     /// The time `since`, `until` and `in` apply to when no field is named.
     pub fn main_time(self) -> &'static str {
         match self {
-            Table::Events | Table::Archive | Table::Failures => "when",
+            Table::Events | Table::Archive | Table::Failures | Table::Telemetry => "when",
             Table::Materials => "stored",
             Table::Runs | Table::Operations => "started",
             Table::Sources => "last_event",
@@ -228,6 +252,11 @@ impl Table {
     /// Whether rows are events, with payloads, text and provenance.
     pub fn is_events(self) -> bool {
         matches!(self, Table::Events | Table::Archive)
+    }
+
+    /// Whether rows carry a payload that `payload.` paths read.
+    pub fn has_payload(self) -> bool {
+        self.is_events() || self == Table::Telemetry
     }
 
     /// Fields shown when the query names none.
@@ -258,6 +287,7 @@ impl Table {
             ],
             Table::Operations => &["id", "kind", "actor", "scope", "started"],
             Table::Failures => &["id", "when", "source", "material", "offset", "reason"],
+            Table::Telemetry => &["when", "payload"],
         }
     }
 
