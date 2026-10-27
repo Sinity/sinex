@@ -59,9 +59,9 @@ impl QueryError {
 
     /// The message with a caret under the place in `text`, for terminals.
     pub fn render(&self, text: &str) -> String {
-        match self.at {
-            Some(at) if at <= text.len() => {
-                let column = text[..at].chars().count();
+        match self.at.and_then(|at| text.get(..at)) {
+            Some(prefix) => {
+                let column = prefix.chars().count();
                 format!("{}\n  {text}\n  {}^", self.message, " ".repeat(column))
             }
             _ => self.message.clone(),

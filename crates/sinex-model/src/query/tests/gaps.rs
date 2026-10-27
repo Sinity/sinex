@@ -279,3 +279,22 @@ fn min_and_max_refuse_payload_values_without_an_ordered_scalar_aggregate() {
         assert!(err(query).message.contains("ordered scalar"));
     }
 }
+
+#[devkit::test]
+fn saved_definition_errors_do_not_point_inside_unicode_arguments() {
+    let saved = SavedQuery {
+        name: "bad".into(),
+        query: "events where source = $source and when < not-a-time".into(),
+        parameters: vec![Parameter {
+            name: "source".into(),
+            field_type: ParameterType::Text,
+        }],
+    };
+    let definitions = BTreeMap::from([("bad".into(), saved)]);
+    let invocation = format!("query:bad(source=\"{}\")", "界".repeat(40));
+    let error = bind_saved(&invocation, &ctx(), &definitions).unwrap_err();
+    assert!(error.at.is_none());
+    assert_eq!(error.render(&invocation), error.message);
+    let error = QueryError::at(1, "synthetic error");
+    assert_eq!(error.render("界"), "synthetic error");
+}

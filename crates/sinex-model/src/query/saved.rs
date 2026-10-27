@@ -263,5 +263,11 @@ pub fn bind_saved(
         bound.extend(input.into_iter().skip(at));
         input = bound;
     }
-    super::parse::bind_tokens(input, ctx, text.len())
+    super::parse::bind_tokens(input, ctx, text.len()).map_err(|mut error| {
+        // Expanded tokens name positions in several texts, not the invocation.
+        if !seen.is_empty() {
+            error.at = None;
+        }
+        error
+    })
 }
