@@ -24,7 +24,7 @@
         nativeBuildInputs = [ postgres ];
         # sinex-sources tests start a throwaway NATS server and make git
         # repositories.
-        nativeCheckInputs = [ pkgs.nats-server pkgs.git ];
+        nativeCheckInputs = [ pkgs.nats-server pkgs.git pkgs.gnutar ];
         preBuild = ''
           cargo run --offline --locked -p xtask -- boundaries
           export PGDATA=$(mktemp -d)

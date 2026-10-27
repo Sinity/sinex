@@ -1,4 +1,5 @@
 //! Additional document roots store file bytes independently of text extraction.
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sinex_model::event_types::documents::DocumentCaptured;
 use sinex_model::{Class, Timestamp};
@@ -22,12 +23,34 @@ pub const SPEC: SourceSpec = SourceSpec {
         sinex_source_core::drivers::export_archive::Framing::Whole,
     ),
 };
+/// Subtrees assigned to another source are excluded before this reader walks.
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct Options {
+    pub excluded_roots: Vec<PathBuf>,
+}
+
+impl Options {
+    fn from_settings(settings: &sinex_source_core::Settings) -> Result<Self, String> {
+        if settings.options.is_null() {
+            Ok(Self::default())
+        } else {
+            serde_json::from_value(settings.options.clone()).map_err(|error| error.to_string())
+        }
+    }
+}
+
 pub struct DocumentParser;
 impl Parser for DocumentParser {
     type Record<'a> = &'a [u8];
     type Carry = ();
     type Payload = DocumentCaptured;
     const READS_BLANK_RECORDS: bool = true;
+
+    fn record_hash(&self, raw: &[u8], context: &RecordContext<'_>) -> [u8; 32] {
+        context.hash_with_path(raw)
+    }
+
     fn parse(
         &self,
         record: &&[u8],
@@ -155,10 +178,18 @@ fn discover(format: &InputFormat, context: &DiscoveryContext) -> Vec<DiscoveredI
             }
             let excluded: Vec<_> = owned.iter().filter(|p| p.starts_with(&resolved)).collect();
             for binding in &mut input.bindings {
-                if !binding.settings.options.is_object() {
-                    binding.settings.options = serde_json::json!({});
-                }
-                binding.settings.options["excluded_roots"] = serde_json::json!(excluded);
+                let mut options = match Options::from_settings(&binding.settings) {
+                    Ok(options) => options,
+                    Err(reason) => {
+                        input.availability = Availability::Unavailable;
+                        input.reason = Some(reason);
+                        continue;
+                    }
+                };
+                options.excluded_roots.extend(excluded.iter().map(|path| path.as_path().to_path_buf()));
+                options.excluded_roots.sort();
+                options.excluded_roots.dedup();
+                binding.settings.options = serde_json::to_value(options).expect("document options serialize");
             }
         }
     }
@@ -188,6 +219,7 @@ pub const FORMAT: InputFormat = InputFormat {
     discover,
     specs: || vec![&SPEC],
     plan: Some(|input, settings| {
+        Options::from_settings(settings)?;
         if input.as_os_str().is_empty() {
             return Err("document acquisition needs a root".into());
         }
@@ -206,14 +238,7 @@ pub const FORMAT: InputFormat = InputFormat {
         }))
     },
     reader: Some(|binding| {
-        let excluded: Vec<PathBuf> = binding
-            .settings
-            .options
-            .get("excluded_roots")
-            .map(|v| serde_json::from_value(v.clone()))
-            .transpose()
-            .map_err(|e| e.to_string())?
-            .unwrap_or_default();
+        let excluded = Options::from_settings(&binding.settings)?.excluded_roots;
         Ok(sinex_source_core::binding::walked_excluding(
             driver(binding.input.clone(), binding.settings.host.clone()),
             excluded,

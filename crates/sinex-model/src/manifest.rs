@@ -69,8 +69,41 @@ pub struct Member {
     pub stream_offset: u64,
     #[serde(default)]
     pub length: u64,
+    /// Captured filesystem metadata, present for files in a directory tar.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub node: Option<FileNode>,
     #[serde(flatten)]
     pub details: Map<String, Value>,
+}
+
+/// Captured filesystem facts, independent of parsing.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FileNode {
+    pub mode: u32,
+    pub uid: u32,
+    pub gid: u32,
+    pub size: u64,
+    pub inode: u64,
+    pub device_id: u64,
+    pub links: u64,
+    pub mtime_ns: String,
+    pub atime_ns: String,
+    pub ctime_ns: String,
+    pub extended_attributes: Vec<ExtendedAttribute>,
+    /// Data ranges of a sparse file; absent for a dense file.
+    pub sparse: Option<Vec<FileExtent>>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ExtendedAttribute {
+    pub name: Vec<u8>,
+    pub value: Vec<u8>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FileExtent {
+    pub offset: u64,
+    pub length: u64,
 }
 
 impl Manifest {

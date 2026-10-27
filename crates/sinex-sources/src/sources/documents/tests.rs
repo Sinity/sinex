@@ -266,3 +266,16 @@ fn native_document_names_remain_distinct_from_utf8_names() {
         1
     );
 }
+
+#[devkit::test]
+fn typed_document_options_preserve_excluded_roots_and_refuse_json_strings() {
+    let root = tempfile::tempdir().unwrap();
+    let mut settings = sinex_source_core::Settings::new("host");
+    settings.options = serde_json::json!({"excluded_roots": [root.path().join("notes")]});
+    let binding = (FORMAT.plan.unwrap())(root.path(), &settings).unwrap().remove(0);
+    assert!((FORMAT.reader.unwrap())(&binding).is_ok());
+    for options in [serde_json::json!("{}"), serde_json::json!({"excluded_roots": "notes"}), serde_json::json!({"capture_documents": true})] {
+        settings.options = options;
+        assert!((FORMAT.plan.unwrap())(root.path(), &settings).is_err());
+    }
+}

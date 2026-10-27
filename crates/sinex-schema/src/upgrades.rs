@@ -4,8 +4,11 @@
 //! directly and matches an upgraded one.
 
 /// The statements of each upgrade, by the version it starts from.
+pub(crate) const LANDED: i32 = 4;
+pub(crate) const PENDING: &[&str] = &["library-scans-and-imported-text"];
+
 pub(crate) fn upgrades() -> Vec<Vec<String>> {
-    vec![
+    let mut numbered = vec![
         // 0 to 1: per-source and per-run counts, filled from the events
         // already stored in one read of them.
         vec![
@@ -43,9 +46,15 @@ pub(crate) fn upgrades() -> Vec<Vec<String>> {
             crate::tables::COVERAGE_RUNS.into(),
         ],
         register_kinds(&["operator.mark", "query.saved"], false),
-        // 4 to 5: library scan identities and preview evidence.
-        library_scans(),
-    ]
+    ];
+    for name in PENDING {
+        numbered.push(match *name {
+            "library-scans-and-imported-text" => library_scans(),
+            _ => unreachable!("declared schema step"),
+        });
+    }
+    numbered
+
 }
 
 /// Register payload schemas and views together. Replacing a kind also updates its registry row.
@@ -103,8 +112,12 @@ fn library_scans() -> Vec<String> {
          END IF; END $$".into(),
     ];
     let names: Vec<_> = sinex_model::event_types::ALL.iter()
-        .filter(|kind| kind.event_type.starts_with("library."))
+        .filter(|kind| source_kind(kind.event_type))
         .map(|kind| kind.event_type).collect();
     statements.extend(register_kinds(&names, true));
     statements
+}
+
+fn source_kind(name: &str) -> bool {
+    ["library.", "document.", "transcript.", "ocr."].iter().any(|prefix| name.starts_with(prefix))
 }

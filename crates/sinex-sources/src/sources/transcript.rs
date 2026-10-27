@@ -9,6 +9,21 @@ use sinex_source_core::registry::{DeclaredSource, Driver, SourceSpec};
 use sinex_source_core::{Parser, RecordContext, RecordError};
 use std::path::Path;
 
+/// Imports read all native fields supplied by the file and run no models.
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Options {}
+
+impl Options {
+    pub(super) fn from_settings(settings: &Settings) -> Result<Self, String> {
+        if settings.options.is_null() {
+            Ok(Self::default())
+        } else {
+            serde_json::from_value(settings.options.clone()).map_err(|error| error.to_string())
+        }
+    }
+}
+
 mod decimal;
 pub(super) mod discovery;
 pub mod framing;

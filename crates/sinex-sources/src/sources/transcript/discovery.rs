@@ -80,6 +80,7 @@ pub(super) fn plan(
     input: &Path,
     settings: &Settings,
 ) -> Result<Vec<Binding>, String> {
+    super::Options::from_settings(settings)?;
     if input.as_os_str().is_empty() {
         return Err("import needs a path".into());
     }

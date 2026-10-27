@@ -26,6 +26,7 @@ these names and no others.
 - **unadmitted bytes**: blobs written before the admission that will cite them. A failed admission is retried from them while the reader holds them; a file a crash leaves with no `core.blobs` row is deleted when the daemon next starts.
 - **held material**: the newest material a reader keeps in memory until its final cursor is admitted, so a failed admission retries the same bytes.
 - **framing**: splitting a material's bytes into records (lines, delimiters, archive members); a **framer** is a source's framing, used alike by its driver, replay and excision.
+- **file node**: captured native file metadata in a PAX tar member index, including ownership, times, extended attributes and sparse extents.
 - **record**: one unit a parser reads from a material (a line, a row, a file, a message).
 - **record location**: `(material, anchor)`, where a record starts; the **anchor** is its byte offset. The query language and references call it the offset.
 - **output index**: which of a record's events an event is, when one record yields several.

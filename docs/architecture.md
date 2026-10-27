@@ -60,7 +60,8 @@ computation engine as the background runner. A shared lock serializes keyed
 computations before reading inputs, so an older read cannot overwrite a
 command's newer outputs. Command runs end on both success and failure.
 
-Schema version 4 adds the scan identity fields and the preview evidence type.
+The named `library-scans-and-imported-text` schema step adds scan identity fields,
+preview evidence and the document, transcript and OCR kinds.
 It upgrades databases without library records. A database containing library
 records is refused before any schema or data changes: its request-created
 IDs and external references need an explicit migration decision.
@@ -114,13 +115,19 @@ revision's records, to align a rewrite. It frames stored parts in chunks and
 keeps only the tail's range metadata, including one oversized record whole.
 
 The SQLite-row reader keeps each row's newest hash and the directory reader
-each file's size, modification time and content hash. Both save this reader
-memory with the cursor at the end of a part: at their first part, once the
-entries stored since the last save reach a quarter of what they remember, and
-at least every 1,000 parts. `raw.reader_memory` keeps only the latest per
-binding, replaced in the cursor's transaction. A restart stops the walk at the
-part the memory was saved at and takes the rest from the memory, so it reads
-at most 1,000 parts, and an unchanged row or file is not stored again.
+each file's size, change time and content hash. Directory captures are PAX tar
+materials. Their typed file nodes preserve native names, ownership, permissions,
+all three file times, extended attributes, access ACLs and sparse data ranges.
+The member index records actual tar body offsets. The drain expands a sparse
+body before parsing, so capture and replay read the same logical file bytes.
+The directory reader records read failures and removals as membership facts.
+
+Both readers save their memory with the cursor at the end of a part: at their
+first part, once the entries stored since the last save reach a quarter of what
+they remember, and at least every 1,000 parts. `raw.reader_memory` keeps only the
+latest per binding, replaced in the cursor's transaction. A restart stops the
+walk at the part the memory was saved at and takes the rest from the memory,
+so it reads at most 1,000 parts, and an unchanged row or file is not stored again.
 
 A binding is either polled alone through `Reader` or read in a pass over a
 stored file shared with every compatible binding of that file (`SharedPass`,
@@ -419,6 +426,11 @@ Every other regular file is captured, including hidden and Markdown files.
 Symbolic-link roots report their resolved boundary. Native file names retain
 their raw bytes alongside their display path. Removed documents have unknown
 size and media type.
+
+Document options are a typed list of excluded roots. Transcript and OCR
+imports have no format options; unknown fields and JSON strings are refused
+when bindings are planned. The source facts and typed options remain in each
+source module until the shared source declaration generates their configuration.
 
 The `transcripts` and `ocr` input roots discover a binding for each matching
 file. Transcript imports accept JSON arrays, Whisper JSON, plain text, WebVTT

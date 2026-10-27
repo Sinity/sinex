@@ -452,3 +452,17 @@ fn an_automatically_discovered_file_has_one_transcript_format() {
     assert_eq!(bindings.len(), 1);
     assert_eq!(bindings[0].parser, TEXT.parser);
 }
+
+#[devkit::test]
+fn imported_text_options_are_typed_and_do_not_enable_models() {
+    let input = tempfile::NamedTempFile::new().unwrap();
+    let mut settings = sinex_source_core::Settings::new("host");
+    for format in [&JSON_FORMAT, &super::super::ocr_import::JSON_FORMAT] {
+        settings.options = serde_json::json!({});
+        assert!((format.plan.unwrap())(input.path(), &settings).is_ok());
+        for options in [serde_json::json!("{}"), serde_json::json!({"run_model": true}), serde_json::json!({"input": "recording"})] {
+            settings.options = options;
+            assert!((format.plan.unwrap())(input.path(), &settings).is_err());
+        }
+    }
+}
