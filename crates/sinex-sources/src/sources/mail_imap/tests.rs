@@ -543,3 +543,43 @@ fn an_unrepresentable_idle_timeout_fails_before_connecting() {
         .expect("invalid timeout");
     assert!(error.to_string().contains("idle timeout"), "{error}");
 }
+
+#[devkit::test]
+fn uid_coordinates_distinguish_equal_messages_and_survive_retries() {
+    use crate::Parser;
+    use sinex_model::EventPayload;
+    const NO_ID: &str = "Subject: identical\r\n\r\nbody\r\n";
+    let imap = mail(
+        server(vec![(4, NO_ID), (7, NO_ID)], 99, false),
+        Some("secret"),
+        None,
+    );
+    let read = || {
+        let material = imap.poll_fresh(&Value::Null).unwrap().material.unwrap();
+        material
+            .records
+            .iter()
+            .map(|(start, end)| {
+                let context = crate::RecordContext {
+                    manifest: &material.manifest,
+                    member: material.manifest.member_at(*start),
+                };
+                super::super::mail::MailParser
+                    .parse(&&material.bytes[*start..*end], &(), &context)
+                    .unwrap()
+                    .0
+                    .remove(0)
+            })
+            .collect::<Vec<_>>()
+    };
+    let first = read();
+    let retry = read();
+    assert_ne!(first[0].native_id, first[1].native_id);
+    assert_eq!(first[0].native_id, retry[0].native_id);
+    assert_eq!(first[1].native_id, retry[1].native_id);
+    assert_eq!(first[0].message_id, None);
+    assert_eq!(
+        first[0].key_kind(),
+        sinex_model::KeyKind::Fields(&["native_id"])
+    );
+}

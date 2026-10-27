@@ -691,7 +691,8 @@ fn a_notification_seen_live_and_in_the_lake_is_one_notification() {
 fn mail(source: &str, id: &str, secs: f64) -> Event {
     captured(
         &MailMessage {
-            message_id: id.into(),
+            message_id: Some(id.into()),
+            native_id: None,
             date: Some(at(secs)),
             from: vec!["a@example.org".into()],
             to: vec![],
@@ -913,4 +914,16 @@ fn capture_program_distinguishes_records_after_ingress_assigns_the_producer_name
         observed_by(&out[0]),
         ["session-example-host", "desktop.clipboard"]
     );
+}
+
+#[devkit::test]
+fn equal_mail_without_message_ids_remains_separate() {
+    let mut first = mail("communication.mbox", "unused", H + 5.0);
+    first.payload["message_id"] = serde_json::Value::Null;
+    let mut second = mail("communication.imap", "unused", H + 5.0);
+    second.payload["message_id"] = serde_json::Value::Null;
+    assert_eq!(first.payload, second.payload);
+    let out = fuse(&MAIL, &[first, second]);
+    assert_eq!(out.len(), 2, "{out:?}");
+    assert!(out.iter().all(|event| event["message_id"].is_null()));
 }

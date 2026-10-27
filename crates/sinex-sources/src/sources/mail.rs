@@ -4,9 +4,10 @@
 //! part of the message.
 //!
 //! The `Message-ID` header is the identity, so the same message in a later
-//! export of the same source is one record; a message without one is identified
-//! by a hash of its raw bytes. An mbox export and a Maildir are two sources (a
-//! Gmail export and a local mail store); the same message in both is combined
+//! export of the same source is one record; a message without one uses its
+//! provider coordinates when present, otherwise its record location. An mbox
+//! export and a Maildir are two sources (a Gmail export and a local mail
+//! store); the same message in both is combined
 //! by fusion, not by admission. Gmail's labels and thread ID are read from its
 //! `X-Gmail-Labels` and `X-GM-THRID` headers. The first plain-text part is kept
 //! as text; attachments are listed with their size, and their bytes stay in the
@@ -14,7 +15,7 @@
 //!
 //! A message deleted from a Maildir is recorded as removed at the source,
 //! where its file was last read: the removed file's marker names only its
-//! path, and a message is identified by its Message-ID, so the parser reads
+//! path, so the parser reads
 //! the marker as nothing. A flag change renames the file, which reads the
 //! message again under its new name and records the old name's reading as
 //! removed; the new reading is the newer one. A message kept in two folders
@@ -36,7 +37,7 @@ pub const MBOX: SourceSpec = SourceSpec {
     purpose: "mail recall and correspondence history",
     class: Class::Open,
     parser: "rfc5322-mail",
-    parser_version: 2,
+    parser_version: 3,
     event_types: &["mail.message"],
     framer: crate::Framer::export(
         crate::drivers::export_archive::frame_mbox,
@@ -51,7 +52,7 @@ pub const MAILDIR: SourceSpec = SourceSpec {
     purpose: "mail recall and correspondence history",
     class: Class::Open,
     parser: "rfc5322-mail",
-    parser_version: 3,
+    parser_version: 4,
     event_types: &["mail.message"],
     framer: crate::Framer::export(
         crate::drivers::export_archive::frame_whole,
@@ -79,7 +80,15 @@ impl Parser for MailParser {
         {
             return Ok((vec![], ()));
         }
-        parse_message(record).map(|m| (vec![m], ()))
+        let mut message = parse_message(record)?;
+        message.native_id = context.member.and_then(|member| {
+            member
+                .details
+                .get("native_id")
+                .and_then(serde_json::Value::as_str)
+                .map(str::to_owned)
+        });
+        Ok((vec![message], ()))
     }
 }
 
@@ -96,7 +105,7 @@ pub fn parse_message(raw: &[u8]) -> Result<MailMessage, RecordError> {
     };
     let message_id = one("Message-ID")
         .map(|id| strip_angles(&id))
-        .unwrap_or_else(|| format!("blake3:{}", blake3::hash(&message).to_hex()));
+        .filter(|id| !id.trim().is_empty());
     let date = one("Date")
         .and_then(|d| mailparse::dateparse(&d).ok())
         // `dateparse` also returns zero for text holding no date. An actual
@@ -133,6 +142,7 @@ pub fn parse_message(raw: &[u8]) -> Result<MailMessage, RecordError> {
     walk(&parsed, &mut text, &mut html, &mut attachments)?;
     Ok(MailMessage {
         message_id,
+        native_id: None,
         date,
         from: addresses("From"),
         to: addresses("To"),
@@ -247,10 +257,55 @@ pub fn mbox_source() -> DeclaredSource<MailParser> {
     }
 }
 
-pub fn maildir_source() -> DeclaredSource<MailParser> {
+pub struct MaildirParser;
+
+impl Parser for MaildirParser {
+    type Record<'a> = &'a [u8];
+    type Carry = ();
+    type Payload = MailMessage;
+
+    fn parse(
+        &self,
+        record: &&[u8],
+        carry: &(),
+        context: &RecordContext<'_>,
+    ) -> Result<(Vec<MailMessage>, ()), RecordError> {
+        let (mut messages, ()) = MailParser.parse(record, carry, context)?;
+        for message in &mut messages {
+            if let (Some(member), Some(root), Some(host)) = (
+                context.member,
+                context.manifest.path.as_deref(),
+                context.manifest.detail("host").as_str(),
+            ) {
+                let path = std::path::Path::new(&member.path);
+                if let (Some(filename), Some(folder)) = (
+                    path.file_name().and_then(|s| s.to_str()),
+                    path.parent().and_then(std::path::Path::parent),
+                ) {
+                    let filename = filename
+                        .rsplit_once(":2,")
+                        .map_or(filename, |(name, _)| name);
+                    message.native_id = Some(
+                        serde_json::json!([
+                            "maildir",
+                            host,
+                            root,
+                            folder.to_string_lossy(),
+                            filename
+                        ])
+                        .to_string(),
+                    );
+                }
+            }
+        }
+        Ok((messages, ()))
+    }
+}
+
+pub fn maildir_source() -> DeclaredSource<MaildirParser> {
     DeclaredSource {
         spec: MAILDIR,
-        parser: MailParser,
+        parser: MaildirParser,
     }
 }
 

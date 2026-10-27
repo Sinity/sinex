@@ -153,7 +153,7 @@ pub struct NotificationFused {
 )]
 pub struct MailFused {
     pub record: String,
-    pub message_id: String,
+    pub message_id: Option<String>,
     pub subject: Option<String>,
     pub from: Vec<String>,
     pub thread_id: Option<String>,

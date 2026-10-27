@@ -25,7 +25,8 @@
           "text": "body with a stray ÿ byte\n",
           "html_only": false,
           "attachments": [],
-          "size": 132
+          "size": 132,
+          "native_id": null
         }
       }
     ]

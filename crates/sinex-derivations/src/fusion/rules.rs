@@ -461,10 +461,14 @@ pub static NOTIFICATIONS: FusionRule = FusionRule {
 
 fn mail(event: &Event) -> Option<FusionRecord> {
     let p = &event.payload;
-    let message_id = text(p, "/message_id")?;
+    let message_id = text(p, "/message_id").filter(|id| !id.trim().is_empty());
+    let identity = match message_id {
+        Some(id) => format!("message\0{id}"),
+        None => format!("record\0{}", crate::derived_event::record_identity(event)),
+    };
     fusion_record(
         event,
-        message_id.to_owned(),
+        identity,
         None,
         fields([
             ("message_id", Some(json!(message_id))),
@@ -487,7 +491,7 @@ const fn mail_from(source: &'static str) -> FusionInput {
 
 pub static MAIL: FusionRule = FusionRule {
     derivation: "mail.fusion",
-    version: 1,
+    version: 2,
     output: "mail.fused",
     fusion_inputs: &[
         mail_from("communication.imap"),

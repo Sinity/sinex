@@ -44,7 +44,7 @@ pub const SPEC: SourceSpec = SourceSpec {
     purpose: "mail recall and correspondence history",
     class: Class::Open,
     parser: "rfc5322-mail",
-    parser_version: 2,
+    parser_version: 3,
     event_types: &["mail.message"],
     framer: crate::Framer::export(
         crate::drivers::export_archive::frame_whole,
@@ -424,8 +424,20 @@ impl ImapMail {
             records.push((start, bytes.len()));
             uids.push(*uid);
         }
+        let members: Vec<_> = uids
+            .iter()
+            .zip(&records)
+            .map(|(uid, (start, end))| {
+                json!({
+                    "path": uid.to_string(), "stream_offset": start, "length": end - start,
+                    "native_id": uid_validity.map(|validity| json!([
+                        "imap", self.input().locator, validity, uid
+                    ]).to_string()),
+                })
+            })
+            .collect();
         let manifest = sinex_model::Manifest::from_json(json!({
-            "media_type": "message/rfc822",
+            "media_type": "message/rfc822", "members": members,
             "mailbox": self.config.mailbox, "uid_validity": uid_validity, "uids": uids,
             "expunged": expunged,
             "records": records, "read_at_ns": i64::try_from(now.unix_ns()).unwrap_or(i64::MAX),

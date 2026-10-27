@@ -27,7 +27,8 @@
           "text": "hello\nFrom the start of a quoted line\n\n",
           "html_only": false,
           "attachments": [],
-          "size": 175
+          "size": 175,
+          "native_id": null
         }
       }
     ]
@@ -60,7 +61,8 @@
           "text": "reply\n",
           "html_only": false,
           "attachments": [],
-          "size": 175
+          "size": 175,
+          "native_id": null
         }
       }
     ]

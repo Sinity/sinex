@@ -31,7 +31,7 @@ fn reads_headers_labels_text_and_attachments() {
         .parse(&MESSAGE, &(), &crate::RecordContext::none())
         .unwrap();
     let m = &m[0];
-    assert_eq!(m.message_id, "abc@example.com");
+    assert_eq!(m.message_id.as_deref(), Some("abc@example.com"));
     assert_eq!(m.subject.as_deref(), Some("Zażółć"));
     assert_eq!(m.date, Timestamp::from_unix_secs(1_709_629_200).ok());
     assert_eq!(m.from, vec!["Ann Example <ann@example.com>"]);
@@ -48,7 +48,7 @@ fn reads_headers_labels_text_and_attachments() {
 }
 
 #[devkit::test]
-fn a_message_without_id_or_date_is_hashed_and_undated() {
+fn a_message_without_id_or_date_keeps_both_unknown() {
     let (m, ()) = MailParser
         .parse(
             &&b"Subject: x\n\nbody\n"[..],
@@ -56,7 +56,12 @@ fn a_message_without_id_or_date_is_hashed_and_undated() {
             &crate::RecordContext::none(),
         )
         .unwrap();
-    assert!(m[0].message_id.starts_with("blake3:"));
+    assert_eq!(m[0].message_id, None);
+    assert_eq!(m[0].native_id, None);
+    assert_eq!(
+        sinex_model::EventPayload::key_kind(&m[0]),
+        sinex_model::KeyKind::Location
+    );
     assert_eq!(m[0].date, None);
 }
 
@@ -94,7 +99,7 @@ body\n";
     let (records, _) = crate::drivers::export_archive::frame_mbox(mbox);
     assert_eq!(records.len(), 2);
     let first = parse(&mbox[records[0].0..records[0].1]);
-    assert_eq!(first.message_id, "one@x");
+    assert_eq!(first.message_id.as_deref(), Some("one@x"));
     assert_eq!(
         first.text.as_deref().map(str::trim_end),
         Some("From the start\n>From twice quoted"),
@@ -211,7 +216,7 @@ fn a_deleted_maildir_message_is_removed_where_it_was_read() {
 #[devkit::test]
 fn blind_copy_recipients_survive_a_non_utf8_body() {
     let mail = parse_message(b"Message-ID: <synthetic@example.org>\r\nFrom: sender@example.org\r\nBcc: Hidden <hidden@example.org>\r\nContent-Type: text/plain; charset=iso-8859-1\r\n\r\nCaf\xe9\r\n").unwrap();
-    assert_eq!(mail.message_id, "synthetic@example.org");
+    assert_eq!(mail.message_id.as_deref(), Some("synthetic@example.org"));
     assert_eq!(mail.bcc, ["Hidden <hidden@example.org>"]);
     assert!(mail.text.as_deref().unwrap().contains("Caf\u{e9}"));
 }
@@ -226,4 +231,61 @@ fn the_epoch_is_a_known_mail_date() {
             .date
             .is_none()
     );
+}
+
+#[devkit::test]
+fn maildir_coordinates_distinguish_equal_messages_and_survive_flag_changes() {
+    use sinex_model::{EventPayload, Manifest};
+    let raw = &b"Subject: identical\n\nbody\n"[..];
+    let read = |host: &str, root: &str, path: &str| {
+        let manifest = Manifest::from_json(serde_json::json!({
+            "host": host, "path": root,
+            "members": [{"path": path, "stream_offset": 0, "length": raw.len()}],
+        }));
+        let context = RecordContext {
+            manifest: &manifest,
+            member: manifest.member_at(0),
+        };
+        MaildirParser
+            .parse(&raw, &(), &context)
+            .unwrap()
+            .0
+            .remove(0)
+    };
+    let original = read("h", "/mail", "INBOX/new/one");
+    let renamed = read("h", "/mail", "INBOX/cur/one:2,RS");
+    assert_eq!(original.native_id, renamed.native_id);
+    assert_eq!(
+        original.key_kind(),
+        sinex_model::KeyKind::Fields(&["native_id"])
+    );
+    for other in [
+        read("h", "/mail", "INBOX/new/two"),
+        read("h", "/mail", "Archive/new/one"),
+        read("h", "/other", "INBOX/new/one"),
+        read("other", "/mail", "INBOX/new/one"),
+    ] {
+        assert_ne!(original.native_id, other.native_id);
+        assert_eq!(original.text, other.text);
+        assert_eq!(other.message_id, None);
+    }
+    let native = read("h", "/mail", "new/one");
+    assert!(
+        native.native_id.is_some(),
+        "top-level Maildir has an empty folder name"
+    );
+}
+
+#[devkit::test]
+fn equal_mbox_messages_without_ids_use_their_own_locations() {
+    use sinex_model::EventPayload;
+    let message = b"From a@x Mon Jan  1 00:00:00 2024\nSubject: x\n\nbody\n";
+    let mbox = [message.as_slice(), message.as_slice()].concat();
+    let (records, _) = crate::drivers::export_archive::frame_mbox(&mbox);
+    assert_eq!(records.len(), 2);
+    for (start, end) in records {
+        let parsed = parse(&mbox[start..end]);
+        assert_eq!(parsed.message_id, None);
+        assert_eq!(parsed.key_kind(), sinex_model::KeyKind::Location);
+    }
 }
