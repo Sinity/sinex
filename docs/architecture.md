@@ -1,7 +1,9 @@
 # Architecture
 
 How the crates divide the work today. [vocabulary.md](vocabulary.md)
-defines the terms; planned work is in Beads.
+defines the terms. [sources.md](sources.md) describes stored formats,
+[query.md](query.md) reading evidence, and [library.md](library.md) library
+records. Planned work is in Beads.
 
 ## Reading sources
 
@@ -283,6 +285,26 @@ share one paged query, and a key is computed as soon as the pages pass its
 end, so the runner holds a page and the keys still open, not every key's
 inputs. A key's own inputs are held whole, so a derivation over a dense series
 keys by hour.
+
+## Identity and replay
+
+An event ID identifies one reading, not its source record. A record location
+is its material and byte offset; an output index distinguishes events one
+record produces. An equivalence key recognizes a source record seen again
+in another material. [Event construction](../crates/sinex-model/src/event.rs)
+and [admission](../crates/sinex-store/src/admission.rs) own these distinctions.
+Equal bytes can back different materials, and sources with no shared key
+remain separate until a fusion rule joins their observations.
+
+[Replay](../crates/sinexd/src/replay.rs) reads stored bytes with current
+parsers and rules. It starts at the first part so parser carry is correct,
+but replaces only readings in scope. One part sequence is one transaction:
+it archives the live readings and their derived descendants and admits the
+new readings together. New readings have new event IDs; source locations
+remain the same. A failure rolls back the sequence. Completed sequences are
+recorded so a resumed operation skips them. Compare mode runs the same work
+and rolls it back after reading the difference. Hidden records remain hidden.
+[Replay tests](../crates/sinexd/src/replay/tests.rs) exercise these boundaries.
 
 ## Interfaces
 
