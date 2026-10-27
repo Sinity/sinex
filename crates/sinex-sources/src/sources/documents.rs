@@ -8,8 +8,6 @@ use sinex_source_core::registry::{DeclaredSource, Driver, SourceSpec};
 use sinex_source_core::{Parser, RecordContext, RecordError};
 use std::path::{Path, PathBuf};
 
-
-
 pub const SPEC: SourceSpec = SourceSpec {
     name: "knowledge.documents",
     driver: Driver::DirSnapshot,
@@ -39,6 +37,9 @@ impl Parser for DocumentParser {
         let member = context
             .member
             .ok_or_else(|| RecordError::new("document needs its directory member"))?;
+        if let Some(reason) = member.details.get("read_error").and_then(Value::as_str) {
+            return Err(RecordError::new(format!("document could not be read: {reason}")));
+        }
         let time = |key: &str| -> Result<Option<Timestamp>, RecordError> {
             member
                 .details
@@ -81,7 +82,11 @@ impl Parser for DocumentParser {
                 size: removed_at.is_none().then_some(record.len() as u64),
                 modified_at: time("mtime_ns")?,
                 media_type: removed_at.is_none().then(|| media_type(record).into()),
-                native_path_bytes: member.details.get("native_path_bytes").and_then(Value::as_str).map(str::to_owned),
+                native_path_bytes: member
+                    .details
+                    .get("native_path_bytes")
+                    .and_then(Value::as_str)
+                    .map(str::to_owned),
                 content,
                 removed_at,
             }],
@@ -105,10 +110,17 @@ fn media_type(bytes: &[u8]) -> &'static str {
     }
 }
 pub fn driver(root: PathBuf, host: String) -> DirSnapshot {
-    DirSnapshot { root, host, select: |_| true, part_bytes: 64 << 20 }
+    DirSnapshot {
+        root,
+        host,
+        select: |_| true,
+        part_bytes: 64 << 20,
+    }
 }
 
-use sinex_source_core::discovery::{DiscoverySpec, Location, Owner, DiscoveryContext, DiscoveredInput, Availability};
+use sinex_source_core::discovery::{
+    Availability, DiscoveredInput, DiscoveryContext, DiscoverySpec, Location, Owner,
+};
 
 fn discover(format: &InputFormat, context: &DiscoveryContext) -> Vec<DiscoveredInput> {
     let mut found = crate::discovery::discover_format(format, context);
@@ -130,11 +142,16 @@ fn discover(format: &InputFormat, context: &DiscoveryContext) -> Vec<DiscoveredI
                 continue;
             }
             if std::fs::symlink_metadata(path).is_ok_and(|m| m.file_type().is_symlink()) {
-                input.reason = Some(format!("symbolic-link root resolves to {}", resolved.display()));
+                input.reason = Some(format!(
+                    "symbolic-link root resolves to {}",
+                    resolved.display()
+                ));
             }
             let excluded: Vec<_> = owned.iter().filter(|p| p.starts_with(&resolved)).collect();
             for binding in &mut input.bindings {
-                if !binding.settings.options.is_object() { binding.settings.options = serde_json::json!({}); }
+                if !binding.settings.options.is_object() {
+                    binding.settings.options = serde_json::json!({});
+                }
                 binding.settings.options["excluded_roots"] = serde_json::json!(excluded);
             }
         }
@@ -146,22 +163,55 @@ pub const FORMAT: InputFormat = InputFormat {
     name: "documents",
     discovery: DiscoverySpec {
         owner: Owner::System,
-        locations: &[Location { root: "declared", path: "documents" }, Location { root: "declared", path: "downloads" }],
-        capabilities: &[], credentials: &[], request_only: false, requests: &[], streams: &[],
+        locations: &[
+            Location {
+                root: "declared",
+                path: "documents",
+            },
+            Location {
+                root: "declared",
+                path: "downloads",
+            },
+        ],
+        capabilities: &[],
+        credentials: &[],
+        request_only: false,
+        requests: &[],
+        streams: &[],
     },
     discover,
     specs: || vec![&SPEC],
     plan: Some(|input, settings| {
-        if input.as_os_str().is_empty() { return Err("document acquisition needs a root".into()); }
+        if input.as_os_str().is_empty() {
+            return Err("document acquisition needs a root".into());
+        }
         let input = std::path::absolute(input).map_err(|e| e.to_string())?;
-        if input.is_file() { return Err("document acquisition needs a directory root".into()); }
-        Ok(vec![Binding::of(&SPEC, &input, settings.clone()).named("directory")])
+        if input.is_file() {
+            return Err("document acquisition needs a directory root".into());
+        }
+        Ok(vec![
+            Binding::of(&SPEC, &input, settings.clone()).named("directory"),
+        ])
     }),
-    source: |_| Ok(Box::new(DeclaredSource { spec: SPEC, parser: DocumentParser })),
+    source: |_| {
+        Ok(Box::new(DeclaredSource {
+            spec: SPEC,
+            parser: DocumentParser,
+        }))
+    },
     reader: Some(|binding| {
-        let excluded: Vec<PathBuf> = binding.settings.options.get("excluded_roots")
-            .map(|v| serde_json::from_value(v.clone())).transpose().map_err(|e| e.to_string())?.unwrap_or_default();
-        Ok(sinex_source_core::binding::walked_excluding(driver(binding.input.clone(), binding.settings.host.clone()), excluded))
+        let excluded: Vec<PathBuf> = binding
+            .settings
+            .options
+            .get("excluded_roots")
+            .map(|v| serde_json::from_value(v.clone()))
+            .transpose()
+            .map_err(|e| e.to_string())?
+            .unwrap_or_default();
+        Ok(sinex_source_core::binding::walked_excluding(
+            driver(binding.input.clone(), binding.settings.host.clone()),
+            excluded,
+        ))
     }),
     capture: None,
 };

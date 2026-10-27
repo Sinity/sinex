@@ -1,10 +1,10 @@
 //! Captured documents and hints derived from library filenames.
-use crate::{Timestamp};
+use crate::Timestamp;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
-#[event(type = "document.captured", key = ["host", "root", "path"], replace = newer,
+#[event(type = "document.captured", key = ["host", "root", "path", "native_path_bytes"], replace = newer,
     time = modified_at, quality = file_mtime, removed_when = removed_at)]
 pub struct DocumentCaptured {
     pub host: String,

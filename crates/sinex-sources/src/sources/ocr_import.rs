@@ -271,7 +271,7 @@ macro_rules! format {
     ($name:ident, $spec:ident, $format:ident, $framing:expr) => {
         pub const $name: InputFormat = InputFormat {
             name: $spec.parser,
-            discovery: super::transcript::discovery::spec("ocr"),
+            discovery: super::transcript::discovery::spec(false),
             discover: super::transcript::discovery::discover,
             specs: || vec![&$spec],
             plan: Some(|p, s| super::transcript::plan(&$spec, p, s)),
@@ -290,17 +290,29 @@ impl Parser for OcrParser {
     type Record<'a> = &'a [u8];
     type Carry = Carry;
     type Payload = OcrText;
-    fn parse(&self, record: &&[u8], carry: &Carry, context: &RecordContext<'_>) -> Result<(Vec<OcrText>, Carry), RecordError> {
+    fn parse(
+        &self,
+        record: &&[u8],
+        carry: &Carry,
+        context: &RecordContext<'_>,
+    ) -> Result<(Vec<OcrText>, Carry), RecordError> {
         if !matches!(self.format, Format::Json) {
             return self.parse_item(record, carry, context);
         }
         let (records, defaults) = super::transcript::json_records(record, true)?;
         let mut manifest = context.manifest.clone();
         manifest.details.insert("file_metadata".into(), defaults);
-        let context = RecordContext { manifest: &manifest, member: context.member };
+        let context = RecordContext {
+            manifest: &manifest,
+            member: context.member,
+        };
         let mut output = Vec::with_capacity(records.len());
         for (index, record) in records.iter().enumerate() {
-            let carry = Carry { next: index as u64, member: Carry::default().at(&context).member, header: None };
+            let carry = Carry {
+                next: index as u64,
+                member: Carry::default().at(&context).member,
+                header: None,
+            };
             output.extend(self.parse_item(&record.as_slice(), &carry, &context)?.0);
         }
         Ok((output, carry.clone()))

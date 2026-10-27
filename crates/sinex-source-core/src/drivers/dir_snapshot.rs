@@ -93,7 +93,12 @@ impl DirSnapshot {
         self.poll_excluding(cursor, state, &[])
     }
 
-    pub fn poll_excluding(&self, cursor: &Value, state: &mut DirState, excluded: &[PathBuf]) -> Result<Acquired, DriverError> {
+    pub fn poll_excluding(
+        &self,
+        cursor: &Value,
+        state: &mut DirState,
+        excluded: &[PathBuf],
+    ) -> Result<Acquired, DriverError> {
         let previous: Cursor = if cursor.is_null() {
             Cursor::default()
         } else {
@@ -378,7 +383,13 @@ fn walk(
         let entry = entry.map_err(io)?;
         let kind = entry.file_type().map_err(io)?;
         let path = entry.path();
-        if excluded.iter().any(|root| std::fs::canonicalize(&path).unwrap_or_else(|_| path.clone()).starts_with(root)) { continue; }
+        if excluded.iter().any(|root| {
+            std::fs::canonicalize(&path)
+                .unwrap_or_else(|_| path.clone())
+                .starts_with(root)
+        }) {
+            continue;
+        }
         if kind.is_dir() {
             walk(root, &path, select, excluded, found)?;
         } else if kind.is_file() {

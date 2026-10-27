@@ -1,16 +1,18 @@
 use super::*;
 use sinex_model::{EventPayload, KeyKind, Manifest};
-fn read(
-    format: Format,
-    text: &[u8],
-    carry: &Carry,
-) -> Result<(Vec<OcrText>, Carry), RecordError> {
+fn read(format: Format, text: &[u8], carry: &Carry) -> Result<(Vec<OcrText>, Carry), RecordError> {
     let manifest = Manifest::from_json(
         serde_json::json!({"path":"example.tsv","file_metadata":{"engine":"example-engine","external_run":"example-run"}}),
     );
     let text = if matches!(format, Format::Json) {
-        format!("{{\"segments\":[{}],\"engine\":\"example-engine\",\"external_run\":\"example-run\"}}", std::str::from_utf8(text).unwrap_or("invalid")).into_bytes()
-    } else { text.to_vec() };
+        format!(
+            "{{\"segments\":[{}],\"engine\":\"example-engine\",\"external_run\":\"example-run\"}}",
+            std::str::from_utf8(text).unwrap_or("invalid")
+        )
+        .into_bytes()
+    } else {
+        text.to_vec()
+    };
     OcrParser {
         input: "example".into(),
         format,
@@ -78,4 +80,3 @@ fn invalid_ocr_is_diagnosed_and_missing_confidence_stays_unknown() {
     let (rows, _) = read(Format::Text, "Żółw\r\n".as_bytes(), &Carry::default()).unwrap();
     assert_eq!(rows[0].text, "Żółw");
 }
-

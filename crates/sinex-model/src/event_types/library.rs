@@ -359,4 +359,3 @@ pub struct FilenameHints {
     pub external_id_hint: Option<String>,
     pub rule_version: u32,
 }
-

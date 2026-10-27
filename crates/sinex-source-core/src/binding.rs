@@ -491,7 +491,8 @@ impl Reader for Walked {
     }
 
     fn poll(&mut self, cursor: &Value) -> Result<Acquired, DriverError> {
-        self.driver.poll_excluding(cursor, &mut self.state, &self.excluded)
+        self.driver
+            .poll_excluding(cursor, &mut self.state, &self.excluded)
     }
 }
 

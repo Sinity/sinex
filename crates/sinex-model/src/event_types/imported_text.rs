@@ -67,8 +67,7 @@ pub struct OcrText {
 
 impl EventPayload for TranscriptCue {
     const EVENT_TYPE: &'static str = "transcript.cue";
-    const KEY: KeyKind =
-        KeyKind::Fields(&["input", "external_run", "model", "provider_id"]);
+    const KEY: KeyKind = KeyKind::Fields(&["input", "external_run", "model", "provider_id"]);
     const REPLACE: ReplaceRule = ReplaceRule::ReplaceWhenNewer;
     fn key_kind(&self) -> KeyKind {
         if self.provider_id_stable && self.provider_id.is_some() {
@@ -87,8 +86,7 @@ impl EventPayload for TranscriptCue {
 
 impl EventPayload for OcrText {
     const EVENT_TYPE: &'static str = "ocr.text";
-    const KEY: KeyKind =
-        KeyKind::Fields(&["input", "external_run", "engine", "provider_id"]);
+    const KEY: KeyKind = KeyKind::Fields(&["input", "external_run", "engine", "provider_id"]);
     const REPLACE: ReplaceRule = ReplaceRule::ReplaceWhenNewer;
     fn key_kind(&self) -> KeyKind {
         if self.provider_id_stable && self.provider_id.is_some() {

@@ -9,8 +9,8 @@ use sinex_source_core::registry::{DeclaredSource, Driver, SourceSpec};
 use sinex_source_core::{Parser, RecordContext, RecordError};
 use std::path::Path;
 
-pub mod framing;
 pub(super) mod discovery;
+pub mod framing;
 
 pub const CUE_FRAMING: Framing = Framing::Custom {
     name: "cue-blocks",
@@ -121,12 +121,23 @@ impl TranscriptParser {
         };
         match self.format {
             Format::Json | Format::Whisper => {
-                let (start, end) = if self.format == Format::Whisper { ("start", "end") } else { ("start_ms", "end_ms") };
-                let raw: std::collections::HashMap<String, &serde_json::value::RawValue> = serde_json::from_str(text).map_err(|e| RecordError::new(format!("transcript object: {e}")))?;
+                let (start, end) = if self.format == Format::Whisper {
+                    ("start", "end")
+                } else {
+                    ("start_ms", "end_ms")
+                };
+                let raw: std::collections::HashMap<String, &serde_json::value::RawValue> =
+                    serde_json::from_str(text)
+                        .map_err(|e| RecordError::new(format!("transcript object: {e}")))?;
                 let mut object = Map::new();
                 for (key, value) in &raw {
                     if key != start && key != end {
-                        object.insert(key.clone(), serde_json::from_str(value.get()).map_err(|e| RecordError::new(format!("transcript field {key}: {e}")))?);
+                        object.insert(
+                            key.clone(),
+                            serde_json::from_str(value.get()).map_err(|e| {
+                                RecordError::new(format!("transcript field {key}: {e}"))
+                            })?,
+                        );
                     }
                 }
                 let defaults = context.manifest.detail("file_metadata").as_object();
@@ -406,7 +417,11 @@ pub fn archive(binding: &Binding, framing: Framing) -> sinex_source_core::bindin
         part_bytes: PART_BYTES,
     })
 }
-pub(super) fn plan(spec: &SourceSpec, input: &Path, settings: &Settings) -> Result<Vec<Binding>, String> {
+pub(super) fn plan(
+    spec: &SourceSpec,
+    input: &Path,
+    settings: &Settings,
+) -> Result<Vec<Binding>, String> {
     discovery::plan(spec, input, settings)
 }
 fn source(
@@ -426,7 +441,7 @@ macro_rules! format {
     ($name:ident, $spec:ident, $format:ident, $framing:expr) => {
         pub const $name: InputFormat = InputFormat {
             name: $spec.parser,
-            discovery: discovery::spec("transcripts"),
+            discovery: discovery::spec(true),
             discover: discovery::discover,
             specs: || vec![&$spec],
             plan: Some(|p, s| plan(&$spec, p, s)),
@@ -450,17 +465,29 @@ impl Parser for TranscriptParser {
     type Carry = Carry;
     type Payload = TranscriptCue;
 
-    fn parse(&self, record: &&[u8], carry: &Carry, context: &RecordContext<'_>) -> Result<(Vec<TranscriptCue>, Carry), RecordError> {
+    fn parse(
+        &self,
+        record: &&[u8],
+        carry: &Carry,
+        context: &RecordContext<'_>,
+    ) -> Result<(Vec<TranscriptCue>, Carry), RecordError> {
         if !matches!(self.format, Format::Json | Format::Whisper) {
             return self.parse_item(record, carry, context);
         }
         let (records, defaults) = json_records(record, self.format == Format::Whisper)?;
         let mut manifest = context.manifest.clone();
         manifest.details.insert("file_metadata".into(), defaults);
-        let context = RecordContext { manifest: &manifest, member: context.member };
+        let context = RecordContext {
+            manifest: &manifest,
+            member: context.member,
+        };
         let mut output = Vec::with_capacity(records.len());
         for (index, record) in records.iter().enumerate() {
-            let carry = Carry { next: index as u64, member: Carry::default().at(&context).member, header: None };
+            let carry = Carry {
+                next: index as u64,
+                member: Carry::default().at(&context).member,
+                header: None,
+            };
             output.extend(self.parse_item(&record.as_slice(), &carry, &context)?.0);
         }
         Ok((output, carry.clone()))
@@ -468,27 +495,46 @@ impl Parser for TranscriptParser {
 }
 
 /// JSON members remain one record, so output indexes and defaults replay together.
-pub(super) fn json_records(bytes: &[u8], nested: bool) -> Result<(Vec<Vec<u8>>, Value), RecordError> {
+pub(super) fn json_records(
+    bytes: &[u8],
+    nested: bool,
+) -> Result<(Vec<Vec<u8>>, Value), RecordError> {
     use serde_json::value::RawValue;
     let error = |e| RecordError::new(format!("imported JSON: {e}"));
     let (rows, defaults) = if nested {
         let mut object: Map<String, Value> = Map::new();
-        let mut raw: std::collections::BTreeMap<String, Box<RawValue>> = serde_json::from_slice(bytes).map_err(error)?;
-        let rows = raw.remove("segments").ok_or_else(|| RecordError::new("imported JSON needs segments"))?;
+        let mut raw: std::collections::BTreeMap<String, Box<RawValue>> =
+            serde_json::from_slice(bytes).map_err(error)?;
+        let rows = raw
+            .remove("segments")
+            .ok_or_else(|| RecordError::new("imported JSON needs segments"))?;
         for (key, value) in raw {
             object.insert(key, serde_json::from_str(value.get()).map_err(error)?);
         }
-        (serde_json::from_str::<Vec<Box<RawValue>>>(rows.get()).map_err(error)?, Value::Object(object))
+        (
+            serde_json::from_str::<Vec<Box<RawValue>>>(rows.get()).map_err(error)?,
+            Value::Object(object),
+        )
     } else {
-        (serde_json::from_slice::<Vec<Box<RawValue>>>(bytes).map_err(error)?, Value::Null)
+        (
+            serde_json::from_slice::<Vec<Box<RawValue>>>(bytes).map_err(error)?,
+            Value::Null,
+        )
     };
-    Ok((rows.into_iter().map(|row| row.get().as_bytes().to_vec()).collect(), defaults))
+    Ok((
+        rows.into_iter()
+            .map(|row| row.get().as_bytes().to_vec())
+            .collect(),
+        defaults,
+    ))
 }
 
 fn decimal_text(value: Option<&str>) -> Result<Option<String>, RecordError> {
     match value {
         None | Some("null") => Ok(None),
-        Some(text) if text.as_bytes().first().is_some_and(u8::is_ascii_digit) => Ok(Some(text.into())),
+        Some(text) if text.as_bytes().first().is_some_and(u8::is_ascii_digit) => {
+            Ok(Some(text.into()))
+        }
         _ => Err(RecordError::new("offset must be nonnegative")),
     }
 }

@@ -80,6 +80,5 @@ fn isolated(text: &str, length: usize, accept: impl Fn(u8) -> bool) -> Option<&s
     None
 }
 
-
 #[cfg(test)]
 mod tests;

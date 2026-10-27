@@ -190,26 +190,66 @@ impl sinex_source_core::drain::RecordRead for Bytes {
 #[devkit::test]
 fn document_discovery_excludes_owned_subtrees_and_reports_symlink_roots() {
     use sinex_source_core::discovery::{DiscoveryContext, SourceConfig};
-    let temp=tempfile::tempdir().unwrap();let root=temp.path().join("documents");let notes=root.join("notes");let library=root.join("library");
-    std::fs::create_dir_all(&notes).unwrap();std::fs::create_dir(&library).unwrap();
-    std::fs::write(root.join(".hidden.md"),b"hidden").unwrap();std::fs::write(root.join("readme.markdown"),b"document").unwrap();std::fs::write(notes.join("note.md"),b"owned").unwrap();std::fs::write(library.join("book.pdf"),b"owned").unwrap();
-    let alias=temp.path().join("alias");std::os::unix::fs::symlink(&root,&alias).unwrap();
-    let mut context=DiscoveryContext {host:"example".into(),..Default::default()};
-    context.input_roots.insert("documents".into(),vec![alias]);context.input_roots.insert("notes".into(),vec![notes]);
-    context.sources.insert("library.scan".into(),SourceConfig {paths:vec![library.display().to_string()],..Default::default()});
-    let found=discover(&FORMAT,&context);let input=found.iter().find(|i| !i.bindings.is_empty()).unwrap();
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path().join("documents");
+    let notes = root.join("notes");
+    let library = root.join("library");
+    std::fs::create_dir_all(&notes).unwrap();
+    std::fs::create_dir(&library).unwrap();
+    std::fs::write(root.join(".hidden.md"), b"hidden").unwrap();
+    std::fs::write(root.join("readme.markdown"), b"document").unwrap();
+    std::fs::write(notes.join("note.md"), b"owned").unwrap();
+    std::fs::write(library.join("book.pdf"), b"owned").unwrap();
+    let alias = temp.path().join("alias");
+    std::os::unix::fs::symlink(&root, &alias).unwrap();
+    let mut context = DiscoveryContext {
+        host: "example".into(),
+        ..Default::default()
+    };
+    context.input_roots.insert("documents".into(), vec![alias]);
+    context.input_roots.insert("notes".into(), vec![notes]);
+    context.sources.insert(
+        "library.scan".into(),
+        SourceConfig {
+            paths: vec![library.display().to_string()],
+            ..Default::default()
+        },
+    );
+    let found = discover(&FORMAT, &context);
+    let input = found.iter().find(|i| !i.bindings.is_empty()).unwrap();
     assert!(input.reason.as_ref().unwrap().contains("symbolic-link"));
-    let sinex_source_core::Reading::Polled(mut reader)=(FORMAT.reader.unwrap())(&input.bindings[0]).unwrap() else {panic!()};
-    let events=parse(&reader.poll(&Value::Null).unwrap());
-    assert_eq!(events.len(),2);assert!(events.iter().any(|e|e.payload["path"]==".hidden.md"));
+    let sinex_source_core::Reading::Polled(mut reader) =
+        (FORMAT.reader.unwrap())(&input.bindings[0]).unwrap()
+    else {
+        panic!()
+    };
+    let events = parse(&reader.poll(&Value::Null).unwrap());
+    assert_eq!(events.len(), 2);
+    assert!(events.iter().any(|e| e.payload["path"] == ".hidden.md"));
 }
 #[devkit::test]
 fn native_document_names_remain_distinct_from_utf8_names() {
     use std::os::unix::ffi::OsStringExt;
-    let temp=tempfile::tempdir().unwrap();
-    std::fs::write(temp.path().join(std::ffi::OsString::from_vec(b"file-\xff.bin".to_vec())),b"native").unwrap();
-    std::fs::write(temp.path().join("file-%FF.bin"),b"utf8").unwrap();
-    let events=parse(&driver(temp.path().into(),"example".into()).poll(&Value::Null,&mut DirState::default()).unwrap());
-    assert_eq!(events.len(),2);
-    assert_eq!(events.iter().filter(|e|e.payload["native_path_bytes"].is_string()).count(),1);
+    let temp = tempfile::tempdir().unwrap();
+    std::fs::write(
+        temp.path()
+            .join(std::ffi::OsString::from_vec(b"file-\xff.bin".to_vec())),
+        b"native",
+    )
+    .unwrap();
+    std::fs::write(temp.path().join("file-%FF.bin"), b"utf8").unwrap();
+    let events = parse(
+        &driver(temp.path().into(), "example".into())
+            .poll(&Value::Null, &mut DirState::default())
+            .unwrap(),
+    );
+    assert_eq!(events.len(), 2);
+    assert_ne!(events[0].equivalence_key, events[1].equivalence_key);
+    assert_eq!(
+        events
+            .iter()
+            .filter(|e| e.payload["native_path_bytes"].is_string())
+            .count(),
+        1
+    );
 }

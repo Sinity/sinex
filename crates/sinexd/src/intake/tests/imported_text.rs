@@ -64,13 +64,7 @@ async fn binary_document_is_admitted_guarded_and_replayed_without_the_root(
     let mut ctx = ReaderContext::open(&db.url(None), &dir.path().join("store"))
         .await
         .unwrap();
-    let binding = ingest(
-        &mut ctx,
-        &documents::FORMAT,
-        &root,
-        json!({}),
-    )
-    .await;
+    let binding = ingest(&mut ctx, &documents::FORMAT, &root, json!({})).await;
     let before = live(&mut ctx, "document.captured").await;
     assert_eq!(before.len(), 1);
     assert_eq!(
@@ -107,34 +101,21 @@ async fn imported_json_metadata_survives_writer_restart_and_replay(db: devkit::p
     std::fs::write(&path,br#"{"segments":[{"id":0,"text":"same","start":0,"end":1},{"id":1,"text":"same","start":2,"end":3}],"language":"pl","model":"example-model","external_run":"example-run"}"#).unwrap();
     let store = dir.path().join("store");
     let mut ctx = ReaderContext::open(&db.url(None), &store).await.unwrap();
-    let binding = ingest(
-        &mut ctx,
-        &transcript::WHISPER_FORMAT,
-        &path,
-        json!({}),
-    )
-    .await;
+    let binding = ingest(&mut ctx, &transcript::WHISPER_FORMAT, &path, json!({})).await;
     let before = live(&mut ctx, "transcript.cue").await;
     assert_eq!(before.len(), 2);
     assert!(before.iter().all(|p| p["language"] == "pl"
         && p["model"] == "example-model"
         && p["external_run"] == "example-run"));
-    let classes: Vec<String> = sqlx::query_scalar(
-        "SELECT class::text FROM core.events WHERE event_type='transcript.cue'",
-    )
-    .fetch_all(&mut ctx.read_conn)
-    .await
-    .unwrap();
+    let classes: Vec<String> =
+        sqlx::query_scalar("SELECT class::text FROM core.events WHERE event_type='transcript.cue'")
+            .fetch_all(&mut ctx.read_conn)
+            .await
+            .unwrap();
     assert!(classes.iter().all(|c| c == "guarded"));
     let corrected = br#"{"segments":[{"id":0,"text":"same","start":0,"end":1},{"id":1,"text":"same","start":2,"end":3}],"language":"en","model":"example-model","external_run":"example-run"}"#;
     std::fs::write(&path, corrected).unwrap();
-    ingest(
-        &mut ctx,
-        &transcript::WHISPER_FORMAT,
-        &path,
-        json!({}),
-    )
-    .await;
+    ingest(&mut ctx, &transcript::WHISPER_FORMAT, &path, json!({})).await;
     let before = live(&mut ctx, "transcript.cue").await;
     assert_eq!(before.len(), 2);
     assert!(before.iter().all(|p| p["language"] == "en"));
