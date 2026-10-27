@@ -22,6 +22,7 @@ fn stable_ids_are_scoped_to_external_runs_and_models() {
     let mut p = TranscriptSegment {
         input: "example-input".into(),
         provider_segment_id: Some("a".into()),
+        provider_id_stable: true,
         text: "same".into(),
         external_run: Some("run-a".into()),
         model: Some("model-a".into()),
