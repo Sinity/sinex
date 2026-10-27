@@ -135,11 +135,10 @@ async fn kestrel_shell_and_books_keep_their_records_after_replay(db: devkit::pg:
     assert_eq!(failed.total, 1);
     let deleted = ask(
         &mut ctx,
-        "events where event_type = command.executed and payload.command = \"rm notes-old.txt\"",
+        "events where event_type = command.executed and state = removed and payload.command = \"rm notes-old.txt\"",
     )
     .await;
     assert_eq!(deleted.total, 1);
-    assert_eq!(deleted.rows[0]["state"], "removed");
     let present = ask(
         &mut ctx,
         "events where event_type = command.executed and state = present and payload.command = \"rm notes-old.txt\"",
