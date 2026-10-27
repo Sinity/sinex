@@ -35,7 +35,7 @@ these names and no others.
 - **cursor**: how far a binding's input has been admitted.
 - **reader memory**: what a reader remembers about its input (each row's hash, each file's size, time and hash), saved with the cursor at the end of a part so a restart reads only the parts after it.
 - **shared pass**: one read of a stored file for every compatible binding of it (export archives); each binding keeps its own parts and cursor.
-- **input root**: a host-declared filesystem location used to discover inputs, such as projects or notes.
+- **input root**: a filesystem location declared by the host to discover inputs, such as projects or notes.
 - **capture plan**: available capture bindings and excluded sources; unavailable inputs keep their existing spool readers.
 - **capture stream**: one live input captured into its own spool, such as the clipboard selection or screen stills.
 - **spool**: a live capture's directory of segment files, which its binding then reads like a growing file.
@@ -139,6 +139,7 @@ these names and no others.
 ## Reader implementation names
 
 - **time settings** (`TimeSettings`): the time zone and local start of a logical day, also used to group local hours.
+- **binding plan** (`BindingPlan`): bindings ready to read and unavailable inputs with their reasons.
 - **binding reader** (`BindingReader`): a configured binding together with its source, reader and remembered progress.
 - **reader context** (`ReaderContext`): the open content store, read connection and writer used by readers and commands.
 - **shared file read** (`SharedFileRead`): compatible bindings grouped for one read of their stored file.

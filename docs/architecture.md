@@ -389,14 +389,14 @@ bindings. Their syntax, identity and discovery locations are documented in
 ## Host discovery
 
 `services.sinex.enable` starts discovery. Each input format declares its owner,
-canonical locations, capture streams, capabilities and credentials. Runtime
+declared locations, capture streams, capabilities and credentials. Runtime
 checks use the operator's declared home/XDG roots, input roots, provider inputs
 and filesystem layout. Nix evaluation serializes these facts without probing
 files. Declared backfill inputs are also ordinary discovered inputs.
 
 A nullable `exclude.<source>` entry applies to every format and binding of that
 source. An exclusion requires a reason; status includes the complete exclusion
-map even when no source has run. Derivation options continue to control derived
+map even when no source has run. Derivation options continue to select derived
 outputs. Source paths, classes, options and time zones remain configurable.
 
 The binding runner reconciles inputs every 60 seconds. It compares aliases only
@@ -413,7 +413,7 @@ spool names and positions. Its default remains the operator's
 0700 and uses umask 0077. Sinnix supplies `/realm` storage during its coordinated
 state relocation; see [session-state.md](session-state.md) for the drain-then-switch procedure.
 Status reports session captures as `producer_reported` until their producer supplies
-status frames. The daemon does not infer their availability from its own environment.
+status frames. Their input paths remain unknown until reported by the producer.
+The daemon does not infer their availability from its own environment.
 `sinexd admin discover --sources /etc/sinex/sources.json --host HOST`
 prints the read-only input plan used by the daemon and permission preparation.
-
