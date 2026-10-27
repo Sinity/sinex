@@ -9,7 +9,7 @@ fn landed() -> Vec<Vec<String>> {
         // 0 to 1: per-source and per-run counts, filled from the events
         // already stored in one read of them.
         vec![
-            crate::description::version_three::SOURCE_COUNTS.into(),
+            crate::description::version_four::SOURCE_COUNTS.into(),
             "ALTER TABLE core.runs ADD COLUMN events bigint NOT NULL DEFAULT 0".into(),
             "CREATE TEMPORARY TABLE stored_counts ON COMMIT DROP AS
              SELECT e.source, e.run_id, count(*) AS events,
@@ -32,16 +32,18 @@ fn landed() -> Vec<Vec<String>> {
         // digests. Materials an earlier excision blanked to spaces stay as
         // they are.
         vec![
-            crate::description::version_three::EXCISED_MATERIALS.into(),
-            crate::description::version_three::EXCISED_MATERIALS_BLOB.into(),
+            crate::description::version_four::EXCISED_MATERIALS.into(),
+            crate::description::version_four::EXCISED_MATERIALS_BLOB.into(),
             "GRANT SELECT ON core.excised_materials TO sinex_reader, sinex_writer".into(),
             "GRANT INSERT, UPDATE, DELETE ON core.excised_materials TO sinex_writer".into(),
         ],
         // 2 to 3: coverage probes each run through one covering index.
         vec![
             "DROP INDEX IF EXISTS core.events_coverage".into(),
-            crate::description::version_three::COVERAGE_RUNS.into(),
+            crate::description::version_four::COVERAGE_RUNS.into(),
         ],
+        // Version four added kind rows and views, installed from the current description.
+        vec![],
     ]
 }
 
@@ -50,7 +52,7 @@ pub(crate) const NAMED: &[&str] = &["kind_declarations"];
 
 pub(crate) fn upgrades() -> Vec<Vec<String>> {
     let mut steps = landed();
-    let before = crate::description::Description::version_three();
+    let before = crate::description::Description::version_four();
     let after = crate::description::Description::current();
     let mut statements =
         vec!["ALTER TABLE registry.event_types RENAME TO unversioned_event_types".into()];
@@ -59,4 +61,4 @@ pub(crate) fn upgrades() -> Vec<Vec<String>> {
     steps
 }
 
-pub(crate) const LANDED_VERSION: i32 = 3;
+pub(crate) const LANDED_VERSION: i32 = 4;

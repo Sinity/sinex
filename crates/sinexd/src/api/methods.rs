@@ -535,7 +535,7 @@ impl Api {
     }
 
     async fn query(&self, caller: &Caller, text: &str, page: Page) -> Reply {
-        let ctx = match sinex_store::query::context_for_page(&self.context(), &page) {
+        let mut ctx = match sinex_store::query::context_for_page(&self.context(), &page) {
             Ok(ctx) => ctx,
             Err(e) => return refused(e.to_string()),
         };
@@ -543,19 +543,22 @@ impl Api {
             Ok(c) => c,
             Err(e) => return refused(e.to_string()),
         };
-        let definitions = if let Some(name) = query::saved::reference_name(text) {
-            match queries::definitions(&mut conn, &name).await {
+        let bound = if let Some(name) = query::saved::reference_name(text) {
+            let definitions = match queries::definitions(&mut conn, &name).await {
                 Ok(d) => d,
                 Err(e) => return refused(e),
+            };
+            let declarations = match sinex_schema::kinds::all(&mut conn).await {
+                Ok(d) => d,
+                Err(e) => return refused(e.to_string()),
+            };
+            ctx.catalog = Some(query::QueryCatalog::new(declarations.into_values()));
+            match query::saved::bind_saved(text, &ctx, &definitions) {
+                Ok(q) => Some(q),
+                Err(e) => return query_refusal(text, e),
             }
-        } else {
-            std::collections::BTreeMap::new()
-        };
-        let bound = match query::saved::bind_saved(text, &ctx, &definitions) {
-            Ok(q) => q,
-            Err(e) => return query_refusal(text, e),
-        };
-        match sinex_store::query::run(&mut conn, text, Some(&bound), &ctx, &page).await {
+        } else { None };
+        match sinex_store::query::run(&mut conn, text, bound.as_ref(), &ctx, &page).await {
             Ok(answer) => data(answer_json(answer)),
             Err(sinex_store::Error::Query(error)) => query_refusal(text, error),
             Err(e) => refused(e.to_string()),

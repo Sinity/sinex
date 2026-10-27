@@ -174,9 +174,7 @@ Its `polylogue` namespace belongs to the configured producer. Sinex ships the
 other bundled declarations from Rust. Each event selects an immutable kind
 version and records whether its validator ran. Bundled kinds keep Rust decoding
 and serialization; outside kinds keep the submitted JSON and use their saved
-schema, when present. A declaration's field hints supply default classes. Operator rules can raise or
-lower those defaults before admission combines the fields' classes. Rules authored
-by agents can raise those defaults. Matching rules keep the highest requested class. Sinex has no AI-chat parser of its own.
+schema, when present. A declaration's field hints describe defaults for configurable output rules. They do not set a kind-wide admission class. Sinex has no AI-chat parser of its own.
 
 The outside producers start their capture threads with `sinex-sources::live`,
 which registers signal handlers first and stops every capture before joining

@@ -21,7 +21,7 @@ impl Compiler<'_> {
                 let mut raw = SqlFragment::text(Self::template(cols, "({t}.payload #> "));
                 raw.param(V::String(Some(text_array(path))))
                     .push("::text[])");
-                Ok((Self::typed_json(raw, *ty), Kind::Typed(*ty)))
+                Ok((Self::typed_json(raw, *ty), if *ty == FieldType::Json { Kind::Json } else { Kind::Typed(*ty) }))
             }
             (Cols::Base { .. }, FieldRef::Group(name)) => Err(invalid(format!(
                 "`{name}` names a group column outside a grouping"
@@ -37,13 +37,17 @@ impl Compiler<'_> {
             )),
             (Cols::Named { r, .. }, FieldRef::TypedPayload { ty, .. }) => Ok((
                 SqlFragment::text(format!("{r}.{}", quote(&column_name(f)))),
-                Kind::Typed(*ty),
+                if *ty == FieldType::Json { Kind::Json } else { Kind::Typed(*ty) },
             )),
         }
     }
 
     fn typed_json(raw: SqlFragment, ty: FieldType) -> SqlFragment {
         let mut out = SqlFragment::new();
+        if ty == FieldType::Time {
+            out.push("core.payload_time(").append(raw).push(" #>> '{}')");
+            return out;
+        }
         if ty == FieldType::TextList {
             out.push("(CASE WHEN jsonb_typeof(")
                 .append(raw.clone())
@@ -132,6 +136,16 @@ impl Compiler<'_> {
         }
     }
 
+    fn json_as(raw: SqlFragment, value: &Value) -> SqlFragment {
+        let ty = match value {
+            Value::Integer(_) | Value::Number(_) => FieldType::Number,
+            Value::Bool(_) => FieldType::Bool,
+            Value::Time(_) => FieldType::Time,
+            _ => FieldType::Text,
+        };
+        Self::typed_json(raw, ty)
+    }
+
     pub(super) fn compare(
         &self,
         lhs: SqlFragment,
@@ -177,7 +191,7 @@ impl Compiler<'_> {
                 .push(") END)");
             return Ok(out);
         }
-        let l = lhs;
+        let l = if kind == Kind::Json { Self::json_as(lhs, v) } else { lhs };
         let mut out = SqlFragment::text("(");
         match (op, v, kind) {
             (Op::Eq | Op::Ne, Value::Glob(g), _) => {

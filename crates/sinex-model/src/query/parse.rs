@@ -82,11 +82,14 @@ pub fn bind(text: &str, ctx: &Context) -> Result<Query, QueryError> {
     bind_tokens(tokens(text)?, ctx, text.len())
 }
 
-pub(super) fn bind_tokens(
-    toks: Vec<Token>,
-    ctx: &Context,
-    end: usize,
-) -> Result<Query, QueryError> {
+pub(super) fn bind_tokens(toks: Vec<Token>, ctx: &Context, end: usize) -> Result<Query, QueryError> {
+    let mut query = parse_tokens(toks, ctx, end)?;
+    super::typed::check(&mut query, ctx)?;
+    super::fill::bind(&mut query, ctx)?;
+    Ok(query)
+}
+
+fn parse_tokens(toks: Vec<Token>, ctx: &Context, end: usize) -> Result<Query, QueryError> {
     if toks.is_empty() {
         return Err(QueryError::new("empty query"));
     }
@@ -96,18 +99,13 @@ pub(super) fn bind_tokens(
         ctx,
         end,
     };
-    let mut query = p.query(false)?;
-    if let Some(catalog) = &ctx.catalog {
-        catalog.bind(&mut query, ctx)?;
-    }
+    let query = p.query(false)?;
     if let Some(t) = p.peek() {
         return Err(QueryError::at(
             t.at,
             format!("unexpected `{}`; expected a clause or the end", t.text),
         ));
     }
-    super::typed::check(&mut query, ctx)?;
-    super::fill::bind(&mut query, ctx)?;
     Ok(query)
 }
 

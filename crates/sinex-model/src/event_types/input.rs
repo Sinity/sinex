@@ -190,19 +190,25 @@ impl crate::EventPayload for KeyReleased {
     key = ["session", "logged_at", "button", "pressed", "n"],
     replace = repeat,
     time = logged_at,
-    quality = captured,
-    class = guarded
+    quality = captured
 )]
 pub struct PointerButton {
+    #[event(class = guarded)]
     pub session: String,
+    #[event(class = guarded)]
     pub logged_at: Timestamp,
     /// `BTN_LEFT`, `BTN_RIGHT`, `BTN_SIDE`…
+    #[event(class = guarded)]
     pub button: String,
+    #[event(class = guarded)]
     pub pressed: bool,
     /// The kernel's value as logged (1 down, 0 up).
+    #[event(class = guarded)]
     pub value: i64,
+    #[event(class = guarded)]
     pub n: u32,
     #[serde(default, skip_serializing_if = "Map::is_empty")]
+    #[event(class = guarded)]
     pub extra: Map<String, Value>,
 }
 
@@ -214,18 +220,24 @@ pub struct PointerButton {
     key = ["session", "logged_at", "axis", "value", "n"],
     replace = repeat,
     time = logged_at,
-    quality = captured,
-    class = guarded
+    quality = captured
 )]
 pub struct PointerMoved {
+    #[event(class = guarded)]
     pub session: String,
+    #[event(class = guarded)]
     pub logged_at: Timestamp,
+    #[event(class = guarded)]
     pub axis: String,
     /// The step (relative axes) or the position (absolute axes).
+    #[event(class = guarded)]
     pub value: i64,
+    #[event(class = guarded)]
     pub absolute: bool,
+    #[event(class = guarded)]
     pub n: u32,
     #[serde(default, skip_serializing_if = "Map::is_empty")]
+    #[event(class = guarded)]
     pub extra: Map<String, Value>,
 }
 
@@ -237,16 +249,21 @@ pub struct PointerMoved {
     key = ["session", "logged_at", "axis", "value", "n"],
     replace = repeat,
     time = logged_at,
-    quality = captured,
-    class = guarded
+    quality = captured
 )]
 pub struct PointerScrolled {
+    #[event(class = guarded)]
     pub session: String,
+    #[event(class = guarded)]
     pub logged_at: Timestamp,
+    #[event(class = guarded)]
     pub axis: String,
+    #[event(class = guarded)]
     pub value: i64,
+    #[event(class = guarded)]
     pub n: u32,
     #[serde(default, skip_serializing_if = "Map::is_empty")]
+    #[event(class = guarded)]
     pub extra: Map<String, Value>,
 }
 
@@ -259,15 +276,19 @@ pub struct PointerScrolled {
     key = ["session", "logged_at", "event", "n"],
     replace = repeat,
     time = logged_at,
-    quality = captured,
-    class = guarded
+    quality = captured
 )]
 pub struct InputLogger {
+    #[event(class = guarded)]
     pub session: String,
+    #[event(class = guarded)]
     pub logged_at: Timestamp,
     /// The record's `event` as written.
+    #[event(class = guarded)]
     pub event: String,
+    #[event(class = guarded)]
     pub n: u32,
     #[serde(default, skip_serializing_if = "Map::is_empty")]
+    #[event(class = guarded)]
     pub fields: Map<String, Value>,
 }

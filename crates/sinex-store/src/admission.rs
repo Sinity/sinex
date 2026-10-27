@@ -129,7 +129,7 @@ pub async fn admit(
 
     let mut events: Vec<Event> = batch.events().cloned().collect();
     let mut declarations = kinds::prepare(conn, batch, &mut events).await?;
-    apply_privacy(conn, batch, &mut events, &declarations).await?;
+    apply_privacy(conn, batch, &mut events).await?;
     removed_at_source(conn, batch, &mut events).await?;
     let missing: Vec<_> = events
         .iter()
@@ -180,7 +180,6 @@ async fn apply_privacy(
     conn: &mut PgConnection,
     batch: &Batch,
     events: &mut [Event],
-    declarations: &std::collections::BTreeMap<sinex_model::KindRef, sinex_model::KindDeclaration>,
 ) -> Result<()> {
     if events.is_empty() {
         return Ok(());
@@ -217,7 +216,7 @@ async fn apply_privacy(
     }
     let rules = privacy::load(conn, events.iter().map(|e| e.source.as_str())).await?;
     for event in events.iter_mut() {
-        rules.apply(event, &declarations[&event.kind_ref()].field_hints)?;
+        rules.apply(event)?;
     }
     keep_removed_class(conn, events).await?;
     sqlx::query!(

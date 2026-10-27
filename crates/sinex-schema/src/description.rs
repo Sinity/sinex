@@ -3,7 +3,7 @@ use crate::{Checks, event_types, tables};
 use sinex_model::KindDeclaration;
 use std::collections::BTreeMap;
 
-pub(super) mod version_three;
+pub(super) mod version_four;
 
 pub(crate) struct View {
     pub name: String,
@@ -32,14 +32,14 @@ impl Description {
         }
     }
 
-    pub fn version_three() -> Self {
+    pub fn version_four() -> Self {
         Self {
-            tables: version_three::tables(&version_three::checks()),
-            after_tables: version_three::after_tables(),
+            tables: version_four::tables(&version_four::checks()),
+            after_tables: version_four::after_tables(),
             visibility: vec![],
             views: vec![],
             kinds: vec![],
-            previous_producer_views: version_three::MOVED_VIEWS
+            previous_producer_views: version_four::MOVED_VIEWS
                 .iter()
                 .map(|name| (*name).into())
                 .collect(),

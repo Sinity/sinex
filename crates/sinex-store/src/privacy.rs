@@ -30,7 +30,6 @@ pub struct Rule {
     pub matcher: Matcher,
     pub class: Class,
     pub action: Action,
-    pub author: String,
 }
 
 #[derive(Clone, Debug)]
@@ -49,7 +48,7 @@ pub enum Matcher {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Action {
-    /// Set the matched field's class, overriding its declaration hint.
+    /// Raise the class only.
     Classify,
     /// Replace matched spans with `[masked]`.
     Mask,
@@ -283,24 +282,8 @@ impl RuleSet {
         )
     }
 
-    /// Operator rules replace field defaults; other rules only raise them.
-    /// Conflicting matches keep the highest requested class.
-    pub fn apply(
-        &self,
-        event: &mut Event,
-        hints: &[sinex_model::kinds::FieldHint],
-    ) -> Result<Applied> {
-        let classes: HashMap<String, Class> = hints
-            .iter()
-            .filter(|hint| {
-                event
-                    .payload
-                    .pointer(&hint.field)
-                    .is_some_and(|v| !v.is_null())
-            })
-            .map(|hint| (hint.field.clone(), hint.class))
-            .collect();
-        let mut overrides: HashMap<String, Class> = HashMap::new();
+    /// Apply the class floor and every matching rule to `event`.
+    pub fn apply(&self, event: &mut Event) -> Result<Applied> {
         let mut applied = Applied::default();
         if let Some(&floor) = self.floors.get(&event.source) {
             event.class = event.class.max(floor);
@@ -325,41 +308,9 @@ impl RuleSet {
         }) {
             if self.apply_rule(rule, event) {
                 applied.matched += 1;
-                let mut set_class = |pointer: String| {
-                    let requested = if rule.author == "operator" {
-                        rule.class
-                    } else {
-                        rule.class
-                            .max(classes.get(&pointer).copied().unwrap_or_default())
-                    };
-                    overrides
-                        .entry(pointer)
-                        .and_modify(|class| *class = (*class).max(requested))
-                        .or_insert(requested);
-                };
-                if let Some(field) = &rule.field {
-                    for pointer in classes.keys() {
-                        if pointer == field || pointer.starts_with(&format!("{field}/")) {
-                            set_class(pointer.clone());
-                        }
-                    }
-                    set_class(field.clone());
-                } else {
-                    for pointer in classes.keys() {
-                        set_class(pointer.clone());
-                    }
-                    set_class(String::new());
-                }
+                event.class = event.class.max(rule.class);
                 applied.changed |= rule.action != Action::Classify;
             }
-        }
-        for (pointer, default) in classes {
-            event.class = event
-                .class
-                .max(overrides.remove(&pointer).unwrap_or(default));
-        }
-        for class in overrides.values() {
-            event.class = event.class.max(*class);
         }
         // The equivalence key is built from payload values; once a rule changed
         // the payload it becomes a keyed hash, so equal values still match and
@@ -529,7 +480,7 @@ pub async fn load<'a>(
         .await?;
     let rows = sqlx::query!(
         r#"SELECT DISTINCT ON (name) id, name, source, event_type, field, matcher, matcher_arg,
-                  class, action, author, ended
+                  class, action, ended
            FROM privacy.rules WHERE source = ANY($1)
            ORDER BY name, seq DESC"#,
         &sources
@@ -547,7 +498,6 @@ pub async fn load<'a>(
             matcher: Matcher::parse(&r.matcher, r.matcher_arg.as_deref())?,
             class: parse_class(&r.class)?,
             action: Action::parse(&r.action)?,
-            author: r.author,
         });
     }
     let floors = sqlx::query!(

@@ -226,7 +226,6 @@ impl Parser<'_> {
     ) -> Result<(), QueryError> {
         match (field, scope) {
             (FieldRef::Field(f), _) if f.ty == FieldType::Time => Ok(()),
-            (FieldRef::Payload(_), _) => Ok(()),
             (FieldRef::Group(_), Scope::Grouped(_)) => Ok(()),
             (FieldRef::Payload(path), _) if self.payload_time(path) => Ok(()),
             _ => Err(QueryError::at(
@@ -368,12 +367,12 @@ impl Parser<'_> {
                 self.time_fn_value(*func, &raw, at)
             }
             Operand::Field(FieldRef::Group(_)) => Ok(infer(&raw, quoted, op)),
-            Operand::Field(FieldRef::Payload(_) | FieldRef::TypedPayload { .. }) => {
-                if placeholder {
-                    Ok(Value::PlaceholderText(raw))
-                } else {
-                    Ok(infer(&raw, quoted, op))
-                }
+            Operand::Field(FieldRef::Payload(path) | FieldRef::TypedPayload { path, .. }) => {
+                if placeholder { return Ok(Value::PlaceholderText(raw)); }
+                let declared_time = self.ctx.catalog.as_ref().and_then(|c| c.field(path)).is_some_and(|f| f.ty == super::super::catalog::DataType::Time);
+                let date_clock = !quoted && time::date(&raw).is_some() && self.peek().is_some_and(|t| time::clock(&t.text).is_some());
+                if declared_time || date_clock { Ok(Value::Time(self.instant_from(&t)?)) }
+                else { Ok(infer(&raw, quoted, op)) }
             }
             Operand::Field(FieldRef::Field(f)) => {
                 if placeholder && f.name == "event_type" && op == Op::Eq {

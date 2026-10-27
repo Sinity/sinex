@@ -78,8 +78,7 @@ pub trait EventPayload: Serialize + DeserializeOwned + Send + Sync + 'static {
     /// identified by its record location instead (`key_kind`).
     const KEY: KeyKind;
     const REPLACE: ReplaceRule;
-    /// Default classes for payload fields, as JSON Pointers. The writer
-    /// applies operator rules before combining the fields' classes.
+    /// Default classes for payload fields, as JSON Pointers, for output rules.
     const FIELD_HINTS: &'static [(&'static str, Class)] = &[];
     /// Fields a newer reading does not erase: when it leaves one unknown
     /// (`null` or absent) and the reading it replaces had a value, admission

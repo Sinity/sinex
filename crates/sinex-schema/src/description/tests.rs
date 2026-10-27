@@ -14,7 +14,7 @@ fn column_lists_keep_nested_commas_and_quotes() {
 #[test]
 fn kind_upgrade_uses_the_current_column_definitions() {
     let current = Description::current();
-    let before = Description::version_three();
+    let before = Description::version_four();
     let changes = current.changes_from(&before, &["registry.event_types"]);
     for table in ["core.events", "telemetry.events", "core.admission_stage"] {
         assert!(changes.iter().any(|sql| sql.starts_with(&format!(

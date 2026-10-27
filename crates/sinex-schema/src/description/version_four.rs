@@ -1,4 +1,4 @@
-//! The deployed version-three description, kept for generating its upgrade.
+//! The deployed version-four description, kept for generating its upgrade.
 //! Table declarations: the whole current schema, which a fresh database is
 //! created with.
 use crate::Checks;
