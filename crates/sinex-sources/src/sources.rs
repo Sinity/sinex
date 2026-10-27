@@ -86,6 +86,8 @@ pub mod sleep_as_android;
 pub mod spotify;
 #[cfg(feature = "full")]
 pub mod takeout_chrome;
+/// Sinex's own state, sampled by the daemon.
+pub mod telemetry;
 pub(crate) mod terminal_text;
 #[cfg(feature = "full")]
 pub mod weechat;
@@ -183,6 +185,7 @@ pub fn formats() -> &'static [&'static InputFormat] {
         &forecast::FORMAT,
         #[cfg(feature = "full")]
         &page_crawl::FORMAT,
+        &telemetry::FORMAT,
     ]
 }
 

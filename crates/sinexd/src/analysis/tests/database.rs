@@ -257,3 +257,48 @@ async fn the_brief_reports_coverage_first_and_never_shows_missing_as_zero(
         p.markdown
     );
 }
+
+/// Gaps are the stretches a source's coverage does not reach; a source Sinex
+/// holds nothing of is unknown over the whole span, never "no gap".
+#[devkit::test]
+async fn gaps_are_where_coverage_does_not_reach(db: devkit::pg::TestDatabase) {
+    let w = World::new(db).await;
+    w.admit(vec![commit("a", 0), commit("b", 24)]).await;
+    let mut conn = w.conn().await;
+    let settings = Settings::operator_default();
+    let day = |d: &str| parse_day(d).unwrap();
+    let all = gaps(
+        &mut conn,
+        &settings,
+        None,
+        day("2026-09-14"),
+        day("2026-09-16"),
+    )
+    .await
+    .unwrap();
+    let spans: Vec<(&str, &str, &str)> = all
+        .iter()
+        .map(|g| (g.source.as_str(), g.from.as_str(), g.state))
+        .collect();
+    assert_eq!(
+        spans,
+        [
+            ("code.git", "2026-09-14T02:00:00Z", "gap"),
+            ("code.git", "2026-09-15T08:00:00.000001Z", "gap"),
+        ],
+        "{all:#?}"
+    );
+    assert_eq!(all[0].to, "2026-09-14T08:00:00Z");
+    assert_eq!(all[1].to, "2026-09-17T02:00:00Z");
+    let unknown = gaps(
+        &mut conn,
+        &settings,
+        Some(&["desktop.hyprland".to_owned()]),
+        day("2026-09-14"),
+        day("2026-09-14"),
+    )
+    .await
+    .unwrap();
+    assert_eq!(unknown.len(), 1);
+    assert_eq!(unknown[0].state, "unknown");
+}

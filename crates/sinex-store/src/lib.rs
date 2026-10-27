@@ -24,10 +24,11 @@ pub mod replay;
 pub mod runs;
 pub mod sealed;
 mod stage;
+pub mod telemetry;
 pub mod writer_lock;
 
 pub use admission::{
-    ComputedKey, DerivedScope, DirtyKeys, KeyInput, NoDerivations, Outcome, admit,
+    ComputedKey, DerivedScope, DirtyKeys, KeyInput, NoDerivations, Outcome, ReadMark, admit,
 };
 pub use blobs::Blobs;
 pub use hashed_blobs::Verified;

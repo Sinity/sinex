@@ -156,3 +156,9 @@ fn a_derivation_runs_unless_the_configuration_turns_it_off() {
     assert!(config.runs("command.fusion"));
     assert!(config.runs("shell.sessions"), "absent means it runs");
 }
+
+#[devkit::test]
+fn tags_require_an_explicit_choice() {
+    assert!(!Config::default().runs("tags"));
+    assert!(config(serde_json::json!({"derivations": {"tags": true}})).runs("tags"));
+}

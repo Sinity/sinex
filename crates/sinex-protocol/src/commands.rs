@@ -522,6 +522,21 @@ pub const COMMANDS: &[Command] = &[
         mcp: true,
     },
     Command {
+        name: "gaps",
+        summary: "Where each source could not have recorded between two logical days: the stretches its coverage (its runs, reads and records) does not reach, or the whole span when its coverage is unknown.",
+        args: &[
+            pos("from", ArgKind::Text, "first logical day, YYYY-MM-DD"),
+            pos("to", ArgKind::Text, "last logical day, included"),
+            opt(
+                "source",
+                ArgKind::List,
+                "only this source; repeat for more (default: every source with events)",
+            ),
+        ],
+        access: Access::Read,
+        mcp: true,
+    },
+    Command {
         name: "analysis-why",
         summary: "Why a metric's cell for one logical day is missing, partial or observed: its state and the coverage each of its sources had.",
         args: &[

@@ -102,6 +102,13 @@ does not know which driver a binding uses.
 
 ### Drivers
 
+- **Append-only files.** An unchanged stat tuple skips the file, unless the
+  last look came within 50 ms of the file's last change, when an edit in the
+  same timestamp tick would not show. Otherwise the bytes before the cursor
+  are hashed in full using a streaming read:
+  unchanged, only the appended records are read; changed, the file is read
+  again as a new revision and aligned against the previous one, so a
+  same-length edit in the middle is a rewrite, never an append.
 - **SQLite rows.** One read transaction covers the schema check and the row
   query, so SQLite's own locking gives a committed view. A locked database is
   unavailable for that poll. The first poll after a start reads every row and
@@ -149,7 +156,10 @@ directories are 2770 and finished files 0640, so a producer running as another
 user in the store's group can hand over bytes without write access to the
 content store. Producer bytes are never stored sealed. A producer pages
 through the materials it registered (`<root>.materials.<producer>`), so one
-that keeps nothing of its own rebuilds from Sinex what it sent.
+that keeps nothing of its own rebuilds from Sinex what it sent. The ingress
+stream keeps a frame until it is admitted: it has no age limit, a full
+stream refuses the next publish rather than dropping an older frame, and the
+daemon's consumer redelivers without a cap.
 
 Polylogue is the producer for AI sessions. Each file an AI tool wrote is a
 material of its real input (origin, path, host), a growing file a chain of
@@ -210,6 +220,17 @@ record no other source saw is fused alone, so a fused kind counts each thing
 once whichever sources were running. Metrics and aliases read the fused
 kinds.
 
+### Tag rules
+
+The opt-in `tags` per-event derivation reads captured events and applies the
+source, file extension and MIME rules in `sinex-derivations/src/tags.rs`.
+Every matching tag becomes a `tag.applied` event naming the record and rules,
+with the captured reading as its parent and its original time and class.
+`services.sinex.derivations.tags.enable = true` enables it. Its rule table is
+part of the derivation version. A changed per-event version reads the inputs
+again and archives outputs it no longer produces, with its progress in the
+same transaction.
+
 ### Metric figures
 
 A metric (`sinex-derivations/src/figures.rs`) declares the kinds it counts,
@@ -230,12 +251,23 @@ points, deviations) and the brief run over panels when asked for. Their
 answers are not stored: they depend on coverage, which is not an event, and
 asking again at the same commit position gives the same answer.
 
+A derived batch never stores an output that cites an input which stopped
+being live after the derivation read it (a newer reading, a replay or an
+excision in between): a key with such an output keeps its previous outputs
+and is marked dirty again, and a per-event output is dropped, since the
+input's replacement is read in its turn. A full recompute also reaches every
+key the derivation has outputs under, so a version that keys its windows
+differently archives the old keys' outputs instead of counting an input
+twice.
+
 The commit log orders committed events and visibility changes (hide, unhide,
 replacement). Hide and unhide change what is live and append to the visibility
 history in one transaction. Readers move past positions an excision left
 empty. Time lookups use stored events and the visibility history, so pruning
 the commit log loses nothing. The publisher sends committed events on the
-confirmed stream, with `Archived`, `Unhidden` and `Excised` messages.
+confirmed stream, with `Archived`, `Unhidden` and `Excised` messages; each
+event message carries the stored reading order and record hash, so a
+consumer can check its copy against Sinex's.
 
 On shutdown the derivation runner finishes its current pass and releases its
 writer handle; the writer drains queued work once every producer has released
