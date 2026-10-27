@@ -13,7 +13,10 @@ impl<const V: u32> Days<V> {
         if V == 1 {
             json!({ "utc": secs.div_euclid(86_400) })
         } else {
-            let start = env.time_settings.day_start(env.time_settings.day(t).unwrap()).unwrap();
+            let start = env
+                .time_settings
+                .day_start(env.time_settings.day(t).unwrap())
+                .unwrap();
             let start = i64::try_from(start.unix_ns().div_euclid(1_000_000_000)).unwrap();
             json!({ "local": start })
         }
@@ -28,7 +31,10 @@ impl<const V: u32> Days<V> {
             ))
         } else {
             let start = Timestamp::from_unix_secs(key.get("local")?.as_i64()?).ok()?;
-            let end = env.time_settings.day_end(env.time_settings.day(start).ok()?).ok()?;
+            let end = env
+                .time_settings
+                .day_end(env.time_settings.day(start).ok()?)
+                .ok()?;
             Some((start, end))
         }
     }

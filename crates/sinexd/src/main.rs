@@ -13,6 +13,7 @@ mod crawl;
 mod daemon;
 mod derivation_runner;
 mod dirty_keys;
+mod document_text;
 mod excision;
 mod ingress;
 mod intake;
@@ -147,6 +148,10 @@ enum Command {
         /// One JSON object: counts per derivation and peak memory.
         #[arg(long)]
         json: bool,
+        /// The sources configuration the daemon runs with, for the tag
+        /// applier's rules; without it the applier has none.
+        #[arg(long)]
+        sources: Option<PathBuf>,
     },
 }
 
@@ -156,6 +161,7 @@ async fn local_runner(
     database: &str,
     host: &str,
     store: Option<&std::path::Path>,
+    configuration: &sinex_derivations::Configuration,
 ) -> Result<
     (
         derivation_runner::DerivationRunner,
@@ -187,7 +193,11 @@ async fn local_runner(
         read,
         handle,
         sinex_derivations::keyed(),
-        derivation_runner::per_event(),
+        if configuration.tags.is_empty() {
+            derivation_runner::per_event()
+        } else {
+            derivation_runner::per_event_with(configuration)?
+        },
         host,
     )
     .await?;
@@ -202,8 +212,14 @@ async fn run_derive(
     store: Option<PathBuf>,
     host: String,
     json: bool,
+    sources: Option<PathBuf>,
 ) -> Result<(), String> {
-    let (mut runner, writer_task) = local_runner(&database, &host, store.as_deref()).await?;
+    let configuration = match &sources {
+        Some(path) => binding_runner::Config::load(path)?.derivation_configuration(),
+        None => sinex_derivations::Configuration::default(),
+    };
+    let (mut runner, writer_task) =
+        local_runner(&database, &host, store.as_deref(), &configuration).await?;
     let started = std::time::Instant::now();
     runner.catch_up().await?;
     let wall = started.elapsed();
@@ -372,7 +388,8 @@ async fn main() -> std::process::ExitCode {
             store,
             host,
             json,
-        } => run_derive(database, store, host, json).await,
+            sources,
+        } => run_derive(database, store, host, json, sources).await,
     };
     match result {
         Ok(()) => std::process::ExitCode::SUCCESS,

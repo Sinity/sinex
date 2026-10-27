@@ -49,7 +49,7 @@ pub(crate) fn upgrades() -> Vec<Vec<String>> {
                 .filter(|sql| sql.starts_with("CREATE VIEW telemetry.visible_events"))
                 .collect();
             statements.push("GRANT SELECT ON telemetry.visible_events TO sinex_reader, sinex_writer".into());
-            statements.extend(crate::added_kinds(&["sinex.telemetry", "tag.applied"]));
+            statements.extend(crate::added_kinds(&["sinex.telemetry", "tag.applied", "activity.span", "conversation.day", "rest.fused", "document.text"]));
             statements
         },
     ]

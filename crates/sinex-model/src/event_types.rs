@@ -23,7 +23,10 @@ pub mod shell;
 pub mod social;
 pub mod telemetry;
 
-pub use derived::{FigureValue, HealthFigure, MetricFigure, StateInterval};
+pub use derived::{
+    ActivitySpan, ConversationDay, FigureValue, HealthFigure, MetricFigure, StateInterval,
+    TagApplied,
+};
 pub use fused::CommandFused;
 use serde_json::Value;
 pub use shell::{CommandExecuted, CommandImported, ShellSession};
@@ -130,7 +133,6 @@ pub const ALL: &[RegisteredEventType] = &[
     // Sinex's own state
     info::<telemetry::SinexTelemetry>(),
     // Derived
-    info::<derived::TagApplied>(),
     info::<CommandFused>(),
     info::<fused::FocusFused>(),
     info::<fused::VisitFused>(),
@@ -138,10 +140,14 @@ pub const ALL: &[RegisteredEventType] = &[
     info::<fused::ClipboardFused>(),
     info::<fused::NotificationFused>(),
     info::<fused::MailFused>(),
+    info::<fused::RestFused>(),
     info::<ShellSession>(),
     info::<StateInterval>(),
     info::<MetricFigure>(),
     info::<HealthFigure>(),
+    info::<ActivitySpan>(),
+    info::<TagApplied>(),
+    info::<ConversationDay>(),
     // Browsing, listening, reading, notes, communication
     info::<browser::BrowserVisit>(),
     info::<browser::BrowserUrl>(),
@@ -183,6 +189,7 @@ pub const ALL: &[RegisteredEventType] = &[
     info::<operator::SteeringRow>(),
     // Library
     info::<library::FileCopy>(),
+    info::<library::DocumentText>(),
     info::<library::Item>(),
     info::<library::Rendition>(),
     info::<library::Assignment>(),
