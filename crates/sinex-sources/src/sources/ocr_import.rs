@@ -18,11 +18,9 @@ pub struct OcrParser {
     pub input: String,
     pub format: Format,
 }
-pub const fn spec(
-    parser: &'static str,
-    framing: Framing,
-    frame: fn(&[u8]) -> (Vec<(usize, usize)>, usize),
-) -> SourceSpec {
+type Frame = fn(&[u8]) -> (Vec<(usize, usize)>, usize);
+
+pub const fn spec(parser: &'static str, framing: Framing, frame: Frame) -> SourceSpec {
     SourceSpec {
         name: "media.ocr-imports",
         driver: Driver::ExportArchive,
