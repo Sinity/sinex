@@ -16,7 +16,7 @@ use serde::{Deserialize, Serialize};
 /// thousand pairs of the same command in the same second on the operator's
 /// machine, which is why the record, not the text and time, identifies it.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
-#[event(
+#[event(version = 2,
     type = "command.fused",
     key = ["record"],
     replace = newer,
@@ -43,7 +43,7 @@ pub struct CommandFused {
 /// whatever the sources call the window, two of them seeing focus begin at
 /// the same moment saw the same focus.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
-#[event(
+#[event(version = 2,
     type = "focus.fused",
     key = ["record"],
     replace = newer,
@@ -64,7 +64,7 @@ pub struct FocusFused {
 /// One page visit, from a browser's own history, a Takeout history export
 /// and the browser-navigation capture.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
-#[event(
+#[event(version = 2,
     type = "visit.fused",
     key = ["record"],
     replace = newer,
@@ -82,7 +82,7 @@ pub struct VisitFused {
 /// One play of a track, from a streaming history export and the media
 /// player's live state (live MPRIS capture and the capture lake).
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
-#[event(
+#[event(version = 2,
     type = "play.fused",
     key = ["record"],
     replace = newer,
@@ -105,7 +105,7 @@ pub struct PlayFused {
 /// One clipboard or primary-selection change, from live capture and the
 /// capture lake.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
-#[event(
+#[event(version = 2,
     type = "clipboard.fused",
     key = ["record"],
     replace = newer,
@@ -124,7 +124,7 @@ pub struct ClipboardFused {
 
 /// One desktop notification, from live capture and the capture lake.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
-#[event(
+#[event(version = 2,
     type = "notification.fused",
     key = ["record"],
     replace = newer,
@@ -144,7 +144,7 @@ pub struct NotificationFused {
 /// mbox, Outlook): its `Message-ID` and `Date` are the same wherever it is
 /// stored.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
-#[event(
+#[event(version = 2,
     type = "mail.fused",
     key = ["record"],
     replace = newer,

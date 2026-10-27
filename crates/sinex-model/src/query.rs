@@ -3,6 +3,9 @@
 //! the logical-day start once, then compiled to SQL by `sinex-store::query`.
 //! Every query reads back as a sentence ([`read_as`]).
 mod ast;
+pub mod catalog;
+pub mod cursor;
+pub use catalog::QueryCatalog;
 mod lex;
 mod parse;
 mod read_as;

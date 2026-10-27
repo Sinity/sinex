@@ -153,7 +153,7 @@ enum Table {
 /// values.
 #[derive(Clone, Debug, PartialEq, Serialize, JsonSchema, crate::EventPayload)]
 #[serde(deny_unknown_fields)]
-#[event(type = "steering.row", key = ["table", "record_id"], replace = newer, time = at, quality = intrinsic)]
+#[event(version = 2, type = "steering.row", key = ["table", "record_id"], replace = newer, time = at, quality = intrinsic)]
 pub struct SteeringRow {
     table: Table,
     record_id: String,

@@ -134,7 +134,7 @@ fn a_span_is_cut_at_logical_day_boundaries() {
         "not-afk",
     );
     let view = KeyView {
-        event_type: s.event_type,
+        event_type: &s.event_type,
         ts_orig: s.ts_orig.at,
         payload: &s.payload,
     };

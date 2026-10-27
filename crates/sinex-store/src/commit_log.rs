@@ -12,8 +12,8 @@
 use crate::{Error, Result};
 use serde_json::Value;
 use sinex_model::{
-    Class, Event, EventId, MaterialId, Origin, ReadingOrder, RecordLocation, RecordState,
-    TimeQuality, Timestamp, TsOrig, event_types,
+    Class, DbCheck, Event, EventId, MaterialId, Origin, ReadingOrder, RecordLocation, RecordState,
+    TimeQuality, Timestamp, TsOrig,
 };
 use sqlx::PgConnection;
 use time::OffsetDateTime;
@@ -25,6 +25,10 @@ pub struct Committed {
     pub commit_seq: i64,
     pub id: Uuid,
     pub event_type: String,
+    pub kind_version: i64,
+    pub validation: String,
+    pub index_text: bool,
+    pub replace_rule: Option<String>,
     pub source: String,
     pub run_id: Uuid,
     pub material_id: Option<Uuid>,
@@ -65,7 +69,7 @@ pub async fn after(conn: &mut PgConnection, after: i64, limit: i64, bytes: i64) 
              e.output_index AS "output_index?", e.parents, e.ts_orig, e.ts_quality AS "ts_quality?",
              e.ts_coided, e.ts_persisted AS "ts_persisted?", e.payload AS "payload?",
              e.equivalence_key, e.reading_order AS "reading_order?",
-             e.record_hash AS "record_hash?", e.record_state AS "record_state?", e.class AS "class?"
+             e.record_hash AS "record_hash?", e.record_state AS "record_state?", e.class AS "class?", e.kind_version AS "kind_version?", e.validation AS "validation?"
            FROM core.counters head
            LEFT JOIN LATERAL (
              SELECT p.commit_seq, p.event_id FROM (
@@ -104,9 +108,17 @@ pub async fn after(conn: &mut PgConnection, after: i64, limit: i64, bytes: i64) 
             continue;
         };
         page.events.push(Committed {
+            index_text: false,
             commit_seq: position,
             id,
             event_type,
+            kind_version: row
+                .kind_version
+                .ok_or_else(|| Error::Invalid("missing kind version".into()))?,
+            validation: row
+                .validation
+                .ok_or_else(|| Error::Invalid("missing validation".into()))?,
+            replace_rule: None,
             source,
             run_id,
             material_id: row.material_id,
@@ -125,16 +137,34 @@ pub async fn after(conn: &mut PgConnection, after: i64, limit: i64, bytes: i64) 
             class: row.class.unwrap_or_default(),
         });
     }
+    let references: Vec<_> = page
+        .events
+        .iter()
+        .map(|e| sinex_model::KindRef {
+            name: e.event_type.clone(),
+            version: e.kind_version as u64,
+        })
+        .collect::<std::collections::BTreeSet<_>>()
+        .into_iter()
+        .collect();
+    let declarations = sinex_schema::kinds::load(conn, &references).await?;
+    for e in &mut page.events {
+        let reference = sinex_model::KindRef {
+            name: e.event_type.clone(),
+            version: e.kind_version as u64,
+        };
+        let d = declarations
+            .get(&reference)
+            .ok_or_else(|| Error::Invalid(format!("missing stored declaration {reference:?}")))?;
+        e.replace_rule = d.replace_rule.map(|r| r.as_db().to_string());
+        e.index_text = d.index_text;
+    }
     Ok(page)
 }
 
 impl Committed {
-    /// The event as the model types describe it, for derivations. `None` when
-    /// this build does not register the event's type.
-    pub fn to_event(&self) -> Result<Option<Event>> {
-        let Some(kind) = event_types::find(&self.event_type) else {
-            return Ok(None);
-        };
+    /// Reconstruct the exact stored reading, including outside kinds.
+    pub fn to_event(&self) -> Result<Event> {
         let origin = match (&self.material_id, self.anchor, &self.parents) {
             (Some(material), Some(anchor), _) => Origin::Record {
                 location: RecordLocation {
@@ -155,9 +185,11 @@ impl Committed {
             self.record_hash.as_slice().try_into().map_err(|_| {
                 Error::Invalid(format!("record hash of {} is not 32 bytes", self.id))
             })?;
-        Ok(Some(Event {
+        Ok(Event {
             id: EventId(self.id),
-            event_type: kind.event_type,
+            event_type: self.event_type.clone(),
+            kind_version: self.kind_version as u64,
+            validation: from_db(&self.validation)?,
             source: self.source.clone(),
             origin,
             ts_orig: TsOrig::maybe(self.ts_orig.map(Timestamp), quality),
@@ -166,13 +198,13 @@ impl Committed {
                 .equivalence_key
                 .clone()
                 .map(sinex_model::EquivalenceKey),
-            replace: kind.replace,
+            replace: self.replace_rule.as_deref().map(from_db).transpose()?,
             reading_order: ReadingOrder(self.reading_order),
             record_hash,
             record_state: from_db::<RecordState>(&self.record_state)?,
             class: from_db::<Class>(&self.class)?,
             owned_blobs: Vec::new(),
-        }))
+        })
     }
 }
 
@@ -379,5 +411,19 @@ pub async fn forget_published(conn: &mut PgConnection, ids: &[Uuid]) -> Result<(
     sqlx::query!("DELETE FROM core.published WHERE event_id = ANY($1)", ids)
         .execute(&mut *conn)
         .await?;
+    Ok(())
+}
+
+/// Record a producer replay's acknowledgment in its replacement transaction.
+pub async fn record_replay_frame(
+    conn: &mut PgConnection,
+    producer: &str,
+    frame: &str,
+    operation: sinex_model::OperationId,
+    ids: &[Uuid],
+    last: Option<i64>,
+) -> Result<()> {
+    let outcome = serde_json::json!({"admitted":ids.len(),"replay":operation});
+    sqlx::query!("INSERT INTO core.ingress_frames (producer,frame,admitted,outcome,commit_seq) VALUES ($1,$2,$3,$4,$5)",producer,frame,ids,outcome,last).execute(conn).await?;
     Ok(())
 }

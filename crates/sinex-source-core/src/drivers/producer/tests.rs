@@ -3,7 +3,10 @@ use serde_json::json;
 
 fn event(n: usize) -> ProducerEvent {
     ProducerEvent {
-        event_type: "window.focused".into(),
+        kind: sinex_model::KindRef {
+            name: "window.focused".into(),
+            version: 2,
+        },
         payload: json!({"title": "x".repeat(n)}),
         location: None,
         output_index: 0,
@@ -75,7 +78,10 @@ async fn standin_with_refusal(
                     None,
                     events.iter().map(|_| sinex_model::EventId::new()).collect(),
                 ),
-                Ingress::Chunk { .. } | Ingress::LargeFrame { .. } => (None, vec![]),
+                Ingress::Chunk { .. }
+                | Ingress::LargeFrame { .. }
+                | Ingress::RegisterKinds { .. }
+                | Ingress::ReplaySequence { .. } => (None, vec![]),
             };
             let refusal = match &frame {
                 Ingress::Chunk { offset, .. } if refuse_offset == Some(*offset) => {

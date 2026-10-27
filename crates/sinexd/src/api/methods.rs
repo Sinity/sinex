@@ -12,6 +12,7 @@ use sqlx::PgPool;
 
 mod analysis;
 mod forecast;
+mod kinds;
 mod operations;
 mod privacy;
 
@@ -190,6 +191,12 @@ impl Api {
     async fn dispatch(&self, request: Request, caller: &Caller) -> Reply {
         let actor = caller.actor;
         match request {
+            Request::Kinds { kind, page, cursor } => {
+                self.kind_fields(caller, kind, page, cursor, false).await
+            }
+            Request::Fields { kind, page, cursor } => {
+                self.kind_fields(caller, kind, page, cursor, true).await
+            }
             Request::Status => match self.status(caller).await {
                 Ok(v) => Reply::Ok { result: v },
                 Err(e) => refused(e.to_string()),
@@ -487,16 +494,13 @@ impl Api {
             Ok(ctx) => ctx,
             Err(e) => return refused(e.to_string()),
         };
-        let bound = match query::bind(text, &ctx) {
-            Ok(q) => q,
-            Err(e) => return query_refusal(text, e),
-        };
         let mut conn = match self.acquire(caller).await {
             Ok(c) => c,
             Err(e) => return refused(e.to_string()),
         };
-        match sinex_store::query::run(&mut conn, text, &bound, &ctx, &page).await {
+        match sinex_store::query::run(&mut conn, text, None, &ctx, &page).await {
             Ok(answer) => data(answer_json(answer)),
+            Err(sinex_store::Error::Query(error)) => query_refusal(text, error),
             Err(e) => refused(e.to_string()),
         }
     }

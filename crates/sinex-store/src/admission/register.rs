@@ -192,6 +192,7 @@ pub(super) async fn frame(
 ) -> Result<()> {
     let admitted: Vec<Uuid> = outcome.admitted_ids.iter().map(|id| id.0).collect();
     let counts = serde_json::json!({
+        "registered_kinds": outcome.registered_kinds,
         "admitted": outcome.admitted,
         "repeats": outcome.repeats,
         "replaced": outcome.replaced,

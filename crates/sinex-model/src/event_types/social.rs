@@ -7,7 +7,7 @@ use serde_json::{Map, Value};
 
 /// A post, comment or link the operator published.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
-#[event(
+#[event(version = 2,
     type = "post.published",
     key = ["service", "kind", "native_id"],
     replace = newer,
@@ -37,7 +37,7 @@ pub struct PostPublished {
 /// time they were cast, so the event time is unknown; the target's own time is
 /// a field.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
-#[event(
+#[event(version = 2,
     type = "vote.cast",
     key = ["service", "target_kind", "target_id"],
     replace = newer,
@@ -66,7 +66,7 @@ pub struct VoteCast {
 /// or link under a tag the operator observes). The service's notification ID
 /// is the identity; a later reading that marks it read is newer.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
-#[event(
+#[event(version = 2,
     type = "notification.received",
     key = ["service", "native_id"],
     replace = newer,
@@ -95,7 +95,7 @@ pub struct NotificationReceived {
 /// blocked user, tag or domain. The setting and its value are the identity;
 /// exports give no time the operator set it.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
-#[event(
+#[event(version = 2,
     type = "account.setting",
     key = ["service", "setting", "value"],
     replace = newer

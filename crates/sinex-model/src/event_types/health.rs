@@ -165,7 +165,7 @@ pub struct HealthEvent {
 /// One health measurement: identified by provider, category and native ID,
 /// timed by its start.
 #[derive(Clone, Debug, PartialEq, crate::EventPayload)]
-#[event(type = "health.record", key = ["provider", "category", "native_id"], replace = newer, time = start, quality = intrinsic)]
+#[event(version = 2, type = "health.record", key = ["provider", "category", "native_id"], replace = newer, time = start, quality = intrinsic)]
 pub struct HealthRecord {
     provider: String,
     category: String,

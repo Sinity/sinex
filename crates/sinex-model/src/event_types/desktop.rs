@@ -12,7 +12,7 @@ use serde::{Deserialize, Serialize};
 
 /// A window took keyboard focus.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
-#[event(type = "window.focused", key = location, replace = repeat, time = received_at, quality = captured)]
+#[event(version = 2, type = "window.focused", key = location, replace = repeat, time = received_at, quality = captured)]
 pub struct WindowFocused {
     pub received_at: Timestamp,
     /// The compositor's window address; `None` when only class and title were
@@ -23,7 +23,7 @@ pub struct WindowFocused {
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
-#[event(type = "window.opened", key = location, replace = repeat, time = received_at, quality = captured)]
+#[event(version = 2, type = "window.opened", key = location, replace = repeat, time = received_at, quality = captured)]
 pub struct WindowOpened {
     pub received_at: Timestamp,
     pub window: String,
@@ -34,7 +34,7 @@ pub struct WindowOpened {
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
-#[event(type = "window.closed", key = location, replace = repeat, time = received_at, quality = captured)]
+#[event(version = 2, type = "window.closed", key = location, replace = repeat, time = received_at, quality = captured)]
 pub struct WindowClosed {
     pub received_at: Timestamp,
     pub window: String,
@@ -42,7 +42,7 @@ pub struct WindowClosed {
 
 /// A window moved to another workspace.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
-#[event(type = "window.moved", key = location, replace = repeat, time = received_at, quality = captured)]
+#[event(version = 2, type = "window.moved", key = location, replace = repeat, time = received_at, quality = captured)]
 pub struct WindowMoved {
     pub received_at: Timestamp,
     pub window: String,
@@ -51,7 +51,7 @@ pub struct WindowMoved {
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
-#[event(type = "window.title_changed", key = location, replace = repeat, time = received_at, quality = captured)]
+#[event(version = 2, type = "window.title_changed", key = location, replace = repeat, time = received_at, quality = captured)]
 pub struct WindowTitleChanged {
     pub received_at: Timestamp,
     pub window: String,
@@ -59,7 +59,7 @@ pub struct WindowTitleChanged {
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
-#[event(type = "workspace.switched", key = location, replace = repeat, time = received_at, quality = captured)]
+#[event(version = 2, type = "workspace.switched", key = location, replace = repeat, time = received_at, quality = captured)]
 pub struct WorkspaceSwitched {
     pub received_at: Timestamp,
     pub workspace_id: Option<i64>,
@@ -67,7 +67,7 @@ pub struct WorkspaceSwitched {
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
-#[event(type = "monitor.focused", key = location, replace = repeat, time = received_at, quality = captured)]
+#[event(version = 2, type = "monitor.focused", key = location, replace = repeat, time = received_at, quality = captured)]
 pub struct MonitorFocused {
     pub received_at: Timestamp,
     pub monitor: String,
@@ -76,7 +76,7 @@ pub struct MonitorFocused {
 
 /// A compositor event Sinex has no type for yet, kept whole.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
-#[event(type = "desktop.other", key = location, replace = repeat, time = received_at, quality = captured)]
+#[event(version = 2, type = "desktop.other", key = location, replace = repeat, time = received_at, quality = captured)]
 pub struct DesktopOther {
     pub received_at: Timestamp,
     pub name: String,
@@ -88,7 +88,7 @@ pub struct DesktopOther {
 /// same, and the source joins adjacent identical events, so a newer reading
 /// of the span replaces the older one.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
-#[event(type = "window.span", key = ["bucket", "span_id"], replace = newer, time = started_at, quality = intrinsic)]
+#[event(version = 2, type = "window.span", key = ["bucket", "span_id"], replace = newer, time = started_at, quality = intrinsic)]
 pub struct WindowSpan {
     pub bucket: String,
     /// The row ID of the first ActivityWatch event in this span.
@@ -104,7 +104,7 @@ pub struct WindowSpan {
 
 /// ActivityWatch's AFK watcher: whether the operator was at the machine.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
-#[event(type = "presence.span", key = ["bucket", "row"], replace = newer, time = started_at, quality = intrinsic)]
+#[event(version = 2, type = "presence.span", key = ["bucket", "row"], replace = newer, time = started_at, quality = intrinsic)]
 pub struct PresenceSpan {
     pub bucket: String,
     pub row: i64,
@@ -120,7 +120,7 @@ pub struct PresenceSpan {
 /// `uncertain`, never silently `present`. Derived per logical day by the
 /// presence derivation; the reported spans stay as read.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
-#[event(type = "presence.interval", key = ["day", "started_at"], replace = newer, time = started_at, quality = intrinsic)]
+#[event(version = 2, type = "presence.interval", key = ["day", "started_at"], replace = newer, time = started_at, quality = intrinsic)]
 pub struct PresenceInterval {
     /// The logical day this interval was computed for (intervals are cut at
     /// day boundaries).
@@ -140,7 +140,7 @@ pub struct PresenceInterval {
 
 /// An ActivityWatch event from a watcher Sinex has no type for yet, kept whole.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
-#[event(type = "activitywatch.other", key = ["bucket", "row"], replace = newer, time = started_at, quality = intrinsic)]
+#[event(version = 2, type = "activitywatch.other", key = ["bucket", "row"], replace = newer, time = started_at, quality = intrinsic)]
 pub struct ActivityWatchOther {
     pub bucket: String,
     pub row: i64,
@@ -151,7 +151,7 @@ pub struct ActivityWatchOther {
 
 /// ActivityWatch's browser watcher: the active tab over a span.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
-#[event(type = "browser.tab_active", key = ["bucket", "row"], replace = newer, time = started_at, quality = intrinsic)]
+#[event(version = 2, type = "browser.tab_active", key = ["bucket", "row"], replace = newer, time = started_at, quality = intrinsic)]
 pub struct BrowserTabActive {
     pub bucket: String,
     pub row: i64,
@@ -169,7 +169,7 @@ pub struct BrowserTabActive {
 /// one was active, and how long input had been idle, taken every `rate_ms`.
 /// The sample's place in the log is its identity.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
-#[event(type = "window.sampled", key = location, replace = repeat, time = sampled_at, quality = intrinsic)]
+#[event(version = 2, type = "window.sampled", key = location, replace = repeat, time = sampled_at, quality = intrinsic)]
 pub struct WindowSampled {
     pub sampled_at: Timestamp,
     /// The sampling interval the tracker recorded.

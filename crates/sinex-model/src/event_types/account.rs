@@ -11,7 +11,7 @@ use serde_json::{Map, Value};
 /// export writes its times in the zone of the export day, and restates titles,
 /// so neither the time text nor the title can be.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
-#[event(
+#[event(version = 2,
     type = "action.recorded",
     key = ["service", "at", "title_url", "unlinked_text"],
     replace = newer,
@@ -44,7 +44,7 @@ pub struct ActionRecorded {
 
 /// A video watched on a video service (YouTube watch history).
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
-#[event(
+#[event(version = 2,
     type = "video.watched",
     key = ["service", "video_id", "watched_at"],
     replace = newer,
@@ -71,7 +71,7 @@ pub struct VideoWatched {
 
 /// A search on a video service (YouTube search history).
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
-#[event(
+#[event(version = 2,
     type = "video.searched",
     key = ["service", "searched_at", "query"],
     replace = newer,
@@ -90,7 +90,7 @@ pub struct VideoSearched {
 /// names files after titles, so the creation time is the identity; a later
 /// edit is a newer reading.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
-#[event(
+#[event(version = 2,
     type = "note.observed",
     key = ["service", "created_at"],
     replace = newer,
@@ -128,7 +128,7 @@ pub struct NoteItem {
 /// A task in a task list (Google Tasks); a later export's reading with a newer
 /// `updated` replaces it.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
-#[event(
+#[event(version = 2,
     type = "task.revised",
     key = ["service", "task_id"],
     replace = newer,
@@ -157,7 +157,7 @@ pub struct TaskRevised {
 /// An order, install, library item or purchase an account store recorded
 /// (Google Play, Purchases). The time is the wrapped item's own field.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
-#[event(
+#[event(version = 2,
     type = "purchase.observed",
     key = ["service", "record_kind", "native_id"],
     replace = newer,
@@ -181,7 +181,7 @@ pub struct PurchaseObserved {
 /// its own event with a recurrence ID. Expanding a rule into occurrences is a
 /// derivation.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
-#[event(
+#[event(version = 2,
     type = "calendar.event",
     key = ["calendar", "uid", "recurrence_id"],
     replace = newer,
@@ -229,7 +229,7 @@ pub use record::AccountRow;
 /// device was, how sure it was, and what it thought the operator was doing.
 /// The device and the instant identify it across exports.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
-#[event(
+#[event(version = 2,
     type = "location.sample",
     key = ["provider", "device", "at"],
     replace = newer,

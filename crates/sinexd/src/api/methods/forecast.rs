@@ -242,6 +242,7 @@ async fn report(conn: &mut PgConnection) -> Result<Value, String> {
         id,
         event_type: kind,
         payload,
+        ..
     } in rows
     {
         let Some(payload) = payload.filter(|p| p.is_object() && p.get("withheld").is_none()) else {

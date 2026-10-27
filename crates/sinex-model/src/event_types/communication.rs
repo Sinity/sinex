@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 /// join, part, quit or other notice. Logs have no message IDs and only grow, so
 /// the record location is the identity.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
-#[event(
+#[event(version = 2,
     type = "chat.message",
     key = location,
     replace = repeat,
@@ -43,7 +43,7 @@ pub enum ChatLineKind {
 /// identifies it (a hash of the raw message when the header is missing), and a
 /// later export with different labels is a newer reading.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
-#[event(
+#[event(version = 2,
     type = "mail.message",
     key = ["message_id"],
     replace = newer,
@@ -86,7 +86,7 @@ pub struct MailAttachment {
 /// time and its sender; the same message read from another export or input is
 /// the same occurrence.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
-#[event(
+#[event(version = 2,
     type = "conversation.message",
     key = ["service", "thread", "sent_at", "sender"],
     replace = newer,

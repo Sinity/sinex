@@ -20,6 +20,24 @@ impl Compiler<'_> {
             (Cols::Base { .. }, FieldRef::Payload(path)) => {
                 let mut f = SqlFragment::text(Self::template(cols, "({t}.payload #> "));
                 f.param(V::String(Some(text_array(path)))).push("::text[])");
+                let ty = self
+                    .ctx
+                    .catalog
+                    .as_ref()
+                    .and_then(|c| c.field(path))
+                    .map(|f| &f.ty);
+                use sinex_model::query::catalog::DataType;
+                let field_type = match ty {
+                    Some(DataType::Text) => Some(FieldType::Text),
+                    Some(DataType::Integer) => Some(FieldType::Integer),
+                    Some(DataType::Number) => Some(FieldType::Number),
+                    Some(DataType::Bool) => Some(FieldType::Bool),
+                    Some(DataType::Time) => Some(FieldType::Time),
+                    _ => None,
+                };
+                if let Some(ty) = field_type {
+                    return Ok((Self::typed_json(f, ty), Kind::Typed(ty)));
+                }
                 Ok((f, Kind::Json))
             }
             (Cols::Base { .. }, FieldRef::Group(name)) => Err(invalid(format!(
@@ -34,10 +52,27 @@ impl Compiler<'_> {
                 SqlFragment::text(format!("{r}.{}", quote(field.name))),
                 Kind::Typed(field.ty),
             )),
-            (Cols::Named { r, .. }, FieldRef::Payload(_)) => Ok((
-                SqlFragment::text(format!("{r}.{}", quote(&column_name(f)))),
-                Kind::Json,
-            )),
+            (Cols::Named { r, .. }, FieldRef::Payload(path)) => {
+                use sinex_model::query::catalog::DataType;
+                let ty = self
+                    .ctx
+                    .catalog
+                    .as_ref()
+                    .and_then(|c| c.field(path))
+                    .map(|f| &f.ty);
+                let kind = match ty {
+                    Some(DataType::Text) => Kind::Typed(FieldType::Text),
+                    Some(DataType::Integer) => Kind::Typed(FieldType::Integer),
+                    Some(DataType::Number) => Kind::Typed(FieldType::Number),
+                    Some(DataType::Bool) => Kind::Typed(FieldType::Bool),
+                    Some(DataType::Time) => Kind::Typed(FieldType::Time),
+                    _ => Kind::Json,
+                };
+                Ok((
+                    SqlFragment::text(format!("{r}.{}", quote(&column_name(f)))),
+                    kind,
+                ))
+            }
         }
     }
 
@@ -90,10 +125,40 @@ impl Compiler<'_> {
         match o {
             Operand::Field(f) => self.field(cols, f),
             Operand::TimeFn(func, f) => {
-                let (t, _) = self.field(cols, f)?;
+                let (t, kind) = self.field(cols, f)?;
+                let t = if kind == Kind::Json {
+                    Self::typed_json(t, FieldType::Time)
+                } else {
+                    t
+                };
                 Ok((self.time_fn(*func, t), Kind::Derived))
             }
         }
+    }
+
+    fn typed_json(j: SqlFragment, ty: FieldType) -> SqlFragment {
+        let mut out = SqlFragment::new();
+        let (json_type, cast) = match ty {
+            FieldType::Text => ("string", ""),
+            FieldType::Integer | FieldType::Number => ("number", "::numeric"),
+            FieldType::Bool => ("boolean", "::boolean"),
+            FieldType::Time => ("string", ""),
+            _ => return j,
+        };
+        if ty == FieldType::Time {
+            out.push("core.payload_time(").append(j).push(" #>> '{}')");
+        } else {
+            out.push("(CASE WHEN jsonb_typeof(")
+                .append(j.clone())
+                .push(") = '")
+                .push(json_type)
+                .push("' THEN (")
+                .append(j)
+                .push(" #>> '{}')")
+                .push(cast)
+                .push(" END)");
+        }
+        out
     }
 
     /// A payload JSON value read as the type of `v`.
@@ -114,8 +179,15 @@ impl Compiler<'_> {
                     .append(j)
                     .push(" #>> '{}')::boolean END)");
             }
+            Value::Time(_) => {
+                out.push("core.payload_time(").append(j).push(" #>> '{}')");
+            }
             _ => {
-                out.push("(").append(j).push(" #>> '{}')");
+                out.push("(CASE WHEN jsonb_typeof(")
+                    .append(j.clone())
+                    .push(")='string' THEN (")
+                    .append(j)
+                    .push(" #>> '{}') END)");
             }
         }
         out
@@ -316,7 +388,12 @@ impl Compiler<'_> {
             }
             Expr::Words(w) => self.words(cols, w)?,
             Expr::Within { lhs, from, to } => {
-                let (l, _) = self.operand(cols, lhs)?;
+                let (l, kind) = self.operand(cols, lhs)?;
+                let l = if kind == Kind::Json {
+                    Self::typed_json(l, FieldType::Time)
+                } else {
+                    l
+                };
                 let mut f = SqlFragment::text("(");
                 f.append(l.clone())
                     .push(" >= ")
@@ -329,8 +406,18 @@ impl Compiler<'_> {
                 f
             }
             Expr::TimeDiff { a, b, op, seconds } => {
-                let (a, _) = self.field(cols, a)?;
-                let (b, _) = self.field(cols, b)?;
+                let (a, a_kind) = self.field(cols, a)?;
+                let (b, b_kind) = self.field(cols, b)?;
+                let a = if a_kind == Kind::Json {
+                    Self::typed_json(a, FieldType::Time)
+                } else {
+                    a
+                };
+                let b = if b_kind == Kind::Json {
+                    Self::typed_json(b, FieldType::Time)
+                } else {
+                    b
+                };
                 let mut f = SqlFragment::text("(extract(epoch from (");
                 f.append(a)
                     .push(" - ")

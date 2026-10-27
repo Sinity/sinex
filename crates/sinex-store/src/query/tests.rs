@@ -108,8 +108,7 @@ async fn ask(conn: &mut PgConnection, text: &str) -> Answer {
 
 async fn ask_page(conn: &mut PgConnection, text: &str, page: Page) -> Answer {
     let ctx = ctx();
-    let q = bind(text, &ctx).unwrap_or_else(|e| panic!("{}", e.render(text)));
-    run(conn, text, &q, &ctx, &page)
+    run(conn, text, None, &ctx, &page)
         .await
         .unwrap_or_else(|e| panic!("{text}: {e}"))
 }
@@ -621,3 +620,5 @@ async fn derived_aliases_read_what_the_derivations_write(db: devkit::pg::TestDat
         vec![json!("desktop.hyprland,desktop.activitywatch")]
     );
 }
+
+mod kinds;

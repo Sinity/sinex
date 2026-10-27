@@ -52,7 +52,10 @@ async fn standin_with_refusal(
                     None,
                     events.iter().map(|_| sinex_model::EventId::new()).collect(),
                 ),
-                Ingress::Chunk { .. } | Ingress::LargeFrame { .. } => (None, vec![]),
+                Ingress::Chunk { .. }
+                | Ingress::LargeFrame { .. }
+                | Ingress::RegisterKinds { .. }
+                | Ingress::ReplaySequence { .. } => (None, vec![]),
             };
             let refusal = match &frame {
                 Ingress::Chunk { offset, .. } if refuse_offset == Some(*offset) => {
@@ -139,7 +142,7 @@ async fn a_spool_is_produced_once_material_first() {
     let Some(Ingress::Events { events, .. }) = frames.get(1) else {
         panic!("events after the material: {frames:?}")
     };
-    let types: Vec<&str> = events.iter().map(|e| e.event_type.as_str()).collect();
+    let types: Vec<&str> = events.iter().map(|e| e.kind.name.as_str()).collect();
     assert_eq!(types, vec!["window.focused", "window.closed"]);
     assert!(
         events.iter().all(|e| e.location.is_some()),

@@ -87,6 +87,20 @@ const CURSOR: Arg = opt("cursor", ArgKind::Text, "the cursor from the previous p
 /// they cannot drift apart.
 pub const COMMANDS: &[Command] = &[
     Command {
+        name: "kinds",
+        summary: "List immutable event-kind declarations",
+        access: Access::Read,
+        mcp: true,
+        args: &[opt("kind", ArgKind::Text, "event type"), PAGE, CURSOR],
+    },
+    Command {
+        name: "fields",
+        summary: "Describe payload fields from stored declarations",
+        access: Access::Read,
+        mcp: true,
+        args: &[opt("kind", ArgKind::Text, "event type"), PAGE, CURSOR],
+    },
+    Command {
         name: "forecast-issue",
         summary: "Record a binary probability forecast",
         access: Access::Agent,
