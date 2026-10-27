@@ -8,11 +8,11 @@
 //!
 //! The key is the logical day (operator's zone, days from the configured
 //! start); a span never crosses a day start. The latest focus before the day
-//! is read too, since a window focused before the day start still holds
-//! attention after it.
+//! is read too, as are commands and absences that still overlap the day.
 use crate::derived_event::derived;
-use crate::{Computed, Env, InputQuery, KeyState, KeyView, Keyed, Kind, Neighbour};
+use crate::{Computed, Env, InputQuery, KeyState, KeyView, Keyed};
 use serde_json::{Value, json};
+use sinex_model::clock::IntervalEnd;
 use sinex_model::event_types::desktop::PresenceInterval;
 use sinex_model::event_types::fused::{ClipboardFused, FocusFused, VisitFused};
 use sinex_model::event_types::{ActivitySpan, CommandFused};
@@ -118,14 +118,14 @@ impl Keyed for ActivitySpans {
         let Some(start) = input.ts_orig else {
             return vec![];
         };
-        // A focus that runs past a day start holds attention in the next day.
-        let end = input
-            .payload
-            .get("ended_at")
-            .and_then(|v| serde_json::from_value::<Timestamp>(v.clone()).ok())
-            .filter(|_| input.event_type == FocusFused::EVENT_TYPE)
-            .unwrap_or(start)
-            .max(start);
+        let end = match input.event_type {
+            CommandFused::EVENT_TYPE => IntervalEnd::AfterNs("duration_ns"),
+            FocusFused::EVENT_TYPE | PresenceInterval::EVENT_TYPE => IntervalEnd::At("ended_at"),
+            _ => IntervalEnd::AfterNs("duration_ns"),
+        }
+        .at(start, input.payload)
+        .unwrap_or(start)
+        .max(start);
         let mut out = Vec::new();
         let (Ok(first), Ok(last)) = (env.time_settings.day(start), env.time_settings.day(end))
         else {
@@ -149,11 +149,14 @@ impl Keyed for ActivitySpans {
             env.time_settings.day_start(day).ok()?,
             env.time_settings.day_end(day).ok()?,
         );
-        q.before.push(Neighbour {
-            kinds: vec![Kind::all(FocusFused::EVENT_TYPE)],
-            per: None,
-            count: 1,
-        });
+        q.intervals = vec![
+            (
+                CommandFused::EVENT_TYPE,
+                IntervalEnd::AfterNs("duration_ns"),
+            ),
+            (FocusFused::EVENT_TYPE, IntervalEnd::At("ended_at")),
+            (PresenceInterval::EVENT_TYPE, IntervalEnd::At("ended_at")),
+        ];
         Some(q)
     }
 

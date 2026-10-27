@@ -404,3 +404,5 @@ material another producer or a binding registered is refused, and nothing
 changes. An excised material is no longer listed on
 `<root>.materials.<producer>`. The operator's excision refuses producers'
 materials.
+
+Activity spans read all earlier commands, focus intervals and absences that overlap their logical day. Input queries declare each interval end as a timestamp field or a duration in nanoseconds; the shared store query selects those intervals.

@@ -53,6 +53,7 @@ pub struct Window {
     pub start: OffsetDateTime,
     pub end: OffsetDateTime,
     pub before: Vec<Nearest>,
+    pub intervals: Vec<(&'static str, sinex_model::clock::IntervalEnd)>,
     pub after: Vec<Nearest>,
 }
 
@@ -172,12 +173,30 @@ macro_rules! committed {
 /// neighbours appended (also sorted, without repeats).
 pub async fn read_window(conn: &mut PgConnection, w: &Window) -> Result<Vec<Committed>> {
     let (types, contains) = kind_arrays(&w.kinds);
+    let mut interval_types = Vec::new();
+    let mut end_fields = Vec::new();
+    let mut durations = Vec::new();
+    for &(kind, end) in &w.intervals {
+        interval_types.push(kind.to_owned());
+        let (field, duration) = match end {
+            sinex_model::clock::IntervalEnd::At(field) => (field, false),
+            sinex_model::clock::IntervalEnd::AfterNs(field) => (field, true),
+        };
+        end_fields.push(field.to_owned());
+        durations.push(duration);
+    }
     let rows = sqlx::query!(
         r#"SELECT e.id, e.event_type, e.source, e.material_id, e.anchor, e.output_index, e.parents,
              e.ts_orig, e.ts_quality, e.payload, e.equivalence_key, e.reading_order, e.record_hash,
              e.record_state, e.class, e.commit_seq
            FROM core.events e
-           WHERE e.event_type = ANY($1) AND e.ts_orig >= $2 AND e.ts_orig < $3
+           WHERE e.event_type = ANY($1) AND e.ts_orig < $3
+             AND (e.ts_orig >= $2 OR EXISTS (
+               SELECT 1 FROM unnest($5::text[], $6::text[], $7::bool[]) AS i(event_type, field, duration)
+               WHERE i.event_type = e.event_type
+                 AND CASE WHEN i.duration THEN e.ts_orig + interval '1 microsecond' *
+                       ceil(greatest(coalesce((e.payload->>i.field)::numeric, 0), 0) / 1000)::double precision
+                     ELSE coalesce((e.payload->>i.field)::timestamptz, $3) END >= $2))
              AND EXISTS (SELECT 1 FROM unnest($1::text[], $4::jsonb[]) AS k(event_type, contains)
                          WHERE k.event_type = e.event_type AND e.payload @> k.contains)
              AND NOT EXISTS (SELECT 1 FROM audit.archived a WHERE a.event_id = e.id)
@@ -186,6 +205,9 @@ pub async fn read_window(conn: &mut PgConnection, w: &Window) -> Result<Vec<Comm
         w.start,
         w.end,
         &contains,
+        &interval_types,
+        &end_fields,
+        &durations,
     )
     .fetch_all(&mut *conn)
     .await?;
@@ -297,8 +319,11 @@ struct Group {
 
 impl Windows {
     pub fn new(windows: Vec<Window>, page: i64, bytes: i64) -> Self {
-        let (alone, mut plain): (Vec<usize>, Vec<usize>) = (0..windows.len())
-            .partition(|&i| !windows[i].before.is_empty() || !windows[i].after.is_empty());
+        let (alone, mut plain): (Vec<usize>, Vec<usize>) = (0..windows.len()).partition(|&i| {
+            !windows[i].before.is_empty()
+                || !windows[i].after.is_empty()
+                || !windows[i].intervals.is_empty()
+        });
         // Group by kinds, then chain by start.
         plain.sort_by(|&a, &b| {
             let (wa, wb) = (&windows[a], &windows[b]);
