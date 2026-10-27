@@ -536,18 +536,25 @@ fn suffix(binding: &Binding) -> Option<&str> {
         .name
         .strip_prefix(&format!("{}:{}", binding.source, binding.input.display()))
 }
-fn same_identity(left: &Binding, right: &Binding) -> bool {
-    left.source == right.source
-        && left.parser == right.parser
-        && left.settings.host == right.settings.host
-        && suffix(left) == suffix(right)
+#[derive(PartialEq, Eq, PartialOrd, Ord)]
+struct BindingIdentity {
+    source: String,
+    parser: String,
+    host: String,
+    suffix: Option<String>,
+    input: PathBuf,
 }
-fn same_input(left: &Path, right: &Path) -> bool {
-    left == right
-        || std::fs::canonicalize(left)
-            .ok()
-            .zip(std::fs::canonicalize(right).ok())
-            .is_some_and(|(left, right)| left == right)
+
+impl BindingIdentity {
+    fn of(binding: &Binding) -> Self {
+        Self {
+            source: binding.source.clone(),
+            parser: binding.parser.clone(),
+            host: binding.settings.host.clone(),
+            suffix: suffix(binding).map(str::to_owned),
+            input: std::fs::canonicalize(&binding.input).unwrap_or_else(|_| binding.input.clone()),
+        }
+    }
 }
 
 /// Reconciled bindings and inputs that cannot be read without choosing a cursor.
@@ -563,23 +570,24 @@ pub fn reconcile(
     saved: &[Binding],
 ) -> BindingPlan {
     let mut out = BindingPlan::default();
-    while !proposed.is_empty() {
-        let (format, mut binding) = proposed.remove(0);
-        let mut aliases = vec![];
-        let mut index = 0;
-        while index < proposed.len() {
-            if same_identity(&proposed[index].1, &binding)
-                && same_input(&proposed[index].1.input, &binding.input)
-            {
-                aliases.push(proposed.remove(index).1);
-            } else {
-                index += 1;
-            }
-        }
-        let candidates: Vec<_> = saved
-            .iter()
-            .filter(|old| same_identity(old, &binding) && same_input(&old.input, &binding.input))
-            .collect();
+    let mut saved_by_input = std::collections::BTreeMap::<_, Vec<_>>::new();
+    for binding in saved {
+        saved_by_input
+            .entry(BindingIdentity::of(binding))
+            .or_default()
+            .push(binding);
+    }
+    let mut proposed_by_input = std::collections::BTreeMap::<_, Vec<_>>::new();
+    for (format, binding) in proposed.drain(..) {
+        proposed_by_input
+            .entry(BindingIdentity::of(&binding))
+            .or_default()
+            .push((format, binding));
+    }
+    for (identity, mut group) in proposed_by_input {
+        let (format, mut binding) = group.remove(0);
+        let aliases: Vec<_> = group.into_iter().map(|(_, binding)| binding).collect();
+        let candidates = saved_by_input.remove(&identity).unwrap_or_default();
         let reason = if candidates.len() > 1 {
             Some("several saved bindings match")
         } else if aliases
