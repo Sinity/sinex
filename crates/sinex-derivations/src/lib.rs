@@ -301,7 +301,8 @@ pub fn keyed() -> Vec<Box<dyn AnyKeyed>> {
         .iter()
         .map(|rule| Box::new(fusion::Fusion(rule)) as Box<dyn AnyKeyed>)
         .collect();
-    all.extend::<[Box<dyn AnyKeyed>; 7]>([
+    all.extend::<[Box<dyn AnyKeyed>; 8]>([
+        Box::new(library::LibraryItems),
         Box::new(session::ShellSessions),
         Box::new(state_interval::StateIntervals),
         Box::new(figures::HourlyMetrics),

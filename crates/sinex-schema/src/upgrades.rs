@@ -43,6 +43,8 @@ pub(crate) fn upgrades() -> Vec<Vec<String>> {
             crate::tables::COVERAGE_RUNS.into(),
         ],
         register_kinds(&["operator.mark", "query.saved"], false),
+        // 4 to 5: library scan identities and preview evidence.
+        library_scans(),
     ]
 }
 
@@ -90,5 +92,19 @@ pub(crate) fn register_kinds(names: &[&str], replace: bool) -> Vec<String> {
         };
         statements.push(format!("INSERT INTO registry.event_types (name,payload_schema,key_kind,key_fields,replace_rule) VALUES ({},{}::jsonb,{},ARRAY[{fields}]::text[],{}){conflict}",literal(&name),literal(&schema.to_string()),literal(key_kind),literal(rule)));
     }
+    statements
+}
+
+/// Request-created identifiers need an explicit decision about their references.
+fn library_scans() -> Vec<String> {
+    let mut statements = vec![
+        "DO $$ BEGIN IF EXISTS (SELECT 1 FROM core.events WHERE event_type LIKE 'library.%') THEN
+         RAISE EXCEPTION 'library records use request-created item IDs; decide how their references should follow deterministic item IDs before upgrading';
+         END IF; END $$".into(),
+    ];
+    let names: Vec<_> = sinex_model::event_types::ALL.iter()
+        .filter(|kind| kind.event_type.starts_with("library."))
+        .map(|kind| kind.event_type).collect();
+    statements.extend(register_kinds(&names, true));
     statements
 }

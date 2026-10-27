@@ -238,8 +238,7 @@ pub(crate) fn alias_field(alias: &str, name: &str) -> Option<String> {
             payload_time("ended_at"),
             payload_time("started_at")
         ),
-        ("items", "item" | "label" | "content" | "media_type") => payload_text(name),
-        ("items", "revision") => payload_number(name),
+        ("items", "item" | "label" | "revision" | "content" | "media_type") => payload_text(name),
         ("media", "path" | "media_type" | "content") => payload_text(name),
         ("media", "size" | "width" | "height") => payload_number(name),
         ("media", "duration") => format!("({} / 1e3)", payload_number("duration_ms")),

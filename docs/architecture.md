@@ -37,9 +37,33 @@ uses its stored bytes and never registers its data key again.
 Library roots are planned by their format; crawl commands supply their URL
 list as binding settings. Both are read by the binding runner. A library file selection
 is a scan of that file within its root; files beside it are neither read nor
-reported removed. `library-add` then turns the copies into item and rendition
-requests, preserving item identity across moves and revisions. This item
-creation still runs in the library command adapter.
+reported removed. Each completed scan records every present file, including
+unchanged files, with a key made from the host, resolved root and original
+relative path. The captured material identifies each scan part; its part
+index orders observations even when clocks repeat or move backwards.
+Unchanged size, modification time, device and inode reuse the
+previous hashes and media metadata; the new scan still records that file. A move within the root keeps that key when the old path is
+missing and the bytes match; matching device and inode take precedence over
+another new copy of those bytes. Changed bytes at the same key create a new
+revision, named by the content hash, including replacement by a different inode.
+
+`library.items` derives items and original renditions from visible scan
+records. Item IDs are hashes of their keys; original rendition IDs also name
+the content hash. Rendering a preview records `library.preview`, which the
+same derivation turns into a rendition with both the rendering and its scan
+evidence as parents. Hiding a scan invalidates its derived outputs; the runner
+recomputes them from the remaining visible scans. An item and its renditions
+stay visible when another scan supplies their evidence. Revisions are content
+hashes, so hiding an earlier scan cannot change their identities.
+Library commands wait for their requested keys through the same batched
+computation engine as the background runner. A shared lock serializes keyed
+computations before reading inputs, so an older read cannot overwrite a
+command's newer outputs. Command runs end on both success and failure.
+
+Schema version 4 adds the scan identity fields and the preview evidence type.
+It upgrades databases without library records. A database containing library
+records is refused before any schema or data changes: its request-created
+IDs and external references need an explicit migration decision.
 
 Crawl reads URLs from the `visit.fused` derivation, or from the command's
 explicit URLs. Its format owns domain filtering and the caller's optional

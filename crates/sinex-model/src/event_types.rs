@@ -190,6 +190,7 @@ pub const ALL: &[RegisteredEventType] = &[
     info::<library::FileCopy>(),
     info::<library::Item>(),
     info::<library::Rendition>(),
+    info::<library::Preview>(),
     info::<library::Assignment>(),
     info::<library::Collection>(),
     info::<library::Entry>(),

@@ -158,3 +158,10 @@ these names and no others.
 - **request record**: a forecast or library request submitted as a material and admitted through the writer.
 - **transcript cue**: one imported speech-text output with its written offsets; `transcript.cue`.
 - **OCR text**: one imported recognized-text output, with any page coordinates; `ocr.text`.
+
+## Library
+
+- **item key**: the host, resolved library root and original relative path of a file. A move within that root keeps the key when the bytes match and the old path is gone.
+- **scan record**: one file observed in a captured scan part, identified by its material and path, with its item key, content hash and acquisition time. The part index orders observations independently of the wall clock.
+- **item revision**: one content hash of an item. Returning to the same bytes returns to that revision.
+- **preview evidence**: the stored output of rendering an item revision; the library derivation produces its rendition.
