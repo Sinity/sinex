@@ -251,3 +251,128 @@ async fn later_sweeps_check_only_names_written_since_the_previous_sweep(
     assert_eq!(blobs.unadmitted_names().unwrap().count(), 0);
     eprintln!("sweep names: initial=1 unchanged=0 installed=1 uninstalled=1");
 }
+
+#[devkit::test]
+fn seekable_file_records_each_name_and_verifies_repeated_content_without_compression() {
+    use std::io::{Seek, SeekFrom};
+    let dir = tempfile::tempdir().unwrap();
+    let blobs = Blobs::open(dir.path()).unwrap();
+    for bytes in [Vec::new(), vec![b'x'; 2 * BLOB_FRAME_BYTES + 17]] {
+        let mut file = tempfile::tempfile().unwrap();
+        file.write_all(b"skip").unwrap();
+        file.write_all(&bytes).unwrap();
+        file.seek(SeekFrom::Start(4)).unwrap();
+        let name = blobs.put_seekable(&mut file).unwrap();
+        assert_eq!(name, format!("blake3:{}", blake3::hash(&bytes).to_hex()));
+        assert_eq!(blobs.read(&name).unwrap(), bytes);
+        assert!(blobs.recorded_names().unwrap().any(|n| n.unwrap() == name));
+
+        struct RepeatedFile<'a> {
+            file: &'a mut std::fs::File,
+            root: &'a Path,
+            read: usize,
+            temporary_files: usize,
+        }
+        impl Read for RepeatedFile<'_> {
+            fn read(&mut self, out: &mut [u8]) -> std::io::Result<usize> {
+                assert_eq!(
+                    std::fs::read_dir(self.root.join("blobs/tmp"))?.count(),
+                    self.temporary_files
+                );
+                let count = self.file.read(out)?;
+                self.read += count;
+                Ok(count)
+            }
+        }
+        impl Seek for RepeatedFile<'_> {
+            fn seek(&mut self, position: SeekFrom) -> std::io::Result<u64> {
+                self.file.seek(position)
+            }
+        }
+        // The previous writer prepared and compressed even repeated content.
+        file.seek(SeekFrom::Start(4)).unwrap();
+        let mut previous = RepeatedFile {
+            file: &mut file,
+            root: dir.path(),
+            read: 0,
+            temporary_files: 1,
+        };
+        let prepared = blobs.0.prepare_plain(&mut previous, 3).unwrap();
+        assert_eq!(previous.read, bytes.len());
+        assert_eq!(prepared.install().unwrap(), parse(&name).unwrap());
+        file.seek(SeekFrom::Start(4)).unwrap();
+        blobs.forget_unadmitted(&name).unwrap();
+        let mut repeated = RepeatedFile {
+            file: &mut file,
+            root: dir.path(),
+            read: 0,
+            temporary_files: 0,
+        };
+        assert_eq!(blobs.put_seekable(&mut repeated).unwrap(), name);
+        assert_eq!(repeated.read, bytes.len());
+        assert!(blobs.recorded_names().unwrap().any(|n| n.unwrap() == name));
+        let hash = parse(&name).unwrap().hex();
+        let path = dir
+            .path()
+            .join("blobs")
+            .join(&hash[..2])
+            .join(format!("{hash}.zst"));
+        std::fs::write(&path, b"damaged").unwrap();
+        file.seek(SeekFrom::Start(4)).unwrap();
+        assert!(blobs.put_seekable(&mut file).is_err());
+        assert_eq!(std::fs::read(path).unwrap(), b"damaged");
+    }
+}
+
+#[devkit::test]
+fn seekable_file_is_not_installed_when_its_name_cannot_be_recorded() {
+    let dir = tempfile::tempdir().unwrap();
+    let blobs = Blobs::open(dir.path()).unwrap();
+    std::fs::write(dir.path().join("unadmitted-blobs"), b"blocked").unwrap();
+    assert!(
+        blobs
+            .put_seekable(std::io::Cursor::new(b"unadmitted"))
+            .is_err()
+    );
+    assert!(
+        !blobs
+            .contains(&format!("blake3:{}", blake3::hash(b"unadmitted").to_hex()))
+            .unwrap()
+    );
+}
+
+#[devkit::test]
+fn seekable_file_records_content_changed_between_hashing_and_compression() {
+    use std::io::{Cursor, SeekFrom};
+    struct ChangingInput {
+        input: Cursor<Vec<u8>>,
+        changed: bool,
+    }
+    impl Read for ChangingInput {
+        fn read(&mut self, bytes: &mut [u8]) -> std::io::Result<usize> {
+            self.input.read(bytes)
+        }
+    }
+    impl Seek for ChangingInput {
+        fn seek(&mut self, position: SeekFrom) -> std::io::Result<u64> {
+            if matches!(position, SeekFrom::Start(0)) && !self.changed {
+                self.input = Cursor::new(b"second content".to_vec());
+                self.changed = true;
+            }
+            self.input.seek(position)
+        }
+        fn stream_position(&mut self) -> std::io::Result<u64> {
+            self.input.stream_position()
+        }
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let blobs = Blobs::open(dir.path()).unwrap();
+    let name = blobs
+        .put_seekable(ChangingInput {
+            input: Cursor::new(b"first content".to_vec()),
+            changed: false,
+        })
+        .unwrap();
+    assert_eq!(blobs.read(&name).unwrap(), b"second content");
+    assert!(blobs.recorded_names().unwrap().any(|n| n.unwrap() == name));
+}
