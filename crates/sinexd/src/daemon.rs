@@ -138,9 +138,10 @@ pub(crate) async fn run(o: Options) -> Result<(), String> {
             ..Default::default()
         },
     );
+    let configuration = sources.derivation_configuration();
     let (keyed, per_event) = (
         sinex_derivations::keyed(),
-        derivation_runner::available_per_event(),
+        derivation_runner::per_event_with(&configuration)?,
     );
     if let Some(name) = sources.derivations.keys().find(|name| {
         !keyed.iter().any(|d| d.name() == name.as_str())

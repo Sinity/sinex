@@ -193,6 +193,19 @@ in
       })
       catalog.derivations);
 
+    tags = mkOption {
+      type = types.listOf (types.attrsOf types.anything);
+      default = [ ];
+      example = lib.literalExpression ''
+        [ { tag = "editor"; event_type = "focus.fused"; when = [ { field = "/app"; is = "kitty"; } { field = "/title"; contains = "nvim"; } ]; } ]
+      '';
+      description = ''
+        Rules the tag applier attaches tags with: each names a tag, an event
+        type and conditions on payload fields (`is`, `contains`, `starts_with`,
+        `ends_with`, `exists`), as JSON pointers. Changing them recomputes every tag.
+      '';
+    };
+
     journald.enable = mkOption {
       type = types.bool;
       default = cfg.sources."machine.journald".enable;
@@ -356,6 +369,7 @@ in
             };
           });
         derivations = mapAttrs (_: d: d.enable) cfg.derivations;
+        inherit (cfg) tags;
       };
 
       systemd.tmpfiles.rules = [
@@ -483,7 +497,7 @@ in
         # restart on every switch.
         restartIfChanged = false;
         # Tesseract reads text from screen segments (screen.text).
-        path = [ pkgs.tesseract pkgs.coreutils ];
+        path = [ pkgs.tesseract pkgs.poppler-utils pkgs.coreutils ];
         serviceConfig = restartPolicy // {
           User = cfg.user;
           Group = cfg.group;
@@ -629,7 +643,7 @@ in
           after = [ "sinex-db-setup.service" "sinexd.service" ];
           requires = [ "sinex-db-setup.service" ];
           restartIfChanged = false;
-          path = [ pkgs.tesseract pkgs.coreutils ];
+          path = [ pkgs.tesseract pkgs.poppler-utils pkgs.coreutils ];
           environment.SINEX_PRIVATE_MODE = privateSwitch;
           serviceConfig = {
             Type = "oneshot";

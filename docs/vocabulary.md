@@ -61,7 +61,7 @@ these names and no others.
 - **derivation**: keyed (recomputes a **dirty key** when its inputs change; a **computed key** is one key's new output set) or per-event.
 - **superseded input**: an input a derivation read that stopped being live (a newer reading or a replay archived it, or excision removed it) before the outputs computed from it were stored; those outputs are dropped and computed again from what is live.
 - **kind** (of what a key reads): events of one type, optionally only those whose payload fields have given values.
-- **tag assignment**: a `tag.applied` derived event naming the captured record, its tag and the rules that matched.
+- **tag assignment**: a `tag.applied` derived event naming the input record, its tag and the rules that matched.
 - **metric**: a declared count over events (events, seconds of their intervals, or a ratio), with its **dimensions** (payload fields it is broken down by) and the sources that observe it. A **tracked metric** is one the brief compares with its recent level.
 - **calculation**: how a metric counts its inputs: events, seconds or a ratio.
 - **figure**: a metric's number over one civil hour or logical day, total or for one **dimension value**, as a `metric.figure` event; a **health figure** (`health.figure`) is the same for one series of health points.

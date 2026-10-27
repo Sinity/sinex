@@ -1,37 +1,44 @@
 # Window-title classification
 
-Classification is a versioned per-event derivation over `focus.fused`.
-It reads the observed application and title and applies a declared rule
-list. It emits a derived event for every matching label. Unmatched text has
-no classification; the original focus remains queryable.
+The opt-in `tag.applier` derivation classifies `focus.fused` records by the
+rules in `services.sinex.tags`, also read from `tags` in the sources JSON
+configuration. It applies the same rules to other registered event types.
 
-The rule table has these columns:
-
-| Column | Meaning |
+| Field | Meaning |
 | --- | --- |
-| name | Unique rule name, recorded with each result |
-| application | Exact application name, or absent for any application |
-| field | `application` or `title` |
-| comparison | `equals`, `starts with` or `ends with` |
-| text | Literal text to compare, with case preserved |
-| label | The label the rule assigns |
+| `tag` | The label to assign |
+| `event_type` | The registered event type to read |
+| `when` | Conditions that must all match, or absent to match the whole type |
+| `when[].field` | A JSON pointer into the payload, such as `/app` or `/title` |
+| `is` | Exact JSON value equality |
+| `contains`, `starts_with`, `ends_with` | Literal text comparisons, with both sides lowercased |
+| `exists` | Present and not null, or absent or null |
 
-A missing title cannot match a title rule. Empty comparison text and empty
-labels are errors. Multiple rules assigning one label produce one result
-listing all matching rules in name order. Conflicting labels remain separate
-assignments with their rules visible; the derivation does not choose between
-them. There are no inferred projects, keywords, regular expressions or model
-calls.
+For example, these rules label a recorded editor window:
 
-The table is part of the derivation version. Changing a rule increments that
-version and reprocesses every focus reading. Admission replaces each input's
-previous output set and advances progress in the same transaction, including
-when a rule change leaves no outputs. The output names the focus record,
-label, matching rules and original start time, and cites the focus reading as
-its parent. Its class is at least its parent's class. These records are read
-through the existing query language.
+```nix
+services.sinex.derivations."tag.applier".enable = true;
+services.sinex.tags = [{
+  tag = "editor";
+  event_type = "focus.fused";
+  when = [
+    { field = "/app"; is = "kitty"; }
+    { field = "/title"; contains = "nvim"; }
+  ];
+}];
+```
 
-The initial rule list must come from the operator's chosen labels and literal
-comparisons. No classification rules or labels are enabled by this design.
-The tag rule table in `sinex-derivations/src/tags.rs` demonstrates the same
-literal comparisons and attribution for source names and file extensions.
+A missing title cannot match a text comparison. A non-string value does not
+match a text comparison. Multiple rules assigning one label produce one
+assignment listing every matching declaration in `rules`; other labels stay
+separate. Unmatched text has no classification and remains queryable as the
+original focus. There are no inferred projects, regular expressions or model
+calls. The default rule list is empty.
+
+Each `tag.applied` event names the input record, label, matching rules and
+original time, with the input reading as parent and the same class and time
+quality. Unknown time stays unknown. Rule order has no effect. A changed
+rule list reprocesses inputs, replacing each input's previous assignments
+and saving progress together, including when no rule matches any more.
+Hiding or replacing an input removes its per-event outputs; unhiding it
+computes them again. Assignments use the ordinary query language.

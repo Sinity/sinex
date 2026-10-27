@@ -466,7 +466,7 @@ fn generated_write_histories_are_classified_and_nothing_is_missed() {
         fresh_id += 1;
         format!("line {fresh_id:08}\n")
     };
-    for history in 0..60 {
+    for history in 0..10_000 {
         let path = temp(&format!("history-{history}"));
         let d = AppendFile {
             path: path.clone(),
@@ -499,7 +499,7 @@ fn generated_write_histories_are_classified_and_nothing_is_missed() {
             look(&mut cursor, &mut state, &mut read),
             RevisionChange::Appended
         );
-        for step in 0..25 {
+        for step in 0..if history < 60 { 25 } else { 5 } {
             let write = match next(5) {
                 0 => FileWrite::Append,
                 1 => FileWrite::Edit,
@@ -604,4 +604,34 @@ fn large_prefixes_are_hashed_whole_without_changing_the_digest_at_a_part_boundar
         after.digest_after(b"appended"),
         Prefix::read(&mut file, length + 8).unwrap().digest(),
     );
+}
+
+static REWRITE_WHILE_FRAMING: std::sync::Mutex<Option<PathBuf>> = std::sync::Mutex::new(None);
+
+fn rewrite_while_framing(bytes: &[u8]) -> (Vec<(usize, usize)>, usize) {
+    if let Some(path) = REWRITE_WHILE_FRAMING.lock().unwrap().take() {
+        std::fs::write(path, b"new\n").unwrap();
+    }
+    lines(bytes)
+}
+
+#[devkit::test]
+fn a_rewrite_during_the_read_advances_nothing_and_is_read_on_the_next_poll() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("history");
+    std::fs::write(&path, b"old\n").unwrap();
+    *REWRITE_WHILE_FRAMING.lock().unwrap() = Some(path.clone());
+    let driver = AppendFile {
+        path,
+        host: "test".into(),
+        framer: Framer::incremental(rewrite_while_framing),
+    };
+    let mut state = AppendState::default();
+    let busy = driver.poll(&Value::Null, &mut state).unwrap();
+    assert!(busy.material.is_none());
+    assert!(busy.observation.unavailable.unwrap().contains("changed"));
+    assert_eq!(busy.cursor_without_material, Value::Null);
+    assert!(state.is_empty());
+    let next = driver.poll(&Value::Null, &mut state).unwrap();
+    assert_eq!(records(&next), ["new\n"]);
 }

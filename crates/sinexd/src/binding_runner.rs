@@ -29,6 +29,9 @@ pub(crate) struct Config {
     /// marked as inputs arrive, so it catches up when it is enabled again.
     #[serde(default)]
     pub derivations: BTreeMap<String, bool>,
+    /// The tag applier's rules.
+    #[serde(default)]
+    pub tags: Vec<sinex_derivations::tags::TagRule>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -58,6 +61,13 @@ impl Config {
             .get(derivation)
             .copied()
             .unwrap_or_else(|| sinex_derivations::enabled_by_default(derivation))
+    }
+
+    /// What the configuration declares for derivations.
+    pub(crate) fn derivation_configuration(&self) -> sinex_derivations::Configuration {
+        sinex_derivations::Configuration {
+            tags: self.tags.clone(),
+        }
     }
 
     pub(crate) fn load(path: &Path) -> Result<Self, String> {
