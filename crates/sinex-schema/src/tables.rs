@@ -58,6 +58,10 @@ RETURNS text LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE AS $$
   END
 $$"#;
 
+/// Coverage probes one source and run for its last recorded time.
+pub(crate) const COVERAGE_RUNS: &str =
+    "CREATE INDEX events_coverage ON core.events (source, run_id, ts_orig) INCLUDE (commit_seq)";
+
 pub(crate) fn tables(c: &Checks) -> Vec<String> {
     let event_columns = format!(
         "id uuid NOT NULL,
@@ -515,6 +519,7 @@ pub(crate) fn after_tables() -> Vec<String> {
             out.push(template.replace("$T", table));
         }
     }
+    out.push(COVERAGE_RUNS.into());
     out
 }
 

@@ -74,10 +74,49 @@ impl Framer {
                 framing,
             );
         }
+        let mut ranges = Vec::new();
+        self.visit_incremental(reader, |range| ranges.push(range))?;
+        Ok(ranges)
+    }
+
+    /// The newest completed ranges, bounded by record count and record bytes.
+    /// One record larger than the byte window is kept whole. The boolean says
+    /// whether every completed record fit, so a restart knows when to stop.
+    pub fn tail_ranges(
+        self,
+        reader: &mut dyn Read,
+        bounds: crate::drivers::append_file::TailBounds,
+    ) -> std::io::Result<(Vec<(usize, usize)>, bool)> {
+        let mut complete = true;
+        let mut tail = std::collections::VecDeque::new();
+        let mut bytes = 0usize;
+        let mut remember = |(start, end)| {
+            tail.push_back((start, end));
+            bytes += end - start;
+            while tail.len() > bounds.records || (bytes > bounds.bytes && tail.len() > 1) {
+                let (start, end) = tail.pop_front().expect("nonempty tail");
+                bytes -= end - start;
+                complete = false;
+            }
+        };
+        if matches!(self.reader, ReaderFraming::Incremental) {
+            self.visit_incremental(reader, &mut remember)?;
+        } else {
+            for range in self.ranges(reader)? {
+                remember(range);
+            }
+        }
+        Ok((tail.into_iter().collect(), complete))
+    }
+
+    fn visit_incremental(
+        self,
+        reader: &mut dyn Read,
+        mut visit: impl FnMut((usize, usize)),
+    ) -> std::io::Result<()> {
         const CHUNK: usize = 64 << 10;
         let mut pending = Vec::new();
         let mut base = 0usize;
-        let mut ranges = Vec::new();
         let mut block = [0; CHUNK];
         loop {
             let n = reader.read(&mut block)?;
@@ -93,10 +132,10 @@ impl Framer {
                 if start > end || end > pending.len() {
                     return Err(std::io::Error::other("invalid source record range"));
                 }
-                ranges.push((base + start, base + end));
+                visit((base + start, base + end));
             }
             if eof {
-                return Ok(ranges);
+                return Ok(());
             }
             if count > 0 {
                 let consumed = records[count].0;
