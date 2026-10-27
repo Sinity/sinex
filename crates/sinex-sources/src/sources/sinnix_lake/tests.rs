@@ -384,13 +384,7 @@ fn an_air_sample_is_keyed_by_the_sensor_clock_under_either_lane_name() {
 
 #[devkit::test]
 fn unbound_lanes_and_bad_envelopes_fail() {
-    assert!(
-        parse(
-            "desktop.clipboard",
-            &envelope_line("mpris", 1, text_copy())
-        )
-        .is_err()
-    );
+    assert!(parse("desktop.clipboard", &envelope_line("mpris", 1, text_copy())).is_err());
     let mut bad = envelope_line("clipboard", 1, text_copy());
     bad.insert("schema".into(), json!("other"));
     assert!(parse("desktop.clipboard", &bad).is_err());

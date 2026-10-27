@@ -8,7 +8,7 @@
 //! made), window samples from arbtt (one record every few seconds, not one
 //! per focus), and the terminal's command reports (they carry no host, which
 //! a command's identity needs).
-use super::{FusionRule, FusionInput, FusionRecord};
+use super::{FusionInput, FusionRecord, FusionRule};
 use serde_json::{Map, Value, json};
 use sinex_model::Event;
 use sinex_model::Timestamp;
@@ -406,7 +406,12 @@ pub static CLIPBOARD: FusionRule = FusionRule {
     end_field: None,
 };
 
-fn notification(event: &Event, app: &str, summary: &str, body: Option<&str>) -> Option<FusionRecord> {
+fn notification(
+    event: &Event,
+    app: &str,
+    summary: &str,
+    body: Option<&str>,
+) -> Option<FusionRecord> {
     fusion_record(
         event,
         format!("{app}\0{summary}\0{}", body.unwrap_or_default()),

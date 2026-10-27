@@ -49,20 +49,20 @@ const fn spec(
 const LAKE_SOURCES: &[LakeSource] = &[
     LakeSource {
         spec: spec(
-                "desktop.clipboard",
-                "sinnix-lake:desktop.clipboard",
-                "recall, prompt provenance",
-                &["clipboard.copied"],
+            "desktop.clipboard",
+            "sinnix-lake:desktop.clipboard",
+            "recall, prompt provenance",
+            &["clipboard.copied"],
         ),
         dirs: &["activity/desktop/clipboard", "activity/desktop/selection"],
         lane_values: &["clipboard", "primary"],
     },
     LakeSource {
         spec: spec(
-                "desktop.notifications",
-                "sinnix-lake:desktop.notifications",
-                "recall, interruption analysis",
-                &["notification.shown"],
+            "desktop.notifications",
+            "sinnix-lake:desktop.notifications",
+            "recall, interruption analysis",
+            &["notification.shown"],
         ),
         dirs: &["activity/desktop/notification"],
         lane_values: &["notifications"],

@@ -157,7 +157,7 @@ impl Parser for ClipboardParser {
             .map(str::to_owned);
         Ok((
             vec![ClipboardCopied {
-        captured_by: sinex_model::event_types::session::CaptureProgram::Sinex,
+                captured_by: sinex_model::event_types::session::CaptureProgram::Sinex,
                 received_at,
                 selection: f
                     .get("selection")
