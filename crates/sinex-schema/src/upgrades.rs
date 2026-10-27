@@ -37,6 +37,11 @@ pub(crate) fn upgrades() -> Vec<Vec<String>> {
             "GRANT SELECT ON core.excised_materials TO sinex_reader, sinex_writer".into(),
             "GRANT INSERT, UPDATE, DELETE ON core.excised_materials TO sinex_writer".into(),
         ],
+        // 2 to 3: coverage probes each run through one covering index.
+        vec![
+            "DROP INDEX IF EXISTS core.events_coverage".into(),
+            crate::tables::COVERAGE_RUNS.into(),
+        ],
         query_records(),
     ]
 }
