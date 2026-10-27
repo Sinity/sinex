@@ -1060,7 +1060,9 @@ async fn a_refused_event_between_good_frames_is_a_queryable_material_failure_and
 }
 
 #[devkit::test]
-async fn content_failures_use_the_named_material_and_missing_locations_are_malformed(db: devkit::pg::TestDatabase) {
+async fn content_failures_use_the_named_material_and_missing_locations_are_malformed(
+    db: devkit::pg::TestDatabase,
+) {
     let h = Harness::start(db).await;
     let (first, frame) = h.material_frame("a/material/first", b": 1760788800:0;first\n");
     h.send("session", &frame).await;
@@ -1072,50 +1074,128 @@ async fn content_failures_use_the_named_material_and_missing_locations_are_malfo
     wrong_location.event_type = "not.declared".into();
     for (name, event, expected) in [
         ("nul", imported(first, 0, "a\0b"), FrameRefusal::Content),
-        ("unknown-material", imported(MaterialId::new(), 0, "synthetic"), FrameRefusal::Content),
+        (
+            "unknown-material",
+            imported(MaterialId::new(), 0, "synthetic"),
+            FrameRefusal::Content,
+        ),
         ("wrong-material", wrong_location, FrameRefusal::Content),
         ("no-location", no_location, FrameRefusal::Malformed),
     ] {
-        let ack = h.send("session", &Ingress::Events {
-            frame: format!("a/events/{first}/{name}"), events: vec![event], failures: vec![],
-        }).await;
+        let ack = h
+            .send(
+                "session",
+                &Ingress::Events {
+                    frame: format!("a/events/{first}/{name}"),
+                    events: vec![event],
+                    failures: vec![],
+                },
+            )
+            .await;
         assert_eq!(ack.refusal_kind(), Some(expected), "{ack:?}");
-        assert_eq!(ack.outcome["failures"], if expected == FrameRefusal::Content {1} else {0}, "{ack:?}");
+        assert_eq!(
+            ack.outcome["failures"],
+            if expected == FrameRefusal::Content {
+                1
+            } else {
+                0
+            },
+            "{ack:?}"
+        );
     }
     assert_eq!(h.count("SELECT count(*) FROM raw.failures").await, 3);
-    assert_eq!(h.count(&format!("SELECT count(*) FROM raw.failures WHERE material_id = '{first}'")).await, 3);
-    assert_eq!(h.count(&format!("SELECT count(*) FROM raw.failures WHERE material_id = '{second}'")).await, 0);
+    assert_eq!(
+        h.count(&format!(
+            "SELECT count(*) FROM raw.failures WHERE material_id = '{first}'"
+        ))
+        .await,
+        3
+    );
+    assert_eq!(
+        h.count(&format!(
+            "SELECT count(*) FROM raw.failures WHERE material_id = '{second}'"
+        ))
+        .await,
+        0
+    );
     assert_eq!(h.count("SELECT count(*) FROM core.events").await, 0);
 }
 
 #[devkit::test]
-async fn privacy_changes_refuse_the_next_frame_before_its_bytes_are_stored(db: devkit::pg::TestDatabase) {
+async fn privacy_changes_refuse_the_next_frame_before_its_bytes_are_stored(
+    db: devkit::pg::TestDatabase,
+) {
     let h = Harness::start(db).await;
     let hello = ProducerHello::default();
-    let connected = sinex_source_core::drivers::producer::Producer::connect(h.nats.url(), None, h.subjects.clone(), "session", &hello).await.unwrap();
+    let connected = sinex_source_core::drivers::producer::Producer::connect(
+        h.nats.url(),
+        None,
+        h.subjects.clone(),
+        "session",
+        &hello,
+    )
+    .await
+    .unwrap();
     let (_, frame) = h.material_frame("first", b"first\n");
     assert!(h.send("session", &frame).await.refusal.is_none());
     let mut conn = PgConnection::connect(&h.url).await.unwrap();
-    sinex_store::privacy::set_source_class(&mut conn, "session", sinex_model::Class::Guarded, "test").await.unwrap();
+    sinex_store::privacy::set_source_class(
+        &mut conn,
+        "session",
+        sinex_model::Class::Guarded,
+        "test",
+    )
+    .await
+    .unwrap();
     let (_, frame) = h.material_frame("changed", b"changed\n");
     let ack = h.send("session", &frame).await;
     assert_eq!(ack.refusal_kind(), Some(FrameRefusal::Configuration));
-    let Ingress::Material { material, .. } = &frame else { panic!("material") };
+    let Ingress::Material { material, .. } = &frame else {
+        panic!("material")
+    };
     assert!(!h.blobs.contains(&material.blob).unwrap());
     drop(connected);
-    let connected = sinex_source_core::drivers::producer::Producer::connect(h.nats.url(), None, h.subjects.clone(), "session", &hello).await.unwrap();
+    let connected = sinex_source_core::drivers::producer::Producer::connect(
+        h.nats.url(),
+        None,
+        h.subjects.clone(),
+        "session",
+        &hello,
+    )
+    .await
+    .unwrap();
     let (_, frame) = h.material_frame("checked", b"checked\n");
     assert!(h.send("session", &frame).await.refusal.is_none());
-    sinex_store::privacy::set_source_class(&mut conn, "session", sinex_model::Class::Sealed, "test").await.unwrap();
+    sinex_store::privacy::set_source_class(
+        &mut conn,
+        "session",
+        sinex_model::Class::Sealed,
+        "test",
+    )
+    .await
+    .unwrap();
     let (_, frame) = h.material_frame("sealed", b"sealed\n");
     let ack = h.send("session", &frame).await;
     assert_eq!(ack.refusal_kind(), Some(FrameRefusal::Configuration));
-    let Ingress::Material { material, .. } = &frame else { panic!("material") };
+    let Ingress::Material { material, .. } = &frame else {
+        panic!("material")
+    };
     assert!(!h.blobs.contains(&material.blob).unwrap());
     assert_eq!(h.count("SELECT count(*) FROM raw.materials").await, 2);
     drop(connected);
-    assert!(matches!(sinex_source_core::drivers::producer::Producer::connect(h.nats.url(), None, h.subjects.clone(), "session", &hello).await,
-        Err(sinex_source_core::drivers::producer::Error::Configuration(_))));
+    assert!(matches!(
+        sinex_source_core::drivers::producer::Producer::connect(
+            h.nats.url(),
+            None,
+            h.subjects.clone(),
+            "session",
+            &hello
+        )
+        .await,
+        Err(sinex_source_core::drivers::producer::Error::Configuration(
+            _
+        ))
+    ));
 }
 
 #[devkit::test]
@@ -1219,44 +1299,115 @@ async fn malformed_large_frames_are_errors_and_byte_refusals_remove_transfer_byt
 }
 
 #[devkit::test]
-async fn daemon_status_counts_refusals_by_producer_source_and_event_type(db: devkit::pg::TestDatabase) {
+async fn daemon_status_counts_refusals_by_producer_source_and_event_type(
+    db: devkit::pg::TestDatabase,
+) {
     let h = Harness::start(db).await;
-    let (material, frame) = h.material_frame("a:/spool/capture@host/material/first", b": 1760788800:0;synthetic\n");
+    let (material, frame) = h.material_frame(
+        "a:/spool/capture@host/material/first",
+        b": 1760788800:0;synthetic\n",
+    );
     h.send("node", &frame).await;
     let mut event = imported(material, 0, "synthetic");
     event.event_type = "not.declared".into();
-    let content = Ingress::Events { frame: format!("a:/spool/capture@host/events/{material}/content"), events: vec![event.clone(), event], failures: vec![] };
-    for _ in 0..2 {
-        assert_eq!(h.send("node", &content).await.refusal_kind(), Some(FrameRefusal::Content));
-    }
-    let bad_bytes = Ingress::Chunk { frame: "bad-bytes".into(), for_frame: "b/material/bytes".into(), blob: "not-a-blob".into(), offset: 0, total: 1, data: "!".into() };
-    assert_eq!(h.send("node", &bad_bytes).await.refusal_kind(), Some(FrameRefusal::Bytes));
-    let malformed = Ingress::Events { frame: "c/events/invalid".into(), events: vec![ProducerEvent { location: None, ..imported(material, 0, "synthetic") }], failures: vec![] };
-    assert_eq!(h.send("other-node", &malformed).await.refusal_kind(), Some(FrameRefusal::Malformed));
-    let mut conn = PgConnection::connect(&h.url).await.unwrap();
-    sinex_store::privacy::set_source_class(&mut conn, "node", sinex_model::Class::Sealed, "test").await.unwrap();
-    let (_, frame) = h.material_frame("d/material/sealed", b"unregistered\n");
-    assert_eq!(h.send("node", &frame).await.refusal_kind(), Some(FrameRefusal::Configuration));
-    assert_eq!(h.send_raw("unknown-node", b"not a frame".to_vec()).await.refusal_kind(), Some(FrameRefusal::Malformed));
-    let api = crate::api::Api {
-        reads: h.reads.clone(), writer: Some(h.writer.clone()), blobs: h.blobs.clone(),
-        zone: jiff::tz::TimeZone::UTC, day_start: jiff::civil::Time::constant(4, 0, 0, 0),
-        agent_grants: vec![], unlock: Default::default(), host: "test".into(),
+    let content = Ingress::Events {
+        frame: format!("a:/spool/capture@host/events/{material}/content"),
+        events: vec![event.clone(), event],
+        failures: vec![],
     };
-    let sinex_protocol::Reply::Ok { result } = api.call(sinex_protocol::Request::Status, sinex_protocol::Access::Read).await else { panic!("status refused") };
-    assert_eq!(result["ingress_refusals_24h"], json!([
-        {"producer":"node","source":"a","event_type":"not.declared","refusal_kind":"content","frames":1},
-        {"producer":"node","source":"b","event_type":null,"refusal_kind":"bytes","frames":1},
-        {"producer":"node","source":"d","event_type":null,"refusal_kind":"configuration","frames":1},
-        {"producer":"other-node","source":"c","event_type":"command.executed","refusal_kind":"malformed","frames":1},
-        {"producer":"unknown-node","source":null,"event_type":null,"refusal_kind":"malformed","frames":1},
-    ]));
+    for _ in 0..2 {
+        assert_eq!(
+            h.send("node", &content).await.refusal_kind(),
+            Some(FrameRefusal::Content)
+        );
+    }
+    let bad_bytes = Ingress::Chunk {
+        frame: "bad-bytes".into(),
+        for_frame: "b/material/bytes".into(),
+        blob: "not-a-blob".into(),
+        offset: 0,
+        total: 1,
+        data: "!".into(),
+    };
+    assert_eq!(
+        h.send("node", &bad_bytes).await.refusal_kind(),
+        Some(FrameRefusal::Bytes)
+    );
+    let malformed = Ingress::Events {
+        frame: "c/events/invalid".into(),
+        events: vec![ProducerEvent {
+            location: None,
+            ..imported(material, 0, "synthetic")
+        }],
+        failures: vec![],
+    };
+    assert_eq!(
+        h.send("other-node", &malformed).await.refusal_kind(),
+        Some(FrameRefusal::Malformed)
+    );
+    let mut conn = PgConnection::connect(&h.url).await.unwrap();
+    sinex_store::privacy::set_source_class(&mut conn, "node", sinex_model::Class::Sealed, "test")
+        .await
+        .unwrap();
+    let (_, frame) = h.material_frame("d/material/sealed", b"unregistered\n");
+    assert_eq!(
+        h.send("node", &frame).await.refusal_kind(),
+        Some(FrameRefusal::Configuration)
+    );
+    assert_eq!(
+        h.send_raw("unknown-node", b"not a frame".to_vec())
+            .await
+            .refusal_kind(),
+        Some(FrameRefusal::Malformed)
+    );
+    let api = crate::api::Api {
+        reads: h.reads.clone(),
+        writer: Some(h.writer.clone()),
+        blobs: h.blobs.clone(),
+        zone: jiff::tz::TimeZone::UTC,
+        day_start: jiff::civil::Time::constant(4, 0, 0, 0),
+        agent_grants: vec![],
+        unlock: Default::default(),
+        host: "test".into(),
+    };
+    let sinex_protocol::Reply::Ok { result } = api
+        .call(
+            sinex_protocol::Request::Status,
+            sinex_protocol::Access::Read,
+        )
+        .await
+    else {
+        panic!("status refused")
+    };
+    assert_eq!(
+        result["ingress_refusals_24h"],
+        json!([
+            {"producer":"node","source":"a","event_type":"not.declared","refusal_kind":"content","frames":1},
+            {"producer":"node","source":"b","event_type":null,"refusal_kind":"bytes","frames":1},
+            {"producer":"node","source":"d","event_type":null,"refusal_kind":"configuration","frames":1},
+            {"producer":"other-node","source":"c","event_type":"command.executed","refusal_kind":"malformed","frames":1},
+            {"producer":"unknown-node","source":null,"event_type":null,"refusal_kind":"malformed","frames":1},
+        ])
+    );
     assert_eq!(result["producer_errors"][0]["producer"], "other-node");
     assert_eq!(result["producer_errors"][0]["frame"], "c/events/invalid");
-    assert!(result["producer_errors"][0]["reason"].as_str().unwrap().contains("needs a record location"));
+    assert!(
+        result["producer_errors"][0]["reason"]
+            .as_str()
+            .unwrap()
+            .contains("needs a record location")
+    );
     assert_eq!(result["producer_errors"].as_array().unwrap().len(), 2);
     sqlx::query("UPDATE core.ingress_frames SET received_at = now() - interval '48 hours' WHERE producer = 'unknown-node'").execute(&mut conn).await.unwrap();
-    let sinex_protocol::Reply::Ok { result } = api.call(sinex_protocol::Request::Status, sinex_protocol::Access::Read).await else { panic!("status refused") };
+    let sinex_protocol::Reply::Ok { result } = api
+        .call(
+            sinex_protocol::Request::Status,
+            sinex_protocol::Access::Read,
+        )
+        .await
+    else {
+        panic!("status refused")
+    };
     assert_eq!(result["ingress_refusals_24h"].as_array().unwrap().len(), 4);
     assert_eq!(result["producer_errors"].as_array().unwrap().len(), 2);
 }

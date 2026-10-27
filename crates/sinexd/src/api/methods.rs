@@ -602,9 +602,11 @@ impl Api {
             .await
             .map_err(|e| e.to_string())?;
         let refusals = sinex_store::diagnostics::ingress_refusals(&mut conn)
-            .await.map_err(|e| e.to_string())?;
+            .await
+            .map_err(|e| e.to_string())?;
         let producer_errors = sinex_store::diagnostics::producer_errors(&mut conn)
-            .await.map_err(|e| e.to_string())?;
+            .await
+            .map_err(|e| e.to_string())?;
         drop(conn);
         let sources = match self
             .query(

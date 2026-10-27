@@ -195,7 +195,7 @@ impl UnacknowledgedFrames {
                 serde_json::from_value(value)
                     .map(Some)
                     .map_err(|e| Error::State(path, e.to_string()))
-            },
+            }
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
             Err(e) => Err(Error::State(path, e.to_string())),
         }
@@ -346,11 +346,23 @@ impl Producer {
                     let body = serde_json::to_vec(frame).expect("frame serializes");
                     let prepared = self.frame_for_message(frame.clone(), &body);
                     let body = serde_json::to_vec(&prepared).expect("frame serializes");
-                    let names = [prepared.frame().to_owned(), format!("malformed/{}", blake3::hash(&body).to_hex())];
+                    let names = [
+                        prepared.frame().to_owned(),
+                        format!("malformed/{}", blake3::hash(&body).to_hex()),
+                    ];
                     let recorded = self.recorded(&names).await?;
-                    let retryable = |kind| matches!(kind, Some(FrameRefusal::Malformed | FrameRefusal::Configuration))
-                        || (kind == Some(FrameRefusal::Content) && matches!(frame, Ingress::Material { .. }));
-                    if retryable(batch.refusal) || recorded.iter().any(|ack| ack.refusal.is_some() && retryable(ack.refusal_kind())) {
+                    let retryable = |kind| {
+                        matches!(
+                            kind,
+                            Some(FrameRefusal::Malformed | FrameRefusal::Configuration)
+                        ) || (kind == Some(FrameRefusal::Content)
+                            && matches!(frame, Ingress::Material { .. }))
+                    };
+                    if retryable(batch.refusal)
+                        || recorded
+                            .iter()
+                            .any(|ack| ack.refusal.is_some() && retryable(ack.refusal_kind()))
+                    {
                         retry(frame);
                         batch.refusal = None;
                         batch.mismatch = None;
@@ -438,7 +450,12 @@ impl Producer {
                     if batch.reporting_failure {
                         retry(&mut batch.frames[0]);
                         batch.save(state, binding)?;
-                        return Err(Error::Refused { frame: frame.frame().into(), reason, recorded: true, kind: FrameRefusal::Bytes });
+                        return Err(Error::Refused {
+                            frame: frame.frame().into(),
+                            reason,
+                            recorded: true,
+                            kind: FrameRefusal::Bytes,
+                        });
                     }
                     let failure_reason = format!("three identical byte refusals: {reason}");
                     let skipped_material = batch
@@ -488,11 +505,17 @@ impl Producer {
                     });
                 }
                 Err(error) => {
-                    if let Error::Refused { recorded: true, kind, .. } = &error {
+                    if let Error::Refused {
+                        recorded: true,
+                        kind,
+                        ..
+                    } = &error
+                    {
                         batch.refusal = Some(*kind);
                         batch.save(state, binding)?;
                         if matches!(kind, FrameRefusal::Content | FrameRefusal::Configuration)
-                            && let Some(transfer) = &transfer {
+                            && let Some(transfer) = &transfer
+                        {
                             self.clear_frame_directories(std::slice::from_ref(transfer), store)?;
                         }
                     }
@@ -950,15 +973,20 @@ impl Producer {
 fn retry(frame: &mut Ingress) {
     let name = format!("{}/retry/{}", frame.frame(), uuid::Uuid::now_v7());
     match frame {
-        Ingress::Material { frame, .. } | Ingress::Events { frame, .. }
-        | Ingress::LargeFrame { frame, .. } | Ingress::Chunk { frame, .. } => *frame = name,
+        Ingress::Material { frame, .. }
+        | Ingress::Events { frame, .. }
+        | Ingress::LargeFrame { frame, .. }
+        | Ingress::Chunk { frame, .. } => *frame = name,
     }
 }
 
 fn failed_events(frames: &[Ingress], reason: &str) -> Result<Ingress, Error> {
     let mut locations = Vec::new();
     for frame in frames {
-        if let Ingress::Events { events, failures, .. } = frame {
+        if let Ingress::Events {
+            events, failures, ..
+        } = frame
+        {
             locations.extend(events.iter().filter_map(|event| event.location));
             locations.extend(failures.iter().map(|failure| failure.location));
         }
@@ -976,7 +1004,13 @@ fn failed_events(frames: &[Ingress], reason: &str) -> Result<Ingress, Error> {
     Ok(Ingress::Events {
         frame: format!("{}/failures/{}", frames[0].frame(), uuid::Uuid::now_v7()),
         events: vec![],
-        failures: locations.into_iter().map(|location| ProducerFailure { location, reason: reason.into() }).collect(),
+        failures: locations
+            .into_iter()
+            .map(|location| ProducerFailure {
+                location,
+                reason: reason.into(),
+            })
+            .collect(),
     })
 }
 

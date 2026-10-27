@@ -143,8 +143,13 @@ pub struct ProducerError {
 }
 
 pub async fn producer_errors(conn: &mut PgConnection) -> Result<Vec<ProducerError>> {
-    Ok(sqlx::query_as!(ProducerError, r#"SELECT DISTINCT ON (producer)
+    Ok(sqlx::query_as!(
+        ProducerError,
+        r#"SELECT DISTINCT ON (producer)
         producer, frame, refusal AS "reason!" FROM core.ingress_frames
         WHERE refusal IS NOT NULL AND outcome->>'refusal_kind' = 'malformed'
-        ORDER BY producer, number DESC"#).fetch_all(&mut *conn).await?)
+        ORDER BY producer, number DESC"#
+    )
+    .fetch_all(&mut *conn)
+    .await?)
 }

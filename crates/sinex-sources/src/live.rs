@@ -330,7 +330,12 @@ async fn produce_spools(
                     had_material |= produced;
                     live.retry.recovered(&live.binding.name);
                 }
-                Err(error @ Error::Refused { kind: sinex_model::FrameRefusal::Configuration, .. }) => {
+                Err(
+                    error @ Error::Refused {
+                        kind: sinex_model::FrameRefusal::Configuration,
+                        ..
+                    },
+                ) => {
                     retry.failed(&connection.producer, "checking configuration", &error);
                     reconnect = true;
                     break;

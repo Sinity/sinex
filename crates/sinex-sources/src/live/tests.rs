@@ -179,9 +179,14 @@ async fn fake_ingress_with_configuration(
                             if connections.is_some() && !configuration_refused {
                                 configuration_refused = true;
                                 return Acknowledgment {
-                                    frame: id.clone(), material: None, admitted: vec![],
+                                    frame: id.clone(),
+                                    material: None,
+                                    admitted: vec![],
                                     outcome: json!({"refusal_kind":"configuration"}),
-                                    refusal: Some("privacy configuration changed; reconnect".into()), commit_seq: None,
+                                    refusal: Some(
+                                        "privacy configuration changed; reconnect".into(),
+                                    ),
+                                    commit_seq: None,
                                 };
                             }
                             Acknowledgment {
@@ -823,22 +828,49 @@ async fn a_configuration_refusal_reconnects_and_recovers_the_saved_batch() {
     let subjects = Subjects::new(nats.prefix());
     let connections = Arc::new(std::sync::atomic::AtomicUsize::new(0));
     let (_available, receiving) = tokio::sync::watch::channel(true);
-    let (_, order, ingress) = fake_ingress_with_configuration(nats.url(), &subjects, receiving, Arc::new(tokio::sync::Notify::new()), Some(connections.clone())).await;
+    let (_, order, ingress) = fake_ingress_with_configuration(
+        nats.url(),
+        &subjects,
+        receiving,
+        Arc::new(tokio::sync::Notify::new()),
+        Some(connections.clone()),
+    )
+    .await;
     let dir = tempfile::tempdir().unwrap();
     let positions = dir.path().join("positions");
     let spool = dir.path().join("spool");
     let (_, binding) = super::binding("hyprland", &spool, "synthetic", Value::Null).unwrap();
     let store = Store::open(&dir.path().join("store")).unwrap();
     run_with_private_mode(
-        Connection { url: nats.url().into(), password_file: None, subjects, producer: "synthetic".into(), upload: false },
-        &store, &positions, vec![(&SYNTHETIC, binding.clone())], Duration::from_millis(50),
+        Connection {
+            url: nats.url().into(),
+            password_file: None,
+            subjects,
+            producer: "synthetic".into(),
+            upload: false,
+        },
+        &store,
+        &positions,
+        vec![(&SYNTHETIC, binding.clone())],
+        Duration::from_millis(50),
         Some(Instant::now() + Duration::from_secs(4)),
         sinex_transport::private_mode::PrivateMode::new(dir.path().join("private")),
-    ).await.unwrap();
+    )
+    .await
+    .unwrap();
     assert_eq!(connections.load(std::sync::atomic::Ordering::SeqCst), 2);
-    assert!(!Position::load(&positions, &binding.name).unwrap().cursor.is_null());
+    assert!(
+        !Position::load(&positions, &binding.name)
+            .unwrap()
+            .cursor
+            .is_null()
+    );
     let frames = order.lock().unwrap();
     assert!(frames.iter().any(|frame| frame.frame().contains("/retry/")));
-    assert!(frames.iter().any(|frame| matches!(frame, Ingress::Events { events, .. } if !events.is_empty())));
+    assert!(
+        frames
+            .iter()
+            .any(|frame| matches!(frame, Ingress::Events { events, .. } if !events.is_empty()))
+    );
     ingress.abort();
 }
