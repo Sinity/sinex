@@ -69,7 +69,7 @@ fn messages_group_by_conversation_within_their_provider() {
     ];
     let mut got = days(&inputs);
     got.sort_by(|a, b| (&a.channel, &a.conversation).cmp(&(&b.channel, &b.conversation)));
-    let summary: Vec<(&str, &str, u32, Vec<&str>)> = got
+    let summary: Vec<(&str, &str, u64, Vec<&str>)> = got
         .iter()
         .map(|d| {
             (
