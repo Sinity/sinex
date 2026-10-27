@@ -51,7 +51,9 @@ a record or key reference can resolve a newer reading after replay.
 `as of` reads the readings visible at the requested commit position or time,
 including the recorded visibility changes. It does not run today's parser
 backwards over bytes. Hiding removes a reading from ordinary views and
-counts while keeping its evidence; replay preserves the hide.
+counts while keeping its evidence; replay preserves the hide. A source
+deletion instead stays queryable with `state = removed`; add `state = present`
+to omit those readings.
 
 ## Answers
 
