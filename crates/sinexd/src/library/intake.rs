@@ -53,14 +53,20 @@ impl Library<'_> {
         for copy in &after {
             let old = before
                 .iter()
-                .find(|old| old.item == copy.item && old.vanished_at.is_none());
+                .filter(|old| old.item == copy.item)
+                .min_by_key(|old| {
+                    (
+                        old.vanished_at.is_some(),
+                        std::cmp::Reverse(old.scanned_at.0),
+                    )
+                });
             if copy.vanished_at.is_some() {
                 continue;
             }
             match old {
                 None => new_items += 1,
                 Some(old) if old.content != copy.content => revisions += 1,
-                Some(old) if old.path != copy.path => moves += 1,
+                Some(old) if old.path != copy.path && copy.moved_from.is_some() => moves += 1,
                 _ => {}
             }
         }

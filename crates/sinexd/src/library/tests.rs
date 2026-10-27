@@ -663,3 +663,45 @@ async fn hiding_scans_recomputes_items_and_preview_renditions(db: devkit::pg::Te
     );
     std::fs::remove_dir_all(w.root.parent().unwrap()).unwrap();
 }
+
+#[devkit::test]
+async fn a_returning_path_continues_its_item_and_curation(db: devkit::pg::TestDatabase) {
+    let mut w = world(db).await;
+    let file = w.root.join("a.txt");
+    std::fs::write(&file, "first revision").unwrap();
+    let add = Request::LibraryAdd {
+        path: w.root.display().to_string(),
+        reference: None,
+    };
+    w.ok(add.clone()).await;
+    let item = w.item_at(&file).await;
+    w.ok(Request::LibraryTag {
+        item: item.clone(),
+        tag: "kept".into(),
+    })
+    .await;
+    let moved = w.root.join("b.txt");
+    std::fs::rename(&file, &moved).unwrap();
+    w.ok(add.clone()).await;
+    std::fs::write(&moved, "second revision").unwrap();
+    w.ok(add.clone()).await;
+    std::fs::remove_file(&moved).unwrap();
+    w.ok(add.clone()).await;
+    std::fs::write(&file, "first revision").unwrap();
+    let returned = w.ok(add).await;
+    assert_eq!(returned["items_new"], 0);
+    assert_eq!(returned["item_revisions"], 1);
+    assert_eq!(returned["items_moved"], 0);
+    assert_eq!(w.item_at(&file).await, item);
+    let view = w.ok(Request::LibraryItem { item }).await;
+    assert_eq!(view["revision"], view["content"]);
+    assert_eq!(view["revisions"].as_array().unwrap().len(), 2);
+    assert!(
+        view["tags"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|tag| tag["tag"] == "kept")
+    );
+    std::fs::remove_dir_all(w.root.parent().unwrap()).unwrap();
+}
