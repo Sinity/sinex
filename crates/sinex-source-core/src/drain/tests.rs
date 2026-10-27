@@ -300,12 +300,16 @@ fn directory_tar_members_keep_distinct_anchors_and_reject_overlaps() {
     let mut records = Vec::new();
     let mut members = Vec::new();
     for (path, body) in [("a.md", b"alpha".as_slice()), ("b.md", b"".as_slice())] {
-        archive.append_pax_extensions([("path", path.as_bytes())]).unwrap();
+        archive
+            .append_pax_extensions([("path", path.as_bytes())])
+            .unwrap();
         let mut header = tar::Header::new_ustar();
         header.set_path(path).unwrap();
         header.set_size(body.len() as u64);
         header.set_mode(0o600);
-        header.set_uid(0); header.set_gid(0); header.set_mtime(0);
+        header.set_uid(0);
+        header.set_gid(0);
+        header.set_mtime(0);
         header.set_cksum();
         let start = archive.get_ref().len() + 512;
         archive.append(&header, body).unwrap();
@@ -337,9 +341,12 @@ fn directory_tar_members_keep_distinct_anchors_and_reject_overlaps() {
     };
     let chunks = run(&manifest, &records).unwrap();
     let outcomes: Vec<_> = chunks.into_iter().flat_map(|c| c.outcomes).collect();
-    for (index, (path, text, anchor)) in [("a.md", "alpha", records[0].0 as u64), ("b.md", "", records[1].0 as u64)]
-        .into_iter()
-        .enumerate()
+    for (index, (path, text, anchor)) in [
+        ("a.md", "alpha", records[0].0 as u64),
+        ("b.md", "", records[1].0 as u64),
+    ]
+    .into_iter()
+    .enumerate()
     {
         let RecordOutcome::Events { location, events } = &outcomes[index] else {
             panic!()
@@ -445,10 +452,20 @@ fn an_export_tar_member_can_hold_several_records() {
         "media_type": "application/x-tar",
         "members": [{"path": "commands", "stream_offset": 0, "length": bytes.len()}],
     }));
-    let chunks = drain(&Lines, DrainInput {
-        source: "synthetic", class: Class::Open, material: MaterialId::new(),
-        bytes: bytes.as_slice().into(), records: &records, carry: Value::Null,
-        reading_order: &|anchor| ReadingOrder(anchor as i64), limits: Limits::default(), manifest: &manifest,
-    }).unwrap();
+    let chunks = drain(
+        &Lines,
+        DrainInput {
+            source: "synthetic",
+            class: Class::Open,
+            material: MaterialId::new(),
+            bytes: bytes.as_slice().into(),
+            records: &records,
+            carry: Value::Null,
+            reading_order: &|anchor| ReadingOrder(anchor as i64),
+            limits: Limits::default(),
+            manifest: &manifest,
+        },
+    )
+    .unwrap();
     assert_eq!(commands(&chunks), [(0, "a".into()), (2, "b".into())]);
 }

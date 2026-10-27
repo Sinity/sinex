@@ -5,7 +5,8 @@ use sinex_model::Manifest;
 pub(crate) const MEDIA_TYPE: &str = "application/x-tar";
 
 pub(crate) fn is_directory(manifest: &Manifest) -> bool {
-    manifest.media_type.as_deref() == Some(MEDIA_TYPE) && manifest.details.contains_key("scan_complete")
+    manifest.media_type.as_deref() == Some(MEDIA_TYPE)
+        && manifest.details.contains_key("scan_complete")
 }
 
 /// Check that a tar's records are distinct, ordered and each exactly one

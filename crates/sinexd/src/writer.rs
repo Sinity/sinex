@@ -426,9 +426,7 @@ async fn admit_checked(
             tx.rollback().await.map_err(database_error)?;
             let content = record_refusals && content_error(&error);
             let refusal = store_error(error);
-            if content
-                && let Some(failed) = refused_source(batch, &refusal.to_string())
-            {
+            if content && let Some(failed) = refused_source(batch, &refusal.to_string()) {
                 check().map_err(WriteError::Refused)?;
                 let mut tx = connection.begin().await.map_err(database_error)?;
                 let outcome = sinex_store::admit(&mut tx, &failed, keys)

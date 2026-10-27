@@ -44,7 +44,13 @@ pub(super) fn capture(
         Ok(Some(facts)) => facts,
         Ok(None) => return Ok(Ok(None)),
         Err(error) => {
-            if input.metadata().ok().is_some_and(|after| after.len() != size || change_time(&after) != changed) { return Ok(Ok(None)); }
+            if input
+                .metadata()
+                .ok()
+                .is_some_and(|after| after.len() != size || change_time(&after) != changed)
+            {
+                return Ok(Ok(None));
+            }
             return Ok(Err(error.to_string()));
         }
     };
@@ -147,7 +153,12 @@ pub(super) fn capture(
     };
     if let Err(error) = output.append(&header, &mut ranges) {
         if let Some(reason) = ranges.failure {
-            if ranges.input.metadata().ok().is_some_and(|after| !same_file(&before, &after)) {
+            if ranges
+                .input
+                .metadata()
+                .ok()
+                .is_some_and(|after| !same_file(&before, &after))
+            {
                 return Ok(Ok(None));
             }
             return Ok(Err(reason));
@@ -213,7 +224,10 @@ fn header(
     Ok(header)
 }
 
-fn extensions(output: &mut Archive, fields: BTreeMap<Vec<u8>, Vec<u8>>) -> std::io::Result<Vec<ExtendedAttribute>> {
+fn extensions(
+    output: &mut Archive,
+    fields: BTreeMap<Vec<u8>, Vec<u8>>,
+) -> std::io::Result<Vec<ExtendedAttribute>> {
     let base = output.get_mut().stream_position()? + 512;
     let mut bytes = Vec::new();
     let mut attributes = Vec::new();
@@ -232,8 +246,10 @@ fn extensions(output: &mut Archive, fields: BTreeMap<Vec<u8>, Vec<u8>>) -> std::
         bytes.push(b'=');
         if let Some(name) = key.strip_prefix(b"SCHILY.xattr.") {
             attributes.push(ExtendedAttribute {
-                name: name.to_vec(), value_at: base + bytes.len() as u64,
-                length: value.len() as u64, hash: *blake3::hash(&value).as_bytes(),
+                name: name.to_vec(),
+                value_at: base + bytes.len() as u64,
+                length: value.len() as u64,
+                hash: *blake3::hash(&value).as_bytes(),
             });
         }
         bytes.extend(value);

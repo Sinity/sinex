@@ -251,7 +251,10 @@ impl DirSnapshot {
             };
             next_failures.remove(relative);
             next_retries.remove(relative);
-            next_files.insert(relative.clone(), Some((*size, *changed, captured.node.content_hash)));
+            next_files.insert(
+                relative.clone(),
+                Some((*size, *changed, captured.node.content_hash)),
+            );
             let offset = captured.offset;
             let end = offset
                 .checked_add(captured.length)
