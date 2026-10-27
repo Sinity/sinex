@@ -319,3 +319,42 @@ async fn a_batch_whose_bytes_are_not_stored_is_refused(db: devkit::pg::TestDatab
     drop(handle);
     writer.await.unwrap();
 }
+
+#[devkit::test]
+async fn temporary_database_errors_remain_retryable(db: devkit::pg::TestDatabase) {
+    let mut conn = PgConnection::connect(&db.url(None)).await.unwrap();
+    sqlx::query("SET statement_timeout = '5ms'")
+        .execute(&mut conn)
+        .await
+        .unwrap();
+    let timeout = sqlx::query("SELECT pg_sleep(1)")
+        .execute(&mut conn)
+        .await
+        .unwrap_err();
+    assert!(matches!(
+        admission_error(timeout.into()),
+        WriteError::Unavailable(_)
+    ));
+    sqlx::query("SET statement_timeout = 0")
+        .execute(&mut conn)
+        .await
+        .unwrap();
+    let invalid = sqlx::query("SELECT 'invalid'::integer")
+        .execute(&mut conn)
+        .await
+        .unwrap_err();
+    assert!(matches!(
+        admission_error(invalid.into()),
+        WriteError::Refused(_)
+    ));
+    let outcome = admit_checked(
+        &mut conn,
+        &batch("after-timeout"),
+        &sinex_store::NoDerivations,
+        None,
+        &|| Ok(()),
+    )
+    .await
+    .unwrap();
+    assert_eq!(outcome.admitted, 1);
+}

@@ -232,18 +232,17 @@ fn requested(run: &Run) -> Vec<(&'static str, &'static str, Value)> {
 
 /// Capture threads write spools; the shared loop produces what they wrote.
 async fn produce(run: Run) -> Result<(), String> {
-    use sinex_source_core::drivers::producer::{Producer, Store};
+    use sinex_source_core::drivers::producer::Store;
 
     let spools = run.state.join("spool");
     let store = Store::open(&run.store).map_err(|e| format!("content store: {e}"))?;
-    let mut producer = Producer::connect(
-        &run.nats,
-        run.nats_password_file.as_deref(),
-        sinex_protocol::Subjects::new(run.subject_root.clone()),
-        &run.producer,
-    )
-    .await
-    .map_err(|e| e.to_string())?;
+    let connection = live::Connection {
+        url: run.nats.clone(),
+        password_file: run.nats_password_file.clone(),
+        subjects: sinex_protocol::Subjects::new(run.subject_root.clone()),
+        producer: run.producer.clone(),
+        upload: false,
+    };
     let bindings = requested(&run)
         .into_iter()
         .map(|(format, spool, options)| {
@@ -257,7 +256,7 @@ async fn produce(run: Run) -> Result<(), String> {
         .seconds
         .map(|s| std::time::Instant::now() + Duration::from_secs(s));
     live::run(
-        &mut producer,
+        connection,
         &store,
         &run.state.join("positions"),
         bindings,
