@@ -37,5 +37,34 @@ pub(crate) fn upgrades() -> Vec<Vec<String>> {
             "GRANT SELECT ON core.excised_materials TO sinex_reader, sinex_writer".into(),
             "GRANT INSERT, UPDATE, DELETE ON core.excised_materials TO sinex_writer".into(),
         ],
+        search_text(),
+    ]
+}
+
+fn search_text() -> Vec<String> {
+    let excluded = sinex_model::event_types::ALL
+        .iter()
+        .filter(|kind| !kind.trigram_indexed)
+        .map(|kind| format!("'{}'", kind.event_type.replace('\'', "''")))
+        .collect::<Vec<_>>()
+        .join(", ");
+    vec![
+        "ALTER TABLE core.search_text ADD COLUMN trigram_indexed boolean NOT NULL DEFAULT true".into(),
+        format!("UPDATE core.search_text s SET trigram_indexed = false
+                 FROM core.events e WHERE e.id = s.event_id AND e.event_type IN ({excluded})"),
+        "DO $$ DECLARE missing bigint; BEGIN
+           SELECT count(*) INTO missing FROM core.search_text s
+           WHERE NOT EXISTS (SELECT 1 FROM core.events e WHERE e.id = s.event_id);
+           IF missing > 0 THEN
+             RAISE NOTICE '% search rows have no event; their trigram eligibility stays true', missing;
+           END IF;
+         END $$".into(),
+        "CREATE OR REPLACE VIEW core.visible_search_text AS
+         SELECT s.event_id, s.text, s.tsv, s.trigram_indexed
+         FROM core.search_text s JOIN core.events e ON e.id = s.event_id
+         WHERE core.class_visible(e.class)".into(),
+        "CREATE INDEX search_text_trigram_partial ON core.search_text USING gin (text gin_trgm_ops) WHERE trigram_indexed".into(),
+        "DROP INDEX core.search_text_trigram".into(),
+        "ALTER INDEX core.search_text_trigram_partial RENAME TO search_text_trigram".into(),
     ]
 }

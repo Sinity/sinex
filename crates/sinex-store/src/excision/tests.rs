@@ -690,9 +690,17 @@ async fn excision_removes_search_text(db: devkit::pg::TestDatabase) {
         count(&mut conn, "SELECT count(*) FROM core.search_text").await,
         2
     );
+    let page = crate::commit_log::after(&mut conn, 0, 10, i64::MAX)
+        .await
+        .unwrap();
     excise(&mut conn, &store, Target::Event(target.id))
         .await
         .unwrap();
+    let mut tx = conn.begin().await.unwrap();
+    crate::read_models::apply_search_text(&mut tx, &page.events)
+        .await
+        .unwrap();
+    tx.commit().await.unwrap();
     let left: Vec<Uuid> = sqlx::query_scalar!("SELECT event_id FROM core.search_text")
         .fetch_all(&mut conn)
         .await

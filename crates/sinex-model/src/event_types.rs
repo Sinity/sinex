@@ -30,6 +30,9 @@ pub use shell::{CommandExecuted, CommandImported, ShellSession};
 /// A registered event type, as the schema registry stores it.
 #[derive(Clone, Debug)]
 pub struct RegisteredEventType {
+    /// Whether substring and prefix searches maintain trigram index entries.
+    /// Normalized text and full-text indexing are kept for every kind.
+    pub trigram_indexed: bool,
     pub event_type: &'static str,
     /// Declared natural key; `build` applies the typed payload's per-record choice.
     pub key: crate::KeyKind,
@@ -55,6 +58,7 @@ pub type Build = fn(
 
 const fn info<P: EventPayload>() -> RegisteredEventType {
     RegisteredEventType {
+        trigram_indexed: true,
         event_type: P::EVENT_TYPE,
         key: P::KEY,
         replace: P::REPLACE,
@@ -62,6 +66,12 @@ const fn info<P: EventPayload>() -> RegisteredEventType {
         json_schema: P::payload_schema,
         build: build_from_json::<P>,
     }
+}
+
+const fn without_trigrams<P: EventPayload>() -> RegisteredEventType {
+    let mut kind = info::<P>();
+    kind.trigram_indexed = false;
+    kind
 }
 
 fn build_from_json<P: EventPayload>(
@@ -110,8 +120,8 @@ pub const ALL: &[RegisteredEventType] = &[
     info::<desktop::ActivityWatchOther>(),
     info::<desktop::WindowSampled>(),
     // Machine
-    info::<machine::JournalEntry>(),
-    info::<machine::LakeObservation>(),
+    without_trigrams::<machine::JournalEntry>(),
+    without_trigrams::<machine::LakeObservation>(),
     info::<machine::FileChanged>(),
     info::<machine::TerminalSession>(),
     info::<machine::TerminalOutput>(),
