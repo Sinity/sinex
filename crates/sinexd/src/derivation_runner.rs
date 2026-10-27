@@ -493,6 +493,7 @@ impl DerivationRunner {
         read: ReadMark,
     ) -> Result<(), String> {
         let name = self.keyed[index].name();
+        let version = self.keyed[index].version();
         let head = derivations::head(&mut self.read)
             .await
             .map_err(|e| e.to_string())?;
@@ -502,6 +503,7 @@ impl DerivationRunner {
                 n += events.len();
                 for e in events {
                     // A recompute is a newer reading than any before it.
+                    hash_version(e, name, version);
                     e.reading_order = ReadingOrder(head);
                 }
             }
@@ -608,6 +610,7 @@ impl DerivationRunner {
     async fn per_event_pass(&mut self, index: usize, env: &Env) -> Result<usize, String> {
         let d = &self.per_event[index];
         let name = d.name();
+        let version = d.version();
         let types: Vec<String> = d.inputs_types().iter().map(|s| (*s).to_owned()).collect();
         let position = derivations::position(&mut self.read, name)
             .await
@@ -672,6 +675,7 @@ impl DerivationRunner {
                     for mut e in derived {
                         // A new derivation version reads every input again; its
                         // outputs must be newer readings than the old version's.
+                        hash_version(&mut e, name, version);
                         e.reading_order = ReadingOrder(reading_order);
                         outputs.push(e);
                     }
@@ -880,6 +884,17 @@ impl DerivationRunner {
         );
         Ok(cmp)
     }
+}
+
+// Equal results from different versions must keep their producer attribution.
+fn hash_version(event: &mut Event, name: &str, version: u32) {
+    let mut hash = blake3::Hasher::new();
+    hash.update(b"sinex.derivation\0");
+    hash.update(name.as_bytes());
+    hash.update(&[0]);
+    hash.update(&version.to_le_bytes());
+    hash.update(&event.record_hash);
+    event.record_hash = *hash.finalize().as_bytes();
 }
 
 /// Each derivation's rank: 0 when no derivation produces any of its inputs,

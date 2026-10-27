@@ -15,9 +15,9 @@
 //! the request's own JSON lines and read back by the request parser. The
 //! parser takes the author and time from the material's manifest, which the
 //! daemon fills from the authenticated caller, never from the lines.
-use crate::registry::{Driver, SourceSpec};
 use serde_json::{Value, json};
 use sinex_model::Class;
+use sinex_source_core::registry::{Driver, SourceSpec};
 
 mod files;
 mod requests;
@@ -36,9 +36,9 @@ pub const SCAN: SourceSpec = SourceSpec {
     parser: "library-scan",
     parser_version: 1,
     event_types: &["library.copy"],
-    framer: crate::Framer::export(
-        crate::drivers::export_archive::frame_lines,
-        crate::drivers::export_archive::Framing::Lines,
+    framer: sinex_source_core::Framer::export(
+        sinex_source_core::drivers::export_archive::frame_lines,
+        sinex_source_core::drivers::export_archive::Framing::Lines,
     ),
 };
 
@@ -51,64 +51,68 @@ pub const REQUEST: SourceSpec = SourceSpec {
     parser: "library-request",
     parser_version: 1,
     event_types: sinex_model::event_types::library::REQUEST_TYPES,
-    framer: crate::Framer::export(
-        crate::drivers::export_archive::frame_lines,
-        crate::drivers::export_archive::Framing::Lines,
+    framer: sinex_source_core::Framer::export(
+        sinex_source_core::drivers::export_archive::frame_lines,
+        sinex_source_core::drivers::export_archive::Framing::Lines,
     ),
 };
 
 /// Library roots are ordinary bindings; library requests are supplied by the API.
-pub const FORMAT: crate::binding::InputFormat = crate::binding::InputFormat {
-    name: "library",
-    specs: || vec![&SCAN, &REQUEST],
-    plan: Some(|path, settings| {
-        let path = std::fs::canonicalize(path).map_err(|e| format!("{}: {e}", path.display()))?;
-        let mut settings = settings.clone();
-        let root = if path.is_dir() {
-            path
-        } else {
-            let name = path
-                .file_name()
-                .ok_or("library input has no file name")?
-                .to_string_lossy()
-                .into_owned();
-            if !settings.options.is_object() {
-                settings.options = json!({});
+pub const FORMAT: sinex_source_core::binding::InputFormat =
+    sinex_source_core::binding::InputFormat {
+        name: "library",
+        specs: || vec![&SCAN, &REQUEST],
+        plan: Some(|path, settings| {
+            let path =
+                std::fs::canonicalize(path).map_err(|e| format!("{}: {e}", path.display()))?;
+            let mut settings = settings.clone();
+            let root = if path.is_dir() {
+                path
+            } else {
+                let name = path
+                    .file_name()
+                    .ok_or("library input has no file name")?
+                    .to_string_lossy()
+                    .into_owned();
+                if !settings.options.is_object() {
+                    settings.options = json!({});
+                }
+                settings.options["only"] = json!(name);
+                path.parent()
+                    .ok_or("library input has no parent")?
+                    .to_path_buf()
+            };
+            Ok(sinex_source_core::binding::single(&SCAN, &root, &settings))
+        }),
+        source: |b| {
+            if b.source == SCAN.name {
+                Ok(Box::new(scan_source()))
+            } else {
+                Ok(Box::new(request_source()))
             }
-            settings.options["only"] = json!(name);
-            path.parent()
-                .ok_or("library input has no parent")?
-                .to_path_buf()
-        };
-        Ok(crate::binding::single(&SCAN, &root, &settings))
-    }),
-    source: |b| {
-        if b.source == SCAN.name {
-            Ok(Box::new(scan_source()))
-        } else {
-            Ok(Box::new(request_source()))
-        }
-    },
-    reader: Some(|b| {
-        if b.source != SCAN.name {
-            return Err("library requests are supplied by the API".into());
-        }
-        Ok(crate::binding::polled(LibraryReader::new(LibraryScan {
-            root: b.input.clone(),
-            host: b.settings.host.clone(),
-            keep_bytes: !b
-                .settings
-                .options
-                .get("reference")
-                .and_then(Value::as_bool)
-                .unwrap_or(false),
-            probe: true,
-            bytes_per_poll: 1 << 30,
-            only: b.settings.option("only").map(str::to_owned),
-        })))
-    }),
-    capture: None,
-};
+        },
+        reader: Some(|b| {
+            if b.source != SCAN.name {
+                return Err("library requests are supplied by the API".into());
+            }
+            Ok(sinex_source_core::binding::polled(LibraryReader::new(
+                LibraryScan {
+                    root: b.input.clone(),
+                    host: b.settings.host.clone(),
+                    keep_bytes: !b
+                        .settings
+                        .options
+                        .get("reference")
+                        .and_then(Value::as_bool)
+                        .unwrap_or(false),
+                    probe: true,
+                    bytes_per_poll: 1 << 30,
+                    only: b.settings.option("only").map(str::to_owned),
+                },
+            )))
+        }),
+        capture: None,
+    };
 
 #[cfg(test)]
 mod tests;

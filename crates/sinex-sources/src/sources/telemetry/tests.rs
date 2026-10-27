@@ -1,6 +1,6 @@
 use super::*;
-use crate::drivers::live_stream::frame;
 use sinex_model::Timestamp;
+use sinex_source_core::drivers::live_stream::frame;
 
 #[devkit::test]
 fn a_spooled_sample_is_one_telemetry_event_at_its_sampling_time() {
@@ -10,7 +10,7 @@ fn a_spooled_sample_is_one_telemetry_event_at_its_sampling_time() {
     let spooled = frame(at, line);
     let record: Map<String, Value> = serde_json::from_slice(&spooled).unwrap();
     let (out, ()) = TelemetryParser
-        .parse(&record, &(), &crate::RecordContext::none())
+        .parse(&record, &(), &sinex_source_core::RecordContext::none())
         .unwrap();
     assert_eq!(
         out,
@@ -25,7 +25,7 @@ fn a_spooled_sample_is_one_telemetry_event_at_its_sampling_time() {
     let record: Map<String, Value> = serde_json::from_slice(&bad).unwrap();
     assert!(
         TelemetryParser
-            .parse(&record, &(), &crate::RecordContext::none())
+            .parse(&record, &(), &sinex_source_core::RecordContext::none())
             .is_err()
     );
 }

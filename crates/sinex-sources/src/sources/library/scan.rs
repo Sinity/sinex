@@ -2,15 +2,15 @@
 //! state a restart rebuilds.
 use super::SCAN;
 use super::files::{digest, dimensions, ffprobe};
-use crate::drivers::{Acquired, DriverError, NewMaterial, file_facts};
-use crate::registry::DeclaredSource;
-use crate::{Parser, RecordError};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 use sinex_model::event_types::library::FileCopy;
 use sinex_model::{
     InputRef, MaterialId, ObservationFacts, ReadingOrder, RevisionChange, Timestamp,
 };
+use sinex_source_core::drivers::{Acquired, DriverError, NewMaterial, file_facts};
+use sinex_source_core::registry::DeclaredSource;
+use sinex_source_core::{Parser, RecordError};
 use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::path::{Path, PathBuf};
 
@@ -71,7 +71,7 @@ impl Parser for ScanParser {
         &self,
         record: &Map<String, Value>,
         _: &(),
-        _context: &crate::RecordContext<'_>,
+        _context: &sinex_source_core::RecordContext<'_>,
     ) -> Result<(Vec<FileCopy>, ()), RecordError> {
         let d: ScannedFile = serde_json::from_value(Value::Object(record.clone()))
             .map_err(|e| RecordError::new(format!("not a library scan line: {e}")))?;
@@ -164,10 +164,10 @@ impl ScanState {
     fn remember_part(
         &mut self,
         root: &Path,
-        bytes: &dyn crate::drain::RecordRead,
+        bytes: &dyn sinex_source_core::drain::RecordRead,
         admitted: u64,
     ) -> Result<(), DriverError> {
-        let ranges = crate::drivers::record_ranges(bytes, SCAN.framer)
+        let ranges = sinex_source_core::drivers::record_ranges(bytes, SCAN.framer)
             .map_err(|e| DriverError::Io(e.to_string()))?;
         for (start, end) in ranges.into_iter().rev() {
             if end as u64 > admitted {
@@ -229,7 +229,7 @@ impl ScanState {
 pub struct LibraryReader {
     scan: LibraryScan,
     state: ScanState,
-    held: Option<crate::drivers::held::HeldMaterial>,
+    held: Option<sinex_source_core::drivers::held::HeldMaterial>,
 }
 
 impl LibraryReader {
@@ -242,17 +242,17 @@ impl LibraryReader {
     }
 }
 
-impl crate::binding::Reader for LibraryReader {
+impl sinex_source_core::binding::Reader for LibraryReader {
     fn history_from(&self, cursor: &Value) -> Option<MaterialId> {
-        crate::drivers::cursor_material(cursor).map(|(material, _)| material)
+        sinex_source_core::drivers::cursor_material(cursor).map(|(material, _)| material)
     }
 
     fn restore(
         &mut self,
         cursor: &Value,
-        material: crate::binding::StoredMaterial,
+        material: sinex_source_core::binding::StoredMaterial,
     ) -> Result<bool, DriverError> {
-        let admitted = match crate::drivers::cursor_material(cursor) {
+        let admitted = match sinex_source_core::drivers::cursor_material(cursor) {
             Some((id, Some(through))) if id == material.reference.id => {
                 through.min(material.reference.length)
             }
@@ -283,7 +283,7 @@ impl crate::binding::Reader for LibraryReader {
         if acquired.material.is_none() {
             return Ok(acquired);
         }
-        let held = crate::drivers::held::HeldMaterial::hold(acquired, cursor)?;
+        let held = sinex_source_core::drivers::held::HeldMaterial::hold(acquired, cursor)?;
         let acquired = held.acquired(cursor)?;
         self.held = Some(held);
         Ok(acquired)
@@ -513,7 +513,7 @@ impl LibraryScan {
             };
             push_line(&mut lines, &mut records, &line);
             if stored {
-                owned_files.push(crate::drivers::OwnedFile {
+                owned_files.push(sinex_source_core::drivers::OwnedFile {
                     path: full.clone(),
                     blob: content.clone(),
                 });
@@ -592,7 +592,7 @@ impl LibraryScan {
         let changed = previous
             .changed_since_memory
             .saturating_add(records.len() as u64);
-        let due = crate::drivers::memory_due(
+        let due = sinex_source_core::drivers::memory_due(
             part_index,
             previous.memory_part,
             changed,

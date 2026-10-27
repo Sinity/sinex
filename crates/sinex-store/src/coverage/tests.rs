@@ -18,6 +18,7 @@ async fn evidence_keeps_visibility_positions_unknown_times_and_archived_run_reco
             .bind(sequence).execute(&mut conn).await.unwrap();
     }
     let before = sinex_schema::catalog(&mut conn).await.unwrap();
+    crate::test_schema::remove_version_4(&mut conn).await;
     conn.execute("DROP INDEX core.events_coverage")
         .await
         .unwrap();

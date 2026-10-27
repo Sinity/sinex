@@ -2,10 +2,6 @@
 //! stored as JSON lines and read back with the author and time taken from the
 //! material's manifest.
 use super::REQUEST;
-use crate::drain::RecordContext;
-use crate::drivers::{Acquired, NewMaterial};
-use crate::registry::DeclaredSource;
-use crate::{Parser, RecordError};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 use sinex_model::event_types::library::{
@@ -15,6 +11,10 @@ use sinex_model::event_types::library::{
 use sinex_model::{
     Class, InputRef, MaterialId, ObservationFacts, ReadingOrder, RevisionChange, Timestamp,
 };
+use sinex_source_core::drain::RecordContext;
+use sinex_source_core::drivers::{Acquired, NewMaterial};
+use sinex_source_core::registry::DeclaredSource;
+use sinex_source_core::{Parser, RecordError};
 
 /// One request line: a record tagged with its kind. `by` and `at` in the line
 /// are ignored; the parser fills them from the manifest.

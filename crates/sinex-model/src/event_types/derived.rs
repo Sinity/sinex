@@ -160,8 +160,8 @@ pub struct TagApplied {
 pub struct ConversationDay {
     /// `chat`, `messages` or `mail`.
     pub channel: String,
-    /// The buffer, the thread's participants, or the mail thread (its thread
-    /// ID, else its subject without reply and forward prefixes).
+    /// The buffer, the thread's participants, or a mail identity prefixed
+    /// with `thread:` for a recorded thread ID and `message:` otherwise.
     pub conversation: String,
     /// The logical day (`YYYY-MM-DD`).
     pub day: String,

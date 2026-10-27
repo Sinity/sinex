@@ -116,7 +116,7 @@ async fn upgrading_from_version_0_counts_the_stored_events(db: devkit::pg::TestD
         .await
         .unwrap();
 
-    remove_version_4(&mut conn).await;
+    crate::test_schema::remove_version_4(&mut conn).await;
     // Version 0 is this schema without the counts.
     conn.execute("DROP TABLE core.source_counts").await.unwrap();
     conn.execute("ALTER TABLE core.runs DROP COLUMN events")
@@ -193,21 +193,6 @@ async fn an_upgrade_waits_for_no_writer(db: devkit::pg::TestDatabase) {
     assert_eq!(version, Some(0));
 }
 
-async fn remove_version_4(conn: &mut PgConnection) {
-    for sql in [
-        "DROP VIEW event_types.sinex_telemetry",
-        "DROP VIEW event_types.tag_applied",
-        "DROP VIEW event_types.activity_span",
-        "DROP VIEW event_types.conversation_day",
-        "DROP VIEW event_types.rest_fused",
-        "DROP VIEW event_types.document_text",
-        "DROP VIEW telemetry.visible_events",
-        "DELETE FROM registry.event_types WHERE name IN ('sinex.telemetry', 'tag.applied', 'activity.span', 'conversation.day', 'rest.fused', 'document.text')",
-    ] {
-        conn.execute(sql).await.unwrap();
-    }
-}
-
 async fn upgrade_keeps_activity_and_telemetry(db: devkit::pg::TestDatabase, from: i32) {
     let mut conn = <PgConnection as sqlx::Connection>::connect(&db.url(None))
         .await
@@ -240,7 +225,7 @@ async fn upgrade_keeps_activity_and_telemetry(db: devkit::pg::TestDatabase, from
     admit_one(&mut conn, &sample).await;
     let before: Vec<Value> = sqlx::query_scalar("SELECT to_jsonb(e) FROM core.events e UNION ALL SELECT to_jsonb(t) FROM telemetry.events t")
         .fetch_all(&mut conn).await.unwrap();
-    remove_version_4(&mut conn).await;
+    crate::test_schema::remove_version_4(&mut conn).await;
     sqlx::query("UPDATE sinex_schema.applied SET version = $1")
         .bind(from)
         .execute(&mut conn)
