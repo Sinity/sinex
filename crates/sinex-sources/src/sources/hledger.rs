@@ -290,7 +290,7 @@ fn validate(settings: &binding::Settings) -> Result<(), String> {
     match settings.options.get("resolve_includes") {
         None | Some(serde_json::Value::Bool(false)) => Ok(()),
         _ => {
-            Err("hledger resolve_includes must be false; include traversal is not approved".into())
+            Err("hledger resolve_includes must be false; include traversal is not supported".into())
         }
     }
 }
