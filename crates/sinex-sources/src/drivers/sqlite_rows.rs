@@ -1,23 +1,32 @@
 //! `SqliteRows`: another program's SQLite database (Atuin, ActivityWatch,
-//! Chromium). Each poll reads one consistent snapshot: rows after the cursor,
-//! plus rows that can still change, because providers update rows in place
-//! (Atuin fills in duration and exit when a command ends, and sets
-//! `deleted_at`). A full pass runs periodically, and on the first poll after a
-//! start, so an update outside the window is still seen. The provider's
-//! schema is checked on open and a missing column is named.
+//! Chromium, the machine telemetry collector). Each poll reads one consistent
+//! snapshot. How much it reads depends on how the provider changes its rows
+//! ([`Changes`]):
+//!
+//! - Rows updated in place (Atuin fills in duration and exit when a command
+//!   ends, and sets `deleted_at`): rows after the cursor, plus rows that can
+//!   still change. A full pass runs periodically, and on the first poll after
+//!   a start, so an update outside the window is still seen.
+//! - Rows only appended: rows after the cursor, a page of at most
+//!   [`ROWS_PER_PART`] at a time; the next poll reads the next page. Nothing
+//!   is remembered per row, so a table of hundreds of millions of rows costs
+//!   no memory and a restart reads on from the cursor.
+//!
+//! The provider's schema is checked on open and a missing column is named.
 //!
 //! Rows are stored as a JSON-lines material ("rows part"); each line is one
 //! row's columns, so the record location is the line's offset and a replay
-//! reads exactly the bytes the parser saw. Rows identical to what this driver
-//! already stored are left out of the material. The held material and its row
-//! hashes are kept until its final admitted cursor confirms them.
+//! reads exactly the bytes the parser saw. For rows updated in place, rows
+//! identical to what this driver already stored are left out of the material.
+//! The held material and its row hashes are kept until its final admitted
+//! cursor confirms them.
 //!
-//! What the driver already stored survives a restart: the rows still open
-//! travel in the cursor, and the row hashes come from the reader memory saved
-//! at the end of a recent part ([`RowState::remember_saved`], on the cadence
-//! of [`super::memory_due`]) plus the stored parts after it
-//! ([`RowState::remember_rows`]), so a restart neither reads the whole part
-//! chain nor stores every row again.
+//! For rows updated in place, what the driver already stored survives a
+//! restart: the rows still open travel in the cursor, and the row hashes come
+//! from the reader memory saved at the end of a recent part
+//! ([`RowState::remember_saved`], on the cadence of [`super::memory_due`])
+//! plus the stored parts after it ([`RowState::remember_rows`]), so a restart
+//! neither reads the whole part sequence nor stores every row again.
 use super::{Acquired, DriverError, NewMaterial, StoredBytes, file_facts};
 use rusqlite::{Connection, OpenFlags, types::ValueRef};
 use serde::{Deserialize, Serialize};
@@ -40,13 +49,28 @@ pub struct SqliteRows {
     /// Columns the parser needs; a missing one makes the input unavailable,
     /// named, rather than silently empty.
     pub required: &'static [&'static str],
-    /// Rows that can still change, as a SQL predicate over the table. `?1` is
-    /// the start of the mutable window, one day ago, in nanoseconds since the
-    /// epoch.
-    pub mutable: Option<&'static str>,
-    /// How often every row is read and compared, in seconds.
-    pub full_pass_secs: i64,
+    pub changes: Changes,
 }
+
+/// How the provider changes the rows of its table.
+#[derive(Clone, Copy, Debug)]
+pub enum Changes {
+    /// Rows can be updated after they are written.
+    InPlace {
+        /// Rows that can still change, as a SQL predicate over the table.
+        /// `?1` is the start of the mutable window, one day ago, in
+        /// nanoseconds since the epoch.
+        mutable: &'static str,
+        /// How often every row is read and compared, in seconds.
+        full_pass_secs: i64,
+    },
+    /// Rows are only appended, in rowid order, and never change once
+    /// committed (a collector's sample tables).
+    Appended,
+}
+
+/// The most rows one part of an appended table holds.
+pub const ROWS_PER_PART: usize = 50_000;
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Cursor {
@@ -195,9 +219,18 @@ impl SqliteRows {
             Ok(c) => c,
             Err(e) => return Ok(unavailable(e)),
         };
-        let full = !state.polled
-            || now_ns.saturating_sub(previous.last_full_pass_ns)
-                >= self.full_pass_secs.saturating_mul(1_000_000_000);
+        let (mutable, full) = match self.changes {
+            Changes::InPlace {
+                mutable,
+                full_pass_secs,
+            } => (
+                Some(mutable),
+                !state.polled
+                    || now_ns.saturating_sub(previous.last_full_pass_ns)
+                        >= full_pass_secs.saturating_mul(1_000_000_000),
+            ),
+            Changes::Appended => (None, false),
+        };
 
         let columns: Vec<String> = {
             let mut stmt = connection
@@ -227,16 +260,20 @@ impl SqliteRows {
             let ids: Vec<String> = open.iter().map(i64::to_string).collect();
             format!(" OR rowid IN ({})", ids.join(","))
         };
-        let filter = match (full, self.mutable) {
+        let filter = match (full, mutable) {
             (true, _) => "1".to_string(),
             (false, Some(m)) => format!("rowid > ?2 OR ({m}){reopen}"),
             (false, None) => "rowid > ?2".to_string(),
         };
-        let open_column = self.mutable.map_or("0".to_string(), |m| format!("({m})"));
+        let open_column = mutable.map_or("0".to_string(), |m| format!("({m})"));
+        let page = match self.changes {
+            Changes::InPlace { .. } => String::new(),
+            Changes::Appended => format!(" LIMIT {ROWS_PER_PART}"),
+        };
         // Both parameters are always bound; this keeps every variant of the
         // statement at the same parameter count.
         let sql = format!(
-            "SELECT {open_column} AS _open, rowid AS _rowid, * FROM {} WHERE ({filter}) AND ?1 IS NOT NULL AND ?2 IS NOT NULL ORDER BY rowid",
+            "SELECT {open_column} AS _open, rowid AS _rowid, * FROM {} WHERE ({filter}) AND ?1 IS NOT NULL AND ?2 IS NOT NULL ORDER BY rowid{page}",
             self.from.unwrap_or(self.table)
         );
         let mut stmt = connection
@@ -280,11 +317,13 @@ impl SqliteRows {
                     open.remove(&rowid);
                 }
                 let line = Value::Object(object).to_string();
-                let hash = *blake3::hash(line.as_bytes()).as_bytes();
-                if state.hashes.get(&rowid) == Some(&hash) {
-                    continue;
+                if mutable.is_some() {
+                    let hash = *blake3::hash(line.as_bytes()).as_bytes();
+                    if state.hashes.get(&rowid) == Some(&hash) {
+                        continue;
+                    }
+                    hashes.push((rowid, hash));
                 }
-                hashes.push((rowid, hash));
                 let start = length;
                 staged
                     .write_all(line.as_bytes())
@@ -346,12 +385,14 @@ impl SqliteRows {
             .iter()
             .filter(|(rowid, _)| !state.hashes.contains_key(rowid))
             .count();
-        let due = super::memory_due(
-            part_index,
-            previous.memory_part,
-            changed,
-            (state.hashes.len() + added) as u64,
-        );
+        // An appended table's reader remembers nothing but its cursor.
+        let due = mutable.is_some()
+            && super::memory_due(
+                part_index,
+                previous.memory_part,
+                changed,
+                (state.hashes.len() + added) as u64,
+            );
         let memory = due.then(|| state.memory_with(&hashes));
         let scanned = Cursor {
             max_rowid,

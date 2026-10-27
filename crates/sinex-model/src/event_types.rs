@@ -29,6 +29,7 @@ pub mod session;
 pub mod shell;
 pub mod social;
 pub mod system;
+pub mod telemetry;
 
 pub use derived::{FigureValue, HealthFigure, MetricFigure, StateInterval};
 pub use fused::CommandFused;
@@ -173,6 +174,10 @@ pub const ALL: &[RegisteredEventType] = &[
     info::<router::DhcpLeaseSampled>(),
     info::<router::DeviceTrafficSampled>(),
     info::<router::WifiClientSampled>(),
+    // Machine telemetry
+    info::<telemetry::ResourceSampled>(),
+    info::<telemetry::ProcessKilled>(),
+    info::<telemetry::HardwareState>(),
     // Code
     info::<code::GitCommit>(),
     // Derived

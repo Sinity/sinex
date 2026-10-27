@@ -26,6 +26,8 @@ pub mod kitty_scrollback;
 pub mod library;
 /// Records Sinnix keeps about the machine: activations, backups, audits.
 pub mod machine_records;
+/// The machine telemetry collector's SQLite databases.
+pub mod machine_telemetry;
 pub mod mail;
 /// Live mail over IMAP, with IDLE and XOAUTH2.
 pub mod mail_imap;
@@ -84,6 +86,7 @@ pub fn formats() -> &'static [&'static InputFormat] {
         &journald::FORMAT,
         &udev::FORMAT,
         &system_bus::FORMAT,
+        &machine_telemetry::FORMAT,
         &file_watch::FORMAT,
         &activitywatch::FORMAT,
         &repository::FORMAT,

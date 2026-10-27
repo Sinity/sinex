@@ -9,7 +9,7 @@
 //! binding; every row can change (a commitment's status), so each poll
 //! compares them all.
 use crate::drivers::append_file::AppendFile;
-use crate::drivers::sqlite_rows::SqliteRows;
+use crate::drivers::sqlite_rows::{Changes, SqliteRows};
 use crate::registry::{DeclaredSource, Driver, SourceSpec};
 use crate::{Parser, RecordError};
 use serde_json::{Map, Value};
@@ -200,8 +200,10 @@ pub fn steering_driver(path: PathBuf, host: String, table: &'static str) -> Sqli
         from: None,
         required: &["id"],
         // A small store whose every row can change: all of it, each poll.
-        mutable: Some("1 = 1"),
-        full_pass_secs: 3600,
+        changes: Changes::InPlace {
+            mutable: "1 = 1",
+            full_pass_secs: 3600,
+        },
     }
 }
 

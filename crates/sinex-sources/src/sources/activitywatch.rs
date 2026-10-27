@@ -16,7 +16,7 @@
 //!   those sources, not something a single row can show.
 //!
 //! The correction parameters live in [`CORRECTIONS`], one declaration.
-use crate::drivers::sqlite_rows::SqliteRows;
+use crate::drivers::sqlite_rows::{Changes, SqliteRows};
 use crate::registry::{DeclaredSource, Driver, SourceSpec};
 use crate::{Parser, RecordError};
 use serde::{Deserialize, Serialize};
@@ -280,8 +280,10 @@ pub fn driver(path: PathBuf, host: String) -> SqliteRows {
         ),
         required: &["id", "bucketrow", "starttime", "endtime", "data"],
         // A bucket's latest event grows while the watcher heartbeats.
-        mutable: Some("endtime >= ?1"),
-        full_pass_secs: 86_400,
+        changes: Changes::InPlace {
+            mutable: "endtime >= ?1",
+            full_pass_secs: 86_400,
+        },
     }
 }
 

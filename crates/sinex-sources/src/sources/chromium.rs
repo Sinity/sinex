@@ -10,7 +10,7 @@
 //! 1601-01-01; 0 means "none".
 use super::fields;
 use crate::drain::RecordContext;
-use crate::drivers::sqlite_rows::SqliteRows;
+use crate::drivers::sqlite_rows::{Changes, SqliteRows};
 use crate::registry::{DeclaredSource, Driver, SourceSpec};
 use crate::{Parser, RecordError};
 use serde_json::{Map, Value};
@@ -190,8 +190,10 @@ pub fn visits_driver(history: PathBuf, host: String) -> SqliteRows {
             "transition",
             "visit_duration",
         ],
-        mutable: Some(RECENT_VISIT),
-        full_pass_secs: 3600,
+        changes: Changes::InPlace {
+            mutable: RECENT_VISIT,
+            full_pass_secs: 3600,
+        },
     }
 }
 
@@ -210,8 +212,10 @@ pub fn urls_driver(history: PathBuf, host: String) -> SqliteRows {
             "last_visit_time",
             "hidden",
         ],
-        mutable: Some(RECENT_URL),
-        full_pass_secs: 3600,
+        changes: Changes::InPlace {
+            mutable: RECENT_URL,
+            full_pass_secs: 3600,
+        },
     }
 }
 
