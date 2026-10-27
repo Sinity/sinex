@@ -313,27 +313,37 @@ async fn produce_spools(
                 }
             }
         }
-        let producer = producer.as_mut().expect("connected above");
+        let connected = producer.as_mut().expect("connected above");
         for live in lives.iter() {
-            producer.monitor(&live.binding.name, live.health.clone());
+            connected.monitor(&live.binding.name, live.health.clone());
         }
         let mut had_material = false;
+        let mut reconnect = false;
         for live in lives
             .iter_mut()
             .filter(|live| live.retry.ready() && live.health.lock().unwrap().error.is_none())
         {
-            // A failed batch is replayed with its original frame IDs before
-            // the reader may advance to newly captured material.
-            match produce_spool(producer, store, positions, live).await {
+            // A saved batch must finish before its reader advances.
+            // Restarted attempts keep their material and record identities.
+            match produce_spool(connected, store, positions, live).await {
                 Ok(produced) => {
                     had_material |= produced;
                     live.retry.recovered(&live.binding.name);
                 }
+                Err(error @ Error::Refused { kind: sinex_model::FrameRefusal::Configuration, .. }) => {
+                    retry.failed(&connection.producer, "checking configuration", &error);
+                    reconnect = true;
+                    break;
+                }
                 Err(
                     Error::Refused {
                         reason,
-                        kind:
-                            sinex_model::FrameRefusal::Malformed | sinex_model::FrameRefusal::Content,
+                        kind: sinex_model::FrameRefusal::Malformed,
+                        ..
+                    }
+                    | Error::Refused {
+                        reason,
+                        kind: sinex_model::FrameRefusal::Content,
                         recorded: true,
                         ..
                     }
@@ -354,6 +364,10 @@ async fn produce_spools(
                 // cursor cannot be repaired by reconnecting to the bus.
                 Err(error) => return Err(error.to_string()),
             }
+        }
+        if reconnect {
+            producer = None;
+            continue;
         }
         if had_material {
             // A backlog gets another turn without waiting for the next poll.

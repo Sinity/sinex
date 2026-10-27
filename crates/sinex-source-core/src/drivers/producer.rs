@@ -95,6 +95,7 @@ impl Store {
 pub struct Position {
     pub cursor: Value,
     pub carry: Value,
+    #[serde(default)]
     pub capture_failures: Vec<CaptureFailure>,
 }
 
@@ -144,6 +145,10 @@ struct UnacknowledgedFrames {
     mismatch: Option<ByteMismatch>,
     skip_position: Option<Position>,
     records: u64,
+    #[serde(default)]
+    refusal: Option<FrameRefusal>,
+    #[serde(default)]
+    reporting_failure: bool,
 }
 
 struct Delivered {
@@ -181,9 +186,16 @@ impl UnacknowledgedFrames {
     fn load(dir: &Path, binding: &str) -> Result<Option<Self>, Error> {
         let path = Self::path(dir, binding);
         match std::fs::read(&path) {
-            Ok(bytes) => serde_json::from_slice(&bytes)
-                .map(Some)
-                .map_err(|e| Error::State(path, e.to_string())),
+            Ok(bytes) => {
+                let value: Value = serde_json::from_slice(&bytes)
+                    .map_err(|e| Error::State(path.clone(), e.to_string()))?;
+                if value.get("sources").is_none() || value.get("records").is_none() {
+                    return Err(Error::State(path, "unsupported unacknowledged-frame format; drain the old producer first, then upgrade".into()));
+                }
+                serde_json::from_value(value)
+                    .map(Some)
+                    .map_err(|e| Error::State(path, e.to_string()))
+            },
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
             Err(e) => Err(Error::State(path, e.to_string())),
         }
@@ -235,6 +247,7 @@ pub struct Sent {
 
 pub struct Producer {
     health: std::collections::HashMap<String, super::spool_health::Counter>,
+    resumed: std::collections::HashSet<String>,
     name: String,
     subjects: Subjects,
     client: async_nats::Client,
@@ -300,6 +313,7 @@ impl Producer {
         let max_message = client.server_info().max_payload;
         Ok(Self {
             health: Default::default(),
+            resumed: Default::default(),
             name: name.to_owned(),
             js: jetstream::new(client.clone()),
             subjects,
@@ -327,6 +341,24 @@ impl Producer {
         store: &Store,
     ) -> Result<Position, Error> {
         if let Some(mut batch) = UnacknowledgedFrames::load(state, binding)? {
+            if !self.resumed.contains(binding) {
+                if let Some(frame) = batch.frames.first_mut() {
+                    let body = serde_json::to_vec(frame).expect("frame serializes");
+                    let prepared = self.frame_for_message(frame.clone(), &body);
+                    let body = serde_json::to_vec(&prepared).expect("frame serializes");
+                    let names = [prepared.frame().to_owned(), format!("malformed/{}", blake3::hash(&body).to_hex())];
+                    let recorded = self.recorded(&names).await?;
+                    let retryable = |kind| matches!(kind, Some(FrameRefusal::Malformed | FrameRefusal::Configuration))
+                        || (kind == Some(FrameRefusal::Content) && matches!(frame, Ingress::Material { .. }));
+                    if retryable(batch.refusal) || recorded.iter().any(|ack| ack.refusal.is_some() && retryable(ack.refusal_kind())) {
+                        retry(frame);
+                        batch.refusal = None;
+                        batch.mismatch = None;
+                        batch.save(state, binding)?;
+                    }
+                }
+                self.resumed.insert(binding.to_owned());
+            }
             let delivered = self
                 .deliver_batch(&mut batch, state, binding, store, None)
                 .await?;
@@ -344,6 +376,7 @@ impl Producer {
                 counter.lock().unwrap().recovered(&batch.position.cursor);
             }
         }
+        self.resumed.insert(binding.to_owned());
         Position::load(state, binding)
     }
 
@@ -398,25 +431,36 @@ impl Producer {
                         self.clear_frame_directories(std::slice::from_ref(transfer), store)?;
                     }
                     if attempts < 3 {
-                        let retry_name =
-                            format!("{}/retry/{}", frame.frame(), uuid::Uuid::now_v7());
-                        match &mut batch.frames[0] {
-                            Ingress::Material { frame, .. }
-                            | Ingress::Events { frame, .. }
-                            | Ingress::LargeFrame { frame, .. }
-                            | Ingress::Chunk { frame, .. } => *frame = retry_name,
-                        }
+                        retry(&mut batch.frames[0]);
                         batch.save(state, binding)?;
                         continue;
                     }
-                    batch.position.capture_failures.push(CaptureFailure {
-                        ranges: batch.sources.clone(),
-                        reason: format!("three identical byte refusals: {reason}"),
-                    });
+                    if batch.reporting_failure {
+                        retry(&mut batch.frames[0]);
+                        batch.save(state, binding)?;
+                        return Err(Error::Refused { frame: frame.frame().into(), reason, recorded: true, kind: FrameRefusal::Bytes });
+                    }
+                    let failure_reason = format!("three identical byte refusals: {reason}");
                     let skipped_material = batch
                         .frames
                         .iter()
                         .any(|frame| matches!(frame, Ingress::Material { .. }));
+                    let failed_events = if skipped_material {
+                        None
+                    } else {
+                        match failed_events(&batch.frames, &failure_reason) {
+                            Ok(frame) => Some(frame),
+                            Err(error) => {
+                                batch.refusal = Some(FrameRefusal::Malformed);
+                                batch.save(state, binding)?;
+                                return Err(error);
+                            }
+                        }
+                    };
+                    batch.position.capture_failures.push(CaptureFailure {
+                        ranges: batch.sources.clone(),
+                        reason: failure_reason,
+                    });
                     if skipped_material {
                         if let Some(mut position) = batch.skip_position.take() {
                             position.capture_failures =
@@ -430,17 +474,33 @@ impl Producer {
                     }
                     // This position owns the failure and keeps the original spool ranges.
                     // Dependent events are not sent for an unregistered material.
-                    batch.frames.clear();
+                    batch.reporting_failure = failed_events.is_some();
+                    batch.frames = failed_events.into_iter().collect();
+                    batch.mismatch = None;
                     batch.save(state, binding)?;
-                    self.frames_changed(binding, 0);
+                    self.frames_changed(binding, batch.frames.len());
+                    if !batch.frames.is_empty() {
+                        continue;
+                    }
                     return Ok(Delivered {
                         acknowledgments,
                         skipped_material,
                     });
                 }
-                Err(error) => return Err(error),
+                Err(error) => {
+                    if let Error::Refused { recorded: true, kind, .. } = &error {
+                        batch.refusal = Some(*kind);
+                        batch.save(state, binding)?;
+                        if matches!(kind, FrameRefusal::Content | FrameRefusal::Configuration)
+                            && let Some(transfer) = &transfer {
+                            self.clear_frame_directories(std::slice::from_ref(transfer), store)?;
+                        }
+                    }
+                    return Err(error);
+                }
             }
             batch.frames.remove(0);
+            batch.refusal = None;
             batch.mismatch = None;
             batch.save(state, binding)?;
             self.frames_changed(binding, batch.frames.len());
@@ -487,6 +547,18 @@ impl Producer {
         Ok(())
     }
 
+    fn frame_for_message(&self, frame: Ingress, body: &[u8]) -> Ingress {
+        if body.len() + 4096 > self.max_message {
+            Ingress::LargeFrame {
+                frame: format!("{}/large", frame.frame()),
+                blob: format!("blake3:{}", blake3::hash(body).to_hex()),
+                length: body.len() as u64,
+            }
+        } else {
+            frame
+        }
+    }
+
     /// Write the bytes `frame` needs to its frame directory: a material's
     /// bytes, and the frame itself when it is too large for one message, in
     /// which case a `LargeFrame` naming those bytes takes its place.
@@ -501,15 +573,7 @@ impl Producer {
             Ingress::Material { material, .. } => Some(material.as_ref().clone()),
             _ => None,
         };
-        let frame = if body.len() + 4096 > self.max_message {
-            Ingress::LargeFrame {
-                frame: format!("{}/large", frame.frame()),
-                blob: format!("blake3:{}", blake3::hash(&body).to_hex()),
-                length: body.len() as u64,
-            }
-        } else {
-            frame
-        };
+        let frame = self.frame_for_message(frame, &body);
         let root = self.frame_root(shared);
         if let Some(material) = material {
             frame_bytes::write(
@@ -850,6 +914,8 @@ impl Producer {
                 mismatch: None,
                 skip_position: skip_position.clone(),
                 records,
+                refusal: None,
+                reporting_failure: false,
             };
             pending.save(state, binding)?;
             self.frames_changed(binding, pending.frames.len());
@@ -879,6 +945,39 @@ impl Producer {
         }
         Ok(sent)
     }
+}
+
+fn retry(frame: &mut Ingress) {
+    let name = format!("{}/retry/{}", frame.frame(), uuid::Uuid::now_v7());
+    match frame {
+        Ingress::Material { frame, .. } | Ingress::Events { frame, .. }
+        | Ingress::LargeFrame { frame, .. } | Ingress::Chunk { frame, .. } => *frame = name,
+    }
+}
+
+fn failed_events(frames: &[Ingress], reason: &str) -> Result<Ingress, Error> {
+    let mut locations = Vec::new();
+    for frame in frames {
+        if let Ingress::Events { events, failures, .. } = frame {
+            locations.extend(events.iter().filter_map(|event| event.location));
+            locations.extend(failures.iter().map(|failure| failure.location));
+        }
+    }
+    if locations.is_empty() {
+        return Err(Error::Refused {
+            frame: frames[0].frame().into(),
+            reason: format!("cannot report the byte failure on a material: {reason}"),
+            recorded: false,
+            kind: FrameRefusal::Malformed,
+        });
+    }
+    locations.sort_by_key(|location| (location.material.0, location.anchor));
+    locations.dedup();
+    Ok(Ingress::Events {
+        frame: format!("{}/failures/{}", frames[0].frame(), uuid::Uuid::now_v7()),
+        events: vec![],
+        failures: locations.into_iter().map(|location| ProducerFailure { location, reason: reason.into() }).collect(),
+    })
 }
 
 /// Group events into frames that fit one message.

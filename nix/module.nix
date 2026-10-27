@@ -2,6 +2,12 @@
 # PostgreSQL and NATS, the session service, the journald capture, a
 # capture-only node for satellite hosts, and the backups. Source and derivation
 # options come from the registries through the generated `catalog.json`.
+#
+# Before upgrading producers, let the old binaries drain until no
+# positions/*.unacknowledged.json remains, then stop them and activate.
+# Check every user's session stateDir (by default XDG_STATE_HOME/sinex-session)
+# and every capture node's stateDir/positions. Old unacknowledged-frame files
+# are refused with their path and must be drained by the old producer first.
 self:
 { config, lib, pkgs, ... }:
 let

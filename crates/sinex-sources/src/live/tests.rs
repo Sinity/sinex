@@ -73,8 +73,18 @@ type ReceivedOrder = Arc<Mutex<Vec<Ingress>>>;
 async fn fake_ingress(
     url: &str,
     subjects: &Subjects,
+    available: tokio::sync::watch::Receiver<bool>,
+    timeout: Arc<tokio::sync::Notify>,
+) -> (ReceivedFrames, ReceivedOrder, tokio::task::JoinHandle<()>) {
+    fake_ingress_with_configuration(url, subjects, available, timeout, None).await
+}
+
+async fn fake_ingress_with_configuration(
+    url: &str,
+    subjects: &Subjects,
     mut available: tokio::sync::watch::Receiver<bool>,
     timeout: Arc<tokio::sync::Notify>,
+    connections: Option<Arc<std::sync::atomic::AtomicUsize>>,
 ) -> (ReceivedFrames, ReceivedOrder, tokio::task::JoinHandle<()>) {
     let client = async_nats::connect(url).await.unwrap();
     let mut declarations = client
@@ -82,8 +92,12 @@ async fn fake_ingress(
         .await
         .unwrap();
     let declarer = client.clone();
+    let declarations_count = connections.clone();
     tokio::spawn(async move {
         while let Some(message) = declarations.next().await {
+            if let Some(count) = &declarations_count {
+                count.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            }
             declarer
                 .publish(
                     message.reply.unwrap(),
@@ -124,6 +138,7 @@ async fn fake_ingress(
     let ack_subject = subjects.ack("synthetic");
     let task = tokio::spawn(async move {
         let mut pending = Vec::new();
+        let mut configuration_refused = false;
         let mut recorded = HashMap::<String, Acknowledgment>::new();
         loop {
             tokio::select! {
@@ -161,6 +176,14 @@ async fn fake_ingress(
                                 _ => (None, vec![]),
                             };
                             let commit_seq = if admitted.is_empty() { None } else { Some(1) };
+                            if connections.is_some() && !configuration_refused {
+                                configuration_refused = true;
+                                return Acknowledgment {
+                                    frame: id.clone(), material: None, admitted: vec![],
+                                    outcome: json!({"refusal_kind":"configuration"}),
+                                    refusal: Some("privacy configuration changed; reconnect".into()), commit_seq: None,
+                                };
+                            }
                             Acknowledgment {
                                 frame: id.clone(),
                                 material,
@@ -792,4 +815,30 @@ async fn a_connect_refusal_is_reported_once_while_capture_continues() {
             >= 10
     );
     responder.abort();
+}
+
+#[devkit::test(multi_thread)]
+async fn a_configuration_refusal_reconnects_and_recovers_the_saved_batch() {
+    let nats = devkit::nats::test_nats().unwrap();
+    let subjects = Subjects::new(nats.prefix());
+    let connections = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let (_available, receiving) = tokio::sync::watch::channel(true);
+    let (_, order, ingress) = fake_ingress_with_configuration(nats.url(), &subjects, receiving, Arc::new(tokio::sync::Notify::new()), Some(connections.clone())).await;
+    let dir = tempfile::tempdir().unwrap();
+    let positions = dir.path().join("positions");
+    let spool = dir.path().join("spool");
+    let (_, binding) = super::binding("hyprland", &spool, "synthetic", Value::Null).unwrap();
+    let store = Store::open(&dir.path().join("store")).unwrap();
+    run_with_private_mode(
+        Connection { url: nats.url().into(), password_file: None, subjects, producer: "synthetic".into(), upload: false },
+        &store, &positions, vec![(&SYNTHETIC, binding.clone())], Duration::from_millis(50),
+        Some(Instant::now() + Duration::from_secs(4)),
+        sinex_transport::private_mode::PrivateMode::new(dir.path().join("private")),
+    ).await.unwrap();
+    assert_eq!(connections.load(std::sync::atomic::Ordering::SeqCst), 2);
+    assert!(!Position::load(&positions, &binding.name).unwrap().cursor.is_null());
+    let frames = order.lock().unwrap();
+    assert!(frames.iter().any(|frame| frame.frame().contains("/retry/")));
+    assert!(frames.iter().any(|frame| matches!(frame, Ingress::Events { events, .. } if !events.is_empty())));
+    ingress.abort();
 }

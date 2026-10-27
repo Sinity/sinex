@@ -177,7 +177,10 @@ The live producers start capture before connecting to NATS. At connect they
 send their protocol version, maximum class and event type names; the daemon
 refuses an unsupported version, sealed storage or unknown event types before
 any frame is sent. Producer-owned type declarations can be registered at this
-connect check. A refused connection stays in local status and is sent to the
+connect check. Each new frame checks the privacy configuration again. A changed
+configuration returns a configuration refusal before storing frame bytes,
+forcing the producer to reconnect and repeat the connect check. A refused
+connection stays in local status and is sent to the
 desktop notifier while capture continues.
 
 Connection and publishing failures retry with exponential delays from one to
@@ -192,10 +195,17 @@ A byte refusal rebuilds the transfer from the original spool range and the
 saved logical frame, then resends under a new frame name. Three identical
 refusals for the same spool bytes record a capture failure with that range in
 the existing position state and advance past it. Spool cleanup keeps those
-files. An unregistered material is skipped without making the next part name
-it. Malformed frames are recorded as refusals and report the binding as
-`error: <reason>`, also sent to the notifier. Unrecorded content refusals and
-storage or database failures remain retryable.
+files as failure evidence; they have no automatic retry or cleanup after the
+binding advances. When the material is already registered, the producer sends
+a failures-only events frame for the dropped records before advancing. An
+unregistered material is skipped without making the next part name it.
+Malformed frames are recorded as refusals and report the binding as
+`error: <reason>`, also sent to the notifier. Their transfer directories stay
+as evidence of the code defect and have no reader or automatic cleanup.
+On restart, a saved malformed refusal or content refusal of a material is sent
+under a fresh attempt name, so a corrected producer or daemon can accept it.
+A configuration refusal also gets a fresh attempt after reconnecting.
+Unrecorded content refusals and storage or database failures remain retryable.
 
 Each pass publishes at most one material per binding, in round-robin order.
 A nonempty pass continues immediately; only idle passes wait for the next poll
@@ -212,10 +222,28 @@ the local session report, including when the daemon is unreachable or refuses
 the status request;
 `--capture-state PATH` selects another local producer's state directory. The
 local report includes binding errors, the capture failure count and its newest
-reason. Online status also counts material failures in `failures_24h`.
-`status --offline --database URL` includes the same report even when its
-database query fails. The observation time
-must be checked because the last report remains on disk after capture stops.
+reason. `status --offline --database URL` includes the local report even when
+its database query fails. Check the observation time because the last report
+remains on disk after capture stops.
+
+Online status also counts material failures in `failures_24h`.
+`ingress_refusals_24h` counts refused frames by producer, source (named at the
+start of a capture binding), event type and refusal kind (`content`, `bytes`, `malformed`,
+`configuration`). A frame containing several event types counts once for each;
+unknown source and event type stay null. `producer_errors` lists the newest
+recorded malformed refusal for each affected producer, including remote
+capture nodes. This is recorded history and remains visible after a successful
+retry.
+
+Before upgrading a producer, let its old binary drain until its positions
+directory contains no `*.unacknowledged.json`, then stop it and activate the
+new binary. Do this for every session state directory (the configured
+`stateDir`, or `${XDG_STATE_HOME:-~/.local/state}/sinex-session`) and every
+capture node's `<stateDir>/positions`. Older position files open with an empty
+capture-failure list. Older unacknowledged-frame files contain prepared
+transfers rather than logical frames; opening one refuses with its path and
+an instruction to drain the old producer first. No conversion is performed.
+
 
 The outside producers start their capture threads with `sinex-sources::live`,
 which registers signal handlers first and stops every capture before joining

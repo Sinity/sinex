@@ -44,9 +44,21 @@ async fn standin_with_refusal(
     nats: &devkit::nats::TestNats,
     subjects: &Subjects,
     producer: &str,
-    mut refuse_offset: Option<u64>,
-    mut refuse_events: usize,
+    refuse_offset: Option<u64>,
+    remaining_refusals: usize,
     refusal_kind: FrameRefusal,
+) -> Arc<Mutex<Vec<Ingress>>> {
+    refusing(nats, subjects, producer, refuse_offset, remaining_refusals, refusal_kind, false).await
+}
+
+async fn refusing(
+    nats: &devkit::nats::TestNats,
+    subjects: &Subjects,
+    producer: &str,
+    mut refuse_offset: Option<u64>,
+    mut remaining_refusals: usize,
+    refusal_kind: FrameRefusal,
+    refuse_material: bool,
 ) -> Arc<Mutex<Vec<Ingress>>> {
     use async_nats::jetstream::{consumer, stream};
     let client = async_nats::connect(nats.url()).await.unwrap();
@@ -112,6 +124,17 @@ async fn standin_with_refusal(
         let mut messages = consumer.messages().await.unwrap();
         while let Some(Ok(message)) = messages.next().await {
             let frame: Ingress = serde_json::from_slice(&message.payload).unwrap();
+            let malformed = format!("malformed/{}", blake3::hash(&message.payload).to_hex());
+            let previous = {
+                let answers = recorded.lock().unwrap();
+                answers.get(frame.frame()).or_else(|| answers.get(&malformed)).cloned()
+            };
+            if let Some(ack) = previous {
+                seen.lock().unwrap().push(frame);
+                acker.publish(ack_subject.clone(), serde_json::to_vec(&ack).unwrap().into()).await.unwrap();
+                message.ack().await.unwrap();
+                continue;
+            }
             let (material, mut admitted) = match &frame {
                 Ingress::Material { material, .. } => (Some(material.id), vec![]),
                 Ingress::Events { events, .. } => (
@@ -125,10 +148,14 @@ async fn standin_with_refusal(
                     refuse_offset = None;
                     Some("synthetic interruption".into())
                 }
+                Ingress::Material { .. } if refuse_material && remaining_refusals > 0 => {
+                    remaining_refusals -= 1;
+                    Some("synthetic invalid material".into())
+                }
                 Ingress::Events { .. } | Ingress::LargeFrame { .. }
-                    if refuse_events > 0 && frame.frame() != "first" =>
+                    if !refuse_material && remaining_refusals > 0 && frame.frame() != "first" =>
                 {
-                    refuse_events -= 1;
+                    remaining_refusals -= 1;
                     Some("synthetic invalid event".into())
                 }
                 _ => None,
@@ -250,6 +277,8 @@ async fn an_unacknowledged_batch_is_resent_with_uploaded_bytes() {
         mismatch: None,
         skip_position: None,
         records: 0,
+    refusal: None,
+    reporting_failure: false,
     }
     .save(&state, "b")
     .unwrap();
@@ -482,6 +511,8 @@ async fn a_recorded_invalid_frame_is_skipped_and_the_next_frame_is_sent() {
         mismatch: None,
         skip_position: None,
         records: 0,
+    refusal: None,
+    reporting_failure: false,
     }
     .save(&state, "binding")
     .unwrap();
@@ -566,6 +597,8 @@ async fn three_identical_byte_refusals_keep_the_spool_and_advance_without_a_part
         position: Position { cursor: json!({"segment":0,"last_material":material,"part_base":0,"inner":{"offset":4,"material":material,"part_index":0,"through":4}}), ..Position::default() },
         skip_position: Some(Position { cursor: json!({"segment":0,"last_material":material,"part_base":0,"inner":{"offset":bytes.len(),"material":material,"part_index":0,"through":bytes.len()}}), carry: json!({"after":"whole material"}), ..Position::default() }),
         records: 2,
+        refusal: None,
+        reporting_failure: false,
         sources: vec![CapturedRange { path: path.clone(), offset: 0, length: bytes.len() as u64, blob }], mismatch: None,
     }.save(&state, "binding").unwrap();
     let position = producer.position("binding", &state, &store).await.unwrap();
@@ -633,6 +666,8 @@ async fn a_byte_refusal_rebuilds_a_large_frame_and_succeeds_on_the_next_attempt(
         mismatch: None,
         skip_position: None,
         records: 0,
+    refusal: None,
+    reporting_failure: false,
     }
     .save(&state, "binding")
     .unwrap();
@@ -653,57 +688,79 @@ async fn a_byte_refusal_rebuilds_a_large_frame_and_succeeds_on_the_next_attempt(
 }
 
 #[devkit::test(multi_thread)]
-async fn a_malformed_frame_stays_an_error_without_advancing_the_binding() {
-    let nats = devkit::nats::test_nats().unwrap();
-    let subjects = Subjects::new(nats.prefix());
-    let received = standin_with_refusal(
-        &nats,
-        &subjects,
-        "malformed",
-        None,
-        1,
-        FrameRefusal::Malformed,
-    )
-    .await;
-    let dir = tempfile::tempdir().unwrap();
-    let store = Store::open(dir.path()).unwrap();
-    let state = dir.path().join("positions");
-    let mut producer = Producer::connect(
-        nats.url(),
-        None,
-        subjects,
-        "malformed",
-        &ProducerHello::default(),
-    )
-    .await
-    .unwrap();
-    UnacknowledgedFrames {
-        frames: vec![Ingress::Events {
-            frame: "broken".into(),
-            events: vec![event(1)],
-            failures: vec![],
-        }],
-        position: Position {
-            cursor: json!({"segment":1}),
-            ..Position::default()
-        },
-        sources: vec![],
-        mismatch: None,
-        skip_position: None,
-        records: 0,
+async fn a_restart_after_a_fix_retries_malformed_and_material_content_refusals() {
+    for (kind, material_frame, large) in [
+        (FrameRefusal::Malformed, false, false),
+        (FrameRefusal::Malformed, false, true),
+        (FrameRefusal::Content, true, false),
+        (FrameRefusal::Configuration, false, false),
+    ] {
+        let nats = devkit::nats::test_nats().unwrap();
+        let subjects = Subjects::new(nats.prefix());
+        let received = refusing(&nats, &subjects, "restart", None, 1, kind, material_frame).await;
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::open(dir.path()).unwrap();
+        let state = dir.path().join("positions");
+        let bytes = b"synthetic source bytes";
+        let source = dir.path().join("source");
+        std::fs::write(&source, bytes).unwrap();
+        let blob = format!("blake3:{}", blake3::hash(bytes).to_hex());
+        let frame = if material_frame {
+            Ingress::Material { frame: "broken".into(), material: Box::new(MaterialFrame {
+                id: sinex_model::MaterialId::new(),
+                input: sinex_model::InputRef { kind: "file".into(), locator: "synthetic".into(), host: "test".into() },
+                blob: blob.clone(), length: bytes.len() as u64, parser: "synthetic".into(), parser_version: 1,
+                part_index: 0, previous_part: None, manifest: Default::default(),
+            }) }
+        } else {
+            Ingress::Events { frame: "broken".into(), events: vec![event(1)], failures: vec![] }
+        };
+        UnacknowledgedFrames {
+            frames: vec![frame], position: Position { cursor: json!({"segment":1}), ..Default::default() },
+            sources: vec![CapturedRange { path: source, offset: 0, length: bytes.len() as u64, blob }],
+            mismatch: None, skip_position: None, records: 1, refusal: None, reporting_failure: false,
+        }.save(&state, "binding").unwrap();
+        let mut producer = Producer::connect(nats.url(), None, subjects.clone(), "restart", &ProducerHello::default()).await.unwrap();
+        if large { producer.max_message = 1; }
+        assert!(matches!(producer.position("binding", &state, &store).await, Err(Error::Refused { recorded: true, .. })));
+        assert!(Position::load(&state, "binding").unwrap().cursor.is_null());
+        if kind == FrameRefusal::Malformed && !large {
+            // A crash can happen after the daemon records the refusal and before the local save.
+            let mut interrupted = UnacknowledgedFrames::load(&state, "binding").unwrap().unwrap();
+            interrupted.refusal = None;
+            interrupted.save(&state, "binding").unwrap();
+        }
+        drop(producer);
+        let mut producer = Producer::connect(nats.url(), None, subjects, "restart", &ProducerHello::default()).await.unwrap();
+        if large { producer.max_message = 1; }
+        let position = producer.position("binding", &state, &store).await.unwrap();
+        assert_eq!(position.cursor, json!({"segment":1}));
+        assert!(UnacknowledgedFrames::load(&state, "binding").unwrap().is_none());
+        let received = received.lock().unwrap();
+        assert_eq!(received.len(), 2);
+        assert!(received[1].frame().contains("/retry/"));
+        assert_ne!(received[0].frame(), received[1].frame());
     }
-    .save(&state, "binding")
-    .unwrap();
-    assert!(matches!(
-        producer.position("binding", &state, &store).await,
-        Err(Error::Refused {
-            kind: FrameRefusal::Malformed,
-            recorded: true,
-            ..
-        })
-    ));
-    assert!(Position::load(&state, "binding").unwrap().cursor.is_null());
-    assert_eq!(received.lock().unwrap().len(), 1);
+}
+
+#[devkit::test]
+fn old_positions_open_and_old_unacknowledged_frames_require_draining() {
+    let dir = tempfile::tempdir().unwrap();
+    let position = Position::path(dir.path(), "binding");
+    let bytes = br#"{"cursor":{"segment":4},"carry":{"partial":"synthetic"}}"#;
+    std::fs::write(&position, bytes).unwrap();
+    let loaded = Position::load(dir.path(), "binding").unwrap();
+    assert_eq!(loaded.cursor, json!({"segment":4}));
+    assert_eq!(loaded.carry, json!({"partial":"synthetic"}));
+    assert!(loaded.capture_failures.is_empty());
+    assert_eq!(std::fs::read(position).unwrap(), bytes);
+    let path = UnacknowledgedFrames::path(dir.path(), "binding");
+    let bytes = br#"{"frames":[{"kind":"large_frame","frame":"saved","blob":"synthetic","length":12}],"position":{"cursor":{},"carry":null}}"#;
+    std::fs::write(&path, bytes).unwrap();
+    let error = Producer::unacknowledged_position("binding", dir.path()).unwrap_err().to_string();
+    assert!(error.contains(path.to_str().unwrap()), "{error}");
+    assert!(error.contains("drain the old producer first"), "{error}");
+    assert_eq!(std::fs::read(path).unwrap(), bytes);
 }
 
 #[devkit::test(multi_thread)]
@@ -807,7 +864,7 @@ async fn byte_mismatch_count_survives_a_producer_restart() {
     let nats = devkit::nats::test_nats().unwrap();
     let subjects = Subjects::new(nats.prefix());
     let received =
-        standin_with_refusal(&nats, &subjects, "restart", None, 1, FrameRefusal::Bytes).await;
+        standin_with_refusal(&nats, &subjects, "restart", None, 4, FrameRefusal::Bytes).await;
     let dir = tempfile::tempdir().unwrap();
     let store = Store::open(dir.path()).unwrap();
     let state = dir.path().join("positions");
@@ -824,10 +881,15 @@ async fn byte_mismatch_count_survives_a_producer_restart() {
         reason: "synthetic invalid event".into(),
         attempts: 2,
     };
+    let material = sinex_model::MaterialId::new();
+    let mut events = vec![event(1), event(2)];
+    for (index, event) in events.iter_mut().enumerate() {
+        event.location = Some(sinex_model::RecordLocation { material, anchor: index as u64 });
+    }
     UnacknowledgedFrames {
         frames: vec![Ingress::Events {
             frame: "events".into(),
-            events: vec![event(1)],
+            events,
             failures: vec![],
         }],
         position: Position {
@@ -838,20 +900,35 @@ async fn byte_mismatch_count_survives_a_producer_restart() {
         mismatch: Some(mismatch),
         skip_position: None,
         records: 0,
+    refusal: None,
+    reporting_failure: false,
     }
     .save(&state, "binding")
     .unwrap();
     let mut producer = Producer::connect(
         nats.url(),
         None,
-        subjects,
+        subjects.clone(),
         "restart",
         &ProducerHello::default(),
     )
     .await
     .unwrap();
+    assert!(matches!(producer.position("binding", &state, &store).await, Err(Error::Refused { kind: FrameRefusal::Bytes, .. })));
+    assert!(Position::load(&state, "binding").unwrap().cursor.is_null());
+    let pending = UnacknowledgedFrames::load(&state, "binding").unwrap().unwrap();
+    assert!(pending.reporting_failure);
+    assert_eq!(pending.position.capture_failures.len(), 1);
+    drop(producer);
+    let mut producer = Producer::connect(nats.url(), None, subjects, "restart", &ProducerHello::default()).await.unwrap();
     let position = producer.position("binding", &state, &store).await.unwrap();
-    assert_eq!(received.lock().unwrap().len(), 1);
+    let received = received.lock().unwrap();
+    assert_eq!(received.len(), 5);
+    let Ingress::Events { events, failures, .. } = &received[4] else { panic!("failure frame") };
+    assert!(events.is_empty());
+    assert_eq!(failures.len(), 2);
+    assert!(failures.iter().all(|failure| failure.location.material == material && failure.reason.contains("three identical byte refusals")));
+    assert_eq!(Position::load(&state, "binding").unwrap().cursor, json!({"segment":1}));
     assert_eq!(position.capture_failures.len(), 1);
     assert_eq!(position.capture_failures[0].ranges[0].path, spool);
 }
