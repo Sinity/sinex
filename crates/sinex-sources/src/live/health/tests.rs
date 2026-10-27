@@ -43,7 +43,7 @@ fn counters_follow_capture_and_acknowledgments_without_reading_the_spool() {
 }
 
 #[devkit::test]
-fn media_counters_include_sidecars_and_exclude_acknowledged_segments() {
+fn media_counters_include_empty_files_and_sidecars_and_exclude_acknowledged_segments() {
     let dir = tempfile::tempdir().unwrap();
     let spool = dir.path().join("spool");
     std::fs::create_dir(&spool).unwrap();
@@ -52,7 +52,8 @@ fn media_counters_include_sidecars_and_exclude_acknowledged_segments() {
     let counter = initialize(&dir.path().join("positions"), &binding).unwrap();
     for stem in ["1-2.screen", "3-4.screen"] {
         let partial = spool.join("capture.partial");
-        std::fs::write(&partial, b"synthetic image").unwrap();
+        let bytes: &[u8] = if stem == "1-2.screen" { b"" } else { b"synthetic image" };
+        std::fs::write(&partial, bytes).unwrap();
         sinex_source_core::drivers::media::publish_segment(
             &spool,
             &partial,
@@ -64,7 +65,7 @@ fn media_counters_include_sidecars_and_exclude_acknowledged_segments() {
     }
     let cursor = json!({"last":"1-2.screen"});
     let mut counter = counter.lock().unwrap();
-    counter.prepare(&cursor, 1);
+    counter.prepare(&cursor, 0);
     counter.recovered(&cursor);
     assert_eq!(counter.counts.bytes, 17);
     assert_eq!(counter.counts.records, 1);
