@@ -162,6 +162,22 @@ pub fn capture(
 pub const FORMAT: sinex_source_core::binding::InputFormat =
     sinex_source_core::binding::InputFormat {
         name: "notifications",
+        discovery: sinex_source_core::discovery::DiscoverySpec {
+            owner: sinex_source_core::discovery::Owner::Session,
+            locations: &[sinex_source_core::discovery::Location {
+                root: "session",
+                path: "session_bus",
+            }],
+            capabilities: &["session_bus", "busctl"],
+            credentials: &[],
+            streams: &[sinex_source_core::discovery::CaptureStream {
+                spool: "notifications",
+                options: "{}",
+                capabilities: &[],
+            }],
+            request_only: false,
+        },
+        discover: crate::discovery::discover_format,
         specs: || vec![&SPEC],
         plan: Some(|spool, settings| {
             Ok(sinex_source_core::binding::single(&SPEC, spool, settings))

@@ -241,7 +241,39 @@ pub fn source_for(binding: &Binding) -> Result<Box<dyn Source>, String> {
             binding.source, binding.parser
         )
     })?;
-    (format.source)(binding)
+    let source = (format.source)(binding)?;
+    let Some(class) = binding.settings.class else {
+        return Ok(source);
+    };
+    let mut spec = source.spec().clone();
+    spec.class = spec.class.max(class);
+    Ok(Box::new(ConfiguredSource { source, spec }))
+}
+
+struct ConfiguredSource {
+    source: Box<dyn Source>,
+    spec: SourceSpec,
+}
+
+impl Source for ConfiguredSource {
+    fn spec(&self) -> &SourceSpec {
+        &self.spec
+    }
+    fn drainer<'a>(
+        &'a self,
+        mut input: sinex_source_core::DrainInput<'a>,
+    ) -> Result<
+        Box<
+            dyn Iterator<
+                    Item = Result<sinex_source_core::DrainOutput, sinex_source_core::RecordError>,
+                > + Send
+                + 'a,
+        >,
+        sinex_source_core::RecordError,
+    > {
+        input.class = input.class.max(self.spec.class);
+        self.source.drainer(input)
+    }
 }
 
 /// The binding a material read by `parser` on `host` had, for a material

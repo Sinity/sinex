@@ -278,6 +278,29 @@ fn media(b: &sinex_source_core::binding::Binding) -> Result<&'static str, String
 pub const FORMAT: sinex_source_core::binding::InputFormat =
     sinex_source_core::binding::InputFormat {
         name: "media",
+        discovery: sinex_source_core::discovery::DiscoverySpec {
+            owner: sinex_source_core::discovery::Owner::Session,
+            locations: &[sinex_source_core::discovery::Location {
+                root: "session",
+                path: "media",
+            }],
+            capabilities: &[],
+            credentials: &[],
+            streams: &[
+                sinex_source_core::discovery::CaptureStream {
+                    spool: "screen",
+                    options: "{\"kind\":\"screen\"}",
+                    capabilities: &["wayland", "grim"],
+                },
+                sinex_source_core::discovery::CaptureStream {
+                    spool: "audio",
+                    options: "{\"kind\":\"audio\"}",
+                    capabilities: &["pipewire", "pw-record"],
+                },
+            ],
+            request_only: false,
+        },
+        discover: crate::discovery::discover_format,
         specs: || vec![&SPEC],
         plan: Some(|spool, settings| {
             let b = sinex_source_core::binding::Binding::of(&SPEC, spool, settings.clone());

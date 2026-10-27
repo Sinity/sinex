@@ -322,6 +322,22 @@ pub fn driver(spool: PathBuf, host: String) -> LiveStream {
 pub const FORMAT: sinex_source_core::binding::InputFormat =
     sinex_source_core::binding::InputFormat {
         name: "file-watch",
+        discovery: sinex_source_core::discovery::DiscoverySpec {
+            owner: sinex_source_core::discovery::Owner::Session,
+            locations: &[sinex_source_core::discovery::Location {
+                root: "session",
+                path: "watch",
+            }],
+            capabilities: &[],
+            credentials: &[],
+            streams: &[sinex_source_core::discovery::CaptureStream {
+                spool: "files",
+                options: "{}",
+                capabilities: &["watch"],
+            }],
+            request_only: false,
+        },
+        discover: crate::discovery::discover_format,
         specs: || vec![&SPEC],
         plan: Some(|spool, settings| {
             Ok(sinex_source_core::binding::single(&SPEC, spool, settings))

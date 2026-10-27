@@ -379,6 +379,15 @@ pub fn source() -> DeclaredSource<PageParser> {
 pub const FORMAT: sinex_source_core::binding::InputFormat =
     sinex_source_core::binding::InputFormat {
         name: "page-crawl",
+        discovery: sinex_source_core::discovery::DiscoverySpec {
+            owner: sinex_source_core::discovery::Owner::System,
+            locations: &[],
+            capabilities: &[],
+            credentials: &[],
+            streams: &[],
+            request_only: true,
+        },
+        discover: crate::discovery::discover_format,
         specs: || vec![&SPEC],
         plan: None,
         source: |_| Ok(Box::new(source())),

@@ -239,6 +239,36 @@ fn profiles(user_data: &Path) -> Vec<(String, PathBuf)> {
 pub const FORMAT: sinex_source_core::binding::InputFormat =
     sinex_source_core::binding::InputFormat {
         name: "chromium",
+        discovery: sinex_source_core::discovery::DiscoverySpec {
+            owner: sinex_source_core::discovery::Owner::System,
+            locations: &[
+                sinex_source_core::discovery::Location {
+                    root: "config",
+                    path: "chromium",
+                },
+                sinex_source_core::discovery::Location {
+                    root: "config",
+                    path: "google-chrome",
+                },
+                sinex_source_core::discovery::Location {
+                    root: "config",
+                    path: "google-chrome-beta",
+                },
+                sinex_source_core::discovery::Location {
+                    root: "config",
+                    path: "BraveSoftware/Brave-Browser",
+                },
+                sinex_source_core::discovery::Location {
+                    root: "input",
+                    path: "chromium",
+                },
+            ],
+            capabilities: &[],
+            credentials: &[],
+            streams: &[],
+            request_only: false,
+        },
+        discover: crate::discovery::discover_format,
         specs: || vec![&VISITS, &URLS],
         plan: Some(|input, settings| {
             Ok(profiles(input)

@@ -227,6 +227,18 @@ fn staging() -> PathBuf {
 pub const FORMAT: sinex_source_core::binding::InputFormat =
     sinex_source_core::binding::InputFormat {
         name: "outlook",
+        discovery: sinex_source_core::discovery::DiscoverySpec {
+            owner: sinex_source_core::discovery::Owner::System,
+            locations: &[sinex_source_core::discovery::Location {
+                root: "input",
+                path: "outlook",
+            }],
+            capabilities: &[],
+            credentials: &[],
+            streams: &[],
+            request_only: false,
+        },
+        discover: crate::discovery::discover_format,
         specs: || vec![&PST],
         plan: Some(|input, settings| {
             let stage = staging();
@@ -258,6 +270,18 @@ pub const FORMAT: sinex_source_core::binding::InputFormat =
 pub const CSV_FORMAT: sinex_source_core::binding::InputFormat =
     sinex_source_core::binding::InputFormat {
         name: "outlook-csv",
+        discovery: sinex_source_core::discovery::DiscoverySpec {
+            owner: sinex_source_core::discovery::Owner::System,
+            locations: &[sinex_source_core::discovery::Location {
+                root: "input",
+                path: "outlook-csv",
+            }],
+            capabilities: &[],
+            credentials: &[],
+            streams: &[],
+            request_only: false,
+        },
+        discover: crate::discovery::discover_format,
         specs: || vec![&CSV],
         plan: Some(|input, settings| {
             Ok(sinex_source_core::binding::per_file(
