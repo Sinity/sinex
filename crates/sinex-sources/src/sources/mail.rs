@@ -271,6 +271,19 @@ pub fn maildir_driver(root: PathBuf, host: String) -> DirSnapshot {
 pub const MBOX_FORMAT: sinex_source_core::binding::InputFormat =
     sinex_source_core::binding::InputFormat {
         name: "mbox",
+        discovery: sinex_source_core::discovery::DiscoverySpec {
+            owner: sinex_source_core::discovery::Owner::System,
+            locations: &[sinex_source_core::discovery::Location {
+                root: "input",
+                path: "mbox",
+            }],
+            capabilities: &[],
+            credentials: &[],
+            streams: &[],
+            requests: &[],
+            request_only: false,
+        },
+        discover: crate::discovery::discover_format,
         specs: || vec![&MBOX],
         plan: Some(|input, settings| {
             Ok(sinex_source_core::binding::per_file(
@@ -295,6 +308,19 @@ pub const MBOX_FORMAT: sinex_source_core::binding::InputFormat =
 pub const MAILDIR_FORMAT: sinex_source_core::binding::InputFormat =
     sinex_source_core::binding::InputFormat {
         name: "maildir",
+        discovery: sinex_source_core::discovery::DiscoverySpec {
+            owner: sinex_source_core::discovery::Owner::System,
+            locations: &[sinex_source_core::discovery::Location {
+                root: "input",
+                path: "maildir",
+            }],
+            capabilities: &[],
+            credentials: &[],
+            streams: &[],
+            requests: &[],
+            request_only: false,
+        },
+        discover: crate::discovery::discover_format,
         specs: || vec![&MAILDIR],
         plan: Some(|input, settings| {
             Ok(sinex_source_core::binding::single(

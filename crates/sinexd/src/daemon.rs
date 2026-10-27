@@ -195,6 +195,7 @@ pub(crate) async fn run(o: Options) -> Result<(), String> {
         .await
         .map_err(|e| format!("read pool: {e}"))?;
     let reader_api = Api {
+        source_config: Arc::new(sources.clone()),
         reads: reads.clone(),
         writer: Some(handle.clone()),
         blobs: blobs.clone(),
@@ -227,8 +228,9 @@ pub(crate) async fn run(o: Options) -> Result<(), String> {
         // A configuration naming an unknown source or format stops the
         // daemon here; the runner plans it again as files appear.
         binding_runner::plan(&sources, &o.host)?;
-        let (read_conn, b, w, host, s) = (
+        let (read_conn, database, b, w, host, s) = (
             connect(&o.database).await?,
+            o.database.clone(),
             blobs.clone(),
             handle.clone(),
             o.host.clone(),
@@ -237,7 +239,16 @@ pub(crate) async fn run(o: Options) -> Result<(), String> {
         tasks.spawn(async move {
             (
                 "binding runner",
-                binding_runner::run(read_conn, b, w, host, sources, BINDINGS_EVERY, s).await,
+                binding_runner::run(
+                    (read_conn, database),
+                    b,
+                    w,
+                    host,
+                    sources,
+                    BINDINGS_EVERY,
+                    s,
+                )
+                .await,
             )
         });
     }

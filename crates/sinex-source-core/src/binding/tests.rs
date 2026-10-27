@@ -47,6 +47,7 @@ fn per_file_reads_a_file_or_a_directorys_kept_files_in_order() {
 #[devkit::test]
 fn settings_round_trip_and_keep_a_resolved_zone() {
     let s = Settings {
+        class: None,
         zone: Some("Europe/Warsaw".into()),
         ..Settings::new("h")
     };

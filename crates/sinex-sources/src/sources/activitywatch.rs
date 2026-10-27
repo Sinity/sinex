@@ -289,6 +289,19 @@ pub fn driver(path: PathBuf, host: String) -> SqliteRows {
 pub const FORMAT: sinex_source_core::binding::InputFormat =
     sinex_source_core::binding::InputFormat {
         name: "activitywatch",
+        discovery: sinex_source_core::discovery::DiscoverySpec {
+            owner: sinex_source_core::discovery::Owner::System,
+            locations: &[sinex_source_core::discovery::Location {
+                root: "data",
+                path: "activitywatch/aw-server-rust/sqlite.db",
+            }],
+            capabilities: &[],
+            credentials: &[],
+            streams: &[],
+            requests: &[],
+            request_only: false,
+        },
+        discover: crate::discovery::discover_format,
         specs: || vec![&SPEC],
         plan: Some(|input, settings| {
             Ok(sinex_source_core::binding::single(&SPEC, input, settings))
