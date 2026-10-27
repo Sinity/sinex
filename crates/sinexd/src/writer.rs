@@ -255,14 +255,8 @@ pub(crate) async fn claim(connection: &mut PgConnection) -> Result<(), String> {
             .await
             .map_err(|e| format!("database: {e}"))?;
         if won {
-            let owners = sinex_schema::kinds::owners(connection)
-                .await
-                .map_err(|e| e.to_string())?;
-            let mut tx = connection.begin().await.map_err(|e| e.to_string())?;
-            sinex_schema::kinds::reconcile(&mut tx, &owners)
-                .await
-                .map_err(|e| e.to_string())?;
-            tx.commit().await.map_err(|e| e.to_string())?;
+            sinex_schema::kinds::require_bundled(connection)
+                .await.map_err(|error| error.to_string())?;
             return Ok(());
         }
         if tokio::time::Instant::now() >= deadline {

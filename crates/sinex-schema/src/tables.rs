@@ -1,6 +1,7 @@
 //! Table declarations: the whole current schema, which a fresh database is
 //! created with.
 use crate::Checks;
+use sinex_model::{DbCheck, Validation, kinds::{Search, Normalization}};
 
 pub(crate) const SCHEMAS: &[&str] = &[
     "sinex_schema",
@@ -42,6 +43,7 @@ pub(crate) const COVERAGE_RUNS: &str =
     "CREATE INDEX events_coverage ON core.events (source, run_id, ts_orig) INCLUDE (commit_seq)";
 
 pub(crate) fn tables(c: &Checks) -> Vec<String> {
+    let kind_columns = kind_columns();
     let event_columns = format!(
         "id uuid NOT NULL,
   event_type text NOT NULL,
@@ -62,8 +64,7 @@ pub(crate) fn tables(c: &Checks) -> Vec<String> {
   record_hash bytea NOT NULL,
   record_state text NOT NULL DEFAULT 'present' {record_state},
   class text NOT NULL DEFAULT 'open' {class},
-  kind_version bigint NOT NULL DEFAULT 1 CHECK (kind_version > 0),
-  validation text NOT NULL DEFAULT 'unvalidated' CHECK (validation IN ('validated', 'unvalidated')),
+  {kind_columns},
   CONSTRAINT one_origin CHECK ((material_id IS NOT NULL AND anchor IS NOT NULL AND parents IS NULL) OR (material_id IS NULL AND anchor IS NULL AND parents IS NOT NULL AND cardinality(parents) > 0)),
   CONSTRAINT id_is_uuidv7 CHECK (uuid_extract_version(id) = 7),
   CONSTRAINT time_pair CHECK ((ts_orig IS NULL) = (ts_quality = 'unknown')),
@@ -337,7 +338,7 @@ pub(crate) fn tables(c: &Checks) -> Vec<String> {
   at timestamptz NOT NULL DEFAULT now()
 )".into(),
         KIND_PREFIXES.into(),
-        KIND_DECLARATIONS.into(),
+        kind_declarations(),
         REPLAY_REFUSALS.into(),
         KIND_IMMUTABILITY.into(),
         "CREATE TABLE registry.sources (
@@ -452,7 +453,7 @@ pub(crate) fn tables(c: &Checks) -> Vec<String> {
         // Admission's staging table. Permanent and unlogged so compile-time
         // checked queries can name it; only the one writer uses it, inside its
         // transaction, and truncates it first.
-        "CREATE UNLOGGED TABLE core.admission_stage (
+        format!("CREATE UNLOGGED TABLE core.admission_stage (
   ord integer PRIMARY KEY,
   id uuid NOT NULL,
   event_type text NOT NULL,
@@ -470,9 +471,8 @@ pub(crate) fn tables(c: &Checks) -> Vec<String> {
   record_hash bytea NOT NULL,
   record_state text NOT NULL,
   class text NOT NULL,
-  kind_version bigint NOT NULL,
-  validation text NOT NULL
-)".into(),
+  {kind_columns}
+)", kind_columns = kind_columns),
     ]
 }
 
@@ -529,24 +529,26 @@ pub(crate) const KIND_PREFIXES: &str = "CREATE TABLE registry.kind_prefixes (
   declaring_producer text NOT NULL
 )";
 
-pub(crate) const KIND_DECLARATIONS: &str = "CREATE TABLE registry.event_types (
+fn kind_declarations() -> String {
+    format!("CREATE TABLE registry.event_types (
   name text NOT NULL,
   version bigint NOT NULL CHECK (version > 0),
   declaring_producer text NOT NULL,
   payload_schema jsonb,
-  normalization text NOT NULL CHECK (normalization IN ('rust', 'json')),
+  normalization text NOT NULL {normalization},
   key_rule jsonb NOT NULL,
   replace_rule text,
   time_rule jsonb NOT NULL,
-  least_class text NOT NULL CHECK (least_class IN ('open', 'guarded', 'sealed')),
+  field_hints jsonb NOT NULL,
   removed_rule jsonb NOT NULL,
   keep_known text[] NOT NULL,
   owned_blobs jsonb NOT NULL,
-  index_text boolean NOT NULL,
+  search text NOT NULL {search},
   definition_hash text NOT NULL,
   registered_at timestamptz NOT NULL DEFAULT now(),
   PRIMARY KEY (name, version)
-)";
+)", normalization = Normalization::check("normalization"), search = Search::check("search"))
+}
 
 pub(crate) const REPLAY_REFUSALS: &str = "CREATE TABLE core.replay_refusals (
   operation_id uuid NOT NULL REFERENCES core.operations(id),
@@ -558,3 +560,8 @@ pub(crate) const REPLAY_REFUSALS: &str = "CREATE TABLE core.replay_refusals (
 pub(crate) const KIND_IMMUTABILITY: &str = "CREATE FUNCTION registry.keep_definition() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'kind definitions and owners are immutable'; END $$;
 CREATE TRIGGER keep_definition BEFORE UPDATE OR DELETE ON registry.event_types FOR EACH ROW EXECUTE FUNCTION registry.keep_definition();
 CREATE TRIGGER keep_owner BEFORE UPDATE OR DELETE ON registry.kind_prefixes FOR EACH ROW EXECUTE FUNCTION registry.keep_definition()";
+
+fn kind_columns() -> String {
+    format!("kind_version bigint NOT NULL DEFAULT 1 CHECK (kind_version > 0),
+  validation text NOT NULL DEFAULT '{}' {}", Validation::Unvalidated.as_db(), Validation::check("validation"))
+}

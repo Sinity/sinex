@@ -92,7 +92,7 @@ pub(super) async fn prepare(
                     event.id = id;
                 }
                 event.validation = Validation::Validated;
-                event.class = event.class.max(d.least_class);
+                
             }
             Normalization::Json => {
                 let validator = &json_validators[&d.kind];

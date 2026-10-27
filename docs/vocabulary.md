@@ -103,6 +103,8 @@ these names and no others.
 - **excision**: the permanent deletion of one record's events and the material holding it, when nothing else shares that material, keeping only the material's digest so its bytes are refused if registered again; only an **excisable** source, one whose every stored copy of a record is a reading of it, allows it.
 - **class**: a privacy class: `open`, `guarded` or `sealed`.
 - **sealed**: encrypted at rest under a per-material **data key**, wrapped for the operator's **class key**; equivalence keys and record hashes become keyed hashes under a **hash key** derived from the data key; reading needs an **unlock**.
+- **field hint**: a payload field's default privacy class, which operator rules may raise or lower.
+- **search**: a kind's search read model: `none`, `words`, or `words_and_trigram`.
 - **rule**: a privacy rule applied at admission; **masking** hides credentials on output.
 
 ## Words not used

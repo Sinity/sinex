@@ -4,12 +4,12 @@
 //! directly and matches an upgraded one.
 
 /// The statements of each upgrade, by the version it starts from.
-pub(crate) fn upgrades() -> Vec<Vec<String>> {
+fn landed() -> Vec<Vec<String>> {
     vec![
         // 0 to 1: per-source and per-run counts, filled from the events
         // already stored in one read of them.
         vec![
-            crate::tables::SOURCE_COUNTS.into(),
+            crate::description::version_three::SOURCE_COUNTS.into(),
             "ALTER TABLE core.runs ADD COLUMN events bigint NOT NULL DEFAULT 0".into(),
             "CREATE TEMPORARY TABLE stored_counts ON COMMIT DROP AS
              SELECT e.source, e.run_id, count(*) AS events,
@@ -32,74 +32,30 @@ pub(crate) fn upgrades() -> Vec<Vec<String>> {
         // digests. Materials an earlier excision blanked to spaces stay as
         // they are.
         vec![
-            crate::tables::EXCISED_MATERIALS.into(),
-            crate::tables::EXCISED_MATERIALS_BLOB.into(),
+            crate::description::version_three::EXCISED_MATERIALS.into(),
+            crate::description::version_three::EXCISED_MATERIALS_BLOB.into(),
             "GRANT SELECT ON core.excised_materials TO sinex_reader, sinex_writer".into(),
             "GRANT INSERT, UPDATE, DELETE ON core.excised_materials TO sinex_writer".into(),
         ],
         // 2 to 3: coverage probes each run through one covering index.
         vec![
             "DROP INDEX IF EXISTS core.events_coverage".into(),
-            crate::tables::COVERAGE_RUNS.into(),
-        ],
-        register_kinds(&["operator.mark", "query.saved"], false),
-        vec![
-            "ALTER TABLE core.events ADD COLUMN kind_version bigint NOT NULL DEFAULT 1 CHECK (kind_version > 0), ADD COLUMN validation text NOT NULL DEFAULT 'unvalidated' CHECK (validation IN ('validated', 'unvalidated'))".into(),
-            "ALTER TABLE telemetry.events ADD COLUMN kind_version bigint NOT NULL DEFAULT 1 CHECK (kind_version > 0), ADD COLUMN validation text NOT NULL DEFAULT 'unvalidated' CHECK (validation IN ('validated', 'unvalidated'))".into(),
-            "ALTER TABLE core.admission_stage ADD COLUMN kind_version bigint NOT NULL DEFAULT 1, ADD COLUMN validation text NOT NULL DEFAULT 'unvalidated'".into(),
-            "ALTER TABLE core.admission_stage ALTER COLUMN kind_version DROP DEFAULT, ALTER COLUMN validation DROP DEFAULT".into(),
-            "ALTER TABLE registry.event_types RENAME TO unversioned_event_types".into(),
-            crate::tables::KIND_PREFIXES.into(),
-            crate::tables::KIND_DECLARATIONS.into(),
-            crate::tables::REPLAY_REFUSALS.into(),
-            crate::tables::KIND_IMMUTABILITY.into(),
+            crate::description::version_three::COVERAGE_RUNS.into(),
         ],
     ]
 }
 
-/// Register payload schemas and views together. Replacing a kind also updates its registry row.
-pub(crate) fn register_kinds(names: &[&str], replace: bool) -> Vec<String> {
-    let mut statements = Vec::new();
-    for name in names {
-        assert!(
-            sinex_model::event_types::ALL
-                .iter()
-                .any(|kind| kind.event_type == *name),
-            "unknown event type {name}"
-        );
-    }
-    for kind in sinex_model::event_types::ALL
-        .iter()
-        .filter(|k| names.contains(&k.event_type))
-    {
-        if replace {
-            statements.push(format!(
-                "DROP VIEW IF EXISTS event_types.{}",
-                crate::quote_ident(&kind.event_type.replace('.', "_"))
-            ));
-        }
-        statements.push(crate::kind_view(kind));
-        statements.push(format!(
-            "GRANT SELECT ON event_types.{} TO sinex_reader, sinex_writer",
-            crate::quote_ident(&kind.event_type.replace('.', "_"))
-        ));
-    }
-    for (name, schema, key_kind, fields, rule) in crate::registry_rows()
-        .into_iter()
-        .filter(|(name, ..)| names.contains(&name.as_str()))
-    {
-        let literal = |s: &str| format!("'{}'", s.replace('\'', "''"));
-        let fields = fields
-            .iter()
-            .map(|s| literal(s))
-            .collect::<Vec<_>>()
-            .join(",");
-        let conflict = if replace {
-            " ON CONFLICT (name) DO UPDATE SET payload_schema=EXCLUDED.payload_schema, key_kind=EXCLUDED.key_kind, key_fields=EXCLUDED.key_fields, replace_rule=EXCLUDED.replace_rule"
-        } else {
-            ""
-        };
-        statements.push(format!("INSERT INTO registry.event_types (name,payload_schema,key_kind,key_fields,replace_rule) VALUES ({},{}::jsonb,{},ARRAY[{fields}]::text[],{}){conflict}",literal(&name),literal(&schema.to_string()),literal(key_kind),literal(rule)));
-    }
-    statements
+/// Unlanded transformations have names; their position is assigned at landing.
+pub(crate) const NAMED: &[&str] = &["kind_declarations"];
+
+pub(crate) fn upgrades() -> Vec<Vec<String>> {
+    let mut steps = landed();
+    let before = crate::description::Description::version_three();
+    let after = crate::description::Description::current();
+    let mut statements = vec!["ALTER TABLE registry.event_types RENAME TO unversioned_event_types".into()];
+    statements.extend(after.changes_from(&before, &["registry.event_types"]));
+    steps.push(statements);
+    steps
 }
+
+pub(crate) const LANDED_VERSION: i32 = 3;

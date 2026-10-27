@@ -41,7 +41,7 @@ async fn immutable_registration_checks_the_whole_frame_and_exact_versions(
     );
     tx.commit().await.unwrap();
     let mut changed = d.clone();
-    changed.index_text = false;
+    changed.search = sinex_model::kinds::Search::None;
     let tenth = declared("example.reading", 10);
     let mut tx = conn.begin().await.unwrap();
     assert!(
@@ -286,17 +286,19 @@ async fn current_apply_recreates_missing_views_and_preserves_outside_declaration
 }
 
 #[devkit::test]
-async fn search_flags_apply_to_live_indexing_and_its_rebuild(db: devkit::pg::TestDatabase) {
+async fn search_modes_apply_to_live_indexing_and_its_rebuild(db: devkit::pg::TestDatabase) {
     let mut conn = PgConnection::connect(&db.url(None)).await.unwrap();
     let mut excluded = declared("example.raw", 9);
-    excluded.index_text = false;
+    excluded.search = sinex_model::kinds::Search::None;
     let searchable = declared("example.typed", 9);
+    let mut words = declared("example.words", 9);
+    words.search = sinex_model::kinds::Search::Words;
     let mut tx = conn.begin().await.unwrap();
-    sinex_schema::kinds::register(&mut tx, "example", &[excluded.clone(), searchable.clone()])
+    sinex_schema::kinds::register(&mut tx, "example", &[excluded.clone(), searchable.clone(), words.clone()])
         .await
         .unwrap();
     tx.commit().await.unwrap();
-    let events = [&excluded, &searchable]
+    let events = [&excluded, &searchable, &words]
         .into_iter()
         .map(|d| {
             Event::submitted(
@@ -324,13 +326,13 @@ async fn search_flags_apply_to_live_indexing_and_its_rebuild(db: devkit::pg::Tes
         .await
         .unwrap();
     let indexed:Vec<String>=sqlx::query_scalar("SELECT e.event_type FROM core.search_text s JOIN core.events e ON e.id=s.event_id ORDER BY 1").fetch_all(&mut conn).await.unwrap();
-    assert_eq!(indexed, ["example.typed"]);
+    assert_eq!(indexed, ["example.typed", "example.words"]);
     conn.execute("TRUNCATE core.search_text").await.unwrap();
     crate::read_models::apply_search_text(&mut conn, &page.events)
         .await
         .unwrap();
     let indexed:Vec<String>=sqlx::query_scalar("SELECT e.event_type FROM core.search_text s JOIN core.events e ON e.id=s.event_id ORDER BY 1").fetch_all(&mut conn).await.unwrap();
-    assert_eq!(indexed, ["example.typed"]);
+    assert_eq!(indexed, ["example.typed", "example.words"]);
 }
 
 #[devkit::test]
@@ -424,7 +426,7 @@ async fn exact_versions_never_select_another_versions_schema(db: devkit::pg::Tes
 #[devkit::test]
 async fn a_saved_definition_hash_cannot_disagree_with_its_fields(db: devkit::pg::TestDatabase) {
     let mut conn = PgConnection::connect(&db.url(None)).await.unwrap();
-    conn.execute("INSERT INTO registry.event_types (name,version,declaring_producer,payload_schema,normalization,key_rule,replace_rule,time_rule,least_class,removed_rule,keep_known,owned_blobs,index_text,definition_hash) VALUES ('example.broken',9,'example',NULL,'json','{\"rule\":\"location\"}','suppress_repeat','{\"rule\":\"unknown\"}','open','{\"rule\":\"never\"}',ARRAY[]::text[],'[]',true,'different-hash')").await.unwrap();
+    conn.execute("INSERT INTO registry.event_types (name,version,declaring_producer,payload_schema,normalization,key_rule,replace_rule,time_rule,field_hints,removed_rule,keep_known,owned_blobs,search,definition_hash) VALUES ('example.broken',9,'example',NULL,'json','{\"rule\":\"location\"}','suppress_repeat','{\"rule\":\"unknown\"}','[]','{\"rule\":\"never\"}',ARRAY[]::text[],'[]','words_and_trigram','different-hash')").await.unwrap();
     let error = sinex_schema::kinds::load(
         &mut conn,
         &[KindRef {
@@ -445,7 +447,7 @@ async fn a_saved_rust_declaration_needs_the_exact_executable_validator(
     let mut conn = PgConnection::connect(&db.url(None)).await.unwrap();
     let mut declaration = sinex_model::event_types::CommandExecuted::declaration();
     declaration.kind.version = 9;
-    sqlx::query("INSERT INTO registry.event_types (name,version,declaring_producer,payload_schema,normalization,key_rule,replace_rule,time_rule,least_class,removed_rule,keep_known,owned_blobs,index_text,definition_hash) SELECT name,$1,declaring_producer,payload_schema,normalization,key_rule,replace_rule,time_rule,least_class,removed_rule,keep_known,owned_blobs,index_text,$2 FROM registry.event_types WHERE name=$3 AND version=2")
+    sqlx::query("INSERT INTO registry.event_types (name,version,declaring_producer,payload_schema,normalization,key_rule,replace_rule,time_rule,field_hints,removed_rule,keep_known,owned_blobs,search,definition_hash) SELECT name,$1,declaring_producer,payload_schema,normalization,key_rule,replace_rule,time_rule,field_hints,removed_rule,keep_known,owned_blobs,search,$2 FROM registry.event_types WHERE name=$3 AND version=2")
         .bind(9i64).bind(declaration.definition_hash()).bind(&declaration.kind.name).execute(&mut conn).await.unwrap();
     let mut reading = keyed("test", 1, 1, 1);
     reading.kind_version = 9;
@@ -468,11 +470,11 @@ async fn a_saved_rust_declaration_needs_the_exact_executable_validator(
 async fn applying_a_changed_bundled_definition_refuses_startup(db: devkit::pg::TestDatabase) {
     let mut conn = PgConnection::connect(&db.url(None)).await.unwrap();
     let mut declaration = sinex_model::event_types::CommandExecuted::declaration();
-    declaration.index_text = false;
+    declaration.search = sinex_model::kinds::Search::None;
     conn.execute("ALTER TABLE registry.event_types DISABLE TRIGGER keep_definition")
         .await
         .unwrap();
-    sqlx::query("UPDATE registry.event_types SET index_text=false,definition_hash=$1 WHERE name=$2 AND version=2")
+    sqlx::query("UPDATE registry.event_types SET search='none',definition_hash=$1 WHERE name=$2 AND version=2")
         .bind(declaration.definition_hash()).bind(&declaration.kind.name).execute(&mut conn).await.unwrap();
     conn.execute("ALTER TABLE registry.event_types ENABLE TRIGGER keep_definition")
         .await
@@ -490,4 +492,38 @@ async fn applying_a_changed_bundled_definition_refuses_startup(db: devkit::pg::T
             .unwrap()[&declaration.kind],
         declaration
     );
+}
+
+
+#[devkit::test]
+async fn operator_rules_can_lower_and_raise_field_defaults(db: devkit::pg::TestDatabase) {
+    let mut conn = PgConnection::connect(&db.url(None)).await.unwrap();
+    let mut declaration = declared("example.field_classes", 2);
+    declaration.field_hints = vec![sinex_model::kinds::FieldHint {
+        field: "/value".into(), class: Class::Guarded,
+    }];
+    let mut tx = conn.begin().await.unwrap();
+    sinex_schema::kinds::register(&mut tx, "example", std::slice::from_ref(&declaration)).await.unwrap();
+    tx.commit().await.unwrap();
+    for (index, expected) in ["guarded", "guarded", "open", "guarded"].into_iter().enumerate() {
+        if index > 0 {
+            crate::privacy::add_rule(&mut conn, &crate::privacy::NewRule {
+                name: "value-class".into(), source: "example".into(),
+                event_type: Some(declaration.kind.name.clone()), field: Some("/value".into()),
+                matcher: "all".into(), matcher_arg: None,
+                class: if index < 3 { Class::Open } else { Class::Guarded },
+                action: crate::privacy::Action::Classify, author: if index == 1 { "agent" } else { "operator" }.into(),
+            }).await.unwrap();
+        }
+        let event = Event::submitted(declaration.kind.clone(),
+            json!({"id":index.to_string(),"at":"2026-10-27T12:00:00Z","value":index}),
+            "example".into(), Origin::Record { location: RecordLocation {
+                material: MaterialId::new(), anchor: 0 }, output_index: 0 },
+            ReadingOrder(1), [index as u8;32], Class::Open);
+        let id = event.id;
+        assert_eq!(admit_one(&mut conn, &batch(vec![event])).await.admitted, 1);
+        let class: String = sqlx::query_scalar("SELECT class FROM core.events WHERE id=$1")
+            .bind(id.0).fetch_one(&mut conn).await.unwrap();
+        assert_eq!(class, expected);
+    }
 }

@@ -40,6 +40,7 @@ fn rule(field: Option<&str>, matcher: Matcher, class: Class, action: Action) -> 
         matcher,
         class,
         action,
+        author: "operator".into(),
     }
 }
 
@@ -56,7 +57,7 @@ fn masks_only_the_matched_span_and_raises_class() {
         Class::Guarded,
         Action::Mask,
     );
-    let applied = set(vec![r]).apply(&mut e).unwrap();
+    let applied = set(vec![r]).apply(&mut e, &[]).unwrap();
     assert_eq!(
         applied,
         Applied {
@@ -74,8 +75,8 @@ fn hashes_join_without_revealing() {
     let mut b = event("ssh alice@host");
     let r = rule(Some("/command"), Matcher::All, Class::Open, Action::Hash);
     let rs = set(vec![r]);
-    rs.apply(&mut a).unwrap();
-    rs.apply(&mut b).unwrap();
+    rs.apply(&mut a, &[]).unwrap();
+    rs.apply(&mut b, &[]).unwrap();
     let h = a.payload["command"].as_str().unwrap();
     assert!(h.starts_with("hash:") && !h.contains("alice"));
     assert_eq!(a.payload, b.payload);
@@ -91,7 +92,7 @@ fn drop_field_removes_it_and_rekeys() {
         Class::Open,
         Action::DropField,
     );
-    set(vec![r]).apply(&mut e).unwrap();
+    set(vec![r]).apply(&mut e, &[]).unwrap();
     assert!(e.payload.get("command").is_none());
     if let (Some(b), Some(a)) = (before, &e.equivalence_key) {
         assert_ne!(&b, a);
@@ -121,12 +122,12 @@ fn floors_raise_and_other_sources_untouched() {
     let mut e = event("ls");
     let mut floors = HashMap::new();
     floors.insert("terminal.zsh-history".to_string(), Class::Guarded);
-    RuleSet::new(vec![], floors, [0; 32]).apply(&mut e).unwrap();
+    RuleSet::new(vec![], floors, [0; 32]).apply(&mut e, &[]).unwrap();
     assert_eq!(e.class, Class::Guarded);
     let mut other = rule(None, Matcher::All, Class::Guarded, Action::Classify);
     other.source = "x".into();
     let mut e = event("ls");
-    set(vec![other]).apply(&mut e).unwrap();
+    set(vec![other]).apply(&mut e, &[]).unwrap();
     assert_eq!(e.class, Class::Open);
 }
 
@@ -135,7 +136,7 @@ fn an_unsealed_event_of_a_sealed_class_fails_closed() {
     let mut e = event("ls");
     let r = rule(None, Matcher::All, Class::Sealed, Action::Classify);
     assert!(matches!(
-        set(vec![r]).apply(&mut e),
+        set(vec![r]).apply(&mut e, &[]),
         Err(Error::Unsealed(_))
     ));
     let mut sealed = event("ls");
@@ -143,9 +144,57 @@ fn an_unsealed_event_of_a_sealed_class_fails_closed() {
     sinex_sealing::seal_event(&mut sealed, &key).unwrap();
     let mask = rule(None, Matcher::All, Class::Open, Action::Mask);
     let before = sealed.payload.clone();
-    set(vec![mask]).apply(&mut sealed).unwrap();
+    set(vec![mask]).apply(&mut sealed, &[]).unwrap();
     assert_eq!(
         sealed.payload, before,
         "rules never rewrite a sealed payload"
     );
+}
+
+
+#[devkit::test]
+fn field_overrides_preserve_other_defaults_and_the_requested_class() {
+    let hints = vec![
+        sinex_model::kinds::FieldHint { field: "/command".into(), class: Class::Guarded },
+        sinex_model::kinds::FieldHint { field: "/hostname".into(), class: Class::Guarded },
+    ];
+    let lower_command = rule(Some("/command"), Matcher::All, Class::Open, Action::Classify);
+    let mut one = event("ls");
+    set(vec![lower_command]).apply(&mut one, &hints).unwrap();
+    assert_eq!(one.class, Class::Guarded);
+    let mut both = event("ls");
+    set(vec![rule(None, Matcher::All, Class::Open, Action::Classify)])
+        .apply(&mut both, &hints).unwrap();
+    assert_eq!(both.class, Class::Open);
+    both.class = Class::Guarded;
+    set(vec![rule(None, Matcher::All, Class::Open, Action::Classify)])
+        .apply(&mut both, &hints).unwrap();
+    assert_eq!(both.class, Class::Guarded);
+}
+
+
+#[devkit::test]
+fn conflicting_rules_keep_the_highest_requested_class_in_any_order() {
+    let hints = vec![sinex_model::kinds::FieldHint { field: "/command".into(), class: Class::Guarded }];
+    for reverse in [false, true] {
+        let mut rules = vec![
+            rule(Some("/command"), Matcher::All, Class::Open, Action::Classify),
+            rule(Some("/command"), Matcher::All, Class::Guarded, Action::Classify),
+        ];
+        if reverse { rules.reverse(); }
+        let mut reading = event("ls");
+        set(rules).apply(&mut reading, &hints).unwrap();
+        assert_eq!(reading.class, Class::Guarded);
+    }
+}
+
+
+#[devkit::test]
+fn an_agent_rule_cannot_lower_a_field_default() {
+    let hints = vec![sinex_model::kinds::FieldHint { field: "/command".into(), class: Class::Guarded }];
+    let mut lower = rule(Some("/command"), Matcher::All, Class::Open, Action::Classify);
+    lower.author = "agent".into();
+    let mut reading = event("ls");
+    set(vec![lower]).apply(&mut reading, &hints).unwrap();
+    assert_eq!(reading.class, Class::Guarded);
 }

@@ -41,8 +41,8 @@ pub async fn load(
         "SELECT jsonb_build_object('kind', jsonb_build_object('name', e.name, 'version', e.version),
           'declaring_producer', e.declaring_producer, 'payload_schema', e.payload_schema,
           'normalization', e.normalization, 'key_rule', e.key_rule, 'replace_rule', e.replace_rule,
-          'time_rule', e.time_rule, 'least_class', e.least_class, 'removed_rule', e.removed_rule,
-          'keep_known', e.keep_known, 'owned_blobs', e.owned_blobs, 'index_text', e.index_text, '_definition_hash', e.definition_hash)
+          'time_rule', e.time_rule, 'field_hints', e.field_hints, 'removed_rule', e.removed_rule,
+          'keep_known', e.keep_known, 'owned_blobs', e.owned_blobs, 'search', e.search, '_definition_hash', e.definition_hash)
          FROM registry.event_types e JOIN unnest($1::text[], $2::bigint[]) r(name, version)
            ON e.name=r.name AND e.version=r.version")
         .bind(&names).bind(&versions).fetch_all(conn).await?;
@@ -222,14 +222,14 @@ async fn register_checked(
             continue;
         }
         sqlx::query("INSERT INTO registry.event_types (name, version, declaring_producer, payload_schema, normalization,
-          key_rule, replace_rule, time_rule, least_class, removed_rule, keep_known, owned_blobs, index_text, definition_hash)
+          key_rule, replace_rule, time_rule, field_hints, removed_rule, keep_known, owned_blobs, search, definition_hash)
           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)")
             .bind(&d.kind.name).bind(d.kind.database_version().map_err(invalid)?)
             .bind(&d.declaring_producer).bind(&d.payload_schema)
-            .bind(match d.normalization { Normalization::Rust => "rust", Normalization::Json => "json" })
+            .bind(d.normalization.as_db())
             .bind(json!(d.key_rule)).bind(d.replace_rule.map(|r| r.as_db())).bind(json!(d.time_rule))
-            .bind(d.least_class.as_db()).bind(json!(d.removed_rule)).bind(&d.keep_known)
-            .bind(json!(d.owned_blobs)).bind(d.index_text).bind(d.definition_hash()).execute(&mut *conn).await?;
+            .bind(json!(d.field_hints)).bind(json!(d.removed_rule)).bind(&d.keep_known)
+            .bind(json!(d.owned_blobs)).bind(d.search.as_db()).bind(d.definition_hash()).execute(&mut *conn).await?;
     }
     Ok(declarations
         .iter()
@@ -237,15 +237,14 @@ async fn register_checked(
         .collect())
 }
 
-pub async fn reconcile(conn: &mut PgConnection, owners: &Owners) -> Result<(), Error> {
-    for k in event_types::ALL {
-        let p = k.event_type.split_once('.').expect("bundled name").0;
+pub(crate) async fn install(conn: &mut PgConnection, owners: &Owners, declarations: &[KindDeclaration]) -> Result<(), Error> {
+    for declaration in declarations {
+        let p = declaration.kind.name.split_once('.').expect("bundled name").0;
         prefix(conn, p, "sinex").await?;
     }
     for (p, owner) in &owners.prefixes {
         prefix(conn, p, owner).await?;
     }
-    let declarations = event_types::declarations();
     register_checked(conn, "sinex", declarations).await?;
     Ok(())
 }
@@ -284,6 +283,18 @@ pub async fn upgrade_historical(conn: &mut PgConnection, owners: &Owners) -> Res
 }
 
 pub fn check(d: &KindDeclaration) -> Result<(), String> {
+    let mut hints = std::collections::BTreeSet::new();
+    for hint in &d.field_hints {
+        if !hint.field.starts_with('/') || !hints.insert(&hint.field) {
+            return Err("field hints need distinct JSON Pointers".into());
+        }
+        let mut bytes = hint.field.bytes();
+        while let Some(byte) = bytes.next() {
+            if byte == b'~' && !matches!(bytes.next(), Some(b'0' | b'1')) {
+                return Err("invalid JSON Pointer in field hint".into());
+            }
+        }
+    }
     if d.key_rule.is_none()
         || d.replace_rule.is_none()
         || d.time_rule.is_none()
@@ -342,6 +353,13 @@ pub fn check(d: &KindDeclaration) -> Result<(), String> {
     }
     if let Some(schema) = &d.payload_schema {
         let properties = declared_fields(schema, schema, &mut std::collections::BTreeSet::new());
+        for hint in &d.field_hints {
+            let root_field = hint.field[1..].split('/').next().expect("pointer has a field")
+                .replace("~1", "/").replace("~0", "~");
+            if !properties.contains(&root_field) {
+                return Err(format!("hint field {} is absent from the schema", hint.field));
+            }
+        }
         if let Some(field) = fields.iter().find(|field| !properties.contains(**field)) {
             return Err(format!("rule field {field} is absent from the schema"));
         }
@@ -432,4 +450,17 @@ pub async fn owners(conn: &mut PgConnection) -> Result<Owners, Error> {
     Ok(Owners {
         prefixes: prefixes.into_iter().collect(),
     })
+}
+
+/// Writer startup reads the installed description; only schema apply writes it.
+pub async fn require_bundled(conn: &mut PgConnection) -> Result<(), Error> {
+    let expected = crate::description::Description::current().kinds;
+    let references: Vec<_> = expected.iter().map(|declaration| declaration.kind.clone()).collect();
+    let saved = load(conn, &references).await?;
+    for declaration in expected {
+        if saved.get(&declaration.kind) != Some(&declaration) {
+            return Err(invalid(format!("definition_conflict: {} version {}; apply this build's schema before starting the writer", declaration.kind.name, declaration.kind.version)));
+        }
+    }
+    Ok(())
 }

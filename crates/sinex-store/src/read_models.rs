@@ -19,7 +19,7 @@ pub async fn apply_search_text(conn: &mut PgConnection, events: &[Committed]) ->
     let mut ids = Vec::with_capacity(events.len());
     let mut texts = Vec::with_capacity(events.len());
     for e in events.iter().filter(|e| e.class != "sealed") {
-        if !e.index_text {
+        if e.search == sinex_model::kinds::Search::None {
             continue;
         }
         let text = payload_text(&e.payload);

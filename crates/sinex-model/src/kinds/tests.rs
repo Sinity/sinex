@@ -229,3 +229,17 @@ fn a_new_kind_starts_at_version_one() {
     assert_eq!(NewKind::VERSION, 1);
     assert_eq!(NewKind::declaration().kind.version, 1);
 }
+
+
+#[test]
+fn declared_search_modes_use_one_spelling_and_reject_flags() {
+    use crate::DbCheck;
+    for (mode, name) in [(Search::None, "none"), (Search::Words, "words"), (Search::WordsAndTrigram, "words_and_trigram")] {
+        assert_eq!(serde_json::to_value(mode).unwrap(), json!(name));
+        assert_eq!(mode.as_db(), name);
+        assert_eq!(serde_json::from_value::<Search>(json!(name)).unwrap(), mode);
+    }
+    assert!(serde_json::from_value::<Search>(json!(true)).is_err());
+    let key = crate::event_types::input::KeyPressed::declaration();
+    assert!(key.field_hints.iter().any(|hint| hint.field == "/key" && hint.class == Class::Guarded));
+}

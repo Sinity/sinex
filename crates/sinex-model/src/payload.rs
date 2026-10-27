@@ -71,17 +71,16 @@ pub struct OwnedBlob {
 
 pub trait EventPayload: Serialize + DeserializeOwned + Send + Sync + 'static {
     const VERSION: u64 = 1;
-    const INDEX_TEXT: bool = true;
+    const SEARCH: crate::kinds::Search = crate::kinds::Search::WordsAndTrigram;
     /// The stored event type, such as `command.executed`.
     const EVENT_TYPE: &'static str;
     /// The declared equivalence key. A record that lacks those fields is
     /// identified by its record location instead (`key_kind`).
     const KEY: KeyKind;
     const REPLACE: ReplaceRule;
-    /// The least class this type's events are stored under: a payload that
-    /// carries what people wrote (an AI session's messages) is `guarded`
-    /// whatever class its producer asks for. Rules in the store can raise it.
-    const CLASS: Class = Class::Open;
+    /// Default classes for payload fields, as JSON Pointers. The writer
+    /// applies operator rules before combining the fields' classes.
+    const FIELD_HINTS: &'static [(&'static str, Class)] = &[];
     /// Fields a newer reading does not erase: when it leaves one unknown
     /// (`null` or absent) and the reading it replaces had a value, admission
     /// keeps that value. For exports that drop details of things that are

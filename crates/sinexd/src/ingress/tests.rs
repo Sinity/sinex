@@ -334,7 +334,7 @@ async fn an_ai_session_from_polylogue_is_ordinary_events(db: devkit::pg::TestDat
         });
         d.replace_rule = Some(sinex_model::ReplaceRule::ReplaceWhenNewer);
         if guarded {
-            d.least_class = sinex_model::Class::Guarded;
+            d.field_hints = vec![sinex_model::kinds::FieldHint { field: "/text".into(), class: sinex_model::Class::Guarded }];
         }
         d
     })

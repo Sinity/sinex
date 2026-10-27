@@ -79,7 +79,7 @@ async fn registration_is_atomic_and_a_reconnect_gets_the_saved_hashes(
         json!([[d.kind, d.definition_hash()]])
     );
     let mut changed = d.clone();
-    changed.index_text = false;
+    changed.search = sinex_model::kinds::Search::None;
     let mut tenth = d.clone();
     tenth.kind.version = 10;
     let refused = h

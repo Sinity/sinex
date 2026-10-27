@@ -127,7 +127,7 @@ impl Event {
             reading_order,
             record_hash,
             record_state: payload.record_state(),
-            class: class.max(P::CLASS),
+            class,
             owned_blobs: payload.owned_blobs(),
         })
     }

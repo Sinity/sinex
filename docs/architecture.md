@@ -174,8 +174,9 @@ Its `polylogue` namespace belongs to the configured producer. Sinex ships the
 other bundled declarations from Rust. Each event selects an immutable kind
 version and records whether its validator ran. Bundled kinds keep Rust decoding
 and serialization; outside kinds keep the submitted JSON and use their saved
-schema, when present. A declaration's least class applies whatever class the
-producer asks for. Sinex has no AI-chat parser of its own.
+schema, when present. A declaration's field hints supply default classes. Operator rules can raise or
+lower those defaults before admission combines the fields' classes. Rules authored
+by agents can raise those defaults. Matching rules keep the highest requested class. Sinex has no AI-chat parser of its own.
 
 The outside producers start their capture threads with `sinex-sources::live`,
 which registers signal handlers first and stops every capture before joining
@@ -186,14 +187,15 @@ children, including descendants adopted through Linux subreaper support.
 ## Kind declarations
 
 `registry.event_types` stores exact versions, schemas, identity and time rules,
-class minima and the `index_text` flag. Registering an identical definition is
+field class hints and `search: none | words | words_and_trigram`. Registering an identical definition is
 idempotent; changing an existing version is refused. Outside producers register
 only their own namespace, or emit an exact version already registered by its
 owner. An unknown version of a known name is refused. A new permitted name may
 be admitted without a schema and is labeled `unvalidated`.
 
-Schema apply reconciles bundled declarations and views even on a current
-schema, under the writer lock. The numbered upgrade gives existing events
+The schema description owns bundled declarations and views. Schema apply writes
+that description under the writer lock, including on a current schema. The named `kind_declarations` step generates structural additions from the
+deployed and current schema descriptions. Its number is assigned at landing. It gives existing events
 version 1 and `unvalidated` through constant column defaults, preserving their
 payloads and compressed chunks. Bundled declarations begin at version 2.
 `sinexd admin schema --kind-owner polylogue=PRODUCER` records a different

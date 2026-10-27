@@ -14,6 +14,7 @@ use sqlx::{Connection, Executor, PgConnection};
 
 pub mod kinds;
 mod tables;
+mod description;
 mod upgrades;
 
 /// The session advisory lock held by the database's one writer.
@@ -21,7 +22,7 @@ pub const WRITER_LOCK: i64 = 0x7369_6e65_7857_5254;
 
 /// The schema version these declarations create: one more than the last
 /// upgrade starts from.
-pub const VERSION: i32 = 4;
+pub const VERSION: i32 = upgrades::LANDED_VERSION + upgrades::NAMED.len() as i32;
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
@@ -89,10 +90,7 @@ pub fn declarations() -> Vec<String> {
         statements.push(format!("CREATE SCHEMA {schema}"));
     }
     statements.push("CREATE TABLE sinex_schema.applied (version integer PRIMARY KEY, applied_at timestamptz NOT NULL DEFAULT now())".into());
-    statements.extend(tables::tables(&Checks::from_model()));
-    statements.extend(tables::after_tables());
-    statements.extend(visibility());
-    statements.extend(kind_views());
+    statements.extend(description::Description::current().statements());
     statements.extend(grants());
     statements
 }
@@ -106,8 +104,8 @@ pub fn declaration_hash() -> String {
         hasher.update(statement.as_bytes());
         hasher.update(&[0]);
     }
-    for kind in event_types::ALL {
-        hasher.update((kind.declaration)().definition_hash().as_bytes());
+    for kind in description::Description::current().kinds {
+        hasher.update(kind.definition_hash().as_bytes());
         hasher.update(&[0]);
     }
     hasher.finalize().to_hex()[..16].to_string()
@@ -177,11 +175,7 @@ WHERE core.class_visible(e.class)"
 
 /// One view per event type with the payload's top-level fields as columns, for
 /// read-only SQL (`event_types.<type>`).
-fn kind_views() -> Vec<String> {
-    event_types::ALL.iter().map(kind_view).collect()
-}
-
-fn kind_view(kind: &event_types::RegisteredEventType) -> String {
+fn kind_view(kind: &event_types::RegisteredEventType) -> description::View {
     let schema = (kind.json_schema)();
     let mut columns = vec![
         "e.id".to_string(),
@@ -198,12 +192,20 @@ fn kind_view(kind: &event_types::RegisteredEventType) -> String {
     }
     columns.push("e.kind_version".into());
     columns.push("e.validation".into());
-    format!(
-        "CREATE VIEW event_types.{} AS SELECT {} FROM core.visible_events e WHERE e.event_type='{}' AND NOT EXISTS (SELECT 1 FROM audit.archived a WHERE a.event_id=e.id)",
-        quote_ident(&kind.event_type.replace('.', "_")),
-        columns.join(", "),
-        kind.event_type
-    )
+    let name = kind.event_type.replace('.', "_");
+    let mut names = vec!["id", "source", "ts_orig", "ts_quality", "ts_coided", "record_state"]
+        .into_iter().map(String::from).collect::<Vec<_>>();
+    if let Some(props) = schema.get("properties").and_then(|p| p.as_object()) {
+        names.extend(props.keys().cloned());
+    }
+    names.extend(["kind_version".into(), "validation".into()]);
+    description::View {
+        name: name.clone(), columns: names,
+        statement: format!(
+            "CREATE VIEW event_types.{} AS SELECT {} FROM core.visible_events e WHERE e.event_type='{}' AND NOT EXISTS (SELECT 1 FROM audit.archived a WHERE a.event_id=e.id)",
+            quote_ident(&name), columns.join(", "), kind.event_type
+        ),
+    }
 }
 
 fn grants() -> Vec<String> {
@@ -274,7 +276,7 @@ pub async fn apply_with_owners(
                 .fetch_one(&mut *connection)
                 .await?;
         return match found {
-            Some(VERSION) => reconcile_current(connection, owners).await,
+            Some(VERSION) => apply_current(connection, owners).await,
             Some(found) if (0..VERSION).contains(&found) => {
                 upgrade(connection, found, owners).await
             }
@@ -360,12 +362,11 @@ async fn run_upgrades(
             .await?;
     }
     kinds::upgrade_historical(connection, owners).await?;
-    reconcile_views(connection).await?;
-    kinds::reconcile(connection, owners).await?;
+    description::Description::current().apply(connection, owners).await?;
     Ok(())
 }
 
-async fn reconcile_current(
+async fn apply_current(
     connection: &mut PgConnection,
     owners: &kinds::Owners,
 ) -> Result<Applied, Error> {
@@ -378,11 +379,7 @@ async fn reconcile_current(
         tx.rollback().await?;
         return Err(Error::WriterRunning);
     }
-    let result = async {
-        kinds::reconcile(&mut tx, owners).await?;
-        reconcile_views(&mut tx).await
-    }
-    .await;
+    let result = description::Description::current().apply(&mut tx, owners).await;
     match result {
         Ok(()) => {
             tx.commit().await?;
@@ -395,8 +392,8 @@ async fn reconcile_current(
     }
 }
 
-async fn reconcile_views(connection: &mut PgConnection) -> Result<(), Error> {
-    for statement in visibility() {
+async fn apply_views(connection: &mut PgConnection, description: &description::Description) -> Result<(), Error> {
+    for statement in &description.visibility {
         connection
             .execute(
                 statement
@@ -405,44 +402,11 @@ async fn reconcile_views(connection: &mut PgConnection) -> Result<(), Error> {
             )
             .await?;
     }
-    for name in [
-        "session",
-        "message",
-        "tool_call",
-        "turn",
-        "delivery",
-        "delivery_outcome",
-        "note",
-        "setting",
-        "kept_result",
-        "excision",
-    ] {
-        connection
-            .execute(format!("DROP VIEW IF EXISTS event_types.polylogue_{name}").as_str())
-            .await?;
-    }
-    for kind in event_types::ALL {
-        let name = kind.event_type.replace('.', "_");
+    for view in &description.views {
+        let name = &view.name;
         let existing: Vec<String> = sqlx::query_scalar("SELECT column_name FROM information_schema.columns WHERE table_schema='event_types' AND table_name=$1 ORDER BY ordinal_position")
             .bind(&name).fetch_all(&mut *connection).await?;
-        let schema = (kind.json_schema)();
-        let mut expected: Vec<String> = [
-            "id",
-            "source",
-            "ts_orig",
-            "ts_quality",
-            "ts_coided",
-            "record_state",
-        ]
-        .map(String::from)
-        .to_vec();
-        if let Some(props) = schema
-            .get("properties")
-            .and_then(serde_json::Value::as_object)
-        {
-            expected.extend(props.keys().cloned());
-        }
-        expected.extend(["kind_version".to_string(), "validation".to_string()]);
+        let expected = &view.columns;
         let mut grants: Vec<(String, String, String)> = vec![];
         let mut owner: Option<String> = None;
         if !expected.starts_with(&existing) {
@@ -461,7 +425,7 @@ async fn reconcile_views(connection: &mut PgConnection) -> Result<(), Error> {
         }
         connection
             .execute(
-                kind_view(kind)
+                view.statement
                     .replacen("CREATE VIEW", "CREATE OR REPLACE VIEW", 1)
                     .as_str(),
             )
@@ -507,7 +471,13 @@ async fn reconcile_views(connection: &mut PgConnection) -> Result<(), Error> {
 }
 
 async fn create_schema(connection: &mut PgConnection, owners: &kinds::Owners) -> Result<(), Error> {
-    for statement in declarations() {
+    let description = description::Description::current();
+    let mut statements = privileged();
+    statements.extend(tables::SCHEMAS.iter().map(|schema| format!("CREATE SCHEMA {schema}")));
+    statements.push("CREATE TABLE sinex_schema.applied (version integer PRIMARY KEY, applied_at timestamptz NOT NULL DEFAULT now())".into());
+    statements.extend(description.tables.clone());
+    statements.extend(description.after_tables.clone());
+    for statement in statements {
         connection
             .execute(statement.as_str())
             .await
@@ -517,7 +487,7 @@ async fn create_schema(connection: &mut PgConnection, owners: &kinds::Owners) ->
         .bind(VERSION)
         .execute(&mut *connection)
         .await?;
-    kinds::reconcile(connection, owners).await?;
+    description.apply(connection, owners).await?;
     Ok(())
 }
 

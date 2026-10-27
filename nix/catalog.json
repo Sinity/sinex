@@ -61,13 +61,13 @@
         ],
         "quality": "captured"
       },
-      "least_class": "open",
+      "field_hints": [],
       "removed_rule": {
         "rule": "never"
       },
       "keep_known": [],
       "owned_blobs": [],
-      "index_text": true
+      "search": "words_and_trigram"
     },
     {
       "kind": {
@@ -152,13 +152,13 @@
         ],
         "quality": "intrinsic"
       },
-      "least_class": "open",
+      "field_hints": [],
       "removed_rule": {
         "rule": "never"
       },
       "keep_known": [],
       "owned_blobs": [],
-      "index_text": true
+      "search": "words_and_trigram"
     },
     {
       "kind": {
@@ -231,13 +231,13 @@
         ],
         "quality": "intrinsic"
       },
-      "least_class": "open",
+      "field_hints": [],
       "removed_rule": {
         "rule": "never"
       },
       "keep_known": [],
       "owned_blobs": [],
-      "index_text": true
+      "search": "words_and_trigram"
     },
     {
       "kind": {
@@ -350,14 +350,14 @@
         ],
         "quality": "intrinsic"
       },
-      "least_class": "open",
+      "field_hints": [],
       "removed_rule": {
         "rule": "when_present",
         "field": "deleted_at"
       },
       "keep_known": [],
       "owned_blobs": [],
-      "index_text": true
+      "search": "words_and_trigram"
     },
     {
       "kind": {
@@ -441,13 +441,13 @@
         ],
         "quality": "intrinsic"
       },
-      "least_class": "open",
+      "field_hints": [],
       "removed_rule": {
         "rule": "never"
       },
       "keep_known": [],
       "owned_blobs": [],
-      "index_text": true
+      "search": "words_and_trigram"
     },
     {
       "kind": {
@@ -506,13 +506,13 @@
         ],
         "quality": "captured"
       },
-      "least_class": "open",
+      "field_hints": [],
       "removed_rule": {
         "rule": "never"
       },
       "keep_known": [],
       "owned_blobs": [],
-      "index_text": true
+      "search": "words_and_trigram"
     },
     {
       "kind": {
@@ -574,13 +574,13 @@
         ],
         "quality": "captured"
       },
-      "least_class": "open",
+      "field_hints": [],
       "removed_rule": {
         "rule": "never"
       },
       "keep_known": [],
       "owned_blobs": [],
-      "index_text": true
+      "search": "words_and_trigram"
     },
     {
       "kind": {
@@ -623,13 +623,13 @@
         ],
         "quality": "captured"
       },
-      "least_class": "open",
+      "field_hints": [],
       "removed_rule": {
         "rule": "never"
       },
       "keep_known": [],
       "owned_blobs": [],
-      "index_text": true
+      "search": "words_and_trigram"
     },
     {
       "kind": {
@@ -684,13 +684,13 @@
         ],
         "quality": "captured"
       },
-      "least_class": "open",
+      "field_hints": [],
       "removed_rule": {
         "rule": "never"
       },
       "keep_known": [],
       "owned_blobs": [],
-      "index_text": true
+      "search": "words_and_trigram"
     },
     {
       "kind": {
@@ -737,13 +737,13 @@
         ],
         "quality": "captured"
       },
-      "least_class": "open",
+      "field_hints": [],
       "removed_rule": {
         "rule": "never"
       },
       "keep_known": [],
       "owned_blobs": [],
-      "index_text": true
+      "search": "words_and_trigram"
     },
     {
       "kind": {
@@ -795,13 +795,13 @@
         ],
         "quality": "captured"
       },
-      "least_class": "open",
+      "field_hints": [],
       "removed_rule": {
         "rule": "never"
       },
       "keep_known": [],
       "owned_blobs": [],
-      "index_text": true
+      "search": "words_and_trigram"
     },
     {
       "kind": {
@@ -848,13 +848,13 @@
         ],
         "quality": "captured"
       },
-      "least_class": "open",
+      "field_hints": [],
       "removed_rule": {
         "rule": "never"
       },
       "keep_known": [],
       "owned_blobs": [],
-      "index_text": true
+      "search": "words_and_trigram"
     },
     {
       "kind": {
@@ -902,13 +902,13 @@
         ],
         "quality": "captured"
       },
-      "least_class": "open",
+      "field_hints": [],
       "removed_rule": {
         "rule": "never"
       },
       "keep_known": [],
       "owned_blobs": [],
-      "index_text": true
+      "search": "words_and_trigram"
     },
     {
       "kind": {
@@ -1000,13 +1000,13 @@
         ],
         "quality": "captured"
       },
-      "least_class": "open",
+      "field_hints": [],
       "removed_rule": {
         "rule": "never"
       },
       "keep_known": [],
       "owned_blobs": [],
-      "index_text": true
+      "search": "words_and_trigram"
     },
     {
       "kind": {
@@ -1057,13 +1057,13 @@
         ],
         "quality": "captured"
       },
-      "least_class": "open",
+      "field_hints": [],
       "removed_rule": {
         "rule": "never"
       },
       "keep_known": [],
       "owned_blobs": [],
-      "index_text": true
+      "search": "words_and_trigram"
     },
     {
       "kind": {
@@ -1113,13 +1113,13 @@
         ],
         "quality": "captured"
       },
-      "least_class": "open",
+      "field_hints": [],
       "removed_rule": {
         "rule": "never"
       },
       "keep_known": [],
       "owned_blobs": [],
-      "index_text": true
+      "search": "words_and_trigram"
     },
     {
       "kind": {
@@ -1204,13 +1204,13 @@
         ],
         "quality": "captured"
       },
-      "least_class": "open",
+      "field_hints": [],
       "removed_rule": {
         "rule": "never"
       },
       "keep_known": [],
       "owned_blobs": [],
-      "index_text": true
+      "search": "words_and_trigram"
     },
     {
       "kind": {
@@ -1304,13 +1304,13 @@
         ],
         "quality": "captured"
       },
-      "least_class": "open",
+      "field_hints": [],
       "removed_rule": {
         "rule": "never"
       },
       "keep_known": [],
       "owned_blobs": [],
-      "index_text": true
+      "search": "words_and_trigram"
     },
     {
       "kind": {
@@ -1390,13 +1390,13 @@
         ],
         "quality": "captured"
       },
-      "least_class": "open",
+      "field_hints": [],
       "removed_rule": {
         "rule": "never"
       },
       "keep_known": [],
       "owned_blobs": [],
-      "index_text": true
+      "search": "words_and_trigram"
     },
     {
       "kind": {
@@ -1488,13 +1488,13 @@
         ],
         "quality": "captured"
       },
-      "least_class": "open",
+      "field_hints": [],
       "removed_rule": {
         "rule": "never"
       },
       "keep_known": [],
       "owned_blobs": [],
-      "index_text": true
+      "search": "words_and_trigram"
     },
     {
       "kind": {
@@ -1576,13 +1576,13 @@
         ],
         "quality": "captured"
       },
-      "least_class": "open",
+      "field_hints": [],
       "removed_rule": {
         "rule": "never"
       },
       "keep_known": [],
       "owned_blobs": [],
-      "index_text": true
+      "search": "words_and_trigram"
     },
     {
       "kind": {
@@ -1638,13 +1638,13 @@
         ],
         "quality": "captured"
       },
-      "least_class": "open",
+      "field_hints": [],
       "removed_rule": {
         "rule": "never"
       },
       "keep_known": [],
       "owned_blobs": [],
-      "index_text": true
+      "search": "words_and_trigram"
     },
     {
       "kind": {
@@ -1720,13 +1720,13 @@
         ],
         "quality": "captured"
       },
-      "least_class": "open",
+      "field_hints": [],
       "removed_rule": {
         "rule": "never"
       },
       "keep_known": [],
       "owned_blobs": [],
-      "index_text": true
+      "search": "words_and_trigram"
     },
     {
       "kind": {
@@ -1800,13 +1800,13 @@
         ],
         "quality": "intrinsic"
       },
-      "least_class": "open",
+      "field_hints": [],
       "removed_rule": {
         "rule": "never"
       },
       "keep_known": [],
       "owned_blobs": [],
-      "index_text": true
+      "search": "words_and_trigram"
     },
     {
       "kind": {
@@ -1868,13 +1868,13 @@
         ],
         "quality": "intrinsic"
       },
-      "least_class": "open",
+      "field_hints": [],
       "removed_rule": {
         "rule": "never"
       },
       "keep_known": [],
       "owned_blobs": [],
-      "index_text": true
+      "search": "words_and_trigram"
     },
     {
       "kind": {
@@ -1949,13 +1949,13 @@
         ],
         "quality": "intrinsic"
       },
-      "least_class": "open",
+      "field_hints": [],
       "removed_rule": {
         "rule": "never"
       },
       "keep_known": [],
       "owned_blobs": [],
-      "index_text": true
+      "search": "words_and_trigram"
     },
     {
       "kind": {
@@ -2043,13 +2043,13 @@
         ],
         "quality": "intrinsic"
       },
-      "least_class": "open",
+      "field_hints": [],
       "removed_rule": {
         "rule": "never"
       },
       "keep_known": [],
       "owned_blobs": [],
-      "index_text": true
+      "search": "words_and_trigram"
     },
     {
       "kind": {
@@ -2108,13 +2108,13 @@
         ],
         "quality": "intrinsic"
       },
-      "least_class": "open",
+      "field_hints": [],
       "removed_rule": {
         "rule": "never"
       },
       "keep_known": [],
       "owned_blobs": [],
-      "index_text": true
+      "search": "words_and_trigram"
     },
     {
       "kind": {
@@ -2211,13 +2211,13 @@
         ],
         "quality": "intrinsic"
       },
-      "least_class": "open",
+      "field_hints": [],
       "removed_rule": {
         "rule": "never"
       },
       "keep_known": [],
       "owned_blobs": [],
-      "index_text": true
+      "search": "words_and_trigram"
     },
     {
       "kind": {
@@ -2350,13 +2350,13 @@
         ],
         "quality": "intrinsic"
       },
-      "least_class": "open",
+      "field_hints": [],
       "removed_rule": {
         "rule": "never"
       },
       "keep_known": [],
       "owned_blobs": [],
-      "index_text": true
+      "search": "words_and_trigram"
     },
     {
       "kind": {
@@ -3980,13 +3980,13 @@
         ],
         "quality": "captured"
       },
-      "least_class": "open",
+      "field_hints": [],
       "removed_rule": {
         "rule": "never"
       },
       "keep_known": [],
       "owned_blobs": [],
-      "index_text": true
+      "search": "words_and_trigram"
     },
     {
       "kind": {
@@ -4065,13 +4065,13 @@
         ],
         "quality": "captured"
       },
-      "least_class": "open",
+      "field_hints": [],
       "removed_rule": {
         "rule": "never"
       },
       "keep_known": [],
       "owned_blobs": [],
-      "index_text": true
+      "search": "words_and_trigram"
     },
     {
       "kind": {
@@ -4145,13 +4145,13 @@
         ],
         "quality": "intrinsic"
       },
-      "least_class": "open",
+      "field_hints": [],
       "removed_rule": {
         "rule": "never"
       },
       "keep_known": [],
       "owned_blobs": [],
-      "index_text": true
+      "search": "words_and_trigram"
     },
     {
       "kind": {
@@ -4229,13 +4229,13 @@
         ],
         "quality": "intrinsic"
       },
-      "least_class": "open",
+      "field_hints": [],
       "removed_rule": {
         "rule": "never"
       },
       "keep_known": [],
       "owned_blobs": [],
-      "index_text": true
+      "search": "words_and_trigram"
     },
     {
       "kind": {
@@ -4331,13 +4331,13 @@
         ],
         "quality": "captured"
       },
-      "least_class": "open",
+      "field_hints": [],
       "removed_rule": {
         "rule": "never"
       },
       "keep_known": [],
       "owned_blobs": [],
-      "index_text": true
+      "search": "words_and_trigram"
     },
     {
       "kind": {
@@ -4418,13 +4418,13 @@
         ],
         "quality": "captured"
       },
-      "least_class": "open",
+      "field_hints": [],
       "removed_rule": {
         "rule": "never"
       },
       "keep_known": [],
       "owned_blobs": [],
-      "index_text": true
+      "search": "words_and_trigram"
     },
     {
       "kind": {
@@ -4545,13 +4545,58 @@
         ],
         "quality": "captured"
       },
-      "least_class": "guarded",
+      "field_hints": [
+        {
+          "field": "/session",
+          "class": "guarded"
+        },
+        {
+          "field": "/logged_at",
+          "class": "guarded"
+        },
+        {
+          "field": "/kernel_at",
+          "class": "guarded"
+        },
+        {
+          "field": "/key",
+          "class": "guarded"
+        },
+        {
+          "field": "/code",
+          "class": "guarded"
+        },
+        {
+          "field": "/value",
+          "class": "guarded"
+        },
+        {
+          "field": "/changed",
+          "class": "guarded"
+        },
+        {
+          "field": "/clipboard",
+          "class": "guarded"
+        },
+        {
+          "field": "/window",
+          "class": "guarded"
+        },
+        {
+          "field": "/n",
+          "class": "guarded"
+        },
+        {
+          "field": "/extra",
+          "class": "guarded"
+        }
+      ],
       "removed_rule": {
         "rule": "never"
       },
       "keep_known": [],
       "owned_blobs": [],
-      "index_text": true
+      "search": "words_and_trigram"
     },
     {
       "kind": {
@@ -4651,13 +4696,50 @@
         ],
         "quality": "captured"
       },
-      "least_class": "guarded",
+      "field_hints": [
+        {
+          "field": "/session",
+          "class": "guarded"
+        },
+        {
+          "field": "/logged_at",
+          "class": "guarded"
+        },
+        {
+          "field": "/kernel_at",
+          "class": "guarded"
+        },
+        {
+          "field": "/key",
+          "class": "guarded"
+        },
+        {
+          "field": "/code",
+          "class": "guarded"
+        },
+        {
+          "field": "/value",
+          "class": "guarded"
+        },
+        {
+          "field": "/changed",
+          "class": "guarded"
+        },
+        {
+          "field": "/n",
+          "class": "guarded"
+        },
+        {
+          "field": "/extra",
+          "class": "guarded"
+        }
+      ],
       "removed_rule": {
         "rule": "never"
       },
       "keep_known": [],
       "owned_blobs": [],
-      "index_text": true
+      "search": "words_and_trigram"
     },
     {
       "kind": {
@@ -4733,13 +4815,42 @@
         ],
         "quality": "captured"
       },
-      "least_class": "guarded",
+      "field_hints": [
+        {
+          "field": "/session",
+          "class": "guarded"
+        },
+        {
+          "field": "/logged_at",
+          "class": "guarded"
+        },
+        {
+          "field": "/button",
+          "class": "guarded"
+        },
+        {
+          "field": "/pressed",
+          "class": "guarded"
+        },
+        {
+          "field": "/value",
+          "class": "guarded"
+        },
+        {
+          "field": "/n",
+          "class": "guarded"
+        },
+        {
+          "field": "/extra",
+          "class": "guarded"
+        }
+      ],
       "removed_rule": {
         "rule": "never"
       },
       "keep_known": [],
       "owned_blobs": [],
-      "index_text": true
+      "search": "words_and_trigram"
     },
     {
       "kind": {
@@ -4814,13 +4925,42 @@
         ],
         "quality": "captured"
       },
-      "least_class": "guarded",
+      "field_hints": [
+        {
+          "field": "/session",
+          "class": "guarded"
+        },
+        {
+          "field": "/logged_at",
+          "class": "guarded"
+        },
+        {
+          "field": "/axis",
+          "class": "guarded"
+        },
+        {
+          "field": "/value",
+          "class": "guarded"
+        },
+        {
+          "field": "/absolute",
+          "class": "guarded"
+        },
+        {
+          "field": "/n",
+          "class": "guarded"
+        },
+        {
+          "field": "/extra",
+          "class": "guarded"
+        }
+      ],
       "removed_rule": {
         "rule": "never"
       },
       "keep_known": [],
       "owned_blobs": [],
-      "index_text": true
+      "search": "words_and_trigram"
     },
     {
       "kind": {
@@ -4890,13 +5030,38 @@
         ],
         "quality": "captured"
       },
-      "least_class": "guarded",
+      "field_hints": [
+        {
+          "field": "/session",
+          "class": "guarded"
+        },
+        {
+          "field": "/logged_at",
+          "class": "guarded"
+        },
+        {
+          "field": "/axis",
+          "class": "guarded"
+        },
+        {
+          "field": "/value",
+          "class": "guarded"
+        },
+        {
+          "field": "/n",
+          "class": "guarded"
+        },
+        {
+          "field": "/extra",
+          "class": "guarded"
+        }
+      ],
       "removed_rule": {
         "rule": "never"
       },
       "keep_known": [],
       "owned_blobs": [],
-      "index_text": true
+      "search": "words_and_trigram"
     },
     {
       "kind": {
@@ -4961,13 +5126,34 @@
         ],
         "quality": "captured"
       },
-      "least_class": "guarded",
+      "field_hints": [
+        {
+          "field": "/session",
+          "class": "guarded"
+        },
+        {
+          "field": "/logged_at",
+          "class": "guarded"
+        },
+        {
+          "field": "/event",
+          "class": "guarded"
+        },
+        {
+          "field": "/n",
+          "class": "guarded"
+        },
+        {
+          "field": "/fields",
+          "class": "guarded"
+        }
+      ],
       "removed_rule": {
         "rule": "never"
       },
       "keep_known": [],
       "owned_blobs": [],
-      "index_text": true
+      "search": "words_and_trigram"
     },
     {
       "kind": {
@@ -5064,13 +5250,13 @@
         ],
         "quality": "intrinsic"
       },
-      "least_class": "open",
+      "field_hints": [],
       "removed_rule": {
         "rule": "never"
       },
       "keep_known": [],
       "owned_blobs": [],
-      "index_text": true
+      "search": "words_and_trigram"
     },
     {
       "kind": {
@@ -5160,13 +5346,13 @@
         ],
         "quality": "intrinsic"
       },
-      "least_class": "open",
+      "field_hints": [],
       "removed_rule": {
         "rule": "never"
       },
       "keep_known": [],
       "owned_blobs": [],
-      "index_text": true
+      "search": "words_and_trigram"
     },
     {
       "kind": {
@@ -5244,13 +5430,13 @@
         ],
         "quality": "intrinsic"
       },
-      "least_class": "open",
+      "field_hints": [],
       "removed_rule": {
         "rule": "never"
       },
       "keep_known": [],
       "owned_blobs": [],
-      "index_text": true
+      "search": "words_and_trigram"
     },
     {
       "kind": {
@@ -5314,13 +5500,13 @@
         ],
         "quality": "intrinsic"
       },
-      "least_class": "open",
+      "field_hints": [],
       "removed_rule": {
         "rule": "never"
       },
       "keep_known": [],
       "owned_blobs": [],
-      "index_text": true
+      "search": "words_and_trigram"
     },
     {
       "kind": {
@@ -5408,13 +5594,13 @@
         ],
         "quality": "intrinsic"
       },
-      "least_class": "open",
+      "field_hints": [],
       "removed_rule": {
         "rule": "never"
       },
       "keep_known": [],
       "owned_blobs": [],
-      "index_text": true
+      "search": "words_and_trigram"
     },
     {
       "kind": {
@@ -5485,13 +5671,13 @@
         ],
         "quality": "intrinsic"
       },
-      "least_class": "open",
+      "field_hints": [],
       "removed_rule": {
         "rule": "never"
       },
       "keep_known": [],
       "owned_blobs": [],
-      "index_text": true
+      "search": "words_and_trigram"
     },
     {
       "kind": {
@@ -5559,13 +5745,13 @@
         ],
         "quality": "intrinsic"
       },
-      "least_class": "open",
+      "field_hints": [],
       "removed_rule": {
         "rule": "never"
       },
       "keep_known": [],
       "owned_blobs": [],
-      "index_text": true
+      "search": "words_and_trigram"
     },
     {
       "kind": {
@@ -5643,13 +5829,13 @@
         ],
         "quality": "intrinsic"
       },
-      "least_class": "open",
+      "field_hints": [],
       "removed_rule": {
         "rule": "never"
       },
       "keep_known": [],
       "owned_blobs": [],
-      "index_text": true
+      "search": "words_and_trigram"
     },
     {
       "kind": {
@@ -5728,13 +5914,13 @@
         ],
         "quality": "intrinsic"
       },
-      "least_class": "open",
+      "field_hints": [],
       "removed_rule": {
         "rule": "never"
       },
       "keep_known": [],
       "owned_blobs": [],
-      "index_text": true
+      "search": "words_and_trigram"
     },
     {
       "kind": {
@@ -5825,13 +6011,13 @@
         ],
         "quality": "intrinsic"
       },
-      "least_class": "open",
+      "field_hints": [],
       "removed_rule": {
         "rule": "never"
       },
       "keep_known": [],
       "owned_blobs": [],
-      "index_text": true
+      "search": "words_and_trigram"
     },
     {
       "kind": {
@@ -5936,13 +6122,13 @@
         ],
         "quality": "intrinsic"
       },
-      "least_class": "open",
+      "field_hints": [],
       "removed_rule": {
         "rule": "never"
       },
       "keep_known": [],
       "owned_blobs": [],
-      "index_text": true
+      "search": "words_and_trigram"
     },
     {
       "kind": {
@@ -6064,13 +6250,13 @@
         ],
         "quality": "intrinsic"
       },
-      "least_class": "open",
+      "field_hints": [],
       "removed_rule": {
         "rule": "never"
       },
       "keep_known": [],
       "owned_blobs": [],
-      "index_text": true
+      "search": "words_and_trigram"
     },
     {
       "kind": {
@@ -6165,13 +6351,13 @@
         ],
         "quality": "intrinsic"
       },
-      "least_class": "open",
+      "field_hints": [],
       "removed_rule": {
         "rule": "never"
       },
       "keep_known": [],
       "owned_blobs": [],
-      "index_text": true
+      "search": "words_and_trigram"
     },
     {
       "kind": {
@@ -6260,13 +6446,13 @@
         ],
         "quality": "intrinsic"
       },
-      "least_class": "open",
+      "field_hints": [],
       "removed_rule": {
         "rule": "never"
       },
       "keep_known": [],
       "owned_blobs": [],
-      "index_text": true
+      "search": "words_and_trigram"
     },
     {
       "kind": {
@@ -6344,13 +6530,13 @@
         ],
         "quality": "intrinsic"
       },
-      "least_class": "open",
+      "field_hints": [],
       "removed_rule": {
         "rule": "never"
       },
       "keep_known": [],
       "owned_blobs": [],
-      "index_text": true
+      "search": "words_and_trigram"
     },
     {
       "kind": {
@@ -6515,13 +6701,13 @@
         ],
         "quality": "intrinsic"
       },
-      "least_class": "open",
+      "field_hints": [],
       "removed_rule": {
         "rule": "never"
       },
       "keep_known": [],
       "owned_blobs": [],
-      "index_text": true
+      "search": "words_and_trigram"
     },
     {
       "kind": {
@@ -6655,14 +6841,14 @@
         ],
         "quality": "intrinsic"
       },
-      "least_class": "open",
+      "field_hints": [],
       "removed_rule": {
         "rule": "when_present",
         "field": "trashed_at"
       },
       "keep_known": [],
       "owned_blobs": [],
-      "index_text": true
+      "search": "words_and_trigram"
     },
     {
       "kind": {
@@ -6862,14 +7048,14 @@
         ],
         "quality": "file_mtime"
       },
-      "least_class": "open",
+      "field_hints": [],
       "removed_rule": {
         "rule": "when_present",
         "field": "removed_at"
       },
       "keep_known": [],
       "owned_blobs": [],
-      "index_text": true
+      "search": "words_and_trigram"
     },
     {
       "kind": {
@@ -6956,13 +7142,13 @@
         ],
         "quality": "intrinsic"
       },
-      "least_class": "open",
+      "field_hints": [],
       "removed_rule": {
         "rule": "never"
       },
       "keep_known": [],
       "owned_blobs": [],
-      "index_text": true
+      "search": "words_and_trigram"
     },
     {
       "kind": {
@@ -7120,13 +7306,13 @@
         ],
         "quality": "intrinsic"
       },
-      "least_class": "open",
+      "field_hints": [],
       "removed_rule": {
         "rule": "never"
       },
       "keep_known": [],
       "owned_blobs": [],
-      "index_text": true
+      "search": "words_and_trigram"
     },
     {
       "kind": {
@@ -7236,13 +7422,13 @@
         ],
         "quality": "intrinsic"
       },
-      "least_class": "open",
+      "field_hints": [],
       "removed_rule": {
         "rule": "never"
       },
       "keep_known": [],
       "owned_blobs": [],
-      "index_text": true
+      "search": "words_and_trigram"
     },
     {
       "kind": {
@@ -7337,7 +7523,7 @@
         ],
         "quality": "intrinsic"
       },
-      "least_class": "open",
+      "field_hints": [],
       "removed_rule": {
         "rule": "never"
       },
@@ -7347,7 +7533,7 @@
         "channel_url"
       ],
       "owned_blobs": [],
-      "index_text": true
+      "search": "words_and_trigram"
     },
     {
       "kind": {
@@ -7413,13 +7599,13 @@
         ],
         "quality": "intrinsic"
       },
-      "least_class": "open",
+      "field_hints": [],
       "removed_rule": {
         "rule": "never"
       },
       "keep_known": [],
       "owned_blobs": [],
-      "index_text": true
+      "search": "words_and_trigram"
     },
     {
       "kind": {
@@ -7560,14 +7746,14 @@
         ],
         "quality": "intrinsic"
       },
-      "least_class": "open",
+      "field_hints": [],
       "removed_rule": {
         "rule": "when_present",
         "field": "trashed_at"
       },
       "keep_known": [],
       "owned_blobs": [],
-      "index_text": true
+      "search": "words_and_trigram"
     },
     {
       "kind": {
@@ -7699,14 +7885,14 @@
         ],
         "quality": "intrinsic"
       },
-      "least_class": "open",
+      "field_hints": [],
       "removed_rule": {
         "rule": "when_present",
         "field": "deleted_at"
       },
       "keep_known": [],
       "owned_blobs": [],
-      "index_text": true
+      "search": "words_and_trigram"
     },
     {
       "kind": {
@@ -7779,13 +7965,13 @@
         ],
         "quality": "intrinsic"
       },
-      "least_class": "open",
+      "field_hints": [],
       "removed_rule": {
         "rule": "never"
       },
       "keep_known": [],
       "owned_blobs": [],
-      "index_text": true
+      "search": "words_and_trigram"
     },
     {
       "kind": {
@@ -7965,14 +8151,14 @@
         ],
         "quality": "intrinsic"
       },
-      "least_class": "open",
+      "field_hints": [],
       "removed_rule": {
         "rule": "when_present",
         "field": "cancelled_at"
       },
       "keep_known": [],
       "owned_blobs": [],
-      "index_text": true
+      "search": "words_and_trigram"
     },
     {
       "kind": {
@@ -8043,13 +8229,13 @@
         ],
         "quality": "intrinsic"
       },
-      "least_class": "open",
+      "field_hints": [],
       "removed_rule": {
         "rule": "never"
       },
       "keep_known": [],
       "owned_blobs": [],
-      "index_text": true
+      "search": "words_and_trigram"
     },
     {
       "kind": {
@@ -8151,13 +8337,13 @@
         ],
         "quality": "intrinsic"
       },
-      "least_class": "open",
+      "field_hints": [],
       "removed_rule": {
         "rule": "never"
       },
       "keep_known": [],
       "owned_blobs": [],
-      "index_text": true
+      "search": "words_and_trigram"
     },
     {
       "kind": {
@@ -8274,14 +8460,14 @@
         ],
         "quality": "intrinsic"
       },
-      "least_class": "open",
+      "field_hints": [],
       "removed_rule": {
         "rule": "when_present",
         "field": "unsent_at"
       },
       "keep_known": [],
       "owned_blobs": [],
-      "index_text": true
+      "search": "words_and_trigram"
     },
     {
       "kind": {
@@ -8461,13 +8647,13 @@
         ],
         "quality": "intrinsic"
       },
-      "least_class": "open",
+      "field_hints": [],
       "removed_rule": {
         "rule": "never"
       },
       "keep_known": [],
       "owned_blobs": [],
-      "index_text": true
+      "search": "words_and_trigram"
     },
     {
       "kind": {
@@ -11225,13 +11411,13 @@
         ],
         "quality": "intrinsic"
       },
-      "least_class": "open",
+      "field_hints": [],
       "removed_rule": {
         "rule": "never"
       },
       "keep_known": [],
       "owned_blobs": [],
-      "index_text": true
+      "search": "words_and_trigram"
     },
     {
       "kind": {
@@ -11345,13 +11531,13 @@
         ],
         "quality": "intrinsic"
       },
-      "least_class": "open",
+      "field_hints": [],
       "removed_rule": {
         "rule": "never"
       },
       "keep_known": [],
       "owned_blobs": [],
-      "index_text": true
+      "search": "words_and_trigram"
     },
     {
       "kind": {
@@ -11462,14 +11648,14 @@
         ],
         "quality": "intrinsic"
       },
-      "least_class": "open",
+      "field_hints": [],
       "removed_rule": {
         "rule": "when_present",
         "field": "withdrawn_at"
       },
       "keep_known": [],
       "owned_blobs": [],
-      "index_text": true
+      "search": "words_and_trigram"
     },
     {
       "kind": {
@@ -11569,13 +11755,13 @@
         ],
         "quality": "intrinsic"
       },
-      "least_class": "open",
+      "field_hints": [],
       "removed_rule": {
         "rule": "never"
       },
       "keep_known": [],
       "owned_blobs": [],
-      "index_text": true
+      "search": "words_and_trigram"
     },
     {
       "kind": {
@@ -11623,13 +11809,13 @@
       "time_rule": {
         "rule": "unknown"
       },
-      "least_class": "open",
+      "field_hints": [],
       "removed_rule": {
         "rule": "never"
       },
       "keep_known": [],
       "owned_blobs": [],
-      "index_text": true
+      "search": "words_and_trigram"
     },
     {
       "kind": {
@@ -11688,13 +11874,13 @@
         ],
         "quality": "intrinsic"
       },
-      "least_class": "open",
+      "field_hints": [],
       "removed_rule": {
         "rule": "never"
       },
       "keep_known": [],
       "owned_blobs": [],
-      "index_text": true
+      "search": "words_and_trigram"
     },
     {
       "kind": {
@@ -11996,13 +12182,13 @@
         ],
         "quality": "intrinsic"
       },
-      "least_class": "open",
+      "field_hints": [],
       "removed_rule": {
         "rule": "never"
       },
       "keep_known": [],
       "owned_blobs": [],
-      "index_text": true
+      "search": "words_and_trigram"
     },
     {
       "kind": {
@@ -12161,7 +12347,7 @@
         ],
         "quality": "file_mtime"
       },
-      "least_class": "open",
+      "field_hints": [],
       "removed_rule": {
         "rule": "when_present",
         "field": "vanished_at"
@@ -12174,7 +12360,7 @@
           "when": "stored"
         }
       ],
-      "index_text": true
+      "search": "words_and_trigram"
     },
     {
       "kind": {
@@ -12275,14 +12461,14 @@
         ],
         "quality": "intrinsic"
       },
-      "least_class": "open",
+      "field_hints": [],
       "removed_rule": {
         "rule": "when_present",
         "field": "withdrawn_at"
       },
       "keep_known": [],
       "owned_blobs": [],
-      "index_text": true
+      "search": "words_and_trigram"
     },
     {
       "kind": {
@@ -12410,14 +12596,14 @@
         ],
         "quality": "intrinsic"
       },
-      "least_class": "open",
+      "field_hints": [],
       "removed_rule": {
         "rule": "when_present",
         "field": "withdrawn_at"
       },
       "keep_known": [],
       "owned_blobs": [],
-      "index_text": true
+      "search": "words_and_trigram"
     },
     {
       "kind": {
@@ -12558,14 +12744,14 @@
         ],
         "quality": "intrinsic"
       },
-      "least_class": "open",
+      "field_hints": [],
       "removed_rule": {
         "rule": "when_present",
         "field": "withdrawn_at"
       },
       "keep_known": [],
       "owned_blobs": [],
-      "index_text": true
+      "search": "words_and_trigram"
     },
     {
       "kind": {
@@ -12643,14 +12829,14 @@
         ],
         "quality": "intrinsic"
       },
-      "least_class": "open",
+      "field_hints": [],
       "removed_rule": {
         "rule": "when_present",
         "field": "withdrawn_at"
       },
       "keep_known": [],
       "owned_blobs": [],
-      "index_text": true
+      "search": "words_and_trigram"
     },
     {
       "kind": {
@@ -12760,14 +12946,14 @@
         ],
         "quality": "intrinsic"
       },
-      "least_class": "open",
+      "field_hints": [],
       "removed_rule": {
         "rule": "when_present",
         "field": "withdrawn_at"
       },
       "keep_known": [],
       "owned_blobs": [],
-      "index_text": true
+      "search": "words_and_trigram"
     },
     {
       "kind": {
@@ -12869,14 +13055,14 @@
         ],
         "quality": "intrinsic"
       },
-      "least_class": "open",
+      "field_hints": [],
       "removed_rule": {
         "rule": "when_present",
         "field": "withdrawn_at"
       },
       "keep_known": [],
       "owned_blobs": [],
-      "index_text": true
+      "search": "words_and_trigram"
     },
     {
       "kind": {
@@ -12949,14 +13135,14 @@
         ],
         "quality": "intrinsic"
       },
-      "least_class": "open",
+      "field_hints": [],
       "removed_rule": {
         "rule": "when_present",
         "field": "withdrawn_at"
       },
       "keep_known": [],
       "owned_blobs": [],
-      "index_text": true
+      "search": "words_and_trigram"
     },
     {
       "kind": {
@@ -13089,13 +13275,13 @@
         ],
         "quality": "intrinsic"
       },
-      "least_class": "open",
+      "field_hints": [],
       "removed_rule": {
         "rule": "never"
       },
       "keep_known": [],
       "owned_blobs": [],
-      "index_text": true
+      "search": "words_and_trigram"
     },
     {
       "kind": {
@@ -13157,13 +13343,13 @@
         ],
         "quality": "intrinsic"
       },
-      "least_class": "open",
+      "field_hints": [],
       "removed_rule": {
         "rule": "never"
       },
       "keep_known": [],
       "owned_blobs": [],
-      "index_text": true
+      "search": "words_and_trigram"
     }
   ],
   "sources": [

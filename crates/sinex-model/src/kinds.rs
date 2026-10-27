@@ -29,7 +29,7 @@ pub enum Validation {
     Unvalidated,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, crate::DbCheck)]
 #[serde(rename_all = "snake_case")]
 pub enum Normalization {
     Rust,
@@ -68,6 +68,23 @@ pub struct OwnedBlobRule {
     pub when: Option<String>,
 }
 
+/// The search read model requested by a declaration.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, crate::DbCheck)]
+#[serde(rename_all = "snake_case")]
+pub enum Search {
+    None,
+    Words,
+    WordsAndTrigram,
+}
+
+/// A payload field's default class. Operator rules can raise or lower it.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct FieldHint {
+    pub field: String,
+    pub class: Class,
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct KindDeclaration {
@@ -78,11 +95,11 @@ pub struct KindDeclaration {
     pub key_rule: Option<KeyRule>,
     pub replace_rule: Option<ReplaceRule>,
     pub time_rule: Option<TimeRule>,
-    pub least_class: Class,
+    pub field_hints: Vec<FieldHint>,
     pub removed_rule: Option<RemovedRule>,
     pub keep_known: Vec<String>,
     pub owned_blobs: Vec<OwnedBlobRule>,
-    pub index_text: bool,
+    pub search: Search,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -104,11 +121,11 @@ impl KindDeclaration {
             key_rule: None,
             replace_rule: None,
             time_rule: None,
-            least_class: Class::Open,
+            field_hints: vec![],
             removed_rule: None,
             keep_known: vec![],
             owned_blobs: vec![],
-            index_text: true,
+            search: crate::kinds::Search::WordsAndTrigram,
         }
     }
 
@@ -121,11 +138,11 @@ impl KindDeclaration {
             key_rule: Some(KeyRule::Location),
             replace_rule: Some(ReplaceRule::SuppressRepeat),
             time_rule: Some(TimeRule::Unknown),
-            least_class: Class::Open,
+            field_hints: vec![],
             removed_rule: Some(RemovedRule::Never),
             keep_known: vec![],
             owned_blobs: vec![],
-            index_text: true,
+            search: crate::kinds::Search::WordsAndTrigram,
         }
     }
 
@@ -210,7 +227,7 @@ impl KindDeclaration {
             ts_orig,
             record_state,
             owned_blobs,
-            class: class.max(self.least_class),
+            class,
         })
     }
 }

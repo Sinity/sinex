@@ -27,7 +27,7 @@ pub struct Committed {
     pub event_type: String,
     pub kind_version: i64,
     pub validation: String,
-    pub index_text: bool,
+    pub search: sinex_model::kinds::Search,
     pub replace_rule: Option<String>,
     pub source: String,
     pub run_id: Uuid,
@@ -108,7 +108,7 @@ pub async fn after(conn: &mut PgConnection, after: i64, limit: i64, bytes: i64) 
             continue;
         };
         page.events.push(Committed {
-            index_text: false,
+            search: sinex_model::kinds::Search::None,
             commit_seq: position,
             id,
             event_type,
@@ -157,7 +157,7 @@ pub async fn after(conn: &mut PgConnection, after: i64, limit: i64, bytes: i64) 
             .get(&reference)
             .ok_or_else(|| Error::Invalid(format!("missing stored declaration {reference:?}")))?;
         e.replace_rule = d.replace_rule.map(|r| r.as_db().to_string());
-        e.index_text = d.index_text;
+        e.search = d.search;
     }
     Ok(page)
 }

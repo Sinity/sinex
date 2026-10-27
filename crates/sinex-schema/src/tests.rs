@@ -11,6 +11,8 @@ fn no_payload_field_shadows_an_event_column() {
         "ts_quality",
         "ts_coided",
         "record_state",
+        "kind_version",
+        "validation",
     ];
     for kind in event_types::ALL {
         let schema = (kind.json_schema)();
