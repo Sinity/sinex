@@ -331,8 +331,10 @@ impl Producer {
                             )
                             .map_err(|e| Error::Local(e.to_string()))?;
                             matches!(
-                                serde_json::from_reader::<_, Ingress>(std::io::BufReader::new(bytes))
-                                    .map_err(|e| Error::Local(e.to_string()))?,
+                                serde_json::from_reader::<_, Ingress>(std::io::BufReader::new(
+                                    bytes
+                                ))
+                                .map_err(|e| Error::Local(e.to_string()))?,
                                 Ingress::Material { .. }
                             )
                         }
