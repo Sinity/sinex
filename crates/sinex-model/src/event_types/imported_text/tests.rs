@@ -1,6 +1,6 @@
 use super::*;
 use crate::{Class, Event, MaterialId, Origin, ReadingOrder, RecordLocation};
-fn build(payload: &TranscriptSegment) -> Event {
+fn build(payload: &TranscriptCue) -> Event {
     Event::build(
         payload,
         "media.transcripts",
@@ -19,9 +19,9 @@ fn build(payload: &TranscriptSegment) -> Event {
 }
 #[devkit::test]
 fn stable_ids_are_scoped_to_external_runs_and_models() {
-    let mut p = TranscriptSegment {
+    let mut p = TranscriptCue {
         input: "example-input".into(),
-        provider_segment_id: Some("a".into()),
+        provider_id: Some("a".into()),
         provider_id_stable: true,
         text: "same".into(),
         external_run: Some("run-a".into()),
@@ -35,7 +35,7 @@ fn stable_ids_are_scoped_to_external_runs_and_models() {
     p.external_run = Some("run-a".into());
     p.model = Some("model-b".into());
     assert_ne!(a.equivalence_key, build(&p).equivalence_key);
-    p.provider_segment_id = None;
+    p.provider_id = None;
     assert!(build(&p).equivalence_key.is_none());
     assert!(build(&p).ts_orig.at.is_none());
 }

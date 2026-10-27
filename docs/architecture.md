@@ -380,3 +380,20 @@ material another producer or a binding registered is refused, and nothing
 changes. An excised material is no longer listed on
 `<root>.materials.<producer>`. The operator's excision refuses producers'
 materials.
+
+### Documents and imported text
+
+Document discovery reads the declared `documents` and `downloads` roots. Notes
+and library roots own their subtrees; the document walk excludes those subtrees.
+Every other regular file is captured, including hidden and Markdown files.
+Symbolic-link roots report their resolved boundary. Native file names retain
+their raw bytes alongside their display path. Removed documents have unknown
+size and media type.
+
+The `transcripts` and `ocr` input roots discover a binding for each matching
+file. Transcript imports accept JSON arrays, Whisper JSON, plain text, WebVTT
+and SRT; OCR imports accept JSON, Tesseract TSV and plain text. JSON files are
+whole records with one event per output index. Their file defaults and outputs
+therefore replay together, including for sealed bindings. Whisper offsets keep
+the decimal seconds exactly as written; milliseconds are derived estimates.
+Filename hints are library derivations of captured copies.

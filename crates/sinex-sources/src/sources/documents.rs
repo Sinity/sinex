@@ -6,9 +6,9 @@ use sinex_source_core::binding::{Binding, InputFormat, Settings};
 use sinex_source_core::drivers::dir_snapshot::DirSnapshot;
 use sinex_source_core::registry::{DeclaredSource, Driver, SourceSpec};
 use sinex_source_core::{Parser, RecordContext, RecordError};
-use std::path::{Component, Path, PathBuf};
+use std::path::{Path, PathBuf};
 
-mod file;
+
 
 pub const SPEC: SourceSpec = SourceSpec {
     name: "knowledge.documents",
@@ -78,18 +78,10 @@ impl Parser for DocumentParser {
                     .clone()
                     .ok_or_else(|| RecordError::new("document needs its recorded root"))?,
                 path: member.path.clone(),
-                size: if removed_at.is_some() {
-                    0
-                } else {
-                    record.len() as u64
-                },
+                size: removed_at.is_none().then_some(record.len() as u64),
                 modified_at: time("mtime_ns")?,
-                media_type: if removed_at.is_some() {
-                    "application/octet-stream"
-                } else {
-                    media_type(record)
-                }
-                .into(),
+                media_type: removed_at.is_none().then(|| media_type(record).into()),
+                native_path_bytes: member.details.get("native_path_bytes").and_then(Value::as_str).map(str::to_owned),
                 content,
                 removed_at,
             }],
@@ -112,125 +104,64 @@ fn media_type(bytes: &[u8]) -> &'static str {
         "application/octet-stream"
     }
 }
-pub fn select(path: &str) -> bool {
-    !path.split('/').any(|s| s.starts_with('.'))
-        && !path.to_ascii_lowercase().ends_with(".md")
-        && !path.to_ascii_lowercase().ends_with(".markdown")
-}
 pub fn driver(root: PathBuf, host: String) -> DirSnapshot {
-    DirSnapshot {
-        root,
-        host,
-        select,
-        part_bytes: 64 << 20,
-    }
+    DirSnapshot { root, host, select: |_| true, part_bytes: 64 << 20 }
 }
-fn validate(input: &Path, settings: &Settings) -> Result<(), String> {
-    if settings
-        .options
-        .get("capture_documents")
-        .and_then(Value::as_bool)
-        != Some(true)
-    {
-        return Err("document acquisition requires capture_documents=true".into());
-    }
-    if input.as_os_str().is_empty() {
-        return Err("document acquisition requires an explicit root".into());
-    }
-    if std::fs::symlink_metadata(input).is_ok_and(|m| m.file_type().is_symlink()) {
-        return Err("a document root must not be a symbolic link".into());
-    }
-    let roots = settings.options.get("existing_roots").and_then(Value::as_array).ok_or("documents need existing_roots listing notes and library roots (an empty list is explicit)")?;
-    let root = resolved_path(input)?;
-    for other in roots {
-        let other = other.as_str().ok_or("existing_roots must contain paths")?;
-        if other.is_empty() {
-            return Err("existing_roots must contain nonempty paths".into());
-        }
-        let other = resolved_path(Path::new(other))?;
-        if root.starts_with(&other) || other.starts_with(&root) {
-            return Err("document roots must not overlap notes or library roots".into());
-        }
-    }
-    Ok(())
-}
-fn resolved_path(path: &Path) -> Result<PathBuf, String> {
-    let absolute = std::path::absolute(path).map_err(|error| format!("document path: {error}"))?;
-    for parent in absolute.ancestors() {
-        if let Ok(mut resolved) = std::fs::canonicalize(parent) {
-            for part in absolute
-                .strip_prefix(parent)
-                .expect("an ancestor is a prefix")
-                .components()
-            {
-                match part {
-                    Component::Normal(name) => resolved.push(name),
-                    Component::ParentDir => {
-                        resolved.pop();
-                    }
-                    Component::CurDir => {}
-                    _ => return Err("document path has an invalid root".into()),
-                }
+
+use sinex_source_core::discovery::{DiscoverySpec, Location, Owner, DiscoveryContext, DiscoveredInput, Availability};
+
+fn discover(format: &InputFormat, context: &DiscoveryContext) -> Vec<DiscoveredInput> {
+    let mut found = crate::discovery::discover_format(format, context);
+    let mut owned = Vec::new();
+    for format in [super::notes::FORMAT, super::library::FORMAT] {
+        for input in (format.discover)(&format, context) {
+            if let Some(path) = input.input {
+                owned.push(std::fs::canonicalize(&path).unwrap_or(path));
             }
-            return Ok(resolved);
         }
     }
-    Err("document path needs an accessible parent".into())
+    for input in &mut found {
+        if let Some(path) = &input.input {
+            let resolved = std::fs::canonicalize(path).unwrap_or_else(|_| path.clone());
+            if owned.iter().any(|other| resolved.starts_with(other)) {
+                input.bindings.clear();
+                input.availability = Availability::Excluded;
+                input.reason = Some("root is owned by notes or the library".into());
+                continue;
+            }
+            if std::fs::symlink_metadata(path).is_ok_and(|m| m.file_type().is_symlink()) {
+                input.reason = Some(format!("symbolic-link root resolves to {}", resolved.display()));
+            }
+            let excluded: Vec<_> = owned.iter().filter(|p| p.starts_with(&resolved)).collect();
+            for binding in &mut input.bindings {
+                if !binding.settings.options.is_object() { binding.settings.options = serde_json::json!({}); }
+                binding.settings.options["excluded_roots"] = serde_json::json!(excluded);
+            }
+        }
+    }
+    found
 }
+
 pub const FORMAT: InputFormat = InputFormat {
     name: "documents",
+    discovery: DiscoverySpec {
+        owner: Owner::System,
+        locations: &[Location { root: "declared", path: "documents" }, Location { root: "declared", path: "downloads" }],
+        capabilities: &[], credentials: &[], request_only: false, requests: &[], streams: &[],
+    },
+    discover,
     specs: || vec![&SPEC],
     plan: Some(|input, settings| {
-        if input.as_os_str().is_empty() {
-            return Err("document acquisition requires an explicit root".into());
-        }
-        let input =
-            std::path::absolute(input).map_err(|error| format!("document path: {error}"))?;
-        validate(&input, settings)?;
-        let mut settings = settings.clone();
-        let file =
-            settings.options.get("file").and_then(Value::as_bool) == Some(true) || input.is_file();
-        settings.options["file"] = Value::Bool(file);
-        Ok(vec![Binding::of(&SPEC, &input, settings).named(if file {
-            "file"
-        } else {
-            "directory"
-        })])
+        if input.as_os_str().is_empty() { return Err("document acquisition needs a root".into()); }
+        let input = std::path::absolute(input).map_err(|e| e.to_string())?;
+        if input.is_file() { return Err("document acquisition needs a directory root".into()); }
+        Ok(vec![Binding::of(&SPEC, &input, settings.clone()).named("directory")])
     }),
-    source: |_| {
-        Ok(Box::new(DeclaredSource {
-            spec: SPEC,
-            parser: DocumentParser,
-        }))
-    },
-    reader: Some(|binding: &Binding| {
-        validate(&binding.input, &binding.settings)?;
-        if binding
-            .settings
-            .options
-            .get("file")
-            .and_then(Value::as_bool)
-            == Some(true)
-        {
-            if !select(
-                binding
-                    .input
-                    .file_name()
-                    .and_then(|s| s.to_str())
-                    .ok_or("document file needs a UTF-8 name")?,
-            ) {
-                return Err("document acquisition excludes Markdown and hidden files".into());
-            }
-            Ok(sinex_source_core::binding::polled(file::FileReader::new(
-                binding.input.clone(),
-                binding.settings.host.clone(),
-            )))
-        } else {
-            Ok(sinex_source_core::binding::walked(driver(
-                binding.input.clone(),
-                binding.settings.host.clone(),
-            )))
-        }
+    source: |_| Ok(Box::new(DeclaredSource { spec: SPEC, parser: DocumentParser })),
+    reader: Some(|binding| {
+        let excluded: Vec<PathBuf> = binding.settings.options.get("excluded_roots")
+            .map(|v| serde_json::from_value(v.clone())).transpose().map_err(|e| e.to_string())?.unwrap_or_default();
+        Ok(sinex_source_core::binding::walked_excluding(driver(binding.input.clone(), binding.settings.host.clone()), excluded))
     }),
     capture: None,
 };

@@ -346,3 +346,17 @@ pub const REQUEST_TYPES: &[&str] = &[
     "library.view",
     "library.dismissal",
 ];
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
+#[event(type = "library.filename_hints", key = ["copy"], replace = newer)]
+pub struct FilenameHints {
+    pub copy: EventId,
+    pub path: String,
+    pub content: String,
+    pub author_hint: Option<String>,
+    pub title_hint: Option<String>,
+    pub year_hint: Option<u16>,
+    pub external_id_hint: Option<String>,
+    pub rule_version: u32,
+}
+

@@ -39,7 +39,7 @@ fn binary_empty_and_large_documents_replay_after_originals_are_gone() {
     let driver = driver(root.to_path_buf(), "example-host".into());
     let acquired = driver.poll(&Value::Null, &mut DirState::default()).unwrap();
     let first = parse(&acquired);
-    assert_eq!(first.len(), 3);
+    assert_eq!(first.len(), 4);
     assert_eq!(first[0].payload["media_type"], "application/octet-stream");
     assert_eq!(first[0].payload["size"], large.len());
     assert_eq!(
@@ -93,46 +93,9 @@ fn unchanged_changed_removed_and_missing_roots_are_distinct() {
     let removed = parse(&driver.poll(&cursor, &mut state).unwrap());
     assert_eq!(removed[0].record_state, sinex_model::RecordState::Removed);
     assert!(removed[0].payload["content"].is_null());
-    assert_eq!(removed[0].payload["media_type"], "application/octet-stream");
+    assert!(removed[0].payload["media_type"].is_null());
+    assert!(removed[0].payload["size"].is_null());
 }
-#[devkit::test]
-fn acquisition_requires_scope_and_rejects_notes_library_and_symlink_overlap() {
-    let temp = tempfile::tempdir().unwrap();
-    let mut settings = Settings::new("example-host");
-    assert!(validate(temp.path(), &settings).is_err());
-    settings.options = serde_json::json!({"capture_documents":true,"existing_roots":[]});
-    assert!(validate(temp.path(), &settings).is_ok());
-    settings.options["existing_roots"] = serde_json::json!([temp.path().join("library")]);
-    assert!(validate(temp.path(), &settings).is_err());
-    settings.options["existing_roots"] = serde_json::json!([]);
-    std::os::unix::fs::symlink(temp.path(), temp.path().join("link")).unwrap();
-    assert!(validate(&temp.path().join("link"), &settings).is_err());
-    assert!(!select("note.md"));
-    assert!(!select("notes.MARKDOWN"));
-    assert!(!select(".git/config"));
-}
-
-#[devkit::test]
-fn missing_paths_are_compared_through_their_existing_parents() {
-    let temp = tempfile::tempdir().unwrap();
-    let root = temp.path().join("documents");
-    std::fs::create_dir(&root).unwrap();
-    let alias = temp.path().join("alias");
-    std::os::unix::fs::symlink(&root, &alias).unwrap();
-    let mut settings = Settings::new("example-host");
-    settings.options = serde_json::json!({
-        "capture_documents": true,
-        "existing_roots": [alias.join("not-created")]
-    });
-    assert!(validate(&root, &settings).is_err());
-    settings.options["existing_roots"] = serde_json::json!([alias.join("child/..")]);
-    assert!(validate(&root, &settings).is_err());
-    settings.options["existing_roots"] = serde_json::json!([temp.path().join("other")]);
-    assert!(validate(&root, &settings).is_ok());
-    settings.options["existing_roots"] = serde_json::json!([""]);
-    assert!(validate(&root, &settings).is_err());
-}
-
 #[devkit::test]
 fn reader_restart_rebuilds_file_facts_and_keeps_held_bytes() {
     use sinex_model::{BatchKind, RunId};
@@ -225,17 +188,28 @@ impl sinex_source_core::drain::RecordRead for Bytes {
 }
 
 #[devkit::test]
-fn planned_document_paths_are_absolute_and_file_selection_has_its_own_progress() {
-    let mut settings = Settings::new("example-host");
-    settings.options = serde_json::json!({"capture_documents":true,"existing_roots":[]});
-    let directory = (FORMAT.plan.unwrap())(Path::new("synthetic-document-path"), &settings)
-        .unwrap()
-        .remove(0);
-    settings.options["file"] = Value::Bool(true);
-    let file = (FORMAT.plan.unwrap())(Path::new("synthetic-document-path"), &settings)
-        .unwrap()
-        .remove(0);
-    assert!(directory.input.is_absolute());
-    assert_eq!(directory.input, file.input);
-    assert_ne!(directory.name, file.name);
+fn document_discovery_excludes_owned_subtrees_and_reports_symlink_roots() {
+    use sinex_source_core::discovery::{DiscoveryContext, SourceConfig};
+    let temp=tempfile::tempdir().unwrap();let root=temp.path().join("documents");let notes=root.join("notes");let library=root.join("library");
+    std::fs::create_dir_all(&notes).unwrap();std::fs::create_dir(&library).unwrap();
+    std::fs::write(root.join(".hidden.md"),b"hidden").unwrap();std::fs::write(root.join("readme.markdown"),b"document").unwrap();std::fs::write(notes.join("note.md"),b"owned").unwrap();std::fs::write(library.join("book.pdf"),b"owned").unwrap();
+    let alias=temp.path().join("alias");std::os::unix::fs::symlink(&root,&alias).unwrap();
+    let mut context=DiscoveryContext {host:"example".into(),..Default::default()};
+    context.input_roots.insert("documents".into(),vec![alias]);context.input_roots.insert("notes".into(),vec![notes]);
+    context.sources.insert("library.scan".into(),SourceConfig {paths:vec![library.display().to_string()],..Default::default()});
+    let found=discover(&FORMAT,&context);let input=found.iter().find(|i| !i.bindings.is_empty()).unwrap();
+    assert!(input.reason.as_ref().unwrap().contains("symbolic-link"));
+    let sinex_source_core::Reading::Polled(mut reader)=(FORMAT.reader.unwrap())(&input.bindings[0]).unwrap() else {panic!()};
+    let events=parse(&reader.poll(&Value::Null).unwrap());
+    assert_eq!(events.len(),2);assert!(events.iter().any(|e|e.payload["path"]==".hidden.md"));
+}
+#[devkit::test]
+fn native_document_names_remain_distinct_from_utf8_names() {
+    use std::os::unix::ffi::OsStringExt;
+    let temp=tempfile::tempdir().unwrap();
+    std::fs::write(temp.path().join(std::ffi::OsString::from_vec(b"file-\xff.bin".to_vec())),b"native").unwrap();
+    std::fs::write(temp.path().join("file-%FF.bin"),b"utf8").unwrap();
+    let events=parse(&driver(temp.path().into(),"example".into()).poll(&Value::Null,&mut DirState::default()).unwrap());
+    assert_eq!(events.len(),2);
+    assert_eq!(events.iter().filter(|e|e.payload["native_path_bytes"].is_string()).count(),1);
 }

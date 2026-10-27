@@ -4,16 +4,19 @@ fn read(
     format: Format,
     text: &[u8],
     carry: &Carry,
-) -> Result<(Vec<OcrSegment>, Carry), RecordError> {
+) -> Result<(Vec<OcrText>, Carry), RecordError> {
     let manifest = Manifest::from_json(
         serde_json::json!({"path":"example.tsv","file_metadata":{"engine":"example-engine","external_run":"example-run"}}),
     );
+    let text = if matches!(format, Format::Json) {
+        format!("{{\"segments\":[{}],\"engine\":\"example-engine\",\"external_run\":\"example-run\"}}", std::str::from_utf8(text).unwrap_or("invalid")).into_bytes()
+    } else { text.to_vec() };
     OcrParser {
         input: "example".into(),
         format,
     }
     .parse(
-        &text,
+        &text.as_slice(),
         carry,
         &RecordContext {
             manifest: &manifest,
@@ -76,46 +79,3 @@ fn invalid_ocr_is_diagnosed_and_missing_confidence_stays_unknown() {
     assert_eq!(rows[0].text, "Żółw");
 }
 
-#[devkit::test]
-fn corrected_file_confidence_scale_changes_a_reading_without_changing_its_identity() {
-    let parser = OcrParser {
-        format: Format::Json,
-        input: "example".into(),
-    };
-    let raw = br#"{"id":"word-a","text":"same","confidence":87}"#;
-    let read = |scale| {
-        let manifest = Manifest::from_json(
-            serde_json::json!({"path":"example.json","file_metadata":{"confidence_scale":scale,"engine":"example-engine","external_run":"example-run"}}),
-        );
-        sinex_source_core::drain(
-            &parser,
-            sinex_source_core::DrainInput {
-                source: JSON.name,
-                class: Class::Guarded,
-                material: sinex_model::MaterialId::new(),
-                bytes: raw.as_slice().into(),
-                records: &[(0, raw.len())],
-                carry: Value::Null,
-                reading_order: &|_| sinex_model::ReadingOrder(0),
-                limits: sinex_source_core::Limits::default(),
-                manifest: &manifest,
-            },
-        )
-        .unwrap()
-        .into_iter()
-        .flat_map(|b| b.outcomes)
-        .find_map(|o| match o {
-            sinex_model::RecordOutcome::Events { mut events, .. } => events.pop(),
-            _ => None,
-        })
-        .unwrap()
-    };
-    let first = read("provider");
-    let corrected = read("0-100");
-    assert_eq!(first.equivalence_key, corrected.equivalence_key);
-    assert_ne!(
-        first.payload["confidence_scale"],
-        corrected.payload["confidence_scale"]
-    );
-    assert_ne!(first.record_hash, corrected.record_hash);
-}

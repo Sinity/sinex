@@ -17,6 +17,8 @@ pub mod chromium;
 pub mod clipboard;
 /// Capture from the session bus, shared by the D-Bus sources.
 pub mod dbus;
+#[cfg(feature = "full")]
+pub mod documents;
 pub(crate) mod fields;
 pub mod file_watch;
 #[cfg(feature = "full")]
@@ -52,6 +54,8 @@ pub mod mpris;
 pub mod notes;
 /// Desktop notifications on the session bus.
 pub mod notifications;
+#[cfg(feature = "full")]
+pub mod ocr_import;
 #[cfg(feature = "full")]
 pub mod operator;
 #[cfg(feature = "full")]
@@ -90,6 +94,8 @@ pub mod spotify;
 pub mod takeout_chrome;
 pub(crate) mod terminal_text;
 #[cfg(feature = "full")]
+pub mod transcript;
+#[cfg(feature = "full")]
 pub mod weechat;
 #[cfg(feature = "full")]
 pub mod wykop;
@@ -104,6 +110,24 @@ use sinex_source_core::registry::{Source, SourceSpec};
 /// work from.
 pub fn formats() -> &'static [&'static InputFormat] {
     &[
+        #[cfg(feature = "full")]
+        &documents::FORMAT,
+        #[cfg(feature = "full")]
+        &transcript::JSON_FORMAT,
+        #[cfg(feature = "full")]
+        &transcript::WHISPER_FORMAT,
+        #[cfg(feature = "full")]
+        &transcript::TEXT_FORMAT,
+        #[cfg(feature = "full")]
+        &transcript::WEBVTT_FORMAT,
+        #[cfg(feature = "full")]
+        &transcript::SRT_FORMAT,
+        #[cfg(feature = "full")]
+        &ocr_import::JSON_FORMAT,
+        #[cfg(feature = "full")]
+        &ocr_import::TSV_FORMAT,
+        #[cfg(feature = "full")]
+        &ocr_import::TEXT_FORMAT,
         #[cfg(feature = "full")]
         &atuin::FORMAT,
         #[cfg(feature = "full")]

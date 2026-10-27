@@ -91,6 +91,8 @@ pub trait Parser: Send + Sync + 'static {
 
     /// Fields left out of the record hash because they change without the
     /// record changing (a last-seen time).
+    const READS_BLANK_RECORDS: bool = false;
+
     const VOLATILE: &'static [&'static str] = &[];
 
     /// Map one framed record to its events. `context` is the record's

@@ -2,7 +2,7 @@
 use super::transcript::{Carry, identifier, optional_number, optional_string, required_string};
 use serde_json::{Map, Value};
 use sinex_model::Class;
-use sinex_model::event_types::imported_text::{BoundingBox, OcrSegment};
+use sinex_model::event_types::imported_text::{BoundingBox, OcrText};
 use sinex_source_core::binding::{Binding, InputFormat};
 use sinex_source_core::drivers::export_archive::Framing;
 use sinex_source_core::registry::{DeclaredSource, Driver, SourceSpec};
@@ -29,14 +29,14 @@ pub const fn spec(parser: &'static str, framing: Framing, frame: Frame) -> Sourc
         class: Class::Guarded,
         parser,
         parser_version: 1,
-        event_types: &["ocr.segment"],
+        event_types: &["ocr.text"],
         framer: sinex_source_core::Framer::export(frame, framing),
     }
 }
 pub const JSON: SourceSpec = spec(
     "ocr-json",
-    Framing::JsonArray("/segments"),
-    sinex_source_core::drivers::export_archive::frame_json_array,
+    Framing::Whole,
+    sinex_source_core::drivers::export_archive::frame_whole,
 );
 pub const TSV: SourceSpec = spec(
     "ocr-tsv",
@@ -49,27 +49,19 @@ pub const TEXT: SourceSpec = spec(
     sinex_source_core::drivers::export_archive::frame_lines,
 );
 
-impl Parser for OcrParser {
-    type Record<'a> = &'a [u8];
-    type Carry = Carry;
-    type Payload = OcrSegment;
-    const READS_RECORD_INDEX: bool = true;
-    fn record_hash(&self, raw: &[u8], context: &RecordContext<'_>) -> [u8; 32] {
-        super::transcript::hash_with_metadata(raw, context)
-    }
-    fn parse(
+impl OcrParser {
+    fn parse_item(
         &self,
         record: &&[u8],
         carry: &Carry,
         context: &RecordContext<'_>,
-    ) -> Result<(Vec<OcrSegment>, Carry), RecordError> {
+    ) -> Result<(Vec<OcrText>, Carry), RecordError> {
         let text =
             std::str::from_utf8(record).map_err(|_| RecordError::new("OCR input is not UTF-8"))?;
         let mut carry = carry.at(context);
-        carry.next = super::transcript::record_index(context).unwrap_or(carry.next);
-        let mut payload = OcrSegment {
+        let mut payload = OcrText {
             input: self.input.clone(),
-            segment_index: carry.next,
+            output_index: carry.next,
             ..Default::default()
         };
         carry.advance()?;
@@ -191,7 +183,7 @@ impl Parser for OcrParser {
             }
         };
         payload.text = required_string(&mut object, "text")?;
-        payload.provider_segment_id = identifier(&mut object, "id")?;
+        payload.provider_id = identifier(&mut object, "id")?;
         payload.external_run = optional_string(&mut object, "external_run")?;
         payload.engine = optional_string(&mut object, "engine")?;
         payload.display = optional_string(&mut object, "display")?;
@@ -242,7 +234,7 @@ impl Parser for OcrParser {
             }
             _ => return Err(RecordError::new("incomplete or negative bounding box size")),
         };
-        payload.provider_id_stable = payload.provider_segment_id.is_some()
+        payload.provider_id_stable = payload.provider_id.is_some()
             && (matches!(self.format, Format::Json) || payload.external_run.is_some());
         payload.extra = object;
         Ok((vec![payload], carry))
@@ -270,11 +262,7 @@ fn source(
     Ok(Box::new(DeclaredSource {
         spec,
         parser: OcrParser {
-            input: binding
-                .settings
-                .option("input")
-                .ok_or("an explicit input identity is required")?
-                .into(),
+            input: binding.input.display().to_string(),
             format,
         },
     }))
@@ -283,6 +271,8 @@ macro_rules! format {
     ($name:ident, $spec:ident, $format:ident, $framing:expr) => {
         pub const $name: InputFormat = InputFormat {
             name: $spec.parser,
+            discovery: super::transcript::discovery::spec("ocr"),
+            discover: super::transcript::discovery::discover,
             specs: || vec![&$spec],
             plan: Some(|p, s| super::transcript::plan(&$spec, p, s)),
             source: |b| source(b, Format::$format, $spec),
@@ -296,3 +286,23 @@ format!(TSV_FORMAT, TSV, Tsv, Framing::Lines);
 format!(TEXT_FORMAT, TEXT, Text, Framing::Lines);
 #[cfg(test)]
 mod tests;
+impl Parser for OcrParser {
+    type Record<'a> = &'a [u8];
+    type Carry = Carry;
+    type Payload = OcrText;
+    fn parse(&self, record: &&[u8], carry: &Carry, context: &RecordContext<'_>) -> Result<(Vec<OcrText>, Carry), RecordError> {
+        if !matches!(self.format, Format::Json) {
+            return self.parse_item(record, carry, context);
+        }
+        let (records, defaults) = super::transcript::json_records(record, true)?;
+        let mut manifest = context.manifest.clone();
+        manifest.details.insert("file_metadata".into(), defaults);
+        let context = RecordContext { manifest: &manifest, member: context.member };
+        let mut output = Vec::with_capacity(records.len());
+        for (index, record) in records.iter().enumerate() {
+            let carry = Carry { next: index as u64, member: Carry::default().at(&context).member, header: None };
+            output.extend(self.parse_item(&record.as_slice(), &carry, &context)?.0);
+        }
+        Ok((output, carry.clone()))
+    }
+}

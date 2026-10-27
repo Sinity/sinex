@@ -1,6 +1,6 @@
 //! Filename hints use only the path and content recorded by a library scan.
 use crate::{Env, Input, PerEvent};
-use sinex_model::event_types::documents::FilenameHints;
+use sinex_model::event_types::library::FilenameHints;
 use sinex_model::{Event, RecordState};
 
 pub struct Hints;
@@ -79,5 +79,7 @@ fn isolated(text: &str, length: usize, accept: impl Fn(u8) -> bool) -> Option<&s
     }
     None
 }
+
+
 #[cfg(test)]
 mod tests;

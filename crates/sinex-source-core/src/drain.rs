@@ -328,7 +328,7 @@ impl<P: Parser> Iterator for Drainer<'_, P> {
             };
             // Only spaces and newlines: no record is there, so nothing is
             // read and nothing fails.
-            if is_blank(&raw) {
+            if !P::READS_BLANK_RECORDS && is_blank(&raw) {
                 current.end = end;
                 continue;
             }

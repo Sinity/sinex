@@ -513,3 +513,4 @@ fn materials(blobs: Blobs) -> crate::sealing::Materials {
     crate::sealing::Materials::new(blobs, Class::Guarded, crate::sealing::Access::default())
         .unwrap()
 }
+mod imported_text;

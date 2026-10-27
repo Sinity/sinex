@@ -90,6 +90,10 @@ impl DirSnapshot {
     }
 
     pub fn poll(&self, cursor: &Value, state: &mut DirState) -> Result<Acquired, DriverError> {
+        self.poll_excluding(cursor, state, &[])
+    }
+
+    pub fn poll_excluding(&self, cursor: &Value, state: &mut DirState, excluded: &[PathBuf]) -> Result<Acquired, DriverError> {
         let previous: Cursor = if cursor.is_null() {
             Cursor::default()
         } else {
@@ -125,7 +129,7 @@ impl DirSnapshot {
         let now = Timestamp::now();
         // Sorted walk: a stable order makes materials and part cuts repeatable.
         let mut found = BTreeMap::new();
-        walk(&self.root, &self.root, self.select, &mut found)?;
+        walk(&self.root, &self.root, self.select, excluded, &mut found)?;
 
         let mut bundle = tempfile::tempfile().map_err(io)?;
         let mut length = 0usize;
@@ -365,6 +369,7 @@ fn walk(
     root: &Path,
     dir: &Path,
     select: fn(&str) -> bool,
+    excluded: &[PathBuf],
     found: &mut BTreeMap<String, (u64, i128)>,
 ) -> Result<(), DriverError> {
     let entries =
@@ -373,8 +378,9 @@ fn walk(
         let entry = entry.map_err(io)?;
         let kind = entry.file_type().map_err(io)?;
         let path = entry.path();
+        if excluded.iter().any(|root| std::fs::canonicalize(&path).unwrap_or_else(|_| path.clone()).starts_with(root)) { continue; }
         if kind.is_dir() {
-            walk(root, &path, select, found)?;
+            walk(root, &path, select, excluded, found)?;
         } else if kind.is_file() {
             let Ok(relative) = path.strip_prefix(root) else {
                 continue;

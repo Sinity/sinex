@@ -5,15 +5,18 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
-pub struct TranscriptSegment {
+pub struct TranscriptCue {
     pub input: String,
-    pub provider_segment_id: Option<String>,
-    /// Whether this ID identifies the segment across revisions of the configured input.
+    pub provider_id: Option<String>,
+    /// Whether this ID identifies the cue across revisions of the configured input.
     #[serde(default)]
     pub provider_id_stable: bool,
-    /// Record position within the member, including any header or hierarchy records.
-    pub segment_index: u64,
+    /// Output position within the whole JSON record, or record position for line imports.
+    pub output_index: u64,
     pub text: String,
+    /// Decimal seconds exactly as written in the import.
+    pub start_seconds: Option<String>,
+    pub end_seconds: Option<String>,
     pub start_ms: Option<u64>,
     pub end_ms: Option<u64>,
     pub speaker: Option<String>,
@@ -37,14 +40,14 @@ pub struct BoundingBox {
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
-pub struct OcrSegment {
+pub struct OcrText {
     pub input: String,
-    pub provider_segment_id: Option<String>,
-    /// Whether this ID identifies the segment across revisions of the configured input.
+    pub provider_id: Option<String>,
+    /// Whether this ID identifies the cue across revisions of the configured input.
     #[serde(default)]
     pub provider_id_stable: bool,
-    /// Record position within the member, including any header or hierarchy records.
-    pub segment_index: u64,
+    /// Output position within the whole JSON record, or record position for line imports.
+    pub output_index: u64,
     pub text: String,
     pub page: Option<u64>,
     pub block: Option<u64>,
@@ -62,13 +65,13 @@ pub struct OcrSegment {
     pub extra: Map<String, Value>,
 }
 
-impl EventPayload for TranscriptSegment {
-    const EVENT_TYPE: &'static str = "transcript.segment";
+impl EventPayload for TranscriptCue {
+    const EVENT_TYPE: &'static str = "transcript.cue";
     const KEY: KeyKind =
-        KeyKind::Fields(&["input", "external_run", "model", "provider_segment_id"]);
+        KeyKind::Fields(&["input", "external_run", "model", "provider_id"]);
     const REPLACE: ReplaceRule = ReplaceRule::ReplaceWhenNewer;
     fn key_kind(&self) -> KeyKind {
-        if self.provider_id_stable && self.provider_segment_id.is_some() {
+        if self.provider_id_stable && self.provider_id.is_some() {
             Self::KEY
         } else {
             KeyKind::Location
@@ -82,13 +85,13 @@ impl EventPayload for TranscriptSegment {
     }
 }
 
-impl EventPayload for OcrSegment {
-    const EVENT_TYPE: &'static str = "ocr.segment";
+impl EventPayload for OcrText {
+    const EVENT_TYPE: &'static str = "ocr.text";
     const KEY: KeyKind =
-        KeyKind::Fields(&["input", "external_run", "engine", "provider_segment_id"]);
+        KeyKind::Fields(&["input", "external_run", "engine", "provider_id"]);
     const REPLACE: ReplaceRule = ReplaceRule::ReplaceWhenNewer;
     fn key_kind(&self) -> KeyKind {
-        if self.provider_id_stable && self.provider_segment_id.is_some() {
+        if self.provider_id_stable && self.provider_id.is_some() {
             Self::KEY
         } else {
             KeyKind::Location

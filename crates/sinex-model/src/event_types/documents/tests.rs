@@ -6,9 +6,10 @@ fn removed_document_and_unknown_mtime_remain_distinct() {
         host: "example-host".into(),
         root: "/example".into(),
         path: "a.bin".into(),
-        size: 0,
+        size: Some(0),
+        native_path_bytes: None,
         modified_at: None,
-        media_type: "application/octet-stream".into(),
+        media_type: Some("application/octet-stream".into()),
         content: Some("blake3:example".into()),
         removed_at: None,
     };
