@@ -37,5 +37,12 @@ pub(crate) fn upgrades() -> Vec<Vec<String>> {
             "GRANT SELECT ON core.excised_materials TO sinex_reader, sinex_writer".into(),
             "GRANT INSERT, UPDATE, DELETE ON core.excised_materials TO sinex_writer".into(),
         ],
+        // 2 to 3: coverage reads times and run positions from the index.
+        vec![
+            "DROP INDEX core.events_source_ts_orig_idx".into(),
+            "CREATE INDEX events_source_ts_orig_idx ON core.events (source, ts_orig) INCLUDE (id, run_id, commit_seq)".into(),
+            "DROP INDEX telemetry.events_source_ts_orig_idx".into(),
+            "CREATE INDEX events_source_ts_orig_idx ON telemetry.events (source, ts_orig) INCLUDE (id, run_id, commit_seq)".into(),
+        ],
     ]
 }

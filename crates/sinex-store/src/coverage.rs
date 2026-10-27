@@ -27,10 +27,15 @@ pub async fn source_evidence(
     as_of: i64,
 ) -> Result<SourceEvidence> {
     let bounds = sqlx::query!(
-        r#"SELECT min(e.ts_orig) AS first, max(e.ts_orig) AS last
-           FROM core.events e
+        r#"SELECT
+          (SELECT e.ts_orig FROM core.events e
            WHERE e.source = $1 AND e.ts_orig IS NOT NULL AND e.commit_seq <= $2
-             AND NOT audit.is_archived_at(e.id, $2)"#,
+             AND NOT audit.is_archived_at(e.id, $2)
+           ORDER BY e.ts_orig LIMIT 1) AS first,
+          (SELECT e.ts_orig FROM core.events e
+           WHERE e.source = $1 AND e.ts_orig IS NOT NULL AND e.commit_seq <= $2
+             AND NOT audit.is_archived_at(e.id, $2)
+           ORDER BY e.ts_orig DESC LIMIT 1) AS last"#,
         source,
         as_of,
     )
@@ -59,3 +64,6 @@ pub async fn source_evidence(
             .collect(),
     })
 }
+
+#[cfg(test)]
+mod tests;

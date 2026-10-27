@@ -480,7 +480,7 @@ pub(crate) fn after_tables() -> Vec<String> {
         for template in [
             "SELECT create_hypertable('$T', by_range('id', INTERVAL '1 day'), create_default_indexes => false)",
             "CREATE INDEX ON $T (ts_orig)",
-            "CREATE INDEX ON $T (source, ts_orig)",
+            "CREATE INDEX ON $T (source, ts_orig) INCLUDE (id, run_id, commit_seq)",
             "CREATE INDEX ON $T (event_type, ts_orig)",
             "CREATE INDEX ON $T (material_id, anchor)",
             // Only derived events have parents. Without the pending list a

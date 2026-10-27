@@ -360,8 +360,9 @@ impl Reader for Appended {
             Some((id, Some(through))) if id == reference.id => through.min(reference.length),
             _ => reference.length,
         };
-        let records = crate::drivers::record_ranges(material.bytes.as_ref(), self.driver.framer)
-            .map_err(|e| DriverError::Io(e.to_string()))?;
+        let (records, complete) =
+            crate::drivers::tail_ranges(material.bytes.as_ref(), self.driver.framer, admitted)
+                .map_err(|e| DriverError::Io(e.to_string()))?;
         let tail = self.tail.get_or_insert_with(Default::default);
         for (start, end) in records
             .into_iter()
@@ -381,7 +382,7 @@ impl Reader for Appended {
                 return Ok(false);
             }
         }
-        Ok(true)
+        Ok(complete)
     }
 
     fn restored(&mut self) -> Result<(), DriverError> {
