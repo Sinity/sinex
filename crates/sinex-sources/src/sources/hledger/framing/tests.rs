@@ -55,10 +55,18 @@ fn ignored_python_blocks_keep_blank_lines_and_indented_text_across_every_split()
     let input = b"!python\n  example()\n\n  example2()\n\n@account Assets:Example\n  type: A\n";
     let expected = complete(input).0;
     assert_eq!(expected.len(), 2);
-    assert_eq!(&input[expected[0].0..expected[0].1], b"!python\n  example()\n\n  example2()\n\n");
+    assert_eq!(
+        &input[expected[0].0..expected[0].1],
+        b"!python\n  example()\n\n  example2()\n\n"
+    );
     for cut in 0..=input.len() {
         let (mut records, through) = frame(&input[..cut], false);
-        records.extend(frame(&input[through..], true).0.into_iter().map(|(a,b)| (through+a,through+b)));
+        records.extend(
+            frame(&input[through..], true)
+                .0
+                .into_iter()
+                .map(|(a, b)| (through + a, through + b)),
+        );
         assert_eq!(records, expected, "cut {cut}");
     }
 }

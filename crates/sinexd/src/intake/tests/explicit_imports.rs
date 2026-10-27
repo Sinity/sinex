@@ -122,8 +122,14 @@ async fn included_journal_changes_are_read_when_the_parent_is_unchanged_and_repl
             .iter()
             .all(|p| p["resolved_date"] == "2032-02-29")
     );
-    assert_eq!(transactions[0]["postings"][0]["annotations"], serde_json::json!(["{= 4 OTHER}"]));
-    assert_eq!(transactions[0]["postings"][0]["assertion_price"]["amount"], "5");
+    assert_eq!(
+        transactions[0]["postings"][0]["annotations"],
+        serde_json::json!(["{= 4 OTHER}"])
+    );
+    assert_eq!(
+        transactions[0]["postings"][0]["assertion_price"]["amount"],
+        "5"
+    );
     assert_ne!(
         transactions[0]["included_from"],
         transactions[1]["included_from"]

@@ -11,10 +11,17 @@ pub(super) fn parse(raw: &str) -> Result<Posting, RecordError> {
         _ => (None, body),
     };
     let (before_comment, account_comment) = super::split_comment(body);
-    let separator = before_comment.as_bytes().iter().enumerate().find_map(|(i, b)| {
-        (*b == b'\t' || (*b == b' ' && before_comment.as_bytes().get(i + 1) == Some(&b' '))).then_some(i)
+    let separator = before_comment
+        .as_bytes()
+        .iter()
+        .enumerate()
+        .find_map(|(i, b)| {
+            (*b == b'\t' || (*b == b' ' && before_comment.as_bytes().get(i + 1) == Some(&b' ')))
+                .then_some(i)
+        });
+    let (account, amounts) = separator.map_or((before_comment.trim(), ""), |i| {
+        (body[..i].trim(), body[i..].trim())
     });
-    let (account, amounts) = separator.map_or((before_comment.trim(), ""), |i| (body[..i].trim(), body[i..].trim()));
     let (account, virtual_account) = if account.starts_with('(') && account.ends_with(')') {
         (&account[1..account.len() - 1], Some("()".into()))
     } else if account.starts_with('[') && account.ends_with(']') {
@@ -48,7 +55,11 @@ pub(super) fn parse(raw: &str) -> Result<Posting, RecordError> {
             currency,
         };
         let slot = if operator.contains('@') {
-            if assertion.is_some() { &mut assertion_price } else { &mut price }
+            if assertion.is_some() {
+                &mut assertion_price
+            } else {
+                &mut price
+            }
         } else {
             &mut assertion
         };
@@ -57,13 +68,19 @@ pub(super) fn parse(raw: &str) -> Result<Posting, RecordError> {
         }
     }
     if amount.is_none() && (price.is_some() || !annotations.is_empty()) {
-        return Err(RecordError::new("posting annotations and prices require an amount"));
+        return Err(RecordError::new(
+            "posting annotations and prices require an amount",
+        ));
     }
     Ok(Posting {
         account: account.into(),
         amount,
         currency,
-        comment: if separator.is_none() { account_comment } else { comment },
+        comment: if separator.is_none() {
+            account_comment
+        } else {
+            comment
+        },
         status,
         virtual_account,
         price,
@@ -99,18 +116,31 @@ fn annotations(raw: &str) -> Result<(String, Vec<String>, Option<String>), Recor
                 at += operator.len();
                 continue;
             }
-            let annotation = if rest.starts_with("((") { Some((3, "((", "))")) }
-                else if rest.starts_with("{{") { Some((0, "{{", "}}")) }
-                else { match c { '{' => Some((0, "{", "}")), '[' => Some((1, "[", "]")), '(' => Some((2, "(", ")")), _ => None } };
+            let annotation = if rest.starts_with("((") {
+                Some((3, "((", "))"))
+            } else if rest.starts_with("{{") {
+                Some((0, "{{", "}}"))
+            } else {
+                match c {
+                    '{' => Some((0, "{", "}")),
+                    '[' => Some((1, "[", "]")),
+                    '(' => Some((2, "(", ")")),
+                    _ => None,
+                }
+            };
             if let Some((kind, open, close)) = annotation {
                 if assertion || seen[kind] {
-                    return Err(RecordError::new("repeated posting annotation or annotation after assertion"));
+                    return Err(RecordError::new(
+                        "repeated posting annotation or annotation after assertion",
+                    ));
                 }
                 let end = annotation_end(rest, open, close)?;
                 let value = rest[open.len()..end - close.len()].trim();
                 if kind == 0 {
                     let value = value.strip_prefix('=').unwrap_or(value).trim();
-                    if !value.is_empty() { quantity(value)?; }
+                    if !value.is_empty() {
+                        quantity(value)?;
+                    }
                 } else if kind == 1 {
                     super::resolve_date(value, None)?;
                 }
@@ -120,7 +150,9 @@ fn annotations(raw: &str) -> Result<(String, Vec<String>, Option<String>), Recor
                 at += end;
                 continue;
             }
-            if c == '=' { assertion = true; }
+            if c == '=' {
+                assertion = true;
+            }
         }
         body.push(c);
         at += c.len_utf8();
@@ -134,13 +166,26 @@ fn annotation_end(raw: &str, open: &str, close: &str) -> Result<usize, RecordErr
     for (at, c) in raw.char_indices().skip(open.len()) {
         // Notes and valuation expressions end at their first closing parenthesis.
         if open.starts_with('(') && c == ')' {
-            return if raw[at..].starts_with(close) { Ok(at + close.len()) }
-                else { Err(RecordError::new("unfinished posting annotation")) };
+            return if raw[at..].starts_with(close) {
+                Ok(at + close.len())
+            } else {
+                Err(RecordError::new("unfinished posting annotation"))
+            };
         }
-        if escaped { escaped = false; continue; }
-        if quoted && c == '\\' { escaped = true; continue; }
-        if c == '"' { quoted = !quoted; }
-        if !quoted && raw[at..].starts_with(close) { return Ok(at + close.len()); }
+        if escaped {
+            escaped = false;
+            continue;
+        }
+        if quoted && c == '\\' {
+            escaped = true;
+            continue;
+        }
+        if c == '"' {
+            quoted = !quoted;
+        }
+        if !quoted && raw[at..].starts_with(close) {
+            return Ok(at + close.len());
+        }
     }
     Err(RecordError::new("unfinished posting annotation"))
 }
@@ -153,15 +198,20 @@ fn outside_marks(raw: &str) -> Vec<(usize, usize)> {
     while at < raw.len() {
         let rest = &raw[at..];
         let c = rest.chars().next().unwrap();
-        if escaped { escaped = false; }
-        else if quoted && c == '\\' { escaped = true; }
-        else if c == '"' { quoted = !quoted; }
-        else if !quoted {
-            if let Some(operator) = ["(@@)", "(@)", "@@", "@", "==*", "==", "=*", "="].into_iter().find(|s| rest.starts_with(s)) {
-                out.push((at, at + operator.len()));
-                at += operator.len();
-                continue;
-            }
+        if escaped {
+            escaped = false;
+        } else if quoted && c == '\\' {
+            escaped = true;
+        } else if c == '"' {
+            quoted = !quoted;
+        } else if !quoted
+            && let Some(operator) = ["(@@)", "(@)", "@@", "@", "==*", "==", "=*", "="]
+                .into_iter()
+                .find(|s| rest.starts_with(s))
+        {
+            out.push((at, at + operator.len()));
+            at += operator.len();
+            continue;
         }
         at += c.len_utf8();
     }

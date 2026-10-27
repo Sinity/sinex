@@ -326,16 +326,35 @@ fn prefixed_includes_strip_inline_comments_and_preserve_the_declared_format_and_
     let root = dir.path().join("main.journal");
     let raw = b"!Y2032\n@include journal:child.journal ; comment\n!include timedot:hours.data; comment\ninclude ; missing path\n";
     std::fs::write(&root, raw).unwrap();
-    std::fs::write(dir.path().join("child.journal"), "02/29 Child\n  Assets:Example\n").unwrap();
-    std::fs::write(dir.path().join("hours.data"), "2032/02/29\n  activities:example ....\n").unwrap();
+    std::fs::write(
+        dir.path().join("child.journal"),
+        "02/29 Child\n  Assets:Example\n",
+    )
+    .unwrap();
+    std::fs::write(
+        dir.path().join("hours.data"),
+        "2032/02/29\n  activities:example ....\n",
+    )
+    .unwrap();
     let bindings = plan(&root, &Settings::new("example-host")).unwrap();
     assert_eq!(bindings.len(), 3);
     assert_eq!(bindings[0].settings.options["initial_year"], 2032);
     assert_eq!(bindings[1].settings.options["journal_format"], "timedot");
     let binding = bindings.iter().find(|b| b.input == root).unwrap();
     let source = (super::super::FORMAT.source)(binding).unwrap();
-    let events = super::super::tests::intake::export_restart(raw, super::super::driver(root, "example-host".into()), source.as_ref(), 4, 0);
+    let events = super::super::tests::intake::export_restart(
+        raw,
+        super::super::driver(root, "example-host".into()),
+        source.as_ref(),
+        4,
+        0,
+    );
     assert!(events[1].payload["includes"][0]["reason"].is_null());
     assert!(events[2].payload["includes"][0]["reason"].is_null());
-    assert!(events[3].payload["includes"][0]["reason"].as_str().unwrap().contains("empty"));
+    assert!(
+        events[3].payload["includes"][0]["reason"]
+            .as_str()
+            .unwrap()
+            .contains("empty")
+    );
 }

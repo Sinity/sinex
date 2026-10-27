@@ -175,7 +175,13 @@ impl Parser for HledgerParser {
                 .unwrap_or_else(|| {
                     if directive == "include" {
                         vec![sinex_model::event_types::finance::IncludeTarget {
-                            path: header.trim_start_matches("include").split(';').next().unwrap().trim().into(),
+                            path: header
+                                .trim_start_matches("include")
+                                .split(';')
+                                .next()
+                                .unwrap()
+                                .trim()
+                                .into(),
                             reason: Some(
                                 "include resolution is unavailable for this captured block".into(),
                             ),
@@ -307,8 +313,8 @@ fn directive_name(header: &str) -> Result<&str, RecordError> {
     match name {
         "account" | "commodity" | "P" | "D" | "N" | "C" | "alias" | "include" | "Y" | "year"
         | "decimal-mark" | "payee" | "tag" | "apply" | "end" | "assert" | "check" | "comment"
-        | "endcomment" | "bucket" | "A" | "capture" | "define" | "eval" | "expr"
-        | "python" | "value" => Ok(name),
+        | "endcomment" | "bucket" | "A" | "capture" | "define" | "eval" | "expr" | "python"
+        | "value" => Ok(name),
         _ if name.starts_with("--") => Ok("--"),
         _ => Err(RecordError::new("unknown journal directive")),
     }

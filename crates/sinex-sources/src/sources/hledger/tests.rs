@@ -388,7 +388,15 @@ fn ledger_prices_annotations_and_assertion_costs_keep_the_written_values() {
     let posting = &event.postings[0];
     assert_eq!(posting.amount.as_deref(), Some("1"));
     assert_eq!(posting.currency.as_deref(), Some("A"));
-    assert_eq!(posting.annotations, ["{= 2 B}", "[2030/1/1]", "(note; @ = text)", "((x @ 4; raw))"]);
+    assert_eq!(
+        posting.annotations,
+        [
+            "{= 2 B}",
+            "[2030/1/1]",
+            "(note; @ = text)",
+            "((x @ 4; raw))"
+        ]
+    );
     assert_eq!(posting.price.as_ref().unwrap().operator, "(@@)");
     assert_eq!(posting.price.as_ref().unwrap().amount, "3");
     assert_eq!(posting.assertion.as_ref().unwrap().operator, "==*");
@@ -396,28 +404,87 @@ fn ledger_prices_annotations_and_assertion_costs_keep_the_written_values() {
     assert_eq!(posting.assertion_price.as_ref().unwrap().amount, "5");
     assert_eq!(posting.comment.as_deref(), Some("comment"));
     assert_eq!(event.postings[1].amount, None);
-    assert_eq!(event.postings[1].assertion_price.as_ref().unwrap().amount, "2");
-    for annotation in ["{1B}", "{=1B}", "{{1B}}", "{{ = 1B }}", "{}", "[2030-01-01]", "(example)", "((value 2))"] {
-        for amounts in [format!("1 A {annotation} @ 2 B"), format!("1 A @ 2 B {annotation}")] {
+    assert_eq!(
+        event.postings[1].assertion_price.as_ref().unwrap().amount,
+        "2"
+    );
+    for annotation in [
+        "{1B}",
+        "{=1B}",
+        "{{1B}}",
+        "{{ = 1B }}",
+        "{}",
+        "[2030-01-01]",
+        "(example)",
+        "((value 2))",
+    ] {
+        for amounts in [
+            format!("1 A {annotation} @ 2 B"),
+            format!("1 A @ 2 B {annotation}"),
+        ] {
             let value = posting::parse(&format!("Assets:Example  {amounts}")).unwrap();
             assert_eq!(value.annotations, [annotation]);
             assert_eq!(value.price.as_ref().unwrap().amount, "2");
         }
     }
-    for amounts in ["1 A = 1 A {1 B}", "1 A @ 2 B @ 3 B", "1 A = 2 B = 3 B", "1 A (unfinished", "1 A [2030-02-30]", "1 A {nonsense}", "1 A ((nested(value)))", "1 A {} {}"] {
-        assert!(posting::parse(&format!("Assets:Example  {amounts}")).is_err(), "{amounts}");
+    for amounts in [
+        "1 A = 1 A {1 B}",
+        "1 A @ 2 B @ 3 B",
+        "1 A = 2 B = 3 B",
+        "1 A (unfinished",
+        "1 A [2030-02-30]",
+        "1 A {nonsense}",
+        "1 A ((nested(value)))",
+        "1 A {} {}",
+    ] {
+        assert!(
+            posting::parse(&format!("Assets:Example  {amounts}")).is_err(),
+            "{amounts}"
+        );
     }
 }
 
 #[devkit::test]
 fn ignored_native_declarations_remain_records_and_prefixed_years_are_authored_context() {
-    for input in ["bucket Equity:Example\n", "A Equity:Example\n", "capture example\n", "define example = 2\n", "eval example\n", "expr example\n", "value example\n", "N TEST\n", "C 1 TEST = 2 OTHER\n", "--forecast\n", "!account Assets:Example\n", "@commodity TEST\n", "!python\n  raise Exception('must remain data')\n\n  another_line\n"] {
-        let (records, _) = parser().parse(&input.as_bytes(), &Carry::default(), &RecordContext::none()).unwrap();
-        let JournalRecord::Directive(record) = &records[0] else { panic!() };
+    for input in [
+        "bucket Equity:Example\n",
+        "A Equity:Example\n",
+        "capture example\n",
+        "define example = 2\n",
+        "eval example\n",
+        "expr example\n",
+        "value example\n",
+        "N TEST\n",
+        "C 1 TEST = 2 OTHER\n",
+        "--forecast\n",
+        "!account Assets:Example\n",
+        "@commodity TEST\n",
+        "!python\n  raise Exception('must remain data')\n\n  another_line\n",
+    ] {
+        let (records, _) = parser()
+            .parse(&input.as_bytes(), &Carry::default(), &RecordContext::none())
+            .unwrap();
+        let JournalRecord::Directive(record) = &records[0] else {
+            panic!()
+        };
         assert_eq!(record.text, input);
     }
-    let (_, carry) = parser().parse(&b"@Y2032\n".as_slice(), &Carry::default(), &RecordContext::none()).unwrap();
-    let (records, _) = parser().parse(&b"02/29 Example\n  Assets:Example\n".as_slice(), &carry, &RecordContext::none()).unwrap();
-    let JournalRecord::Transaction(record) = &records[0] else { panic!() };
+    let (_, carry) = parser()
+        .parse(
+            &b"@Y2032\n".as_slice(),
+            &Carry::default(),
+            &RecordContext::none(),
+        )
+        .unwrap();
+    let (records, _) = parser()
+        .parse(
+            &b"02/29 Example\n  Assets:Example\n".as_slice(),
+            &carry,
+            &RecordContext::none(),
+        )
+        .unwrap();
+    let JournalRecord::Transaction(record) = &records[0] else {
+        panic!()
+    };
     assert_eq!(record.resolved_date.as_deref(), Some("2032-02-29"));
 }

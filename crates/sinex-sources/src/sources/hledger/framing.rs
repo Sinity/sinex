@@ -28,8 +28,12 @@ pub fn frame(bytes: &[u8], eof: bool) -> (Vec<(usize, usize)>, usize) {
                 records.push((start, offset));
                 consumed = offset;
             }
-            let directive = line.strip_prefix(b"!").or_else(|| line.strip_prefix(b"@")).unwrap_or(line);
-            python = directive.split(|b| b.is_ascii_whitespace()).next() == Some(b"python".as_slice());
+            let directive = line
+                .strip_prefix(b"!")
+                .or_else(|| line.strip_prefix(b"@"))
+                .unwrap_or(line);
+            python =
+                directive.split(|b| b.is_ascii_whitespace()).next() == Some(b"python".as_slice());
             if directive == b"comment" {
                 comment = true;
             }
