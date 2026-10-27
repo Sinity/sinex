@@ -125,7 +125,9 @@ impl Library<'_> {
                 let (w, h, _) = library_source::dimensions(&d.head, &d.media_type);
                 let file = std::fs::File::open(&o).map_err(e)?;
                 let size = file.metadata().map_err(e)?.len();
-                let blob = blobs.put_reader(std::io::BufReader::new(file)).map_err(e)?;
+                let blob = blobs
+                    .put_seekable(std::io::BufReader::new(file))
+                    .map_err(e)?;
                 let _ = std::fs::remove_file(&o);
                 Ok((sinex_model::OwnedBlob { blob, size }, w, h))
             },

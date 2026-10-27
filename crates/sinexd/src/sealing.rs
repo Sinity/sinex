@@ -117,7 +117,7 @@ impl Materials {
     ) -> Result<String, String> {
         match &self.sealing {
             Some(sealing) => sealing.put_reader(reader),
-            None => self.plain.0.put_reader(reader).map_err(|e| e.to_string()),
+            None => self.plain.0.put_seekable(reader).map_err(|e| e.to_string()),
         }
     }
     pub(crate) fn archive_input<C>(

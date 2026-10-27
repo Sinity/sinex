@@ -51,7 +51,10 @@ capture from the format registry and stops it through the shared capture lifetim
 `StoredBytes` has three forms: an unnamed file of framed records, shared
 in-memory records, or a stored blob. A stored blob can supply its decoded
 record reader when reopened; an archive instead supplies decoded records
-separately. Storing and draining use those same bytes on retries.
+separately. Storing and draining use those same bytes on retries. Plain seekable inputs use
+`put_seekable`: repeated content is verified without recompression. Each completed
+input pass records its name before installation, including the compression pass
+when a file changes after its first hash pass.
 
 A driver's bytes are written to the content store before the batch that cites
 them is admitted. Admission inserts the material and its `core.blobs` row in
