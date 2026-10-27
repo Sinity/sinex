@@ -203,6 +203,9 @@ Each database test gets its own copy of the schema template. AgentCTL takes
 `CARGO_TARGET_DIR` from the caller; give each target directory one build at a
 time.
 
+For the optional acceptance test against an external Atuin snapshot, see
+[private history acceptance](docs/private-history-test.md).
+
 ## Benchmarks
 
 `agentctl job start sinex bench -- run` backfills a fixed sample of real
