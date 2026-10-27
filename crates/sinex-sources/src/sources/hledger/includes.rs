@@ -10,7 +10,11 @@ use std::path::{Path, PathBuf};
 pub(super) fn plan(input: &Path, settings: &Settings) -> Result<Vec<Binding>, String> {
     let mut out = Vec::new();
     let mut active = BTreeSet::new();
-    let roots = if input.is_dir() { journals(input)? } else { vec![input.to_path_buf()] };
+    let roots = if input.is_dir() {
+        journals(input)?
+    } else {
+        vec![input.to_path_buf()]
+    };
     for root in roots {
         visit(&root, &root, settings, None, None, &mut active, &mut out)?;
     }
@@ -22,12 +26,20 @@ fn journals(root: &Path) -> Result<Vec<PathBuf>, String> {
     let mut dirs = vec![root.to_path_buf()];
     let mut seen = BTreeSet::new();
     while let Some(dir) = dirs.pop() {
-        if !seen.insert(std::fs::canonicalize(&dir).map_err(|e| e.to_string())?) { continue; }
+        if !seen.insert(std::fs::canonicalize(&dir).map_err(|e| e.to_string())?) {
+            continue;
+        }
         for entry in std::fs::read_dir(&dir).map_err(|e| e.to_string())? {
             let path = entry.map_err(|e| e.to_string())?.path();
-            if path.is_dir() { dirs.push(path); }
-            else if matches!(path.extension().and_then(|s| s.to_str()), Some("journal" | "hledger"))
-                || path.file_name().is_some_and(|s| s == "journal_clean") { found.push(path); }
+            if path.is_dir() {
+                dirs.push(path);
+            } else if matches!(
+                path.extension().and_then(|s| s.to_str()),
+                Some("journal" | "hledger")
+            ) || path.file_name().is_some_and(|s| s == "journal_clean")
+            {
+                found.push(path);
+            }
         }
     }
     found.sort();
@@ -35,8 +47,13 @@ fn journals(root: &Path) -> Result<Vec<PathBuf>, String> {
 }
 
 fn visit(
-    path: &Path, journal: &Path, settings: &Settings, initial_year: Option<i16>,
-    from: Option<IncludedFrom>, active: &mut BTreeSet<PathBuf>, out: &mut Vec<Binding>,
+    path: &Path,
+    journal: &Path,
+    settings: &Settings,
+    initial_year: Option<i16>,
+    from: Option<IncludedFrom>,
+    active: &mut BTreeSet<PathBuf>,
+    out: &mut Vec<Binding>,
 ) -> Result<(), String> {
     let identity = std::fs::canonicalize(path).map_err(|e| format!("{}: {e}", path.display()))?;
     active.insert(identity.clone());
@@ -50,18 +67,36 @@ fn visit(
         for (start, end) in framing::complete(&bytes).0 {
             let block = &text[start..end];
             let header = block.lines().next().unwrap_or("").trim();
-            if let Some(value) = header.strip_prefix('Y').or_else(|| header.strip_prefix("year ")) {
-                if let Ok(value) = super::split_comment(value).0.trim().parse::<i16>() { year = Some(value); }
+            if let Some(value) = header
+                .strip_prefix('Y')
+                .or_else(|| header.strip_prefix("year "))
+            {
+                if let Ok(value) = super::split_comment(value).0.trim().parse::<i16>() {
+                    year = Some(value);
+                }
             }
-            let Some(target) = header.strip_prefix("include ").or_else(|| header.strip_prefix("include\t")) else { continue; };
+            let Some(target) = header
+                .strip_prefix("include ")
+                .or_else(|| header.strip_prefix("include\t"))
+            else {
+                continue;
+            };
             let hash = blake3::hash(block.as_bytes()).to_hex().to_string();
             let duplicate = counts.entry(hash.clone()).or_default();
-            let from = IncludedFrom { path: path.display().to_string(), block_hash: hash.clone(), duplicate: *duplicate, parent: from.clone().map(Box::new) };
+            let from = IncludedFrom {
+                path: path.display().to_string(),
+                block_hash: hash.clone(),
+                duplicate: *duplicate,
+                parent: from.clone().map(Box::new),
+            };
             *duplicate += 1;
             let targets = match resolve(path, target.trim(), settings) {
                 Ok(targets) => targets,
                 Err(reason) => {
-                    includes.entry(hash).or_default().push(IncludeTarget { path: target.trim().into(), reason: Some(reason) });
+                    includes.entry(hash).or_default().push(IncludeTarget {
+                        path: target.trim().into(),
+                        reason: Some(reason),
+                    });
                     continue;
                 }
             };
@@ -69,12 +104,26 @@ fn visit(
                 let reason = match std::fs::canonicalize(&target) {
                     Err(e) => Some(format!("{}: {e}", target.display())),
                     Ok(id) if active.contains(&id) => Some("include cycle".into()),
-                    Ok(_) => match visit(&target, journal, settings, year, Some(from.clone()), active, out) {
+                    Ok(_) => match visit(
+                        &target,
+                        journal,
+                        settings,
+                        year,
+                        Some(from.clone()),
+                        active,
+                        out,
+                    ) {
                         Ok(()) => None,
                         Err(e) => Some(e),
                     },
                 };
-                includes.entry(hash.clone()).or_default().push(IncludeTarget { path: target.display().to_string(), reason });
+                includes
+                    .entry(hash.clone())
+                    .or_default()
+                    .push(IncludeTarget {
+                        path: target.display().to_string(),
+                        reason,
+                    });
             }
         }
     }
@@ -84,7 +133,14 @@ fn visit(
     options.insert("initial_year".into(), json!(initial_year));
     options.insert("included_from".into(), json!(from));
     options.insert("includes".into(), json!(includes));
-    let mut binding = Binding::of(&SPEC, path, Settings { options: options.into(), ..settings.clone() });
+    let mut binding = Binding::of(
+        &SPEC,
+        path,
+        Settings {
+            options: options.into(),
+            ..settings.clone()
+        },
+    );
     if let Some(from) = from {
         let parent = blake3::hash(serde_json::to_string(&from).unwrap().as_bytes()).to_hex();
         binding = binding.named(&format!("include:{parent}"));
@@ -95,19 +151,36 @@ fn visit(
 
 fn resolve(parent: &Path, target: &str, settings: &Settings) -> Result<Vec<PathBuf>, String> {
     if target.starts_with(['|', '!', '<']) || target.contains("://") {
-        return Err("include requires a local file; commands and remote imports are not executed".into());
+        return Err(
+            "include requires a local file; commands and remote imports are not executed".into(),
+        );
     }
-    let target = if let Some(target) = target.strip_prefix("journal:") { target } else {
+    let target = if let Some(target) = target.strip_prefix("journal:") {
+        target
+    } else {
         if let Some((format, _)) = target.split_once(':')
-            && matches!(format, "csv" | "ssv" | "tsv" | "rules" | "timeclock" | "timedot") {
+            && matches!(
+                format,
+                "csv" | "ssv" | "tsv" | "rules" | "timeclock" | "timedot"
+            )
+        {
             return Err(format!("{format} includes are not journal records"));
         }
         target
     };
     let path = if let Some(rest) = target.strip_prefix("~/") {
-        settings.option("include_home").map(PathBuf::from).or_else(|| std::env::var_os("HOME").map(PathBuf::from)).ok_or("include home directory is unavailable")?.join(rest)
-    } else { parent.parent().unwrap_or(Path::new(".")).join(target) };
-    if !target.contains(['*', '?', '[']) { return Ok(vec![path]); }
+        settings
+            .option("include_home")
+            .map(PathBuf::from)
+            .or_else(|| std::env::var_os("HOME").map(PathBuf::from))
+            .ok_or("include home directory is unavailable")?
+            .join(rest)
+    } else {
+        parent.parent().unwrap_or(Path::new(".")).join(target)
+    };
+    if !target.contains(['*', '?', '[']) {
+        return Ok(vec![path]);
+    }
     let pattern = path.to_str().ok_or("include glob is not UTF-8")?;
     let first = pattern.find(['*', '?', '[']).unwrap();
     let slash = pattern[..first].rfind('/').unwrap_or(0);
@@ -120,23 +193,40 @@ fn resolve(parent: &Path, target: &str, settings: &Settings) -> Result<Vec<PathB
     let mut seen = BTreeSet::new();
     while let Some(dir) = dirs.pop() {
         let id = std::fs::canonicalize(&dir).map_err(|e| e.to_string())?;
-        if !seen.insert(id) { continue; }
+        if !seen.insert(id) {
+            continue;
+        }
         for entry in std::fs::read_dir(&dir).map_err(|e| e.to_string())? {
             let path = entry.map_err(|e| e.to_string())?.path();
-            if path.file_name().is_some_and(|s| s.as_encoded_bytes().starts_with(b".")) {
+            if path
+                .file_name()
+                .is_some_and(|s| s.as_encoded_bytes().starts_with(b"."))
+            {
                 let relative = path.strip_prefix(root).map_err(|e| e.to_string())?;
                 let literal_hidden = pattern.contains("/.");
-                let nested_directory = pattern.contains("**") && path.is_dir() && relative.components().count() > 1;
-                if !literal_hidden && !nested_directory { continue; }
+                let nested_directory =
+                    pattern.contains("**") && path.is_dir() && relative.components().count() > 1;
+                if !literal_hidden && !nested_directory {
+                    continue;
+                }
             }
             if path.is_dir() {
-                if pattern.contains("**") || dir.components().count() < Path::new(pattern).components().count()-1 { dirs.push(path); }
+                if pattern.contains("**")
+                    || dir.components().count() < Path::new(pattern).components().count() - 1
+                {
+                    dirs.push(path);
+                }
             } else if path.to_str().is_some_and(|s| matcher.is_match(s))
-                && std::fs::canonicalize(&path).map_err(|e| e.to_string())? != current { paths.push(path); }
+                && std::fs::canonicalize(&path).map_err(|e| e.to_string())? != current
+            {
+                paths.push(path);
+            }
         }
     }
     paths.sort();
-    if paths.is_empty() { return Err("include glob matches no other files".into()); }
+    if paths.is_empty() {
+        return Err("include glob matches no other files".into());
+    }
     Ok(paths)
 }
 
@@ -147,17 +237,32 @@ fn glob_expression(pattern: &str) -> Result<String, String> {
         match c {
             '*' if chars.peek() == Some(&'*') => {
                 chars.next();
-                if chars.peek() == Some(&'/') { chars.next(); out.push_str("(?:.*/)?"); }
-                else { out.push_str(".*"); }
+                if chars.peek() == Some(&'/') {
+                    chars.next();
+                    out.push_str("(?:.*/)?");
+                } else {
+                    out.push_str(".*");
+                }
             }
             '*' => out.push_str("[^/]*"),
             '?' => out.push_str("[^/]"),
             '[' => {
                 out.push('[');
-                if chars.peek() == Some(&'!') { chars.next(); out.push('^'); }
+                if chars.peek() == Some(&'!') {
+                    chars.next();
+                    out.push('^');
+                }
                 let mut closed = false;
-                for c in chars.by_ref() { out.push(c); if c == ']' { closed = true; break; } }
-                if !closed { return Err("unfinished include glob character class".into()); }
+                for c in chars.by_ref() {
+                    out.push(c);
+                    if c == ']' {
+                        closed = true;
+                        break;
+                    }
+                }
+                if !closed {
+                    return Err("unfinished include glob character class".into());
+                }
             }
             _ => out.push_str(&regex::escape(&c.to_string())),
         }

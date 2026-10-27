@@ -79,8 +79,15 @@ pub const FORMAT: InputFormat = InputFormat {
     name: "text-history",
     discovery: sinex_source_core::discovery::DiscoverySpec {
         owner: sinex_source_core::discovery::Owner::System,
-        locations: &[sinex_source_core::discovery::Location { root: "input", path: "text-history" }],
-        capabilities: &[], credentials: &[], streams: &[], requests: &[], request_only: false,
+        locations: &[sinex_source_core::discovery::Location {
+            root: "input",
+            path: "text-history",
+        }],
+        capabilities: &[],
+        credentials: &[],
+        streams: &[],
+        requests: &[],
+        request_only: false,
     },
     discover: crate::discovery::discover_format,
     specs: || vec![&SPEC],

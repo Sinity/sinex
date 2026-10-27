@@ -7,25 +7,56 @@ fn nested_includes_keep_context_duplicate_references_cycles_missing_files_and_ch
     let root = dir.path().join("main.journal");
     let child = dir.path().join("child.journal");
     std::fs::write(&root, "Y2032\ninclude child.journal\ninclude child.journal\ninclude missing.journal\ninclude |never-execute\n").unwrap();
-    std::fs::write(&child, "02/29 Child\n  Assets:Example  1 TEST\n\ninclude main.journal\n").unwrap();
+    std::fs::write(
+        &child,
+        "02/29 Child\n  Assets:Example  1 TEST\n\ninclude main.journal\n",
+    )
+    .unwrap();
     let settings = Settings::new("example-host");
     let bindings = plan(&root, &settings).unwrap();
     assert_eq!(bindings.len(), 3);
     assert_ne!(bindings[0].name, bindings[1].name);
     assert_eq!(bindings[0].settings.options["initial_year"], 2032);
-    assert_eq!(bindings[1].settings.options["included_from"]["duplicate"], 1);
+    assert_eq!(
+        bindings[1].settings.options["included_from"]["duplicate"],
+        1
+    );
     let main = bindings.iter().find(|b| b.input == root).unwrap();
-    let targets = main.settings.options["includes"].as_object().unwrap().values().flat_map(|v| v.as_array().unwrap()).collect::<Vec<_>>();
-    assert!(targets.iter().any(|target| target["reason"].as_str().is_some_and(|r| r.contains("not executed"))));
-    assert!(targets.iter().any(|target| target["path"].as_str().unwrap().ends_with("missing.journal") && target["reason"].is_string()));
-    assert!(bindings[0].settings.options["includes"].to_string().contains("include cycle"));
+    let targets = main.settings.options["includes"]
+        .as_object()
+        .unwrap()
+        .values()
+        .flat_map(|v| v.as_array().unwrap())
+        .collect::<Vec<_>>();
+    assert!(targets.iter().any(|target| {
+        target["reason"]
+            .as_str()
+            .is_some_and(|r| r.contains("not executed"))
+    }));
+    assert!(targets.iter().any(|target| {
+        target["path"]
+            .as_str()
+            .unwrap()
+            .ends_with("missing.journal")
+            && target["reason"].is_string()
+    }));
+    assert!(
+        bindings[0].settings.options["includes"]
+            .to_string()
+            .contains("include cycle")
+    );
     // The child is its own ordinary input: its revision is not hidden by unchanged parent bytes.
     assert_eq!(bindings[0].input, child);
     std::fs::write(&child, "03/01 Changed\n  Assets:Example  2 TEST\n").unwrap();
     let changed = plan(&root, &settings).unwrap();
     assert_eq!(changed.len(), 3);
     assert_eq!(changed[0].name, bindings[0].name);
-    assert!(changed[0].settings.options["includes"].as_object().unwrap().is_empty());
+    assert!(
+        changed[0].settings.options["includes"]
+            .as_object()
+            .unwrap()
+            .is_empty()
+    );
 }
 
 #[devkit::test]
@@ -39,9 +70,29 @@ fn recursive_globs_follow_relative_paths_and_exclude_the_current_file() {
     std::fs::write(dir.path().join(".hidden.journal"), "; hidden\n").unwrap();
     let bindings = plan(&root, &Settings::new("example-host")).unwrap();
     assert_eq!(bindings.len(), 3);
-    assert!(bindings.iter().all(|b| !b.settings.options["includes"].to_string().contains("cycle")));
-    assert_eq!(resolve(&root, "journal:child.journal", &Settings::new("example-host")).unwrap(), vec![dir.path().join("child.journal")]);
-    assert_eq!(resolve(&root, "sub/../child.journal", &Settings::new("example-host")).unwrap(), vec![dir.path().join("sub/../child.journal")]);
+    assert!(
+        bindings
+            .iter()
+            .all(|b| !b.settings.options["includes"].to_string().contains("cycle"))
+    );
+    assert_eq!(
+        resolve(
+            &root,
+            "journal:child.journal",
+            &Settings::new("example-host")
+        )
+        .unwrap(),
+        vec![dir.path().join("child.journal")]
+    );
+    assert_eq!(
+        resolve(
+            &root,
+            "sub/../child.journal",
+            &Settings::new("example-host")
+        )
+        .unwrap(),
+        vec![dir.path().join("sub/../child.journal")]
+    );
 }
 
 #[devkit::test]
@@ -49,13 +100,38 @@ fn discovery_uses_finance_environment_home_and_text_history_inputs() {
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path().join("journal_clean");
     std::fs::write(&root, "").unwrap();
-    let mut context = DiscoveryContext { host: "example-host".into(), home: Some(dir.path().into()), ..Default::default() };
-    context.input_roots.insert("finance".into(), vec![root.clone()]);
+    let mut context = DiscoveryContext {
+        host: "example-host".into(),
+        home: Some(dir.path().into()),
+        ..Default::default()
+    };
+    context
+        .input_roots
+        .insert("finance".into(), vec![root.clone()]);
     let found = crate::discovery::discover_format(&super::super::FORMAT, &context);
-    assert!(found.iter().any(|i| i.input.as_ref() == Some(&root) && i.availability == Availability::Reading && i.bindings.len() == 1));
-    assert!(found.iter().any(|i| i.input.as_ref() == Some(&dir.path().join(".hledger.journal")) && i.availability == Availability::WaitingForInput));
-    context.environment.insert("LEDGER_FILE".into(), root.display().to_string());
-    assert_eq!(crate::discovery::discover_format(&super::super::FORMAT, &context).iter().filter(|i| i.input.as_ref() == Some(&root)).count(), 1);
-    context.inputs.insert("text-history".into(), vec![root.clone()]);
-    assert!(crate::discovery::discover_format(&crate::sources::text_history::FORMAT, &context).iter().any(|i| i.input.as_ref() == Some(&root) && i.availability == Availability::Reading));
+    assert!(found.iter().any(|i| i.input.as_ref() == Some(&root)
+        && i.availability == Availability::Reading
+        && i.bindings.len() == 1));
+    assert!(found.iter().any(
+        |i| i.input.as_ref() == Some(&dir.path().join(".hledger.journal"))
+            && i.availability == Availability::WaitingForInput
+    ));
+    context
+        .environment
+        .insert("LEDGER_FILE".into(), root.display().to_string());
+    assert_eq!(
+        crate::discovery::discover_format(&super::super::FORMAT, &context)
+            .iter()
+            .filter(|i| i.input.as_ref() == Some(&root))
+            .count(),
+        1
+    );
+    context
+        .inputs
+        .insert("text-history".into(), vec![root.clone()]);
+    assert!(
+        crate::discovery::discover_format(&crate::sources::text_history::FORMAT, &context)
+            .iter()
+            .any(|i| i.input.as_ref() == Some(&root) && i.availability == Availability::Reading)
+    );
 }

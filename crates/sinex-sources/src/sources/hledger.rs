@@ -7,7 +7,9 @@ mod posting;
 use serde::{Deserialize, Serialize};
 use sinex_model::{
     Class,
-    event_types::finance::{Posting, TransactionPosted, JournalDirective, JournalRecord, IncludedFrom},
+    event_types::finance::{
+        IncludedFrom, JournalDirective, JournalRecord, Posting, TransactionPosted,
+    },
 };
 use sinex_source_core::binding::{self, InputFormat};
 use sinex_source_core::drivers::export_archive::{ExportArchive, Framing, PART_BYTES};
@@ -37,7 +39,8 @@ pub struct HledgerParser {
     pub journal: String,
     pub initial_year: Option<i16>,
     pub included_from: Option<IncludedFrom>,
-    pub includes: std::collections::BTreeMap<String, Vec<sinex_model::event_types::finance::IncludeTarget>>,
+    pub includes:
+        std::collections::BTreeMap<String, Vec<sinex_model::event_types::finance::IncludeTarget>>,
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
@@ -113,36 +116,71 @@ impl Parser for HledgerParser {
                 ..Default::default()
             }
         };
-        if next.year.is_none() { next.year = self.initial_year; }
+        if next.year.is_none() {
+            next.year = self.initial_year;
+        }
         let mut lines = text.lines().filter(|line| !line.trim().is_empty());
-        let Some(header) = lines.next() else { return Ok((vec![], next)); };
+        let Some(header) = lines.next() else {
+            return Ok((vec![], next));
+        };
         let hash = blake3::hash(record).to_hex().to_string();
         let duplicate = next.seen.get(&hash).copied().unwrap_or(0);
-        next.seen.insert(hash.clone(), duplicate.checked_add(1)
-            .ok_or_else(|| RecordError::new("journal duplicate number exceeds u64"))?);
+        next.seen.insert(
+            hash.clone(),
+            duplicate
+                .checked_add(1)
+                .ok_or_else(|| RecordError::new("journal duplicate number exceeds u64"))?,
+        );
         let header = header.trim_start();
         if !header.starts_with(|c: char| c.is_ascii_digit()) {
             let directive = directive_name(header)?;
             if directive == "Y" || directive == "year" {
                 let value = header.trim_start_matches(directive).trim();
-                next.year = Some(split_comment(value).0.trim().parse::<i16>()
-                    .map_err(|_| RecordError::new("invalid journal year"))?);
+                next.year = Some(
+                    split_comment(value)
+                        .0
+                        .trim()
+                        .parse::<i16>()
+                        .map_err(|_| RecordError::new("invalid journal year"))?,
+                );
             }
             let includes = self.includes.get(&hash).cloned().unwrap_or_default();
-            return Ok((vec![JournalRecord::Directive(JournalDirective {
-                host: self.host.clone(), journal: self.journal.clone(),
-                member: member.as_ref().map(|(path, _)| path.clone()), member_duplicate,
-                block_hash: hash, duplicate, directive: directive.into(), text: text.into(),
-                included_from: self.included_from.clone(), includes,
-            })], next));
+            return Ok((
+                vec![JournalRecord::Directive(JournalDirective {
+                    host: self.host.clone(),
+                    journal: self.journal.clone(),
+                    member: member.as_ref().map(|(path, _)| path.clone()),
+                    member_duplicate,
+                    block_hash: hash,
+                    duplicate,
+                    directive: directive.into(),
+                    text: text.into(),
+                    included_from: self.included_from.clone(),
+                    includes,
+                })],
+                next,
+            ));
         }
-        let (dates, rest) = header.split_once(char::is_whitespace).unwrap_or((header, ""));
+        let (dates, rest) = header
+            .split_once(char::is_whitespace)
+            .unwrap_or((header, ""));
         let (date, effective_date) = match dates.split_once('=') {
             Some((date, effective)) => (date, Some(effective)),
             None => (dates, None),
         };
         let resolved_date = resolve_date(date, next.year)?;
-        let resolved_effective_date = effective_date.map(|date| resolve_date(date, resolved_date.as_deref().and_then(|date| date.split('-').next()?.parse().ok()).or(next.year))).transpose()?.flatten();
+        let resolved_effective_date = effective_date
+            .map(|date| {
+                resolve_date(
+                    date,
+                    resolved_date
+                        .as_deref()
+                        .and_then(|date| date.split('-').next()?.parse().ok())
+                        .or(next.year),
+                )
+            })
+            .transpose()?
+            .flatten();
         let rest = rest.trim_start();
         let (status, rest) = if let Some(rest) = rest.strip_prefix('*') {
             (Some("*".to_owned()), rest.trim_start())
@@ -152,9 +190,13 @@ impl Parser for HledgerParser {
             (None, rest)
         };
         let (code, rest) = if let Some(code) = rest.strip_prefix('(') {
-            let (code, rest) = code.split_once(')').ok_or_else(|| RecordError::new("unfinished transaction code"))?;
+            let (code, rest) = code
+                .split_once(')')
+                .ok_or_else(|| RecordError::new("unfinished transaction code"))?;
             (Some(code.into()), rest.trim_start())
-        } else { (None, rest) };
+        } else {
+            (None, rest)
+        };
         let (description, comment) = split_comment(rest);
         let (description, narration) = match description.split_once('|') {
             Some((payee, narration)) => (payee.trim(), Some(narration.trim().to_owned())),
@@ -190,7 +232,10 @@ impl Parser for HledgerParser {
             duplicate,
             date: date.into(),
             effective_date: effective_date.map(str::to_owned),
-            resolved_date, resolved_effective_date, default_year: next.year, code,
+            resolved_date,
+            resolved_effective_date,
+            default_year: next.year,
+            code,
             included_from: self.included_from.clone(),
             status,
             description: description.into(),
@@ -203,30 +248,51 @@ impl Parser for HledgerParser {
 }
 
 fn directive_name(header: &str) -> Result<&str, RecordError> {
-    if header.starts_with([';', '#', '*']) { return Ok("comment"); }
-    if header.starts_with('~') { return Ok("~"); }
-    if header.starts_with('=') { return Ok("="); }
-    if header.starts_with('Y') && header[1..].starts_with(|c: char| c.is_ascii_digit()) { return Ok("Y"); }
+    if header.starts_with([';', '#', '*']) {
+        return Ok("comment");
+    }
+    if header.starts_with('~') {
+        return Ok("~");
+    }
+    if header.starts_with('=') {
+        return Ok("=");
+    }
+    if header.starts_with('Y') && header[1..].starts_with(|c: char| c.is_ascii_digit()) {
+        return Ok("Y");
+    }
     let name = header.split_whitespace().next().unwrap_or("");
     match name {
-        "account" | "commodity" | "P" | "D" | "alias" | "include" | "Y" | "year" |
-        "decimal-mark" | "payee" | "tag" | "apply" | "end" | "assert" | "check" |
-        "comment" | "endcomment" => Ok(name),
+        "account" | "commodity" | "P" | "D" | "alias" | "include" | "Y" | "year"
+        | "decimal-mark" | "payee" | "tag" | "apply" | "end" | "assert" | "check" | "comment"
+        | "endcomment" => Ok(name),
         _ => Err(RecordError::new("unknown journal directive")),
     }
 }
 
 fn resolve_date(raw: &str, year: Option<i16>) -> Result<Option<String>, RecordError> {
-    let separator = raw.chars().find(|c| matches!(c, '-' | '/' | '.'))
+    let separator = raw
+        .chars()
+        .find(|c| matches!(c, '-' | '/' | '.'))
         .ok_or_else(|| RecordError::new("invalid journal date"))?;
     let fields = raw.split(separator).collect::<Vec<_>>();
     let (year, month, day) = match fields.as_slice() {
-        [y, m, d] => (Some(y.parse::<i16>().map_err(|_| RecordError::new("invalid journal date"))?), *m, *d),
+        [y, m, d] => (
+            Some(
+                y.parse::<i16>()
+                    .map_err(|_| RecordError::new("invalid journal date"))?,
+            ),
+            *m,
+            *d,
+        ),
         [m, d] => (year, *m, *d),
         _ => return Err(RecordError::new("invalid journal date")),
     };
-    let month = month.parse::<i8>().map_err(|_| RecordError::new("invalid journal date"))?;
-    let day = day.parse::<i8>().map_err(|_| RecordError::new("invalid journal date"))?;
+    let month = month
+        .parse::<i8>()
+        .map_err(|_| RecordError::new("invalid journal date"))?;
+    let day = day
+        .parse::<i8>()
+        .map_err(|_| RecordError::new("invalid journal date"))?;
     // A leap year checks a partial February 29 without inventing a year.
     let date = jiff::civil::Date::new(year.unwrap_or(2000), month, day)
         .map_err(|_| RecordError::new("invalid journal date"))?;
@@ -237,10 +303,20 @@ fn split_comment(raw: &str) -> (&str, Option<String>) {
     let mut quoted = false;
     let mut escaped = false;
     for (at, c) in raw.char_indices() {
-        if escaped { escaped = false; continue; }
-        if quoted && c == '\\' { escaped = true; continue; }
-        if c == '"' { quoted = !quoted; }
-        if c == ';' && !quoted { return (&raw[..at], Some(raw[at+1..].trim().into())); }
+        if escaped {
+            escaped = false;
+            continue;
+        }
+        if quoted && c == '\\' {
+            escaped = true;
+            continue;
+        }
+        if c == '"' {
+            quoted = !quoted;
+        }
+        if c == ';' && !quoted {
+            return (&raw[..at], Some(raw[at + 1..].trim().into()));
+        }
     }
     (raw, None)
 }
@@ -248,7 +324,13 @@ fn split_comment(raw: &str) -> (&str, Option<String>) {
 pub fn source(host: String, journal: String) -> DeclaredSource<HledgerParser> {
     DeclaredSource {
         spec: SPEC,
-        parser: HledgerParser { host, journal, initial_year: None, included_from: None, includes: Default::default() },
+        parser: HledgerParser {
+            host,
+            journal,
+            initial_year: None,
+            included_from: None,
+            includes: Default::default(),
+        },
     }
 }
 
@@ -267,11 +349,24 @@ pub const FORMAT: InputFormat = InputFormat {
     discovery: sinex_source_core::discovery::DiscoverySpec {
         owner: sinex_source_core::discovery::Owner::System,
         locations: &[
-            sinex_source_core::discovery::Location { root: "environment", path: "LEDGER_FILE" },
-            sinex_source_core::discovery::Location { root: "home", path: ".hledger.journal" },
-            sinex_source_core::discovery::Location { root: "declared", path: "finance" },
+            sinex_source_core::discovery::Location {
+                root: "environment",
+                path: "LEDGER_FILE",
+            },
+            sinex_source_core::discovery::Location {
+                root: "home",
+                path: ".hledger.journal",
+            },
+            sinex_source_core::discovery::Location {
+                root: "declared",
+                path: "finance",
+            },
         ],
-        capabilities: &[], credentials: &[], streams: &[], requests: &[], request_only: false,
+        capabilities: &[],
+        credentials: &[],
+        streams: &[],
+        requests: &[],
+        request_only: false,
     },
     discover: |format, context| {
         let mut context = context.clone();
@@ -284,13 +379,43 @@ pub const FORMAT: InputFormat = InputFormat {
     specs: || vec![&SPEC],
     plan: Some(includes::plan),
     source: |b| {
-        let mut source = source(b.settings.host.clone(), b.settings.option("journal").unwrap_or(&b.input.display().to_string()).into());
-        source.parser.initial_year = b.settings.options.get("initial_year").and_then(serde_json::Value::as_i64).and_then(|n| i16::try_from(n).ok());
-        source.parser.included_from = b.settings.options.get("included_from").filter(|v| !v.is_null()).map(|v| serde_json::from_value(v.clone())).transpose().map_err(|e| e.to_string())?;
-        source.parser.includes = b.settings.options.get("includes").map(|v| serde_json::from_value(v.clone())).transpose().map_err(|e| e.to_string())?.unwrap_or_default();
+        let mut source = source(
+            b.settings.host.clone(),
+            b.settings
+                .option("journal")
+                .unwrap_or(&b.input.display().to_string())
+                .into(),
+        );
+        source.parser.initial_year = b
+            .settings
+            .options
+            .get("initial_year")
+            .and_then(serde_json::Value::as_i64)
+            .and_then(|n| i16::try_from(n).ok());
+        source.parser.included_from = b
+            .settings
+            .options
+            .get("included_from")
+            .filter(|v| !v.is_null())
+            .map(|v| serde_json::from_value(v.clone()))
+            .transpose()
+            .map_err(|e| e.to_string())?;
+        source.parser.includes = b
+            .settings
+            .options
+            .get("includes")
+            .map(|v| serde_json::from_value(v.clone()))
+            .transpose()
+            .map_err(|e| e.to_string())?
+            .unwrap_or_default();
         Ok(Box::new(source))
     },
-    reader: Some(|b| Ok(binding::shared(driver(b.input.clone(), b.settings.host.clone())))),
+    reader: Some(|b| {
+        Ok(binding::shared(driver(
+            b.input.clone(),
+            b.settings.host.clone(),
+        )))
+    }),
     capture: None,
 };
 

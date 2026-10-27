@@ -14,7 +14,9 @@ pub fn frame(bytes: &[u8], eof: bool) -> (Vec<(usize, usize)>, usize) {
         };
         let line = bytes[offset..end].trim_ascii_end();
         if comment {
-            if line == b"end comment" || line == b"endcomment" { comment = false; }
+            if line == b"end comment" || line == b"endcomment" {
+                comment = false;
+            }
         } else if line.is_empty() {
             if let Some(start) = block.take() {
                 records.push((start, end));
@@ -25,7 +27,9 @@ pub fn frame(bytes: &[u8], eof: bool) -> (Vec<(usize, usize)>, usize) {
                 records.push((start, offset));
                 consumed = offset;
             }
-            if line == b"comment" { comment = true; }
+            if line == b"comment" {
+                comment = true;
+            }
         } else if block.is_none() {
             block = Some(offset);
         }
