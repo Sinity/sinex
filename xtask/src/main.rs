@@ -23,7 +23,8 @@ enum Cli {
     },
     /// Rust tests under nextest; each database test clones the schema template.
     Test {
-        /// Further `cargo nextest run` arguments: packages, filters, names.
+        /// `--changed` selects affected tests through devkit; other arguments
+        /// select nextest packages, filters and names.
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
         args: Vec<String>,
     },

@@ -71,3 +71,20 @@ fn compile_requires_and_preserves_explicit_selection() {
     };
     assert_eq!(args, ["-p", "sinex-model", "--tests"]);
 }
+
+#[devkit::test]
+fn test_selection_passes_changed_arguments_to_devkit() {
+    let got = options(&["--changed", "--changed-base=HEAD", "-E", "test(reads)"]);
+    assert_eq!(
+        got.args,
+        [
+            "--locked",
+            "--workspace",
+            "--changed",
+            "--changed-base=HEAD",
+            "-E",
+            "test(reads)"
+        ]
+    );
+    assert!(!got.allow_no_tests);
+}

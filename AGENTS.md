@@ -56,8 +56,9 @@ Optimize for fast integration.
 - Every cargo build or test runs as an AgentCTL job (`agentctl project
   operations sinex`). While editing, run selected tests with
   `agentctl job start sinex focused --workspace <worktree> -- -p <package>
-  -E 'test(<name>)'`, and selected compilation with `compile -- -p <package>
-  [--tests]`, which sets the schema database and runs `cargo check --locked`
+  -E 'test(<name>)'` or `-- --changed` for tests affected by changes since
+  the merge base with `origin/master` (through `devkit::select`). Selected
+  compilation uses `compile -- -p <package> [--tests]`, which sets the schema database and runs `cargo check --locked`
   without adding workspace selection. Package selection limits the build; a
   name filter alone still builds the workspace. `fmt` formats; `check` runs
   fmt, boundaries and clippy against the schema database; `test` runs every
