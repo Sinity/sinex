@@ -51,29 +51,32 @@ fn emitted(config: &Config) -> Result<Vec<&'static str>, String> {
 /// Saved bindings keep their parser identity in their materials, including
 /// bindings planned by several parsers of the same source.
 async fn saved(conn: &mut PgConnection, host: &str) -> Result<Vec<Binding>, String> {
-    use sqlx::Row;
-    let rows = sqlx::query("SELECT b.binding, b.source, b.input, b.settings, array_agg(DISTINCT m.parser) FILTER (WHERE m.parser IS NOT NULL) AS parsers FROM raw.bindings b LEFT JOIN raw.inputs i ON i.binding = b.binding LEFT JOIN raw.materials m ON m.input_id = i.id GROUP BY b.binding")
-        .fetch_all(conn).await.map_err(|error| error.to_string())?;
+    let rows = sinex_store::bindings::all(conn)
+        .await
+        .map_err(|error| error.to_string())?;
     let mut out = Vec::new();
-    for row in rows {
+    for (row, mut parsers) in rows {
         let settings: Settings =
-            serde_json::from_value(row.get("settings")).map_err(|error| error.to_string())?;
+            serde_json::from_value(row.settings).map_err(|error| error.to_string())?;
         if settings.host != host {
             continue;
         }
-        let source: String = row.get("source");
-        let parsers: Option<Vec<String>> = row.get("parsers");
-        for parser in parsers.unwrap_or_else(|| {
-            sources::specs()
+        if parsers.is_empty() {
+            let declared: Vec<_> = sources::specs()
                 .into_iter()
-                .filter(|spec| spec.name == source)
+                .filter(|spec| spec.name == row.source)
                 .map(|spec| spec.parser.to_owned())
-                .collect()
-        }) {
+                .collect();
+            if declared.len() != 1 {
+                continue;
+            }
+            parsers = declared;
+        }
+        for parser in parsers {
             out.push(Binding {
-                name: row.get("binding"),
-                source: source.clone(),
-                input: std::path::PathBuf::from(row.get::<String, _>("input")),
+                name: row.binding.clone(),
+                source: row.source.clone(),
+                input: std::path::PathBuf::from(&row.input),
                 parser,
                 settings: settings.clone(),
             });

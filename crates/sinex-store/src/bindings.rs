@@ -44,3 +44,29 @@ pub async fn load(conn: &mut PgConnection, binding: &str) -> Result<Option<Store
     .fetch_optional(&mut *conn)
     .await?)
 }
+
+/// Saved bindings and the parser names of their retained materials.
+pub async fn all(conn: &mut PgConnection) -> Result<Vec<(Stored, Vec<String>)>> {
+    let rows = sqlx::query!(
+        r#"SELECT b.binding, b.source, b.input, b.settings,
+                  coalesce(array_agg(DISTINCT m.parser) FILTER (WHERE m.parser IS NOT NULL), '{}') AS "parsers!"
+           FROM raw.bindings b
+           LEFT JOIN raw.inputs i ON i.binding = b.binding
+           LEFT JOIN raw.materials m ON m.input_id = i.id
+           GROUP BY b.binding"#
+    ).fetch_all(conn).await?;
+    Ok(rows
+        .into_iter()
+        .map(|row| {
+            (
+                Stored {
+                    binding: row.binding,
+                    source: row.source,
+                    input: row.input,
+                    settings: row.settings,
+                },
+                row.parsers,
+            )
+        })
+        .collect())
+}

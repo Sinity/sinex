@@ -397,13 +397,13 @@ pub fn captures(
             if stream.capabilities.contains(&"watch") {
                 options["roots"] = json!(context.watch);
             }
-            if let Some(configured) = context.sources.get(spec.name) {
-                if let Some(configured) = configured.options.as_object() {
-                    if !options.is_object() {
-                        options = json!({});
-                    }
-                    options.as_object_mut().unwrap().extend(configured.clone());
+            if let Some(configured) = context.sources.get(spec.name)
+                && let Some(configured) = configured.options.as_object()
+            {
+                if !options.is_object() {
+                    options = json!({});
                 }
+                options.as_object_mut().unwrap().extend(configured.clone());
             }
             let (format, mut binding) = crate::live::binding(
                 format.name,
