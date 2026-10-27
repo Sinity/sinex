@@ -32,3 +32,15 @@ fn a_buffer_end_is_not_a_transaction_end() {
     assert!(frame(large.as_bytes(), false).0.is_empty());
     assert_eq!(complete(large.as_bytes()).0, [(0, large.len())]);
 }
+
+#[devkit::test]
+fn multiline_comment_bodies_do_not_turn_into_directives_at_buffer_boundaries() {
+    let input = b"comment\nfree text\n\n2030-01-01 is still comment text\nend comment\n2030-01-02 Entry\n  Assets:Example\n";
+    let expected = complete(input).0;
+    assert_eq!(expected.len(), 2);
+    for cut in 0..=input.len() {
+        let (mut records, through) = frame(&input[..cut], false);
+        records.extend(frame(&input[through..], true).0.into_iter().map(|(a,b)| (through+a,through+b)));
+        assert_eq!(records, expected, "cut {cut}");
+    }
+}

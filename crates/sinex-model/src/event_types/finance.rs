@@ -79,11 +79,26 @@ pub struct JournalDirective {
     pub includes: Vec<IncludeTarget>,
 }
 
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
+#[event(type = "journal.imported", key = ["host", "journal", "member", "member_duplicate", "block_hash", "duplicate", "included_from"], replace = repeat)]
+pub struct JournalImported {
+    pub host: String,
+    pub journal: String,
+    pub member: Option<String>,
+    pub member_duplicate: u64,
+    pub block_hash: String,
+    pub duplicate: u64,
+    pub included_from: Option<IncludedFrom>,
+    pub format: String,
+    pub text: String,
+}
+
 crate::payload_enum! {
     #[derive(Clone, Debug, PartialEq)]
     pub enum JournalRecord {
         Transaction(TransactionPosted),
         Directive(JournalDirective),
+        Imported(JournalImported),
     }
 }
 

@@ -308,3 +308,33 @@ fn parser_carry_measurement_preserves_nonadjacent_duplicates_without_a_record_li
     assert_eq!(carry.seen.len(), 1000);
     assert!(measurements.windows(2).all(|pair| pair[1].1 > pair[0].1));
 }
+
+#[devkit::test]
+fn three_authored_transactions_keep_multicurrency_postings_and_optional_narration() {
+    let input=b"; example\n\n2030-01-01 First\n  Assets:Example\n  Expenses:Example  TEST 10.50\n\n2030-01-02 ! Second|two\n  Assets:Example  -2 TEST\n  Expenses:Example  1 TEST\n  Expenses:Other  1 OTHER\n\n2030-01-03 Third\n  Assets:Example  0\n  Expenses:Example";
+    let mut carry=Carry::default();
+    let mut transactions=vec![];
+    let mut comments=0;
+    for (start,end) in framing::complete(input).0 {
+        let (records,next)=parser().parse(&&input[start..end],&carry,&RecordContext::none()).unwrap();
+        carry=next;
+        for record in records {
+            match record {
+                JournalRecord::Transaction(record)=>transactions.push(record),
+                JournalRecord::Directive(record)=>{assert_eq!(record.directive,"comment");comments+=1;},
+                JournalRecord::Imported(_)=>panic!("authored journal"),
+            }
+        }
+    }
+    assert_eq!(transactions.len(),3);
+    assert_eq!(comments,1);
+    assert_eq!(transactions[0].postings[1].amount.as_deref(),Some("10.50"));
+    assert_eq!(transactions[0].postings[1].currency.as_deref(),Some("TEST"));
+    assert_eq!(transactions[0].narration,None);
+    assert_eq!(transactions[1].status.as_deref(),Some("!"));
+    assert_eq!(transactions[1].postings.len(),3);
+    assert_eq!(transactions[1].postings[2].currency.as_deref(),Some("OTHER"));
+    assert_eq!(transactions[2].postings[0].currency,None);
+    assert!(transaction(b"2030-01-01\n").postings.is_empty());
+    assert_eq!(transaction(b"2030-01-01=02/01\n").resolved_effective_date.as_deref(),Some("2030-02-01"));
+}

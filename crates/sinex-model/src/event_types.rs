@@ -86,6 +86,7 @@ pub const ALL: &[RegisteredEventType] = &[
     info::<CommandImported>(),
     info::<finance::TransactionPosted>(),
     info::<finance::JournalDirective>(),
+    info::<finance::JournalImported>(),
     // Desktop
     info::<desktop::WindowFocused>(),
     info::<desktop::WindowOpened>(),

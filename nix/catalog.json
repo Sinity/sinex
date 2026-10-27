@@ -202,7 +202,8 @@
       ],
       "eventTypes": [
         "transaction.posted",
-        "journal.directive"
+        "journal.directive",
+        "journal.imported"
       ],
       "formats": [
         "hledger"

@@ -8,6 +8,9 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
 pub(super) fn plan(input: &Path, settings: &Settings) -> Result<Vec<Binding>, String> {
+    if settings.option("journal_format").is_some_and(|format| !matches!(format,"journal"|"timeclock"|"timedot")) {
+        return Err("unknown native journal format".into());
+    }
     let mut out = Vec::new();
     let mut active = BTreeSet::new();
     let roots = if input.is_dir() {
@@ -56,20 +59,21 @@ fn visit(
     out: &mut Vec<Binding>,
 ) -> Result<(), String> {
     let identity = std::fs::canonicalize(path).map_err(|e| format!("{}: {e}", path.display()))?;
-    active.insert(identity.clone());
     let bytes = std::fs::read(path).map_err(|e| format!("{}: {e}", path.display()))?;
+    active.insert(identity.clone());
     let mut includes = BTreeMap::<String, Vec<IncludeTarget>>::new();
     let mut year = initial_year;
     let mut counts = BTreeMap::<String, u64>::new();
     // Archives are read by the shared archive reader. Native journal include
     // paths refer to the local filesystem, never to an extracted temporary tree.
-    if let Ok(text) = std::str::from_utf8(&bytes) {
+    if settings.option("journal_format").unwrap_or("journal") == "journal"
+        && let Ok(text) = std::str::from_utf8(&bytes) {
         for (start, end) in framing::complete(&bytes).0 {
             let block = &text[start..end];
             let header = block.lines().next().unwrap_or("").trim();
             if let Some(value) = header
                 .strip_prefix('Y')
-                .or_else(|| header.strip_prefix("year "))
+                .or_else(|| header.strip_prefix("year ")).or_else(|| header.strip_prefix("apply year "))
             {
                 if let Ok(value) = super::split_comment(value).0.trim().parse::<i16>() {
                     year = Some(value);
@@ -83,6 +87,7 @@ fn visit(
             };
             let hash = blake3::hash(block.as_bytes()).to_hex().to_string();
             let duplicate = counts.entry(hash.clone()).or_default();
+            let key = format!("{hash}:{}", *duplicate);
             let from = IncludedFrom {
                 path: path.display().to_string(),
                 block_hash: hash.clone(),
@@ -93,7 +98,7 @@ fn visit(
             let targets = match resolve(path, target.trim(), settings) {
                 Ok(targets) => targets,
                 Err(reason) => {
-                    includes.entry(hash).or_default().push(IncludeTarget {
+                    includes.entry(key).or_default().push(IncludeTarget {
                         path: target.trim().into(),
                         reason: Some(reason),
                     });
@@ -104,10 +109,16 @@ fn visit(
                 let reason = match std::fs::canonicalize(&target) {
                     Err(e) => Some(format!("{}: {e}", target.display())),
                     Ok(id) if active.contains(&id) => Some("include cycle".into()),
-                    Ok(_) => match visit(
+                    Ok(_) => {
+                        let format = target_format(header, &target);
+                        let mut child_settings = settings.clone();
+                        let mut options = child_settings.options.as_object().cloned().unwrap_or_default();
+                        options.insert("journal_format".into(), json!(format));
+                        child_settings.options = options.into();
+                        match visit(
                         &target,
                         journal,
-                        settings,
+                        &child_settings,
                         year,
                         Some(from.clone()),
                         active,
@@ -115,10 +126,10 @@ fn visit(
                     ) {
                         Ok(()) => None,
                         Err(e) => Some(e),
-                    },
+                    }},
                 };
                 includes
-                    .entry(hash.clone())
+                    .entry(key.clone())
                     .or_default()
                     .push(IncludeTarget {
                         path: target.display().to_string(),
@@ -149,25 +160,38 @@ fn visit(
     Ok(())
 }
 
+fn target_format(header: &str, path: &Path) -> &'static str {
+    let target = header.strip_prefix("include").unwrap_or(header).trim_start();
+    for format in ["journal", "timeclock", "timedot"] {
+        if target.strip_prefix(format).is_some_and(|rest| rest.starts_with(':')) { return format; }
+    }
+    match path.extension().and_then(|s| s.to_str()) {
+        Some("timeclock") => "timeclock",
+        Some("timedot") => "timedot",
+        _ => "journal",
+    }
+}
+
 fn resolve(parent: &Path, target: &str, settings: &Settings) -> Result<Vec<PathBuf>, String> {
     if target.starts_with(['|', '!', '<']) || target.contains("://") {
         return Err(
             "include requires a local file; commands and remote imports are not executed".into(),
         );
     }
-    let target = if let Some(target) = target.strip_prefix("journal:") {
+    let target = if let Some(target) = target.strip_prefix("journal:").or_else(|| target.strip_prefix("timeclock:")).or_else(|| target.strip_prefix("timedot:")) {
         target
     } else {
         if let Some((format, _)) = target.split_once(':')
             && matches!(
                 format,
-                "csv" | "ssv" | "tsv" | "rules" | "timeclock" | "timedot"
+                "csv" | "ssv" | "tsv" | "rules"
             )
         {
             return Err(format!("{format} includes are not journal records"));
         }
         target
     };
+    let parent = if parent.is_absolute() { parent.to_path_buf() } else { std::env::current_dir().map_err(|e| e.to_string())?.join(parent) };
     let path = if let Some(rest) = target.strip_prefix("~/") {
         settings
             .option("include_home")
@@ -187,7 +211,7 @@ fn resolve(parent: &Path, target: &str, settings: &Settings) -> Result<Vec<PathB
     let root = Path::new(&pattern[..slash.max(1)]);
     let expression = glob_expression(pattern)?;
     let matcher = regex::Regex::new(&expression).map_err(|e| e.to_string())?;
-    let current = std::fs::canonicalize(parent).map_err(|e| e.to_string())?;
+    let current = std::fs::canonicalize(&parent).map_err(|e| e.to_string())?;
     let mut paths = Vec::new();
     let mut dirs = vec![root.to_path_buf()];
     let mut seen = BTreeSet::new();
