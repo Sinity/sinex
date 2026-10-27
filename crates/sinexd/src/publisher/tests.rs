@@ -583,7 +583,7 @@ async fn repeated_erasure_keeps_other_copies_until_their_acknowledgment(
         .await
         .unwrap();
     sqlx::query("INSERT INTO core.event_tombstones (event_id, source, event_type, operation_id) VALUES ($1, 'test.source', 'test.event', $2)")
-        .bind(id.0).bind(uuid::Uuid::new_v4()).execute(&mut conn).await.unwrap();
+        .bind(id.0).bind(uuid::Uuid::now_v7()).execute(&mut conn).await.unwrap();
     // The message was erased before a stop, while its pair was still stored.
     let stream = js.get_stream(subjects.confirmed_stream()).await.unwrap();
     stream.delete_message(1).await.unwrap();
