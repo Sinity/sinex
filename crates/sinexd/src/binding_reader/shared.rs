@@ -1,12 +1,12 @@
 //! One pass over a stored file shared by every compatible binding of it:
 //! the file is stored once (sealed when the bindings' class is), read forward
 //! once, and each binding's acquisitions are admitted as the pass reaches them.
+use super::Reading;
 use super::{Access, BindingReader};
 use crate::backfill::Totals;
 use crate::writer::WriterHandle;
 use serde_json::Value;
 use sinex_model::{Class, ObservationFacts, RunId};
-use sinex_source_core::Reading;
 use sinex_source_core::drivers;
 use sinex_source_core::shared_pass::{self, StoredFile};
 use sinex_store::{Blobs, positions};
@@ -217,7 +217,7 @@ pub(super) async fn read_shared(
         let result = async {
             let mut acquired = delivery.acquired.map_err(|e| e.to_string())?;
             if sinex_transport::private_mode::PrivateMode::default().on() {
-                return Err("private mode is on; admission stopped".into());
+                return Err("capture cancelled or private mode is on; admission stopped".into());
             }
             material.check()?;
             let (cursor, carry) = positions::load(conn, &b.binding.name)
@@ -229,15 +229,18 @@ pub(super) async fn read_shared(
                 .shared_carry(conn, &b.binding.name, carry, &acquired)
                 .await?;
             let total = totals[slot].as_mut().map_err(|e| e.clone())?;
+            let checked_stop = stop.clone();
             crate::intake::Intake {
                 writer,
                 run,
-                source: b.source.as_ref(),
+                source: b.source.clone(),
                 binding: &b.binding.name,
-                material: &material,
-                check: Arc::new(|| {
-                    if sinex_transport::private_mode::PrivateMode::default().on() {
-                        Err("private mode is on; admission stopped".into())
+                material: material.clone(),
+                check: Arc::new(move || {
+                    if *checked_stop.borrow()
+                        || sinex_transport::private_mode::PrivateMode::default().on()
+                    {
+                        Err("capture cancelled or private mode is on; admission stopped".into())
                     } else {
                         Ok(())
                     }
