@@ -388,7 +388,7 @@ fn offsets_finer_than_a_nanosecond_keep_their_text_without_inventing_a_timestamp
 
 #[devkit::test]
 fn a_header_named_cue_keeps_its_spoken_text() {
-    let rows=read(Format::WebVtt,b"WEBVTT\n00:00.000 --> 00:01.000\nspoken").unwrap();
-    assert_eq!(rows[0].text,"spoken");
-    assert_eq!(rows[0].extra["cue_id"],"WEBVTT");
+    let rows = read(Format::WebVtt, b"WEBVTT\n00:00.000 --> 00:01.000\nspoken").unwrap();
+    assert_eq!(rows[0].text, "spoken");
+    assert_eq!(rows[0].extra["cue_id"], "WEBVTT");
 }

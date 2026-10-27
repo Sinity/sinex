@@ -83,7 +83,6 @@ impl Carry {
             }
         }
     }
-
 }
 
 pub struct TranscriptParser {
@@ -211,7 +210,8 @@ impl TranscriptParser {
                 let heading = block.lines().next().unwrap_or_default();
                 let word = heading.split_ascii_whitespace().next().unwrap_or_default();
                 if self.format == Format::WebVtt
-                    && ((word == "WEBVTT" && !block.lines().skip(1).any(|line| line.contains("-->")))
+                    && ((word == "WEBVTT"
+                        && !block.lines().skip(1).any(|line| line.contains("-->")))
                         || word == "NOTE"
                         || matches!(heading.trim_end(), "STYLE" | "REGION"))
                 {
