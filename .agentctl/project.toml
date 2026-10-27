@@ -8,6 +8,11 @@ kind = "nix-develop"
 command = ["nix", "develop", "--command"]
 inherit = ["HOME", "USER", "LANG", "PATH", "TMPDIR", "XDG_RUNTIME_DIR", "CARGO_TARGET_DIR"]
 unset = ["DATABASE_URL", "PGHOST", "PGPORT", "PGDATABASE", "PGUSER", "SQLX_OFFLINE"]
+[environment.values]
+# Two builds run at once under the host cargo cap; -j8 each keeps them
+# inside their memory ceilings instead of each spawning one rustc per thread.
+CARGO_BUILD_JOBS = "8"
+
 [operations.check]
 description = "Format check, dependency boundaries and clippy against the schema database"
 exec = ["cargo", "run", "--locked", "--quiet", "-p", "xtask", "--", "check"]
@@ -115,3 +120,12 @@ scratch = "nvme"
 cache = "none"
 cap = "cargo"
 unit_properties = ["MemoryHigh=8G"]
+
+[operations.codex]
+description = "Run one Codex worker in this checkout: codex-worker <effort> <prompt-file> <output-schema> <output-dir> [model]"
+exec = ["codex-worker"]
+arguments = "required"
+pool = "codex"
+result = "exit"
+timeout_seconds = 14400
+cache = "none"
