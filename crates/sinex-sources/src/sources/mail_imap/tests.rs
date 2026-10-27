@@ -319,7 +319,7 @@ fn returned_uids_allow_progress_without_a_usable_uidnext() {
 #[devkit::test]
 fn partial_admission_keeps_unfed_uids_available_for_retry() {
     struct Discard;
-    impl crate::drivers::MaterialSink for Discard {
+    impl sinex_source_core::drivers::MaterialSink for Discard {
         fn put(&self, bytes: &[u8]) -> Result<String, String> {
             Ok(format!("blake3:{}", blake3::hash(bytes).to_hex()))
         }
@@ -331,14 +331,14 @@ fn partial_admission_keeps_unfed_uids_available_for_retry() {
     let imap = mail(port, Some("secret"), None);
     let acquired = imap.poll(&Value::Null).unwrap();
     let source = source();
-    let prepared = crate::drivers::prepare(
+    let prepared = sinex_source_core::drivers::prepare(
         &source,
         "imap-test",
         sinex_model::RunId::new(),
         acquired,
         Value::Null,
         &Discard,
-        crate::Limits {
+        sinex_source_core::Limits {
             max_events: 1,
             max_bytes: usize::MAX,
         },
@@ -367,7 +367,7 @@ fn partial_admission_keeps_unfed_uids_available_for_retry() {
 
 #[devkit::test]
 fn the_reader_retries_its_held_answer_without_asking_the_server_again() {
-    use crate::binding::Reader;
+    use sinex_source_core::binding::Reader;
     let port = server(vec![(4, M1), (7, M2)], 99, false);
     let mut reader = ImapReader {
         mail: mail(port, Some("secret"), None),

@@ -105,7 +105,7 @@ impl Api {
                 }
             }
             Request::Unlock { identity, minutes } => {
-                let identity = match sinex_store::sealed::parse_identity(&identity) {
+                let identity = match sinex_sealing::parse_identity(&identity) {
                     Ok(i) => i,
                     Err(e) => return refused(e.to_string()),
                 };
@@ -113,7 +113,7 @@ impl Api {
                 let Some(seconds) = minutes.checked_mul(60) else {
                     return refused("unlock duration exceeds u64 seconds");
                 };
-                let unlock = match crate::sealed_access::Unlock::new(
+                let unlock = match crate::sealing::Unlock::new(
                     identity,
                     std::time::Duration::from_secs(seconds),
                 ) {

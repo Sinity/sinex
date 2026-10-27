@@ -13,13 +13,13 @@
 //! A session row can be followed by a row whose first 13 cells are empty: the
 //! session's sound-level (noise) samples, not aligned to the header's times.
 //! It becomes a `sleep-noise` record of the session before it.
-use crate::drivers::export_archive::{ExportArchive, Framing, PART_BYTES};
-use crate::registry::{DeclaredSource, Driver, SourceSpec};
 use crate::sources::fields;
-use crate::{Parser, RecordError};
 use serde_json::{Map, Value, json};
 use sinex_model::event_types::health::HealthRecord;
 use sinex_model::{Class, Timestamp};
+use sinex_source_core::drivers::export_archive::{ExportArchive, Framing, PART_BYTES};
+use sinex_source_core::registry::{DeclaredSource, Driver, SourceSpec};
+use sinex_source_core::{Parser, RecordError};
 use std::path::PathBuf;
 
 pub const SPEC: SourceSpec = SourceSpec {
@@ -31,7 +31,10 @@ pub const SPEC: SourceSpec = SourceSpec {
     parser: "sleep-as-android",
     parser_version: 3,
     event_types: &["health.record"],
-    framer: crate::Framer::export(frame, crate::drivers::export_archive::Framing::Csv),
+    framer: sinex_source_core::Framer::export(
+        frame,
+        sinex_source_core::drivers::export_archive::Framing::Csv,
+    ),
 };
 
 pub struct SleepParser;
@@ -53,7 +56,7 @@ impl Parser for SleepParser {
         &self,
         record: &&[u8],
         carry: &Carry,
-        _context: &crate::RecordContext<'_>,
+        _context: &sinex_source_core::RecordContext<'_>,
     ) -> Result<(Vec<HealthRecord>, Carry), RecordError> {
         let cells = fields::csv_cells(record)?;
         if cells.first().map(String::as_str) == Some("Id") {
@@ -241,27 +244,28 @@ pub fn driver(path: PathBuf, host: String) -> ExportArchive {
 }
 
 /// `--read sleep-as-android=PATH`: each Sleep as Android export in PATH.
-pub const FORMAT: crate::binding::InputFormat = crate::binding::InputFormat {
-    name: "sleep-as-android",
-    specs: || vec![&SPEC],
-    plan: Some(|input, settings| {
-        Ok(crate::binding::per_file(
-            &SPEC,
-            input,
-            settings,
-            false,
-            crate::binding::any,
-        ))
-    }),
-    source: |_| Ok(Box::new(source())),
-    reader: Some(|b| {
-        Ok(crate::binding::shared(driver(
-            b.input.clone(),
-            b.settings.host.clone(),
-        )))
-    }),
-    capture: None,
-};
+pub const FORMAT: sinex_source_core::binding::InputFormat =
+    sinex_source_core::binding::InputFormat {
+        name: "sleep-as-android",
+        specs: || vec![&SPEC],
+        plan: Some(|input, settings| {
+            Ok(sinex_source_core::binding::per_file(
+                &SPEC,
+                input,
+                settings,
+                false,
+                sinex_source_core::binding::any,
+            ))
+        }),
+        source: |_| Ok(Box::new(source())),
+        reader: Some(|b| {
+            Ok(sinex_source_core::binding::shared(driver(
+                b.input.clone(),
+                b.settings.host.clone(),
+            )))
+        }),
+        capture: None,
+    };
 
 #[cfg(test)]
 mod tests;

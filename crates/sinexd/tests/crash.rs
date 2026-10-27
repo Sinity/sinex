@@ -553,7 +553,7 @@ async fn an_interrupted_replay_resumes_where_it_stopped() {
 /// A clipboard spool of two segments: `copy 42` alone in the first, `copies`
 /// other copies in the second. Each segment is read as its own material.
 fn clipboard_spool(dir: &Path, copies: usize) -> PathBuf {
-    use sinex_sources::drivers::live_stream;
+    use sinex_source_core::drivers::live_stream;
     use sinex_sources::sources::clipboard;
     let spool = dir.join("clipboard");
     std::fs::create_dir_all(&spool).unwrap();

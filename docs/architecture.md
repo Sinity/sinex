@@ -5,8 +5,10 @@ defines the terms; planned work is in Beads.
 
 ## Reading sources
 
-`sinex-sources` holds the source declarations, the shared drivers, record
-framing and the parsers. A driver gets bytes from an input; a parser reads one
+`sinex-source-core` holds the parser traits, drain, shared drivers and record
+framing. `sinex-sources` holds source declarations, parsers and the live loop.
+Its `full` feature selects archive, database, repository and network source
+families; capture-only nodes leave it off. A driver gets bytes from an input; a parser reads one
 framed record and opens no files, sockets or clocks. The drain around the
 parser attaches record locations, hashes, carry and record failures to each
 batch. Anything specific to one provider lives here, not in the store or the
@@ -52,8 +54,12 @@ the file under that row's lock, then the row. Deletion and admission both run
 in the writer, and the writer checks that every file a batch cites is present
 just before admitting it, so a batch never cites a file that is gone. A
 process that stops between writing bytes and admitting them leaves a file with
-no row; the daemon deletes such files when it starts, holding the writer, before
-any source reads.
+no row. Before installing a blob, the content store syncs its name in
+`unadmitted-blobs/`. The daemon checks those names against the database at
+start, holding the writer, before any source reads. After draining the writer
+at shutdown it removes the names that have rows. The first start of an existing
+store checks every file once, then syncs `unadmitted-blobs-ready` so later starts
+check only the recorded names.
 
 A failed admission is retried from the material the reader holds: the append,
 directory, SQLite-row and IMAP readers keep their newest material in memory
@@ -70,7 +76,8 @@ the material its committed cursor points at, and the daemon offers it that
 material and the parts before it, newest first, until the reader has enough.
 The parts are read a page at a time, so a reader that stops early reads no
 more of the part sequence. The append reader keeps the tail of the current
-revision's records, to align a rewrite.
+revision's records, to align a rewrite. It frames stored parts in chunks and
+keeps only the tail's range metadata, including one oversized record whole.
 
 The SQLite-row reader keeps each row's newest hash and the directory reader
 each file's size, modification time and content hash. Both save this reader
@@ -280,8 +287,10 @@ keys by hour.
 public commands and wire types without IO. `sinex-transport` holds the
 private-mode switch and the frame directories, so the daemon, drivers and CLI
 share them without the wire types touching the filesystem. CLI, MCP and HTTP
-are generated from the command table. `sinex-diagnostics` works while the
-daemon is down.
+are generated from the command table. `sinex-diagnostics` is a database-free client of `sinexd admin diagnostics`.
+Offline commands invoke the sibling daemon executable without starting the
+daemon. The database work lives in the daemon; the CLI has no store or SQLx
+dependency.
 
 Forecast issues and resolutions are ordinary `forecast.request` records. Both
 commands use `sinexd/src/intake.rs`, as library requests do: one
@@ -317,6 +326,10 @@ Shared blob storage, credential masking and the development tooling come from
 released `polylogue-sinex-common` versions.
 
 ## Sealing and excision
+
+`sinex-sealing` owns age and payload cryptography. The daemon's `sealing`
+module handles material keys, stored reads and batch protection through one
+material-reading interface. The store holds only the wrapped-key queries.
 
 A sealed source encrypts each material under its own data key, wrapped for the
 sealed class key; its events' payloads are encrypted under the same key, and

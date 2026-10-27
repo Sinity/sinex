@@ -7,13 +7,13 @@
 //!
 //! File names carry an output_index that changes between exports, so a thread is
 //! its sorted participants and a message is the thread, time and sender.
-use crate::drivers::export_archive::{ExportArchive, Framing, PART_BYTES};
-use crate::registry::{DeclaredSource, Driver, SourceSpec};
 use crate::sources::fields;
-use crate::{Parser, RecordError};
 use serde_json::{Map, Value};
 use sinex_model::Class;
 use sinex_model::event_types::communication::ConversationMessage;
+use sinex_source_core::drivers::export_archive::{ExportArchive, Framing, PART_BYTES};
+use sinex_source_core::registry::{DeclaredSource, Driver, SourceSpec};
+use sinex_source_core::{Parser, RecordError};
 use std::path::PathBuf;
 
 pub const SPEC: SourceSpec = SourceSpec {
@@ -25,7 +25,10 @@ pub const SPEC: SourceSpec = SourceSpec {
     parser: "facebook-messenger",
     parser_version: 1,
     event_types: &["conversation.message"],
-    framer: crate::Framer::export(frame, crate::drivers::export_archive::Framing::Whole),
+    framer: sinex_source_core::Framer::export(
+        frame,
+        sinex_source_core::drivers::export_archive::Framing::Whole,
+    ),
 };
 
 pub struct MessengerParser;
@@ -39,7 +42,7 @@ impl Parser for MessengerParser {
         &self,
         doc: &Map<String, Value>,
         _: &(),
-        _context: &crate::RecordContext<'_>,
+        _context: &sinex_source_core::RecordContext<'_>,
     ) -> Result<(Vec<ConversationMessage>, ()), RecordError> {
         let messages = doc
             .get("messages")
@@ -183,27 +186,28 @@ pub fn driver(path: PathBuf, host: String) -> ExportArchive {
 }
 
 /// `--read messenger=PATH`: each Messenger export in PATH.
-pub const FORMAT: crate::binding::InputFormat = crate::binding::InputFormat {
-    name: "messenger",
-    specs: || vec![&SPEC],
-    plan: Some(|input, settings| {
-        Ok(crate::binding::per_file(
-            &SPEC,
-            input,
-            settings,
-            false,
-            crate::binding::any,
-        ))
-    }),
-    source: |_| Ok(Box::new(source())),
-    reader: Some(|b| {
-        Ok(crate::binding::shared(driver(
-            b.input.clone(),
-            b.settings.host.clone(),
-        )))
-    }),
-    capture: None,
-};
+pub const FORMAT: sinex_source_core::binding::InputFormat =
+    sinex_source_core::binding::InputFormat {
+        name: "messenger",
+        specs: || vec![&SPEC],
+        plan: Some(|input, settings| {
+            Ok(sinex_source_core::binding::per_file(
+                &SPEC,
+                input,
+                settings,
+                false,
+                sinex_source_core::binding::any,
+            ))
+        }),
+        source: |_| Ok(Box::new(source())),
+        reader: Some(|b| {
+            Ok(sinex_source_core::binding::shared(driver(
+                b.input.clone(),
+                b.settings.host.clone(),
+            )))
+        }),
+        capture: None,
+    };
 
 #[cfg(test)]
 mod tests;

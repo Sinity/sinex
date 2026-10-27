@@ -71,7 +71,7 @@ self: {
             "max_wal_size": "16GB", "checkpoint_timeout": "30min",
             "checkpoint_completion_target": "0.9", "jit": "off",
             "synchronous_commit": "on", "fsync": "on",
-            "max_connections": "64", "shared_preload_libraries": "timescaledb",
+            "log_temp_files": "16MB", "max_connections": "64", "shared_preload_libraries": "timescaledb",
         }.items():
             shown = machine.succeed(f"sudo -u postgres psql -tAc 'show {setting}'").strip()
             assert shown == expected, f"{setting}: {shown!r} != {expected!r}"

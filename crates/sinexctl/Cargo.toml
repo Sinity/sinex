@@ -7,9 +7,9 @@ publish.workspace = true
 license.workspace = true
 
 [dependencies]
+sinex-diagnostics.workspace = true
 sinex-transport.workspace = true
 sinex-protocol = { workspace = true, features = ["cli"] }
-sinex-diagnostics.workspace = true
 clap.workspace = true
 serde_json.workspace = true
 tokio = { workspace = true, features = ["net", "io-std", "process"] }

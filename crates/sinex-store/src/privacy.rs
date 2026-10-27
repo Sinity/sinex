@@ -291,7 +291,7 @@ impl RuleSet {
         // A sealed payload is unreadable here by design: rules ran where it
         // was sealed, or never could. An event whose class is sealed must
         // arrive sealed; anything else fails closed.
-        if crate::sealed::is_sealed(&event.payload) {
+        if sinex_sealing::is_sealed(&event.payload) {
             event.class = Class::Sealed;
             return Ok(applied);
         }

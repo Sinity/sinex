@@ -8,16 +8,16 @@
 //! is only what is new since the previous snapshot of the same window
 //! ([`Windows`]); each sidecar is one `scrollback.window`. The kitty
 //! integration captures the same thing live (`session.integrations`).
-use crate::drain::RecordContext;
-use crate::drivers::dir_snapshot::DirSnapshot;
-use crate::registry::{DeclaredSource, Driver, SourceSpec};
 use crate::sources::fields;
 use crate::sources::terminal_text::strip_escapes;
-use crate::{Parser, RecordError};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use sinex_model::event_types::machine::{ScrollbackCaptured, ScrollbackWindow};
 use sinex_model::{Class, Timestamp};
+use sinex_source_core::drain::RecordContext;
+use sinex_source_core::drivers::dir_snapshot::DirSnapshot;
+use sinex_source_core::registry::{DeclaredSource, Driver, SourceSpec};
+use sinex_source_core::{Parser, RecordError};
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 
@@ -31,9 +31,9 @@ pub const SPEC: SourceSpec = SourceSpec {
     parser: "kitty-scrollback",
     parser_version: 1,
     event_types: &["scrollback.captured", "scrollback.window"],
-    framer: crate::Framer::export(
-        crate::drivers::export_archive::frame_whole,
-        crate::drivers::export_archive::Framing::Whole,
+    framer: sinex_source_core::Framer::export(
+        sinex_source_core::drivers::export_archive::frame_whole,
+        sinex_source_core::drivers::export_archive::Framing::Whole,
     ),
 };
 
@@ -314,19 +314,22 @@ pub fn driver(root: PathBuf, host: String) -> DirSnapshot {
 }
 
 /// `--read kitty-scrollback=DIR`: the lake's scrollback snapshots in DIR.
-pub const FORMAT: crate::binding::InputFormat = crate::binding::InputFormat {
-    name: "kitty-scrollback",
-    specs: || vec![&SPEC],
-    plan: Some(|input, settings| Ok(crate::binding::single(&SPEC, input, settings))),
-    source: |_| Ok(Box::new(source())),
-    reader: Some(|b| {
-        Ok(crate::binding::walked(driver(
-            b.input.clone(),
-            b.settings.host.clone(),
-        )))
-    }),
-    capture: None,
-};
+pub const FORMAT: sinex_source_core::binding::InputFormat =
+    sinex_source_core::binding::InputFormat {
+        name: "kitty-scrollback",
+        specs: || vec![&SPEC],
+        plan: Some(|input, settings| {
+            Ok(sinex_source_core::binding::single(&SPEC, input, settings))
+        }),
+        source: |_| Ok(Box::new(source())),
+        reader: Some(|b| {
+            Ok(sinex_source_core::binding::walked(driver(
+                b.input.clone(),
+                b.settings.host.clone(),
+            )))
+        }),
+        capture: None,
+    };
 
 #[cfg(test)]
 mod tests;

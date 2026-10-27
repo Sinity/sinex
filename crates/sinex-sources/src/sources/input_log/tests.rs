@@ -1,6 +1,6 @@
 use super::*;
-use crate::{DrainInput, Limits, drain};
 use sinex_model::{EventPayload, MaterialId, ReadingOrder, RecordOutcome, TimeQuality};
+use sinex_source_core::{DrainInput, Limits, drain};
 
 fn parse_all(lines: &[&str]) -> Vec<Input> {
     let mut carry = Numbering::default();
@@ -8,7 +8,7 @@ fn parse_all(lines: &[&str]) -> Vec<Input> {
     for line in lines {
         let row: Map<String, Value> = serde_json::from_str(line).unwrap();
         let (events, next) = InputLogParser
-            .parse(&row, &carry, &crate::RecordContext::none())
+            .parse(&row, &carry, &sinex_source_core::RecordContext::none())
             .unwrap();
         out.extend(events);
         carry = next;
@@ -19,7 +19,11 @@ fn parse_all(lines: &[&str]) -> Vec<Input> {
 fn parse_error(line: &str) -> String {
     let row: Map<String, Value> = serde_json::from_str(line).unwrap();
     InputLogParser
-        .parse(&row, &Numbering::default(), &crate::RecordContext::none())
+        .parse(
+            &row,
+            &Numbering::default(),
+            &sinex_source_core::RecordContext::none(),
+        )
         .unwrap_err()
         .to_string()
 }
@@ -184,7 +188,7 @@ fn observations(
     let chunks = drain(
         &InputLogParser,
         DrainInput {
-            manifest: crate::RecordContext::none().manifest,
+            manifest: sinex_source_core::RecordContext::none().manifest,
             source: SPEC.name,
             class: Class::Guarded,
             material: MaterialId(uuid::Uuid::nil()),

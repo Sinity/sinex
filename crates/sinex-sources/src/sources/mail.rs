@@ -14,14 +14,14 @@
 //!
 //! A message deleted from a Maildir is not recorded as removed yet: the
 //! removed file's marker names only its path, not its Message-ID.
-use crate::drain::RecordContext;
-use crate::drivers::dir_snapshot::DirSnapshot;
-use crate::drivers::export_archive::{ExportArchive, Framing, PART_BYTES};
-use crate::registry::{DeclaredSource, Driver, SourceSpec};
-use crate::{Parser, RecordError};
 use mailparse::{MailHeaderMap, ParsedMail};
 use sinex_model::event_types::communication::{MailAttachment, MailMessage};
 use sinex_model::{Class, Timestamp};
+use sinex_source_core::drain::RecordContext;
+use sinex_source_core::drivers::dir_snapshot::DirSnapshot;
+use sinex_source_core::drivers::export_archive::{ExportArchive, Framing, PART_BYTES};
+use sinex_source_core::registry::{DeclaredSource, Driver, SourceSpec};
+use sinex_source_core::{Parser, RecordError};
 use std::path::PathBuf;
 
 pub const MBOX: SourceSpec = SourceSpec {
@@ -33,9 +33,9 @@ pub const MBOX: SourceSpec = SourceSpec {
     parser: "rfc5322-mail",
     parser_version: 1,
     event_types: &["mail.message"],
-    framer: crate::Framer::export(
-        crate::drivers::export_archive::frame_mbox,
-        crate::drivers::export_archive::Framing::Mbox,
+    framer: sinex_source_core::Framer::export(
+        sinex_source_core::drivers::export_archive::frame_mbox,
+        sinex_source_core::drivers::export_archive::Framing::Mbox,
     ),
 };
 
@@ -48,9 +48,9 @@ pub const MAILDIR: SourceSpec = SourceSpec {
     parser: "rfc5322-mail",
     parser_version: 2,
     event_types: &["mail.message"],
-    framer: crate::Framer::export(
-        crate::drivers::export_archive::frame_whole,
-        crate::drivers::export_archive::Framing::Whole,
+    framer: sinex_source_core::Framer::export(
+        sinex_source_core::drivers::export_archive::frame_whole,
+        sinex_source_core::drivers::export_archive::Framing::Whole,
     ),
 };
 
@@ -261,42 +261,48 @@ pub fn maildir_driver(root: PathBuf, host: String) -> DirSnapshot {
 }
 
 /// `--read mbox=PATH`: each mbox file in PATH.
-pub const MBOX_FORMAT: crate::binding::InputFormat = crate::binding::InputFormat {
-    name: "mbox",
-    specs: || vec![&MBOX],
-    plan: Some(|input, settings| {
-        Ok(crate::binding::per_file(
-            &MBOX,
-            input,
-            settings,
-            false,
-            crate::binding::any,
-        ))
-    }),
-    source: |_| Ok(Box::new(mbox_source())),
-    reader: Some(|b| {
-        Ok(crate::binding::shared(mbox_driver(
-            b.input.clone(),
-            b.settings.host.clone(),
-        )))
-    }),
-    capture: None,
-};
+pub const MBOX_FORMAT: sinex_source_core::binding::InputFormat =
+    sinex_source_core::binding::InputFormat {
+        name: "mbox",
+        specs: || vec![&MBOX],
+        plan: Some(|input, settings| {
+            Ok(sinex_source_core::binding::per_file(
+                &MBOX,
+                input,
+                settings,
+                false,
+                sinex_source_core::binding::any,
+            ))
+        }),
+        source: |_| Ok(Box::new(mbox_source())),
+        reader: Some(|b| {
+            Ok(sinex_source_core::binding::shared(mbox_driver(
+                b.input.clone(),
+                b.settings.host.clone(),
+            )))
+        }),
+        capture: None,
+    };
 
 /// `--read maildir=PATH`: the Maildir at PATH, walked as one directory.
-pub const MAILDIR_FORMAT: crate::binding::InputFormat = crate::binding::InputFormat {
-    name: "maildir",
-    specs: || vec![&MAILDIR],
-    plan: Some(|input, settings| Ok(crate::binding::single(&MAILDIR, input, settings))),
-    source: |_| Ok(Box::new(maildir_source())),
-    reader: Some(|b| {
-        Ok(crate::binding::walked(maildir_driver(
-            b.input.clone(),
-            b.settings.host.clone(),
-        )))
-    }),
-    capture: None,
-};
+pub const MAILDIR_FORMAT: sinex_source_core::binding::InputFormat =
+    sinex_source_core::binding::InputFormat {
+        name: "maildir",
+        specs: || vec![&MAILDIR],
+        plan: Some(|input, settings| {
+            Ok(sinex_source_core::binding::single(
+                &MAILDIR, input, settings,
+            ))
+        }),
+        source: |_| Ok(Box::new(maildir_source())),
+        reader: Some(|b| {
+            Ok(sinex_source_core::binding::walked(maildir_driver(
+                b.input.clone(),
+                b.settings.host.clone(),
+            )))
+        }),
+        capture: None,
+    };
 
 #[cfg(test)]
 mod tests;

@@ -8,9 +8,9 @@
 //! 9:34:44 PM CEST` for an entry from December), so a time is read as an
 //! instant at the label's offset. The time line is found by its pattern, never
 //! by position: Gemini entries hold multi-line text.
-use crate::{RecordError, RecordShape};
 use serde::Serialize;
 use sinex_model::Timestamp;
+use sinex_source_core::{RecordError, RecordShape};
 
 /// Where every activity cell starts.
 pub const CELL: &[u8] = b"<div class=\"outer-cell";

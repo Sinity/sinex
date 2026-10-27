@@ -38,6 +38,10 @@ pub(crate) fn upgrades() -> Vec<Vec<String>> {
             "GRANT INSERT, UPDATE, DELETE ON core.excised_materials TO sinex_writer".into(),
         ],
         vec![
+            "DROP INDEX IF EXISTS core.events_coverage".into(),
+            crate::tables::COVERAGE_RUNS.into(),
+        ],
+        vec![
             crate::tables::ENCODE_EQUIVALENCE_KEY.into(),
             crate::tables::DECODE_EQUIVALENCE_KEY.into(),
             "CREATE TEMPORARY TABLE live_keys_before ON COMMIT DROP AS TABLE core.live_equivalence".into(),

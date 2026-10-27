@@ -123,7 +123,7 @@ fn scoped_plain_seek_owns_verified_bytes_and_rechecks_cancellation_on_cached_rea
             .read_plain_seek(&name, bytes.len() as u64 + 1, || Ok(()))
             .is_err()
     );
-    let key = crate::sealed::new_key().unwrap();
+    let key = sinex_sealing::new_key().unwrap();
     let sealed = blobs.put_sealed(bytes, &key).unwrap();
     assert!(
         blobs
@@ -198,8 +198,56 @@ async fn files_without_a_row_are_deleted_and_the_rest_kept(db: devkit::pg::TestD
         assert!(!blobs.contains(name).unwrap(), "{name} has no row and goes");
     }
 
-    // A second run finds nothing more.
+    // A second start checks no historical files, even though the store keeps
+    // more names than one database page.
+    assert_eq!(blobs.unadmitted_names().unwrap().count(), 0);
+    let full = blobs.names().unwrap().filter_map(|name| name.ok()).count();
+    assert_eq!(full, with_rows.len());
+    eprintln!(
+        "startup names checked: full_walk={full} tracked=0 kept={}",
+        with_rows.len()
+    );
     let again = delete_files_without_rows(&mut conn, &blobs).await.unwrap();
     assert!(again.deleted.is_empty());
     std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[devkit::test]
+async fn later_sweeps_check_only_names_written_since_the_previous_sweep(
+    db: devkit::pg::TestDatabase,
+) {
+    use sqlx::Connection;
+    let mut conn = sqlx::PgConnection::connect(&db.url(None)).await.unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    let blobs = Blobs::open(dir.path()).unwrap();
+    let name = blobs.put(b"kept history").unwrap();
+    sqlx::query("INSERT INTO core.blobs (hash, size, status) VALUES ($1, 12, 'present')")
+        .bind(&name)
+        .execute(&mut conn)
+        .await
+        .unwrap();
+    delete_files_without_rows(&mut conn, &blobs).await.unwrap();
+    assert_eq!(blobs.unadmitted_names().unwrap().count(), 0);
+    // Listing history now would report this file. The recorded names do not.
+    std::fs::write(dir.path().join("blobs/history.txt"), b"unrelated").unwrap();
+    let orphan = blobs.put(b"stopped before admission").unwrap();
+    assert_eq!(blobs.unadmitted_names().unwrap().count(), 1);
+    // A clean shutdown forgets admitted names but leaves unadmitted ones.
+    blobs.put(b"kept history").unwrap();
+    assert_eq!(blobs.unadmitted_names().unwrap().count(), 2);
+    forget_files_with_rows(&mut conn, &blobs).await.unwrap();
+    assert_eq!(blobs.unadmitted_names().unwrap().count(), 1);
+    // A stop before installation leaves only the recorded name.
+    blobs
+        .note_unadmitted(hashed_blobs::Hash::of(b"not installed"))
+        .unwrap();
+    let reopened = Blobs::open(dir.path()).unwrap();
+    let found = delete_files_without_rows(&mut conn, &reopened)
+        .await
+        .unwrap();
+    assert_eq!(found.deleted, [orphan]);
+    assert!(found.not_blobs.is_empty());
+    assert!(blobs.contains(&name).unwrap());
+    assert_eq!(blobs.unadmitted_names().unwrap().count(), 0);
+    eprintln!("sweep names: initial=1 unchanged=0 installed=1 uninstalled=1");
 }

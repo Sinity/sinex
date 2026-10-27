@@ -1,6 +1,7 @@
 use super::*;
 use sinex_model::{BatchKind, RunId};
-use sinex_sources::{binding, sources::atuin};
+use sinex_source_core::binding;
+use sinex_sources::sources::atuin;
 
 struct FailedSink;
 impl drivers::MaterialSink for FailedSink {

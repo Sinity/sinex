@@ -7,10 +7,11 @@ publish.workspace = true
 license.workspace = true
 
 [dependencies]
+sinex-source-core.workspace = true
 serde_json.workspace = true
 sinex-model.workspace = true
 sinex-protocol.workspace = true
-sinex-sources.workspace = true
+sinex-sources = { workspace = true, default-features = false }
 
 clap.workspace = true
 tokio.workspace = true

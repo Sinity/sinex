@@ -1,10 +1,8 @@
 use super::*;
 use crate::reader_context::ReaderContext;
 use serde_json::json;
-use sinex_sources::{
-    Settings,
-    sources::google_takeout::{self, fit, tasks},
-};
+use sinex_source_core::Settings;
+use sinex_sources::sources::google_takeout::{self, fit, tasks};
 use std::io::Write;
 
 fn archive(path: &std::path::Path) -> usize {
@@ -40,7 +38,7 @@ fn archive(path: &std::path::Path) -> usize {
 fn takeout_driver(
     binding: &Binding,
     part_bytes: usize,
-) -> sinex_sources::drivers::export_archive::ExportArchive {
+) -> sinex_source_core::drivers::export_archive::ExportArchive {
     let host = binding.settings.host.clone();
     let mut driver = if binding.source == fit::SPEC.name {
         fit::driver(binding.input.clone(), host)
@@ -294,19 +292,20 @@ async fn cancelled_archive_worker_joins_and_restart_catches_up(db: devkit::pg::T
 
 struct SmallBatches(Box<dyn Source>);
 impl Source for SmallBatches {
-    fn spec(&self) -> &sinex_sources::SourceSpec {
+    fn spec(&self) -> &sinex_source_core::SourceSpec {
         self.0.spec()
     }
     fn drainer<'a>(
         &'a self,
-        mut input: sinex_sources::DrainInput<'a>,
+        mut input: sinex_source_core::DrainInput<'a>,
     ) -> Result<
         Box<
-            dyn Iterator<Item = Result<sinex_sources::DrainOutput, sinex_sources::RecordError>>
-                + Send
+            dyn Iterator<
+                    Item = Result<sinex_source_core::DrainOutput, sinex_source_core::RecordError>,
+                > + Send
                 + 'a,
         >,
-        sinex_sources::RecordError,
+        sinex_source_core::RecordError,
     > {
         input.limits.max_events = 2;
         self.0.drainer(input)
@@ -337,7 +336,7 @@ async fn sealed_archive_restart_replay_and_class_changes_preserve_exact_material
         }
         let mut ctx = ReaderContext::open(&url, &dir.join("store")).await.unwrap();
         sqlx::query("INSERT INTO privacy.source_classes(source,class,author) VALUES ('google.fit','sealed','synthetic')").execute(&mut ctx.read_conn).await.unwrap();
-        let identity = sinex_store::sealed::Identity::generate();
+        let identity = sinex_sealing::Identity::generate();
         let recipient = identity.to_public();
         let sink = Sink(ctx.blobs.clone());
         let (_stop, stop) = watch::channel(false);
@@ -381,7 +380,7 @@ async fn sealed_archive_restart_replay_and_class_changes_preserve_exact_material
             .unwrap();
         let cursor = pass_cursor(&checkpoint.0);
         assert_eq!(cursor.record, 2);
-        assert!(checkpoint.1.is_null() || sinex_store::sealed::is_sealed(&checkpoint.1));
+        assert!(checkpoint.1.is_null() || sinex_sealing::is_sealed(&checkpoint.1));
         let partial = cursor.material.unwrap();
         let original = cursor.original_material.unwrap();
         assert_ne!(partial, original);
@@ -421,8 +420,7 @@ async fn sealed_archive_restart_replay_and_class_changes_preserve_exact_material
             checkpoint
         );
         let unlock =
-            crate::sealed_access::Unlock::new(identity, std::time::Duration::from_secs(60))
-                .unwrap();
+            crate::sealing::Unlock::new(identity, std::time::Duration::from_secs(60)).unwrap();
         let mut restarted = make_bound();
         let unlocked = read(
             &mut ctx.read_conn,
@@ -466,7 +464,7 @@ async fn sealed_archive_restart_replay_and_class_changes_preserve_exact_material
             3,
             "every material has its own key"
         );
-        assert!(before.iter().all(|e| sinex_store::sealed::is_sealed(&e.2)));
+        assert!(before.iter().all(|e| sinex_sealing::is_sealed(&e.2)));
         let scope = crate::replay::Scope {
             binding: Some(name.clone()),
             ..Default::default()
@@ -506,8 +504,8 @@ async fn sealed_archive_restart_replay_and_class_changes_preserve_exact_material
                 .await
                 .unwrap();
             assert_eq!(
-                sinex_store::sealed::unseal_payload(&old.2, &key.key).unwrap(),
-                sinex_store::sealed::unseal_payload(&new.2, &key.key).unwrap()
+                sinex_sealing::unseal_payload(&old.2, &key.key).unwrap(),
+                sinex_sealing::unseal_payload(&new.2, &key.key).unwrap()
             );
         }
         unlock.revoke();
@@ -596,7 +594,7 @@ async fn sealed_bindings_never_share_data_keys_or_original_blob_names(
     archive(&path);
     let mut ctx = ReaderContext::open(&url, &dir.join("store")).await.unwrap();
     sqlx::query("INSERT INTO privacy.source_classes(source,class,author) VALUES ('google.fit','sealed','synthetic'),('google.tasks','sealed','synthetic')").execute(&mut ctx.read_conn).await.unwrap();
-    let identity = sinex_store::sealed::Identity::generate();
+    let identity = sinex_sealing::Identity::generate();
     let recipient = identity.to_public();
     let sink = Sink(ctx.blobs.clone());
     let (_stop, stop) = watch::channel(false);

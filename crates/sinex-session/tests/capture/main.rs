@@ -119,7 +119,7 @@ exec sleep 30
                 "--nats",
                 nats.url(),
                 "--subject-root",
-                &nats.prefix(),
+                nats.prefix(),
                 "--producer",
                 "fixture",
                 "--clipboard",

@@ -1,11 +1,9 @@
 //! A stored material's records read through one verified reader. Sealed bodies
 //! stay off disk.
-use sinex_sources::shared_pass::ReadSeek;
-use sinex_sources::{Framer, drivers};
+use sinex_source_core::shared_pass::ReadSeek;
+use sinex_source_core::{Framer, drivers};
 use std::io::{Read, Seek, SeekFrom};
 use std::sync::Mutex;
-mod material;
-pub(crate) use material::{MaterialOnDemand, open, open_checked};
 pub(crate) type ReadCheck = std::sync::Arc<dyn Fn() -> Result<(), String> + Send + Sync>;
 
 pub(crate) struct StoredReader {
@@ -36,7 +34,7 @@ impl StoredReader {
         drivers::stored_records_from(manifest, &mut *reader, framer).map_err(|e| e.to_string())
     }
 }
-impl sinex_sources::drain::RecordRead for StoredReader {
+impl sinex_source_core::drain::RecordRead for StoredReader {
     fn length(&self) -> u64 {
         self.length
     }

@@ -14,7 +14,7 @@ fn entries_with_continuations() {
     };
     let (a, b) = records[1];
     let (out, ()) = p
-        .parse(&&LOG[a..b], &(), &crate::RecordContext::none())
+        .parse(&&LOG[a..b], &(), &sinex_source_core::RecordContext::none())
         .unwrap();
     assert_eq!(out[0].text, "another one\n  continued here");
     assert_eq!(
@@ -25,7 +25,7 @@ fn entries_with_continuations() {
         .parse(
             &&b"- **SPECIAL:** [[note]].\n"[..],
             &(),
-            &crate::RecordContext::none(),
+            &sinex_source_core::RecordContext::none(),
         )
         .unwrap();
     assert_eq!(out[0].written_at, None);
@@ -35,7 +35,7 @@ fn entries_with_continuations() {
         .parse(
             &&b"- **2025-08-18** a day\n"[..],
             &(),
-            &crate::RecordContext::none(),
+            &sinex_source_core::RecordContext::none(),
         )
         .unwrap();
     assert_eq!(
@@ -46,7 +46,7 @@ fn entries_with_continuations() {
         .parse(
             &&b"- **2025-08-03:** a day\n"[..],
             &(),
-            &crate::RecordContext::none(),
+            &sinex_source_core::RecordContext::none(),
         )
         .unwrap();
     assert_eq!(out[0].label.as_deref(), Some("2025-08-03"));
@@ -54,7 +54,7 @@ fn entries_with_continuations() {
         .parse(
             &&b"- **2025-07-30 21:57** minutes\n"[..],
             &(),
-            &crate::RecordContext::none(),
+            &sinex_source_core::RecordContext::none(),
         )
         .unwrap();
     assert_eq!(
@@ -79,7 +79,11 @@ fn steering_rows_take_their_tables_time() {
     let row = json!({"_rowid": 1, "id": "c1", "text": "x", "created_at": "2026-10-12T08:00:00+02:00",
         "status": "open", "forecast_p": 0.7});
     let (out, ()) = p
-        .parse(row.as_object().unwrap(), &(), &crate::RecordContext::none())
+        .parse(
+            row.as_object().unwrap(),
+            &(),
+            &sinex_source_core::RecordContext::none(),
+        )
         .unwrap();
     use sinex_model::EventPayload;
     assert_eq!(
@@ -105,7 +109,7 @@ fn steering_rows_take_their_tables_time() {
 
 #[devkit::test]
 fn each_steering_table_is_its_own_binding() {
-    let settings = crate::Settings {
+    let settings = sinex_source_core::Settings {
         host: "h".into(),
         zone: None,
         options: Value::Null,
@@ -121,10 +125,10 @@ fn each_steering_table_is_its_own_binding() {
 
 #[devkit::test]
 fn unknown_steering_shapes_are_accounted_without_losing_later_coordinates() {
-    use crate::{DrainInput, Limits, Source};
     use sinex_model::{MaterialId, Origin, ReadingOrder, RecordLocation, RecordOutcome};
+    use sinex_source_core::{DrainInput, Limits, Source};
     let bytes = b"{\"_rowid\":1,\"id\":\"c1\",\"status\":\"open\",\"text\":\"before\"}\n{\"_rowid\":2,\"id\":\"unknown\",\"future_column\":true}\n{\"_rowid\":3,\"id\":\"c3\",\"forecast_p\":null,\"text\":\"after\"}\n";
-    let (records, covered) = crate::drivers::append_file::lines(bytes);
+    let (records, covered) = sinex_source_core::drivers::append_file::lines(bytes);
     assert_eq!(covered, bytes.len());
     let material = MaterialId::new();
     let outputs = steering("commitments")
@@ -138,7 +142,7 @@ fn unknown_steering_shapes_are_accounted_without_losing_later_coordinates() {
             carry: Value::Null,
             reading_order: &|at| ReadingOrder(at as i64),
             limits: Limits::default(),
-            manifest: crate::RecordContext::none().manifest,
+            manifest: sinex_source_core::RecordContext::none().manifest,
         })
         .unwrap();
     assert_eq!(outputs.len(), 1);

@@ -10,7 +10,7 @@ fn old_and_new_fix_shapes() {
             .as_object()
             .unwrap(),
             &(),
-            &crate::RecordContext::none(),
+            &sinex_source_core::RecordContext::none(),
         )
         .unwrap();
     assert!((out[0].latitude - 49.7031663).abs() < 1e-9);
@@ -26,7 +26,7 @@ fn old_and_new_fix_shapes() {
             .as_object()
             .unwrap(),
             &(),
-            &crate::RecordContext::none(),
+            &sinex_source_core::RecordContext::none(),
         )
         .unwrap();
     assert_eq!(out[0].device.as_deref(), Some("12345"));

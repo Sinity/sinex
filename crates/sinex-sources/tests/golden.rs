@@ -12,7 +12,7 @@
 //! rewrites `expected.json` from the current output, for review in the diff.
 use serde_json::{Value, json};
 use sinex_model::{MaterialId, ReadingOrder, RecordOutcome};
-use sinex_sources::{DrainInput, Limits};
+use sinex_source_core::{DrainInput, Limits};
 use std::path::{Path, PathBuf};
 
 const HOST: &str = "golden-host";

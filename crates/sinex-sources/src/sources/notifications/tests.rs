@@ -11,7 +11,7 @@ fn rec(line: &str) -> Map<String, Value> {
 
 fn parse(line: &str) -> Vec<Notification> {
     NotificationsParser
-        .parse(&rec(line), &(), &crate::RecordContext::none())
+        .parse(&rec(line), &(), &sinex_source_core::RecordContext::none())
         .unwrap()
         .0
 }

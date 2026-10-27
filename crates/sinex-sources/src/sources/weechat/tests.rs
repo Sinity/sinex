@@ -4,10 +4,14 @@ fn parse(line: &str) -> ChatMessage {
     let p = WeeChatParser {
         zone: jiff::tz::TimeZone::get("Europe/Warsaw").unwrap(),
     };
-    p.parse(&line.as_bytes(), &(), &crate::RecordContext::none())
-        .unwrap()
-        .0
-        .remove(0)
+    p.parse(
+        &line.as_bytes(),
+        &(),
+        &sinex_source_core::RecordContext::none(),
+    )
+    .unwrap()
+    .0
+    .remove(0)
 }
 
 #[devkit::test]
@@ -69,7 +73,7 @@ fn empty_lines_are_not_messages() {
         zone: jiff::tz::TimeZone::UTC,
     };
     assert!(
-        p.parse(&&b"\n"[..], &(), &crate::RecordContext::none())
+        p.parse(&&b"\n"[..], &(), &sinex_source_core::RecordContext::none())
             .unwrap()
             .0
             .is_empty()

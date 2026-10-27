@@ -4169,6 +4169,7 @@ dependencies = [
  "serde_json",
  "sinex-model",
  "sinex-protocol",
+ "sinex-source-core",
  "sinex-sources",
  "tokio",
 ]
@@ -4191,10 +4192,6 @@ name = "sinex-diagnostics"
 version = "0.1.0"
 dependencies = [
  "serde_json",
- "sinex-model",
- "sinex-schema",
- "sinex-store",
- "time",
  "tokio",
 ]
 
@@ -4268,6 +4265,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "sinex-sealing"
+version = "0.1.0"
+dependencies = [
+ "age",
+ "base64 0.22.1",
+ "blake3",
+ "chacha20poly1305",
+ "devkit",
+ "getrandom 0.3.4",
+ "hashed-blobs",
+ "serde_json",
+ "sinex-model",
+ "thiserror 2.0.21",
+ "uuid",
+]
+
+[[package]]
 name = "sinex-session"
 version = "0.1.0"
 dependencies = [
@@ -4276,9 +4290,42 @@ dependencies = [
  "serde_json",
  "sinex-model",
  "sinex-protocol",
+ "sinex-source-core",
  "sinex-sources",
  "tempfile",
  "tokio",
+]
+
+[[package]]
+name = "sinex-source-core"
+version = "0.1.0"
+dependencies = [
+ "allocation-counter",
+ "async-nats",
+ "base64 0.22.1",
+ "blake3",
+ "csv",
+ "devkit",
+ "flate2",
+ "futures",
+ "hashed-blobs",
+ "imbl",
+ "jiff",
+ "proptest",
+ "rusqlite",
+ "rustix",
+ "serde",
+ "serde_json",
+ "sinex-model",
+ "sinex-protocol",
+ "sinex-transport",
+ "tar",
+ "tempfile",
+ "thiserror 2.0.21",
+ "time",
+ "tokio",
+ "uuid",
+ "zip",
 ]
 
 [[package]]
@@ -4312,6 +4359,7 @@ dependencies = [
  "sha2 0.10.9",
  "sinex-model",
  "sinex-protocol",
+ "sinex-source-core",
  "sinex-transport",
  "tar",
  "tempfile",
@@ -4328,10 +4376,8 @@ dependencies = [
 name = "sinex-store"
 version = "0.1.0"
 dependencies = [
- "age",
  "base64 0.22.1",
  "blake3",
- "chacha20poly1305",
  "devkit",
  "futures",
  "getrandom 0.3.4",
@@ -4344,6 +4390,7 @@ dependencies = [
  "serde_json",
  "sinex-model",
  "sinex-schema",
+ "sinex-sealing",
  "sqlx",
  "tempfile",
  "thiserror 2.0.21",
@@ -4383,7 +4430,6 @@ dependencies = [
 name = "sinexd"
 version = "0.1.0"
 dependencies = [
- "age",
  "async-nats",
  "axum",
  "base64 0.22.1",
@@ -4407,6 +4453,8 @@ dependencies = [
  "sinex-model",
  "sinex-protocol",
  "sinex-schema",
+ "sinex-sealing",
+ "sinex-source-core",
  "sinex-sources",
  "sinex-store",
  "sinex-transport",

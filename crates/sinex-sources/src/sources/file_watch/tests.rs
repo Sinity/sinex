@@ -38,7 +38,7 @@ fn renames_keep_both_ends_and_odd_paths_survive() {
         .parse(
             &rec(json!({"kind": "renamed", "paths": ["/a/x", "/a/y"], "is_dir": null})),
             &(),
-            &crate::RecordContext::none(),
+            &sinex_source_core::RecordContext::none(),
         )
         .unwrap();
     assert_eq!(out[0].path.as_deref(), Some("/a/x"));
@@ -47,7 +47,7 @@ fn renames_keep_both_ends_and_odd_paths_survive() {
         .parse(
             &rec(json!({"kind": "created", "paths": [{"hex": "2fff"}], "is_dir": false})),
             &(),
-            &crate::RecordContext::none(),
+            &sinex_source_core::RecordContext::none(),
         )
         .unwrap();
     assert_eq!(
@@ -55,7 +55,7 @@ fn renames_keep_both_ends_and_odd_paths_survive() {
         (None, Some("2fff"))
     );
     let (out, ()) = FileWatchParser
-        .parse(&rec(json!({"kind": "unwatched", "paths": ["/big"], "note": "inotify watch limit reached"})), &(), &crate::RecordContext::none())
+        .parse(&rec(json!({"kind": "unwatched", "paths": ["/big"], "note": "inotify watch limit reached"})), &(), &sinex_source_core::RecordContext::none())
         .unwrap();
     assert_eq!(out[0].note.as_deref(), Some("inotify watch limit reached"));
 }
@@ -85,9 +85,10 @@ fn capture_sees_changes_including_in_new_directories() {
     let m = acquired.material.unwrap();
     let mut seen = Vec::new();
     for (s, e) in &m.records {
-        let r: Map<String, Value> = serde_json::from_slice(&m.body()[*s..*e]).unwrap();
+        let r: Map<String, Value> =
+            serde_json::from_slice(&crate::test_support::body(&m)[*s..*e]).unwrap();
         for c in FileWatchParser
-            .parse(&r, &(), &crate::RecordContext::none())
+            .parse(&r, &(), &sinex_source_core::RecordContext::none())
             .unwrap()
             .0
         {

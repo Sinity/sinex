@@ -2,14 +2,13 @@
 //! the file is stored once (sealed when the bindings' class is), read forward
 //! once, and each binding's acquisitions are admitted as the pass reaches them.
 use super::{Access, BindingReader};
-use crate::backfill::{self, Totals};
-use crate::material_sink::Sink;
+use crate::backfill::Totals;
 use crate::writer::WriterHandle;
 use serde_json::Value;
 use sinex_model::{Class, ObservationFacts, RunId};
-use sinex_sources::Reading;
-use sinex_sources::drivers;
-use sinex_sources::shared_pass::{self, StoredFile};
+use sinex_source_core::Reading;
+use sinex_source_core::drivers;
+use sinex_source_core::shared_pass::{self, StoredFile};
 use sinex_store::{Blobs, positions};
 use sqlx::PgConnection;
 use std::io::Read;
@@ -51,11 +50,16 @@ impl Drop for Cancel {
 struct InterruptibleReader<R> {
     input: R,
     stop: Arc<AtomicBool>,
+    private: Arc<std::sync::Mutex<sinex_transport::private_mode::Cached>>,
 }
 impl<R: Read> Read for InterruptibleReader<R> {
     fn read(&mut self, bytes: &mut [u8]) -> std::io::Result<usize> {
         if self.stop.load(Ordering::Relaxed)
-            || sinex_transport::private_mode::PrivateMode::default().on()
+            || self
+                .private
+                .lock()
+                .map_err(|_| std::io::Error::other("private-mode check poisoned"))?
+                .on()
         {
             return Err(std::io::Error::other("capture cancelled"));
         }
@@ -69,45 +73,21 @@ pub(super) async fn read_shared(
     blobs: &Blobs,
     writer: &WriterHandle,
     run: RunId,
-    sink: &Sink,
     readers: &mut [BindingReader],
     pass: &SharedFileRead,
     mut stop: watch::Receiver<bool>,
     access: Access<'_>,
 ) -> Result<Vec<Result<Totals, String>>, String> {
     let started = std::time::Instant::now();
+    let private = Arc::new(std::sync::Mutex::new(
+        sinex_transport::private_mode::Cached::new(
+            sinex_transport::private_mode::PrivateMode::default(),
+            std::time::Duration::from_millis(250),
+        ),
+    ));
     let cancel = Cancel(Arc::new(AtomicBool::new(false)));
-    let sealing = if pass.class == Class::Sealed {
-        let configured = if access.recipient.is_none() {
-            crate::material_sink::class_key()?
-        } else {
-            None
-        };
-        let recipient = access
-            .recipient
-            .cloned()
-            .or(configured)
-            .or_else(|| access.unlock.map(|a| a.recipient()))
-            .ok_or("sealed capture requires the class key's public recipient")?;
-        Some(Arc::new(crate::material_sink::SealingSink::new(
-            blobs.clone(),
-            recipient,
-        )))
-    } else {
-        None
-    };
-    // Reading a stored sealed copy needs the key of the material that holds
-    // it; a sealed group has one binding.
-    if let (Some(stored), Some(sealing)) = (&pass.stored, &sealing) {
-        let unlock = access
-            .unlock
-            .ok_or("continuing a sealed file needs an operator unlock")?;
-        let material = stored
-            .material
-            .ok_or("a sealed stored copy names no material")?;
-        let key = unlock.data_key(conn, material).await?;
-        sealing.restore_key(stored.blob.clone(), key)?;
-    }
+    let material = crate::sealing::Materials::archive(blobs.clone(), pass.class, access)?;
+    material.restore_archive(conn, pass.stored.as_ref()).await?;
     let stored_copy = pass
         .stored
         .as_ref()
@@ -146,10 +126,8 @@ pub(super) async fn read_shared(
     };
     let path = shared.path().to_owned();
     let facts = pass.facts.clone();
-    let store = blobs.clone();
-    let material_sink = Sink(blobs.clone());
-    let worker_sealing = sealing.clone();
-    let unlock = access.unlock.cloned();
+    let worker_material = material.clone();
+    let operation = material.clone();
     let cancelled = Arc::clone(&cancel.0);
     let (send, mut receive) = mpsc::channel::<PollDelivery>(1);
     let worker = tokio::task::spawn_blocking(move || {
@@ -161,11 +139,9 @@ pub(super) async fn read_shared(
                 let input = InterruptibleReader {
                     input,
                     stop: Arc::clone(&cancelled),
+                    private: Arc::clone(&private),
                 };
-                let blob = match &worker_sealing {
-                    Some(sealing) => sealing.put_reader(input)?,
-                    None => store.put_reader(input).map_err(|e| e.to_string())?,
-                };
+                let blob = worker_material.store_reader(input)?;
                 let after = drivers::file_facts(&path).map_err(|e| e.to_string())?;
                 if !same_file(&facts, &after) {
                     return Err(
@@ -176,43 +152,34 @@ pub(super) async fn read_shared(
             }
         };
         let verify_stop = Arc::clone(&cancelled);
+        let verify_private = Arc::clone(&private);
         let check = move || {
             if verify_stop.load(Ordering::Relaxed)
-                || sinex_transport::private_mode::PrivateMode::default().on()
+                || verify_private
+                    .lock()
+                    .map_err(|_| std::io::Error::other("private-mode check poisoned"))?
+                    .on()
             {
-                return Err(std::io::Error::other("verification cancelled").into());
+                return Err(std::io::Error::other("verification cancelled"));
             }
-            if let Some(unlock) = &unlock {
-                unlock.check().map_err(std::io::Error::other)?;
-            }
+            operation.check().map_err(std::io::Error::other)?;
             Ok(())
         };
-        let input = match &worker_sealing {
-            Some(sealing) => {
-                let key = sealing.key(&blob)?;
+        let input = match worker_material.archive_input(&blob, length, check)? {
+            shared_pass::Input::Seekable(input) => {
                 shared_pass::Input::Seekable(Box::new(InterruptibleReader {
-                    input: store
-                        .read_sealed(
-                            &blob,
-                            Some(length),
-                            &key,
-                            crate::sealed_access::read_limits(length)?,
-                            check,
-                        )
-                        .map_err(|e| e.to_string())?,
+                    input,
                     stop: Arc::clone(&cancelled),
+                    private: Arc::clone(&private),
                 }))
             }
-            None => shared_pass::Input::Sequential(Box::new(InterruptibleReader {
-                input: store
-                    .read_plain(&blob, Some(length), check)
-                    .map_err(|e| e.to_string())?,
-                stop: Arc::clone(&cancelled),
-            })),
-        };
-        let archive_sink: &dyn drivers::MaterialSink = match &worker_sealing {
-            Some(sealing) => sealing.as_ref(),
-            None => &material_sink,
+            shared_pass::Input::Sequential(input) => {
+                shared_pass::Input::Sequential(Box::new(InterruptibleReader {
+                    input,
+                    stop: Arc::clone(&cancelled),
+                    private: Arc::clone(&private),
+                }))
+            }
         };
         shared_pass::read(
             input,
@@ -221,7 +188,7 @@ pub(super) async fn read_shared(
             facts,
             cancelled,
             routes,
-            archive_sink,
+            worker_material.sink(),
             &mut |index, acquired| {
                 let (ack, answer) = std::sync::mpsc::sync_channel(0);
                 send.blocking_send(PollDelivery {
@@ -252,41 +219,22 @@ pub(super) async fn read_shared(
             if sinex_transport::private_mode::PrivateMode::default().on() {
                 return Err("private mode is on; admission stopped".into());
             }
-            if let Some(unlock) = access.unlock {
-                unlock.check()?;
-            }
+            material.check()?;
             let (cursor, carry) = positions::load(conn, &b.binding.name)
                 .await
                 .map_err(|e| e.to_string())?
                 .unwrap_or((Value::Null, Value::Null));
             drivers::note_previous_through(&cursor, &mut acquired);
-            let carry = if acquired.starts_over().map_err(|e| e.to_string())? {
-                Value::Null
-            } else if acquired.material.is_some() {
-                match &sealing {
-                    Some(sealing) => {
-                        backfill::open_carry(conn, &b.binding.name, &carry, sealing, access.unlock)
-                            .await?
-                    }
-                    None => carry,
-                }
-            } else {
-                carry
-            };
-            let archive_sink: &dyn drivers::MaterialSink = match &sealing {
-                Some(sealing) => sealing.as_ref(),
-                None => sink,
-            };
+            let carry = material
+                .shared_carry(conn, &b.binding.name, carry, &acquired)
+                .await?;
             let total = totals[slot].as_mut().map_err(|e| e.clone())?;
             crate::intake::Intake {
                 writer,
                 run,
                 source: b.source.as_ref(),
                 binding: &b.binding.name,
-                sink: archive_sink,
-                sealing: sealing.as_deref(),
-                unlock: access.unlock,
-                class: pass.class,
+                material: &material,
                 check: Arc::new(|| {
                     if sinex_transport::private_mode::PrivateMode::default().on() {
                         Err("private mode is on; admission stopped".into())
@@ -296,13 +244,7 @@ pub(super) async fn read_shared(
                 }),
                 priority: crate::writer::Priority::Bulk,
                 atomic: false,
-                registered: matches!(
-                    acquired.material.as_ref().and_then(|m| m.stored.as_ref()),
-                    Some(drivers::StoredBytes::Blob {
-                        records: Some(_),
-                        ..
-                    })
-                ),
+                registered: crate::sealing::registered(&acquired),
             }
             .submit(acquired, carry, total)
             .await
@@ -345,3 +287,6 @@ impl<R: Read + std::io::Seek> std::io::Seek for InterruptibleReader<R> {
         self.input.seek(position)
     }
 }
+
+#[cfg(test)]
+mod tests;

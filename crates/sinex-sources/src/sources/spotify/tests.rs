@@ -7,7 +7,11 @@ fn extended_rows_start_before_they_stop() {
         "master_metadata_track_name": "Thus Spake the Nightspirit", "spotify_track_uri": "spotify:track:2W",
         "skipped": null, "shuffle": false, "offline_timestamp": null});
     let (p, ()) = SpotifyParser
-        .parse(row.as_object().unwrap(), &(), &crate::RecordContext::none())
+        .parse(
+            row.as_object().unwrap(),
+            &(),
+            &sinex_source_core::RecordContext::none(),
+        )
         .unwrap();
     assert_eq!(
         p[0].ended_at,
@@ -27,7 +31,11 @@ fn account_data_rows_and_podcasts() {
     let row = json!({"endTime": "2025-02-28 14:17", "podcastName": "Histories of Mysteries",
         "episodeName": "LUCA", "msPlayed": 12756});
     let (p, ()) = SpotifyParser
-        .parse(row.as_object().unwrap(), &(), &crate::RecordContext::none())
+        .parse(
+            row.as_object().unwrap(),
+            &(),
+            &sinex_source_core::RecordContext::none(),
+        )
         .unwrap();
     assert_eq!(p[0].show_name.as_deref(), Some("Histories of Mysteries"));
     assert_eq!(
@@ -39,7 +47,7 @@ fn account_data_rows_and_podcasts() {
             .parse(
                 json!({"x": 1}).as_object().unwrap(),
                 &(),
-                &crate::RecordContext::none()
+                &sinex_source_core::RecordContext::none()
             )
             .is_err()
     );

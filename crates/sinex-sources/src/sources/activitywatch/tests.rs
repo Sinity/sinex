@@ -1,6 +1,6 @@
 use super::*;
-use crate::drivers::sqlite_rows::RowState;
 use serde_json::json;
+use sinex_source_core::drivers::sqlite_rows::RowState;
 
 fn row(
     id: i64,
@@ -36,7 +36,7 @@ fn run(rows: &[Map<String, Value>]) -> (Vec<Activity>, OpenSpans) {
     let mut out = Vec::new();
     for r in rows {
         let (e, next) = ActivityWatchParser
-            .parse(r, &carry, &crate::RecordContext::none())
+            .parse(r, &carry, &sinex_source_core::RecordContext::none())
             .unwrap();
         out.extend(e);
         carry = next;
@@ -91,7 +91,7 @@ fn a_heartbeat_extending_the_last_row_extends_its_span() {
         .parse(
             &win(2, 2, 9, "kitty", "a"),
             &carry,
-            &crate::RecordContext::none(),
+            &sinex_source_core::RecordContext::none(),
         )
         .unwrap();
     assert_eq!(spans(&out), vec![(1, "a".into(), 9, 2)]);
@@ -110,7 +110,7 @@ fn reading_history_again_reproduces_the_same_spans() {
     let mut again = Vec::new();
     for r in &rows {
         let (e, next) = ActivityWatchParser
-            .parse(r, &c, &crate::RecordContext::none())
+            .parse(r, &c, &sinex_source_core::RecordContext::none())
             .unwrap();
         again.extend(e);
         c = next;
@@ -157,7 +157,11 @@ fn rfc3339_times_from_the_python_server_are_read() {
     r.insert("starttime".into(), json!("2026-01-01T00:00:00Z"));
     r.insert("endtime".into(), json!("2026-01-01T00:00:05.5Z"));
     let (out, _) = ActivityWatchParser
-        .parse(&r, &OpenSpans::default(), &crate::RecordContext::none())
+        .parse(
+            &r,
+            &OpenSpans::default(),
+            &sinex_source_core::RecordContext::none(),
+        )
         .unwrap();
     assert!(
         matches!(&out[0], Activity::Window(w) if w.ended_at.unix_ns() - w.started_at.unix_ns() == 5_500_000_000)
@@ -182,9 +186,10 @@ fn the_driver_reads_the_join_and_sees_heartbeat_growth() {
     let mut state = RowState::default();
     let first = d.poll(&Value::Null, &mut state).unwrap();
     let m = first.material.as_ref().unwrap();
-    let read_row = |material: &crate::drivers::NewMaterial| -> Map<String, Value> {
+    let read_row = |material: &sinex_source_core::drivers::NewMaterial| -> Map<String, Value> {
         use std::os::unix::fs::FileExt;
-        let Some(crate::drivers::StoredBytes::FramedFile(file)) = &material.stored else {
+        let Some(sinex_source_core::drivers::StoredBytes::FramedFile(file)) = &material.stored
+        else {
             panic!("SQLite rows use staged bytes")
         };
         let (start, end) = material.records[0];
