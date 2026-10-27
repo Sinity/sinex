@@ -163,3 +163,32 @@ fn socket_paths_remain_one_connection_parameter() {
         "postgresql:///sinex?host=/realm/bench%20one/pg%26user%3Dother&user=sinex"
     );
 }
+
+#[devkit::test]
+fn disposable_postgres_stops_after_measurement_and_startup_errors() {
+    let root = env::temp_dir().join(format!("bc-{}", std::process::id()));
+    fs::create_dir(&root).unwrap();
+    let settings = ["shared_buffers=16MB".into()];
+    let measured = (|| -> Result<(), String> {
+        let _cluster = Cluster::start(&root.join("measurement"), true, &settings)?;
+        Err("measurement failed".into())
+    })();
+    assert_eq!(measured.unwrap_err(), "measurement failed");
+    let started = Cluster::start(
+        &root.join("startup"),
+        true,
+        &["unknown_benchmark_setting=invalid".into()],
+    );
+    assert!(started.is_err());
+    for name in ["measurement", "startup"] {
+        let status = Command::new("pg_ctl")
+            .arg("-D")
+            .arg(root.join(name).join("data"))
+            .arg("status")
+            .stdout(std::process::Stdio::null())
+            .status()
+            .unwrap();
+        assert_eq!(status.code(), Some(3), "{name} server still runs");
+    }
+    fs::remove_dir_all(root).unwrap();
+}
