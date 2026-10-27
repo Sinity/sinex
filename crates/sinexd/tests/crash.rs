@@ -457,16 +457,22 @@ backfill_steps! { Inputs::multiple_batches();
 /// Kill a replay at a step; then run it again and compare with an
 /// uninterrupted replay: the same live readings, every event once.
 async fn replay_survives(lock_sql: &str) {
+    let started = Instant::now();
+    let note = |phase| eprintln!("replay {phase} after {:?}", started.elapsed());
     let inputs = Inputs::multiple_batches();
+    note("inputs ready");
     let expected = {
         let reference = Target::new(&inputs);
         finish(&mut reference.backfill(&inputs));
+        note("reference backfill complete");
         finish(&mut reference.replay(&["--binding", &inputs.zsh_binding()]));
+        note("reference replay complete");
         state(&mut reference.connect().await).await
     };
 
     let target = Target::new(&inputs);
     finish(&mut target.backfill(&inputs));
+    note("target backfill complete");
     let before = state(&mut target.connect().await).await;
     assert_eq!(before.live, expected.live, "replay changes no content");
     kill_at(
@@ -476,6 +482,7 @@ async fn replay_survives(lock_sql: &str) {
         lock_sql,
     )
     .await;
+    note("target operation finished");
     consistent(&target).await;
     assert_eq!(
         state(&mut target.connect().await).await,
@@ -483,6 +490,8 @@ async fn replay_survives(lock_sql: &str) {
         "a killed sequence changed nothing"
     );
     finish(&mut target.replay(&["--binding", &inputs.zsh_binding()]));
+    note("retried replay complete");
+    note("target operation finished");
     consistent(&target).await;
     assert_eq!(state(&mut target.connect().await).await, expected);
     assert_eq!(
