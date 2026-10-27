@@ -198,6 +198,18 @@ impl Parser for SleepCsvParser {
 
 impl SleepCsvParser {
     fn resolve(&self, raw: &str) -> Result<(Option<Timestamp>, Option<String>), RecordError> {
+        let bad = || {
+            RecordError::new("invalid sleep CSV local timestamp; expected ISO date and clock time")
+        };
+        let clock = raw.as_bytes().get(10..16).ok_or_else(bad)?;
+        if !matches!(clock[0], b'T' | b't' | b' ')
+            || clock[3] != b':'
+            || ![clock[1], clock[2], clock[4], clock[5]]
+                .iter()
+                .all(u8::is_ascii_digit)
+        {
+            return Err(bad());
+        }
         if let Ok(at) = raw.parse::<jiff::Timestamp>() {
             let at = Timestamp::from_unix_ns(at.as_nanosecond())
                 .map_err(|_| RecordError::new("sleep CSV timestamp is out of range"))?;
