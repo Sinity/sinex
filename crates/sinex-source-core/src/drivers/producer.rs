@@ -339,13 +339,24 @@ impl Producer {
                         _ => false,
                     };
                     if material_refused {
-                        return Err(Error::Refused { frame: id, reason, recorded: true });
+                        return Err(Error::Refused {
+                            frame: id,
+                            reason,
+                            recorded: true,
+                        });
                     }
                     acknowledgments.push(None);
                     refused = true;
                     write_durably(
-                        &state.join("refused").join(format!("{}.json", blake3::hash(frame.frame().as_bytes()).to_hex())),
-                        &serde_json::to_vec(&UnacknowledgedFrames { frames: frames[index..].to_vec(), position: position.clone() }).expect("frames serialize"),
+                        &state.join("refused").join(format!(
+                            "{}.json",
+                            blake3::hash(frame.frame().as_bytes()).to_hex()
+                        )),
+                        &serde_json::to_vec(&UnacknowledgedFrames {
+                            frames: frames[index..].to_vec(),
+                            position: position.clone(),
+                        })
+                        .expect("frames serialize"),
                     )?;
                     eprintln!("Sinex refused frame {id}: {reason}; skipping recorded refusal");
                 }

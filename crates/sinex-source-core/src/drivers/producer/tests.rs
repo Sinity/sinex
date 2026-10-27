@@ -528,8 +528,11 @@ async fn a_refused_large_material_keeps_its_bytes_and_batch_pending() {
     }
     .save(&state, "binding")
     .unwrap();
-    assert!(matches!(producer.position("binding", &state, &store).await, Err(Error::Refused {recorded:true,..})));
-    assert!(Position::load(&state,"binding").unwrap().cursor.is_null());
+    assert!(matches!(
+        producer.position("binding", &state, &store).await,
+        Err(Error::Refused { recorded: true, .. })
+    ));
+    assert!(Position::load(&state, "binding").unwrap().cursor.is_null());
     assert_eq!(received.lock().unwrap().len(), 1);
     assert!(
         frame_bytes::snapshot(
@@ -541,7 +544,12 @@ async fn a_refused_large_material_keeps_its_bytes_and_batch_pending() {
         )
         .is_ok()
     );
-    let pending = UnacknowledgedFrames::load(&state,"binding").unwrap().unwrap();
-    assert_eq!(pending.frames.len(),2);
-    assert_eq!(Producer::unacknowledged_frames("binding",&state).unwrap(),2);
+    let pending = UnacknowledgedFrames::load(&state, "binding")
+        .unwrap()
+        .unwrap();
+    assert_eq!(pending.frames.len(), 2);
+    assert_eq!(
+        Producer::unacknowledged_frames("binding", &state).unwrap(),
+        2
+    );
 }
