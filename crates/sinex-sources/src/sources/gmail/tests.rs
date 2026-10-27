@@ -196,11 +196,12 @@ fn automatic_reconciliation_preserves_the_admitted_byte_position() {
         serde_json::from_value(cursor["material"].clone()).ok()
     );
     assert_eq!(material.part_index, 5);
-    let next = (material.cursor_at)(material.bytes.len()).unwrap();
+    let end = material.records.last().unwrap().1;
+    let next = (material.cursor_at)(end).unwrap();
     assert_eq!(next["api"]["mode"], "list");
     assert_eq!(next["api"]["initial_history_id"], "new-baseline");
     assert!(next["last_order"].as_i64().unwrap() > 123);
-    assert_eq!(next["through"], material.bytes.len());
+    assert_eq!(next["through"], end);
 }
 
 #[test]
