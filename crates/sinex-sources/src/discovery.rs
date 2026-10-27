@@ -224,7 +224,7 @@ fn paths(location: &Location, context: &DiscoveryContext) -> Result<Vec<PathBuf>
     })
 }
 
-/// A format owns its locations and planner. Shared source names retain all formats.
+/// A format owns its locations and planner. Shared source names keep all formats.
 pub fn discover_format(format: &InputFormat, context: &DiscoveryContext) -> Vec<DiscoveredInput> {
     let mut out = Vec::new();
     for spec in (format.specs)() {
