@@ -52,13 +52,14 @@ pub fn discover(format: &InputFormat, context: &DiscoveryContext) -> Vec<Discove
         for binding in std::mem::take(&mut input.bindings) {
             if !selected {
                 match matches(format.name, &binding.input) {
-                    Ok(true) => {},
+                    Ok(true) => {}
                     Ok(false) => continue,
                     Err(reason) => {
                         let mut failed = input.clone();
                         failed.input = Some(binding.input.clone());
                         failed.settings = binding.settings.clone();
-                        failed.availability = sinex_source_core::discovery::Availability::Unavailable;
+                        failed.availability =
+                            sinex_source_core::discovery::Availability::Unavailable;
                         failed.reason = Some(reason);
                         failures.push(failed);
                         continue;
