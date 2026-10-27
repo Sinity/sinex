@@ -3,6 +3,7 @@ use crate::sources;
 use serde_json::json;
 pub use sinex_source_core::discovery::*;
 use sinex_source_core::{Binding, InputFormat, Settings};
+use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
 #[cfg(not(feature = "full"))]
@@ -361,13 +362,25 @@ fn capability(context: &DiscoveryContext, name: &str) -> bool {
     }
 }
 
+/// Unavailable acquisition inputs leave their existing spool readers selected.
+#[derive(Debug, Default)]
+pub struct CapturePlan {
+    pub bindings: Vec<(&'static InputFormat, Binding)>,
+    pub exclude: BTreeSet<String>,
+}
+
 /// The same spool names as explicit session selections, so positions survive discovery.
-pub fn captures(
-    context: &DiscoveryContext,
-    owner: Owner,
-) -> Result<Vec<(&'static InputFormat, Binding)>, String> {
+pub fn captures(context: &DiscoveryContext, owner: Owner) -> Result<CapturePlan, String> {
     validate(context)?;
-    Ok(select_captures(context, owner, sources::formats()))
+    Ok(CapturePlan {
+        bindings: select_captures(context, owner, sources::formats()),
+        exclude: context
+            .exclude
+            .iter()
+            .filter(|(_, exclusion)| exclusion.is_some())
+            .map(|(source, _)| source.clone())
+            .collect(),
+    })
 }
 
 fn select_captures(

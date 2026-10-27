@@ -159,15 +159,7 @@ fn capture_source(
     (format.capture.expect("live formats capture"))(&binding, stop)
 }
 
-fn requested(
-    run: &Run,
-) -> Result<
-    Vec<(
-        &'static sinex_source_core::InputFormat,
-        sinex_source_core::Binding,
-    )>,
-    String,
-> {
+fn requested(run: &Run) -> Result<sinex_sources::discovery::CapturePlan, String> {
     use sinex_sources::discovery::{self, Configuration, DiscoveryContext, Owner};
     let configuration = run
         .sources

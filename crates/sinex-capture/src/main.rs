@@ -108,9 +108,10 @@ async fn run(cli: Cli) -> Result<(), String> {
         &store,
         &positions,
         || {
-            let mut bindings = discovery::captures(&context, Owner::System)?;
-            bindings.extend(discovery::captures(&context, Owner::Session)?);
-            Ok(bindings)
+            let mut plan = discovery::captures(&context, Owner::System)?;
+            plan.bindings
+                .extend(discovery::captures(&context, Owner::Session)?.bindings);
+            Ok(plan)
         },
         Duration::from_secs(cli.every),
         None,
