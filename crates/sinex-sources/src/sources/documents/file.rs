@@ -17,13 +17,13 @@ struct Cursor {
     content: Option<String>,
     missing: bool,
 }
-pub struct FileReader {
+pub(super) struct FileReader {
     path: PathBuf,
     host: String,
     held: Option<sinex_source_core::drivers::held::HeldMaterial>,
 }
 impl FileReader {
-    pub fn new(path: PathBuf, host: String) -> Self {
+    pub(super) fn new(path: PathBuf, host: String) -> Self {
         Self {
             path,
             host,

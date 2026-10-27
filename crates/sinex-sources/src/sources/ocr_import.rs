@@ -55,6 +55,7 @@ impl Parser for OcrParser {
     type Record<'a> = &'a [u8];
     type Carry = Carry;
     type Payload = OcrSegment;
+    const READS_RECORD_INDEX: bool = true;
     fn record_hash(&self, raw: &[u8], context: &RecordContext<'_>) -> [u8; 32] {
         super::transcript::hash_with_metadata(raw, context)
     }
@@ -67,6 +68,7 @@ impl Parser for OcrParser {
         let text =
             std::str::from_utf8(record).map_err(|_| RecordError::new("OCR input is not UTF-8"))?;
         let mut carry = carry.at(context);
+        carry.next = super::transcript::record_index(context).unwrap_or(carry.next);
         let mut payload = OcrSegment {
             input: self.input.clone(),
             segment_index: carry.next,
