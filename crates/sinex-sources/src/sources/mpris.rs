@@ -202,7 +202,7 @@ pub const FORMAT: crate::binding::InputFormat = crate::binding::InputFormat {
     plan: Some(|spool, settings| Ok(crate::binding::single(&SPEC, spool, settings))),
     source: |_| Ok(Box::new(source())),
     reader: Some(|b| {
-        Ok(crate::binding::stateless(driver(
+        Ok(crate::binding::polled(driver(
             b.input.clone(),
             b.settings.host.clone(),
         )))
