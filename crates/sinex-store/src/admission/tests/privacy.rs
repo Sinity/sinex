@@ -8,7 +8,6 @@ use crate::read_models::tests::catch_up_search_text;
 use sinex_model::event_types::{CommandExecuted, CommandImported};
 use sinex_model::{Class, MaterialId, Origin, ReadingOrder, RecordLocation, RunId};
 use sinex_model::{RecordOutcome, Timestamp};
-use sqlx::Connection;
 
 const SECRET: &str = "hunter2-correct-horse";
 

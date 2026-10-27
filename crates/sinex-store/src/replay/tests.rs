@@ -6,7 +6,6 @@ use sinex_model::{
     ArchiveRequest, Batch, BatchKind, Class, Event, MaterialId, Origin, ReadingOrder,
     RecordLocation, RecordOutcome, ReplayScope, RunId, Timestamp,
 };
-use sqlx::Connection;
 
 fn reading(material: MaterialId, key: &str, command: &str) -> Event {
     Event::build(

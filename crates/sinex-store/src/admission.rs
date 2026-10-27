@@ -115,6 +115,7 @@ pub(crate) async fn admit(
         BatchKind::Derived { .. } | BatchKind::Api { .. } | BatchKind::Replay { .. } => {}
     }
     outcome.timings.insert("registration", started.elapsed());
+    let started = std::time::Instant::now();
     for request in &batch.archive {
         if let ArchiveRequest::Replay { scope, operation } = request {
             let (archived, dirty) = archive::replay_scope(conn, scope, *operation, keys).await?;
@@ -123,17 +124,24 @@ pub(crate) async fn admit(
         }
     }
 
+    outcome.timings.insert("replay_archive", started.elapsed());
     let mut events: Vec<Event> = batch.events().cloned().collect();
     let started = std::time::Instant::now();
     apply_privacy(conn, cache, batch, &mut events).await?;
     outcome.timings.insert("privacy", started.elapsed());
+    let started = std::time::Instant::now();
     removed_at_source(conn, batch, &mut events).await?;
+    outcome
+        .timings
+        .insert("removed_at_source", started.elapsed());
 
     if !events.is_empty() {
         let classified = classify::stage_and_classify(conn, &events, &mut outcome).await?;
         let started = std::time::Instant::now();
         sqlx::query!(
-            "DELETE FROM core.admission_stage WHERE NOT (ord = ANY($1::integer[]))",
+            "DELETE FROM core.admission_stage AS staged
+             WHERE NOT EXISTS (SELECT 1 FROM unnest($1::integer[]) AS admitted(ord)
+               WHERE admitted.ord = staged.ord)",
             &classified.admit
         )
         .execute(&mut *conn)
@@ -148,10 +156,12 @@ pub(crate) async fn admit(
         resolved = classified.resolved;
     }
 
+    let started = std::time::Instant::now();
     if let BatchKind::Derived { derivation, scope } = &batch.kind {
         outcome.dirty_keys +=
             derived::apply_derived(conn, derivation, scope, batch, &resolved, keys).await?;
     }
+    outcome.timings.insert("derived", started.elapsed());
     let started = std::time::Instant::now();
     outcome.failures = write::record_failures(conn, batch).await?;
     if let BatchKind::Source(progress) = &batch.kind {

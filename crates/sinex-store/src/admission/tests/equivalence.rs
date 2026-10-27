@@ -1,4 +1,5 @@
 use super::*;
+use crate::privacy;
 
 fn keys() -> Vec<String> {
     let digest = "a7".repeat(32);
@@ -113,7 +114,63 @@ async fn populated_key_upgrade_preserves_all_rows_and_matches_fresh_schema(
             event
         })
         .collect();
-    admit_one(&mut conn, &batch(events.clone())).await;
+    let mut initial = batch(events.clone());
+    initial.kind = BatchKind::Source(Box::new(SourceProgress {
+        data_keys: vec![],
+        binding: "upgrade input".into(),
+        input: InputRef {
+            kind: "file".into(),
+            locator: "/synthetic/input".into(),
+            host: "test".into(),
+        },
+        observation: ObservationFacts {
+            changed: true,
+            ..Default::default()
+        },
+        revision: RevisionChange::Appended,
+        material: None,
+        cursor: json!({"offset":17}),
+        carry: json!({"partial":"line"}),
+        memory: None,
+    }));
+    sqlx::query("INSERT INTO core.runs(id,name,host) VALUES($1,'upgrade run','test')")
+        .bind(initial.run.0)
+        .execute(&mut conn)
+        .await
+        .unwrap();
+    admit_one(&mut conn, &initial).await;
+    let Origin::Record { location, .. } = events[0].origin else {
+        unreachable!()
+    };
+    let blob = format!("blake3:{}", blake3::hash(b"synthetic\n").to_hex());
+    sqlx::query("INSERT INTO core.blobs(hash,size,status) VALUES($1,10,'present')")
+        .bind(&blob)
+        .execute(&mut conn)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO raw.materials(id,input_id,revision_id,blob,length,manifest,parser,parser_version) SELECT $1,i.id,r.id,$2,10,'{}','synthetic',1 FROM raw.inputs i JOIN raw.revisions r ON r.input_id=i.id")
+        .bind(location.material.0).bind(&blob).execute(&mut conn).await.unwrap();
+    sqlx::query("INSERT INTO raw.failures(material_id,anchor,reason,run_id) VALUES($1,9,'synthetic failure',$2)")
+        .bind(location.material.0).bind(initial.run.0).execute(&mut conn).await.unwrap();
+    sqlx::query("INSERT INTO core.consumer_positions(consumer,commit_seq,change_seq) VALUES('test consumer',7,1)")
+        .execute(&mut conn).await.unwrap();
+    let removed = Uuid::now_v7();
+    sqlx::query("INSERT INTO core.event_tombstones(event_id,source,event_type,operation_id) VALUES($1,'s','command.executed',$2)")
+        .bind(removed).bind(Uuid::now_v7()).execute(&mut conn).await.unwrap();
+    sqlx::query("INSERT INTO core.published VALUES($1,17),($2,29)")
+        .bind(events[1].id.0)
+        .bind(removed)
+        .execute(&mut conn)
+        .await
+        .unwrap();
+    let mut derived = keyed("derived", 1, 1, 1);
+    derived.origin = Origin::Derived {
+        parents: vec![events[2].id],
+    };
+    admit_one(&mut conn, &batch(vec![derived])).await;
+    privacy::set_source_class(&mut conn, "other", Class::Guarded, "test")
+        .await
+        .unwrap();
     let mut newer = events[0].clone();
     newer.id = EventId::new();
     newer.reading_order = ReadingOrder(2);
@@ -125,6 +182,9 @@ async fn populated_key_upgrade_preserves_all_rows_and_matches_fresh_schema(
         operation: OperationId::new(),
     });
     admit_one(&mut conn, &hide).await;
+    crate::read_models::tests::catch_up_search_text(&mut conn)
+        .await
+        .unwrap();
     let before = rows(&mut conn).await;
     let catalog = sinex_schema::catalog(&mut conn).await.unwrap();
     version_two_keys(&mut conn).await;
@@ -218,7 +278,7 @@ async fn interrupted_key_upgrade_rolls_back_functions_and_rows(db: devkit::pg::T
 }
 
 #[devkit::test]
-async fn keyed_and_location_readings_are_disjoint_even_when_the_text_matches(
+async fn keyed_and_location_readings_stay_separate_when_the_text_matches(
     db: devkit::pg::TestDatabase,
 ) {
     let mut conn = crate::AdmissionContext::connect(&db.url(None))

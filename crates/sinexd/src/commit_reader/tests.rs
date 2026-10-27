@@ -131,7 +131,7 @@ async fn read_models_get_every_event_once_across_restarts(db: devkit::pg::TestDa
             let consumers: Vec<Box<dyn Consumer>> =
                 vec![Box::new(ReadModelRunner(Box::new(Counter)))];
             run(
-                sinex_store::AdmissionContext::connect(&url).await.unwrap(),
+                PgConnection::connect(&url).await.unwrap(),
                 consumers,
                 commits,
                 stop,

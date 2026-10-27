@@ -1,5 +1,5 @@
 use super::*;
-use crate::privacy::{Action, NewRule};
+use crate::privacy::{self, Action, NewRule};
 
 fn rule(source: &str, name: &str, action: Action) -> NewRule {
     NewRule {
@@ -34,10 +34,17 @@ async fn warm_batches_see_rules_floors_and_new_sources(db: devkit::pg::TestDatab
     let seq = privacy::add_rule(&mut changes, &rule("later", "later rule", Action::Classify))
         .await
         .unwrap();
+    privacy::set_source_class(&mut changes, "unseen floor", Class::Guarded, "test")
+        .await
+        .unwrap();
     admit_one(&mut conn, &batch(vec![keyed("first", 1, 1, 1)])).await;
     let event = keyed("later", 1, 1, 1);
     admit_one(&mut conn, &batch(vec![event.clone()])).await;
     assert_eq!(stored_class(&mut conn, event.id).await, "guarded");
+
+    let floor = keyed("unseen floor", 1, 1, 1);
+    admit_one(&mut conn, &batch(vec![floor.clone()])).await;
+    assert_eq!(stored_class(&mut conn, floor.id).await, "guarded");
 
     privacy::end_rule(&mut changes, "later rule", "test")
         .await
@@ -148,4 +155,92 @@ async fn hash_initialization_commits_before_a_failed_admission(db: devkit::pg::T
     let repeated = admit_one(&mut conn, &batch(vec![event])).await;
     assert_eq!((repeated.admitted, repeated.repeats), (0, 1));
     assert!(first.starts_with("hash:"));
+}
+
+#[devkit::test]
+async fn rules_and_floors_committed_out_of_order_reach_the_next_batch(
+    db: devkit::pg::TestDatabase,
+) {
+    let url = db.url(None);
+    let mut conn = crate::AdmissionContext::connect(&url).await.unwrap();
+    let mut late = PgConnection::connect(&url).await.unwrap();
+    let mut changes = PgConnection::connect(&url).await.unwrap();
+    let mut tx = late.begin().await.unwrap();
+    privacy::add_rule(&mut tx, &rule("s", "late rule", Action::Classify))
+        .await
+        .unwrap();
+    let maximum = privacy::add_rule(&mut changes, &rule("other", "first rule", Action::Classify))
+        .await
+        .unwrap();
+    let before = keyed("s", 1, 1, 1);
+    admit_one(&mut conn, &batch(vec![before.clone()])).await;
+    assert_eq!(stored_class(&mut conn, before.id).await, "open");
+    tx.commit().await.unwrap();
+    let after = keyed("s", 2, 1, 1);
+    admit_one(&mut conn, &batch(vec![after.clone()])).await;
+    assert_eq!(stored_class(&mut conn, after.id).await, "guarded");
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>("SELECT max(seq) FROM privacy.rules")
+            .fetch_one(&mut conn)
+            .await
+            .unwrap(),
+        maximum
+    );
+
+    let mut tx = late.begin().await.unwrap();
+    privacy::set_source_class(&mut tx, "floor", Class::Guarded, "test")
+        .await
+        .unwrap();
+    let maximum = privacy::set_source_class(&mut changes, "other", Class::Guarded, "test")
+        .await
+        .unwrap();
+    let before = keyed("floor", 1, 1, 1);
+    admit_one(&mut conn, &batch(vec![before.clone()])).await;
+    assert_eq!(stored_class(&mut conn, before.id).await, "open");
+    tx.commit().await.unwrap();
+    let after = keyed("floor", 2, 1, 1);
+    admit_one(&mut conn, &batch(vec![after.clone()])).await;
+    assert_eq!(stored_class(&mut conn, after.id).await, "guarded");
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>("SELECT max(seq) FROM privacy.source_classes")
+            .fetch_one(&mut conn)
+            .await
+            .unwrap(),
+        maximum
+    );
+}
+
+#[devkit::test]
+async fn a_rolled_back_cache_is_refreshed_even_when_visible_versions_match(
+    db: devkit::pg::TestDatabase,
+) {
+    let url = db.url(None);
+    let mut conn = crate::AdmissionContext::connect(&url).await.unwrap();
+    let mut late = PgConnection::connect(&url).await.unwrap();
+    let mut changes = PgConnection::connect(&url).await.unwrap();
+    let mut tx = conn.begin().await.unwrap();
+    privacy::add_rule(&mut tx, &rule("s", "aborted first", Action::Classify))
+        .await
+        .unwrap();
+    let mut waiting = late.begin().await.unwrap();
+    privacy::add_rule(&mut waiting, &rule("t", "late second", Action::Classify))
+        .await
+        .unwrap();
+    privacy::add_rule(
+        &mut changes,
+        &rule("other", "committed third", Action::Classify),
+    )
+    .await
+    .unwrap();
+    tx.admit(&batch(vec![keyed("s", 1, 1, 1)]), &NoDerivations)
+        .await
+        .unwrap();
+    tx.rollback().await.unwrap();
+    waiting.commit().await.unwrap();
+    // Both snapshots have two rows and the same maximum, but different rules.
+    let open = keyed("s", 2, 1, 1);
+    let guarded = keyed("t", 2, 1, 1);
+    admit_one(&mut conn, &batch(vec![open.clone(), guarded.clone()])).await;
+    assert_eq!(stored_class(&mut conn, open.id).await, "open");
+    assert_eq!(stored_class(&mut conn, guarded.id).await, "guarded");
 }

@@ -1,7 +1,7 @@
 //! A validated writer connection and its admission transactions.
 use crate::{DirtyKeys, Outcome, Result, privacy};
 use sinex_model::Batch;
-use sqlx::{Connection, Executor, PgConnection, Postgres, Transaction};
+use sqlx::{Connection, PgConnection, Postgres, Transaction};
 use std::ops::{Deref, DerefMut};
 
 /// Holds the writer claim, schema validation and privacy cache for one session.
@@ -44,7 +44,8 @@ impl AdmissionContext {
     /// All admissions in a replay share this transaction and this session cache.
     pub async fn begin(&mut self) -> Result<AdmissionTransaction<'_>> {
         Ok(AdmissionTransaction {
-            transaction: self.connection.begin().await?,
+            transaction: Some(self.connection.begin().await?),
+            committed: false,
             privacy: &mut self.privacy,
         })
     }
@@ -69,32 +70,57 @@ impl DerefMut for AdmissionContext {
 
 /// An admission transaction can only be opened by a validated writer context.
 pub struct AdmissionTransaction<'a> {
-    transaction: Transaction<'a, Postgres>,
+    transaction: Option<Transaction<'a, Postgres>>,
+    committed: bool,
     privacy: &'a mut privacy::Cache,
 }
 
 impl AdmissionTransaction<'_> {
     pub async fn admit(&mut self, batch: &Batch, keys: &dyn DirtyKeys) -> Result<Outcome> {
-        crate::admission::admit(&mut self.transaction, self.privacy, batch, keys).await
+        crate::admission::admit(
+            self.transaction.as_mut().expect("open transaction"),
+            self.privacy,
+            batch,
+            keys,
+        )
+        .await
     }
-    pub async fn commit(self) -> Result<()> {
-        self.transaction.commit().await?;
+    pub async fn commit(mut self) -> Result<()> {
+        self.transaction
+            .take()
+            .expect("open transaction")
+            .commit()
+            .await?;
+        self.committed = true;
         Ok(())
     }
-    pub async fn rollback(self) -> Result<()> {
-        self.transaction.rollback().await?;
+    pub async fn rollback(mut self) -> Result<()> {
+        self.transaction
+            .take()
+            .expect("open transaction")
+            .rollback()
+            .await?;
         Ok(())
     }
 }
+impl Drop for AdmissionTransaction<'_> {
+    fn drop(&mut self) {
+        if !self.committed {
+            // A transaction can see its own rule changes before they commit.
+            self.privacy.invalidate();
+        }
+    }
+}
+
 impl Deref for AdmissionTransaction<'_> {
     type Target = PgConnection;
     fn deref(&self) -> &Self::Target {
-        &self.transaction
+        self.transaction.as_ref().expect("open transaction")
     }
 }
 impl DerefMut for AdmissionTransaction<'_> {
     fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.transaction
+        self.transaction.as_mut().expect("open transaction")
     }
 }
 

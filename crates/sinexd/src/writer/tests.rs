@@ -368,7 +368,7 @@ async fn reconnect_reclaims_and_reloads_privacy(db: devkit::pg::TestDatabase) {
     sinex_store::privacy::set_source_class(&mut changes, "t", sinex_model::Class::Guarded, "test")
         .await
         .unwrap();
-    sqlx::query("SELECT pg_terminate_backend($1)")
+    sqlx::query("SELECT pg_terminate_backend($1, 5000)")
         .bind(pid)
         .execute(&mut changes)
         .await

@@ -161,7 +161,9 @@ pub(super) async fn insert_admitted(
     }
     outcome.dirty_keys += mark_dirty(conn, dirty, last).await?;
     outcome.timings.insert("dirty_keys", started.elapsed());
+    let started = std::time::Instant::now();
     record_citations(conn, events, admit_ords).await?;
+    outcome.timings.insert("citations", started.elapsed());
     Ok(())
 }
 

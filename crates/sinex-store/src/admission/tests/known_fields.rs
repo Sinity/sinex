@@ -26,6 +26,7 @@ async fn known_fields_merge_in_one_batch_and_supply_dirty_keys(db: devkit::pg::T
     newer.payload.as_object_mut().unwrap().remove("title");
     newer.payload["channel"] = json!("new channel");
     let mut other = watched(None, 2);
+    other.payload["title"] = Value::Null;
     other.equivalence_key = second.equivalence_key.clone();
     // A repeat and an older reading must not enter the merge relation.
     let older = watched(None, 0);
