@@ -69,6 +69,7 @@ fn imported(command: &str, n: i64) -> Event {
             hostname: "h".into(),
             started_at: Some(Timestamp::from_unix_secs(1_700_000_000 + n).unwrap()),
             header_elapsed: Some(0),
+            paths: vec![],
             n: 0,
         },
         "zsh",
