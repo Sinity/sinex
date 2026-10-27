@@ -405,6 +405,7 @@ spool names and positions. Its default remains the operator's
 0700 and uses umask 0077. Sinnix supplies `/realm` storage during its coordinated
 state relocation; see [session-state.md](session-state.md) for the drain-then-switch procedure.
 Status reports session captures as `producer_reported` until their producer supplies
-status frames. The daemon does not infer their availability from its own environment.
+status frames. Their input paths remain unknown until reported by the producer.
+The daemon does not infer their availability from its own environment.
 `sinexd admin discover --sources /etc/sinex/sources.json --host HOST`
 prints the read-only input plan used by the daemon and permission preparation.
