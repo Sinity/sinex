@@ -415,3 +415,27 @@ fn request_citation_facts_preserve_payload_identity_and_refuse_supplied_invalid_
         ));
     }
 }
+
+#[devkit::test]
+fn library_format_plans_one_file_without_reading_its_neighbours() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("selected.txt"), b"synthetic selected file").unwrap();
+    std::fs::write(dir.path().join("other.txt"), b"synthetic other file").unwrap();
+    let mut settings = sinex_source_core::Settings::new("synthetic");
+    settings.options = serde_json::json!({"reference": true});
+    let bindings = (FORMAT.plan.unwrap())(&dir.path().join("selected.txt"), &settings).unwrap();
+    assert_eq!(bindings.len(), 1);
+    let binding = &bindings[0];
+    assert_eq!(binding.source, SCAN.name);
+    let mut reader = (FORMAT.reader.unwrap())(binding)
+        .unwrap()
+        .into_polled()
+        .unwrap();
+    let acquired = reader.poll(&serde_json::Value::Null).unwrap();
+    let material = acquired.material.unwrap();
+    assert_eq!(material.records.len(), 1);
+    assert!(material.owned_files.is_empty());
+    let line: serde_json::Value = serde_json::from_slice(material.body()).unwrap();
+    assert!(line["path"].as_str().unwrap().ends_with("selected.txt"));
+    assert_eq!(line["stored"], false);
+}

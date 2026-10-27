@@ -276,7 +276,11 @@ fn stored_original_length_does_not_replace_decoded_record_coordinates() {
             id: MaterialId::new(),
             records: lines(&bytes).0,
             bytes,
-            stored: Some(StoredBytes::File(path)),
+            stored: Some(StoredBytes::Blob {
+                name: Discard.put_file(&path).unwrap(),
+                length: std::fs::metadata(&path).unwrap().len(),
+                records: None,
+            }),
             part_index: 0,
             previous_part: None,
             manifest: sinex_model::Manifest::from_json(serde_json::json!({})),

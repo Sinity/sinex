@@ -37,6 +37,56 @@ impl BindingReader {
     }
 }
 
+/// Run ordinary bindings once, with one source run and its final outcome.
+pub(crate) async fn once(
+    conn: &mut PgConnection,
+    blobs: &Blobs,
+    writer: &WriterHandle,
+    host: &str,
+    mut readers: Vec<BindingReader>,
+) -> Result<Totals, String> {
+    let mut emits: Vec<&str> = readers
+        .iter()
+        .flat_map(|b| b.source.spec().event_types.iter().copied())
+        .collect();
+    emits.sort_unstable();
+    emits.dedup();
+    let run = sinex_store::runs::start(
+        conn,
+        &sinex_store::runs::Manifest {
+            name: "sinexd sources",
+            kind: "source",
+            version: env!("CARGO_PKG_VERSION"),
+            build: option_env!("SINEX_BUILD").unwrap_or("dev"),
+            emits: &emits,
+        },
+        host,
+    )
+    .await
+    .map_err(|e| e.to_string())?;
+    let (_stop, stop) = watch::channel(false);
+    let results = read(
+        conn,
+        blobs,
+        writer,
+        run,
+        &Sink(blobs.clone()),
+        &mut readers,
+        stop,
+        Access::default(),
+        &mut |_, _| {},
+    )
+    .await;
+    sinex_store::runs::end(conn, run)
+        .await
+        .map_err(|e| e.to_string())?;
+    let mut totals = Totals::default();
+    for (_, result) in results {
+        totals.add(result?);
+    }
+    Ok(totals)
+}
+
 pub(crate) use crate::sealing::Access;
 
 mod shared;

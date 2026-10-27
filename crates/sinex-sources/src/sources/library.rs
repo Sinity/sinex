@@ -1168,13 +1168,33 @@ pub fn request_material(
     }
 }
 
-/// The library's sources: scans of library roots and library requests,
-/// written through `library-add` and the API rather than read from a path.
+/// Library roots are ordinary bindings; library requests are supplied by the API.
 pub const FORMAT: sinex_source_core::binding::InputFormat =
     sinex_source_core::binding::InputFormat {
         name: "library",
         specs: || vec![&SCAN, &REQUEST],
-        plan: None,
+        plan: Some(|path, settings| {
+            let path =
+                std::fs::canonicalize(path).map_err(|e| format!("{}: {e}", path.display()))?;
+            let mut settings = settings.clone();
+            let root = if path.is_dir() {
+                path
+            } else {
+                let name = path
+                    .file_name()
+                    .ok_or("library input has no file name")?
+                    .to_string_lossy()
+                    .into_owned();
+                if !settings.options.is_object() {
+                    settings.options = json!({});
+                }
+                settings.options["only"] = json!(name);
+                path.parent()
+                    .ok_or("library input has no parent")?
+                    .to_path_buf()
+            };
+            Ok(sinex_source_core::binding::single(&SCAN, &root, &settings))
+        }),
         source: |b| {
             if b.source == SCAN.name {
                 Ok(Box::new(scan_source()))
@@ -1182,7 +1202,26 @@ pub const FORMAT: sinex_source_core::binding::InputFormat =
                 Ok(Box::new(request_source()))
             }
         },
-        reader: None,
+        reader: Some(|b| {
+            if b.source != SCAN.name {
+                return Err("library requests are supplied by the API".into());
+            }
+            Ok(sinex_source_core::binding::polled(LibraryReader::new(
+                LibraryScan {
+                    root: b.input.clone(),
+                    host: b.settings.host.clone(),
+                    keep_bytes: !b
+                        .settings
+                        .options
+                        .get("reference")
+                        .and_then(Value::as_bool)
+                        .unwrap_or(false),
+                    probe: true,
+                    bytes_per_poll: 1 << 30,
+                    only: b.settings.option("only").map(str::to_owned),
+                },
+            )))
+        }),
         capture: None,
     };
 

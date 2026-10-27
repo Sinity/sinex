@@ -219,19 +219,19 @@ impl Materials {
     ) -> Result<serde_json::Value, String> {
         self.check()?;
         if let (Some(sealing), Some(material)) = (&self.sealing, &acquired.material)
-            && let Some(drivers::StoredBytes::FramedReader(stored)) = &material.stored
-            && self
-                .plain
-                .0
-                .is_sealed(&stored.blob)
-                .map_err(|e| e.to_string())?
+            && let Some(drivers::StoredBytes::Blob {
+                name,
+                records: Some(_),
+                ..
+            }) = &material.stored
+            && self.plain.0.is_sealed(name).map_err(|e| e.to_string())?
         {
             let unlock = self
                 .unlock
                 .as_ref()
                 .ok_or("stored sealed material needs an operator unlock")?;
             let key = unlock.data_key(conn, material.id).await?;
-            sealing.restore_key(stored.blob.clone(), key)?;
+            sealing.restore_key(name.clone(), key)?;
         }
         match (&self.sealing, acquired.material.is_some()) {
             (Some(sealing), true) => {
@@ -271,7 +271,7 @@ pub(crate) async fn reopen_stored(
     if let (Some(sealing), Some(key)) = (sealing, &opened.key) {
         sealing.restore_current(material.id, opened.reference.blob.clone(), key.clone())?;
     }
-    material.stored = Some(drivers::StoredBytes::FramedReader(opened.records()));
+    material.stored = Some(opened.records());
     material.bytes.clear();
     material.manifest = opened.reference.manifest.clone();
     Ok(true)
@@ -398,4 +398,18 @@ pub(crate) fn unseal_in(
         Value::Object(map) => map.values_mut().for_each(|v| unseal_in(v, keys)),
         _ => {}
     }
+}
+
+/// A reopened body already has its material and data key registered.
+pub(crate) fn registered(acquired: &drivers::Acquired) -> Option<MaterialId> {
+    acquired.material.as_ref().and_then(|material| {
+        matches!(
+            &material.stored,
+            Some(drivers::StoredBytes::Blob {
+                records: Some(_),
+                ..
+            })
+        )
+        .then_some(material.id)
+    })
 }

@@ -2,7 +2,7 @@
 //! the file is stored once (sealed when the bindings' class is), read forward
 //! once, and each binding's acquisitions are admitted as the pass reaches them.
 use super::{Access, BindingReader};
-use crate::backfill::{self, Totals};
+use crate::backfill::Totals;
 use crate::writer::WriterHandle;
 use serde_json::Value;
 use sinex_model::{Class, ObservationFacts, RunId};
@@ -211,17 +211,26 @@ pub(super) async fn read_shared(
                 .shared_carry(conn, &b.binding.name, carry, &acquired)
                 .await?;
             let total = totals[slot].as_mut().map_err(|e| e.clone())?;
-            backfill::submit(
+            crate::intake::Intake {
                 writer,
                 run,
-                b.source.as_ref(),
-                &b.binding.name,
-                &material,
-                acquired,
-                carry,
-                total,
-            )
+                source: b.source.as_ref(),
+                binding: &b.binding.name,
+                material: &material,
+                check: Arc::new(|| {
+                    if sinex_transport::private_mode::PrivateMode::default().on() {
+                        Err("private mode is on; admission stopped".into())
+                    } else {
+                        Ok(())
+                    }
+                }),
+                priority: crate::writer::Priority::Bulk,
+                atomic: false,
+                registered: crate::sealing::registered(&acquired),
+            }
+            .submit(acquired, carry, total)
             .await
+            .map(|_| ())
         }
         .await;
         let keep = result.is_ok();

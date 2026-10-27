@@ -286,7 +286,7 @@ pub const FORMAT: sinex_source_core::binding::InputFormat =
         }),
         source: |_| Ok(Box::new(source())),
         reader: Some(|b| {
-            Ok(sinex_source_core::binding::stateless(driver(
+            Ok(sinex_source_core::binding::polled(driver(
                 b.input.clone(),
                 b.settings.host.clone(),
                 media(b)?,

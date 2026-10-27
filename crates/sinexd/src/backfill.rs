@@ -6,13 +6,12 @@
 //! binding is recorded with its settings (so a replay reads it the same way)
 //! and its driver state is rebuilt from the materials it stored, so a
 //! second run reads only what changed.
-use sinex_sources::sources;
-mod pipeline;
 use crate::reader_context::ReaderContext;
 use crate::sealing::Sink;
-use crate::writer::{self, Priority};
+use crate::writer;
 use sinex_model::RunId;
-use sinex_source_core::{Binding, InputFormat, Limits, Settings, Source, drivers};
+use sinex_source_core::{Binding, InputFormat, Settings, Source, drivers};
+use sinex_sources::sources;
 use sinex_store::{bindings, positions, runs};
 use sqlx::PgConnection;
 use std::path::PathBuf;
@@ -50,10 +49,10 @@ pub(crate) struct Totals {
     materials: usize,
     material_bytes: usize,
     batches: usize,
-    events_offered: usize,
-    admitted: usize,
+    pub(crate) events_offered: usize,
+    pub(crate) admitted: usize,
     repeats: usize,
-    replaced: usize,
+    pub(crate) replaced: usize,
     older: usize,
     hidden: usize,
     superseded: usize,
@@ -252,7 +251,8 @@ pub(crate) async fn drive(
         .copied()
         .unwrap_or_default();
     let effective_class = source.spec().class.max(floor).max(minimum_class);
-    let material = crate::sealing::Materials::new(sink.0.clone(), effective_class, access)?;
+    let material = crate::sealing::Materials::new(sink.0.clone(), effective_class, access)
+        .map_err(|e| format!("{}: {e}", source.spec().name))?;
     let checked_stop = stop.clone();
     // Checked for every buffer read, so the switch is looked at only every
     // quarter second.
@@ -292,17 +292,21 @@ pub(crate) async fn drive(
             return Err(format!("{binding}: {reason}"));
         }
         let had_material = acquired.material.is_some();
-        let pipeline = pipeline::Pipeline {
+        check()?;
+        let registered = material.reopen(read_conn, source, &mut acquired).await?;
+        crate::intake::Intake {
             writer: handle,
             source,
             binding,
             run,
             material: &material,
             check: check.clone(),
-        };
-        pipeline
-            .submit(read_conn, carry, acquired, &mut totals)
-            .await?;
+            priority: crate::writer::Priority::Bulk,
+            atomic: false,
+            registered,
+        }
+        .submit(acquired, carry, &mut totals)
+        .await?;
         if !had_material {
             break;
         }
@@ -311,70 +315,22 @@ pub(crate) async fn drive(
     Ok(totals)
 }
 
-/// Submit one acquisition through the same drain and writer in every binding reader.
-#[allow(clippy::too_many_arguments)]
-pub(crate) async fn submit(
-    handle: &writer::WriterHandle,
-    run: RunId,
-    source: &dyn Source,
-    binding: &str,
-    material: &crate::sealing::Materials,
-    acquired: drivers::Acquired,
-    carry: serde_json::Value,
-    totals: &mut Totals,
-) -> Result<(), String> {
-    totals.polls += 1;
-    // Batches are submitted as they are drained, so memory holds one
-    // batch at a time, never a whole material's events.
-    let stored_material = acquired.material.as_ref().and_then(|material| {
-        matches!(
-            &material.stored,
-            Some(drivers::StoredBytes::FramedReader(_))
-        )
-        .then_some(material.id)
-    });
-    let prepared = drivers::prepare(
-        source,
-        binding,
-        run,
-        acquired,
-        carry,
-        material.sink(),
-        Limits::default(),
-    )
-    .map_err(|e| e.to_string())?;
-    let had_material = prepared.material_len();
-    if let Some(bytes) = had_material {
-        totals.materials += 1;
-        totals.material_bytes += bytes;
-    }
-    for batch in prepared.batches().map_err(|e| e.to_string())? {
-        let mut one = [batch.map_err(|e| e.to_string())?];
-        material.prepare_batch(&mut one[0], stored_material)?;
-        material.check()?;
-        let [batch] = one;
-        totals.batches += 1;
-        totals.events_offered += batch.event_count();
-        let t = Instant::now();
-        let out = handle
-            .submit(Priority::Bulk, batch)
-            .await
-            .map_err(|e| e.to_string())?;
-        totals.admit_time += t.elapsed();
-        totals.admitted += out.admitted;
-        totals.repeats += out.repeats;
-        totals.replaced += out.replaced;
-        totals.older += out.older;
-        totals.hidden += out.hidden;
-        totals.superseded += out.superseded;
-        totals.failures += out.failures;
-        totals.dirty_keys += out.dirty_keys;
-    }
-    Ok(())
-}
-
 impl Totals {
-    fn add_outcome(&mut self, out: sinex_store::Outcome) {
+    pub(crate) fn poll(&mut self, length: Option<usize>) {
+        self.polls += 1;
+        if let Some(length) = length {
+            self.materials += 1;
+            self.material_bytes += length;
+        }
+    }
+
+    pub(crate) fn batch(&mut self, events: usize, elapsed: Duration) {
+        self.batches += 1;
+        self.events_offered += events;
+        self.admit_time += elapsed;
+    }
+
+    pub(crate) fn add_outcome(&mut self, out: &sinex_store::Outcome) {
         self.admitted += out.admitted;
         self.repeats += out.repeats;
         self.replaced += out.replaced;

@@ -375,26 +375,50 @@ pub fn source() -> DeclaredSource<PageParser> {
     }
 }
 
-/// The forward crawl, run by `sinexd admin crawl` over browser history rather
-/// than read from a path.
+/// A page crawl over URLs supplied by the command in the binding's settings.
 pub const FORMAT: sinex_source_core::binding::InputFormat =
     sinex_source_core::binding::InputFormat {
         name: "page-crawl",
         specs: || vec![&SPEC],
         plan: None,
         source: |_| Ok(Box::new(source())),
-        reader: None,
+        reader: Some(|b| {
+            let urls: Vec<String> = serde_json::from_value(b.settings.options["urls"].clone())
+                .map_err(|e| format!("crawl URLs: {e}"))?;
+            let allow: Vec<String> = match &b.settings.options["allow"] {
+                Value::String(domain) => vec![domain.clone()],
+                Value::Array(domains) => serde_json::from_value(Value::Array(domains.clone()))
+                    .map_err(|e| format!("crawl allow list: {e}"))?,
+                _ => return Err("nothing is crawled without an allow list (--allow DOMAIN)".into()),
+            };
+            if allow.is_empty() {
+                return Err("nothing is crawled without an allow list (--allow DOMAIN)".into());
+            }
+            let mut urls: Vec<String> = urls
+                .into_iter()
+                .filter(|url| split(url).is_some_and(|(_, host, _)| allowed(&host, &allow)))
+                .collect();
+            if let Some(limit) = b.settings.number("limit") {
+                urls.truncate(usize::try_from(limit).unwrap_or(usize::MAX));
+            }
+            Ok(sinex_source_core::binding::polled(Crawl::new(
+                urls,
+                allow,
+                Duration::from_secs(b.settings.number("pause").unwrap_or(2)),
+                b.settings.host.clone(),
+            )))
+        }),
         capture: None,
     };
 
 #[cfg(test)]
 mod tests;
 
-impl sinex_source_core::binding::StatelessDriver for Crawl {
-    fn poll_once(
-        &self,
+impl sinex_source_core::binding::Reader for Crawl {
+    fn poll(
+        &mut self,
         cursor: &serde_json::Value,
     ) -> Result<sinex_source_core::drivers::Acquired, sinex_source_core::drivers::DriverError> {
-        self.poll(cursor)
+        Self::poll(self, cursor)
     }
 }

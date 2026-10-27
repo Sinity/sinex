@@ -183,15 +183,6 @@ pub enum Start<'a> {
 /// Run `journalctl` into the spool. With `follow`, it keeps running until the
 /// child exits; without, it stops at the end of the journal. Returns the number
 /// of entries captured.
-pub fn capture(spool: &Path, follow: bool, start: Start<'_>) -> std::io::Result<u64> {
-    capture_until(
-        spool,
-        follow,
-        start,
-        &sinex_source_core::capture::CaptureStop::new(None),
-    )
-}
-
 fn capture_until(
     spool: &Path,
     follow: bool,
@@ -246,7 +237,7 @@ pub const FORMAT: sinex_source_core::binding::InputFormat =
         }),
         source: |_| Ok(Box::new(source())),
         reader: Some(|b| {
-            Ok(sinex_source_core::binding::stateless(driver(
+            Ok(sinex_source_core::binding::polled(driver(
                 b.input.clone(),
                 b.settings.host.clone(),
             )))

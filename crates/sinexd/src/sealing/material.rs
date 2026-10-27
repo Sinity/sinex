@@ -5,7 +5,7 @@ use crate::stored::StoredReader;
 use sinex_model::{MaterialId, MaterialRef};
 use sinex_sealing::DataKey;
 use sinex_source_core::drain::RecordRead;
-use sinex_source_core::drivers::StoredRecords;
+use sinex_source_core::drivers::StoredBytes;
 use sinex_store::Blobs;
 use sqlx::PgConnection;
 use std::{io::Seek, sync::Arc};
@@ -17,10 +17,11 @@ pub(crate) struct Opened {
     pub key: Option<DataKey>,
 }
 impl Opened {
-    pub(crate) fn records(&self) -> StoredRecords {
-        StoredRecords {
-            blob: self.reference.blob.clone(),
-            bytes: self.body.clone(),
+    pub(crate) fn records(&self) -> StoredBytes {
+        StoredBytes::Blob {
+            name: self.reference.blob.clone(),
+            length: self.reference.length,
+            records: Some(self.body.clone()),
         }
     }
 }
