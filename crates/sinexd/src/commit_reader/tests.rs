@@ -206,3 +206,188 @@ async fn excised_events_never_reach_consumers(db: devkit::pg::TestDatabase) {
     assert_eq!(event.event_type, "command.imported");
     assert!(event.location().is_some());
 }
+
+struct FailingSearch;
+impl ReadModel for FailingSearch {
+    fn name(&self) -> &'static str {
+        sinex_store::read_models::SEARCH_TEXT
+    }
+    fn wants(&self, _: &str) -> bool {
+        true
+    }
+    fn apply<'a>(
+        &'a self,
+        events: &'a [Committed],
+        tx: &'a mut PgConnection,
+    ) -> BoxFuture<'a, Result<(), String>> {
+        Box::pin(async move {
+            sinex_store::read_models::apply_search_text(tx, events)
+                .await
+                .map_err(|e| e.to_string())?;
+            Err("stopped before saving position".into())
+        })
+    }
+}
+
+#[devkit::test]
+async fn search_failure_rolls_back_text_and_restart_covers_same_position(
+    db: devkit::pg::TestDatabase,
+) {
+    let mut conn = PgConnection::connect(&db.url(None)).await.unwrap();
+    let mut tx = conn.begin().await.unwrap();
+    sinex_store::admit(
+        &mut tx,
+        &api_batch(vec![imported("cargo test", 0)]),
+        &sinex_store::NoDerivations,
+    )
+    .await
+    .unwrap();
+    tx.commit().await.unwrap();
+    let page = commit_log::after(&mut conn, 0, PAGE, sinex_store::PAGE_BYTES)
+        .await
+        .unwrap();
+    let mut failing = ReadModelRunner(Box::new(FailingSearch));
+    assert!(
+        failing
+            .handle(&page.events, page.up_to.unwrap(), &mut conn)
+            .await
+            .is_err()
+    );
+    assert_eq!(failing.position(&mut conn).await.unwrap(), 0);
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>("SELECT count(*) FROM core.search_text")
+            .fetch_one(&mut conn)
+            .await
+            .unwrap(),
+        0
+    );
+    let mut restarted = ReadModelRunner(Box::new(SearchText));
+    restarted
+        .handle(&page.events, page.up_to.unwrap(), &mut conn)
+        .await
+        .unwrap();
+    assert_eq!(restarted.position(&mut conn).await.unwrap(), 1);
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>("SELECT count(*) FROM core.search_text")
+            .fetch_one(&mut conn)
+            .await
+            .unwrap(),
+        1
+    );
+}
+
+struct BatchSizes(tokio::sync::mpsc::UnboundedSender<usize>);
+impl ReadModel for BatchSizes {
+    fn name(&self) -> &'static str {
+        "test.batch_sizes"
+    }
+    fn wants(&self, _: &str) -> bool {
+        true
+    }
+    fn apply<'a>(
+        &'a self,
+        events: &'a [Committed],
+        _: &'a mut PgConnection,
+    ) -> BoxFuture<'a, Result<(), String>> {
+        Box::pin(async move { self.0.send(events.len()).map_err(|e| e.to_string()) })
+    }
+}
+
+#[devkit::test]
+async fn maintenance_batches_immediate_backlog_and_flushes_small_tail(
+    db: devkit::pg::TestDatabase,
+) {
+    let url = db.url(None);
+    let mut conn = PgConnection::connect(&url).await.unwrap();
+    let mut tx = conn.begin().await.unwrap();
+    sinex_store::admit(
+        &mut tx,
+        &api_batch((0..10_001).map(|n| imported("cargo", n)).collect()),
+        &sinex_store::NoDerivations,
+    )
+    .await
+    .unwrap();
+    tx.commit().await.unwrap();
+    let (sender, mut batches) = tokio::sync::mpsc::unbounded_channel();
+    let (_commits, commits) = watch::channel(0);
+    let (stop_tx, stop) = watch::channel(false);
+    let reader = tokio::spawn(run(
+        conn,
+        vec![Box::new(ReadModelRunner(Box::new(BatchSizes(sender))))],
+        commits,
+        stop,
+    ));
+    assert_eq!(
+        tokio::time::timeout(Duration::from_secs(30), batches.recv())
+            .await
+            .unwrap(),
+        Some(10_000)
+    );
+    assert_eq!(
+        tokio::time::timeout(Duration::from_secs(30), batches.recv())
+            .await
+            .unwrap(),
+        Some(1)
+    );
+    stop_tx.send(true).unwrap();
+    reader.await.unwrap().unwrap();
+    let mut check = PgConnection::connect(&url).await.unwrap();
+    assert_eq!(
+        commit_log::consumer_position(&mut check, "test.batch_sizes")
+            .await
+            .unwrap()
+            .0,
+        10_001
+    );
+}
+
+#[devkit::test]
+async fn maintenance_byte_budget_accepts_oversized_first_event_and_commit_gaps(
+    db: devkit::pg::TestDatabase,
+) {
+    let mut conn = PgConnection::connect(&db.url(None)).await.unwrap();
+    let mut tx = conn.begin().await.unwrap();
+    // Random-looking bytes keep PostgreSQL from compressing the payload
+    // below the byte budget before commit-log pagination measures it.
+    let mut command = String::new();
+    for n in 0u64..200_000 {
+        command.push_str(blake3::hash(&n.to_le_bytes()).to_hex().as_str());
+    }
+    sinex_store::admit(
+        &mut tx,
+        &api_batch(vec![imported(&command, 0), imported("tail", 1)]),
+        &sinex_store::NoDerivations,
+    )
+    .await
+    .unwrap();
+    tx.commit().await.unwrap();
+    let first = commit_log::after(&mut conn, 0, PAGE, sinex_store::PAGE_BYTES)
+        .await
+        .unwrap();
+    assert_eq!(first.events.len(), 1);
+    assert_eq!(
+        first.events[0].payload["command"].as_str(),
+        Some(command.as_str())
+    );
+    let tail = commit_log::after(
+        &mut conn,
+        first.up_to.unwrap(),
+        PAGE,
+        sinex_store::PAGE_BYTES,
+    )
+    .await
+    .unwrap();
+    assert_eq!(tail.events.len(), 1);
+    sqlx::query("DELETE FROM core.commit_log")
+        .execute(&mut conn)
+        .await
+        .unwrap();
+    let gap = commit_log::after(&mut conn, 0, PAGE, sinex_store::PAGE_BYTES)
+        .await
+        .unwrap();
+    assert!(gap.events.is_empty());
+    assert_eq!(gap.up_to, Some(2));
+    let mut consumer = ReadModelRunner(Box::new(SearchText));
+    consumer.handle(&gap.events, 2, &mut conn).await.unwrap();
+    assert_eq!(consumer.position(&mut conn).await.unwrap(), 2);
+}

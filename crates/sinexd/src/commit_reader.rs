@@ -14,8 +14,9 @@ use sqlx::{Connection, PgConnection};
 use std::time::Duration;
 use tokio::sync::watch;
 
-/// Events read per page.
-const PAGE: i64 = 1_000;
+/// Immediately available commits per maintenance batch. The commit reader's
+/// payload byte budget also applies; an oversized first event travels alone.
+const PAGE: i64 = 10_000;
 /// How long a failed consumer waits before it is offered the same events again.
 const RETRY: Duration = Duration::from_secs(1);
 
@@ -52,6 +53,7 @@ pub(crate) async fn run(
         let _ = stop.wait_for(|s| *s).await;
         return Ok(());
     }
+    let measure = std::env::var_os("SINEX_BENCH_TIMINGS").is_some();
     let mut positions = Vec::with_capacity(consumers.len());
     for consumer in &consumers {
         positions.push(consumer.position(&mut conn).await?);
@@ -62,6 +64,7 @@ pub(crate) async fn run(
         }
         commits.borrow_and_update();
         let from = positions.iter().copied().min().unwrap_or(0);
+        let read_started = std::time::Instant::now();
         let page = commit_log::after(&mut conn, from, PAGE, sinex_store::PAGE_BYTES)
             .await
             .map_err(|e| e.to_string())?;
@@ -72,6 +75,7 @@ pub(crate) async fn run(
             }
             continue;
         };
+        let read_time = read_started.elapsed();
         let mut failed = false;
         for (consumer, position) in consumers.iter_mut().zip(positions.iter_mut()) {
             if *position >= up_to {
@@ -83,8 +87,24 @@ pub(crate) async fn run(
                 .filter(|e| e.commit_seq > *position && consumer.wants(&e.event_type))
                 .cloned()
                 .collect();
+            let started = std::time::Instant::now();
             match consumer.handle(&mine, up_to, &mut conn).await {
-                Ok(()) => *position = up_to,
+                Ok(()) => {
+                    if measure {
+                        eprintln!(
+                            "{}",
+                            serde_json::json!({"search_batch": {
+                                "consumer": consumer.name(), "events": mine.len(),
+                                "from": *position, "up_to": up_to,
+                                "timings_ms": {
+                                    "read": read_time.as_secs_f64() * 1000.0,
+                                    "apply": started.elapsed().as_secs_f64() * 1000.0,
+                                }
+                            }})
+                        );
+                    }
+                    *position = up_to;
+                }
                 Err(error) => {
                     eprintln!(
                         "sinexd: {} failed after commit position {}: {error}",

@@ -251,16 +251,26 @@ impl Compiler<'_> {
 
     pub(super) fn words(&self, cols: &Cols, w: &Words) -> Result<SqlFragment> {
         let id = Self::id_of(cols)?;
-        let mut out = SqlFragment::text(
-            "EXISTS (SELECT 1 FROM core.visible_search_text s WHERE s.event_id = ",
-        );
-        out.append(id).push(" AND ");
+        let mut out = SqlFragment::new();
         if w.prefix {
             let mut pattern = String::from("(^| )");
             let escaped: Vec<String> = w.words.iter().map(|x| regex_escape(x)).collect();
             pattern.push_str(&escaped.join(" "));
-            out.push("s.text ~ ").param(V::String(Some(pattern)));
-        } else if w.phrase {
+            // Separate branches expose the partial index's literal predicate.
+            // Both read through the protected view, including excluded kinds.
+            out.push("(")
+                .append(id)
+                .push(" IN (SELECT s.event_id FROM core.visible_search_text s WHERE s.trigram_indexed AND s.text ~ ")
+                .param(V::String(Some(pattern.clone())))
+                .push(" UNION ALL SELECT s.event_id FROM core.visible_search_text s WHERE NOT s.trigram_indexed AND s.text ~ ")
+                .param(V::String(Some(pattern)))
+                .push("))");
+            return Ok(out);
+        }
+        out.push("EXISTS (SELECT 1 FROM core.visible_search_text s WHERE s.event_id = ")
+            .append(id)
+            .push(" AND ");
+        if w.phrase {
             out.push("s.tsv @@ phraseto_tsquery('simple', ")
                 .param(V::String(Some(w.words.join(" "))))
                 .push(")");

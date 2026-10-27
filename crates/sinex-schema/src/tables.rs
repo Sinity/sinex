@@ -465,10 +465,11 @@ pub(crate) fn tables(c: &Checks) -> Vec<String> {
         "CREATE TABLE core.search_text (
   event_id uuid PRIMARY KEY,
   text text NOT NULL,
-  tsv tsvector GENERATED ALWAYS AS (to_tsvector('simple', text)) STORED
+  tsv tsvector GENERATED ALWAYS AS (to_tsvector('simple', text)) STORED,
+  trigram_indexed boolean NOT NULL DEFAULT true
 )".into(),
         "CREATE INDEX search_text_tsv ON core.search_text USING gin (tsv)".into(),
-        "CREATE INDEX search_text_trigram ON core.search_text USING gin (text gin_trgm_ops)".into(),
+        "CREATE INDEX search_text_trigram ON core.search_text USING gin (text gin_trgm_ops) WHERE trigram_indexed".into(),
         // Admission's staging table. Permanent and unlogged so compile-time
         // checked queries can name it; only the one writer uses it, inside its
         // transaction, and truncates it first.

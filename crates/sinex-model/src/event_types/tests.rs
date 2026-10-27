@@ -93,3 +93,14 @@ fn catalog_lists_each_type_once() {
     names.dedup();
     assert_eq!(names.len(), ALL.len());
 }
+
+#[devkit::test]
+fn search_policy_keeps_full_text_for_high_volume_kinds() {
+    let excluded: Vec<_> = ALL
+        .iter()
+        .filter(|kind| !kind.trigram_indexed)
+        .map(|kind| kind.event_type)
+        .collect();
+    assert_eq!(excluded, ["journal.entry", "lake.observed"]);
+    assert!(find("command.imported").unwrap().trigram_indexed);
+}
