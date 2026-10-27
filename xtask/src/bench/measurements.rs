@@ -492,6 +492,10 @@ fn monitor(port: u16) -> Result<Value, String> {
     serde_json::from_str(body).map_err(|e| e.to_string())
 }
 
+fn nats_ready(port: u16, monitoring: u16) -> bool {
+    monitor(monitoring).is_ok() && TcpStream::connect(("127.0.0.1", port)).is_ok()
+}
+
 #[derive(Clone, Copy)]
 pub(super) struct ConsumerCounts {
     pub live: u64,
@@ -562,7 +566,7 @@ pub(super) fn with_consumers(
             .map_err(|e| e.to_string())?,
         None,
     );
-    while monitor(monitoring).is_err() {
+    while !nats_ready(port, monitoring) {
         if let Some(status) = nats.0.try_wait().map_err(|e| e.to_string())? {
             return Err(format!("NATS exited: {status}"));
         }

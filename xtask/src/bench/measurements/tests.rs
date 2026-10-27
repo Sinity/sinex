@@ -129,3 +129,36 @@ fn publisher_completion_waits_for_archive_notices() {
     cluster.stop().unwrap();
     fs::remove_dir_all(root).unwrap();
 }
+
+#[devkit::test]
+fn nats_readiness_requires_its_client_listener() {
+    use std::io::BufRead as _;
+
+    let monitoring = TcpListener::bind(("127.0.0.1", 0)).unwrap();
+    let monitoring_port = monitoring.local_addr().unwrap().port();
+    let server = std::thread::spawn(move || {
+        for _ in 0..2 {
+            let (mut stream, _) = monitoring.accept().unwrap();
+            let mut request = std::io::BufReader::new(stream.try_clone().unwrap());
+            loop {
+                let mut line = String::new();
+                request.read_line(&mut line).unwrap();
+                if line == "\r\n" {
+                    break;
+                }
+            }
+            std::io::Write::write_all(
+                &mut stream,
+                b"HTTP/1.0 200 OK\r\nContent-Length: 2\r\n\r\n{}",
+            )
+            .unwrap();
+        }
+    });
+    assert!(!nats_ready(0, monitoring_port));
+    let clients = TcpListener::bind(("127.0.0.1", 0)).unwrap();
+    assert!(nats_ready(
+        clients.local_addr().unwrap().port(),
+        monitoring_port
+    ));
+    server.join().unwrap();
+}
