@@ -148,8 +148,11 @@ impl DirSnapshot {
         found: BTreeMap<PathBuf, EntryFacts>,
     ) -> Result<Acquired, DriverError> {
         let now = Timestamp::now();
-        let failed: Vec<_> = found.iter().filter(|(_, facts)| facts.is_err())
-            .map(|(path, _)| path.clone()).collect();
+        let failed: Vec<_> = found
+            .iter()
+            .filter(|(_, facts)| facts.is_err())
+            .map(|(path, _)| path.clone())
+            .collect();
 
         let mut bundle = tempfile::tempfile().map_err(io)?;
         let mut length = 0usize;
@@ -201,9 +204,11 @@ impl DirSnapshot {
                 Ok(Some(captured)) => captured,
                 Ok(None) => {
                     bundle.set_len(length as u64).map_err(io)?;
-                    bundle.seek(std::io::SeekFrom::Start(length as u64)).map_err(io)?;
+                    bundle
+                        .seek(std::io::SeekFrom::Start(length as u64))
+                        .map_err(io)?;
                     continue;
-                },
+                }
                 Err(reason) => {
                     bundle.set_len(length as u64).map_err(io)?;
                     bundle
@@ -263,7 +268,9 @@ impl DirSnapshot {
             let mut gone: Vec<PathBuf> = state
                 .files
                 .keys()
-                .filter(|p| !seen.contains(*p) && !failed.iter().any(|prefix| p.starts_with(prefix)))
+                .filter(|p| {
+                    !seen.contains(*p) && !failed.iter().any(|prefix| p.starts_with(prefix))
+                })
                 .cloned()
                 .collect();
             gone.sort();
@@ -286,7 +293,9 @@ impl DirSnapshot {
             }
         }
         if complete {
-            next_failures.retain(|path, _| seen.contains(path) || failed.iter().any(|prefix| path.starts_with(prefix)));
+            next_failures.retain(|path, _| {
+                seen.contains(path) || failed.iter().any(|prefix| path.starts_with(prefix))
+            });
         }
         let mut scanned = Cursor {
             last_complete_scan_ns: if complete && failed.is_empty() {
@@ -389,7 +398,11 @@ impl DirSnapshot {
         };
         let held = super::held::HeldMaterial::hold(acquired, cursor)?;
         let acquired = held.acquired(cursor)?;
-        state.held = Some(HeldSnapshot { material: held, files: next_files, failures: next_failures });
+        state.held = Some(HeldSnapshot {
+            material: held,
+            files: next_files,
+            failures: next_failures,
+        });
         Ok(acquired)
     }
 }

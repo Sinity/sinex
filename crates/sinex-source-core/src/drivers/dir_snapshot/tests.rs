@@ -538,7 +538,15 @@ fn native_names_survive_capture_restart_changes_and_removal() {
         .map(|member| member.path.as_str())
         .collect();
     assert!(displays.contains("bad-%FF.md"));
-    assert!(material.manifest.members.iter().filter(|member| member.details.contains_key("native_path_bytes")).count() == 2);
+    assert!(
+        material
+            .manifest
+            .members
+            .iter()
+            .filter(|member| member.details.contains_key("native_path_bytes"))
+            .count()
+            == 2
+    );
     assert!(displays.contains("é.md"));
     assert!(displays.contains("e\u{301}.md"));
     for (index, member) in material.manifest.members.iter().enumerate() {
@@ -651,7 +659,8 @@ fn path_display_round_trips_every_native_byte() {
     let member = serde_json::from_value(member).unwrap();
     assert_eq!(paths::native(&member).unwrap(), path);
     for text in ["%", "%X1", "%1", "%💡", "100% done.md", "foo%20bar.md"] {
-        let member = serde_json::from_value(json!({"path": text, "stream_offset": 1, "length": 0})).unwrap();
+        let member =
+            serde_json::from_value(json!({"path": text, "stream_offset": 1, "length": 0})).unwrap();
         assert_eq!(paths::display(Path::new(text)), text);
         assert_eq!(paths::native(&member).unwrap(), PathBuf::from(text));
     }
@@ -670,21 +679,36 @@ fn open_and_read_errors_belong_to_the_entry() {
     assert!(capture(dir.path(), &mut bundle, 0, 0).unwrap().is_err());
 }
 
-
 fn final_cursor(acquired: &Acquired) -> Value {
     let material = acquired.material.as_ref().unwrap();
     (material.cursor_at)(material.records.last().unwrap().1).unwrap()
 }
 
-fn poll_entries(d: &DirSnapshot, cursor: &Value, state: &mut DirState, entries: BTreeMap<PathBuf, EntryFacts>) -> Acquired {
+fn poll_entries(
+    d: &DirSnapshot,
+    cursor: &Value,
+    state: &mut DirState,
+    entries: BTreeMap<PathBuf, EntryFacts>,
+) -> Acquired {
     // Apply the admitted held material through the same entry point as a poll.
     if let Some(held) = state.held.take() {
         assert!(held.material.admitted(cursor));
         state.files = held.files;
         state.failures = held.failures;
     }
-    let previous = if cursor.is_null() { Cursor::default() } else { serde_json::from_value(cursor.clone()).unwrap() };
-    d.poll_entries(cursor, state, previous, file_facts(&d.root).unwrap(), entries).unwrap()
+    let previous = if cursor.is_null() {
+        Cursor::default()
+    } else {
+        serde_json::from_value(cursor.clone()).unwrap()
+    };
+    d.poll_entries(
+        cursor,
+        state,
+        previous,
+        file_facts(&d.root).unwrap(),
+        entries,
+    )
+    .unwrap()
 }
 
 #[devkit::test]
@@ -718,7 +742,15 @@ fn bundles_with_verbatim_percent_names_restore_without_new_records() {
     // Fresh captures keep the same member paths used by note identities.
     let fresh = d.poll(&Value::Null, &mut DirState::default()).unwrap();
     assert_eq!(paths(&fresh), vec!["100% done.md", "foo%20bar.md"]);
-    assert!(fresh.material.unwrap().manifest.members.iter().all(|member| !member.details.contains_key("native_path_bytes")));
+    assert!(
+        fresh
+            .material
+            .unwrap()
+            .manifest
+            .members
+            .iter()
+            .all(|member| !member.details.contains_key("native_path_bytes"))
+    );
 }
 
 #[devkit::test]
@@ -730,13 +762,27 @@ fn failures_are_recorded_on_change_and_after_recovery_only() {
     let first = poll_entries(&d, &Value::Null, &mut state, failed("denied"));
     let cursor = final_cursor(&first);
     // Before admission the identical material is offered again.
-    assert_eq!(d.poll(&Value::Null, &mut state).unwrap().material.unwrap().id, first.material.unwrap().id);
+    assert_eq!(
+        d.poll(&Value::Null, &mut state)
+            .unwrap()
+            .material
+            .unwrap()
+            .id,
+        first.material.unwrap().id
+    );
     for _ in 0..3 {
-        assert!(poll_entries(&d, &cursor, &mut state, failed("denied")).material.is_none());
+        assert!(
+            poll_entries(&d, &cursor, &mut state, failed("denied"))
+                .material
+                .is_none()
+        );
     }
     let changed = poll_entries(&d, &cursor, &mut state, failed("missing"));
     let cursor = final_cursor(&changed);
-    assert_eq!(changed.material.unwrap().manifest.members[0].details["read_error"], "missing");
+    assert_eq!(
+        changed.material.unwrap().manifest.members[0].details["read_error"],
+        "missing"
+    );
     std::fs::write(dir.path().join("a.md"), "readable").unwrap();
     let recovered = d.poll(&cursor, &mut state).unwrap();
     let cursor = final_cursor(&recovered);
@@ -749,15 +795,29 @@ fn failed_subtrees_preserve_only_their_own_files() {
     let dir = tempfile::tempdir().unwrap();
     let d = driver(dir.path().to_owned(), 1024);
     let mut state = DirState::default();
-    for name in ["blocked/inside.md", "blocked-extra/removed.md", "outside.md"] {
+    for name in [
+        "blocked/inside.md",
+        "blocked-extra/removed.md",
+        "outside.md",
+    ] {
         state.files.insert(PathBuf::from(name), None);
     }
     let failed = BTreeMap::from([(PathBuf::from("blocked"), Err("denied".into()))]);
     let first = poll_entries(&d, &Value::Null, &mut state, failed.clone());
-    assert_eq!(paths(&first), vec!["blocked", "blocked-extra/removed.md", "outside.md"]);
+    assert_eq!(
+        paths(&first),
+        vec!["blocked", "blocked-extra/removed.md", "outside.md"]
+    );
     let cursor = final_cursor(&first);
-    assert!(poll_entries(&d, &cursor, &mut state, failed).material.is_none());
-    assert_eq!(state.files.keys().collect::<Vec<_>>(), vec![&PathBuf::from("blocked/inside.md")]);
+    assert!(
+        poll_entries(&d, &cursor, &mut state, failed)
+            .material
+            .is_none()
+    );
+    assert_eq!(
+        state.files.keys().collect::<Vec<_>>(),
+        vec![&PathBuf::from("blocked/inside.md")]
+    );
     let recovered = poll_entries(&d, &cursor, &mut state, BTreeMap::new());
     assert_eq!(paths(&recovered), vec!["blocked/inside.md"]);
 }
@@ -771,13 +831,24 @@ fn changing_files_are_skipped_without_failures_and_retried() {
     std::fs::write(&path, "after with more bytes").unwrap();
     let d = driver(dir.path().to_owned(), 1024);
     let mut state = DirState::default();
-    let changed = poll_entries(&d, &Value::Null, &mut state, BTreeMap::from([
-        (PathBuf::from("a.md"), Ok((before.size.unwrap(), before.mtime_ns.unwrap())))
-    ]));
+    let changed = poll_entries(
+        &d,
+        &Value::Null,
+        &mut state,
+        BTreeMap::from([(
+            PathBuf::from("a.md"),
+            Ok((before.size.unwrap(), before.mtime_ns.unwrap())),
+        )]),
+    );
     assert!(changed.material.is_none());
     assert!(state.files.is_empty());
     assert!(state.failures.is_empty());
-    let retried = d.poll(&changed.cursor_without_material, &mut state).unwrap();
+    let retried = d
+        .poll(&changed.cursor_without_material, &mut state)
+        .unwrap();
     assert_eq!(paths(&retried), vec!["a.md"]);
-    assert_eq!(record(retried.material.as_ref().unwrap(), 0), b"after with more bytes");
+    assert_eq!(
+        record(retried.material.as_ref().unwrap(), 0),
+        b"after with more bytes"
+    );
 }
