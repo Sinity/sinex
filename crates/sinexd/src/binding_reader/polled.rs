@@ -12,7 +12,7 @@ impl PolledReader {
 
     pub async fn acquire(&self, cursor: Value) -> Result<drivers::Acquired, String> {
         let reader = self.0.clone();
-        crate::intake::blocking::run(move || {
+        crate::intake::blocking::run(crate::writer::Priority::Bulk, move || {
             reader
                 .lock()
                 .map_err(|e| e.to_string())?

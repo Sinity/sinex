@@ -22,7 +22,7 @@ material through `drivers::prepare`, drains it, applies the effective class,
 seals when required, and sends each batch through the writer with the caller's
 cancellation and unlock checks. Reader polls, material storage and parsing run
 as owned blocking work, with at most four workers shared across bindings and
-requests. Each submission takes a permit before advancing its parser: two permits
+requests. Bulk work uses at most three, leaving capacity for live requests. Each submission takes a permit before advancing its parser: two permits
 cover the committing batch and one parsed batch ahead. The next acquisition
 waits for every commit answer. A failed answer closes the batch channel and
 joins the parser before returning; provisional cursor and carry never advance

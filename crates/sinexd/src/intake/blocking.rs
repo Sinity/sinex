@@ -1,4 +1,5 @@
 //! Owned synchronous work, with a shared worker budget and two batches per submission.
+use crate::writer::Priority;
 use sinex_model::Batch;
 use std::sync::{Arc, LazyLock};
 use std::time::Duration;
@@ -6,15 +7,42 @@ use tokio::sync::{OwnedSemaphorePermit, Semaphore, mpsc};
 
 // Waiting for work capacity never rejects input or changes a drain's batch targets.
 static WORKERS: LazyLock<Arc<Semaphore>> = LazyLock::new(|| Arc::new(Semaphore::new(4)));
+static BULK_WORKERS: LazyLock<Arc<Semaphore>> = LazyLock::new(|| Arc::new(Semaphore::new(3)));
 
-pub(crate) async fn run<T: Send + 'static>(
-    work: impl FnOnce() -> T + Send + 'static,
-) -> Result<T, String> {
-    let permit = WORKERS
+struct WorkPermit {
+    _worker: OwnedSemaphorePermit,
+    _bulk: Option<OwnedSemaphorePermit>,
+}
+
+async fn capacity(priority: Priority) -> Result<WorkPermit, String> {
+    // Bulk acquisitions can wait on many commits. Keep a worker available for live requests.
+    let bulk = if priority == Priority::Bulk {
+        Some(
+            BULK_WORKERS
+                .clone()
+                .acquire_owned()
+                .await
+                .map_err(|e| e.to_string())?,
+        )
+    } else {
+        None
+    };
+    let worker = WORKERS
         .clone()
         .acquire_owned()
         .await
         .map_err(|e| e.to_string())?;
+    Ok(WorkPermit {
+        _worker: worker,
+        _bulk: bulk,
+    })
+}
+
+pub(crate) async fn run<T: Send + 'static>(
+    priority: Priority,
+    work: impl FnOnce() -> T + Send + 'static,
+) -> Result<T, String> {
+    let permit = capacity(priority).await?;
     tokio::task::spawn_blocking(move || {
         let _permit = permit;
         work()
@@ -83,13 +111,10 @@ pub(super) struct Batches {
 
 impl Batches {
     pub async fn start(
+        priority: Priority,
         work: impl FnOnce(BatchSender) -> Result<(), String> + Send + 'static,
     ) -> Result<Self, String> {
-        let budget = WORKERS
-            .clone()
-            .acquire_owned()
-            .await
-            .map_err(|e| e.to_string())?;
+        let budget = capacity(priority).await?;
         let (send, receive) = mpsc::channel(1);
         let permits = Arc::new(Semaphore::new(2));
         let sender = BatchSender {
@@ -133,3 +158,6 @@ impl Drop for Batches {
         self.receive.close();
     }
 }
+
+#[cfg(test)]
+mod tests;

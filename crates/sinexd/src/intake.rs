@@ -81,7 +81,8 @@ impl Intake<'_> {
             check: check.clone(),
         };
         let mut batches =
-            blocking::Batches::start(move |send| work.run(acquired, carry, send)).await?;
+            blocking::Batches::start(self.priority, move |send| work.run(acquired, carry, send))
+                .await?;
         let mut outcome = Outcome::default();
         let result = async {
             while let Some(parsed) = batches.next().await {
