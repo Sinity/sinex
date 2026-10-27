@@ -55,6 +55,12 @@ impl Parser for RequestParser {
             .and_then(|s| s.parse::<i128>().ok())
             .and_then(|ns| Timestamp::from_unix_ns(ns).ok())
             .ok_or_else(|| RecordError::new("query manifest has no time"))?;
+        let host = context
+            .manifest
+            .detail("host")
+            .as_str()
+            .filter(|s| !s.is_empty())
+            .ok_or_else(|| RecordError::new("query manifest has no host"))?;
         let mut object = record.clone();
         object.insert("by".into(), json!(actor));
         object.insert("written_at".into(), json!(at));
@@ -62,12 +68,7 @@ impl Parser for RequestParser {
             .map_err(|e| RecordError::new(e.to_string()))?;
         let payload = match line {
             Line::Mark(mut x) => {
-                x.host = context
-                    .manifest
-                    .detail("host")
-                    .as_str()
-                    .unwrap_or("")
-                    .into();
+                x.host = host.into();
                 x.by = actor.into();
                 x.written_at = at;
                 QueryRecord::Mark(x)
@@ -75,6 +76,15 @@ impl Parser for RequestParser {
             Line::Saved(mut x) => {
                 x.by = actor.into();
                 x.written_at = at;
+                let now = jiff::Timestamp::from_nanosecond(at.unix_ns())
+                    .map_err(|e| RecordError::new(e.to_string()))?;
+                sinex_model::query::saved::SavedQuery {
+                    name: x.name.clone(),
+                    query: x.query.clone(),
+                    parameters: x.parameters.clone(),
+                }
+                .validate(&sinex_model::query::Context::utc(now))
+                .map_err(|e| RecordError::new(e.to_string()))?;
                 QueryRecord::Saved(x)
             }
         };
@@ -88,7 +98,7 @@ pub fn request_source() -> DeclaredSource<RequestParser> {
     }
 }
 
-/// Both acts keep their exact bytes with server-owned authorship and time.
+/// Keep request bytes with server-owned authorship and recording time.
 pub fn request_material(record: QueryRecord, actor: &str, host: &str, at: Timestamp) -> Acquired {
     let line = match record {
         QueryRecord::Mark(x) => Line::Mark(x),

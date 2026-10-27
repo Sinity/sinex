@@ -107,7 +107,7 @@ impl Api {
             .ok_or("query authoring requires sinexd run")?;
         let acquired =
             sinex_sources::sources::query::request_material(record, caller.actor, &self.host, now);
-        let done = crate::authored::submit(
+        let done = crate::requests::submit(
             &mut conn,
             writer,
             &self.blobs,

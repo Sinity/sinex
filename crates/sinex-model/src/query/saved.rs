@@ -155,8 +155,12 @@ fn substitute(
     let mut used = BTreeSet::new();
     let mut list_depth = 0_usize;
     for i in 0..input.len() {
-        if input[i].is_symbol("[") { list_depth += 1; }
-        if input[i].is_symbol("]") { list_depth = list_depth.saturating_sub(1); }
+        if input[i].is_symbol("[") {
+            list_depth += 1;
+        }
+        if input[i].is_symbol("]") {
+            list_depth = list_depth.saturating_sub(1);
+        }
         if input[i].kind != Kind::Word {
             continue;
         }
@@ -168,9 +172,11 @@ fn substitute(
                     .iter()
                     .any(|s| t.is_symbol(s))
                     || (list_depth > 0 && t.is_symbol(","))
-                    || ["since", "until", "within", "limit", "of", "recall", "overlaps"]
-                        .iter()
-                        .any(|s| t.is_word(s))
+                    || [
+                        "since", "until", "within", "limit", "of", "recall", "overlaps",
+                    ]
+                    .iter()
+                    .any(|s| t.is_word(s))
             }) {
                 return Err(QueryError::at(
                     input[i].at,

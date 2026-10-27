@@ -117,25 +117,67 @@ fn time_citations_require_absolute_time_and_marks_have_positive_numbers() {
 
 #[devkit::test]
 fn parameters_do_not_stand_for_fields_and_text_parameters_stay_text() {
-    let saved = SavedQuery { name:"typed".into(),query:"events where payload.command = $value".into(),parameters:vec![Parameter { name:"value".into(),field_type:ParameterType::Text }] };
+    let saved = SavedQuery {
+        name: "typed".into(),
+        query: "events where payload.command = $value".into(),
+        parameters: vec![Parameter {
+            name: "value".into(),
+            field_type: ParameterType::Text,
+        }],
+    };
     saved.validate(&ctx()).unwrap();
-    let definitions = BTreeMap::from([("typed".into(),saved.clone())]);
-    let bound = bind_saved("query:typed(value=123)",&ctx(),&definitions).unwrap();
+    let definitions = BTreeMap::from([("typed".into(), saved.clone())]);
+    let bound = bind_saved("query:typed(value=123)", &ctx(), &definitions).unwrap();
     assert!(matches!(bound.filter,Some(Expr::Compare { rhs:Value::Text(ref s),.. }) if s == "123"));
-    for query in ["events fields id,$value","events sort when,$value","events where $value = x"] {
+    for query in [
+        "events fields id,$value",
+        "events sort when,$value",
+        "events where $value = x",
+    ] {
         let mut invalid = saved.clone();
         invalid.query = query.into();
-        assert!(invalid.validate(&ctx()).is_err(),"{query}");
+        assert!(invalid.validate(&ctx()).is_err(), "{query}");
     }
     let mut enumeration = saved;
     enumeration.query = "events where class = $value".into();
     enumeration.validate(&ctx()).unwrap();
-    let definitions = BTreeMap::from([("typed".into(),enumeration)]);
-    assert!(bind_saved("query:typed(value=open)",&ctx(),&definitions).is_ok());
-    assert!(bind_saved("query:typed(value=unknown)",&ctx(),&definitions).is_err());
+    let definitions = BTreeMap::from([("typed".into(), enumeration)]);
+    assert!(bind_saved("query:typed(value=open)", &ctx(), &definitions).is_ok());
+    assert!(bind_saved("query:typed(value=unknown)", &ctx(), &definitions).is_err());
 }
 
 #[devkit::test]
 fn unrepresentable_time_ranges_are_errors_without_panicking() {
-    for text in ["events since 99999999999999999999999999999d","recall 9999-12-30T12:00:00Z ±999999999d","events where when in last -9223372036854775808 days"] { assert!(bind(text,&ctx()).is_err(),"{text}"); }
+    for text in [
+        "events since 99999999999999999999999999999d",
+        "recall 9999-12-30T12:00:00Z ±999999999d",
+        "events where when in last -9223372036854775808 days",
+    ] {
+        assert!(bind(text, &ctx()).is_err(), "{text}");
+    }
+}
+
+#[devkit::test]
+fn each_boolean_branch_uses_its_selected_event_schema() {
+    let text = "events where (event_type = metric.figure and payload.value > 0) or (event_type = library.assignment and payload.value = synthetic)";
+    assert!(bind(text, &ctx()).is_ok());
+    assert!(err("events where (event_type = metric.figure and payload.value = synthetic) or (event_type = library.assignment and payload.value = synthetic)").message.contains("number"));
+}
+
+#[devkit::test]
+fn event_type_globs_select_the_schemas_used_for_payload_fields() {
+    assert!(
+        bind(
+            "events where event_type = metric.* and payload.value > 0",
+            &ctx()
+        )
+        .is_ok()
+    );
+    assert!(
+        bind(
+            "events where event_type = [metric.*, health.figure] sum(payload.numerator)",
+            &ctx()
+        )
+        .is_ok()
+    );
 }

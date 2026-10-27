@@ -135,9 +135,22 @@ pub fn complete(text: &str) -> Vec<Completion> {
             .filter(|f| kinds.as_ref().is_none_or(|ks| ks.contains(f.event_type)))
         {
             let name = format!("payload.{}", field.path.join("."));
+            let field_type = format!("{:?}", field.ty).to_lowercase();
             choices
                 .entry(name)
-                .or_insert_with(|| format!("{:?}", field.ty).to_lowercase());
+                .and_modify(|prior| {
+                    if prior != &field_type {
+                        if [prior.as_str(), field_type.as_str()]
+                            .iter()
+                            .all(|t| matches!(*t, "integer" | "number"))
+                        {
+                            *prior = "number".into();
+                        } else {
+                            *prior = "ambiguous".into();
+                        }
+                    }
+                })
+                .or_insert(field_type);
         }
     }
     choices
@@ -147,26 +160,59 @@ pub fn complete(text: &str) -> Vec<Completion> {
         .collect()
 }
 
+fn glob_matches(pattern: &str, text: &str) -> bool {
+    let (pattern, text) = (pattern.as_bytes(), text.as_bytes());
+    let (mut p, mut t, mut star, mut retry) = (0, 0, None, 0);
+    while t < text.len() {
+        if p < pattern.len() && pattern[p] == text[t] {
+            p += 1;
+            t += 1;
+        } else if p < pattern.len() && pattern[p] == b'*' {
+            star = Some(p);
+            p += 1;
+            retry = t;
+        } else if let Some(last) = star {
+            p = last + 1;
+            retry += 1;
+            t = retry;
+        } else {
+            return false;
+        }
+    }
+    while p < pattern.len() && pattern[p] == b'*' {
+        p += 1;
+    }
+    p == pattern.len()
+}
+
+fn selected_value(value: &Value) -> Option<BTreeSet<String>> {
+    match value {
+        Value::Text(s) => Some(BTreeSet::from([s.clone()])),
+        Value::Glob(pattern) => Some(
+            crate::event_types::ALL
+                .iter()
+                .filter(|event| glob_matches(pattern, event.event_type))
+                .map(|event| event.event_type.into())
+                .collect(),
+        ),
+        Value::List(values) => {
+            let mut out = BTreeSet::new();
+            for value in values {
+                out.extend(selected_value(value)?);
+            }
+            Some(out)
+        }
+        _ => None,
+    }
+}
+
 fn selected(e: &Expr) -> Option<BTreeSet<String>> {
     match e {
         Expr::Compare {
             lhs: Operand::Field(FieldRef::Field(f)),
             op: Op::Eq,
             rhs,
-        } if f.name == "event_type" => match rhs {
-            Value::Text(s) => Some(BTreeSet::from([s.clone()])),
-            Value::List(items) => items
-                .iter()
-                .map(|v| {
-                    if let Value::Text(s) = v {
-                        Some(s.clone())
-                    } else {
-                        None
-                    }
-                })
-                .collect(),
-            _ => None,
-        },
+        } if f.name == "event_type" => selected_value(rhs),
         Expr::And(a, b) => match (selected(a), selected(b)) {
             (Some(a), Some(b)) => Some(a.intersection(&b).cloned().collect()),
             (a, b) => a.or(b),
@@ -259,6 +305,12 @@ fn validate_value(v: &mut Value, ty: FieldType, ctx: &Context) -> Result<(), Que
     }
 }
 fn expr(e: &mut Expr, kinds: &Option<BTreeSet<String>>, ctx: &Context) -> Result<(), QueryError> {
+    let narrowed = selected(e).map(|selected| {
+        kinds.as_ref().map_or(selected.clone(), |ks| {
+            ks.intersection(&selected).cloned().collect()
+        })
+    });
+    let kinds = if narrowed.is_some() { &narrowed } else { kinds };
     match e {
         Expr::And(a, b) | Expr::Or(a, b) => {
             expr(a, kinds, ctx)?;

@@ -38,7 +38,7 @@ A lower bound is required; an omitted upper bound resolves to the query's
 Dimension combinations come from the groups that were recorded in the range.
 Every filled row has `coverage`: `recorded` for a group with records,
 `observed` when the selected live source's recorded run covers the bucket's selected
-range, or `no_data` when that opportunity is unknown. Empty counts become
+range, or `no_data` when that opportunity is unknown. Empty counts and sums become
 zero only for `observed` rows; other empty aggregates remain null. A filled
 zero counts stored records, not every real-world occurrence. Sorting,
 filtering, further grouping and paging operate on the filled rows.
@@ -58,7 +58,9 @@ recording time. The marked time has operator quality. A client may supply its
 observed directory, command, application and title. No event IDs are needed at
 mark time. Recall selects the newest visible mark by marked time, with ID as
 the tie breaker, and returns its note and context at one commit position.
-`mark 2` selects the second newest. An absent or unavailable mark is explicit.
+`mark 2` selects the second newest. Recall also resolves command and focus
+links by equivalence key and sessions by containing time. An absent or
+unavailable mark is explicit.
 
 Citations work through `show` and event citations through provenance commands:
 

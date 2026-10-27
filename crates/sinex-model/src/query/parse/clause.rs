@@ -17,8 +17,14 @@ impl Parser<'_> {
         let Some(t) = self.peek().cloned() else {
             let w = SignedDuration::from_secs_f64(default_window);
             return Ok(Source::Recall {
-                from: ctx.now.checked_sub(w).map_err(|_| QueryError::new("recall start exceeds the timestamp range"))?,
-                to: ctx.now.checked_add(w).map_err(|_| QueryError::new("recall end exceeds the timestamp range"))?,
+                from: ctx
+                    .now
+                    .checked_sub(w)
+                    .map_err(|_| QueryError::new("recall start exceeds the timestamp range"))?,
+                to: ctx
+                    .now
+                    .checked_add(w)
+                    .map_err(|_| QueryError::new("recall end exceeds the timestamp range"))?,
             });
         };
         let word = t.text.to_ascii_lowercase();
@@ -65,8 +71,14 @@ impl Parser<'_> {
         if CLAUSE_WORDS.contains(&word.as_str()) {
             let w = SignedDuration::from_secs_f64(default_window);
             return Ok(Source::Recall {
-                from: ctx.now.checked_sub(w).map_err(|_| QueryError::new("recall start exceeds the timestamp range"))?,
-                to: ctx.now.checked_add(w).map_err(|_| QueryError::new("recall end exceeds the timestamp range"))?,
+                from: ctx
+                    .now
+                    .checked_sub(w)
+                    .map_err(|_| QueryError::new("recall start exceeds the timestamp range"))?,
+                to: ctx
+                    .now
+                    .checked_add(w)
+                    .map_err(|_| QueryError::new("recall end exceeds the timestamp range"))?,
             });
         }
         // A whole day.
@@ -100,8 +112,12 @@ impl Parser<'_> {
         }
         let w = SignedDuration::from_secs_f64(window);
         Ok(Source::Recall {
-            from: centre.checked_sub(w).map_err(|_| QueryError::at(t.at,"recall start exceeds the timestamp range"))?,
-            to: centre.checked_add(w).map_err(|_| QueryError::at(t.at,"recall end exceeds the timestamp range"))?,
+            from: centre
+                .checked_sub(w)
+                .map_err(|_| QueryError::at(t.at, "recall start exceeds the timestamp range"))?,
+            to: centre
+                .checked_add(w)
+                .map_err(|_| QueryError::at(t.at, "recall end exceeds the timestamp range"))?,
         })
     }
 

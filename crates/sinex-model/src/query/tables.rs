@@ -112,7 +112,11 @@ const RUNS: &[Field] = &[
     f("failed", FieldType::Integer, "records that failed"),
 ];
 const SOURCES: &[Field] = &[
-    f("continuity", FieldType::Text, "continuity evidence"),
+    f(
+        "continuity",
+        FieldType::Enum(&["run_lifetimes", "unknown"]),
+        "continuity evidence",
+    ),
     f("gaps", FieldType::Json, "gaps between recorded live runs"),
     f("drift", FieldType::Json, "recorded payload schema changes"),
     f(

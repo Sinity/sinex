@@ -7,7 +7,7 @@ pub(super) fn field(name: &str) -> Option<String> {
             SELECT started_at, max(ended_at) OVER (ORDER BY started_at,ended_at ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING) AS prior_end FROM (
               SELECT r.id,r.started_at,coalesce(r.ended_at,max(e.ts_orig)) AS ended_at
               FROM core.visible_events e JOIN core.runs r ON r.id=e.run_id
-              WHERE e.source={t}.name AND NOT EXISTS (SELECT 1 FROM audit.archived a WHERE a.event_id=e.id)
+              WHERE e.source={t}.name
               GROUP BY r.id,r.started_at,r.ended_at
             ) runs
           ) spans WHERE {t}.driver='live-stream' AND prior_end < started_at)".into(),

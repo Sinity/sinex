@@ -219,3 +219,31 @@ async fn time_citations_follow_replaced_spans_and_recall_includes_states_already
     assert_eq!(window["result"]["total"], 1);
     assert_eq!(window["result"]["rows"][0]["id"], second_id.to_string());
 }
+
+#[devkit::test]
+async fn replacing_a_saved_definition_invalidates_its_previous_continuation(
+    db: devkit::pg::TestDatabase,
+) {
+    let w = world(db).await;
+    admit(
+        &w,
+        &["synthetic one", "synthetic two", "synthetic three"],
+        0,
+    )
+    .await;
+    let (_,saved) = call(&w,Some(OPERATOR),json!({"method":"query-save","name":"paged","query":"events where payload.cwd = $directory fields id","parameter":["directory:text"]})).await;
+    assert_eq!(saved["outcome"], "ok", "{saved}");
+    let (_, page) = call(
+        &w,
+        Some(OPERATOR),
+        json!({"method":"query","query":"query:paged(directory=\"/src/tide\")","page":1}),
+    )
+    .await;
+    assert_eq!(page["outcome"], "ok", "{page}");
+    let cursor = page["result"]["page"]["cursor"].clone();
+    assert!(cursor.is_string());
+    let (_,changed) = call(&w,Some(OPERATOR),json!({"method":"query-save","name":"paged","query":"events where payload.cwd = $directory sort when desc fields id","parameter":["directory:text"]})).await;
+    assert_eq!(changed["outcome"], "ok", "{changed}");
+    let (_,continued) = call(&w,Some(OPERATOR),json!({"method":"query","query":"query:paged(directory=\"/src/tide\")","page":1,"cursor":cursor})).await;
+    assert_eq!(continued["outcome"], "refused", "{continued}");
+}

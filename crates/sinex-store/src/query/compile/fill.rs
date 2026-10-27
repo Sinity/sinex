@@ -120,7 +120,10 @@ impl Compiler<'_> {
                 quote(key),
                 quote(&aggregate.column())
             ));
-            if matches!(aggregate.function, AggFn::Count | AggFn::CountDistinct) {
+            if matches!(
+                aggregate.function,
+                AggFn::Count | AggFn::CountDistinct | AggFn::Sum
+            ) {
                 value
                     .push(" WHEN ")
                     .append(known_opportunity.clone())

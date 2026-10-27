@@ -266,13 +266,15 @@ async fn mark_links(
     for (name, text) in questions {
         let text = format!("{text} fields id,event_type,source,key,material,offset,output");
         let query = sinex_model::query::bind(&text, &ctx).map_err(|e| Error::Invalid(e.message))?;
-        let compiled = Compiler::new(&ctx, seq).compile(&query)?;
-        let mut sql = SqlFragment::text(format!(
-            "SELECT {} FROM (",
-            super::json_object(&compiled.columns)
-        ));
-        sql.append(compiled.answer).push(") q");
-        let (text, values) = sql.render();
+        let (text, values) = {
+            let compiled = Compiler::new(&ctx, seq).compile(&query)?;
+            let mut sql = SqlFragment::text(format!(
+                "SELECT {} FROM (",
+                super::json_object(&compiled.columns)
+            ));
+            sql.append(compiled.answer).push(") q");
+            sql.render()
+        };
         let mut rows: Vec<Json> = super::sql::bind_scalar(sqlx::query_scalar(&text), values)
             .fetch_all(&mut *conn)
             .await?;

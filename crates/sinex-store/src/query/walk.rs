@@ -254,12 +254,14 @@ pub(crate) async fn recall_summary(
             fill: None,
         })],
     };
-    let compiled = super::Compiler::new(&Context::utc(to), seq).compile(&selector)?;
-    let mut rows = super::SqlFragment::text(
-        "SELECT jsonb_build_object('source',q.source,'events',q.count,'first',q.min_when,'last',q.max_when) FROM (",
-    );
-    rows.append(compiled.answer).push(") q");
-    let (sql, values) = rows.render();
+    let (sql, values) = {
+        let compiled = super::Compiler::new(&Context::utc(to), seq).compile(&selector)?;
+        let mut rows = super::SqlFragment::text(
+            "SELECT jsonb_build_object('source',q.source,'events',q.count,'first',q.min_when,'last',q.max_when) FROM (",
+        );
+        rows.append(compiled.answer).push(") q");
+        rows.render()
+    };
     let by_source: Vec<Json> = super::sql::bind_scalar(sqlx::query_scalar(&sql), values)
         .fetch_all(&mut *conn)
         .await?;
