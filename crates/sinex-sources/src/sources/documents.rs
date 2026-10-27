@@ -82,7 +82,12 @@ impl Parser for DocumentParser {
                     record.len() as u64
                 },
                 modified_at: time("mtime_ns")?,
-                media_type: media_type(record).into(),
+                media_type: if removed_at.is_some() {
+                    "application/octet-stream"
+                } else {
+                    media_type(record)
+                }
+                .into(),
                 content,
                 removed_at,
             }],
