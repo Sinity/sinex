@@ -57,9 +57,11 @@ fn each_version_after_0_has_its_upgrade() {
 async fn search_version_two(conn: &mut PgConnection) {
     for statement in [
         "DROP VIEW core.visible_search_text",
-        "DROP INDEX core.search_text_trigram",
-        "ALTER TABLE core.search_text DROP COLUMN trigram_indexed",
+        "DROP TABLE core.search_text",
+        "CREATE TABLE core.search_text (event_id uuid PRIMARY KEY, text text NOT NULL, tsv tsvector GENERATED ALWAYS AS (to_tsvector('simple', text)) STORED)",
+        "CREATE INDEX search_text_tsv ON core.search_text USING gin (tsv)",
         "CREATE INDEX search_text_trigram ON core.search_text USING gin (text gin_trgm_ops)",
+        "GRANT SELECT, INSERT, UPDATE, DELETE ON core.search_text TO sinex_writer",
         "CREATE VIEW core.visible_search_text AS SELECT s.event_id, s.text, s.tsv FROM core.search_text s JOIN core.events e ON e.id=s.event_id WHERE core.class_visible(e.class)",
         "GRANT SELECT ON core.visible_search_text TO sinex_reader, sinex_writer",
         "GRANT INSERT, UPDATE, DELETE ON core.visible_search_text TO sinex_writer",
