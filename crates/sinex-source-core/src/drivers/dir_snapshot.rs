@@ -13,7 +13,7 @@
 //!
 //! The admitted cursor confirms cached file facts. Until its final byte commits,
 //! a retry offers the same bundle again. Each member records the file's size,
-//! modification time and content hash, and the reader saves its file facts
+//! change time and content hash, and the reader saves its file facts
 //! with the cursor on the cadence of [`super::memory_due`]. A restart takes
 //! the facts from that saved memory and the bundles after it, so an unchanged
 //! file is not read or stored again and a file removed while Sinex was down is
@@ -61,7 +61,7 @@ pub struct Cursor {
     pub changed_since_memory: u64,
 }
 
-/// What was already read, by relative path: size, modification time, hash.
+/// What was already read, by relative path: size, change time, hash.
 #[derive(Default)]
 pub struct DirState {
     files: FileMemory,
