@@ -75,131 +75,131 @@ fn visit(
         || prefix.get(257..262) == Some(b"ustar");
     active.insert(identity.clone());
     let result = (|| -> Result<(), String> {
-    let mut includes = BTreeMap::<String, Vec<IncludeTarget>>::new();
-    let mut year = initial_year;
-    let mut counts = BTreeMap::<String, u64>::new();
-    // Archives are read by the shared archive reader. Native journal include
-    // paths refer to the local filesystem, never to an extracted temporary tree.
-    if !archive && settings.option("journal_format").unwrap_or("journal") == "journal" {
-        file.rewind().map_err(|e| e.to_string())?;
-        let ranges = SPEC.framer.ranges(&mut file).map_err(|e| e.to_string())?;
-        for (start, end) in ranges {
-            file.seek(SeekFrom::Start(start as u64))
-                .map_err(|e| e.to_string())?;
-            let mut header = String::new();
-            let read =
-                BufReader::new(file.by_ref().take((end - start) as u64)).read_line(&mut header);
-            if let Err(error) = read {
-                if error.kind() == std::io::ErrorKind::InvalidData {
+        let mut includes = BTreeMap::<String, Vec<IncludeTarget>>::new();
+        let mut year = initial_year;
+        let mut counts = BTreeMap::<String, u64>::new();
+        // Archives are read by the shared archive reader. Native journal include
+        // paths refer to the local filesystem, never to an extracted temporary tree.
+        if !archive && settings.option("journal_format").unwrap_or("journal") == "journal" {
+            file.rewind().map_err(|e| e.to_string())?;
+            let ranges = SPEC.framer.ranges(&mut file).map_err(|e| e.to_string())?;
+            for (start, end) in ranges {
+                file.seek(SeekFrom::Start(start as u64))
+                    .map_err(|e| e.to_string())?;
+                let mut header = String::new();
+                let read =
+                    BufReader::new(file.by_ref().take((end - start) as u64)).read_line(&mut header);
+                if let Err(error) = read {
+                    if error.kind() == std::io::ErrorKind::InvalidData {
+                        continue;
+                    }
+                    return Err(error.to_string());
+                }
+                let header = header.trim();
+                if let Some(value) = header
+                    .strip_prefix('Y')
+                    .or_else(|| header.strip_prefix("year "))
+                    .or_else(|| header.strip_prefix("apply year "))
+                {
+                    if let Ok(value) = super::split_comment(value).0.trim().parse::<i16>() {
+                        year = Some(value);
+                    }
+                }
+                let Some(target) = header
+                    .strip_prefix("include ")
+                    .or_else(|| header.strip_prefix("include\t"))
+                else {
                     continue;
+                };
+                file.seek(SeekFrom::Start(start as u64))
+                    .map_err(|e| e.to_string())?;
+                let mut hash = blake3::Hasher::new();
+                let mut block = file.by_ref().take((end - start) as u64);
+                let mut buffer = [0; 8192];
+                loop {
+                    let count = block.read(&mut buffer).map_err(|e| e.to_string())?;
+                    if count == 0 {
+                        break;
+                    }
+                    hash.update(&buffer[..count]);
                 }
-                return Err(error.to_string());
-            }
-            let header = header.trim();
-            if let Some(value) = header
-                .strip_prefix('Y')
-                .or_else(|| header.strip_prefix("year "))
-                .or_else(|| header.strip_prefix("apply year "))
-            {
-                if let Ok(value) = super::split_comment(value).0.trim().parse::<i16>() {
-                    year = Some(value);
-                }
-            }
-            let Some(target) = header
-                .strip_prefix("include ")
-                .or_else(|| header.strip_prefix("include\t"))
-            else {
-                continue;
-            };
-            file.seek(SeekFrom::Start(start as u64))
-                .map_err(|e| e.to_string())?;
-            let mut hash = blake3::Hasher::new();
-            let mut block = file.by_ref().take((end - start) as u64);
-            let mut buffer = [0; 8192];
-            loop {
-                let count = block.read(&mut buffer).map_err(|e| e.to_string())?;
-                if count == 0 {
-                    break;
-                }
-                hash.update(&buffer[..count]);
-            }
-            let hash = hash.finalize().to_hex().to_string();
-            let duplicate = counts.entry(hash.clone()).or_default();
-            let key = format!("{hash}:{}", *duplicate);
-            let from = IncludedFrom {
-                path: path.display().to_string(),
-                block_hash: hash.clone(),
-                duplicate: *duplicate,
-                parent: from.clone().map(Box::new),
-            };
-            *duplicate += 1;
-            let targets = match resolve(path, target.trim(), settings) {
-                Ok(targets) => targets,
-                Err(reason) => {
-                    includes.entry(key).or_default().push(IncludeTarget {
-                        path: target.trim().into(),
-                        reason: Some(reason),
-                    });
-                    continue;
-                }
-            };
-            for target in targets {
-                let reason = match std::fs::canonicalize(&target) {
-                    Err(e) => Some(format!("{}: {e}", target.display())),
-                    Ok(id) if active.contains(&id) => Some("include cycle".into()),
-                    Ok(_) => {
-                        let format = target_format(header, &target);
-                        let mut child_settings = settings.clone();
-                        let mut options = child_settings
-                            .options
-                            .as_object()
-                            .cloned()
-                            .unwrap_or_default();
-                        options.insert("journal_format".into(), json!(format));
-                        child_settings.options = options.into();
-                        match visit(
-                            &target,
-                            journal,
-                            &child_settings,
-                            year,
-                            Some(from.clone()),
-                            active,
-                            out,
-                        ) {
-                            Ok(()) => None,
-                            Err(e) => Some(e),
-                        }
+                let hash = hash.finalize().to_hex().to_string();
+                let duplicate = counts.entry(hash.clone()).or_default();
+                let key = format!("{hash}:{}", *duplicate);
+                let from = IncludedFrom {
+                    path: path.display().to_string(),
+                    block_hash: hash.clone(),
+                    duplicate: *duplicate,
+                    parent: from.clone().map(Box::new),
+                };
+                *duplicate += 1;
+                let targets = match resolve(path, target.trim(), settings) {
+                    Ok(targets) => targets,
+                    Err(reason) => {
+                        includes.entry(key).or_default().push(IncludeTarget {
+                            path: target.trim().into(),
+                            reason: Some(reason),
+                        });
+                        continue;
                     }
                 };
-                includes
-                    .entry(key.clone())
-                    .or_default()
-                    .push(IncludeTarget {
-                        path: target.display().to_string(),
-                        reason,
-                    });
+                for target in targets {
+                    let reason = match std::fs::canonicalize(&target) {
+                        Err(e) => Some(format!("{}: {e}", target.display())),
+                        Ok(id) if active.contains(&id) => Some("include cycle".into()),
+                        Ok(_) => {
+                            let format = target_format(header, &target);
+                            let mut child_settings = settings.clone();
+                            let mut options = child_settings
+                                .options
+                                .as_object()
+                                .cloned()
+                                .unwrap_or_default();
+                            options.insert("journal_format".into(), json!(format));
+                            child_settings.options = options.into();
+                            match visit(
+                                &target,
+                                journal,
+                                &child_settings,
+                                year,
+                                Some(from.clone()),
+                                active,
+                                out,
+                            ) {
+                                Ok(()) => None,
+                                Err(e) => Some(e),
+                            }
+                        }
+                    };
+                    includes
+                        .entry(key.clone())
+                        .or_default()
+                        .push(IncludeTarget {
+                            path: target.display().to_string(),
+                            reason,
+                        });
+                }
             }
         }
-    }
-    let mut options = settings.options.as_object().cloned().unwrap_or_default();
-    options.insert("journal".into(), json!(journal.display().to_string()));
-    options.insert("initial_year".into(), json!(initial_year));
-    options.insert("included_from".into(), json!(from));
-    options.insert("includes".into(), json!(includes));
-    let mut binding = Binding::of(
-        &SPEC,
-        path,
-        Settings {
-            options: options.into(),
-            ..settings.clone()
-        },
-    );
-    if let Some(from) = from {
-        let parent = blake3::hash(serde_json::to_string(&from).unwrap().as_bytes()).to_hex();
-        binding = binding.named(&format!("include:{parent}"));
-    }
-    out.push(binding);
-    Ok(())
+        let mut options = settings.options.as_object().cloned().unwrap_or_default();
+        options.insert("journal".into(), json!(journal.display().to_string()));
+        options.insert("initial_year".into(), json!(initial_year));
+        options.insert("included_from".into(), json!(from));
+        options.insert("includes".into(), json!(includes));
+        let mut binding = Binding::of(
+            &SPEC,
+            path,
+            Settings {
+                options: options.into(),
+                ..settings.clone()
+            },
+        );
+        if let Some(from) = from {
+            let parent = blake3::hash(serde_json::to_string(&from).unwrap().as_bytes()).to_hex();
+            binding = binding.named(&format!("include:{parent}"));
+        }
+        out.push(binding);
+        Ok(())
     })();
     active.remove(&identity);
     result
