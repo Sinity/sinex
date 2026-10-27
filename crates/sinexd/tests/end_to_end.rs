@@ -210,7 +210,7 @@ async fn consistent(conn: &mut PgConnection) {
             conn,
             "SELECT count(*) FROM core.live_equivalence l JOIN core.events e ON e.id = l.event_id
              WHERE (e.source, e.event_type, e.equivalence_key, e.reading_order, e.record_hash)
-                   IS DISTINCT FROM (l.source, l.event_type, l.equivalence_key, l.reading_order, l.record_hash)",
+                   IS DISTINCT FROM (l.source, l.event_type, core.decode_equivalence_key(l.equivalence_key), l.reading_order, l.record_hash)",
         )
         .await;
     assert_eq!(disagree, 0, "side tables agree with core.events");
