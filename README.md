@@ -241,3 +241,16 @@ workload and storage equal; compare individual runs and the median paired
 ratio. A failed load check is a loaded observation. Admission-only rates do
 not establish throughput with search and publication, and consumer completion
 includes their later catch-up time.
+
+Consumer measurements also save protected prefix-query plans and three
+read-only execution samples after the timed workload. `--publication-probe`
+adds a separate publication-table probe after those correctness snapshots. It
+compares ordered and overlapping UUID bounds on 3,851,000 synthetic mappings,
+retaining lookup, erasure, relation size and host-load observations.
+
+`agentctl job start sinex bench -- cases --events 10000 --output /realm/path`
+measures synthetic source changes separately: new YouTube records, the same
+records in another material, hidden records, replacements that omit known
+titles and channels, and derivations with retained parent links. It checks
+search and publication catch-up after each phase. These serial scenario
+timings are supplementary to the concurrent pipeline comparison.

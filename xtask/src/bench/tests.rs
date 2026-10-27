@@ -153,3 +153,11 @@ fn stage_percentiles_compare_equal_batch_sizes_and_count_suppressed_batches() {
     assert_eq!(groups[1]["stages"]["copy"]["p95_ms"], 30.0);
     assert!(measurements::summarize_batches(&[])["totals"]["batches"].is_null());
 }
+
+#[devkit::test]
+fn socket_paths_remain_one_connection_parameter() {
+    assert_eq!(
+        measurements::socket_url(Path::new("/realm/bench one/pg&user=other")),
+        "postgresql:///sinex?host=/realm/bench%20one/pg%26user%3Dother&user=sinex"
+    );
+}

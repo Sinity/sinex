@@ -28,6 +28,7 @@
 //! `bench synthetic` measures admission alone: it backfills a generated shell
 //! history of small events into its own PostgreSQL and records the rate under
 //! `synthetic-admission`.
+mod cases;
 mod measurements;
 
 use devkit::bench::{self, Candidate, LoadMonitor, Manifest};
@@ -70,7 +71,7 @@ pub enum Bench {
     Run {
         /// `disk` puts PostgreSQL and the content store on /realm like the
         /// deployment; `memory` puts them in /dev/shm.
-        #[arg(long, default_value = "disk")]
+        #[arg(long, default_value = "disk", value_parser = ["disk", "memory"])]
         storage: String,
         /// Memory cap per backfill process (systemd `MemoryMax`). A backfill
         /// that exceeds it is killed and reported, not the desktop.
@@ -84,7 +85,7 @@ pub enum Bench {
         #[arg(long, default_value_t = 1_000_000)]
         events: u64,
         /// `disk` or `memory`, as for `run`.
-        #[arg(long, default_value = "disk")]
+        #[arg(long, default_value = "disk", value_parser = ["disk", "memory"])]
         storage: String,
         #[arg(long, default_value = "6G")]
         memory_max: String,
@@ -101,12 +102,22 @@ pub enum Bench {
         /// Populate and consume this many live keyed journal events before measurement.
         #[arg(long, default_value_t = 0)]
         prefill_keys: u64,
+        /// After the measured workload, compare publication lookup and erasure costs.
+        #[arg(long)]
+        publication_probe: bool,
         /// Measure admission while search and publication consume it.
         #[arg(long)]
         consumers: bool,
         /// Add keyed journal records and variable payload widths.
         #[arg(long)]
         mixed: bool,
+    },
+    /// Exercise repeats, hidden readings, known-field replacements and derivations.
+    Cases {
+        #[arg(long, default_value_t = 10_000)]
+        events: u64,
+        #[arg(long)]
+        output: PathBuf,
     },
     #[command(flatten)]
     Shared(devkit::cli::Bench),
@@ -127,6 +138,7 @@ pub fn execute(command: Bench) -> ExitCode {
             output,
             older_binary,
             prefill_keys,
+            publication_probe,
             consumers,
             mixed,
         } => synthetic(SyntheticOptions {
@@ -137,9 +149,11 @@ pub fn execute(command: Bench) -> ExitCode {
             output,
             older_binary,
             prefill_keys,
+            publication_probe,
             consumers,
             mixed,
         }),
+        Bench::Cases { events, output } => cases::run(events, &output),
         Bench::Shared(b) => return devkit::cli::bench("sinex", b),
     };
     match result {
@@ -340,15 +354,19 @@ impl Cluster {
         if !ok {
             return Err("initdb failed".into());
         }
-        let configuration = measurements::postgres_configuration(fsync, settings)?;
+        let mut configuration = measurements::postgres_configuration(fsync, settings)?;
+        let directory = format!("\"{}\"", socket.to_string_lossy().replace('"', "\"\""));
+        configuration.push_str(&format!(
+            "listen_addresses = ''\nunix_socket_directories = '{}'\n",
+            directory.replace('\\', "\\\\").replace('\'', "''")
+        ));
         fs::write(data.join("postgresql.auto.conf"), configuration).map_err(|e| e.to_string())?;
-        let options = format!("-k {} -c listen_addresses=", socket.display());
         let ok = Command::new("pg_ctl")
             .arg("-D")
             .arg(&data)
             .arg("-l")
             .arg(dir.join("log"))
-            .args(["-w", "-o", &options, "start"])
+            .args(["-w", "start"])
             .stdout(std::process::Stdio::null())
             .status()
             .map_err(|e| format!("pg_ctl: {e}"))?
@@ -399,10 +417,7 @@ impl Cluster {
     }
 
     fn url(&self) -> String {
-        format!(
-            "postgresql:///sinex?host={}&user=sinex",
-            self.socket.display()
-        )
+        measurements::socket_url(&self.socket)
     }
 
     /// Run `sql` in the bench database and return its unaligned output.
@@ -461,7 +476,11 @@ fn sinexd_recorded(
     args: &[&std::ffi::OsStr],
     out: Option<&Path>,
 ) -> Result<Value, String> {
-    let output = Command::new("systemd-run")
+    let mut command = Command::new("systemd-run");
+    if let Some(out) = out {
+        command.env("SINEX_PRIVATE_MODE", out.join("private-mode"));
+    }
+    let output = command
         .env("SINEX_BENCH_TIMINGS", "1")
         .args(["--user", "--scope", "--quiet", "-p"])
         .arg(format!("MemoryMax={memory_max}"))
@@ -567,6 +586,7 @@ struct SyntheticOptions {
     output: Option<PathBuf>,
     older_binary: Option<PathBuf>,
     prefill_keys: u64,
+    publication_probe: bool,
     consumers: bool,
     mixed: bool,
 }
@@ -580,6 +600,7 @@ fn synthetic(options: SyntheticOptions) -> Result<(), String> {
         output,
         older_binary,
         prefill_keys,
+        publication_probe,
         consumers,
         mixed,
     } = options;
@@ -590,6 +611,29 @@ fn synthetic(options: SyntheticOptions) -> Result<(), String> {
             events.saturating_mul(if mixed { 1024 } else { 48 }),
         )?,
     };
+    if bench::storage_of(&out) != storage {
+        return Err(format!(
+            "--storage {storage} does not match output directory {} ({})",
+            out.display(),
+            bench::storage_of(&out)
+        ));
+    }
+    if storage == "memory"
+        && available(&out).is_some_and(|free| {
+            free < events
+                .saturating_add(prefill_keys)
+                .saturating_mul(if mixed { 4096 } else { 192 })
+        })
+    {
+        return Err(
+            "insufficient memory-filesystem space for the generated workload; use --storage disk"
+                .into(),
+        );
+    }
+    let harness_started_unix_s = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|e| e.to_string())?
+        .as_secs_f64();
     let build = Instant::now();
     let (built_binary, build_times) = sinexd_binary_measured()?;
     let build_s = build.elapsed().as_secs_f64();
@@ -621,7 +665,14 @@ fn synthetic(options: SyntheticOptions) -> Result<(), String> {
         let prefill = out.join("prefill");
         fs::create_dir(&prefill).map_err(|e| e.to_string())?;
         let input = measurements::journal_input(&prefill, prefill_keys, "prefill")?;
-        measurements::with_consumers(&binary, &cluster, &out, &[input], prefill_keys, &memory_max)?;
+        measurements::with_consumers(
+            &binary,
+            &cluster,
+            &out,
+            &[input],
+            measurements::ConsumerCounts::all_new(prefill_keys),
+            &memory_max,
+        )?;
         for name in [
             "daemon.log",
             "nats.log",
@@ -654,9 +705,11 @@ fn synthetic(options: SyntheticOptions) -> Result<(), String> {
             &cluster,
             &out,
             &inputs,
-            events
-                .checked_add(prefill_keys)
-                .ok_or("event count overflow")?,
+            measurements::ConsumerCounts::all_new(
+                events
+                    .checked_add(prefill_keys)
+                    .ok_or("event count overflow")?,
+            ),
             &memory_max,
         )
     } else {
@@ -713,6 +766,7 @@ fn synthetic(options: SyntheticOptions) -> Result<(), String> {
     let normalized = measurements::normalize_statements(&statements, batches);
     measurements::save(&out, "statements-per-batch.json", &normalized)?;
     let mut metrics = json!({
+        "harness_started_unix_s": harness_started_unix_s,
         "complete": complete, "events": events, "prefill_keys": prefill_keys, "offered": totals["events_offered"],
         "admitted": correctness["events"].as_u64().and_then(|n| n.checked_sub(prefill_keys)), "batches": batches,
         "build_s": build_s, "build": build_times, "setup_s": setup_s, "execution_s": execution_s,
@@ -727,8 +781,19 @@ fn synthetic(options: SyntheticOptions) -> Result<(), String> {
         "batch_limits": {"events": 10000, "bytes": 16777216},
         "wal_bytes": measurements::wal_delta(&before, &after),
         "wal_bytes_per_event": measurements::wal_delta(&before, &after).map(|b| b as f64 / events.max(1) as f64),
+        "search_trigram_bytes": measurements::relation_size(&after, "search_text_trigram", "bytes"),
+        "search_tsv_bytes": measurements::relation_size(&after, "search_text_tsv", "bytes"),
+        "live_equivalence_bytes": measurements::relation_size(&after, "live_equivalence", "total_bytes"),
+        "published_bytes": measurements::relation_size(&after, "published", "total_bytes"),
         "artifacts": out,
     });
+    measurements::save(&out, "metrics.json", &metrics)?;
+    if consumers {
+        metrics["query_probes"] = measurements::query_probes(&cluster, &out)?;
+    }
+    if publication_probe {
+        metrics["publication_probe"] = measurements::publication_probe(&cluster, &out)?;
+    }
     metrics["teardown_s"] = match cluster.stop() {
         Ok(seconds) => json!(seconds),
         Err(error) => {

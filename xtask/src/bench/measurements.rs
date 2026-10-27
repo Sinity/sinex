@@ -23,7 +23,7 @@ pub(super) fn run_directory(parent: &Path) -> Result<PathBuf, String> {
         std::process::id()
     ));
     fs::create_dir(&out).map_err(|e| e.to_string())?;
-    Ok(out)
+    fs::canonicalize(out).map_err(|e| e.to_string())
 }
 
 fn postgres_value(value: &Value) -> String {
@@ -93,11 +93,19 @@ pub(super) fn postgres_configuration(disk: bool, overrides: &[String]) -> Result
         .collect())
 }
 
-fn query(cluster: &Cluster, sql: &str) -> Result<Value, String> {
+pub(super) fn query(cluster: &Cluster, sql: &str) -> Result<Value, String> {
     let output = Command::new("psql")
         .arg("-h")
         .arg(&cluster.socket)
-        .args(["-U", "sinex", "-v", "ON_ERROR_STOP=1", "-Atc", sql, "sinex"])
+        .args([
+            "-U",
+            "sinex",
+            "-v",
+            "ON_ERROR_STOP=1",
+            "-qAtc",
+            sql,
+            "sinex",
+        ])
         .output()
         .map_err(|e| e.to_string())?;
     if !output.status.success() {
@@ -428,12 +436,28 @@ fn monitor(port: u16) -> Result<Value, String> {
     serde_json::from_str(body).map_err(|e| e.to_string())
 }
 
+#[derive(Clone, Copy)]
+pub(super) struct ConsumerCounts {
+    pub live: u64,
+    pub events: u64,
+    pub messages: u64,
+}
+impl ConsumerCounts {
+    pub fn all_new(events: u64) -> Self {
+        Self {
+            live: events,
+            events,
+            messages: events,
+        }
+    }
+}
+
 pub(super) fn with_consumers(
     binary: &Path,
     cluster: &Cluster,
     out: &Path,
     inputs: &[SyntheticInput],
-    events: u64,
+    expected: ConsumerCounts,
     memory_max: &str,
 ) -> Result<Value, String> {
     let port = free_port()?;
@@ -499,7 +523,14 @@ pub(super) fn with_consumers(
     let runtime = out.join("runtime");
     fs::create_dir_all(&runtime).map_err(|e| e.to_string())?;
     let daemon_log = fs::File::create(out.join("daemon.log")).map_err(|e| e.to_string())?;
-    let unit = format!("sinex-bench-{}", std::process::id());
+    let unit = format!(
+        "sinex-bench-{}-{}",
+        std::process::id(),
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_err(|e| e.to_string())?
+            .as_nanos()
+    );
     let started = Instant::now();
     let mut daemon = Process(
         Command::new("systemd-run")
@@ -578,7 +609,7 @@ pub(super) fn with_consumers(
                     "no admission or consumer progress for ten minutes; see daemon.log".into(),
                 );
             }
-            let full = positions["admitted"].as_u64() == Some(events);
+            let full = positions["admitted"].as_u64() == Some(expected.live);
             if full && admission_s.is_none() {
                 admission_s = Some(elapsed);
             }
@@ -603,13 +634,18 @@ pub(super) fn with_consumers(
                     .flat_map(|a| a["stream_detail"].as_array().into_iter().flatten())
                     .find(|s| s["name"] == "BENCH_CONFIRMED")
                     .and_then(|s| s["state"]["messages"].as_u64());
-                if messages != Some(events) {
+                if messages.is_none() {
+                    std::thread::sleep(Duration::from_millis(200));
+                    continue;
+                }
+                if messages != Some(expected.messages) {
                     return Err(format!(
-                        "confirmed stream contains {messages:?} events, expected {events}"
+                        "confirmed stream contains {messages:?} messages, expected {}",
+                        expected.messages
                     ));
                 }
-                let correctness = correctness(cluster, events)?;
-                if correctness["search_rows"].as_u64() != Some(events) {
+                let correctness = correctness(cluster, expected.events)?;
+                if correctness["search_rows"].as_u64() != Some(expected.events) {
                     return Err("search did not retain all generated rows".into());
                 }
                 return Ok(
@@ -639,6 +675,19 @@ pub(super) fn with_consumers(
     if !status.success() && measured.is_ok() {
         return Err(format!("benchmark daemon shutdown failed: {status}"));
     }
+    if nats.0.try_wait().map_err(|e| e.to_string())?.is_none() {
+        let signalled = Command::new("kill")
+            .args(["-TERM", &nats.0.id().to_string()])
+            .status()
+            .map_err(|e| e.to_string())?;
+        if !signalled.success() && measured.is_ok() {
+            return Err("stopping benchmark NATS failed".into());
+        }
+        let status = nats.0.wait().map_err(|e| e.to_string())?;
+        if !status.success() && measured.is_ok() {
+            return Err(format!("benchmark NATS shutdown failed: {status}"));
+        }
+    }
     measured
 }
 
@@ -646,7 +695,7 @@ pub(super) fn stage_summary(out: &Path) -> Result<Value, String> {
     let mut batches = Vec::new();
     let mut publishers = Vec::new();
     let mut search = Vec::new();
-    for name in ["daemon.log", "backfill.stderr"] {
+    for name in ["daemon.log", "backfill.stderr", "source.stderr"] {
         let path = out.join(name);
         match fs::read_to_string(&path) {
             Ok(text) => {
@@ -659,7 +708,16 @@ pub(super) fn stage_summary(out: &Path) -> Result<Value, String> {
                             search.push(record["search_batch"].clone());
                         }
                         if record["publisher_page"].is_object() {
-                            publishers.push(record["publisher_page"].clone());
+                            let mut page = record["publisher_page"].clone();
+                            let timings: serde_json::Map<String, Value> =
+                                ["read", "acknowledge", "record", "commit"]
+                                    .into_iter()
+                                    .map(|stage| {
+                                        (stage.into(), page[format!("{stage}_ms")].clone())
+                                    })
+                                    .collect();
+                            page["timings_ms"] = json!(timings);
+                            publishers.push(page);
                         }
                     }
                 }
@@ -736,4 +794,100 @@ pub(super) fn summarize_batches(batches: &[Value]) -> Value {
         }
     }
     json!({"reported_batches": batches.len(), "totals": totals, "by_batch_size": groups})
+}
+
+pub(super) fn relation_size(snapshot: &Value, relation: &str, field: &str) -> Option<u64> {
+    snapshot["relations"]
+        .as_array()?
+        .iter()
+        .find(|row| row["schema"] == "core" && row["name"] == relation)?[field]
+        .as_u64()
+}
+
+pub(super) fn query_probes(cluster: &Cluster, out: &Path) -> Result<Value, String> {
+    let partial = query(cluster, "SELECT EXISTS(SELECT 1 FROM information_schema.columns WHERE table_schema='core' AND table_name='search_text' AND column_name='trigram_indexed')")?.as_bool().ok_or("missing search policy")?;
+    let mut observations = Vec::new();
+    for (kind, pattern) in [
+        ("command", "(^| )echo synthetic 12345"),
+        ("journal", "(^| )synthetic café record 12345"),
+    ] {
+        let from = if partial {
+            "SELECT s.event_id FROM core.visible_search_text s WHERE s.trigram_indexed AND s.text ~ $1::text UNION ALL SELECT s.event_id FROM core.visible_search_text s WHERE NOT s.trigram_indexed AND s.text ~ $1::text"
+        } else {
+            "SELECT s.event_id FROM core.visible_search_text s WHERE s.text ~ $1::text"
+        };
+        let sql = format!("SELECT count(*) FROM ({from}) matches");
+        let literal = sql.replace("$1::text", &format!("'{pattern}'::text"));
+        let prefix =
+            "BEGIN READ ONLY; SET LOCAL ROLE sinex_reader; SET LOCAL sinex.grants='guarded'; ";
+        let generic = query(
+            cluster,
+            &format!("{prefix}EXPLAIN (GENERIC_PLAN, FORMAT JSON) {sql}; ROLLBACK"),
+        )?;
+        let custom = query(
+            cluster,
+            &format!("{prefix}EXPLAIN (FORMAT JSON) {literal}; ROLLBACK"),
+        )?;
+        let mut samples = Vec::new();
+        for _ in 0..3 {
+            samples.push(query(
+                cluster,
+                &format!(
+                    "{prefix}EXPLAIN (ANALYZE, BUFFERS, WAL, FORMAT JSON) {literal}; ROLLBACK"
+                ),
+            )?);
+        }
+        let count = query(
+            cluster,
+            &format!("{prefix}SELECT to_jsonb(matches) FROM ({literal}) matches; ROLLBACK"),
+        )?;
+        observations.push(json!({"kind": kind, "pattern": pattern, "matches": count,
+            "generic": generic, "custom": custom, "samples": samples}));
+    }
+    let result = json!({"partial_index": partial, "observations": observations,
+        "scope": "Protected search-view prefix branches after consumer completion; planning is non-executing and latency uses read-only execution plans."});
+    save(out, "query-probes.json", &result)?;
+    Ok(result)
+}
+
+pub(super) fn publication_probe(cluster: &Cluster, out: &Path) -> Result<Value, String> {
+    let load = LoadMonitor::start()?;
+    let script = out.join("publication-probe.py");
+    fs::write(&script, include_str!("publication.py")).map_err(|e| e.to_string())?;
+    let output = Command::new("python3")
+        .arg(&script)
+        .arg(cluster.url())
+        .arg(out)
+        .arg(env::current_dir().map_err(|e| e.to_string())?)
+        .output()
+        .map_err(|e| e.to_string())?;
+    let load = load.finish()?;
+    save(out, "publication-probe-load.json", &load.to_json())?;
+    fs::write(out.join("publication-probe.stdout"), output.stdout).map_err(|e| e.to_string())?;
+    fs::write(out.join("publication-probe.stderr"), output.stderr).map_err(|e| e.to_string())?;
+    if !output.status.success() {
+        return Err(format!(
+            "publication probe failed; see {}",
+            out.join("publication-probe.stderr").display()
+        ));
+    }
+    let result = fs::read(out.join("publication-probe.json")).map_err(|e| e.to_string())?;
+    serde_json::from_slice(&result).map_err(|e| e.to_string())
+}
+
+pub(super) fn socket_url(path: &Path) -> String {
+    use std::os::unix::ffi::OsStrExt;
+    let encoded: String = path
+        .as_os_str()
+        .as_bytes()
+        .iter()
+        .map(|byte| {
+            if byte.is_ascii_alphanumeric() || b"/-_.~".contains(byte) {
+                char::from(*byte).to_string()
+            } else {
+                format!("%{byte:02X}")
+            }
+        })
+        .collect();
+    format!("postgresql:///sinex?host={encoded}&user=sinex")
 }
