@@ -653,3 +653,5 @@ async fn untimed_zsh_occurrences_coexist_and_only_same_locations_repeat(
 
 mod archive_history;
 mod source_counts;
+
+mod library_upgrade;

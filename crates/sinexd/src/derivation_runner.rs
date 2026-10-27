@@ -855,3 +855,67 @@ pub(crate) fn per_event() -> Vec<Box<dyn AnyPerEvent>> {
     }
     all
 }
+
+/// Compute explicitly requested keys through the same query and admission
+/// scope as the background runner. Commands use this before returning reads.
+pub(crate) async fn compute_now(
+    conn: &mut PgConnection,
+    writer: &WriterHandle,
+    derivation: &dyn AnyKeyed,
+    keys: Vec<Value>,
+    host: &str,
+) -> Result<(), String> {
+    let version = derivation.version().to_string();
+    let manifest = runs::Manifest {
+        name: derivation.name(),
+        kind: "derivation",
+        version: &version,
+        build: option_env!("SINEX_BUILD").unwrap_or("dev"),
+        emits: derivation.output_types(),
+    };
+    let run = runs::start(conn, &manifest, host)
+        .await
+        .map_err(|e| e.to_string())?;
+    let env = Env::at(Timestamp::now());
+    for key in keys {
+        let Some(query) = derivation.inputs(&key, &env) else {
+            continue;
+        };
+        let head = derivations::head(conn).await.map_err(|e| e.to_string())?;
+        let inputs = derivations::read_window(conn, &to_window(&query))
+            .await
+            .map_err(|e| e.to_string())?;
+        let inputs: Vec<_> = inputs.into_iter().map(|row| row.event).collect();
+        let mut computed = derivation.compute(&key, &inputs, &env);
+        for event in &mut computed.outputs {
+            event.reading_order = ReadingOrder(head);
+        }
+        writer
+            .submit(
+                Priority::Derived,
+                Batch {
+                    run,
+                    kind: BatchKind::Derived {
+                        derivation: derivation.name().into(),
+                        scope: DerivedScope::Keys {
+                            keys: vec![ComputedKey {
+                                key,
+                                dirty_seq: head,
+                                waiting: computed.waiting,
+                            }],
+                        }
+                        .to_value(),
+                    },
+                    records: vec![RecordOutcome::Events {
+                        location: None,
+                        events: computed.outputs,
+                    }],
+                    archive: vec![],
+                },
+            )
+            .await
+            .map_err(|e| e.to_string())?;
+    }
+    runs::end(conn, run).await.map_err(|e| e.to_string())?;
+    Ok(())
+}

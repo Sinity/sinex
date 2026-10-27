@@ -1,14 +1,11 @@
 //! Intake: scanning a library root and making or continuing items from what
 //! the scan saw.
-use super::{INTAKE, Library, R, e};
+use super::{Library, R, e};
 use serde_json::{Value, json};
-use sinex_library::{items, reads};
-use sinex_model::Timestamp;
-use sinex_model::event_types::library::{FileCopy, Item, LibraryRecord};
-use sinex_source_core::Settings;
+use sinex_library::reads;
+use sinex_source_core::binding::Settings;
 use sinex_sources::sources;
 use sqlx::PgConnection;
-use std::collections::HashMap;
 use std::path::Path;
 
 impl Library<'_> {
@@ -27,6 +24,9 @@ impl Library<'_> {
             .next()
             .ok_or("library input has no binding")?;
         let root_text = binding.input.display().to_string();
+        let before = reads::copies(conn, self.host, &root_text)
+            .await
+            .map_err(e)?;
         let reader = crate::binding_reader::BindingReader::new(format, binding)?;
         crate::intake::request_class(conn, reader.source.as_ref()).await?;
         let counts =
@@ -34,57 +34,37 @@ impl Library<'_> {
                 .await?;
         let files = counts.events_offered;
         let seen = counts.admitted + counts.replaced;
-        // Every present copy under the root, against the items its
-        // path belongs to.
-        let copies = reads::copies(conn, self.host, &root_text)
+        let after = reads::copies(conn, self.host, &root_text)
             .await
             .map_err(e)?;
-        let keys: Vec<String> = copies
-            .iter()
-            .flat_map(|a| {
-                let mut k = vec![items::copy_key(&a.host, &a.path)];
-                if let Some(from) = &a.moved_from {
-                    k.push(items::copy_key(&a.host, from));
-                }
-                k
-            })
-            .collect();
-        let mut holders: HashMap<String, Item> = HashMap::new();
-        for item in reads::items_at(conn, &keys).await.map_err(e)? {
-            for k in &item.copies {
-                holders.insert(k.clone(), item.clone());
+        let keys: std::collections::BTreeSet<_> =
+            after.iter().map(|copy| copy.item.clone()).collect();
+        crate::derivation_runner::compute_now(
+            conn,
+            self.writer,
+            &sinex_derivations::library::LibraryItems,
+            keys.into_iter().map(Value::String).collect(),
+            self.host,
+        )
+        .await?;
+        let mut new_items = 0;
+        let mut revisions = 0;
+        let mut moves = 0;
+        for copy in &after {
+            let old = before
+                .iter()
+                .find(|old| old.item == copy.item && old.vanished_at.is_none());
+            if copy.vanished_at.is_some() {
+                continue;
+            }
+            match old {
+                None => new_items += 1,
+                Some(old) if old.content != copy.content => revisions += 1,
+                Some(old) if old.path != copy.path => moves += 1,
+                _ => {}
             }
         }
-        let now = Timestamp::now();
-        let mut records = Vec::new();
-        let (mut new_items, mut revisions, mut moves) = (0, 0, 0);
-        // Moves first, then the rest, so a rename continues its item before
-        // anything else claims the bytes.
-        let mut ordered: Vec<&FileCopy> = copies.iter().collect();
-        ordered.sort_by_key(|a| a.moved_from.is_none());
-        for a in ordered {
-            let out = items::records_for(a, |k| holders.get(k).cloned(), INTAKE, now);
-            for r in &out {
-                if let LibraryRecord::Item(i) = r {
-                    match (i.revision, holders.values().any(|o| o.item == i.item)) {
-                        (1, false) => new_items += 1,
-                        (_, true) if a.moved_from.is_some() => moves += 1,
-                        (r, true) if r > 1 => revisions += 1,
-                        _ => {}
-                    }
-                    holders.retain(|_, o| o.item != i.item);
-                    for k in &i.copies {
-                        holders.insert(k.clone(), i.clone());
-                    }
-                }
-            }
-            records.extend(out);
-        }
-        let mut written = 0;
-        for chunk in records.chunks(2000) {
-            let v = self.write(conn, chunk.to_vec(), INTAKE, "intake").await?;
-            written += v["records"].as_u64().unwrap_or(0);
-        }
+        let written = (new_items + revisions) * 2 + moves;
         Ok(json!({
             "root": root_text,
             "stored_bytes": !reference,

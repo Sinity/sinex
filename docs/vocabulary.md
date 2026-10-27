@@ -151,3 +151,9 @@ these names and no others.
 - **submission** (`Submission`): the admission outcome and material of a submitted request.
 - **authored at** (`authored_at`): the author timestamp supplied by a Git commit, distinct from its commit timestamp.
 - **request record**: a forecast or library request submitted as a material and admitted through the writer.
+
+## Library
+
+- **item key**: the host, resolved library root and original relative path of a file. A move within that root keeps the key when the bytes match and the old path is gone.
+- **scan record**: one file observed during a library scan, with its item key, content hash, revision number and acquisition time.
+- **preview evidence**: the stored output of rendering an item revision; the library derivation produces its rendition.

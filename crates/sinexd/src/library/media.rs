@@ -4,7 +4,7 @@ use super::{Library, R, e};
 use serde_json::{Value, json};
 use sinex_library::{items, reads, render};
 use sinex_model::Timestamp;
-use sinex_model::event_types::library::{LibraryRecord, Rendition, RenditionRole};
+use sinex_model::event_types::library::{LibraryRecord, Preview, RenditionRole};
 use sinex_sources::sources::library as library_source;
 use sqlx::PgConnection;
 use std::path::PathBuf;
@@ -135,7 +135,7 @@ impl Library<'_> {
         .await
         .map_err(e)??;
         let content = stored.blob.clone();
-        let r = Rendition {
+        let r = Preview {
             rendition: items::new_id(),
             item: item.to_owned(),
             revision: it.revision,
@@ -154,10 +154,18 @@ impl Library<'_> {
         let id = r.rendition.clone();
         self.write_citing(
             conn,
-            vec![LibraryRecord::Rendition(r)],
+            vec![LibraryRecord::Preview(r)],
             actor,
             "preview",
             vec![stored],
+        )
+        .await?;
+        crate::derivation_runner::compute_now(
+            conn,
+            self.writer,
+            &sinex_derivations::library::LibraryItems,
+            vec![json!(item)],
+            self.host,
         )
         .await?;
         Ok(json!({ "item": item, "rendition": id, "content": content, "width": w, "height": h }))
