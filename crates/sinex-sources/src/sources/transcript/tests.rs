@@ -524,3 +524,23 @@ fn unresolvable_absolute_time_keeps_valid_relative_offsets() {
     assert_eq!(rows[0].start_ms, Some(u64::MAX));
     assert!(rows[0].at.is_none());
 }
+
+#[devkit::test]
+fn format_and_logical_input_have_distinct_binding_identities() {
+    let mut settings = Settings::new("example-host");
+    settings.options = serde_json::json!({"input":"recording-a"});
+    let first = plan(&JSON, Path::new("synthetic-import.json"), &settings)
+        .unwrap()
+        .remove(0);
+    let text = plan(&TEXT, Path::new("synthetic-import.json"), &settings)
+        .unwrap()
+        .remove(0);
+    settings.options["input"] = Value::String("recording-b".into());
+    let second = plan(&JSON, Path::new("synthetic-import.json"), &settings)
+        .unwrap()
+        .remove(0);
+    assert!(first.input.is_absolute());
+    assert_eq!(first.input, second.input);
+    assert_ne!(first.name, second.name);
+    assert_ne!(first.name, text.name);
+}

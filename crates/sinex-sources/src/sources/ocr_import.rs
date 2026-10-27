@@ -3,11 +3,10 @@ use super::transcript::{Carry, identifier, optional_number, optional_string, req
 use serde_json::{Map, Value};
 use sinex_model::Class;
 use sinex_model::event_types::imported_text::{BoundingBox, OcrSegment};
-use sinex_source_core::binding::{Binding, InputFormat, Settings};
+use sinex_source_core::binding::{Binding, InputFormat};
 use sinex_source_core::drivers::export_archive::Framing;
 use sinex_source_core::registry::{DeclaredSource, Driver, SourceSpec};
 use sinex_source_core::{Parser, RecordContext, RecordError};
-use std::path::Path;
 
 #[derive(Clone, Copy)]
 pub enum Format {
@@ -263,12 +262,6 @@ fn tsv_unsigned(object: &mut Map<String, Value>, key: &str) -> Result<u64, Recor
         .parse()
         .map_err(|_| RecordError::new(format!("invalid TSV {key}")))
 }
-fn plan(spec: &SourceSpec, input: &Path, settings: &Settings) -> Result<Vec<Binding>, String> {
-    if input.as_os_str().is_empty() || settings.option("input").is_none_or(str::is_empty) {
-        return Err("an explicit import path and input identity are required".into());
-    }
-    Ok(sinex_source_core::binding::single(spec, input, settings))
-}
 fn source(
     binding: &Binding,
     format: Format,
@@ -291,7 +284,7 @@ macro_rules! format {
         pub const $name: InputFormat = InputFormat {
             name: $spec.parser,
             specs: || vec![&$spec],
-            plan: Some(|p, s| plan(&$spec, p, s)),
+            plan: Some(|p, s| super::transcript::plan(&$spec, p, s)),
             source: |b| source(b, Format::$format, $spec),
             reader: Some(|b| Ok(super::transcript::archive(b, $framing))),
             capture: None,

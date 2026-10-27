@@ -155,12 +155,21 @@ pub const FORMAT: InputFormat = InputFormat {
     name: "documents",
     specs: || vec![&SPEC],
     plan: Some(|input, settings| {
-        validate(input, settings)?;
-        let mut settings = settings.clone();
-        if input.is_file() {
-            settings.options["file"] = Value::Bool(true);
+        if input.as_os_str().is_empty() {
+            return Err("document acquisition requires an explicit root".into());
         }
-        Ok(sinex_source_core::binding::single(&SPEC, input, &settings))
+        let input =
+            std::path::absolute(input).map_err(|error| format!("document path: {error}"))?;
+        validate(&input, settings)?;
+        let mut settings = settings.clone();
+        let file =
+            settings.options.get("file").and_then(Value::as_bool) == Some(true) || input.is_file();
+        settings.options["file"] = Value::Bool(file);
+        Ok(vec![Binding::of(&SPEC, &input, settings).named(if file {
+            "file"
+        } else {
+            "directory"
+        })])
     }),
     source: |_| {
         Ok(Box::new(DeclaredSource {
