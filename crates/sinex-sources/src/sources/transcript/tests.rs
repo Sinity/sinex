@@ -23,7 +23,6 @@ fn whisper_keeps_written_decimals_defaults_and_distinct_output_indexes() {
     assert_eq!(rows[0].end_seconds.as_deref(), Some("1.23456789"));
     assert_eq!(rows[1].end_seconds.as_deref(), Some("2e1"));
     assert_eq!((rows[0].start_ms, rows[0].end_ms), (Some(1), Some(1235)));
-    assert_eq!((rows[0].output_index, rows[1].output_index), (0, 1));
     assert!(rows.iter().all(|r| r.language.as_deref() == Some("pl")));
 }
 #[devkit::test]
@@ -332,4 +331,19 @@ fn named_import_roots_are_validated_and_registered_for_discovery() {
             .count(),
         1
     );
+}
+
+#[devkit::test]
+fn archived_provider_ids_are_scoped_to_the_member_path() {
+    let parser=TranscriptParser {format:Format::Json,input:"example.zip".into()};
+    let manifest=Manifest::from_json(serde_json::json!({"source_container":"zip"}));
+    let read=|path:&str| {
+        parser.parse(&br#"[{"id":"same","text":"same"}]"#.as_slice(),&Carry::default(),&RecordContext {manifest:&manifest,member:Some(&sinex_model::Member {path:path.into(),..Default::default()})}).unwrap().0.remove(0)
+    };
+    assert_ne!(read("a.json").input,read("b.json").input);
+}
+#[devkit::test]
+fn recording_time_uses_the_written_offset_before_millisecond_rounding() {
+    let rows=read(Format::Whisper,br#"{"segments":[{"text":"x","start":0.0005}],"recording_started_at":"2026-01-01T00:00:00Z"}"#).unwrap();
+    assert_eq!(rows[0].at.unwrap().unix_ns(),Timestamp::from_unix_secs(1_767_225_600).unwrap().unix_ns()+500_000);
 }

@@ -60,8 +60,7 @@ impl OcrParser {
             std::str::from_utf8(record).map_err(|_| RecordError::new("OCR input is not UTF-8"))?;
         let mut carry = carry.at(context);
         let mut payload = OcrText {
-            input: self.input.clone(),
-            output_index: carry.next,
+            input: super::transcript::input_identity(&self.input, context),
             ..Default::default()
         };
         carry.advance()?;

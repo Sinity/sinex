@@ -1,4 +1,5 @@
 use super::*;
+use std::path::Path;
 use sinex_model::{ReadingOrder, RecordOutcome};
 use sinex_source_core::drivers::dir_snapshot::DirState;
 use sinex_source_core::{DrainInput, Limits, drain};
@@ -36,10 +37,11 @@ fn binary_empty_and_large_documents_replay_after_originals_are_gone() {
     std::fs::write(root.join("b.empty"), []).unwrap();
     std::fs::write(root.join("c.pdf"), b"%PDF-1.4\nexample").unwrap();
     std::fs::write(root.join("note.md"), b"# Notes").unwrap();
+    std::fs::write(root.join("z.whitespace"), b" \n\t").unwrap();
     let driver = driver(root.to_path_buf(), "example-host".into());
     let acquired = driver.poll(&Value::Null, &mut DirState::default()).unwrap();
     let first = parse(&acquired);
-    assert_eq!(first.len(), 4);
+    assert_eq!(first.len(), 5);
     assert_eq!(first[0].payload["media_type"], "application/octet-stream");
     assert_eq!(first[0].payload["size"], large.len());
     assert_eq!(

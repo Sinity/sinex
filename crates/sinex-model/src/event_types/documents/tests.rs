@@ -17,5 +17,9 @@ fn removed_document_and_unknown_mtime_remain_distinct() {
     assert_eq!(p.record_state(), RecordState::Present);
     p.removed_at = Some(Timestamp::from_unix_secs(1).unwrap());
     p.content = None;
+    p.size = None;
+    p.media_type = None;
+    assert!(serde_json::to_value(&p).unwrap()["size"].is_null());
+    assert!(serde_json::to_value(&p).unwrap()["media_type"].is_null());
     assert_eq!(p.record_state(), RecordState::Removed);
 }

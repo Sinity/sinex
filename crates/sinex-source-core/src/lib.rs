@@ -90,10 +90,11 @@ pub trait Parser: Send + Sync + 'static {
     /// One typed payload, or an enum over several (see `Payloads`).
     type Payload: Payloads;
 
-    /// Fields left out of the record hash because they change without the
-    /// record changing (a last-seen time).
+    /// Empty file records still describe captured documents.
     const READS_BLANK_RECORDS: bool = false;
 
+    /// Fields left out of the record hash because they change without the
+    /// record changing (a last-seen time).
     const VOLATILE: &'static [&'static str] = &[];
 
     /// Map one framed record to its events. `context` is the record's

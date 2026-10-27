@@ -71,37 +71,30 @@ fn matches(parser: &str, path: &Path) -> Result<bool, String> {
     let extension = path
         .extension()
         .and_then(|s| s.to_str())
-        .unwrap_or_default();
-    Ok(match (parser, extension) {
+        .unwrap_or_default().to_ascii_lowercase();
+    Ok(match (parser, extension.as_str()) {
         ("webvtt", "vtt")
         | ("srt", "srt")
-        | ("ocr-tsv", "tsv")
-        | ("transcript-text" | "ocr-text", "txt") => true,
+        | ("ocr-tsv", "tsv") => true,
         ("transcript-json" | "whisper-json" | "ocr-json", "json") => {
-            // JSON syntax determines the format, not a required filename convention.
+            use std::io::Read;
             let file = std::fs::File::open(path).map_err(|e| format!("{}: {e}", path.display()))?;
-            let shape: Shape = match serde_json::from_reader(std::io::BufReader::new(file)) {
-                Ok(shape) => shape,
-                Err(_) => return Ok(matches!(parser, "transcript-json" | "ocr-json")),
-            };
-            match shape {
-                Shape::Array(rows) => {
-                    let _ = rows;
-                    parser == "transcript-json"
-                }
-                Shape::Object(object) => {
-                    let _ = object;
-                    matches!(parser, "whisper-json" | "ocr-json")
-                }
+            let mut first = None;
+            for byte in std::io::BufReader::new(file).bytes() {
+                let byte = byte.map_err(|e| format!("{}: {e}", path.display()))?;
+                if !byte.is_ascii_whitespace() { first = Some(byte); break; }
+            }
+            // The declared root identifies OCR; transcript JSON distinguishes its array and object forms.
+            // The parser reports malformed JSON after its bytes have been captured.
+            match parser {
+                "ocr-json" => true,
+                "whisper-json" => first == Some(b'{'),
+                _ => first != Some(b'{'),
             }
         }
+        ("transcript-text", extension) => !matches!(extension, "json" | "vtt" | "srt"),
+        ("ocr-text", extension) => !matches!(extension, "json" | "tsv"),
         _ => false,
     })
 }
 
-#[derive(serde::Deserialize)]
-#[serde(untagged)]
-enum Shape {
-    Array(Vec<serde::de::IgnoredAny>),
-    Object(std::collections::BTreeMap<String, serde::de::IgnoredAny>),
-}

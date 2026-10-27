@@ -115,8 +115,7 @@ impl TranscriptParser {
         carry.next = index;
         carry.advance()?;
         let mut payload = TranscriptCue {
-            input: self.input.clone(),
-            output_index: index,
+            input: input_identity(&self.input, context),
             ..Default::default()
         };
         match self.format {
@@ -189,10 +188,13 @@ impl TranscriptParser {
                         .map_err(|_| RecordError::new("invalid recording_started_at"))
                     })
                     .transpose()?;
-                if let (Some(at), Some(ms)) = (recording_start, payload.start_ms) {
+                let offset_ns = if self.format == Format::Whisper {
+                    payload.start_seconds.as_deref().and_then(|text| decimal_ms(text, 9).ok()).map(i128::from)
+                } else { payload.start_ms.map(|ms| i128::from(ms) * 1_000_000) };
+                if let (Some(at), Some(ns)) = (recording_start, offset_ns) {
                     payload.at = at
                         .unix_ns()
-                        .checked_add(i128::from(ms) * 1_000_000)
+                        .checked_add(ns)
                         .and_then(|ns| Timestamp::from_unix_ns(ns).ok());
                 }
                 payload.provider_id_stable = payload.provider_id.is_some()
@@ -537,4 +539,11 @@ fn decimal_text(value: Option<&str>) -> Result<Option<String>, RecordError> {
         }
         _ => Err(RecordError::new("offset must be nonnegative")),
     }
+}
+
+/// An archive member is a separate imported input even when its provider reuses IDs.
+pub(super) fn input_identity(input: &str, context: &RecordContext<'_>) -> String {
+    if matches!(context.manifest.detail("source_container").as_str(), Some("zip" | "tar" | "tar-gzip")) {
+        serde_json::to_string(&(input, context.member.map(|member| member.path.as_str()))).expect("paths serialize")
+    } else { input.into() }
 }

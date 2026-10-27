@@ -8,11 +8,9 @@ use serde_json::{Map, Value};
 pub struct TranscriptCue {
     pub input: String,
     pub provider_id: Option<String>,
-    /// Whether this ID identifies the cue across revisions of the configured input.
+    /// Whether this ID identifies the output across revisions of the input.
     #[serde(default)]
     pub provider_id_stable: bool,
-    /// Output position within the whole JSON record, or record position for line imports.
-    pub output_index: u64,
     pub text: String,
     /// Decimal seconds exactly as written in the import.
     pub start_seconds: Option<String>,
@@ -43,11 +41,9 @@ pub struct BoundingBox {
 pub struct OcrText {
     pub input: String,
     pub provider_id: Option<String>,
-    /// Whether this ID identifies the cue across revisions of the configured input.
+    /// Whether this ID identifies the output across revisions of the input.
     #[serde(default)]
     pub provider_id_stable: bool,
-    /// Output position within the whole JSON record, or record position for line imports.
-    pub output_index: u64,
     pub text: String,
     pub page: Option<u64>,
     pub block: Option<u64>,

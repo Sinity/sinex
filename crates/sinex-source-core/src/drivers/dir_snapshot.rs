@@ -158,7 +158,8 @@ impl DirSnapshot {
             })
             .collect();
         walk(&self.root, &self.root, self.select, &excluded, &mut found);
-        self.poll_entries(cursor, state, previous, facts, found)
+        let excluded: Vec<_> = excluded.iter().filter_map(|path| path.strip_prefix(&self.root).ok().map(Path::to_path_buf)).collect();
+        self.poll_entries(cursor, state, previous, facts, found, &excluded)
     }
 
     fn poll_entries(
@@ -168,6 +169,7 @@ impl DirSnapshot {
         previous: Cursor,
         mut facts: ObservationFacts,
         found: BTreeMap<PathBuf, EntryFacts>,
+        excluded: &[PathBuf],
     ) -> Result<Acquired, DriverError> {
         let now = Timestamp::now();
         let failed: Vec<_> = found
@@ -297,7 +299,7 @@ impl DirSnapshot {
                 .files
                 .keys()
                 .filter(|p| {
-                    !seen.contains(*p) && !failed.iter().any(|prefix| p.starts_with(prefix))
+                    !seen.contains(*p) && !failed.iter().any(|prefix| p.starts_with(prefix)) && !excluded.iter().any(|prefix| p.starts_with(prefix))
                 })
                 .cloned()
                 .collect();
@@ -323,10 +325,10 @@ impl DirSnapshot {
         }
         if complete {
             next_retries.retain(|path| {
-                seen.contains(path) || failed.iter().any(|prefix| path.starts_with(prefix))
+                seen.contains(path) || failed.iter().any(|prefix| path.starts_with(prefix)) || excluded.iter().any(|prefix| path.starts_with(prefix))
             });
             next_failures.retain(|path, _| {
-                seen.contains(path) || failed.iter().any(|prefix| path.starts_with(prefix))
+                seen.contains(path) || failed.iter().any(|prefix| path.starts_with(prefix)) || excluded.iter().any(|prefix| path.starts_with(prefix))
             });
         }
         let mut scanned = Cursor {

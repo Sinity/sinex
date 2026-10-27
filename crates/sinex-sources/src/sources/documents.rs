@@ -2,11 +2,11 @@
 use serde_json::Value;
 use sinex_model::event_types::documents::DocumentCaptured;
 use sinex_model::{Class, Timestamp};
-use sinex_source_core::binding::{Binding, InputFormat, Settings};
+use sinex_source_core::binding::{Binding, InputFormat};
 use sinex_source_core::drivers::dir_snapshot::DirSnapshot;
 use sinex_source_core::registry::{DeclaredSource, Driver, SourceSpec};
 use sinex_source_core::{Parser, RecordContext, RecordError};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 pub const SPEC: SourceSpec = SourceSpec {
     name: "knowledge.documents",
