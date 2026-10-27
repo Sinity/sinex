@@ -48,7 +48,11 @@ impl ReaderContext {
     /// Stop the writer once everything submitted is done.
     pub(crate) async fn close(self) -> Result<(), String> {
         drop(self.writer);
-        self.task.await.map_err(|e| e.to_string())
+        self.task.await.map_err(|e| e.to_string())?;
+        let mut conn = writer::claim(self.read_conn).await?;
+        sinex_store::blobs::forget_files_with_rows(&mut conn, &self.blobs)
+            .await
+            .map_err(|e| e.to_string())
     }
 }
 

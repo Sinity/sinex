@@ -51,11 +51,16 @@ impl Drop for Cancel {
 struct InterruptibleReader<R> {
     input: R,
     stop: Arc<AtomicBool>,
+    private: Arc<std::sync::Mutex<sinex_transport::private_mode::Cached>>,
 }
 impl<R: Read> Read for InterruptibleReader<R> {
     fn read(&mut self, bytes: &mut [u8]) -> std::io::Result<usize> {
         if self.stop.load(Ordering::Relaxed)
-            || sinex_transport::private_mode::PrivateMode::default().on()
+            || self
+                .private
+                .lock()
+                .map_err(|_| std::io::Error::other("private-mode check poisoned"))?
+                .on()
         {
             return Err(std::io::Error::other("capture cancelled"));
         }
@@ -76,6 +81,12 @@ pub(super) async fn read_shared(
     access: Access<'_>,
 ) -> Result<Vec<Result<Totals, String>>, String> {
     let started = std::time::Instant::now();
+    let private = Arc::new(std::sync::Mutex::new(
+        sinex_transport::private_mode::Cached::new(
+            sinex_transport::private_mode::PrivateMode::default(),
+            std::time::Duration::from_millis(250),
+        ),
+    ));
     let cancel = Cancel(Arc::new(AtomicBool::new(false)));
     let sealing = if pass.class == Class::Sealed {
         let configured = if access.recipient.is_none() {
@@ -161,6 +172,7 @@ pub(super) async fn read_shared(
                 let input = InterruptibleReader {
                     input,
                     stop: Arc::clone(&cancelled),
+                    private: Arc::clone(&private),
                 };
                 let blob = match &worker_sealing {
                     Some(sealing) => sealing.put_reader(input)?,
@@ -176,9 +188,13 @@ pub(super) async fn read_shared(
             }
         };
         let verify_stop = Arc::clone(&cancelled);
+        let verify_private = Arc::clone(&private);
         let check = move || {
             if verify_stop.load(Ordering::Relaxed)
-                || sinex_transport::private_mode::PrivateMode::default().on()
+                || verify_private
+                    .lock()
+                    .map_err(|_| std::io::Error::other("private-mode check poisoned"))?
+                    .on()
             {
                 return Err(std::io::Error::other("verification cancelled").into());
             }
@@ -201,6 +217,7 @@ pub(super) async fn read_shared(
                         )
                         .map_err(|e| e.to_string())?,
                     stop: Arc::clone(&cancelled),
+                    private: Arc::clone(&private),
                 }))
             }
             None => shared_pass::Input::Sequential(Box::new(InterruptibleReader {
@@ -208,6 +225,7 @@ pub(super) async fn read_shared(
                     .read_plain(&blob, Some(length), check)
                     .map_err(|e| e.to_string())?,
                 stop: Arc::clone(&cancelled),
+                private: Arc::clone(&private),
             })),
         };
         let archive_sink: &dyn drivers::MaterialSink = match &worker_sealing {
@@ -345,3 +363,6 @@ impl<R: Read + std::io::Seek> std::io::Seek for InterruptibleReader<R> {
         self.input.seek(position)
     }
 }
+
+#[cfg(test)]
+mod tests;
