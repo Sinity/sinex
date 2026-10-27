@@ -116,12 +116,18 @@ async fn upgrading_from_version_0_counts_the_stored_events(db: devkit::pg::TestD
         .await
         .unwrap();
 
-    // Version 0 is this schema without the counts.
+    // Remove the declarations added after version 0.
     conn.execute("DROP TABLE core.source_counts").await.unwrap();
     conn.execute("ALTER TABLE core.runs DROP COLUMN events")
         .await
         .unwrap();
     conn.execute("DROP TABLE core.excised_materials")
+        .await
+        .unwrap();
+    conn.execute("DROP VIEW event_types.operator_mark, event_types.query_saved")
+        .await
+        .unwrap();
+    conn.execute("DELETE FROM registry.event_types WHERE name IN ('operator.mark','query.saved')")
         .await
         .unwrap();
     conn.execute("UPDATE sinex_schema.applied SET version = 0")
@@ -168,6 +174,12 @@ async fn an_upgrade_waits_for_no_writer(db: devkit::pg::TestDatabase) {
         .await
         .unwrap();
     conn.execute("DROP TABLE core.excised_materials")
+        .await
+        .unwrap();
+    conn.execute("DROP VIEW event_types.operator_mark, event_types.query_saved")
+        .await
+        .unwrap();
+    conn.execute("DELETE FROM registry.event_types WHERE name IN ('operator.mark','query.saved')")
         .await
         .unwrap();
     conn.execute("UPDATE sinex_schema.applied SET version = 0")

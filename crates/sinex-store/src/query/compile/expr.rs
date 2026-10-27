@@ -47,6 +47,14 @@ impl Compiler<'_> {
 
     fn typed_json(raw: SqlFragment, ty: FieldType) -> SqlFragment {
         let mut out = SqlFragment::new();
+        if ty == FieldType::TextList {
+            out.push("(CASE WHEN jsonb_typeof(")
+                .append(raw.clone())
+                .push(") = 'array' THEN ARRAY(SELECT jsonb_array_elements_text(")
+                .append(raw)
+                .push(")) END)");
+            return out;
+        }
         let (kind, cast) = match ty {
             FieldType::Integer => ("number", "numeric"),
             FieldType::Number => ("number", "numeric"),
@@ -138,13 +146,20 @@ impl Compiler<'_> {
             let sep = if op == Op::Ne { " AND " } else { " OR " };
             return Ok(SqlFragment::join(parts, sep).parenthesized());
         }
-        if kind == Kind::Typed(FieldType::PathList) {
-            if !matches!(op, Op::Eq | Op::Ne | Op::Prefix) {
-                return Err(invalid("path lists compare with = != or ^"));
+        if matches!(kind, Kind::Typed(FieldType::PathList | FieldType::TextList)) {
+            let paths = kind == Kind::Typed(FieldType::PathList);
+            if op.ordering() || (paths && op == Op::Contains) {
+                return Err(invalid(
+                    "lists compare their members with = != ^ or ~ (text only)",
+                ));
             }
             let comparison = self.compare(
-                SqlFragment::text("member.path"),
-                Kind::Typed(FieldType::Path),
+                SqlFragment::text("member.value"),
+                Kind::Typed(if paths {
+                    FieldType::Path
+                } else {
+                    FieldType::Text
+                }),
                 if op == Op::Ne { Op::Eq } else { op },
                 v,
             )?;
@@ -155,7 +170,7 @@ impl Compiler<'_> {
             }
             out.push("EXISTS (SELECT 1 FROM unnest(")
                 .append(lhs)
-                .push(") AS member(path) WHERE ")
+                .push(") AS member(value) WHERE ")
                 .append(comparison)
                 .push(") END)");
             return Ok(out);

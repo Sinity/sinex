@@ -22,6 +22,8 @@ schemas can be used without an event-type filter when its declared types
 agree. Unknown paths and conflicting types are errors. `sum` and `avg` need
 numbers; an unknown value remains null. Numeric payload fields sort numerically.
 Text, boolean, numeric and timestamp comparisons keep their declared types.
+Text-list comparisons match any member; `!=` excludes every matching member.
+Unknown lists remain unknown, and an empty list has no matching member.
 
 ## Empty time buckets
 

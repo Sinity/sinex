@@ -66,6 +66,7 @@ these names and no others.
 - **derivation runner**, **binding runner**: the daemon tasks that run derivations and keep configured bindings read.
 - **comparison**: what a recompute with `--compare` would change, kept in `derivation.comparisons` without writing outputs.
 - **replay**: reading stored bytes again with the current parsers, one part sequence per transaction.
+- **text list**: a field declared as an array of strings; a comparison matches a member, and inequality excludes every matching member.
 - **query table**: what a query reads (`events`, `archive`, `materials`, `runs`, `sources`, `operations`, `failures`), each with its fields.
 - **reference**: how a command names one event: an event ID or `sinex:ev/<id>`, `sinex:record/<material>/<offset>[/<event type>[/<output index>]]`, `sinex:key/<source>/<event type>/<equivalence key>`, or a time citation.
 - **moment mark**: an operator-authored moment, note and client-observed context (`operator.mark`); `recall mark` reads around it.

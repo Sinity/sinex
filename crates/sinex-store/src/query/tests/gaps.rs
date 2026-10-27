@@ -115,8 +115,14 @@ async fn a_live_run_establishes_zero_only_for_buckets_it_covers(db: devkit::pg::
     let mut conn = PgConnection::connect(&db.url(None)).await.unwrap();
     world(&mut conn).await;
     sqlx::query("INSERT INTO registry.sources(name,driver,version,event_types,purpose) VALUES ('terminal.atuin','live-stream',1,ARRAY['command.executed'],'synthetic query test')").execute(&mut conn).await.unwrap();
+    let unknown = ask(
+        &mut conn,
+        "sources where source = terminal.atuin fields continuity",
+    )
+    .await;
+    assert_eq!(unknown.rows[0]["continuity"], "unknown");
     sqlx::query(
-        "UPDATE core.runs SET started_at='2026-09-13T04:00:00Z', ended_at='2026-09-16T04:00:00Z'",
+        "INSERT INTO core.runs (id,name,host,started_at,ended_at) SELECT DISTINCT run_id,'synthetic','synthetic','2026-09-13T04:00:00Z'::timestamptz,'2026-09-16T04:00:00Z'::timestamptz FROM core.events",
     )
     .execute(&mut conn)
     .await
@@ -142,13 +148,13 @@ async fn source_gaps_merge_overlapping_runs_and_drift_keeps_recorded_changes(
     world(&mut conn).await;
     sqlx::query("INSERT INTO registry.sources(name,driver,version,event_types,purpose) VALUES ('terminal.atuin','live-stream',1,ARRAY['command.executed'],'synthetic query test')").execute(&mut conn).await.unwrap();
     sqlx::query(
-        "UPDATE core.runs SET started_at='2026-09-14T04:00:00Z', ended_at='2026-09-14T06:00:00Z'",
+        "INSERT INTO core.runs (id,name,host,started_at,ended_at) SELECT DISTINCT run_id,'synthetic','synthetic','2026-09-14T04:00:00Z'::timestamptz,'2026-09-14T06:00:00Z'::timestamptz FROM core.events",
     )
     .execute(&mut conn)
     .await
     .unwrap();
     admit_commands(&mut conn, &[("synthetic later", "/src/other")]).await;
-    sqlx::query("UPDATE core.runs SET started_at='2026-09-14T08:00:00Z',ended_at='2026-09-14T09:00:00Z' WHERE started_at > '2026-10-01T00:00:00Z'").execute(&mut conn).await.unwrap();
+    sqlx::query("INSERT INTO core.runs (id,name,host,started_at,ended_at) SELECT DISTINCT e.run_id,'synthetic','synthetic','2026-09-14T08:00:00Z'::timestamptz,'2026-09-14T09:00:00Z'::timestamptz FROM core.events e WHERE NOT EXISTS (SELECT 1 FROM core.runs r WHERE r.id=e.run_id)").execute(&mut conn).await.unwrap();
     let payload: sinex_model::event_types::health::HealthRecord = serde_json::from_value(json!({"provider":"samsung-health","category":"step_daily_trend","native_id":"synthetic-drift","start":null,"end":null,"offset_minutes":null,"values":{"count":1,"synthetic_added_field":true}})).unwrap();
     let event = Event::build(
         &payload,
@@ -179,7 +185,7 @@ async fn source_gaps_merge_overlapping_runs_and_drift_keeps_recorded_changes(
     let mut tx = conn.begin().await.unwrap();
     admit(&mut tx, &batch, &NoDerivations).await.unwrap();
     tx.commit().await.unwrap();
-    sqlx::query("UPDATE core.runs SET started_at='2026-09-14T08:30:00Z',ended_at='2026-09-14T08:45:00Z' WHERE id=$1").bind(batch.run.0).execute(&mut conn).await.unwrap();
+    sqlx::query("INSERT INTO core.runs (id,name,host,started_at,ended_at) VALUES ($1,'synthetic','synthetic','2026-09-14T08:30:00Z','2026-09-14T08:45:00Z')").bind(batch.run.0).execute(&mut conn).await.unwrap();
     let a = ask(
         &mut conn,
         "sources where source = terminal.atuin fields source,continuity,gaps,drift",
@@ -190,4 +196,69 @@ async fn source_gaps_merge_overlapping_runs_and_drift_keeps_recorded_changes(
     assert_eq!(a.rows[0]["gaps"].as_array().unwrap().len(), 1);
     assert_eq!(a.rows[0]["drift"]["status"], "changes_recorded");
     assert!(!a.rows[0]["drift"]["events"].as_array().unwrap().is_empty());
+}
+
+#[devkit::test]
+async fn text_lists_compare_members_and_return_the_declared_array(db: devkit::pg::TestDatabase) {
+    let mut conn = PgConnection::connect(&db.url(None)).await.unwrap();
+    world(&mut conn).await;
+    let parent: Uuid = sqlx::query_scalar("SELECT id FROM core.events LIMIT 1")
+        .fetch_one(&mut conn)
+        .await
+        .unwrap();
+    let event = Event::build(
+        &sinex_model::event_types::ShellSession {
+            host: "synthetic-list".into(),
+            started_at: Timestamp::from_unix_secs(BASE).unwrap(),
+            ended_at: Timestamp::from_unix_secs(BASE + 60).unwrap(),
+            day: "2026-09-14".into(),
+            commands: 1,
+            failed: 0,
+            cwds: vec!["/src/tide".into(), "/src/other".into()],
+        },
+        "synthetic.sessions",
+        Origin::Derived {
+            parents: vec![sinex_model::EventId(parent)],
+        },
+        ReadingOrder(1),
+        [8; 32],
+        Class::Open,
+    )
+    .unwrap();
+    let batch = Batch {
+        run: RunId::new(),
+        kind: BatchKind::Api {
+            actor: "synthetic".into(),
+        },
+        records: vec![RecordOutcome::Events {
+            location: None,
+            events: vec![event],
+        }],
+        archive: vec![],
+    };
+    let mut tx = conn.begin().await.unwrap();
+    admit(&mut tx, &batch, &NoDerivations).await.unwrap();
+    tx.commit().await.unwrap();
+    for (condition, total) in [
+        ("payload.cwds = /src/tide", 1),
+        ("payload.cwds != /src/tide", 0),
+        ("payload.cwds != /src/absent", 1),
+        ("payload.cwds ~ TiDe", 1),
+        ("payload.cwds ^ /src/o", 1),
+        (r#"payload.cwds ~ ",""#, 0),
+        ("payload.cwds = [/src/absent, /src/other]", 1),
+    ] {
+        let answer = ask(
+            &mut conn,
+            &format!("events where event_type = shell.session and {condition} fields payload.cwds"),
+        )
+        .await;
+        assert_eq!(answer.total, total, "{condition}");
+        if total == 1 {
+            assert_eq!(
+                answer.rows[0]["payload.cwds"],
+                json!(["/src/tide", "/src/other"])
+            );
+        }
+    }
 }

@@ -2,7 +2,7 @@
 
 pub(super) fn field(name: &str) -> Option<String> {
     Some(match name {
-        "continuity" => "(CASE WHEN {t}.driver='live-stream' AND EXISTS (SELECT 1 FROM core.visible_events e WHERE e.source={t}.name) THEN 'run_lifetimes' ELSE 'unknown' END)".into(),
+        "continuity" => "(CASE WHEN {t}.driver='live-stream' AND EXISTS (SELECT 1 FROM core.visible_events e JOIN core.runs r ON r.id=e.run_id WHERE e.source={t}.name) THEN 'run_lifetimes' ELSE 'unknown' END)".into(),
         "gaps" => "(SELECT coalesce(jsonb_agg(jsonb_build_object('from',prior_end,'to',started_at,'reason','between recorded live runs') ORDER BY started_at), '[]'::jsonb) FROM (
             SELECT started_at, max(ended_at) OVER (ORDER BY started_at,ended_at ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING) AS prior_end FROM (
               SELECT r.id,r.started_at,coalesce(r.ended_at,max(e.ts_orig)) AS ended_at

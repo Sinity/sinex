@@ -243,3 +243,29 @@ fn recall_last_payload_conditions_use_the_session_schema() {
             .contains("not declared")
     );
 }
+
+#[devkit::test]
+fn text_list_fields_compare_members_without_treating_the_array_as_json_text() {
+    for condition in [
+        "payload.cwd ~ tide",
+        "payload.cwd ^ /src",
+        "payload.cwd = [/src/tide, /src/other]",
+        "payload.cwd != /src/tide",
+    ] {
+        assert!(
+            bind(
+                &format!("events where event_type = polylogue.session and {condition}"),
+                &ctx()
+            )
+            .is_ok(),
+            "{condition}"
+        );
+    }
+    assert!(
+        err("events where event_type = polylogue.session and payload.cwd > x")
+            .message
+            .contains("ordered")
+    );
+    let choices = complete("events where event_type = polylogue.session and payload.cw");
+    assert_eq!(choices[0].field_type, "textlist");
+}

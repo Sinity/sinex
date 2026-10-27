@@ -330,7 +330,7 @@ impl Parser<'_> {
             Operand::Field(FieldRef::Field(f)) => {
                 let text_like = matches!(
                     f.ty,
-                    FieldType::Text | FieldType::Path | FieldType::PathList
+                    FieldType::Text | FieldType::TextList | FieldType::Path | FieldType::PathList
                 );
                 if matches!(op, Op::Contains | Op::Prefix) && !text_like {
                     return Err(QueryError::at(
@@ -349,6 +349,7 @@ impl Parser<'_> {
                         FieldType::Id
                             | FieldType::IdList
                             | FieldType::PathList
+                            | FieldType::TextList
                             | FieldType::Bool
                             | FieldType::Enum(_)
                             | FieldType::Json
@@ -415,7 +416,10 @@ impl Parser<'_> {
                         at,
                         "compare a payload field by its path: `payload.<field>`",
                     )),
-                    FieldType::Text | FieldType::Path | FieldType::PathList => {
+                    FieldType::Text
+                    | FieldType::TextList
+                    | FieldType::Path
+                    | FieldType::PathList => {
                         if f.ty == FieldType::PathList
                             && !matches!(op, Op::Eq | Op::Ne | Op::Prefix)
                         {

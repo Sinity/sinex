@@ -9,6 +9,7 @@ use crate::{ArchiveReason, Class, DbCheck, RecordState, TimeQuality};
 pub enum FieldType {
     Id,
     Text,
+    TextList,
     /// A path: `^` means "is or lies under", by whole components.
     Path,
     /// Recorded paths: equality or component-prefix matches any member.

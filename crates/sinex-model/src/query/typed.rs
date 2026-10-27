@@ -69,6 +69,7 @@ fn collect(
         Some("boolean") => FieldType::Bool,
         Some("string") if schema["format"] == "date-time" => FieldType::Time,
         Some("string") => FieldType::Text,
+        Some("array") if schema["items"]["type"] == "string" => FieldType::TextList,
         Some("null") | None => return,
         _ => FieldType::Json,
     };
@@ -322,7 +323,10 @@ fn validate_value(v: &mut Value, ty: FieldType, ctx: &Context) -> Result<(), Que
         (ty, &*v),
         (FieldType::Integer, Value::Integer(_))
             | (FieldType::Number, Value::Integer(_) | Value::Number(_))
-            | (FieldType::Text, Value::Text(_) | Value::Glob(_))
+            | (
+                FieldType::Text | FieldType::TextList,
+                Value::Text(_) | Value::Glob(_)
+            )
             | (FieldType::Time, Value::Time(_))
             | (FieldType::Bool, Value::Bool(_))
     );
@@ -351,10 +355,14 @@ fn expr(e: &mut Expr, kinds: &Option<BTreeSet<String>>, ctx: &Context) -> Result
         Expr::Compare { lhs, op, rhs } => {
             operand(lhs, kinds)?;
             if let Operand::Field(FieldRef::TypedPayload { ty, .. }) = lhs {
-                if matches!(op, Op::Contains | Op::Prefix) && *ty != FieldType::Text {
+                if matches!(op, Op::Contains | Op::Prefix)
+                    && !matches!(ty, FieldType::Text | FieldType::TextList)
+                {
                     return Err(QueryError::new("~ and ^ require a text payload field"));
                 }
-                if op.ordering() && matches!(ty, FieldType::Bool | FieldType::Json) {
+                if op.ordering()
+                    && matches!(ty, FieldType::Bool | FieldType::Json | FieldType::TextList)
+                {
                     return Err(QueryError::new("this payload field cannot be ordered"));
                 }
                 validate_value(rhs, *ty, ctx)?;
