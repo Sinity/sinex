@@ -943,7 +943,6 @@ fn failed_files_retry_even_when_their_facts_match_the_cache() {
     assert!(state.failures.is_empty());
 }
 
-
 #[devkit::test]
 fn an_unstable_file_with_unchanged_content_is_retried_without_another_material() {
     let dir = tempfile::tempdir().unwrap();
@@ -953,14 +952,22 @@ fn an_unstable_file_with_unchanged_content_is_retried_without_another_material()
     let size = facts.size.unwrap();
     let mtime = facts.mtime_ns.unwrap();
     let mut state = DirState::default();
-    state.files.insert(PathBuf::from("a.md"), Some((size, mtime, *blake3::hash(b"same").as_bytes())));
+    state.files.insert(
+        PathBuf::from("a.md"),
+        Some((size, mtime, *blake3::hash(b"same").as_bytes())),
+    );
     let d = driver(dir.path().to_owned(), 1024);
-    let changed = poll_entries(&d, &Value::Null, &mut state, BTreeMap::from([
-        (PathBuf::from("a.md"), Ok((size + 1, mtime)))
-    ]));
+    let changed = poll_entries(
+        &d,
+        &Value::Null,
+        &mut state,
+        BTreeMap::from([(PathBuf::from("a.md"), Ok((size + 1, mtime)))]),
+    );
     assert!(changed.material.is_none());
     assert!(state.retries.contains(Path::new("a.md")));
-    let retry = d.poll(&changed.cursor_without_material, &mut state).unwrap();
+    let retry = d
+        .poll(&changed.cursor_without_material, &mut state)
+        .unwrap();
     assert!(retry.material.is_none());
     assert!(state.retries.is_empty());
 }
