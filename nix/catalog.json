@@ -1,6 +1,34 @@
 {
   "sources": [
     {
+      "name": "finance.hledger",
+      "formats": [
+        "hledger"
+      ],
+      "drivers": [
+        "export-archive"
+      ],
+      "purpose": "journal transactions and their postings",
+      "class": "guarded",
+      "eventTypes": [
+        "transaction.posted"
+      ]
+    },
+    {
+      "name": "terminal.text-history",
+      "formats": [
+        "text-history"
+      ],
+      "drivers": [
+        "append-file"
+      ],
+      "purpose": "explicit untimed command history",
+      "class": "guarded",
+      "eventTypes": [
+        "command.imported"
+      ]
+    },
+    {
       "name": "terminal.atuin-history",
       "formats": [
         "atuin"
