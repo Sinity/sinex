@@ -141,29 +141,68 @@ fn nested_duplicate_include_paths_remain_distinct() {
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path().join("main.journal");
     std::fs::write(&root, "include child.journal\ninclude child.journal\n").unwrap();
-    std::fs::write(dir.path().join("child.journal"), "include leaf.journal\ninclude leaf.journal\n").unwrap();
-    std::fs::write(dir.path().join("leaf.journal"), "2030-01-01 Leaf\n  Assets:Example\n").unwrap();
-    let bindings = plan(&root,&Settings::new("example-host")).unwrap();
-    assert_eq!(bindings.len(),7);
-    assert_eq!(bindings.iter().map(|b| &b.name).collect::<BTreeSet<_>>().len(),7);
+    std::fs::write(
+        dir.path().join("child.journal"),
+        "include leaf.journal\ninclude leaf.journal\n",
+    )
+    .unwrap();
+    std::fs::write(
+        dir.path().join("leaf.journal"),
+        "2030-01-01 Leaf\n  Assets:Example\n",
+    )
+    .unwrap();
+    let bindings = plan(&root, &Settings::new("example-host")).unwrap();
+    assert_eq!(bindings.len(), 7);
+    assert_eq!(
+        bindings
+            .iter()
+            .map(|b| &b.name)
+            .collect::<BTreeSet<_>>()
+            .len(),
+        7
+    );
 }
 
 #[devkit::test]
 fn native_time_formats_are_kept_as_written_records_without_generating_transactions() {
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path().join("main.journal");
-    std::fs::write(&root, "include timeclock:hours.data\ninclude hours.timedot\n").unwrap();
+    std::fs::write(
+        &root,
+        "include timeclock:hours.data\ninclude hours.timedot\n",
+    )
+    .unwrap();
     let clock = b"i 2030/01/01 09:00:00 activities:example\no 2030/01/01 10:00:00\n";
     let dot = b"2030/01/01\n  activities:example  ....\n";
-    std::fs::write(dir.path().join("hours.data"),clock).unwrap();
-    std::fs::write(dir.path().join("hours.timedot"),dot).unwrap();
-    let bindings = plan(&root,&Settings::new("example-host")).unwrap();
-    assert_eq!(bindings.len(),3);
-    for (name,bytes,count,format) in [("hours.data", clock.as_slice(),2,"timeclock"),("hours.timedot",dot.as_slice(),1,"timedot")] {
-        let binding=bindings.iter().find(|b|b.input.file_name().unwrap()==name).unwrap();
-        let source=(super::super::FORMAT.source)(binding).unwrap();
-        let events=super::super::tests::intake::export_restart(bytes,super::super::driver(binding.input.clone(),binding.settings.host.clone()),source.as_ref(),count,0);
-        assert!(events.iter().all(|e|e.event_type=="journal.imported" && e.payload["format"]==format && e.ts_orig.at.is_none()));
-        assert_eq!(events.iter().map(|e|e.payload["text"].as_str().unwrap()).collect::<String>(),std::str::from_utf8(bytes).unwrap());
+    std::fs::write(dir.path().join("hours.data"), clock).unwrap();
+    std::fs::write(dir.path().join("hours.timedot"), dot).unwrap();
+    let bindings = plan(&root, &Settings::new("example-host")).unwrap();
+    assert_eq!(bindings.len(), 3);
+    for (name, bytes, count, format) in [
+        ("hours.data", clock.as_slice(), 2, "timeclock"),
+        ("hours.timedot", dot.as_slice(), 1, "timedot"),
+    ] {
+        let binding = bindings
+            .iter()
+            .find(|b| b.input.file_name().unwrap() == name)
+            .unwrap();
+        let source = (super::super::FORMAT.source)(binding).unwrap();
+        let events = super::super::tests::intake::export_restart(
+            bytes,
+            super::super::driver(binding.input.clone(), binding.settings.host.clone()),
+            source.as_ref(),
+            count,
+            0,
+        );
+        assert!(events.iter().all(|e| e.event_type == "journal.imported"
+            && e.payload["format"] == format
+            && e.ts_orig.at.is_none()));
+        assert_eq!(
+            events
+                .iter()
+                .map(|e| e.payload["text"].as_str().unwrap())
+                .collect::<String>(),
+            std::str::from_utf8(bytes).unwrap()
+        );
     }
 }

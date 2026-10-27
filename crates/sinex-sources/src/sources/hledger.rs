@@ -30,7 +30,11 @@ pub const SPEC: SourceSpec = SourceSpec {
     class: Class::Guarded,
     parser: "hledger",
     parser_version: 1,
-    event_types: &["transaction.posted", "journal.directive", "journal.imported"],
+    event_types: &[
+        "transaction.posted",
+        "journal.directive",
+        "journal.imported",
+    ],
     framer: sinex_source_core::Framer::export(framing::complete, TRANSACTIONS),
 };
 
@@ -133,18 +137,29 @@ impl Parser for HledgerParser {
                 .ok_or_else(|| RecordError::new("journal duplicate number exceeds u64"))?,
         );
         if self.input_format != "journal" {
-            return Ok((vec![JournalRecord::Imported(JournalImported {
-                host: self.host.clone(), journal: self.journal.clone(),
-                member: member.as_ref().map(|(path, _)| path.clone()), member_duplicate,
-                block_hash: hash, duplicate, included_from: self.included_from.clone(),
-                format: self.input_format.clone(), text: text.into(),
-            })], next));
+            return Ok((
+                vec![JournalRecord::Imported(JournalImported {
+                    host: self.host.clone(),
+                    journal: self.journal.clone(),
+                    member: member.as_ref().map(|(path, _)| path.clone()),
+                    member_duplicate,
+                    block_hash: hash,
+                    duplicate,
+                    included_from: self.included_from.clone(),
+                    format: self.input_format.clone(),
+                    text: text.into(),
+                })],
+                next,
+            ));
         }
         let header = header.trim_start();
         if !header.starts_with(|c: char| c.is_ascii_digit()) {
             let directive = directive_name(header)?;
             if directive == "Y" || directive == "year" || header.starts_with("apply year ") {
-                let value = header.strip_prefix("apply year ").unwrap_or_else(|| header.trim_start_matches(directive)).trim();
+                let value = header
+                    .strip_prefix("apply year ")
+                    .unwrap_or_else(|| header.trim_start_matches(directive))
+                    .trim();
                 next.year = Some(
                     split_comment(value)
                         .0
@@ -153,7 +168,11 @@ impl Parser for HledgerParser {
                         .map_err(|_| RecordError::new("invalid journal year"))?,
                 );
             }
-            let includes = self.includes.get(&format!("{hash}:{duplicate}")).cloned().unwrap_or_default();
+            let includes = self
+                .includes
+                .get(&format!("{hash}:{duplicate}"))
+                .cloned()
+                .unwrap_or_default();
             return Ok((
                 vec![JournalRecord::Directive(JournalDirective {
                     host: self.host.clone(),
@@ -396,8 +415,10 @@ pub const FORMAT: InputFormat = InputFormat {
                 .unwrap_or(&b.input.display().to_string())
                 .into(),
         );
-        let input_format=b.settings.option("journal_format").unwrap_or("journal");
-        if !matches!(input_format,"journal"|"timeclock"|"timedot") { return Err("unknown native journal format".into()); }
+        let input_format = b.settings.option("journal_format").unwrap_or("journal");
+        if !matches!(input_format, "journal" | "timeclock" | "timedot") {
+            return Err("unknown native journal format".into());
+        }
         source.parser.input_format = input_format.into();
         source.parser.initial_year = b
             .settings

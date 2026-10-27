@@ -8,7 +8,10 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
 pub(super) fn plan(input: &Path, settings: &Settings) -> Result<Vec<Binding>, String> {
-    if settings.option("journal_format").is_some_and(|format| !matches!(format,"journal"|"timeclock"|"timedot")) {
+    if settings
+        .option("journal_format")
+        .is_some_and(|format| !matches!(format, "journal" | "timeclock" | "timedot"))
+    {
         return Err("unknown native journal format".into());
     }
     let mut out = Vec::new();
@@ -67,13 +70,15 @@ fn visit(
     // Archives are read by the shared archive reader. Native journal include
     // paths refer to the local filesystem, never to an extracted temporary tree.
     if settings.option("journal_format").unwrap_or("journal") == "journal"
-        && let Ok(text) = std::str::from_utf8(&bytes) {
+        && let Ok(text) = std::str::from_utf8(&bytes)
+    {
         for (start, end) in framing::complete(&bytes).0 {
             let block = &text[start..end];
             let header = block.lines().next().unwrap_or("").trim();
             if let Some(value) = header
                 .strip_prefix('Y')
-                .or_else(|| header.strip_prefix("year ")).or_else(|| header.strip_prefix("apply year "))
+                .or_else(|| header.strip_prefix("year "))
+                .or_else(|| header.strip_prefix("apply year "))
             {
                 if let Ok(value) = super::split_comment(value).0.trim().parse::<i16>() {
                     year = Some(value);
@@ -112,21 +117,26 @@ fn visit(
                     Ok(_) => {
                         let format = target_format(header, &target);
                         let mut child_settings = settings.clone();
-                        let mut options = child_settings.options.as_object().cloned().unwrap_or_default();
+                        let mut options = child_settings
+                            .options
+                            .as_object()
+                            .cloned()
+                            .unwrap_or_default();
                         options.insert("journal_format".into(), json!(format));
                         child_settings.options = options.into();
                         match visit(
-                        &target,
-                        journal,
-                        &child_settings,
-                        year,
-                        Some(from.clone()),
-                        active,
-                        out,
-                    ) {
-                        Ok(()) => None,
-                        Err(e) => Some(e),
-                    }},
+                            &target,
+                            journal,
+                            &child_settings,
+                            year,
+                            Some(from.clone()),
+                            active,
+                            out,
+                        ) {
+                            Ok(()) => None,
+                            Err(e) => Some(e),
+                        }
+                    }
                 };
                 includes
                     .entry(key.clone())
@@ -161,9 +171,17 @@ fn visit(
 }
 
 fn target_format(header: &str, path: &Path) -> &'static str {
-    let target = header.strip_prefix("include").unwrap_or(header).trim_start();
+    let target = header
+        .strip_prefix("include")
+        .unwrap_or(header)
+        .trim_start();
     for format in ["journal", "timeclock", "timedot"] {
-        if target.strip_prefix(format).is_some_and(|rest| rest.starts_with(':')) { return format; }
+        if target
+            .strip_prefix(format)
+            .is_some_and(|rest| rest.starts_with(':'))
+        {
+            return format;
+        }
     }
     match path.extension().and_then(|s| s.to_str()) {
         Some("timeclock") => "timeclock",
@@ -178,20 +196,27 @@ fn resolve(parent: &Path, target: &str, settings: &Settings) -> Result<Vec<PathB
             "include requires a local file; commands and remote imports are not executed".into(),
         );
     }
-    let target = if let Some(target) = target.strip_prefix("journal:").or_else(|| target.strip_prefix("timeclock:")).or_else(|| target.strip_prefix("timedot:")) {
+    let target = if let Some(target) = target
+        .strip_prefix("journal:")
+        .or_else(|| target.strip_prefix("timeclock:"))
+        .or_else(|| target.strip_prefix("timedot:"))
+    {
         target
     } else {
         if let Some((format, _)) = target.split_once(':')
-            && matches!(
-                format,
-                "csv" | "ssv" | "tsv" | "rules"
-            )
+            && matches!(format, "csv" | "ssv" | "tsv" | "rules")
         {
             return Err(format!("{format} includes are not journal records"));
         }
         target
     };
-    let parent = if parent.is_absolute() { parent.to_path_buf() } else { std::env::current_dir().map_err(|e| e.to_string())?.join(parent) };
+    let parent = if parent.is_absolute() {
+        parent.to_path_buf()
+    } else {
+        std::env::current_dir()
+            .map_err(|e| e.to_string())?
+            .join(parent)
+    };
     let path = if let Some(rest) = target.strip_prefix("~/") {
         settings
             .option("include_home")

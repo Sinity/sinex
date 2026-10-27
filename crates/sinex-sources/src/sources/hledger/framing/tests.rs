@@ -40,7 +40,12 @@ fn multiline_comment_bodies_do_not_turn_into_directives_at_buffer_boundaries() {
     assert_eq!(expected.len(), 2);
     for cut in 0..=input.len() {
         let (mut records, through) = frame(&input[..cut], false);
-        records.extend(frame(&input[through..], true).0.into_iter().map(|(a,b)| (through+a,through+b)));
+        records.extend(
+            frame(&input[through..], true)
+                .0
+                .into_iter()
+                .map(|(a, b)| (through + a, through + b)),
+        );
         assert_eq!(records, expected, "cut {cut}");
     }
 }
