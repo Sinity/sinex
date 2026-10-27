@@ -838,6 +838,48 @@
       "purpose": "mail recall and correspondence history"
     },
     {
+      "class": "guarded",
+      "discovery": [
+        {
+          "capture": false,
+          "description": {
+            "capabilities": [],
+            "credentials": [
+              "client_id_file",
+              "client_secret_file",
+              "refresh_token_file"
+            ],
+            "locations": [
+              {
+                "path": "gmail",
+                "root": "input"
+              }
+            ],
+            "owner": "system",
+            "request_only": false,
+            "requests": [],
+            "streams": []
+          },
+          "format": "gmail"
+        }
+      ],
+      "drivers": [
+        "api-cursor"
+      ],
+      "eventTypes": [
+        "mail.message",
+        "mail.provider_message",
+        "mail.changed",
+        "mail.history_gap",
+        "mail.provider_missing"
+      ],
+      "formats": [
+        "gmail"
+      ],
+      "name": "communication.gmail",
+      "purpose": "mail and provider history"
+    },
+    {
       "class": "open",
       "discovery": [
         {

@@ -15,7 +15,7 @@ Discovery reads the account file declared as `input:gmail`. An explicit `--read 
 }
 ```
 
-Relative credential paths resolve beside the account configuration. File contents are trimmed and must be nonempty. Unknown configuration fields, inline secrets are refused. Credentials are loaded at refresh time and access tokens remain in runtime memory. Grant the daemon read access to the files through the existing Sinnix agenix secret wiring (`sinnix.secrets.paths`); secret contents must never enter Nix store files or binding settings.
+Relative credential paths resolve beside the account configuration. File contents are trimmed and must be nonempty. Unknown configuration fields and inline secrets are refused. Credentials are loaded at refresh time and access tokens remain in runtime memory. Grant the daemon read access to the files through the existing Sinnix agenix secret wiring (`sinnix.secrets.paths`); secret contents must never enter Nix store files or binding settings.
 
 `gmail::oauth::authorization_url(client_id, redirect_uri, state)` requests full Gmail access and an offline refresh token. The operator completes Google's consent flow and places the resulting refresh token in the configured secret file. Capture never opens a browser or broadens a previously granted scope automatically. The first API profile must identify the configured account.
 

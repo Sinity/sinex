@@ -46,7 +46,7 @@ pub struct MailMessage {
     /// Mailbox account, when the input identifies it.
     pub account: Option<String>,
     pub message_id: Option<String>,
-    /// Maildir filename or IMAP UID, scoped to its mailbox and input.
+    /// Provider ID, scoped to its account or mailbox and input.
     pub native_id: Option<String>,
     /// The `Date` header; `None` when missing or unreadable.
     pub date: Option<Timestamp>,
