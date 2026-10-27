@@ -17,7 +17,7 @@ pub enum Access {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ArgKind {
     Text,
-    /// A citation: an event ID, `sinex:ev/…`, `sinex:record/…` or `sinex:key/…`.
+    /// An event, record, key, spanning-output or time-window citation.
     Reference,
     Integer,
     Bool,
@@ -259,14 +259,14 @@ pub const COMMANDS: &[Command] = &[
     },
     Command {
         name: "recall",
-        summary: "What sources recorded around a time/day, or in the latest shell session (last).",
+        summary: "What sources recorded around a time/day or moment mark, or in the latest shell session (last).",
         args: &[
             Arg {
                 required: false,
                 ..pos(
                     "around",
                     ArgKind::Rest,
-                    "last, a time (2026-03-02 14:05 ±20m), a day (yesterday) or nothing for now",
+                    "last, mark [N], a time (2026-03-02 14:05 ±20m), a day (yesterday) or nothing for now",
                 )
             },
             opt(

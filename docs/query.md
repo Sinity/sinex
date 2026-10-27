@@ -114,8 +114,9 @@ sinexctl query 'sources fields source, continuity, gaps, drift, record_failures'
 
 `context` reads the past two hours by default. An explicit end anchors a
 lookback duration; absolute start and end times also work. Its answer is recall,
-including states whose spans overlap the window and a source-by-source
-account. `timeline` reads ordinary event queries in time order. Both preserve
+including states whose spans overlap the window, a source-by-source
+account and the latest visible observation from each source. The digest is
+independent of the page size, so a busy source does not crowd the others out. `timeline` reads ordinary event queries in time order. Both preserve
 paging and query metadata on every surface.
 
 `source` evidence stays in the `sources` query table. `continuity` says whether

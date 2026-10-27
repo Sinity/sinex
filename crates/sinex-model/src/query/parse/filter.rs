@@ -441,8 +441,8 @@ impl Parser<'_> {
     }
 }
 
-/// A value whose type comes from the literal: payload paths and grouped
-/// columns have no declared type.
+/// Read a literal before checking its payload schema, or for a grouped
+/// column whose type comes from the relation.
 pub(super) fn infer(raw: &str, quoted: bool, op: Op) -> Value {
     if quoted {
         return Value::Text(raw.to_string());

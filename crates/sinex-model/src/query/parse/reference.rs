@@ -85,6 +85,6 @@ pub fn parse_reference(raw: &str) -> Result<Reference, QueryError> {
         return Ok(Reference::Window { from, to });
     }
     Err(QueryError::new(format!(
-        "`{raw}` is not a reference; use an event ID, sinex:ev/<id>, sinex:record/... or sinex:key/..."
+        "`{raw}` is not a reference; use an event ID, sinex:ev/<id>, sinex:record/..., sinex:key/..., sinex:at/... or sinex:window/..."
     )))
 }

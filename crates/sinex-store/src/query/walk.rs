@@ -265,6 +265,23 @@ pub(crate) async fn recall_summary(
     let by_source: Vec<Json> = super::sql::bind_scalar(sqlx::query_scalar(&sql), values)
         .fetch_all(&mut *conn)
         .await?;
+    let latest_by_source = {
+        let (sql, values) = {
+            let mut latest = selector.clone();
+            latest.stages.clear();
+            let compiled = super::Compiler::new(&Context::utc(to), seq).compile(&latest)?;
+            let mut rows = super::SqlFragment::text(format!(
+                "SELECT DISTINCT ON (q.source) {} FROM (",
+                super::json_object(&compiled.columns)
+            ));
+            rows.append(compiled.answer)
+                .push(") q ORDER BY q.source, q.\"when\" DESC NULLS LAST, q.id DESC");
+            rows.render()
+        };
+        super::sql::bind_scalar(sqlx::query_scalar::<_, Json>(&sql), values)
+            .fetch_all(&mut *conn)
+            .await?
+    };
     let known = sqlx::query_scalar!(
         r#"SELECT source AS "name!" FROM core.source_counts
            UNION SELECT name FROM registry.sources ORDER BY 1"#
@@ -284,6 +301,7 @@ pub(crate) async fn recall_summary(
         "to": to.to_string(),
         "inclusive_end": inclusive_end,
         "by_source": by_source,
+        "latest_by_source": latest_by_source,
         "no_data": no_data,
     }))
 }

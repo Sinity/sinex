@@ -142,6 +142,10 @@ async fn context_windows_count_back_from_the_end_and_timeline_uses_the_same_quer
             "synthetic within"
         );
         assert!(answer["result"]["recall"]["citation"].is_string());
+        assert_eq!(
+            answer["result"]["recall"]["latest_by_source"][0]["payload"]["command"],
+            "synthetic within"
+        );
     }
     let (_,a) = call(&w,Some(READ),json!({"method":"timeline","query":"where source = terminal.atuin since 2026-09-14T08:01:00Z"})).await;
     let (_,b) = call(&w,Some(READ),json!({"method":"query","query":"events where source = terminal.atuin since 2026-09-14T08:01:00Z"})).await;
@@ -246,4 +250,33 @@ async fn replacing_a_saved_definition_invalidates_its_previous_continuation(
     assert_eq!(changed["outcome"], "ok", "{changed}");
     let (_,continued) = call(&w,Some(OPERATOR),json!({"method":"query","query":"query:paged(directory=\"/src/tide\")","page":1,"cursor":cursor})).await;
     assert_eq!(continued["outcome"], "refused", "{continued}");
+}
+
+#[devkit::test]
+async fn context_digest_keeps_the_latest_observation_of_each_source_beyond_the_page(
+    db: devkit::pg::TestDatabase,
+) {
+    let w = world(db).await;
+    let first = command("synthetic busy first", 0);
+    let mut other = command("synthetic other source", 1);
+    other.source = "synthetic.other".into();
+    let last = command("synthetic busy latest", 2);
+    admit_events(&w, vec![first, other, last]).await;
+    let (_,answer) = call(&w,Some(READ),json!({"method":"context","since":"2026-09-14T08:00:00Z","until":"2026-09-14T08:03:00Z","page":1})).await;
+    assert_eq!(answer["outcome"], "ok", "{answer}");
+    assert_eq!(answer["result"]["rows"].as_array().unwrap().len(), 1);
+    let digest = answer["result"]["recall"]["latest_by_source"]
+        .as_array()
+        .unwrap();
+    assert_eq!(digest.len(), 2);
+    assert!(
+        digest
+            .iter()
+            .any(|r| r["payload"]["command"] == "synthetic busy latest")
+    );
+    assert!(
+        digest
+            .iter()
+            .any(|r| r["payload"]["command"] == "synthetic other source")
+    );
 }

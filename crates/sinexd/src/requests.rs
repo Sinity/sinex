@@ -1,4 +1,5 @@
-//! Records written through the API (library requests and scans, forecasts):
+//! Records written through the API (library requests and scans, forecasts,
+//! moment marks and saved queries):
 //! one material, stored and then admitted in one batch.
 use crate::writer::{Priority, WriterHandle};
 use serde_json::Value;

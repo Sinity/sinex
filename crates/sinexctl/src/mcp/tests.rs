@@ -6,8 +6,18 @@ fn tools_come_from_the_command_table() {
     let names: Vec<&str> = tools.iter().map(|t| t.name.as_ref()).collect();
     assert!(names.contains(&"sinex_query"));
     assert!(names.contains(&"sinex_recall"));
-    for name in ["sinex_stage", "sinex_same", "sinex_distinct", "sinex_mark"] {
+    for name in ["sinex_stage", "sinex_same", "sinex_distinct"] {
         assert!(!names.contains(&name), "{name} is not implemented");
+    }
+    assert!(!names.contains(&"sinex_mark"), "marks are the operator's");
+    for name in [
+        "sinex_context",
+        "sinex_timeline",
+        "sinex_query-save",
+        "sinex_query-list",
+        "sinex_query-complete",
+    ] {
+        assert!(names.contains(&name), "{name}");
     }
     assert!(!names.contains(&"sinex_follow"), "follow streams");
     assert!(
