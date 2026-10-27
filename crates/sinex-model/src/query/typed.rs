@@ -133,7 +133,7 @@ pub fn complete(text: &str) -> Vec<Completion> {
     if table.is_events() {
         for field in fields()
             .iter()
-            .filter(|f| kinds.as_ref().is_none_or(|ks| ks.contains(&&f.event_type)))
+            .filter(|f| kinds.as_ref().is_none_or(|ks| ks.contains(&f.event_type)))
         {
             let name = format!("payload.{}", field.path.join("."));
             let field_type = format!("{:?}", field.ty).to_lowercase();
@@ -255,7 +255,7 @@ fn field_type(
     let definitions = definitions(ctx);
     let mut types = definitions
         .iter()
-        .filter(|f| f.path == path && kinds.as_ref().is_none_or(|ks| ks.contains(&&f.event_type)))
+        .filter(|f| f.path == path && kinds.as_ref().is_none_or(|ks| ks.contains(&f.event_type)))
         .map(|f| f.ty);
     let Some(mut ty) = types.next() else {
         return Err(QueryError::new(format!(
