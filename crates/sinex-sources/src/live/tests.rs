@@ -50,16 +50,37 @@ fn rediscovery_applies_exclusions_and_settings_without_removing_spools() {
     let (_, mut binding) = binding("file-watch", &spool, "fixture", Value::Null).unwrap();
     let name = binding.name.clone();
     let mut lives = Vec::new();
-    extend(&mut lives, vec![(&FORMAT, binding.clone())]);
+    extend(
+        &mut lives,
+        CapturePlan {
+            bindings: vec![(&FORMAT, binding.clone())],
+            ..Default::default()
+        },
+    );
     assert_eq!(lives.len(), 1);
     binding.settings.class = Some(sinex_model::Class::Guarded);
-    extend(&mut lives, vec![(&FORMAT, binding)]);
+    extend(
+        &mut lives,
+        CapturePlan {
+            bindings: vec![(&FORMAT, binding)],
+            ..Default::default()
+        },
+    );
     assert_eq!(lives[0].binding.name, name);
     assert_eq!(
         lives[0].binding.settings.class,
         Some(sinex_model::Class::Guarded)
     );
-    extend(&mut lives, vec![]);
+    extend(&mut lives, CapturePlan::default());
+    assert_eq!(lives.len(), 1, "a missing input must keep its spool reader");
+    let source = lives[0].binding.source.clone();
+    extend(
+        &mut lives,
+        CapturePlan {
+            bindings: vec![],
+            exclude: std::iter::once(source).collect(),
+        },
+    );
     assert!(lives.is_empty());
     assert_eq!(std::fs::read(kept).unwrap(), b"synthetic raw data");
 }
