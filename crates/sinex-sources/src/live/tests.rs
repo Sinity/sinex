@@ -657,9 +657,16 @@ async fn capture_recovers_when_nats_returns(initially_unavailable: bool) {
         .collect();
     let report = dir.path().join("health.json");
     wait_for(&mut running, || {
-        std::fs::read(&report).ok().and_then(|bytes| serde_json::from_slice::<Value>(&bytes).ok()).is_some_and(|health|
-            health["spools"][0]["unpublished"]["records"].as_u64().is_some_and(|records| records > 0))
-    }).await;
+        std::fs::read(&report)
+            .ok()
+            .and_then(|bytes| serde_json::from_slice::<Value>(&bytes).ok())
+            .is_some_and(|health| {
+                health["spools"][0]["unpublished"]["records"]
+                    .as_u64()
+                    .is_some_and(|records| records > 0)
+            })
+    })
+    .await;
     nats.start().await;
     let (received, _, ingress) =
         fake_ingress(&nats.url(), &subjects, availability, Arc::default()).await;

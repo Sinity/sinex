@@ -940,13 +940,30 @@ async fn storage_faults_stay_unavailable_and_invalid_bytes_are_refused(
 async fn a_recorded_refusal_keeps_the_frame_bytes_on_redelivery(db: devkit::pg::TestDatabase) {
     let h = Harness::start(db).await;
     let bytes = b"not JSON";
-    let blob = format!("blake3:{}",blake3::hash(bytes).to_hex());
-    frame_bytes::write(&h.store_dir,"node","invalid",&blob,bytes.len() as u64,bytes.as_slice()).unwrap();
-    let frame = Ingress::LargeFrame {frame:"invalid".into(),blob:blob.clone(),length:bytes.len() as u64};
+    let blob = format!("blake3:{}", blake3::hash(bytes).to_hex());
+    frame_bytes::write(
+        &h.store_dir,
+        "node",
+        "invalid",
+        &blob,
+        bytes.len() as u64,
+        bytes.as_slice(),
+    )
+    .unwrap();
+    let frame = Ingress::LargeFrame {
+        frame: "invalid".into(),
+        blob: blob.clone(),
+        length: bytes.len() as u64,
+    };
     for _ in 0..2 {
-        let ack = h.send_raw("node",serde_json::to_vec(&frame).unwrap()).await;
+        let ack = h
+            .send_raw("node", serde_json::to_vec(&frame).unwrap())
+            .await;
         assert!(ack.refusal.is_some());
-        assert!(frame_bytes::snapshot(&h.store_dir,"node","invalid",&blob,bytes.len() as u64).is_ok());
+        assert!(
+            frame_bytes::snapshot(&h.store_dir, "node", "invalid", &blob, bytes.len() as u64)
+                .is_ok()
+        );
     }
-    assert_eq!(h.recorded("node",&["invalid"]).await.len(),1);
+    assert_eq!(h.recorded("node", &["invalid"]).await.len(), 1);
 }
