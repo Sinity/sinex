@@ -1,11 +1,11 @@
 //! Additional document roots store file bytes independently of text extraction.
-use crate::binding::{Binding, InputFormat, Settings};
-use crate::drivers::dir_snapshot::DirSnapshot;
-use crate::registry::{DeclaredSource, Driver, SourceSpec};
-use crate::{Parser, RecordContext, RecordError};
 use serde_json::Value;
 use sinex_model::event_types::documents::DocumentCaptured;
 use sinex_model::{Class, Timestamp};
+use sinex_source_core::binding::{Binding, InputFormat, Settings};
+use sinex_source_core::drivers::dir_snapshot::DirSnapshot;
+use sinex_source_core::registry::{DeclaredSource, Driver, SourceSpec};
+use sinex_source_core::{Parser, RecordContext, RecordError};
 use std::path::{Path, PathBuf};
 
 mod file;
@@ -19,9 +19,9 @@ pub const SPEC: SourceSpec = SourceSpec {
     parser: "documents",
     parser_version: 1,
     event_types: &["document.captured"],
-    framer: crate::Framer::export(
-        crate::drivers::export_archive::frame_whole,
-        crate::drivers::export_archive::Framing::Whole,
+    framer: sinex_source_core::Framer::export(
+        sinex_source_core::drivers::export_archive::frame_whole,
+        sinex_source_core::drivers::export_archive::Framing::Whole,
     ),
 };
 pub struct DocumentParser;
@@ -159,7 +159,7 @@ pub const FORMAT: InputFormat = InputFormat {
         if input.is_file() {
             settings.options["file"] = Value::Bool(true);
         }
-        Ok(crate::binding::single(&SPEC, input, &settings))
+        Ok(sinex_source_core::binding::single(&SPEC, input, &settings))
     }),
     source: |_| {
         Ok(Box::new(DeclaredSource {
@@ -185,12 +185,12 @@ pub const FORMAT: InputFormat = InputFormat {
             ) {
                 return Err("the selected file belongs to notes or is hidden".into());
             }
-            Ok(crate::binding::polled(file::FileReader::new(
+            Ok(sinex_source_core::binding::polled(file::FileReader::new(
                 binding.input.clone(),
                 binding.settings.host.clone(),
             )))
         } else {
-            Ok(crate::binding::walked(driver(
+            Ok(sinex_source_core::binding::walked(driver(
                 binding.input.clone(),
                 binding.settings.host.clone(),
             )))

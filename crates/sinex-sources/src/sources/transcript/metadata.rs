@@ -28,7 +28,18 @@ impl<'de> Visitor<'de> for Metadata {
     fn visit_map<A: MapAccess<'de>>(self, mut map: A) -> Result<Self::Value, A::Error> {
         let mut metadata = Map::new();
         while let Some(key) = map.next_key::<String>()? {
-            if key == "segments" {
+            if !matches!(
+                key.as_str(),
+                "language"
+                    | "model"
+                    | "external_run"
+                    | "recording_started_at"
+                    | "confidence_scale"
+                    | "engine"
+                    | "coordinate_units"
+                    | "display"
+                    | "window"
+            ) {
                 map.next_value::<IgnoredAny>()?;
             } else {
                 if metadata.contains_key(&key) {
