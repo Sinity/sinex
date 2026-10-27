@@ -267,8 +267,10 @@ calendar series into its instances. Its key is one series, and it reads every
 reading of it: the event with its rule and the changed instances. The rule is
 expanded in local time in the series' zone, `EXDATE` starts are left out,
 `RDATE` starts added, and a changed instance replaces the one whose start it
-names. A rule without `COUNT` or `UNTIL` is expanded through 366 days after
-the key is computed. Each `calendar.instance` names the readings it came from.
+names. A rule without `COUNT` or `UNTIL` needs a requested expansion range;
+until one is supplied, its recorded occurrence and explicit additions are
+kept with `rule_not_expanded` explaining the missing range. Each
+`calendar.instance` names the readings it came from.
 
 ### Metric figures
 

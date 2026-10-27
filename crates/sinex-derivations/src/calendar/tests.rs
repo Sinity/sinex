@@ -153,11 +153,19 @@ fn excluded_added_and_changed_instances() {
 }
 
 #[devkit::test]
-fn an_endless_series_stops_at_the_horizon() {
-    let out = compute(&[stored(&weekly("FREQ=WEEKLY"))], "2024-03-18T00:00:00Z");
-    // 366 days ahead of 2024-03-18: 53 Mondays from the first.
-    assert_eq!(out.len(), 53);
-    assert!(out.last().unwrap().start <= at("2025-03-19T00:00:00Z"));
+fn an_endless_series_reports_that_expansion_needs_a_range() {
+    let event = stored(&weekly("FREQ=WEEKLY"));
+    let out = compute(std::slice::from_ref(&event), "2024-03-18T00:00:00Z");
+    assert_eq!(out.len(), 1);
+    assert_eq!(out[0].start, at("2024-03-18T08:00:00Z"));
+    assert!(
+        out[0]
+            .rule_not_expanded
+            .as_deref()
+            .unwrap()
+            .contains("expansion range")
+    );
+    assert_eq!(out, compute(&[event], "2030-03-18T00:00:00Z"));
 }
 
 #[devkit::test]
@@ -222,4 +230,17 @@ fn a_series_is_one_key_read_whole() {
     assert_eq!(keys, [json!({"calendar": "me@example.org", "uid": "w"})]);
     let query = Instances.inputs(&keys[0], &env).unwrap();
     assert!(query.admits(&e));
+}
+
+#[devkit::test]
+fn an_unexpanded_rule_keeps_explicit_additions_and_exclusions() {
+    let event = CalendarEvent {
+        excluded_starts: vec![at("2024-03-18T08:00:00Z")],
+        added_starts: vec![at("2035-03-20T12:00:00Z")],
+        ..weekly("FREQ=WEEKLY")
+    };
+    let out = compute(&[stored(&event)], "2024-03-18T00:00:00Z");
+    assert_eq!(out.len(), 1);
+    assert_eq!(out[0].start, at("2035-03-20T12:00:00Z"));
+    assert!(out[0].rule_not_expanded.is_some());
 }

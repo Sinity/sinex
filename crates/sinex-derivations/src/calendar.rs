@@ -10,9 +10,9 @@
 //! gives is kept as its own instance, and a cancelled one plans nothing. A
 //! cancelled or removed series plans nothing.
 //!
-//! A rule with neither `COUNT` nor `UNTIL` repeats without end, so the
-//! expansion stops at a horizon: [`HORIZON_DAYS`] after the time the key is
-//! computed. Recomputing the derivation moves it on.
+//! A rule with neither `COUNT` nor `UNTIL` needs an explicit expansion range.
+//! Until one is supplied, its recorded occurrence is kept with the reason
+//! the rule was not expanded.
 use crate::derived_event::derived;
 use crate::{Computed, Env, InputQuery, KeyState, KeyView, Keyed};
 use jiff::civil::DateTime;
@@ -22,10 +22,6 @@ use sinex_model::event_types::account::{CalendarEvent, CalendarInstance};
 use sinex_model::{Event, EventPayload, RecordState, Timestamp};
 
 pub mod rule;
-
-/// How far past the time a key is computed a series without an end is
-/// expanded.
-pub const HORIZON_DAYS: i64 = 366;
 
 pub struct Instances;
 
@@ -78,12 +74,8 @@ fn instance(
 }
 
 /// The local starts of `series`, and why its rule was not expanded when it
-/// was not. `horizon` bounds a rule without an end.
-fn starts(
-    series: &CalendarEvent,
-    first: Timestamp,
-    horizon: jiff::Timestamp,
-) -> (Vec<Timestamp>, Option<String>) {
+/// was not.
+fn starts(series: &CalendarEvent, first: Timestamp) -> (Vec<Timestamp>, Option<String>) {
     let zone = zone_of(series);
     let Some(first_instant) = instant(first) else {
         return (vec![first], None);
@@ -98,6 +90,10 @@ fn starts(
     let (mut out, not_expanded) = match series.rrule.as_deref().map(rule::Rule::parse) {
         None => (vec![first], None),
         Some(Err(reason)) => (vec![first], Some(reason)),
+        Some(Ok(rule)) if rule.until.is_none() && rule.count.is_none() => (
+            vec![first],
+            Some("an expansion range is required for a rule without COUNT or UNTIL".into()),
+        ),
         Some(Ok(rule)) => {
             let until = rule.until.map(|until| match until {
                 rule::Until::Date(date) => date
@@ -113,13 +109,7 @@ fn starts(
                     .compatible()
                     .map_or(DateTime::MAX, |z| local(z.timestamp())),
             });
-            // A rule with an end is expanded to it; one without stops at
-            // the horizon.
-            let last = match (until, rule.count) {
-                (Some(until), _) => until,
-                (None, Some(_)) => DateTime::MAX,
-                (None, None) => local(horizon),
-            };
+            let last = until.unwrap_or(DateTime::MAX);
             let starts = rule.starts(local(first_instant), |at| at <= last);
             (starts.into_iter().filter_map(global).collect(), None)
         }
@@ -159,7 +149,7 @@ fn live(event: &Event) -> Option<CalendarEvent> {
 
 impl Keyed for Instances {
     const NAME: &'static str = "calendar.instances";
-    const VERSION: u32 = 1;
+    const VERSION: u32 = 2;
     const INPUTS: &'static [&'static str] = &[CalendarEvent::EVENT_TYPE];
     const OUTPUTS: &'static [&'static str] = &[CalendarInstance::EVENT_TYPE];
 
@@ -183,13 +173,7 @@ impl Keyed for Instances {
         )
     }
 
-    fn compute(&self, _: &Value, inputs: &[Event], env: &Env) -> Computed {
-        let horizon = instant(env.now)
-            .and_then(|now| {
-                now.checked_add(jiff::SignedDuration::from_hours(24 * HORIZON_DAYS))
-                    .ok()
-            })
-            .unwrap_or(jiff::Timestamp::MAX);
+    fn compute(&self, _: &Value, inputs: &[Event], _: &Env) -> Computed {
         let series = inputs
             .iter()
             .find(|e| e.payload.get("recurrence_id").is_none_or(Value::is_null));
@@ -208,7 +192,7 @@ impl Keyed for Instances {
                 let Some(first) = series_event.start else {
                     return Computed::default();
                 };
-                let (starts, not_expanded) = starts(&series_event, first, horizon);
+                let (starts, not_expanded) = starts(&series_event, first);
                 for start in starts {
                     let found = changed.iter().position(|(e, _)| {
                         e.payload_as::<CalendarEvent>()
