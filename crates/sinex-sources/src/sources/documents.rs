@@ -29,6 +29,7 @@ impl Parser for DocumentParser {
     type Record<'a> = &'a [u8];
     type Carry = ();
     type Payload = DocumentCaptured;
+    const READS_BLANK_RECORDS: bool = true;
     fn parse(
         &self,
         record: &&[u8],

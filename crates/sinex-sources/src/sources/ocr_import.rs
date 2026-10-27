@@ -56,6 +56,9 @@ impl Parser for OcrParser {
     type Record<'a> = &'a [u8];
     type Carry = Carry;
     type Payload = OcrSegment;
+    fn record_hash(&self, raw: &[u8], context: &RecordContext<'_>) -> [u8; 32] {
+        super::transcript::hash_with_metadata(raw, context)
+    }
     fn parse(
         &self,
         record: &&[u8],
