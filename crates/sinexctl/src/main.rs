@@ -249,34 +249,28 @@ async fn main() -> ExitCode {
             };
         }
         "private" => {
-            use sinex_transport::private_mode::State;
-            let mode = sinex_transport::private_mode::PrivateMode::default();
             let state = sub
                 .get_one::<String>("state")
                 .map_or("status", String::as_str);
-            if state != "status"
-                && let Err(e) = mode.set(state == "on")
-            {
-                return fail(1, format!("{}: {e}", mode.path().display()));
-            }
-            let switch = mode.state();
+            let report = match sinex_diagnostics::private_mode(state).await {
+                Ok(report) => report,
+                Err(error) => return fail(1, error),
+            };
             if json {
-                print_json(&serde_json::json!({
-                    "private_mode": switch.name(),
-                    "switch": mode.path(),
-                    "reason": switch.reason(),
-                }));
+                print_json(&report);
             } else {
-                let said = match &switch {
-                    State::Off => "off".to_string(),
-                    State::On => "on: nothing is captured".to_string(),
-                    State::Unchecked(reason) => {
-                        format!(
-                            "unknown: the switch cannot be checked ({reason}), so nothing is captured"
-                        )
-                    }
+                let said = match report["private_mode"].as_str() {
+                    Some("off") => "off".to_owned(),
+                    Some("on") => "on: nothing is captured".to_owned(),
+                    _ => format!(
+                        "unknown: the switch cannot be checked ({}), so nothing is captured",
+                        report["reason"].as_str().unwrap_or("unknown cause")
+                    ),
                 };
-                println!("private mode is {said} ({})", mode.path().display());
+                println!(
+                    "private mode is {said} ({})",
+                    report["switch"].as_str().unwrap_or("unknown path")
+                );
             }
             return ExitCode::SUCCESS;
         }

@@ -39,6 +39,12 @@ impl Default for Rotation {
 
 /// The capture side: appends received lines to the current segment.
 pub struct SpoolWriter {
+    private: crate::private_mode::Gate,
+    state: std::sync::Arc<std::sync::Mutex<SpoolState>>,
+    pub dropped: u64,
+}
+
+struct SpoolState {
     dir: PathBuf,
     rotation: Rotation,
     index: u64,
@@ -46,11 +52,6 @@ pub struct SpoolWriter {
     written: u64,
     opened: Instant,
     unsynced: usize,
-    /// Private mode, checked at most every quarter second; lines that arrive
-    /// while it is on are dropped, never written.
-    private: sinex_transport::private_mode::Cached,
-    /// Lines dropped because private mode was on.
-    pub dropped: u64,
 }
 
 const SEGMENT_SUFFIX: &str = ".ndjson";
@@ -106,41 +107,114 @@ impl SpoolWriter {
             .create_new(true)
             .append(true)
             .open(segment_path(&dir, index))?;
-        Ok(Self {
-            private: sinex_transport::private_mode::Cached::new(
-                sinex_transport::private_mode::PrivateMode::default(),
-                Duration::from_millis(250),
-            ),
-            dropped: 0,
-            dir,
+        let state = std::sync::Arc::new(std::sync::Mutex::new(SpoolState {
+            dir: dir.clone(),
             rotation,
             index,
             file,
             written: 0,
             opened: Instant::now(),
             unsynced: 0,
+        }));
+        let private = Self::gate(
+            &dir,
+            state.clone(),
+            crate::private_mode::PrivateMode::default(),
+        )?;
+        Ok(Self {
+            private,
+            state,
+            dropped: 0,
         })
+    }
+
+    fn gate(
+        dir: &Path,
+        state: std::sync::Arc<std::sync::Mutex<SpoolState>>,
+        mode: crate::private_mode::PrivateMode,
+    ) -> std::io::Result<crate::private_mode::Gate> {
+        crate::private_mode::Gate::open(dir, dir.display().to_string(), mode, move |gap| {
+            let mut state = state.lock().unwrap_or_else(|e| e.into_inner());
+            let mut bytes = serde_json::to_vec(&json!({"capture_gap": gap}))?;
+            bytes.push(b'\n');
+            state.write(&bytes)?;
+            state.sync()
+        })
+    }
+
+    pub fn record<T: Send>(
+        &self,
+        stop: &crate::capture::CaptureStop,
+        capture: impl FnOnce(&crate::capture::CaptureStop) -> std::io::Result<T> + Send,
+    ) -> std::io::Result<Option<T>> {
+        self.private.record(stop, capture)
+    }
+
+    pub fn gate_access(&self) -> crate::private_mode::GateAccess {
+        self.private.access()
+    }
+
+    pub fn read_permit(&self) -> std::io::Result<crate::private_mode::ReadPermit> {
+        self.private.permit()
+    }
+
+    pub fn append_read(
+        &mut self,
+        permit: crate::private_mode::ReadPermit,
+        received: Timestamp,
+        line: &[u8],
+    ) -> std::io::Result<()> {
+        if !self.private.accepts(permit)? {
+            self.dropped += 1;
+            return Ok(());
+        }
+        self.append(received, line)
     }
 
     /// Append one received line (without its terminator).
     pub fn append(&mut self, received: Timestamp, line: &[u8]) -> std::io::Result<()> {
-        if self.private.on() {
+        if !self.private.allowed()? {
             self.dropped += 1;
             return Ok(());
         }
+        self.state
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .write(&frame(received, line))
+    }
+
+    /// Make everything appended so far durable.
+    pub fn sync(&mut self) -> std::io::Result<()> {
+        self.private.allowed()?;
+        self.state.lock().unwrap_or_else(|e| e.into_inner()).sync()
+    }
+
+    /// Use a configured switch. Tests use independent switch paths.
+    pub fn with_private_mode(self, mode: crate::private_mode::PrivateMode) -> Self {
+        self.private
+            .set_switch(mode)
+            .expect("capture switch can be configured");
+        self
+    }
+
+    pub fn segment(&self) -> u64 {
+        self.state.lock().unwrap_or_else(|e| e.into_inner()).index
+    }
+}
+
+impl SpoolState {
+    fn write(&mut self, bytes: &[u8]) -> std::io::Result<()> {
         if self.written >= self.rotation.max_bytes || self.opened.elapsed() >= self.rotation.max_age
         {
             self.rotate()?;
         }
-        let bytes = frame(received, line);
-        self.file.write_all(&bytes)?;
+        self.file.write_all(bytes)?;
         self.written += bytes.len() as u64;
         self.unsynced += 1;
         Ok(())
     }
 
-    /// Make everything appended so far durable.
-    pub fn sync(&mut self) -> std::io::Result<()> {
+    fn sync(&mut self) -> std::io::Result<()> {
         if self.unsynced > 0 {
             self.file.sync_data()?;
             self.unsynced = 0;
@@ -159,15 +233,66 @@ impl SpoolWriter {
         self.opened = Instant::now();
         Ok(())
     }
+}
 
-    /// Use this switch instead of the default (tests, a configured path).
-    pub fn with_private_mode(mut self, mode: sinex_transport::private_mode::PrivateMode) -> Self {
-        self.private = sinex_transport::private_mode::Cached::new(mode, Duration::from_millis(250));
-        self
+/// The same framing is used by a capture thread and shared socket writers.
+pub trait LineWriter {
+    fn permission(&self) -> std::io::Result<crate::private_mode::ReadPermit>;
+    fn line(
+        &mut self,
+        first: crate::private_mode::ReadPermit,
+        last: crate::private_mode::ReadPermit,
+        received: Timestamp,
+        bytes: &[u8],
+    ) -> std::io::Result<bool>;
+    fn flush(&mut self) -> std::io::Result<()>;
+}
+
+impl LineWriter for SpoolWriter {
+    fn permission(&self) -> std::io::Result<crate::private_mode::ReadPermit> {
+        self.read_permit()
     }
+    fn line(
+        &mut self,
+        first: crate::private_mode::ReadPermit,
+        last: crate::private_mode::ReadPermit,
+        received: Timestamp,
+        bytes: &[u8],
+    ) -> std::io::Result<bool> {
+        let dropped = self.dropped;
+        if self.private.accepts(last)? {
+            self.append_read(first, received, bytes)?;
+        } else {
+            self.dropped += 1;
+        }
+        Ok(self.dropped == dropped)
+    }
+    fn flush(&mut self) -> std::io::Result<()> {
+        self.sync()
+    }
+}
 
-    pub fn segment(&self) -> u64 {
-        self.index
+impl LineWriter for &std::sync::Mutex<SpoolWriter> {
+    fn permission(&self) -> std::io::Result<crate::private_mode::ReadPermit> {
+        self.lock()
+            .map_err(|_| std::io::Error::other("spool lock poisoned"))?
+            .permission()
+    }
+    fn line(
+        &mut self,
+        first: crate::private_mode::ReadPermit,
+        last: crate::private_mode::ReadPermit,
+        received: Timestamp,
+        bytes: &[u8],
+    ) -> std::io::Result<bool> {
+        self.lock()
+            .map_err(|_| std::io::Error::other("spool lock poisoned"))?
+            .line(first, last, received, bytes)
+    }
+    fn flush(&mut self) -> std::io::Result<()> {
+        self.lock()
+            .map_err(|_| std::io::Error::other("spool lock poisoned"))?
+            .sync()
     }
 }
 
@@ -176,27 +301,45 @@ impl SpoolWriter {
 /// terminator is captured too: the stream ended, so it is complete.
 pub fn capture_lines(
     mut reader: impl BufRead,
-    spool: &mut SpoolWriter,
+    spool: &mut impl LineWriter,
     sync_every: Duration,
 ) -> std::io::Result<u64> {
     let mut line = Vec::new();
+    let mut line_permit = spool.permission()?;
     let mut count = 0;
     let mut last_sync = Instant::now();
     loop {
-        line.clear();
-        if reader.read_until(b'\n', &mut line)? == 0 {
+        let permit = spool.permission()?;
+        let bytes = match reader.fill_buf() {
+            Ok(bytes) => bytes,
+            Err(error) if error.kind() == std::io::ErrorKind::Interrupted => continue,
+            Err(error) => return Err(error),
+        };
+        if bytes.is_empty() {
             break;
         }
-        let received = Timestamp::now();
-        let body = line.strip_suffix(b"\n").unwrap_or(&line);
-        spool.append(received, body)?;
-        count += 1;
+        let length = bytes.len();
+        for piece in bytes.split_inclusive(|b| *b == b'\n') {
+            if line.is_empty() {
+                line_permit = permit;
+            }
+            line.extend_from_slice(piece);
+            if line.ends_with(b"\n") {
+                line.pop();
+                count += u64::from(spool.line(line_permit, permit, Timestamp::now(), &line)?);
+                line.clear();
+            }
+        }
+        reader.consume(length);
         if last_sync.elapsed() >= sync_every {
-            spool.sync()?;
+            spool.flush()?;
             last_sync = Instant::now();
         }
     }
-    spool.sync()?;
+    if !line.is_empty() {
+        count += u64::from(spool.line(line_permit, line_permit, Timestamp::now(), &line)?);
+    }
+    spool.flush()?;
     Ok(count)
 }
 
@@ -285,6 +428,10 @@ impl LiveStream {
             let mut acquired = file.poll(&state.inner, &mut AppendState::default())?;
             acquired.input = self.input.clone();
             if let Some(material) = &mut acquired.material {
+                material
+                    .manifest
+                    .details
+                    .insert("capture_records".into(), json!(true));
                 let inner_part = material.part_index;
                 material.part_index = state.part_base + inner_part;
                 if inner_part == 0 {

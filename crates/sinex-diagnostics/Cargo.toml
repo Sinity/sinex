@@ -1,6 +1,6 @@
 [package]
 name = "sinex-diagnostics"
-description = "Read-only diagnostics that work while the daemon is down."
+description = "Administrative commands that work while the daemon is down."
 version.workspace = true
 edition.workspace = true
 publish.workspace = true

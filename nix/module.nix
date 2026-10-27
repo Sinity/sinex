@@ -319,16 +319,21 @@ in
   };
 
   config = mkMerge [
+    (mkIf (cfg.enable || node.enable) {
+      users.groups.sinex = { };
+      systemd.tmpfiles.rules = [ "d /run/sinex 2770 root sinex -" ];
+    })
     (mkIf cfg.enable {
       users.users = {
         ${cfg.user} = {
           isSystemUser = true;
           group = cfg.group;
+          extraGroups = [ "sinex" ];
           home = cfg.stateDir;
         };
       } // lib.optionalAttrs cfg.session.enable {
         # Producers on this host write material bytes into the store.
-        ${cfg.session.user}.extraGroups = [ cfg.group ];
+        ${cfg.session.user}.extraGroups = lib.unique [ cfg.group "sinex" ];
       };
       assertions = [{
         assertion = !cfg.session.enable || cfg.session.user != "";
@@ -360,9 +365,6 @@ in
 
       systemd.tmpfiles.rules = [
         "d ${cfg.stateDir} 0750 ${cfg.user} ${cfg.group} -"
-        # The private-mode switch's directory exists before sinexd first runs,
-        # so the session service can check it.
-        "d /run/sinex 0770 ${cfg.user} ${cfg.group} -"
         # Group mode 2770 marks the store root as shared with producers on this
         # host; they write only under incoming/producers (frame directories).
         "d ${cfg.storeDir} 2770 ${cfg.user} ${cfg.group} -"
@@ -484,12 +486,6 @@ in
         serviceConfig = restartPolicy // {
           User = cfg.user;
           Group = cfg.group;
-          RuntimeDirectory = "sinex";
-          # It holds the private-mode switch, which the operator sets through
-          # the group and a backfill run while the daemon is stopped checks
-          # too; a missing directory counts as on.
-          RuntimeDirectoryMode = "0770";
-          RuntimeDirectoryPreserve = "yes";
           LoadCredential = [ "nats:${cfg.nats.daemonPasswordFile}" ];
           UMask = "0007";
           # A schema upgrade can read every stored event; a start timeout
@@ -536,6 +532,7 @@ in
           Group = cfg.group;
           SupplementaryGroups = [ "systemd-journal" ];
         };
+        environment.SINEX_PRIVATE_MODE = privateSwitch;
         path = [ config.systemd.package ];
         script = ''
           exec ${cfg.package}/bin/sinex-session capture journald \
@@ -658,6 +655,7 @@ in
       users.users.${node.user} = {
         isSystemUser = true;
         group = node.group;
+        extraGroups = [ "sinex" ];
       };
       users.groups.${node.group} = { };
       systemd.services.sinex-capture = {
@@ -671,14 +669,9 @@ in
           Group = node.group;
           UMask = "0007";
           StateDirectory = "sinex-capture";
-          # The private-mode switch: a file here turns capture off. The
-          # capture user cannot create the default /run/sinex, and a switch
-          # it cannot check counts as on (the node logs why, once).
-          RuntimeDirectory = "sinex-capture";
-          RuntimeDirectoryPreserve = "yes";
-          SupplementaryGroups = optional node.journald "systemd-journal";
+          SupplementaryGroups = [ "sinex" ] ++ optional node.journald "systemd-journal";
         };
-        environment.SINEX_PRIVATE_MODE = "/run/sinex-capture/private-mode";
+        environment.SINEX_PRIVATE_MODE = privateSwitch;
         path = [ config.systemd.package ];
         script = ''
           exec ${node.package}/bin/sinex-capture \

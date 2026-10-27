@@ -244,7 +244,7 @@ pub(crate) async fn drive(
 ) -> Result<Totals, String> {
     let mut totals = Totals::default();
     let started = Instant::now();
-    let private = sinex_transport::private_mode::PrivateMode::default();
+    let private = sinex_source_core::private_mode::PrivateMode::default();
     // The source's class: its declaration, raised by the operator's floor.
     // A sealed source seals each material and its events as they are read.
     let floor = sinex_store::privacy::load(read_conn, std::iter::once(source.spec().name))
@@ -260,8 +260,8 @@ pub(crate) async fn drive(
     let checked_stop = stop.clone();
     // Checked for every buffer read, so the switch is looked at only every
     // quarter second.
-    let checked_private = std::sync::Mutex::new(sinex_transport::private_mode::Cached::new(
-        sinex_transport::private_mode::PrivateMode::default(),
+    let checked_private = std::sync::Mutex::new(sinex_source_core::private_mode::Cached::new(
+        sinex_source_core::private_mode::PrivateMode::default(),
         std::time::Duration::from_millis(250),
     ));
     let check: std::sync::Arc<dyn Fn() -> Result<(), String> + Send + Sync> =

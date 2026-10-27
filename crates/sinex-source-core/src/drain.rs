@@ -217,6 +217,37 @@ impl<'a, P: Parser> Drainer<'a, P> {
             manifest: input.manifest,
             member: input.manifest.member_at(start),
         };
+        let gap = if input.manifest.details.get("capture_records") == Some(&Value::Bool(true)) {
+            serde_json::from_slice::<Value>(raw)
+                .ok()
+                .and_then(|v| v.get("capture_gap").cloned())
+        } else {
+            input.manifest.details.get("capture_gap").cloned()
+        };
+        if let Some(gap) = gap {
+            let built = serde_json::from_value::<crate::private_mode::Gap>(gap)
+                .map_err(|e| e.to_string())
+                .and_then(|gap| {
+                    gap.build(
+                        input.source,
+                        Origin::Record {
+                            location,
+                            output_index: 0,
+                        },
+                        (input.reading_order)(start),
+                        *blake3::hash(raw).as_bytes(),
+                        input.class,
+                    )
+                    .map_err(|e| e.to_string())
+                });
+            return match built {
+                Ok(event) => RecordOutcome::Events {
+                    location: Some(location),
+                    events: vec![event],
+                },
+                Err(reason) => RecordOutcome::Failure { location, reason },
+            };
+        }
         match parse_one(self.parser, raw, &self.carry, &context) {
             Ok((payloads, next)) => {
                 self.carry = next;

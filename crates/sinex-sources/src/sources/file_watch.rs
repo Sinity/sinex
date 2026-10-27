@@ -144,9 +144,13 @@ fn capture_until(
     spool: &Path,
     stop: &sinex_source_core::capture::CaptureStop,
 ) -> std::io::Result<u64> {
-    let (tx, rx) = mpsc::channel::<notify::Result<notify::Event>>();
-    let mut watcher = notify::recommended_watcher(tx).map_err(std::io::Error::other)?;
     let mut writer = SpoolWriter::open(spool, Rotation::default())?;
+    let gate = writer.gate_access();
+    let (tx, rx) = mpsc::channel();
+    let mut watcher = notify::recommended_watcher(move |event: notify::Result<notify::Event>| {
+        let _ = tx.send((gate.permit(), event));
+    })
+    .map_err(std::io::Error::other)?;
     let mut count = 0u64;
     let limit = std::fs::read_to_string("/proc/sys/fs/inotify/max_user_watches")
         .ok()
@@ -193,14 +197,18 @@ fn capture_until(
         }
         let wait = Duration::from_millis(100);
         match rx.recv_timeout(wait) {
-            Ok(Ok(event)) => {
+            Ok((permit, Ok(event))) => {
+                let permit = permit?;
                 let Some((change, is_dir)) = change_of(&event.kind) else {
                     continue;
                 };
                 let paths: Vec<Value> = event.paths.iter().map(|p| path_json(p)).collect();
-                spool_line(
-                    &mut writer,
-                    &json!({"kind": change, "paths": paths, "is_dir": is_dir}),
+                writer.append_read(
+                    permit,
+                    Timestamp::now(),
+                    json!({"kind": change, "paths": paths, "is_dir": is_dir})
+                        .to_string()
+                        .as_bytes(),
                 )?;
                 count += 1;
                 // A new directory (made here or moved in) gets its watches.
@@ -215,10 +223,13 @@ fn capture_until(
                     watch_tree(path, &mut writer, &mut count)?;
                 }
             }
-            Ok(Err(e)) => {
-                spool_line(
-                    &mut writer,
-                    &json!({"kind": "other", "paths": [], "note": e.to_string()}),
+            Ok((permit, Err(e))) => {
+                writer.append_read(
+                    permit?,
+                    Timestamp::now(),
+                    json!({"kind": "other", "paths": [], "note": e.to_string()})
+                        .to_string()
+                        .as_bytes(),
                 )?;
                 count += 1;
             }

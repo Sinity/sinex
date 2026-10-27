@@ -564,7 +564,7 @@ impl Api {
             Reply::Refused { reason, .. } => json!({ "unavailable": reason }),
         };
         // The daemon's own switch, which pauses the binding runner.
-        let private = sinex_transport::private_mode::PrivateMode::default();
+        let private = sinex_source_core::private_mode::PrivateMode::default();
         let switch = private.state();
         Ok(json!({
             "commit_seq": row.commit_seq,

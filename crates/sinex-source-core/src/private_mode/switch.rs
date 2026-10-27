@@ -115,7 +115,19 @@ impl PrivateMode {
     /// What the switch says now.
     pub fn state(&self) -> State {
         match std::fs::symlink_metadata(&self.path) {
-            Ok(_) => State::On,
+            Ok(metadata) if !metadata.is_file() => {
+                State::Unchecked(format!("switch {} is not a file", self.path.display()))
+            }
+            Ok(_) => match std::fs::File::open(&self.path) {
+                Ok(file) => match file.metadata() {
+                    Ok(metadata) if metadata.is_file() => State::On,
+                    Ok(_) => {
+                        State::Unchecked(format!("switch {} is not a file", self.path.display()))
+                    }
+                    Err(e) => State::Unchecked(format!("cannot read {}: {e}", self.path.display())),
+                },
+                Err(e) => State::Unchecked(format!("cannot read {}: {e}", self.path.display())),
+            },
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
                 // Off only if the directory that would hold the switch is (or
                 // can be made) there and readable; otherwise the switch cannot
@@ -151,7 +163,15 @@ impl PrivateMode {
             std::fs::create_dir_all(dir)?;
         }
         if on {
-            std::fs::write(&self.path, b"private mode is on: Sinex captures nothing\n")
+            use std::io::Write;
+            use std::os::unix::fs::OpenOptionsExt;
+            let mut file = std::fs::OpenOptions::new()
+                .write(true)
+                .create(true)
+                .truncate(true)
+                .mode(0o660)
+                .open(&self.path)?;
+            file.write_all(b"private mode is on: Sinex captures nothing\n")
         } else {
             match std::fs::remove_file(&self.path) {
                 Err(e) if e.kind() != std::io::ErrorKind::NotFound => Err(e),

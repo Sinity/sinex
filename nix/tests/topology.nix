@@ -75,6 +75,13 @@ self: {
         else:
             raise Exception("no change from the satellite was admitted")
 
+    with subtest("the capture account can read the shared private-mode switch"):
+        satellite.succeed("runuser -u sinex-capture -- ls /run/sinex")
+        satellite.succeed("install -m 0660 -g sinex /dev/null /run/sinex/private-mode")
+        satellite.succeed("runuser -u sinex-capture -- cat /run/sinex/private-mode")
+        satellite.succeed("rm /run/sinex/private-mode")
+        satellite.succeed("test $(systemctl show -p Environment --value sinex-capture.service | grep -o SINEX_PRIVATE_MODE=/run/sinex/private-mode) = SINEX_PRIVATE_MODE=/run/sinex/private-mode")
+
     with subtest("the capture does not run as root"):
         satellite.succeed("test $(systemctl show -p User --value sinex-capture.service) = sinex-capture")
 

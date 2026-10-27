@@ -102,6 +102,10 @@ self: {
         machine.succeed("su - alice -c 'sinexctl status'")
         machine.succeed("su - alice -c 'sinexctl private on'")
         machine.succeed("test -e /run/sinex/private-mode")
+        for account in ["alice", "sinex"]:
+            machine.succeed(f"runuser -u {account} -- cat /run/sinex/private-mode")
+            machine.succeed(f"runuser -u {account} -- ls /run/sinex")
+        machine.succeed("test $(stat -c %G /run/sinex/private-mode) = sinex")
         machine.succeed("su - alice -c 'sinexctl private off'")
 
     with subtest("a declared backfill stops sinexd, imports, and starts it again"):

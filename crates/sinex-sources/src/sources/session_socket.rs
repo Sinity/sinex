@@ -18,7 +18,7 @@ use sinex_model::{Class, InputRef, Timestamp};
 use sinex_source_core::drivers::live_stream::{self, LiveStream, Rotation, SpoolWriter};
 use sinex_source_core::registry::{DeclaredSource, Driver, SourceSpec};
 use sinex_source_core::{Parser, RecordError};
-use std::io::{BufRead, BufReader};
+use std::io::BufReader;
 use std::net::Shutdown;
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
@@ -194,33 +194,9 @@ fn join_connection(handler: std::thread::JoinHandle<std::io::Result<u64>>) -> st
         .map_err(|_| std::io::Error::other("integration socket reader panicked"))?
 }
 
-fn capture_connection(stream: UnixStream, writer: &Mutex<SpoolWriter>) -> std::io::Result<u64> {
+fn capture_connection(stream: UnixStream, mut writer: &Mutex<SpoolWriter>) -> std::io::Result<u64> {
     stream.set_nonblocking(false)?;
-    let mut reader = BufReader::new(stream);
-    let mut line = Vec::new();
-    let mut count = 0;
-    loop {
-        let ended = match reader.read_until(b'\n', &mut line) {
-            Ok(0) => true,
-            Ok(_) => false,
-            Err(error) if error.kind() == std::io::ErrorKind::Interrupted => continue,
-            Err(error) => return Err(error),
-        };
-        let body = line.strip_suffix(b"\n").unwrap_or(&line);
-        if !body.is_empty() {
-            let mut writer = writer
-                .lock()
-                .map_err(|_| std::io::Error::other("spool lock poisoned"))?;
-            let dropped = writer.dropped;
-            writer.append(Timestamp::now(), body)?;
-            writer.sync()?;
-            count += u64::from(writer.dropped == dropped);
-        }
-        line.clear();
-        if ended {
-            return Ok(count);
-        }
-    }
+    live_stream::capture_lines(BufReader::new(stream), &mut writer, Duration::ZERO)
 }
 
 pub fn driver(spool: PathBuf, host: String) -> LiveStream {

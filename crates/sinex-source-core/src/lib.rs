@@ -14,6 +14,7 @@ pub mod capture;
 pub mod drain;
 pub mod drivers;
 pub mod nats;
+pub mod private_mode;
 pub mod registry;
 #[cfg(feature = "archives")]
 pub mod shared_pass;

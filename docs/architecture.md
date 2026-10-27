@@ -287,9 +287,9 @@ keys by hour.
 ## Interfaces
 
 `sinex-model` holds identities and payloads. `sinex-protocol` declares the
-public commands and wire types without IO. `sinex-transport` holds the
-private-mode switch and the frame directories, so the daemon, drivers and CLI
-share them without the wire types touching the filesystem. CLI, MCP and HTTP
+public commands and wire types without IO. `sinex-transport` holds the frame directories. `sinex-source-core` owns the
+private-mode switch and capture gate, shared by the daemon and producers. The
+CLI invokes `sinexd admin private` through its sibling process client. CLI, MCP and HTTP
 are generated from the command table. `sinex-diagnostics` is a database-free client of `sinexd admin diagnostics`.
 Offline commands invoke the sibling daemon executable without starting the
 daemon. The database work lives in the daemon; the CLI has no store or SQLx
@@ -377,3 +377,9 @@ material another producer or a binding registered is refused, and nothing
 changes. An excised material is no longer listed on
 `<root>.materials.<producer>`. The operator's excision refuses producers'
 materials.
+
+### Private mode
+
+Every live spool writer and media recorder uses `sinex-source-core::private_mode::Gate`. Writes check the switch directly. A watcher checks quiet streams every 20 ms, keeps the start of an open gap in `.private-gap.json`, and writes `.capture-health.json` with the stream and any switch error. Capture logs report those errors. Completed intervals become gap records in the same spool and the shared drain emits `capture.gap` events before invoking a source parser. Media recorders are interrupted when the gate closes and discard interrupted segments. Buffered line reads spanning a blocked interval are discarded. Producers continue sending spooled records; private mode gates recording at its source.
+
+The private switch is `/run/sinex/private-mode` in the Nix module. Its directory is shared through group `sinex`, including session and capture-only accounts. The switch inherits that group when created.

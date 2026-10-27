@@ -195,7 +195,7 @@ pub fn capture(
     spool: &Path,
     stop: &sinex_source_core::capture::CaptureStop,
 ) -> std::io::Result<u64> {
-    dbus::capture(MATCHES, &snapshot_until(stop), spool, stop)
+    dbus::capture(MATCHES, snapshot_until, spool, stop)
 }
 
 /// `--read players=SPOOL`: media players (MPRIS), captured into SPOOL.

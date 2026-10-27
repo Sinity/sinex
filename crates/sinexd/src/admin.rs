@@ -6,6 +6,11 @@ use std::path::PathBuf;
 
 #[derive(Subcommand)]
 pub(crate) enum Admin {
+    /// Read or change private mode without starting the daemon or database.
+    Private {
+        #[arg(default_value = "status", value_parser = ["on", "off", "status"])]
+        state: String,
+    },
     /// Read-only checks that work without a running daemon.
     Diagnostics {
         #[command(subcommand)]
@@ -53,6 +58,19 @@ pub(crate) enum Admin {
 
 pub(crate) async fn run(command: Admin) -> Result<(), String> {
     match command {
+        Admin::Private { state } => {
+            let mode = sinex_source_core::private_mode::PrivateMode::default();
+            if state != "status" {
+                mode.set(state == "on")
+                    .map_err(|e| format!("{}: {e}", mode.path().display()))?;
+            }
+            let switch = mode.state();
+            println!(
+                "{}",
+                serde_json::json!({"private_mode": switch.name(), "switch": mode.path(), "reason": switch.reason()})
+            );
+            Ok(())
+        }
         Admin::Diagnostics { command } => crate::diagnostics::run(command).await,
         Admin::Table(args) => admin_table(args).await,
         Admin::Schema { database } => sinex_schema::apply_url(&database)

@@ -19,9 +19,11 @@ fn lines_of(a: &Acquired) -> Vec<String> {
     let m = a.material.as_ref().unwrap();
     m.records
         .iter()
-        .map(|(s, e)| {
+        .filter_map(|(s, e)| {
             let record: Map<String, Value> = serde_json::from_slice(&m.body()[*s..*e]).unwrap();
-            String::from_utf8(received(&record).unwrap().1).unwrap()
+            received(&record)
+                .ok()
+                .map(|(_, bytes)| String::from_utf8(bytes).unwrap())
         })
         .collect()
 }
@@ -51,13 +53,12 @@ fn captured_lines_are_acquired_once_in_order() {
 #[devkit::test]
 fn private_mode_drops_lines_while_on() {
     let spool = dir();
-    let switch = sinex_transport::private_mode::PrivateMode::new(dir().join("private-mode"));
+    let switch = crate::private_mode::PrivateMode::new(dir().join("private-mode"));
     let mut writer = SpoolWriter::open(&spool, Rotation::default())
         .unwrap()
         .with_private_mode(switch.clone());
     capture_lines(&b"before\n"[..], &mut writer, Duration::ZERO).unwrap();
     switch.set(true).unwrap();
-    std::thread::sleep(Duration::from_millis(300));
     capture_lines(
         &b"private one\nprivate two\n"[..],
         &mut writer,
@@ -66,7 +67,6 @@ fn private_mode_drops_lines_while_on() {
     .unwrap();
     assert_eq!(writer.dropped, 2);
     switch.set(false).unwrap();
-    std::thread::sleep(Duration::from_millis(300));
     capture_lines(&b"after\n"[..], &mut writer, Duration::ZERO).unwrap();
     let got = lines_of(&stream(&spool).poll(&Value::Null).unwrap());
     assert_eq!(got, vec!["before", "after"]);
@@ -165,4 +165,52 @@ fn first_capture_after_an_empty_segment_poll_survives_restart() {
     let next = live.poll(&saved).unwrap();
     assert_eq!(lines_of(&next), ["first synthetic line"]);
     assert!(live.poll(&end_cursor(&next)).unwrap().material.is_none());
+}
+
+#[devkit::test]
+fn buffered_lines_from_a_private_interval_are_all_discarded() {
+    struct DuringPrivate {
+        switch: crate::private_mode::PrivateMode,
+        gate: crate::private_mode::GateAccess,
+        read: bool,
+    }
+    impl std::io::Read for DuringPrivate {
+        fn read(&mut self, buffer: &mut [u8]) -> std::io::Result<usize> {
+            if self.read {
+                return Ok(0);
+            }
+            self.read = true;
+            self.switch.set(true)?;
+            self.gate.permit()?;
+            self.switch.set(false)?;
+            let bytes = b"private one\nprivate two\npartial";
+            buffer[..bytes.len()].copy_from_slice(bytes);
+            Ok(bytes.len())
+        }
+    }
+    let directory = tempfile::tempdir().unwrap();
+    let switch = crate::private_mode::PrivateMode::new(directory.path().join("switch"));
+    let mut writer = SpoolWriter::open(directory.path().join("spool"), Rotation::default())
+        .unwrap()
+        .with_private_mode(switch.clone());
+    let reader = DuringPrivate {
+        switch,
+        gate: writer.gate_access(),
+        read: false,
+    };
+    assert_eq!(
+        capture_lines(std::io::BufReader::new(reader), &mut writer, Duration::ZERO).unwrap(),
+        0
+    );
+    assert_eq!(writer.dropped, 3);
+    writer.append(Timestamp::now(), b"after").unwrap();
+    writer.sync().unwrap();
+    assert_eq!(
+        lines_of(
+            &stream(&directory.path().join("spool"))
+                .poll(&Value::Null)
+                .unwrap()
+        ),
+        ["after"]
+    );
 }

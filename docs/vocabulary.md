@@ -145,3 +145,8 @@ these names and no others.
 - **submission** (`Submission`): the admission outcome and material of a submitted request.
 - **authored at** (`authored_at`): the author timestamp supplied by a Git commit, distinct from its commit timestamp.
 - **request record**: a forecast or library request submitted as a material and admitted through the writer.
+
+- **private mode**: the operator's switch that stops live capture. An unreadable switch stops capture too.
+- **capture gate**: the shared private-mode check in `sinex-source-core`, used by spool writers and media recorders.
+- **capture gap**: a stream's start and end of an interval when nothing was captured, admitted as `capture.gap`.
+- **read permit**: permission to store one read only if private mode stayed off throughout that read.

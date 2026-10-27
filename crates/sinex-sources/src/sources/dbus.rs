@@ -29,13 +29,17 @@ pub fn driver(spool: PathBuf, host: String, locator: &str) -> LiveStream {
 /// ends or capture stops. Returns the number of lines captured.
 pub fn capture(
     matches: &[&str],
-    initial: &[Vec<u8>],
+    initial: impl FnOnce(&sinex_source_core::capture::CaptureStop) -> Vec<Vec<u8>> + Send,
     spool: &Path,
     stop: &sinex_source_core::capture::CaptureStop,
 ) -> std::io::Result<u64> {
     let mut writer = SpoolWriter::open(spool, Rotation::default())?;
-    for line in initial {
-        writer.append(sinex_model::Timestamp::now(), line)?;
+    let permit = writer.read_permit()?;
+    let initial = writer
+        .record(stop, |recording| Ok(initial(recording)))?
+        .unwrap_or_default();
+    for line in &initial {
+        writer.append_read(permit, sinex_model::Timestamp::now(), line)?;
     }
     writer.sync()?;
     let mut command = Command::new("busctl");

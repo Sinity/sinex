@@ -124,10 +124,6 @@ fn outputs_until(stop: &sinex_source_core::capture::CaptureStop) -> Vec<(String,
         .collect()
 }
 
-fn private_on() -> bool {
-    sinex_transport::private_mode::PrivateMode::default().on()
-}
-
 /// Take a still of every output each `every`, until capture stops. Returns the stills written.
 fn capture_screen(
     spool: &Path,
@@ -135,10 +131,11 @@ fn capture_screen(
     stop: &sinex_source_core::capture::CaptureStop,
 ) -> std::io::Result<u64> {
     std::fs::create_dir_all(spool)?;
+    let gate = sinex_source_core::private_mode::Gate::media(spool, "screen")?;
     let mut n = 0;
     while !stop.stopped() {
         let tick = Instant::now();
-        if !private_on() {
+        if gate.allowed()? {
             // Without Hyprland to name the outputs, one still of everything.
             let mut targets: Vec<(Option<String>, u32, u32)> = outputs_until(stop)
                 .into_iter()
@@ -159,9 +156,9 @@ fn capture_screen(
                 grim.args(["-t", "jpeg", "-q", "75"])
                     .arg(&partial)
                     .stderr(Stdio::null());
-                let ok = stop
-                    .status(&mut grim)
-                    .is_ok_and(|s| s.is_some_and(|s| s.success()));
+                let ok = gate
+                    .record(stop, |recording| recording.status(&mut grim))?
+                    .is_some_and(|s| s.is_some_and(|s| s.success()));
                 if !ok {
                     let _ = std::fs::remove_file(&partial);
                     continue;
@@ -202,9 +199,10 @@ fn capture_audio(
                 .stderr(Stdio::null()),
         )
         .is_ok_and(|status| status.is_some_and(|s| s.success()));
+    let gate = sinex_source_core::private_mode::Gate::media(spool, "audio")?;
     let mut n = 0;
     while !stop.stopped() {
-        if private_on() {
+        if !gate.allowed()? {
             stop.wait(Duration::from_secs(1));
             continue;
         }
@@ -217,12 +215,22 @@ fn capture_audio(
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::null());
-        let Some(mut child) = stop.spawn(&mut command)? else {
-            break;
-        };
-        stop.wait(segment);
-        child.interrupt();
-        child.wait()?;
+        let permit = gate.permit()?;
+        let recorded = gate.record(stop, |recording| {
+            let Some(mut child) = recording.spawn(&mut command)? else {
+                return Ok(());
+            };
+            recording.wait(segment);
+            child.interrupt();
+            child.wait()?;
+            Ok(())
+        })?;
+        if recorded.is_none() {
+            if wav.exists() {
+                std::fs::remove_file(&wav)?;
+            }
+            continue;
+        }
         let end = Timestamp::now();
         if !wav.exists() {
             continue;
@@ -248,6 +256,10 @@ fn capture_audio(
         } else {
             (wav, "wav", "audio/wav")
         };
+        if !gate.accepts(permit)? {
+            std::fs::remove_file(&file)?;
+            continue;
+        }
         media::publish_segment(
             spool,
             &file,

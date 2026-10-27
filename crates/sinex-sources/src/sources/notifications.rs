@@ -154,7 +154,7 @@ pub fn capture(
     spool: &Path,
     stop: &sinex_source_core::capture::CaptureStop,
 ) -> std::io::Result<u64> {
-    dbus::capture(MATCHES, &[], spool, stop)
+    dbus::capture(MATCHES, |_| Vec::new(), spool, stop)
 }
 
 /// `--read notifications=SPOOL`: desktop notifications on the session

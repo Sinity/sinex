@@ -225,7 +225,7 @@ pub(crate) async fn run(
         .await
         .map_err(|e| e.to_string())?;
     let sink = Sink(blobs.clone());
-    let private = sinex_transport::private_mode::PrivateMode::default();
+    let private = sinex_source_core::private_mode::PrivateMode::default();
     let mut bindings = Bindings::default();
     let mut planned_at: Option<std::time::Instant> = None;
     loop {

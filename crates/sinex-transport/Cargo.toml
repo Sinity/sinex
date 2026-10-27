@@ -1,6 +1,6 @@
 [package]
 name = "sinex-transport"
-description = "Filesystem transport shared by Sinex and its outside producers: where producers leave frame bytes, and the private-mode switch."
+description = "Filesystem frame transport shared by Sinex and its outside producers."
 version.workspace = true
 edition.workspace = true
 publish.workspace = true

@@ -94,12 +94,7 @@ fn allowed(name: &str) -> Result<&'static [&'static str], String> {
             "sinex-sources",
             "sinex-source-core",
         ]),
-        "sinexctl" => Ok(&[
-            "sinex-diagnostics",
-            "sinex-model",
-            "sinex-protocol",
-            "sinex-transport",
-        ]),
+        "sinexctl" => Ok(&["sinex-diagnostics", "sinex-model", "sinex-protocol"]),
         _ => Err(format!("unassigned workspace package: {name}")),
     }
 }

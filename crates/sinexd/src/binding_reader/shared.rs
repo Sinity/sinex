@@ -50,7 +50,7 @@ impl Drop for Cancel {
 struct InterruptibleReader<R> {
     input: R,
     stop: Arc<AtomicBool>,
-    private: Arc<std::sync::Mutex<sinex_transport::private_mode::Cached>>,
+    private: Arc<std::sync::Mutex<sinex_source_core::private_mode::Cached>>,
 }
 impl<R: Read> Read for InterruptibleReader<R> {
     fn read(&mut self, bytes: &mut [u8]) -> std::io::Result<usize> {
@@ -80,8 +80,8 @@ pub(super) async fn read_shared(
 ) -> Result<Vec<Result<Totals, String>>, String> {
     let started = std::time::Instant::now();
     let private = Arc::new(std::sync::Mutex::new(
-        sinex_transport::private_mode::Cached::new(
-            sinex_transport::private_mode::PrivateMode::default(),
+        sinex_source_core::private_mode::Cached::new(
+            sinex_source_core::private_mode::PrivateMode::default(),
             std::time::Duration::from_millis(250),
         ),
     ));
@@ -216,7 +216,7 @@ pub(super) async fn read_shared(
         let b = &mut readers[index];
         let result = async {
             let mut acquired = delivery.acquired.map_err(|e| e.to_string())?;
-            if sinex_transport::private_mode::PrivateMode::default().on() {
+            if sinex_source_core::private_mode::PrivateMode::default().on() {
                 return Err("capture cancelled or private mode is on; admission stopped".into());
             }
             material.check()?;
@@ -238,7 +238,7 @@ pub(super) async fn read_shared(
                 material: material.clone(),
                 check: Arc::new(move || {
                     if *checked_stop.borrow()
-                        || sinex_transport::private_mode::PrivateMode::default().on()
+                        || sinex_source_core::private_mode::PrivateMode::default().on()
                     {
                         Err("capture cancelled or private mode is on; admission stopped".into())
                     } else {

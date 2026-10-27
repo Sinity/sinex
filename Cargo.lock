@@ -4422,7 +4422,6 @@ dependencies = [
  "serde_json",
  "sinex-diagnostics",
  "sinex-protocol",
- "sinex-transport",
  "tokio",
 ]
 

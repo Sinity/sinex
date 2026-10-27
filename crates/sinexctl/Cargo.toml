@@ -8,7 +8,6 @@ license.workspace = true
 
 [dependencies]
 sinex-diagnostics.workspace = true
-sinex-transport.workspace = true
 sinex-protocol = { workspace = true, features = ["cli"] }
 clap.workspace = true
 serde_json.workspace = true
