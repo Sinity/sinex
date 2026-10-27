@@ -18,7 +18,9 @@ fn backlog(binding: &Binding, cursor: &Value) -> Result<Value, String> {
                         Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
                         Err(error) => return Err(error),
                     };
-                    bytes += length;
+                    let sidecar =
+                        std::fs::metadata(binding.input.join(format!("{stem}.json")))?.len();
+                    bytes += length + sidecar;
                     records += 1;
                 }
             }

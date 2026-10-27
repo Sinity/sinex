@@ -203,6 +203,17 @@ async fn main() -> ExitCode {
         // Bare `sinexctl`: the status view until the Today view is built.
         None => ("status".to_string(), matches.clone()),
     };
+    let capture_state = sub
+        .try_get_one::<String>("capture-state")
+        .ok()
+        .flatten()
+        .map(String::as_str);
+    let offline = sub
+        .try_get_one::<bool>("offline")
+        .ok()
+        .flatten()
+        .copied()
+        .unwrap_or(false);
     match name.as_str() {
         "doctor" => {
             let database = sub.get_one::<String>("database").expect("required");
@@ -283,16 +294,13 @@ async fn main() -> ExitCode {
             }
             return ExitCode::SUCCESS;
         }
-        "status" if sub.get_flag("offline") => {
+        "status" if offline => {
             let Some(database) = sub.get_one::<String>("database") else {
                 return fail(1, "status --offline needs --database");
             };
             return match sinex_diagnostics::run("status", database, None).await {
                 Ok(mut v) => {
-                    capture_health::attach(
-                        &mut v,
-                        sub.get_one::<String>("capture-state").map(String::as_str),
-                    );
+                    capture_health::attach(&mut v, capture_state);
                     print_json(&v);
                     ExitCode::SUCCESS
                 }
@@ -391,10 +399,7 @@ async fn main() -> ExitCode {
             Err(ClientError::Unreachable(m)) => {
                 if name == "status" {
                     let mut status = serde_json::json!({"daemon": {"unavailable": m}});
-                    capture_health::attach(
-                        &mut status,
-                        sub.get_one::<String>("capture-state").map(String::as_str),
-                    );
+                    capture_health::attach(&mut status, capture_state);
                     print_json(&status);
                     return ExitCode::from(UNREACHABLE);
                 }
@@ -411,10 +416,7 @@ async fn main() -> ExitCode {
             Reply::Refused { reason, .. } => return fail(REFUSED, reason),
         };
         if name == "status" {
-            capture_health::attach(
-                &mut result,
-                sub.get_one::<String>("capture-state").map(String::as_str),
-            );
+            capture_health::attach(&mut result, capture_state);
         }
         if !paged {
             if json {

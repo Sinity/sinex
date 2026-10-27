@@ -1,5 +1,6 @@
 use super::*;
 use serde_json::json;
+use std::collections::HashMap;
 
 fn event(n: usize) -> ProducerEvent {
     ProducerEvent {
@@ -65,12 +66,37 @@ async fn standin_with_refusal(
         .await
         .unwrap();
     let received: Arc<Mutex<Vec<Ingress>>> = Arc::default();
+    let recorded = Arc::new(Mutex::new(HashMap::<String, Acknowledgment>::new()));
+    let mut queries = client.subscribe(subjects.recorded(producer)).await.unwrap();
+    client.flush().await.unwrap();
+    let answers = recorded.clone();
+    let responder = client.clone();
+    tokio::spawn(async move {
+        while let Some(message) = queries.next().await {
+            let query: RecordedQuery = serde_json::from_slice(&message.payload).unwrap();
+            let frames: Vec<_> = {
+                let answers = answers.lock().unwrap();
+                query
+                    .frames
+                    .iter()
+                    .filter_map(|frame| answers.get(frame).cloned())
+                    .collect()
+            };
+            responder
+                .publish(
+                    message.reply.unwrap(),
+                    serde_json::to_vec(&frames).unwrap().into(),
+                )
+                .await
+                .unwrap();
+        }
+    });
     let (seen, acker, ack_subject) = (received.clone(), client, subjects.ack(producer));
     tokio::spawn(async move {
         let mut messages = consumer.messages().await.unwrap();
         while let Some(Ok(message)) = messages.next().await {
             let frame: Ingress = serde_json::from_slice(&message.payload).unwrap();
-            let (material, admitted) = match &frame {
+            let (material, mut admitted) = match &frame {
                 Ingress::Material { material, .. } => (Some(material.id), vec![]),
                 Ingress::Events { events, .. } => (
                     None,
@@ -89,14 +115,26 @@ async fn standin_with_refusal(
                 }
                 _ => None,
             };
+            if refusal.is_some() {
+                admitted.clear();
+            }
+            let commit_seq = if refusal.is_some() || admitted.is_empty() {
+                None
+            } else {
+                Some(1)
+            };
             let ack = Acknowledgment {
                 frame: frame.frame().to_owned(),
                 material,
                 admitted,
                 outcome: json!({}),
                 refusal,
-                commit_seq: Some(1),
+                commit_seq,
             };
+            recorded
+                .lock()
+                .unwrap()
+                .insert(ack.frame.clone(), ack.clone());
             seen.lock().unwrap().push(frame);
             acker
                 .publish(
