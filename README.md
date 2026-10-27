@@ -260,6 +260,12 @@ the shared development schema cache. Compiler schema facts are retained with
 the run. Disk runs keep fsync, full-page writes and synchronous
 commit enabled. Memory runs are a separate diagnostic series.
 
+For an unmerged checkout, set `CARGO_TARGET_DIR` on the launch:
+`env CARGO_TARGET_DIR=<worktree>/target/bench agentctl job start sinex bench --workspace <worktree> -- synthetic --events 1000000 --consumers`.
+AgentCTL takes its registered operation from the owning project checkout;
+setting the directory on the launch also isolates the runner before that
+checkout has the updated operation.
+
 For a comparison, freeze both revisions and alternate before/after order for
 at least three matched pairs, one measurement at a time. Keep settings,
 workload and storage equal; compare individual runs and the median paired
