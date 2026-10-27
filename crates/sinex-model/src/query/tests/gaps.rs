@@ -26,6 +26,17 @@ fn payload_types_are_taken_from_registered_schemas_and_used_by_aggregates() {
         ["payload.duration_ns"]
     );
     assert_eq!(completions[0].field_type, "integer");
+    for text in [
+        "events where event_type = command.* and payload.dur",
+        "events where event_type = [command.executed, command.fused] and payload.dur",
+    ] {
+        assert!(
+            complete(text)
+                .iter()
+                .any(|f| f.name == "payload.duration_ns"),
+            "{text}"
+        );
+    }
     assert!(complete("materials payload.").is_empty());
 }
 
@@ -79,7 +90,7 @@ fn fill_resolves_bounds_and_keeps_later_group_filters() {
     };
     let fill = g.fill.as_ref().unwrap();
     assert_eq!(fill.to, ctx().now);
-    assert_eq!((fill.to - fill.from).as_secs(), 3 * 86400);
+    assert_eq!(fill.to.as_second() - fill.from.as_second(), 3 * 86400);
     assert!(read_as(&query).contains("empty time buckets"));
     assert!(
         err("commands group by day(when) count fill")
@@ -179,5 +190,56 @@ fn event_type_globs_select_the_schemas_used_for_payload_fields() {
             &ctx()
         )
         .is_ok()
+    );
+}
+
+#[devkit::test]
+fn fill_recognizes_equivalent_finite_source_filters() {
+    for filter in [
+        "source = terminal.atuin",
+        "source = [terminal.atuin]",
+        "(source = terminal.atuin or source = terminal.atuin)",
+        "source = [terminal.atuin, synthetic.other] and source = terminal.atuin",
+    ] {
+        let query = q(&format!(
+            "events where {filter} and when in last 3d group by day(when) count fill"
+        ));
+        let Stage::Group(g) = &query.stages[0] else {
+            panic!()
+        };
+        assert_eq!(
+            g.fill.as_ref().unwrap().sources,
+            ["terminal.atuin"],
+            "{filter}"
+        );
+    }
+    let query = q(
+        "events where (source = terminal.atuin or event_type = command.executed) and when in last 3d group by day(when) count fill",
+    );
+    let Stage::Group(g) = &query.stages[0] else {
+        panic!()
+    };
+    assert!(g.fill.as_ref().unwrap().sources.is_empty());
+}
+
+#[devkit::test]
+fn recall_last_payload_conditions_use_the_session_schema() {
+    let query = q("recall last where payload.host = synthetic");
+    assert!(matches!(
+        query.source,
+        Source::RecallLast {
+            filter: Some(Expr::Compare {
+                lhs: Operand::Field(FieldRef::TypedPayload {
+                    ty: FieldType::Text,
+                    ..
+                }),
+                ..
+            })
+        }
+    ));
+    assert!(
+        err("recall last where payload.command = synthetic")
+            .message
+            .contains("not declared")
     );
 }

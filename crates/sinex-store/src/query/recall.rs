@@ -133,7 +133,13 @@ impl Selection {
         }
     }
 
-    pub(super) async fn account(&self, conn: &mut PgConnection, seq: i64) -> Result<Json> {
+    pub(super) async fn account(
+        &self,
+        conn: &mut PgConnection,
+        seq: i64,
+        rows: &Query,
+        ctx: &Context,
+    ) -> Result<Json> {
         match self {
             Self::NoKnownMark => Ok(
                 serde_json::json!({"mark":null,"status":"no_known_moment_mark","reason":"No visible moment mark matches this number."}),
@@ -149,7 +155,7 @@ impl Selection {
                 session,
             } => {
                 let mut account =
-                    walk::recall_summary(conn, *from, *to, seq, *inclusive, self.filter()).await?;
+                    walk::recall_summary(conn, *from, *to, seq, *inclusive, rows, ctx).await?;
                 if let Some(session) = session {
                     if let Some(mark) = session.get("mark") {
                         account["mark"] = mark.clone();

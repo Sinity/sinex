@@ -112,6 +112,13 @@ pub(crate) fn answer(result: &Value, local: &Local, next_hint: Option<&str>) -> 
         out.push_str(&table(&columns, &rows, local));
     }
     if let Some(recall) = result.get("recall").filter(|r| !r.is_null()) {
+        if let Some(reason) = recall["reason"].as_str() {
+            let reason: String = reason
+                .chars()
+                .map(|c| if c.is_control() { ' ' } else { c })
+                .collect();
+            let _ = writeln!(out, "{reason}");
+        }
         if let Some(mark) = recall.get("mark").filter(|m| !m.is_null()) {
             let _ = writeln!(out, "Mark: {}", cell(local, &mark["payload"]["text"]));
         }

@@ -44,18 +44,33 @@ fn bounds(
         _ => {}
     }
 }
-fn sources(e: &Expr, out: &mut Vec<String>) {
-    match e {
-        Expr::And(a, b) => {
-            sources(a, out);
-            sources(b, out);
+fn sources(e: &Expr) -> Option<std::collections::BTreeSet<String>> {
+    use std::collections::BTreeSet;
+    fn values(value: &Value) -> Option<BTreeSet<String>> {
+        match value {
+            Value::Text(s) => Some(BTreeSet::from([s.clone()])),
+            Value::List(items) => {
+                let mut out = BTreeSet::new();
+                for item in items {
+                    out.extend(values(item)?);
+                }
+                Some(out)
+            }
+            _ => None,
         }
+    }
+    match e {
+        Expr::And(a, b) => match (sources(a), sources(b)) {
+            (Some(a), Some(b)) => Some(a.intersection(&b).cloned().collect()),
+            (a, b) => a.or(b),
+        },
+        Expr::Or(a, b) => Some(sources(a)?.union(&sources(b)?).cloned().collect()),
         Expr::Compare {
             lhs: Operand::Field(FieldRef::Field(f)),
             op: Op::Eq,
-            rhs: Value::Text(s),
-        } if f.name == "source" => out.push(s.clone()),
-        _ => {}
+            rhs,
+        } if f.name == "source" => values(rhs),
+        _ => None,
     }
 }
 pub(super) fn bind(q: &mut Query, ctx: &Context) -> Result<(), QueryError> {
@@ -84,10 +99,16 @@ pub(super) fn bind(q: &mut Query, ctx: &Context) -> Result<(), QueryError> {
                     }
                     let (_, field) = times[0];
                     let (mut from, mut to) = (None, None);
+                    let mut selected: Option<std::collections::BTreeSet<String>> = None;
                     for e in &filters {
                         bounds(e, field, &mut from, &mut to);
-                        sources(e, &mut fill.sources);
+                        if let Some(names) = sources(e) {
+                            selected = Some(selected.map_or(names.clone(), |prior| {
+                                prior.intersection(&names).cloned().collect()
+                            }));
+                        }
                     }
+                    fill.sources = selected.unwrap_or_default().into_iter().collect();
                     if let Source::Recall { from: f, to: t } = q.source {
                         from = Some(f);
                         to = Some(t);

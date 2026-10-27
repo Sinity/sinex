@@ -222,40 +222,40 @@ pub(crate) async fn recall_summary(
     to: jiff::Timestamp,
     seq: i64,
     inclusive_end: bool,
-    filter: sinex_model::query::Expr,
+    rows: &sinex_model::query::Query,
+    ctx: &sinex_model::query::Context,
 ) -> Result<Json> {
-    use sinex_model::query::{
-        AggFn, Aggregate, Context, FieldRef, Group, Operand, Query, Source, Stage, Table,
-    };
+    use sinex_model::query::{AggFn, Aggregate, FieldRef, Group, Operand, Stage, Table};
     let field = |name| FieldRef::Field(Table::Events.field(name).expect("event field declared"));
-    let selector = Query {
-        source: Source::Table {
-            table: Table::Events,
-            alias: None,
-        },
-        filter: Some(filter),
-        ranked: false,
-        stages: vec![Stage::Group(Group {
-            keys: vec![Operand::Field(field("source"))],
-            aggregates: vec![
-                Aggregate {
-                    function: AggFn::Count,
-                    field: None,
-                },
-                Aggregate {
-                    function: AggFn::Min,
-                    field: Some(field("when")),
-                },
-                Aggregate {
-                    function: AggFn::Max,
-                    field: Some(field("when")),
-                },
-            ],
-            fill: None,
-        })],
-    };
+    let mut selector = rows.clone();
+    selector.stages = rows
+        .stages
+        .iter()
+        .take_while(|s| !matches!(s, Stage::Group(_)))
+        .filter(|s| !matches!(s, Stage::Fields(_)))
+        .cloned()
+        .collect();
+    let mut summary = selector.clone();
+    summary.stages.push(Stage::Group(Group {
+        keys: vec![Operand::Field(field("source"))],
+        aggregates: vec![
+            Aggregate {
+                function: AggFn::Count,
+                field: None,
+            },
+            Aggregate {
+                function: AggFn::Min,
+                field: Some(field("when")),
+            },
+            Aggregate {
+                function: AggFn::Max,
+                field: Some(field("when")),
+            },
+        ],
+        fill: None,
+    }));
     let (sql, values) = {
-        let compiled = super::Compiler::new(&Context::utc(to), seq).compile(&selector)?;
+        let compiled = super::Compiler::new(ctx, seq).compile(&summary)?;
         let mut rows = super::SqlFragment::text(
             "SELECT jsonb_build_object('source',q.source,'events',q.count,'first',q.min_when,'last',q.max_when) FROM (",
         );
@@ -267,9 +267,7 @@ pub(crate) async fn recall_summary(
         .await?;
     let latest_by_source = {
         let (sql, values) = {
-            let mut latest = selector.clone();
-            latest.stages.clear();
-            let compiled = super::Compiler::new(&Context::utc(to), seq).compile(&latest)?;
+            let compiled = super::Compiler::new(ctx, seq).compile(&selector)?;
             let mut rows = super::SqlFragment::text(format!(
                 "SELECT DISTINCT ON (q.source) {} FROM (",
                 super::json_object(&compiled.columns)

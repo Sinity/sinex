@@ -112,10 +112,41 @@ pub fn complete(text: &str) -> Vec<Completion> {
     let mut kinds: Option<BTreeSet<String>> =
         alias.map(|a| a.kinds.iter().map(|s| (*s).into()).collect());
     if let Ok(tokens) = super::lex::tokens(&text[..start]) {
-        for part in tokens.windows(3) {
-            if part[0].is_word("event_type") && (part[1].is_symbol("=") || part[1].is_symbol(":")) {
-                kinds = Some(BTreeSet::from([part[2].text.clone()]));
+        let mut mentioned = BTreeSet::new();
+        for (i, token) in tokens.iter().enumerate() {
+            if !token.is_word("event_type")
+                || !tokens
+                    .get(i + 1)
+                    .is_some_and(|t| t.is_symbol("=") || t.is_symbol(":"))
+            {
+                continue;
             }
+            let values = &tokens[i + 2..];
+            let list = values.first().is_some_and(|t| t.is_symbol("["));
+            for value in values.iter().skip(usize::from(list)) {
+                if value.is_symbol("]") {
+                    break;
+                }
+                if value.kind != super::lex::Kind::Symbol {
+                    let value = if value.kind == super::lex::Kind::Word && value.text.contains('*')
+                    {
+                        Value::Glob(value.text.clone())
+                    } else {
+                        Value::Text(value.text.clone())
+                    };
+                    if let Some(selected) = selected_value(&value) {
+                        mentioned.extend(selected);
+                    }
+                }
+                if !list {
+                    break;
+                }
+            }
+        }
+        if !mentioned.is_empty() {
+            kinds = Some(kinds.map_or(mentioned.clone(), |alias| {
+                alias.intersection(&mentioned).cloned().collect()
+            }));
         }
     }
     let mut choices = std::collections::BTreeMap::new();
@@ -379,6 +410,11 @@ fn expr(e: &mut Expr, kinds: &Option<BTreeSet<String>>, ctx: &Context) -> Result
 }
 
 pub(super) fn check(q: &mut Query, ctx: &Context) -> Result<(), QueryError> {
+    if let Source::RecallLast { filter: Some(e) } = &mut q.source {
+        let alias = Alias::from_name("shell-sessions").expect("shell sessions declared");
+        let kinds = Some(alias.kinds.iter().map(|s| (*s).into()).collect());
+        expr(e, &kinds, ctx)?;
+    }
     let mut kinds: Option<BTreeSet<String>> = q
         .source
         .alias()

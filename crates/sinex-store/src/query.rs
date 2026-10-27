@@ -247,7 +247,9 @@ pub async fn run(
                 read.size,
                 read.prior.is_none(),
             );
-            let account = selection.account(&mut tx, read.seq).await?;
+            let account = selection
+                .account(&mut tx, read.seq, &as_events, &read.ctx)
+                .await?;
             page_of(&mut tx, rendered, table, text, query, &read, Some(account)).await?
         }
     };

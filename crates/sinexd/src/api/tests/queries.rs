@@ -280,3 +280,33 @@ async fn context_digest_keeps_the_latest_observation_of_each_source_beyond_the_p
             .any(|r| r["payload"]["command"] == "synthetic other source")
     );
 }
+
+#[devkit::test]
+async fn recall_digest_obeys_row_filters_and_limits(db: devkit::pg::TestDatabase) {
+    let w = world(db).await;
+    let first = command("synthetic first", 0);
+    let mut other = command("synthetic excluded", 1);
+    other.source = "synthetic.other".into();
+    let last = command("synthetic last", 2);
+    admit_events(&w, vec![first, other, last]).await;
+    for (suffix, count, command) in [
+        ("", 2, "synthetic last"),
+        (" sort when limit 1 fields id", 1, "synthetic first"),
+        (" count", 2, "synthetic last"),
+    ] {
+        let query = format!(
+            "recall sinex:window/2026-09-14T08:00:00Z/2026-09-14T08:03:00Z where source = terminal.atuin{suffix}"
+        );
+        let (_, answer) = call(&w, Some(READ), json!({"method":"query","query":query})).await;
+        assert_eq!(answer["outcome"], "ok", "{answer}");
+        let account = &answer["result"]["recall"];
+        assert_eq!(account["by_source"].as_array().unwrap().len(), 1);
+        assert_eq!(account["by_source"][0]["source"], "terminal.atuin");
+        assert_eq!(account["by_source"][0]["events"], count);
+        assert_eq!(account["latest_by_source"].as_array().unwrap().len(), 1);
+        assert_eq!(
+            account["latest_by_source"][0]["payload"]["command"],
+            command
+        );
+    }
+}

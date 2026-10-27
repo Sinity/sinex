@@ -36,3 +36,12 @@ fn recall_prints_the_mark_and_each_sources_latest_observation() {
     assert!(text.contains("synthetic.source"));
     assert!(text.contains("synthetic latest"));
 }
+
+#[devkit::test]
+fn empty_recall_prints_its_complete_reason_without_terminal_controls() {
+    let reason = "No matching recorded shell session; untimed observations or pending derivations may still exist.";
+    let result =
+        json!({"rows":[],"total":0,"recall":{"reason":format!("{reason}\nSynthetic\tend")}});
+    let text = answer(&result, &Local::new(Some("UTC")), None);
+    assert!(text.contains(&format!("{reason} Synthetic end")));
+}

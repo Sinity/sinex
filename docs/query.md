@@ -116,7 +116,9 @@ sinexctl query 'sources fields source, continuity, gaps, drift, record_failures'
 lookback duration; absolute start and end times also work. Its answer is recall,
 including states whose spans overlap the window, a source-by-source
 account and the latest visible observation from each source. The digest is
-independent of the page size, so a busy source does not crowd the others out. `timeline` reads ordinary event queries in time order. Both preserve
+independent of the page size, so a busy source does not crowd the others out.
+Recall digests apply the question's row filters, joins and limits before any
+grouping. `timeline` reads ordinary event queries in time order. Both preserve
 paging and query metadata on every surface.
 
 `source` evidence stays in the `sources` query table. `continuity` says whether
