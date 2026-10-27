@@ -176,9 +176,13 @@ impl Parser for HledgerParser {
                     if directive == "include" {
                         vec![sinex_model::event_types::finance::IncludeTarget {
                             path: header.trim_start_matches("include").trim().into(),
-                            reason: Some("include resolution is unavailable for this captured block".into()),
+                            reason: Some(
+                                "include resolution is unavailable for this captured block".into(),
+                            ),
                         }]
-                    } else { vec![] }
+                    } else {
+                        vec![]
+                    }
                 });
             return Ok((
                 vec![JournalRecord::Directive(JournalDirective {

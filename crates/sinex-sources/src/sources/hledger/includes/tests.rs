@@ -287,7 +287,18 @@ fn changed_include_block_reports_unavailable_resolution_without_using_the_previo
     let binding = bindings.iter().find(|b| b.input == root).unwrap();
     let source = (super::super::FORMAT.source)(binding).unwrap();
     let changed = b"include other.journal\n";
-    let events = super::super::tests::intake::export_restart(changed, super::super::driver(root,"example-host".into()), source.as_ref(),1,0);
-    assert_eq!(events[0].payload["includes"][0]["path"],"other.journal");
-    assert!(events[0].payload["includes"][0]["reason"].as_str().unwrap().contains("unavailable"));
+    let events = super::super::tests::intake::export_restart(
+        changed,
+        super::super::driver(root, "example-host".into()),
+        source.as_ref(),
+        1,
+        0,
+    );
+    assert_eq!(events[0].payload["includes"][0]["path"], "other.journal");
+    assert!(
+        events[0].payload["includes"][0]["reason"]
+            .as_str()
+            .unwrap()
+            .contains("unavailable")
+    );
 }
