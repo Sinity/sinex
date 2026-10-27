@@ -152,7 +152,7 @@ impl Parser for HledgerParser {
                 next,
             ));
         }
-        let header = header.trim_start();
+        let header = directive_body(header.trim_start());
         if !header.starts_with(|c: char| c.is_ascii_digit()) {
             let directive = directive_name(header)?;
             if directive == "Y" || directive == "year" || header.starts_with("apply year ") {
@@ -175,7 +175,7 @@ impl Parser for HledgerParser {
                 .unwrap_or_else(|| {
                     if directive == "include" {
                         vec![sinex_model::event_types::finance::IncludeTarget {
-                            path: header.trim_start_matches("include").trim().into(),
+                            path: header.trim_start_matches("include").split(';').next().unwrap().trim().into(),
                             reason: Some(
                                 "include resolution is unavailable for this captured block".into(),
                             ),
@@ -286,6 +286,10 @@ impl Parser for HledgerParser {
     }
 }
 
+fn directive_body(header: &str) -> &str {
+    header.strip_prefix(['!', '@']).unwrap_or(header)
+}
+
 fn directive_name(header: &str) -> Result<&str, RecordError> {
     if header.starts_with([';', '#', '*']) {
         return Ok("comment");
@@ -301,9 +305,11 @@ fn directive_name(header: &str) -> Result<&str, RecordError> {
     }
     let name = header.split_whitespace().next().unwrap_or("");
     match name {
-        "account" | "commodity" | "P" | "D" | "alias" | "include" | "Y" | "year"
+        "account" | "commodity" | "P" | "D" | "N" | "C" | "alias" | "include" | "Y" | "year"
         | "decimal-mark" | "payee" | "tag" | "apply" | "end" | "assert" | "check" | "comment"
-        | "endcomment" => Ok(name),
+        | "endcomment" | "bucket" | "A" | "capture" | "define" | "eval" | "expr"
+        | "python" | "value" => Ok(name),
+        _ if name.starts_with("--") => Ok("--"),
         _ => Err(RecordError::new("unknown journal directive")),
     }
 }

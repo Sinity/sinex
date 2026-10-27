@@ -5,7 +5,7 @@ use crate::{
 
 #[devkit::test]
 fn transaction_key_keeps_duplicate_and_host_and_time_unknown() {
-    let value = serde_json::json!({"host":"example-host", "journal":"example.journal", "member":null, "member_duplicate":0, "block_hash":"example-hash", "duplicate":0, "date":"2030-01-01", "effective_date":null,"resolved_date":null,"resolved_effective_date":null,"default_year":null,"code":null,"included_from":null, "status":null, "description":"Example", "narration":null, "comment":null, "postings":[{"account":"Assets:Example", "amount":"12345678901234567890.001", "currency":"TEST", "comment":null,"status":null,"virtual_account":null,"price":null,"assertion":null}]});
+    let value = serde_json::json!({"host":"example-host", "journal":"example.journal", "member":null, "member_duplicate":0, "block_hash":"example-hash", "duplicate":0, "date":"2030-01-01", "effective_date":null,"resolved_date":null,"resolved_effective_date":null,"default_year":null,"code":null,"included_from":null, "status":null, "description":"Example", "narration":null, "comment":null, "postings":[{"account":"Assets:Example", "amount":"12345678901234567890.001", "currency":"TEST", "comment":null,"status":null,"virtual_account":null,"price":null,"assertion":null,"assertion_price":null,"annotations":[]}]});
     let payload: TransactionPosted = serde_json::from_value(value.clone()).unwrap();
     assert_eq!(serde_json::to_value(&payload).unwrap(), value);
     let build = |p: &TransactionPosted| {

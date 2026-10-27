@@ -97,7 +97,7 @@ async fn included_journal_changes_are_read_when_the_parent_is_unchanged_and_repl
     .unwrap();
     std::fs::write(
         &child,
-        "02/29 Child\n  (Assets:Example)  1.234,000 TEST @ 2 OTHER == 3 TEST\n",
+        "02/29 Child\n  (Assets:Example)  1.234,000 TEST {= 4 OTHER} @ 2 OTHER == 3 TEST @ 5 OTHER\n",
     )
     .unwrap();
     let store = dir.path().join("store");
@@ -122,6 +122,8 @@ async fn included_journal_changes_are_read_when_the_parent_is_unchanged_and_repl
             .iter()
             .all(|p| p["resolved_date"] == "2032-02-29")
     );
+    assert_eq!(transactions[0]["postings"][0]["annotations"], serde_json::json!(["{= 4 OTHER}"]));
+    assert_eq!(transactions[0]["postings"][0]["assertion_price"]["amount"], "5");
     assert_ne!(
         transactions[0]["included_from"],
         transactions[1]["included_from"]

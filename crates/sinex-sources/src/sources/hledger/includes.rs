@@ -95,7 +95,7 @@ fn visit(
                     }
                     return Err(error.to_string());
                 }
-                let header = header.trim();
+                let header = super::directive_body(header.trim());
                 if let Some(value) = header
                     .strip_prefix('Y')
                     .or_else(|| header.strip_prefix("year "))
@@ -132,7 +132,8 @@ fn visit(
                     parent: from.clone().map(Box::new),
                 };
                 *duplicate += 1;
-                let targets = match resolve(path, target.trim(), settings) {
+                let target = target.split(';').next().unwrap().trim();
+                let targets = match resolve(path, target, settings) {
                     Ok(targets) => targets,
                     Err(reason) => {
                         includes.entry(key).or_default().push(IncludeTarget {
@@ -228,6 +229,9 @@ fn target_format(header: &str, path: &Path) -> &'static str {
 }
 
 fn resolve(parent: &Path, target: &str, settings: &Settings) -> Result<Vec<PathBuf>, String> {
+    if target.is_empty() {
+        return Err("include path is empty".into());
+    }
     if target.starts_with(['|', '!', '<']) || target.contains("://") {
         return Err(
             "include requires a local file; commands and remote imports are not executed".into(),

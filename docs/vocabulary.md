@@ -154,6 +154,7 @@ these names and no others.
 ## Explicit imports
 
 - **journal**: an hledger file or archive containing authored transactions and directives.
+- **posting annotation**: written lot cost, lot date, lot note or valuation expression attached to a posting amount, preserved without evaluation.
 - **posting**: one ordered account entry in a transaction, with an optional exact decimal amount and commodity.
 - **journal directive**: an authored journal declaration, rule, include or comment, kept as a record without executing it.
 - **text history**: an appended file with one untimed command per complete line.

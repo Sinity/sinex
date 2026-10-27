@@ -14,6 +14,8 @@ pub struct Posting {
     pub virtual_account: Option<String>,
     pub price: Option<PostingAmount>,
     pub assertion: Option<PostingAmount>,
+    pub assertion_price: Option<PostingAmount>,
+    pub annotations: Vec<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
