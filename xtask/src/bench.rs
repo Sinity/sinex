@@ -432,11 +432,12 @@ impl Cluster {
         let started = Instant::now();
         // A checkpoint may outlast a fast shutdown. Disposable databases can
         // stop immediately rather than leave their server holding the job.
-        for mode in ["fast", "immediate"] {
+        // Immediate shutdown can still wait for an in-flight disk operation.
+        for (mode, wait) in [("fast", "60"), ("immediate", "120")] {
             let output = Command::new("pg_ctl")
                 .arg("-D")
                 .arg(&self.data)
-                .args(["-m", mode, "-w", "-t", "60", "stop"])
+                .args(["-m", mode, "-w", "-t", wait, "stop"])
                 .output()
                 .map_err(|e| e.to_string())?;
             if output.status.success() {
