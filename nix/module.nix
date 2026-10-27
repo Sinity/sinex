@@ -63,7 +63,7 @@ let
     format = mkOption {
       type = types.nullOr types.str;
       default = null;
-      description = "The format to read ${spec.name} with: one of ${concatStringsSep ", " spec.formats}; every applicable format when null.";
+      description = "The format for ${spec.name}'s explicit paths: one of ${concatStringsSep ", " spec.formats}; every applicable format when null. Canonical discovery still considers every format.";
     };
     zone = mkOption {
       type = types.nullOr types.str;
@@ -253,6 +253,7 @@ in
         One-shot imports of large exports, each a `sinex-backfill-NAME`
         service that is started by hand, never at activation. Each entry is a
         list of `format=path` inputs (`sinexd admin catalog` lists the formats).
+        These paths also enter automatic discovery as provider inputs.
         The database has one writer, so starting a backfill stops sinexd and
         starts it again when the backfill ends; live captures spool meanwhile.
         The inputs are mounted read-only for it.

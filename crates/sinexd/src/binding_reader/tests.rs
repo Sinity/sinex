@@ -642,7 +642,7 @@ async fn an_unchanged_append_only_file_is_not_polled_again(db: devkit::pg::TestD
     let mut ctx = ReaderContext::open(&url, &dir.join("store")).await.unwrap();
     let sink = Sink(ctx.blobs.clone());
     let (_stop, stop) = watch::channel(false);
-    let format = sinex_sources::sources::format_of("terminal.zsh-history").unwrap();
+    let format = sinex_sources::sources::format("zsh").unwrap();
     let settings = Settings {
         class: None,
         host: "h".into(),

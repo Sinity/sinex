@@ -137,7 +137,8 @@ their next login. A switch that cannot be checked also stops capture: each
 process logs the reason once, and `sinexctl private` and `sinexctl status`
 show it.
 
-The database has one writer. Starting a backfill
+Declared backfill paths also enter automatic discovery, so present exports
+are read by the binding runner. The database has one writer. Starting a backfill
 (`systemctl start sinex-backfill-NAME`) stops sinexd, reads the inputs
 read-only to their end, and starts sinexd again; the session service and the
 journald capture keep spooling meanwhile.
