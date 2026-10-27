@@ -148,7 +148,7 @@ async fn a_spool_is_produced_once_material_first() {
 }
 
 #[devkit::test(multi_thread)]
-async fn draining_after_physical_state_relocation_preserves_names_and_admitted_positions() {
+async fn draining_after_moving_session_storage_keeps_names_and_positions() {
     use sinex_source_core::drivers::live_stream::{Rotation, SpoolWriter};
     use sinex_sources::{discovery, live};
     use std::os::unix::fs::symlink;
@@ -252,7 +252,7 @@ async fn drain_retries_pending_frames_even_when_the_spool_directory_is_absent() 
         "{error}"
     );
     drop(producer);
-    std::fs::rename(&spool, root.path().join("retained-spool")).unwrap();
+    std::fs::rename(&spool, root.path().join("kept-spool")).unwrap();
     let received = standin(&nats, &subjects, "session-test").await;
     let mut producer = Producer::connect(nats.url(), None, subjects, "session-test")
         .await

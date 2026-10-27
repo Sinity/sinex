@@ -58,6 +58,6 @@ let
   ];
 in
 assert lib.all (result: result) tests;
-pkgs.runCommandNoCC "sinex-module-tests" { } ''
+pkgs.runCommand "sinex-module-tests" { } ''
   mkdir "$out"
 ''
