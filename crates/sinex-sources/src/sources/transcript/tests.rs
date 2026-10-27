@@ -351,3 +351,46 @@ fn json_file_metadata_and_progress_survive_part_restart() {
         && e.payload["external_run"] == "example-run"));
     assert_ne!(events[0].equivalence_key, events[1].equivalence_key);
 }
+
+#[devkit::test]
+fn webvtt_headers_allow_tabs_and_later_header_named_cues_remain_text() {
+    assert!(
+        read(Format::WebVtt, b"NOTE\tcomment\nmore", Value::Null)
+            .unwrap()
+            .is_empty()
+    );
+    assert!(
+        read(Format::WebVtt, b"WEBVTT\tcomment", Value::Null)
+            .unwrap()
+            .is_empty()
+    );
+    let parser = TranscriptParser {
+        format: Format::WebVtt,
+        input: "example".into(),
+    };
+    let manifest = Manifest::from_json(serde_json::json!({"path":"example.vtt"}));
+    let context = RecordContext {
+        manifest: &manifest,
+        member: None,
+    };
+    let (_, carry) = parser
+        .parse(&b"WEBVTT".as_slice(), &Carry::default(), &context)
+        .unwrap();
+    let (rows, _) = parser
+        .parse(
+            &b"WEBVTT\n00:00.000 --> 00:01.000\nspoken".as_slice(),
+            &carry,
+            &context,
+        )
+        .unwrap();
+    assert_eq!(rows[0].text, "spoken");
+    assert_eq!(rows[0].extra["cue_id"], "WEBVTT");
+    assert!(
+        read(
+            Format::WebVtt,
+            b"60:00.000 --> 61:00.000\nspoken",
+            Value::Null
+        )
+        .is_err()
+    );
+}
