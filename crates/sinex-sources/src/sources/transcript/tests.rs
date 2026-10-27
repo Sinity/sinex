@@ -480,3 +480,30 @@ fn imported_json_refuses_sealed_member_staging_before_any_material_delivery() {
     assert_eq!(deliveries, 0);
     assert_eq!(sink.0.lock().unwrap().len(), 1);
 }
+
+#[devkit::test]
+fn whisper_position_ids_need_an_external_run_for_equivalence() {
+    let row = br#"{"id":0,"text":"same","start":0,"end":1}"#;
+    let unscoped = read(
+        Format::Whisper,
+        row,
+        serde_json::json!({"model":"example-model"}),
+    )
+    .unwrap();
+    assert_eq!(unscoped[0].provider_segment_id.as_deref(), Some("0"));
+    assert!(matches!(unscoped[0].key_kind(), KeyKind::Location));
+    let scoped = read(
+        Format::Whisper,
+        row,
+        serde_json::json!({"model":"example-model","external_run":"example-run"}),
+    )
+    .unwrap();
+    assert!(matches!(scoped[0].key_kind(), KeyKind::Fields(_)));
+    let generic = read(
+        Format::Json,
+        br#"{"id":"stable-segment","text":"same"}"#,
+        Value::Null,
+    )
+    .unwrap();
+    assert!(matches!(generic[0].key_kind(), KeyKind::Fields(_)));
+}

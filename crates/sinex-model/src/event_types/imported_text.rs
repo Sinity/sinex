@@ -8,6 +8,9 @@ use serde_json::{Map, Value};
 pub struct TranscriptSegment {
     pub input: String,
     pub provider_segment_id: Option<String>,
+    /// Whether this ID identifies the segment across revisions of the configured input.
+    #[serde(default)]
+    pub provider_id_stable: bool,
     pub segment_index: u64,
     pub text: String,
     pub start_ms: Option<u64>,
@@ -36,6 +39,9 @@ pub struct BoundingBox {
 pub struct OcrSegment {
     pub input: String,
     pub provider_segment_id: Option<String>,
+    /// Whether this ID identifies the segment across revisions of the configured input.
+    #[serde(default)]
+    pub provider_id_stable: bool,
     pub segment_index: u64,
     pub text: String,
     pub page: Option<u64>,
@@ -60,7 +66,7 @@ impl EventPayload for TranscriptSegment {
         KeyKind::Fields(&["input", "external_run", "model", "provider_segment_id"]);
     const REPLACE: ReplaceRule = ReplaceRule::ReplaceWhenNewer;
     fn key_kind(&self) -> KeyKind {
-        if self.provider_segment_id.is_some() {
+        if self.provider_id_stable && self.provider_segment_id.is_some() {
             Self::KEY
         } else {
             KeyKind::Location
@@ -80,7 +86,7 @@ impl EventPayload for OcrSegment {
         KeyKind::Fields(&["input", "external_run", "engine", "provider_segment_id"]);
     const REPLACE: ReplaceRule = ReplaceRule::ReplaceWhenNewer;
     fn key_kind(&self) -> KeyKind {
-        if self.provider_segment_id.is_some() {
+        if self.provider_id_stable && self.provider_segment_id.is_some() {
             Self::KEY
         } else {
             KeyKind::Location
