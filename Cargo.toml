@@ -61,9 +61,9 @@ hyper-util = { version = "0.1", features = ["tokio"] }
 http-body-util = "0.1"
 rmcp = { version = "3", features = ["server", "transport-io"] }
 schemars = { version = "1", features = ["uuid1"] }
-credential-masking = { git = "https://github.com/Sinity/polylogue-sinex-common", tag = "v0.7.0" }
-hashed-blobs = { git = "https://github.com/Sinity/polylogue-sinex-common", tag = "v0.7.0" }
-devkit = { git = "https://github.com/Sinity/polylogue-sinex-common", tag = "v0.7.0", features = ["pg", "nats"] }
+credential-masking = { git = "https://github.com/Sinity/polylogue-sinex-common", tag = "v0.7.6" }
+hashed-blobs = { git = "https://github.com/Sinity/polylogue-sinex-common", tag = "v0.7.6" }
+devkit = { git = "https://github.com/Sinity/polylogue-sinex-common", tag = "v0.7.6", features = ["pg", "nats"] }
 async-nats = "0.47"
 # The NATS server checks passwords against bcrypt hashes in its config.
 bcrypt = "0.17"

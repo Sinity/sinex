@@ -208,7 +208,7 @@ pub enum ArchiveReason {
 }
 
 /// Requests that archive live readings in the same transaction. Excision is
-/// not one of them: it rewrites material bytes, so it is its own writer job
+/// not one of them: it deletes whole eligible materials in its own writer job
 /// (`sinex_store::excision`).
 #[derive(Clone, Debug)]
 pub enum ArchiveRequest {
