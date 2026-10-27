@@ -6,7 +6,7 @@ use sinex_model::{DbCheck, Event, Origin};
 use sqlx::PgConnection;
 use std::fmt::Write;
 
-pub(crate) const COLUMNS: &str = "ord, id, event_type, source, material_id, anchor, output_index, parents, ts_orig, ts_quality, payload, equivalence_key, replace_rule, reading_order, record_hash, record_state, class";
+pub(crate) const COLUMNS: &str = "ord, id, event_type, source, material_id, anchor, output_index, parents, ts_orig, ts_quality, payload, equivalence_key, replace_rule, reading_order, record_hash, record_state, class, kind_version, validation";
 
 /// Copy `events` (with their batch-order numbers) into the stage table, which
 /// the caller has truncated in the same transaction.
@@ -63,7 +63,7 @@ fn row(buf: &mut String, ord: i32, e: &Event) -> Result<()> {
     for b in e.record_hash {
         let _ = write!(hash, "{b:02x}");
     }
-    let fields: [Option<String>; 17] = [
+    let fields: [Option<String>; 19] = [
         Some(ord.to_string()),
         Some(e.id.0.to_string()),
         Some(e.event_type.to_owned()),
@@ -76,11 +76,25 @@ fn row(buf: &mut String, ord: i32, e: &Event) -> Result<()> {
         Some(e.ts_orig.quality.as_db().to_owned()),
         Some(e.payload.to_string()),
         e.equivalence_key.as_ref().map(|k| k.0.clone()),
-        Some(e.replace.as_db().to_owned()),
+        Some(
+            e.replace
+                .ok_or_else(|| {
+                    Error::Invalid("historical declaration has no replacement rule".into())
+                })?
+                .as_db()
+                .to_owned(),
+        ),
         Some(e.reading_order.0.to_string()),
         None, // record_hash, written pre-escaped below
         Some(e.record_state.as_db().to_owned()),
         Some(e.class.as_db().to_owned()),
+        Some(
+            e.kind_ref()
+                .database_version()
+                .map_err(Error::Invalid)?
+                .to_string(),
+        ),
+        Some(e.validation.as_db().to_owned()),
     ];
     for (i, field) in fields.iter().enumerate() {
         if i > 0 {

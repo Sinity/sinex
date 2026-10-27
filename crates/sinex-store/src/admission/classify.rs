@@ -138,14 +138,15 @@ pub(super) async fn keep_known(
     conn: &mut PgConnection,
     events: &[Event],
     replaced: &[(i32, Uuid)],
+    declarations: &std::collections::BTreeMap<sinex_model::KindRef, sinex_model::KindDeclaration>,
 ) -> Result<()> {
     for (ord, live) in replaced {
-        let event_type = &events[usize::try_from(*ord).expect("ord is an index")].event_type;
-        let keep = sinex_model::event_types::find(event_type).map_or(&[][..], |k| k.keep_known);
+        let event = &events[usize::try_from(*ord).expect("ord is an index")];
+        let keep = &declarations[&event.kind_ref()].keep_known;
         if keep.is_empty() {
             continue;
         }
-        let keep: Vec<String> = keep.iter().map(|f| (*f).to_owned()).collect();
+        let keep: Vec<String> = keep.clone();
         sqlx::query!(
             r#"UPDATE core.admission_stage st
                SET payload = st.payload || coalesce((

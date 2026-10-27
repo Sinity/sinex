@@ -53,3 +53,5 @@ fn declarations_are_deterministic_and_named() {
 fn each_version_after_0_has_its_upgrade() {
     assert_eq!(i32::try_from(upgrades::upgrades().len()).unwrap(), VERSION);
 }
+
+mod kinds;

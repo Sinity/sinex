@@ -10,6 +10,7 @@ pub struct Context {
     pub now: Timestamp,
     pub zone: TimeZone,
     pub day_start: Time,
+    pub catalog: Option<super::QueryCatalog>,
 }
 
 impl Context {
@@ -18,6 +19,7 @@ impl Context {
             now,
             zone,
             day_start,
+            catalog: None,
         }
     }
 
@@ -146,6 +148,25 @@ pub fn clock(word: &str) -> Option<Time> {
 pub fn instant(ctx: &Context, word: &str) -> Option<Timestamp> {
     if let Ok(ts) = word.parse::<Timestamp>() {
         return Some(ts);
+    }
+    match word {
+        "now" => return Some(ctx.now),
+        "today" => return ctx.day(ctx.today()).map(|r| r.0),
+        "yesterday" => {
+            return ctx
+                .today()
+                .yesterday()
+                .ok()
+                .and_then(|d| ctx.day(d))
+                .map(|r| r.0);
+        }
+        _ => {}
+    }
+    if let Some(date) = date(word) {
+        return ctx.day(date).map(|r| r.0);
+    }
+    if let Some(clock) = clock(word) {
+        return ctx.local(ctx.zoned(ctx.now).date().to_datetime(clock));
     }
     let (d, t) = word.split_once('T')?;
     ctx.local(date(d)?.to_datetime(clock(t)?))

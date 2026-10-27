@@ -45,6 +45,8 @@ pub const PAGE_BYTES: i64 = 8 << 20;
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
     #[error(transparent)]
+    Query(#[from] sinex_model::query::QueryError),
+    #[error(transparent)]
     Schema(#[from] sinex_schema::Error),
     #[error(transparent)]
     Database(#[from] sqlx::Error),
@@ -61,3 +63,6 @@ pub enum Error {
 }
 
 pub type Result<T, E = Error> = std::result::Result<T, E>;
+
+#[cfg(test)]
+mod test_schema;

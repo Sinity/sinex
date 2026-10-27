@@ -3,17 +3,16 @@
 //! upgrades in `upgrades.rs`, in one transaction; a newer one is refused.
 //!
 //! Enum CHECK lists come from the Rust enums (`DbCheck`), and the event-type
-//! registry rows and typed views come from `sinex_model::event_types::ALL`, so the
-//! database cannot disagree with the code.
+//! bundled registry rows and views come from `sinex_model::event_types::ALL`.
+//! Outside declarations are immutable data, registered by their producer.
 //!
 //! This crate uses no compile-time-checked queries: it builds before any
 //! database exists and provisions the one the store's queries are checked
 //! against.
-use sinex_model::{
-    ArchiveReason, Class, DbCheck, KeyKind, RecordState, ReplaceRule, TimeQuality, event_types,
-};
+use sinex_model::{ArchiveReason, Class, DbCheck, RecordState, TimeQuality, event_types};
 use sqlx::{Connection, Executor, PgConnection};
 
+pub mod kinds;
 mod tables;
 mod upgrades;
 
@@ -22,7 +21,7 @@ pub const WRITER_LOCK: i64 = 0x7369_6e65_7857_5254;
 
 /// The schema version these declarations create: one more than the last
 /// upgrade starts from.
-pub const VERSION: i32 = 3;
+pub const VERSION: i32 = 4;
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
@@ -34,6 +33,8 @@ pub enum Error {
     Unversioned,
     #[error("a writer holds the database; stop sinexd before upgrading its schema")]
     WriterRunning,
+    #[error("{0}")]
+    Declaration(String),
 }
 
 /// What `apply` did.
@@ -105,6 +106,10 @@ pub fn declaration_hash() -> String {
         hasher.update(statement.as_bytes());
         hasher.update(&[0]);
     }
+    for kind in event_types::ALL {
+        hasher.update((kind.declaration)().definition_hash().as_bytes());
+        hasher.update(&[0]);
+    }
     hasher.finalize().to_hex()[..16].to_string()
 }
 
@@ -113,7 +118,6 @@ pub(crate) struct Checks {
     pub time_quality: String,
     pub record_state: String,
     pub class: String,
-    pub replace_rule: String,
     pub archive_reason: String,
     /// The archive reasons, and `unhide` for a reading put back.
     pub archive_change_reason: String,
@@ -125,7 +129,6 @@ impl Checks {
             time_quality: TimeQuality::check("ts_quality"),
             record_state: RecordState::check("record_state"),
             class: Class::check("class"),
-            replace_rule: ReplaceRule::check("replace_rule"),
             archive_reason: ArchiveReason::check("reason"),
             archive_change_reason: {
                 let mut reasons: Vec<String> = ArchiveReason::VALUES
@@ -147,7 +150,11 @@ impl Checks {
 /// and equivalence key do not.
 fn visibility() -> Vec<String> {
     vec![
-        "CREATE FUNCTION core.class_visible(class text) RETURNS boolean LANGUAGE sql STABLE AS $$
+        "CREATE OR REPLACE FUNCTION core.payload_time(value text) RETURNS timestamptz LANGUAGE plpgsql IMMUTABLE STRICT AS $$ BEGIN
+ IF value !~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}[Tt][0-9]{2}:[0-9]{2}:[0-9]{2}([.][0-9]+)?([Zz]|[+-][0-9]{2}:[0-9]{2})$' THEN RETURN NULL; END IF;
+ RETURN value::timestamptz;
+ EXCEPTION WHEN invalid_datetime_format OR datetime_field_overflow THEN RETURN NULL; END $$".to_string(),
+        "CREATE OR REPLACE FUNCTION core.class_visible(class text) RETURNS boolean LANGUAGE sql STABLE AS $$
   SELECT class = 'open'
       OR class = ANY (string_to_array(coalesce(current_setting('sinex.grants', true), ''), ','))
 $$"
@@ -158,7 +165,7 @@ $$"
   CASE WHEN core.class_visible(e.class) THEN e.payload
        ELSE jsonb_build_object('withheld', e.class) END AS payload,
   CASE WHEN core.class_visible(e.class) THEN e.equivalence_key END AS equivalence_key,
-  e.reading_order, e.record_hash, e.record_state, e.class
+  e.reading_order, e.record_hash, e.record_state, e.class, e.kind_version, e.validation
 FROM core.events e"
             .to_string(),
         "CREATE VIEW core.visible_search_text AS SELECT s.event_id, s.text, s.tsv
@@ -189,38 +196,14 @@ fn kind_view(kind: &event_types::RegisteredEventType) -> String {
             columns.push(format!("e.payload->'{field}' AS {}", quote_ident(field)));
         }
     }
+    columns.push("e.kind_version".into());
+    columns.push("e.validation".into());
     format!(
         "CREATE VIEW event_types.{} AS SELECT {} FROM core.visible_events e WHERE e.event_type='{}' AND NOT EXISTS (SELECT 1 FROM audit.archived a WHERE a.event_id=e.id)",
         quote_ident(&kind.event_type.replace('.', "_")),
         columns.join(", "),
         kind.event_type
     )
-}
-
-/// Registry rows for event types, written from the Rust catalog.
-fn registry_rows() -> Vec<(
-    String,
-    serde_json::Value,
-    &'static str,
-    Vec<String>,
-    &'static str,
-)> {
-    event_types::ALL
-        .iter()
-        .map(|k| {
-            let (key_kind, fields) = match k.key {
-                KeyKind::Location => ("location", vec![]),
-                KeyKind::Fields(f) => ("fields", f.iter().map(|s| s.to_string()).collect()),
-            };
-            (
-                k.event_type.to_string(),
-                (k.json_schema)(),
-                key_kind,
-                fields,
-                k.replace.as_db(),
-            )
-        })
-        .collect()
 }
 
 fn grants() -> Vec<String> {
@@ -273,6 +256,13 @@ pub async fn require_current(connection: &mut PgConnection) -> Result<(), Error>
 /// or confirm that an existing one is at this version. Creation and an
 /// upgrade are each one transaction.
 pub async fn apply(connection: &mut PgConnection) -> Result<Applied, Error> {
+    apply_with_owners(connection, &kinds::Owners::default()).await
+}
+
+pub async fn apply_with_owners(
+    connection: &mut PgConnection,
+    owners: &kinds::Owners,
+) -> Result<Applied, Error> {
     let has_version_table: bool = sqlx::query_scalar(
         "SELECT EXISTS (SELECT 1 FROM pg_tables WHERE schemaname='sinex_schema' AND tablename='applied')",
     )
@@ -284,8 +274,10 @@ pub async fn apply(connection: &mut PgConnection) -> Result<Applied, Error> {
                 .fetch_one(&mut *connection)
                 .await?;
         return match found {
-            Some(VERSION) => Ok(Applied::Current { version: VERSION }),
-            Some(found) if (0..VERSION).contains(&found) => upgrade(connection, found).await,
+            Some(VERSION) => reconcile_current(connection, owners).await,
+            Some(found) if (0..VERSION).contains(&found) => {
+                upgrade(connection, found, owners).await
+            }
             Some(found) => Err(Error::Version { found }),
             None => Err(Error::Unversioned),
         };
@@ -298,7 +290,15 @@ pub async fn apply(connection: &mut PgConnection) -> Result<Applied, Error> {
         return Err(Error::Unversioned);
     }
     let mut tx = connection.begin().await?;
-    match create_schema(&mut tx).await {
+    let free: bool = sqlx::query_scalar("SELECT pg_try_advisory_xact_lock($1)")
+        .bind(WRITER_LOCK)
+        .fetch_one(&mut *tx)
+        .await?;
+    if !free {
+        tx.rollback().await?;
+        return Err(Error::WriterRunning);
+    }
+    match create_schema(&mut tx, owners).await {
         Ok(()) => {
             tx.commit().await?;
             Ok(Applied::Created { version: VERSION })
@@ -315,9 +315,13 @@ pub async fn apply(connection: &mut PgConnection) -> Result<Applied, Error> {
 /// Run the upgrades from `from` to [`VERSION`] in one transaction, while no
 /// writer holds the database: a writer of an older build would not keep the
 /// new tables current.
-async fn upgrade(connection: &mut PgConnection, from: i32) -> Result<Applied, Error> {
+async fn upgrade(
+    connection: &mut PgConnection,
+    from: i32,
+    owners: &kinds::Owners,
+) -> Result<Applied, Error> {
     let mut tx = connection.begin().await?;
-    match run_upgrades(&mut tx, from).await {
+    match run_upgrades(&mut tx, from, owners).await {
         Ok(()) => {
             tx.commit().await?;
             Ok(Applied::Upgraded { from, to: VERSION })
@@ -329,7 +333,11 @@ async fn upgrade(connection: &mut PgConnection, from: i32) -> Result<Applied, Er
     }
 }
 
-async fn run_upgrades(connection: &mut PgConnection, from: i32) -> Result<(), Error> {
+async fn run_upgrades(
+    connection: &mut PgConnection,
+    from: i32,
+    owners: &kinds::Owners,
+) -> Result<(), Error> {
     let free: bool = sqlx::query_scalar("SELECT pg_try_advisory_xact_lock($1)")
         .bind(WRITER_LOCK)
         .fetch_one(&mut *connection)
@@ -351,10 +359,154 @@ async fn run_upgrades(connection: &mut PgConnection, from: i32) -> Result<(), Er
             .execute(&mut *connection)
             .await?;
     }
+    kinds::upgrade_historical(connection, owners).await?;
+    reconcile_views(connection).await?;
+    kinds::reconcile(connection, owners).await?;
     Ok(())
 }
 
-async fn create_schema(connection: &mut PgConnection) -> Result<(), Error> {
+async fn reconcile_current(
+    connection: &mut PgConnection,
+    owners: &kinds::Owners,
+) -> Result<Applied, Error> {
+    let mut tx = connection.begin().await?;
+    let free: bool = sqlx::query_scalar("SELECT pg_try_advisory_xact_lock($1)")
+        .bind(WRITER_LOCK)
+        .fetch_one(&mut *tx)
+        .await?;
+    if !free {
+        tx.rollback().await?;
+        return Err(Error::WriterRunning);
+    }
+    let result = async {
+        kinds::reconcile(&mut tx, owners).await?;
+        reconcile_views(&mut tx).await
+    }
+    .await;
+    match result {
+        Ok(()) => {
+            tx.commit().await?;
+            Ok(Applied::Current { version: VERSION })
+        }
+        Err(error) => {
+            tx.rollback().await?;
+            Err(error)
+        }
+    }
+}
+
+async fn reconcile_views(connection: &mut PgConnection) -> Result<(), Error> {
+    for statement in visibility() {
+        connection
+            .execute(
+                statement
+                    .replacen("CREATE VIEW", "CREATE OR REPLACE VIEW", 1)
+                    .as_str(),
+            )
+            .await?;
+    }
+    for name in [
+        "session",
+        "message",
+        "tool_call",
+        "turn",
+        "delivery",
+        "delivery_outcome",
+        "note",
+        "setting",
+        "kept_result",
+        "excision",
+    ] {
+        connection
+            .execute(format!("DROP VIEW IF EXISTS event_types.polylogue_{name}").as_str())
+            .await?;
+    }
+    for kind in event_types::ALL {
+        let name = kind.event_type.replace('.', "_");
+        let existing: Vec<String> = sqlx::query_scalar("SELECT column_name FROM information_schema.columns WHERE table_schema='event_types' AND table_name=$1 ORDER BY ordinal_position")
+            .bind(&name).fetch_all(&mut *connection).await?;
+        let schema = (kind.json_schema)();
+        let mut expected: Vec<String> = [
+            "id",
+            "source",
+            "ts_orig",
+            "ts_quality",
+            "ts_coided",
+            "record_state",
+        ]
+        .map(String::from)
+        .to_vec();
+        if let Some(props) = schema
+            .get("properties")
+            .and_then(serde_json::Value::as_object)
+        {
+            expected.extend(props.keys().cloned());
+        }
+        expected.extend(["kind_version".to_string(), "validation".to_string()]);
+        let mut grants: Vec<(String, String, String)> = vec![];
+        let mut owner: Option<String> = None;
+        if !expected.starts_with(&existing) {
+            owner = sqlx::query_scalar(
+                "SELECT viewowner FROM pg_views WHERE schemaname='event_types' AND viewname=$1",
+            )
+            .bind(&name)
+            .fetch_optional(&mut *connection)
+            .await?;
+            grants = sqlx::query_as("SELECT grantee, privilege_type, is_grantable FROM information_schema.role_table_grants WHERE table_schema='event_types' AND table_name=$1")
+                .bind(&name).fetch_all(&mut *connection).await?;
+            // DROP refuses an outside dependency and names it; no CASCADE.
+            connection
+                .execute(format!("DROP VIEW event_types.{}", quote_ident(&name)).as_str())
+                .await?;
+        }
+        connection
+            .execute(
+                kind_view(kind)
+                    .replacen("CREATE VIEW", "CREATE OR REPLACE VIEW", 1)
+                    .as_str(),
+            )
+            .await?;
+        if let Some(owner) = owner {
+            connection
+                .execute(
+                    format!(
+                        "ALTER VIEW event_types.{} OWNER TO {}",
+                        quote_ident(&name),
+                        quote_ident(&owner)
+                    )
+                    .as_str(),
+                )
+                .await?;
+        }
+        for (role, privilege, grantable) in grants {
+            let role = if role == "PUBLIC" {
+                role
+            } else {
+                quote_ident(&role)
+            };
+            connection
+                .execute(
+                    format!(
+                        "GRANT {privilege} ON event_types.{} TO {role}{}",
+                        quote_ident(&name),
+                        if grantable == "YES" {
+                            " WITH GRANT OPTION"
+                        } else {
+                            ""
+                        }
+                    )
+                    .as_str(),
+                )
+                .await?;
+        }
+    }
+    for statement in grants() {
+        connection.execute(statement.as_str()).await?;
+    }
+    Ok(())
+}
+
+async fn create_schema(connection: &mut PgConnection, owners: &kinds::Owners) -> Result<(), Error> {
     for statement in declarations() {
         connection
             .execute(statement.as_str())
@@ -365,18 +517,7 @@ async fn create_schema(connection: &mut PgConnection) -> Result<(), Error> {
         .bind(VERSION)
         .execute(&mut *connection)
         .await?;
-    for (name, schema, key_kind, fields, replace) in registry_rows() {
-        sqlx::query(
-            "INSERT INTO registry.event_types (name, payload_schema, key_kind, key_fields, replace_rule) VALUES ($1,$2,$3,$4,$5)",
-        )
-        .bind(name)
-        .bind(schema)
-        .bind(key_kind)
-        .bind(fields)
-        .bind(replace)
-        .execute(&mut *connection)
-        .await?;
-    }
+    kinds::reconcile(connection, owners).await?;
     Ok(())
 }
 

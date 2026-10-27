@@ -10,6 +10,7 @@ use std::sync::Arc;
 /// A daemon slice for tests: NATS, a database, the writer, the ingress task
 /// and a content store.
 struct Harness {
+    writer: WriterHandle,
     reads: sqlx::PgPool,
     nats: devkit::nats::TestNats,
     subjects: Subjects,
@@ -55,7 +56,7 @@ impl Harness {
         };
         let ingest = Ingest::new(
             subjects.clone(),
-            handle,
+            handle.clone(),
             PgConnection::connect(&url).await.unwrap(),
             blobs.clone(),
             "test-host".into(),
@@ -65,6 +66,7 @@ impl Harness {
         let task_client = client.clone();
         tokio::spawn(async move { run(task_client, ingest, requests, stopped).await.unwrap() });
         let harness = Self {
+            writer: handle,
             reads,
             nats,
             subjects,
@@ -234,7 +236,10 @@ impl Drop for Harness {
 
 fn imported(material: MaterialId, anchor: u64, command: &str) -> ProducerEvent {
     ProducerEvent {
-        event_type: "command.imported".into(),
+        kind: sinex_model::KindRef {
+            name: "command.imported".into(),
+            version: 2,
+        },
         payload: json!({
             "command": command,
             "hostname": "laptop",
@@ -305,6 +310,47 @@ async fn materials_then_events_are_admitted_and_acknowledged_once(db: devkit::pg
 #[devkit::test]
 async fn an_ai_session_from_polylogue_is_ordinary_events(db: devkit::pg::TestDatabase) {
     let h = Harness::start(db).await;
+    let declarations = [
+        ("session", "session", "started", false),
+        ("message", "message", "at", true),
+        ("tool_call", "call", "at", true),
+        ("turn", "turn", "start", false),
+    ]
+    .into_iter()
+    .map(|(name, key, time, guarded)| {
+        let mut d = sinex_model::KindDeclaration::schemaless(
+            sinex_model::KindRef {
+                name: format!("polylogue.{name}"),
+                version: 2,
+            },
+            "polylogue".into(),
+        );
+        d.key_rule = Some(sinex_model::kinds::KeyRule::Fields {
+            fields: vec![key.into()],
+        });
+        d.time_rule = Some(sinex_model::kinds::TimeRule::FirstPresent {
+            fields: vec![time.into()],
+            quality: sinex_model::TimeQuality::Intrinsic,
+        });
+        d.replace_rule = Some(sinex_model::ReplaceRule::ReplaceWhenNewer);
+        if guarded {
+            d.least_class = sinex_model::Class::Guarded;
+        }
+        d
+    })
+    .collect();
+    assert_eq!(
+        h.send(
+            "polylogue",
+            &Ingress::RegisterKinds {
+                frame: "kinds".into(),
+                declarations
+            }
+        )
+        .await
+        .refusal,
+        None
+    );
     let file = concat!(
         r#"{"type":"user","uuid":"u1","sessionId":"s1","cwd":"/home/op/morrow","message":{"content":"run the tests"}}"#,
         "\n",
@@ -336,7 +382,10 @@ async fn an_ai_session_from_polylogue_is_ordinary_events(db: devkit::pg::TestDat
     let at = |anchor: u64| Some(RecordLocation { material, anchor });
     let event =
         |event_type: &str, payload: serde_json::Value, anchor: u64, order: i64| ProducerEvent {
-            event_type: event_type.into(),
+            kind: sinex_model::KindRef {
+                name: event_type.into(),
+                version: 2,
+            },
             payload,
             location: at(anchor),
             output_index: 0,
@@ -414,7 +463,7 @@ async fn an_ai_session_from_polylogue_is_ordinary_events(db: devkit::pg::TestDat
     );
 
     let mut conn = PgConnection::connect(&h.url).await.unwrap();
-    let text = "events where event_type = polylogue.session and payload.cwd ~ morrow";
+    let text = "events where event_type = polylogue.session and payload.origin = claude-code";
     let ctx = sinex_model::query::Context::new(
         jiff::Timestamp::now(),
         jiff::tz::TimeZone::UTC,
@@ -424,7 +473,7 @@ async fn an_ai_session_from_polylogue_is_ordinary_events(db: devkit::pg::TestDat
     let answer = sinex_store::query::run(
         &mut conn,
         text,
-        &bound,
+        Some(&bound),
         &ctx,
         &sinex_store::query::Page {
             size: Some(10),
@@ -456,7 +505,7 @@ async fn invalid_frames_are_refused_and_recorded(db: devkit::pg::TestDatabase) {
     h.send("kitty", &frame).await;
 
     let mut wrong_type = imported(material, 0, "ls");
-    wrong_type.event_type = "no.such.type".into();
+    wrong_type.kind.name = "no.such.type".into();
     let mut missing_field = imported(material, 0, "ls");
     missing_field.payload = json!({"command": "ls"});
     let mut no_origin = imported(material, 0, "ls");
@@ -464,7 +513,7 @@ async fn invalid_frames_are_refused_and_recorded(db: devkit::pg::TestDatabase) {
     let unregistered = imported(MaterialId::new(), 0, "ls");
 
     for (name, event, expected) in [
-        ("f-type", wrong_type, "not a registered event type"),
+        ("f-type", wrong_type, "namespace_refused"),
         ("f-schema", missing_field, "hostname"),
         ("f-origin", no_origin, "record location or parent"),
         ("f-material", unregistered, "not registered"),
@@ -512,7 +561,12 @@ async fn invalid_frames_are_refused_and_recorded(db: devkit::pg::TestDatabase) {
     );
 
     let garbage = h.send_raw("kitty", b"{not json".to_vec()).await;
-    assert!(garbage.refusal.unwrap().starts_with("not a frame"));
+    assert!(
+        garbage
+            .refusal
+            .unwrap()
+            .starts_with("invalid frame at line")
+    );
 }
 
 #[devkit::test]
@@ -687,7 +741,7 @@ async fn an_indirect_frame_is_handled_as_the_frame_it_names(db: devkit::pg::Test
     let (material, frame) = h.material_frame("m1", b"ls\n");
     h.send("kitty", &frame).await;
     let inner = Ingress::Events {
-        frame: "inner-name-ignored".into(),
+        frame: "e-big".into(),
         events: vec![imported(material, 0, "ls")],
         failures: vec![],
     };
@@ -876,3 +930,5 @@ async fn frames_flow_while_a_request_waits(db: devkit::pg::TestDatabase) {
     assert_eq!(acks.len(), 1);
     assert_eq!(acks[0].frame, "m1");
 }
+
+mod kinds;

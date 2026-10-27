@@ -39,6 +39,10 @@ these names and no others.
 
 - **event**: one reading of a record, or of parent events: a typed payload, an origin and three clocks.
 - **event type**: the registered name of a payload type, `<thing>.<what>` (`command.executed`, `note.document`). An occurrence is named with a past participle (`window.opened`), a state or record with a noun (`journal.entry`). A **span** is a state a source observed with its end; an **interval** is one a derivation computed.
+- **kind declaration**: the immutable schema and rules of one version of an event type, owned by its declaring producer.
+- **kind version**: the positive integer selecting one exact kind declaration. Historical version 1 has no schema or rules; current bundled declarations start at version 2.
+- **validation**: whether the selected declaration's checks ran at admission (`validated` or `unvalidated`).
+- **sampling rule**: a versioned selection of continuous sample records by the hash of capture UUID and sequence; discrete changes and typed outputs are always selected.
 - **reading**: the event a record produced on one read; the **live reading** is the current one, older ones are **archived**, each with an archive reason (`replay`, `newer_reading`, `hide`, `recomputed`).
 - **reading order**: which of two readings of a record is newer.
 - **equivalence key**: the per-type key that recognizes the same thing seen again in another material.

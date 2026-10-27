@@ -54,16 +54,32 @@ impl Ingest {
         };
         let root = self.blobs.root().to_owned();
         let producer = producer.to_owned();
+        let expected_name = name.clone();
         let inner = tokio::task::spawn_blocking(move || {
             let file = frame_bytes::snapshot(&root, &producer, &name, &blob, length)
                 .map_err(Check::Refused)?;
-            serde_json::from_reader::<_, Ingress>(std::io::BufReader::new(file))
-                .map_err(|e| Check::Refused(format!("large-frame bytes are not a frame: {e}")))
+            serde_json::from_reader::<_, Ingress>(std::io::BufReader::new(file)).map_err(|e| {
+                Check::Refused(format!(
+                    "invalid large frame at line {}, column {}",
+                    e.line(),
+                    e.column()
+                ))
+            })
         })
         .await
         .map_err(|e| Check::Unavailable(e.to_string()))??;
         match inner {
-            Ingress::Material { .. } | Ingress::Events { .. } => Ok(inner),
+            Ingress::Material { .. }
+            | Ingress::Events { .. }
+            | Ingress::RegisterKinds { .. }
+            | Ingress::ReplaySequence { .. } => {
+                if inner.frame() != expected_name {
+                    return Err(Check::Refused(
+                        "large frame name differs from its contents".into(),
+                    ));
+                }
+                Ok(inner)
+            }
             _ => Err(Check::Refused(
                 "a large frame stands for a material or events frame".into(),
             )),

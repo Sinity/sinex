@@ -42,5 +42,16 @@ pub(crate) fn upgrades() -> Vec<Vec<String>> {
             "DROP INDEX IF EXISTS core.events_coverage".into(),
             crate::tables::COVERAGE_RUNS.into(),
         ],
+        vec![
+            "ALTER TABLE core.events ADD COLUMN kind_version bigint NOT NULL DEFAULT 1 CHECK (kind_version > 0), ADD COLUMN validation text NOT NULL DEFAULT 'unvalidated' CHECK (validation IN ('validated', 'unvalidated'))".into(),
+            "ALTER TABLE telemetry.events ADD COLUMN kind_version bigint NOT NULL DEFAULT 1 CHECK (kind_version > 0), ADD COLUMN validation text NOT NULL DEFAULT 'unvalidated' CHECK (validation IN ('validated', 'unvalidated'))".into(),
+            "ALTER TABLE core.admission_stage ADD COLUMN kind_version bigint NOT NULL DEFAULT 1, ADD COLUMN validation text NOT NULL DEFAULT 'unvalidated'".into(),
+            "ALTER TABLE core.admission_stage ALTER COLUMN kind_version DROP DEFAULT, ALTER COLUMN validation DROP DEFAULT".into(),
+            "ALTER TABLE registry.event_types RENAME TO unversioned_event_types".into(),
+            crate::tables::KIND_PREFIXES.into(),
+            crate::tables::KIND_DECLARATIONS.into(),
+            crate::tables::REPLAY_REFUSALS.into(),
+            crate::tables::KIND_IMMUTABILITY.into(),
+        ],
     ]
 }

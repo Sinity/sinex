@@ -112,27 +112,13 @@ impl Parser<'_> {
     /// the value is a date (`2026-03-02 14:05`).
     pub(super) fn instant_from(&mut self, t: &Token) -> Result<Timestamp, QueryError> {
         let raw = t.text.as_str();
-        let ctx = self.ctx;
-        let today = ctx.today();
-        let day_start = |d: jiff::civil::Date| ctx.day(d).map(|r| r.0);
-        let resolved = match raw {
-            "now" => Some(ctx.now),
-            "today" => day_start(today),
-            "yesterday" => today.yesterday().ok().and_then(day_start),
-            _ => {
-                if let Some(d) = time::date(raw) {
-                    if let Some(c) = self.peek().and_then(|n| time::clock(&n.text)) {
-                        self.at += 1;
-                        ctx.local(d.to_datetime(c))
-                    } else {
-                        day_start(d)
-                    }
-                } else if let Some(c) = time::clock(raw) {
-                    ctx.local(ctx.zoned(ctx.now).date().to_datetime(c))
-                } else {
-                    time::instant(ctx, raw)
-                }
-            }
+        let resolved = if let Some(date) = time::date(raw)
+            && let Some(clock) = self.peek().and_then(|n| time::clock(&n.text))
+        {
+            self.at += 1;
+            self.ctx.local(date.to_datetime(clock))
+        } else {
+            time::instant(self.ctx, raw)
         };
         resolved.ok_or_else(|| {
             QueryError::at(

@@ -212,11 +212,25 @@ impl Parser<'_> {
         match (field, scope) {
             (FieldRef::Field(f), _) if f.ty == FieldType::Time => Ok(()),
             (FieldRef::Group(_), Scope::Grouped(_)) => Ok(()),
+            (FieldRef::Payload(path), _) if self.payload_time(path) => Ok(()),
             _ => Err(QueryError::at(
                 at,
                 format!("`{}` is not a time", field.name()),
             )),
         }
+    }
+
+    fn payload_time(&self, path: &[String]) -> bool {
+        self.ctx
+            .catalog
+            .as_ref()
+            .and_then(|catalog| catalog.field(path))
+            .is_none_or(|field| {
+                matches!(
+                    field.ty,
+                    super::super::catalog::DataType::Time | super::super::catalog::DataType::Json
+                )
+            })
     }
 
     /// The table's main time, for `since`, `until` and `in` without a field.
@@ -247,6 +261,14 @@ impl Parser<'_> {
                 return Err(QueryError::at(
                     at,
                     format!("`{}` is not a time; `in` takes a time range", f.name),
+                ));
+            }
+            if let Operand::Field(FieldRef::Payload(path)) = &lhs
+                && !self.payload_time(path)
+            {
+                return Err(QueryError::at(
+                    at,
+                    "payload field is not a date-time; `in` takes a time range",
                 ));
             }
             return Ok(Expr::Within { lhs, from, to });
@@ -308,7 +330,22 @@ impl Parser<'_> {
                 self.time_fn_value(*func, &raw, at)
             }
             Operand::Field(FieldRef::Group(_)) => Ok(infer(&raw, quoted, op)),
-            Operand::Field(FieldRef::Payload(_)) => Ok(infer(&raw, quoted, op)),
+            Operand::Field(FieldRef::Payload(path)) => {
+                let declared_time = self
+                    .ctx
+                    .catalog
+                    .as_ref()
+                    .and_then(|c| c.field(path))
+                    .is_some_and(|f| f.ty == super::super::catalog::DataType::Time);
+                let date_clock = !quoted
+                    && time::date(&raw).is_some()
+                    && self.peek().is_some_and(|t| time::clock(&t.text).is_some());
+                if declared_time || date_clock {
+                    Ok(Value::Time(self.instant_from(&t)?))
+                } else {
+                    Ok(infer(&raw, quoted, op))
+                }
+            }
             Operand::Field(FieldRef::Field(f)) => {
                 let text_like = matches!(
                     f.ty,

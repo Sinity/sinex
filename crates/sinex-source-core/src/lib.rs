@@ -13,8 +13,10 @@ pub mod binding;
 pub mod capture;
 pub mod drain;
 pub mod drivers;
+pub mod gaps;
 pub mod nats;
 pub mod registry;
+pub mod sampling;
 #[cfg(feature = "archives")]
 pub mod shared_pass;
 

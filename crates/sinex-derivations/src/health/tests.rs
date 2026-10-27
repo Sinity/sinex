@@ -57,7 +57,7 @@ fn env() -> Env {
 fn keys(d: &dyn crate::AnyKeyed, e: &Event) -> Vec<Value> {
     d.keys_for(
         &KeyView {
-            event_type: e.event_type,
+            event_type: &e.event_type,
             ts_orig: e.ts_orig.at,
             payload: &e.payload,
         },
@@ -96,8 +96,8 @@ fn a_point_dirties_its_civil_hour_and_only_fit_points_count() {
     assert_eq!(
         query.kinds,
         vec![crate::Kind {
-            event_type: "health.record",
-            equal: vec![("provider", json!("google-fit"))],
+            event_type: "health.record".into(),
+            equal: vec![("provider".into(), json!("google-fit"))],
         }]
     );
 }

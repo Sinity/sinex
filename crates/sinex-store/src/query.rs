@@ -98,11 +98,12 @@ pub async fn read_one_snapshot(conn: &mut PgConnection) -> Result<()> {
     Ok(())
 }
 
-/// Run a bound query and return one page of its answer.
+/// Parse and bind one question against this transaction's declarations. A
+/// supplied query is a programmatic query (including follow's commit filter).
 pub async fn run(
     conn: &mut PgConnection,
     text: &str,
-    query: &Query,
+    query: Option<&Query>,
     ctx: &Context,
     page: &Page,
 ) -> Result<Answer> {
@@ -115,7 +116,53 @@ pub async fn run(
     if size > i64::MAX as u64 {
         return Err(Error::Invalid("page size is out of range".into()));
     }
-    let ctx = context_for_page(ctx, page)?;
+    let mut ctx = context_for_page(ctx, page)?;
+    ctx.catalog = None;
+    let requested = match query {
+        Some(query) => query.clone(),
+        None => sinex_model::query::bind(text, &ctx)?,
+    };
+    let pinned = page
+        .cursor
+        .as_deref()
+        .map(cursor::Cursor::decode)
+        .transpose()?;
+    let declarations = match &pinned {
+        Some(cursor) => {
+            let refs: Vec<_> = cursor.declarations.iter().map(|d| d.0.clone()).collect();
+            let declarations = sinex_schema::kinds::load(&mut tx, &refs).await?;
+            if cursor.declarations.iter().any(|(r, h)| {
+                declarations
+                    .get(r)
+                    .is_none_or(|d| d.definition_hash() != *h)
+            }) {
+                return Err(Error::Invalid(
+                    "query declaration snapshot is unavailable".into(),
+                ));
+            }
+            declarations
+        }
+        None => {
+            let mut all = sinex_schema::kinds::all(&mut tx).await?;
+            if let Some(names) = selected_kinds(&requested) {
+                all.retain(|r, _| names.contains(&r.name));
+            }
+            all
+        }
+    };
+    ctx.catalog = Some(sinex_model::query::QueryCatalog::new(
+        declarations.into_values(),
+    ));
+    let mut bound = match query {
+        Some(_) => requested,
+        None => sinex_model::query::bind(text, &ctx)?,
+    };
+    ctx.catalog
+        .as_ref()
+        .expect("loaded catalog")
+        .bind(&mut bound, &ctx)
+        .map_err(Error::Query)?;
+    let query = &bound;
     let scope = sqlx::query!(
         r#"SELECT current_user::text AS "user!", coalesce(current_setting('sinex.grants', true), '') AS "grants!""#,
     )
@@ -251,6 +298,29 @@ pub async fn run(
     answer.read_as = read_as(query);
     tx.commit().await?;
     Ok(answer)
+}
+
+fn selected_kinds(query: &Query) -> Option<std::collections::BTreeSet<String>> {
+    fn names(expr: &Expr) -> Option<std::collections::BTreeSet<String>> {
+        match expr {
+            Expr::Compare {
+                lhs: Operand::Field(FieldRef::Field(f)),
+                op: sinex_model::query::Op::Eq,
+                rhs: sinex_model::query::Value::Text(name),
+            } if f.name == "event_type" => Some(std::collections::BTreeSet::from([name.clone()])),
+            Expr::And(a, b) => match (names(a), names(b)) {
+                (Some(a), Some(b)) => Some(a.intersection(&b).cloned().collect()),
+                (a, b) => a.or(b),
+            },
+            Expr::Or(a, b) => Some(names(a)?.union(&names(b)?).cloned().collect()),
+            _ => None,
+        }
+    }
+    let alias = query
+        .source
+        .alias()
+        .map(|a| a.kinds.iter().map(|k| k.to_string()).collect());
+    query.filter.as_ref().and_then(names).or(alias)
 }
 
 /// The validated clock and position shared by every answer shape in this read.

@@ -10,6 +10,7 @@ pub mod clock;
 pub mod event;
 pub mod event_types;
 pub mod id;
+pub mod kinds;
 pub mod manifest;
 pub mod payload;
 pub mod privacy;
@@ -24,6 +25,7 @@ pub use batch::{
 pub use clock::{TimeQuality, Timestamp, TsOrig};
 pub use event::{BuildError, Event, Origin, ReadingOrder, RecordLocation, RecordState};
 pub use id::{EventId, InputId, MaterialId, ObservationId, OperationId, RevisionId, RunId};
+pub use kinds::{KindDeclaration, KindRef, Validation};
 pub use manifest::{Manifest, MaterialRole, Member};
 pub use payload::{
     DbCheck, EquivalenceKey, EventPayload, KeyKind, OwnedBlob, Payloads, ReplaceRule,

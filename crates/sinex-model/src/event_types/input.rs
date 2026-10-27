@@ -67,6 +67,7 @@ fn key_time(kernel_at: Option<Timestamp>, logged_at: Timestamp) -> TsOrig {
 }
 
 impl crate::EventPayload for KeyPressed {
+    const VERSION: u64 = 2;
     const EVENT_TYPE: &'static str = "key.pressed";
     const KEY: KeyKind = KeyKind::Fields(KEY_FIELDS);
     const REPLACE: ReplaceRule = ReplaceRule::SuppressRepeat;
@@ -76,12 +77,38 @@ impl crate::EventPayload for KeyPressed {
         key_time(self.kernel_at, self.logged_at)
     }
 
+    fn declaration() -> crate::KindDeclaration {
+        crate::KindDeclaration {
+            kind: crate::KindRef {
+                name: Self::EVENT_TYPE.into(),
+                version: Self::VERSION,
+            },
+            declaring_producer: "sinex".into(),
+            payload_schema: Some(Self::payload_schema()),
+            normalization: crate::kinds::Normalization::Rust,
+            key_rule: Some(crate::kinds::KeyRule::Fields {
+                fields: KEY_FIELDS.iter().map(|f| (*f).into()).collect(),
+            }),
+            replace_rule: Some(Self::REPLACE),
+            time_rule: Some(crate::kinds::TimeRule::FirstPresent {
+                fields: vec!["kernel_at".into(), "logged_at".into()],
+                quality: crate::TimeQuality::Captured,
+            }),
+            least_class: Self::CLASS,
+            removed_rule: Some(crate::kinds::RemovedRule::Never),
+            keep_known: vec![],
+            owned_blobs: vec![],
+            index_text: Self::INDEX_TEXT,
+        }
+    }
+
     fn payload_schema() -> Value {
         serde_json::to_value(schemars::schema_for!(Self)).expect("schemas serialize")
     }
 }
 
 impl crate::EventPayload for KeyReleased {
+    const VERSION: u64 = 2;
     const EVENT_TYPE: &'static str = "key.released";
     const KEY: KeyKind = KeyKind::Fields(KEY_FIELDS);
     const REPLACE: ReplaceRule = ReplaceRule::SuppressRepeat;
@@ -89,6 +116,31 @@ impl crate::EventPayload for KeyReleased {
 
     fn ts_orig(&self) -> TsOrig {
         key_time(self.kernel_at, self.logged_at)
+    }
+
+    fn declaration() -> crate::KindDeclaration {
+        crate::KindDeclaration {
+            kind: crate::KindRef {
+                name: Self::EVENT_TYPE.into(),
+                version: Self::VERSION,
+            },
+            declaring_producer: "sinex".into(),
+            payload_schema: Some(Self::payload_schema()),
+            normalization: crate::kinds::Normalization::Rust,
+            key_rule: Some(crate::kinds::KeyRule::Fields {
+                fields: KEY_FIELDS.iter().map(|f| (*f).into()).collect(),
+            }),
+            replace_rule: Some(Self::REPLACE),
+            time_rule: Some(crate::kinds::TimeRule::FirstPresent {
+                fields: vec!["kernel_at".into(), "logged_at".into()],
+                quality: crate::TimeQuality::Captured,
+            }),
+            least_class: Self::CLASS,
+            removed_rule: Some(crate::kinds::RemovedRule::Never),
+            keep_known: vec![],
+            owned_blobs: vec![],
+            index_text: Self::INDEX_TEXT,
+        }
     }
 
     fn payload_schema() -> Value {
@@ -99,7 +151,7 @@ impl crate::EventPayload for KeyReleased {
 /// A pointer button went down or up. The logger records no kernel time for
 /// pointer records, so the time is the logger's.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
-#[event(
+#[event(version = 2,
     type = "pointer.button",
     key = ["session", "logged_at", "button", "pressed", "n"],
     replace = repeat,
@@ -123,7 +175,7 @@ pub struct PointerButton {
 /// The pointer moved along one axis: a relative step (`REL_X`, `REL_Y`) or an
 /// absolute position (`ABS_X`, a tablet's).
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
-#[event(
+#[event(version = 2,
     type = "pointer.moved",
     key = ["session", "logged_at", "axis", "value", "n"],
     replace = repeat,
@@ -146,7 +198,7 @@ pub struct PointerMoved {
 /// A scroll wheel turned: `REL_WHEEL` and `REL_HWHEEL` in detents,
 /// `REL_WHEEL_HI_RES` and `REL_HWHEEL_HI_RES` in 1/120 of one.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
-#[event(
+#[event(version = 2,
     type = "pointer.scrolled",
     key = ["session", "logged_at", "axis", "value", "n"],
     replace = repeat,
@@ -168,7 +220,7 @@ pub struct PointerScrolled {
 /// older logs, a typed-text `snapshot`), or one of a kind this parser has no
 /// type for, with its fields as written.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
-#[event(
+#[event(version = 2,
     type = "input.logger",
     key = ["session", "logged_at", "event", "n"],
     replace = repeat,

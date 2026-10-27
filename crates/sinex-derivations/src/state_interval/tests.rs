@@ -22,7 +22,9 @@ fn input(event_type: &str, secs: i64, payload: Value) -> Event {
         .expect("a lift input type");
     Event {
         id: EventId::new(),
-        event_type,
+        event_type: event_type.into(),
+        kind_version: 2,
+        validation: sinex_model::Validation::Validated,
         source: "test".into(),
         origin: Origin::Record {
             location: RecordLocation {
@@ -34,7 +36,7 @@ fn input(event_type: &str, secs: i64, payload: Value) -> Event {
         ts_orig: TsOrig::known(at(secs), TimeQuality::Captured),
         payload,
         equivalence_key: Some(EquivalenceKey("k".into())),
-        replace: ReplaceRule::SuppressRepeat,
+        replace: Some(ReplaceRule::SuppressRepeat),
         reading_order: ReadingOrder(0),
         record_hash: [0; 32],
         record_state: RecordState::Present,
@@ -243,9 +245,9 @@ fn inputs_ask_for_the_transitions_after_the_day() {
     let q = StateIntervals.inputs(&key("desktop.focus"), &env).unwrap();
     assert_eq!(q.window.0, at(-6 * 3600));
     assert_eq!(q.window.1, at(18 * 3600));
-    assert!(q.event_types().contains(&"window.focused"));
+    assert!(q.event_types().contains(&"window.focused".to_string()));
     assert!(
-        q.event_types().contains(&"presence.span"),
+        q.event_types().contains(&"presence.span".to_string()),
         "interruptions are inputs"
     );
     assert_eq!(q.after.len(), 2, "next transitions, next afk");
@@ -257,7 +259,7 @@ fn keys_cover_the_rules_a_fence_ends() {
     let view = |e: &Event| {
         StateIntervals.keys_for(
             &KeyView {
-                event_type: e.event_type,
+                event_type: &e.event_type,
                 ts_orig: e.ts_orig.at,
                 payload: &e.payload,
             },
