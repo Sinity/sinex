@@ -849,7 +849,10 @@ async fn declaration_discovery_pages_through_the_public_commands(db: devkit::pg:
         )
         .await;
         assert_eq!(status, StatusCode::OK, "{body}");
-        for row in body["result"]["kinds"].as_array().expect(&body.to_string()) {
+        for row in body["result"]["kinds"]
+            .as_array()
+            .unwrap_or_else(|| panic!("{body}"))
+        {
             assert!(names.insert(row["declaration"]["kind"].clone().to_string()));
         }
         cursor = body["result"]["cursor"].as_str().map(String::from);
