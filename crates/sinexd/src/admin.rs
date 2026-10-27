@@ -138,11 +138,6 @@ async fn admin_table(args: Vec<String>) -> Result<(), String> {
                 .value_parser(value_parser!(PathBuf)),
         )
         .arg(Arg::new("host").long("host").default_value("localhost"))
-        .arg(
-            Arg::new("sources")
-                .long("sources")
-                .value_parser(value_parser!(PathBuf)),
-        )
         .arg(Arg::new("zone").long("zone"))
         .arg(
             Arg::new("day-start")
@@ -156,11 +151,6 @@ async fn admin_table(args: Vec<String>) -> Result<(), String> {
     let database: &String = matches.get_one("database").expect("required");
     let store: &PathBuf = matches.get_one("store").expect("required");
     let host: &String = matches.get_one("host").expect("defaulted");
-    let derivations = matches
-        .get_one::<PathBuf>("sources")
-        .map(|path| crate::binding_runner::Config::load(path))
-        .transpose()?
-        .map(|c| c.derivation_configuration());
     let zone = match matches.get_one::<String>("zone") {
         Some(name) => jiff::tz::TimeZone::get(name).map_err(|e| format!("zone {name}: {e}"))?,
         None => jiff::tz::TimeZone::system(),
@@ -199,7 +189,6 @@ async fn admin_table(args: Vec<String>) -> Result<(), String> {
         agent_grants: Vec::new(),
         unlock: Default::default(),
         host: host.clone(),
-        derivations,
     };
     if let Some(identity) = identity {
         if let sinex_protocol::Reply::Refused { reason, .. } = local
