@@ -138,7 +138,7 @@ in
     database = {
       package = mkOption {
         type = types.package;
-        default = pkgs.postgresql_18.withPackages (p: [ p.timescaledb ]);
+        default = (if config.services.postgresql.enableJIT then pkgs.postgresql_18.withJIT else pkgs.postgresql_18).withPackages (p: [ p.timescaledb ]);
       };
       dataDir = mkOption {
         type = types.path;
@@ -424,9 +424,10 @@ in
         package = postgres;
         dataDir = cfg.database.dataDir;
         enableTCPIP = false;
+        enableJIT = lib.mkDefault cfg.database.jit;
         ensureDatabases = [ "sinex" ];
         ensureUsers = [{ name = cfg.user; ensureDBOwnership = true; }];
-        settings = mapAttrs (_: value: lib.mkDefault value) (postgresDefaults // {
+        settings = mapAttrs (_: value: lib.mkDefault value) (builtins.removeAttrs postgresDefaults [ "jit" ] // {
           shared_buffers = cfg.database.sharedBuffers;
           effective_cache_size = cfg.database.effectiveCacheSize;
           work_mem = cfg.database.workMem;
@@ -434,7 +435,6 @@ in
           max_wal_size = cfg.database.maxWalSize;
           checkpoint_timeout = cfg.database.checkpointTimeout;
           checkpoint_completion_target = cfg.database.checkpointCompletionTarget;
-          jit = cfg.database.jit;
           shared_preload_libraries = "timescaledb";
           "timescaledb.telemetry_level" = "off";
           "timescaledb.enable_chunk_skipping" = "on";

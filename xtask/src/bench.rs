@@ -313,6 +313,7 @@ fn sinexd_binary_measured() -> Result<(PathBuf, Value), String> {
 struct Cluster {
     data: PathBuf,
     socket: PathBuf,
+    stopped: bool,
 }
 
 impl Cluster {
@@ -358,7 +359,11 @@ impl Cluster {
                 dir.join("log").display()
             ));
         }
-        let cluster = Cluster { data, socket };
+        let cluster = Cluster {
+            data,
+            socket,
+            stopped: false,
+        };
         let ok = Command::new("createdb")
             .arg("-h")
             .arg(&cluster.socket)
@@ -370,6 +375,27 @@ impl Cluster {
             return Err("createdb failed".into());
         }
         Ok(cluster)
+    }
+
+    fn stop(&mut self) -> Result<f64, String> {
+        if self.stopped {
+            return Ok(0.0);
+        }
+        let started = Instant::now();
+        let output = Command::new("pg_ctl")
+            .arg("-D")
+            .arg(&self.data)
+            .args(["-m", "fast", "-w", "-t", "3600", "stop"])
+            .output()
+            .map_err(|e| e.to_string())?;
+        if !output.status.success() {
+            return Err(format!(
+                "benchmark PostgreSQL shutdown failed: {}",
+                String::from_utf8_lossy(&output.stderr)
+            ));
+        }
+        self.stopped = true;
+        Ok(started.elapsed().as_secs_f64())
     }
 
     fn url(&self) -> String {
@@ -415,12 +441,11 @@ impl Cluster {
 
 impl Drop for Cluster {
     fn drop(&mut self) {
-        let _ = Command::new("pg_ctl")
-            .arg("-D")
-            .arg(&self.data)
-            .args(["-m", "fast", "stop"])
-            .stdout(std::process::Stdio::null())
-            .status();
+        if !self.stopped
+            && let Err(error) = self.stop()
+        {
+            eprintln!("{error}");
+        }
     }
 }
 
@@ -572,7 +597,7 @@ fn synthetic(options: SyntheticOptions) -> Result<(), String> {
     fs::copy(&built_binary, &binary).map_err(|e| e.to_string())?;
     let setup = Instant::now();
     let inputs = measurements::synthetic_inputs(&out, events, mixed)?;
-    let cluster = Cluster::start(&out.join("pg"), storage == "disk", &settings)?;
+    let mut cluster = Cluster::start(&out.join("pg"), storage == "disk", &settings)?;
     let url = cluster.url();
     apply_schema(&binary, &url)?;
     if let Some(older) = older_binary {
@@ -597,10 +622,20 @@ fn synthetic(options: SyntheticOptions) -> Result<(), String> {
         fs::create_dir(&prefill).map_err(|e| e.to_string())?;
         let input = measurements::journal_input(&prefill, prefill_keys, "prefill")?;
         measurements::with_consumers(&binary, &cluster, &out, &[input], prefill_keys, &memory_max)?;
-        for name in ["daemon.log", "nats.log", "sources.json", "consumer-positions.json", "nats.json"] {
+        for name in [
+            "daemon.log",
+            "nats.log",
+            "sources.json",
+            "consumer-positions.json",
+            "nats.json",
+        ] {
             fs::rename(out.join(name), prefill.join(name)).map_err(|e| e.to_string())?;
         }
-        measurements::save(&prefill, "before-measurement.json", &measurements::snapshot(&cluster)?)?;
+        measurements::save(
+            &prefill,
+            "before-measurement.json",
+            &measurements::snapshot(&cluster)?,
+        )?;
     }
     let effective = measurements::settings(&cluster)?;
     measurements::save(&out, "settings.json", &effective)?;
@@ -614,7 +649,16 @@ fn synthetic(options: SyntheticOptions) -> Result<(), String> {
     let load = LoadMonitor::start()?;
     let started = Instant::now();
     let execution = if consumers {
-        measurements::with_consumers(&binary, &cluster, &out, &inputs, events.checked_add(prefill_keys).ok_or("event count overflow")?, &memory_max)
+        measurements::with_consumers(
+            &binary,
+            &cluster,
+            &out,
+            &inputs,
+            events
+                .checked_add(prefill_keys)
+                .ok_or("event count overflow")?,
+            &memory_max,
+        )
     } else {
         let store = out.join("store");
         let mut args: Vec<std::ffi::OsString> = ["backfill", "--database", &url, "--store"]
@@ -657,13 +701,18 @@ fn synthetic(options: SyntheticOptions) -> Result<(), String> {
     } else {
         stages["admission"]["totals"].clone()
     };
-    let correctness = measurements::correctness(&cluster, events.checked_add(prefill_keys).ok_or("event count overflow")?)?;
+    let correctness = measurements::correctness(
+        &cluster,
+        events
+            .checked_add(prefill_keys)
+            .ok_or("event count overflow")?,
+    )?;
     let complete = correctness["complete"] == true
         && (consumers || totals["admitted"].as_u64() == Some(events));
     let batches = totals["batches"].as_u64();
     let normalized = measurements::normalize_statements(&statements, batches);
     measurements::save(&out, "statements-per-batch.json", &normalized)?;
-    let metrics = json!({
+    let mut metrics = json!({
         "complete": complete, "events": events, "prefill_keys": prefill_keys, "offered": totals["events_offered"],
         "admitted": correctness["events"].as_u64().and_then(|n| n.checked_sub(prefill_keys)), "batches": batches,
         "build_s": build_s, "build": build_times, "setup_s": setup_s, "execution_s": execution_s,
@@ -680,6 +729,17 @@ fn synthetic(options: SyntheticOptions) -> Result<(), String> {
         "wal_bytes_per_event": measurements::wal_delta(&before, &after).map(|b| b as f64 / events.max(1) as f64),
         "artifacts": out,
     });
+    metrics["teardown_s"] = match cluster.stop() {
+        Ok(seconds) => json!(seconds),
+        Err(error) => {
+            measurements::save(
+                &out,
+                "failure.json",
+                &json!({"error": error, "metrics": metrics}),
+            )?;
+            return Err(error);
+        }
+    };
     measurements::save(&out, "metrics.json", &metrics)?;
     let id = if complete {
         let store = Store::open().map_err(|e| e.to_string())?;
@@ -741,7 +801,7 @@ fn run(storage: &str, memory_max: &str) -> Result<(), String> {
     let out = output_dir(storage, manifest.bytes())?;
     let binary = sinexd_binary()?;
     let load = LoadMonitor::start()?;
-    let cluster = Cluster::start(&out.join("pg"), storage == "disk", &[])?;
+    let mut cluster = Cluster::start(&out.join("pg"), storage == "disk", &[])?;
     let url = cluster.url();
     let store_dir = out.join("store");
     apply_schema(&binary, &url)?;
@@ -829,7 +889,7 @@ fn run(storage: &str, memory_max: &str) -> Result<(), String> {
         }
     };
     let complete = benchmark_complete(&inputs_out, derive_complete);
-    let metrics = json!({
+    let mut metrics = json!({
         "complete": complete,
         "inputs": inputs_out,
         "derive": derive,
@@ -839,7 +899,7 @@ fn run(storage: &str, memory_max: &str) -> Result<(), String> {
         "memory_max": memory_max,
         "linear_estimate": combined_estimate(&estimates),
     });
-    drop(cluster);
+    metrics["teardown_s"] = json!(cluster.stop()?);
     let load = load.finish()?;
     let id = if complete {
         let store = Store::open().map_err(|e| e.to_string())?;

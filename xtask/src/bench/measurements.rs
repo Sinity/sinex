@@ -225,6 +225,10 @@ pub(super) fn synthetic_inputs(
     let path = out.join("zsh_history");
     let mut history = BufWriter::new(fs::File::create(&path).map_err(|e| e.to_string())?);
     for i in 0..commands {
+        if mixed && i % 2 == 0 {
+            writeln!(history, "echo untimed synthetic {i}").map_err(|e| e.to_string())?;
+            continue;
+        }
         writeln!(history, ": {}:0;echo synthetic {i}", 1_600_000_000 + i * 60)
             .map_err(|e| e.to_string())?;
     }
@@ -234,29 +238,39 @@ pub(super) fn synthetic_inputs(
         source: "terminal.zsh-history",
         path,
     }];
-    if mixed { inputs.push(journal_input(out, events - commands, "measurement")?); }
+    if mixed {
+        inputs.push(journal_input(out, events - commands, "measurement")?);
+    }
     Ok(inputs)
 }
 
-pub(super) fn journal_input(out: &Path, events: u64, namespace: &str) -> Result<SyntheticInput, String> {
-        let path = out.join("journal");
-        fs::create_dir(&path).map_err(|e| e.to_string())?;
-        let file = fs::File::create(path.join("000000000000.ndjson")).map_err(|e| e.to_string())?;
-        let mut file = BufWriter::new(file);
-        for i in 0..events {
-            // Multiplication permutes the keys so ordered input does not make
-            // equivalence-index insertion sequential.
-            let key = i.wrapping_mul(0x9e37_79b9_7f4a_7c15);
-            let message = format!(
-                "synthetic café record {i} {}",
-                "payload ".repeat((i % 257) as usize)
-            );
-            let entry = json!({"__CURSOR": format!("{namespace}:s={key:016x};i={i}"),
+pub(super) fn journal_input(
+    out: &Path,
+    events: u64,
+    namespace: &str,
+) -> Result<SyntheticInput, String> {
+    let path = out.join("journal");
+    fs::create_dir(&path).map_err(|e| e.to_string())?;
+    let file = fs::File::create(path.join("000000000000.ndjson")).map_err(|e| e.to_string())?;
+    let mut file = BufWriter::new(file);
+    for i in 0..events {
+        // Multiplication permutes the keys so ordered input does not make
+        // equivalence-index insertion sequential.
+        let key = i.wrapping_mul(0x9e37_79b9_7f4a_7c15);
+        let message = format!(
+            "synthetic café record {i} {}",
+            "payload ".repeat((i % 257) as usize)
+        );
+        let entry = json!({"__CURSOR": format!("{namespace}:s={key:016x};i={i}"),
                 "__REALTIME_TIMESTAMP": (1_600_000_000_000_000u64 + i * 1_000_000).to_string(), "MESSAGE": message, "PRIORITY": "6"});
-            writeln!(file, "{}", json!({"received_ns": (1_600_000_000_000_000_000u64 + i * 1_000_000_000).to_string(), "line": entry.to_string()})).map_err(|e| e.to_string())?;
-        }
-        file.flush().map_err(|e| e.to_string())?;
-    Ok(SyntheticInput { format: "journald", source: "machine.journald", path })
+        writeln!(file, "{}", json!({"received_ns": (1_600_000_000_000_000_000u64 + i * 1_000_000_000).to_string(), "line": entry.to_string()})).map_err(|e| e.to_string())?;
+    }
+    file.flush().map_err(|e| e.to_string())?;
+    Ok(SyntheticInput {
+        format: "journald",
+        source: "machine.journald",
+        path,
+    })
 }
 
 pub(super) fn source_totals(result: &Value) -> Value {
@@ -316,6 +330,7 @@ pub(super) fn correctness(cluster: &Cluster, events: u64) -> Result<Value, Strin
     counts["complete"] = json!(
         counts["events"].as_u64() == Some(events)
             && counts["commit_events"].as_u64() == Some(events)
+            && counts["last_commit"].as_u64() == Some(events)
             && counts["source_counts"].as_u64() == Some(events)
             && counts["run_events"].as_u64() == Some(events)
             && counts["failures"].as_u64() == Some(0)
@@ -323,12 +338,66 @@ pub(super) fn correctness(cluster: &Cluster, events: u64) -> Result<Value, Strin
     Ok(counts)
 }
 
-struct Process(Child);
+struct Process(Child, Option<String>);
 impl Drop for Process {
     fn drop(&mut self) {
+        if self.0.try_wait().ok().flatten().is_none()
+            && let Some(unit) = &self.1
+        {
+            let _ = Command::new("systemctl")
+                .args(["--user", "kill", "--signal=SIGTERM", unit])
+                .status();
+        }
         let _ = self.0.kill();
         let _ = self.0.wait();
     }
+}
+
+fn scope_memory(unit: &str, binary: &Path) -> Option<(f64, u64)> {
+    let output = Command::new("systemctl")
+        .args([
+            "--user",
+            "show",
+            &format!("{unit}.scope"),
+            "--property=ControlGroup",
+            "--value",
+        ])
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let group = String::from_utf8(output.stdout).ok()?;
+    let group = group.trim();
+    if group.is_empty() {
+        return None;
+    }
+    let directory = Path::new("/sys/fs/cgroup").join(group.trim_start_matches('/'));
+    let memory = fs::read_to_string(directory.join("memory.peak"))
+        .ok()?
+        .trim()
+        .parse()
+        .ok()?;
+    for pid in fs::read_to_string(directory.join("cgroup.procs"))
+        .ok()?
+        .lines()
+    {
+        let process = Path::new("/proc").join(pid);
+        if fs::read_link(process.join("exe")).ok().as_deref() != Some(binary) {
+            continue;
+        }
+        let status = fs::read_to_string(process.join("status")).ok()?;
+        let rss = status
+            .lines()
+            .find_map(|line| line.strip_prefix("VmHWM:"))?
+            .split_whitespace()
+            .next()?
+            .parse::<f64>()
+            .ok()?
+            / 1024.0;
+        return Some((rss, memory));
+    }
+    None
 }
 
 fn free_port() -> Result<u16, String> {
@@ -387,6 +456,7 @@ pub(super) fn with_consumers(
             .stderr(nats_log)
             .spawn()
             .map_err(|e| e.to_string())?,
+        None,
     );
     while monitor(monitoring).is_err() {
         if let Some(status) = nats.0.try_wait().map_err(|e| e.to_string())? {
@@ -471,12 +541,17 @@ pub(super) fn with_consumers(
             .stderr(daemon_log)
             .spawn()
             .map_err(|e| e.to_string())?,
+        Some(format!("{unit}.scope")),
     );
     let measured = (|| {
         let mut admission_s = None;
         let mut search_s = None;
         let mut publication_s = None;
         let mut samples = Vec::new();
+        let mut peak_rss_mb: Option<f64> = None;
+        let mut memory_peak_bytes: Option<u64> = None;
+        let mut last_count = 0;
+        let mut last_progress = Instant::now();
         loop {
             if let Some(status) = daemon.0.try_wait().map_err(|e| e.to_string())? {
                 return Err(format!("benchmark daemon exited: {status}"));
@@ -486,6 +561,23 @@ pub(super) fn with_consumers(
                 'search', coalesce((SELECT commit_seq FROM core.consumer_positions WHERE consumer='read.search_text'),0),
                 'publisher', coalesce((SELECT commit_seq FROM core.consumer_positions WHERE consumer='publisher'),0))")?;
             let elapsed = started.elapsed().as_secs_f64();
+            if let Some((rss, memory)) = scope_memory(&unit, binary) {
+                peak_rss_mb = Some(peak_rss_mb.unwrap_or(0.0).max(rss));
+                memory_peak_bytes = Some(memory_peak_bytes.unwrap_or(0).max(memory));
+            }
+            let count = positions["admitted"].as_u64().unwrap_or(0)
+                + positions["search"].as_u64().unwrap_or(0)
+                + positions["publisher"].as_u64().unwrap_or(0);
+            if count != last_count {
+                last_count = count;
+                last_progress = Instant::now();
+            }
+            if last_progress.elapsed() > Duration::from_secs(600) {
+                save(out, "consumer-positions.json", &json!(samples))?;
+                return Err(
+                    "no admission or consumer progress for ten minutes; see daemon.log".into(),
+                );
+            }
             let full = positions["admitted"].as_u64() == Some(events);
             if full && admission_s.is_none() {
                 admission_s = Some(elapsed);
@@ -521,7 +613,8 @@ pub(super) fn with_consumers(
                     return Err("search did not retain all generated rows".into());
                 }
                 return Ok(
-                    json!({"consumers": {"admission_s": admission_s, "search_s": search_s, "publisher_s": publication_s,
+                    json!({"peak_rss_mb": peak_rss_mb, "scope_memory_peak_bytes": memory_peak_bytes,
+                        "consumers": {"admission_s": admission_s, "search_s": search_s, "publisher_s": publication_s,
                     "search_catch_up_s": search_s.zip(admission_s).map(|(s,a)| s-a),
                     "publisher_catch_up_s": publication_s.zip(admission_s).map(|(p,a)| p-a),
                     "acknowledged_events": messages, "position_resolution_s": 0.2}}),
@@ -539,7 +632,7 @@ pub(super) fn with_consumers(
         ])
         .status()
         .map_err(|e| e.to_string())?;
-    if !stopped.success() {
+    if !stopped.success() && measured.is_ok() {
         return Err("stopping benchmark scope failed".into());
     }
     let status = daemon.0.wait().map_err(|e| e.to_string())?;
@@ -552,6 +645,7 @@ pub(super) fn with_consumers(
 pub(super) fn stage_summary(out: &Path) -> Result<Value, String> {
     let mut batches = Vec::new();
     let mut publishers = Vec::new();
+    let mut search = Vec::new();
     for name in ["daemon.log", "backfill.stderr"] {
         let path = out.join(name);
         match fs::read_to_string(&path) {
@@ -560,6 +654,9 @@ pub(super) fn stage_summary(out: &Path) -> Result<Value, String> {
                     if let Ok(record) = serde_json::from_str::<Value>(line) {
                         if record["admission_batch"].is_object() {
                             batches.push(record["admission_batch"].clone());
+                        }
+                        if record["search_batch"].is_object() {
+                            search.push(record["search_batch"].clone());
                         }
                         if record["publisher_page"].is_object() {
                             publishers.push(record["publisher_page"].clone());
@@ -574,10 +671,10 @@ pub(super) fn stage_summary(out: &Path) -> Result<Value, String> {
     save(
         out,
         "batch-timings.json",
-        &json!({"admission": batches, "publisher": publishers}),
+        &json!({"admission": batches, "search": search, "publisher": publishers}),
     )?;
     Ok(
-        json!({"admission": summarize_batches(&batches), "publisher": summarize_batches(&publishers)}),
+        json!({"admission": summarize_batches(&batches), "search": summarize_batches(&search), "publisher": summarize_batches(&publishers)}),
     )
 }
 
