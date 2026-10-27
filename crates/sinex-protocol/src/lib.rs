@@ -11,7 +11,7 @@ mod request;
 
 pub use commands::{Access, Arg, ArgKind, COMMANDS, Command, command};
 pub use nats::{
-    Acknowledgment, Archived, Confirmed, ConfirmedEvent, Excise, ExciseReply, Ingress,
+    PRODUCER_VERSION, ProducerHello, ProducerWelcome, Acknowledgment, Archived, Confirmed, ConfirmedEvent, Excise, ExciseReply, Ingress,
     MaterialFrame, Materials, ProducerEvent, ProducerFailure, ProducerMaterial, RecordedQuery,
     Subjects, Unhidden, Withheld,
 };

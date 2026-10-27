@@ -4,7 +4,6 @@
 //! A poll goes through the same driver and drain `sinexd` uses. Then:
 //!
 //! 1. the material's bytes are written to the material frame's
-//!    directory
 //!    directory under the content store this host shares with `sinexd`
 //!    (`sinex_transport::frame_bytes`); Sinex stores them and registers the
 //!    material, and the producer waits for the acknowledgment before sending
@@ -35,9 +34,9 @@ use base64::Engine;
 use futures::StreamExt;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use sinex_model::{BatchKind, Origin, RecordOutcome, RunId};
+use sinex_model::{BatchKind, FrameRefusal, Origin, RecordOutcome, RunId};
 use sinex_protocol::{
-    Acknowledgment, Ingress, MaterialFrame, ProducerEvent, ProducerFailure, RecordedQuery, Subjects,
+    Acknowledgment, Ingress, MaterialFrame, ProducerEvent, ProducerFailure, ProducerHello, ProducerWelcome, RecordedQuery, Subjects,
 };
 use std::io::Read;
 use std::path::{Path, PathBuf};
@@ -64,7 +63,10 @@ pub enum Error {
         frame: String,
         reason: String,
         recorded: bool,
+        kind: FrameRefusal,
     },
+    #[error("producer configuration: {0}")]
+    Configuration(String),
     #[error("local storage: {0}")]
     Local(String),
     #[error("no acknowledgment for frame {0}")]
@@ -92,6 +94,7 @@ impl Store {
 pub struct Position {
     pub cursor: Value,
     pub carry: Value,
+    pub capture_failures: Vec<CaptureFailure>,
 }
 
 impl Position {
@@ -136,6 +139,30 @@ impl Position {
 struct UnacknowledgedFrames {
     frames: Vec<Ingress>,
     position: Position,
+    sources: Vec<CapturedRange>,
+    mismatch: Option<ByteMismatch>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct CapturedRange {
+    #[serde(with = "path_bytes")]
+    pub path: PathBuf,
+    pub offset: u64,
+    pub length: u64,
+    pub blob: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct CaptureFailure {
+    pub ranges: Vec<CapturedRange>,
+    pub reason: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+struct ByteMismatch {
+    fingerprint: String,
+    reason: String,
+    attempts: u8,
 }
 
 impl UnacknowledgedFrames {
@@ -240,6 +267,7 @@ impl Producer {
         password_file: Option<&std::path::Path>,
         subjects: Subjects,
         name: &str,
+        hello: &ProducerHello,
     ) -> Result<Self, Error> {
         if !sinex_protocol::nats::valid_producer(name) {
             return Err(Error::Nats(format!("invalid producer name {name:?}")));
@@ -248,6 +276,9 @@ impl Producer {
             .await
             .map_err(Error::Nats)?;
         let acks = client.subscribe(subjects.ack(name)).await.map_err(nats)?;
+        let reply = client.request(subjects.connect(name), serde_json::to_vec(hello).expect("declaration serializes").into()).await.map_err(nats)?;
+        let welcome: ProducerWelcome = serde_json::from_slice(&reply.payload).map_err(nats)?;
+        if let Some(reason) = welcome.refusal { return Err(Error::Configuration(reason)); }
         let max_message = client.server_info().max_payload;
         Ok(Self {
             health: Default::default(),
@@ -277,104 +308,86 @@ impl Producer {
         state: &Path,
         store: &Store,
     ) -> Result<Position, Error> {
-        if let Some(unacknowledged) = UnacknowledgedFrames::load(state, binding)? {
-            self.deliver_batch(
-                &unacknowledged.frames,
-                &unacknowledged.position,
-                state,
-                binding,
-                store,
-            )
-            .await?;
-            unacknowledged.position.save(state, binding)?;
+        if let Some(mut batch) = UnacknowledgedFrames::load(state, binding)? {
+            self.deliver_batch(&mut batch, state, binding, store).await?;
+            batch.position.save(state, binding)?;
             UnacknowledgedFrames::clear(state, binding)?;
             if let Some(counter) = self.health.get(binding) {
-                counter
-                    .lock()
-                    .unwrap()
-                    .recovered(&unacknowledged.position.cursor);
+                counter.lock().unwrap().recovered(&batch.position.cursor);
             }
         }
         Position::load(state, binding)
     }
 
-    /// A recorded refusal is final. Its reason remains in Sinex's frame
-    /// record. A refused material stays pending because later parts and events
-    /// may name it.
+    /// Content failures are already stored on the material. Byte failures
+    /// rebuild from the spool; malformed frames stop this binding with an error.
     async fn deliver_batch(
         &mut self,
-        frames: &[Ingress],
-        position: &Position,
+        batch: &mut UnacknowledgedFrames,
         state: &Path,
         binding: &str,
         store: &Store,
     ) -> Result<Vec<Option<Acknowledgment>>, Error> {
         let mut acknowledgments = Vec::new();
-        for (index, frame) in frames.iter().enumerate() {
-            let mut refused = false;
-            match self.deliver(frame.clone(), store).await {
+        while let Some(frame) = batch.frames.first().cloned() {
+            let prepared = self.rebuild(&frame, &batch.sources, store);
+            let (result, transfer) = match prepared {
+                Ok(prepared) => (self.deliver(prepared.clone(), store).await, Some(prepared)),
+                Err(error) => (Err(error), None),
+            };
+            match result {
                 Ok(ack) => acknowledgments.push(Some(ack)),
-                Err(Error::Refused {
-                    frame: id,
-                    reason,
-                    recorded: true,
-                }) if id == frame.frame() => {
-                    let material_refused = match frame {
-                        Ingress::Material { .. } => true,
-                        Ingress::LargeFrame { blob, length, .. } => {
-                            let bytes = frame_bytes::snapshot(
-                                self.frame_root(store),
-                                &self.name,
-                                frame.frame(),
-                                blob,
-                                *length,
-                            )
-                            .map_err(|e| Error::Local(e.to_string()))?;
-                            matches!(
-                                serde_json::from_reader::<_, Ingress>(std::io::BufReader::new(
-                                    bytes
-                                ))
-                                .map_err(|e| Error::Local(e.to_string()))?,
-                                Ingress::Material { .. }
-                            )
-                        }
-                        _ => false,
-                    };
-                    if material_refused {
-                        return Err(Error::Refused {
-                            frame: id,
-                            reason,
-                            recorded: true,
-                        });
-                    }
+                Err(Error::Refused { reason, recorded: true, kind: FrameRefusal::Content, .. })
+                    if matches!(frame, Ingress::Events { .. }) => {
+                    eprintln!("{binding}: {reason}; material failure recorded");
                     acknowledgments.push(None);
-                    refused = true;
-                    write_durably(
-                        &state.join("refused").join(format!(
-                            "{}.json",
-                            blake3::hash(frame.frame().as_bytes()).to_hex()
-                        )),
-                        &serde_json::to_vec(&UnacknowledgedFrames {
-                            frames: frames[index..].to_vec(),
-                            position: position.clone(),
-                        })
-                        .expect("frames serialize"),
-                    )?;
-                    eprintln!("Sinex refused frame {id}: {reason}; skipping recorded refusal");
+                }
+                Err(Error::Refused { reason, kind: FrameRefusal::Bytes, .. }) => {
+                    let fingerprint = fingerprint(&batch.sources)?;
+                    let attempts = batch.mismatch.as_ref().filter(|m| m.fingerprint == fingerprint && m.reason == reason).map_or(1, |m| m.attempts + 1);
+                    batch.mismatch = Some(ByteMismatch { fingerprint, reason: reason.clone(), attempts });
+                    if let Some(transfer) = &transfer { self.clear_frame_directories(std::slice::from_ref(transfer), store)?; }
+                    if attempts < 3 {
+                        let retry_name = format!("{}/retry/{}", frame.frame(), uuid::Uuid::now_v7());
+                        match &mut batch.frames[0] {
+                            Ingress::Material { frame, .. } | Ingress::Events { frame, .. } | Ingress::LargeFrame { frame, .. } | Ingress::Chunk { frame, .. } => *frame = retry_name,
+                        }
+                        batch.save(state, binding)?;
+                        continue;
+                    }
+                    batch.position.capture_failures.push(CaptureFailure { ranges: batch.sources.clone(), reason: format!("three identical byte refusals: {reason}") });
+                    if batch.frames.iter().any(|frame| matches!(frame, Ingress::Material { .. })) {
+                        skip_material(&mut batch.position.cursor, &Position::load(state, binding)?.cursor);
+                    }
+                    // This position owns the failure and keeps the original spool ranges.
+                    // Dependent events are not sent for an unregistered material.
+                    batch.frames.clear();
+                    batch.save(state, binding)?;
+                    self.frames_changed(binding, 0);
+                    return Ok(acknowledgments);
                 }
                 Err(error) => return Err(error),
             }
-            UnacknowledgedFrames {
-                frames: frames[index + 1..].to_vec(),
-                position: position.clone(),
-            }
-            .save(state, binding)?;
-            self.frames_changed(binding, frames.len() - index - 1);
-            if !refused {
-                self.clear_frame_directories(std::slice::from_ref(frame), store)?;
-            }
+            batch.frames.remove(0);
+            batch.mismatch = None;
+            batch.save(state, binding)?;
+            self.frames_changed(binding, batch.frames.len());
+            if let Some(transfer) = &transfer { self.clear_frame_directories(std::slice::from_ref(transfer), store)?; }
         }
         Ok(acknowledgments)
+    }
+
+    fn rebuild(&self, frame: &Ingress, sources: &[CapturedRange], store: &Store) -> Result<Ingress, Error> {
+        let snapshots = Snapshots::new()?;
+        for source in sources.iter().filter(|source| matches!(frame, Ingress::Material { material, .. } if material.blob == source.blob)) {
+            let mut file = std::fs::File::open(&source.path).map_err(|e| Error::Local(e.to_string()))?;
+            std::io::Seek::seek(&mut file, std::io::SeekFrom::Start(source.offset)).map_err(|e| Error::Local(e.to_string()))?;
+            let blob = snapshots.put_reader(file.take(source.length)).map_err(Error::Local)?;
+            if blob != source.blob {
+                return Err(Error::Refused { frame: frame.frame().into(), reason: "spool bytes differ from the captured range".into(), recorded: false, kind: FrameRefusal::Bytes });
+            }
+        }
+        self.prepare(frame.clone(), &snapshots, store)
     }
 
     /// The root whose frame directories hold this producer's bytes.
@@ -525,7 +538,7 @@ impl Producer {
         let wait = async {
             while let Some(message) = self.acks.next().await {
                 if let Ok(ack) = serde_json::from_slice::<Acknowledgment>(&message.payload)
-                    && ack.frame == id
+                    && (ack.frame == id || ack.refusal_kind() == Some(FrameRefusal::Malformed))
                 {
                     return Some(ack);
                 }
@@ -562,6 +575,7 @@ impl Producer {
                 frame: id,
                 reason: reason.clone(),
                 recorded,
+                kind: ack.refusal_kind().unwrap_or(FrameRefusal::Malformed),
             });
         }
         Ok(ack)
@@ -590,9 +604,10 @@ impl Producer {
         acquired: Acquired,
         sink: &Store,
         state: &Path,
+        spool: &Path,
     ) -> Result<Sent, Error> {
         if source.spec().class == sinex_model::Class::Sealed {
-            return Err(Error::Local(
+            return Err(Error::Configuration(
                 "sealed producer storage is unsupported".into(),
             ));
         }
@@ -608,24 +623,29 @@ impl Producer {
             Limits::default(),
         )?;
         let mut sent = Sent::default();
+        let mut frames = Vec::new();
+        let mut sources = Vec::new();
+        let mut after = Position::load(state, binding)?;
+        let mut records = 0;
+        let mut class = source.spec().class;
         for (index, batch) in batches.into_iter().enumerate() {
             let BatchKind::Source(progress) = &batch.kind else {
                 unreachable!("drivers build source batches")
             };
-            let mut frames = Vec::new();
+            records += batch.records.len() as u64;
+            class = batch.events().fold(class, |class, event| class.max(event.class));
             if let Some(m) = &progress.material {
+                let path = m.manifest.detail("spool_segment").as_u64().map(|segment| spool.join(format!("{segment:012}.ndjson")))
+                    .or_else(|| m.manifest.detail("file").as_str().map(|file| spool.join(file)))
+                    .or_else(|| m.manifest.path.as_ref().map(PathBuf::from))
+                    .unwrap_or_else(|| spool.to_owned());
+                sources.push(CapturedRange { path, offset: m.manifest.file_offset.unwrap_or(0), length: m.length, blob: m.blob.clone() });
                 frames.push(Ingress::Material {
                     frame: format!("{binding}/material/{}", m.id),
                     material: Box::new(MaterialFrame {
-                        id: m.id,
-                        input: progress.input.clone(),
-                        blob: m.blob.clone(),
-                        length: m.length,
-                        parser: m.parser.clone(),
-                        parser_version: m.parser_version,
-                        part_index: m.part_index,
-                        previous_part: m.previous_part,
-                        manifest: m.manifest.clone(),
+                        id: m.id, input: progress.input.clone(), blob: m.blob.clone(), length: m.length,
+                        parser: m.parser.clone(), parser_version: m.parser_version, part_index: m.part_index,
+                        previous_part: m.previous_part, manifest: m.manifest.clone(),
                     }),
                 });
                 sent.materials += 1;
@@ -637,111 +657,48 @@ impl Producer {
                     RecordOutcome::Events { events: built, .. } => {
                         for e in built {
                             let (location, output_index) = match &e.origin {
-                                Origin::Record {
-                                    location,
-                                    output_index,
-                                } => (Some(*location), *output_index),
+                                Origin::Record { location, output_index } => (Some(*location), *output_index),
                                 Origin::Derived { .. } => (None, 0),
                             };
                             events.push(ProducerEvent {
-                                event_type: e.event_type.to_owned(),
-                                payload: e.payload.clone(),
-                                location,
-                                output_index,
-                                parents: vec![],
-                                reading_order: e.reading_order.0,
-                                class: e.class,
+                                event_type: e.event_type.to_owned(), payload: e.payload.clone(), location, output_index,
+                                parents: vec![], reading_order: e.reading_order.0, class: e.class,
                             });
                         }
                     }
-                    RecordOutcome::Failure { location, reason } => {
-                        failures.push(ProducerFailure {
-                            location: *location,
-                            reason: reason.clone(),
-                        });
-                    }
+                    RecordOutcome::Failure { location, reason } => failures.push(ProducerFailure { location: *location, reason: reason.clone() }),
                 }
             }
             sent.unread += failures.len();
-            let material = progress
-                .material
-                .as_ref()
-                .map(|m| m.id.to_string())
-                .or_else(|| progress.cursor.get("material").map(|m| m.to_string()))
-                .unwrap_or_default();
+            let material = frames.iter().find_map(|frame| match frame {
+                Ingress::Material { material, .. } => Some(material.id.to_string()), _ => None,
+            }).unwrap_or_default();
             let mut chunks = split(events);
-            if chunks.is_empty() && !failures.is_empty() {
-                chunks.push(Vec::new());
-            }
+            if chunks.is_empty() && !failures.is_empty() { chunks.push(Vec::new()); }
             for (chunk, frame_events) in chunks.into_iter().enumerate() {
                 sent.events += frame_events.len();
                 frames.push(Ingress::Events {
                     frame: format!("{binding}/events/{material}/{index}/{chunk}"),
                     events: frame_events,
-                    // The batch's failures travel with its first events frame.
-                    failures: if chunk == 0 {
-                        std::mem::take(&mut failures)
-                    } else {
-                        Vec::new()
-                    },
+                    failures: if chunk == 0 { std::mem::take(&mut failures) } else { Vec::new() },
                 });
             }
-            let after = Position {
-                cursor: progress.cursor.clone(),
-                carry: progress.carry.clone(),
-            };
-            if let Some(counter) = self.health.get(binding) {
-                counter
-                    .lock()
-                    .unwrap()
-                    .prepare(&after.cursor, batch.records.len() as u64);
-            }
-            if frames.is_empty() {
-                after.save(state, binding)?;
-                if let Some(counter) = self.health.get(binding) {
-                    counter.lock().unwrap().recovered(&after.cursor);
-                }
-                continue;
-            }
-            let class = batch
-                .events()
-                .fold(source.spec().class, |class, event| class.max(event.class));
-            if class == sinex_model::Class::Sealed {
-                return Err(Error::Local(
-                    "sealed producer storage is unsupported".into(),
-                ));
-            }
-            let events_frames: Vec<bool> = frames
-                .iter()
-                .map(|f| matches!(f, Ingress::Events { .. }))
-                .collect();
-            let frames = frames
-                .into_iter()
-                .map(|f| self.prepare(f, &snapshots, sink))
-                .collect::<Result<Vec<_>, _>>()?;
-            UnacknowledgedFrames {
-                frames: frames.clone(),
-                position: after.clone(),
-            }
-            .save(state, binding)?;
-            self.frames_changed(binding, frames.len());
-            let acknowledgments = self
-                .deliver_batch(&frames, &after, state, binding, sink)
-                .await?;
-            for (ack, is_events) in acknowledgments.iter().zip(events_frames) {
-                if is_events {
-                    sent.frames += 1;
-                    if let Some(ack) = ack {
-                        sent.admitted += ack.admitted.len();
-                    }
-                }
-            }
-            after.save(state, binding)?;
-            if let Some(counter) = self.health.get(binding) {
-                counter.lock().unwrap().recovered(&after.cursor);
-            }
-            UnacknowledgedFrames::clear(state, binding)?;
+            after.cursor = progress.cursor.clone();
+            after.carry = progress.carry.clone();
         }
+        if class == sinex_model::Class::Sealed { return Err(Error::Configuration("sealed producer storage is unsupported".into())); }
+        if let Some(counter) = self.health.get(binding) { counter.lock().unwrap().prepare(&after.cursor, records); }
+        let events_frames: Vec<_> = frames.iter().map(|frame| matches!(frame, Ingress::Events { .. })).collect();
+        let mut batch = UnacknowledgedFrames { frames, position: after, sources, mismatch: None };
+        batch.save(state, binding)?;
+        self.frames_changed(binding, batch.frames.len());
+        let acknowledgments = self.deliver_batch(&mut batch, state, binding, sink).await?;
+        for (ack, is_events) in acknowledgments.iter().zip(events_frames) {
+            if is_events { sent.frames += 1; if let Some(ack) = ack { sent.admitted += ack.admitted.len(); } }
+        }
+        batch.position.save(state, binding)?;
+        if let Some(counter) = self.health.get(binding) { counter.lock().unwrap().recovered(&batch.position.cursor); }
+        UnacknowledgedFrames::clear(state, binding)?;
         Ok(sent)
     }
 }
@@ -768,3 +725,44 @@ fn split(events: Vec<ProducerEvent>) -> Vec<Vec<ProducerEvent>> {
 
 #[cfg(test)]
 mod tests;
+
+fn fingerprint(sources: &[CapturedRange]) -> Result<String, Error> {
+    let mut hash = blake3::Hasher::new();
+    for source in sources {
+        let mut file = std::fs::File::open(&source.path).map_err(|e| Error::Local(e.to_string()))?;
+        std::io::Seek::seek(&mut file, std::io::SeekFrom::Start(source.offset)).map_err(|e| Error::Local(e.to_string()))?;
+        std::io::copy(&mut file.take(source.length), &mut hash).map_err(|e| Error::Local(e.to_string()))?;
+    }
+    Ok(hash.finalize().to_hex().to_string())
+}
+
+fn skip_material(cursor: &mut Value, previous: &Value) {
+    if cursor.get("inner").is_some() {
+        let same_segment = cursor.get("segment") == previous.get("segment");
+        for key in ["material", "part_index", "through"] {
+            cursor["inner"][key] = if same_segment { previous["inner"][key].clone() } else { Value::Null };
+        }
+        // Null fields in the append cursor have concrete zero defaults.
+        for key in ["part_index", "through"] {
+            if cursor["inner"][key].is_null() { cursor["inner"][key] = Value::from(0); }
+        }
+        cursor["last_material"] = previous["last_material"].clone();
+    } else if cursor.get("last").is_some() {
+        cursor["material"] = previous["material"].clone();
+        cursor["part_index"] = previous.get("part_index").cloned().unwrap_or(Value::from(0));
+    }
+}
+
+mod path_bytes {
+    use serde::{Deserialize, Deserializer, Serialize, Serializer};
+    use std::os::unix::ffi::{OsStrExt, OsStringExt};
+    use std::path::{Path, PathBuf};
+
+    pub(super) fn serialize<S: Serializer>(path: &Path, serializer: S) -> Result<S::Ok, S::Error> {
+        path.as_os_str().as_bytes().serialize(serializer)
+    }
+
+    pub(super) fn deserialize<'de, D: Deserializer<'de>>(deserializer: D) -> Result<PathBuf, D::Error> {
+        Ok(std::ffi::OsString::from_vec(Vec::<u8>::deserialize(deserializer)?).into())
+    }
+}

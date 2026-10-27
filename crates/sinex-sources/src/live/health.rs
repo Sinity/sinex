@@ -126,6 +126,7 @@ pub(super) fn initialize(positions: &Path, binding: &Binding) -> Result<Counter,
         recovering.as_ref().map(|position| &position.cursor),
     )?;
     initial.cursor = position.cursor;
+    initial.capture_failures = position.capture_failures.len();
     initial.frames =
         Producer::unacknowledged_frames(&binding.name, positions).map_err(|e| e.to_string())?;
     Ok(spool_health::register(&binding.input, initial))
@@ -137,6 +138,9 @@ fn snapshot(positions: &Path, bindings: &[(Binding, Counter)]) -> Result<(), Str
         serde_json::json!({
             "binding": binding.name,
             "spool": binding.input.to_string_lossy(),
+            "error": counter.error,
+            "state": counter.error.as_ref().map(|reason| format!("error: {reason}")).unwrap_or_else(|| "capturing".into()),
+            "capture_failures": counter.capture_failures,
             "unpublished": {"bytes": counter.counts.bytes, "records": counter.counts.records, "frames": counter.frames},
         })
     }).collect();

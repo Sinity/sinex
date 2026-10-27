@@ -99,6 +99,14 @@ impl Subjects {
         format!("{}.recorded.*", self.root)
     }
 
+    pub fn connect(&self, producer: &str) -> String {
+        format!("{}.connect.{producer}", self.root)
+    }
+
+    pub fn connect_all(&self) -> String {
+        format!("{}.connect.*", self.root)
+    }
+
     pub fn materials(&self, producer: &str) -> String {
         format!("{}.materials.{producer}", self.root)
     }
@@ -123,6 +131,7 @@ impl Subjects {
             .strip_prefix('.')?;
         let producer = rest
             .strip_prefix("ingress.")
+            .or_else(|| rest.strip_prefix("connect."))
             .or_else(|| rest.strip_prefix("recorded."))
             .or_else(|| rest.strip_prefix("materials."))
             .or_else(|| rest.strip_prefix("excise."))?;
@@ -136,6 +145,7 @@ impl Subjects {
         (
             vec![
                 self.ingress(producer),
+                self.connect(producer),
                 self.recorded(producer),
                 self.materials(producer),
                 self.excise(producer),
@@ -319,6 +329,34 @@ pub struct Acknowledgment {
     pub refusal: Option<String>,
     /// The last commit position of the frame's events.
     pub commit_seq: Option<i64>,
+}
+
+impl Acknowledgment {
+    pub fn refusal_kind(&self) -> Option<sinex_model::FrameRefusal> {
+        serde_json::from_value(self.outcome["refusal_kind"].clone()).ok()
+    }
+}
+
+pub const PRODUCER_VERSION: u32 = 1;
+
+/// Checked before any material or events are sent. Event declarations can
+/// be registered here before checking the names the producer will emit.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ProducerHello {
+    pub version: u32,
+    pub event_types: Vec<String>,
+    pub class: Class,
+}
+
+impl Default for ProducerHello {
+    fn default() -> Self {
+        Self { version: PRODUCER_VERSION, event_types: Vec::new(), class: Class::Open }
+    }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ProducerWelcome {
+    pub refusal: Option<String>,
 }
 
 /// A request on `<root>.recorded.<producer>`: which of these frames Sinex has

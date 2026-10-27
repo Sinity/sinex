@@ -19,6 +19,7 @@ use sinex_model::{InputRef, MaterialId, RevisionChange, Timestamp};
 use std::fs::{File, OpenOptions};
 use std::io::{BufRead, Write};
 use std::path::{Path, PathBuf};
+use std::os::unix::ffi::OsStringExt;
 use std::time::{Duration, Instant};
 
 /// When capture closes a segment and starts the next.
@@ -358,8 +359,10 @@ impl LiveStream {
         };
         let mut removed = 0;
         for index in segments(&self.spool)? {
-            if index < state.segment {
-                std::fs::remove_file(segment_path(&self.spool, index))?;
+            let path = segment_path(&self.spool, index);
+            let keep = committed.get("keep_files").and_then(Value::as_array).is_some_and(|paths| paths.iter().any(|p| serde_json::from_value::<Vec<u8>>(p.clone()).is_ok_and(|keep| PathBuf::from(std::ffi::OsString::from_vec(keep)) == path)));
+            if index < state.segment && !keep {
+                std::fs::remove_file(path)?;
                 removed += 1;
             }
         }

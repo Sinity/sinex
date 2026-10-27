@@ -198,6 +198,8 @@ pub(super) async fn frame(
         "older": outcome.older,
         "hidden": outcome.hidden,
         "superseded": outcome.superseded,
+        "failures": outcome.failures,
+        "refusal_kind": frame.refusal_kind,
     });
     sqlx::query!(
         r#"INSERT INTO core.ingress_frames (producer, frame, material_id, admitted, outcome, refusal, commit_seq)

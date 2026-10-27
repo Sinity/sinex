@@ -87,6 +87,9 @@ these names and no others.
 - **frame**: one message from an outside producer: events, a material, a chunk, or a **large frame** that names its own bytes.
 - **frame bytes**: the bytes an outside producer hands over for one frame, in that frame's directory under the content store (`incoming/producers`); removed once the frame is recorded.
 - **unacknowledged frames**: a producer's frames sent but not yet acknowledged, kept with the position after them and sent again after a restart.
+- **frame refusal** (`FrameRefusal`): a content failure stored on a material, a byte failure that rebuilds the transfer, or a malformed frame reported as a binding error.
+- **capture failure**: a spool range whose bytes could not be delivered after three identical byte refusals; the position records its range and reason and cleanup keeps its spool file.
+- **producer declaration** (`ProducerHello`): the protocol version, maximum class and event types checked when an outside producer connects.
 - **acknowledgment**: the reply that confirms a frame was admitted; a **recorded query** asks Sinex for the acknowledgments of given frames.
 - **publish**: send a NATS message.
 - **confirmed stream**: the NATS stream of committed events in commit order, with `Archived`, `Unhidden` and `Excised` messages.

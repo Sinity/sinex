@@ -20,7 +20,7 @@ impl Ingest {
         };
         let data = base64::engine::general_purpose::STANDARD
             .decode(data)
-            .map_err(|e| Check::Refused(format!("chunk data is not base64: {e}")))?;
+            .map_err(|e| Check::Bytes(format!("chunk data is not base64: {e}")))?;
         let root = self.blobs.root().to_owned();
         let (producer, for_frame, blob, offset, total) = (
             producer.to_owned(),
@@ -61,7 +61,7 @@ impl Ingest {
                 if e.is_io() {
                     Check::Unavailable(e.to_string())
                 } else {
-                    Check::Refused(format!("large-frame bytes are not a frame: {e}"))
+                    Check::Malformed(format!("large-frame bytes are not a frame: {e}"))
                 }
             })
         })
@@ -69,7 +69,7 @@ impl Ingest {
         .map_err(|e| Check::Unavailable(e.to_string()))??;
         match inner {
             Ingress::Material { .. } | Ingress::Events { .. } => Ok(inner),
-            _ => Err(Check::Refused(
+            _ => Err(Check::Malformed(
                 "a large frame stands for a material or events frame".into(),
             )),
         }
@@ -105,7 +105,7 @@ impl Ingest {
                 .put_seekable(std::io::BufReader::new(file))
                 .map_err(|e| Check::Unavailable(e.to_string()))?;
             if stored != blob {
-                return Err(Check::Refused(format!(
+                return Err(Check::Bytes(format!(
                     "the frame bytes are {stored}, not {blob}"
                 )));
             }
@@ -113,21 +113,6 @@ impl Ingest {
         })
         .await
         .map_err(|e| Check::Unavailable(e.to_string()))?
-    }
-
-    /// Whether the producer's privacy settings ask for sealed storage, which
-    /// producer bytes do not support.
-    pub(super) async fn sealed(&mut self, producer: &str) -> Result<bool, String> {
-        let privacy = sinex_store::privacy::load(&mut self.conn, std::iter::once(producer))
-            .await
-            .map_err(|e| e.to_string())?;
-        Ok(
-            privacy.floors.get(producer) == Some(&sinex_model::Class::Sealed)
-                || privacy
-                    .rules
-                    .iter()
-                    .any(|r| r.class == sinex_model::Class::Sealed),
-        )
     }
 
     /// Remove the frame directory of a recorded frame.
@@ -140,7 +125,7 @@ impl Ingest {
 
 fn check_bytes(error: frame_bytes::Error) -> Check {
     match error {
-        frame_bytes::Error::Invalid(reason) => Check::Refused(reason),
+        frame_bytes::Error::Invalid(reason) => Check::Bytes(reason),
         frame_bytes::Error::Storage(reason) => Check::Unavailable(reason),
     }
 }

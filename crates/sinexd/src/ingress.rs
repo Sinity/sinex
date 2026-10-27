@@ -31,12 +31,12 @@ use base64::Engine;
 use futures::StreamExt;
 use serde_json::Value;
 use sinex_model::{
-    Batch, BatchKind, EventId, IngressFrame, MaterialRef, ObservationFacts, Origin, ReadingOrder,
+    Batch, BatchKind, EventId, FrameRefusal, IngressFrame, MaterialRef, ObservationFacts, Origin, ReadingOrder,
     RecordOutcome, RevisionChange, RunId, SourceProgress, Timestamp, event_types,
 };
 use sinex_protocol::{
     Acknowledgment, Excise, ExciseReply, Ingress, MaterialFrame, Materials, ProducerEvent,
-    ProducerFailure, ProducerMaterial, RecordedQuery, Subjects,
+    ProducerFailure, ProducerHello, ProducerWelcome, ProducerMaterial, RecordedQuery, Subjects,
 };
 use sinex_store::commit_log::{self, StoredFrame};
 use sinex_store::{Blobs, runs};
@@ -127,63 +127,40 @@ impl Ingest {
         producer: &str,
         body: &[u8],
     ) -> Result<Acknowledgment, String> {
-        let frame: Ingress = match serde_json::from_slice(body) {
-            Ok(frame) => frame,
-            Err(error) => {
-                // No frame name to record it under; the refusal goes back on
-                // the producer's acknowledgment subject only.
-                return Ok(refused_unrecorded(&format!("not a frame: {error}")));
-            }
-        };
-        let name = frame.frame().to_owned();
-        if name.is_empty() {
-            return Ok(refused_unrecorded("a frame needs a name"));
-        }
+        let decoded = serde_json::from_slice::<Ingress>(body);
+        let name = decoded.as_ref().ok().map(|f| f.frame()).filter(|name| !name.is_empty())
+            .map(str::to_owned).unwrap_or_else(|| format!("malformed/{}", blake3::hash(body).to_hex()));
         if let Some(stored) = self.stored(producer, &name).await? {
-            if stored.refusal.is_none() {
-                self.discard(producer, &name);
-            }
+            if stored.refusal.is_none() { self.discard(producer, &name); }
             return Ok(acknowledgment(stored));
         }
         let run = self.run(producer).await?;
-        let checked = match self.unwrap_large_frame(producer, frame).await {
-            Err(check) => Err(check),
-            Ok(Ingress::Material { material, .. }) => match self.sealed(producer).await? {
-                true => Err(Check::Refused(
-                    "this producer's records are sealed, and producer bytes cannot be stored sealed"
-                        .into(),
-                )),
-                false => match self.store_material(producer, &name, &material).await {
-                    Ok(()) => self.material(producer, &material),
-                    Err(check) => Err(check),
-                },
+        let decoded = match decoded {
+            Ok(frame) if !frame.frame().is_empty() => self.unwrap_large_frame(producer, frame).await,
+            Ok(_) => Err(Check::Malformed("a frame needs a name".into())),
+            Err(error) => Err(Check::Malformed(format!("not a frame: {error}"))),
+        };
+        let checked = match &decoded {
+            Err(check) => Err(check.clone()),
+            Ok(Ingress::Material { material, .. }) => match self.store_material(producer, &name, material).await {
+                Ok(()) => self.material(producer, material),
+                Err(check) => Err(check),
             },
-            Ok(Ingress::Events {
-                events, failures, ..
-            }) => self
-                .events(producer, &events, &failures)
-                .await
-                .map(|records| (None, records)),
-            Ok(chunk @ Ingress::Chunk { .. }) => self
-                .receive_chunk(producer, &chunk)
-                .await
-                .map(|()| (None, vec![])),
-            Ok(Ingress::LargeFrame { .. }) => unreachable!("unwrap_large_frame replaces indirect frames"),
+            Ok(Ingress::Events { events, failures, .. }) => self.events(producer, events, failures).await.map(|records| (None, records)),
+            Ok(chunk @ Ingress::Chunk { .. }) => self.receive_chunk(producer, chunk).await.map(|()| (None, vec![])),
+            Ok(Ingress::LargeFrame { .. }) => unreachable!("large frame was decoded"),
         };
         let batch = match checked {
             Ok((progress, records)) => Batch {
                 run,
                 kind: BatchKind::Ingress(Box::new(IngressFrame {
-                    producer: producer.to_owned(),
-                    frame: name.clone(),
-                    material: progress,
-                    refusal: None,
+                    producer: producer.to_owned(), frame: name.clone(), material: progress,
+                    refusal: None, refusal_kind: None,
                 })),
-                records,
-                archive: vec![],
+                records, archive: vec![],
             },
-            Err(Check::Refused(reason)) => refusal(run, producer, &name, reason),
             Err(Check::Unavailable(error)) => return Err(error),
+            Err(check) => self.refusal(run, producer, &name, decoded.as_ref().ok(), check).await?,
         };
         match self.writer.submit(Priority::Live, batch).await {
             Ok(_) => {}
@@ -197,20 +174,9 @@ impl Ingest {
                     }
                     return Ok(acknowledgment(stored));
                 }
-                // Admission refused the content (a NUL in a payload, an
-                // impossible value): record the frame as refused.
-                self.writer
-                    .submit(
-                        Priority::Live,
-                        refusal(
-                            run,
-                            producer,
-                            &name,
-                            format!("admission refused it: {reason}"),
-                        ),
-                    )
-                    .await
-                    .map_err(|e| e.to_string())?;
+                let refused = self.refusal(run, producer, &name, decoded.as_ref().ok(),
+                    Check::Refused(format!("admission refused it: {reason}"))).await?;
+                self.writer.submit(Priority::Live, refused).await.map_err(|e| e.to_string())?;
             }
         }
         let stored = self
@@ -221,6 +187,44 @@ impl Ingest {
             self.discard(producer, &name);
         }
         Ok(acknowledgment(stored))
+    }
+
+    async fn refusal(&mut self, run: RunId, producer: &str, name: &str, frame: Option<&Ingress>, check: Check) -> Result<Batch, String> {
+        let (kind, reason) = match check {
+            Check::Refused(reason) => (FrameRefusal::Content, reason),
+            Check::Bytes(reason) => (FrameRefusal::Bytes, reason),
+            Check::Malformed(reason) => (FrameRefusal::Malformed, reason),
+            Check::Unavailable(reason) => return Err(reason),
+        };
+        let mut batch = refusal(run, producer, name, kind, reason.clone());
+        if kind == FrameRefusal::Content && let Some(Ingress::Events { events, failures, .. }) = frame {
+            let mut locations: Vec<_> = events.iter().filter_map(|e| e.location)
+                .chain(failures.iter().map(|f| f.location)).collect();
+            let ids: Vec<_> = locations.iter().map(|l| l.material.0).collect();
+            let known = sinex_store::material_bytes::registered(&mut self.conn, &ids).await.map_err(|e| e.to_string())?;
+            if locations.is_empty() || locations.iter().any(|l| !known.contains(&l.material.0)) {
+                // A producer can send a wrong location after registering its material.
+                // Keep the failure on that producer's last registered material.
+                let material: Option<Uuid> = sqlx::query_scalar("SELECT material_id FROM core.ingress_frames WHERE producer = $1 AND material_id IS NOT NULL ORDER BY number DESC LIMIT 1")
+                    .bind(producer).fetch_optional(&mut self.conn).await.map_err(|e| e.to_string())?;
+                if let Some(material) = material {
+                    for location in &mut locations {
+                        if !known.contains(&location.material.0) { location.material = sinex_model::MaterialId(material); }
+                    }
+                    if locations.is_empty() { locations.push(sinex_model::RecordLocation { material: sinex_model::MaterialId(material), anchor: 0 }); }
+                }
+            }
+            locations.retain(|l| known.contains(&l.material.0) || !ids.contains(&l.material.0));
+            locations.sort_by_key(|l| (l.material.0, l.anchor));
+            locations.dedup();
+            batch.records = locations.into_iter().map(|location| RecordOutcome::Failure {
+                location, reason: reason.replace('\0', "\\0"),
+            }).collect();
+            if batch.records.is_empty() && let BatchKind::Ingress(frame) = &mut batch.kind {
+                frame.refusal_kind = Some(FrameRefusal::Malformed);
+            }
+        }
+        Ok(batch)
     }
 
     async fn stored(&mut self, producer: &str, frame: &str) -> Result<Option<StoredFrame>, String> {
@@ -381,9 +385,12 @@ impl Ingest {
     }
 }
 
+#[derive(Clone)]
 enum Check {
     /// The frame itself is wrong; it is recorded as refused.
     Refused(String),
+    Bytes(String),
+    Malformed(String),
     /// Sinex could not check it now; it is delivered again.
     Unavailable(String),
 }
@@ -398,20 +405,22 @@ fn record_hash(event_type: &str, payload: &Value) -> [u8; 32] {
     *hasher.finalize().as_bytes()
 }
 
-fn refusal(run: RunId, producer: &str, frame: &str, reason: String) -> Batch {
+fn refusal(run: RunId, producer: &str, frame: &str, kind: FrameRefusal, reason: String) -> Batch {
     Batch {
         run,
         kind: BatchKind::Ingress(Box::new(IngressFrame {
             producer: producer.to_owned(),
             frame: frame.to_owned(),
             material: None,
-            refusal: Some(reason),
+            refusal: Some(reason.replace('\0', "\\0")),
+            refusal_kind: Some(kind),
         })),
         records: vec![],
         archive: vec![],
     }
 }
 
+#[cfg(test)]
 fn refused_unrecorded(reason: &str) -> Acknowledgment {
     Acknowledgment {
         frame: String::new(),
@@ -449,6 +458,21 @@ pub(crate) struct Requests {
 }
 
 impl Requests {
+    async fn connect(&self, producer: &str, hello: &ProducerHello) -> Result<ProducerWelcome, String> {
+        let mut conn = self.reads.acquire().await.map_err(|e| e.to_string())?;
+        let privacy = sinex_store::privacy::load(&mut conn, std::iter::once(producer)).await.map_err(|e| e.to_string())?;
+        let refusal = if hello.version != sinex_protocol::PRODUCER_VERSION {
+            Some(format!("producer protocol version {} is unsupported; expected {}", hello.version, sinex_protocol::PRODUCER_VERSION))
+        } else if hello.class == sinex_model::Class::Sealed || privacy.floors.get(producer) == Some(&sinex_model::Class::Sealed) || privacy.rules.iter().any(|r| r.class == sinex_model::Class::Sealed) {
+            Some("producer bytes cannot be stored sealed".into())
+        } else {
+            // Producer-owned kind declarations are registered at this seam.
+            hello.event_types.iter().find(|name| event_types::find(name).is_none())
+                .map(|name| format!("producer event type {name} is not registered"))
+        };
+        Ok(ProducerWelcome { refusal })
+    }
+
     /// Answer a recorded query: the recorded acknowledgments of these frames.
     async fn recorded(
         &self,
@@ -529,7 +553,16 @@ impl Requests {
     /// producer.
     async fn answer(&self, subject: &str, payload: &[u8]) -> Option<Vec<u8>> {
         let producer = self.subjects.producer_of(subject)?.to_owned();
-        let body = if subject == self.subjects.recorded(&producer) {
+        let body = if subject == self.subjects.connect(&producer) {
+            let welcome = match serde_json::from_slice::<ProducerHello>(payload) {
+                Ok(hello) => match self.connect(&producer, &hello).await {
+                    Ok(welcome) => welcome,
+                    Err(_) => return None,
+                },
+                Err(error) => ProducerWelcome { refusal: Some(format!("not a producer declaration: {error}")) },
+            };
+            serde_json::json!(welcome)
+        } else if subject == self.subjects.recorded(&producer) {
             match serde_json::from_slice::<RecordedQuery>(payload) {
                 Ok(query) => match self.recorded(&producer, &query).await {
                     Ok(acks) => serde_json::json!(acks),
@@ -654,6 +687,7 @@ async fn serve(client: async_nats::Client, requests: Requests) -> Result<(), Str
         }
     };
     let mut incoming = futures::stream::select_all([
+        subscribe(requests.subjects.connect_all()).await?,
         subscribe(requests.subjects.recorded_all()).await?,
         subscribe(requests.subjects.materials_all()).await?,
         subscribe(requests.subjects.excise_all()).await?,

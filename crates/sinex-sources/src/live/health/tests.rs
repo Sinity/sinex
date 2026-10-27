@@ -130,6 +130,7 @@ fn startup_counts_an_unacknowledged_batch_once_and_then_counts_new_capture() {
     Position {
         cursor: before,
         carry: Value::Null,
+        capture_failures: Vec::new(),
     }
     .save(&positions, &binding.name)
     .unwrap();
@@ -142,7 +143,7 @@ fn startup_counts_an_unacknowledged_batch_once_and_then_counts_new_capture() {
         .with_extension("unacknowledged.json");
     std::fs::write(
         path,
-        serde_json::to_vec(&json!({"frames":[],"position":{"cursor":after,"carry":null}})).unwrap(),
+        serde_json::to_vec(&json!({"frames":[],"position":{"cursor":after,"carry":null,"capture_failures":[]},"sources":[],"mismatch":null})).unwrap(),
     )
     .unwrap();
     let counter = initialize(&positions, &binding).unwrap();
@@ -175,4 +176,20 @@ fn a_native_spool_name_does_not_stop_health_reporting() {
         report["spools"][0]["spool"],
         spool.to_string_lossy().as_ref()
     );
+}
+
+#[devkit::test]
+fn binding_errors_are_reported_with_the_reason_and_capture_failure_count() {
+    let dir = tempfile::tempdir().unwrap();
+    let spool = dir.path().join("spool");
+    std::fs::create_dir(&spool).unwrap();
+    let positions = dir.path().join("positions");
+    let (_, binding) = super::super::binding("hyprland", &spool, "synthetic", Value::Null).unwrap();
+    let counter = initialize(&positions, &binding).unwrap();
+    counter.lock().unwrap().error = Some("large-frame bytes are not a frame".into());
+    counter.lock().unwrap().capture_failures = 1;
+    snapshot(&positions, &[(binding, counter)]).unwrap();
+    let report: Value = serde_json::from_slice(&std::fs::read(dir.path().join("health.json")).unwrap()).unwrap();
+    assert_eq!(report["spools"][0]["state"], "error: large-frame bytes are not a frame");
+    assert_eq!(report["spools"][0]["capture_failures"], 1);
 }

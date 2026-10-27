@@ -10,6 +10,7 @@ use sinex_source_core::binding::{Binding, InputFormat, Reader, Settings};
 use sinex_source_core::capture::CaptureStop;
 use sinex_source_core::drivers::producer::{Error, Position, Producer, Store};
 use std::path::Path;
+use std::os::unix::ffi::OsStrExt;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -133,9 +134,6 @@ fn start(
         .ok_or_else(|| format!("{}: no spool reader", k.name))?)(&binding)?
     .into_polled()?;
     let source = (k.source)(&binding)?;
-    if source.spec().class == sinex_model::Class::Sealed {
-        return Err("sealed producer storage is unsupported".into());
-    }
     let health = health::initialize(positions, &binding)?;
     let stop = Arc::new(CaptureStop::new(None));
     let b = binding.clone();
@@ -264,6 +262,13 @@ async fn produce_spools(
     every: Duration,
     private: sinex_transport::private_mode::PrivateMode,
 ) -> Result<(), String> {
+    let mut declaration = sinex_protocol::ProducerHello::default();
+    for live in lives.iter() {
+        declaration.class = declaration.class.max(live.source.spec().class);
+        declaration.event_types.extend(live.source.spec().event_types.iter().map(|name| (*name).to_owned()));
+    }
+    declaration.event_types.sort();
+    declaration.event_types.dedup();
     let mut producer = None;
     let mut retry = Retry::default();
     loop {
@@ -277,6 +282,7 @@ async fn produce_spools(
                 connection.password_file.as_deref(),
                 connection.subjects.clone(),
                 &connection.producer,
+                &declaration,
             )
             .await
             {
@@ -287,6 +293,11 @@ async fn produce_spools(
                         connected
                     });
                     retry.recovered(&connection.producer);
+                }
+                Err(Error::Configuration(reason)) => {
+                    for live in lives.iter() { live.health.lock().unwrap().error = Some(reason.clone()); }
+                    notifier::raise(&connection.producer, &reason).await;
+                    return std::future::pending().await;
                 }
                 Err(error) => {
                     retry.failed(&connection.producer, "connecting", &error);
@@ -299,7 +310,7 @@ async fn produce_spools(
             producer.monitor(&live.binding.name, live.health.clone());
         }
         let mut had_material = false;
-        for live in lives.iter_mut().filter(|live| live.retry.ready()) {
+        for live in lives.iter_mut().filter(|live| live.retry.ready() && live.health.lock().unwrap().error.is_none()) {
             // A failed batch is replayed with its original frame IDs before
             // the reader may advance to newly captured material.
             match produce_spool(producer, store, positions, live).await {
@@ -307,10 +318,14 @@ async fn produce_spools(
                     had_material |= produced;
                     live.retry.recovered(&live.binding.name);
                 }
+                Err(Error::Refused { reason, kind: sinex_model::FrameRefusal::Malformed | sinex_model::FrameRefusal::Content, recorded: true, .. } | Error::Configuration(reason)) => {
+                    live.health.lock().unwrap().error = Some(reason.clone());
+                    notifier::raise(&live.binding.name, &reason).await;
+                }
                 Err(error @ (Error::Nats(_) | Error::NoAck(_) | Error::Refused { .. })) => {
                     let state = match error {
                         Error::NoAck(_) => "awaiting acknowledgment",
-                        Error::Refused { .. } => "awaiting admission",
+                        Error::Refused { .. } => "retrying bytes",
                         _ => "unavailable",
                     };
                     live.retry.failed(&live.binding.name, state, &error);
@@ -344,7 +359,7 @@ async fn produce_spool(
         .position(&live.binding.name, positions, store)
         .await?;
     if recovering {
-        live.reader.remove_passed(&position.cursor)?;
+        remove_passed(live, &position)?;
         return Ok(true);
     }
     let acquired = live.reader.poll(&position.cursor)?;
@@ -356,14 +371,26 @@ async fn produce_spool(
             acquired,
             store,
             positions,
+            &live.binding.input,
         )
         .await?;
     let committed = Position::load(positions, &live.binding.name)?;
-    live.reader.remove_passed(&committed.cursor)?;
+    remove_passed(live, &committed)?;
     Ok(had_material)
 }
 
+fn remove_passed(live: &mut Live, position: &Position) -> Result<(), Error> {
+    live.health.lock().unwrap().capture_failures = position.capture_failures.len();
+    let mut cursor = position.cursor.clone();
+    if !position.capture_failures.is_empty() {
+        cursor["keep_files"] = serde_json::to_value(position.capture_failures.iter().flat_map(|failure| failure.ranges.iter().map(|range| range.path.as_os_str().as_bytes().to_vec())).collect::<Vec<_>>()).expect("paths serialize");
+    }
+    live.reader.remove_passed(&cursor)?;
+    Ok(())
+}
+
 mod health;
+mod notifier;
 
 /// `key=value` pairs as source options: numbers and booleans keep their types, a repeated key
 /// collects a list, and directory lists (`roots`, `skip`) are lists even with

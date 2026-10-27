@@ -173,16 +173,35 @@ event each. A type can declare the least class its events are stored
 under (`class = guarded` on `polylogue.message`), whatever class the producer
 asks for. Sinex has no AI-chat parser of its own.
 
-The live producers start capture before connecting to NATS. Connection and
-publishing failures retry with exponential delays from one to 30 seconds while
-capture keeps writing. Each acknowledged frame is removed from the durable
-pending batch before another is sent. Recorded invalid event-frame refusals are skipped and kept for inspection. A refused material keeps its whole batch pending, with its captured bytes, because later parts and events may name that material. Unrecorded
-refusals and failures to upload chunks remain pending for retry. The writer
-keeps temporary database and storage failures separate from invalid content,
-so the ingress leaves those frames pending rather than recording refusals.
-Each pass publishes at most one material per binding, in round-robin order. A nonempty pass continues immediately; only idle passes wait for the next poll or retry. Capture source failures also restart independently of publishing. Unwritable
-local storage and undecodable state stop production because reconnecting cannot
-repair them.
+The live producers start capture before connecting to NATS. At connect they
+send their protocol version, maximum class and event type names; the daemon
+refuses an unsupported version, sealed storage or unknown event types before
+any frame is sent. Producer-owned type declarations can be registered at this
+connect check. A refused connection stays in local status and is sent to the
+desktop notifier while capture continues.
+
+Connection and publishing failures retry with exponential delays from one to
+30 seconds while capture keeps writing. Each acknowledged frame is removed
+from the durable batch before another is sent. A content refusal of an events
+frame records ordinary failures on its material in the same transaction as the
+refused acknowledgment. The producer advances, and the existing material
+replay reads those bytes with the corrected parser or declarations. Refused
+frames have no separate local store or replay command.
+
+A byte refusal rebuilds the transfer from the original spool range and the
+saved logical frame, then resends under a new frame name. Three identical
+refusals for the same spool bytes record a capture failure with that range in
+the existing position state and advance past it. Spool cleanup keeps those
+files. An unregistered material is skipped without making the next part name
+it. Malformed frames are recorded as refusals and report the binding as
+`error: <reason>`, also sent to the notifier. Unrecorded content refusals and
+storage or database failures remain retryable.
+
+Each pass publishes at most one material per binding, in round-robin order.
+A nonempty pass continues immediately; only idle passes wait for the next poll
+or retry. Capture source failures restart independently of publishing.
+Unwritable local storage and undecodable state stop production because
+reconnecting cannot repair them.
 
 The producer counts existing spools once at startup. Capture writes and acknowledged batches then update running counters without rereading spools. Every two seconds a blocking worker writes `health.json` in its state
 directory, independently of publishing. It reports the observation time and

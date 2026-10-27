@@ -12,6 +12,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use sinex_model::{InputRef, MaterialId, ObservationFacts, RevisionChange, Timestamp};
 use std::path::{Path, PathBuf};
+use std::os::unix::ffi::OsStringExt;
 
 /// One record, the whole stored file.
 pub fn whole(bytes: &[u8]) -> (Vec<(usize, usize)>, usize) {
@@ -149,7 +150,8 @@ impl Media {
         };
         let mut n = 0;
         for (stem, path) in complete(&self.spool)? {
-            if stem <= last {
+            let keep = committed.get("keep_files").and_then(Value::as_array).is_some_and(|paths| paths.iter().any(|p| serde_json::from_value::<Vec<u8>>(p.clone()).is_ok_and(|keep| PathBuf::from(std::ffi::OsString::from_vec(keep)) == path)));
+            if stem <= last && !keep {
                 std::fs::remove_file(&path)?;
                 let _ = std::fs::remove_file(self.spool.join(format!("{stem}.json")));
                 n += 1;
