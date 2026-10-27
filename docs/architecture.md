@@ -181,7 +181,7 @@ skipped; a refused material also skips the events that cite it. Refused frames a
 refusals and failures to upload chunks remain pending for retry. The writer
 keeps temporary database and storage failures separate from invalid content,
 so the ingress leaves those frames pending rather than recording refusals.
-Each pass publishes at most one material per binding, in round-robin order. Capture source failures also restart independently of publishing. Unwritable
+Each pass publishes at most one material per binding, in round-robin order. A nonempty pass continues immediately; only idle passes wait for the next poll or retry. Capture source failures also restart independently of publishing. Unwritable
 local storage and undecodable state stop production because reconnecting cannot
 repair them.
 

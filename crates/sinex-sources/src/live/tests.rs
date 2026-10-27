@@ -487,7 +487,7 @@ async fn backlogged_bindings_publish_materials_in_alternating_order() {
             &store,
             &positions,
             bindings,
-            Duration::from_millis(10),
+            Duration::from_secs(60),
             None,
             private,
         )
