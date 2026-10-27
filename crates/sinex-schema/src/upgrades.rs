@@ -72,8 +72,8 @@ fn versioned_kind_declarations() -> Vec<String> {
 
 // The deployed unversioned registry gains these names before it is upgraded.
 fn query_records() -> Vec<String> {
-    use sinex_model::{DbCheck, EventPayload};
     use sinex_model::event_types::query::{Mark, Saved};
+    use sinex_model::{DbCheck, EventPayload};
     let literal = |s: &str| format!("'{}'", s.replace('\'', "''"));
     [("operator.mark", Mark::payload_schema(), "location", "ARRAY[]::text[]", sinex_model::ReplaceRule::SuppressRepeat.as_db()),
      ("query.saved", Saved::payload_schema(), "fields", "ARRAY['name','by']::text[]", sinex_model::ReplaceRule::ReplaceWhenNewer.as_db())]
