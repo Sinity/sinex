@@ -390,9 +390,15 @@ impl Cluster {
             directory.replace('\\', "\\\\").replace('\'', "''")
         ));
         fs::write(data.join("postgresql.auto.conf"), configuration).map_err(|e| e.to_string())?;
+        // pg_ctl can time out while the server continues starting.
+        let cluster = Cluster {
+            data,
+            socket,
+            stopped: false,
+        };
         let ok = Command::new("pg_ctl")
             .arg("-D")
-            .arg(&data)
+            .arg(&cluster.data)
             .arg("-l")
             .arg(dir.join("log"))
             .args(["-w", "start"])
@@ -406,11 +412,6 @@ impl Cluster {
                 dir.join("log").display()
             ));
         }
-        let cluster = Cluster {
-            data,
-            socket,
-            stopped: false,
-        };
         let ok = Command::new("createdb")
             .arg("-h")
             .arg(&cluster.socket)
