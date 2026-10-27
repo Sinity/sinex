@@ -44,3 +44,14 @@ pub async fn load(conn: &mut PgConnection, binding: &str) -> Result<Option<Store
     .fetch_optional(&mut *conn)
     .await?)
 }
+
+/// Every stored binding of a source.
+pub async fn for_source(conn: &mut PgConnection, source: &str) -> Result<Vec<Stored>> {
+    Ok(sqlx::query_as!(
+        Stored,
+        "SELECT binding, source, input, settings FROM raw.bindings WHERE source = $1",
+        source
+    )
+    .fetch_all(&mut *conn)
+    .await?)
+}

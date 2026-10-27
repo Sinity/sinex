@@ -55,6 +55,7 @@ pub(crate) async fn item_view(conn: &mut PgConnection, item: &str) -> R<Value> {
                 "present": a.vanished_at.is_none(),
                 "same_bytes_as_item": a.content == it.content,
                 "stored": a.stored,
+                "move_candidates": a.move_candidates,
             })
         })
         .collect();

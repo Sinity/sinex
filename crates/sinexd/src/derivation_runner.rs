@@ -899,23 +899,17 @@ pub(crate) async fn compute_now(
     let result: Result<Counts, String> = async {
         let env = Env::at(Timestamp::now());
         let mut counts = Counts::default();
-        for chunk in keys.chunks(KEYS_PER_BATCH) {
-            let head = derivations::head(conn).await.map_err(|e| e.to_string())?;
-            let work = chunk
-                .iter()
-                .cloned()
-                .map(|key| (key, head, false))
-                .collect();
-            KeyComputation {
-                read: conn,
-                writer,
-                derivation,
-                run,
-                counts: &mut counts,
-            }
-            .compute(work, &env)
-            .await?;
+        let head = derivations::head(conn).await.map_err(|e| e.to_string())?;
+        let work = keys.into_iter().map(|key| (key, head, false)).collect();
+        KeyComputation {
+            read: conn,
+            writer,
+            derivation,
+            run,
+            counts: &mut counts,
         }
+        .compute(work, &env)
+        .await?;
         Ok(counts)
     }
     .await;

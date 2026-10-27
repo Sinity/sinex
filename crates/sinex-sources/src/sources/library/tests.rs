@@ -451,9 +451,8 @@ fn library_format_plans_one_file_without_reading_its_neighbours() {
 }
 
 #[devkit::test]
-fn an_unreadable_directory_preserves_known_files_and_retries_the_walk() {
+fn an_unreadable_directory_reports_partial_coverage_and_other_files_continue() {
     use std::os::unix::fs::PermissionsExt;
-
     let dir = tempfile::tempdir().unwrap();
     let nested = dir.path().join("nested");
     std::fs::create_dir(&nested).unwrap();
@@ -462,22 +461,63 @@ fn an_unreadable_directory_preserves_known_files_and_retries_the_walk() {
     let mut state = ScanState::default();
     let acquired = scanner.poll(&Value::Null, &mut state).unwrap();
     let (_, cursor) = stored(&acquired);
-    let known = state.files.clone();
-
+    let known = state.files["nested/image.png"].clone();
+    std::fs::write(dir.path().join("new.png"), png(20, 20)).unwrap();
     std::fs::set_permissions(&nested, std::fs::Permissions::from_mode(0o000)).unwrap();
-    let unavailable = scanner.poll(&cursor, &mut state);
+    let partial = scanner.poll(&cursor, &mut state);
     std::fs::set_permissions(&nested, std::fs::Permissions::from_mode(0o700)).unwrap();
-    assert!(matches!(unavailable, Err(DriverError::Io(_))));
-    assert_eq!(state.files, known);
-    assert!(!state.walk_pending);
-    assert!(state.queue.is_empty());
-    assert!(
-        scanner
-            .poll(&cursor, &mut state)
-            .unwrap()
-            .material
-            .is_none()
+    let partial = partial.unwrap();
+    let material = partial.material.as_ref().unwrap();
+    let result = drain(
+        &ScanParser,
+        DrainInput {
+            source: SCAN.name,
+            class: Class::Open,
+            material: material.id,
+            bytes: material.record_bytes(),
+            records: &material.records,
+            carry: Value::Null,
+            reading_order: &*material.reading_order,
+            limits: Limits::default(),
+            manifest: &material.manifest,
+        },
+    )
+    .unwrap();
+    let outcomes: Vec<_> = result
+        .into_iter()
+        .flat_map(|batch| batch.outcomes)
+        .collect();
+    let failures: Vec<_> = outcomes
+        .iter()
+        .filter_map(|outcome| match outcome {
+            RecordOutcome::Failure { reason, .. } => Some(reason),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(failures.len(), 1);
+    assert!(failures[0].contains("partial library scan"));
+    assert!(failures[0].contains("nested"));
+    let copies: Vec<FileCopy> = outcomes
+        .into_iter()
+        .flat_map(|outcome| match outcome {
+            RecordOutcome::Events { events, .. } => events,
+            _ => vec![],
+        })
+        .map(|event| event.payload_as().unwrap())
+        .collect();
+    assert_eq!(copies.len(), 1);
+    assert!(copies[0].path.ends_with("new.png"));
+    assert_eq!(state.files["nested/image.png"], known);
+    let (_, next) = stored(&partial);
+    assert_eq!(
+        next["last_complete_walk_ns"],
+        cursor["last_complete_walk_ns"]
     );
+    // The successful retry discovers changes under the unreadable directory.
+    std::fs::write(nested.join("second.png"), png(30, 30)).unwrap();
+    let retry = read(&scanner.poll(&next, &mut state).unwrap(), &ScanParser);
+    assert_eq!(retry.len(), 1);
+    assert!(retry[0].path.ends_with("nested/second.png"));
 }
 
 #[devkit::test]
@@ -748,4 +788,84 @@ fn completion_records_do_not_advance_the_file_memory_checkpoint() {
         (_, cursor) = stored(&acquired);
     }
     std::fs::remove_dir_all(root).unwrap();
+}
+
+#[devkit::test]
+fn a_reused_path_gets_a_separate_key_while_the_moved_item_is_present() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("a.png"), png(10, 10)).unwrap();
+    let scanner = scan(dir.path());
+    let mut state = ScanState::default();
+    let first = scanner.poll(&Value::Null, &mut state).unwrap();
+    let old = read(&first, &ScanParser).remove(0);
+    let (_, cursor) = stored(&first);
+    std::fs::rename(dir.path().join("a.png"), dir.path().join("b.png")).unwrap();
+    let moved = scanner.poll(&cursor, &mut state).unwrap();
+    let (_, cursor) = stored(&moved);
+    std::fs::write(dir.path().join("a.png"), png(20, 20)).unwrap();
+    let acquired = scanner.poll(&cursor, &mut state).unwrap();
+    let new = read(&acquired, &ScanParser).remove(0);
+    assert_ne!(new.item, old.item);
+    assert_eq!(state.files["b.png"].item_key, old.item_key);
+    assert!(
+        new.item_key
+            .ends_with(&acquired.material.as_ref().unwrap().id.to_string())
+    );
+    let mut restarted = ScanState::default();
+    let (bytes, cursor) = stored(&acquired);
+    restarted
+        .remember_part(dir.path(), bytes.bytes.as_ref(), bytes.reference.length)
+        .unwrap();
+    let (bytes, _) = stored(&moved);
+    restarted
+        .remember_part(dir.path(), bytes.bytes.as_ref(), bytes.reference.length)
+        .unwrap();
+    restarted.remembered.clear();
+    assert_eq!(restarted.files["a.png"].item_key, new.item_key);
+    assert_eq!(restarted.files["b.png"].item_key, old.item_key);
+    assert!(
+        scanner
+            .poll(&cursor, &mut restarted)
+            .unwrap()
+            .material
+            .is_none()
+    );
+}
+
+#[devkit::test]
+fn one_missing_path_and_several_new_equal_copies_report_ambiguity_across_parts() {
+    let dir = tempfile::tempdir().unwrap();
+    let bytes = png(10, 10);
+    std::fs::write(dir.path().join("old.png"), &bytes).unwrap();
+    let mut scanner = scan(dir.path());
+    let mut state = ScanState::default();
+    let first = scanner.poll(&Value::Null, &mut state).unwrap();
+    let old = read(&first, &ScanParser).remove(0);
+    let (_, mut cursor) = stored(&first);
+    // Remove identity evidence, as when a file is moved between file systems.
+    state.files.get_mut("old.png").unwrap().inode = None;
+    std::fs::remove_file(dir.path().join("old.png")).unwrap();
+    for name in ["a.png", "b.png"] {
+        std::fs::write(dir.path().join(name), &bytes).unwrap();
+    }
+    scanner.bytes_per_poll = bytes.len() as u64;
+    let mut copies = Vec::new();
+    for _ in 0..2 {
+        let part = scanner.poll(&cursor, &mut state).unwrap();
+        copies.extend(read(&part, &ScanParser));
+        cursor = stored(&part).1;
+    }
+    let present: Vec<_> = copies
+        .iter()
+        .filter(|copy| copy.vanished_at.is_none())
+        .collect();
+    assert_eq!(present.len(), 2);
+    assert_ne!(present[0].item, present[1].item);
+    for copy in present {
+        assert_ne!(copy.item, old.item);
+        assert!(copy.moved_from.is_none());
+        assert_eq!(copy.move_candidates.len(), 3);
+        assert!(copy.move_candidates.contains(&old.path));
+    }
+    assert_eq!(state.files_hashed, 3, "each new file was hashed once");
 }

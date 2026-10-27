@@ -24,6 +24,7 @@ fn copy(part_index: u32, content: &str) -> serde_json::Value {
         inode: None,
         modified_at: None,
         moved_from: None,
+        move_candidates: Vec::new(),
         previous_content: None,
         vanished_at: None,
     })

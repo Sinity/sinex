@@ -59,6 +59,7 @@ impl World {
             Some(&self.writer),
             &self.blobs,
             "h",
+            &[],
             request,
             "operator",
         )
@@ -514,6 +515,7 @@ async fn the_library_end_to_end(db: devkit::pg::TestDatabase) {
         writer: &w.writer,
         blobs: &w.blobs,
         host: "h",
+        roots: &[],
     };
     std::fs::remove_dir_all(w.root.parent().unwrap()).unwrap();
 }
@@ -951,4 +953,196 @@ async fn an_unchanged_rescan_counts_each_item_once_after_hiding_a_move_removal(
     assert_eq!(view["copies"].as_array().unwrap().len(), 2);
     assert_eq!(view["revisions"].as_array().unwrap().len(), 2);
     std::fs::remove_dir_all(w.root.parent().unwrap()).unwrap();
+}
+
+#[devkit::test]
+async fn a_new_file_at_a_moved_items_old_path_keeps_curation_separate(
+    db: devkit::pg::TestDatabase,
+) {
+    let mut w = world(db).await;
+    let a = w.root.join("a.txt");
+    let b = w.root.join("b.txt");
+    std::fs::write(&a, "first item").unwrap();
+    let add = Request::LibraryAdd {
+        path: w.root.display().to_string(),
+        reference: None,
+    };
+    w.ok(add.clone()).await;
+    let original = w.item_at(&a).await;
+    w.ok(Request::LibraryTag {
+        item: original.clone(),
+        tag: "original".into(),
+    })
+    .await;
+    std::fs::rename(&a, &b).unwrap();
+    w.ok(add.clone()).await;
+    assert_eq!(w.item_at(&b).await, original);
+    std::fs::write(&a, "different item").unwrap();
+    let added = w.ok(add.clone()).await;
+    assert_eq!(added["items_new"], 1);
+    let new = w.item_at(&a).await;
+    assert_ne!(original, new);
+    w.ok(Request::LibraryTag {
+        item: new.clone(),
+        tag: "new".into(),
+    })
+    .await;
+    let old_view = w
+        .ok(Request::LibraryItem {
+            item: original.clone(),
+        })
+        .await;
+    let new_view = w.ok(Request::LibraryItem { item: new.clone() }).await;
+    assert_eq!(old_view["tags"][0]["tag"], "original");
+    assert_eq!(new_view["tags"][0]["tag"], "new");
+    assert_eq!(old_view["tags"].as_array().unwrap().len(), 1);
+    assert_eq!(new_view["tags"].as_array().unwrap().len(), 1);
+    assert_eq!(w.ok(add).await["items_new"], 0);
+    assert_eq!(w.item_at(&a).await, new);
+    assert_eq!(w.item_at(&b).await, original);
+}
+
+#[devkit::test]
+async fn selections_inside_a_configured_root_use_one_item_and_preserve_other_paths(
+    db: devkit::pg::TestDatabase,
+) {
+    let mut w = world(db).await;
+    let selected = w.root.join("sub/x.txt");
+    let outside = w.root.join("outside.txt");
+    std::fs::write(&selected, "selected").unwrap();
+    std::fs::write(&outside, "outside").unwrap();
+    let roots = [w.root.clone()];
+    let result = dispatch(
+        &mut w.conn,
+        Some(&w.writer),
+        &w.blobs,
+        "h",
+        &roots,
+        Request::LibraryAdd {
+            path: selected.display().to_string(),
+            reference: None,
+        },
+        "operator",
+    )
+    .await
+    .unwrap();
+    assert_eq!(result["root"], w.root.display().to_string());
+    assert_eq!(result["files_described"], 1);
+    let item = w.item_at(&selected).await;
+    let full = w
+        .ok(Request::LibraryAdd {
+            path: w.root.display().to_string(),
+            reference: None,
+        })
+        .await;
+    assert_eq!(full["items_new"], 1, "only the outside file is new");
+    assert_eq!(w.item_at(&selected).await, item);
+    let other = w.item_at(&outside).await;
+    // Stored bindings also keep the root for later command selections.
+    std::fs::write(w.root.join("sub/another.txt"), "another").unwrap();
+    let partial = w
+        .ok(Request::LibraryAdd {
+            path: w.root.join("sub").display().to_string(),
+            reference: None,
+        })
+        .await;
+    assert_eq!(partial["root"], w.root.display().to_string());
+    assert_eq!(partial["files_described"], 1);
+    assert_eq!(w.item_at(&selected).await, item);
+    assert_eq!(w.item_at(&outside).await, other);
+    assert_eq!(rows(&mut w.conn, "items").await, 3);
+}
+
+#[devkit::test]
+async fn one_to_many_move_ambiguity_is_visible_without_transferring_curation(
+    db: devkit::pg::TestDatabase,
+) {
+    let mut w = world(db).await;
+    let old_path = w.root.join("old.txt");
+    std::fs::write(&old_path, "equal bytes").unwrap();
+    let add = Request::LibraryAdd {
+        path: w.root.display().to_string(),
+        reference: None,
+    };
+    w.ok(add.clone()).await;
+    let old = w.item_at(&old_path).await;
+    w.ok(Request::LibraryTag {
+        item: old.clone(),
+        tag: "kept".into(),
+    })
+    .await;
+    for path in ["a.txt", "b.txt"] {
+        std::fs::copy(&old_path, w.root.join(path)).unwrap();
+    }
+    std::fs::remove_file(&old_path).unwrap();
+    let added = w.ok(add).await;
+    assert_eq!(added["items_new"], 2);
+    assert_eq!(added["items_moved"], 0);
+    for path in ["a.txt", "b.txt"] {
+        let item = w.item_at(&w.root.join(path)).await;
+        assert_ne!(item, old);
+        let view = w.ok(Request::LibraryItem { item }).await;
+        assert!(view["tags"].as_array().unwrap().is_empty());
+        assert_eq!(
+            view["copies"][0]["move_candidates"]
+                .as_array()
+                .unwrap()
+                .len(),
+            3
+        );
+    }
+    let view = w.ok(Request::LibraryItem { item: old }).await;
+    assert_eq!(view["tags"][0]["tag"], "kept");
+}
+
+#[devkit::test]
+async fn a_partial_library_add_reports_failures_and_admits_readable_files(
+    db: devkit::pg::TestDatabase,
+) {
+    use std::os::unix::fs::PermissionsExt;
+    let mut w = world(db).await;
+    let blocked = w.root.join("sub");
+    std::fs::write(blocked.join("known.txt"), "known").unwrap();
+    let add = Request::LibraryAdd {
+        path: w.root.display().to_string(),
+        reference: None,
+    };
+    w.ok(add.clone()).await;
+    let known = w.item_at(&blocked.join("known.txt")).await;
+    std::fs::write(w.root.join("new.txt"), "new").unwrap();
+    std::fs::set_permissions(&blocked, std::fs::Permissions::from_mode(0o000)).unwrap();
+    let result = w.run(add).await;
+    std::fs::set_permissions(&blocked, std::fs::Permissions::from_mode(0o700)).unwrap();
+    let result = result.unwrap();
+    assert_eq!(result["scan_failures"], 1);
+    assert_eq!(result["items_new"], 1);
+    assert_eq!(w.item_at(&blocked.join("known.txt")).await, known);
+}
+
+#[devkit::test]
+#[ignore = "paired 10,000-file library-add measurement"]
+async fn library_add_ten_thousand_files(db: devkit::pg::TestDatabase) {
+    let mut w = world(db).await;
+    for index in 0..10_000 {
+        std::fs::write(
+            w.root.join(format!("file-{index:05}.txt")),
+            format!("synthetic file {index:05}\n"),
+        )
+        .unwrap();
+    }
+    let started = std::time::Instant::now();
+    let result = w
+        .ok(Request::LibraryAdd {
+            path: w.root.display().to_string(),
+            reference: Some(true),
+        })
+        .await;
+    let seconds = started.elapsed().as_secs_f64();
+    assert_eq!(result["items_new"], 10_000);
+    assert_eq!(result["copies_admitted"], 10_000);
+    assert_eq!(result["library_records_written"], 20_000);
+    eprintln!(
+        "LIBRARY_ADD_MEASUREMENT {}",
+        json!({"files": 10_000, "reference": true, "seconds": seconds, "result": result})
+    );
 }

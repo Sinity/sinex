@@ -37,6 +37,7 @@ fn copy_at(path: &str, content: &str, part_index: u32, seconds: i64, original: &
         inode: None,
         modified_at: None,
         moved_from: None,
+        move_candidates: Vec::new(),
         previous_content: None,
         vanished_at: None,
     };
@@ -162,4 +163,70 @@ fn clock_corrections_do_not_change_capture_order() {
     let output = compute(&[second, first]);
     assert_eq!(item(&output).revision, "blake3:b");
     assert_eq!(item(&output).replaces.as_deref(), Some("blake3:a"));
+}
+
+#[devkit::test]
+fn preview_evidence_derives_a_rendition_with_both_parents_without_external_tools() {
+    use sinex_model::event_types::library::Preview;
+    let original = copy("/r/a.png", "blake3:a", 1, "a.png");
+    let payload = Preview {
+        rendition: "preview-a".into(),
+        item: original.payload["item"].as_str().unwrap().into(),
+        revision: "blake3:a".into(),
+        role: RenditionRole::Preview,
+        content: "blake3:preview".into(),
+        media_type: "image/webp".into(),
+        width: Some(1),
+        height: Some(1),
+        duration_ms: None,
+        made_from: Some(format!(
+            "{}:blake3:a",
+            original.payload["item"].as_str().unwrap()
+        )),
+        made_with: serde_json::Map::from_iter([("tool".into(), Value::from("synthetic"))]),
+        by: "operator".into(),
+        at: Timestamp::from_unix_secs(2).unwrap(),
+        withdrawn_at: None,
+    };
+    let preview = Event::build(
+        &payload,
+        "library.request",
+        Origin::Record {
+            location: RecordLocation {
+                material: MaterialId::new(),
+                anchor: 0,
+            },
+            output_index: 0,
+        },
+        ReadingOrder(2),
+        [0; 32],
+        Class::Open,
+    )
+    .unwrap();
+    let output = compute(&[original.clone(), preview.clone()]);
+    let derived = output
+        .iter()
+        .find(|event| event.payload["rendition"] == "preview-a")
+        .unwrap();
+    let rendition: Rendition = derived.payload_as().unwrap();
+    assert_eq!(rendition.part_index, 1);
+    assert_eq!(rendition.content, payload.content);
+    assert_eq!(rendition.made_from, payload.made_from);
+    assert_eq!(rendition.made_with, payload.made_with);
+    assert_eq!(rendition.by, "operator");
+    let Origin::Derived { parents } = &derived.origin else {
+        panic!("derived rendition");
+    };
+    assert_eq!(parents.len(), 2);
+    assert!(parents.contains(&original.id));
+    assert!(parents.contains(&preview.id));
+    assert!(
+        compute(&[preview]).is_empty(),
+        "a preview alone cannot supply a revision"
+    );
+    assert_eq!(
+        compute(&[original]).len(),
+        2,
+        "removing the preview leaves the original and item"
+    );
 }

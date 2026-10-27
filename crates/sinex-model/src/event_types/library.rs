@@ -60,6 +60,8 @@ pub struct FileCopy {
     /// The earlier path matched by device and inode, or by a unique content
     /// match among missing paths.
     pub moved_from: Option<String>,
+    /// Paths that could be the same item; no move is inferred when several match.
+    pub move_candidates: Vec<String>,
     /// The earlier bytes at this path, when its content changed.
     pub previous_content: Option<String>,
     /// When a completed scan first found the file gone.

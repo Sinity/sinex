@@ -37,8 +37,10 @@ uses its stored bytes and never registers its data key again.
 Library roots are planned by their format; crawl commands supply their URL
 list as binding settings. Both are read by the binding runner. A library file selection
 is a scan of that file within its root; files beside it are neither read nor
-reported removed. A failed directory walk keeps the previous file facts and
-retries without inferring removals. A scan records only paths whose size, modification time,
+reported removed. File and directory selections inside a configured root use
+that root's item identities. An unreadable entry records a scan failure and the
+walk continues elsewhere; earlier facts under the unreadable path stay in
+place until a successful retry. A scan records only paths whose size, modification time,
 device, inode or stored-byte setting changed, plus paths found missing.
 Unchanged polls write no material or copy events. One completion record closes
 each changed scan after its last part; it produces no copy event. Unchanged
@@ -48,8 +50,11 @@ path. The captured material identifies each scan part; its part index orders
 changes even when clocks repeat or move backwards. A move within the root
 keeps that key when the old path is missing and the bytes match: a unique
 device and inode match takes precedence, otherwise a unique equal-content
-match is required. Ambiguous matches create new items and leave existing
-items and their curation separate. Changed bytes at the same key create a
+match is required in both directions. The scan compares all possible matches
+before emitting its first part. Ambiguous copies list their move candidates,
+create new items and leave existing curation separate. A new file at a moved
+item's original path gets a key that also names its first scan material, so
+two present files cannot take the same item key. Changed bytes at the same key create a
 revision named by the content hash, including replacement by another inode.
 Moving or renaming a whole root starts new items until an explicit root
 relocation is recorded. Root relocation recording is not yet implemented.
@@ -67,7 +72,8 @@ three transitions while reusing A's rendition. Library commands report actual
 admission counts and wait for their requested keys through the same batched
 computation engine as the background runner. A shared lock serializes keyed
 computations before reading inputs, so an older read cannot overwrite a
-command's newer outputs. Command runs end on both success and failure.
+command's newer outputs. Item keys with the same input range share one paged
+query over all their values, rather than reading the library once per item. Command runs end on both success and failure.
 
 Schema version 5 adds the scan identity fields and the preview evidence type.
 It upgrades databases without library records. A database containing library
