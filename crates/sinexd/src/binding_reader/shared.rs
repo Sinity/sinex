@@ -1,13 +1,13 @@
 //! One pass over a stored file shared by every compatible binding of it:
 //! the file is stored once (sealed when the bindings' class is), read forward
 //! once, and each binding's acquisitions are admitted as the pass reaches them.
+use super::Reading;
 use super::{Access, BindingReader};
 use crate::backfill::{self, Totals};
 use crate::material_sink::Sink;
 use crate::writer::WriterHandle;
 use serde_json::Value;
 use sinex_model::{Class, ObservationFacts, RunId};
-use sinex_sources::Reading;
 use sinex_sources::drivers;
 use sinex_sources::shared_pass::{self, StoredFile};
 use sinex_store::{Blobs, positions};
@@ -291,22 +291,25 @@ pub(super) async fn read_shared(
             } else {
                 carry
             };
-            let archive_sink: &dyn drivers::MaterialSink = match &sealing {
-                Some(sealing) => sealing.as_ref(),
-                None => sink,
+            let archive_sink: Arc<dyn drivers::MaterialSink> = match &sealing {
+                Some(sealing) => sealing.clone(),
+                None => Arc::new(Sink(sink.0.clone())),
             };
             let total = totals[slot].as_mut().map_err(|e| e.clone())?;
+            let checked_stop = stop.clone();
             crate::intake::Intake {
                 writer,
                 run,
-                source: b.source.as_ref(),
+                source: b.source.clone(),
                 binding: &b.binding.name,
                 sink: archive_sink,
-                sealing: sealing.as_deref(),
+                sealing: sealing.clone(),
                 unlock: access.unlock,
                 class: pass.class,
-                check: Arc::new(|| {
-                    if sinex_transport::private_mode::PrivateMode::default().on() {
+                check: Arc::new(move || {
+                    if *checked_stop.borrow()
+                        || sinex_transport::private_mode::PrivateMode::default().on()
+                    {
                         Err("private mode is on; admission stopped".into())
                     } else {
                         Ok(())

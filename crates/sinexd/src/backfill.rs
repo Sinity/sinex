@@ -59,6 +59,10 @@ pub(crate) struct Totals {
     failures: usize,
     dirty_keys: usize,
     admit_time: Duration,
+    poll_time: Duration,
+    parse_time: Duration,
+    queue_time: Duration,
+    service_time: Duration,
     wall: Duration,
     files_stored: u64,
     pass_decoded_bytes: u64,
@@ -231,12 +235,12 @@ pub(crate) async fn drive(
     read_conn: &mut PgConnection,
     handle: &writer::WriterHandle,
     run: RunId,
-    source: &dyn Source,
+    source: std::sync::Arc<dyn Source>,
     binding: &str,
     sink: &Sink,
     access: crate::sealed_access::Access<'_>,
     minimum_class: sinex_model::Class,
-    reader: &mut dyn sinex_sources::Reader,
+    reader: &mut crate::binding_reader::polled::PolledReader,
     stop: tokio::sync::watch::Receiver<bool>,
 ) -> Result<Totals, String> {
     let mut totals = Totals::default();
@@ -263,10 +267,10 @@ pub(crate) async fn drive(
                 source.spec().name
             )
         })?;
-        Some(crate::material_sink::SealingSink::new(
+        Some(std::sync::Arc::new(crate::material_sink::SealingSink::new(
             sink.0.clone(),
             recipient,
-        ))
+        )))
     } else {
         None
     };
@@ -302,7 +306,9 @@ pub(crate) async fn drive(
             .await
             .map_err(|e| e.to_string())?
             .unwrap_or((serde_json::Value::Null, serde_json::Value::Null));
-        let mut acquired = reader.poll(&cursor).map_err(|e| e.to_string())?;
+        let poll_started = Instant::now();
+        let mut acquired = reader.acquire(cursor.clone()).await?;
+        totals.poll_time += poll_started.elapsed();
         drivers::note_previous_through(&cursor, &mut acquired);
         if let Some(unlock) = access.unlock {
             unlock.check()?;
@@ -333,24 +339,24 @@ pub(crate) async fn drive(
         let registered = pipeline::reopen_stored(
             read_conn,
             &sink.0,
-            source,
+            source.as_ref(),
             &mut acquired,
-            sealing.as_ref(),
+            sealing.as_deref(),
             access.unlock,
         )
         .await?;
-        let material_sink: &dyn drivers::MaterialSink = match &sealing {
-            Some(sealing) => sealing,
-            None => sink,
+        let material_sink: std::sync::Arc<dyn drivers::MaterialSink> = match &sealing {
+            Some(sealing) => sealing.clone(),
+            None => std::sync::Arc::new(Sink(sink.0.clone())),
         };
         crate::intake::Intake {
             writer: handle,
-            source,
+            source: source.clone(),
             binding,
             run,
             sink: material_sink,
             class: effective_class,
-            sealing: sealing.as_ref(),
+            sealing: sealing.clone(),
             unlock: access.unlock,
             check: check.clone(),
             priority: crate::writer::Priority::Bulk,
@@ -374,6 +380,15 @@ impl Totals {
             self.materials += 1;
             self.material_bytes += length;
         }
+    }
+
+    pub(crate) fn parse(&mut self, elapsed: Duration) {
+        self.parse_time += elapsed;
+    }
+
+    pub(crate) fn writer(&mut self, queue: Duration, service: Duration) {
+        self.queue_time += queue;
+        self.service_time += service;
     }
 
     pub(crate) fn batch(&mut self, events: usize, elapsed: Duration) {
@@ -427,6 +442,10 @@ impl Totals {
             "dirty_keys": self.dirty_keys,
             "wall_s": self.wall.as_secs_f64(),
             "admission_s": self.admit_time.as_secs_f64(),
+            "poll_s": self.poll_time.as_secs_f64(),
+            "parse_s": self.parse_time.as_secs_f64(),
+            "queue_s": self.queue_time.as_secs_f64(),
+            "service_s": self.service_time.as_secs_f64(),
             "admission_events_per_s": per_s(self.events_offered, self.admit_time),
             "events_per_s": per_s(self.events_offered, self.wall),
             "mb_per_s": self.material_bytes as f64 / 1e6 / self.wall.as_secs_f64().max(1e-9),
@@ -451,6 +470,10 @@ impl Totals {
         self.failures += o.failures;
         self.dirty_keys += o.dirty_keys;
         self.admit_time += o.admit_time;
+        self.poll_time += o.poll_time;
+        self.parse_time += o.parse_time;
+        self.queue_time += o.queue_time;
+        self.service_time += o.service_time;
         self.wall += o.wall;
     }
 }

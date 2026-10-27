@@ -5,15 +5,23 @@ use crate::writer::WriterHandle;
 use serde_json::Value;
 use sinex_model::{Class, RunId};
 use sinex_sources::shared_pass::SharedReadStart;
-use sinex_sources::{Binding, InputFormat, Reader, Reading, Source, drivers};
+use sinex_sources::{Binding, InputFormat, Reader, Source, drivers};
 use sinex_store::{Blobs, positions};
 use sqlx::PgConnection;
 use std::sync::Arc;
 use tokio::sync::watch;
 
+pub(crate) mod polled;
+use polled::PolledReader;
+
+enum Reading {
+    Polled(PolledReader),
+    Shared(Box<dyn sinex_sources::shared_pass::SharedPass>),
+}
+
 pub(crate) struct BindingReader {
     pub binding: Binding,
-    pub source: Box<dyn Source>,
+    pub source: Arc<dyn Source>,
     reading: Reading,
     remembered: bool,
     history_floor: Class,
@@ -27,8 +35,13 @@ impl BindingReader {
             .reader
             .ok_or_else(|| format!("{} is not read by a driver", kind.name))?;
         Ok(Self {
-            source: (kind.source)(&binding)?,
-            reading: reader(&binding)?,
+            source: (kind.source)(&binding)?.into(),
+            reading: match reader(&binding)? {
+                sinex_sources::Reading::Polled(reader) => {
+                    Reading::Polled(PolledReader::new(reader))
+                }
+                sinex_sources::Reading::Shared(pass) => Reading::Shared(pass),
+            },
             binding,
             remembered: false,
             history_floor: Class::Open,
@@ -205,12 +218,12 @@ pub(crate) async fn read(
                 conn,
                 writer,
                 run,
-                b.source.as_ref(),
+                b.source.clone(),
                 &b.binding.name,
                 sink,
                 access,
                 b.history_floor,
-                reader.as_mut(),
+                reader,
                 stop.clone(),
             )
             .await;

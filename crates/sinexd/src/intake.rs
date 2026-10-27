@@ -16,12 +16,12 @@ pub(crate) struct Submission {
 
 pub(crate) struct Intake<'a> {
     pub writer: &'a WriterHandle,
-    pub source: &'a dyn Source,
+    pub source: Arc<dyn Source>,
     pub binding: &'a str,
     pub run: RunId,
-    pub sink: &'a dyn drivers::MaterialSink,
+    pub sink: Arc<dyn drivers::MaterialSink>,
     pub class: Class,
-    pub sealing: Option<&'a crate::material_sink::SealingSink>,
+    pub sealing: Option<Arc<crate::material_sink::SealingSink>>,
     pub unlock: Option<&'a crate::sealed_access::Unlock>,
     pub check: AdmissionCheck,
     pub priority: Priority,
@@ -38,95 +38,108 @@ impl Intake<'_> {
         carry: Value,
         totals: &mut Totals,
     ) -> Result<Submission, String> {
-        (self.check)()?;
-        let material = acquired.material.as_ref().map(|m| m.id);
-        let prepared = drivers::prepare(
-            self.source,
-            self.binding,
-            self.run,
-            acquired,
-            carry,
-            self.sink,
-            if self.atomic {
-                Limits {
-                    max_events: usize::MAX,
-                    max_bytes: usize::MAX,
-                }
-            } else {
-                Limits::default()
-            },
-        )
-        .map_err(|e| e.to_string())?;
-        totals.poll(prepared.material_len());
-        let mut batches = prepared.batches().map_err(|e| e.to_string())?;
-        let mut outcome = Outcome::default();
-        while let Some(batch) = batches.next() {
-            let mut batch = batch.map_err(|e| e.to_string())?;
-            if self.atomic {
-                if batches.next().is_some() {
-                    return Err("request records must commit in one batch".into());
-                }
-                if batch
-                    .records
-                    .iter()
-                    .any(|r| matches!(r, RecordOutcome::Failure { .. }))
-                {
-                    return Err("request records failed to read back".into());
-                }
-            }
-            for record in &mut batch.records {
-                if let RecordOutcome::Events { events, .. } = record {
-                    for event in events {
-                        event.class = event.class.max(self.class);
-                    }
-                }
-            }
-            if let Some(sealing) = self.sealing {
-                sealing.seal(std::slice::from_mut(&mut batch))?;
-                if self.registered
-                    && let BatchKind::Source(progress) = &mut batch.kind
-                {
-                    progress.data_keys.clear();
-                }
-            }
-            let check = self.check.clone();
-            let unlock = self.unlock.cloned();
-            let check: AdmissionCheck = Arc::new(move || {
-                check()?;
-                if let Some(unlock) = &unlock {
-                    unlock.check()?;
-                }
-                Ok(())
-            });
-            check()?;
-            let events = batch.event_count();
-            let started = Instant::now();
-            let admitted = self
-                .writer
+        self.submit_using(acquired, carry, totals, |batch, check| async move {
+            self.writer
                 .submit_checked(self.priority, batch, check)
                 .await
-                .map_err(|e| e.to_string())?;
-            totals.batch(events, started.elapsed());
-            totals.add_outcome(&admitted);
-            outcome.admitted += admitted.admitted;
-            outcome.repeats += admitted.repeats;
-            outcome.replaced += admitted.replaced;
-            outcome.older += admitted.older;
-            outcome.hidden += admitted.hidden;
-            outcome.superseded += admitted.superseded;
-            outcome.failures += admitted.failures;
-            outcome.dirty_keys += admitted.dirty_keys;
-            outcome.replay_archived += admitted.replay_archived;
-            if let Some((start, end)) = admitted.commit_seq {
-                outcome.commit_seq =
-                    Some((outcome.commit_seq.map_or(start, |(first, _)| first), end));
+                .map_err(|e| e.to_string())
+        })
+        .await
+    }
+
+    async fn submit_using<F, A>(
+        &self,
+        acquired: drivers::Acquired,
+        carry: Value,
+        totals: &mut Totals,
+        mut admit: F,
+    ) -> Result<Submission, String>
+    where
+        F: FnMut(sinex_model::Batch, AdmissionCheck) -> A,
+        A: std::future::Future<Output = Result<Outcome, String>>,
+    {
+        let check = self.check.clone();
+        let unlock = self.unlock.cloned();
+        let check: AdmissionCheck = Arc::new(move || {
+            check()?;
+            if let Some(unlock) = &unlock {
+                unlock.check()?;
             }
-            // Streaming readers hold only one batch's results at a time.
-            if self.atomic {
-                outcome.admitted_ids = admitted.admitted_ids;
+            Ok(())
+        });
+        check()?;
+        let material = acquired.material.as_ref().map(|m| m.id);
+        let work = Preparation {
+            source: self.source.clone(),
+            binding: self.binding.to_owned(),
+            run: self.run,
+            sink: self.sink.clone(),
+            class: self.class,
+            sealing: self.sealing.clone(),
+            atomic: self.atomic,
+            registered: self.registered,
+            check: check.clone(),
+        };
+        let mut batches =
+            blocking::Batches::start(move |send| work.run(acquired, carry, send)).await?;
+        let mut outcome = Outcome::default();
+        let result = async {
+            while let Some(parsed) = batches.next().await {
+                let parsed = parsed?;
+                let _permit = parsed._permit;
+                if let Some(length) = parsed.material_length {
+                    totals.poll(length);
+                }
+                totals.parse(parsed.elapsed);
+                let batch = parsed.batch;
+
+                check()?;
+                let events = batch.event_count();
+                let started = Instant::now();
+                // submit_checked calls this first at writer service start, then before commit.
+                // Its answer still means committed; no queue or priority changes are needed.
+                let service_started = Arc::new(std::sync::Mutex::new(None));
+                let service_clock = service_started.clone();
+                let admission_check = check.clone();
+                let writer_check: AdmissionCheck = Arc::new(move || {
+                    service_clock
+                        .lock()
+                        .map_err(|e| e.to_string())?
+                        .get_or_insert_with(Instant::now);
+                    admission_check()
+                });
+                let admitted = admit(batch, writer_check).await?;
+                let elapsed = started.elapsed();
+                let queue = service_started
+                    .lock()
+                    .map_err(|e| e.to_string())?
+                    .map_or(elapsed, |service| service.duration_since(started));
+                totals.writer(queue, elapsed.saturating_sub(queue));
+                totals.batch(events, elapsed);
+                totals.add_outcome(&admitted);
+                outcome.admitted += admitted.admitted;
+                outcome.repeats += admitted.repeats;
+                outcome.replaced += admitted.replaced;
+                outcome.older += admitted.older;
+                outcome.hidden += admitted.hidden;
+                outcome.superseded += admitted.superseded;
+                outcome.failures += admitted.failures;
+                outcome.dirty_keys += admitted.dirty_keys;
+                outcome.replay_archived += admitted.replay_archived;
+                if let Some((start, end)) = admitted.commit_seq {
+                    outcome.commit_seq =
+                        Some((outcome.commit_seq.map_or(start, |(first, _)| first), end));
+                }
+                // Streaming submissions do not keep every committed event ID.
+                if self.atomic {
+                    outcome.admitted_ids = admitted.admitted_ids;
+                }
             }
+            Ok(Submission { outcome, material })
         }
-        Ok(Submission { outcome, material })
+        .await;
+        batches.finish().await?;
+        result
     }
 }
 
@@ -156,10 +169,10 @@ pub(crate) async fn request(
     let class = request_class(conn, source.as_ref()).await?;
     Intake {
         writer,
-        source: source.as_ref(),
+        source,
         binding,
         run: RunId::new(),
-        sink: &crate::material_sink::Sink(blobs.clone()),
+        sink: Arc::new(crate::material_sink::Sink(blobs.clone())),
         class,
         sealing: None,
         unlock: None,
@@ -193,3 +206,98 @@ pub(crate) async fn request_class(
 
 #[cfg(test)]
 mod tests;
+
+struct Preparation {
+    source: Arc<dyn Source>,
+    binding: String,
+    run: RunId,
+    sink: Arc<dyn drivers::MaterialSink>,
+    class: Class,
+    sealing: Option<Arc<crate::material_sink::SealingSink>>,
+    atomic: bool,
+    registered: bool,
+    check: AdmissionCheck,
+}
+
+impl Preparation {
+    fn run(
+        self,
+        acquired: drivers::Acquired,
+        carry: Value,
+        send: blocking::BatchSender,
+    ) -> Result<(), String> {
+        let started = Instant::now();
+        (self.check)()?;
+        let prepared = drivers::prepare(
+            self.source.as_ref(),
+            &self.binding,
+            self.run,
+            acquired,
+            carry,
+            self.sink.as_ref(),
+            if self.atomic {
+                Limits {
+                    max_events: usize::MAX,
+                    max_bytes: usize::MAX,
+                }
+            } else {
+                Limits::default()
+            },
+        )
+        .map_err(|e| e.to_string())?;
+        let mut material_length = Some(prepared.material_len());
+        let mut batches = prepared.batches().map_err(|e| e.to_string())?;
+        let mut setup = started.elapsed();
+        loop {
+            // The permit covers parsing, waiting in the channel, and the commit answer.
+            let Some(permit) = send.permit() else {
+                return Ok(());
+            };
+            (self.check)()?;
+            let started = Instant::now();
+            let Some(batch) = batches.next() else {
+                return Ok(());
+            };
+            let mut batch = batch.map_err(|e| e.to_string())?;
+            if self.atomic {
+                if batches.next().is_some() {
+                    return Err("request records must commit in one batch".into());
+                }
+                if batch
+                    .records
+                    .iter()
+                    .any(|r| matches!(r, RecordOutcome::Failure { .. }))
+                {
+                    return Err("request records failed to read back".into());
+                }
+            }
+            for record in &mut batch.records {
+                if let RecordOutcome::Events { events, .. } = record {
+                    for event in events {
+                        event.class = event.class.max(self.class);
+                    }
+                }
+            }
+            if let Some(sealing) = &self.sealing {
+                sealing.seal(std::slice::from_mut(&mut batch))?;
+                if self.registered
+                    && let BatchKind::Source(progress) = &mut batch.kind
+                {
+                    progress.data_keys.clear();
+                }
+            }
+            (self.check)()?;
+            let elapsed = started.elapsed() + std::mem::take(&mut setup);
+            if !send.send(blocking::Parsed {
+                batch,
+                elapsed,
+                material_length: material_length.take(),
+                _permit: permit,
+            }) {
+                return Ok(());
+            }
+        }
+    }
+}
+
+pub(crate) mod blocking;

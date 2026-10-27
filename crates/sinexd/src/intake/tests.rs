@@ -102,24 +102,24 @@ async fn request_commits_its_records_together_with_the_source_class(db: devkit::
 
 #[devkit::test]
 async fn submission_checks_again_inside_the_writer(db: devkit::pg::TestDatabase) {
-    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::atomic::{AtomicBool, Ordering};
     let dir = tempfile::tempdir().unwrap();
     let mut ctx = crate::reader_context::ReaderContext::open(&db.url(None), dir.path())
         .await
         .unwrap();
-    let calls = Arc::new(AtomicUsize::new(0));
-    let check_calls = calls.clone();
+    let stopped = Arc::new(AtomicBool::new(false));
+    let checked_stop = stopped.clone();
     let result = Intake {
         writer: &ctx.writer,
-        source: &forecast::request_source(),
+        source: Arc::new(forecast::request_source()),
         binding: "synthetic-check",
         run: RunId::new(),
-        sink: &crate::material_sink::Sink(ctx.blobs.clone()),
+        sink: Arc::new(crate::material_sink::Sink(ctx.blobs.clone())),
         class: Class::Guarded,
         sealing: None,
         unlock: None,
         check: Arc::new(move || {
-            if check_calls.fetch_add(1, Ordering::SeqCst) >= 3 {
+            if checked_stop.load(Ordering::SeqCst) {
                 Err("capture stopped".into())
             } else {
                 Ok(())
@@ -129,10 +129,24 @@ async fn submission_checks_again_inside_the_writer(db: devkit::pg::TestDatabase)
         atomic: false,
         registered: false,
     }
-    .submit(acquisition("first"), Value::Null, &mut Totals::default())
+    .submit_using(
+        acquisition("first"),
+        Value::Null,
+        &mut Totals::default(),
+        |batch, check| {
+            // Cancellation after the caller's final check must still refuse admission.
+            stopped.store(true, Ordering::SeqCst);
+            let writer = &ctx.writer;
+            async move {
+                writer
+                    .submit_checked(Priority::Bulk, batch, check)
+                    .await
+                    .map_err(|e| e.to_string())
+            }
+        },
+    )
     .await;
     assert!(result.err().unwrap().contains("capture stopped"));
-    assert!(calls.load(Ordering::SeqCst) >= 4);
     assert!(
         sinex_store::positions::load(&mut ctx.read_conn, "synthetic-check")
             .await
@@ -140,4 +154,237 @@ async fn submission_checks_again_inside_the_writer(db: devkit::pg::TestDatabase)
             .is_none()
     );
     ctx.close().await.unwrap();
+}
+
+struct CountedSource {
+    source: Box<dyn Source>,
+    parsed: Arc<std::sync::atomic::AtomicUsize>,
+    second: Arc<tokio::sync::Notify>,
+    closed: Arc<std::sync::atomic::AtomicBool>,
+}
+
+impl Source for CountedSource {
+    fn spec(&self) -> &sinex_sources::SourceSpec {
+        self.source.spec()
+    }
+    fn drainer<'a>(
+        &'a self,
+        mut input: sinex_sources::DrainInput<'a>,
+    ) -> Result<
+        Box<
+            dyn Iterator<Item = Result<sinex_sources::DrainOutput, sinex_sources::RecordError>>
+                + Send
+                + 'a,
+        >,
+        sinex_sources::RecordError,
+    > {
+        input.limits.max_events = 1;
+        let batches = self.source.drainer(input)?;
+        struct Counted<'a> {
+            batches: Box<
+                dyn Iterator<Item = Result<sinex_sources::DrainOutput, sinex_sources::RecordError>>
+                    + Send
+                    + 'a,
+            >,
+            source: &'a CountedSource,
+        }
+        impl Iterator for Counted<'_> {
+            type Item = Result<sinex_sources::DrainOutput, sinex_sources::RecordError>;
+            fn next(&mut self) -> Option<Self::Item> {
+                let batch = self.batches.next()?;
+                if self
+                    .source
+                    .parsed
+                    .fetch_add(1, std::sync::atomic::Ordering::SeqCst)
+                    == 1
+                {
+                    self.source.second.notify_one();
+                }
+                Some(batch)
+            }
+        }
+        impl Drop for Counted<'_> {
+            fn drop(&mut self) {
+                self.source
+                    .closed
+                    .store(true, std::sync::atomic::Ordering::SeqCst);
+            }
+        }
+        Ok(Box::new(Counted {
+            batches,
+            source: self,
+        }))
+    }
+}
+
+fn three_records() -> drivers::Acquired {
+    let mut acquired = acquisition("first");
+    for id in ["second", "third"] {
+        let next = acquisition(id).material.unwrap();
+        let material = acquired.material.as_mut().unwrap();
+        let start = material.bytes.len();
+        material.bytes.extend(next.bytes);
+        material.records.push((start, material.bytes.len()));
+    }
+    acquired
+}
+
+async fn overlap(fail_first: bool) {
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+    let parsed = Arc::new(AtomicUsize::new(0));
+    let closed = Arc::new(AtomicBool::new(false));
+    let second = Arc::new(tokio::sync::Notify::new());
+    let source = CountedSource {
+        source: Box::new(forecast::request_source()),
+        parsed: parsed.clone(),
+        second: second.clone(),
+        closed: closed.clone(),
+    };
+    let dir = tempfile::tempdir().unwrap();
+    let blobs = Blobs::open(dir.path()).unwrap();
+    let (writer, _queues) = crate::writer::channels();
+    let intake = Intake {
+        writer: &writer,
+        source: Arc::new(source),
+        binding: "synthetic-overlap",
+        run: RunId::new(),
+        sink: Arc::new(crate::material_sink::Sink(blobs)),
+        class: Class::Guarded,
+        sealing: None,
+        unlock: None,
+        check: Arc::new(|| Ok(())),
+        priority: Priority::Bulk,
+        atomic: false,
+        registered: false,
+    };
+    let mut submitted = 0;
+    let mut anchors = Vec::new();
+    let mut totals = Totals::default();
+    let result = intake
+        .submit_using(three_records(), Value::Null, &mut totals, |batch, check| {
+            submitted += 1;
+            let first = submitted == 1;
+            let second = second.clone();
+            let parsed = parsed.clone();
+            let location = match &batch.records[0] {
+                RecordOutcome::Events { location, .. } => location.unwrap(),
+                RecordOutcome::Failure { .. } => panic!("synthetic records must parse"),
+            };
+            anchors.push(location.anchor);
+            async move {
+                check()?;
+                if first {
+                    // The admission answer is held until the blocking parser produces batch two.
+                    tokio::time::timeout(std::time::Duration::from_secs(5), second.notified())
+                        .await
+                        .unwrap();
+                    assert_eq!(parsed.load(Ordering::SeqCst), 2);
+                    if fail_first {
+                        return Err("first commit failed".into());
+                    }
+                }
+                check()?;
+                Ok(Outcome {
+                    admitted: batch.event_count(),
+                    ..Outcome::default()
+                })
+            }
+        })
+        .await;
+    assert!(
+        closed.load(Ordering::SeqCst),
+        "the parser must be joined before returning"
+    );
+    if fail_first {
+        assert_eq!(result.err().unwrap(), "first commit failed");
+        assert_eq!(submitted, 1);
+        assert_eq!(parsed.load(Ordering::SeqCst), 2);
+    } else {
+        assert_eq!(result.unwrap().outcome.admitted, 3);
+        assert_eq!(submitted, 3);
+        assert!(anchors.windows(2).all(|a| a[0] < a[1]));
+    }
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn parsing_the_next_batch_overlaps_the_commit_answer() {
+    overlap(false).await;
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn failed_commit_discards_the_batch_ahead_and_joins_the_parser() {
+    overlap(true).await;
+}
+
+struct SlowSink {
+    entered: std::sync::Mutex<Option<tokio::sync::oneshot::Sender<()>>>,
+    release: std::sync::Mutex<std::sync::mpsc::Receiver<()>>,
+    sink: crate::material_sink::Sink,
+}
+impl drivers::MaterialSink for SlowSink {
+    fn put(&self, bytes: &[u8]) -> Result<String, String> {
+        self.entered
+            .lock()
+            .unwrap()
+            .take()
+            .unwrap()
+            .send(())
+            .unwrap();
+        self.release
+            .lock()
+            .unwrap()
+            .recv_timeout(std::time::Duration::from_secs(5))
+            .map_err(|_| "runtime did not progress during storage".to_owned())?;
+        drivers::MaterialSink::put(&self.sink, bytes)
+    }
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn synchronous_storage_does_not_stop_other_runtime_tasks() {
+    let dir = tempfile::tempdir().unwrap();
+    let blobs = Blobs::open(dir.path()).unwrap();
+    let (entered, waiting) = tokio::sync::oneshot::channel();
+    let (release, resume) = std::sync::mpsc::channel();
+    let (writer, _queues) = crate::writer::channels();
+    let intake = Intake {
+        writer: &writer,
+        source: Arc::new(forecast::request_source()),
+        binding: "synthetic-slow-sink",
+        run: RunId::new(),
+        sink: Arc::new(SlowSink {
+            entered: std::sync::Mutex::new(Some(entered)),
+            release: std::sync::Mutex::new(resume),
+            sink: crate::material_sink::Sink(blobs),
+        }),
+        class: Class::Guarded,
+        sealing: None,
+        unlock: None,
+        check: Arc::new(|| Ok(())),
+        priority: Priority::Live,
+        atomic: true,
+        registered: false,
+    };
+    let unrelated = async {
+        waiting.await.unwrap();
+        release.send(()).unwrap();
+    };
+    let submit = async {
+        intake
+            .submit_using(
+                acquisition("first"),
+                Value::Null,
+                &mut Totals::default(),
+                |batch, check| async move {
+                    check()?;
+                    Ok(Outcome {
+                        admitted: batch.event_count(),
+                        ..Outcome::default()
+                    })
+                },
+            )
+            .await
+            .unwrap()
+    };
+    let (submitted, ()) = tokio::join!(submit, unrelated);
+    assert_eq!(submitted.outcome.admitted, 1);
 }
