@@ -28,7 +28,7 @@ pub(crate) fn plan(
                 input
                     .bindings
                     .into_iter()
-                    .filter(move |_| input.availability != Availability::Capturing)
+                    .filter(move |_| !input.capture)
                     .map(move |binding| (format, binding))
             })
             .collect(),
@@ -109,8 +109,10 @@ impl Bindings {
         let mut proposed = Vec::new();
         for input in inputs {
             let key = format!(
-                "input {} {}",
+                "input {} {} {} {}",
                 input.source,
+                input.format,
+                if input.capture { "capture" } else { "read" },
                 input
                     .input
                     .as_ref()
@@ -134,7 +136,7 @@ impl Bindings {
                 self.said.remove(&key);
             }
             let format = sources::format(&input.format).expect("discovered format");
-            if input.availability != Availability::Capturing {
+            if !input.capture {
                 proposed.extend(input.bindings.into_iter().map(|binding| (format, binding)));
             }
         }
