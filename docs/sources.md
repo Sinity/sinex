@@ -10,8 +10,8 @@ catalog` describes the supported declarations. The catalog is generated from
 code rather than maintained as a second list of promised sources.
 
 A binding names a source, an input and its settings. Live capture writes a
-spool, which is read through the same path as backfill. Every admitted event
-has the record location and parser reading that produced it. Reading stored
+spool, which is read through the same path as backfill. An event read from a material names its record location and the parser
+reading that produced it. Reading stored
 bytes again is [replay](architecture.md#identity-and-replay).
 [Architecture](architecture.md#reading-sources) owns admission, source
 progress and restart behavior.
@@ -56,9 +56,7 @@ show why the stored format and the event are separate:
   figures are derivations; Fit still emits each source point.
 
 Sinnix lake records are decoded by their
-[lane parser](../crates/sinex-sources/src/sources/sinnix_lake.rs). A missing
-raw file is not an empty successful read. Unknown typed fields and malformed
-known fields follow [the typed-payload rules](architecture.md#typed-payloads).
+[lane parser](../crates/sinex-sources/src/sources/sinnix_lake.rs). Unknown typed fields and malformed known fields follow [the typed-payload rules](architecture.md#typed-payloads).
 Outside producers use [the producer protocol](architecture.md#outside-producers),
 including Polylogue, which supplies its own parsed AI-session events.
 

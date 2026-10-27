@@ -12,6 +12,6 @@ and query execution. Expectations are handwritten from these inputs.
 The away span first ends at 08:00 UTC and later at 09:27:30 UTC, under the
 same bucket and row ID. A later response repeats two rows unchanged and
 extends another. The zsh history has a Polish string, a multiline command,
-a repeated command, and a 01:30 local command belonging to the previous
-logical day. Atuin also observes those evening commands and has a deleted
-command row. The book export supplies three dated events from two books.
+and a 01:30 local command belonging to the previous logical day. Atuin also
+observes those evening commands, including an immediate repeat of `git status`,
+and has a deleted command row. The book export supplies three dated events from two books.
