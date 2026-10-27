@@ -671,7 +671,7 @@ fn a_notification_seen_live_and_in_the_lake_is_one_notification() {
 fn mail(source: &str, id: &str, secs: f64) -> Event {
     captured(
         &MailMessage {
-            account: None,
+            account: Some("owner@example.test".into()),
             native_id: None,
             bcc: vec![],
             message_id: Some(id.into()),

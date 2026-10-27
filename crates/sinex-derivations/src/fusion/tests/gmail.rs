@@ -34,11 +34,23 @@ fn the_same_message_id_in_different_accounts_is_not_joined() {
     first.payload["account"] = json!("one@example.test");
     let mut second = mail("communication.imap", "rfc@example.test", H + 5.0);
     second.payload["account"] = json!("two@example.test");
-    let unknown = mail("communication.mbox", "rfc@example.test", H + 5.0);
+    let mut unknown = mail("communication.mbox", "rfc@example.test", H + 5.0);
+    unknown.payload["account"] = Value::Null;
     assert_eq!(fuse(&MAIL, &[first.clone(), second, unknown]).len(), 3);
     let mut same = mail("communication.imap", "rfc@example.test", H + 5.0);
     same.payload["account"] = json!("one@example.test");
     let joined = fuse(&MAIL, &[first, same]);
     assert_eq!(joined.len(), 1);
     assert_eq!(joined[0]["account"], "one@example.test");
+}
+
+#[devkit::test]
+fn messages_from_unknown_accounts_in_different_sources_stay_separate() {
+    let mut first = mail("communication.imap", "rfc@example.test", H + 5.0);
+    let mut second = mail("communication.mbox", "rfc@example.test", H + 5.0);
+    first.payload["account"] = Value::Null;
+    second.payload["account"] = Value::Null;
+    let output = fuse(&MAIL, &[first, second]);
+    assert_eq!(output.len(), 2);
+    assert!(output.iter().all(|message| message["account"].is_null()));
 }

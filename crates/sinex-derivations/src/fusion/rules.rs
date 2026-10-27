@@ -500,9 +500,13 @@ pub static NOTIFICATIONS: FusionRule = FusionRule {
 fn mail(event: &Event) -> Option<FusionRecord> {
     let p = &event.payload;
     let message_id = text(p, "/message_id")?;
+    let identity = match text(p, "/account") {
+        Some(account) => json!(["account", account, message_id]),
+        None => json!(["source", event.source, message_id]),
+    };
     fusion_record(
         event,
-        serde_json::to_string(&(text(p, "/account"), message_id)).ok()?,
+        identity.to_string(),
         None,
         fields([
             ("account", p.get("account").cloned()),
