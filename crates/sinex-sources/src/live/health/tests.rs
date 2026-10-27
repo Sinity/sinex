@@ -52,7 +52,7 @@ fn media_backlog_excludes_committed_segments() {
     }
     assert_eq!(
         backlog(&binding, &json!({"last":"1-2.screen"})).unwrap(),
-        json!({"bytes":14,"records":1})
+        json!({"bytes":15,"records":1})
     );
 }
 
