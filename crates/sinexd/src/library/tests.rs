@@ -418,6 +418,23 @@ async fn the_library_end_to_end(db: devkit::pg::TestDatabase) {
     let vb = w.ok(Request::LibraryItem { item: ib.clone() }).await;
     assert_eq!(vb["revision"], vb["content"]);
     assert_eq!(vb["revisions"].as_array().unwrap().len(), 2);
+    let old = vb["renditions"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|rendition| {
+            rendition["role"] == "original" && rendition["revision"] != vb["revision"]
+        })
+        .unwrap();
+    let opened = w
+        .ok(Request::LibraryOpen {
+            item: ib.clone(),
+            rendition: Some(old["rendition"].as_str().unwrap().into()),
+        })
+        .await;
+    assert_eq!(opened["revision"], old["revision"]);
+    assert_eq!(opened["content"], old["content"]);
+    std::fs::remove_file(opened["path"].as_str().unwrap()).unwrap();
 
     // Bytes gone from disk are still openable from the content store.
     std::fs::remove_file(&moved).unwrap();
