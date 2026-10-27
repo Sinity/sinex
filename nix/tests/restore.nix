@@ -4,8 +4,6 @@ self: {
   name = "sinex-restore";
   nodes.machine = { pkgs, ... }: {
     imports = [ self.nixosModules.default ];
-    # This VM has 3 GiB total; use a smaller database buffer pool.
-    services.postgresql.settings.shared_buffers = "128MB";
     virtualisation = { memorySize = 3072; cores = 2; diskSize = 4096; };
     environment.etc."sinex-test/nats-daemon".text = "daemon-secret";
     environment.etc."sinex-test/borg-pass".text = "borg-pass";

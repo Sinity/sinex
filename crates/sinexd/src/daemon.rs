@@ -277,8 +277,7 @@ pub(crate) async fn run(o: Options) -> Result<(), String> {
     .is_ok();
     tasks.abort_all();
     if drained {
-        let mut conn = connect(&o.database).await?;
-        writer::claim(&mut conn).await?;
+        let mut conn = writer::claim(connect(&o.database).await?).await?;
         sinex_store::blobs::forget_files_with_rows(&mut conn, &blobs)
             .await
             .map_err(|e| format!("forgetting admitted blob names: {e}"))?;
