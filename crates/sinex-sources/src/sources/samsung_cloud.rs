@@ -19,16 +19,16 @@
 //! Two tables are not read here. Samsung Pass holds saved credentials, so its
 //! privacy class is the operator's call before anything is stored; SMS is read
 //! by `communication.samsung-sms`.
-use crate::drivers::export_archive::{ExportArchive, Framing, PART_BYTES};
-use crate::registry::{DeclaredSource, Driver, SourceSpec};
 use crate::sources::fields;
 use crate::sources::samsung_health::typed;
-use crate::{Parser, RecordContext, RecordError};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use sinex_model::event_types::account::AccountRow;
 use sinex_model::event_types::health::HealthRecord;
 use sinex_model::{Class, Timestamp};
+use sinex_source_core::drivers::export_archive::{ExportArchive, Framing, PART_BYTES};
+use sinex_source_core::registry::{DeclaredSource, Driver, SourceSpec};
+use sinex_source_core::{Parser, RecordContext, RecordError};
 use std::path::{Path, PathBuf};
 
 pub const SPEC: SourceSpec = SourceSpec {
@@ -40,7 +40,10 @@ pub const SPEC: SourceSpec = SourceSpec {
     parser: "samsung-account-export",
     parser_version: 4,
     event_types: &["health.record", "account.row"],
-    framer: crate::Framer::export(frame, crate::drivers::export_archive::Framing::Csv),
+    framer: sinex_source_core::Framer::export(
+        frame,
+        sinex_source_core::drivers::export_archive::Framing::Csv,
+    ),
 };
 
 sinex_model::payload_enum! {
@@ -260,23 +263,24 @@ pub fn driver(path: PathBuf, host: String) -> ExportArchive {
 }
 
 /// `--read samsung-account=PATH`: each table of a Samsung account export under PATH.
-pub const FORMAT: crate::binding::InputFormat = crate::binding::InputFormat {
-    name: "samsung-account",
-    specs: || vec![&SPEC],
-    plan: Some(|input, settings| {
-        Ok(crate::binding::per_file(
-            &SPEC, input, settings, true, is_table,
-        ))
-    }),
-    source: |_| Ok(Box::new(source())),
-    reader: Some(|b| {
-        Ok(crate::binding::shared(driver(
-            b.input.clone(),
-            b.settings.host.clone(),
-        )))
-    }),
-    capture: None,
-};
+pub const FORMAT: sinex_source_core::binding::InputFormat =
+    sinex_source_core::binding::InputFormat {
+        name: "samsung-account",
+        specs: || vec![&SPEC],
+        plan: Some(|input, settings| {
+            Ok(sinex_source_core::binding::per_file(
+                &SPEC, input, settings, true, is_table,
+            ))
+        }),
+        source: |_| Ok(Box::new(source())),
+        reader: Some(|b| {
+            Ok(sinex_source_core::binding::shared(driver(
+                b.input.clone(),
+                b.settings.host.clone(),
+            )))
+        }),
+        capture: None,
+    };
 
 #[cfg(test)]
 mod tests;

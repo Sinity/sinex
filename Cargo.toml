@@ -8,6 +8,8 @@ members = [
     "crates/sinex-schema",
     "crates/sinex-store",
     "crates/sinex-sources",
+    "crates/sinex-source-core",
+    "crates/sinex-sealing",
     "crates/sinex-derivations",
     "crates/sinex-analysis",
     "crates/sinex-library",
@@ -73,7 +75,9 @@ sinex-protocol = { path = "crates/sinex-protocol" }
 sinex-transport = { path = "crates/sinex-transport" }
 sinex-schema = { path = "crates/sinex-schema" }
 sinex-store = { path = "crates/sinex-store" }
-sinex-sources = { path = "crates/sinex-sources" }
+sinex-sources = { path = "crates/sinex-sources", default-features = false }
+sinex-source-core = { path = "crates/sinex-source-core" }
+sinex-sealing = { path = "crates/sinex-sealing" }
 sinex-derivations = { path = "crates/sinex-derivations" }
 sinex-analysis = { path = "crates/sinex-analysis" }
 sinex-library = { path = "crates/sinex-library" }
@@ -100,3 +104,6 @@ opt-level = 3
 
 [profile.dev.package.md-5]
 opt-level = 3
+
+[profile.dev.package."*"]
+debug = false

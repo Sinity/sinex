@@ -7,7 +7,11 @@ fn reads_an_entry_and_keeps_new_fields() {
         "url": "https://a/", "client_id": "c==", "time_usec": 1_565_000_000_123_456i64,
         "page_transition_qualifier": "CLIENT_REDIRECT"});
     let (p, ()) = TakeoutChromeParser
-        .parse(row.as_object().unwrap(), &(), &crate::RecordContext::none())
+        .parse(
+            row.as_object().unwrap(),
+            &(),
+            &sinex_source_core::RecordContext::none(),
+        )
         .unwrap();
     assert_eq!(p[0].visited_at.unix_ns(), 1_565_000_000_123_456_000);
     assert_eq!(p[0].page_transition.as_deref(), Some("LINK"));

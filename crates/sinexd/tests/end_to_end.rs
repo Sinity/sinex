@@ -638,7 +638,7 @@ async fn visible_a3(c: &mut PgConnection) -> i64 {
 /// A clipboard spool holding one copy of each of `texts`: a source whose
 /// records can be excised.
 fn clipboard_spool(dir: &Dir, name: &str, texts: &[&str]) -> PathBuf {
-    use sinex_sources::drivers::live_stream;
+    use sinex_source_core::drivers::live_stream;
     use sinex_sources::sources::clipboard;
     let mut bytes = Vec::new();
     for (i, text) in texts.iter().enumerate() {

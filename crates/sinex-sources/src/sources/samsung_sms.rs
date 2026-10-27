@@ -2,13 +2,13 @@
 //! Each row's `VALUE` cell is a JSON string holding the message object (`_id,
 //! thread_id, address, date (ms), body, type`: 1 received, 2 sent, 3 draft).
 //! Drafts are kept, marked as such.
-use crate::drivers::export_archive::{ExportArchive, Framing, PART_BYTES};
-use crate::registry::{DeclaredSource, Driver, SourceSpec};
 use crate::sources::fields;
-use crate::{Parser, RecordError};
 use serde_json::{Map, Value};
 use sinex_model::Class;
 use sinex_model::event_types::communication::ConversationMessage;
+use sinex_source_core::drivers::export_archive::{ExportArchive, Framing, PART_BYTES};
+use sinex_source_core::registry::{DeclaredSource, Driver, SourceSpec};
+use sinex_source_core::{Parser, RecordError};
 use std::path::PathBuf;
 
 pub const SPEC: SourceSpec = SourceSpec {
@@ -20,7 +20,10 @@ pub const SPEC: SourceSpec = SourceSpec {
     parser: "samsung-sms",
     parser_version: 1,
     event_types: &["conversation.message"],
-    framer: crate::Framer::export(frame, crate::drivers::export_archive::Framing::Csv),
+    framer: sinex_source_core::Framer::export(
+        frame,
+        sinex_source_core::drivers::export_archive::Framing::Csv,
+    ),
 };
 
 pub struct SmsParser;
@@ -35,7 +38,7 @@ impl Parser for SmsParser {
         &self,
         record: &&[u8],
         header: &Vec<String>,
-        _context: &crate::RecordContext<'_>,
+        _context: &sinex_source_core::RecordContext<'_>,
     ) -> Result<(Vec<ConversationMessage>, Vec<String>), RecordError> {
         let cells = fields::csv_cells(record)?;
         if header.is_empty() || cells.first().map(String::as_str) == Some("ITEM_DATA") {
@@ -113,31 +116,32 @@ pub fn driver(path: PathBuf, host: String) -> ExportArchive {
 }
 
 /// `--read samsung-sms=PATH`: each Samsung SMS backup (`SMS_*.csv`) under PATH.
-pub const FORMAT: crate::binding::InputFormat = crate::binding::InputFormat {
-    name: "samsung-sms",
-    specs: || vec![&SPEC],
-    plan: Some(|input, settings| {
-        Ok(crate::binding::per_file(
-            &SPEC,
-            input,
-            settings,
-            true,
-            |p| {
-                p.file_name()
-                    .and_then(|n| n.to_str())
-                    .is_some_and(|n| n.starts_with("SMS_") && n.ends_with(".csv"))
-            },
-        ))
-    }),
-    source: |_| Ok(Box::new(source())),
-    reader: Some(|b| {
-        Ok(crate::binding::shared(driver(
-            b.input.clone(),
-            b.settings.host.clone(),
-        )))
-    }),
-    capture: None,
-};
+pub const FORMAT: sinex_source_core::binding::InputFormat =
+    sinex_source_core::binding::InputFormat {
+        name: "samsung-sms",
+        specs: || vec![&SPEC],
+        plan: Some(|input, settings| {
+            Ok(sinex_source_core::binding::per_file(
+                &SPEC,
+                input,
+                settings,
+                true,
+                |p| {
+                    p.file_name()
+                        .and_then(|n| n.to_str())
+                        .is_some_and(|n| n.starts_with("SMS_") && n.ends_with(".csv"))
+                },
+            ))
+        }),
+        source: |_| Ok(Box::new(source())),
+        reader: Some(|b| {
+            Ok(sinex_source_core::binding::shared(driver(
+                b.input.clone(),
+                b.settings.host.clone(),
+            )))
+        }),
+        capture: None,
+    };
 
 #[cfg(test)]
 mod tests;

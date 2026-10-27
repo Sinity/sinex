@@ -12,9 +12,6 @@
 //! This records that a file changed, not what it contains; reading contents is
 //! the directory-snapshot driver's job (it must also check that a symlink
 //! inside a root does not lead outside it).
-use crate::drivers::live_stream::{self, LiveStream, Rotation, SpoolWriter};
-use crate::registry::{DeclaredSource, Driver, SourceSpec};
-use crate::{Parser, RecordError};
 use notify::event::{
     AccessKind, AccessMode, CreateKind, EventKind, ModifyKind, RemoveKind, RenameMode,
 };
@@ -22,6 +19,9 @@ use notify::{RecursiveMode, Watcher};
 use serde_json::{Map, Value, json};
 use sinex_model::event_types::machine::FileChanged;
 use sinex_model::{Class, InputRef, Timestamp};
+use sinex_source_core::drivers::live_stream::{self, LiveStream, Rotation, SpoolWriter};
+use sinex_source_core::registry::{DeclaredSource, Driver, SourceSpec};
+use sinex_source_core::{Parser, RecordError};
 use std::os::unix::ffi::OsStrExt;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc;
@@ -37,7 +37,7 @@ pub const SPEC: SourceSpec = SourceSpec {
     parser: "file-watch",
     parser_version: 1,
     event_types: &["file.changed"],
-    framer: crate::Framer::incremental(crate::drivers::append_file::lines),
+    framer: sinex_source_core::Framer::incremental(sinex_source_core::drivers::append_file::lines),
 };
 
 /// Directory names skipped by default.
@@ -132,13 +132,17 @@ fn spool_line(spool: &mut SpoolWriter, line: &Value) -> std::io::Result<()> {
 /// Watch `roots` and spool every change until `duration` elapses (forever when
 /// `None`). Returns the number of records spooled.
 pub fn capture(roots: &Roots, spool: &Path, duration: Option<Duration>) -> std::io::Result<u64> {
-    capture_until(roots, spool, &crate::capture::CaptureStop::new(duration))
+    capture_until(
+        roots,
+        spool,
+        &sinex_source_core::capture::CaptureStop::new(duration),
+    )
 }
 
 fn capture_until(
     roots: &Roots,
     spool: &Path,
-    stop: &crate::capture::CaptureStop,
+    stop: &sinex_source_core::capture::CaptureStop,
 ) -> std::io::Result<u64> {
     let (tx, rx) = mpsc::channel::<notify::Result<notify::Event>>();
     let mut watcher = notify::recommended_watcher(tx).map_err(std::io::Error::other)?;
@@ -252,7 +256,7 @@ impl Parser for FileWatchParser {
         &self,
         record: &Map<String, Value>,
         _: &(),
-        _context: &crate::RecordContext<'_>,
+        _context: &sinex_source_core::RecordContext<'_>,
     ) -> Result<(Vec<FileChanged>, ()), RecordError> {
         let (received_at, line) = live_stream::received(record).map_err(RecordError::new)?;
         let change: Map<String, Value> = serde_json::from_slice(&line)
@@ -315,45 +319,48 @@ pub fn driver(spool: PathBuf, host: String) -> LiveStream {
 
 /// `--read file-watch=SPOOL`: changes under the directories in the
 /// `roots` option (and not under `skip` names), captured into SPOOL.
-pub const FORMAT: crate::binding::InputFormat = crate::binding::InputFormat {
-    name: "file-watch",
-    specs: || vec![&SPEC],
-    plan: Some(|spool, settings| Ok(crate::binding::single(&SPEC, spool, settings))),
-    source: |_| Ok(Box::new(source())),
-    reader: Some(|b| {
-        Ok(crate::binding::polled(driver(
-            b.input.clone(),
-            b.settings.host.clone(),
-        )))
-    }),
-    capture: Some(|b, stop| {
-        let list = |key: &str| -> Vec<String> {
-            b.settings
-                .options
-                .get(key)
-                .and_then(Value::as_array)
-                .map(|a| {
-                    a.iter()
-                        .filter_map(|v| v.as_str().map(str::to_owned))
-                        .collect()
-                })
-                .unwrap_or_default()
-        };
-        let skip = list("skip");
-        let roots = Roots {
-            roots: list("roots").into_iter().map(PathBuf::from).collect(),
-            skip: if skip.is_empty() {
-                SKIP.iter().map(|s| (*s).to_owned()).collect()
-            } else {
-                skip
-            },
-        };
-        if roots.roots.is_empty() {
-            return Err("file-watch: no `roots` to watch".into());
-        }
-        capture_until(&roots, &b.input, stop).map_err(|e| e.to_string())
-    }),
-};
+pub const FORMAT: sinex_source_core::binding::InputFormat =
+    sinex_source_core::binding::InputFormat {
+        name: "file-watch",
+        specs: || vec![&SPEC],
+        plan: Some(|spool, settings| {
+            Ok(sinex_source_core::binding::single(&SPEC, spool, settings))
+        }),
+        source: |_| Ok(Box::new(source())),
+        reader: Some(|b| {
+            Ok(sinex_source_core::binding::polled(driver(
+                b.input.clone(),
+                b.settings.host.clone(),
+            )))
+        }),
+        capture: Some(|b, stop| {
+            let list = |key: &str| -> Vec<String> {
+                b.settings
+                    .options
+                    .get(key)
+                    .and_then(Value::as_array)
+                    .map(|a| {
+                        a.iter()
+                            .filter_map(|v| v.as_str().map(str::to_owned))
+                            .collect()
+                    })
+                    .unwrap_or_default()
+            };
+            let skip = list("skip");
+            let roots = Roots {
+                roots: list("roots").into_iter().map(PathBuf::from).collect(),
+                skip: if skip.is_empty() {
+                    SKIP.iter().map(|s| (*s).to_owned()).collect()
+                } else {
+                    skip
+                },
+            };
+            if roots.roots.is_empty() {
+                return Err("file-watch: no `roots` to watch".into());
+            }
+            capture_until(&roots, &b.input, stop).map_err(|e| e.to_string())
+        }),
+    };
 
 #[cfg(test)]
 mod tests;

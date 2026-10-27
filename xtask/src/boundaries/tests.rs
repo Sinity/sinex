@@ -195,3 +195,19 @@ fn quoted_catalog_names_are_found_in_store_text() {
     );
     assert!(named_sources("command.imported without quotes", &names).is_empty());
 }
+
+#[devkit::test]
+fn cli_cannot_acquire_database_work_through_a_wrapper() {
+    let mut graph = metadata(&[("sinexctl", vec![dep("wrapper", None)], vec!["wrapper"])]);
+    let wrapper = graph
+        .resolve
+        .nodes
+        .iter_mut()
+        .find(|node| node.id == "wrapper")
+        .unwrap();
+    wrapper.deps[0].pkg = "sqlx".into();
+    assert_eq!(
+        validate(graph).unwrap_err(),
+        "forbidden transitive dependency: sinexctl -> sqlx"
+    );
+}

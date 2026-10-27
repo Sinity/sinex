@@ -1,11 +1,15 @@
 use super::*;
-use crate::{DrainInput, Limits, drain};
 use proptest::prelude::*;
 use sinex_model::{MaterialId, ReadingOrder, RecordOutcome};
+use sinex_source_core::{DrainInput, Limits, drain};
 
 fn parse(bytes: &[u8]) -> Result<String, RecordError> {
     ZshParser { host: "h".into() }
-        .parse(&bytes, &Seen::default(), &crate::RecordContext::none())
+        .parse(
+            &bytes,
+            &Seen::default(),
+            &sinex_source_core::RecordContext::none(),
+        )
         .map(|(p, _)| p[0].command.clone())
 }
 
@@ -22,7 +26,7 @@ fn identical_runs_in_one_second_are_numbered_in_file_order() {
     let mut ns = Vec::new();
     for line in lines {
         let (out, next) = parser
-            .parse(&line, &seen, &crate::RecordContext::none())
+            .parse(&line, &seen, &sinex_source_core::RecordContext::none())
             .unwrap();
         ns.push(out[0].n);
         seen = next;
@@ -33,7 +37,7 @@ fn identical_runs_in_one_second_are_numbered_in_file_order() {
     let mut ns2 = Vec::new();
     for line in lines {
         let (out, next) = parser
-            .parse(&line, &again, &crate::RecordContext::none())
+            .parse(&line, &again, &sinex_source_core::RecordContext::none())
             .unwrap();
         ns2.push(out[0].n);
         again = next;
@@ -76,7 +80,7 @@ fn commands(bytes: &[u8], base: usize) -> Vec<(usize, String)> {
     let out = drain(
         &ZshParser { host: "h".into() },
         DrainInput {
-            manifest: crate::RecordContext::none().manifest,
+            manifest: sinex_source_core::RecordContext::none().manifest,
             source: SPEC.name,
             class: Class::Open,
             material: MaterialId(uuid::Uuid::nil()),
@@ -146,7 +150,11 @@ fn plain_commands_preserve_text_and_do_not_invent_times() {
     ];
     for (raw, expected) in cases {
         let (events, state) = parser
-            .parse(raw, &Seen::default(), &crate::RecordContext::none())
+            .parse(
+                raw,
+                &Seen::default(),
+                &sinex_source_core::RecordContext::none(),
+            )
             .unwrap();
         assert_eq!(events[0].command, *expected);
         assert_eq!(events[0].started_at, None);
@@ -159,7 +167,7 @@ fn plain_commands_preserve_text_and_do_not_invent_times() {
             .parse(
                 &b"\n".as_slice(),
                 &Seen::default(),
-                &crate::RecordContext::none()
+                &sinex_source_core::RecordContext::none()
             )
             .unwrap()
             .0
@@ -175,7 +183,11 @@ fn plain_commands_preserve_text_and_do_not_invent_times() {
     ] {
         assert!(
             parser
-                .parse(&raw, &Seen::default(), &crate::RecordContext::none())
+                .parse(
+                    &raw,
+                    &Seen::default(),
+                    &sinex_source_core::RecordContext::none()
+                )
                 .is_err(),
             "{raw:?}"
         );
@@ -193,7 +205,7 @@ fn observations(
     let chunks = drain(
         &ZshParser { host: "h".into() },
         DrainInput {
-            manifest: crate::RecordContext::none().manifest,
+            manifest: sinex_source_core::RecordContext::none().manifest,
             source: SPEC.name,
             class: Class::Open,
             material: MaterialId(uuid::Uuid::nil()),
@@ -263,7 +275,7 @@ fn mixed_history_append_cuts_keep_carry_coordinates_and_failures() {
 
 #[devkit::test]
 fn appended_plain_records_keep_distinct_material_locations_on_replay() {
-    use crate::drivers::append_file::AppendState;
+    use sinex_source_core::drivers::append_file::AppendState;
     use std::io::Write;
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("history");
@@ -275,10 +287,15 @@ fn appended_plain_records_keep_distinct_material_locations_on_replay() {
         .unwrap()
         .material
         .unwrap();
-    assert_eq!(first.body(), b"pwd\n: 10:0;pwd\n");
-    let (_, carry) = observations(first.body(), 0, serde_json::Value::Null);
-    let cursor = (first.cursor_at)(first.body().len()).unwrap();
-    let mut restarted = AppendState::rebuild([(first.id, first.body())], SPEC.framer);
+    assert_eq!(crate::test_support::body(&first), b"pwd\n: 10:0;pwd\n");
+    let (_, carry) = observations(
+        crate::test_support::body(&first),
+        0,
+        serde_json::Value::Null,
+    );
+    let cursor = (first.cursor_at)(crate::test_support::body(&first).len()).unwrap();
+    let mut restarted =
+        AppendState::rebuild([(first.id, crate::test_support::body(&first))], SPEC.framer);
     std::fs::OpenOptions::new()
         .append(true)
         .open(&path)
@@ -292,15 +309,27 @@ fn appended_plain_records_keep_distinct_material_locations_on_replay() {
         .unwrap();
     assert_eq!(second.previous_part, Some(first.id));
     assert_ne!(second.id, first.id);
-    assert_eq!(second.body(), b"printf a\\\nb\npwd\n: 10:0;pwd\n");
-    assert_eq!(second.records, frame(second.body()).0);
-    let (actual, _) = observations(second.body(), first.body().len(), carry.clone());
+    assert_eq!(
+        crate::test_support::body(&second),
+        b"printf a\\\nb\npwd\n: 10:0;pwd\n"
+    );
+    assert_eq!(second.records, frame(crate::test_support::body(&second)).0);
+    let (actual, _) = observations(
+        crate::test_support::body(&second),
+        crate::test_support::body(&first).len(),
+        carry.clone(),
+    );
     assert_eq!(actual[0][1]["command"], "printf a\nb");
     assert_eq!(actual[1][3], "unknown");
     assert_eq!(actual[2][1]["n"], 1);
     assert_eq!(
         actual,
-        observations(second.body(), first.body().len(), carry).0
+        observations(
+            crate::test_support::body(&second),
+            crate::test_support::body(&first).len(),
+            carry
+        )
+        .0
     );
 }
 

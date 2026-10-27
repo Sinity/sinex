@@ -16,15 +16,15 @@
 //!   those sources, not something a single row can show.
 //!
 //! The correction parameters live in [`CORRECTIONS`], one declaration.
-use crate::drivers::sqlite_rows::SqliteRows;
-use crate::registry::{DeclaredSource, Driver, SourceSpec};
-use crate::{Parser, RecordError};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use sinex_model::event_types::desktop::{
     ActivityWatchOther, BrowserTabActive, PresenceSpan, WindowSpan,
 };
 use sinex_model::{Class, Timestamp};
+use sinex_source_core::drivers::sqlite_rows::SqliteRows;
+use sinex_source_core::registry::{DeclaredSource, Driver, SourceSpec};
+use sinex_source_core::{Parser, RecordError};
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 use time::OffsetDateTime;
@@ -44,7 +44,7 @@ pub const SPEC: SourceSpec = SourceSpec {
         "browser.tab_active",
         "activitywatch.other",
     ],
-    framer: crate::Framer::incremental(crate::drivers::append_file::lines),
+    framer: sinex_source_core::Framer::incremental(sinex_source_core::drivers::append_file::lines),
 };
 
 /// The corrections applied while reading.
@@ -137,7 +137,7 @@ impl Parser for ActivityWatchParser {
         &self,
         row: &Map<String, Value>,
         open: &OpenSpans,
-        _context: &crate::RecordContext<'_>,
+        _context: &sinex_source_core::RecordContext<'_>,
     ) -> Result<(Vec<Activity>, OpenSpans), RecordError> {
         let id = row
             .get("rowid")
@@ -286,19 +286,22 @@ pub fn driver(path: PathBuf, host: String) -> SqliteRows {
 }
 
 /// `--read activitywatch=PATH`: `aw-server-rust`'s database.
-pub const FORMAT: crate::binding::InputFormat = crate::binding::InputFormat {
-    name: "activitywatch",
-    specs: || vec![&SPEC],
-    plan: Some(|input, settings| Ok(crate::binding::single(&SPEC, input, settings))),
-    source: |_| Ok(Box::new(source())),
-    reader: Some(|b| {
-        Ok(crate::binding::rows(driver(
-            b.input.clone(),
-            b.settings.host.clone(),
-        )))
-    }),
-    capture: None,
-};
+pub const FORMAT: sinex_source_core::binding::InputFormat =
+    sinex_source_core::binding::InputFormat {
+        name: "activitywatch",
+        specs: || vec![&SPEC],
+        plan: Some(|input, settings| {
+            Ok(sinex_source_core::binding::single(&SPEC, input, settings))
+        }),
+        source: |_| Ok(Box::new(source())),
+        reader: Some(|b| {
+            Ok(sinex_source_core::binding::rows(driver(
+                b.input.clone(),
+                b.settings.host.clone(),
+            )))
+        }),
+        capture: None,
+    };
 
 #[cfg(test)]
 mod tests;

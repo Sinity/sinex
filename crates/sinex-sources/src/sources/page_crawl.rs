@@ -8,13 +8,13 @@
 //! the request and response facts in its manifest; the parser turns it into
 //! `page.fetched`. A failed fetch is a fact too: it is stored with status 0
 //! and the error, so the page is not silently missing.
-use crate::drivers::{Acquired, DriverError, NewMaterial};
-use crate::registry::{DeclaredSource, Driver, SourceSpec};
-use crate::{Parser, RecordContext, RecordError};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use sinex_model::event_types::session::PageFetched;
 use sinex_model::{Class, InputRef, MaterialId, ObservationFacts, RevisionChange, Timestamp};
+use sinex_source_core::drivers::{Acquired, DriverError, NewMaterial};
+use sinex_source_core::registry::{DeclaredSource, Driver, SourceSpec};
+use sinex_source_core::{Parser, RecordContext, RecordError};
 use std::collections::BTreeMap;
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
@@ -28,9 +28,9 @@ pub const SPEC: SourceSpec = SourceSpec {
     parser: "page-fetch",
     parser_version: 1,
     event_types: &["page.fetched"],
-    framer: crate::Framer::export(
-        crate::drivers::media::whole,
-        crate::drivers::export_archive::Framing::Whole,
+    framer: sinex_source_core::Framer::export(
+        sinex_source_core::drivers::media::whole,
+        sinex_source_core::drivers::export_archive::Framing::Whole,
     ),
 };
 
@@ -274,7 +274,7 @@ impl Crawl {
                     stored: None,
                     part_index,
                     previous_part: previous.material,
-                    reading_order: crate::drivers::reading_order(&manifest),
+                    reading_order: sinex_source_core::drivers::reading_order(&manifest),
                     manifest,
                     cursor_at: Box::new({
                         let cursor =
@@ -376,48 +376,49 @@ pub fn source() -> DeclaredSource<PageParser> {
 }
 
 /// A page crawl over URLs supplied by the command in the binding's settings.
-pub const FORMAT: crate::binding::InputFormat = crate::binding::InputFormat {
-    name: "page-crawl",
-    specs: || vec![&SPEC],
-    plan: None,
-    source: |_| Ok(Box::new(source())),
-    reader: Some(|b| {
-        let urls: Vec<String> = serde_json::from_value(b.settings.options["urls"].clone())
-            .map_err(|e| format!("crawl URLs: {e}"))?;
-        let allow: Vec<String> = match &b.settings.options["allow"] {
-            Value::String(domain) => vec![domain.clone()],
-            Value::Array(domains) => serde_json::from_value(Value::Array(domains.clone()))
-                .map_err(|e| format!("crawl allow list: {e}"))?,
-            _ => return Err("nothing is crawled without an allow list (--allow DOMAIN)".into()),
-        };
-        if allow.is_empty() {
-            return Err("nothing is crawled without an allow list (--allow DOMAIN)".into());
-        }
-        let mut urls: Vec<String> = urls
-            .into_iter()
-            .filter(|url| split(url).is_some_and(|(_, host, _)| allowed(&host, &allow)))
-            .collect();
-        if let Some(limit) = b.settings.number("limit") {
-            urls.truncate(usize::try_from(limit).unwrap_or(usize::MAX));
-        }
-        Ok(crate::binding::polled(Crawl::new(
-            urls,
-            allow,
-            Duration::from_secs(b.settings.number("pause").unwrap_or(2)),
-            b.settings.host.clone(),
-        )))
-    }),
-    capture: None,
-};
+pub const FORMAT: sinex_source_core::binding::InputFormat =
+    sinex_source_core::binding::InputFormat {
+        name: "page-crawl",
+        specs: || vec![&SPEC],
+        plan: None,
+        source: |_| Ok(Box::new(source())),
+        reader: Some(|b| {
+            let urls: Vec<String> = serde_json::from_value(b.settings.options["urls"].clone())
+                .map_err(|e| format!("crawl URLs: {e}"))?;
+            let allow: Vec<String> = match &b.settings.options["allow"] {
+                Value::String(domain) => vec![domain.clone()],
+                Value::Array(domains) => serde_json::from_value(Value::Array(domains.clone()))
+                    .map_err(|e| format!("crawl allow list: {e}"))?,
+                _ => return Err("nothing is crawled without an allow list (--allow DOMAIN)".into()),
+            };
+            if allow.is_empty() {
+                return Err("nothing is crawled without an allow list (--allow DOMAIN)".into());
+            }
+            let mut urls: Vec<String> = urls
+                .into_iter()
+                .filter(|url| split(url).is_some_and(|(_, host, _)| allowed(&host, &allow)))
+                .collect();
+            if let Some(limit) = b.settings.number("limit") {
+                urls.truncate(usize::try_from(limit).unwrap_or(usize::MAX));
+            }
+            Ok(sinex_source_core::binding::polled(Crawl::new(
+                urls,
+                allow,
+                Duration::from_secs(b.settings.number("pause").unwrap_or(2)),
+                b.settings.host.clone(),
+            )))
+        }),
+        capture: None,
+    };
 
 #[cfg(test)]
 mod tests;
 
-impl crate::binding::Reader for Crawl {
+impl sinex_source_core::binding::Reader for Crawl {
     fn poll(
         &mut self,
         cursor: &serde_json::Value,
-    ) -> Result<crate::drivers::Acquired, crate::drivers::DriverError> {
+    ) -> Result<sinex_source_core::drivers::Acquired, sinex_source_core::drivers::DriverError> {
         Self::poll(self, cursor)
     }
 }

@@ -123,7 +123,7 @@ fn scoped_plain_seek_owns_verified_bytes_and_rechecks_cancellation_on_cached_rea
             .read_plain_seek(&name, bytes.len() as u64 + 1, || Ok(()))
             .is_err()
     );
-    let key = crate::sealed::new_key().unwrap();
+    let key = sinex_sealing::new_key().unwrap();
     let sealed = blobs.put_sealed(bytes, &key).unwrap();
     assert!(
         blobs

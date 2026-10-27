@@ -10,7 +10,11 @@ fn tasks_in_lists() {
             {"id": "T2", "title": "", "status": "needsAction", "deleted": true,
              "updated": "2019-06-14T10:00:00Z"}]}]});
     let (out, ()) = TasksParser
-        .parse(doc.as_object().unwrap(), &(), &crate::RecordContext::none())
+        .parse(
+            doc.as_object().unwrap(),
+            &(),
+            &sinex_source_core::RecordContext::none(),
+        )
         .unwrap();
     assert_eq!(out.len(), 2);
     assert_eq!(out[0].list_title.as_deref(), Some("Mine"));

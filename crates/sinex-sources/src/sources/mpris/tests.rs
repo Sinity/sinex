@@ -11,7 +11,7 @@ fn run(lines: &[&str]) -> Vec<PlayerChanged> {
         ))
         .unwrap();
         let (e, c) = MprisParser
-            .parse(&rec, &carry, &crate::RecordContext::none())
+            .parse(&rec, &carry, &sinex_source_core::RecordContext::none())
             .unwrap();
         out.extend(e);
         carry = c;

@@ -7,12 +7,12 @@
 //! current properties), then spools signals; the parser carries the map from
 //! unique to well-known names forward.
 use super::dbus::{self, Message};
-use crate::drivers::live_stream::{self, LiveStream};
-use crate::registry::{DeclaredSource, Driver, SourceSpec};
-use crate::{Parser, RecordError};
 use serde_json::{Map, Value, json};
 use sinex_model::Class;
 use sinex_model::event_types::session::PlayerChanged;
+use sinex_source_core::drivers::live_stream::{self, LiveStream};
+use sinex_source_core::registry::{DeclaredSource, Driver, SourceSpec};
+use sinex_source_core::{Parser, RecordError};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
@@ -26,7 +26,7 @@ pub const SPEC: SourceSpec = SourceSpec {
     parser: "dbus-mpris",
     parser_version: 1,
     event_types: &["player.changed"],
-    framer: crate::Framer::incremental(crate::drivers::append_file::lines),
+    framer: sinex_source_core::Framer::incremental(sinex_source_core::drivers::append_file::lines),
 };
 
 pub const MATCHES: &[&str] = &[
@@ -91,7 +91,7 @@ impl Parser for MprisParser {
         &self,
         record: &Map<String, Value>,
         owners: &BTreeMap<String, String>,
-        _context: &crate::RecordContext<'_>,
+        _context: &sinex_source_core::RecordContext<'_>,
     ) -> Result<(Vec<PlayerChanged>, BTreeMap<String, String>), RecordError> {
         let (received_at, bytes) = live_stream::received(record).map_err(RecordError::new)?;
         let mut owners = owners.clone();
@@ -156,10 +156,10 @@ pub fn driver(spool: PathBuf, host: String) -> LiveStream {
 
 /// One snapshot line per player on the bus now.
 pub fn snapshot() -> Vec<Vec<u8>> {
-    snapshot_until(&crate::capture::CaptureStop::new(None))
+    snapshot_until(&sinex_source_core::capture::CaptureStop::new(None))
 }
 
-fn snapshot_until(stop: &crate::capture::CaptureStop) -> Vec<Vec<u8>> {
+fn snapshot_until(stop: &sinex_source_core::capture::CaptureStop) -> Vec<Vec<u8>> {
     dbus::names_until(stop)
         .into_iter()
         .filter(|n| n.starts_with(PREFIX))
@@ -191,24 +191,30 @@ fn snapshot_until(stop: &crate::capture::CaptureStop) -> Vec<Vec<u8>> {
         .collect()
 }
 
-pub fn capture(spool: &Path, stop: &crate::capture::CaptureStop) -> std::io::Result<u64> {
+pub fn capture(
+    spool: &Path,
+    stop: &sinex_source_core::capture::CaptureStop,
+) -> std::io::Result<u64> {
     dbus::capture(MATCHES, &snapshot_until(stop), spool, stop)
 }
 
 /// `--read players=SPOOL`: media players (MPRIS), captured into SPOOL.
-pub const FORMAT: crate::binding::InputFormat = crate::binding::InputFormat {
-    name: "players",
-    specs: || vec![&SPEC],
-    plan: Some(|spool, settings| Ok(crate::binding::single(&SPEC, spool, settings))),
-    source: |_| Ok(Box::new(source())),
-    reader: Some(|b| {
-        Ok(crate::binding::polled(driver(
-            b.input.clone(),
-            b.settings.host.clone(),
-        )))
-    }),
-    capture: Some(|b, stop| capture(&b.input, stop).map_err(|e| e.to_string())),
-};
+pub const FORMAT: sinex_source_core::binding::InputFormat =
+    sinex_source_core::binding::InputFormat {
+        name: "players",
+        specs: || vec![&SPEC],
+        plan: Some(|spool, settings| {
+            Ok(sinex_source_core::binding::single(&SPEC, spool, settings))
+        }),
+        source: |_| Ok(Box::new(source())),
+        reader: Some(|b| {
+            Ok(sinex_source_core::binding::polled(driver(
+                b.input.clone(),
+                b.settings.host.clone(),
+            )))
+        }),
+        capture: Some(|b, stop| capture(&b.input, stop).map_err(|e| e.to_string())),
+    };
 
 #[cfg(test)]
 mod tests;

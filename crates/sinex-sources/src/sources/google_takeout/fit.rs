@@ -5,13 +5,13 @@
 //! identify it. `fitValue` is kept as exported, one entry per field.
 //! Hourly and daily figures are derived from these points (`health.hourly`,
 //! `health.daily`); the parser never combines points.
-use crate::drivers::export_archive::{ExportArchive, Framing, PART_BYTES};
-use crate::registry::{DeclaredSource, Driver, SourceSpec};
 use crate::sources::fields;
-use crate::{Parser, RecordContext, RecordError};
 use serde_json::{Map, Value};
 use sinex_model::event_types::health::HealthRecord;
 use sinex_model::{Class, Timestamp};
+use sinex_source_core::drivers::export_archive::{ExportArchive, Framing, PART_BYTES};
+use sinex_source_core::registry::{DeclaredSource, Driver, SourceSpec};
+use sinex_source_core::{Parser, RecordContext, RecordError};
 use std::path::PathBuf;
 
 pub const SPEC: SourceSpec = SourceSpec {
@@ -23,9 +23,9 @@ pub const SPEC: SourceSpec = SourceSpec {
     parser: "google-fit",
     parser_version: 4,
     event_types: &["health.record"],
-    framer: crate::Framer::export(
+    framer: sinex_source_core::Framer::export(
         frame,
-        crate::drivers::export_archive::Framing::JsonArray("/Data Points"),
+        sinex_source_core::drivers::export_archive::Framing::JsonArray("/Data Points"),
     ),
 };
 

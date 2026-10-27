@@ -3,7 +3,8 @@
 //! opt-in: nothing is fetched without one.
 use crate::backfill::Totals;
 use crate::writer::WriterHandle;
-use sinex_sources::{Binding, Settings, sources};
+use sinex_source_core::{Binding, Settings};
+use sinex_sources::sources;
 use sinex_store::Blobs;
 use sinex_store::payloads::{self, RecordStates};
 use sqlx::PgConnection;

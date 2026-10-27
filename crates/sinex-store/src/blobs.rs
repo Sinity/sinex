@@ -45,7 +45,7 @@ impl Blobs {
 
     /// Store bytes sealed under `key` (the sealed class): encrypted frames
     /// named by a keyed hash, so the store never confirms a known plaintext.
-    pub fn put_sealed(&self, bytes: &[u8], key: &crate::sealed::DataKey) -> Result<String> {
+    pub fn put_sealed(&self, bytes: &[u8], key: &sinex_sealing::DataKey) -> Result<String> {
         self.put_sealed_reader(std::io::Cursor::new(bytes), key)
     }
 
@@ -53,7 +53,7 @@ impl Blobs {
     pub fn put_sealed_reader(
         &self,
         reader: impl Read + Seek,
-        key: &crate::sealed::DataKey,
+        key: &sinex_sealing::DataKey,
     ) -> Result<String> {
         let prepared = self.0.prepare_sealed(reader, 3, key)?;
         self.note_unadmitted(prepared.hash())?;
@@ -66,7 +66,7 @@ impl Blobs {
         &self,
         name: &str,
         expected_len: Option<u64>,
-        key: &crate::sealed::DataKey,
+        key: &sinex_sealing::DataKey,
         limits: SealedReadLimits,
         check: impl FnMut() -> hashed_blobs::Result<()> + Send + 'static,
     ) -> Result<hashed_blobs::SealedReader> {

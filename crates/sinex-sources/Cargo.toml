@@ -1,12 +1,13 @@
 [package]
 name = "sinex-sources"
-description = "The source framework (parser seam, drain, shared drivers) and every source, one module per family."
+description = "Source families and live capture, built over sinex-source-core."
 version.workspace = true
 edition.workspace = true
 publish.workspace = true
 license.workspace = true
 
 [dependencies]
+sinex-source-core.workspace = true
 sinex-transport.workspace = true
 sinex-model.workspace = true
 sinex-protocol.workspace = true
@@ -16,30 +17,30 @@ base64.workspace = true
 blake3.workspace = true
 thiserror.workspace = true
 time.workspace = true
-rusqlite.workspace = true
+rusqlite = { workspace = true, optional = true }
 notify.workspace = true
 uuid.workspace = true
-gix.workspace = true
+gix = { workspace = true, optional = true }
 tokio.workspace = true
 async-nats.workspace = true
 futures.workspace = true
-zip = { version = "2", default-features = false, features = ["deflate", "bzip2"] }
-tar = "0.4"
-flate2 = "1"
+zip = { version = "2", default-features = false, features = ["deflate", "bzip2"], optional = true }
+tar = { version = "0.4", optional = true }
+flate2 = { version = "1", optional = true }
 csv = "1"
 regex.workspace = true
-serde-saphyr = { version = "2", default-features = false, features = ["deserialize"] }
+serde-saphyr = { version = "2", default-features = false, features = ["deserialize"], optional = true }
 tempfile = "3"
 rustix = { version = "1", features = ["process"] }
 imbl = "5"
-mailparse = "0.16"
-encoding_rs = "0.8"
+mailparse = { version = "0.16", optional = true }
+encoding_rs = { version = "0.8", optional = true }
 jiff = { version = "0.2", features = ["tzdb-bundle-always"] }
-sha2 = "0.10"
-md-5 = "0.10"
-ureq = { version = "3", default-features = false, features = ["rustls", "gzip"] }
-rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
-webpki-roots = "1"
+sha2 = { version = "0.10", optional = true }
+md-5 = { version = "0.10", optional = true }
+ureq = { version = "3", default-features = false, features = ["rustls", "gzip"], optional = true }
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"], optional = true }
+webpki-roots = { version = "1", optional = true }
 
 [dev-dependencies]
 allocation-counter = "0.8.1"
@@ -49,3 +50,19 @@ hashed-blobs.workspace = true
 
 [lints]
 workspace = true
+
+[features]
+default = ["full"]
+full = ["sinex-source-core/archives", "sinex-source-core/sqlite", "dep:rusqlite", "dep:gix", "dep:zip", "dep:tar", "dep:flate2", "dep:serde-saphyr", "dep:mailparse", "dep:encoding_rs", "dep:sha2", "dep:md-5", "dep:ureq", "dep:rustls", "dep:webpki-roots"]
+
+[[test]]
+name = "golden"
+required-features = ["full"]
+
+[[test]]
+name = "framing"
+required-features = ["full"]
+
+[[test]]
+name = "archive"
+required-features = ["full"]

@@ -16,12 +16,12 @@
 //! The client is a small synchronous IMAP4rev1 client (RFC 3501): the
 //! commands live mail needs (LOGIN or AUTHENTICATE XOAUTH2, SELECT, UID
 //! FETCH, IDLE, LOGOUT) over TLS (rustls) or, for tests, plain TCP.
-use crate::drivers::{Acquired, DriverError, NewMaterial};
-use crate::registry::{DeclaredSource, Driver, SourceSpec};
 use base64::Engine;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use sinex_model::{Class, InputRef, MaterialId, ObservationFacts, RevisionChange, Timestamp};
+use sinex_source_core::drivers::{Acquired, DriverError, NewMaterial};
+use sinex_source_core::registry::{DeclaredSource, Driver, SourceSpec};
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::TcpStream;
 use std::path::PathBuf;
@@ -37,9 +37,9 @@ pub const SPEC: SourceSpec = SourceSpec {
     parser: "rfc5322-mail",
     parser_version: 1,
     event_types: &["mail.message"],
-    framer: crate::Framer::export(
-        crate::drivers::export_archive::frame_whole,
-        crate::drivers::export_archive::Framing::Whole,
+    framer: sinex_source_core::Framer::export(
+        sinex_source_core::drivers::export_archive::frame_whole,
+        sinex_source_core::drivers::export_archive::Framing::Whole,
     ),
 };
 
@@ -415,7 +415,7 @@ impl ImapMail {
                 records,
                 part_index,
                 previous_part: previous.material,
-                reading_order: crate::drivers::reading_order(&manifest),
+                reading_order: sinex_source_core::drivers::reading_order(&manifest),
                 manifest,
                 cursor_at: Box::new(move |end| {
                     at(&next, start, &cursor_records, end)
@@ -440,30 +440,33 @@ pub fn source() -> DeclaredSource<super::mail::MailParser> {
 
 /// `--read imap=CONFIG.json`: live mail from the account CONFIG describes,
 /// the messages new since the last read.
-pub const FORMAT: crate::binding::InputFormat = crate::binding::InputFormat {
-    name: "imap",
-    specs: || vec![&SPEC],
-    plan: Some(|input, settings| {
-        let config = config(input)?;
-        let mut b = crate::binding::Binding::of(&SPEC, input, settings.clone());
-        b.name = format!(
-            "{}:{}@{}/{}@{}",
-            SPEC.name, config.username, config.host, config.mailbox, settings.host
-        );
-        Ok(vec![b])
-    }),
-    source: |_| Ok(Box::new(source())),
-    reader: Some(|b| {
-        Ok(crate::binding::Reading::Polled(Box::new(ImapReader {
-            mail: ImapMail {
-                config: config(&b.input)?,
-                host: b.settings.host.clone(),
-            },
-            held: None,
-        })))
-    }),
-    capture: None,
-};
+pub const FORMAT: sinex_source_core::binding::InputFormat =
+    sinex_source_core::binding::InputFormat {
+        name: "imap",
+        specs: || vec![&SPEC],
+        plan: Some(|input, settings| {
+            let config = config(input)?;
+            let mut b = sinex_source_core::binding::Binding::of(&SPEC, input, settings.clone());
+            b.name = format!(
+                "{}:{}@{}/{}@{}",
+                SPEC.name, config.username, config.host, config.mailbox, settings.host
+            );
+            Ok(vec![b])
+        }),
+        source: |_| Ok(Box::new(source())),
+        reader: Some(|b| {
+            Ok(sinex_source_core::binding::Reading::Polled(Box::new(
+                ImapReader {
+                    mail: ImapMail {
+                        config: config(&b.input)?,
+                        host: b.settings.host.clone(),
+                    },
+                    held: None,
+                },
+            )))
+        }),
+        capture: None,
+    };
 
 fn config(path: &std::path::Path) -> Result<ImapConfig, String> {
     serde_json::from_slice(&std::fs::read(path).map_err(|e| format!("{}: {e}", path.display()))?)
@@ -472,10 +475,10 @@ fn config(path: &std::path::Path) -> Result<ImapConfig, String> {
 
 struct ImapReader {
     mail: ImapMail,
-    held: Option<crate::drivers::held::HeldMaterial>,
+    held: Option<sinex_source_core::drivers::held::HeldMaterial>,
 }
 
-impl crate::binding::Reader for ImapReader {
+impl sinex_source_core::binding::Reader for ImapReader {
     fn poll(&mut self, cursor: &Value) -> Result<Acquired, DriverError> {
         if let Some(held) = &self.held {
             if !held.admitted(cursor) {
@@ -487,7 +490,7 @@ impl crate::binding::Reader for ImapReader {
         if acquired.material.is_none() {
             return Ok(acquired);
         }
-        let held = crate::drivers::held::HeldMaterial::hold(acquired, cursor)?;
+        let held = sinex_source_core::drivers::held::HeldMaterial::hold(acquired, cursor)?;
         let acquired = held.acquired(cursor)?;
         self.held = Some(held);
         Ok(acquired)

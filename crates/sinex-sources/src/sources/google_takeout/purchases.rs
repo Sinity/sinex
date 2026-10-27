@@ -3,13 +3,13 @@
 //! per file), on `ExportArchive`. Each item's time is read from the wrapped
 //! item's own field (Lynchpin unwrapped only `orderHistory`, so most rows had
 //! no time); its identity is the provider's ID where there is one.
-use crate::drivers::export_archive::{ExportArchive, Framing, PART_BYTES};
-use crate::registry::{DeclaredSource, Driver, SourceSpec};
 use crate::sources::fields;
-use crate::{Parser, RecordError};
 use serde_json::{Map, Value};
 use sinex_model::event_types::account::PurchaseObserved;
 use sinex_model::{Class, Timestamp};
+use sinex_source_core::drivers::export_archive::{ExportArchive, Framing, PART_BYTES};
+use sinex_source_core::registry::{DeclaredSource, Driver, SourceSpec};
+use sinex_source_core::{Parser, RecordError};
 use std::path::PathBuf;
 
 pub const PLAY_STORE: SourceSpec = SourceSpec {
@@ -21,9 +21,9 @@ pub const PLAY_STORE: SourceSpec = SourceSpec {
     parser: "google-play-store",
     parser_version: 1,
     event_types: &["purchase.observed"],
-    framer: crate::Framer::export(
+    framer: sinex_source_core::Framer::export(
         frame_play_store,
-        crate::drivers::export_archive::Framing::JsonArray(""),
+        sinex_source_core::drivers::export_archive::Framing::JsonArray(""),
     ),
 };
 
@@ -36,9 +36,9 @@ pub const PURCHASES: SourceSpec = SourceSpec {
     parser: "google-purchases",
     parser_version: 1,
     event_types: &["purchase.observed"],
-    framer: crate::Framer::export(
+    framer: sinex_source_core::Framer::export(
         frame_purchases,
-        crate::drivers::export_archive::Framing::Whole,
+        sinex_source_core::drivers::export_archive::Framing::Whole,
     ),
 };
 
@@ -65,7 +65,7 @@ impl Parser for PurchasesParser {
         &self,
         row: &Map<String, Value>,
         _: &(),
-        _context: &crate::RecordContext<'_>,
+        _context: &sinex_source_core::RecordContext<'_>,
     ) -> Result<(Vec<PurchaseObserved>, ()), RecordError> {
         // An order file: the object itself is the item.
         if row.contains_key("merchantOrderId") || row.contains_key("lineItem") {

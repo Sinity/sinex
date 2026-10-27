@@ -109,15 +109,18 @@ async fn submission_checks_again_inside_the_writer(db: devkit::pg::TestDatabase)
         .unwrap();
     let calls = Arc::new(AtomicUsize::new(0));
     let check_calls = calls.clone();
+    let material = crate::sealing::Materials::new(
+        ctx.blobs.clone(),
+        Class::Guarded,
+        crate::sealing::Access::default(),
+    )
+    .unwrap();
     let result = Intake {
         writer: &ctx.writer,
         source: &forecast::request_source(),
         binding: "synthetic-check",
         run: RunId::new(),
-        sink: &crate::material_sink::Sink(ctx.blobs.clone()),
-        class: Class::Guarded,
-        sealing: None,
-        unlock: None,
+        material: &material,
         check: Arc::new(move || {
             if check_calls.fetch_add(1, Ordering::SeqCst) >= 3 {
                 Err("capture stopped".into())
@@ -127,7 +130,7 @@ async fn submission_checks_again_inside_the_writer(db: devkit::pg::TestDatabase)
         }),
         priority: Priority::Bulk,
         atomic: false,
-        registered: false,
+        registered: None,
     }
     .submit(acquisition("first"), Value::Null, &mut Totals::default())
     .await;

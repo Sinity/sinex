@@ -1,10 +1,17 @@
 //! Every source, one module per family, registered in one list.
+#[cfg(feature = "full")]
 pub mod activitywatch;
+#[cfg(feature = "full")]
 pub mod arbtt;
+#[cfg(feature = "full")]
 pub mod asciinema;
+#[cfg(feature = "full")]
 pub mod atuin;
+#[cfg(feature = "full")]
 pub mod bash;
+#[cfg(feature = "full")]
 pub mod calendar;
+#[cfg(feature = "full")]
 pub mod chromium;
 /// The Wayland clipboard and primary selection.
 pub mod clipboard;
@@ -12,106 +19,169 @@ pub mod clipboard;
 pub mod dbus;
 pub(crate) mod fields;
 pub mod file_watch;
+#[cfg(feature = "full")]
 pub mod fish;
+#[cfg(feature = "full")]
 pub mod forecast;
+#[cfg(feature = "full")]
 pub mod goodreads;
+#[cfg(feature = "full")]
 pub mod google_takeout;
 pub mod hyprland;
 /// The keyboard and pointer log (scribe-tap).
+#[cfg(feature = "full")]
 pub mod input_log;
 pub mod journald;
 /// kitty scrollback snapshots in the Sinnix lake.
 pub mod kitty_scrollback;
 /// The media library: scans of library roots and library requests.
+#[cfg(feature = "full")]
 pub mod library;
+#[cfg(feature = "full")]
 pub mod mail;
 /// Live mail over IMAP, with IDLE and XOAUTH2.
+#[cfg(feature = "full")]
 pub mod mail_imap;
 /// Screen stills and audio segments on the `Media` driver.
 pub mod media_capture;
+#[cfg(feature = "full")]
 pub mod messenger;
 /// Media players (MPRIS) on the session bus.
 pub mod mpris;
+#[cfg(feature = "full")]
 pub mod notes;
 /// Desktop notifications on the session bus.
 pub mod notifications;
+#[cfg(feature = "full")]
 pub mod operator;
+#[cfg(feature = "full")]
 pub mod outlook;
 /// The forward crawl of browser-history pages, opt-in per domain.
+#[cfg(feature = "full")]
 pub mod page_crawl;
+#[cfg(feature = "full")]
 pub mod raindrop;
+#[cfg(feature = "full")]
 pub mod reddit;
 /// Commits in local repositories (`code.git`).
+#[cfg(feature = "full")]
 pub mod repository;
+#[cfg(feature = "full")]
 pub mod samsung_cloud;
+#[cfg(feature = "full")]
 pub mod samsung_health;
+#[cfg(feature = "full")]
 pub mod samsung_sms;
 /// The session integration socket: Neovim and kitty integrations.
 pub mod session_socket;
 /// Numbering shell history records, shared by zsh, bash and fish.
+#[cfg(feature = "full")]
 pub(crate) mod shell_history;
 /// The Sinnix capture lake's lanes.
+#[cfg(feature = "full")]
 pub mod sinnix_lake;
+#[cfg(feature = "full")]
 pub mod sleep_as_android;
+#[cfg(feature = "full")]
 pub mod spotify;
+#[cfg(feature = "full")]
 pub mod takeout_chrome;
 pub(crate) mod terminal_text;
+#[cfg(feature = "full")]
 pub mod weechat;
+#[cfg(feature = "full")]
 pub mod wykop;
+#[cfg(feature = "full")]
 pub mod zsh;
 
-use crate::binding::{Binding, InputFormat, Settings};
-use crate::registry::{Source, SourceSpec};
+use sinex_source_core::binding::{Binding, InputFormat, Settings};
+use sinex_source_core::registry::{Source, SourceSpec};
 
 /// Every input format and the sources that read it: the one list the
 /// catalog, backfill, the binding runner, `sinex-session` and replay all
 /// work from.
 pub fn formats() -> &'static [&'static InputFormat] {
     &[
+        #[cfg(feature = "full")]
         &atuin::FORMAT,
+        #[cfg(feature = "full")]
         &zsh::FORMAT,
+        #[cfg(feature = "full")]
         &bash::FORMAT,
+        #[cfg(feature = "full")]
         &fish::FORMAT,
         &hyprland::FORMAT,
         &journald::FORMAT,
         &file_watch::FORMAT,
+        #[cfg(feature = "full")]
         &activitywatch::FORMAT,
+        #[cfg(feature = "full")]
         &repository::FORMAT,
+        #[cfg(feature = "full")]
         &chromium::FORMAT,
+        #[cfg(feature = "full")]
         &takeout_chrome::FORMAT,
+        #[cfg(feature = "full")]
         &spotify::FORMAT,
+        #[cfg(feature = "full")]
         &raindrop::FORMAT,
+        #[cfg(feature = "full")]
         &notes::FORMAT,
+        #[cfg(feature = "full")]
         &mail::MBOX_FORMAT,
+        #[cfg(feature = "full")]
         &mail::MAILDIR_FORMAT,
+        #[cfg(feature = "full")]
         &mail_imap::FORMAT,
+        #[cfg(feature = "full")]
         &outlook::FORMAT,
+        #[cfg(feature = "full")]
         &outlook::CSV_FORMAT,
+        #[cfg(feature = "full")]
         &weechat::FORMAT,
+        #[cfg(feature = "full")]
         &calendar::FORMAT,
+        #[cfg(feature = "full")]
         &google_takeout::FORMAT,
+        #[cfg(feature = "full")]
         &goodreads::FORMAT,
+        #[cfg(feature = "full")]
         &messenger::FORMAT,
+        #[cfg(feature = "full")]
         &sleep_as_android::FORMAT,
+        #[cfg(feature = "full")]
         &wykop::FORMAT,
+        #[cfg(feature = "full")]
         &reddit::FORMAT,
+        #[cfg(feature = "full")]
         &samsung_health::FORMAT,
+        #[cfg(feature = "full")]
         &samsung_sms::FORMAT,
+        #[cfg(feature = "full")]
         &samsung_cloud::FORMAT,
+        #[cfg(feature = "full")]
         &arbtt::FORMAT,
+        #[cfg(feature = "full")]
         &asciinema::FORMAT,
         &kitty_scrollback::FORMAT,
+        #[cfg(feature = "full")]
         &input_log::FORMAT,
+        #[cfg(feature = "full")]
         &operator::RAW_LOG_FORMAT,
+        #[cfg(feature = "full")]
         &operator::STEERING_FORMAT,
+        #[cfg(feature = "full")]
         &sinnix_lake::FORMAT,
         &notifications::FORMAT,
         &mpris::FORMAT,
         &clipboard::FORMAT,
         &session_socket::FORMAT,
         &media_capture::FORMAT,
+        #[cfg(feature = "full")]
         &library::FORMAT,
+        #[cfg(feature = "full")]
         &forecast::FORMAT,
+        #[cfg(feature = "full")]
         &page_crawl::FORMAT,
     ]
 }
@@ -188,5 +258,5 @@ pub fn binding_for_parser(parser: &str, host: &str) -> Option<Binding> {
     })
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "full"))]
 mod tests;

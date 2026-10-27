@@ -1,12 +1,12 @@
 //! Authenticated forecast requests stored as ordinary JSON-line materials.
-use crate::drivers::{Acquired, NewMaterial};
-use crate::{DeclaredSource, Driver, Parser, RecordContext, RecordError, SourceSpec};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 use sinex_model::event_types::forecast::{ForecastRecord, Issued, Resolved};
 use sinex_model::{
     Class, InputRef, MaterialId, ObservationFacts, ReadingOrder, RevisionChange, Timestamp,
 };
+use sinex_source_core::drivers::{Acquired, NewMaterial};
+use sinex_source_core::{DeclaredSource, Driver, Parser, RecordContext, RecordError, SourceSpec};
 
 pub const REQUEST: SourceSpec = SourceSpec {
     name: "forecast.request",
@@ -17,9 +17,9 @@ pub const REQUEST: SourceSpec = SourceSpec {
     parser: "forecast-request",
     parser_version: 1,
     event_types: &["forecast.issued", "forecast.resolved"],
-    framer: crate::Framer::export(
-        crate::drivers::export_archive::frame_lines,
-        crate::drivers::export_archive::Framing::Lines,
+    framer: sinex_source_core::Framer::export(
+        sinex_source_core::drivers::export_archive::frame_lines,
+        sinex_source_core::drivers::export_archive::Framing::Lines,
     ),
 };
 
@@ -141,14 +141,15 @@ pub fn request_material(
         cursor_without_material: Value::Null,
     }
 }
-pub const FORMAT: crate::binding::InputFormat = crate::binding::InputFormat {
-    name: "forecast",
-    specs: || vec![&REQUEST],
-    plan: None,
-    source: |_| Ok(Box::new(request_source())),
-    reader: None,
-    capture: None,
-};
+pub const FORMAT: sinex_source_core::binding::InputFormat =
+    sinex_source_core::binding::InputFormat {
+        name: "forecast",
+        specs: || vec![&REQUEST],
+        plan: None,
+        source: |_| Ok(Box::new(request_source())),
+        reader: None,
+        capture: None,
+    };
 
 #[cfg(test)]
 mod tests;

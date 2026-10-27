@@ -16,7 +16,7 @@ fn linked_and_unlinked_actions() {
         "Aug 26, 2026, 9:34:44 PM CEST",
     );
     let (out, ()) = MyActivityParser
-        .parse(&c, &(), &crate::RecordContext::none())
+        .parse(&c, &(), &sinex_source_core::RecordContext::none())
         .unwrap();
     assert_eq!(out[0].verb.as_deref(), Some("Visited"));
     assert_eq!(out[0].title, "A page");
@@ -28,7 +28,7 @@ fn linked_and_unlinked_actions() {
         "Dec 15, 2025, 5:15:21 AM CEST",
     );
     let (out, ()) = MyActivityParser
-        .parse(&c, &(), &crate::RecordContext::none())
+        .parse(&c, &(), &sinex_source_core::RecordContext::none())
         .unwrap();
     assert_eq!(out[0].title_url, None);
     assert_eq!(
@@ -45,7 +45,7 @@ fn watches_keep_unknown_titles_unknown() {
         "Aug 26, 2026, 9:34:44 PM CEST",
     );
     let (out, ()) = YouTubeParser
-        .parse(&c, &(), &crate::RecordContext::none())
+        .parse(&c, &(), &sinex_source_core::RecordContext::none())
         .unwrap();
     let YouTubeEvent::Watched(w) = &out[0] else {
         panic!()
@@ -59,7 +59,7 @@ fn watches_keep_unknown_titles_unknown() {
         "Aug 26, 2026, 9:34:44 PM CEST",
     );
     let (out, ()) = YouTubeParser
-        .parse(&gone, &(), &crate::RecordContext::none())
+        .parse(&gone, &(), &sinex_source_core::RecordContext::none())
         .unwrap();
     let YouTubeEvent::Watched(w) = &out[0] else {
         panic!()
@@ -72,7 +72,7 @@ fn watches_keep_unknown_titles_unknown() {
         "Aug 26, 2026, 9:34:44 PM CEST",
     );
     let (out, ()) = YouTubeParser
-        .parse(&removed, &(), &crate::RecordContext::none())
+        .parse(&removed, &(), &sinex_source_core::RecordContext::none())
         .unwrap();
     let YouTubeEvent::Watched(w) = &out[0] else {
         panic!()
