@@ -6,7 +6,7 @@ fn read(
     carry: &Carry,
 ) -> Result<(Vec<OcrSegment>, Carry), RecordError> {
     let manifest = Manifest::from_json(
-        serde_json::json!({"path":"example.tsv","imported_text":{"engine":"example-engine","external_run":"example-run"}}),
+        serde_json::json!({"path":"example.tsv","file_metadata":{"engine":"example-engine","external_run":"example-run"}}),
     );
     OcrParser {
         input: "example".into(),
@@ -85,11 +85,11 @@ fn corrected_file_confidence_scale_changes_a_reading_without_changing_its_identi
     let raw = br#"{"id":"word-a","text":"same","confidence":87}"#;
     let read = |scale| {
         let manifest = Manifest::from_json(
-            serde_json::json!({"path":"example.json","imported_text":{"confidence_scale":scale,"engine":"example-engine","external_run":"example-run"}}),
+            serde_json::json!({"path":"example.json","file_metadata":{"confidence_scale":scale,"engine":"example-engine","external_run":"example-run"}}),
         );
-        crate::drain(
+        sinex_source_core::drain(
             &parser,
-            crate::DrainInput {
+            sinex_source_core::DrainInput {
                 source: JSON.name,
                 class: Class::Guarded,
                 material: sinex_model::MaterialId::new(),
@@ -97,7 +97,7 @@ fn corrected_file_confidence_scale_changes_a_reading_without_changing_its_identi
                 records: &[(0, raw.len())],
                 carry: Value::Null,
                 reading_order: &|_| sinex_model::ReadingOrder(0),
-                limits: crate::Limits::default(),
+                limits: sinex_source_core::Limits::default(),
                 manifest: &manifest,
             },
         )
