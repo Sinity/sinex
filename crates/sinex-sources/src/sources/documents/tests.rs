@@ -93,6 +93,7 @@ fn unchanged_changed_removed_and_missing_roots_are_distinct() {
     let removed = parse(&driver.poll(&cursor, &mut state).unwrap());
     assert_eq!(removed[0].record_state, sinex_model::RecordState::Removed);
     assert!(removed[0].payload["content"].is_null());
+    assert_eq!(removed[0].payload["media_type"], "application/octet-stream");
 }
 #[devkit::test]
 fn acquisition_requires_scope_and_rejects_notes_library_and_symlink_overlap() {
