@@ -29,7 +29,26 @@ pub const fn spec(transcripts: bool) -> DiscoverySpec {
 }
 
 pub fn discover(format: &InputFormat, context: &DiscoveryContext) -> Vec<DiscoveredInput> {
-    crate::discovery::discover_format(format, context)
+    let mut found = crate::discovery::discover_format(format, context);
+    for input in &mut found {
+        let Some(path) = input.input.as_ref().filter(|path| path.is_file()) else { continue; };
+        let selected = context.inputs.get(format.name).is_some_and(|paths| paths.contains(path))
+            || context.sources.get(&input.source).is_some_and(|configuration| {
+                configuration.format.as_deref() == Some(format.name)
+                    && configuration.paths.iter().any(|configured| Path::new(configured) == path.as_path())
+            });
+        if selected { continue; }
+        match matches(format.name, path) {
+            Ok(true) => {},
+            Ok(false) => input.bindings.clear(),
+            Err(reason) => {
+                input.bindings.clear();
+                input.availability = sinex_source_core::discovery::Availability::Unavailable;
+                input.reason = Some(reason);
+            }
+        }
+    }
+    found
 }
 
 pub fn plan(spec: &SourceSpec, input: &Path, settings: &Settings) -> Result<Vec<Binding>, String> {

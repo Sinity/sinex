@@ -396,3 +396,23 @@ fn a_header_named_cue_keeps_its_spoken_text() {
     assert_eq!(rows[0].text, "spoken");
     assert_eq!(rows[0].extra["cue_id"], "WEBVTT");
 }
+
+#[devkit::test]
+fn an_automatically_discovered_file_has_one_transcript_format() {
+    use sinex_source_core::discovery::DiscoveryContext;
+    let temp = tempfile::tempdir().unwrap();
+    let path = temp.path().join("example.json");
+    std::fs::write(&path, br#"{"segments":[{"text":"same"}]}"#).unwrap();
+    let mut context = DiscoveryContext { host: "example".into(), ..Default::default() };
+    context.inputs.insert("transcripts".into(), vec![path.clone()]);
+    let found = crate::discovery::discover(&context).unwrap();
+    let bindings: Vec<_> = found.iter().filter(|input| input.source == WHISPER.name).flat_map(|input| &input.bindings).collect();
+    assert_eq!(bindings.len(), 1);
+    assert_eq!(bindings[0].parser, WHISPER.parser);
+    context.inputs.clear();
+    context.inputs.insert("transcript-text".into(), vec![path]);
+    let found = crate::discovery::discover(&context).unwrap();
+    let bindings: Vec<_> = found.iter().filter(|input| input.source == TEXT.name).flat_map(|input| &input.bindings).collect();
+    assert_eq!(bindings.len(), 1);
+    assert_eq!(bindings[0].parser, TEXT.parser);
+}
