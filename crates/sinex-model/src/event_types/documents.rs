@@ -4,7 +4,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
-#[event(type = "document.captured", replace = newer,
+#[event(type = "document.captured", key = location, replace = newer,
     time = modified_at, quality = file_mtime, removed_when = removed_at)]
 pub struct DocumentCaptured {
     pub host: String,
