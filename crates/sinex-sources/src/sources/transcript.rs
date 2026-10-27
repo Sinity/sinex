@@ -64,7 +64,6 @@ pub const SRT: SourceSpec = spec("srt", CUE_FRAMING, framing::whole);
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct Carry {
     pub member: String,
-    pub next: u64,
     pub header: Option<Vec<String>>,
 }
 impl Carry {
@@ -80,22 +79,11 @@ impl Carry {
         } else {
             Self {
                 member,
-                next: context
-                    .member
-                    .and_then(|m| m.details.get("record_start"))
-                    .and_then(Value::as_u64)
-                    .unwrap_or(0),
                 header: None,
             }
         }
     }
-    pub fn advance(&mut self) -> Result<(), RecordError> {
-        self.next = self
-            .next
-            .checked_add(1)
-            .ok_or_else(|| RecordError::new("output index exceeds u64"))?;
-        Ok(())
-    }
+
 }
 
 pub struct TranscriptParser {
@@ -111,10 +99,7 @@ impl TranscriptParser {
     ) -> Result<(Vec<TranscriptCue>, Carry), RecordError> {
         let text =
             std::str::from_utf8(record).map_err(|_| RecordError::new("transcript is not UTF-8"))?;
-        let mut carry = carry.at(context);
-        let index = carry.next;
-        carry.next = index;
-        carry.advance()?;
+        let carry = carry.at(context);
         let mut payload = TranscriptCue {
             input: input_identity(&self.input, context),
             ..Default::default()
@@ -226,7 +211,7 @@ impl TranscriptParser {
                 let heading = block.lines().next().unwrap_or_default();
                 let word = heading.split_ascii_whitespace().next().unwrap_or_default();
                 if self.format == Format::WebVtt
-                    && ((index == 0 && word == "WEBVTT")
+                    && ((word == "WEBVTT" && !block.lines().skip(1).any(|line| line.contains("-->")))
                         || word == "NOTE"
                         || matches!(heading.trim_end(), "STYLE" | "REGION"))
                 {
@@ -503,9 +488,8 @@ impl Parser for TranscriptParser {
             member: context.member,
         };
         let mut output = Vec::with_capacity(records.len());
-        for (index, record) in records.iter().enumerate() {
+        for record in &records {
             let carry = Carry {
-                next: index as u64,
                 member: Carry::default().at(&context).member,
                 header: None,
             };

@@ -63,7 +63,6 @@ impl OcrParser {
             input: super::transcript::input_identity(&self.input, context),
             ..Default::default()
         };
-        carry.advance()?;
         let mut object = match self.format {
             Format::Text => {
                 payload.text = text.trim_end_matches(['\r', '\n']).into();
@@ -306,9 +305,8 @@ impl Parser for OcrParser {
             member: context.member,
         };
         let mut output = Vec::with_capacity(records.len());
-        for (index, record) in records.iter().enumerate() {
+        for record in &records {
             let carry = Carry {
-                next: index as u64,
                 member: Carry::default().at(&context).member,
                 header: None,
             };
