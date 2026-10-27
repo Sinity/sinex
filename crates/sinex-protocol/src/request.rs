@@ -207,6 +207,12 @@ pub enum Request {
         #[serde(default)]
         by: Option<String>,
     },
+    Gaps {
+        from: String,
+        to: String,
+        #[serde(default)]
+        source: Option<Vec<String>>,
+    },
     #[serde(rename = "analysis-why")]
     AnalysisWhy {
         metric: String,
@@ -359,6 +365,7 @@ impl Request {
             Request::AnalysisCatalog => "analysis-catalog",
             Request::AnalysisRun { .. } => "analysis-run",
             Request::AnalysisPanel { .. } => "analysis-panel",
+            Request::Gaps { .. } => "gaps",
             Request::AnalysisWhy { .. } => "analysis-why",
             Request::Brief { .. } => "brief",
             Request::LibraryAdd { .. } => "library-add",

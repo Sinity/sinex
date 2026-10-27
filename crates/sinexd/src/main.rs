@@ -24,6 +24,7 @@ mod replay;
 mod screen_text;
 mod sealed_access;
 mod stored;
+mod telemetry;
 mod writer;
 
 use clap::{Parser, Subcommand};
@@ -77,6 +78,10 @@ enum Command {
         /// `/etc/sinex/sources.json`); none when unset.
         #[arg(long)]
         sources: Option<PathBuf>,
+        /// The spool the daemon writes its telemetry samples to, and reads
+        /// back; `<store>/telemetry` when unset.
+        #[arg(long)]
+        telemetry_spool: Option<PathBuf>,
     },
     /// Publish every committed event not yet on the confirmed stream, then stop
     /// and report the rate. For a first run and measurement; the running daemon
@@ -306,8 +311,10 @@ async fn main() -> std::process::ExitCode {
             zone,
             day_start,
             sources,
+            telemetry_spool,
         } => match api_options(socket, listen, tokens, zone, &day_start) {
             Ok(api) => {
+                let telemetry_spool = telemetry_spool.unwrap_or_else(|| telemetry::spool(&store));
                 daemon::run(daemon::Options {
                     database,
                     store,
@@ -317,6 +324,7 @@ async fn main() -> std::process::ExitCode {
                     host,
                     api,
                     sources,
+                    telemetry_spool,
                 })
                 .await
             }
@@ -374,3 +382,4 @@ async fn main() -> std::process::ExitCode {
         }
     }
 }
+

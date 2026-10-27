@@ -286,3 +286,224 @@ fn a_read_stays_on_its_committed_view_and_the_next_read_sees_wal_commits() {
     drop(read);
     assert_eq!(n(&open_for_read(&path).unwrap()), 99);
 }
+
+/// A database a writer commits to continuously, read by polls in between:
+/// every poll reads one committed state (rows changed in one transaction are
+/// read together, at their committed values), and the polls together read
+/// the writer's commits in order, missing no inserted row and taking none
+/// twice.
+#[devkit::test]
+fn polls_read_a_continuously_committing_writer_one_commit_at_a_time() {
+    const COMMITS: i64 = 300;
+    let dir = std::env::temp_dir().join(format!("sinex-sqlite-{}", uuid::Uuid::now_v7()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("h.db");
+    let setup = Connection::open(&path).unwrap();
+    setup
+        .execute_batch(
+            "PRAGMA journal_mode=WAL; CREATE TABLE t (id TEXT, n INTEGER, b BLOB);
+             INSERT INTO t VALUES ('x', 0, NULL), ('y', 0, NULL);",
+        )
+        .unwrap();
+    drop(setup);
+    let writer = std::thread::spawn({
+        let path = path.clone();
+        move || {
+            let c = Connection::open(&path).unwrap();
+            for k in 1..=COMMITS {
+                c.execute_batch(&format!(
+                    "BEGIN IMMEDIATE; UPDATE t SET n = {k} WHERE id IN ('x', 'y');
+                     INSERT INTO t VALUES ('r{k}', {k}, NULL); COMMIT;"
+                ))
+                .unwrap();
+                if k % 7 == 0 {
+                    std::thread::sleep(std::time::Duration::from_millis(1));
+                }
+            }
+        }
+    });
+    let d = SqliteRows {
+        mutable: None,
+        full_pass_secs: 0,
+        ..driver(path)
+    };
+    let mut state = RowState::default();
+    let mut cursor = Value::Null;
+    let mut polls: Vec<Vec<Value>> = Vec::new();
+    let mut poll = |cursor: &mut Value, state: &mut RowState| {
+        let a = d.poll(cursor, state).unwrap();
+        match &a.material {
+            Some(m) => {
+                polls.push(lines(&a));
+                *cursor = (m.cursor_at)(material_bytes(m).len()).unwrap();
+            }
+            None => *cursor = a.cursor_without_material.clone(),
+        }
+    };
+    while !writer.is_finished() {
+        poll(&mut cursor, &mut state);
+    }
+    writer.join().unwrap();
+    poll(&mut cursor, &mut state);
+
+    let mut last_x = -1;
+    let mut inserted = std::collections::BTreeMap::new();
+    for rows in &polls {
+        let n_of = |id: &str| {
+            rows.iter()
+                .find(|r| r["id"] == id)
+                .map(|r| r["n"].as_i64().unwrap())
+        };
+        let (x, y) = (n_of("x"), n_of("y"));
+        assert_eq!(
+            x, y,
+            "rows changed in one commit are read together: {rows:?}"
+        );
+        if let Some(x) = x {
+            assert!(x > last_x, "commits are read in order: {x} after {last_x}");
+            last_x = x;
+            let newest = rows
+                .iter()
+                .filter_map(|r| r["id"].as_str()?.strip_prefix('r')?.parse::<i64>().ok())
+                .max();
+            if let Some(newest) = newest {
+                assert_eq!(newest, x, "the poll saw one commit's state");
+            }
+        }
+        for r in rows {
+            if let Some(k) = r["id"].as_str().and_then(|id| id.strip_prefix('r')) {
+                let k: i64 = k.parse().unwrap();
+                assert_eq!(r["n"], json!(k));
+                assert!(inserted.insert(k, ()).is_none(), "r{k} read twice");
+            }
+        }
+    }
+    assert_eq!(last_x, COMMITS, "the final values are read");
+    assert_eq!(
+        inserted.keys().copied().collect::<Vec<_>>(),
+        (1..=COMMITS).collect::<Vec<_>>(),
+        "every inserted row is read once"
+    );
+}
+
+/// Polls `d` once, taking its material's rows (if any) and moving the cursor
+/// past them.
+fn poll_rows(d: &SqliteRows, cursor: &mut Value, state: &mut RowState) -> Vec<Value> {
+    let a = d.poll(cursor, state).unwrap();
+    match &a.material {
+        Some(m) => {
+            let rows = lines(&a);
+            *cursor = (m.cursor_at)(material_bytes(m).len()).unwrap();
+            rows
+        }
+        None => {
+            *cursor = a.cursor_without_material.clone();
+            Vec::new()
+        }
+    }
+}
+
+/// A row that keeps changing is never frozen: an ActivityWatch AFK span that
+/// grows while the window bucket inserts thousands of rows is read again at
+/// every look that finds it grown, to its final end.
+#[devkit::test]
+fn a_growing_activitywatch_span_is_read_to_its_final_end() {
+    let dir = std::env::temp_dir().join(format!("sinex-aw-{}", uuid::Uuid::now_v7()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("sqlite.db");
+    let c = Connection::open(&path).unwrap();
+    let start = i64::try_from(Timestamp::now().unix_ns()).unwrap() - 3_600_000_000_000;
+    c.execute_batch(&format!(
+        "PRAGMA journal_mode=WAL;
+         CREATE TABLE buckets (id INTEGER PRIMARY KEY, name TEXT, type TEXT, client TEXT, hostname TEXT, created TEXT, data TEXT);
+         CREATE TABLE events (id INTEGER PRIMARY KEY, bucketrow INTEGER, starttime INTEGER, endtime INTEGER, data TEXT);
+         INSERT INTO buckets VALUES (1, 'aw-watcher-afk_h', 'afkstatus', 'c', 'h', 'x', '{{}}');
+         INSERT INTO buckets VALUES (2, 'aw-watcher-window_h', 'currentwindow', 'c', 'h', 'x', '{{}}');
+         INSERT INTO events VALUES (1, 1, {start}, {start}, '{{\"status\":\"afk\"}}');"
+    ))
+    .unwrap();
+    let d = crate::sources::activitywatch::driver(path, "h".into());
+    let (mut cursor, mut state) = (Value::Null, RowState::default());
+    let mut afk_ends = Vec::new();
+    let mut take = |rows: Vec<Value>| {
+        afk_ends.extend(
+            rows.iter()
+                .filter(|r| r["bucket"] == "aw-watcher-afk_h")
+                .map(|r| r["endtime"].as_i64().unwrap()),
+        );
+    };
+    take(poll_rows(&d, &mut cursor, &mut state));
+    let mut end = start;
+    for look in 0..12 {
+        // Five minutes of window rows, and the AFK span heartbeats on.
+        let base = 10 + look * 250;
+        let mut sql = String::from("BEGIN;");
+        for i in 0..250 {
+            let at = start + (look * 250 + i) * 1_000_000_000;
+            sql.push_str(&format!(
+                "INSERT INTO events VALUES ({}, 2, {at}, {at}, '{{\"app\":\"kitty\",\"title\":\"t{i}\"}}');",
+                base + i
+            ));
+        }
+        end += 300_000_000_000;
+        sql.push_str(&format!(
+            "UPDATE events SET endtime = {end} WHERE id = 1; COMMIT;"
+        ));
+        c.execute_batch(&sql).unwrap();
+        take(poll_rows(&d, &mut cursor, &mut state));
+    }
+    assert_eq!(
+        afk_ends.len(),
+        13,
+        "read at the first look and at every growth"
+    );
+    assert_eq!(
+        afk_ends.last(),
+        Some(&end),
+        "the final end is the newest reading"
+    );
+    assert!(
+        afk_ends.windows(2).all(|w| w[0] < w[1]),
+        "readings only grow: {afk_ends:?}"
+    );
+}
+
+/// A Chromium visit whose duration is written after a hundred later visits is
+/// read again with its duration.
+#[devkit::test]
+fn a_visit_duration_written_later_is_read() {
+    let dir = std::env::temp_dir().join(format!("sinex-chromium-{}", uuid::Uuid::now_v7()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("History");
+    let c = Connection::open(&path).unwrap();
+    // Microseconds since 1601, an hour ago.
+    let at = i64::try_from(Timestamp::now().unix_ns() / 1_000).unwrap() + 11_644_473_600_000_000
+        - 3_600_000_000;
+    c.execute_batch(&format!(
+        "CREATE TABLE urls (id INTEGER PRIMARY KEY, url TEXT, title TEXT, visit_count INTEGER, typed_count INTEGER, last_visit_time INTEGER, hidden INTEGER);
+         CREATE TABLE visits (id INTEGER PRIMARY KEY, url INTEGER, visit_time INTEGER, from_visit INTEGER, transition INTEGER, segment_id INTEGER, visit_duration INTEGER, opener_visit INTEGER);
+         INSERT INTO urls VALUES (1, 'https://example.org/', 'Example', 1, 0, {at}, 0);
+         INSERT INTO visits VALUES (1, 1, {at}, 0, 805306368, 0, 0, 0);"
+    ))
+    .unwrap();
+    let d = crate::sources::chromium::visits_driver(path, "h".into());
+    let (mut cursor, mut state) = (Value::Null, RowState::default());
+    let first = poll_rows(&d, &mut cursor, &mut state);
+    assert_eq!(first[0]["visit_duration"], json!(0));
+    let mut sql = String::from("BEGIN;");
+    for i in 2..=101 {
+        sql.push_str(&format!(
+            "INSERT INTO visits VALUES ({i}, 1, {}, 0, 805306368, 0, 1000, 0);",
+            at + i
+        ));
+    }
+    sql.push_str("COMMIT;");
+    c.execute_batch(&sql).unwrap();
+    assert_eq!(poll_rows(&d, &mut cursor, &mut state).len(), 100);
+    c.execute_batch("UPDATE visits SET visit_duration = 42000000 WHERE id = 1")
+        .unwrap();
+    let again = poll_rows(&d, &mut cursor, &mut state);
+    assert_eq!(again.len(), 1, "only the changed visit: {again:?}");
+    assert_eq!(again[0]["id"], json!(1));
+    assert_eq!(again[0]["visit_duration"], json!(42_000_000));
+}

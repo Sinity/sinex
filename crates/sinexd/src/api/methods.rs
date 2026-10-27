@@ -471,6 +471,7 @@ impl Api {
             Request::AnalysisCatalog
             | Request::AnalysisRun { .. }
             | Request::AnalysisPanel { .. }
+            | Request::Gaps { .. }
             | Request::AnalysisWhy { .. }
             | Request::Brief { .. } => self.analysis(caller, request).await,
             Request::Follow { .. } => refused("follow streams; use the API's follow stream"),
@@ -592,6 +593,9 @@ impl Api {
         let row = sinex_store::diagnostics::positions(&mut conn)
             .await
             .map_err(|e| e.to_string())?;
+        let telemetry = sinex_store::telemetry::latest(&mut conn)
+            .await
+            .map_err(|e| e.to_string())?;
         drop(conn);
         let sources = match self
             .query(
@@ -626,6 +630,8 @@ impl Api {
             "zone": self.context().zone_name(),
             "day_start": self.day_start.to_string(),
             "sources": sources,
+            // The daemon's newest sample of each of its parts.
+            "telemetry": telemetry,
         }))
     }
 }

@@ -116,6 +116,7 @@ async fn upgrading_from_version_0_counts_the_stored_events(db: devkit::pg::TestD
         .await
         .unwrap();
 
+    remove_version_3(&mut conn).await;
     // Version 0 is this schema without the counts.
     conn.execute("DROP TABLE core.source_counts").await.unwrap();
     conn.execute("ALTER TABLE core.runs DROP COLUMN events")
@@ -190,4 +191,49 @@ async fn an_upgrade_waits_for_no_writer(db: devkit::pg::TestDatabase) {
         .await
         .unwrap();
     assert_eq!(version, Some(0));
+}
+
+async fn remove_version_3(conn: &mut PgConnection) {
+    for sql in [
+        "DROP VIEW event_types.sinex_telemetry",
+        "DROP VIEW event_types.tag_applied",
+        "DROP VIEW telemetry.visible_events",
+        "DELETE FROM registry.event_types WHERE name IN ('sinex.telemetry', 'tag.applied')",
+    ] {
+        conn.execute(sql).await.unwrap();
+    }
+}
+
+#[devkit::test]
+async fn upgrading_from_version_2_keeps_activity_and_telemetry(db: devkit::pg::TestDatabase) {
+    let mut conn = <PgConnection as sqlx::Connection>::connect(&db.url(None))
+        .await
+        .unwrap();
+    admit_one(&mut conn, &batch(vec![keyed("source", 1, 1, 1)])).await;
+    conn.execute("INSERT INTO telemetry.events SELECT * FROM core.events")
+        .await
+        .unwrap();
+    let before: Vec<Value> = sqlx::query_scalar("SELECT to_jsonb(e) FROM core.events e UNION ALL SELECT to_jsonb(t) FROM telemetry.events t")
+        .fetch_all(&mut conn).await.unwrap();
+    remove_version_3(&mut conn).await;
+    conn.execute("UPDATE sinex_schema.applied SET version = 2")
+        .await
+        .unwrap();
+    assert_eq!(
+        sinex_schema::apply(&mut conn).await.unwrap(),
+        sinex_schema::Applied::Upgraded {
+            from: 2,
+            to: sinex_schema::VERSION
+        }
+    );
+    let after: Vec<Value> = sqlx::query_scalar("SELECT to_jsonb(e) FROM core.events e UNION ALL SELECT to_jsonb(t) FROM telemetry.events t")
+        .fetch_all(&mut conn).await.unwrap();
+    assert_eq!(before, after);
+    let kinds: i64 = sqlx::query_scalar("SELECT count(*) FROM registry.event_types WHERE name IN ('sinex.telemetry', 'tag.applied')")
+        .fetch_one(&mut conn).await.unwrap();
+    assert_eq!(kinds, 2);
+    assert!(matches!(
+        sinex_schema::apply(&mut conn).await.unwrap(),
+        sinex_schema::Applied::Current { .. }
+    ));
 }

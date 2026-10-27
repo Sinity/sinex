@@ -439,3 +439,5 @@ async fn archive_consumer_observes_hide_restore_hide_without_duplicate_events(
         Published::default()
     );
 }
+
+mod outage;

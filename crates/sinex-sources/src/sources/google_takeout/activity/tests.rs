@@ -108,3 +108,89 @@ fn selects_members() {
         "Takeout/YouTube/my-comments/my-comments.html"
     ));
 }
+
+/// An export's cells as one My Activity page, each `(time line)` an entry
+/// titled the same.
+fn page(times: &[&str]) -> String {
+    times
+        .iter()
+        .map(|time| {
+            format!(
+                r#"<div class="outer-cell"><p class="mdl-typography--title">Search<br></p></div><div class="content-cell mdl-typography--body-1">Visited <a href="https://example.org/a">A page</a><br>{time}<br></div><div class="content-cell mdl-typography--caption"><b>Products:</b><br>&emsp;Search<br></div>"#
+            )
+        })
+        .collect()
+}
+
+/// The events and failure reasons of one export page, drained.
+fn drained(html: &str) -> (Vec<(sinex_model::Timestamp, String)>, Vec<String>) {
+    let (records, _) = frame(html.as_bytes());
+    let chunks = crate::drain::drain(
+        &MyActivityParser,
+        crate::drain::DrainInput {
+            source: "google.takeout.my-activity",
+            class: Class::Open,
+            material: sinex_model::MaterialId::new(),
+            bytes: html.as_bytes().into(),
+            records: &records,
+            carry: serde_json::Value::Null,
+            reading_order: &|_| sinex_model::ReadingOrder(0),
+            limits: crate::drain::Limits::default(),
+            manifest: crate::RecordContext::none().manifest,
+        },
+    )
+    .unwrap();
+    let (mut events, mut failures) = (Vec::new(), Vec::new());
+    for outcome in chunks.into_iter().flat_map(|c| c.outcomes) {
+        match outcome {
+            sinex_model::RecordOutcome::Events { events: e, .. } => {
+                events.extend(e.into_iter().map(|e| {
+                    (
+                        e.ts_orig.at.unwrap(),
+                        e.equivalence_key.expect("keyed by content").0,
+                    )
+                }));
+            }
+            sinex_model::RecordOutcome::Failure { reason, .. } => failures.push(reason),
+        }
+    }
+    (events, failures)
+}
+
+/// Three entries with one title at one wall-clock time under three zone
+/// labels are three moments; a label the reader has no rule for is a record
+/// failure carrying it, never an entry without a time; the same moments in a
+/// second export written in another zone are the same three events.
+#[devkit::test]
+fn an_unparsed_time_never_merges_records() {
+    let (first, failed) = drained(&page(&[
+        "Jan 10, 2026, 9:00:00 AM UTC",
+        "Jan 10, 2026, 9:00:00 AM CET",
+        "Jan 10, 2026, 9:00:00 AM CEST",
+        "Jan 10, 2026, 9:00:00 AM XYZT",
+    ]));
+    let instants: Vec<String> = first.iter().map(|(t, _)| format!("{t:?}")).collect();
+    assert_eq!(first.len(), 3, "{instants:?}");
+    let mut keys: Vec<&String> = first.iter().map(|(_, k)| k).collect();
+    keys.sort();
+    keys.dedup();
+    assert_eq!(keys.len(), 3, "three moments, three keys");
+    assert_eq!(failed.len(), 1);
+    assert!(failed[0].contains("XYZT"), "{failed:?}");
+
+    let (second, failed) = drained(&page(&[
+        "Jan 10, 2026, 10:00:00 AM CET",
+        "Jan 10, 2026, 8:00:00 AM UTC",
+        "Jan 10, 2026, 8:00:00 AM CET",
+        "Jan 10, 2026, 10:00:00 AM XYZT",
+    ]));
+    assert_eq!(failed.len(), 1);
+    let mut a = first.clone();
+    let mut b = second.clone();
+    a.sort();
+    b.sort();
+    assert_eq!(
+        a, b,
+        "the same moments from an export written in another zone"
+    );
+}

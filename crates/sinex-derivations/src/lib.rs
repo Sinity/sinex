@@ -21,6 +21,7 @@ pub mod health;
 pub mod presence;
 pub mod session;
 pub mod state_interval;
+pub mod tags;
 
 /// What a key function sees of an admitted or archived event.
 #[derive(Clone, Copy, Debug)]
@@ -212,6 +213,11 @@ pub trait PerEvent: Send + Sync {
     const VERSION: u32;
     const INPUTS: &'static [&'static str];
     const OUTPUTS: &'static [&'static str];
+    /// Registered input kinds. A rule over every registered kind can build
+    /// this list from the event registry.
+    fn input_types(&self) -> &'static [&'static str] {
+        Self::INPUTS
+    }
     /// Whether `derive` reads the bytes of the material the input cites
     /// (screen text from a screen still). The bytes are content-addressed and
     /// never change, so the output is still a function of the input.
@@ -280,7 +286,7 @@ impl<P: PerEvent> AnyPerEvent for P {
         P::VERSION
     }
     fn inputs_types(&self) -> &'static [&'static str] {
-        P::INPUTS
+        PerEvent::input_types(self)
     }
     fn output_types(&self) -> &'static [&'static str] {
         P::OUTPUTS
@@ -315,7 +321,12 @@ pub fn keyed() -> Vec<Box<dyn AnyKeyed>> {
 /// Every pure per-event derivation. Those that need a local tool (screen text
 /// through an OCR engine) are added by `sinexd`, which may run them.
 pub fn per_event() -> Vec<Box<dyn AnyPerEvent>> {
-    Vec::new()
+    vec![Box::new(tags::Tags)]
+}
+
+/// Whether a derivation runs without an explicit configuration entry.
+pub fn enabled_by_default(name: &str) -> bool {
+    name != tags::Tags::NAME
 }
 
 /// The parent IDs of a set of input events, in input order, without repeats.

@@ -41,15 +41,19 @@ fn render(outcome: &RecordOutcome) -> Value {
     }
 }
 
+fn manifest_of(dir: &Path) -> sinex_model::Manifest {
+    match std::fs::read(dir.join("manifest.json")) {
+        Ok(raw) => serde_json::from_slice(&raw).expect("manifest.json is JSON"),
+        Err(_) => sinex_model::Manifest::from_json(json!({ "path": "input" })),
+    }
+}
+
 fn run_case(parser: &str, dir: &Path) -> Value {
     let binding = sinex_sources::sources::binding_for_parser(parser, HOST)
         .unwrap_or_else(|| panic!("no source reads with parser {parser}"));
     let source = sinex_sources::sources::source_for(&binding).expect("source");
     let bytes = std::fs::read(dir.join("input")).expect("case input");
-    let manifest: sinex_model::Manifest = match std::fs::read(dir.join("manifest.json")) {
-        Ok(raw) => serde_json::from_slice(&raw).expect("manifest.json is JSON"),
-        Err(_) => sinex_model::Manifest::from_json(json!({ "path": "input" })),
-    };
+    let manifest = manifest_of(dir);
     let (records, _covered) = source.spec().framer.frame(&bytes);
     struct Fragmented<R>(R);
     impl<R: std::io::Read> std::io::Read for Fragmented<R> {
@@ -106,6 +110,14 @@ fn golden_cases() {
         for case in cases {
             ran += 1;
             let dir = case.path();
+            for check in [anchors_read_back, a_bad_record_fails_alone] {
+                if let Err(e) = check(&name, &dir) {
+                    failures.push(format!(
+                        "{name}/{}: {e}",
+                        case.file_name().to_string_lossy()
+                    ));
+                }
+            }
             let got = run_case(&name, &dir);
             let expected_path = dir.join("expected.json");
             if bless {
@@ -155,4 +167,191 @@ fn missing_or_empty_case_directories_fail() {
     std::fs::create_dir(&root).unwrap();
     assert!(entries(&root).is_err());
     std::fs::remove_dir(root).unwrap();
+}
+
+/// The case input as stored and as the same text written differently: with
+/// CRLF line ends, with a blank line after every line, and without its last
+/// line end.
+fn variants(bytes: &[u8]) -> Vec<(&'static str, Vec<u8>)> {
+    let mut out = vec![("as stored", bytes.to_vec())];
+    let lines: Vec<&[u8]> = bytes
+        .split_inclusive(|b| *b == b'\n')
+        .map(|l| l.strip_suffix(b"\n").unwrap_or(l))
+        .map(|l| l.strip_suffix(b"\r").unwrap_or(l))
+        .collect();
+    let joined = |end: &[u8]| -> Vec<u8> {
+        let mut text = Vec::new();
+        for line in &lines {
+            text.extend_from_slice(line);
+            text.extend_from_slice(end);
+        }
+        text
+    };
+    out.push(("with CRLF line ends", joined(b"\r\n")));
+    out.push(("with blank lines", joined(b"\n\n")));
+    let mut unterminated = joined(b"\n");
+    unterminated.pop();
+    out.push(("without a last line end", unterminated));
+    out
+}
+
+/// Anchors read back, for every variant of the case input: every event's
+/// anchor is where a framed record starts, its bytes frame alone as that
+/// record, and read alone with the state the parser carried into it (a CSV
+/// header, a span still being merged) they give the same events.
+fn anchors_read_back(parser: &str, dir: &Path) -> Result<(), String> {
+    let binding = sinex_sources::sources::binding_for_parser(parser, HOST)
+        .ok_or_else(|| format!("no source reads with parser {parser}"))?;
+    let source = sinex_sources::sources::source_for(&binding).expect("source");
+    let manifest = manifest_of(dir);
+    let stored = std::fs::read(dir.join("input")).expect("case input");
+    let read = |bytes: &[u8], records: &[(usize, usize)], carry: Value| {
+        let order = |anchor: usize| ReadingOrder(anchor as i64);
+        source
+            .drain(DrainInput {
+                source: source.spec().name,
+                class: source.spec().class,
+                material: MaterialId(uuid::Uuid::nil()),
+                bytes: bytes.into(),
+                records,
+                carry,
+                reading_order: &order,
+                limits: Limits::default(),
+                manifest: &manifest,
+            })
+            .expect("drain")
+    };
+    let events = |outcome: &RecordOutcome| match outcome {
+        RecordOutcome::Events { events, .. } => events
+            .iter()
+            .map(|e| (e.event_type, e.payload.clone()))
+            .collect(),
+        RecordOutcome::Failure { .. } => Vec::new(),
+    };
+    for (variant, bytes) in variants(&stored) {
+        let (records, _) = source.spec().framer.frame(&bytes);
+        for outcome in read(&bytes, &records, Value::Null)
+            .into_iter()
+            .flat_map(|c| c.outcomes)
+        {
+            let RecordOutcome::Events {
+                location: Some(location),
+                ..
+            } = &outcome
+            else {
+                continue;
+            };
+            let anchor = usize::try_from(location.anchor).unwrap();
+            let Some(&(start, end)) = records.iter().find(|(start, _)| *start == anchor) else {
+                return Err(format!(
+                    "{variant}: anchor {anchor} is not where a record starts"
+                ));
+            };
+            let alone = &bytes[start..end];
+            let (again, _) = source.spec().framer.frame(alone);
+            if again != [(0, alone.len())] {
+                return Err(format!(
+                    "{variant}: the record at {anchor} frames as {again:?} on its own"
+                ));
+            }
+            // The state the parser carried into this record.
+            let before: Vec<(usize, usize)> = records
+                .iter()
+                .copied()
+                .filter(|(_, e)| *e <= start)
+                .collect();
+            let carry = read(&bytes, &before, Value::Null)
+                .last()
+                .map_or(Value::Null, |c| c.carry.clone());
+            let reread: Vec<_> = read(alone, &again, carry)
+                .iter()
+                .flat_map(|c| &c.outcomes)
+                .flat_map(events)
+                .collect();
+            if reread != events(&outcome) {
+                return Err(format!(
+                    "{variant}: the record at {anchor} reads back as {reread:?}, not {:?}",
+                    events(&outcome)
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
+/// A bad record fails alone: a line of bytes no parser accepts, put between
+/// the case's first and second records, is a record failure, and every other
+/// record reads as before. Formats that do not frame such a line as a record
+/// of its own (mail, where it joins the message before) are left out.
+fn a_bad_record_fails_alone(parser: &str, dir: &Path) -> Result<(), String> {
+    let binding = sinex_sources::sources::binding_for_parser(parser, HOST)
+        .ok_or_else(|| format!("no source reads with parser {parser}"))?;
+    let source = sinex_sources::sources::source_for(&binding).expect("source");
+    let manifest = manifest_of(dir);
+    let stored = std::fs::read(dir.join("input")).expect("case input");
+    let (records, _) = source.spec().framer.frame(&stored);
+    let Some(&(second, _)) = records.get(1) else {
+        return Ok(());
+    };
+    let bad: &[u8] = b"\xff\xfe{ not a record\n";
+    let mut bytes = stored[..second].to_vec();
+    bytes.extend_from_slice(bad);
+    bytes.extend_from_slice(&stored[second..]);
+    let (with_bad, _) = source.spec().framer.frame(&bytes);
+    if with_bad.len() != records.len() + 1 || !with_bad.contains(&(second, second + bad.len())) {
+        return Ok(());
+    }
+    let read = |bytes: &[u8], records: &[(usize, usize)]| {
+        let order = |anchor: usize| ReadingOrder(anchor as i64);
+        source
+            .drain(DrainInput {
+                source: source.spec().name,
+                class: source.spec().class,
+                material: MaterialId(uuid::Uuid::nil()),
+                bytes: bytes.into(),
+                records,
+                carry: Value::Null,
+                reading_order: &order,
+                limits: Limits::default(),
+                manifest: &manifest,
+            })
+            .expect("drain")
+            .into_iter()
+            .flat_map(|c| c.outcomes)
+            .map(|o| match o {
+                RecordOutcome::Events { location, events } => (
+                    location.map(|l| l.anchor),
+                    Ok(events
+                        .into_iter()
+                        .map(|e| (e.event_type, e.payload))
+                        .collect::<Vec<_>>()),
+                ),
+                RecordOutcome::Failure { location, reason } => (Some(location.anchor), Err(reason)),
+            })
+            .collect::<Vec<_>>()
+    };
+    let before = read(&stored, &records);
+    let after = read(&bytes, &with_bad);
+    let shift = |anchor: Option<u64>| {
+        anchor.map(|a| {
+            if a >= second as u64 {
+                a + bad.len() as u64
+            } else {
+                a
+            }
+        })
+    };
+    let expected: Vec<_> = before.into_iter().map(|(a, o)| (shift(a), o)).collect();
+    let (failed, rest): (Vec<_>, Vec<_>) = after
+        .into_iter()
+        .partition(|(a, _)| *a == Some(second as u64));
+    if !matches!(failed.as_slice(), [(_, Err(_))]) {
+        return Err(format!("the bad record read as {failed:?}"));
+    }
+    if rest != expected {
+        return Err(format!(
+            "a bad record changed its neighbours: {rest:?} instead of {expected:?}"
+        ));
+    }
+    Ok(())
 }

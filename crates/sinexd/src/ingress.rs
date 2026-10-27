@@ -49,34 +49,41 @@ use uuid::Uuid;
 /// The durable consumer `sinexd` reads the ingress stream with.
 const DURABLE: &str = "sinexd";
 
-/// Create the ingress stream and its consumer if they do not exist.
+/// Create the ingress stream and its consumer, or bring an existing stream
+/// to this configuration. Nothing a producer sent expires before admission:
+/// the stream has no age limit, a full stream refuses a publish (the
+/// producer keeps the frame and sends it again) instead of dropping an
+/// older frame, and the consumer redelivers without a cap.
 pub(crate) async fn ensure_stream(
     js: &jetstream::Context,
     subjects: &Subjects,
 ) -> Result<consumer::PullConsumer, String> {
+    js.create_or_update_stream(stream::Config {
+        name: subjects.ingress_stream(),
+        subjects: vec![subjects.ingress_all()],
+        storage: stream::StorageType::File,
+        // A frame stays until sinexd acknowledges it, then goes: its content
+        // is now in Postgres and the content store.
+        retention: stream::RetentionPolicy::WorkQueue,
+        discard: stream::DiscardPolicy::New,
+        max_age: Duration::ZERO,
+        duplicate_window: Duration::from_secs(120),
+        ..Default::default()
+    })
+    .await
+    .map_err(|e| format!("ingress stream: {e}"))?;
     let stream = js
-        .get_or_create_stream(stream::Config {
-            name: subjects.ingress_stream(),
-            subjects: vec![subjects.ingress_all()],
-            storage: stream::StorageType::File,
-            // A frame stays until sinexd acknowledges it, then goes: its content
-            // is now in Postgres and the content store.
-            retention: stream::RetentionPolicy::WorkQueue,
-            duplicate_window: Duration::from_secs(120),
-            ..Default::default()
-        })
+        .get_stream(subjects.ingress_stream())
         .await
         .map_err(|e| format!("ingress stream: {e}"))?;
     stream
-        .get_or_create_consumer(
-            DURABLE,
-            consumer::pull::Config {
-                durable_name: Some(DURABLE.into()),
-                ack_policy: consumer::AckPolicy::Explicit,
-                ack_wait: Duration::from_secs(60),
-                ..Default::default()
-            },
-        )
+        .create_consumer(consumer::pull::Config {
+            durable_name: Some(DURABLE.into()),
+            ack_policy: consumer::AckPolicy::Explicit,
+            ack_wait: Duration::from_secs(60),
+            max_deliver: -1,
+            ..Default::default()
+        })
         .await
         .map_err(|e| format!("ingress consumer: {e}"))
 }

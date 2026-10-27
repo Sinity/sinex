@@ -117,6 +117,18 @@ impl Target {
         finish(&mut self.sinexd(&all))
     }
 
+    /// A query through the public command, its text last (it takes the rest
+    /// of the line).
+    fn query(&self, text: &str) -> serde_json::Value {
+        let mut c = Command::new(env!("CARGO_BIN_EXE_sinexd"));
+        c.args(["admin", "query", "--database", &self.url, "--store"])
+            .arg(&self.store)
+            .args(["--page", "1000", text])
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+        serde_json::from_str(&finish(&mut c)).unwrap()
+    }
+
     async fn connect(&self) -> PgConnection {
         PgConnection::connect(&self.url).await.unwrap()
     }
@@ -681,7 +693,7 @@ async fn dry_runs_change_nothing_and_shared_bytes_survive() {
     .fetch_one(&mut c)
     .await
     .unwrap();
-    t.admin(&["excise", &victim.to_string(), "--dry-run"]);
+    let planned = t.admin(&["excise", &victim.to_string(), "--dry-run"]);
     assert_eq!(
         live(&mut c).await,
         before,
@@ -692,7 +704,17 @@ async fn dry_runs_change_nothing_and_shared_bytes_survive() {
         events
     );
 
-    t.admin(&["excise", &victim.to_string()]);
+    let done = t.admin(&["excise", &victim.to_string()]);
+    let said = |text: &str, field: &str| -> String {
+        let reply: serde_json::Value = serde_json::from_str(text).unwrap();
+        reply[field].as_str().unwrap().to_owned()
+    };
+    let (planned, done) = (said(&planned, "would_excise"), said(&done, "excised"));
+    assert!(
+        done.strip_prefix("excised ")
+            .is_some_and(|counts| counts.starts_with(&format!("{planned} |"))),
+        "the dry run's counts are the run's: {planned} / {done}"
+    );
     let still: i64 = sqlx::query_scalar("SELECT count(*) FROM raw.materials WHERE blob = $1")
         .bind(&shared[0])
         .fetch_one(&mut c)
@@ -976,15 +998,28 @@ async fn derived_results_do_not_depend_on_arrival_order() {
 
 /// Provenance is complete: every derived event's parents resolve, live or
 /// archived, down to material events, and every parent committed before its
-/// child.
+/// child. A derived event's time comes from its inputs, not from when the
+/// derivation ran.
 #[devkit::test]
 async fn every_parent_resolves_and_committed_first() {
     let dir = Dir::new();
     let (zsh, atuin) = derivation_inputs(&dir);
     let t = Target::new(&dir);
     t.backfill(Some(&zsh), Some(&atuin));
+    let started = chrono_now(&mut t.connect().await).await;
     t.derive();
     let mut c = t.connect().await;
+    let run_time: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM core.events WHERE parents IS NOT NULL AND ts_orig >= $1::timestamptz",
+    )
+    .bind(&started)
+    .fetch_one(&mut c)
+    .await
+    .unwrap();
+    assert_eq!(
+        run_time, 0,
+        "a derived time comes from its inputs, never the run"
+    );
     let derived_n = scalar(
         &mut c,
         "SELECT count(*) FROM core.events WHERE parents IS NOT NULL",
@@ -1017,4 +1052,176 @@ fn zsh_binding(path: &Path) -> String {
 /// The binding backfill files an Atuin database under.
 fn atuin_binding(path: &Path) -> String {
     format!("terminal.atuin-history:{}@{HOST}", path.display())
+}
+
+/// Revisions read back: after a history file grows, is rewritten and grows
+/// again, and an Atuin database's rows change, every material ever stored
+/// still reads back to the bytes its name hashes, at its recorded length.
+#[devkit::test]
+async fn every_revision_reads_back_after_later_ones() {
+    let dir = Dir::new();
+    let t = Target::new(&dir);
+    let atuin = dir.0.join("history.db");
+    let mut rows: Vec<AtuinRow> = (0..30).map(atuin_row).collect();
+    atuin_db(&atuin, &rows);
+    let mut text = small_zsh();
+    let zsh = dir.file("zsh", text.as_bytes());
+    t.backfill(Some(&zsh), Some(&atuin));
+    // Appended.
+    text.push_str(&zsh_line(1_600_001_000, "appended"));
+    std::fs::write(&zsh, &text).unwrap();
+    rows[3].3 = 9;
+    atuin_db(&atuin, &rows);
+    t.backfill(Some(&zsh), Some(&atuin));
+    // Rewritten: an exiting shell wrote the history again, older lines gone.
+    let rewritten: String = text.lines().skip(10).map(|l| format!("{l}\n")).collect();
+    std::fs::write(&zsh, &rewritten).unwrap();
+    t.backfill(Some(&zsh), None);
+    // Appended again.
+    std::fs::write(
+        &zsh,
+        format!(
+            "{rewritten}{}",
+            zsh_line(1_600_002_000, "after the rewrite")
+        ),
+    )
+    .unwrap();
+    t.backfill(Some(&zsh), None);
+
+    let mut c = t.connect().await;
+    let materials: Vec<(String, i64)> = sqlx::query_as("SELECT blob, length FROM raw.materials")
+        .fetch_all(&mut c)
+        .await
+        .unwrap();
+    assert!(materials.len() >= 5, "{} materials", materials.len());
+    for (blob, length) in materials {
+        let hex = blob.trim_start_matches("blake3:");
+        let file = t
+            .store
+            .join("blobs")
+            .join(&hex[..2])
+            .join(format!("{hex}.zst"));
+        let out = Command::new("zstd").arg("-dc").arg(&file).output().unwrap();
+        assert!(out.status.success(), "zstd -dc {}", file.display());
+        assert_eq!(blake3::hash(&out.stdout).to_hex().as_str(), hex);
+        assert_eq!(i64::try_from(out.stdout.len()).unwrap(), length, "{blob}");
+    }
+}
+
+/// Self events never reach the activity store: Sinex's telemetry, read from
+/// its spool, is kept in `telemetry.events` only, once however often it is
+/// read, and no activity event lands there; derivations never see it.
+#[devkit::test]
+async fn telemetry_is_kept_apart_from_activity() {
+    use sinex_sources::drivers::live_stream;
+    let dir = Dir::new();
+    let t = Target::new(&dir);
+    let zsh = dir.file("zsh", small_zsh().as_bytes());
+    t.backfill(Some(&zsh), None);
+    let mut spooled = Vec::new();
+    for (i, component) in ["writer", "publisher", "search index"].iter().enumerate() {
+        let line =
+            serde_json::json!({"component": component, "name": "", "measures": {"behind": i}});
+        let at = sinex_model::Timestamp::from_unix_secs(1_800_000_000 + i as i64).unwrap();
+        spooled.extend(live_stream::frame(at, line.to_string().as_bytes()));
+    }
+    // The same sample can be sent twice in one part, with two locations.
+    let first_line = spooled[..spooled.iter().position(|b| *b == b'\n').unwrap() + 1].to_vec();
+    spooled.extend(first_line);
+    let spool = dir.file("telemetry/000000000000.ndjson", &spooled);
+    let spool = spool.parent().unwrap().to_path_buf();
+    let read = |t: &Target| {
+        finish(
+            t.sinexd(&["backfill", "--host", HOST])
+                .arg("--read")
+                .arg(format!("sinex-telemetry={}", spool.display())),
+        )
+    };
+    read(&t);
+    t.derive();
+    let mut c = t.connect().await;
+    let telemetry_in_core = "SELECT count(*) FROM core.events WHERE event_type = 'sinex.telemetry'";
+    let activity_in_telemetry =
+        "SELECT count(*) FROM telemetry.events WHERE event_type <> 'sinex.telemetry'";
+    let samples = "SELECT count(*) FROM telemetry.events";
+    assert_eq!(scalar(&mut c, samples).await, 3);
+    assert_eq!(scalar(&mut c, telemetry_in_core).await, 0);
+    assert_eq!(scalar(&mut c, activity_in_telemetry).await, 0);
+
+    // Read again from the start and replayed: still each sample once.
+    sqlx::query("DELETE FROM raw.positions WHERE binding LIKE 'sinex.telemetry:%'")
+        .execute(&mut c)
+        .await
+        .unwrap();
+    read(&t);
+    t.admin(&[
+        "replay",
+        "--binding",
+        &format!("sinex.telemetry:{}@{HOST}", spool.display()),
+    ]);
+    t.derive();
+    assert_eq!(scalar(&mut c, samples).await, 3);
+    assert_eq!(scalar(&mut c, telemetry_in_core).await, 0);
+    consistent(&mut c).await;
+
+    let answer = t.query("telemetry where payload.component = publisher");
+    assert_eq!(answer["total"], 1, "{answer}");
+}
+
+/// The live commands and their times (Unix seconds), through the public
+/// query.
+fn zsh_facts(t: &Target) -> Vec<(i64, String)> {
+    let answer = t.query("events where source = terminal.zsh-history sort when");
+    answer["rows"]
+        .as_array()
+        .unwrap_or_else(|| panic!("{answer}"))
+        .iter()
+        .map(|r| {
+            let when = time::OffsetDateTime::parse(
+                r["when"].as_str().unwrap(),
+                &time::format_description::well_known::Rfc3339,
+            )
+            .unwrap();
+            (
+                when.unix_timestamp(),
+                r["payload"]["command"].as_str().unwrap().to_owned(),
+            )
+        })
+        .collect()
+}
+
+/// A closed zsh history replayed after its file is gone gives exactly the
+/// facts written down here: repeats stay separate, a multi-line command is
+/// one, metafied bytes decode, a malformed record is a failure.
+#[devkit::test]
+async fn replay_after_the_history_file_is_gone_gives_the_same_facts() {
+    let dir = Dir::new();
+    let t = Target::new(&dir);
+    let mut history = Vec::new();
+    history.extend_from_slice(b": 1700000000:0;git status\n");
+    history.extend_from_slice(b": 1700000060:0;git status\n");
+    history.extend_from_slice(b": 1700000120:0;for f in *; do\\\necho $f\\\ndone\n");
+    history.extend_from_slice(b": 1700000180:0;echo za\xc5\x83\xbb\xc3\xb3\xc5\x82\xc4\x87\n");
+    history.extend_from_slice(b": notanumber:0;weird\n");
+    let zsh = dir.file("zsh", &history);
+    t.backfill(Some(&zsh), None);
+    let expected = vec![
+        (1_700_000_000, "git status".to_owned()),
+        (1_700_000_060, "git status".to_owned()),
+        (1_700_000_120, "for f in *; do\necho $f\ndone".to_owned()),
+        (1_700_000_180, "echo zaśółć".to_owned()),
+    ];
+    assert_eq!(zsh_facts(&t), expected);
+    let mut c = t.connect().await;
+    assert_eq!(scalar(&mut c, "SELECT count(*) FROM raw.failures").await, 1);
+
+    std::fs::remove_file(&zsh).unwrap();
+    t.admin(&["replay", "--binding", &zsh_binding(&zsh)]);
+    assert_eq!(
+        zsh_facts(&t),
+        expected,
+        "replayed from the stored bytes alone"
+    );
+    assert_eq!(scalar(&mut c, "SELECT count(*) FROM raw.failures").await, 1);
+    consistent(&mut c).await;
 }

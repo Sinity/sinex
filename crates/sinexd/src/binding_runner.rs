@@ -51,10 +51,12 @@ pub(crate) struct SourceConfig {
 }
 
 impl Config {
-    /// Whether the derivation `name` runs; every derivation does unless the
-    /// configuration turns it off.
+    /// Whether the derivation runs: an explicit choice, or its catalog default.
     pub(crate) fn runs(&self, derivation: &str) -> bool {
-        self.derivations.get(derivation).copied().unwrap_or(true)
+        self.derivations
+            .get(derivation)
+            .copied()
+            .unwrap_or_else(|| sinex_derivations::enabled_by_default(derivation))
     }
 
     pub(crate) fn load(path: &Path) -> Result<Self, String> {

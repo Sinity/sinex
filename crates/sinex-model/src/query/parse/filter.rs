@@ -161,7 +161,7 @@ impl Parser<'_> {
                     return Ok(FieldRef::Group(name.to_string()));
                 }
                 if let Some(path) = name.strip_prefix("payload.") {
-                    if !table.is_events() {
+                    if !table.has_payload() {
                         return Err(QueryError::at(
                             at,
                             format!("{} have no payload", table.name()),

@@ -9,6 +9,7 @@ pub(crate) fn catalog() -> Value {
     let keyed = sinex_derivations::keyed().into_iter().map(|d| {
         json!({
             "name": d.name(),
+            "enabledByDefault": sinex_derivations::enabled_by_default(d.name()),
             "kind": "keyed",
             "inputs": d.inputs_types(),
             "outputs": d.output_types(),
@@ -17,6 +18,7 @@ pub(crate) fn catalog() -> Value {
     let per_event = sinex_derivations::per_event().into_iter().map(|d| {
         json!({
             "name": d.name(),
+            "enabledByDefault": sinex_derivations::enabled_by_default(d.name()),
             "kind": "per-event",
             "inputs": d.inputs_types(),
             "outputs": d.output_types(),

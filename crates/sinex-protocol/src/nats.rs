@@ -406,6 +406,13 @@ pub struct ConfirmedEvent {
     pub record_state: String,
     pub class: Class,
     pub equivalence_key: Option<String>,
+    /// Which of two readings of one record is newer.
+    #[serde(default)]
+    pub reading_order: i64,
+    /// The BLAKE3 of the record as read, in hex: what tells a repeat from a
+    /// changed reading, so a consumer can check its copy against Sinex's.
+    #[serde(default)]
+    pub record_hash: String,
     pub payload: Option<Value>,
     /// Why `payload` is absent, when it is. The event itself is stored whole;
     /// read it from Sinex by ID.

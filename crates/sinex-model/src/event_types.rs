@@ -21,6 +21,7 @@ pub mod polylogue;
 pub mod session;
 pub mod shell;
 pub mod social;
+pub mod telemetry;
 
 pub use derived::{FigureValue, HealthFigure, MetricFigure, StateInterval};
 pub use fused::CommandFused;
@@ -126,7 +127,10 @@ pub const ALL: &[RegisteredEventType] = &[
     info::<input::InputLogger>(),
     // Code
     info::<code::GitCommit>(),
+    // Sinex's own state
+    info::<telemetry::SinexTelemetry>(),
     // Derived
+    info::<derived::TagApplied>(),
     info::<CommandFused>(),
     info::<fused::FocusFused>(),
     info::<fused::VisitFused>(),
@@ -194,6 +198,12 @@ pub const ALL: &[RegisteredEventType] = &[
 /// read from the database and needs the static one.
 pub fn find(event_type: &str) -> Option<&'static RegisteredEventType> {
     ALL.iter().find(|k| k.event_type == event_type)
+}
+
+/// Whether events of `event_type` are Sinex's own telemetry, stored apart
+/// from the activity record.
+pub fn is_telemetry(event_type: &str) -> bool {
+    telemetry::TYPES.contains(&event_type)
 }
 
 #[cfg(test)]

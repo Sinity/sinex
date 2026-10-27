@@ -237,3 +237,54 @@ fn number(v: f64) -> String {
 pub(super) fn span_text(span: Span) -> (String, String) {
     (rfc3339(span.start), rfc3339(span.end))
 }
+
+/// One stretch a source could not have recorded in.
+#[derive(Clone, Debug, PartialEq, serde::Serialize)]
+pub(crate) struct Gap {
+    pub source: String,
+    pub from: String,
+    pub to: String,
+    /// `gap`: outside every stretch the source covered; `unknown`: Sinex holds
+    /// nothing that bounds the source's coverage.
+    pub state: &'static str,
+}
+
+/// Where each of `sources` (every source with events when `None`) could not
+/// have recorded between the logical days `from` and `to`, at the current
+/// commit position.
+pub(crate) async fn gaps(
+    conn: &mut PgConnection,
+    settings: &Settings,
+    sources: Option<&[String]>,
+    from: jiff::civil::Date,
+    to: jiff::civil::Date,
+) -> Result<Vec<Gap>, String> {
+    let range = settings.day_span(from, to)?;
+    let as_of = sinex_store::query::current_seq(conn)
+        .await
+        .map_err(|e| e.to_string())?;
+    let names: Vec<String> = match sources {
+        Some(s) => s.to_vec(),
+        None => sinex_store::coverage::sources(conn)
+            .await
+            .map_err(|e| e.to_string())?,
+    };
+    let mut out = Vec::new();
+    for name in &names {
+        let covered = coverage(conn, &[name.as_str()], as_of).await?;
+        let (uncovered, state) = if covered.is_empty() {
+            (vec![range], "unknown")
+        } else {
+            let covered = sinex_analysis::SpanSet::from_spans(covered.iter().map(|c| c.span));
+            let all = sinex_analysis::SpanSet::from_spans([range]);
+            (all.subtract(&covered).spans().to_vec(), "gap")
+        };
+        out.extend(uncovered.into_iter().map(|s| Gap {
+            source: name.clone(),
+            from: rfc3339(s.start),
+            to: rfc3339(s.end),
+            state,
+        }));
+    }
+    Ok(out)
+}
