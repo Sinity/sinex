@@ -271,7 +271,9 @@ at least three matched pairs, one measurement at a time. Keep settings,
 workload and storage equal; compare individual runs and the median paired
 ratio. A failed load check is a loaded observation. Admission-only rates do
 not establish throughput with search and publication, and consumer completion
-includes their later catch-up time.
+includes their later catch-up time. Publication checks require saved mappings
+for every event and retain the additional message count from at-least-once
+redelivery.
 
 Consumer measurements also save protected prefix and regex query plans and three
 read-only execution samples after the timed workload. `--publication-probe`

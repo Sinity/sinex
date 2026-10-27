@@ -162,3 +162,64 @@ fn nats_readiness_requires_its_client_listener() {
     ));
     server.join().unwrap();
 }
+
+#[devkit::test]
+fn saved_publications_cover_each_event_in_both_schemas() {
+    let root = env::temp_dir().join(format!("pc-{}", std::process::id()));
+    fs::create_dir(&root).unwrap();
+    let mut cluster =
+        Cluster::start(&root.join("pg"), true, &["shared_buffers=16MB".into()]).unwrap();
+    cluster
+        .psql(
+            "CREATE SCHEMA core;
+        CREATE TABLE core.events(id uuid PRIMARY KEY);
+        CREATE TABLE core.published(event_id uuid NOT NULL);
+        INSERT INTO core.events VALUES
+          ('00000000-0000-0000-0000-000000000001'),
+          ('00000000-0000-0000-0000-000000000002');
+        INSERT INTO core.published SELECT id FROM core.events ORDER BY id LIMIT 1",
+        )
+        .unwrap();
+    assert_eq!(
+        published_event_counts(&cluster).unwrap(),
+        json!({"recorded":1,"missing":1})
+    );
+    cluster
+        .psql("INSERT INTO core.published VALUES('00000000-0000-0000-0000-000000000002')")
+        .unwrap();
+    assert_eq!(
+        published_event_counts(&cluster).unwrap(),
+        json!({"recorded":2,"missing":0})
+    );
+    cluster
+        .psql("INSERT INTO core.published VALUES('00000000-0000-0000-0000-000000000002')")
+        .unwrap();
+    assert_eq!(
+        published_event_counts(&cluster).unwrap(),
+        json!({"recorded":3,"missing":0})
+    );
+    cluster
+        .psql(
+            "DROP TABLE core.published;
+        CREATE TABLE core.published(event_ids uuid[] NOT NULL);
+        INSERT INTO core.published SELECT array_agg(id ORDER BY id) FROM core.events",
+        )
+        .unwrap();
+    assert_eq!(
+        published_event_counts(&cluster).unwrap(),
+        json!({"recorded":2,"missing":0})
+    );
+    cluster
+        .psql(
+            "UPDATE core.published SET event_ids=ARRAY[
+        '00000000-0000-0000-0000-000000000001'::uuid,
+        '00000000-0000-0000-0000-000000000003'::uuid]",
+        )
+        .unwrap();
+    assert_eq!(
+        published_event_counts(&cluster).unwrap(),
+        json!({"recorded":2,"missing":1})
+    );
+    cluster.stop().unwrap();
+    fs::remove_dir_all(root).unwrap();
+}

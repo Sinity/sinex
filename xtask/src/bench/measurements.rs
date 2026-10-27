@@ -492,6 +492,30 @@ fn monitor(port: u16) -> Result<Value, String> {
     serde_json::from_str(body).map_err(|e| e.to_string())
 }
 
+fn published_event_counts(cluster: &Cluster) -> Result<Value, String> {
+    let pages = query(
+        cluster,
+        "SELECT to_jsonb(EXISTS(SELECT 1 FROM information_schema.columns
+         WHERE table_schema='core' AND table_name='published' AND column_name='event_ids'))",
+    )?
+    .as_bool()
+    .ok_or("publication columns were not observed")?;
+    let events = if pages {
+        "SELECT unnest(event_ids) AS event_id FROM core.published"
+    } else {
+        "SELECT event_id FROM core.published"
+    };
+    query(
+        cluster,
+        &format!(
+            "WITH recorded AS MATERIALIZED ({events})
+        SELECT json_build_object('recorded',(SELECT count(*) FROM recorded),
+        'missing',(SELECT count(*) FROM core.events event
+          WHERE NOT EXISTS(SELECT 1 FROM recorded WHERE recorded.event_id=event.id)))"
+        ),
+    )
+}
+
 fn nats_ready(port: u16, monitoring: u16) -> bool {
     monitor(monitoring).is_ok() && TcpStream::connect(("127.0.0.1", port)).is_ok()
 }
@@ -727,22 +751,30 @@ pub(super) fn with_consumers(
                     std::thread::sleep(Duration::from_millis(200));
                     continue;
                 }
-                if messages != Some(expected.messages) {
+                // Delivery is at least once; saved mappings must cover each event once.
+                let published = published_event_counts(cluster)?;
+                if published["recorded"].as_u64() != Some(expected.events)
+                    || published["missing"].as_u64() != Some(0)
+                {
                     return Err(format!(
-                        "confirmed stream contains {messages:?} messages, expected {}",
-                        expected.messages
+                        "published event coverage is incomplete: {published}"
                     ));
                 }
                 let correctness = correctness(cluster, expected.events)?;
-                if correctness["search_rows"].as_u64() != Some(expected.events) {
-                    return Err("search did not retain all generated rows".into());
+                if correctness["events"].as_u64() != Some(expected.events)
+                    || correctness["search_rows"].as_u64() != Some(expected.events)
+                {
+                    return Err("stored and searched event counts do not match the workload".into());
                 }
                 return Ok(
                     json!({"peak_rss_mb": peak_rss_mb, "scope_memory_peak_bytes": memory_peak_bytes,
                         "consumers": {"setup_s": setup_s, "complete_wall_s": elapsed, "admission_s": admission_s, "search_s": search_s, "publisher_s": publication_s,
                     "search_catch_up_s": search_s.zip(admission_s).map(|(s,a)| s-a),
                     "publisher_catch_up_s": publication_s.zip(admission_s).map(|(p,a)| p-a),
-                    "acknowledged_events": messages, "position_resolution_s": 0.2}}),
+                    "acknowledged_events": expected.events, "confirmed_messages": messages,
+                    "expected_messages": expected.messages,
+                    "additional_messages": messages.map(|messages| messages - expected.messages),
+                    "published_events": published, "position_resolution_s": 0.2}}),
                 );
             }
             std::thread::sleep(Duration::from_millis(200));
