@@ -299,7 +299,8 @@ impl Producer {
     }
 
     /// A recorded refusal is final. Its reason remains in Sinex's frame
-    /// record; a refused material also prevents sending events that cite it.
+    /// record. A refused material stays pending because later parts and events
+    /// may name it.
     async fn deliver_batch(
         &mut self,
         frames: &[Ingress],
@@ -311,7 +312,6 @@ impl Producer {
         let mut acknowledgments = Vec::new();
         for (index, frame) in frames.iter().enumerate() {
             let mut refused = false;
-            let mut skip_rest = false;
             match self.deliver(frame.clone(), store).await {
                 Ok(ack) => acknowledgments.push(Some(ack)),
                 Err(Error::Refused {
@@ -319,21 +319,7 @@ impl Producer {
                     reason,
                     recorded: true,
                 }) if id == frame.frame() => {
-                    acknowledgments.push(None);
-                    refused = true;
-                    write_durably(
-                        &state.join("refused").join(format!(
-                            "{}.json",
-                            blake3::hash(frame.frame().as_bytes()).to_hex()
-                        )),
-                        &serde_json::to_vec(&UnacknowledgedFrames {
-                            frames: frames[index..].to_vec(),
-                            position: position.clone(),
-                        })
-                        .expect("frames serialize"),
-                    )?;
-                    eprintln!("Sinex refused frame {id}: {reason}; skipping recorded refusal");
-                    skip_rest = match frame {
+                    let material_refused = match frame {
                         Ingress::Material { .. } => true,
                         Ingress::LargeFrame { blob, length, .. } => {
                             let bytes = frame_bytes::snapshot(
@@ -352,31 +338,27 @@ impl Producer {
                         }
                         _ => false,
                     };
+                    if material_refused {
+                        return Err(Error::Refused { frame: id, reason, recorded: true });
+                    }
+                    acknowledgments.push(None);
+                    refused = true;
+                    write_durably(
+                        &state.join("refused").join(format!("{}.json", blake3::hash(frame.frame().as_bytes()).to_hex())),
+                        &serde_json::to_vec(&UnacknowledgedFrames { frames: frames[index..].to_vec(), position: position.clone() }).expect("frames serialize"),
+                    )?;
+                    eprintln!("Sinex refused frame {id}: {reason}; skipping recorded refusal");
                 }
                 Err(error) => return Err(error),
             }
             UnacknowledgedFrames {
-                frames: if skip_rest {
-                    vec![]
-                } else {
-                    frames[index + 1..].to_vec()
-                },
+                frames: frames[index + 1..].to_vec(),
                 position: position.clone(),
             }
             .save(state, binding)?;
-            self.frames_changed(
-                binding,
-                if skip_rest {
-                    0
-                } else {
-                    frames.len() - index - 1
-                },
-            );
+            self.frames_changed(binding, frames.len() - index - 1);
             if !refused {
                 self.clear_frame_directories(std::slice::from_ref(frame), store)?;
-            }
-            if skip_rest {
-                break;
             }
         }
         Ok(acknowledgments)
