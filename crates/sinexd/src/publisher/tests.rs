@@ -436,7 +436,9 @@ async fn page_pairs_follow_acknowledgments_through_visibility_and_commit_gaps(
     let subjects = Subjects::new(nats.prefix());
     let js = context(async_nats::connect(nats.url()).await.unwrap());
     ensure_stream(&js, &subjects).await.unwrap();
-    let mut conn = PgConnection::connect(&db.url(None)).await.unwrap();
+    let mut conn = sinex_store::AdmissionContext::connect(&db.url(None))
+        .await
+        .unwrap();
     let first = executed("first", "pwd", 1, Class::Open);
     let first_id = first.id;
     let missing = executed("missing", "gone", 2, Class::Open);
@@ -487,7 +489,9 @@ async fn acknowledgment_before_database_rollback_is_recorded_on_retry(
     let subjects = Subjects::new(nats.prefix());
     let js = context(async_nats::connect(nats.url()).await.unwrap());
     ensure_stream(&js, &subjects).await.unwrap();
-    let mut conn = PgConnection::connect(&db.url(None)).await.unwrap();
+    let mut conn = sinex_store::AdmissionContext::connect(&db.url(None))
+        .await
+        .unwrap();
     let event = executed("first", "pwd", 1, Class::Open);
     let id = event.id;
     admit(&mut conn, batch(vec![event], vec![])).await;
@@ -545,7 +549,9 @@ async fn repeated_erasure_keeps_other_copies_until_their_acknowledgment(
     let subjects = Subjects::new(nats.prefix());
     let js = context(async_nats::connect(nats.url()).await.unwrap());
     ensure_stream(&js, &subjects).await.unwrap();
-    let mut conn = PgConnection::connect(&db.url(None)).await.unwrap();
+    let mut conn = sinex_store::AdmissionContext::connect(&db.url(None))
+        .await
+        .unwrap();
     let event = executed("first", "pwd", 1, Class::Open);
     let id = event.id;
     admit(&mut conn, batch(vec![event], vec![])).await;

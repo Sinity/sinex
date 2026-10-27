@@ -242,11 +242,12 @@ ratio. A failed load check is a loaded observation. Admission-only rates do
 not establish throughput with search and publication, and consumer completion
 includes their later catch-up time.
 
-Consumer measurements also save protected prefix-query plans and three
+Consumer measurements also save protected prefix and regex query plans and three
 read-only execution samples after the timed workload. `--publication-probe`
 adds a separate publication-table probe after those correctness snapshots. It
 compares ordered and overlapping UUID bounds on 3,851,000 synthetic mappings,
-retaining lookup, erasure, relation size and host-load observations.
+checks every recorded stream pair, and retains lookup, one- and 1,000-pair
+erasure, relation size and host-load observations.
 
 `agentctl job start sinex bench -- cases --events 10000 --output /realm/path`
 measures synthetic source changes separately: new YouTube records, the same
@@ -254,11 +255,3 @@ records in another material, hidden records, replacements that omit known
 titles and channels, and derivations with retained parent links. It checks
 search and publication catch-up after each phase. These serial scenario
 timings are supplementary to the concurrent pipeline comparison.
-
-`bench cases --events 10000 --output <directory>` exercises repeat records,
-known-field preservation during replacement, hiding and derived parents in
-the disposable consumer setup. `synthetic --publication-probe` additionally
-checks every recorded stream pair, then measures one and 1,000 scattered
-erasures with ordered and overlapping UUID bounds at 3,851,000 mappings.
-These supplementary probes run after the complete-load snapshots. Prefix
-and regex read plans and latency are saved for consumer runs.

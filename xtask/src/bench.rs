@@ -480,11 +480,15 @@ fn sinexd_recorded(
     if let Some(out) = out {
         command.env("SINEX_PRIVATE_MODE", out.join("private-mode"));
     }
-    let output = command
+    command
         .env("SINEX_BENCH_TIMINGS", "1")
         .args(["--user", "--scope", "--quiet", "-p"])
         .arg(format!("MemoryMax={memory_max}"))
-        .args(["-p", "MemorySwapMax=0", "--", "flock", "-o", LOCK])
+        .args(["-p", "MemorySwapMax=0", "--"]);
+    if out.is_none() {
+        command.args(["flock", "-o", LOCK]);
+    }
+    let output = command
         .arg(binary)
         .args(args)
         .arg("--json")
