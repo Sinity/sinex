@@ -592,7 +592,6 @@ async fn capture_recovers_when_nats_returns(initially_unavailable: bool) {
     let mut nats = RestartingNats::new();
     let subjects = Subjects::new("reconnect");
     let (available, availability) = tokio::sync::watch::channel(true);
-    let mut previous_frames = HashMap::new();
     let mut responder = None;
     if !initially_unavailable {
         nats.start().await;
@@ -625,7 +624,7 @@ async fn capture_recovers_when_nats_returns(initially_unavailable: bool) {
         .await
     }));
     let segment = spool.join("000000000000.ndjson");
-    if let Some((frames, _, task)) = responder.take() {
+    if let Some((frames, _, _)) = &responder {
         wait_for(&mut running, || {
             frames
                 .lock()
@@ -635,9 +634,6 @@ async fn capture_recovers_when_nats_returns(initially_unavailable: bool) {
         })
         .await;
         nats.stop();
-        previous_frames = frames.lock().unwrap().clone();
-        // The responder is recreated against its durable consumer after restart.
-        task.abort();
     }
     wait_for(&mut running, || segment.exists()).await;
     let before = std::fs::metadata(&segment).unwrap().len();
@@ -668,8 +664,10 @@ async fn capture_recovers_when_nats_returns(initially_unavailable: bool) {
     })
     .await;
     nats.start().await;
-    let (received, _, ingress) =
-        fake_ingress(&nats.url(), &subjects, availability, Arc::default()).await;
+    let (received, _, ingress) = match responder {
+        Some(responder) => responder,
+        None => fake_ingress(&nats.url(), &subjects, availability, Arc::default()).await,
+    };
     let report = dir.path().join("health.json");
     wait_for(&mut running, || {
         std::fs::read(&report)
@@ -682,8 +680,8 @@ async fn capture_recovers_when_nats_returns(initially_unavailable: bool) {
     })
     .await;
     // Check every captured event across both server lifetimes.
-    previous_frames.extend(received.lock().unwrap().clone());
-    let events: Vec<_> = previous_frames
+    let frames = received.lock().unwrap();
+    let events: Vec<_> = frames
         .values()
         .filter_map(|frame| match frame {
             Ingress::Events { events, .. } => Some(events),
