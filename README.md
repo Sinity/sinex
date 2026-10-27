@@ -70,6 +70,21 @@ reads the bindings in `--sources` continuously and also needs NATS and a tokens
 directory; the NixOS module sets it up. A sealed source that was left part-way needs
 `--identity-file KEYFILE` to continue.
 
+### Upgrade a deployed database
+
+Stop the whole daemon before applying the schema so admission, search and the
+confirmed-stream publisher have all stopped. Apply the schema with the new
+binary, then restart the daemon. Schema application refuses an active admission
+writer and applies the numbered upgrades in one transaction.
+
+After version 3, the upgrades convert live equivalence keys, add search-index
+eligibility and pack the exact event-to-stream mappings. In a disposable
+database with 2.48 million live keys, key conversion and its complete
+preservation checks took 522 seconds (about 8.7 minutes). Allow for that
+measured interruption plus the search and stream-mapping upgrades; their total
+duration depends on the stored population and host load. This measurement is
+not a duration guarantee for the deployed database.
+
 ## Run on a host
 
 On NixOS, import `nixosModules.default` from this flake and enable it:
