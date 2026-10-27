@@ -229,7 +229,11 @@ in
         type = types.path;
         description = "The session producer's NATS password, readable by the operator's account.";
       };
-      stateDir = mkOption { type = types.path; default = "${cfg.stateDir}/sinex-session/${cfg.session.user}"; description = "Session spools and positions; Sinnix supplies its /realm state root."; };
+      stateDir = mkOption {
+        type = types.path;
+        default = if cfg.discovery.home == null then "${cfg.stateDir}/sinex-session/${cfg.session.user}" else "${cfg.discovery.home}/.local/state/sinex-session";
+        description = "Session spools and positions. Preserve the existing input spelling; Sinnix supplies /realm storage with the producer's binding and cursor mapping.";
+      };
       watch = mkOption {
         type = types.listOf types.str;
         default = [ ];
