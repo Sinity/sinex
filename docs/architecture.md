@@ -187,9 +187,11 @@ directory, independently of publishing. It reports the observation time and
 unpublished captured bytes and records for each spool, plus the number of
 prepared transport frames awaiting acknowledgment. Media bytes include the
 completed data file and its sidecar. `sinexctl status` includes
-the local session report, including when the daemon is unreachable;
+the local session report, including when the daemon is unreachable or refuses
+the status request;
 `--capture-state PATH` selects another local producer's state directory.
-`status --offline --database URL` includes the same report. The observation time
+`status --offline --database URL` includes the same report even when its
+database query fails. The observation time
 must be checked because the last report remains on disk after capture stops.
 
 The outside producers start their capture threads with `sinex-sources::live`,
