@@ -184,11 +184,11 @@ impl DirSnapshot {
                     continue;
                 }
             };
-            next_failures.remove(relative);
             if let Some(Some((s, m, _))) = state.files.get(relative)
                 && *s == *size
                 && *m == *mtime
             {
+                next_failures.remove(relative);
                 continue;
             }
             if files_read
@@ -230,6 +230,7 @@ impl DirSnapshot {
                     continue;
                 }
             };
+            next_failures.remove(relative);
             let same = state
                 .files
                 .get(relative)
