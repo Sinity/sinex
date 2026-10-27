@@ -518,3 +518,42 @@ fn a_copy_then_removal_keeps_identity_without_the_same_inode() {
     assert_ne!(present.inode, first[0].inode);
     std::fs::remove_dir_all(root).unwrap();
 }
+
+#[devkit::test]
+fn full_rescans_record_every_file_without_hashing_unchanged_bytes() {
+    use crate::binding::Reader;
+    let root = tmp();
+    std::fs::write(root.join("one.png"), png(10, 10)).unwrap();
+    std::fs::write(root.join("two.png"), png(20, 20)).unwrap();
+    let mut reader = LibraryReader::new(scan(&root));
+    let first = reader.poll(&Value::Null).unwrap();
+    let (_, cursor) = stored(&first);
+    let memory = first.material.as_ref().unwrap().memory.clone().unwrap();
+    assert_eq!(reader.state.files_hashed, 2);
+    assert!(reader.poll(&cursor).unwrap().material.is_none());
+    let again = reader.poll(&cursor).unwrap();
+    assert_eq!(read(&again, &ScanParser).len(), 2);
+    assert!(again.material.as_ref().unwrap().owned_files.is_empty());
+    assert_eq!(reader.state.files_hashed, 2, "the rescan hashes zero files");
+
+    let mut restarted = LibraryReader::new(scan(&root));
+    restarted.restore_memory(&memory).unwrap();
+    restarted.restored().unwrap();
+    let after_restart = restarted.poll(&cursor).unwrap();
+    assert_eq!(read(&after_restart, &ScanParser).len(), 2);
+    assert_eq!(restarted.state.files_hashed, 0);
+    let (_, cursor) = stored(&after_restart);
+    assert!(restarted.poll(&cursor).unwrap().material.is_none());
+    let mut changed = png(30, 30);
+    changed.push(0);
+    std::fs::write(root.join("two.png"), changed).unwrap();
+    assert_eq!(
+        read(&restarted.poll(&cursor).unwrap(), &ScanParser).len(),
+        2
+    );
+    assert_eq!(
+        restarted.state.files_hashed, 1,
+        "only the edited file is hashed"
+    );
+    std::fs::remove_dir_all(root).unwrap();
+}

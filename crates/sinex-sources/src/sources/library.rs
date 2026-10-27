@@ -175,7 +175,7 @@ pub struct LibraryScan {
     pub keep_bytes: bool,
     /// Ask `ffprobe` for dimensions and duration of video and audio.
     pub probe: bool,
-    /// File bytes hashed per poll, so one poll's material stays a sensible size
+    /// File bytes described per poll, so one poll's material stays a sensible size
     /// and progress commits as it goes. A file larger than this is read alone.
     pub bytes_per_poll: u64,
     /// Scan only this file (a path relative to `root`); the rest of the root
@@ -187,6 +187,13 @@ pub struct LibraryScan {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Known {
     pub item_key: String,
+    pub sha256: String,
+    pub md5: String,
+    pub media_type: String,
+    pub width: Option<u32>,
+    pub height: Option<u32>,
+    pub duration_ms: Option<u64>,
+    pub stored: bool,
     pub size: u64,
     pub mtime_ns: i128,
     pub device: Option<u64>,
@@ -194,7 +201,7 @@ pub struct Known {
     pub content: String,
 }
 
-/// A file the walk found changed: relative path, size, mtime, device, inode.
+/// A file the walk found: relative path, size, mtime, device, inode.
 type Pending = (String, u64, i128, Option<u64>, Option<u64>);
 
 /// The scan's state: the files read, by path, and the work left from the
@@ -208,6 +215,8 @@ pub struct ScanState {
     missing: BTreeMap<String, Known>,
     walk_pending: bool,
     completed: bool,
+    #[cfg(test)]
+    files_hashed: usize,
     /// Paths a restart has already decided from a newer part.
     remembered: std::collections::HashSet<String>,
 }
@@ -264,6 +273,13 @@ impl ScanState {
                 relative,
                 Known {
                     item_key: d.item_key,
+                    sha256: d.sha256,
+                    md5: d.md5,
+                    media_type: d.media_type,
+                    width: d.width,
+                    height: d.height,
+                    duration_ms: d.duration_ms,
+                    stored: d.stored,
                     size: d.size,
                     mtime_ns,
                     device: d.device,
@@ -513,6 +529,48 @@ impl LibraryScan {
             state.queue.pop_front();
             budget += size.max(1);
             let full = self.root.join(&relative);
+            let before = state.files.get(&relative).cloned();
+            if let Some(known) = &before
+                && known.size == size
+                && known.mtime_ns == mtime
+                && known.device == dev
+                && known.inode == ino
+            {
+                let line = ScannedFile {
+                    item_key: known.item_key.clone(),
+                    host: self.host.clone(),
+                    root: root.clone(),
+                    path: full.display().to_string(),
+                    content: known.content.clone(),
+                    size,
+                    sha256: known.sha256.clone(),
+                    md5: known.md5.clone(),
+                    media_type: known.media_type.clone(),
+                    width: known.width,
+                    height: known.height,
+                    duration_ms: known.duration_ms,
+                    stored: self.keep_bytes,
+                    device: dev,
+                    inode: ino,
+                    mtime_ns: Some(mtime.to_string()),
+                    moved_from: None,
+                    previous_content: None,
+                    vanished_at_ns: None,
+                };
+                if self.keep_bytes && !known.stored {
+                    owned_files.push(crate::drivers::OwnedFile {
+                        path: full,
+                        blob: known.content.clone(),
+                    });
+                }
+                push_line(&mut lines, &mut records, &line);
+                state.files.get_mut(&relative).expect("known file").stored = self.keep_bytes;
+                continue;
+            }
+            #[cfg(test)]
+            {
+                state.files_hashed += 1;
+            }
             let digests = match digest(&full) {
                 Ok(d) => d,
                 // Gone or unreadable between the walk and the read: the next
@@ -521,7 +579,6 @@ impl LibraryScan {
             };
             let content = format!("blake3:{}", digests.blake3);
             let stored = self.keep_bytes;
-            let before = state.files.get(&relative).cloned();
             // Only a missing path with unchanged bytes can continue at a
             // new path. The walk orders matching inodes before new copies.
             let moved_from = state
@@ -599,6 +656,13 @@ impl LibraryScan {
                 relative,
                 Known {
                     item_key,
+                    sha256: line.sha256,
+                    md5: line.md5,
+                    media_type: line.media_type,
+                    width: line.width,
+                    height: line.height,
+                    duration_ms: line.duration_ms,
+                    stored: line.stored,
                     size,
                     mtime_ns: mtime,
                     device: dev,

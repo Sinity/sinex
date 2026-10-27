@@ -70,7 +70,7 @@ impl Library<'_> {
         rendition: Option<&str>,
     ) -> R<Value> {
         let it = self.item_or(conn, item).await?;
-        let (content, media_type, rendition_id) = match rendition {
+        let (content, media_type, rendition_id, revision) = match rendition {
             Some(id) => {
                 let r = reads::renditions(conn, item)
                     .await
@@ -78,14 +78,19 @@ impl Library<'_> {
                     .into_iter()
                     .find(|r| r.rendition == id && r.withdrawn_at.is_none())
                     .ok_or_else(|| format!("{item} has no rendition {id}"))?;
-                (r.content, r.media_type, Some(r.rendition))
+                (r.content, r.media_type, Some(r.rendition), r.revision)
             }
-            None => (it.content.clone(), it.media_type.clone(), None),
+            None => (
+                it.content.clone(),
+                it.media_type.clone(),
+                None,
+                it.revision.clone(),
+            ),
         };
         let (path, on_disk) = self.local_copy(conn, &content, &media_type).await?;
         Ok(json!({
             "item": item,
-            "revision": it.revision,
+            "revision": revision,
             "rendition": rendition_id,
             "content": content,
             "media_type": media_type,
