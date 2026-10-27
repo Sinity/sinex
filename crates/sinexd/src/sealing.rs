@@ -339,3 +339,63 @@ pub(crate) async fn replay_keys<'a>(
     }
     Ok(keys)
 }
+
+/// Sealed acquisitions keep their own key and cannot share a stored copy.
+pub(crate) fn can_share(class: Class) -> bool {
+    class != Class::Sealed
+}
+
+pub(crate) async fn history_floor(conn: &mut PgConnection, binding: &str) -> Result<Class, String> {
+    if sinex_store::positions::has_sealed_material(conn, binding)
+        .await
+        .map_err(|e| e.to_string())?
+    {
+        Ok(Class::Sealed)
+    } else {
+        Ok(Class::default())
+    }
+}
+
+pub(crate) fn collect_sealed(value: &Value, out: &mut Vec<String>) {
+    if let Some(r) = sinex_sealing::key_ref(value) {
+        out.push(r.to_string());
+        return;
+    }
+    match value {
+        Value::String(text) => {
+            if let Some(value) = sinex_sealing::sealed_text(text) {
+                collect_sealed(&value, out);
+            }
+        }
+        Value::Array(items) => items.iter().for_each(|v| collect_sealed(v, out)),
+        Value::Object(map) => map.values().for_each(|v| collect_sealed(v, out)),
+        _ => {}
+    }
+}
+
+pub(crate) fn unseal_in(
+    value: &mut Value,
+    keys: &std::collections::HashMap<String, sinex_sealing::Zeroizing<[u8; 32]>>,
+) {
+    if let Some(r) = sinex_sealing::key_ref(value) {
+        if let Some(key) = keys.get(r)
+            && let Ok(plain) = sinex_sealing::unseal_payload(value, key)
+        {
+            *value = plain;
+        }
+        return;
+    }
+    match value {
+        Value::String(text) => {
+            if let Some(mut sealed) = sinex_sealing::sealed_text(text) {
+                unseal_in(&mut sealed, keys);
+                if !sinex_sealing::is_sealed(&sealed) {
+                    *value = sealed;
+                }
+            }
+        }
+        Value::Array(items) => items.iter_mut().for_each(|v| unseal_in(v, keys)),
+        Value::Object(map) => map.values_mut().for_each(|v| unseal_in(v, keys)),
+        _ => {}
+    }
+}

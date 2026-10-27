@@ -87,50 +87,6 @@ fn data(result: Value) -> Reply {
     Reply::Ok { result: out }
 }
 
-fn collect_sealed(value: &Value, out: &mut Vec<String>) {
-    if let Some(r) = sinex_sealing::key_ref(value) {
-        out.push(r.to_string());
-        return;
-    }
-    match value {
-        Value::String(text) => {
-            if let Some(value) = sinex_sealing::sealed_text(text) {
-                collect_sealed(&value, out);
-            }
-        }
-        Value::Array(items) => items.iter().for_each(|v| collect_sealed(v, out)),
-        Value::Object(map) => map.values().for_each(|v| collect_sealed(v, out)),
-        _ => {}
-    }
-}
-
-fn unseal_in(
-    value: &mut Value,
-    keys: &std::collections::HashMap<String, sinex_sealing::Zeroizing<[u8; 32]>>,
-) {
-    if let Some(r) = sinex_sealing::key_ref(value) {
-        if let Some(key) = keys.get(r)
-            && let Ok(plain) = sinex_sealing::unseal_payload(value, key)
-        {
-            *value = plain;
-        }
-        return;
-    }
-    match value {
-        Value::String(text) => {
-            if let Some(mut sealed) = sinex_sealing::sealed_text(text) {
-                unseal_in(&mut sealed, keys);
-                if !sinex_sealing::is_sealed(&sealed) {
-                    *value = sealed;
-                }
-            }
-        }
-        Value::Array(items) => items.iter_mut().for_each(|v| unseal_in(v, keys)),
-        Value::Object(map) => map.values_mut().for_each(|v| unseal_in(v, keys)),
-        _ => {}
-    }
-}
-
 impl Api {
     /// The caller for a token's access. The operator token holds `guarded`;
     /// the agent token what the operator granted it; the read token nothing.
@@ -204,7 +160,7 @@ impl Api {
     /// each data key once per session.
     async fn unseal(&self, value: &mut Value) -> Result<(), String> {
         let mut refs = Vec::new();
-        collect_sealed(value, &mut refs);
+        crate::sealing::collect_sealed(value, &mut refs);
         if refs.is_empty() {
             return Ok(());
         }
@@ -227,7 +183,7 @@ impl Api {
             }
         }
         s.unlock.check()?;
-        unseal_in(value, &s.keys);
+        crate::sealing::unseal_in(value, &s.keys);
         Ok(())
     }
 

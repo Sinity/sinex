@@ -80,8 +80,12 @@ impl MaterialOnDemand {
             opened: std::sync::OnceLock::new(),
         })
     }
-    pub(crate) fn sealed(&self) -> bool {
-        self.sealed
+    pub(crate) fn floor(&self) -> sinex_model::Class {
+        if self.sealed {
+            sinex_model::Class::Sealed
+        } else {
+            sinex_model::Class::default()
+        }
     }
     fn body(&self) -> std::io::Result<&Arc<StoredReader>> {
         self.opened

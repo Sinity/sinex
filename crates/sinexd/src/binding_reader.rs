@@ -118,7 +118,7 @@ pub(crate) async fn read(
                     // file facts permit aliases without conflating configured input identities.
                     let compatible = passes.iter_mut().find(|g| {
                         g.class == class
-                            && class != Class::Sealed
+                            && crate::sealing::can_share(class)
                             && same_file(&g.facts, &facts)
                             && g.host == b.binding.settings.host
                     });
@@ -220,7 +220,7 @@ async fn restore(
     let Reading::Polled(reader) = &mut b.reading else {
         return Ok(());
     };
-    let sealed = restore_reader(
+    let floor = restore_reader(
         conn,
         blobs,
         reader.as_mut(),
@@ -229,9 +229,7 @@ async fn restore(
         stop,
     )
     .await?;
-    if sealed {
-        b.history_floor = b.history_floor.max(Class::Sealed);
-    }
+    b.history_floor = b.history_floor.max(floor);
     Ok(())
 }
 
@@ -241,8 +239,8 @@ const PARTS_PER_QUERY: i32 = 256;
 /// Offer `reader` the committed cursor's material and the parts before it,
 /// newest first, until it has what it needs or the walk reaches the part its
 /// saved memory was written at; then the saved memory. Parts are read a page
-/// at a time, so a reader that stops early reads no more of the chain. True
-/// when a part was sealed.
+/// at a time, so a reader that stops early reads no more of the chain. Returns
+/// the privacy floor of the restored history.
 pub(crate) async fn restore_reader(
     conn: &mut PgConnection,
     blobs: &Blobs,
@@ -250,20 +248,20 @@ pub(crate) async fn restore_reader(
     binding: &str,
     unlock: Option<&crate::sealing::Unlock>,
     stop: &watch::Receiver<bool>,
-) -> Result<bool, String> {
+) -> Result<Class, String> {
     let cursor = positions::load(conn, binding)
         .await
         .map_err(|e| e.to_string())?
         .map(|(cursor, _)| cursor)
         .unwrap_or(Value::Null);
     let Some(last) = reader.history_from(&cursor) else {
-        return Ok(false);
+        return Ok(Class::default());
     };
     let saved = positions::reader_memory(conn, binding)
         .await
         .map_err(|e| e.to_string())?;
     let mut reached_saved = false;
-    let mut sealed = false;
+    let mut floor = Class::default();
     let mut newest_revision = None;
     let mut next = Some(last);
     'parts: while let Some(newest) = next {
@@ -290,7 +288,7 @@ pub(crate) async fn restore_reader(
             let bytes =
                 crate::sealing::MaterialOnDemand::new(conn, blobs, reference.clone(), unlock)
                     .await?;
-            sealed |= bytes.sealed();
+            floor = floor.max(bytes.floor());
             let more = reader
                 .restore(
                     &cursor,
@@ -311,12 +309,10 @@ pub(crate) async fn restore_reader(
             .restore_memory(&saved.bytes)
             .map_err(|e| e.to_string())?;
         // The parts the saved memory stands for were not opened.
-        sealed |= positions::has_sealed_material(conn, binding)
-            .await
-            .map_err(|e| e.to_string())?;
+        floor = floor.max(crate::sealing::history_floor(conn, binding).await?);
     }
     reader.restored().map_err(|e| e.to_string())?;
-    Ok(sealed)
+    Ok(floor)
 }
 
 #[cfg(test)]
