@@ -221,7 +221,7 @@ fn every_lane_maps_to_its_sources_declared_event_types() {
                 )
                 .unwrap();
             assert!(
-                spec.event_types.contains(&built.event_type),
+                spec.event_types.contains(&built.event_type.as_str()),
                 "{source} emits {} it does not declare",
                 built.event_type
             );

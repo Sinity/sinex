@@ -234,7 +234,7 @@ pub const FORMAT: sinex_source_core::binding::InputFormat =
             credentials: &[],
             streams: &[sinex_source_core::discovery::CaptureStream {
                 spool: "notifications",
-                options: "{}",
+                options: &[],
                 capabilities: &[],
             }],
             requests: &[],

@@ -71,6 +71,12 @@ at shutdown it removes the names that have rows. The first start of an existing
 store checks every file once, then syncs `unadmitted-blobs-ready` so later starts
 check only the recorded names.
 
+A content refusal in a source batch records failures at its member locations
+and commits the cursor and reader memory, leaving the material bytes available.
+Unknown kinds, schema failures and database content errors therefore advance.
+API requests retain their atomic refusal behavior. Missing bytes, cancellation,
+unlock expiry and database availability errors still stop submission.
+
 A failed admission is retried from the material the reader holds: the append,
 directory, SQLite-row and IMAP readers keep their newest material in memory
 until its final cursor is admitted, then read on. After a restart nothing
@@ -130,18 +136,20 @@ does not know which driver a binding uses.
   where each UID it read is stored, asks the server which it still holds, and
   records an expunged message as removed at the source; it saves that memory
   like the SQLite-row and directory readers.
-- **Directory snapshots.** Changed files stream into one unnamed bundle. Each
-  file is preceded by one byte outside its source range, so empty files have
-  distinct anchors. The cursor confirms the reader's file facts only at the
-  bundle's last byte. Paths are keyed and reopened as native bytes, including
-  in saved reader memory. Manifest paths keep valid UTF-8 names verbatim. Non-UTF-8 names add
-  `native_path_bytes` with base64-encoded native bytes; reopening uses that field
-  when present. A file that cannot be read contributes a failure record when
-  its failure appears or changes and is retried on the next poll. A file that
-  changes during capture is skipped and retried. Walk failures suppress removals
-  only within the failed path; a walk cut by the part size records no removals.
-  Maildir and notes also remember where each file was stored and record the
-  removed file's reading as removed at the source.
+- **Directory snapshots.** Changed files stream into one unnamed POSIX PAX tar
+  material. Members retain native file names, permissions, ownership, times,
+  extended attributes, access ACLs and sparse ranges. Typed file nodes in the
+  manifest index member data at its stored offsets; sparse bytes expand for
+  parsing and replay. The final record's cursor confirms the file facts.
+  A metadata change creates a new material even when the file contents stay
+  equal. Failure and removal records are membership facts stored under
+  `.sinex-membership/`, with the source path in the manifest, and are excluded
+  when restoring files with GNU tar. A file that cannot be read contributes
+  a failure when the failure appears or changes and is retried on the next
+  poll. A file that changes during capture is skipped and retried. Walk failures
+  suppress removals only within the failed path; a walk cut by the part size
+  records no removals. Maildir and notes remember each file's stored location
+  and record the removed file's reading as removed at the source.
 - **Export archives.** An archive is stored once and read in one forward pass
   for every compatible binding (same host and class); each binding keeps its
   own record parts and cursor. A sealed archive uses one key per binding.

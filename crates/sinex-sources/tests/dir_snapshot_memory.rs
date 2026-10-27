@@ -41,7 +41,10 @@ fn the_bundle_does_not_hold_whole_file_bodies_in_memory() {
     let Some(StoredBytes::FramedFile(file)) = material.stored else {
         panic!("the bundle must be in a temporary file")
     };
-    assert_eq!(file.metadata().unwrap().len(), (24 << 20) + 6);
+    let size = file.metadata().unwrap().len();
+    assert_eq!(size % 512, 0);
+    assert!(size > 24 << 20);
+    assert_eq!(material.manifest.members.iter().map(|member| member.node.as_ref().unwrap().size).sum::<u64>(), 24 << 20);
     assert!(
         measured.bytes_max < 8 << 20,
         "bundle allocations: {measured:?}"

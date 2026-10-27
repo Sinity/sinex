@@ -207,10 +207,9 @@ fn facts(member: &sinex_model::Member) -> Result<Facts, DriverError> {
         .as_str()
         .and_then(|hex| blake3::Hash::from_hex(hex).ok())
         .ok_or_else(invalid)?;
-    let size = member.length;
-    let mtime = member.details["mtime_ns"]
-        .as_str()
-        .and_then(|text| text.parse::<i128>().ok())
+    let node = member.node.as_ref().ok_or_else(invalid)?;
+    let size = node.size;
+    let mtime = node.ctime_ns.parse::<i128>().ok()
         .ok_or_else(invalid)?;
     Ok(Some((size, mtime, *hash.as_bytes())))
 }

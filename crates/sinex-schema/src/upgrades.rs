@@ -4,8 +4,11 @@
 //! directly and matches an upgraded one.
 
 /// The statements of each upgrade, by the version it starts from.
+pub(crate) const LANDED: i32 = 4;
+pub(crate) const PENDING: &[&str] = &["versioned-kind-declarations"];
+
 pub(crate) fn upgrades() -> Vec<Vec<String>> {
-    vec![
+    let mut steps = vec![
         // 0 to 1: per-source and per-run counts, filled from the events
         // already stored in one read of them.
         vec![
@@ -42,8 +45,19 @@ pub(crate) fn upgrades() -> Vec<Vec<String>> {
             "DROP INDEX IF EXISTS core.events_coverage".into(),
             crate::tables::COVERAGE_RUNS.into(),
         ],
-        register_kinds(&["operator.mark", "query.saved"], false),
-        vec![
+        query_records(),
+    ];
+    for name in PENDING {
+        steps.push(match *name {
+            "versioned-kind-declarations" => versioned_kind_declarations(),
+            _ => unreachable!("declared schema step"),
+        });
+    }
+    steps
+}
+
+fn versioned_kind_declarations() -> Vec<String> {
+    vec![
             "ALTER TABLE core.events ADD COLUMN kind_version bigint NOT NULL DEFAULT 1 CHECK (kind_version > 0), ADD COLUMN validation text NOT NULL DEFAULT 'unvalidated' CHECK (validation IN ('validated', 'unvalidated'))".into(),
             "ALTER TABLE telemetry.events ADD COLUMN kind_version bigint NOT NULL DEFAULT 1 CHECK (kind_version > 0), ADD COLUMN validation text NOT NULL DEFAULT 'unvalidated' CHECK (validation IN ('validated', 'unvalidated'))".into(),
             "ALTER TABLE core.admission_stage ADD COLUMN kind_version bigint NOT NULL DEFAULT 1, ADD COLUMN validation text NOT NULL DEFAULT 'unvalidated'".into(),
@@ -53,53 +67,19 @@ pub(crate) fn upgrades() -> Vec<Vec<String>> {
             crate::tables::KIND_DECLARATIONS.into(),
             crate::tables::REPLAY_REFUSALS.into(),
             crate::tables::KIND_IMMUTABILITY.into(),
-        ],
     ]
 }
 
-/// Register payload schemas and views together. Replacing a kind also updates its registry row.
-pub(crate) fn register_kinds(names: &[&str], replace: bool) -> Vec<String> {
-    let mut statements = Vec::new();
-    for name in names {
-        assert!(
-            sinex_model::event_types::ALL
-                .iter()
-                .any(|kind| kind.event_type == *name),
-            "unknown event type {name}"
-        );
-    }
-    for kind in sinex_model::event_types::ALL
-        .iter()
-        .filter(|k| names.contains(&k.event_type))
-    {
-        if replace {
-            statements.push(format!(
-                "DROP VIEW IF EXISTS event_types.{}",
-                crate::quote_ident(&kind.event_type.replace('.', "_"))
-            ));
-        }
-        statements.push(crate::kind_view(kind));
-        statements.push(format!(
-            "GRANT SELECT ON event_types.{} TO sinex_reader, sinex_writer",
-            crate::quote_ident(&kind.event_type.replace('.', "_"))
-        ));
-    }
-    for (name, schema, key_kind, fields, rule) in crate::registry_rows()
+// The deployed unversioned registry gains these names before it is upgraded.
+fn query_records() -> Vec<String> {
+    use sinex_model::event_types::query::{Mark, Saved};
+    use sinex_model::EventPayload;
+    let literal = |s: &str| format!("'{}'", s.replace('\'', "''"));
+    [("operator.mark", Mark::json_schema(), "location", "ARRAY[]::text[]", "repeat"),
+     ("query.saved", Saved::json_schema(), "fields", "ARRAY['name','by']::text[]", "newer")]
         .into_iter()
-        .filter(|(name, ..)| names.contains(&name.as_str()))
-    {
-        let literal = |s: &str| format!("'{}'", s.replace('\'', "''"));
-        let fields = fields
-            .iter()
-            .map(|s| literal(s))
-            .collect::<Vec<_>>()
-            .join(",");
-        let conflict = if replace {
-            " ON CONFLICT (name) DO UPDATE SET payload_schema=EXCLUDED.payload_schema, key_kind=EXCLUDED.key_kind, key_fields=EXCLUDED.key_fields, replace_rule=EXCLUDED.replace_rule"
-        } else {
-            ""
-        };
-        statements.push(format!("INSERT INTO registry.event_types (name,payload_schema,key_kind,key_fields,replace_rule) VALUES ({},{}::jsonb,{},ARRAY[{fields}]::text[],{}){conflict}",literal(&name),literal(&schema.to_string()),literal(key_kind),literal(rule)));
-    }
-    statements
+        .map(|(name, schema, key, fields, rule)| format!(
+            "INSERT INTO registry.event_types (name,payload_schema,key_kind,key_fields,replace_rule) VALUES ({},{}::jsonb,{}, {}, {})",
+            literal(name), literal(&schema.to_string()), literal(key), fields, literal(rule)))
+        .collect()
 }

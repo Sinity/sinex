@@ -56,8 +56,7 @@ fn the_working_set_number_and_urgency_do_not_change_a_task() {
     let two = json!({"id": 4, "urgency": 2.0, "uuid": "u", "status": "pending"}).to_string();
     let other = json!({"id": 1, "urgency": 9.1, "uuid": "u", "status": "completed"}).to_string();
     let hash = |raw: &str| {
-        sinex_source_core::drain::record_hash(
-            &TaskwarriorParser,
+        TaskwarriorParser.record_hash(
             raw.as_bytes(),
             &sinex_source_core::RecordContext::none(),
         )

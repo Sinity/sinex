@@ -11,6 +11,7 @@ fn member(path: &str, removed: bool) -> Member {
         path: path.into(),
         stream_offset: 0,
         length: 0,
+        node: None,
         details,
     }
 }

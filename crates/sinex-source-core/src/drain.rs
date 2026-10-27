@@ -136,6 +136,10 @@ impl RecordContext<'_> {
             hash.update(b"\0native_path_bytes\0");
             hash.update(native.as_bytes());
         }
+        if let Some(node) = self.member.and_then(|member| member.node.as_ref()) {
+            hash.update(b"\0file node\0");
+            hash.update(&serde_json::to_vec(node).expect("file node serializes"));
+        }
         *hash.finalize().as_bytes()
     }
 
@@ -352,6 +356,10 @@ impl<P: Parser> Iterator for Drainer<'_, P> {
                     ))));
                 }
             };
+            let raw = match crate::drivers::dir_snapshot::decode_record(self.input.manifest, start, raw) {
+                Ok(raw) => raw,
+                Err(error) => { self.finished = true; return Some(Err(error)); }
+            };
             // Only spaces and newlines: no record is there, so nothing is
             // read and nothing fails.
             if is_blank(&raw) {
@@ -359,7 +367,7 @@ impl<P: Parser> Iterator for Drainer<'_, P> {
                 continue;
             }
             let outcome = self.outcome(&raw, start);
-            let size = end - start;
+            let size = raw.len();
             let events = match &outcome {
                 RecordOutcome::Events { events, .. } => events.len(),
                 RecordOutcome::Failure { .. } => 0,
@@ -405,7 +413,7 @@ fn parse_one<P: Parser>(
     carry: &P::Carry,
     context: &RecordContext<'_>,
 ) -> Result<(Vec<P::Payload>, P::Carry), RecordError> {
-    if context.manifest.media_type.as_deref() == Some("application/x-sinex-file-bundle")
+    if context.manifest.media_type.as_deref() == Some("application/x-tar")
         && let Some(reason) = context
             .member
             .and_then(|member| member.details.get("read_error"))

@@ -1,3 +1,6 @@
+#[path = "tar_tests.rs"]
+mod tar_tests;
+
 use super::*;
 
 fn vault() -> PathBuf {
@@ -75,7 +78,7 @@ fn a_walk_cut_by_the_part_size_does_not_record_removed_files() {
 }
 
 #[devkit::test]
-fn a_touched_but_unchanged_file_is_skipped() {
+fn metadata_changes_are_captured_even_when_content_stays_equal() {
     let root = vault();
     let d = driver(root.clone(), 1 << 20);
     let mut state = DirState::default();
@@ -88,7 +91,9 @@ fn a_touched_but_unchanged_file_is_skipped() {
         .unwrap();
     f.set_modified(std::time::SystemTime::now() + std::time::Duration::from_secs(5))
         .unwrap();
-    assert!(d.poll(&cursor, &mut state).unwrap().material.is_none());
+    let updated = d.poll(&cursor, &mut state).unwrap();
+    assert_eq!(paths(&updated), ["a.md"]);
+    assert_eq!(record(updated.material.as_ref().unwrap(), 0), b"alpha");
 }
 
 fn record(m: &NewMaterial, index: usize) -> Vec<u8> {
@@ -99,7 +104,7 @@ fn record(m: &NewMaterial, index: usize) -> Vec<u8> {
     let (start, end) = m.records[index];
     let mut bytes = vec![0; end - start];
     file.read_exact_at(&mut bytes, start as u64).unwrap();
-    bytes
+    format::decode(&m.manifest, start, bytes.into()).unwrap().into_owned()
 }
 
 struct Refuse;
@@ -135,6 +140,9 @@ fn failed_storage_retries_the_same_unnamed_capture_before_new_source_changes() {
         "the temporary bundle has no name a crash could leave behind"
     );
     assert!(m.bytes.is_empty());
+    let expected_length = file.metadata().unwrap().len();
+    let mut expected_bytes = vec![0; expected_length as usize];
+    std::os::unix::fs::FileExt::read_exact_at(&**file, &mut expected_bytes, 0).unwrap();
     assert!(
         prepare(
             &source,
@@ -164,14 +172,14 @@ fn failed_storage_retries_the_same_unnamed_capture_before_new_source_changes() {
         Limits::default(),
     )
     .unwrap();
-    assert_eq!(prepared.material_len(), Some(11));
+    assert_eq!(prepared.material_len(), Some(expected_length));
     let batch = prepared.batches().unwrap().next().unwrap().unwrap();
     let BatchKind::Source(progress) = batch.kind else {
         panic!()
     };
     assert_eq!(
         progress.material.unwrap().blob,
-        format!("blake3:{}", blake3::hash(b"\0alpha\0beta").to_hex())
+        format!("blake3:{}", blake3::hash(&expected_bytes).to_hex())
     );
     let next = d.poll(&progress.cursor, &mut state).unwrap();
     assert_ne!(next.material.as_ref().unwrap().id, id);
@@ -195,6 +203,7 @@ fn partial_admission_resumes_original_member_anchors_and_only_final_cursor_updat
     let sink = FixtureSink::open(blobs.path()).unwrap();
     let acquired = d.poll(&Value::Null, &mut state).unwrap();
     let id = acquired.material.as_ref().unwrap().id;
+    let original_records = acquired.material.as_ref().unwrap().records.clone();
     let prepared = prepare(
         &source,
         "b",
@@ -212,14 +221,14 @@ fn partial_admission_resumes_original_member_anchors_and_only_final_cursor_updat
     let BatchKind::Source(progress) = batch.kind else {
         panic!()
     };
-    assert_eq!(progress.cursor["through"], 6);
+    assert_eq!(progress.cursor["through"], original_records[0].1);
     assert!(progress.cursor["last_complete_scan_ns"].is_null());
     drop(prepared);
     let acquired = d.poll(&progress.cursor, &mut state).unwrap();
     let m = acquired.material.as_ref().unwrap();
     assert_eq!(m.id, id);
-    assert_eq!(m.records, vec![(7, 11)]);
-    assert_eq!(m.manifest.records, Some(vec![(1, 6), (7, 11)]));
+    assert_eq!(m.records, original_records[1..]);
+    assert_eq!(m.manifest.records, Some(original_records.clone()));
     assert!(state.files.is_empty());
     let prepared = prepare(
         &source,
@@ -235,13 +244,13 @@ fn partial_admission_resumes_original_member_anchors_and_only_final_cursor_updat
     let RecordOutcome::Events { location, events } = &batch.records[0] else {
         panic!()
     };
-    assert_eq!(location.unwrap().anchor, 7);
+    assert_eq!(location.unwrap().anchor, original_records[1].0 as u64);
     assert_eq!(events[0].payload["path"], "sub/b.md");
     assert_eq!(events[0].payload["text"], "beta");
     let BatchKind::Source(progress) = batch.kind else {
         panic!()
     };
-    assert_eq!(progress.cursor["through"], 11);
+    assert_eq!(progress.cursor["through"], original_records[1].1);
     assert!(
         d.poll(&progress.cursor, &mut state)
             .unwrap()
@@ -679,14 +688,14 @@ fn path_display_round_trips_every_native_byte() {
 #[devkit::test]
 fn open_and_read_errors_belong_to_the_entry() {
     let dir = tempfile::tempdir().unwrap();
-    let mut bundle = tempfile::tempfile().unwrap();
+    let mut bundle = tar::Archive::new(tempfile::tempfile().unwrap());
     assert!(
-        capture(&dir.path().join("missing"), &mut bundle, 0, 0)
+        tar::capture(&dir.path().join("missing"), Path::new("missing"), &mut bundle, 0, 0)
             .unwrap()
             .is_err()
     );
     // On Unix a directory can be opened but cannot be read as file bytes.
-    assert!(capture(dir.path(), &mut bundle, 0, 0).unwrap().is_err());
+    assert!(tar::capture(dir.path(), Path::new("directory"), &mut bundle, 0, tar::change_time(&dir.path().metadata().unwrap())).unwrap().is_err());
 }
 
 fn final_cursor(acquired: &Acquired) -> Value {
@@ -723,45 +732,20 @@ fn poll_entries(
 }
 
 #[devkit::test]
-fn bundles_with_verbatim_percent_names_restore_without_new_records() {
+fn tar_members_with_verbatim_percent_names_restore_without_new_records() {
     let dir = tempfile::tempdir().unwrap();
-    let mut members = Vec::new();
-    let mut records = Vec::new();
-    let mut end = 0;
-    for name in ["100% done.md", "foo%20bar.md"] {
-        std::fs::write(dir.path().join(name), "text").unwrap();
-        let facts = file_facts(&dir.path().join(name)).unwrap();
-        members.push(json!({
-            "path": name, "stream_offset": end + 1, "length": 4,
-            "mtime_ns": facts.mtime_ns.unwrap().to_string(),
-            "hash": blake3::hash(b"text").to_hex().as_str(),
-        }));
-        records.push((end + 1, end + 5));
-        end += 5;
-    }
-    // The deployed bundle layout has plain paths and no native-byte field.
-    let manifest = sinex_model::Manifest::from_json(json!({
-        "media_type": format::MEDIA_TYPE, "members": members, "records": records,
-    }));
+    for name in ["100% done.md", "foo%20bar.md"] { std::fs::write(dir.path().join(name), "text").unwrap(); }
+    let d = driver(dir.path().to_owned(), 1 << 20);
+    let first = d.poll(&Value::Null, &mut DirState::default()).unwrap();
+    let material = first.material.as_ref().unwrap();
     let mut state = DirState::default();
-    state.remember_members(&manifest, end as u64).unwrap();
+    state.remember_members(&material.manifest, material.records.last().unwrap().1 as u64).unwrap();
     state.finish_remembering();
-    let d = driver(dir.path().to_owned(), 1024);
     assert!(d.poll(&Value::Null, &mut state).unwrap().material.is_none());
     assert!(state.files.contains_key(Path::new("100% done.md")));
     assert!(state.files.contains_key(Path::new("foo%20bar.md")));
-    // Fresh captures keep the same member paths used by note identities.
-    let fresh = d.poll(&Value::Null, &mut DirState::default()).unwrap();
-    assert_eq!(paths(&fresh), vec!["100% done.md", "foo%20bar.md"]);
-    assert!(
-        fresh
-            .material
-            .unwrap()
-            .manifest
-            .members
-            .iter()
-            .all(|member| !member.details.contains_key("native_path_bytes"))
-    );
+    assert_eq!(paths(&first), ["100% done.md", "foo%20bar.md"]);
+    assert!(material.manifest.members.iter().all(|member| !member.details.contains_key("native_path_bytes")));
 }
 
 #[devkit::test]
@@ -838,7 +822,7 @@ fn changing_files_are_skipped_without_failures_and_retried() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("a.md");
     std::fs::write(&path, "before").unwrap();
-    let before = file_facts(&path).unwrap();
+    let before = path.metadata().unwrap();
     std::fs::write(&path, "after with more bytes").unwrap();
     let d = driver(dir.path().to_owned(), 1024);
     let mut state = DirState::default();
@@ -848,7 +832,7 @@ fn changing_files_are_skipped_without_failures_and_retried() {
         &mut state,
         BTreeMap::from([(
             PathBuf::from("a.md"),
-            Ok((before.size.unwrap(), before.mtime_ns.unwrap())),
+            Ok((before.len(), tar::change_time(&before))),
         )]),
     );
     assert!(changed.material.is_none());
@@ -878,11 +862,11 @@ fn a_part_cut_keeps_failures_of_files_not_yet_retried() {
     );
     let cursor = final_cursor(&failed);
     std::fs::write(dir.path().join("a.md"), "a").unwrap();
-    let facts = file_facts(&dir.path().join("a.md")).unwrap();
+    let facts = dir.path().join("a.md").metadata().unwrap();
     let entries = BTreeMap::from([
         (
             PathBuf::from("a.md"),
-            Ok((facts.size.unwrap(), facts.mtime_ns.unwrap())),
+            Ok((facts.len(), tar::change_time(&facts))),
         ),
         missing,
     ]);
@@ -903,9 +887,9 @@ fn changing_files_retry_even_when_their_facts_return_to_the_cached_values() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("a.md");
     std::fs::write(&path, "after").unwrap();
-    let facts = file_facts(&path).unwrap();
-    let size = facts.size.unwrap();
-    let mtime = facts.mtime_ns.unwrap();
+    let facts = path.metadata().unwrap();
+    let size = facts.len();
+    let mtime = tar::change_time(&facts);
     let mut state = DirState::default();
     state.files.insert(
         PathBuf::from("a.md"),
@@ -932,13 +916,13 @@ fn failed_files_retry_even_when_their_facts_match_the_cache() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("a.md");
     std::fs::write(&path, "after").unwrap();
-    let facts = file_facts(&path).unwrap();
+    let facts = path.metadata().unwrap();
     let mut state = DirState::default();
     state.files.insert(
         PathBuf::from("a.md"),
         Some((
-            facts.size.unwrap(),
-            facts.mtime_ns.unwrap(),
+            facts.len(),
+            tar::change_time(&facts),
             *blake3::hash(b"prior").as_bytes(),
         )),
     );
@@ -954,13 +938,13 @@ fn failed_files_retry_even_when_their_facts_match_the_cache() {
 }
 
 #[devkit::test]
-fn an_unstable_file_with_unchanged_content_is_retried_without_another_material() {
+fn an_unstable_file_with_unchanged_content_retains_its_new_metadata() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("a.md");
     std::fs::write(&path, "same").unwrap();
-    let facts = file_facts(&path).unwrap();
-    let size = facts.size.unwrap();
-    let mtime = facts.mtime_ns.unwrap();
+    let facts = path.metadata().unwrap();
+    let size = facts.len();
+    let mtime = tar::change_time(&facts);
     let mut state = DirState::default();
     state.files.insert(
         PathBuf::from("a.md"),
@@ -978,6 +962,8 @@ fn an_unstable_file_with_unchanged_content_is_retried_without_another_material()
     let retry = d
         .poll(&changed.cursor_without_material, &mut state)
         .unwrap();
-    assert!(retry.material.is_none());
+    assert_eq!(record(retry.material.as_ref().unwrap(), 0), b"same");
+    let cursor = final_cursor(&retry);
+    assert!(d.poll(&cursor, &mut state).unwrap().material.is_none());
     assert!(state.retries.is_empty());
 }

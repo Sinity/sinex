@@ -235,8 +235,8 @@ impl sinex_source_core::Parser for IgnoreFirst {
     type Record<'a> = &'a [u8];
     type Carry = ();
     type Payload = sinex_model::event_types::media::NoteDocument;
-    fn record_hash(&self, raw: &[u8], context: &sinex_sources::RecordContext<'_>) -> [u8; 32] {
-        sinex_sources::Parser::record_hash(&notes::NotesParser, raw, context)
+    fn record_hash(&self, raw: &[u8], context: &sinex_source_core::RecordContext<'_>) -> [u8; 32] {
+        sinex_source_core::Parser::record_hash(&notes::NotesParser, raw, context)
     }
     fn parse(
         &self,
