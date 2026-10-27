@@ -249,3 +249,20 @@ fn glob_dot_names_are_matched_at_their_own_path_component() {
         vec![dir.path().join("visible/.child/leaf.journal")]
     );
 }
+
+#[devkit::test]
+fn parsed_include_records_keep_one_resolution_list_per_duplicate() {
+    let dir = tempfile::tempdir().unwrap();
+    let root=dir.path().join("main.journal");
+    let raw=b"include child.journal\ninclude child.journal\ninclude missing.journal\n";
+    std::fs::write(&root,raw).unwrap();
+    std::fs::write(dir.path().join("child.journal"),"; child\n").unwrap();
+    let bindings=plan(&root,&Settings::new("example-host")).unwrap();
+    let binding=bindings.iter().find(|b|b.input==root).unwrap();
+    let source=(super::super::FORMAT.source)(binding).unwrap();
+    let events=super::super::tests::intake::export_restart(raw,super::super::driver(root,"example-host".into()),source.as_ref(),3,0);
+    assert!(events.iter().all(|e|e.payload["includes"].as_array().unwrap().len()==1));
+    assert!(events[0].payload["includes"][0]["reason"].is_null());
+    assert_eq!(events[1].payload["duplicate"],1);
+    assert!(events[2].payload["includes"][0]["reason"].is_string());
+}

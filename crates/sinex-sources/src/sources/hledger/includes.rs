@@ -1,11 +1,12 @@
 //! Include planning reads local files only. Every file uses the shared export
 //! reader, so edits to a child are acquired independently of its parent's bytes.
-use super::{SPEC, framing};
+use super::SPEC;
 use serde_json::json;
 use sinex_model::event_types::finance::{IncludeTarget, IncludedFrom};
 use sinex_source_core::binding::{Binding, Settings};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
+use std::io::{BufRead, BufReader, Read, Seek, SeekFrom};
 
 pub(super) fn plan(input: &Path, settings: &Settings) -> Result<Vec<Binding>, String> {
     if settings
@@ -62,19 +63,29 @@ fn visit(
     out: &mut Vec<Binding>,
 ) -> Result<(), String> {
     let identity = std::fs::canonicalize(path).map_err(|e| format!("{}: {e}", path.display()))?;
-    let bytes = std::fs::read(path).map_err(|e| format!("{}: {e}", path.display()))?;
+    let mut file = std::fs::File::open(path).map_err(|e| format!("{}: {e}", path.display()))?;
+    let mut prefix=Vec::new();
+    file.by_ref().take(512).read_to_end(&mut prefix).map_err(|e| e.to_string())?;
+    let archive=prefix.starts_with(&[0x1f,0x8b]) || prefix.starts_with(b"PK\x03\x04")
+        || prefix.starts_with(b"PK\x05\x06") || prefix.get(257..262)==Some(b"ustar");
     active.insert(identity.clone());
     let mut includes = BTreeMap::<String, Vec<IncludeTarget>>::new();
     let mut year = initial_year;
     let mut counts = BTreeMap::<String, u64>::new();
     // Archives are read by the shared archive reader. Native journal include
     // paths refer to the local filesystem, never to an extracted temporary tree.
-    if settings.option("journal_format").unwrap_or("journal") == "journal"
-        && let Ok(text) = std::str::from_utf8(&bytes)
-    {
-        for (start, end) in framing::complete(&bytes).0 {
-            let block = &text[start..end];
-            let header = block.lines().next().unwrap_or("").trim();
+    if !archive && settings.option("journal_format").unwrap_or("journal") == "journal" {
+        file.rewind().map_err(|e| e.to_string())?;
+        let ranges=SPEC.framer.ranges(&mut file).map_err(|e|e.to_string())?;
+        for (start, end) in ranges {
+            file.seek(SeekFrom::Start(start as u64)).map_err(|e|e.to_string())?;
+            let mut header=String::new();
+            let read=BufReader::new(file.by_ref().take((end-start) as u64)).read_line(&mut header);
+            if let Err(error)=read {
+                if error.kind()==std::io::ErrorKind::InvalidData { continue; }
+                return Err(error.to_string());
+            }
+            let header=header.trim();
             if let Some(value) = header
                 .strip_prefix('Y')
                 .or_else(|| header.strip_prefix("year "))
@@ -90,7 +101,16 @@ fn visit(
             else {
                 continue;
             };
-            let hash = blake3::hash(block.as_bytes()).to_hex().to_string();
+            file.seek(SeekFrom::Start(start as u64)).map_err(|e|e.to_string())?;
+            let mut hash=blake3::Hasher::new();
+            let mut block=file.by_ref().take((end-start) as u64);
+            let mut buffer=[0;8192];
+            loop {
+                let count=block.read(&mut buffer).map_err(|e|e.to_string())?;
+                if count==0 { break; }
+                hash.update(&buffer[..count]);
+            }
+            let hash=hash.finalize().to_hex().to_string();
             let duplicate = counts.entry(hash.clone()).or_default();
             let key = format!("{hash}:{}", *duplicate);
             let from = IncludedFrom {
