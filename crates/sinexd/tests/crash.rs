@@ -385,6 +385,45 @@ async fn kill_at(target: &Target, command: &mut Command, ready: Option<&str>, lo
         .await
         .unwrap();
     sqlx::query("ROLLBACK").execute(&mut harness).await.unwrap();
+    // Termination sends a signal; rollback and session-lock release finish
+    // asynchronously. Recovery starts after that backend has actually exited.
+    let deadline = Instant::now() + WAIT_LIMIT;
+    loop {
+        let present: bool =
+            sqlx::query_scalar("SELECT EXISTS (SELECT 1 FROM pg_stat_activity WHERE pid=$1)")
+                .bind(blocked)
+                .fetch_one(&mut watch)
+                .await
+                .unwrap();
+        if !present {
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "terminated backend {blocked} did not exit"
+        );
+        tokio::time::sleep(Duration::from_millis(2)).await;
+    }
+    loop {
+        let released: bool = sqlx::query_scalar("SELECT pg_try_advisory_lock($1)")
+            .bind(sinex_schema::WRITER_LOCK)
+            .fetch_one(&mut watch)
+            .await
+            .unwrap();
+        if released {
+            sqlx::query("SELECT pg_advisory_unlock($1)")
+                .bind(sinex_schema::WRITER_LOCK)
+                .execute(&mut watch)
+                .await
+                .unwrap();
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "killed writer did not release its session lock"
+        );
+        tokio::time::sleep(Duration::from_millis(2)).await;
+    }
 }
 
 /// Block writes to `table` (reads pass), so the kill lands on the write.
