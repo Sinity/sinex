@@ -71,18 +71,20 @@ fn matches(parser: &str, path: &Path) -> Result<bool, String> {
     let extension = path
         .extension()
         .and_then(|s| s.to_str())
-        .unwrap_or_default().to_ascii_lowercase();
+        .unwrap_or_default()
+        .to_ascii_lowercase();
     Ok(match (parser, extension.as_str()) {
-        ("webvtt", "vtt")
-        | ("srt", "srt")
-        | ("ocr-tsv", "tsv") => true,
+        ("webvtt", "vtt") | ("srt", "srt") | ("ocr-tsv", "tsv") => true,
         ("transcript-json" | "whisper-json" | "ocr-json", "json") => {
             use std::io::Read;
             let file = std::fs::File::open(path).map_err(|e| format!("{}: {e}", path.display()))?;
             let mut first = None;
             for byte in std::io::BufReader::new(file).bytes() {
                 let byte = byte.map_err(|e| format!("{}: {e}", path.display()))?;
-                if !byte.is_ascii_whitespace() { first = Some(byte); break; }
+                if !byte.is_ascii_whitespace() {
+                    first = Some(byte);
+                    break;
+                }
             }
             // The declared root identifies OCR; transcript JSON distinguishes its array and object forms.
             // The parser reports malformed JSON after its bytes have been captured.
@@ -97,4 +99,3 @@ fn matches(parser: &str, path: &Path) -> Result<bool, String> {
         _ => false,
     })
 }
-

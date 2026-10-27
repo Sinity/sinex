@@ -975,10 +975,22 @@ fn an_unstable_file_with_unchanged_content_is_retried_without_another_material()
 
 #[devkit::test]
 fn excluded_subtrees_do_not_turn_old_observations_into_removals() {
-    let dir=tempfile::tempdir().unwrap();let owned=dir.path().join("owned");std::fs::create_dir(&owned).unwrap();std::fs::write(owned.join("note.md"),b"source").unwrap();
-    let driver=driver(dir.path().into(),1024);let mut state=DirState::default();
-    let acquired=driver.poll(&Value::Null,&mut state).unwrap();let cursor=final_cursor(&acquired);
+    let dir = tempfile::tempdir().unwrap();
+    let owned = dir.path().join("owned");
+    std::fs::create_dir(&owned).unwrap();
+    std::fs::write(owned.join("note.md"), b"source").unwrap();
+    let driver = driver(dir.path().into(), 1024);
+    let mut state = DirState::default();
+    let acquired = driver.poll(&Value::Null, &mut state).unwrap();
+    let cursor = final_cursor(&acquired);
     std::fs::remove_file(owned.join("note.md")).unwrap();
-    assert!(driver.poll_excluding(&cursor,&mut state,&[owned]).unwrap().material.is_none());
-    let removed=driver.poll(&cursor,&mut state).unwrap();assert_eq!(paths(&removed),vec!["owned/note.md"]);
+    assert!(
+        driver
+            .poll_excluding(&cursor, &mut state, &[owned])
+            .unwrap()
+            .material
+            .is_none()
+    );
+    let removed = driver.poll(&cursor, &mut state).unwrap();
+    assert_eq!(paths(&removed), vec!["owned/note.md"]);
 }

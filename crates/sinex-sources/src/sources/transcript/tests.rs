@@ -372,3 +372,10 @@ fn recording_time_uses_the_written_offset_before_millisecond_rounding() {
 fn reversed_submillisecond_offsets_fail_before_rounding() {
     assert!(read(Format::Whisper,br#"{"segments":[{"text":"x","start":1.0004,"end":1.0003}]}"#).is_err());
 }
+
+#[devkit::test]
+fn offsets_finer_than_a_nanosecond_keep_their_text_without_inventing_a_timestamp() {
+    let rows=read(Format::Whisper,br#"{"segments":[{"text":"x","start":0.0000000005}],"recording_started_at":"2026-01-01T00:00:00Z"}"#).unwrap();
+    assert_eq!(rows[0].start_seconds.as_deref(),Some("0.0000000005"));
+    assert!(rows[0].at.is_none());
+}

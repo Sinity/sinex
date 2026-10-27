@@ -193,8 +193,8 @@ impl TranscriptParser {
                     payload
                         .start_seconds
                         .as_deref()
-                        .and_then(|text| decimal_ms(text, 9).ok())
-                        .map(i128::from)
+                        .and_then(|text| scaled_offset(text, 9, false).ok().and_then(|ns| i128::try_from(ns).ok()))
+    
                 } else {
                     payload.start_ms.map(|ms| i128::from(ms) * 1_000_000)
                 };
@@ -329,7 +329,10 @@ fn raw_offset(value: Option<&str>, seconds: bool) -> Result<Option<u64>, RecordE
 /// Whisper seconds round to the nearest millisecond without floating point arithmetic.
 /// Explicit millisecond fields must be integral.
 pub fn decimal_ms(text: &str, places: u32) -> Result<u64, RecordError> {
-    let invalid = || RecordError::new("offset must resolve to nonnegative milliseconds within u64");
+    u64::try_from(scaled_offset(text, places, true)?).map_err(|_| RecordError::new("offset exceeds u64 milliseconds"))
+}
+fn scaled_offset(text: &str, places: u32, round: bool) -> Result<u128, RecordError> {
+    let invalid = || RecordError::new("offset cannot be represented at the requested precision");
     if text.starts_with('-') {
         return Err(invalid());
     }
@@ -362,23 +365,23 @@ pub fn decimal_ms(text: &str, places: u32) -> Result<u64, RecordError> {
         let cut = usize::try_from(shift.unsigned_abs()).map_err(|_| invalid())?;
         let split = digits.len().saturating_sub(cut);
         let discarded = &digits[split..];
-        if places == 0 && !discarded.bytes().all(|b| b == b'0') {
+        if (!round || places == 0) && !discarded.bytes().all(|b| b == b'0') {
             return Err(invalid());
         }
         let whole = if split == 0 {
             0
         } else {
-            digits[..split].parse::<u64>().map_err(|_| invalid())?
+            digits[..split].parse::<u128>().map_err(|_| invalid())?
         };
-        let round_up = places > 0 && cut <= digits.len() && discarded.as_bytes()[0] >= b'5';
-        whole.checked_add(u64::from(round_up)).ok_or_else(invalid)?
+        let round_up = round && places > 0 && cut <= digits.len() && discarded.as_bytes()[0] >= b'5';
+        whole.checked_add(u128::from(round_up)).ok_or_else(invalid)?
     } else {
         let shift = u32::try_from(shift).map_err(|_| invalid())?;
         digits
-            .parse::<u64>()
+            .parse::<u128>()
             .ok()
             .and_then(|n| {
-                10u64
+                10u128
                     .checked_pow(shift)
                     .and_then(|scale| n.checked_mul(scale))
             })

@@ -158,7 +158,10 @@ impl DirSnapshot {
             })
             .collect();
         walk(&self.root, &self.root, self.select, &excluded, &mut found);
-        let excluded: Vec<_> = excluded.iter().filter_map(|path| path.strip_prefix(&self.root).ok().map(Path::to_path_buf)).collect();
+        let excluded: Vec<_> = excluded
+            .iter()
+            .filter_map(|path| path.strip_prefix(&self.root).ok().map(Path::to_path_buf))
+            .collect();
         self.poll_entries(cursor, state, previous, facts, found, &excluded)
     }
 
@@ -299,7 +302,9 @@ impl DirSnapshot {
                 .files
                 .keys()
                 .filter(|p| {
-                    !seen.contains(*p) && !failed.iter().any(|prefix| p.starts_with(prefix)) && !excluded.iter().any(|prefix| p.starts_with(prefix))
+                    !seen.contains(*p)
+                        && !failed.iter().any(|prefix| p.starts_with(prefix))
+                        && !excluded.iter().any(|prefix| p.starts_with(prefix))
                 })
                 .cloned()
                 .collect();
@@ -325,10 +330,14 @@ impl DirSnapshot {
         }
         if complete {
             next_retries.retain(|path| {
-                seen.contains(path) || failed.iter().any(|prefix| path.starts_with(prefix)) || excluded.iter().any(|prefix| path.starts_with(prefix))
+                seen.contains(path)
+                    || failed.iter().any(|prefix| path.starts_with(prefix))
+                    || excluded.iter().any(|prefix| path.starts_with(prefix))
             });
             next_failures.retain(|path, _| {
-                seen.contains(path) || failed.iter().any(|prefix| path.starts_with(prefix)) || excluded.iter().any(|prefix| path.starts_with(prefix))
+                seen.contains(path)
+                    || failed.iter().any(|prefix| path.starts_with(prefix))
+                    || excluded.iter().any(|prefix| path.starts_with(prefix))
             });
         }
         let mut scanned = Cursor {

@@ -1,8 +1,8 @@
 use super::*;
-use std::path::Path;
 use sinex_model::{ReadingOrder, RecordOutcome};
 use sinex_source_core::drivers::dir_snapshot::DirState;
 use sinex_source_core::{DrainInput, Limits, drain};
+use std::path::Path;
 pub(super) fn parse(acquired: &sinex_source_core::Acquired) -> Vec<sinex_model::Event> {
     let m = acquired.material.as_ref().unwrap();
     drain(
