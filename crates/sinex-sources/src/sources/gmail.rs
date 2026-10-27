@@ -136,7 +136,10 @@ fn parse_record(record: &Map<String, Value>) -> Result<Vec<GmailRecord>, RecordE
     match record_text(record, "kind")? {
         "listing" => Ok(vec![]),
         "message" => {
-            let raw = required(response, "raw")?;
+            let raw = response
+                .get("raw")
+                .and_then(Value::as_str)
+                .ok_or_else(|| RecordError::new("Gmail message missing raw bytes"))?;
             let bytes = base64::engine::general_purpose::URL_SAFE_NO_PAD
                 .decode(raw)
                 .or_else(|_| base64::engine::general_purpose::URL_SAFE.decode(raw))
@@ -272,6 +275,10 @@ impl<T: api::Transport + 'static> Reader for GmailReader<T> {
         }
         let mut acquired = self.driver.poll(cursor)?;
         let Some(material) = acquired.material.as_mut() else {
+            if cursor.pointer("/api/mode").and_then(Value::as_str) == Some("gap") {
+                acquired.observation.unavailable =
+                    Some("Gmail history gap; explicit resync required".into());
+            }
             if let Some(through) = cursor.get("through") {
                 acquired
                     .cursor_without_material

@@ -429,3 +429,196 @@ fn raw_response_must_name_the_requested_message() {
     assert_eq!(listing.next["pending"]["index"], 0);
     fake.done();
 }
+
+#[test]
+fn http_history_404_stores_a_gap_without_tokens_or_the_error_body() {
+    use sinex_source_core::Reader;
+    use std::io::{Read, Write};
+    let dir = tempfile::tempdir().unwrap();
+    for file in ["id", "secret", "refresh"] {
+        std::fs::write(dir.path().join(file), "credential-secret").unwrap();
+    }
+    let files = oauth::CredentialFiles {
+        client_id_file: dir.path().join("id"),
+        client_secret_file: dir.path().join("secret"),
+        refresh_token_file: dir.path().join("refresh"),
+    };
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let endpoint = format!("http://{}", listener.local_addr().unwrap());
+    let server = std::thread::spawn(move || {
+        let (mut stream, _) = listener.accept().unwrap();
+        stream
+            .set_read_timeout(Some(std::time::Duration::from_secs(5)))
+            .unwrap();
+        let mut request = Vec::new();
+        while !request.windows(4).any(|w| w == b"\r\n\r\n") {
+            let mut buffer = [0; 4096];
+            let n = stream.read(&mut buffer).unwrap();
+            assert!(n > 0);
+            request.extend_from_slice(&buffer[..n]);
+        }
+        let body = "credential-secret access-secret refresh-secret error-description";
+        write!(
+            stream,
+            "HTTP/1.1 404 Not Found\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+            body.len()
+        )
+        .unwrap();
+    });
+    let tokens = TokenProvider::new(
+        files,
+        HttpExchange(std::sync::atomic::AtomicUsize::new(0)),
+        oauth::SystemClock,
+    );
+    let mut http = Http::new(tokens, "owner@example.test");
+    http.endpoint = endpoint;
+    let mut state = initial();
+    state.mode = Mode::History;
+    let cursor = serde_json::to_value(sinex_source_core::drivers::api_cursor::Cursor {
+        api: serde_json::to_value(state).unwrap(),
+        ..Default::default()
+    })
+    .unwrap();
+    let mut reader =
+        super::super::GmailReader::new(http, "owner@example.test".into(), "test-host".into());
+    let material = reader.poll(&cursor).unwrap().material.unwrap();
+    let Some(sinex_source_core::drivers::StoredBytes::FramedMemory(bytes)) = &material.stored
+    else {
+        panic!()
+    };
+    let stored: Value = serde_json::from_slice(bytes).unwrap();
+    assert_eq!(stored["kind"], "gap");
+    assert_eq!(stored["response"]["status"], 404);
+    let next = (material.cursor_at)(bytes.len()).unwrap();
+    assert_eq!(next["api"]["mode"], "gap");
+    let public = format!(
+        "{} {} {}",
+        String::from_utf8_lossy(bytes),
+        next,
+        serde_json::to_string(&material.manifest).unwrap()
+    );
+    for secret in [
+        "credential-secret",
+        "access-secret",
+        "refresh-secret",
+        "error-description",
+    ] {
+        assert!(!public.contains(secret));
+    }
+    server.join().unwrap();
+}
+
+#[test]
+fn explicit_resync_preserves_the_admitted_byte_position() {
+    let material = sinex_model::MaterialId::new();
+    let cursor =
+        json!({"api":initial(),"material":material,"part_index":4,"last_order":123,"through":7});
+    let reset = resync(&cursor, "owner@example.test").unwrap();
+    assert!(reset["api"].is_null());
+    for field in ["material", "part_index", "last_order", "through"] {
+        assert_eq!(reset[field], cursor[field]);
+    }
+    let mut invalid = cursor;
+    invalid["through"] = json!(-1);
+    assert!(resync(&invalid, "owner@example.test").is_err());
+}
+
+#[test]
+fn an_empty_raw_response_is_not_a_missing_message() {
+    let fake = Fake::new();
+    fake.add(
+        "/messages",
+        &[("maxResults", "500"), ("includeSpamTrash", "true")],
+        Ok(json!({"messages":[{"id":"empty"}]})),
+    );
+    labels(&fake);
+    fake.add(
+        "/messages/empty",
+        &[("format", "raw")],
+        Ok(json!({"id":"empty","historyId":"history","threadId":"thread","raw":""})),
+    );
+    let api = gmail(fake.clone());
+    let listing = api.fetch(&value(initial())).unwrap();
+    let message = api.fetch(&listing.next).unwrap();
+    assert_eq!(message.records[0]["kind"], "message");
+    assert_eq!(message.records[0]["response"]["raw"], "");
+    fake.done();
+}
+
+#[test]
+fn a_completed_empty_history_walk_has_a_stable_cursor() {
+    let fake = Fake::new();
+    fake.add(
+        "/history",
+        &[
+            ("maxResults", "500"),
+            ("startHistoryId", "184467440737095516169999"),
+        ],
+        Ok(json!({"historyId":"184467440737095516169999"})),
+    );
+    labels(&fake);
+    let api = gmail(fake.clone());
+    let mut state = initial();
+    state.mode = Mode::History;
+    let previous = value(state);
+    let empty = api.fetch(&previous).unwrap();
+    assert!(empty.records.is_empty());
+    assert_eq!(empty.next, previous);
+    fake.done();
+}
+
+#[test]
+fn http_keeps_a_message_response_larger_than_ten_mebibytes() {
+    use base64::Engine;
+    use std::io::{Read, Write};
+    let dir = tempfile::tempdir().unwrap();
+    for file in ["id", "secret", "refresh"] {
+        std::fs::write(dir.path().join(file), "credential-secret").unwrap();
+    }
+    let files = oauth::CredentialFiles {
+        client_id_file: dir.path().join("id"),
+        client_secret_file: dir.path().join("secret"),
+        refresh_token_file: dir.path().join("refresh"),
+    };
+    let raw = format!(
+        "{}{}",
+        base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(b"Subject: large\r\n\r\n"),
+        "eHh4".repeat(3 << 20)
+    );
+    let raw_length = raw.len();
+    let body = serde_json::to_vec(&json!({"id":"large","historyId":"h","threadId":"t","raw":raw}))
+        .unwrap();
+    assert!(body.len() > 10 << 20);
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let endpoint = format!("http://{}", listener.local_addr().unwrap());
+    let server = std::thread::spawn(move || {
+        let (mut stream, _) = listener.accept().unwrap();
+        stream
+            .set_read_timeout(Some(std::time::Duration::from_secs(5)))
+            .unwrap();
+        let mut request = Vec::new();
+        while !request.windows(4).any(|w| w == b"\r\n\r\n") {
+            let mut buffer = [0; 4096];
+            let n = stream.read(&mut buffer).unwrap();
+            assert!(n > 0);
+            request.extend_from_slice(&buffer[..n]);
+        }
+        write!(
+            stream,
+            "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+            body.len()
+        )
+        .unwrap();
+        stream.write_all(&body).unwrap();
+    });
+    let tokens = TokenProvider::new(
+        files,
+        HttpExchange(std::sync::atomic::AtomicUsize::new(0)),
+        oauth::SystemClock,
+    );
+    let mut http = Http::new(tokens, "owner@example.test");
+    http.endpoint = endpoint;
+    let message = http.get("/messages/large", &[("format", "raw")]).unwrap();
+    assert_eq!(message["raw"].as_str().unwrap().len(), raw_length);
+    server.join().unwrap();
+}

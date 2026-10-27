@@ -218,7 +218,10 @@ impl<T: Transport> Gmail<T> {
                 if text(&response, "id")? != id {
                     return Err(invalid());
                 }
-                text(&response, "raw")?;
+                response
+                    .get("raw")
+                    .and_then(Value::as_str)
+                    .ok_or_else(invalid)?;
                 text(&response, "historyId")?;
                 text(&response, "threadId")?;
                 record(&self.account, "message", response)
@@ -288,7 +291,11 @@ impl<T: Transport> Gmail<T> {
         let token = page_token(&response)?;
         let mut after = State {
             page_token: token.clone(),
-            page_index: state.page_index.checked_add(1).ok_or_else(invalid)?,
+            page_index: if token.is_some() {
+                state.page_index.checked_add(1).ok_or_else(invalid)?
+            } else {
+                0
+            },
             ..state.clone()
         };
         let mut ids = Vec::new();
@@ -357,7 +364,8 @@ impl<T: Transport> Gmail<T> {
     }
 }
 
-/// Called by the public resync command after recording the operator request.
+/// Reset provider progress after the caller records a resync request.
+/// The caller replaces the binding's reader before capture resumes.
 /// A new profile baseline is committed before any new listing is read.
 pub fn resync(cursor: &Value, account: &str) -> Result<Value, DriverError> {
     let mut outer: sinex_source_core::drivers::api_cursor::Cursor =
@@ -371,7 +379,16 @@ pub fn resync(cursor: &Value, account: &str) -> Result<Value, DriverError> {
         ));
     }
     outer.api = Value::Null;
-    serde_json::to_value(outer).map_err(|_| invalid())
+    let mut next = serde_json::to_value(outer).map_err(|_| invalid())?;
+    if let Some(through) = cursor.get("through") {
+        if through.as_u64().is_none() {
+            return Err(DriverError::Cursor("invalid Gmail byte position".into()));
+        }
+        next.as_object_mut()
+            .expect("API cursor is an object")
+            .insert("through".into(), through.clone());
+    }
+    Ok(next)
 }
 
 #[cfg(test)]
