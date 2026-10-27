@@ -3,10 +3,9 @@
 //! original. Callers use that traversal for one binding or compatible bindings.
 #[cfg(feature = "archives")]
 pub mod group;
-#[cfg(feature = "archives")]
 pub(crate) mod records;
 
-#[cfg(feature = "archives")]
+#[cfg(any(feature = "archives", test))]
 use super::DriverError;
 use serde::{Deserialize, Serialize};
 #[cfg(feature = "archives")]
@@ -116,7 +115,7 @@ fn file_name(path: &std::path::Path) -> String {
         .unwrap_or_default()
 }
 
-#[cfg(feature = "archives")]
+#[cfg(any(feature = "archives", test))]
 fn io(e: impl std::fmt::Display) -> DriverError {
     DriverError::Io(e.to_string())
 }

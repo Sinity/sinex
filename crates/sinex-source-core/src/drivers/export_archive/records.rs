@@ -1,12 +1,15 @@
 //! Record framing over a member reader. JSON arrays use Serde's streaming
 //! visitor; other formats hold only a part and the current incomplete record.
-use super::{DriverError, Framing, io};
+use super::Framing;
+#[cfg(any(feature = "archives", test))]
+use super::{DriverError, io};
 use serde::Deserialize;
 use serde::de::{self, DeserializeSeed, IgnoredAny, MapAccess, SeqAccess, Visitor};
 use serde_json::value::RawValue;
 use std::fmt;
 use std::io::Read;
 
+#[cfg(any(feature = "archives", test))]
 pub(super) fn visit(
     reader: &mut dyn Read,
     framing: Framing,
@@ -73,16 +76,19 @@ pub(super) fn visit(
     }
 }
 
+#[cfg(any(feature = "archives", test))]
 struct JsonSink<'a> {
     emit: &'a mut dyn FnMut(Vec<u8>) -> Result<(), DriverError>,
     stopped: Option<DriverError>,
 }
 
+#[cfg(any(feature = "archives", test))]
 struct ArrayAt<'a, 'b> {
     path: &'a [String],
     sink: &'a mut JsonSink<'b>,
 }
 
+#[cfg(any(feature = "archives", test))]
 impl<'de> DeserializeSeed<'de> for ArrayAt<'_, '_> {
     type Value = ();
     fn deserialize<D: de::Deserializer<'de>>(self, deserializer: D) -> Result<(), D::Error> {
@@ -94,6 +100,7 @@ impl<'de> DeserializeSeed<'de> for ArrayAt<'_, '_> {
     }
 }
 
+#[cfg(any(feature = "archives", test))]
 impl<'de> Visitor<'de> for ArrayAt<'_, '_> {
     type Value = ();
     fn expecting(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
