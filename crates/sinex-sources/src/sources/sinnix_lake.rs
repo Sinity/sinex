@@ -310,6 +310,19 @@ fn lake_source_of(b: &sinex_source_core::binding::Binding) -> Result<&'static La
 pub const FORMAT: sinex_source_core::binding::InputFormat =
     sinex_source_core::binding::InputFormat {
         name: "sinnix-lake",
+        discovery: sinex_source_core::discovery::DiscoverySpec {
+            owner: sinex_source_core::discovery::Owner::System,
+            locations: &[sinex_source_core::discovery::Location {
+                root: "declared",
+                path: "realm",
+            }],
+            capabilities: &[],
+            credentials: &[],
+            streams: &[],
+            requests: &[],
+            request_only: false,
+        },
+        discover: crate::discovery::discover_format,
         specs: || LAKE_SOURCES.iter().map(|l| &l.spec).collect(),
         plan: Some(|input, settings| {
             Ok(LAKE_SOURCES

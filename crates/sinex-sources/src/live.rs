@@ -3,6 +3,7 @@
 //! thread, and one loop produces what the spools hold to `sinexd` over the
 //! NATS ingress. Both programs build their sources from the registry's formats
 //! and share this loop.
+use crate::discovery::CapturePlan;
 use crate::sources;
 use serde_json::Value;
 use sinex_source_core::Source;
@@ -75,7 +76,7 @@ fn start(k: &'static InputFormat, binding: Binding) -> Result<Live, String> {
         .reader
         .ok_or_else(|| format!("{}: no spool reader", k.name))?)(&binding)?
     .into_polled()?;
-    let source = (k.source)(&binding)?;
+    let source = sources::source_for(&binding)?;
     let stop = Arc::new(CaptureStop::new(None));
     let b = binding.clone();
     let thread_stop = stop.clone();
@@ -99,20 +100,22 @@ fn start(k: &'static InputFormat, binding: Binding) -> Result<Live, String> {
 
 /// Produce what every spool holds, every `every`, until `until` (forever
 /// otherwise). Private mode pauses capture and production until it is off.
-pub async fn run(
+/// Recheck source selection without interrupting existing captures or their spools.
+pub async fn run<F>(
     producer: &mut Producer,
     store: &Store,
     positions: &Path,
-    bindings: Vec<(&'static InputFormat, Binding)>,
+    mut select: F,
     every: Duration,
     until: Option<Instant>,
-) -> Result<(), String> {
+) -> Result<(), String>
+where
+    F: FnMut() -> Result<CapturePlan, String>,
+{
     // Register before any capture thread or child can start.
     let shutdown = sinex_source_core::capture::shutdown_signal().map_err(|e| e.to_string())?;
-    let mut lives = bindings
-        .into_iter()
-        .map(|(format, binding)| start(format, binding))
-        .collect::<Result<Vec<_>, _>>()?;
+    let mut lives = Vec::new();
+    extend(&mut lives, select()?);
     let deadline = async {
         match until {
             Some(until) => {
@@ -122,7 +125,7 @@ pub async fn run(
         }
     };
     let result = tokio::select! {
-        result = produce_spools(producer, store, positions, &mut lives, every) => result,
+        result = produce_spools(producer, store, positions, &mut lives, every, &mut select) => result,
         _ = shutdown => Ok(()),
         _ = deadline => Ok(()),
     };
@@ -136,59 +139,151 @@ pub async fn run(
     result
 }
 
-async fn produce_spools(
+fn extend(lives: &mut Vec<Live>, plan: CapturePlan) {
+    lives.retain(|live| !plan.exclude.contains(&live.binding.source));
+    for (format, binding) in plan.bindings {
+        if let Some(existing) = lives
+            .iter_mut()
+            .find(|live| live.binding.name == binding.name)
+        {
+            if existing
+                .capture
+                .thread
+                .as_ref()
+                .is_some_and(|thread| !thread.is_finished())
+                && existing.binding.settings == binding.settings
+            {
+                continue;
+            }
+            existing.capture.stop();
+            match start(format, binding) {
+                Ok(live) => *existing = live,
+                Err(error) => eprintln!("{}: {error}", format.name),
+            }
+        } else {
+            match start(format, binding) {
+                Ok(live) => lives.push(live),
+                Err(error) => eprintln!("{}: {error}", format.name),
+            }
+        }
+    }
+}
+
+async fn produce_spools<F>(
     producer: &mut Producer,
     store: &Store,
     positions: &Path,
-    lives: &mut [Live],
+    lives: &mut Vec<Live>,
     every: Duration,
-) -> Result<(), String> {
+    select: &mut F,
+) -> Result<(), String>
+where
+    F: FnMut() -> Result<CapturePlan, String>,
+{
+    let mut selected_at = Instant::now();
     let private = sinex_transport::private_mode::PrivateMode::default();
     loop {
+        if selected_at.elapsed() >= Duration::from_secs(60) {
+            match select() {
+                Ok(bindings) => extend(lives, bindings),
+                Err(error) => eprintln!("source discovery: {error}"),
+            }
+            selected_at = Instant::now();
+        }
         if private.on() {
             tokio::time::sleep(Duration::from_secs(1)).await;
             continue;
         }
         for live in lives.iter_mut() {
-            // Drain everything captured so far, one material at a time.
-            loop {
-                let position = producer
-                    .position(&live.binding.name, positions, store)
-                    .await
-                    .map_err(|e| e.to_string())?;
-                let acquired = live
-                    .reader
-                    .poll(&position.cursor)
-                    .map_err(|e| e.to_string())?;
-                let had_material = acquired.material.is_some();
-                let sent = producer
-                    .produce(
-                        live.source.as_ref(),
-                        &live.binding.name,
-                        acquired,
-                        store,
-                        positions,
-                    )
-                    .await
-                    .map_err(|e| e.to_string())?;
-                if had_material {
-                    println!(
-                        "{}: {} events in {} frames, {} admitted, {} unread",
-                        live.binding.name, sent.events, sent.frames, sent.admitted, sent.unread
-                    );
-                }
-                let committed =
-                    Position::load(positions, &live.binding.name).map_err(|e| e.to_string())?;
-                live.reader
-                    .remove_passed(&committed.cursor)
-                    .map_err(|e| e.to_string())?;
-                if !had_material {
-                    break;
-                }
-            }
+            produce_spool(
+                producer,
+                store,
+                positions,
+                &live.binding,
+                live.source.as_ref(),
+                live.reader.as_mut(),
+            )
+            .await?;
         }
         tokio::time::sleep(every).await;
     }
+}
+
+/// Drain finished spools without starting any capture threads. The caller stops
+/// the running producer first, so its positions have one writer.
+pub async fn drain(
+    producer: &mut Producer,
+    store: &Store,
+    positions: &Path,
+    bindings: Vec<(&'static InputFormat, Binding)>,
+) -> Result<(), String> {
+    let private = sinex_transport::private_mode::PrivateMode::default();
+    if private.on() {
+        return Err("private mode pauses spool production".into());
+    }
+    for (format, binding) in bindings {
+        producer
+            .position(&binding.name, positions, store)
+            .await
+            .map_err(|error| error.to_string())?;
+        match std::fs::metadata(&binding.input) {
+            Ok(_) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(error) => return Err(format!("{}: {error}", binding.input.display())),
+        }
+        let source = sources::source_for(&binding)?;
+        let mut reader =
+            (format
+                .reader
+                .ok_or_else(|| format!("{}: no spool reader", format.name))?)(&binding)?
+            .into_polled()?;
+        produce_spool(
+            producer,
+            store,
+            positions,
+            &binding,
+            source.as_ref(),
+            reader.as_mut(),
+        )
+        .await?;
+    }
+    Ok(())
+}
+
+async fn produce_spool(
+    producer: &mut Producer,
+    store: &Store,
+    positions: &Path,
+    binding: &Binding,
+    source: &dyn Source,
+    reader: &mut dyn Reader,
+) -> Result<(), String> {
+    loop {
+        let position = producer
+            .position(&binding.name, positions, store)
+            .await
+            .map_err(|e| e.to_string())?;
+        let acquired = reader.poll(&position.cursor).map_err(|e| e.to_string())?;
+        let had_material = acquired.material.is_some();
+        let sent = producer
+            .produce(source, &binding.name, acquired, store, positions)
+            .await
+            .map_err(|e| e.to_string())?;
+        if had_material {
+            println!(
+                "{}: {} events in {} frames, {} admitted, {} unread",
+                binding.name, sent.events, sent.frames, sent.admitted, sent.unread
+            );
+        }
+        let committed = Position::load(positions, &binding.name).map_err(|e| e.to_string())?;
+        reader
+            .remove_passed(&committed.cursor)
+            .map_err(|e| e.to_string())?;
+        if !had_material {
+            break;
+        }
+    }
+    Ok(())
 }
 
 /// `key=value` pairs as source options: numbers and booleans keep their types, a repeated key

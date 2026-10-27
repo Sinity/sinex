@@ -45,9 +45,9 @@ struct Cli {
     /// This host's name, recorded with every input.
     #[arg(long)]
     host: String,
-    /// Capture the systemd journal.
+    /// Host inputs, settings and source exclusions.
     #[arg(long)]
-    journald: bool,
+    sources: Option<PathBuf>,
     /// A directory whose file changes to capture; repeatable.
     #[arg(long = "watch")]
     watch: Vec<PathBuf>,
@@ -91,28 +91,28 @@ async fn run(cli: Cli) -> Result<(), String> {
         producer = producer.upload_bytes(own);
     }
 
-    let mut requested: Vec<(&str, &str, serde_json::Value)> = Vec::new();
-    if cli.journald {
-        requested.push(("journald", "journald", serde_json::json!({"follow": true})));
-    }
-    if !cli.watch.is_empty() {
-        let roots: Vec<String> = cli.watch.iter().map(|p| p.display().to_string()).collect();
-        requested.push(("file-watch", "files", serde_json::json!({ "roots": roots })));
-    }
-    if requested.is_empty() {
-        return Err("nothing to capture: pass --journald and/or --watch".into());
-    }
-    let bindings = requested
-        .into_iter()
-        .map(|(format, spool, options)| {
-            live::binding(format, &spools.join(spool), &cli.host, options)
-        })
-        .collect::<Result<Vec<_>, _>>()?;
+    use sinex_sources::discovery::{self, Configuration, DiscoveryContext, Owner};
+    let configuration = cli
+        .sources
+        .as_deref()
+        .map(Configuration::load)
+        .transpose()?
+        .unwrap_or_default();
+    let mut context = DiscoveryContext::for_process(&cli.host, spools);
+    context.sources = configuration.sources;
+    context.exclude = configuration.exclude;
+    context.watch = cli.watch;
+    context.watch.extend(configuration.discovery.watch);
     live::run(
         &mut producer,
         &store,
         &positions,
-        bindings,
+        || {
+            let mut plan = discovery::captures(&context, Owner::System)?;
+            plan.bindings
+                .extend(discovery::captures(&context, Owner::Session)?.bindings);
+            Ok(plan)
+        },
         Duration::from_secs(cli.every),
         None,
     )

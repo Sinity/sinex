@@ -374,3 +374,35 @@ materials.
 Journal transactions and untimed command history
 use the shared export and append readers. Their supported syntax and explicit
 configuration are documented in [imported records](imported-records.md).
+
+## Host discovery
+
+`services.sinex.enable` starts discovery. Each input format declares its owner,
+canonical locations, capture streams, capabilities and credentials. Runtime
+checks use the operator's declared home/XDG roots, input roots, provider inputs
+and filesystem layout. Nix evaluation serializes these facts without probing
+files. Declared backfill inputs are also ordinary discovered inputs.
+
+A nullable `exclude.<source>` entry applies to every format and binding of that
+source. An exclusion requires a reason; status includes the complete exclusion
+map even when no source has run. Derivation options continue to control derived
+outputs. Source paths, classes, options and time zones remain configurable.
+
+The binding runner reconciles inputs every 60 seconds. It compares aliases only
+within the same source, parser, host and distinguishing suffix, and reuses saved
+binding names and input spellings. Conflicting saved identities are reported;
+cursors stay attached to their original names. A missing input waits, an empty
+readable input has zero bindings or records, and an unreadable input reports its
+error independently of the other inputs.
+
+`sinex-session run` selects every available session stream by default, using the
+same exclusions and source settings. Its state directory holds the existing
+spool names and positions. Its default remains the operator's
+`~/.local/state/sinex-session` input spelling. The Nix unit creates it with mode
+0700 and uses umask 0077. Sinnix supplies `/realm` storage during its coordinated
+state relocation; see [session-state.md](session-state.md) for the drain-then-switch procedure.
+Status reports session captures as `producer_reported` until their producer supplies
+status frames. The daemon does not infer their availability from its own environment.
+`sinexd admin discover --sources /etc/sinex/sources.json --host HOST`
+prints the read-only input plan used by the daemon and permission preparation.
+

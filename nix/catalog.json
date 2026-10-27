@@ -1,1093 +1,106 @@
 {
-  "sources": [
-    {
-      "name": "finance.hledger",
-      "formats": [
-        "hledger"
-      ],
-      "drivers": [
-        "export-archive"
-      ],
-      "purpose": "journal transactions and their postings",
-      "class": "guarded",
-      "eventTypes": [
-        "transaction.posted"
-      ]
-    },
-    {
-      "name": "terminal.text-history",
-      "formats": [
-        "text-history"
-      ],
-      "drivers": [
-        "append-file"
-      ],
-      "purpose": "explicit untimed command history",
-      "class": "guarded",
-      "eventTypes": [
-        "command.imported"
-      ]
-    },
-    {
-      "name": "terminal.atuin-history",
-      "formats": [
-        "atuin"
-      ],
-      "drivers": [
-        "sqlite-rows"
-      ],
-      "purpose": "command fusion and shell recall",
-      "class": "open",
-      "eventTypes": [
-        "command.executed"
-      ]
-    },
-    {
-      "name": "terminal.zsh-history",
-      "formats": [
-        "zsh"
-      ],
-      "drivers": [
-        "append-file"
-      ],
-      "purpose": "command fusion and shell recall",
-      "class": "open",
-      "eventTypes": [
-        "command.imported"
-      ]
-    },
-    {
-      "name": "terminal.bash-history",
-      "formats": [
-        "bash"
-      ],
-      "drivers": [
-        "append-file"
-      ],
-      "purpose": "command fusion and shell recall",
-      "class": "open",
-      "eventTypes": [
-        "command.imported"
-      ]
-    },
-    {
-      "name": "terminal.fish-history",
-      "formats": [
-        "fish"
-      ],
-      "drivers": [
-        "append-file"
-      ],
-      "purpose": "command fusion and shell recall",
-      "class": "open",
-      "eventTypes": [
-        "command.imported"
-      ]
-    },
-    {
-      "name": "desktop.hyprland",
-      "formats": [
-        "hyprland"
-      ],
-      "drivers": [
-        "live-stream"
-      ],
-      "purpose": "focus intervals, attention and recall",
-      "class": "guarded",
-      "eventTypes": [
-        "window.focused",
-        "window.opened",
-        "window.closed",
-        "window.moved",
-        "window.title_changed",
-        "workspace.switched",
-        "monitor.focused",
-        "desktop.other"
-      ]
-    },
-    {
-      "name": "machine.journald",
-      "formats": [
-        "journald"
-      ],
-      "drivers": [
-        "live-stream"
-      ],
-      "purpose": "machine timeline, service health and recall",
-      "class": "guarded",
-      "eventTypes": [
-        "journal.entry"
-      ]
-    },
-    {
-      "name": "machine.file-watch",
-      "formats": [
-        "file-watch"
-      ],
-      "drivers": [
-        "live-stream"
-      ],
-      "purpose": "work episodes, project attribution and recall",
-      "class": "guarded",
-      "eventTypes": [
-        "file.changed"
-      ]
-    },
-    {
-      "name": "desktop.activitywatch",
-      "formats": [
-        "activitywatch"
-      ],
-      "drivers": [
-        "sqlite-rows"
-      ],
-      "purpose": "attention, presence and recall",
-      "class": "guarded",
-      "eventTypes": [
-        "window.span",
-        "presence.span",
-        "browser.tab_active",
-        "activitywatch.other"
-      ]
-    },
-    {
-      "name": "code.git",
-      "formats": [
-        "repository"
-      ],
-      "drivers": [
-        "api-cursor"
-      ],
-      "purpose": "work episodes, project attribution and recall",
-      "class": "open",
-      "eventTypes": [
-        "git.commit"
-      ]
-    },
-    {
-      "name": "browser.chromium-visits",
-      "formats": [
-        "chromium"
-      ],
-      "drivers": [
-        "sqlite-rows"
-      ],
-      "purpose": "browsing recall and the attention stream",
-      "class": "open",
-      "eventTypes": [
-        "browser.visit"
-      ]
-    },
-    {
-      "name": "browser.chromium-urls",
-      "formats": [
-        "chromium"
-      ],
-      "drivers": [
-        "sqlite-rows"
-      ],
-      "purpose": "browsing recall and page titles",
-      "class": "open",
-      "eventTypes": [
-        "browser.url"
-      ]
-    },
-    {
-      "name": "browser.takeout-chrome-history",
-      "formats": [
-        "takeout-chrome"
-      ],
-      "drivers": [
-        "export-archive"
-      ],
-      "purpose": "browsing recall before live capture",
-      "class": "open",
-      "eventTypes": [
-        "browser.history_entry"
-      ]
-    },
-    {
-      "name": "media.spotify-history",
-      "formats": [
-        "spotify"
-      ],
-      "drivers": [
-        "export-archive"
-      ],
-      "purpose": "listening history and the attention stream",
-      "class": "open",
-      "eventTypes": [
-        "music.played"
-      ]
-    },
-    {
-      "name": "reading.raindrop",
-      "formats": [
-        "raindrop"
-      ],
-      "drivers": [
-        "export-archive"
-      ],
-      "purpose": "saved reading and URL recall",
-      "class": "open",
-      "eventTypes": [
-        "bookmark.saved"
-      ]
-    },
-    {
-      "name": "knowledge.notes-vault",
-      "formats": [
-        "notes"
-      ],
-      "drivers": [
-        "dir-snapshot"
-      ],
-      "purpose": "note recall and the library",
-      "class": "open",
-      "eventTypes": [
-        "note.document"
-      ]
-    },
-    {
-      "name": "communication.mbox",
-      "formats": [
-        "mbox"
-      ],
-      "drivers": [
-        "export-archive"
-      ],
-      "purpose": "mail recall and correspondence history",
-      "class": "open",
-      "eventTypes": [
-        "mail.message"
-      ]
-    },
-    {
-      "name": "communication.maildir",
-      "formats": [
-        "maildir"
-      ],
-      "drivers": [
-        "dir-snapshot"
-      ],
-      "purpose": "mail recall and correspondence history",
-      "class": "open",
-      "eventTypes": [
-        "mail.message"
-      ]
-    },
-    {
-      "name": "communication.imap",
-      "formats": [
-        "imap"
-      ],
-      "drivers": [
-        "api-cursor"
-      ],
-      "purpose": "mail recall and correspondence history",
-      "class": "open",
-      "eventTypes": [
-        "mail.message"
-      ]
-    },
-    {
-      "name": "communication.outlook",
-      "formats": [
-        "outlook"
-      ],
-      "drivers": [
-        "export-archive"
-      ],
-      "purpose": "mail recall and correspondence history",
-      "class": "open",
-      "eventTypes": [
-        "mail.message"
-      ]
-    },
-    {
-      "name": "communication.outlook-csv",
-      "formats": [
-        "outlook-csv"
-      ],
-      "drivers": [
-        "export-archive"
-      ],
-      "purpose": "mail recall and correspondence history",
-      "class": "open",
-      "eventTypes": [
-        "mail.message"
-      ]
-    },
-    {
-      "name": "communication.weechat-log",
-      "formats": [
-        "weechat"
-      ],
-      "drivers": [
-        "append-file"
-      ],
-      "purpose": "chat recall and correspondence history",
-      "class": "open",
-      "eventTypes": [
-        "chat.message"
-      ]
-    },
-    {
-      "name": "calendar.export",
-      "formats": [
-        "calendar"
-      ],
-      "drivers": [
-        "export-archive"
-      ],
-      "purpose": "planned events beside what happened",
-      "class": "open",
-      "eventTypes": [
-        "calendar.event"
-      ]
-    },
-    {
-      "name": "google.my-activity",
-      "formats": [
-        "takeout"
-      ],
-      "drivers": [
-        "export-archive"
-      ],
-      "purpose": "searches, visits and app use recorded by the Google account",
-      "class": "open",
-      "eventTypes": [
-        "action.recorded"
-      ]
-    },
-    {
-      "name": "google.youtube-history",
-      "formats": [
-        "takeout"
-      ],
-      "drivers": [
-        "export-archive"
-      ],
-      "purpose": "videos watched and searched for",
-      "class": "open",
-      "eventTypes": [
-        "video.watched",
-        "video.searched"
-      ]
-    },
-    {
-      "name": "google.keep",
-      "formats": [
-        "takeout"
-      ],
-      "drivers": [
-        "export-archive"
-      ],
-      "purpose": "notes and checklists kept in Keep",
-      "class": "open",
-      "eventTypes": [
-        "note.observed"
-      ]
-    },
-    {
-      "name": "google.tasks",
-      "formats": [
-        "takeout"
-      ],
-      "drivers": [
-        "export-archive"
-      ],
-      "purpose": "tasks and their completion",
-      "class": "open",
-      "eventTypes": [
-        "task.revised"
-      ]
-    },
-    {
-      "name": "google.play-store",
-      "formats": [
-        "takeout"
-      ],
-      "drivers": [
-        "export-archive"
-      ],
-      "purpose": "apps installed, bought and reviewed",
-      "class": "open",
-      "eventTypes": [
-        "purchase.observed"
-      ]
-    },
-    {
-      "name": "google.purchases",
-      "formats": [
-        "takeout"
-      ],
-      "drivers": [
-        "export-archive"
-      ],
-      "purpose": "orders and reservations",
-      "class": "open",
-      "eventTypes": [
-        "purchase.observed"
-      ]
-    },
-    {
-      "name": "google.location-history",
-      "formats": [
-        "takeout"
-      ],
-      "drivers": [
-        "export-archive"
-      ],
-      "purpose": "where the operator was",
-      "class": "open",
-      "eventTypes": [
-        "location.sample"
-      ]
-    },
-    {
-      "name": "google.fit",
-      "formats": [
-        "takeout"
-      ],
-      "drivers": [
-        "export-archive"
-      ],
-      "purpose": "steps, activity, heart and location samples Fit recorded",
-      "class": "open",
-      "eventTypes": [
-        "health.record"
-      ]
-    },
-    {
-      "name": "reading.goodreads",
-      "formats": [
-        "goodreads"
-      ],
-      "drivers": [
-        "export-archive"
-      ],
-      "purpose": "books shelved and read, for long-horizon interest",
-      "class": "open",
-      "eventTypes": [
-        "book.status"
-      ]
-    },
-    {
-      "name": "communication.messenger",
-      "formats": [
-        "messenger"
-      ],
-      "drivers": [
-        "export-archive"
-      ],
-      "purpose": "conversations with people",
-      "class": "open",
-      "eventTypes": [
-        "conversation.message"
-      ]
-    },
-    {
-      "name": "health.sleep-as-android",
-      "formats": [
-        "sleep-as-android"
-      ],
-      "drivers": [
-        "export-archive"
-      ],
-      "purpose": "sleep sessions and their phases",
-      "class": "open",
-      "eventTypes": [
-        "health.record"
-      ]
-    },
-    {
-      "name": "social.wykop",
-      "formats": [
-        "wykop"
-      ],
-      "drivers": [
-        "export-archive"
-      ],
-      "purpose": "what the operator wrote and voted on at Wykop",
-      "class": "open",
-      "eventTypes": [
-        "post.published",
-        "vote.cast",
-        "bookmark.saved",
-        "notification.received",
-        "account.setting"
-      ]
-    },
-    {
-      "name": "social.reddit",
-      "formats": [
-        "reddit"
-      ],
-      "drivers": [
-        "export-archive"
-      ],
-      "purpose": "what the operator wrote, voted on, saved and sent at Reddit",
-      "class": "open",
-      "eventTypes": [
-        "post.published",
-        "vote.cast",
-        "bookmark.saved",
-        "conversation.message"
-      ]
-    },
-    {
-      "name": "health.samsung-export",
-      "formats": [
-        "samsung-health"
-      ],
-      "drivers": [
-        "export-archive"
-      ],
-      "purpose": "sleep, heart, activity and body measurements",
-      "class": "open",
-      "eventTypes": [
-        "health.record"
-      ]
-    },
-    {
-      "name": "phone.samsung-sms",
-      "formats": [
-        "samsung-sms"
-      ],
-      "drivers": [
-        "export-archive"
-      ],
-      "purpose": "text messages sent and received",
-      "class": "open",
-      "eventTypes": [
-        "conversation.message"
-      ]
-    },
-    {
-      "name": "account.samsung",
-      "formats": [
-        "samsung-account"
-      ],
-      "drivers": [
-        "export-archive"
-      ],
-      "purpose": "what the operator's Samsung account kept: health sync, settings, backups",
-      "class": "open",
-      "eventTypes": [
-        "health.record",
-        "account.row"
-      ]
-    },
-    {
-      "name": "desktop.arbtt",
-      "formats": [
-        "arbtt"
-      ],
-      "drivers": [
-        "append-file"
-      ],
-      "purpose": "which window was in use, sampled every interval",
-      "class": "open",
-      "eventTypes": [
-        "window.sampled"
-      ]
-    },
-    {
-      "name": "terminal.asciinema",
-      "formats": [
-        "asciinema"
-      ],
-      "drivers": [
-        "append-file"
-      ],
-      "purpose": "what terminals showed and what was typed, replayable",
-      "class": "open",
-      "eventTypes": [
-        "terminal.session",
-        "terminal.output"
-      ]
-    },
-    {
-      "name": "terminal.capture-events",
-      "formats": [
-        "asciinema"
-      ],
-      "drivers": [
-        "append-file"
-      ],
-      "purpose": "shell commands around a terminal recording",
-      "class": "open",
-      "eventTypes": [
-        "terminal.reported"
-      ]
-    },
-    {
-      "name": "terminal.kitty-scrollback",
-      "formats": [
-        "kitty-scrollback"
-      ],
-      "drivers": [
-        "dir-snapshot"
-      ],
-      "purpose": "terminal recall: what kitty windows showed",
-      "class": "guarded",
-      "eventTypes": [
-        "scrollback.captured",
-        "scrollback.window"
-      ]
-    },
-    {
-      "name": "desktop.input-log",
-      "formats": [
-        "input-log"
-      ],
-      "drivers": [
-        "append-file"
-      ],
-      "purpose": "keystroke timing, typing and pointer activity",
-      "class": "guarded",
-      "eventTypes": [
-        "key.pressed",
-        "key.released",
-        "pointer.button",
-        "pointer.moved",
-        "pointer.scrolled",
-        "input.logger"
-      ]
-    },
-    {
-      "name": "operator.raw-log",
-      "formats": [
-        "raw-log"
-      ],
-      "drivers": [
-        "append-file"
-      ],
-      "purpose": "the operator's quick notes, as primary data",
-      "class": "open",
-      "eventTypes": [
-        "operator_log.entry"
-      ]
-    },
-    {
-      "name": "operator.steering",
-      "formats": [
-        "steering"
-      ],
-      "drivers": [
-        "sqlite-rows"
-      ],
-      "purpose": "commitments, forecasts and reviews the operator keeps",
-      "class": "open",
-      "eventTypes": [
-        "steering.row"
-      ]
-    },
-    {
-      "name": "desktop.clipboard",
-      "formats": [
-        "sinnix-lake",
-        "clipboard"
-      ],
-      "drivers": [
-        "append-file",
-        "live-stream"
-      ],
-      "purpose": "recall, prompt provenance",
-      "class": "guarded",
-      "eventTypes": [
-        "lake.observed",
-        "clipboard.copied"
-      ]
-    },
-    {
-      "name": "desktop.notifications",
-      "formats": [
-        "sinnix-lake",
-        "notifications"
-      ],
-      "drivers": [
-        "append-file",
-        "live-stream"
-      ],
-      "purpose": "recall, interruption analysis",
-      "class": "guarded",
-      "eventTypes": [
-        "lake.observed",
-        "notification.shown",
-        "notification.closed",
-        "notification.action"
-      ]
-    },
-    {
-      "name": "desktop.media",
-      "formats": [
-        "sinnix-lake"
-      ],
-      "drivers": [
-        "append-file"
-      ],
-      "purpose": "listening and attention timeline",
-      "class": "open",
-      "eventTypes": [
-        "lake.observed"
-      ]
-    },
-    {
-      "name": "desktop.a11y",
-      "formats": [
-        "sinnix-lake"
-      ],
-      "drivers": [
-        "append-file"
-      ],
-      "purpose": "what was on screen, recall",
-      "class": "open",
-      "eventTypes": [
-        "lake.observed"
-      ]
-    },
-    {
-      "name": "desktop.idle-inhibitor",
-      "formats": [
-        "sinnix-lake"
-      ],
-      "drivers": [
-        "append-file"
-      ],
-      "purpose": "presence and AFK evidence",
-      "class": "open",
-      "eventTypes": [
-        "lake.observed"
-      ]
-    },
-    {
-      "name": "media.screen",
-      "formats": [
-        "sinnix-lake"
-      ],
-      "drivers": [
-        "append-file"
-      ],
-      "purpose": "screen recall and OCR",
-      "class": "open",
-      "eventTypes": [
-        "lake.observed"
-      ]
-    },
-    {
-      "name": "media.audio",
-      "formats": [
-        "sinnix-lake"
-      ],
-      "drivers": [
-        "append-file"
-      ],
-      "purpose": "audio recall, speech index, device state",
-      "class": "open",
-      "eventTypes": [
-        "lake.observed"
-      ]
-    },
-    {
-      "name": "browser.navigation",
-      "formats": [
-        "sinnix-lake"
-      ],
-      "drivers": [
-        "append-file"
-      ],
-      "purpose": "browsing trails, recall",
-      "class": "open",
-      "eventTypes": [
-        "lake.observed"
-      ]
-    },
-    {
-      "name": "reading.stack",
-      "formats": [
-        "sinnix-lake"
-      ],
-      "drivers": [
-        "append-file"
-      ],
-      "purpose": "reading queue",
-      "class": "open",
-      "eventTypes": [
-        "lake.observed"
-      ]
-    },
-    {
-      "name": "desktop.display",
-      "formats": [
-        "sinnix-lake"
-      ],
-      "drivers": [
-        "append-file"
-      ],
-      "purpose": "machine state timeline",
-      "class": "open",
-      "eventTypes": [
-        "lake.observed"
-      ]
-    },
-    {
-      "name": "network.netflow",
-      "formats": [
-        "sinnix-lake"
-      ],
-      "drivers": [
-        "append-file"
-      ],
-      "purpose": "network flows by connection",
-      "class": "open",
-      "eventTypes": [
-        "lake.observed"
-      ]
-    },
-    {
-      "name": "machine.peripheral",
-      "formats": [
-        "sinnix-lake"
-      ],
-      "drivers": [
-        "append-file"
-      ],
-      "purpose": "battery and audio device state",
-      "class": "open",
-      "eventTypes": [
-        "lake.observed"
-      ]
-    },
-    {
-      "name": "environment.awair",
-      "formats": [
-        "sinnix-lake"
-      ],
-      "drivers": [
-        "append-file"
-      ],
-      "purpose": "room air, sleep and focus analysis",
-      "class": "open",
-      "eventTypes": [
-        "lake.observed"
-      ]
-    },
-    {
-      "name": "media.mpris",
-      "formats": [
-        "players"
-      ],
-      "drivers": [
-        "live-stream"
-      ],
-      "purpose": "listening and watching history, attention",
-      "class": "guarded",
-      "eventTypes": [
-        "player.changed"
-      ]
-    },
-    {
-      "name": "session.integrations",
-      "formats": [
-        "integration-socket"
-      ],
-      "drivers": [
-        "live-stream"
-      ],
-      "purpose": "recall: files edited, commands run in the terminal and what they printed",
-      "class": "guarded",
-      "eventTypes": [
-        "editor.reported",
-        "terminal.reported",
-        "scrollback.captured"
-      ]
-    },
-    {
-      "name": "session.media",
-      "formats": [
-        "media"
-      ],
-      "drivers": [
-        "media"
-      ],
-      "purpose": "recall: what was on screen and said; screen text and transcripts",
-      "class": "guarded",
-      "eventTypes": [
-        "media.segment"
-      ]
-    },
-    {
-      "name": "library.scan",
-      "formats": [
-        "library"
-      ],
-      "drivers": [
-        "dir-snapshot"
-      ],
-      "purpose": "the media library",
-      "class": "open",
-      "eventTypes": [
-        "library.copy"
-      ]
-    },
-    {
-      "name": "library.request",
-      "formats": [
-        "library"
-      ],
-      "drivers": [
-        "api-request"
-      ],
-      "purpose": "the media library",
-      "class": "open",
-      "eventTypes": [
-        "library.item",
-        "library.rendition",
-        "library.assignment",
-        "library.collection",
-        "library.entry",
-        "library.rating",
-        "library.comparison",
-        "library.view",
-        "library.dismissal"
-      ]
-    },
-    {
-      "name": "forecast.request",
-      "formats": [
-        "forecast"
-      ],
-      "drivers": [
-        "api-request"
-      ],
-      "purpose": "submitted probability forecasts",
-      "class": "guarded",
-      "eventTypes": [
-        "forecast.issued",
-        "forecast.resolved"
-      ]
-    },
-    {
-      "name": "browser.page-crawl",
-      "formats": [
-        "page-crawl"
-      ],
-      "drivers": [
-        "api-cursor"
-      ],
-      "purpose": "page content for recall and search over what was read",
-      "class": "guarded",
-      "eventTypes": [
-        "page.fetched"
-      ]
-    }
-  ],
   "derivations": [
     {
-      "name": "command.fusion",
-      "kind": "keyed",
       "inputs": [
         "command.executed",
         "command.imported"
       ],
+      "kind": "keyed",
+      "name": "command.fusion",
       "outputs": [
         "command.fused"
       ]
     },
     {
-      "name": "focus.fusion",
-      "kind": "keyed",
       "inputs": [
         "state.interval",
         "window.span"
       ],
+      "kind": "keyed",
+      "name": "focus.fusion",
       "outputs": [
         "focus.fused"
       ]
     },
     {
-      "name": "visit.fusion",
-      "kind": "keyed",
       "inputs": [
         "browser.visit",
         "browser.history_entry",
         "lake.observed"
       ],
+      "kind": "keyed",
+      "name": "visit.fusion",
       "outputs": [
         "visit.fused"
       ]
     },
     {
-      "name": "play.fusion",
-      "kind": "keyed",
       "inputs": [
         "music.played",
         "player.changed",
         "lake.observed"
       ],
+      "kind": "keyed",
+      "name": "play.fusion",
       "outputs": [
         "play.fused"
       ]
     },
     {
-      "name": "clipboard.fusion",
-      "kind": "keyed",
       "inputs": [
         "clipboard.copied",
         "lake.observed"
       ],
+      "kind": "keyed",
+      "name": "clipboard.fusion",
       "outputs": [
         "clipboard.fused"
       ]
     },
     {
-      "name": "notification.fusion",
-      "kind": "keyed",
       "inputs": [
         "notification.shown",
         "lake.observed"
       ],
+      "kind": "keyed",
+      "name": "notification.fusion",
       "outputs": [
         "notification.fused"
       ]
     },
     {
-      "name": "mail.fusion",
-      "kind": "keyed",
       "inputs": [
         "mail.message"
       ],
+      "kind": "keyed",
+      "name": "mail.fusion",
       "outputs": [
         "mail.fused"
       ]
     },
     {
-      "name": "shell.sessions",
-      "kind": "keyed",
       "inputs": [
         "command.fused"
       ],
+      "kind": "keyed",
+      "name": "shell.sessions",
       "outputs": [
         "shell.session"
       ]
     },
     {
-      "name": "state.intervals",
-      "kind": "keyed",
       "inputs": [
         "window.focused",
         "workspace.switched",
         "presence.span"
       ],
+      "kind": "keyed",
+      "name": "state.intervals",
       "outputs": [
         "state.interval"
       ]
     },
     {
-      "name": "metric.hourly",
-      "kind": "keyed",
       "inputs": [
         "command.fused",
         "shell.session",
@@ -1102,23 +115,23 @@
         "key.pressed",
         "pointer.button"
       ],
+      "kind": "keyed",
+      "name": "metric.hourly",
       "outputs": [
         "metric.figure"
       ]
     },
     {
-      "name": "metric.daily",
-      "kind": "keyed",
       "inputs": [
         "metric.figure"
       ],
+      "kind": "keyed",
+      "name": "metric.daily",
       "outputs": [
         "metric.figure"
       ]
     },
     {
-      "name": "presence.intervals",
-      "kind": "keyed",
       "inputs": [
         "presence.span",
         "command.executed",
@@ -1126,29 +139,2402 @@
         "window.focused",
         "workspace.switched"
       ],
+      "kind": "keyed",
+      "name": "presence.intervals",
       "outputs": [
         "presence.interval"
       ]
     },
     {
-      "name": "health.hourly",
-      "kind": "keyed",
       "inputs": [
         "health.record"
       ],
+      "kind": "keyed",
+      "name": "health.hourly",
       "outputs": [
         "health.figure"
       ]
     },
     {
-      "name": "health.daily",
-      "kind": "keyed",
       "inputs": [
         "health.figure"
       ],
+      "kind": "keyed",
+      "name": "health.daily",
       "outputs": [
         "health.figure"
       ]
+    }
+  ],
+  "sources": [
+    {
+      "class": "open",
+      "discovery": [
+        {
+          "capture": false,
+          "description": {
+            "capabilities": [],
+            "credentials": [],
+            "locations": [
+              {
+                "path": "atuin/history.db",
+                "root": "data"
+              }
+            ],
+            "owner": "system",
+            "request_only": false,
+            "requests": [],
+            "streams": []
+          },
+          "format": "atuin"
+        }
+      ],
+      "drivers": [
+        "sqlite-rows"
+      ],
+      "eventTypes": [
+        "command.executed"
+      ],
+      "formats": [
+        "atuin"
+      ],
+      "name": "terminal.atuin-history",
+      "purpose": "command fusion and shell recall"
+    },
+    {
+      "class": "open",
+      "discovery": [
+        {
+          "capture": false,
+          "description": {
+            "capabilities": [],
+            "credentials": [],
+            "locations": [
+              {
+                "path": "ZSH_HISTFILE",
+                "root": "environment"
+              }
+            ],
+            "owner": "system",
+            "request_only": false,
+            "requests": [],
+            "streams": []
+          },
+          "format": "zsh"
+        }
+      ],
+      "drivers": [
+        "append-file"
+      ],
+      "eventTypes": [
+        "command.imported"
+      ],
+      "formats": [
+        "zsh"
+      ],
+      "name": "terminal.zsh-history",
+      "purpose": "command fusion and shell recall"
+    },
+    {
+      "class": "open",
+      "discovery": [
+        {
+          "capture": false,
+          "description": {
+            "capabilities": [],
+            "credentials": [],
+            "locations": [
+              {
+                "path": "BASH_HISTFILE",
+                "root": "environment"
+              }
+            ],
+            "owner": "system",
+            "request_only": false,
+            "requests": [],
+            "streams": []
+          },
+          "format": "bash"
+        }
+      ],
+      "drivers": [
+        "append-file"
+      ],
+      "eventTypes": [
+        "command.imported"
+      ],
+      "formats": [
+        "bash"
+      ],
+      "name": "terminal.bash-history",
+      "purpose": "command fusion and shell recall"
+    },
+    {
+      "class": "open",
+      "discovery": [
+        {
+          "capture": false,
+          "description": {
+            "capabilities": [],
+            "credentials": [],
+            "locations": [
+              {
+                "path": "fish/fish_history",
+                "root": "data"
+              }
+            ],
+            "owner": "system",
+            "request_only": false,
+            "requests": [],
+            "streams": []
+          },
+          "format": "fish"
+        }
+      ],
+      "drivers": [
+        "append-file"
+      ],
+      "eventTypes": [
+        "command.imported"
+      ],
+      "formats": [
+        "fish"
+      ],
+      "name": "terminal.fish-history",
+      "purpose": "command fusion and shell recall"
+    },
+    {
+      "class": "guarded",
+      "discovery": [
+        {
+          "capture": true,
+          "description": {
+            "capabilities": [
+              "hyprland"
+            ],
+            "credentials": [],
+            "locations": [],
+            "owner": "session",
+            "request_only": false,
+            "requests": [],
+            "streams": [
+              {
+                "capabilities": [],
+                "options": "{}",
+                "spool": "hyprland"
+              }
+            ]
+          },
+          "format": "hyprland"
+        }
+      ],
+      "drivers": [
+        "live-stream"
+      ],
+      "eventTypes": [
+        "window.focused",
+        "window.opened",
+        "window.closed",
+        "window.moved",
+        "window.title_changed",
+        "workspace.switched",
+        "monitor.focused",
+        "desktop.other"
+      ],
+      "formats": [
+        "hyprland"
+      ],
+      "name": "desktop.hyprland",
+      "purpose": "focus intervals, attention and recall"
+    },
+    {
+      "class": "guarded",
+      "discovery": [
+        {
+          "capture": true,
+          "description": {
+            "capabilities": [
+              "journalctl"
+            ],
+            "credentials": [],
+            "locations": [
+              {
+                "path": "journald",
+                "root": "spool"
+              }
+            ],
+            "owner": "system",
+            "request_only": false,
+            "requests": [],
+            "streams": [
+              {
+                "capabilities": [],
+                "options": "{\"follow\":true}",
+                "spool": "journald"
+              }
+            ]
+          },
+          "format": "journald"
+        }
+      ],
+      "drivers": [
+        "live-stream"
+      ],
+      "eventTypes": [
+        "journal.entry"
+      ],
+      "formats": [
+        "journald"
+      ],
+      "name": "machine.journald",
+      "purpose": "machine timeline, service health and recall"
+    },
+    {
+      "class": "guarded",
+      "discovery": [
+        {
+          "capture": true,
+          "description": {
+            "capabilities": [],
+            "credentials": [],
+            "locations": [],
+            "owner": "session",
+            "request_only": false,
+            "requests": [],
+            "streams": [
+              {
+                "capabilities": [
+                  "watch"
+                ],
+                "options": "{}",
+                "spool": "files"
+              }
+            ]
+          },
+          "format": "file-watch"
+        }
+      ],
+      "drivers": [
+        "live-stream"
+      ],
+      "eventTypes": [
+        "file.changed"
+      ],
+      "formats": [
+        "file-watch"
+      ],
+      "name": "machine.file-watch",
+      "purpose": "work episodes, project attribution and recall"
+    },
+    {
+      "class": "guarded",
+      "discovery": [
+        {
+          "capture": false,
+          "description": {
+            "capabilities": [],
+            "credentials": [],
+            "locations": [
+              {
+                "path": "activitywatch/aw-server-rust/sqlite.db",
+                "root": "data"
+              }
+            ],
+            "owner": "system",
+            "request_only": false,
+            "requests": [],
+            "streams": []
+          },
+          "format": "activitywatch"
+        }
+      ],
+      "drivers": [
+        "sqlite-rows"
+      ],
+      "eventTypes": [
+        "window.span",
+        "presence.span",
+        "browser.tab_active",
+        "activitywatch.other"
+      ],
+      "formats": [
+        "activitywatch"
+      ],
+      "name": "desktop.activitywatch",
+      "purpose": "attention, presence and recall"
+    },
+    {
+      "class": "open",
+      "discovery": [
+        {
+          "capture": false,
+          "description": {
+            "capabilities": [],
+            "credentials": [],
+            "locations": [
+              {
+                "path": "",
+                "root": "projects"
+              }
+            ],
+            "owner": "system",
+            "request_only": false,
+            "requests": [],
+            "streams": []
+          },
+          "format": "repository"
+        }
+      ],
+      "drivers": [
+        "api-cursor"
+      ],
+      "eventTypes": [
+        "git.commit"
+      ],
+      "formats": [
+        "repository"
+      ],
+      "name": "code.git",
+      "purpose": "work episodes, project attribution and recall"
+    },
+    {
+      "class": "open",
+      "discovery": [
+        {
+          "capture": false,
+          "description": {
+            "capabilities": [],
+            "credentials": [],
+            "locations": [
+              {
+                "path": "chromium",
+                "root": "config"
+              },
+              {
+                "path": "google-chrome",
+                "root": "config"
+              },
+              {
+                "path": "google-chrome-beta",
+                "root": "config"
+              },
+              {
+                "path": "BraveSoftware/Brave-Browser",
+                "root": "config"
+              },
+              {
+                "path": "chromium",
+                "root": "input"
+              }
+            ],
+            "owner": "system",
+            "request_only": false,
+            "requests": [],
+            "streams": []
+          },
+          "format": "chromium"
+        }
+      ],
+      "drivers": [
+        "sqlite-rows"
+      ],
+      "eventTypes": [
+        "browser.visit"
+      ],
+      "formats": [
+        "chromium"
+      ],
+      "name": "browser.chromium-visits",
+      "purpose": "browsing recall and the attention stream"
+    },
+    {
+      "class": "open",
+      "discovery": [
+        {
+          "capture": false,
+          "description": {
+            "capabilities": [],
+            "credentials": [],
+            "locations": [
+              {
+                "path": "chromium",
+                "root": "config"
+              },
+              {
+                "path": "google-chrome",
+                "root": "config"
+              },
+              {
+                "path": "google-chrome-beta",
+                "root": "config"
+              },
+              {
+                "path": "BraveSoftware/Brave-Browser",
+                "root": "config"
+              },
+              {
+                "path": "chromium",
+                "root": "input"
+              }
+            ],
+            "owner": "system",
+            "request_only": false,
+            "requests": [],
+            "streams": []
+          },
+          "format": "chromium"
+        }
+      ],
+      "drivers": [
+        "sqlite-rows"
+      ],
+      "eventTypes": [
+        "browser.url"
+      ],
+      "formats": [
+        "chromium"
+      ],
+      "name": "browser.chromium-urls",
+      "purpose": "browsing recall and page titles"
+    },
+    {
+      "class": "open",
+      "discovery": [
+        {
+          "capture": false,
+          "description": {
+            "capabilities": [],
+            "credentials": [],
+            "locations": [
+              {
+                "path": "takeout-chrome",
+                "root": "input"
+              }
+            ],
+            "owner": "system",
+            "request_only": false,
+            "requests": [],
+            "streams": []
+          },
+          "format": "takeout-chrome"
+        }
+      ],
+      "drivers": [
+        "export-archive"
+      ],
+      "eventTypes": [
+        "browser.history_entry"
+      ],
+      "formats": [
+        "takeout-chrome"
+      ],
+      "name": "browser.takeout-chrome-history",
+      "purpose": "browsing recall before live capture"
+    },
+    {
+      "class": "open",
+      "discovery": [
+        {
+          "capture": false,
+          "description": {
+            "capabilities": [],
+            "credentials": [],
+            "locations": [
+              {
+                "path": "spotify",
+                "root": "input"
+              }
+            ],
+            "owner": "system",
+            "request_only": false,
+            "requests": [],
+            "streams": []
+          },
+          "format": "spotify"
+        }
+      ],
+      "drivers": [
+        "export-archive"
+      ],
+      "eventTypes": [
+        "music.played"
+      ],
+      "formats": [
+        "spotify"
+      ],
+      "name": "media.spotify-history",
+      "purpose": "listening history and the attention stream"
+    },
+    {
+      "class": "open",
+      "discovery": [
+        {
+          "capture": false,
+          "description": {
+            "capabilities": [],
+            "credentials": [],
+            "locations": [
+              {
+                "path": "raindrop",
+                "root": "input"
+              }
+            ],
+            "owner": "system",
+            "request_only": false,
+            "requests": [],
+            "streams": []
+          },
+          "format": "raindrop"
+        }
+      ],
+      "drivers": [
+        "export-archive"
+      ],
+      "eventTypes": [
+        "bookmark.saved"
+      ],
+      "formats": [
+        "raindrop"
+      ],
+      "name": "reading.raindrop",
+      "purpose": "saved reading and URL recall"
+    },
+    {
+      "class": "open",
+      "discovery": [
+        {
+          "capture": false,
+          "description": {
+            "capabilities": [],
+            "credentials": [],
+            "locations": [
+              {
+                "path": "notes",
+                "root": "declared"
+              }
+            ],
+            "owner": "system",
+            "request_only": false,
+            "requests": [],
+            "streams": []
+          },
+          "format": "notes"
+        }
+      ],
+      "drivers": [
+        "dir-snapshot"
+      ],
+      "eventTypes": [
+        "note.document"
+      ],
+      "formats": [
+        "notes"
+      ],
+      "name": "knowledge.notes-vault",
+      "purpose": "note recall and the library"
+    },
+    {
+      "class": "open",
+      "discovery": [
+        {
+          "capture": false,
+          "description": {
+            "capabilities": [],
+            "credentials": [],
+            "locations": [
+              {
+                "path": "mbox",
+                "root": "input"
+              }
+            ],
+            "owner": "system",
+            "request_only": false,
+            "requests": [],
+            "streams": []
+          },
+          "format": "mbox"
+        }
+      ],
+      "drivers": [
+        "export-archive"
+      ],
+      "eventTypes": [
+        "mail.message"
+      ],
+      "formats": [
+        "mbox"
+      ],
+      "name": "communication.mbox",
+      "purpose": "mail recall and correspondence history"
+    },
+    {
+      "class": "open",
+      "discovery": [
+        {
+          "capture": false,
+          "description": {
+            "capabilities": [],
+            "credentials": [],
+            "locations": [
+              {
+                "path": "maildir",
+                "root": "input"
+              }
+            ],
+            "owner": "system",
+            "request_only": false,
+            "requests": [],
+            "streams": []
+          },
+          "format": "maildir"
+        }
+      ],
+      "drivers": [
+        "dir-snapshot"
+      ],
+      "eventTypes": [
+        "mail.message"
+      ],
+      "formats": [
+        "maildir"
+      ],
+      "name": "communication.maildir",
+      "purpose": "mail recall and correspondence history"
+    },
+    {
+      "class": "open",
+      "discovery": [
+        {
+          "capture": false,
+          "description": {
+            "capabilities": [],
+            "credentials": [
+              "token_file or password_file"
+            ],
+            "locations": [
+              {
+                "path": "imap",
+                "root": "input"
+              }
+            ],
+            "owner": "system",
+            "request_only": false,
+            "requests": [],
+            "streams": []
+          },
+          "format": "imap"
+        }
+      ],
+      "drivers": [
+        "api-cursor"
+      ],
+      "eventTypes": [
+        "mail.message"
+      ],
+      "formats": [
+        "imap"
+      ],
+      "name": "communication.imap",
+      "purpose": "mail recall and correspondence history"
+    },
+    {
+      "class": "open",
+      "discovery": [
+        {
+          "capture": false,
+          "description": {
+            "capabilities": [],
+            "credentials": [],
+            "locations": [
+              {
+                "path": "outlook",
+                "root": "input"
+              }
+            ],
+            "owner": "system",
+            "request_only": false,
+            "requests": [],
+            "streams": []
+          },
+          "format": "outlook"
+        }
+      ],
+      "drivers": [
+        "export-archive"
+      ],
+      "eventTypes": [
+        "mail.message"
+      ],
+      "formats": [
+        "outlook"
+      ],
+      "name": "communication.outlook",
+      "purpose": "mail recall and correspondence history"
+    },
+    {
+      "class": "open",
+      "discovery": [
+        {
+          "capture": false,
+          "description": {
+            "capabilities": [],
+            "credentials": [],
+            "locations": [
+              {
+                "path": "outlook-csv",
+                "root": "input"
+              }
+            ],
+            "owner": "system",
+            "request_only": false,
+            "requests": [],
+            "streams": []
+          },
+          "format": "outlook-csv"
+        }
+      ],
+      "drivers": [
+        "export-archive"
+      ],
+      "eventTypes": [
+        "mail.message"
+      ],
+      "formats": [
+        "outlook-csv"
+      ],
+      "name": "communication.outlook-csv",
+      "purpose": "mail recall and correspondence history"
+    },
+    {
+      "class": "open",
+      "discovery": [
+        {
+          "capture": false,
+          "description": {
+            "capabilities": [],
+            "credentials": [],
+            "locations": [
+              {
+                "path": "weechat/logs",
+                "root": "data"
+              }
+            ],
+            "owner": "system",
+            "request_only": false,
+            "requests": [],
+            "streams": []
+          },
+          "format": "weechat"
+        }
+      ],
+      "drivers": [
+        "append-file"
+      ],
+      "eventTypes": [
+        "chat.message"
+      ],
+      "formats": [
+        "weechat"
+      ],
+      "name": "communication.weechat-log",
+      "purpose": "chat recall and correspondence history"
+    },
+    {
+      "class": "open",
+      "discovery": [
+        {
+          "capture": false,
+          "description": {
+            "capabilities": [],
+            "credentials": [],
+            "locations": [
+              {
+                "path": "calendar",
+                "root": "input"
+              },
+              {
+                "path": "takeout",
+                "root": "input"
+              }
+            ],
+            "owner": "system",
+            "request_only": false,
+            "requests": [],
+            "streams": []
+          },
+          "format": "calendar"
+        }
+      ],
+      "drivers": [
+        "export-archive"
+      ],
+      "eventTypes": [
+        "calendar.event"
+      ],
+      "formats": [
+        "calendar"
+      ],
+      "name": "calendar.export",
+      "purpose": "planned events beside what happened"
+    },
+    {
+      "class": "open",
+      "discovery": [
+        {
+          "capture": false,
+          "description": {
+            "capabilities": [],
+            "credentials": [],
+            "locations": [
+              {
+                "path": "takeout",
+                "root": "input"
+              }
+            ],
+            "owner": "system",
+            "request_only": false,
+            "requests": [],
+            "streams": []
+          },
+          "format": "takeout"
+        }
+      ],
+      "drivers": [
+        "export-archive"
+      ],
+      "eventTypes": [
+        "action.recorded"
+      ],
+      "formats": [
+        "takeout"
+      ],
+      "name": "google.my-activity",
+      "purpose": "searches, visits and app use recorded by the Google account"
+    },
+    {
+      "class": "open",
+      "discovery": [
+        {
+          "capture": false,
+          "description": {
+            "capabilities": [],
+            "credentials": [],
+            "locations": [
+              {
+                "path": "takeout",
+                "root": "input"
+              }
+            ],
+            "owner": "system",
+            "request_only": false,
+            "requests": [],
+            "streams": []
+          },
+          "format": "takeout"
+        }
+      ],
+      "drivers": [
+        "export-archive"
+      ],
+      "eventTypes": [
+        "video.watched",
+        "video.searched"
+      ],
+      "formats": [
+        "takeout"
+      ],
+      "name": "google.youtube-history",
+      "purpose": "videos watched and searched for"
+    },
+    {
+      "class": "open",
+      "discovery": [
+        {
+          "capture": false,
+          "description": {
+            "capabilities": [],
+            "credentials": [],
+            "locations": [
+              {
+                "path": "takeout",
+                "root": "input"
+              }
+            ],
+            "owner": "system",
+            "request_only": false,
+            "requests": [],
+            "streams": []
+          },
+          "format": "takeout"
+        }
+      ],
+      "drivers": [
+        "export-archive"
+      ],
+      "eventTypes": [
+        "note.observed"
+      ],
+      "formats": [
+        "takeout"
+      ],
+      "name": "google.keep",
+      "purpose": "notes and checklists kept in Keep"
+    },
+    {
+      "class": "open",
+      "discovery": [
+        {
+          "capture": false,
+          "description": {
+            "capabilities": [],
+            "credentials": [],
+            "locations": [
+              {
+                "path": "takeout",
+                "root": "input"
+              }
+            ],
+            "owner": "system",
+            "request_only": false,
+            "requests": [],
+            "streams": []
+          },
+          "format": "takeout"
+        }
+      ],
+      "drivers": [
+        "export-archive"
+      ],
+      "eventTypes": [
+        "task.revised"
+      ],
+      "formats": [
+        "takeout"
+      ],
+      "name": "google.tasks",
+      "purpose": "tasks and their completion"
+    },
+    {
+      "class": "open",
+      "discovery": [
+        {
+          "capture": false,
+          "description": {
+            "capabilities": [],
+            "credentials": [],
+            "locations": [
+              {
+                "path": "takeout",
+                "root": "input"
+              }
+            ],
+            "owner": "system",
+            "request_only": false,
+            "requests": [],
+            "streams": []
+          },
+          "format": "takeout"
+        }
+      ],
+      "drivers": [
+        "export-archive"
+      ],
+      "eventTypes": [
+        "purchase.observed"
+      ],
+      "formats": [
+        "takeout"
+      ],
+      "name": "google.play-store",
+      "purpose": "apps installed, bought and reviewed"
+    },
+    {
+      "class": "open",
+      "discovery": [
+        {
+          "capture": false,
+          "description": {
+            "capabilities": [],
+            "credentials": [],
+            "locations": [
+              {
+                "path": "takeout",
+                "root": "input"
+              }
+            ],
+            "owner": "system",
+            "request_only": false,
+            "requests": [],
+            "streams": []
+          },
+          "format": "takeout"
+        }
+      ],
+      "drivers": [
+        "export-archive"
+      ],
+      "eventTypes": [
+        "purchase.observed"
+      ],
+      "formats": [
+        "takeout"
+      ],
+      "name": "google.purchases",
+      "purpose": "orders and reservations"
+    },
+    {
+      "class": "open",
+      "discovery": [
+        {
+          "capture": false,
+          "description": {
+            "capabilities": [],
+            "credentials": [],
+            "locations": [
+              {
+                "path": "takeout",
+                "root": "input"
+              }
+            ],
+            "owner": "system",
+            "request_only": false,
+            "requests": [],
+            "streams": []
+          },
+          "format": "takeout"
+        }
+      ],
+      "drivers": [
+        "export-archive"
+      ],
+      "eventTypes": [
+        "location.sample"
+      ],
+      "formats": [
+        "takeout"
+      ],
+      "name": "google.location-history",
+      "purpose": "where the operator was"
+    },
+    {
+      "class": "open",
+      "discovery": [
+        {
+          "capture": false,
+          "description": {
+            "capabilities": [],
+            "credentials": [],
+            "locations": [
+              {
+                "path": "takeout",
+                "root": "input"
+              }
+            ],
+            "owner": "system",
+            "request_only": false,
+            "requests": [],
+            "streams": []
+          },
+          "format": "takeout"
+        }
+      ],
+      "drivers": [
+        "export-archive"
+      ],
+      "eventTypes": [
+        "health.record"
+      ],
+      "formats": [
+        "takeout"
+      ],
+      "name": "google.fit",
+      "purpose": "steps, activity, heart and location samples Fit recorded"
+    },
+    {
+      "class": "open",
+      "discovery": [
+        {
+          "capture": false,
+          "description": {
+            "capabilities": [],
+            "credentials": [],
+            "locations": [
+              {
+                "path": "goodreads",
+                "root": "input"
+              }
+            ],
+            "owner": "system",
+            "request_only": false,
+            "requests": [],
+            "streams": []
+          },
+          "format": "goodreads"
+        }
+      ],
+      "drivers": [
+        "export-archive"
+      ],
+      "eventTypes": [
+        "book.status"
+      ],
+      "formats": [
+        "goodreads"
+      ],
+      "name": "reading.goodreads",
+      "purpose": "books shelved and read, for long-horizon interest"
+    },
+    {
+      "class": "open",
+      "discovery": [
+        {
+          "capture": false,
+          "description": {
+            "capabilities": [],
+            "credentials": [],
+            "locations": [
+              {
+                "path": "messenger",
+                "root": "input"
+              }
+            ],
+            "owner": "system",
+            "request_only": false,
+            "requests": [],
+            "streams": []
+          },
+          "format": "messenger"
+        }
+      ],
+      "drivers": [
+        "export-archive"
+      ],
+      "eventTypes": [
+        "conversation.message"
+      ],
+      "formats": [
+        "messenger"
+      ],
+      "name": "communication.messenger",
+      "purpose": "conversations with people"
+    },
+    {
+      "class": "open",
+      "discovery": [
+        {
+          "capture": false,
+          "description": {
+            "capabilities": [],
+            "credentials": [],
+            "locations": [
+              {
+                "path": "sleep-as-android",
+                "root": "input"
+              }
+            ],
+            "owner": "system",
+            "request_only": false,
+            "requests": [],
+            "streams": []
+          },
+          "format": "sleep-as-android"
+        }
+      ],
+      "drivers": [
+        "export-archive"
+      ],
+      "eventTypes": [
+        "health.record"
+      ],
+      "formats": [
+        "sleep-as-android"
+      ],
+      "name": "health.sleep-as-android",
+      "purpose": "sleep sessions and their phases"
+    },
+    {
+      "class": "open",
+      "discovery": [
+        {
+          "capture": false,
+          "description": {
+            "capabilities": [],
+            "credentials": [],
+            "locations": [
+              {
+                "path": "wykop",
+                "root": "input"
+              }
+            ],
+            "owner": "system",
+            "request_only": false,
+            "requests": [],
+            "streams": []
+          },
+          "format": "wykop"
+        }
+      ],
+      "drivers": [
+        "export-archive"
+      ],
+      "eventTypes": [
+        "post.published",
+        "vote.cast",
+        "bookmark.saved",
+        "notification.received",
+        "account.setting"
+      ],
+      "formats": [
+        "wykop"
+      ],
+      "name": "social.wykop",
+      "purpose": "what the operator wrote and voted on at Wykop"
+    },
+    {
+      "class": "open",
+      "discovery": [
+        {
+          "capture": false,
+          "description": {
+            "capabilities": [],
+            "credentials": [],
+            "locations": [
+              {
+                "path": "reddit",
+                "root": "input"
+              }
+            ],
+            "owner": "system",
+            "request_only": false,
+            "requests": [],
+            "streams": []
+          },
+          "format": "reddit"
+        }
+      ],
+      "drivers": [
+        "export-archive"
+      ],
+      "eventTypes": [
+        "post.published",
+        "vote.cast",
+        "bookmark.saved",
+        "conversation.message"
+      ],
+      "formats": [
+        "reddit"
+      ],
+      "name": "social.reddit",
+      "purpose": "what the operator wrote, voted on, saved and sent at Reddit"
+    },
+    {
+      "class": "open",
+      "discovery": [
+        {
+          "capture": false,
+          "description": {
+            "capabilities": [],
+            "credentials": [],
+            "locations": [
+              {
+                "path": "samsung-health",
+                "root": "input"
+              }
+            ],
+            "owner": "system",
+            "request_only": false,
+            "requests": [],
+            "streams": []
+          },
+          "format": "samsung-health"
+        }
+      ],
+      "drivers": [
+        "export-archive"
+      ],
+      "eventTypes": [
+        "health.record"
+      ],
+      "formats": [
+        "samsung-health"
+      ],
+      "name": "health.samsung-export",
+      "purpose": "sleep, heart, activity and body measurements"
+    },
+    {
+      "class": "open",
+      "discovery": [
+        {
+          "capture": false,
+          "description": {
+            "capabilities": [],
+            "credentials": [],
+            "locations": [
+              {
+                "path": "samsung-sms",
+                "root": "input"
+              }
+            ],
+            "owner": "system",
+            "request_only": false,
+            "requests": [],
+            "streams": []
+          },
+          "format": "samsung-sms"
+        }
+      ],
+      "drivers": [
+        "export-archive"
+      ],
+      "eventTypes": [
+        "conversation.message"
+      ],
+      "formats": [
+        "samsung-sms"
+      ],
+      "name": "phone.samsung-sms",
+      "purpose": "text messages sent and received"
+    },
+    {
+      "class": "open",
+      "discovery": [
+        {
+          "capture": false,
+          "description": {
+            "capabilities": [],
+            "credentials": [],
+            "locations": [
+              {
+                "path": "samsung-account",
+                "root": "input"
+              }
+            ],
+            "owner": "system",
+            "request_only": false,
+            "requests": [],
+            "streams": []
+          },
+          "format": "samsung-account"
+        }
+      ],
+      "drivers": [
+        "export-archive"
+      ],
+      "eventTypes": [
+        "health.record",
+        "account.row"
+      ],
+      "formats": [
+        "samsung-account"
+      ],
+      "name": "account.samsung",
+      "purpose": "what the operator's Samsung account kept: health sync, settings, backups"
+    },
+    {
+      "class": "open",
+      "discovery": [
+        {
+          "capture": false,
+          "description": {
+            "capabilities": [],
+            "credentials": [],
+            "locations": [
+              {
+                "path": ".arbtt/capture.log",
+                "root": "home"
+              }
+            ],
+            "owner": "system",
+            "request_only": false,
+            "requests": [],
+            "streams": []
+          },
+          "format": "arbtt"
+        }
+      ],
+      "drivers": [
+        "append-file"
+      ],
+      "eventTypes": [
+        "window.sampled"
+      ],
+      "formats": [
+        "arbtt"
+      ],
+      "name": "desktop.arbtt",
+      "purpose": "which window was in use, sampled every interval"
+    },
+    {
+      "class": "open",
+      "discovery": [
+        {
+          "capture": false,
+          "description": {
+            "capabilities": [],
+            "credentials": [],
+            "locations": [
+              {
+                "path": "asciinema",
+                "root": "capture"
+              }
+            ],
+            "owner": "system",
+            "request_only": false,
+            "requests": [],
+            "streams": []
+          },
+          "format": "asciinema"
+        }
+      ],
+      "drivers": [
+        "append-file"
+      ],
+      "eventTypes": [
+        "terminal.session",
+        "terminal.output"
+      ],
+      "formats": [
+        "asciinema"
+      ],
+      "name": "terminal.asciinema",
+      "purpose": "what terminals showed and what was typed, replayable"
+    },
+    {
+      "class": "open",
+      "discovery": [
+        {
+          "capture": false,
+          "description": {
+            "capabilities": [],
+            "credentials": [],
+            "locations": [
+              {
+                "path": "asciinema",
+                "root": "capture"
+              }
+            ],
+            "owner": "system",
+            "request_only": false,
+            "requests": [],
+            "streams": []
+          },
+          "format": "asciinema"
+        }
+      ],
+      "drivers": [
+        "append-file"
+      ],
+      "eventTypes": [
+        "terminal.reported"
+      ],
+      "formats": [
+        "asciinema"
+      ],
+      "name": "terminal.capture-events",
+      "purpose": "shell commands around a terminal recording"
+    },
+    {
+      "class": "guarded",
+      "discovery": [
+        {
+          "capture": false,
+          "description": {
+            "capabilities": [],
+            "credentials": [],
+            "locations": [
+              {
+                "path": "kitty-scrollback",
+                "root": "capture"
+              }
+            ],
+            "owner": "system",
+            "request_only": false,
+            "requests": [],
+            "streams": []
+          },
+          "format": "kitty-scrollback"
+        }
+      ],
+      "drivers": [
+        "dir-snapshot"
+      ],
+      "eventTypes": [
+        "scrollback.captured",
+        "scrollback.window"
+      ],
+      "formats": [
+        "kitty-scrollback"
+      ],
+      "name": "terminal.kitty-scrollback",
+      "purpose": "terminal recall: what kitty windows showed"
+    },
+    {
+      "class": "guarded",
+      "discovery": [
+        {
+          "capture": false,
+          "description": {
+            "capabilities": [],
+            "credentials": [],
+            "locations": [
+              {
+                "path": "keylog",
+                "root": "capture"
+              }
+            ],
+            "owner": "system",
+            "request_only": false,
+            "requests": [],
+            "streams": []
+          },
+          "format": "input-log"
+        }
+      ],
+      "drivers": [
+        "append-file"
+      ],
+      "eventTypes": [
+        "key.pressed",
+        "key.released",
+        "pointer.button",
+        "pointer.moved",
+        "pointer.scrolled",
+        "input.logger"
+      ],
+      "formats": [
+        "input-log"
+      ],
+      "name": "desktop.input-log",
+      "purpose": "keystroke timing, typing and pointer activity"
+    },
+    {
+      "class": "open",
+      "discovery": [
+        {
+          "capture": false,
+          "description": {
+            "capabilities": [],
+            "credentials": [],
+            "locations": [
+              {
+                "path": "raw-log",
+                "root": "declared"
+              }
+            ],
+            "owner": "system",
+            "request_only": false,
+            "requests": [],
+            "streams": []
+          },
+          "format": "raw-log"
+        }
+      ],
+      "drivers": [
+        "append-file"
+      ],
+      "eventTypes": [
+        "operator_log.entry"
+      ],
+      "formats": [
+        "raw-log"
+      ],
+      "name": "operator.raw-log",
+      "purpose": "the operator's quick notes, as primary data"
+    },
+    {
+      "class": "open",
+      "discovery": [
+        {
+          "capture": false,
+          "description": {
+            "capabilities": [],
+            "credentials": [],
+            "locations": [
+              {
+                "path": "steering",
+                "root": "declared"
+              }
+            ],
+            "owner": "system",
+            "request_only": false,
+            "requests": [],
+            "streams": []
+          },
+          "format": "steering"
+        }
+      ],
+      "drivers": [
+        "sqlite-rows"
+      ],
+      "eventTypes": [
+        "steering.row"
+      ],
+      "formats": [
+        "steering"
+      ],
+      "name": "operator.steering",
+      "purpose": "commitments, forecasts and reviews the operator keeps"
+    },
+    {
+      "class": "guarded",
+      "discovery": [
+        {
+          "capture": false,
+          "description": {
+            "capabilities": [],
+            "credentials": [],
+            "locations": [
+              {
+                "path": "realm",
+                "root": "declared"
+              }
+            ],
+            "owner": "system",
+            "request_only": false,
+            "requests": [],
+            "streams": []
+          },
+          "format": "sinnix-lake"
+        },
+        {
+          "capture": true,
+          "description": {
+            "capabilities": [
+              "wayland",
+              "wl-paste"
+            ],
+            "credentials": [],
+            "locations": [],
+            "owner": "session",
+            "request_only": false,
+            "requests": [],
+            "streams": [
+              {
+                "capabilities": [],
+                "options": "{\"selection\":\"clipboard\"}",
+                "spool": "clipboard"
+              },
+              {
+                "capabilities": [],
+                "options": "{\"selection\":\"primary\"}",
+                "spool": "primary"
+              }
+            ]
+          },
+          "format": "clipboard"
+        }
+      ],
+      "drivers": [
+        "append-file",
+        "live-stream"
+      ],
+      "eventTypes": [
+        "lake.observed",
+        "clipboard.copied"
+      ],
+      "formats": [
+        "sinnix-lake",
+        "clipboard"
+      ],
+      "name": "desktop.clipboard",
+      "purpose": "recall, prompt provenance"
+    },
+    {
+      "class": "guarded",
+      "discovery": [
+        {
+          "capture": false,
+          "description": {
+            "capabilities": [],
+            "credentials": [],
+            "locations": [
+              {
+                "path": "realm",
+                "root": "declared"
+              }
+            ],
+            "owner": "system",
+            "request_only": false,
+            "requests": [],
+            "streams": []
+          },
+          "format": "sinnix-lake"
+        },
+        {
+          "capture": true,
+          "description": {
+            "capabilities": [
+              "session_bus",
+              "busctl"
+            ],
+            "credentials": [],
+            "locations": [],
+            "owner": "session",
+            "request_only": false,
+            "requests": [],
+            "streams": [
+              {
+                "capabilities": [],
+                "options": "{}",
+                "spool": "notifications"
+              }
+            ]
+          },
+          "format": "notifications"
+        }
+      ],
+      "drivers": [
+        "append-file",
+        "live-stream"
+      ],
+      "eventTypes": [
+        "lake.observed",
+        "notification.shown",
+        "notification.closed",
+        "notification.action"
+      ],
+      "formats": [
+        "sinnix-lake",
+        "notifications"
+      ],
+      "name": "desktop.notifications",
+      "purpose": "recall, interruption analysis"
+    },
+    {
+      "class": "open",
+      "discovery": [
+        {
+          "capture": false,
+          "description": {
+            "capabilities": [],
+            "credentials": [],
+            "locations": [
+              {
+                "path": "realm",
+                "root": "declared"
+              }
+            ],
+            "owner": "system",
+            "request_only": false,
+            "requests": [],
+            "streams": []
+          },
+          "format": "sinnix-lake"
+        }
+      ],
+      "drivers": [
+        "append-file"
+      ],
+      "eventTypes": [
+        "lake.observed"
+      ],
+      "formats": [
+        "sinnix-lake"
+      ],
+      "name": "desktop.media",
+      "purpose": "listening and attention timeline"
+    },
+    {
+      "class": "open",
+      "discovery": [
+        {
+          "capture": false,
+          "description": {
+            "capabilities": [],
+            "credentials": [],
+            "locations": [
+              {
+                "path": "realm",
+                "root": "declared"
+              }
+            ],
+            "owner": "system",
+            "request_only": false,
+            "requests": [],
+            "streams": []
+          },
+          "format": "sinnix-lake"
+        }
+      ],
+      "drivers": [
+        "append-file"
+      ],
+      "eventTypes": [
+        "lake.observed"
+      ],
+      "formats": [
+        "sinnix-lake"
+      ],
+      "name": "desktop.a11y",
+      "purpose": "what was on screen, recall"
+    },
+    {
+      "class": "open",
+      "discovery": [
+        {
+          "capture": false,
+          "description": {
+            "capabilities": [],
+            "credentials": [],
+            "locations": [
+              {
+                "path": "realm",
+                "root": "declared"
+              }
+            ],
+            "owner": "system",
+            "request_only": false,
+            "requests": [],
+            "streams": []
+          },
+          "format": "sinnix-lake"
+        }
+      ],
+      "drivers": [
+        "append-file"
+      ],
+      "eventTypes": [
+        "lake.observed"
+      ],
+      "formats": [
+        "sinnix-lake"
+      ],
+      "name": "desktop.idle-inhibitor",
+      "purpose": "presence and AFK evidence"
+    },
+    {
+      "class": "open",
+      "discovery": [
+        {
+          "capture": false,
+          "description": {
+            "capabilities": [],
+            "credentials": [],
+            "locations": [
+              {
+                "path": "realm",
+                "root": "declared"
+              }
+            ],
+            "owner": "system",
+            "request_only": false,
+            "requests": [],
+            "streams": []
+          },
+          "format": "sinnix-lake"
+        }
+      ],
+      "drivers": [
+        "append-file"
+      ],
+      "eventTypes": [
+        "lake.observed"
+      ],
+      "formats": [
+        "sinnix-lake"
+      ],
+      "name": "media.screen",
+      "purpose": "screen recall and OCR"
+    },
+    {
+      "class": "open",
+      "discovery": [
+        {
+          "capture": false,
+          "description": {
+            "capabilities": [],
+            "credentials": [],
+            "locations": [
+              {
+                "path": "realm",
+                "root": "declared"
+              }
+            ],
+            "owner": "system",
+            "request_only": false,
+            "requests": [],
+            "streams": []
+          },
+          "format": "sinnix-lake"
+        }
+      ],
+      "drivers": [
+        "append-file"
+      ],
+      "eventTypes": [
+        "lake.observed"
+      ],
+      "formats": [
+        "sinnix-lake"
+      ],
+      "name": "media.audio",
+      "purpose": "audio recall, speech index, device state"
+    },
+    {
+      "class": "open",
+      "discovery": [
+        {
+          "capture": false,
+          "description": {
+            "capabilities": [],
+            "credentials": [],
+            "locations": [
+              {
+                "path": "realm",
+                "root": "declared"
+              }
+            ],
+            "owner": "system",
+            "request_only": false,
+            "requests": [],
+            "streams": []
+          },
+          "format": "sinnix-lake"
+        }
+      ],
+      "drivers": [
+        "append-file"
+      ],
+      "eventTypes": [
+        "lake.observed"
+      ],
+      "formats": [
+        "sinnix-lake"
+      ],
+      "name": "browser.navigation",
+      "purpose": "browsing trails, recall"
+    },
+    {
+      "class": "open",
+      "discovery": [
+        {
+          "capture": false,
+          "description": {
+            "capabilities": [],
+            "credentials": [],
+            "locations": [
+              {
+                "path": "realm",
+                "root": "declared"
+              }
+            ],
+            "owner": "system",
+            "request_only": false,
+            "requests": [],
+            "streams": []
+          },
+          "format": "sinnix-lake"
+        }
+      ],
+      "drivers": [
+        "append-file"
+      ],
+      "eventTypes": [
+        "lake.observed"
+      ],
+      "formats": [
+        "sinnix-lake"
+      ],
+      "name": "reading.stack",
+      "purpose": "reading queue"
+    },
+    {
+      "class": "open",
+      "discovery": [
+        {
+          "capture": false,
+          "description": {
+            "capabilities": [],
+            "credentials": [],
+            "locations": [
+              {
+                "path": "realm",
+                "root": "declared"
+              }
+            ],
+            "owner": "system",
+            "request_only": false,
+            "requests": [],
+            "streams": []
+          },
+          "format": "sinnix-lake"
+        }
+      ],
+      "drivers": [
+        "append-file"
+      ],
+      "eventTypes": [
+        "lake.observed"
+      ],
+      "formats": [
+        "sinnix-lake"
+      ],
+      "name": "desktop.display",
+      "purpose": "machine state timeline"
+    },
+    {
+      "class": "open",
+      "discovery": [
+        {
+          "capture": false,
+          "description": {
+            "capabilities": [],
+            "credentials": [],
+            "locations": [
+              {
+                "path": "realm",
+                "root": "declared"
+              }
+            ],
+            "owner": "system",
+            "request_only": false,
+            "requests": [],
+            "streams": []
+          },
+          "format": "sinnix-lake"
+        }
+      ],
+      "drivers": [
+        "append-file"
+      ],
+      "eventTypes": [
+        "lake.observed"
+      ],
+      "formats": [
+        "sinnix-lake"
+      ],
+      "name": "network.netflow",
+      "purpose": "network flows by connection"
+    },
+    {
+      "class": "open",
+      "discovery": [
+        {
+          "capture": false,
+          "description": {
+            "capabilities": [],
+            "credentials": [],
+            "locations": [
+              {
+                "path": "realm",
+                "root": "declared"
+              }
+            ],
+            "owner": "system",
+            "request_only": false,
+            "requests": [],
+            "streams": []
+          },
+          "format": "sinnix-lake"
+        }
+      ],
+      "drivers": [
+        "append-file"
+      ],
+      "eventTypes": [
+        "lake.observed"
+      ],
+      "formats": [
+        "sinnix-lake"
+      ],
+      "name": "machine.peripheral",
+      "purpose": "battery and audio device state"
+    },
+    {
+      "class": "open",
+      "discovery": [
+        {
+          "capture": false,
+          "description": {
+            "capabilities": [],
+            "credentials": [],
+            "locations": [
+              {
+                "path": "realm",
+                "root": "declared"
+              }
+            ],
+            "owner": "system",
+            "request_only": false,
+            "requests": [],
+            "streams": []
+          },
+          "format": "sinnix-lake"
+        }
+      ],
+      "drivers": [
+        "append-file"
+      ],
+      "eventTypes": [
+        "lake.observed"
+      ],
+      "formats": [
+        "sinnix-lake"
+      ],
+      "name": "environment.awair",
+      "purpose": "room air, sleep and focus analysis"
+    },
+    {
+      "class": "guarded",
+      "discovery": [
+        {
+          "capture": true,
+          "description": {
+            "capabilities": [
+              "session_bus",
+              "busctl"
+            ],
+            "credentials": [],
+            "locations": [],
+            "owner": "session",
+            "request_only": false,
+            "requests": [],
+            "streams": [
+              {
+                "capabilities": [],
+                "options": "{}",
+                "spool": "players"
+              }
+            ]
+          },
+          "format": "players"
+        }
+      ],
+      "drivers": [
+        "live-stream"
+      ],
+      "eventTypes": [
+        "player.changed"
+      ],
+      "formats": [
+        "players"
+      ],
+      "name": "media.mpris",
+      "purpose": "listening and watching history, attention"
+    },
+    {
+      "class": "guarded",
+      "discovery": [
+        {
+          "capture": true,
+          "description": {
+            "capabilities": [
+              "runtime"
+            ],
+            "credentials": [],
+            "locations": [],
+            "owner": "session",
+            "request_only": false,
+            "requests": [],
+            "streams": [
+              {
+                "capabilities": [],
+                "options": "{}",
+                "spool": "integrations"
+              }
+            ]
+          },
+          "format": "integration-socket"
+        }
+      ],
+      "drivers": [
+        "live-stream"
+      ],
+      "eventTypes": [
+        "editor.reported",
+        "terminal.reported",
+        "scrollback.captured"
+      ],
+      "formats": [
+        "integration-socket"
+      ],
+      "name": "session.integrations",
+      "purpose": "recall: files edited, commands run in the terminal and what they printed"
+    },
+    {
+      "class": "guarded",
+      "discovery": [
+        {
+          "capture": true,
+          "description": {
+            "capabilities": [],
+            "credentials": [],
+            "locations": [],
+            "owner": "session",
+            "request_only": false,
+            "requests": [],
+            "streams": [
+              {
+                "capabilities": [
+                  "wayland",
+                  "grim"
+                ],
+                "options": "{\"kind\":\"screen\"}",
+                "spool": "screen"
+              },
+              {
+                "capabilities": [
+                  "pipewire",
+                  "pw-record"
+                ],
+                "options": "{\"kind\":\"audio\"}",
+                "spool": "audio"
+              }
+            ]
+          },
+          "format": "media"
+        }
+      ],
+      "drivers": [
+        "media"
+      ],
+      "eventTypes": [
+        "media.segment"
+      ],
+      "formats": [
+        "media"
+      ],
+      "name": "session.media",
+      "purpose": "recall: what was on screen and said; screen text and transcripts"
+    },
+    {
+      "class": "open",
+      "discovery": [
+        {
+          "capture": false,
+          "description": {
+            "capabilities": [],
+            "credentials": [],
+            "locations": [
+              {
+                "path": "library",
+                "root": "declared"
+              }
+            ],
+            "owner": "system",
+            "request_only": false,
+            "requests": [
+              "library.request"
+            ],
+            "streams": []
+          },
+          "format": "library"
+        }
+      ],
+      "drivers": [
+        "dir-snapshot"
+      ],
+      "eventTypes": [
+        "library.copy"
+      ],
+      "formats": [
+        "library"
+      ],
+      "name": "library.scan",
+      "purpose": "the media library"
+    },
+    {
+      "class": "open",
+      "discovery": [
+        {
+          "capture": false,
+          "description": {
+            "capabilities": [],
+            "credentials": [],
+            "locations": [
+              {
+                "path": "library",
+                "root": "declared"
+              }
+            ],
+            "owner": "system",
+            "request_only": false,
+            "requests": [
+              "library.request"
+            ],
+            "streams": []
+          },
+          "format": "library"
+        }
+      ],
+      "drivers": [
+        "api-request"
+      ],
+      "eventTypes": [
+        "library.item",
+        "library.rendition",
+        "library.assignment",
+        "library.collection",
+        "library.entry",
+        "library.rating",
+        "library.comparison",
+        "library.view",
+        "library.dismissal"
+      ],
+      "formats": [
+        "library"
+      ],
+      "name": "library.request",
+      "purpose": "the media library"
+    },
+    {
+      "class": "guarded",
+      "discovery": [
+        {
+          "capture": false,
+          "description": {
+            "capabilities": [],
+            "credentials": [],
+            "locations": [],
+            "owner": "system",
+            "request_only": true,
+            "requests": [],
+            "streams": []
+          },
+          "format": "forecast"
+        }
+      ],
+      "drivers": [
+        "api-request"
+      ],
+      "eventTypes": [
+        "forecast.issued",
+        "forecast.resolved"
+      ],
+      "formats": [
+        "forecast"
+      ],
+      "name": "forecast.request",
+      "purpose": "submitted probability forecasts"
+    },
+    {
+      "class": "guarded",
+      "discovery": [
+        {
+          "capture": false,
+          "description": {
+            "capabilities": [],
+            "credentials": [],
+            "locations": [],
+            "owner": "system",
+            "request_only": true,
+            "requests": [],
+            "streams": []
+          },
+          "format": "page-crawl"
+        }
+      ],
+      "drivers": [
+        "api-cursor"
+      ],
+      "eventTypes": [
+        "page.fetched"
+      ],
+      "formats": [
+        "page-crawl"
+      ],
+      "name": "browser.page-crawl",
+      "purpose": "page content for recall and search over what was read"
     }
   ]
 }

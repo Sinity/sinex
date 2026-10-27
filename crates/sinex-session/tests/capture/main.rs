@@ -85,6 +85,24 @@ exec sleep 30
             std::fs::write(&path, format!("#!{}\n{body}", shell.trim())).unwrap();
             std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o700)).unwrap();
         }
+        let runtime = root.join("run");
+        std::fs::create_dir(&runtime).unwrap();
+        std::fs::write(runtime.join("wayland-test"), b"").unwrap();
+        let excluded: serde_json::Map<String, serde_json::Value> = sinex_sources::sources::specs()
+            .iter()
+            .filter(|spec| spec.name != "desktop.clipboard")
+            .map(|spec| {
+                (
+                    spec.name.to_owned(),
+                    serde_json::json!({"reason":"fixture captures only the clipboard"}),
+                )
+            })
+            .collect();
+        std::fs::write(
+            root.join("sources.json"),
+            serde_json::to_vec(&serde_json::json!({"exclude":excluded})).unwrap(),
+        )
+        .unwrap();
         let pids = root.join("pids");
         Self {
             _dir: dir,
@@ -101,6 +119,10 @@ exec sleep 30
         ));
         command
             .env("PATH", std::env::join_paths(path).unwrap())
+            .env("XDG_RUNTIME_DIR", self.root.join("run"))
+            .env("WAYLAND_DISPLAY", "wayland-test")
+            .env_remove("HYPRLAND_INSTANCE_SIGNATURE")
+            .env_remove("DBUS_SESSION_BUS_ADDRESS")
             .env("FAKE_PIDS", &self.pids)
             .env("FAKE_DESCENDANTS", self.root.join("descendants"))
             .env("FAKE_HEARTBEAT", self.root.join("heartbeat"))
@@ -122,10 +144,11 @@ exec sleep 30
                 nats.prefix(),
                 "--producer",
                 "fixture",
-                "--clipboard",
                 "--every",
                 "1",
             ])
+            .arg("--sources")
+            .arg(self.root.join("sources.json"))
             .arg("--state")
             .arg(self.root.join("state"))
             .arg("--store")
@@ -320,4 +343,68 @@ fn a_first_record_after_saved_empty_polls_reaches_transport_and_reaps_children()
         String::from_utf8_lossy(&output.stderr)
     );
     fixture.all_reaped();
+}
+
+#[devkit::test]
+fn drain_without_spools_exits_without_starting_session_captures() {
+    let nats = devkit::nats::test_nats().unwrap();
+    let fixture = Fixture::new();
+    let output = Session {
+        child: Some(fixture.run(&nats).arg("--drain").spawn().unwrap()),
+    }
+    .finish();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(fixture.pids().is_empty());
+    assert!(!fixture.root.join("state/spool").exists());
+}
+
+#[devkit::test]
+fn drain_reads_a_stopped_spool_without_session_capabilities_and_keeps_unacknowledged_bytes() {
+    use sinex_source_core::drivers::live_stream::{Rotation, SpoolWriter};
+    let nats = devkit::nats::test_nats().unwrap();
+    let fixture = Fixture::new();
+    let spool = fixture.root.join("state/spool/clipboard");
+    let mut writer = SpoolWriter::open(&spool, Rotation::default()).unwrap();
+    writer
+        .append(
+            sinex_model::Timestamp::now(),
+            br#"{"selection":"clipboard","types":[],"secret":false,"text":"synthetic drain"}"#,
+        )
+        .unwrap();
+    writer.sync().unwrap();
+    drop(writer);
+    let before: Vec<_> = std::fs::read_dir(&spool)
+        .unwrap()
+        .map(|entry| {
+            let path = entry.unwrap().path();
+            let bytes = std::fs::read(&path).unwrap();
+            (path, bytes)
+        })
+        .collect();
+    let output = Session {
+        child: Some(
+            fixture
+                .run(&nats)
+                .arg("--drain")
+                .env_remove("WAYLAND_DISPLAY")
+                .spawn()
+                .unwrap(),
+        ),
+    }
+    .finish();
+    // There is no ingress stream, so finished data must remain available to retry.
+    assert!(!output.status.success());
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("no stream found for given subject"),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(fixture.pids().is_empty());
+    for (path, bytes) in before {
+        assert_eq!(std::fs::read(path).unwrap(), bytes);
+    }
 }
