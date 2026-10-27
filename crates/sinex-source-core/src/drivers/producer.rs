@@ -637,9 +637,11 @@ impl Producer {
                 self.recorded(&[id.clone(), malformed.clone()])
                     .await?
                     .into_iter()
-                    .find(|ack| ack.frame == id
-                        || (ack.frame == malformed
-                            && ack.refusal_kind() == Some(FrameRefusal::Malformed)))
+                    .find(|ack| {
+                        ack.frame == id
+                            || (ack.frame == malformed
+                                && ack.refusal_kind() == Some(FrameRefusal::Malformed))
+                    })
                     .ok_or_else(|| Error::NoAck(id.clone()))?,
                 true,
             ),

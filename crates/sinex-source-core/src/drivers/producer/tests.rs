@@ -711,16 +711,40 @@ async fn a_stale_malformed_acknowledgment_does_not_refuse_another_frame() {
     let nats = devkit::nats::test_nats().unwrap();
     let subjects = Subjects::new(nats.prefix());
     let received = standin(&nats, &subjects, "delayed").await;
-    let mut producer = Producer::connect(nats.url(), None, subjects.clone(), "delayed", &ProducerHello::default()).await.unwrap();
+    let mut producer = Producer::connect(
+        nats.url(),
+        None,
+        subjects.clone(),
+        "delayed",
+        &ProducerHello::default(),
+    )
+    .await
+    .unwrap();
     let client = async_nats::connect(nats.url()).await.unwrap();
     let stale = Acknowledgment {
-        frame: "malformed/another-frame".into(), material: None,
-        admitted: vec![], outcome: json!({"refusal_kind": FrameRefusal::Malformed}),
-        refusal: Some("a delayed malformed frame".into()), commit_seq: None,
+        frame: "malformed/another-frame".into(),
+        material: None,
+        admitted: vec![],
+        outcome: json!({"refusal_kind": FrameRefusal::Malformed}),
+        refusal: Some("a delayed malformed frame".into()),
+        commit_seq: None,
     };
-    client.publish(subjects.ack("delayed"), serde_json::to_vec(&stale).unwrap().into()).await.unwrap();
+    client
+        .publish(
+            subjects.ack("delayed"),
+            serde_json::to_vec(&stale).unwrap().into(),
+        )
+        .await
+        .unwrap();
     client.flush().await.unwrap();
-    let ack = producer.send(Ingress::Events { frame: "valid".into(), events: vec![event(1)], failures: vec![] }).await.unwrap();
+    let ack = producer
+        .send(Ingress::Events {
+            frame: "valid".into(),
+            events: vec![event(1)],
+            failures: vec![],
+        })
+        .await
+        .unwrap();
     assert_eq!(ack.frame, "valid");
     assert_eq!(ack.admitted.len(), 1);
     assert_eq!(received.lock().unwrap().len(), 1);
