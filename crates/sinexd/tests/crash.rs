@@ -10,6 +10,9 @@
 //! dense, every stored material's bytes present.
 mod support;
 
+#[path = "crash/private_history.rs"]
+mod private_history;
+
 use devkit::pg::TestDatabase;
 use sqlx::{Connection, PgConnection, Row};
 use std::collections::BTreeMap;
@@ -18,10 +21,9 @@ use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 
 const HOST: &str = "crash";
-/// How long a step may take to reach its kill point or finish: just under the
-/// suite's own termination of a crash test (`.config/nextest.toml`: 120 s × 5),
-/// so a slow host makes a test slow, never a spurious failure.
-const WAIT_LIMIT: Duration = Duration::from_secs(570);
+/// One fault-point wait; leave 30 seconds below nextest's two-minute deadline
+/// for reporting and cleanup.
+const WAIT_LIMIT: Duration = Duration::from_secs(90);
 /// Inputs generated once per test: a zsh history and an Atuin database.
 struct Inputs {
     dir: PathBuf,
@@ -448,10 +450,10 @@ backfill_steps! { Inputs::multiple_batches();
     // again: its bytes are stored, its readings are not.
     backfill_killed_between_zsh_batches:
         Some("SELECT EXISTS (SELECT 1 FROM raw.positions WHERE binding LIKE 'terminal.zsh-history:%@crash')"),
-        "SELECT 1 FROM raw.positions WHERE binding LIKE 'terminal.zsh-history:%@crash' FOR UPDATE".to_string();
+        "SELECT 1 FROM raw.positions WHERE binding LIKE 'terminal.zsh-history:%@crash' FOR UPDATE";
     backfill_killed_between_atuin_batches:
         Some("SELECT EXISTS (SELECT 1 FROM raw.positions WHERE binding LIKE 'terminal.atuin-history:%@crash')"),
-        "SELECT 1 FROM raw.positions WHERE binding LIKE 'terminal.atuin-history:%@crash' FOR UPDATE".to_string();
+        "SELECT 1 FROM raw.positions WHERE binding LIKE 'terminal.atuin-history:%@crash' FOR UPDATE";
 }
 
 /// Kill a replay at a step; then run it again and compare with an
@@ -770,7 +772,7 @@ publisher_steps! {
     // A later page is on the stream; saving its position is blocked.
     publisher_killed_between_pages:
         Some("SELECT EXISTS (SELECT 1 FROM core.consumer_positions WHERE consumer = 'publisher')"),
-        "SELECT 1 FROM core.consumer_positions WHERE consumer = 'publisher' FOR UPDATE".to_string();
+        "SELECT 1 FROM core.consumer_positions WHERE consumer = 'publisher' FOR UPDATE";
 }
 
 /// Kill a backfill after it stored a material's bytes but before the
