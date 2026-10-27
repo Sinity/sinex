@@ -435,3 +435,40 @@ fn changed_file_defaults_change_segment_readings_with_the_same_native_identity()
     assert_ne!(first.payload["language"], corrected.payload["language"]);
     assert_ne!(first.record_hash, corrected.record_hash);
 }
+
+#[devkit::test]
+fn imported_json_refuses_sealed_member_staging_before_any_material_delivery() {
+    use crate::{MaterialSink, shared_pass::SharedPass};
+    let bytes = br#"{"segments":[{"text":"synthetic"}],"model":"example"}"#;
+    let sink = Sink::default();
+    let blob = sink.put(bytes).unwrap();
+    let driver = ExportArchive {
+        path: "/example/missing.json".into(),
+        host: "example".into(),
+        select: |_| true,
+        framing: Framing::ImportedJson("/segments"),
+        part_bytes: 1,
+    };
+    let mut deliveries = 0;
+    let result = crate::shared_pass::read(
+        crate::shared_pass::Input::Sequential(Box::new(std::io::Cursor::new(bytes.to_vec()))),
+        blob,
+        bytes.len() as u64,
+        sinex_model::ObservationFacts::default(),
+        std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        vec![driver.route(Value::Null, Class::Sealed)],
+        &sink,
+        &mut |_, _| {
+            deliveries += 1;
+            Ok(true)
+        },
+    );
+    assert!(
+        result
+            .unwrap_err()
+            .to_string()
+            .contains("sealed imported JSON")
+    );
+    assert_eq!(deliveries, 0);
+    assert_eq!(sink.0.lock().unwrap().len(), 1);
+}
