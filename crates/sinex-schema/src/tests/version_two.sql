@@ -3,6 +3,8 @@ DROP FUNCTION core.encode_equivalence_key(text), core.decode_equivalence_key(byt
 DROP VIEW core.visible_search_text;
 ALTER TABLE core.search_text RENAME TO search_text_current;
 ALTER TABLE core.search_text_current RENAME CONSTRAINT search_text_pkey TO search_text_current_pkey;
+ALTER TABLE core.search_text_current RENAME CONSTRAINT search_text_event_id_not_null TO search_text_current_event_id_not_null;
+ALTER TABLE core.search_text_current RENAME CONSTRAINT search_text_text_not_null TO search_text_current_text_not_null;
 DROP INDEX core.search_text_trigram;
 DROP INDEX core.search_text_tsv;
 CREATE TABLE core.search_text (event_id uuid PRIMARY KEY, text text NOT NULL, tsv tsvector GENERATED ALWAYS AS (to_tsvector('simple',text)) STORED);
