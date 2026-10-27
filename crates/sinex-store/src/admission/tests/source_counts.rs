@@ -116,7 +116,7 @@ async fn upgrading_from_version_0_counts_the_stored_events(db: devkit::pg::TestD
         .await
         .unwrap();
 
-    remove_version_3(&mut conn).await;
+    remove_version_4(&mut conn).await;
     // Version 0 is this schema without the counts.
     conn.execute("DROP TABLE core.source_counts").await.unwrap();
     conn.execute("ALTER TABLE core.runs DROP COLUMN events")
@@ -193,7 +193,7 @@ async fn an_upgrade_waits_for_no_writer(db: devkit::pg::TestDatabase) {
     assert_eq!(version, Some(0));
 }
 
-async fn remove_version_3(conn: &mut PgConnection) {
+async fn remove_version_4(conn: &mut PgConnection) {
     for sql in [
         "DROP VIEW event_types.sinex_telemetry",
         "DROP VIEW event_types.tag_applied",
@@ -208,8 +208,7 @@ async fn remove_version_3(conn: &mut PgConnection) {
     }
 }
 
-#[devkit::test]
-async fn upgrading_from_version_2_keeps_activity_and_telemetry(db: devkit::pg::TestDatabase) {
+async fn upgrade_keeps_activity_and_telemetry(db: devkit::pg::TestDatabase, from: i32) {
     let mut conn = <PgConnection as sqlx::Connection>::connect(&db.url(None))
         .await
         .unwrap();
@@ -241,14 +240,16 @@ async fn upgrading_from_version_2_keeps_activity_and_telemetry(db: devkit::pg::T
     admit_one(&mut conn, &sample).await;
     let before: Vec<Value> = sqlx::query_scalar("SELECT to_jsonb(e) FROM core.events e UNION ALL SELECT to_jsonb(t) FROM telemetry.events t")
         .fetch_all(&mut conn).await.unwrap();
-    remove_version_3(&mut conn).await;
-    conn.execute("UPDATE sinex_schema.applied SET version = 2")
+    remove_version_4(&mut conn).await;
+    sqlx::query("UPDATE sinex_schema.applied SET version = $1")
+        .bind(from)
+        .execute(&mut conn)
         .await
         .unwrap();
     assert_eq!(
         sinex_schema::apply(&mut conn).await.unwrap(),
         sinex_schema::Applied::Upgraded {
-            from: 2,
+            from,
             to: sinex_schema::VERSION
         }
     );
@@ -262,4 +263,14 @@ async fn upgrading_from_version_2_keeps_activity_and_telemetry(db: devkit::pg::T
         sinex_schema::apply(&mut conn).await.unwrap(),
         sinex_schema::Applied::Current { .. }
     ));
+}
+
+#[devkit::test]
+async fn upgrading_from_version_2_keeps_activity_and_telemetry(db: devkit::pg::TestDatabase) {
+    upgrade_keeps_activity_and_telemetry(db, 2).await;
+}
+
+#[devkit::test]
+async fn upgrading_from_version_3_keeps_activity_and_telemetry(db: devkit::pg::TestDatabase) {
+    upgrade_keeps_activity_and_telemetry(db, 3).await;
 }
