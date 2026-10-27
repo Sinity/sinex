@@ -30,7 +30,7 @@ pub const SPEC: SourceSpec = SourceSpec {
     excisable: false,
     purpose: "keystroke timing, typing and pointer activity",
     // Keystrokes spell out what was typed, passwords included.
-    class: Class::Guarded,
+    class: Class::Sealed,
     parser: "scribe-tap",
     parser_version: 1,
     event_types: &[

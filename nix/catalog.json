@@ -792,7 +792,7 @@
         "append-file"
       ],
       "purpose": "keystroke timing, typing and pointer activity",
-      "class": "guarded",
+      "class": "sealed",
       "eventTypes": [
         "key.pressed",
         "key.released",
