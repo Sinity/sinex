@@ -194,6 +194,13 @@ fn print_json(v: &Value) {
     println!("{}", serde_json::to_string_pretty(v).expect("JSON prints"));
 }
 
+fn status_error(code: u8, reason: impl std::fmt::Display, state: Option<&str>) -> ExitCode {
+    let mut status = serde_json::json!({"daemon": {"unavailable": reason.to_string()}});
+    capture_health::attach(&mut status, state);
+    print_json(&status);
+    ExitCode::from(code)
+}
+
 #[tokio::main]
 async fn main() -> ExitCode {
     let matches = cli().get_matches();
@@ -304,13 +311,14 @@ async fn main() -> ExitCode {
                     print_json(&v);
                     ExitCode::SUCCESS
                 }
-                Err(e) => fail(1, e),
+                Err(e) => status_error(1, e, capture_state),
             };
         }
         _ => {}
     }
     let client = match client(&matches) {
         Ok(c) => c,
+        Err(e) if name == "status" => return status_error(1, e, capture_state),
         Err(e) => return fail(1, e),
     };
     if name == "mcp" {
@@ -391,17 +399,22 @@ async fn main() -> ExitCode {
             Ok((_, reply)) => reply,
             Err(ClientError::Unreachable(m)) => {
                 if name == "status" {
-                    let mut status = serde_json::json!({"daemon": {"unavailable": m}});
-                    capture_health::attach(&mut status, capture_state);
-                    print_json(&status);
-                    return ExitCode::from(UNREACHABLE);
+                    return status_error(UNREACHABLE, m, capture_state);
                 }
                 return fail(UNREACHABLE, format!("the daemon is not reachable: {m}"));
             }
+            Err(e) if name == "status" => return status_error(1, e, capture_state),
             Err(e) => return fail(1, e),
         };
         let mut result = match reply {
             Reply::Ok { result } => result,
+            Reply::Refused { reason, not_built } if name == "status" => {
+                return status_error(
+                    if not_built { NOT_BUILT } else { REFUSED },
+                    reason,
+                    capture_state,
+                );
+            }
             Reply::Refused {
                 reason,
                 not_built: true,
