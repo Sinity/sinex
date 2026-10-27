@@ -145,3 +145,15 @@ fn declared_file_extension_and_mime_rules_keep_the_ported_cases() {
     input.payload["media_type"] = json!("image/png");
     assert!(read(&rules, &input).is_empty());
 }
+
+#[devkit::test]
+fn sources_with_the_same_native_id_keep_separate_tags() {
+    let rule = applier(json!([{"tag": "terminal", "event_type": "command.imported"}]));
+    let mut first = event();
+    first.payload["native_id"] = json!("one");
+    let mut second = first.clone();
+    second.source = "other.source".into();
+    let one = read(&rule, &first);
+    let two = read(&rule, &second);
+    assert_ne!(one[0].equivalence_key, two[0].equivalence_key);
+}
