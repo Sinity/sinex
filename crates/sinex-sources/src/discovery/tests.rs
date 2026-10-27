@@ -52,7 +52,7 @@ fn discovers_late_inputs_and_distinguishes_empty_missing_and_unreadable() {
     std::fs::write(&path, b"").unwrap();
     assert_eq!(states().availability, Availability::Reading);
     assert_eq!(states().bindings.len(), 1);
-    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0)).unwrap();
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o0)).unwrap();
     assert_eq!(states().availability, Availability::Unavailable);
     std::fs::remove_file(&path).unwrap();
     assert_eq!(states().availability, Availability::WaitingForInput);
@@ -369,4 +369,47 @@ fn invalid_capture_settings_do_not_disable_other_streams() {
     );
     assert!(inputs.iter().any(|input| input.source == "library.request"
         && input.availability == Availability::RequestOnly));
+}
+
+#[devkit::test]
+fn capture_selection_uses_the_formats_discovery_callback() {
+    const FORMAT: InputFormat = InputFormat {
+        discover: |format, context| {
+            let binding = (format.plan.unwrap())(
+                &context.spool.join("dynamic-device"),
+                &Settings::new(&context.host),
+            )
+            .unwrap()
+            .remove(0);
+            vec![DiscoveredInput {
+                format: format.name.into(),
+                source: binding.source.clone(),
+                input: Some(binding.input.clone()),
+                settings: binding.settings.clone(),
+                availability: Availability::Capturing,
+                capture: true,
+                reason: None,
+                bindings: vec![binding],
+            }]
+        },
+        ..crate::sources::file_watch::FORMAT
+    };
+    let mut context = DiscoveryContext {
+        host: "fixture".into(),
+        spool: PathBuf::from("/synthetic/spool"),
+        ..Default::default()
+    };
+    let captures = select_captures(&context, Owner::Session, &[&FORMAT]);
+    assert_eq!(captures.len(), 1);
+    assert_eq!(
+        captures[0].1.input,
+        Path::new("/synthetic/spool/dynamic-device")
+    );
+    context.exclude.insert(
+        (FORMAT.specs)()[0].name.into(),
+        Some(Exclusion {
+            reason: "fixture exclusion".into(),
+        }),
+    );
+    assert!(select_captures(&context, Owner::Session, &[&FORMAT]).is_empty());
 }
