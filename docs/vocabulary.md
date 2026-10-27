@@ -6,7 +6,7 @@ these names and no others.
 ## Captured data
 
 - **input**: something Sinex observes repeatedly: a file, a database, a socket, an API collection.
-- **source**: a named kind of record Sinex reads, `<area>.<name>` (`terminal.zsh-history`), with its parser, its event types and its purpose. Events carry the source's name. Several declarations can share one source name: one per table it reads (`operator.steering`) or one per format that reads it (the live clipboard and its lake lane).
+- **source**: a named kind of record Sinex reads, `<area>.<name>` (`terminal.zsh-history`), with its parser, its event types and its purpose. Events carry the source's name. Several declarations can share one source name: one per table it reads (`operator.steering`).
 - **format**: how an input is laid out and which sources it feeds (`zsh`, `takeout`, `sinnix-lake`); `--read FORMAT=PATH` plans the bindings for an input in that format.
 - **binding**: one configured instance of a source: the source, its input and its settings.
 - **driver**: shared code that reads one input shape (append-only file, SQLite rows, export archive, directory snapshot, live stream, API cursor, media, producer, API request).

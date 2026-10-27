@@ -37,7 +37,7 @@ fn envelope_time() -> Timestamp {
 
 #[devkit::test]
 fn a_selection_is_the_live_clipboard_event() {
-    let LakeEvent::Copied(copy) = one("desktop.clipboard", "primary", text_copy()) else {
+    let LakeEvent::Copied(copy) = one("desktop.lake-clipboard", "primary", text_copy()) else {
         panic!("not a copy")
     };
     assert_eq!(copy.selection, "primary");
@@ -53,7 +53,7 @@ fn a_selection_is_the_live_clipboard_event() {
     assert!(copy.extra.is_empty(), "the category is the MIME type's");
 
     let LakeEvent::Copied(imported) = one(
-        "desktop.clipboard",
+        "desktop.lake-clipboard",
         "clipboard",
         json!({"category":"binary","mime":"image/png","sha256":"ab","size":4,
                "source":"clipse-import","pinned":false}),
@@ -73,7 +73,7 @@ fn a_selection_is_the_live_clipboard_event() {
 #[devkit::test]
 fn a_notification_takes_the_monitor_time_and_flat_actions() {
     let LakeEvent::Notification(n) = one(
-        "desktop.notifications",
+        "desktop.lake-notifications",
         "notifications",
         json!({"app_name":"synthetic","app_icon":"","replaces_id":0,"summary":"Hello",
                "body":"body","actions":[{"id":"default","label":"Open"}],"urgency":2,
@@ -97,7 +97,7 @@ fn a_notification_takes_the_monitor_time_and_flat_actions() {
         1,
         json!({"app_name":"synthetic","summary":"Hello"}),
     );
-    assert!(parse("desktop.notifications", &missing).is_err());
+    assert!(parse("desktop.lake-notifications", &missing).is_err());
 }
 
 #[devkit::test]
@@ -384,22 +384,22 @@ fn an_air_sample_is_keyed_by_the_sensor_clock_under_either_lane_name() {
 
 #[devkit::test]
 fn unbound_lanes_and_bad_envelopes_fail() {
-    assert!(parse("desktop.clipboard", &envelope_line("mpris", 1, text_copy())).is_err());
+    assert!(parse("desktop.lake-clipboard", &envelope_line("mpris", 1, text_copy())).is_err());
     let mut bad = envelope_line("clipboard", 1, text_copy());
     bad.insert("schema".into(), json!("other"));
-    assert!(parse("desktop.clipboard", &bad).is_err());
+    assert!(parse("desktop.lake-clipboard", &bad).is_err());
     let mut bad = envelope_line("clipboard", 1, text_copy());
     bad.remove("seq");
-    assert!(parse("desktop.clipboard", &bad).is_err());
+    assert!(parse("desktop.lake-clipboard", &bad).is_err());
     let wrong_type = envelope_line("clipboard", 1, json!({"text": 4}));
-    assert!(parse("desktop.clipboard", &wrong_type).is_err());
+    assert!(parse("desktop.lake-clipboard", &wrong_type).is_err());
 }
 
 #[devkit::test]
 fn every_lane_maps_to_its_sources_declared_event_types() {
     use sinex_model::Payloads;
     let samples = [
-        ("desktop.clipboard", "clipboard", text_copy()),
+        ("desktop.lake-clipboard", "clipboard", text_copy()),
         ("desktop.media", "mpris", json!({"player":"p"})),
         ("desktop.display", "monitor", json!({})),
         ("network.netflow", "netflow", json!({})),
@@ -445,7 +445,7 @@ fn day_files_skip_index_and_sidecars() {
     ] {
         std::fs::write(dir.join(f), b"").unwrap();
     }
-    let files = day_files(&root, lake_source("desktop.notifications").unwrap());
+    let files = day_files(&root, lake_source("desktop.lake-notifications").unwrap()).unwrap();
     assert_eq!(files.len(), 1);
     assert!(files[0].ends_with("notifications-20261001.jsonl"));
     std::fs::remove_dir_all(&root).unwrap();
@@ -462,4 +462,36 @@ fn source_names_and_parsers_are_unique() {
             .iter()
             .all(|l| l.spec.parser.ends_with(l.spec.name))
     );
+}
+
+#[devkit::test]
+fn malformed_envelope_coordinates_and_out_of_range_times_fail() {
+    let source = "desktop.lake-clipboard";
+    let valid = envelope_line("clipboard", 1, text_copy());
+    for (field, value) in [
+        ("host", json!(null)), ("host", json!("")),
+        ("seq", json!(-1)), ("seq", json!("1")),
+        ("raw_ref", json!({})), ("ts", json!(1e300)), ("ts", json!(-1e300)),
+    ] {
+        let mut record = valid.clone();
+        record.insert(field.into(), value);
+        assert!(parse(source, &record).is_err(), "{field}: {record:?}");
+    }
+}
+
+#[devkit::test]
+fn an_unreadable_lane_directory_is_not_an_empty_lake() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("activity/desktop");
+    std::fs::create_dir_all(&path).unwrap();
+    std::fs::write(path.join("clipboard"), "not a directory").unwrap();
+    let error = (FORMAT.plan.unwrap())(dir.path(), &crate::binding::Settings::default()).unwrap_err();
+    assert!(error.contains("clipboard"), "{error}");
+}
+
+#[devkit::test]
+fn a_missing_lake_root_is_not_an_empty_lake() {
+    let directory = tempfile::tempdir().unwrap();
+    assert!((FORMAT.plan.unwrap())(&directory.path().join("missing"), &crate::binding::Settings::default()).is_err());
+    assert!((FORMAT.plan.unwrap())(directory.path(), &crate::binding::Settings::default()).unwrap().is_empty());
 }

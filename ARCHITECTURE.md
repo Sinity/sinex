@@ -117,8 +117,14 @@ its own domain type where Sinex has no live capture of it yet
 (`accessibility.tree`, `connection.ended`, `air.sampled`), so lake history and
 live capture are one series. Fields a producer adds later are kept in the
 event's `extra`; a known field of the wrong type is a record failure.
-Samsung account tables other than health stay generic `account.row` rows,
-always marked `untyped`.
+Samsung calls and reminders become `call.logged` and `task.revised`;
+other account tables outside health stay generic `account.row` rows, always
+marked `untyped`.
+
+Lake clipboard and notification sources (`desktop.lake-clipboard`,
+`desktop.lake-notifications`) remain distinct from their live captures. Fusion
+reads each source with its own observer, so overlapping captures join while
+repeated records from one capture stay separate.
 
 The machine records (activations, backup checks and drills, audits, the usage
 census, configuration drift, experiment runs) and the router's capture lake
@@ -134,7 +140,11 @@ moved to a commit that does not descend from its old target is a rewrite,
 and the update lists the commits no ref or checkout reaches any more. They
 stay recorded. `code.github` reads the GitHub repository of the same
 checkout with a token from a file; `work.beads` reads a Beads store's JSONL
-export and `work.agentctl` AgentCTL's event log. Sinex never writes to
+export and `work.agentctl` AgentCTL's event log. The Beads cursor keeps
+issue IDs and hashes, so deletions survive retries and restarts without
+putting issue text in the cursor. GitHub lists, checks, reviews and labels
+are read to their last page; malformed lists and repeated page cursors fail
+the poll. Sinex never writes to
 these tools. The fields that join them are recorded as they are read: a
 commit's refs and checkouts, a pull request's head branch and commit, a
 job's checkout and its HEAD at start and end.

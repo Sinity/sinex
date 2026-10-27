@@ -213,7 +213,7 @@ fn mpris(title: &str, artist: &str, secs: f64, status: Option<&str>, length_s: f
             heartbeat: false,
             properties: Default::default(),
         },
-        "desktop.mpris",
+        "media.mpris",
         Class::Open,
     )
 }
@@ -594,7 +594,7 @@ fn a_play_in_the_export_and_the_player_is_one_play() {
     assert_eq!(p["player"], "org.mpris.MediaPlayer2.spotify");
     assert_eq!(
         observed_by(p),
-        ["media.spotify-history", "desktop.mpris", "desktop.media"]
+        ["media.spotify-history", "media.mpris", "desktop.media"]
     );
     assert!(matches!(&out[0].origin, Origin::Derived { parents } if parents.len() == 4));
 }
@@ -653,17 +653,20 @@ fn a_copy_seen_live_and_in_the_lake_is_one_copy() {
             clipboard("clipboard", "hello", H + 5.0, false),
             in_lake(
                 clipboard("clipboard", "hello", H + 5.3, false),
-                "desktop.clipboard",
+                "desktop.lake-clipboard",
             ),
             in_lake(
                 clipboard("primary", "hello", H + 5.3, false),
-                "desktop.clipboard",
+                "desktop.lake-clipboard",
             ),
             clipboard("clipboard", "secret", H + 9.0, true),
         ],
     );
     assert_eq!(out.len(), 2, "{out:?}");
-    assert_eq!(observed_by(&out[0]), ["desktop.clipboard"]);
+    assert_eq!(
+        observed_by(&out[0]),
+        ["desktop.clipboard", "desktop.lake-clipboard"]
+    );
     assert_eq!(out[1]["selection"], "primary");
 }
 
@@ -673,13 +676,19 @@ fn a_notification_seen_live_and_in_the_lake_is_one_notification() {
         &NOTIFICATIONS,
         &[
             notification("New mail", H + 5.0),
-            in_lake(notification("New mail", H + 5.1), "desktop.notifications"),
+            in_lake(
+                notification("New mail", H + 5.1),
+                "desktop.lake-notifications",
+            ),
             notification("Other", H + 5.0),
         ],
     );
     assert_eq!(out.len(), 2, "{out:?}");
     let joined = out.iter().find(|n| n["summary"] == "New mail").unwrap();
-    assert_eq!(observed_by(joined), ["desktop.notifications"]);
+    assert_eq!(
+        observed_by(joined),
+        ["desktop.notifications", "desktop.lake-notifications"]
+    );
 }
 
 // Mail: one message stored by several mail sources.
@@ -824,5 +833,79 @@ fn the_same_text_at_the_same_millisecond_is_one_message() {
     assert_eq!(
         joined["message_id"], "mid.1000",
         "the ID comes from the database"
+    );
+}
+
+#[devkit::test]
+fn repeated_copies_from_one_capture_stay_separate() {
+    let out = fuse(
+        &CLIPBOARD,
+        &[
+            clipboard("clipboard", "hello", H + 5.0, false),
+            clipboard("clipboard", "hello", H + 5.4, false),
+            in_lake(
+                clipboard("clipboard", "hello", H + 5.1, false),
+                "desktop.lake-clipboard",
+            ),
+            in_lake(
+                clipboard("clipboard", "hello", H + 5.5, false),
+                "desktop.lake-clipboard",
+            ),
+        ],
+    );
+    assert_eq!(out.len(), 2, "{out:?}");
+    for copy in out {
+        assert_eq!(
+            observed_by(&copy),
+            ["desktop.clipboard", "desktop.lake-clipboard"]
+        );
+    }
+    assert_eq!(
+        fuse(
+            &CLIPBOARD,
+            &[
+                clipboard("clipboard", "hello", H + 5.0, false),
+                clipboard("clipboard", "hello", H + 5.1, false),
+            ]
+        )
+        .len(),
+        2
+    );
+}
+
+#[devkit::test]
+fn repeated_notifications_from_one_capture_stay_separate() {
+    let out = fuse(
+        &NOTIFICATIONS,
+        &[
+            notification("New mail", H + 5.0),
+            notification("New mail", H + 5.4),
+            in_lake(
+                notification("New mail", H + 5.1),
+                "desktop.lake-notifications",
+            ),
+            in_lake(
+                notification("New mail", H + 5.5),
+                "desktop.lake-notifications",
+            ),
+        ],
+    );
+    assert_eq!(out.len(), 2, "{out:?}");
+    for notification in out {
+        assert_eq!(
+            observed_by(&notification),
+            ["desktop.notifications", "desktop.lake-notifications"]
+        );
+    }
+    assert_eq!(
+        fuse(
+            &NOTIFICATIONS,
+            &[
+                notification("New mail", H + 5.0),
+                notification("New mail", H + 5.1),
+            ]
+        )
+        .len(),
+        2
     );
 }

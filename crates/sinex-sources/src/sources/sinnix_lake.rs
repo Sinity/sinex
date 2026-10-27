@@ -48,22 +48,28 @@ const fn spec(
 /// audit, phone) have their own formats and readers.
 const LAKE_SOURCES: &[LakeSource] = &[
     LakeSource {
-        spec: spec(
-            "desktop.clipboard",
-            "sinnix-lake:desktop.clipboard",
+        spec: SourceSpec {
+            class: Class::Guarded,
+            ..spec(
+            "desktop.lake-clipboard",
+            "sinnix-lake:desktop.lake-clipboard",
             "recall, prompt provenance",
             &["clipboard.copied"],
-        ),
+        )
+        },
         dirs: &["activity/desktop/clipboard", "activity/desktop/selection"],
         lane_values: &["clipboard", "primary"],
     },
     LakeSource {
-        spec: spec(
-            "desktop.notifications",
-            "sinnix-lake:desktop.notifications",
+        spec: SourceSpec {
+            class: Class::Guarded,
+            ..spec(
+            "desktop.lake-notifications",
+            "sinnix-lake:desktop.lake-notifications",
             "recall, interruption analysis",
             &["notification.shown"],
-        ),
+        )
+        },
         dirs: &["activity/desktop/notification"],
         lane_values: &["notifications"],
     },
@@ -234,10 +240,14 @@ fn envelope(record: &Map<String, Value>, source: &LakeSource) -> Result<Envelope
             source.lane_values.join(", ")
         )));
     }
-    for field in ["host", "seq"] {
-        if record.get(field).is_none() {
-            return Err(RecordError::new(format!("envelope has no {field}")));
-        }
+    if record.get("host").and_then(Value::as_str).is_none_or(str::is_empty) {
+        return Err(RecordError::new("envelope host is not a nonempty string"));
+    }
+    if record.get("seq").and_then(Value::as_u64).is_none() {
+        return Err(RecordError::new("envelope seq is not an unsigned integer"));
+    }
+    if record.get("raw_ref").is_some_and(|value| !value.is_null() && !value.is_string()) {
+        return Err(RecordError::new("envelope raw_ref is not a string or null"));
     }
     let ts = record
         .get("ts")
@@ -285,14 +295,17 @@ pub fn source(lake_source: &'static LakeSource) -> DeclaredSource<EnvelopeParser
 
 /// The source's day files (`L-YYYYMMDD.jsonl`) under `root`, in name order. The
 /// index, sequence, lock and high-water files are not material.
-fn day_files(root: &Path, source: &LakeSource) -> Vec<PathBuf> {
+fn day_files(root: &Path, source: &LakeSource) -> Result<Vec<PathBuf>, String> {
     let mut out = Vec::new();
     for dir in source.dirs {
-        for entry in std::fs::read_dir(root.join(dir))
-            .into_iter()
-            .flatten()
-            .flatten()
-        {
+        let path = root.join(dir);
+        let entries = match std::fs::read_dir(&path) {
+            Ok(entries) => entries,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(error) => return Err(format!("{}: {error}", path.display())),
+        };
+        for entry in entries {
+            let entry = entry.map_err(|error| format!("{}: {error}", path.display()))?;
             let p = entry.path();
             let Some(name) = p.file_name().and_then(|n| n.to_str()) else {
                 continue;
@@ -307,7 +320,7 @@ fn day_files(root: &Path, source: &LakeSource) -> Vec<PathBuf> {
         }
     }
     out.sort();
-    out
+    Ok(out)
 }
 
 pub fn driver(path: PathBuf, host: String) -> AppendFile {
@@ -332,14 +345,14 @@ pub const FORMAT: crate::binding::InputFormat = crate::binding::InputFormat {
     name: "sinnix-lake",
     specs: || LAKE_SOURCES.iter().map(|l| &l.spec).collect(),
     plan: Some(|input, settings| {
-        Ok(LAKE_SOURCES
-            .iter()
-            .flat_map(|source| {
-                day_files(input, source)
-                    .into_iter()
-                    .map(|f| crate::binding::Binding::of(&source.spec, &f, settings.clone()))
-            })
-            .collect())
+        std::fs::read_dir(input).map_err(|error| format!("{}: {error}", input.display()))?;
+        let mut bindings = Vec::new();
+        for source in LAKE_SOURCES {
+            bindings.extend(day_files(input, source)?.into_iter().map(|file| {
+                crate::binding::Binding::of(&source.spec, &file, settings.clone())
+            }));
+        }
+        Ok(bindings)
     }),
     source: |b| Ok(Box::new(source(lake_source_of(b)?))),
     reader: Some(|b| {

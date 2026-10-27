@@ -454,6 +454,23 @@ fn item_number(item: &Value, name: &str) -> Result<u64, DriverError> {
         .ok_or_else(|| DriverError::Io(format!("GitHub item without `{name}`")))
 }
 
+fn array<'a>(value: &'a Value, name: &str) -> Result<&'a Vec<Value>, DriverError> {
+    value.as_array().ok_or_else(|| DriverError::Io(format!("GitHub {name} is not an array")))
+}
+
+fn next_cursor(connection: &Value, seen: &mut std::collections::BTreeSet<String>) -> Result<Option<String>, DriverError> {
+    let has_next = connection.pointer("/pageInfo/hasNextPage").and_then(Value::as_bool)
+        .ok_or_else(|| DriverError::Io("GitHub connection has no page information".into()))?;
+    if !has_next { return Ok(None); }
+    let cursor = connection.pointer("/pageInfo/endCursor").and_then(Value::as_str)
+        .filter(|cursor| !cursor.is_empty())
+        .ok_or_else(|| DriverError::Io("GitHub next page has no cursor".into()))?;
+    if !seen.insert(cursor.to_owned()) {
+        return Err(DriverError::Io("GitHub repeated a page cursor".into()));
+    }
+    Ok(Some(cursor.to_owned()))
+}
+
 const CONTEXT: &str = "fragment Context on StatusCheckRollupContext {
   __typename
   ... on CheckRun { databaseId name status conclusion startedAt completedAt detailsUrl
@@ -473,7 +490,7 @@ const PULL_REQUEST: &str = "fragment PullRequest on PullRequest {
   title body state isDraft url createdAt updatedAt closedAt mergedAt
   author { login } mergeCommit { oid }
   headRefName headRefOid baseRefName baseRefOid
-  labels(first: 100) { nodes { name } }
+  labels(first: 100) { pageInfo { hasNextPage endCursor } nodes { name } }
   reviews(first: 100) { pageInfo { hasNextPage endCursor } nodes { ...Review } }
 }";
 const PULL_REQUESTS: &str = "query($owner: String!, $name: String!, $after: String) {
@@ -487,6 +504,9 @@ const OPEN_CHECKS: &str = "query($owner: String!, $name: String!, $after: String
 const MORE_REVIEWS: &str = "query($id: ID!, $after: String) {
   node(id: $id) { ... on PullRequest {
     reviews(first: 100, after: $after) { pageInfo { hasNextPage endCursor } nodes { ...Review } } } } }";
+const MORE_LABELS: &str = "query($id: ID!, $after: String) {
+  node(id: $id) { ... on PullRequest {
+    labels(first: 100, after: $after) { pageInfo { hasNextPage endCursor } nodes { name } } } } }";
 const MORE_CONTEXTS: &str = "query($id: ID!, $after: String) {
   node(id: $id) { ... on StatusCheckRollup {
     contexts(first: 100, after: $after) { pageInfo { hasNextPage endCursor } nodes { ...Context } } } } }";
@@ -503,38 +523,28 @@ fn page_to_end(
     query: &str,
     connection: &str,
 ) -> Result<(), DriverError> {
+    let mut seen = std::collections::BTreeSet::new();
     loop {
-        let Some(page) = node.pointer(&format!("{pointer}/pageInfo")).cloned() else {
-            return Ok(());
+        let Some(current) = node.pointer(pointer).filter(|value| !value.is_null()) else {
+            if pointer == CONTEXTS { return Ok(()); }
+            return Err(DriverError::Io(format!("GitHub node without {pointer}")));
         };
-        if page.get("hasNextPage") != Some(&json!(true)) {
-            break;
-        }
-        let id = node
-            .pointer(id_pointer)
-            .and_then(Value::as_str)
-            .ok_or_else(|| DriverError::Io(format!("GitHub node without {id_pointer}")))?
-            .to_owned();
-        let answer = github.graphql(
-            token,
-            query,
-            json!({"id": id, "after": page.get("endCursor")}),
-        )?;
-        let more = answer
-            .pointer(&format!("/node/{connection}"))
-            .cloned()
+        array(&current["nodes"], connection)?;
+        let Some(after) = next_cursor(current, &mut seen)? else { break; };
+        let id = node.pointer(id_pointer).and_then(Value::as_str)
+            .ok_or_else(|| DriverError::Io(format!("GitHub node without {id_pointer}")))?.to_owned();
+        let answer = github.graphql(token, query, json!({"id": id, "after": after}))?;
+        let more = answer.pointer(&format!("/node/{connection}"))
             .ok_or_else(|| DriverError::Io(format!("GitHub answer without {connection}")))?;
-        let target = node
-            .pointer_mut(pointer)
-            .and_then(Value::as_object_mut)
+        let new = array(&more["nodes"], connection)?;
+        let target = node.pointer_mut(pointer).and_then(Value::as_object_mut)
             .ok_or_else(|| DriverError::Io(format!("GitHub node without {pointer}")))?;
-        if let (Some(Value::Array(have)), Some(Value::Array(new))) =
-            (target.get_mut("nodes"), more.get("nodes"))
-        {
-            have.extend(new.iter().cloned());
-        }
+        let have = target.get_mut("nodes").and_then(Value::as_array_mut)
+            .ok_or_else(|| DriverError::Io(format!("GitHub {connection} has no nodes")))?;
+        have.extend(new.iter().cloned());
         target.insert("pageInfo".into(), more["pageInfo"].clone());
     }
+
     if let Some(target) = node.pointer_mut(pointer).and_then(Value::as_object_mut) {
         target.remove("pageInfo");
     }
@@ -631,6 +641,9 @@ impl Github {
     }
 
     fn get(&self, token: &str, url: &str) -> Result<(Value, Option<String>), DriverError> {
+        if !url.starts_with(&format!("{}/", self.api.trim_end_matches('/'))) {
+            return Err(DriverError::Io("GitHub next page is outside the configured API".into()));
+        }
         let response = self
             .agent
             .get(url)
@@ -686,6 +699,7 @@ impl Github {
     ) -> Result<Vec<Value>, DriverError> {
         let mut out = Vec::new();
         let mut after = Value::Null;
+        let mut seen = std::collections::BTreeSet::new();
         'pages: loop {
             let data = self.graphql(
                 token,
@@ -696,7 +710,7 @@ impl Github {
                 .pointer("/repository/pullRequests")
                 .ok_or_else(|| DriverError::Io(format!("GitHub has no repository {owner}/{name}")))?
                 .clone();
-            for mut node in connection["nodes"].as_array().cloned().unwrap_or_default() {
+            for mut node in array(&connection["nodes"], "pull requests")?.iter().cloned() {
                 let number = item_number(&node, "number")?;
                 let updated = item_time(&node, "updatedAt")?;
                 if since.at.is_some_and(|at| updated < at) {
@@ -714,6 +728,7 @@ impl Github {
                     MORE_REVIEWS,
                     "reviews",
                 )?;
+                page_to_end(self, token, &mut node, "/labels", "/id", MORE_LABELS, "labels")?;
                 page_to_end(
                     self,
                     token,
@@ -725,13 +740,8 @@ impl Github {
                 )?;
                 out.push(node);
             }
-            if connection.pointer("/pageInfo/hasNextPage") != Some(&json!(true)) {
-                break;
-            }
-            after = connection
-                .pointer("/pageInfo/endCursor")
-                .cloned()
-                .unwrap_or(Value::Null);
+            let Some(cursor) = next_cursor(&connection, &mut seen)? else { break; };
+            after = json!(cursor);
         }
         Ok(out)
     }
@@ -740,6 +750,7 @@ impl Github {
     fn open_checks(&self, token: &str, owner: &str, name: &str) -> Result<Vec<Value>, DriverError> {
         let mut out = Vec::new();
         let mut after = Value::Null;
+        let mut seen = std::collections::BTreeSet::new();
         loop {
             let data = self.graphql(
                 token,
@@ -750,7 +761,7 @@ impl Github {
                 .pointer("/repository/pullRequests")
                 .ok_or_else(|| DriverError::Io(format!("GitHub has no repository {owner}/{name}")))?
                 .clone();
-            for mut node in connection["nodes"].as_array().cloned().unwrap_or_default() {
+            for mut node in array(&connection["nodes"], "pull requests")?.iter().cloned() {
                 page_to_end(
                     self,
                     token,
@@ -762,13 +773,8 @@ impl Github {
                 )?;
                 out.push(node);
             }
-            if connection.pointer("/pageInfo/hasNextPage") != Some(&json!(true)) {
-                return Ok(out);
-            }
-            after = connection
-                .pointer("/pageInfo/endCursor")
-                .cloned()
-                .unwrap_or(Value::Null);
+            let Some(cursor) = next_cursor(&connection, &mut seen)? else { return Ok(out); };
+            after = json!(cursor);
         }
     }
 
@@ -776,9 +782,11 @@ impl Github {
     fn list(&self, token: &str, url: String) -> Result<Vec<Value>, DriverError> {
         let mut out = Vec::new();
         let mut next = Some(url);
+        let mut seen = std::collections::BTreeSet::new();
         while let Some(url) = next {
+            if !seen.insert(url.clone()) { return Err(DriverError::Io("GitHub repeated a page URL".into())); }
             let (page, link) = self.get(token, &url)?;
-            out.extend(page.as_array().cloned().unwrap_or_default());
+            out.extend(array(&page, "REST list")?.iter().cloned());
             next = link;
         }
         Ok(out)
@@ -797,12 +805,11 @@ impl Github {
             "{}/repos/{repository}/actions/runs?per_page=100",
             self.api
         ));
+        let mut seen = std::collections::BTreeSet::new();
         while let Some(url) = next {
+            if !seen.insert(url.clone()) { return Err(DriverError::Io("GitHub repeated a page URL".into())); }
             let (page, link) = self.get(token, &url)?;
-            let runs = page["workflow_runs"]
-                .as_array()
-                .cloned()
-                .unwrap_or_default();
+            let runs = array(&page["workflow_runs"], "workflow runs")?.iter().cloned();
             let mut below = false;
             for run in runs {
                 if floor.is_some_and(|floor| item_time(&run, "created_at").is_ok_and(|c| c < floor))

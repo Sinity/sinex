@@ -272,6 +272,24 @@ fn after(event: &Event, length_ns: Option<f64>) -> Option<Timestamp> {
     Timestamp::from_unix_ns(start + i128::from(length as i64)).ok()
 }
 
+fn player(e: &Event) -> Option<Sighting> {
+    let p = &e.payload;
+    if !playing(text(p, "/status")) {
+        return None;
+    }
+    let length = p.get("length_us").and_then(Value::as_f64);
+    play(
+        e,
+        text(p, "/title")?,
+        text(p, "/artists/0"),
+        after(e, length.map(|us| us * 1e3)),
+        [
+            ("album", p.get("album").cloned()),
+            ("player", p.get("player").cloned()),
+        ],
+    )
+}
+
 pub static PLAYS: FusionRule = FusionRule {
     derivation: "play.fusion",
     version: 3,
@@ -298,25 +316,16 @@ pub static PLAYS: FusionRule = FusionRule {
         Observer {
             event_type: "player.changed",
             only: &[],
-            source: None,
+            source: Some("media.mpris"),
             spans: false,
-            read: |e| {
-                let p = &e.payload;
-                if !playing(text(p, "/status")) {
-                    return None;
-                }
-                let length = p.get("length_us").and_then(Value::as_f64);
-                play(
-                    e,
-                    text(p, "/title")?,
-                    text(p, "/artists/0"),
-                    after(e, length.map(|us| us * 1e3)),
-                    [
-                        ("album", p.get("album").cloned()),
-                        ("player", p.get("player").cloned()),
-                    ],
-                )
-            },
+            read: player,
+        },
+        Observer {
+            event_type: "player.changed",
+            only: &[],
+            source: Some("desktop.media"),
+            spans: false,
+            read: player,
         },
     ],
     inputs: &["music.played", "player.changed"],
@@ -328,8 +337,8 @@ pub static PLAYS: FusionRule = FusionRule {
 };
 
 // Clipboard and notifications: the same change seen by Sinex's live capture
-// and the Sinnix capture lake while both run. Both emit the same event types,
-// so one observer reads both.
+// and the Sinnix capture lake while both run. Distinct sources let fusion
+// pair the captures without joining repeated records from one capture.
 
 fn copy(
     event: &Event,
@@ -355,29 +364,40 @@ fn copy(
     )
 }
 
+fn clipboard(e: &Event) -> Option<Sighting> {
+    let p = &e.payload;
+    if p.get("secret").and_then(Value::as_bool) == Some(true) {
+        return None;
+    }
+    copy(
+        e,
+        text(p, "/selection")?,
+        text(p, "/text"),
+        text(p, "/mime_type"),
+        p.get("bytes").and_then(Value::as_u64),
+    )
+}
+
 pub static CLIPBOARD: FusionRule = FusionRule {
     derivation: "clipboard.fusion",
     version: 2,
     output: "clipboard.fused",
-    observers: &[Observer {
-        event_type: "clipboard.copied",
-        only: &[],
-        source: None,
-        spans: false,
-        read: |e| {
-            let p = &e.payload;
-            if p.get("secret").and_then(Value::as_bool) == Some(true) {
-                return None;
-            }
-            copy(
-                e,
-                text(p, "/selection")?,
-                text(p, "/text"),
-                text(p, "/mime_type"),
-                p.get("bytes").and_then(Value::as_u64),
-            )
+    observers: &[
+        Observer {
+            event_type: "clipboard.copied",
+            only: &[],
+            source: Some("desktop.clipboard"),
+            spans: false,
+            read: clipboard,
         },
-    }],
+        Observer {
+            event_type: "clipboard.copied",
+            only: &[],
+            source: Some("desktop.lake-clipboard"),
+            spans: false,
+            read: clipboard,
+        },
+    ],
     inputs: &["clipboard.copied"],
     window_ns: secs(2),
     fallback_ns: secs(10),
@@ -399,20 +419,31 @@ fn notification(event: &Event, app: &str, summary: &str, body: Option<&str>) -> 
     )
 }
 
+fn shown_notification(e: &Event) -> Option<Sighting> {
+    let p = &e.payload;
+    notification(e, text(p, "/app")?, text(p, "/summary")?, text(p, "/body"))
+}
+
 pub static NOTIFICATIONS: FusionRule = FusionRule {
     derivation: "notification.fusion",
     version: 2,
     output: "notification.fused",
-    observers: &[Observer {
-        event_type: "notification.shown",
-        only: &[],
-        source: None,
-        spans: false,
-        read: |e| {
-            let p = &e.payload;
-            notification(e, text(p, "/app")?, text(p, "/summary")?, text(p, "/body"))
+    observers: &[
+        Observer {
+            event_type: "notification.shown",
+            only: &[],
+            source: Some("desktop.notifications"),
+            spans: false,
+            read: shown_notification,
         },
-    }],
+        Observer {
+            event_type: "notification.shown",
+            only: &[],
+            source: Some("desktop.lake-notifications"),
+            spans: false,
+            read: shown_notification,
+        },
+    ],
     inputs: &["notification.shown"],
     window_ns: secs(2),
     fallback_ns: secs(10),

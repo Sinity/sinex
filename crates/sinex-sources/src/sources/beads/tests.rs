@@ -157,3 +157,22 @@ fn asked_again_from_an_older_cursor_every_issue_is_read() {
         ["demo-a", "demo-b"]
     );
 }
+
+#[devkit::test]
+fn removal_survives_a_failed_admission_and_a_restart() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("issues.jsonl");
+    export(&path, &[line("demo-a", "A", "open"), line("demo-b", "B", "open")]);
+    let reader = driver(path.clone(), "h".into());
+    let admitted = cursor(&reader.poll(&Value::Null).unwrap());
+    assert!(!admitted.to_string().contains("what to do"), "cursor holds no issue text");
+    export(&path, &[line("demo-a", "A", "open")]);
+    for reader in [reader, driver(path.clone(), "h".into())] {
+        for _ in 0..2 {
+            let acquired = reader.poll(&admitted).unwrap();
+            let records = records(&acquired);
+            assert_eq!(ids(&records), ["demo-b"]);
+            assert_eq!(parse(&records[0]).unwrap()[0].record_state(), RecordState::Removed);
+        }
+    }
+}

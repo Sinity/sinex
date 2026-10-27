@@ -147,3 +147,10 @@ fn unread_rules_are_refused_by_name() {
     assert!(Rule::parse("FREQ=DAILY;COUNT=2;UNTIL=20240101").is_err());
     assert!(Rule::parse("FREQ=DAILY;X-NAME=1").is_ok());
 }
+
+#[devkit::test]
+fn non_ascii_weekdays_are_errors() {
+    for day in ["😀", "żółć", "M😀"] {
+        assert!(Rule::parse(&format!("FREQ=WEEKLY;BYDAY={day}")).is_err());
+    }
+}

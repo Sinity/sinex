@@ -167,6 +167,9 @@ impl Rule {
                 }
                 "BYDAY" => {
                     for day in value.split(',').map(str::trim) {
+                        if !day.is_ascii() {
+                            return Err(format!("BYDAY={value}: not an ASCII weekday"));
+                        }
                         let split = day.len().saturating_sub(2);
                         let (ordinal, code) = day.split_at(split);
                         let ordinal = match ordinal.trim_start_matches('+') {

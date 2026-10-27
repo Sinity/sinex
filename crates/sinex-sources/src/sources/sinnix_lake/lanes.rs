@@ -60,7 +60,11 @@ pub(super) fn seconds(value: f64) -> Result<Timestamp, RecordError> {
     }
     let whole = value.floor();
     let micros = ((value - whole) * 1e6).round() as i128;
-    Timestamp::from_unix_ns(whole as i128 * 1_000_000_000 + micros * 1_000)
+    let nanos = (whole as i128)
+        .checked_mul(1_000_000_000)
+        .and_then(|whole| whole.checked_add(micros * 1_000))
+        .ok_or_else(|| RecordError::new(format!("time {value} out of range")))?;
+    Timestamp::from_unix_ns(nanos)
         .map_err(|e| RecordError::new(format!("time {value} out of range: {e}")))
 }
 

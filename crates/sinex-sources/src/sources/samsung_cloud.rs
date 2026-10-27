@@ -180,20 +180,21 @@ fn call(account_key: String, values: &Map<String, Value>) -> Result<CallLogged, 
         return Err(RecordError::new("call log row without a VALUE object"));
     };
     let mut extra = entry.clone();
-    let mut text = |name: &str| {
-        extra
-            .remove(name)
-            .and_then(|v| v.as_str().map(str::to_owned))
-            .filter(|s| !s.is_empty())
+    let mut text = |name: &str| -> Result<Option<String>, RecordError> {
+        match extra.remove(name) {
+            None | Some(Value::Null) => Ok(None),
+            Some(Value::String(value)) => Ok((!value.is_empty()).then_some(value)),
+            Some(_) => Err(RecordError::new(format!("call log {name} is not a string"))),
+        }
     };
-    let number = text("number");
-    let name = text("name").or_else(|| text("cnap_name"));
-    let date = text("date");
-    let call_type = text("type");
-    let duration = text("duration");
-    let log_type = text("logtype");
-    let message = text("m_content");
-    let subject = text("m_subject");
+    let number = text("number")?;
+    let name = text("name")?.or(text("cnap_name")?);
+    let date = text("date")?;
+    let call_type = text("type")?;
+    let duration = text("duration")?;
+    let log_type = text("logtype")?;
+    let message = text("m_content")?;
+    let subject = text("m_subject")?;
     let integer = |field: &str, value: Option<String>| {
         value
             .map(|v| {

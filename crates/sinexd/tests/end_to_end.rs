@@ -1049,9 +1049,9 @@ async fn every_lake_line_is_read_once() {
     let backfill = || finish(&mut t.sinexd(&["backfill", "--host", HOST, "--read", &read]));
     backfill();
     let mut c = t.connect().await;
-    let accounted = "SELECT count(DISTINCT anchor) FROM (
-        SELECT anchor FROM core.events WHERE material_id IS NOT NULL
-        UNION ALL SELECT anchor FROM raw.failures) a";
+    let accounted = "SELECT count(*) FROM (
+        SELECT material_id, anchor FROM core.events WHERE material_id IS NOT NULL
+        UNION SELECT material_id, anchor FROM raw.failures) a";
     assert_eq!(
         scalar(
             &mut c,
@@ -1074,6 +1074,11 @@ async fn every_lake_line_is_read_once() {
     .await
     .unwrap();
     assert_eq!(texts, ["one", "three", "four", "five"]);
+    assert_eq!(
+        scalar(&mut c, accounted).await,
+        5,
+        "new lines have distinct record locations"
+    );
     assert_eq!(scalar(&mut c, "SELECT count(*) FROM raw.failures").await, 1);
     assert_eq!(
         scalar(&mut c, "SELECT count(*) FROM audit.archived").await,
@@ -1214,4 +1219,79 @@ async fn applying_brings_event_types_up_to_the_build() {
     assert!(views.contains(&"clipboard_copied".to_string()));
     assert!(!views.contains(&"gone_type".to_string()));
     assert_eq!(views.len(), names.len());
+}
+
+#[devkit::test]
+async fn event_type_refresh_refuses_a_running_writer() {
+    let dir = Dir::new();
+    let target = Target::new(&dir);
+    let mut writer = target.connect().await;
+    sqlx::query("SELECT pg_advisory_lock($1)")
+        .bind(sinex_schema::WRITER_LOCK)
+        .execute(&mut writer)
+        .await
+        .unwrap();
+    let mut schema = target.connect().await;
+    sqlx::query("DELETE FROM registry.event_types WHERE name = 'clipboard.copied'")
+        .execute(&mut schema)
+        .await
+        .unwrap();
+    assert!(matches!(
+        sinex_schema::apply(&mut schema).await,
+        Err(sinex_schema::Error::WriterRunning)
+    ));
+    assert_eq!(
+        scalar(
+            &mut schema,
+            "SELECT count(*) FROM registry.event_types WHERE name = 'clipboard.copied'"
+        )
+        .await,
+        0
+    );
+    sqlx::query("SELECT pg_advisory_unlock($1)")
+        .bind(sinex_schema::WRITER_LOCK)
+        .execute(&mut writer)
+        .await
+        .unwrap();
+    sinex_schema::apply(&mut schema).await.unwrap();
+    assert_eq!(
+        scalar(
+            &mut schema,
+            "SELECT count(*) FROM registry.event_types WHERE name = 'clipboard.copied'"
+        )
+        .await,
+        1
+    );
+}
+
+#[devkit::test]
+async fn a_note_keeps_its_identity_when_renamed_between_backfills() {
+    let dir = Dir::new();
+    let target = Target::new(&dir);
+    let first = dir.file("vault/first.md", b"---\nid: synthetic-note\n---\nA note\n");
+    let read = format!("notes={}", dir.0.join("vault").display());
+    let backfill = || finish(&mut target.sinexd(&["backfill", "--host", HOST, "--read", &read]));
+    backfill();
+    std::fs::rename(&first, dir.0.join("vault/renamed.md")).unwrap();
+    backfill();
+    let mut connection = target.connect().await;
+    let notes: Vec<(String, String)> = sqlx::query_as(
+        "SELECT e.payload->>'path', e.record_state FROM core.live_equivalence l
+         JOIN core.events e ON e.id = l.event_id WHERE l.event_type = 'note.document'",
+    )
+    .fetch_all(&mut connection)
+    .await
+    .unwrap();
+    assert_eq!(notes, [("renamed.md".to_string(), "present".to_string())]);
+    std::fs::remove_file(dir.0.join("vault/renamed.md")).unwrap();
+    backfill();
+    let states: Vec<String> = sqlx::query_scalar(
+        "SELECT e.record_state FROM core.live_equivalence l JOIN core.events e ON e.id = l.event_id
+         WHERE l.event_type = 'note.document'",
+    )
+    .fetch_all(&mut connection)
+    .await
+    .unwrap();
+    assert_eq!(states, ["removed"]);
+    consistent(&mut connection).await;
 }

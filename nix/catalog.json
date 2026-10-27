@@ -817,14 +817,12 @@
       ]
     },
     {
-      "name": "desktop.clipboard",
+      "name": "desktop.lake-clipboard",
       "formats": [
-        "sinnix-lake",
-        "clipboard"
+        "sinnix-lake"
       ],
       "drivers": [
-        "append-file",
-        "live-stream"
+        "append-file"
       ],
       "purpose": "recall, prompt provenance",
       "class": "guarded",
@@ -833,21 +831,17 @@
       ]
     },
     {
-      "name": "desktop.notifications",
+      "name": "desktop.lake-notifications",
       "formats": [
-        "sinnix-lake",
-        "notifications"
+        "sinnix-lake"
       ],
       "drivers": [
-        "append-file",
-        "live-stream"
+        "append-file"
       ],
       "purpose": "recall, interruption analysis",
       "class": "guarded",
       "eventTypes": [
-        "notification.shown",
-        "notification.closed",
-        "notification.action"
+        "notification.shown"
       ]
     },
     {
@@ -1010,6 +1004,22 @@
       ]
     },
     {
+      "name": "desktop.notifications",
+      "formats": [
+        "notifications"
+      ],
+      "drivers": [
+        "live-stream"
+      ],
+      "purpose": "recall and the day's interruptions",
+      "class": "guarded",
+      "eventTypes": [
+        "notification.shown",
+        "notification.closed",
+        "notification.action"
+      ]
+    },
+    {
       "name": "media.mpris",
       "formats": [
         "players"
@@ -1021,6 +1031,20 @@
       "class": "guarded",
       "eventTypes": [
         "player.changed"
+      ]
+    },
+    {
+      "name": "desktop.clipboard",
+      "formats": [
+        "clipboard"
+      ],
+      "drivers": [
+        "live-stream"
+      ],
+      "purpose": "recall: what was copied where",
+      "class": "guarded",
+      "eventTypes": [
+        "clipboard.copied"
       ]
     },
     {

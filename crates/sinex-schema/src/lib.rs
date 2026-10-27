@@ -338,6 +338,14 @@ async fn sync_event_types(connection: &mut PgConnection) -> Result<(), Error> {
         return Ok(());
     }
     let mut tx = connection.begin().await?;
+    let free: bool = sqlx::query_scalar("SELECT pg_try_advisory_xact_lock($1)")
+        .bind(WRITER_LOCK)
+        .fetch_one(&mut *tx)
+        .await?;
+    if !free {
+        tx.rollback().await?;
+        return Err(Error::WriterRunning);
+    }
     let views: Vec<String> =
         sqlx::query_scalar("SELECT viewname::text FROM pg_views WHERE schemaname = 'event_types'")
             .fetch_all(&mut *tx)

@@ -7,11 +7,9 @@
 //! exports: a changed issue is a newer reading, and an issue gone from the
 //! export is removed at the source. A poll reads the file when its size or
 //! modification time changed and records each issue whose line changed. The
-//! reader keeps each issue's last line in memory; after a restart it takes
-//! them from the file when the file is unchanged since the cursor, and
-//! otherwise records every issue again (an unchanged one is a repeat at
-//! admission), so an issue deleted while Sinex was stopped and the file
-//! changed is not seen as removed.
+//! cursor keeps each issue's hash and ID, so a retry or restart compares the
+//! new export with exactly the export whose records were admitted. Missing
+//! issues become removed readings even when the file changed while stopped.
 use crate::drivers::DriverError;
 use crate::drivers::api_cursor::{Api, ApiCursor, Page};
 use crate::registry::{DeclaredSource, Driver, SourceSpec};
@@ -23,7 +21,6 @@ use sinex_model::event_types::account::TaskRevised;
 use sinex_model::{Class, InputRef, Timestamp};
 use std::collections::BTreeMap;
 use std::path::PathBuf;
-use std::sync::Mutex;
 
 pub const SPEC: SourceSpec = SourceSpec {
     name: "work.beads",
@@ -133,31 +130,22 @@ pub fn source() -> DeclaredSource<BeadsParser> {
     }
 }
 
-/// The export file as last read.
+/// The admitted export's file facts and issue hashes, without issue text.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Seen {
+pub struct Position {
     pub size: u64,
     pub modified_ns: i128,
+    pub issues: BTreeMap<String, String>,
 }
-
-/// Each issue's line, by ID.
-type Issues = BTreeMap<String, Map<String, Value>>;
 
 pub struct Export {
     pub path: PathBuf,
     pub host: String,
-    /// The file as last read, with each issue's line by ID: what the cursor
-    /// naming that reading stands for. Empty until the first read.
-    issues: Mutex<Option<(Seen, Issues)>>,
 }
 
 impl Export {
     pub fn new(path: PathBuf, host: String) -> Self {
-        Self {
-            path,
-            host,
-            issues: Mutex::new(None),
-        }
+        Self { path, host }
     }
 }
 
@@ -175,85 +163,68 @@ impl Api for Export {
     }
 
     fn fetch(&self, cursor: &Value) -> Result<Page, DriverError> {
-        let previous: Option<Seen> = if cursor.is_null() {
+        let previous: Option<Position> = if cursor.is_null() {
             None
         } else {
-            Some(
-                serde_json::from_value(cursor.clone())
-                    .map_err(|e| DriverError::Cursor(e.to_string()))?,
-            )
+            Some(serde_json::from_value(cursor.clone())
+                .map_err(|error| DriverError::Cursor(error.to_string()))?)
         };
-        let metadata = std::fs::metadata(&self.path).map_err(|e| io(&self.path, e))?;
-        let modified_ns = metadata
-            .modified()
-            .ok()
-            .and_then(|m| m.duration_since(std::time::UNIX_EPOCH).ok())
-            .map_or(0, |d| i128::try_from(d.as_nanos()).unwrap_or(i128::MAX));
-        let seen = Seen {
-            size: metadata.len(),
-            modified_ns,
+        let facts = |metadata: &std::fs::Metadata| -> Result<(u64, i128), DriverError> {
+            let modified = metadata.modified().map_err(|error| io(&self.path, error))?;
+            let modified_ns = modified.duration_since(std::time::UNIX_EPOCH)
+                .map_err(|error| io(&self.path, error))?.as_nanos();
+            Ok((metadata.len(), i128::try_from(modified_ns)
+                .map_err(|error| io(&self.path, error))?))
         };
-        let mut remembered = self.issues.lock().expect("lock");
-        let unchanged = previous.as_ref() == Some(&seen);
-        if unchanged && remembered.as_ref().is_some_and(|(read, _)| *read == seen) {
-            return Ok(Page {
-                records: Vec::new(),
-                next: cursor.clone(),
-            });
+        let mut file = std::fs::File::open(&self.path).map_err(|error| io(&self.path, error))?;
+        let metadata = file.metadata().map_err(|error| io(&self.path, error))?;
+        let (size, modified_ns) = facts(&metadata)?;
+        if previous.as_ref().is_some_and(|position|
+            position.size == size && position.modified_ns == modified_ns) {
+            return Ok(Page { records: Vec::new(), next: cursor.clone() });
         }
-        let bytes = std::fs::read(&self.path).map_err(|e| io(&self.path, e))?;
-        let mut current = Issues::new();
+        let mut bytes = Vec::new();
+        std::io::Read::read_to_end(&mut file, &mut bytes).map_err(|error| io(&self.path, error))?;
+        let after = file.metadata().map_err(|error| io(&self.path, error))?;
+        if facts(&after)? != (size, modified_ns) || bytes.len() as u64 != size {
+            return Err(io(&self.path, "export changed while reading"));
+        }
+        let mut issues = BTreeMap::new();
+        let mut records = Vec::new();
         let mut unreadable = Vec::new();
-        for line in bytes.split(|b| *b == b'\n').filter(|l| !l.is_empty()) {
+        for line in bytes.split(|byte| *byte == b'\n').filter(|line| !line.is_empty()) {
             match serde_json::from_slice::<Map<String, Value>>(line) {
                 Ok(issue) => match issue.get("id").and_then(Value::as_str) {
-                    Some(id) => {
-                        current.insert(id.to_owned(), issue);
+                    Some(id) if issue.get("_type").and_then(Value::as_str) == Some("issue") => {
+                        let hash = blake3::hash(line).to_hex().to_string();
+                        if previous.as_ref().and_then(|p| p.issues.get(id)) != Some(&hash) {
+                            records.push(issue.clone());
+                        }
+                        if issues.insert(id.to_owned(), hash).is_some() {
+                            return Err(io(&self.path, format!("duplicate issue ID {id:?}")));
+                        }
                     }
-                    None => unreadable.push(issue),
+                    _ => unreadable.push(issue),
                 },
-                // A line that is not JSON is kept as text, so the parser
-                // records it as a failure with its bytes.
                 Err(_) => unreadable.push(Map::from_iter([(
-                    "unreadable".into(),
-                    json!(String::from_utf8_lossy(line)),
+                    "unreadable".into(), json!(String::from_utf8_lossy(line)),
                 )])),
             }
         }
-        let mut records = Vec::new();
-        match (previous, remembered.take()) {
-            // The file is as it was when the cursor was recorded.
-            (Some(previous), _) if previous == seen => {}
-            // What the cursor stands for is remembered: only what changed.
-            (Some(previous), Some((read, before))) if read == previous => {
-                for (id, issue) in &current {
-                    if before.get(id) != Some(issue) {
-                        records.push(issue.clone());
-                    }
+        if let Some(previous) = previous {
+            let removed_at = serde_json::to_value(Timestamp::now()).map_err(|error| io(&self.path, error))?;
+            for id in previous.issues.keys() {
+                if !issues.contains_key(id) {
+                    records.push(serde_json::from_value(json!({
+                        "_type": "issue", "id": id, "removed_at": removed_at,
+                    })).expect("JSON object"));
                 }
-                let removed_at =
-                    serde_json::to_value(Timestamp::now()).map_err(|e| io(&self.path, e))?;
-                for (id, issue) in before {
-                    if !current.contains_key(&id) {
-                        let mut removed = issue;
-                        removed.insert("removed_at".into(), removed_at.clone());
-                        records.push(removed);
-                    }
-                }
-                records.extend(unreadable);
-            }
-            // Nothing known about the cursor's reading: every issue.
-            _ => {
-                records.extend(current.values().cloned());
-                records.extend(unreadable);
             }
         }
-        *remembered = Some((seen.clone(), current));
-        Ok(Page {
-            records,
-            next: json!(seen),
-        })
+        records.extend(unreadable);
+        Ok(Page { records, next: json!(Position { size, modified_ns, issues }) })
     }
+
 }
 
 pub fn driver(path: PathBuf, host: String) -> ApiCursor<Export> {

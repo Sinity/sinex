@@ -224,3 +224,11 @@ fn reminders_are_tasks_identified_by_their_record_id() {
     assert_eq!(task.due.as_deref(), Some("2024-07-14T03:00:00Z"));
     assert_eq!(task.extra["event_status"], json!(3));
 }
+
+#[devkit::test]
+fn malformed_call_fields_fail_instead_of_becoming_unknown() {
+    for (field, value) in [("number", json!(42)), ("date", json!({})), ("duration", json!("bad"))] {
+        let row = Map::from_iter([("VALUE".into(), json!({field: value}))]);
+        assert!(call("synthetic-id".into(), &row).is_err(), "{field}");
+    }
+}
