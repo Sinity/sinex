@@ -1,7 +1,10 @@
 //! Owned synchronous work, with a shared worker budget and two batches per submission.
 use crate::writer::Priority;
 use sinex_model::Batch;
-use std::sync::{Arc, LazyLock};
+use std::sync::{
+    Arc, LazyLock,
+    atomic::{AtomicBool, Ordering},
+};
 use std::time::Duration;
 use tokio::sync::{OwnedSemaphorePermit, Semaphore, mpsc};
 
@@ -107,6 +110,7 @@ pub(super) struct Batches {
     receive: mpsc::Receiver<Result<Parsed, String>>,
     permits: Arc<Semaphore>,
     worker: Option<tokio::task::JoinHandle<()>>,
+    cancelled: Arc<AtomicBool>,
 }
 
 impl Batches {
@@ -132,6 +136,18 @@ impl Batches {
             receive,
             permits,
             worker: Some(worker),
+            cancelled: Arc::new(AtomicBool::new(false)),
+        })
+    }
+
+    pub fn cancellation_check(&self) -> crate::writer::AdmissionCheck {
+        let cancelled = self.cancelled.clone();
+        Arc::new(move || {
+            if cancelled.load(Ordering::Acquire) {
+                Err("submission cancelled".into())
+            } else {
+                Ok(())
+            }
         })
     }
 
@@ -154,6 +170,7 @@ impl Batches {
 
 impl Drop for Batches {
     fn drop(&mut self) {
+        self.cancelled.store(true, Ordering::Release);
         self.permits.close();
         self.receive.close();
     }

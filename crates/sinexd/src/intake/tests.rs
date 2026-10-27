@@ -388,3 +388,110 @@ async fn synchronous_storage_does_not_stop_other_runtime_tasks() {
     let (submitted, ()) = tokio::join!(submit, unrelated);
     assert_eq!(submitted.outcome.admitted, 1);
 }
+
+async fn queued_submission(db: devkit::pg::TestDatabase, cancel: bool) {
+    use sqlx::Connection;
+    use std::sync::atomic::{AtomicBool, AtomicUsize};
+    let dir = tempfile::tempdir().unwrap();
+    let blobs = Blobs::open(dir.path()).unwrap();
+    let url = db.url(None);
+    let connection = sqlx::PgConnection::connect(&url).await.unwrap();
+    let (writer, queues) = crate::writer::channels();
+    let worker_writer = writer.clone();
+    let worker_blobs = blobs.clone();
+    let queued = Arc::new(tokio::sync::Notify::new());
+    let worker_queued = queued.clone();
+    let second = Arc::new(tokio::sync::Notify::new());
+    let source = CountedSource {
+        source: Box::new(forecast::request_source()),
+        parsed: Arc::new(AtomicUsize::new(0)),
+        second: second.clone(),
+        closed: Arc::new(AtomicBool::new(false)),
+    };
+    let mut submission = tokio::spawn(async move {
+        let intake = Intake {
+            writer: &worker_writer,
+            source: Arc::new(source),
+            binding: "synthetic-queued",
+            run: RunId::new(),
+            sink: Arc::new(crate::material_sink::Sink(worker_blobs)),
+            class: Class::Guarded,
+            sealing: None,
+            unlock: None,
+            check: Arc::new(|| Ok(())),
+            priority: Priority::Bulk,
+            atomic: false,
+            registered: false,
+        };
+        let mut first = true;
+        intake
+            .submit_using(
+                three_records(),
+                Value::Null,
+                &mut Totals::default(),
+                |batch, check| {
+                    let writer = worker_writer.clone();
+                    let queued = worker_queued.clone();
+                    let first = std::mem::take(&mut first);
+                    async move {
+                        let mut answer =
+                            Box::pin(writer.submit_checked(Priority::Bulk, batch, check));
+                        if first {
+                            // The empty queue accepts the batch; the writer has not started to answer it.
+                            assert!(matches!(
+                                futures::poll!(answer.as_mut()),
+                                std::task::Poll::Pending
+                            ));
+                            queued.notify_one();
+                        }
+                        answer.await.map_err(|e| e.to_string())
+                    }
+                },
+            )
+            .await
+    });
+    tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        tokio::join!(queued.notified(), second.notified());
+    })
+    .await
+    .unwrap();
+    if cancel {
+        submission.abort();
+        assert!((&mut submission).await.err().unwrap().is_cancelled());
+    }
+    let worker = tokio::spawn(crate::writer::run(
+        url.clone(),
+        connection,
+        queues,
+        Arc::new(sinex_store::NoDerivations),
+        Some(blobs),
+    ));
+    if !cancel {
+        assert_eq!(submission.await.unwrap().unwrap().outcome.admitted, 3);
+    }
+    drop(writer);
+    worker.await.unwrap();
+    let mut read = sqlx::PgConnection::connect(&url).await.unwrap();
+    let count: i64 = sqlx::query_scalar("SELECT count(*) FROM core.events")
+        .fetch_one(&mut read)
+        .await
+        .unwrap();
+    assert_eq!(count, if cancel { 0 } else { 3 });
+    assert_eq!(
+        sinex_store::positions::load(&mut read, "synthetic-queued")
+            .await
+            .unwrap()
+            .is_some(),
+        !cancel
+    );
+}
+
+#[devkit::test]
+async fn queued_batches_commit_in_order_after_the_writer_starts(db: devkit::pg::TestDatabase) {
+    queued_submission(db, false).await;
+}
+
+#[devkit::test]
+async fn dropping_a_submission_refuses_its_queued_batch(db: devkit::pg::TestDatabase) {
+    queued_submission(db, true).await;
+}

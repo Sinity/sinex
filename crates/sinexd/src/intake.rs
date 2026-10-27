@@ -83,6 +83,11 @@ impl Intake<'_> {
         let mut batches =
             blocking::Batches::start(self.priority, move |send| work.run(acquired, carry, send))
                 .await?;
+        let cancelled = batches.cancellation_check();
+        let check: AdmissionCheck = Arc::new(move || {
+            cancelled()?;
+            check()
+        });
         let mut outcome = Outcome::default();
         let result = async {
             while let Some(parsed) = batches.next().await {
@@ -97,8 +102,7 @@ impl Intake<'_> {
                 check()?;
                 let events = batch.event_count();
                 let started = Instant::now();
-                // submit_checked calls this first at writer service start, then before commit.
-                // Its answer still means committed; no queue or priority changes are needed.
+                // The first writer check starts service; the answer confirms the commit.
                 let service_started = Arc::new(std::sync::Mutex::new(None));
                 let service_clock = service_started.clone();
                 let admission_check = check.clone();
