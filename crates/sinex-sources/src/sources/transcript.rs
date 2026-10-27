@@ -406,14 +406,27 @@ pub fn archive(binding: &Binding, framing: Framing) -> sinex_source_core::bindin
         part_bytes: PART_BYTES,
     })
 }
-fn plan(spec: &SourceSpec, input: &Path, settings: &Settings) -> Result<Vec<Binding>, String> {
+pub(super) fn plan(
+    spec: &SourceSpec,
+    input: &Path,
+    settings: &Settings,
+) -> Result<Vec<Binding>, String> {
     if input.as_os_str().is_empty() {
         return Err("an explicit import path is required".into());
     }
     if settings.option("input").is_none_or(str::is_empty) {
         return Err("an explicit input identity is required".into());
     }
-    Ok(sinex_source_core::binding::single(spec, input, settings))
+    if input.is_dir() {
+        return Err("imports require an explicit file or archive".into());
+    }
+    let input = std::path::absolute(input).map_err(|error| format!("import path: {error}"))?;
+    let identity = serde_json::to_vec(&(spec.parser, settings.option("input")))
+        .expect("input identity serializes");
+    let name = blake3::hash(&identity).to_hex().to_string();
+    Ok(vec![
+        Binding::of(spec, &input, settings.clone()).named(&name),
+    ])
 }
 fn source(
     binding: &Binding,
