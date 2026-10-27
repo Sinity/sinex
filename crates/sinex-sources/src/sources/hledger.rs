@@ -320,4 +320,7 @@ pub const FORMAT: InputFormat = InputFormat {
 };
 
 #[cfg(test)]
+pub(crate) mod intake_tests;
+
+#[cfg(test)]
 mod tests;

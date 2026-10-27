@@ -79,10 +79,10 @@ fn pass(
                 let BatchKind::Source(progress) = batch.kind else {
                     panic!("source batch")
                 };
-                if let Some(material) = progress.material {
-                    if !seen.materials.iter().any(|m| m.id == material.id) {
-                        seen.materials.push(material);
-                    }
+                if let Some(material) = progress.material
+                    && !seen.materials.iter().any(|m| m.id == material.id)
+                {
+                    seen.materials.push(material);
                 }
                 seen.cursor = progress.cursor;
                 seen.carry = progress.carry;
@@ -121,7 +121,7 @@ fn values(events: &[Event]) -> Vec<Value> {
         .collect()
 }
 
-pub(super) fn export_restart(
+pub(crate) fn export_restart(
     raw: &[u8],
     driver: ExportArchive,
     source: &dyn Source,

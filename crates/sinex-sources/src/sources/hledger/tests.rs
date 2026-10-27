@@ -140,8 +140,7 @@ fn streaming_export_ranges_equal_slice_even_for_oversized_blocks() {
     assert_eq!(actual, framing::complete(input.as_bytes()).0);
 }
 
-#[path = "intake_tests.rs"]
-mod intake;
+use super::intake_tests as intake;
 
 #[devkit::test]
 fn shared_intake_restart_inside_a_part_and_replay_keep_duplicate_transactions() {
