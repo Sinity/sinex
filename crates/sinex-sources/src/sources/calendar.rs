@@ -378,10 +378,16 @@ pub const FORMAT: sinex_source_core::binding::InputFormat =
         name: "calendar",
         discovery: sinex_source_core::discovery::DiscoverySpec {
             owner: sinex_source_core::discovery::Owner::System,
-            locations: &[sinex_source_core::discovery::Location {
-                root: "input",
-                path: "calendar",
-            }],
+            locations: &[
+                sinex_source_core::discovery::Location {
+                    root: "input",
+                    path: "calendar",
+                },
+                sinex_source_core::discovery::Location {
+                    root: "input",
+                    path: "takeout",
+                },
+            ],
             capabilities: &[],
             credentials: &[],
             streams: &[],
