@@ -951,5 +951,5 @@ derive_steps! {
     // derivation reading it, is blocked.
     derive_killed_between_derived_batches:
         Some("SELECT EXISTS (SELECT 1 FROM derivation.outputs)"),
-        "LOCK TABLE derivation.outputs IN SHARE MODE".to_string();
+        "LOCK TABLE derivation.outputs IN SHARE MODE";
 }

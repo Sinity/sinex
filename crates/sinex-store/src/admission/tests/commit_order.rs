@@ -11,16 +11,12 @@ async fn a_second_transaction_waits_for_the_first_to_commit(db: devkit::pg::Test
     let mut observer = PgConnection::connect(&url).await.unwrap();
 
     let mut held = first.begin().await.unwrap();
-    let early = admit(
-        &mut *held,
-        &batch(vec![keyed("s", 1, 1, 1)]),
-        &NoDerivations,
-    )
-    .await
-    .unwrap();
+    let early = admit(&mut held, &batch(vec![keyed("s", 1, 1, 1)]), &NoDerivations)
+        .await
+        .unwrap();
     let late = tokio::spawn(async move {
         let mut tx = second.begin().await.unwrap();
-        let out = admit(&mut *tx, &batch(vec![keyed("s", 2, 1, 1)]), &NoDerivations)
+        let out = admit(&mut tx, &batch(vec![keyed("s", 2, 1, 1)]), &NoDerivations)
             .await
             .unwrap();
         tx.commit().await.unwrap();
