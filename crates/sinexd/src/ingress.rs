@@ -15,7 +15,7 @@
 //! 3. hands it to the writer as one `Ingress` batch, so its events and its
 //!    acknowledgment commit together; a frame that fails a check is recorded
 //!    as refused, with no events;
-//! 4. removes the frame's directory, publishes the acknowledgment on
+//! 4. keeps refused bytes or removes an accepted frame's directory, publishes the acknowledgment on
 //!    `<root>.ack.<producer>` and acknowledges the JetStream message.
 //!
 //! The producer is the one its subject names; per-producer credentials limit
@@ -266,7 +266,7 @@ impl Ingest {
             .contains(&m.blob)
             .map_err(|e| Check::Unavailable(e.to_string()))?;
         if !present {
-            return Err(Check::Refused(format!(
+            return Err(Check::Unavailable(format!(
                 "material {} names bytes {} that are not in the content store; place them first",
                 m.id, m.blob
             )));

@@ -684,14 +684,7 @@ async fn an_indirect_frame_is_handled_as_the_frame_it_names(db: devkit::pg::Test
     assert_eq!(ack.refusal, None, "{ack:?}");
     assert_eq!(ack.frame, "e-big");
     assert_eq!(ack.admitted.len(), 1);
-    // Bytes not in the frame's directory, or a large frame standing for
-    // another large frame, are refused.
-    let missing = Ingress::LargeFrame {
-        frame: "e-missing".into(),
-        blob: format!("blake3:{}", blake3::hash(b"absent").to_hex()),
-        length: 6,
-    };
-    assert!(h.send("kitty", &missing).await.refusal.is_some());
+    // A large frame cannot stand for another large frame.
     let nested_body = serde_json::to_vec(&outer).unwrap();
     let nested = h.fixture_blob(&nested_body);
     let ack = h
@@ -941,4 +934,19 @@ async fn storage_faults_stay_unavailable_and_invalid_bytes_are_refused(
         ingest.receive_chunk("node", &chunk).await,
         Err(Check::Refused(_))
     ));
+}
+
+#[devkit::test]
+async fn a_recorded_refusal_keeps_the_frame_bytes_on_redelivery(db: devkit::pg::TestDatabase) {
+    let h = Harness::start(db).await;
+    let bytes = b"not JSON";
+    let blob = format!("blake3:{}",blake3::hash(bytes).to_hex());
+    frame_bytes::write(&h.store_dir,"node","invalid",&blob,bytes.len() as u64,bytes.as_slice()).unwrap();
+    let frame = Ingress::LargeFrame {frame:"invalid".into(),blob:blob.clone(),length:bytes.len() as u64};
+    for _ in 0..2 {
+        let ack = h.send_raw("node",serde_json::to_vec(&frame).unwrap()).await;
+        assert!(ack.refusal.is_some());
+        assert!(frame_bytes::snapshot(&h.store_dir,"node","invalid",&blob,bytes.len() as u64).is_ok());
+    }
+    assert_eq!(h.recorded("node",&["invalid"]).await.len(),1);
 }

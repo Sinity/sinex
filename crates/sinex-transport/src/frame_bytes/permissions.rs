@@ -29,7 +29,7 @@ pub(super) fn prepare_directory(root: &Path, leaf: &Path) -> Result<Option<u32>,
         };
         let meta = std::fs::symlink_metadata(&at).map_err(super::error)?;
         if !meta.is_dir() || meta.gid() != group {
-            return Err("producer frame directory does not belong to the store group".into());
+            return Err(super::Error::Storage("producer frame directory does not belong to the store group".into()));
         }
         if created {
             // Override a restrictive caller umask only for this newly created
@@ -38,7 +38,7 @@ pub(super) fn prepare_directory(root: &Path, leaf: &Path) -> Result<Option<u32>,
                 .and_then(|dir| dir.set_permissions(std::fs::Permissions::from_mode(0o2770)))
                 .map_err(super::error)?;
         } else if meta.mode() & 0o7777 != 0o2770 {
-            return Err("producer frame directory requires configured group mode 2770".into());
+            return Err(super::Error::Storage("producer frame directory requires configured group mode 2770".into()));
         }
     }
     Ok(Some(group))
@@ -50,7 +50,7 @@ pub(super) fn share_completed_file(
 ) -> Result<(), super::Error> {
     if let Some(group) = group {
         if file.metadata().map_err(super::error)?.gid() != group {
-            return Err("producer frame file does not belong to the store group".into());
+            return Err(super::Error::Storage("producer frame file does not belong to the store group".into()));
         }
         // The receiver reads a verified copy and unlinks roles through the
         // shared directory. It does not need to write the sender's inode.
@@ -66,7 +66,7 @@ pub(super) fn check_existing_file(path: &Path, group: Option<u32>) -> Result<(),
             Ok(meta) if meta.is_file() && meta.gid() == group && meta.mode() & 0o7777 == 0o640 => {}
             Ok(_) => {
                 return Err(
-                    "existing producer frame file requires configured group mode 0640".into(),
+                    super::Error::Storage("existing producer frame file requires configured group mode 0640".into()),
                 );
             }
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
