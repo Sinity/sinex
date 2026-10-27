@@ -11,7 +11,7 @@ use super::{Acquired, DriverError, NewMaterial};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use sinex_model::{InputRef, MaterialId, ObservationFacts, RevisionChange, Timestamp};
-use std::os::unix::ffi::OsStringExt;
+use std::os::unix::ffi::OsStrExt;
 use std::path::{Path, PathBuf};
 
 /// One record, the whole stored file.
@@ -156,7 +156,7 @@ impl Media {
                 .is_some_and(|paths| {
                     paths.iter().any(|p| {
                         serde_json::from_value::<Vec<u8>>(p.clone()).is_ok_and(|keep| {
-                            PathBuf::from(std::ffi::OsString::from_vec(keep)) == path
+                            path.as_os_str().as_bytes() == keep.as_slice()
                         })
                     })
                 });

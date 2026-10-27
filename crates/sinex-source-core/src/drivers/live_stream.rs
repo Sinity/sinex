@@ -18,7 +18,7 @@ use serde_json::{Map, Value, json};
 use sinex_model::{InputRef, MaterialId, RevisionChange, Timestamp};
 use std::fs::{File, OpenOptions};
 use std::io::{BufRead, Write};
-use std::os::unix::ffi::OsStringExt;
+use std::os::unix::ffi::OsStrExt;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
@@ -366,7 +366,7 @@ impl LiveStream {
                 .is_some_and(|paths| {
                     paths.iter().any(|p| {
                         serde_json::from_value::<Vec<u8>>(p.clone()).is_ok_and(|keep| {
-                            PathBuf::from(std::ffi::OsString::from_vec(keep)) == path
+                            path.as_os_str().as_bytes() == keep.as_slice()
                         })
                     })
                 });

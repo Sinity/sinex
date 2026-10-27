@@ -611,6 +611,7 @@ impl Producer {
         // answers a resent frame from its record.
         headers.insert("Nats-Msg-Id", id.as_str());
         let body = serde_json::to_vec(&frame).expect("frame serializes");
+        let malformed = format!("malformed/{}", blake3::hash(&body).to_hex());
         self.js
             .publish_with_headers(self.subjects.ingress(&self.name), headers, body.into())
             .await
@@ -620,7 +621,9 @@ impl Producer {
         let wait = async {
             while let Some(message) = self.acks.next().await {
                 if let Ok(ack) = serde_json::from_slice::<Acknowledgment>(&message.payload)
-                    && (ack.frame == id || ack.refusal_kind() == Some(FrameRefusal::Malformed))
+                    && (ack.frame == id
+                        || (ack.frame == malformed
+                            && ack.refusal_kind() == Some(FrameRefusal::Malformed)))
                 {
                     return Some(ack);
                 }
@@ -631,10 +634,12 @@ impl Producer {
             Ok(Some(ack)) => (ack, false),
             // Missed it: ask what Sinex has recorded for this frame.
             _ => (
-                self.recorded(std::slice::from_ref(&id))
+                self.recorded(&[id.clone(), malformed.clone()])
                     .await?
                     .into_iter()
-                    .find(|ack| ack.frame == id)
+                    .find(|ack| ack.frame == id
+                        || (ack.frame == malformed
+                            && ack.refusal_kind() == Some(FrameRefusal::Malformed)))
                     .ok_or_else(|| Error::NoAck(id.clone()))?,
                 true,
             ),
