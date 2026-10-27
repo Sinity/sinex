@@ -951,21 +951,7 @@
               {
                 "path": "calendar",
                 "root": "input"
-              }
-            ],
-            "owner": "system",
-            "request_only": false,
-            "requests": [],
-            "streams": []
-          },
-          "format": "calendar"
-        },
-        {
-          "capture": false,
-          "description": {
-            "capabilities": [],
-            "credentials": [],
-            "locations": [
+              },
               {
                 "path": "takeout",
                 "root": "input"
@@ -976,7 +962,7 @@
             "requests": [],
             "streams": []
           },
-          "format": "takeout"
+          "format": "calendar"
         }
       ],
       "drivers": [
@@ -986,8 +972,7 @@
         "calendar.event"
       ],
       "formats": [
-        "calendar",
-        "takeout"
+        "calendar"
       ],
       "name": "calendar.export",
       "purpose": "planned events beside what happened"
