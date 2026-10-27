@@ -48,6 +48,11 @@ fn decimal_offsets_are_exact_and_checked() {
     assert_eq!(decimal_ms("18446744073709551.615", 3).unwrap(), u64::MAX);
     assert_eq!(decimal_ms("1e3", 3).unwrap(), 1_000_000);
     assert_eq!(decimal_ms("1.2300", 3).unwrap(), 1230);
+    assert_eq!(decimal_ms("0.0001", 3).unwrap(), 0);
+    assert_eq!(decimal_ms("0.0005", 3).unwrap(), 1);
+    assert_eq!(decimal_ms("1.2345", 3).unwrap(), 1235);
+    assert_eq!(decimal_ms("0.30000000000000004", 3).unwrap(), 300);
+    assert!(decimal_ms("1.5", 0).is_err());
     for s in ["-1", "0.0001", "18446744073709551.616", "1e99999", "\"1\""] {
         assert!(decimal_ms(s, 3).is_err(), "{s}");
     }
@@ -506,4 +511,16 @@ fn whisper_position_ids_need_an_external_run_for_equivalence() {
     )
     .unwrap();
     assert!(matches!(generic[0].key_kind(), KeyKind::Fields(_)));
+}
+
+#[devkit::test]
+fn unresolvable_absolute_time_keeps_valid_relative_offsets() {
+    let rows = read(
+        Format::Whisper,
+        br#"{"text":"example","start":18446744073709551.615}"#,
+        serde_json::json!({"recording_started_at":"2026-01-01T00:00:00Z"}),
+    )
+    .unwrap();
+    assert_eq!(rows[0].start_ms, Some(u64::MAX));
+    assert!(rows[0].at.is_none());
 }
