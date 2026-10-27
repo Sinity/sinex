@@ -368,11 +368,23 @@ impl Parser<'_> {
             }
             Operand::Field(FieldRef::Group(_)) => Ok(infer(&raw, quoted, op)),
             Operand::Field(FieldRef::Payload(path) | FieldRef::TypedPayload { path, .. }) => {
-                if placeholder { return Ok(Value::PlaceholderText(raw)); }
-                let declared_time = self.ctx.catalog.as_ref().and_then(|c| c.field(path)).is_some_and(|f| f.ty == super::super::catalog::DataType::Time);
-                let date_clock = !quoted && time::date(&raw).is_some() && self.peek().is_some_and(|t| time::clock(&t.text).is_some());
-                if declared_time || date_clock { Ok(Value::Time(self.instant_from(&t)?)) }
-                else { Ok(infer(&raw, quoted, op)) }
+                if placeholder {
+                    return Ok(Value::PlaceholderText(raw));
+                }
+                let declared_time = self
+                    .ctx
+                    .catalog
+                    .as_ref()
+                    .and_then(|c| c.field(path))
+                    .is_some_and(|f| f.ty == super::super::catalog::DataType::Time);
+                let date_clock = !quoted
+                    && time::date(&raw).is_some()
+                    && self.peek().is_some_and(|t| time::clock(&t.text).is_some());
+                if declared_time || date_clock {
+                    Ok(Value::Time(self.instant_from(&t)?))
+                } else {
+                    Ok(infer(&raw, quoted, op))
+                }
             }
             Operand::Field(FieldRef::Field(f)) => {
                 if placeholder && f.name == "event_type" && op == Op::Eq {

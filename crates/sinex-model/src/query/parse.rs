@@ -82,7 +82,11 @@ pub fn bind(text: &str, ctx: &Context) -> Result<Query, QueryError> {
     bind_tokens(tokens(text)?, ctx, text.len())
 }
 
-pub(super) fn bind_tokens(toks: Vec<Token>, ctx: &Context, end: usize) -> Result<Query, QueryError> {
+pub(super) fn bind_tokens(
+    toks: Vec<Token>,
+    ctx: &Context,
+    end: usize,
+) -> Result<Query, QueryError> {
     let mut query = parse_tokens(toks, ctx, end)?;
     super::typed::check(&mut query, ctx)?;
     super::fill::bind(&mut query, ctx)?;

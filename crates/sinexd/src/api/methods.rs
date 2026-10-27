@@ -557,7 +557,9 @@ impl Api {
                 Ok(q) => Some(q),
                 Err(e) => return query_refusal(text, e),
             }
-        } else { None };
+        } else {
+            None
+        };
         match sinex_store::query::run(&mut conn, text, bound.as_ref(), &ctx, &page).await {
             Ok(answer) => data(answer_json(answer)),
             Err(sinex_store::Error::Query(error)) => query_refusal(text, error),

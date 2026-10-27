@@ -13,27 +13,48 @@ struct PayloadField {
 }
 
 fn payload_fields(catalog: &QueryCatalog) -> Vec<PayloadField> {
-    catalog.kinds.iter().flat_map(|kind| {
-        kind.fields.iter().flat_map(|fields| fields.values()).map(|field| PayloadField {
-            event_type: kind.kind.name.clone(),
-            path: field.path.clone(),
-            ty: match &field.ty {
-                catalog::DataType::Text => FieldType::Text,
-                catalog::DataType::Integer => FieldType::Integer,
-                catalog::DataType::Number => FieldType::Number,
-                catalog::DataType::Bool => FieldType::Bool,
-                catalog::DataType::Time => FieldType::Time,
-                catalog::DataType::Array(item) if **item == catalog::DataType::Text => FieldType::TextList,
-                _ => FieldType::Json,
-            },
-            values: (!field.values.is_empty() && field.values.iter().all(Json::is_string)).then(|| field.values.iter().filter_map(Json::as_str).map(str::to_owned).collect()),
+    catalog
+        .kinds
+        .iter()
+        .flat_map(|kind| {
+            kind.fields
+                .iter()
+                .flat_map(|fields| fields.values())
+                .map(|field| PayloadField {
+                    event_type: kind.kind.name.clone(),
+                    path: field.path.clone(),
+                    ty: match &field.ty {
+                        catalog::DataType::Text => FieldType::Text,
+                        catalog::DataType::Integer => FieldType::Integer,
+                        catalog::DataType::Number => FieldType::Number,
+                        catalog::DataType::Bool => FieldType::Bool,
+                        catalog::DataType::Time => FieldType::Time,
+                        catalog::DataType::Array(item) if **item == catalog::DataType::Text => {
+                            FieldType::TextList
+                        }
+                        _ => FieldType::Json,
+                    },
+                    values: (!field.values.is_empty() && field.values.iter().all(Json::is_string))
+                        .then(|| {
+                            field
+                                .values
+                                .iter()
+                                .filter_map(Json::as_str)
+                                .map(str::to_owned)
+                                .collect()
+                        }),
+                })
         })
-    }).collect()
+        .collect()
 }
 
 fn fields() -> &'static [PayloadField] {
     static FIELDS: OnceLock<Vec<PayloadField>> = OnceLock::new();
-    FIELDS.get_or_init(|| payload_fields(&QueryCatalog::new(crate::event_types::declarations().iter().cloned())))
+    FIELDS.get_or_init(|| {
+        payload_fields(&QueryCatalog::new(
+            crate::event_types::declarations().iter().cloned(),
+        ))
+    })
 }
 
 fn definitions(ctx: &Context) -> Vec<PayloadField> {
@@ -170,9 +191,19 @@ fn selected_value(value: &Value, ctx: Option<&Context>) -> Option<BTreeSet<Strin
         Value::Text(s) => Some(BTreeSet::from([s.clone()])),
         Value::Glob(pattern) => Some(
             match ctx.and_then(|ctx| ctx.catalog.as_ref()) {
-                Some(catalog) => catalog.declarations.iter().map(|(kind, _)| kind.name.clone()).collect::<BTreeSet<_>>(),
-                None => crate::event_types::ALL.iter().map(|kind| kind.event_type.to_owned()).collect(),
-            }.into_iter().filter(|name| glob_matches(pattern, name)).collect()
+                Some(catalog) => catalog
+                    .declarations
+                    .iter()
+                    .map(|(kind, _)| kind.name.clone())
+                    .collect::<BTreeSet<_>>(),
+                None => crate::event_types::ALL
+                    .iter()
+                    .map(|kind| kind.event_type.to_owned())
+                    .collect(),
+            }
+            .into_iter()
+            .filter(|name| glob_matches(pattern, name))
+            .collect(),
         ),
         Value::List(values) => {
             let mut out = BTreeSet::new();
@@ -196,17 +227,34 @@ fn selected(e: &Expr, ctx: &Context) -> Option<BTreeSet<String>> {
             (Some(a), Some(b)) => Some(a.intersection(&b).cloned().collect()),
             (a, b) => a.or(b),
         },
-        Expr::Or(a, b) => Some(selected(a, ctx)?.union(&selected(b, ctx)?).cloned().collect()),
+        Expr::Or(a, b) => Some(
+            selected(a, ctx)?
+                .union(&selected(b, ctx)?)
+                .cloned()
+                .collect(),
+        ),
         _ => None,
     }
 }
 
-fn field_type(path: &[String], kinds: &Option<BTreeSet<String>>, ctx: &Context) -> Result<FieldType, QueryError> {
-    if ctx.catalog.as_ref().is_some_and(|catalog| catalog.kinds.iter().any(|kind| kind.fields.is_none() && kinds.as_ref().is_none_or(|names| names.contains(&kind.kind.name)))) {
+fn field_type(
+    path: &[String],
+    kinds: &Option<BTreeSet<String>>,
+    ctx: &Context,
+) -> Result<FieldType, QueryError> {
+    if ctx.catalog.as_ref().is_some_and(|catalog| {
+        catalog.kinds.iter().any(|kind| {
+            kind.fields.is_none()
+                && kinds
+                    .as_ref()
+                    .is_none_or(|names| names.contains(&kind.kind.name))
+        })
+    }) {
         return Ok(FieldType::Json);
     }
     let definitions = definitions(ctx);
-    let mut types = definitions.iter()
+    let mut types = definitions
+        .iter()
         .filter(|f| f.path == path && kinds.as_ref().is_none_or(|ks| ks.contains(&&f.event_type)))
         .map(|f| f.ty);
     let Some(mut ty) = types.next() else {
@@ -222,7 +270,9 @@ fn field_type(path: &[String], kinds: &Option<BTreeSet<String>>, ctx: &Context) 
         ) {
             ty = FieldType::Number;
         } else if ty != other {
-            if ctx.catalog.is_some() { return Ok(FieldType::Json); }
+            if ctx.catalog.is_some() {
+                return Ok(FieldType::Json);
+            }
             return Err(QueryError::new(format!(
                 "payload.{} has different types; select an event_type",
                 path.join(".")
@@ -232,7 +282,11 @@ fn field_type(path: &[String], kinds: &Option<BTreeSet<String>>, ctx: &Context) 
     Ok(ty)
 }
 
-fn field(f: &mut FieldRef, kinds: &Option<BTreeSet<String>>, ctx: &Context) -> Result<(), QueryError> {
+fn field(
+    f: &mut FieldRef,
+    kinds: &Option<BTreeSet<String>>,
+    ctx: &Context,
+) -> Result<(), QueryError> {
     if let FieldRef::Payload(path) | FieldRef::TypedPayload { path, .. } = f {
         *f = FieldRef::TypedPayload {
             ty: field_type(path, kinds, ctx)?,
@@ -241,12 +295,20 @@ fn field(f: &mut FieldRef, kinds: &Option<BTreeSet<String>>, ctx: &Context) -> R
     }
     Ok(())
 }
-fn operand(o: &mut Operand, kinds: &Option<BTreeSet<String>>, ctx: &Context) -> Result<(), QueryError> {
+fn operand(
+    o: &mut Operand,
+    kinds: &Option<BTreeSet<String>>,
+    ctx: &Context,
+) -> Result<(), QueryError> {
     match o {
         Operand::Field(f) => field(f, kinds, ctx),
         Operand::TimeFn(_, f) => {
             field(f, kinds, ctx)?;
-            if let FieldRef::TypedPayload { ty, .. } = f && *ty == FieldType::Json { *ty = FieldType::Time; }
+            if let FieldRef::TypedPayload { ty, .. } = f
+                && *ty == FieldType::Json
+            {
+                *ty = FieldType::Time;
+            }
             if let FieldRef::TypedPayload { ty, .. } = f
                 && *ty != FieldType::Time
             {
@@ -257,7 +319,9 @@ fn operand(o: &mut Operand, kinds: &Option<BTreeSet<String>>, ctx: &Context) -> 
     }
 }
 fn validate_value(v: &mut Value, ty: FieldType, ctx: &Context) -> Result<(), QueryError> {
-    if ty == FieldType::Json { return Ok(()); }
+    if ty == FieldType::Json {
+        return Ok(());
+    }
     if let Value::List(values) = v {
         for value in values {
             validate_value(value, ty, ctx)?;
@@ -265,7 +329,12 @@ fn validate_value(v: &mut Value, ty: FieldType, ctx: &Context) -> Result<(), Que
         return Ok(());
     }
     if ty == FieldType::Text && matches!(v, Value::Integer(_) | Value::Number(_) | Value::Bool(_)) {
-        *v = Value::Text(match &*v { Value::Integer(v) => v.to_string(), Value::Number(v) => v.to_string(), Value::Bool(v) => v.to_string(), _ => unreachable!() });
+        *v = Value::Text(match &*v {
+            Value::Integer(v) => v.to_string(),
+            Value::Number(v) => v.to_string(),
+            Value::Bool(v) => v.to_string(),
+            _ => unreachable!(),
+        });
     }
     if ty == FieldType::Time
         && let Value::Text(text) = v
@@ -324,7 +393,8 @@ fn expr(e: &mut Expr, kinds: &Option<BTreeSet<String>>, ctx: &Context) -> Result
                 validate_value(rhs, *ty, ctx)?;
                 if let Operand::Field(FieldRef::TypedPayload { path, .. }) = lhs {
                     let available = definitions(ctx);
-                    let definitions: Vec<_> = available.iter()
+                    let definitions: Vec<_> = available
+                        .iter()
                         .filter(|f| {
                             f.path == *path
                                 && kinds.as_ref().is_none_or(|ks| ks.contains(&f.event_type))
@@ -360,7 +430,11 @@ fn expr(e: &mut Expr, kinds: &Option<BTreeSet<String>>, ctx: &Context) -> Result
         }
         Expr::Within { lhs, .. } => {
             operand(lhs, kinds, ctx)?;
-            if let Operand::Field(FieldRef::TypedPayload { ty, .. }) = lhs && *ty == FieldType::Json { *ty = FieldType::Time; }
+            if let Operand::Field(FieldRef::TypedPayload { ty, .. }) = lhs
+                && *ty == FieldType::Json
+            {
+                *ty = FieldType::Time;
+            }
             if let Operand::Field(FieldRef::TypedPayload { ty, .. }) = lhs
                 && *ty != FieldType::Time
             {
@@ -372,7 +446,11 @@ fn expr(e: &mut Expr, kinds: &Option<BTreeSet<String>>, ctx: &Context) -> Result
             field(a, kinds, ctx)?;
             field(b, kinds, ctx)?;
             for field in [&mut *a, &mut *b] {
-                if let FieldRef::TypedPayload { ty, .. } = field && *ty == FieldType::Json { *ty = FieldType::Time; }
+                if let FieldRef::TypedPayload { ty, .. } = field
+                    && *ty == FieldType::Json
+                {
+                    *ty = FieldType::Time;
+                }
             }
             if [a, b].iter().any(|field| matches!(field, FieldRef::TypedPayload { ty, .. } if *ty != FieldType::Time)) {
                 return Err(QueryError::new("time differences require time fields"));

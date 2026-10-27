@@ -1,5 +1,5 @@
 use super::*;
-use crate::query::{Expr, Value, FieldRef, FieldType, Stage};
+use crate::query::{Expr, FieldRef, FieldType, Stage, Value};
 use serde_json::json;
 
 fn declaration(schema: Json) -> KindDeclaration {
@@ -119,17 +119,37 @@ fn declared_non_time_fields_refuse_time_operations_before_sql() {
 
 #[test]
 fn each_query_and_join_binds_to_its_selected_saved_kinds() {
-    let mut text = declaration(json!({"type":"object","properties":{"value":{"type":"string"}},"required":["value"]}));
+    let mut text = declaration(
+        json!({"type":"object","properties":{"value":{"type":"string"}},"required":["value"]}),
+    );
     text.kind.name = "example.text".into();
-    let mut number = declaration(json!({"type":"object","properties":{"value":{"type":"integer"}},"required":["value"]}));
+    let mut number = declaration(
+        json!({"type":"object","properties":{"value":{"type":"integer"}},"required":["value"]}),
+    );
     number.kind.name = "example.number".into();
     let mut ctx = Context::utc("2026-10-27T15:00:00Z".parse().unwrap());
     ctx.catalog = Some(QueryCatalog::new([text, number]));
     let query = crate::query::bind("events where event_type = example.text and payload.value = 7 near (events where event_type = example.number and payload.value = 7 fields payload.value) within 5m fields payload.value", &ctx).unwrap();
     assert!(query.stages.iter().any(|stage| matches!(stage, Stage::Fields(fields) if matches!(&fields[0], FieldRef::TypedPayload { ty: FieldType::Text, .. }))));
-    let inner = query.stages.iter().find_map(|stage| if let Stage::Join(join) = stage { Some(&join.inner) } else { None }).unwrap();
+    let inner = query
+        .stages
+        .iter()
+        .find_map(|stage| {
+            if let Stage::Join(join) = stage {
+                Some(&join.inner)
+            } else {
+                None
+            }
+        })
+        .unwrap();
     assert!(inner.stages.iter().any(|stage| matches!(stage, Stage::Fields(fields) if matches!(&fields[0], FieldRef::TypedPayload { ty: FieldType::Integer, .. }))));
-    assert!(crate::query::bind("events where event_type = example.number and payload.value = wrong", &ctx).is_err());
+    assert!(
+        crate::query::bind(
+            "events where event_type = example.number and payload.value = wrong",
+            &ctx
+        )
+        .is_err()
+    );
 }
 
 #[test]
@@ -137,9 +157,15 @@ fn schema_binding_rechecks_programmatic_payload_fields() {
     let first = declaration(json!({"type":"object","properties":{"value":{"type":"string"}}}));
     let mut ctx = Context::utc("2026-10-27T15:00:00Z".parse().unwrap());
     ctx.catalog = Some(QueryCatalog::new([first]));
-    let mut query = crate::query::bind("events where event_type = example.reading fields payload.value", &ctx).unwrap();
+    let mut query = crate::query::bind(
+        "events where event_type = example.reading fields payload.value",
+        &ctx,
+    )
+    .unwrap();
     let next = declaration(json!({"type":"object","properties":{"value":{"type":"integer"}}}));
     let catalog = QueryCatalog::new([next]);
     catalog.bind(&mut query, &ctx).unwrap();
-    assert!(matches!(&query.stages[0], Stage::Fields(fields) if matches!(&fields[0], FieldRef::TypedPayload { ty: FieldType::Integer, .. })));
+    assert!(
+        matches!(&query.stages[0], Stage::Fields(fields) if matches!(&fields[0], FieldRef::TypedPayload { ty: FieldType::Integer, .. }))
+    );
 }

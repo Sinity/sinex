@@ -269,8 +269,16 @@ impl Table {
     /// Fields shown when the query names none.
     pub fn default_fields(self) -> &'static [&'static str] {
         match self {
-    Table::Gaps => &["source", "run", "start", "end", "reason"],
-    Table::Events | Table::Drift => &["id", "event_type", "kind_version", "validation", "source", "when", "payload"],
+            Table::Gaps => &["source", "run", "start", "end", "reason"],
+            Table::Events | Table::Drift => &[
+                "id",
+                "event_type",
+                "kind_version",
+                "validation",
+                "source",
+                "when",
+                "payload",
+            ],
             Table::Archive => &[
                 "id",
                 "event_type",

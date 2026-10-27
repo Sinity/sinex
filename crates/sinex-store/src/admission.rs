@@ -176,11 +176,7 @@ pub async fn admit(
 
 /// Apply the privacy rules to every event, once: reads never apply a rule
 /// again.
-async fn apply_privacy(
-    conn: &mut PgConnection,
-    batch: &Batch,
-    events: &mut [Event],
-) -> Result<()> {
+async fn apply_privacy(conn: &mut PgConnection, batch: &Batch, events: &mut [Event]) -> Result<()> {
     if events.is_empty() {
         return Ok(());
     }

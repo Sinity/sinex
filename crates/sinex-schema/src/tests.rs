@@ -57,14 +57,28 @@ fn each_version_after_0_has_its_upgrade() {
 }
 
 #[devkit::test]
-async fn query_kinds_keep_their_definitions_when_apply_recreates_a_view(db: devkit::pg::TestDatabase) {
-    let mut conn = <PgConnection as Connection>::connect(&db.url(None)).await.unwrap();
+async fn query_kinds_keep_their_definitions_when_apply_recreates_a_view(
+    db: devkit::pg::TestDatabase,
+) {
+    let mut conn = <PgConnection as Connection>::connect(&db.url(None))
+        .await
+        .unwrap();
     let before = kinds::all(&mut conn).await.unwrap();
-    conn.execute("DROP VIEW event_types.query_saved").await.unwrap();
+    conn.execute("DROP VIEW event_types.query_saved")
+        .await
+        .unwrap();
     apply(&mut conn).await.unwrap();
     assert_eq!(kinds::all(&mut conn).await.unwrap(), before);
-    conn.execute("SELECT * FROM event_types.query_saved LIMIT 0").await.unwrap();
-    assert!(conn.execute("UPDATE registry.event_types SET payload_schema='{}'::jsonb WHERE name='query.saved'").await.is_err());
+    conn.execute("SELECT * FROM event_types.query_saved LIMIT 0")
+        .await
+        .unwrap();
+    assert!(
+        conn.execute(
+            "UPDATE registry.event_types SET payload_schema='{}'::jsonb WHERE name='query.saved'"
+        )
+        .await
+        .is_err()
+    );
 }
 
 mod kinds;

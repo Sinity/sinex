@@ -502,19 +502,44 @@ async fn applying_a_changed_bundled_definition_refuses_startup(db: devkit::pg::T
 async fn field_hints_are_saved_without_setting_a_kind_wide_class(db: devkit::pg::TestDatabase) {
     let mut conn = PgConnection::connect(&db.url(None)).await.unwrap();
     let mut declaration = declared("example.field_classes", 2);
-    declaration.field_hints = vec![sinex_model::kinds::FieldHint { field: "/value".into(), class: Class::Guarded }];
+    declaration.field_hints = vec![sinex_model::kinds::FieldHint {
+        field: "/value".into(),
+        class: Class::Guarded,
+    }];
     let mut tx = conn.begin().await.unwrap();
-    sinex_schema::kinds::register(&mut tx, "example", std::slice::from_ref(&declaration)).await.unwrap();
+    sinex_schema::kinds::register(&mut tx, "example", std::slice::from_ref(&declaration))
+        .await
+        .unwrap();
     tx.commit().await.unwrap();
-    assert_eq!(sinex_schema::kinds::load(&mut conn, std::slice::from_ref(&declaration.kind)).await.unwrap()[&declaration.kind], declaration);
+    assert_eq!(
+        sinex_schema::kinds::load(&mut conn, std::slice::from_ref(&declaration.kind))
+            .await
+            .unwrap()[&declaration.kind],
+        declaration
+    );
     for (index, supplied_class) in [Class::Open, Class::Guarded].into_iter().enumerate() {
-        let event = Event::submitted(declaration.kind.clone(),
-            json!({"id":index.to_string(),"at":"2026-10-27T12:00:00Z","value":index}), "example".into(),
-            Origin::Record { location: RecordLocation { material: MaterialId::new(), anchor: 0 }, output_index: 0 },
-            ReadingOrder(1), [index as u8; 32], supplied_class);
+        let event = Event::submitted(
+            declaration.kind.clone(),
+            json!({"id":index.to_string(),"at":"2026-10-27T12:00:00Z","value":index}),
+            "example".into(),
+            Origin::Record {
+                location: RecordLocation {
+                    material: MaterialId::new(),
+                    anchor: 0,
+                },
+                output_index: 0,
+            },
+            ReadingOrder(1),
+            [index as u8; 32],
+            supplied_class,
+        );
         let id = event.id;
         assert_eq!(admit_one(&mut conn, &batch(vec![event])).await.admitted, 1);
-        let class: String = sqlx::query_scalar("SELECT class FROM core.events WHERE id=$1").bind(id.0).fetch_one(&mut conn).await.unwrap();
+        let class: String = sqlx::query_scalar("SELECT class FROM core.events WHERE id=$1")
+            .bind(id.0)
+            .fetch_one(&mut conn)
+            .await
+            .unwrap();
         assert_eq!(class, crate::privacy::class_name(supplied_class));
     }
 }

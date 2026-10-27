@@ -50,12 +50,18 @@ impl QueryCatalog {
                 .declarations
                 .push((d.kind.clone(), d.definition_hash()));
             let Some(schema) = d.payload_schema else {
-                catalog.kinds.push(KindFields { kind: d.kind, fields: None });
+                catalog.kinds.push(KindFields {
+                    kind: d.kind,
+                    fields: None,
+                });
                 catalog.schemaless = true;
                 continue;
             };
             let fields = describe(&schema, &schema, vec![], false, &mut BTreeSet::new());
-            catalog.kinds.push(KindFields { kind: d.kind, fields: Some(fields.clone()) });
+            catalog.kinds.push(KindFields {
+                kind: d.kind,
+                fields: Some(fields.clone()),
+            });
             for (name, field) in fields {
                 *counts.entry(name.clone()).or_default() += 1;
                 match catalog.fields.get_mut(&name) {
