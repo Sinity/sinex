@@ -915,8 +915,7 @@
       "purpose": "the media library",
       "class": "open",
       "eventTypes": [
-        "library.item",
-        "library.rendition",
+        "library.preview",
         "library.assignment",
         "library.collection",
         "library.entry",
@@ -1033,6 +1032,18 @@
       ],
       "outputs": [
         "mail.fused"
+      ]
+    },
+    {
+      "name": "library.items",
+      "kind": "keyed",
+      "inputs": [
+        "library.copy",
+        "library.preview"
+      ],
+      "outputs": [
+        "library.item",
+        "library.rendition"
       ]
     },
     {

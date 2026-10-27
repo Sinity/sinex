@@ -28,9 +28,28 @@ uses its stored bytes and never registers its data key again.
 Library roots are planned by their format; crawl commands supply their URL
 list as binding settings. Both are read by the binding runner. A library file selection
 is a scan of that file within its root; files beside it are neither read nor
-reported removed. `library-add` then turns the copies into item and rendition
-requests, preserving item identity across moves and revisions. This item
-creation still runs in the library command adapter.
+reported removed. Each completed scan records every present file, including
+unchanged files, with a key made from the host, resolved root and original
+relative path. A move within the root keeps that key when the old path is
+missing and the bytes match; matching device and inode take precedence over
+another new copy of those bytes. Changed bytes at the same key advance the
+revision, including replacement by a different inode.
+
+`library.items` derives items and original renditions from visible scan
+records. Item IDs are hashes of their keys; original rendition IDs also name
+the content hash. Rendering a preview records `library.preview`, which the
+same derivation turns into a rendition with both the rendering and its scan
+evidence as parents. Hiding a scan invalidates its derived outputs; the runner
+recomputes them from the remaining visible scans. An item and its renditions
+stay visible when another scan supplies their evidence. Revision numbers are
+recorded by the scanner, so hiding an earlier scan does not renumber them.
+Library commands wait for their requested keys to be computed through the
+ordinary runner query and admission scope before returning.
+
+Schema version 3 adds the scan identity fields and the preview evidence type.
+It upgrades databases without library records. A database containing library
+records is refused before any schema or data changes: its request-created
+IDs and external references need an explicit migration decision.
 
 Crawl reads URLs from the `visit.fused` derivation, or from the command's
 explicit URLs. Its format owns domain filtering and the caller's optional

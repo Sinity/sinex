@@ -37,5 +37,43 @@ pub(crate) fn upgrades() -> Vec<Vec<String>> {
             "GRANT SELECT ON core.excised_materials TO sinex_reader, sinex_writer".into(),
             "GRANT INSERT, UPDATE, DELETE ON core.excised_materials TO sinex_writer".into(),
         ],
+        library_scans(),
     ]
+}
+
+/// Captured library requests have random item identifiers. Refuse to guess
+/// how external references should follow a change to those identifiers.
+fn library_scans() -> Vec<String> {
+    let mut statements = vec![
+        "DO $$ BEGIN IF EXISTS (SELECT 1 FROM core.events WHERE event_type LIKE 'library.%') THEN
+         RAISE EXCEPTION 'library records use request-created item IDs; decide how their references should follow deterministic item IDs before upgrading';
+         END IF; END $$".into(),
+    ];
+    for kind in sinex_model::event_types::ALL
+        .iter()
+        .filter(|kind| kind.event_type.starts_with("library."))
+    {
+        statements.push(format!(
+            "DROP VIEW IF EXISTS event_types.{}",
+            crate::quote_ident(&kind.event_type.replace('.', "_"))
+        ));
+        statements.push(crate::kind_view(kind));
+    }
+    for (name, schema, key_kind, fields, replace) in crate::registry_rows()
+        .into_iter()
+        .filter(|row| row.0.starts_with("library."))
+    {
+        let quote = |text: &str| format!("'{}'", text.replace('\'', "''"));
+        let fields = fields
+            .iter()
+            .map(|field| quote(field))
+            .collect::<Vec<_>>()
+            .join(",");
+        statements.push(format!("INSERT INTO registry.event_types (name, payload_schema, key_kind, key_fields, replace_rule)
+            VALUES ({}, {}::jsonb, {}, ARRAY[{fields}]::text[], {})
+            ON CONFLICT (name) DO UPDATE SET payload_schema=EXCLUDED.payload_schema, key_kind=EXCLUDED.key_kind,
+            key_fields=EXCLUDED.key_fields, replace_rule=EXCLUDED.replace_rule", quote(&name), quote(&schema.to_string()), quote(key_kind), quote(replace)));
+    }
+    statements.extend(crate::grants());
+    statements
 }

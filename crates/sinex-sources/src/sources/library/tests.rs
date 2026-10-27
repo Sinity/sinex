@@ -84,6 +84,13 @@ fn a_single_file_scan_reads_and_misses_nothing_else() {
     let mut mem = ScanState::default();
     let all = scan(&root).poll(&Value::Null, &mut mem).unwrap();
     assert_eq!(read(&all, &ScanParser).len(), 2);
+    assert!(
+        scan(&root)
+            .poll(&Value::Null, &mut mem)
+            .unwrap()
+            .material
+            .is_none()
+    );
 
     std::fs::write(root.join("one.png"), png(30, 30)).unwrap();
     std::fs::write(root.join("three.png"), png(40, 40)).unwrap();
@@ -156,11 +163,12 @@ fn scan_describes_stores_and_follows_renames_edits_and_removals() {
     let gone_at = seen.iter().position(|a| a.vanished_at.is_some()).unwrap();
     assert!(moved_at < gone_at);
 
+    assert!(s.poll(&Value::Null, &mut mem).unwrap().material.is_none());
     std::fs::remove_file(root.join("renamed.png")).unwrap();
     let fourth = s.poll(&Value::Null, &mut mem).unwrap();
     let seen = read(&fourth, &parser);
-    assert_eq!(seen.len(), 1);
-    assert!(seen[0].vanished_at.is_some());
+    assert_eq!(seen.len(), 2);
+    assert!(seen.iter().any(|copy| copy.vanished_at.is_some()));
     std::fs::remove_dir_all(&root).unwrap();
 }
 
@@ -200,7 +208,7 @@ fn stored(acquired: &Acquired) -> (crate::binding::StoredMaterial, Value) {
 }
 
 #[devkit::test]
-fn a_restarted_scan_reads_only_what_changed_since_its_stored_parts() {
+fn a_restarted_scan_keeps_item_keys_and_records_every_present_file() {
     use crate::binding::Reader;
     let root = tmp();
     std::fs::write(root.join("one.png"), png(10, 10)).unwrap();
@@ -222,7 +230,7 @@ fn a_restarted_scan_reads_only_what_changed_since_its_stored_parts() {
     assert!(again.restore(&cursor_b, part_b).unwrap());
     assert!(again.restore(&cursor_b, part_a).unwrap());
     again.restored().unwrap();
-    assert!(again.poll(&cursor_b).unwrap().material.is_none());
+    assert_eq!(read(&again.poll(&cursor_b).unwrap(), &ScanParser).len(), 2);
 
     // From the newest part and the memory saved at the first one.
     let (part_b, _) = stored(&b);
@@ -233,8 +241,12 @@ fn a_restarted_scan_reads_only_what_changed_since_its_stored_parts() {
     std::fs::write(root.join("two.png"), png(30, 30)).unwrap();
     let c = saved.poll(&cursor_b).unwrap();
     let seen = read(&c, &ScanParser);
-    assert_eq!(seen.len(), 1, "only the edited file: {seen:?}");
-    assert!(seen[0].path.ends_with("two.png"));
+    assert_eq!(
+        seen.len(),
+        2,
+        "every present file is scan evidence: {seen:?}"
+    );
+    assert!(seen.iter().any(|copy| copy.path.ends_with("two.png")));
     std::fs::remove_dir_all(&root).unwrap();
 }
 
@@ -269,18 +281,6 @@ fn sniffs_types_from_bytes_not_names() {
 
 #[devkit::test]
 fn requests_take_author_and_time_from_the_manifest() {
-    let item = Item {
-        item: "i1".into(),
-        revision: 1,
-        replaces: None,
-        content: "blake3:x".into(),
-        media_type: "image/png".into(),
-        copies: vec!["h:/r/a.png".into()],
-        label: Some("a.png".into()),
-        by: "forged".into(),
-        at: Timestamp::from_unix_secs(1).unwrap(),
-        withdrawn_at: None,
-    };
     let tag = Assignment {
         assignment: "as1".into(),
         target: Target {
@@ -295,12 +295,7 @@ fn requests_take_author_and_time_from_the_manifest() {
         at: Timestamp::from_unix_secs(1).unwrap(),
         withdrawn_at: Some(Timestamp::from_unix_secs(2).unwrap()),
     };
-    let a = request_material(
-        &[LibraryRecord::Item(item), LibraryRecord::Assignment(tag)],
-        "operator",
-        "h",
-        "test",
-    );
+    let a = request_material(&[LibraryRecord::Assignment(tag)], "operator", "h", "test");
     let m = a.material.as_ref().unwrap();
     let out = drain(
         &RequestParser,
@@ -325,18 +320,17 @@ fn requests_take_author_and_time_from_the_manifest() {
             RecordOutcome::Failure { reason, .. } => panic!("{reason}"),
         })
         .collect();
-    assert_eq!(events.len(), 2);
-    assert_eq!(events[0].event_type, "library.item");
+    assert_eq!(events.len(), 1);
+    assert_eq!(events[0].event_type, "library.assignment");
     assert_eq!(events[0].payload["by"], "operator");
     assert_ne!(events[0].payload["at"], json!("1970-01-01T00:00:01Z"));
-    assert_eq!(events[1].event_type, "library.assignment");
-    assert_eq!(events[1].record_state, RecordState::Removed);
+    assert_eq!(events[0].record_state, RecordState::Removed);
 }
 
 #[devkit::test]
 fn request_citation_facts_preserve_payload_identity_and_refuse_supplied_invalid_evidence() {
     let blob = format!("blake3:{}", blake3::hash(b"synthetic preview"));
-    let record = LibraryRecord::Rendition(Rendition {
+    let record = LibraryRecord::Preview(Preview {
         rendition: "r".into(),
         item: "i".into(),
         revision: 1,
