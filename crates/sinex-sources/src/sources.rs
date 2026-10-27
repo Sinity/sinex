@@ -207,15 +207,6 @@ pub fn format(name: &str) -> Option<&'static InputFormat> {
     formats().iter().copied().find(|k| k.name == name)
 }
 
-/// The format that reads the source `spec_name`.
-///
-/// Several formats can read one source name (the live clipboard and its lake
-/// lane); this is the first registered, and a configuration names the format
-/// to choose another.
-pub fn format_of(spec_name: &str) -> Option<&'static InputFormat> {
-    formats().iter().copied().find(|k| k.reads(spec_name))
-}
-
 /// The format reading the source `name` with `parser`. Neither is unique
 /// alone: a name is shared by one source read two ways (the live clipboard
 /// and its lake lane), a parser by sources of one format (mbox, Maildir and
