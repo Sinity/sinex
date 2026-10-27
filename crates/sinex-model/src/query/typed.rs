@@ -476,6 +476,23 @@ pub(super) fn check(q: &mut Query, ctx: &Context) -> Result<(), QueryError> {
                             FieldRef::Field(f) => Some(f.ty),
                             _ => None,
                         };
+                        if matches!(a.function, AggFn::Min | AggFn::Max)
+                            && ty.is_some_and(|ty| {
+                                matches!(
+                                    ty,
+                                    FieldType::Bool
+                                        | FieldType::Json
+                                        | FieldType::TextList
+                                        | FieldType::PathList
+                                        | FieldType::IdList
+                                        | FieldType::Id
+                                )
+                            })
+                        {
+                            return Err(QueryError::new(
+                                "min and max require an ordered scalar field",
+                            ));
+                        }
                         if matches!(a.function, AggFn::Sum | AggFn::Avg)
                             && ty.is_some_and(|ty| {
                                 !matches!(ty, FieldType::Integer | FieldType::Number)

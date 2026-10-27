@@ -269,3 +269,13 @@ fn text_list_fields_compare_members_without_treating_the_array_as_json_text() {
     let choices = complete("events where event_type = polylogue.session and payload.cw");
     assert_eq!(choices[0].field_type, "textlist");
 }
+
+#[devkit::test]
+fn min_and_max_refuse_payload_values_without_an_ordered_scalar_aggregate() {
+    for query in [
+        "events where event_type = polylogue.session min(payload.cwd)",
+        "events where event_type = polylogue.session max(payload.cwd)",
+    ] {
+        assert!(err(query).message.contains("ordered scalar"));
+    }
+}
