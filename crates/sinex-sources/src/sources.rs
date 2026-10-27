@@ -24,6 +24,8 @@ pub mod fish;
 #[cfg(feature = "full")]
 pub mod forecast;
 #[cfg(feature = "full")]
+pub mod gmail;
+#[cfg(feature = "full")]
 pub mod goodreads;
 #[cfg(feature = "full")]
 pub mod google_takeout;
@@ -133,6 +135,8 @@ pub fn formats() -> &'static [&'static InputFormat] {
         &mail::MAILDIR_FORMAT,
         #[cfg(feature = "full")]
         &mail_imap::FORMAT,
+        #[cfg(feature = "full")]
+        &gmail::FORMAT,
         #[cfg(feature = "full")]
         &outlook::FORMAT,
         #[cfg(feature = "full")]

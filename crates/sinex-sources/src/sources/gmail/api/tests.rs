@@ -92,7 +92,7 @@ fn baseline_is_committed_before_full_mailbox_listing() {
     );
     let api = gmail(fake.clone());
     let page = api.fetch(&Value::Null).unwrap();
-    assert!(page.records.is_empty());
+    assert_eq!(page.records[0]["kind"], "profile");
     assert_eq!(page.next, value(initial()));
     fake.done();
 }
@@ -141,7 +141,7 @@ fn empty_list_pages_advance_and_then_cover_arrivals_during_listing() {
     );
     let api = gmail(fake.clone());
     let first = api.fetch(&value(initial())).unwrap();
-    assert!(first.records.is_empty());
+    assert_eq!(first.records[0]["kind"], "listing");
     assert_eq!(first.next["page_token"], "page two");
     let second = api.fetch(&first.next).unwrap();
     assert_eq!(second.next["mode"], "history");
@@ -196,34 +196,29 @@ fn history_baseline_stays_fixed_through_multiple_empty_pages() {
 }
 
 #[test]
-fn gap_is_stored_and_restart_remains_paused_until_explicit_resync() {
+fn gap_is_stored_before_restart_automatically_lists_from_a_new_baseline() {
     let fake = Fake::new();
-    fake.add(
-        "/history",
-        &[
-            ("maxResults", "500"),
-            ("startHistoryId", "184467440737095516169999"),
-        ],
-        Err(Error::Status(404)),
-    );
+    fake.add("/history", &[("maxResults", "500"), ("startHistoryId", "184467440737095516169999")], Err(Error::Status(404)));
     let api = gmail(fake.clone());
     let mut state = initial();
     state.mode = Mode::History;
+    state.page_token = Some("expired-page".into());
+    // A failed later page must start a new listing, never reuse its token.
+    fake.steps.lock().unwrap()[0].query.push(("pageToken".into(), "expired-page".into()));
     let gap = api.fetch(&value(state)).unwrap();
     assert_eq!(gap.records[0]["kind"], "gap");
-    assert_eq!(gap.next["mode"], "gap");
+    assert_eq!(gap.next["mode"], "baseline");
+    fake.add("/profile", &[], Ok(json!({"emailAddress":"owner@example.test", "historyId":"new-baseline"})));
     let restarted = gmail(fake.clone());
-    let paused = restarted.fetch(&gap.next).unwrap();
-    assert!(paused.records.is_empty());
-    assert_eq!(paused.next, gap.next);
-    let outer = serde_json::to_value(sinex_source_core::drivers::api_cursor::Cursor {
-        api: gap.next,
-        ..Default::default()
-    })
-    .unwrap();
-    assert!(resync(&outer, "other@example.test").is_err());
-    let reset = resync(&outer, "owner@example.test").unwrap();
-    assert!(reset["api"].is_null());
+    let baseline = restarted.fetch(&gap.next).unwrap();
+    assert_eq!(baseline.records[0]["kind"], "profile");
+    assert_eq!(baseline.next["mode"], "list");
+    assert!(baseline.next["page_token"].is_null());
+    fake.add("/messages", &[("maxResults", "500"), ("includeSpamTrash", "true")], Ok(json!({})));
+    labels(&fake);
+    let listed = restarted.fetch(&baseline.next).unwrap();
+    assert_eq!(listed.next["mode"], "history");
+    assert_eq!(listed.next["start_history_id"], "new-baseline");
     fake.done();
 }
 
@@ -490,7 +485,7 @@ fn http_history_404_stores_a_gap_without_tokens_or_the_error_body() {
     assert_eq!(stored["kind"], "gap");
     assert_eq!(stored["response"]["status"], 404);
     let next = (material.cursor_at)(bytes.len()).unwrap();
-    assert_eq!(next["api"]["mode"], "gap");
+    assert_eq!(next["api"]["mode"], "baseline");
     let public = format!(
         "{} {} {}",
         String::from_utf8_lossy(bytes),
@@ -506,21 +501,6 @@ fn http_history_404_stores_a_gap_without_tokens_or_the_error_body() {
         assert!(!public.contains(secret));
     }
     server.join().unwrap();
-}
-
-#[test]
-fn explicit_resync_preserves_the_admitted_byte_position() {
-    let material = sinex_model::MaterialId::new();
-    let cursor =
-        json!({"api":initial(),"material":material,"part_index":4,"last_order":123,"through":7});
-    let reset = resync(&cursor, "owner@example.test").unwrap();
-    assert!(reset["api"].is_null());
-    for field in ["material", "part_index", "last_order", "through"] {
-        assert_eq!(reset[field], cursor[field]);
-    }
-    let mut invalid = cursor;
-    invalid["through"] = json!(-1);
-    assert!(resync(&invalid, "owner@example.test").is_err());
 }
 
 #[test]

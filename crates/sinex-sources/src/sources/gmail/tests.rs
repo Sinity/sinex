@@ -15,7 +15,7 @@ fn rfc_identity_labels_attachments_and_provider_metadata_are_separate() {
     let GmailRecord::Message(mail) = &records[0] else {
         panic!()
     };
-    assert_eq!(mail.message_id, "rfc@example.test");
+    assert_eq!(mail.message_id.as_deref(), Some("rfc@example.test"));
     assert!(mail.date.is_none());
     assert_eq!(mail.labels, ["Sent", "Draft", "Work / Research"]);
     assert_eq!(mail.thread_id.as_deref(), Some("thread-1"));
@@ -113,7 +113,7 @@ fn drain_anchors_both_message_events_to_stored_api_bytes_for_replay() {
 fn configuration_records_only_nonsecret_selection_and_reads_credentials_later() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("account.json");
-    std::fs::write(&path, json!({"account":"owner@example.test","scopes":[oauth::FULL_SCOPE],"credentials":{"client_id_file":"id","client_secret_file":"secret","refresh_token_file":"refresh"}}).to_string()).unwrap();
+    std::fs::write(&path, json!({"account":"owner@example.test","credentials":{"client_id_file":"id","client_secret_file":"secret","refresh_token_file":"refresh"}}).to_string()).unwrap();
     let config = Config::load(&path).unwrap();
     assert_eq!(
         config.credentials.refresh_token_file,
@@ -178,26 +178,26 @@ fn partial_admission_retries_held_bytes_and_restart_refetches_the_same_page() {
 }
 
 #[test]
-fn a_restarted_gap_keeps_the_complete_committed_cursor_without_provider_requests() {
-    struct Paused;
-    impl api::Transport for Paused {
-        fn get(&self, _: &str, _: &[(&str, &str)]) -> Result<Value, api::Error> {
-            panic!("gap must stay paused");
+fn automatic_reconciliation_preserves_the_admitted_byte_position() {
+    struct Profile;
+    impl api::Transport for Profile {
+        fn get(&self, path: &str, _: &[(&str, &str)]) -> Result<Value, api::Error> {
+            assert_eq!(path, "/profile");
+            Ok(json!({"emailAddress":"owner@example.test", "historyId":"new-baseline"}))
         }
     }
-    let cursor = json!({"api":{"account":"owner@example.test","mode":"gap","page_token":null,"start_history_id":"old","completed_history_id":"old","initial_history_id":"old","page_index":1,"pending":null},"material":sinex_model::MaterialId::new(),"part_index":0,"last_order":123,"through":456});
-    let mut reader = GmailReader::new(Paused, "owner@example.test".into(), "test-host".into());
+    let cursor = json!({"api":{"account":"owner@example.test","mode":"baseline","page_token":null,"start_history_id":"old","completed_history_id":"old","initial_history_id":"old","page_index":1,"pending":null},"material":sinex_model::MaterialId::new(),"part_index":4,"last_order":123,"through":456});
+    let mut reader = GmailReader::new(Profile, "owner@example.test".into(), "test-host".into());
     let acquired = reader.poll(&cursor).unwrap();
-    assert!(acquired.material.is_none());
-    assert_eq!(acquired.cursor_without_material, cursor);
-    assert!(
-        acquired
-            .observation
-            .unavailable
-            .as_deref()
-            .unwrap()
-            .contains("resync")
-    );
+    assert!(acquired.observation.unavailable.is_none());
+    let material = acquired.material.unwrap();
+    assert_eq!(material.previous_part, serde_json::from_value(cursor["material"].clone()).ok());
+    assert_eq!(material.part_index, 5);
+    let next = (material.cursor_at)(material.bytes.len()).unwrap();
+    assert_eq!(next["api"]["mode"], "list");
+    assert_eq!(next["api"]["initial_history_id"], "new-baseline");
+    assert!(next["last_order"].as_i64().unwrap() > 123);
+    assert_eq!(next["through"], material.bytes.len());
 }
 
 #[test]
@@ -248,4 +248,24 @@ fn an_empty_raw_message_still_keeps_its_provider_and_draft_label() {
         panic!()
     };
     assert_eq!(provider.provider_message_id, "empty-draft");
+}
+
+#[test]
+fn provider_ids_identify_messages_without_rfc_ids_and_isolate_accounts() {
+    use sinex_model::EventPayload;
+    let mut record = message_record();
+    record.get_mut("response").unwrap()["raw"] = json!(base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(b"Subject: No ID\r\n\r\nbody"));
+    let parse = |record: &Map<String, Value>| {
+        let GmailRecord::Message(message) = parse_record(record).unwrap().remove(0) else { panic!() };
+        message
+    };
+    let first = parse(&record);
+    assert!(first.message_id.is_none());
+    assert_eq!(first.account.as_deref(), Some("owner@example.test"));
+    assert_eq!(first.key_kind(), sinex_model::KeyKind::Fields(&["account", "native_id"]));
+    record.insert("account".into(), json!("other@example.test"));
+    assert_ne!(first.native_id, parse(&record).native_id);
+    record.insert("account".into(), json!("owner@example.test"));
+    record.get_mut("response").unwrap()["id"] = json!("provider-2");
+    assert_ne!(first.native_id, parse(&record).native_id);
 }

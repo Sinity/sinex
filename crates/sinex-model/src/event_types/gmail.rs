@@ -12,7 +12,7 @@ pub struct ProviderMessage {
     pub history_id: String,
     pub labels: Vec<String>,
     pub internal_date: Option<Timestamp>,
-    pub message_id: String,
+    pub message_id: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]

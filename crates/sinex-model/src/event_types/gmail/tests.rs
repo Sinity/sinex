@@ -61,7 +61,7 @@ fn repeated_provider_observations_share_a_key_only_within_the_account() {
         history_id: "184467440737095516169999".into(),
         labels: vec![],
         internal_date: None,
-        message_id: "rfc@example.test".into(),
+        message_id: Some("rfc@example.test".into()),
     };
     let build = |payload: &ProviderMessage| {
         crate::Event::build(

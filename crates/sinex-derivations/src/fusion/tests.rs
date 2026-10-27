@@ -671,7 +671,10 @@ fn a_notification_seen_live_and_in_the_lake_is_one_notification() {
 fn mail(source: &str, id: &str, secs: f64) -> Event {
     captured(
         &MailMessage {
-            message_id: id.into(),
+            account: None,
+            native_id: None,
+            bcc: vec![],
+            message_id: Some(id.into()),
             date: Some(at(secs)),
             from: vec!["a@example.org".into()],
             to: vec![],
@@ -715,3 +718,5 @@ fn mail_from_a_source_no_input_names_is_not_fused() {
     let out = fuse(&MAIL, &[mail("communication.elsewhere", "<1@x>", H + 5.0)]);
     assert!(out.is_empty());
 }
+
+mod gmail;

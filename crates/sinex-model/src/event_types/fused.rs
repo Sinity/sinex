@@ -152,11 +152,13 @@ pub struct NotificationFused {
     quality = intrinsic
 )]
 pub struct MailFused {
+    pub account: Option<String>,
     pub record: String,
     pub message_id: String,
     pub subject: Option<String>,
     pub from: Vec<String>,
     pub thread_id: Option<String>,
+    pub labels: Vec<String>,
     /// The `Date` header.
     pub sent_at: Timestamp,
     pub observed_by: Vec<String>,

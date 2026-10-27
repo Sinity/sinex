@@ -33,7 +33,7 @@ fn csv_rows_are_windows_1250_with_polish_headers() {
     assert_eq!(m.to, vec!["Anna <anna@y.pl>"]);
     assert_eq!(m.labels, vec!["Praca"]);
     assert_eq!(m.date, None);
-    assert!(m.message_id.starts_with("blake3:"));
+    assert!(m.message_id.as_ref().unwrap().starts_with("blake3:"));
     assert!(
         CsvParser
             .parse(

@@ -376,6 +376,7 @@ impl ImapMail {
             uids.push(*uid);
         }
         let manifest = sinex_model::Manifest::from_json(json!({
+            "account": self.config.username,
             "media_type": "message/rfc822",
             "mailbox": self.config.mailbox, "uid_validity": uid_validity, "uids": uids,
             "records": records, "read_at_ns": i64::try_from(now.unix_ns()).unwrap_or(i64::MAX),

@@ -80,7 +80,7 @@ impl<E: Exchange, C: Clock> Transport for Http<E, C> {
 pub enum Mode {
     List,
     History,
-    Gap,
+    Baseline,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -172,7 +172,7 @@ impl<T: Transport> Api for Gmail<T> {
             }
             let initial = text(&profile, "historyId")?.to_owned();
             return page(
-                vec![],
+                vec![record(&self.account, "profile", profile)],
                 State {
                     account: self.account.clone(),
                     mode: Mode::List,
@@ -192,8 +192,8 @@ impl<T: Transport> Api for Gmail<T> {
                 "Gmail cursor belongs to another account".into(),
             ));
         }
-        if state.mode == Mode::Gap {
-            return page(vec![], state);
+        if state.mode == Mode::Baseline {
+            return self.fetch(&Value::Null);
         }
         if state.pending.is_some() {
             return self.fetch_pending(state);
@@ -270,7 +270,7 @@ impl<T: Transport> Gmail<T> {
                 return page(
                     vec![stored],
                     State {
-                        mode: Mode::Gap,
+                        mode: Mode::Baseline,
                         ..state
                     },
                 );
@@ -304,9 +304,7 @@ impl<T: Transport> Gmail<T> {
             for message in array(&response, "messages")? {
                 ids.push(text(message, "id")?.to_owned());
             }
-            if !ids.is_empty() {
-                records.push(record(&self.account, "listing", response));
-            }
+            records.push(record(&self.account, "listing", response));
             if token.is_none() {
                 after.mode = Mode::History;
                 after.start_history_id = state.initial_history_id.clone();
@@ -362,33 +360,6 @@ impl<T: Transport> Gmail<T> {
         };
         page(records, next)
     }
-}
-
-/// Reset provider progress after the caller records a resync request.
-/// The caller replaces the binding's reader before capture resumes.
-/// A new profile baseline is committed before any new listing is read.
-pub fn resync(cursor: &Value, account: &str) -> Result<Value, DriverError> {
-    let mut outer: sinex_source_core::drivers::api_cursor::Cursor =
-        serde_json::from_value(cursor.clone())
-            .map_err(|_| DriverError::Cursor("invalid Gmail cursor".into()))?;
-    let state: State = serde_json::from_value(outer.api.clone())
-        .map_err(|_| DriverError::Cursor("invalid Gmail cursor".into()))?;
-    if state.account != account {
-        return Err(DriverError::Cursor(
-            "Gmail cursor belongs to another account".into(),
-        ));
-    }
-    outer.api = Value::Null;
-    let mut next = serde_json::to_value(outer).map_err(|_| invalid())?;
-    if let Some(through) = cursor.get("through") {
-        if through.as_u64().is_none() {
-            return Err(DriverError::Cursor("invalid Gmail byte position".into()));
-        }
-        next.as_object_mut()
-            .expect("API cursor is an object")
-            .insert("through".into(), through.clone());
-    }
-    Ok(next)
 }
 
 #[cfg(test)]

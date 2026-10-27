@@ -172,10 +172,13 @@ impl Parser for CsvParser {
             .unwrap_or_default();
         Ok((
             vec![MailMessage {
-                message_id: format!(
+                account: None,
+                native_id: None,
+                bcc: vec![],
+                message_id: Some(format!(
                     "blake3:{}",
                     blake3::hash(cells.join("\u{1f}").as_bytes()).to_hex()
-                ),
+                )),
                 date: None,
                 from: people("Od"),
                 to: people("Do"),

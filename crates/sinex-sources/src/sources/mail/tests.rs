@@ -31,7 +31,7 @@ fn reads_headers_labels_text_and_attachments() {
         .parse(&MESSAGE, &(), &sinex_source_core::RecordContext::none())
         .unwrap();
     let m = &m[0];
-    assert_eq!(m.message_id, "abc@example.com");
+    assert_eq!(m.message_id.as_deref(), Some("abc@example.com"));
     assert_eq!(m.subject.as_deref(), Some("Zażółć"));
     assert_eq!(m.date, Timestamp::from_unix_secs(1_709_629_200).ok());
     assert_eq!(m.from, vec!["Ann Example <ann@example.com>"]);
@@ -48,7 +48,7 @@ fn reads_headers_labels_text_and_attachments() {
 }
 
 #[devkit::test]
-fn a_message_without_id_or_date_is_hashed_and_undated() {
+fn a_message_without_id_or_date_keeps_both_unknown() {
     let (m, ()) = MailParser
         .parse(
             &&b"Subject: x\n\nbody\n"[..],
@@ -56,7 +56,7 @@ fn a_message_without_id_or_date_is_hashed_and_undated() {
             &sinex_source_core::RecordContext::none(),
         )
         .unwrap();
-    assert!(m[0].message_id.starts_with("blake3:"));
+    assert!(m[0].message_id.is_none());
     assert_eq!(m[0].date, None);
 }
 

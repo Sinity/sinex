@@ -502,13 +502,15 @@ fn mail(event: &Event) -> Option<FusionRecord> {
     let message_id = text(p, "/message_id")?;
     fusion_record(
         event,
-        message_id.to_owned(),
+        serde_json::to_string(&(text(p, "/account"), message_id)).ok()?,
         None,
         fields([
+            ("account", p.get("account").cloned()),
             ("message_id", Some(json!(message_id))),
             ("subject", p.get("subject").cloned()),
             ("from", p.get("from").cloned()),
             ("thread_id", p.get("thread_id").cloned()),
+            ("labels", p.get("labels").cloned()),
         ]),
     )
 }
@@ -525,9 +527,10 @@ const fn mail_from(source: &'static str) -> FusionInput {
 
 pub static MAIL: FusionRule = FusionRule {
     derivation: "mail.fusion",
-    version: 1,
+    version: 2,
     output: "mail.fused",
     fusion_inputs: &[
+        mail_from("communication.gmail"),
         mail_from("communication.imap"),
         mail_from("communication.maildir"),
         mail_from("communication.mbox"),

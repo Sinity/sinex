@@ -11,6 +11,7 @@ pub mod derived;
 pub mod desktop;
 pub mod forecast;
 pub mod fused;
+pub mod gmail;
 pub mod health;
 pub mod input;
 pub mod library;
@@ -147,6 +148,10 @@ pub const ALL: &[RegisteredEventType] = &[
     info::<media::NoteDocument>(),
     info::<communication::ChatMessage>(),
     info::<communication::MailMessage>(),
+    info::<gmail::ProviderMessage>(),
+    info::<gmail::MailChanged>(),
+    info::<gmail::HistoryGap>(),
+    info::<gmail::ProviderMissing>(),
     // AI sessions from Polylogue, and what people and agents add to them
     info::<polylogue::Session>(),
     info::<polylogue::Message>(),

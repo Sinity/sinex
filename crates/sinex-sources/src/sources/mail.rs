@@ -3,9 +3,10 @@
 //! way; an mbox record starts with its `From ` separator line, which is not
 //! part of the message.
 //!
-//! The `Message-ID` header is the identity, so the same message in a later
+//! The account and provider ID identify a message when supplied; otherwise
+//! the `Message-ID` header identifies the same message in a later
 //! export of the same source is one record; a message without one is identified
-//! by a hash of its raw bytes. An mbox export and a Maildir are two sources (a
+//! by its provider ID or record location. An mbox export and a Maildir are two sources (a
 //! Gmail export and a local mail store); the same message in both is combined
 //! by fusion, not by admission. Gmail's labels and thread ID are read from its
 //! `X-Gmail-Labels` and `X-GM-THRID` headers. The first plain-text part is kept
@@ -74,7 +75,10 @@ impl Parser for MailParser {
         {
             return Ok((vec![], ()));
         }
-        parse_message(record).map(|m| (vec![m], ()))
+        let mut message = parse_message(record)?;
+        message.account = context.manifest.details.get("account")
+            .and_then(serde_json::Value::as_str).map(str::to_owned);
+        Ok((vec![message], ()))
     }
 }
 
@@ -91,7 +95,7 @@ pub fn parse_message(raw: &[u8]) -> Result<MailMessage, RecordError> {
     };
     let message_id = one("Message-ID")
         .map(|id| strip_angles(&id))
-        .unwrap_or_else(|| format!("blake3:{}", blake3::hash(&message).to_hex()));
+        .filter(|id| !id.trim().is_empty());
     let date = one("Date")
         .and_then(|d| mailparse::dateparse(&d).ok())
         .and_then(|secs| Timestamp::from_unix_secs(secs).ok());
@@ -115,11 +119,14 @@ pub fn parse_message(raw: &[u8]) -> Result<MailMessage, RecordError> {
     let mut attachments = Vec::new();
     walk(&parsed, &mut text, &mut html, &mut attachments)?;
     Ok(MailMessage {
+        account: None,
+        native_id: None,
         message_id,
         date,
         from: addresses("From"),
         to: addresses("To"),
         cc: addresses("Cc"),
+        bcc: addresses("Bcc"),
         subject: one("Subject"),
         in_reply_to: one("In-Reply-To").map(|v| strip_angles(&v)),
         references: ids("References"),

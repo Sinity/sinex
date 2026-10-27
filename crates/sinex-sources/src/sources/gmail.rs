@@ -44,7 +44,6 @@ pub const SPEC: SourceSpec = SourceSpec {
 #[serde(deny_unknown_fields)]
 pub struct Config {
     pub account: String,
-    pub scopes: Vec<String>,
     pub credentials: oauth::CredentialFiles,
 }
 
@@ -55,10 +54,9 @@ impl Config {
             serde_json::from_slice(&bytes).map_err(|_| "invalid Gmail account configuration")?;
         if config.account.trim().is_empty()
             || config.account == "me"
-            || config.scopes != [oauth::FULL_SCOPE]
         {
             return Err(
-                "Gmail requires an account email and the full https://mail.google.com/ scope"
+                "Gmail requires an account email"
                     .into(),
             );
         }
@@ -134,7 +132,7 @@ fn parse_record(record: &Map<String, Value>) -> Result<Vec<GmailRecord>, RecordE
         .filter(|r| r.is_object())
         .ok_or_else(|| RecordError::new("Gmail record missing response"))?;
     match record_text(record, "kind")? {
-        "listing" => Ok(vec![]),
+        "listing" | "profile" => Ok(vec![]),
         "message" => {
             let raw = response
                 .get("raw")
@@ -145,6 +143,10 @@ fn parse_record(record: &Map<String, Value>) -> Result<Vec<GmailRecord>, RecordE
                 .or_else(|_| base64::engine::general_purpose::URL_SAFE.decode(raw))
                 .map_err(|_| RecordError::new("Gmail message has invalid base64url bytes"))?;
             let mut message = super::mail::parse_message(&bytes)?;
+            let provider_message_id = required(response, "id")?.to_owned();
+            message.account = Some(account.clone());
+            message.native_id = Some(serde_json::to_string(&(&account, &provider_message_id))
+                .expect("message coordinates serialize"));
             let labels = strings(response, "labelIds")?;
             let names = record
                 .get("labels")
@@ -183,7 +185,7 @@ fn parse_record(record: &Map<String, Value>) -> Result<Vec<GmailRecord>, RecordE
                 .transpose()?;
             let provider = ProviderMessage {
                 account,
-                provider_message_id: required(response, "id")?.into(),
+                provider_message_id,
                 thread_id,
                 history_id: required(response, "historyId")?.into(),
                 labels,
@@ -275,10 +277,6 @@ impl<T: api::Transport + 'static> Reader for GmailReader<T> {
         }
         let mut acquired = self.driver.poll(cursor)?;
         let Some(material) = acquired.material.as_mut() else {
-            if cursor.pointer("/api/mode").and_then(Value::as_str) == Some("gap") {
-                acquired.observation.unavailable =
-                    Some("Gmail history gap; explicit resync required".into());
-            }
             if let Some(through) = cursor.get("through") {
                 acquired
                     .cursor_without_material
@@ -311,7 +309,7 @@ pub const FORMAT: sinex_source_core::binding::InputFormat =
         plan: Some(|input, settings| {
             let config = Config::load(input)?;
             let mut settings = settings.clone();
-            settings.options = json!({"account": config.account, "scopes": config.scopes, "include_spam_trash": true});
+            settings.options = json!({"account": config.account, "include_spam_trash": true});
             Ok(sinex_source_core::binding::single(&SPEC, input, &settings))
         }),
         source: |_| Ok(Box::new(source())),
