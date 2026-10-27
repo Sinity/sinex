@@ -198,21 +198,12 @@ impl Parser for TranscriptParser {
                 let block = text
                     .trim_matches(['\r', '\n'])
                     .trim_start_matches('\u{feff}');
+                let heading = block.lines().next().unwrap_or_default();
+                let word = heading.split_ascii_whitespace().next().unwrap_or_default();
                 if self.format == Format::WebVtt
-                    && (block == "WEBVTT"
-                        || block.starts_with("WEBVTT ")
-                        || block.starts_with("WEBVTT\n")
-                        || block.starts_with("WEBVTT\r\n")
-                        || block == "NOTE"
-                        || block.starts_with("NOTE ")
-                        || block.starts_with("NOTE\n")
-                        || block.starts_with("NOTE\r\n")
-                        || block == "STYLE"
-                        || block.starts_with("STYLE\n")
-                        || block.starts_with("STYLE\r\n")
-                        || block == "REGION"
-                        || block.starts_with("REGION\n")
-                        || block.starts_with("REGION\r\n"))
+                    && ((index == 0 && word == "WEBVTT")
+                        || word == "NOTE"
+                        || matches!(heading.trim_end(), "STYLE" | "REGION"))
                 {
                     return Ok((vec![], carry));
                 }
@@ -378,7 +369,7 @@ fn cue_time(text: &str, srt: bool) -> Result<u64, RecordError> {
                 .checked_mul(1000)
                 .ok_or_else(|| RecordError::new("cue time overflow"))?
         };
-        if index > 0 && value >= 60_000 {
+        if (index > 0 || parts.len() == 2) && value >= 60_000 {
             return Err(RecordError::new("cue minute or second exceeds 59"));
         }
         total = total
