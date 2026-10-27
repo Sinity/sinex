@@ -43,7 +43,7 @@ def run(psql, output_directory, source_root):
     mapping = "core.published p CROSS JOIN LATERAL unnest(p.event_ids,p.stream_seqs) m(event_id,stream_seq)" if page_storage else "core.published m"
     audit = json.loads(query(f"SELECT json_build_object('pairs', count(*), 'event_ids', count(DISTINCT m.event_id), 'stream_seqs', count(DISTINCT m.stream_seq), 'wrong_pairs', count(*) FILTER (WHERE c.event_id IS NULL OR c.commit_seq <> m.stream_seq), 'expected', (SELECT count(*) FROM core.commit_log WHERE event_id IS NOT NULL)) FROM {mapping} LEFT JOIN core.commit_log c ON c.event_id=m.event_id"))
     pathlib.Path(output_directory, 'publication-audit.json').write_text(json.dumps(audit, indent=2))
-    if not (audit['pairs'] == audit['event_ids'] == audit['stream_seqs'] == audit['expected'] == 1000000 and audit['wrong_pairs'] == 0):
+    if not (audit['pairs'] == audit['event_ids'] == audit['stream_seqs'] == audit['expected'] and audit['wrong_pairs'] == 0):
         raise RuntimeError('published pairs differ from the generated stream: ' + json.dumps(audit))
     results = {"page_storage": page_storage, "source": str(root), "cases": []}
     # 3.85 million mappings approximate the inspected confirmed-stream map.
@@ -81,7 +81,30 @@ def run(psql, output_directory, source_root):
         remaining = int(query("SELECT coalesce(sum(cardinality(event_ids)),0) FROM core.published" if page_storage else "SELECT count(*) FROM core.published"))
         if remaining != 3850999:
             raise RuntimeError(f'wrong remaining pair count: {remaining}')
-        results["cases"].append({"overlapping_uuid_bounds": overlap, "candidate_pages": candidates, "remaining_pairs": remaining, "fill": fill, "sizes": sizes, "lookup": lookup, "rewrite": rewrite})
+        import hashlib
+        numbers = [500 + 1000 * page for page in range(1000)]
+        ids = [hashlib.md5(str(i).encode()).hexdigest() if overlap else f'{i:032x}' for i in numbers]
+        id_array = 'ARRAY[' + ','.join("'" + value + "'" for value in ids) + ']::uuid[]'
+        seq_array = 'ARRAY[' + ','.join(str(i * 3) for i in numbers) + ']::bigint[]'
+        query(f"INSERT INTO core.event_tombstones(event_id,source,event_type,operation_id) SELECT id,'bench.synthetic','bench.event','00000000-0000-0000-0000-000000000001'::uuid FROM unnest({id_array}) t(id); ANALYZE core.event_tombstones")
+        types, sql = statements['excised_on_stream']
+        batch_lookup = [timed(f'PREPARE lookup({types}) AS {sql}; EXECUTE lookup(1000)') for _ in range(3)]
+        for sample in batch_lookup:
+            found = {int(line.split('|')[1]) for line in sample['result'].splitlines() if '|' in line}
+            if found != {i * 3 for i in numbers}:
+                raise RuntimeError('batch lookup did not return the exact 1000 scattered pairs')
+        types, sql = statements['forget_published']
+        args = id_array + (',' + seq_array if page_storage else '')
+        batch_rewrite = timed(f'PREPARE forget({types}) AS {sql}; EXECUTE forget({args})')
+        batch_remaining = int(query('SELECT coalesce(sum(cardinality(event_ids)),0) FROM core.published' if page_storage else 'SELECT count(*) FROM core.published'))
+        if batch_remaining != 3849999:
+            raise RuntimeError(f'wrong pair count after scattered erasures: {batch_remaining}')
+        types, sql = statements['excised_on_stream']
+        empty_lookup = [timed(f'PREPARE lookup({types}) AS {sql}; EXECUTE lookup(1000)') for _ in range(3)]
+        if any('|' in sample['result'] for sample in empty_lookup):
+            raise RuntimeError('erased pairs were returned again')
+        results["cases"].append({"overlapping_uuid_bounds": overlap, "candidate_pages": candidates, "remaining_pairs": remaining, "fill": fill, "sizes": sizes, "lookup": lookup, "rewrite": rewrite,
+            'scattered_1000': {'lookup': batch_lookup, 'rewrite': batch_rewrite, 'remaining_pairs': batch_remaining, 'post_erasure_lookup': empty_lookup}})
     pathlib.Path(output_directory, 'publication-probe.json').write_text(json.dumps(results, indent=2))
     return results
 
@@ -115,4 +138,4 @@ if __name__ == '__main__':
     finally:
         stop.set()
         observer.join()
-        pathlib.Path(output, 'publication-probe-host.json').write_text(json.dumps(samples, indent=2))
+        pathlib.Path(output, 'publication-probe-load.json').write_text(json.dumps(samples, indent=2))

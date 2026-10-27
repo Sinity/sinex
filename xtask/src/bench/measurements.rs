@@ -333,7 +333,10 @@ pub(super) fn correctness(cluster: &Cluster, events: u64) -> Result<Value, Strin
         'failures', (SELECT count(*) FROM raw.failures),
         'positions', (SELECT json_agg(p) FROM raw.positions p),
         'consumers', (SELECT json_agg(p) FROM core.consumer_positions p),
-        'search_rows', (SELECT count(*) FROM core.search_text))",
+        'search_rows', (SELECT count(*) FROM core.search_text),
+        'live_equivalence_rows', (SELECT count(*) FROM core.live_equivalence),
+        'live_location_rows', (SELECT count(*) FROM core.live_locations),
+        'event_types', (SELECT json_object_agg(event_type,n) FROM (SELECT event_type,count(*) n FROM core.events GROUP BY event_type) t))",
     )?;
     counts["complete"] = json!(
         counts["events"].as_u64() == Some(events)
@@ -460,6 +463,7 @@ pub(super) fn with_consumers(
     expected: ConsumerCounts,
     memory_max: &str,
 ) -> Result<Value, String> {
+    let setup_started = Instant::now();
     let port = free_port()?;
     let monitoring = free_port()?;
     let nats_log = fs::File::create(out.join("nats.log")).map_err(|e| e.to_string())?;
@@ -531,6 +535,7 @@ pub(super) fn with_consumers(
             .map_err(|e| e.to_string())?
             .as_nanos()
     );
+    let setup_s = setup_started.elapsed().as_secs_f64();
     let started = Instant::now();
     let mut daemon = Process(
         Command::new("systemd-run")
@@ -650,7 +655,7 @@ pub(super) fn with_consumers(
                 }
                 return Ok(
                     json!({"peak_rss_mb": peak_rss_mb, "scope_memory_peak_bytes": memory_peak_bytes,
-                        "consumers": {"admission_s": admission_s, "search_s": search_s, "publisher_s": publication_s,
+                        "consumers": {"setup_s": setup_s, "complete_wall_s": elapsed, "admission_s": admission_s, "search_s": search_s, "publisher_s": publication_s,
                     "search_catch_up_s": search_s.zip(admission_s).map(|(s,a)| s-a),
                     "publisher_catch_up_s": publication_s.zip(admission_s).map(|(p,a)| p-a),
                     "acknowledged_events": messages, "position_resolution_s": 0.2}}),
@@ -793,6 +798,26 @@ pub(super) fn summarize_batches(batches: &[Value]) -> Value {
             totals.insert(output.into(), json!(total));
         }
     }
+    let names: std::collections::BTreeSet<_> = batches
+        .iter()
+        .flat_map(|batch| {
+            batch["timings_ms"]
+                .as_object()
+                .into_iter()
+                .flatten()
+                .map(|(name, _)| name.clone())
+        })
+        .collect();
+    for name in names {
+        let values: Option<Vec<f64>> = batches
+            .iter()
+            .map(|batch| batch["timings_ms"][&name].as_f64())
+            .collect();
+        totals.insert(
+            format!("{name}_s"),
+            json!(values.map(|values| values.iter().sum::<f64>() / 1000.0)),
+        );
+    }
     json!({"reported_batches": batches.len(), "totals": totals, "by_batch_size": groups})
 }
 
@@ -807,9 +832,11 @@ pub(super) fn relation_size(snapshot: &Value, relation: &str, field: &str) -> Op
 pub(super) fn query_probes(cluster: &Cluster, out: &Path) -> Result<Value, String> {
     let partial = query(cluster, "SELECT EXISTS(SELECT 1 FROM information_schema.columns WHERE table_schema='core' AND table_name='search_text' AND column_name='trigram_indexed')")?.as_bool().ok_or("missing search policy")?;
     let mut observations = Vec::new();
-    for (kind, pattern) in [
-        ("command", "(^| )echo synthetic 12345"),
-        ("journal", "(^| )synthetic café record 12345"),
+    for (kind, shape, pattern) in [
+        ("command", "prefix", "(^| )echo synthetic 12345"),
+        ("journal", "prefix", "(^| )synthetic café record 12345"),
+        ("command", "regex", "synthetic (12|34)[0-9]+$"),
+        ("journal", "regex", "café record (12|34)[0-9]+ "),
     ] {
         let from = if partial {
             "SELECT s.event_id FROM core.visible_search_text s WHERE s.trigram_indexed AND s.text ~ $1::text UNION ALL SELECT s.event_id FROM core.visible_search_text s WHERE NOT s.trigram_indexed AND s.text ~ $1::text"
@@ -841,11 +868,13 @@ pub(super) fn query_probes(cluster: &Cluster, out: &Path) -> Result<Value, Strin
             cluster,
             &format!("{prefix}SELECT to_jsonb(matches) FROM ({literal}) matches; ROLLBACK"),
         )?;
-        observations.push(json!({"kind": kind, "pattern": pattern, "matches": count,
-            "generic": generic, "custom": custom, "samples": samples}));
+        observations.push(
+            json!({"kind": kind, "shape": shape, "pattern": pattern, "matches": count,
+            "generic": generic, "custom": custom, "samples": samples}),
+        );
     }
     let result = json!({"partial_index": partial, "observations": observations,
-        "scope": "Protected search-view prefix branches after consumer completion; planning is non-executing and latency uses read-only execution plans."});
+        "scope": "Protected search-view prefix and regex branches after consumer completion; planning is non-executing and latency uses read-only execution plans."});
     save(out, "query-probes.json", &result)?;
     Ok(result)
 }

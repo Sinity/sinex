@@ -254,3 +254,11 @@ records in another material, hidden records, replacements that omit known
 titles and channels, and derivations with retained parent links. It checks
 search and publication catch-up after each phase. These serial scenario
 timings are supplementary to the concurrent pipeline comparison.
+
+`bench cases --events 10000 --output <directory>` exercises repeat records,
+known-field preservation during replacement, hiding and derived parents in
+the disposable consumer setup. `synthetic --publication-probe` additionally
+checks every recorded stream pair, then measures one and 1,000 scattered
+erasures with ordered and overlapping UUID bounds at 3,851,000 mappings.
+These supplementary probes run after the complete-load snapshots. Prefix
+and regex read plans and latency are saved for consumer runs.

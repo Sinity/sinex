@@ -233,7 +233,9 @@ impl ReadModel for FailingSearch {
 async fn search_failure_rolls_back_text_and_restart_covers_same_position(
     db: devkit::pg::TestDatabase,
 ) {
-    let mut conn = sinex_store::AdmissionContext::connect(&db.url(None)).await.unwrap();
+    let mut conn = sinex_store::AdmissionContext::connect(&db.url(None))
+        .await
+        .unwrap();
     let mut tx = conn.begin().await.unwrap();
     tx.admit(
         &api_batch(vec![imported("cargo test", 0)]),
@@ -345,7 +347,9 @@ async fn maintenance_batches_immediate_backlog_and_flushes_small_tail(
 async fn maintenance_byte_budget_accepts_oversized_first_event_and_commit_gaps(
     db: devkit::pg::TestDatabase,
 ) {
-    let mut conn = sinex_store::AdmissionContext::connect(&db.url(None)).await.unwrap();
+    let mut conn = sinex_store::AdmissionContext::connect(&db.url(None))
+        .await
+        .unwrap();
     let mut tx = conn.begin().await.unwrap();
     // Random-looking bytes keep PostgreSQL from compressing the payload
     // below the byte budget before commit-log pagination measures it.

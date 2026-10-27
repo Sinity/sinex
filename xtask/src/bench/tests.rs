@@ -146,6 +146,8 @@ fn stage_percentiles_compare_equal_batch_sizes_and_count_suppressed_batches() {
     assert_eq!(summary["totals"]["batches"], 4);
     assert_eq!(summary["totals"]["events_offered"], 30287);
     assert_eq!(summary["totals"]["admitted"], 20287);
+    assert_eq!(summary["totals"]["copy_s"], 0.062);
+    assert!(summary["totals"]["parse_s"].is_null());
     let groups = &summary["by_batch_size"];
     assert_eq!(groups[0]["events_per_batch"], 287);
     assert_eq!(groups[1]["events_per_batch"], 10000);

@@ -55,7 +55,10 @@ fn each_version_after_0_has_its_upgrade() {
 }
 
 async fn search_version_two(conn: &mut PgConnection) {
-    sqlx::raw_sql(include_str!("tests/version_two.sql")).execute(conn).await.unwrap();
+    sqlx::raw_sql(include_str!("tests/version_two.sql"))
+        .execute(conn)
+        .await
+        .unwrap();
 }
 
 #[devkit::test]
@@ -86,7 +89,10 @@ async fn search_upgrade_preserves_populated_text_and_other_rows(db: devkit::pg::
             .unwrap();
     assert_eq!(
         apply(&mut conn).await.unwrap(),
-        Applied::Upgraded { from: 2, to: VERSION }
+        Applied::Upgraded {
+            from: 2,
+            to: VERSION
+        }
     );
     let after: Vec<serde_json::Value> = sqlx::query_scalar(
         "SELECT to_jsonb(s)-'trigram_indexed' FROM core.search_text s ORDER BY event_id",
@@ -192,7 +198,10 @@ async fn search_upgrade_refuses_writer_and_rolls_back_failed_index_build(
     );
     assert_eq!(
         apply(&mut conn).await.unwrap(),
-        Applied::Upgraded { from: 2, to: VERSION }
+        Applied::Upgraded {
+            from: 2,
+            to: VERSION
+        }
     );
 }
 

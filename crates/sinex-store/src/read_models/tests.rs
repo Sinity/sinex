@@ -48,7 +48,10 @@ async fn indexes_committed_payload_text_once_and_resumes(db: devkit::pg::TestDat
 }
 
 /// Same text under kinds with and without trigram indexing.
-pub(crate) async fn admit_search_kinds(conn: &mut crate::AdmissionContext, class: sinex_model::Class) {
+pub(crate) async fn admit_search_kinds(
+    conn: &mut crate::AdmissionContext,
+    class: sinex_model::Class,
+) {
     use serde_json::json;
     use sinex_model::{
         Batch, BatchKind, Event, MaterialId, Origin, ReadingOrder, RecordLocation, RecordOutcome,
@@ -110,7 +113,9 @@ pub(crate) async fn admit_search_kinds(conn: &mut crate::AdmissionContext, class
 #[devkit::test]
 async fn writes_kind_policy_and_skips_unchanged_rows(db: devkit::pg::TestDatabase) {
     use sqlx::Connection;
-    let mut conn = crate::AdmissionContext::connect(&db.url(None)).await.unwrap();
+    let mut conn = crate::AdmissionContext::connect(&db.url(None))
+        .await
+        .unwrap();
     admit_search_kinds(&mut conn, sinex_model::Class::Open).await;
     catch_up_search_text(&mut conn).await.unwrap();
     let before: Vec<(String, String, String, bool)> = sqlx::query_as(
@@ -164,7 +169,9 @@ async fn writes_kind_policy_and_skips_unchanged_rows(db: devkit::pg::TestDatabas
 #[devkit::test]
 async fn sealed_and_empty_text_still_advance_search_position(db: devkit::pg::TestDatabase) {
     use sqlx::Connection;
-    let mut conn = crate::AdmissionContext::connect(&db.url(None)).await.unwrap();
+    let mut conn = crate::AdmissionContext::connect(&db.url(None))
+        .await
+        .unwrap();
     admit_search_kinds(&mut conn, sinex_model::Class::Open).await;
     let mut page = crate::commit_log::after(&mut conn, 0, 10, i64::MAX)
         .await

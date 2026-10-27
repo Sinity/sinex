@@ -754,13 +754,26 @@ fn synthetic(options: SyntheticOptions) -> Result<(), String> {
     } else {
         stages["admission"]["totals"].clone()
     };
-    let correctness = measurements::correctness(
+    let mut correctness = measurements::correctness(
         &cluster,
         events
             .checked_add(prefill_keys)
             .ok_or("event count overflow")?,
     )?;
+    let commands = if mixed { events / 3 } else { events };
+    let location_rows = if mixed { commands.div_ceil(2) } else { 0 };
+    let keyed_rows = events
+        .checked_add(prefill_keys)
+        .and_then(|n| n.checked_sub(location_rows))
+        .ok_or("key count overflow")?;
+    correctness["expected_live_equivalence_rows"] = json!(keyed_rows);
+    correctness["expected_live_location_rows"] = json!(location_rows);
+    correctness["key_counts_match"] = json!(
+        correctness["live_equivalence_rows"].as_u64() == Some(keyed_rows)
+            && correctness["live_location_rows"].as_u64() == Some(location_rows)
+    );
     let complete = correctness["complete"] == true
+        && correctness["key_counts_match"] == true
         && (consumers || totals["admitted"].as_u64() == Some(events));
     let batches = totals["batches"].as_u64();
     let normalized = measurements::normalize_statements(&statements, batches);
@@ -771,6 +784,11 @@ fn synthetic(options: SyntheticOptions) -> Result<(), String> {
         "admitted": correctness["events"].as_u64().and_then(|n| n.checked_sub(prefill_keys)), "batches": batches,
         "build_s": build_s, "build": build_times, "setup_s": setup_s, "execution_s": execution_s,
         "wall_s": totals["wall_s"], "admission_s": totals["admission_s"],
+        "admission_wall_s": if consumers { &result["consumers"]["admission_s"] } else { &totals["wall_s"] },
+        "admission_service_s": stages["admission"]["totals"]["service_s"],
+        "writer_queue_s": stages["admission"]["totals"]["queue_s"],
+        "commit_s": stages["admission"]["totals"]["commit_s"],
+        "parse_s": totals["parse_s"],
         "admission_events_per_s": totals["admission_events_per_s"],
         "events_per_s": events as f64 / execution_s,
         "peak_rss_mb": result["peak_rss_mb"], "source_totals": totals, "stages": stages,

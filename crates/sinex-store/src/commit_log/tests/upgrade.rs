@@ -1,7 +1,12 @@
 use super::*;
 
 async fn version_two(conn: &mut PgConnection) {
-    sqlx::raw_sql(include_str!("../../../../sinex-schema/src/tests/version_two.sql")).execute(conn).await.unwrap();
+    sqlx::raw_sql(include_str!(
+        "../../../../sinex-schema/src/tests/version_two.sql"
+    ))
+    .execute(conn)
+    .await
+    .unwrap();
 }
 
 async fn other_rows(
@@ -21,8 +26,14 @@ async fn other_rows(
         let name = format!("{schema}.{table}");
         let value = if table == "live_equivalence" && compact {
             "to_jsonb(t)||jsonb_build_object('equivalence_key',core.decode_equivalence_key(equivalence_key))"
-        } else if table == "search_text" { "to_jsonb(t)-'trigram_indexed'" } else { "to_jsonb(t)" };
-        let sql = format!("SELECT coalesce(jsonb_agg({value} ORDER BY {value}), '[]'::jsonb) FROM \"{schema}\".\"{table}\" t");
+        } else if table == "search_text" {
+            "to_jsonb(t)-'trigram_indexed'"
+        } else {
+            "to_jsonb(t)"
+        };
+        let sql = format!(
+            "SELECT coalesce(jsonb_agg({value} ORDER BY {value}), '[]'::jsonb) FROM \"{schema}\".\"{table}\" t"
+        );
         rows.insert(
             name,
             sqlx::query_scalar(&sql)
@@ -38,7 +49,9 @@ async fn other_rows(
 async fn upgrade_packs_every_mapping_including_tombstones_without_commit_rows(
     db: devkit::pg::TestDatabase,
 ) {
-    let mut conn = crate::AdmissionContext::connect(&db.url(None)).await.unwrap();
+    let mut conn = crate::AdmissionContext::connect(&db.url(None))
+        .await
+        .unwrap();
     let ids = crate::query::tests::admit_commands(
         &mut conn,
         &[("pwd", "/sample"), ("echo example", "/sample")],
@@ -59,9 +72,7 @@ async fn upgrade_packs_every_mapping_including_tombstones_without_commit_rows(
         }],
     };
     let mut tx = conn.begin().await.unwrap();
-    tx.admit(&batch, &crate::NoDerivations)
-        .await
-        .unwrap();
+    tx.admit(&batch, &crate::NoDerivations).await.unwrap();
     tx.commit().await.unwrap();
     drop(conn);
     let mut conn = PgConnection::connect(&db.url(None)).await.unwrap();
@@ -113,7 +124,10 @@ async fn upgrade_packs_every_mapping_including_tombstones_without_commit_rows(
         .unwrap();
     assert_eq!(
         sinex_schema::apply(&mut conn).await.unwrap(),
-        sinex_schema::Applied::Upgraded { from: 2, to: sinex_schema::VERSION }
+        sinex_schema::Applied::Upgraded {
+            from: 2,
+            to: sinex_schema::VERSION
+        }
     );
     assert_eq!(pairs(&mut conn).await, before);
     assert_eq!(other_rows(&mut conn).await, other_before);
@@ -147,7 +161,9 @@ async fn upgrade_packs_every_mapping_including_tombstones_without_commit_rows(
     assert_eq!(pairs(&mut conn).await.len(), before.len());
     assert_eq!(
         sinex_schema::apply(&mut conn).await.unwrap(),
-        sinex_schema::Applied::Current { version: sinex_schema::VERSION }
+        sinex_schema::Applied::Current {
+            version: sinex_schema::VERSION
+        }
     );
 }
 

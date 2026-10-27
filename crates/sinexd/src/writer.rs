@@ -295,8 +295,11 @@ pub(crate) async fn run_notifying(
         if let (Some(events), Ok(Done::Admitted(outcome))) = (offered, &result)
             && std::env::var_os("SINEX_BENCH_TIMINGS").is_some()
         {
-            let timings: std::collections::BTreeMap<_, _> = outcome.timings.iter()
-                .map(|(name, duration)| (*name, duration.as_secs_f64() * 1000.0)).collect();
+            let timings: std::collections::BTreeMap<_, _> = outcome
+                .timings
+                .iter()
+                .map(|(name, duration)| (*name, duration.as_secs_f64() * 1000.0))
+                .collect();
             eprintln!(
                 "{}",
                 serde_json::json!({"admission_batch": {
