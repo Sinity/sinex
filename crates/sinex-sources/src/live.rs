@@ -298,11 +298,15 @@ async fn produce_spools(
         for live in lives.iter() {
             producer.monitor(&live.binding.name, live.health.clone());
         }
+        let mut had_material = false;
         for live in lives.iter_mut().filter(|live| live.retry.ready()) {
             // A failed batch is replayed with its original frame IDs before
             // the reader may advance to newly captured material.
             match produce_spool(producer, store, positions, live).await {
-                Ok(_) => live.retry.recovered(&live.binding.name),
+                Ok(produced) => {
+                    had_material |= produced;
+                    live.retry.recovered(&live.binding.name);
+                }
                 Err(error @ (Error::Nats(_) | Error::NoAck(_) | Error::Refused { .. })) => {
                     let state = match error {
                         Error::NoAck(_) => "awaiting acknowledgment",
@@ -316,7 +320,14 @@ async fn produce_spools(
                 Err(error) => return Err(error.to_string()),
             }
         }
-        tokio::time::sleep(every.max(Duration::from_millis(100))).await;
+        if had_material {
+            // A backlog gets another turn without waiting for the next poll.
+            tokio::task::yield_now().await;
+        } else {
+            let next_retry = lives.iter().filter_map(|live| live.retry.after).min();
+            let wait = next_retry.map_or(every, |after| every.min(after.saturating_duration_since(Instant::now())));
+            tokio::time::sleep(wait.max(Duration::from_millis(100))).await;
+        }
     }
 }
 
