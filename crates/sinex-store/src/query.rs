@@ -7,6 +7,7 @@ mod compile;
 mod cursor;
 mod fields;
 mod recall;
+mod source_views;
 mod sql;
 mod walk;
 
@@ -174,7 +175,9 @@ pub async fn run(
         Source::Table { alias: Some(a), .. } => a.name.to_string(),
         Source::Table { table, .. } => table.name().to_string(),
         Source::Walk { walk, .. } => format!("{walk:?}").to_lowercase(),
-        Source::Recall { .. } | Source::RecallLast { .. } => "recall".to_string(),
+        Source::Recall { .. } | Source::RecallLast { .. } | Source::RecallMark { .. } => {
+            "recall".to_string()
+        }
     };
     let mut answer = match &query.source {
         Source::Walk { walk, reference } => {
@@ -227,7 +230,7 @@ pub async fn run(
             );
             page_of(&mut tx, rendered, table, text, query, &read, None).await?
         }
-        Source::Recall { .. } | Source::RecallLast { .. } => {
+        Source::Recall { .. } | Source::RecallLast { .. } | Source::RecallMark { .. } => {
             let selection = recall::select(&mut tx, &query.source, &read.ctx, read.seq).await?;
             let as_events = Query {
                 source: Source::Table {
@@ -244,7 +247,9 @@ pub async fn run(
                 read.size,
                 read.prior.is_none(),
             );
-            let account = selection.account(&mut tx, read.seq).await?;
+            let account = selection
+                .account(&mut tx, read.seq, &as_events, &read.ctx)
+                .await?;
             page_of(&mut tx, rendered, table, text, query, &read, Some(account)).await?
         }
     };

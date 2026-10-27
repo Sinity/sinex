@@ -1,0 +1,447 @@
+use super::*;
+
+#[devkit::test]
+async fn moment_marks_are_authored_material_records_recalled_by_number_and_visibility(
+    db: devkit::pg::TestDatabase,
+) {
+    let w = world(db).await;
+    admit(
+        &w,
+        &["synthetic marked command", "synthetic next command"],
+        0,
+    )
+    .await;
+    let (_, denied) = call(&w, Some(READ), json!({"method":"mark","text":"synthetic"})).await;
+    assert_eq!(denied["outcome"], "refused");
+    let (status, _) = call(&w, Some(AGENT), json!({"method":"mark","text":"synthetic"})).await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+    let mut citations = Vec::new();
+    for (at, note) in [
+        ("2026-09-14T08:00:00Z", "synthetic first mark"),
+        ("2026-09-14T08:01:00Z", "synthetic second mark"),
+    ] {
+        let (_, answer) = call(
+            &w,
+            Some(OPERATOR),
+            json!({"method":"mark","text":note,"at":at,"cwd":"/src/tide"}),
+        )
+        .await;
+        assert_eq!(answer["outcome"], "ok", "{answer}");
+        citations.push(answer["result"]["citation"].clone());
+    }
+    let (_, shown) = call(
+        &w,
+        Some(OPERATOR),
+        json!({"method":"show","reference":citations[0]}),
+    )
+    .await;
+    assert_eq!(shown["result"]["event"]["payload"]["by"], "operator");
+    assert_eq!(shown["result"]["event"]["time_quality"], "operator");
+    for (around, note) in [
+        ("mark", "synthetic second mark"),
+        ("mark 2", "synthetic first mark"),
+    ] {
+        let (_, answer) = call(
+            &w,
+            Some(OPERATOR),
+            json!({"method":"recall","around":around}),
+        )
+        .await;
+        assert_eq!(answer["outcome"], "ok", "{answer}");
+        assert_eq!(answer["result"]["recall"]["mark"]["payload"]["text"], note);
+    }
+    let (_, hidden) = call(
+        &w,
+        Some(OPERATOR),
+        json!({"method":"hide","reference":citations[1]}),
+    )
+    .await;
+    assert_eq!(hidden["outcome"], "ok", "{hidden}");
+    let (_, answer) = call(
+        &w,
+        Some(OPERATOR),
+        json!({"method":"recall","around":"mark"}),
+    )
+    .await;
+    assert_eq!(
+        answer["result"]["recall"]["mark"]["payload"]["text"],
+        "synthetic first mark"
+    );
+    let (_, ungranted) = call(&w, Some(READ), json!({"method":"recall","around":"mark"})).await;
+    assert_eq!(
+        ungranted["result"]["recall"]["status"],
+        "no_known_moment_mark"
+    );
+}
+
+#[devkit::test]
+async fn saved_queries_bind_parameters_and_replace_definitions_through_admission(
+    db: devkit::pg::TestDatabase,
+) {
+    let w = world(db).await;
+    admit(&w, &["synthetic first", "synthetic second"], 0).await;
+    let (_,answer) = call(&w,Some(OPERATOR),json!({"method":"query-save","name":"in-directory","query":"events where event_type = command.executed and payload.cwd = $directory count","parameter":["directory:text"]})).await;
+    assert_eq!(answer["outcome"], "ok", "{answer}");
+    let (_, answer) = call(
+        &w,
+        Some(OPERATOR),
+        json!({"method":"query","query":"query:in-directory(directory=\"/src/tide\")"}),
+    )
+    .await;
+    assert_eq!(answer["outcome"], "ok", "{answer}");
+    assert_eq!(answer["result"]["rows"][0]["count"], 2);
+    let (_, answer) = call(
+        &w,
+        Some(OPERATOR),
+        json!({"method":"query","query":"query:in-directory(directory=\"x or source exists\")"}),
+    )
+    .await;
+    assert_eq!(answer["result"]["rows"][0]["count"], 0);
+    let (_, answer) = call(
+        &w,
+        Some(READ),
+        json!({"method":"query","query":"query:in-directory(directory=x)"}),
+    )
+    .await;
+    assert_eq!(answer["outcome"], "refused");
+    let (_,answer) = call(&w,Some(OPERATOR),json!({"method":"query-save","name":"in-directory","query":"events where source = $source count","parameter":["source:text"]})).await;
+    assert_eq!(answer["outcome"], "ok", "{answer}");
+    let (_, answer) = call(&w, Some(OPERATOR), json!({"method":"query-list"})).await;
+    assert_eq!(answer["result"]["queries"].as_array().unwrap().len(), 1);
+    let (_, answer) = call(
+        &w,
+        Some(OPERATOR),
+        json!({"method":"query","query":"query:in-directory(source=terminal.atuin)"}),
+    )
+    .await;
+    assert_eq!(answer["result"]["rows"][0]["count"], 2);
+}
+
+#[devkit::test]
+async fn context_windows_count_back_from_the_end_and_timeline_uses_the_same_query_rows(
+    db: devkit::pg::TestDatabase,
+) {
+    let w = world(db).await;
+    admit(
+        &w,
+        &["synthetic before", "synthetic within", "synthetic end"],
+        0,
+    )
+    .await;
+    for since in ["60s", "2026-09-14T08:01:00Z"] {
+        let (_, answer) = call(
+            &w,
+            Some(READ),
+            json!({"method":"context","since":since,"until":"2026-09-14T08:02:00Z"}),
+        )
+        .await;
+        assert_eq!(answer["outcome"], "ok", "{answer}");
+        assert_eq!(answer["result"]["total"], 1);
+        assert_eq!(
+            answer["result"]["rows"][0]["payload"]["command"],
+            "synthetic within"
+        );
+        assert!(answer["result"]["recall"]["citation"].is_string());
+        assert_eq!(
+            answer["result"]["recall"]["latest_by_source"][0]["payload"]["command"],
+            "synthetic within"
+        );
+    }
+    let (_,a) = call(&w,Some(READ),json!({"method":"timeline","query":"where source = terminal.atuin since 2026-09-14T08:01:00Z"})).await;
+    let (_,b) = call(&w,Some(READ),json!({"method":"query","query":"events where source = terminal.atuin since 2026-09-14T08:01:00Z"})).await;
+    assert_eq!(a["result"]["rows"], b["result"]["rows"]);
+    assert_eq!(a["result"]["total"], 2);
+    let (_,completion) = call(&w,Some(READ),json!({"method":"query-complete","query":"events where event_type = command.executed and payload.dur"})).await;
+    assert_eq!(
+        completion["result"]["fields"][0]["name"],
+        "payload.duration_ns"
+    );
+}
+
+#[devkit::test]
+async fn time_citations_follow_replaced_spans_and_recall_includes_states_already_holding(
+    db: devkit::pg::TestDatabase,
+) {
+    let w = world(db).await;
+    let parent = command("synthetic spanning parent", 0);
+    let start = Timestamp::from_unix_secs(1_789_372_800).unwrap();
+    let end = Timestamp::from_unix_secs(1_789_376_400).unwrap();
+    let mut session = sinex_model::Event::build(
+        &sinex_model::event_types::ShellSession {
+            host: "synthetic".into(),
+            started_at: start,
+            ended_at: end,
+            day: "2026-09-14".into(),
+            commands: 1,
+            failed: 0,
+            cwds: vec!["/src/tide".into()],
+        },
+        "synthetic.sessions",
+        Origin::Derived {
+            parents: vec![parent.id],
+        },
+        ReadingOrder(1),
+        [1; 32],
+        Class::Open,
+    )
+    .unwrap();
+    let first_id = session.id;
+    admit_events(&w, vec![parent, session.clone()]).await;
+    let reference = "sinex:at/2026-09-14T08:30:00Z/shell.session";
+    let (_, shown) = call(
+        &w,
+        Some(READ),
+        json!({"method":"show","reference":reference}),
+    )
+    .await;
+    assert_eq!(shown["outcome"], "ok", "{shown}");
+    assert_eq!(shown["result"]["event"]["id"], first_id.to_string());
+    let (_, context) = call(
+        &w,
+        Some(READ),
+        json!({"method":"context","since":"2026-09-14T08:30:00Z","until":"2026-09-14T08:31:00Z"}),
+    )
+    .await;
+    assert_eq!(context["outcome"], "ok", "{context}");
+    assert_eq!(context["result"]["total"], 1);
+    session.id = sinex_model::EventId::new();
+    session.reading_order = ReadingOrder(2);
+    session.record_hash = [2; 32];
+    session.payload["ended_at"] = json!(Timestamp::from_unix_secs(1_789_380_000).unwrap());
+    let second_id = session.id;
+    admit_events(&w, vec![session]).await;
+    let (_, shown) = call(
+        &w,
+        Some(READ),
+        json!({"method":"show","reference":reference}),
+    )
+    .await;
+    assert_eq!(shown["outcome"], "ok", "{shown}");
+    assert_eq!(shown["result"]["event"]["id"], second_id.to_string());
+    let (_,window) = call(&w,Some(READ),json!({"method":"show","reference":"sinex:window/2026-09-14T08:30:00Z/2026-09-14T08:31:00Z"})).await;
+    assert_eq!(window["outcome"], "ok", "{window}");
+    assert_eq!(window["result"]["total"], 1);
+    assert_eq!(window["result"]["rows"][0]["id"], second_id.to_string());
+}
+
+#[devkit::test]
+async fn replacing_a_saved_definition_invalidates_its_previous_continuation(
+    db: devkit::pg::TestDatabase,
+) {
+    let w = world(db).await;
+    admit(
+        &w,
+        &["synthetic one", "synthetic two", "synthetic three"],
+        0,
+    )
+    .await;
+    let (_,saved) = call(&w,Some(OPERATOR),json!({"method":"query-save","name":"paged","query":"events where event_type = command.executed and payload.cwd = $directory fields id","parameter":["directory:text"]})).await;
+    assert_eq!(saved["outcome"], "ok", "{saved}");
+    let (_, page) = call(
+        &w,
+        Some(OPERATOR),
+        json!({"method":"query","query":"query:paged(directory=\"/src/tide\")","page":1}),
+    )
+    .await;
+    assert_eq!(page["outcome"], "ok", "{page}");
+    let cursor = page["result"]["page"]["cursor"].clone();
+    assert!(cursor.is_string());
+    let (_,changed) = call(&w,Some(OPERATOR),json!({"method":"query-save","name":"paged","query":"events where event_type = command.executed and payload.cwd = $directory sort when desc fields id","parameter":["directory:text"]})).await;
+    assert_eq!(changed["outcome"], "ok", "{changed}");
+    let (_,continued) = call(&w,Some(OPERATOR),json!({"method":"query","query":"query:paged(directory=\"/src/tide\")","page":1,"cursor":cursor})).await;
+    assert_eq!(continued["outcome"], "refused", "{continued}");
+}
+
+#[devkit::test]
+async fn context_digest_keeps_the_latest_observation_of_each_source_beyond_the_page(
+    db: devkit::pg::TestDatabase,
+) {
+    let w = world(db).await;
+    let first = command("synthetic busy first", 0);
+    let mut other = command("synthetic other source", 1);
+    other.source = "synthetic.other".into();
+    let last = command("synthetic busy latest", 2);
+    admit_events(&w, vec![first, other, last]).await;
+    let (_,answer) = call(&w,Some(READ),json!({"method":"context","since":"2026-09-14T08:00:00Z","until":"2026-09-14T08:03:00Z","page":1})).await;
+    assert_eq!(answer["outcome"], "ok", "{answer}");
+    assert_eq!(answer["result"]["rows"].as_array().unwrap().len(), 1);
+    let digest = answer["result"]["recall"]["latest_by_source"]
+        .as_array()
+        .unwrap();
+    assert_eq!(digest.len(), 2);
+    assert!(
+        digest
+            .iter()
+            .any(|r| r["payload"]["command"] == "synthetic busy latest")
+    );
+    assert!(
+        digest
+            .iter()
+            .any(|r| r["payload"]["command"] == "synthetic other source")
+    );
+}
+
+#[devkit::test]
+async fn recall_digest_obeys_row_filters_and_limits(db: devkit::pg::TestDatabase) {
+    let w = world(db).await;
+    let first = command("synthetic first", 0);
+    let mut other = command("synthetic excluded", 1);
+    other.source = "synthetic.other".into();
+    let last = command("synthetic last", 2);
+    admit_events(&w, vec![first, other, last]).await;
+    for (suffix, count, command) in [
+        ("", 2, "synthetic last"),
+        (" sort when limit 1 fields id", 1, "synthetic first"),
+        (" count", 2, "synthetic last"),
+    ] {
+        let query = format!(
+            "recall sinex:window/2026-09-14T08:00:00Z/2026-09-14T08:03:00Z where source = terminal.atuin{suffix}"
+        );
+        let (_, answer) = call(&w, Some(READ), json!({"method":"query","query":query})).await;
+        assert_eq!(answer["outcome"], "ok", "{answer}");
+        let account = &answer["result"]["recall"];
+        assert_eq!(account["by_source"].as_array().unwrap().len(), 1);
+        assert_eq!(account["by_source"][0]["source"], "terminal.atuin");
+        assert_eq!(account["by_source"][0]["events"], count);
+        assert_eq!(account["latest_by_source"].as_array().unwrap().len(), 1);
+        assert_eq!(
+            account["latest_by_source"][0]["payload"]["command"],
+            command
+        );
+    }
+}
+
+#[devkit::test]
+async fn ambiguous_saved_names_do_not_block_other_saved_questions(db: devkit::pg::TestDatabase) {
+    let w = world(db).await;
+    admit(&w, &["synthetic command"], 0).await;
+    let first = command("synthetic parent", 1);
+    let record = sinex_model::Event::build(
+        &sinex_model::event_types::query::Saved {
+            name: "clash".into(),
+            query: "events count".into(),
+            parameters: vec![],
+            by: "synthetic other author".into(),
+            written_at: Timestamp::now(),
+        },
+        "query.request",
+        Origin::Record {
+            location: sinex_model::RecordLocation {
+                material: sinex_model::MaterialId::new(),
+                anchor: 0,
+            },
+            output_index: 0,
+        },
+        ReadingOrder(1),
+        [7; 32],
+        Class::Guarded,
+    )
+    .unwrap();
+    admit_events(&w, vec![first, record]).await;
+    for (name, query, parameters) in [
+        ("clash", "events count", vec![]),
+        (
+            "usable",
+            "events where event_type = command.executed count",
+            vec![],
+        ),
+        (
+            "by-source",
+            "events where source = $source count",
+            vec!["source:text"],
+        ),
+        (
+            "indirect",
+            "query:by-source(source=$source)",
+            vec!["source:text"],
+        ),
+    ] {
+        let (_, answer) = call(
+            &w,
+            Some(OPERATOR),
+            json!({"method":"query-save","name":name,"query":query,"parameter":parameters}),
+        )
+        .await;
+        assert_eq!(answer["outcome"], "ok", "{answer}");
+    }
+    for query in [
+        "events where event_type = command.executed count",
+        "query:usable",
+        " QUERY : usable ",
+        "QUERY:usable",
+        "query :usable",
+        "query:indirect(source=terminal.atuin)",
+    ] {
+        let (_, answer) = call(&w, Some(OPERATOR), json!({"method":"query","query":query})).await;
+        assert_eq!(answer["outcome"], "ok", "{answer}");
+        assert_eq!(answer["result"]["rows"][0]["count"], 2);
+    }
+    for query in [
+        "query:clash@operator",
+        "query:\"clash@synthetic other author\"",
+    ] {
+        let (_, answer) = call(&w, Some(OPERATOR), json!({"method":"query", "query":query})).await;
+        assert_eq!(answer["outcome"], "ok", "{answer}");
+    }
+    let (_, answer) = call(
+        &w,
+        Some(OPERATOR),
+        json!({"method":"query", "query":"query:clash@missing"}),
+    )
+    .await;
+    assert_eq!(answer["outcome"], "refused", "{answer}");
+    let (_, answer) = call(
+        &w,
+        Some(OPERATOR),
+        json!({"method":"query-save", "name":"qualified", "query":"query:clash@operator"}),
+    )
+    .await;
+    assert_eq!(answer["outcome"], "ok", "{answer}");
+    let (_, answer) = call(
+        &w,
+        Some(OPERATOR),
+        json!({"method":"query", "query":"query:qualified"}),
+    )
+    .await;
+    assert_eq!(answer["outcome"], "ok", "{answer}");
+    let (_, listed) = call(&w, Some(OPERATOR), json!({"method":"query-list"})).await;
+    assert_eq!(listed["outcome"], "ok", "{listed}");
+    let clashes: Vec<_> = listed["result"]["queries"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|q| q["name"] == "clash")
+        .collect();
+    assert_eq!(clashes.len(), 2);
+    assert_ne!(clashes[0]["by"], clashes[1]["by"]);
+    let (_, answer) = call(
+        &w,
+        Some(OPERATOR),
+        json!({"method":"query","query":"query:clash"}),
+    )
+    .await;
+    assert_eq!(answer["outcome"], "refused");
+    assert!(
+        answer["reason"]
+            .as_str()
+            .unwrap()
+            .contains("several authors")
+    );
+}
+
+#[devkit::test]
+async fn saving_parameterized_questions_refuses_invalid_fields_and_stages(
+    db: devkit::pg::TestDatabase,
+) {
+    let w = world(db).await;
+    for query in [
+        "events where missing = $source",
+        "events where source = $source fields missing",
+        "events where source = $source group by source count where missing > 0",
+    ] {
+        let (_, answer) = call(&w, Some(OPERATOR), json!({"method":"query-save", "name":"invalid", "query":query, "parameter":["source:text"]})).await;
+        assert_eq!(answer["outcome"], "refused", "{answer}");
+    }
+    let (_, listed) = call(&w, Some(OPERATOR), json!({"method":"query-list"})).await;
+    assert_eq!(listed["result"]["queries"], json!([]));
+}

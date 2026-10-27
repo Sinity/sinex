@@ -31,6 +31,37 @@ pub enum Request {
     #[serde(rename = "forecast-report")]
     ForecastReport,
 
+    #[serde(rename = "query-save")]
+    QuerySave {
+        name: String,
+        query: String,
+        #[serde(default)]
+        parameter: Vec<String>,
+    },
+    #[serde(rename = "query-list")]
+    QueryList,
+    #[serde(rename = "query-complete")]
+    QueryComplete {
+        query: String,
+    },
+    Context {
+        #[serde(default)]
+        since: Option<String>,
+        #[serde(default)]
+        until: Option<String>,
+        #[serde(default)]
+        page: Option<u64>,
+        #[serde(default)]
+        cursor: Option<String>,
+    },
+    Timeline {
+        #[serde(default)]
+        query: Option<String>,
+        #[serde(default)]
+        page: Option<u64>,
+        #[serde(default)]
+        cursor: Option<String>,
+    },
     Query {
         query: String,
         #[serde(default)]
@@ -148,6 +179,16 @@ pub enum Request {
     Mark {
         #[serde(default)]
         text: Option<String>,
+        #[serde(default)]
+        at: Option<String>,
+        #[serde(default)]
+        cwd: Option<String>,
+        #[serde(default)]
+        command: Option<String>,
+        #[serde(default)]
+        app: Option<String>,
+        #[serde(default)]
+        title: Option<String>,
     },
     #[serde(rename = "privacy-rules")]
     PrivacyRules {
@@ -332,6 +373,11 @@ impl Request {
             Request::ForecastResolve { .. } => "forecast-resolve",
             Request::ForecastReport => "forecast-report",
             Request::Query { .. } => "query",
+            Request::QuerySave { .. } => "query-save",
+            Request::QueryList => "query-list",
+            Request::QueryComplete { .. } => "query-complete",
+            Request::Context { .. } => "context",
+            Request::Timeline { .. } => "timeline",
             Request::Search { .. } => "search",
             Request::Recall { .. } => "recall",
             Request::Sql { .. } => "sql",
@@ -384,9 +430,7 @@ impl Request {
     /// panic.
     pub fn access(&self) -> Access {
         match self {
-            Self::Stage { .. } | Self::Same { .. } | Self::Distinct { .. } | Self::Mark { .. } => {
-                Access::Agent
-            }
+            Self::Stage { .. } | Self::Same { .. } | Self::Distinct { .. } => Access::Agent,
             _ => {
                 command(self.method())
                     .expect("implemented request is in the command table")

@@ -26,6 +26,8 @@ pub enum Source {
     Recall { from: Timestamp, to: Timestamp },
     /// The latest recorded shell session matching a session-field filter.
     RecallLast { filter: Option<Expr> },
+    /// The Nth newest visible operator moment mark.
+    RecallMark { number: u64, window: f64 },
 }
 
 impl Source {
@@ -33,9 +35,10 @@ impl Source {
     pub fn table(&self) -> Table {
         match self {
             Source::Table { table, .. } => *table,
-            Source::Walk { .. } | Source::Recall { .. } | Source::RecallLast { .. } => {
-                Table::Events
-            }
+            Source::Walk { .. }
+            | Source::Recall { .. }
+            | Source::RecallLast { .. }
+            | Source::RecallMark { .. } => Table::Events,
         }
     }
 
@@ -62,6 +65,10 @@ pub enum Walk {
 pub enum Reference {
     /// `sinex:ev/<id>` or a bare event ID: one reading, live or archived.
     Event(Uuid),
+    /// The live spanning output containing this absolute instant.
+    At { at: Timestamp, event_type: String },
+    /// A half-open absolute time window.
+    Window { from: Timestamp, to: Timestamp },
     /// `sinex:record/<material>/<offset>[/<event type>[/<output>]]`: the live
     /// reading of the record starting at that byte offset.
     Record {
@@ -96,6 +103,11 @@ pub enum Expr {
         lhs: Operand,
         from: Timestamp,
         to: Timestamp,
+    },
+    /// Spanning states that held at an instant or during a half-open window.
+    Overlaps {
+        from: Timestamp,
+        to: Option<Timestamp>,
     },
     /// The difference of two time fields: `seen - when > 1d`.
     TimeDiff {
@@ -144,6 +156,11 @@ pub enum FieldRef {
     Field(&'static Field),
     /// `payload.a.b`: a path into the payload.
     Payload(Vec<String>),
+    /// A payload path bound to the registered event schemas.
+    TypedPayload {
+        path: Vec<String>,
+        ty: super::FieldType,
+    },
     /// A column of a grouped stage: a key or an aggregate.
     Group(String),
 }
@@ -152,7 +169,9 @@ impl FieldRef {
     pub fn name(&self) -> String {
         match self {
             FieldRef::Field(f) => f.name.to_string(),
-            FieldRef::Payload(path) => format!("payload.{}", path.join(".")),
+            FieldRef::Payload(path) | FieldRef::TypedPayload { path, .. } => {
+                format!("payload.{}", path.join("."))
+            }
             FieldRef::Group(name) => name.clone(),
         }
     }
@@ -302,6 +321,13 @@ pub enum AsOf {
 pub struct Group {
     pub keys: Vec<Operand>,
     pub aggregates: Vec<Aggregate>,
+    pub fill: Option<Fill>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct Fill {
+    pub from: Timestamp,
+    pub to: Timestamp,
 }
 
 #[derive(Clone, Debug, PartialEq)]

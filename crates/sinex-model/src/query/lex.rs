@@ -56,6 +56,11 @@ pub(crate) fn tokens(text: &str) -> Result<Vec<Token>, QueryError> {
             i += stream.byte_offset();
             continue;
         }
+        if c == ':' {
+            out.push(symbol(":", i));
+            i += 1;
+            continue;
+        }
         if rest.starts_with("->") {
             out.push(symbol("->", i));
             i += 2;
@@ -90,11 +95,12 @@ pub(crate) fn tokens(text: &str) -> Result<Vec<Token>, QueryError> {
         if let Some(colon) = word.find(':') {
             let name = &word[..colon];
             let field_like = !name.is_empty()
-                && name != "sinex"
+                && !name.eq_ignore_ascii_case("sinex")
                 && name.bytes().all(|b| {
                     b.is_ascii_lowercase() || b == b'_' || b == b'.' || b.is_ascii_digit()
                 })
                 && name.as_bytes()[0].is_ascii_lowercase();
+            let field_like = field_like || name.eq_ignore_ascii_case("query");
             if field_like {
                 out.push(Token {
                     kind: Kind::Word,

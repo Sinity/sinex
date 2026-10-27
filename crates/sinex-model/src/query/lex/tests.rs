@@ -44,3 +44,37 @@ fn quoted_words_are_never_keywords() {
 fn refuses_a_bad_quote() {
     assert!(tokens(r#"a "unterminated"#).is_err());
 }
+
+#[devkit::test]
+fn colons_are_symbols_between_names_even_with_spaces_or_capitals() {
+    for text in [
+        "query:by-directory",
+        "QUERY:by-directory",
+        "QUERY : by-directory",
+        "query :by-directory",
+        "query: by-directory",
+    ] {
+        let input = tokens(text).unwrap();
+        assert!(input[0].is_word("query"));
+        assert!(input[1].is_symbol(":"));
+        assert_eq!(input[2].text, "by-directory");
+    }
+    assert_eq!(texts("recall 14:05 ±20m"), ["recall", "14:05", "±20m"]);
+    assert_eq!(
+        texts("show sinex:at/2026-09-14T08:01:00Z/shell.session"),
+        ["show", "sinex:at/2026-09-14T08:01:00Z/shell.session"]
+    );
+}
+
+#[devkit::test]
+fn only_lowercase_names_split_field_colons() {
+    for text in ["TODO:", "Word:value", "SOURCE:value"] {
+        assert_eq!(texts(text), [text]);
+    }
+    assert_eq!(texts("source:value"), ["source", ":", "value"]);
+    assert_eq!(texts("SINEX:ev/0190"), ["SINEX:ev/0190"]);
+    assert_eq!(
+        texts("QUERY:shared@operator"),
+        ["QUERY", ":", "shared@operator"]
+    );
+}

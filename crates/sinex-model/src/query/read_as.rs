@@ -28,6 +28,9 @@ pub fn read_as(q: &Query) -> String {
                 out.push_str(&format!("as Sinex knew them at commit {s}"));
             }
             Stage::Group(g) => {
+                if g.fill.is_some() {
+                    out.push_str("including empty time buckets with their coverage, ");
+                }
                 let aggs: Vec<String> = g.aggregates.iter().map(aggregate).collect();
                 if g.keys.is_empty() {
                     out.push_str(&aggs.join(" and "));
@@ -98,6 +101,9 @@ fn source(s: &Source) -> String {
                 format!("{what} {r}")
             }
         }
+        Source::RecallMark { number, window } => {
+            format!("everything within {window}s of moment mark {number}, newest first")
+        }
         Source::RecallLast { filter } => {
             let mut s = "everything during the latest recorded shell session".to_string();
             if let Some(f) = filter {
@@ -115,6 +121,8 @@ fn source(s: &Source) -> String {
 fn reference_text(r: &Reference) -> String {
     match r {
         Reference::Event(id) => format!("event {id}"),
+        Reference::At { at, event_type } => format!("the live {event_type} containing {at}"),
+        Reference::Window { from, to } => format!("the window from {from} until {to}"),
         Reference::Record {
             material, offset, ..
         } => {
@@ -169,6 +177,10 @@ fn expr(e: &Expr) -> String {
         Expr::Within { lhs, from, to } => {
             format!("{} is from {} until {}", operand(lhs), time(from), time(to))
         }
+        Expr::Overlaps { from, to } => match to {
+            Some(to) => format!("its span overlaps {from} until {to}"),
+            None => format!("its span contains {from}"),
+        },
         Expr::TimeDiff { a, b, op, seconds } => {
             format!(
                 "{} minus {} {} {}s",

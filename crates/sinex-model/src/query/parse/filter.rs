@@ -47,6 +47,21 @@ impl Parser<'_> {
             self.expect_symbol(")")?;
             return Ok(e);
         }
+        if self.take_word("overlaps") {
+            let t = self.value_token()?;
+            let from = self.instant_from(&t)?;
+            let to = if self.take_word("..") {
+                let t = self.value_token()?;
+                let to = self.instant_from(&t)?;
+                if from >= to {
+                    return Err(QueryError::at(t.at, "overlap end must follow its start"));
+                }
+                Some(to)
+            } else {
+                None
+            };
+            return Ok(Expr::Overlaps { from, to });
+        }
         if self.take_word("since") {
             return self.since(scope);
         }
@@ -211,6 +226,7 @@ impl Parser<'_> {
     ) -> Result<(), QueryError> {
         match (field, scope) {
             (FieldRef::Field(f), _) if f.ty == FieldType::Time => Ok(()),
+            (FieldRef::Payload(_), _) => Ok(()),
             (FieldRef::Group(_), Scope::Grouped(_)) => Ok(()),
             _ => Err(QueryError::at(
                 at,
@@ -308,11 +324,13 @@ impl Parser<'_> {
                 self.time_fn_value(*func, &raw, at)
             }
             Operand::Field(FieldRef::Group(_)) => Ok(infer(&raw, quoted, op)),
-            Operand::Field(FieldRef::Payload(_)) => Ok(infer(&raw, quoted, op)),
+            Operand::Field(FieldRef::Payload(_) | FieldRef::TypedPayload { .. }) => {
+                Ok(infer(&raw, quoted, op))
+            }
             Operand::Field(FieldRef::Field(f)) => {
                 let text_like = matches!(
                     f.ty,
-                    FieldType::Text | FieldType::Path | FieldType::PathList
+                    FieldType::Text | FieldType::TextList | FieldType::Path | FieldType::PathList
                 );
                 if matches!(op, Op::Contains | Op::Prefix) && !text_like {
                     return Err(QueryError::at(
@@ -331,6 +349,7 @@ impl Parser<'_> {
                         FieldType::Id
                             | FieldType::IdList
                             | FieldType::PathList
+                            | FieldType::TextList
                             | FieldType::Bool
                             | FieldType::Enum(_)
                             | FieldType::Json
@@ -397,7 +416,10 @@ impl Parser<'_> {
                         at,
                         "compare a payload field by its path: `payload.<field>`",
                     )),
-                    FieldType::Text | FieldType::Path | FieldType::PathList => {
+                    FieldType::Text
+                    | FieldType::TextList
+                    | FieldType::Path
+                    | FieldType::PathList => {
                         if f.ty == FieldType::PathList
                             && !matches!(op, Op::Eq | Op::Ne | Op::Prefix)
                         {
@@ -423,8 +445,8 @@ impl Parser<'_> {
     }
 }
 
-/// A value whose type comes from the literal: payload paths and grouped
-/// columns have no declared type.
+/// Read a literal before checking its payload schema, or for a grouped
+/// column whose type comes from the relation.
 pub(super) fn infer(raw: &str, quoted: bool, op: Op) -> Value {
     if quoted {
         return Value::Text(raw.to_string());

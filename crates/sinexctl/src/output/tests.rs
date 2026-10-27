@@ -23,3 +23,25 @@ fn long_cells_end_with_an_ellipsis() {
     assert_eq!(c.chars().count(), CELL);
     assert!(c.ends_with('…'));
 }
+
+#[devkit::test]
+fn recall_prints_the_mark_and_each_sources_latest_observation() {
+    let result = json!({"read_as":"synthetic context","rows":[],"total":0,"resolved":{"zone":"UTC"},"recall":{
+        "mark":{"payload":{"text":"synthetic moment"}},
+        "latest_by_source":[{"source":"synthetic.source","event_type":"command.executed","when":"2026-09-14T08:00:00Z","payload":{"command":"synthetic latest"}}]
+    }});
+    let text = answer(&result, &Local::new(Some("UTC")), None);
+    assert!(text.contains("Mark: synthetic moment"));
+    assert!(text.contains("Latest by source:"));
+    assert!(text.contains("synthetic.source"));
+    assert!(text.contains("synthetic latest"));
+}
+
+#[devkit::test]
+fn empty_recall_prints_its_complete_reason_without_terminal_controls() {
+    let reason = "No matching recorded shell session; untimed observations or pending derivations may still exist.";
+    let result =
+        json!({"rows":[],"total":0,"recall":{"reason":format!("{reason}\nSynthetic\tend")}});
+    let text = answer(&result, &Local::new(Some("UTC")), None);
+    assert!(text.contains(&format!("{reason} Synthetic end")));
+}

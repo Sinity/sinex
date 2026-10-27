@@ -30,7 +30,6 @@ async fn discovery_omits_unimplemented_commands_and_unimplemented_calls_refuse_e
         json!({"method":"stage", "path":"/synthetic/input"}),
         json!({"method":"same", "a":"sinex:ev/a", "b":"sinex:ev/b"}),
         json!({"method":"distinct", "a":"sinex:ev/a", "b":"sinex:ev/b"}),
-        json!({"method":"mark", "text":"synthetic moment"}),
     ] {
         assert!(!names.contains(&value["method"].as_str().unwrap()));
         let (status, _) = call(&w, Some(READ), value.clone()).await;
@@ -49,7 +48,7 @@ async fn discovery_omits_unimplemented_commands_and_unimplemented_calls_refuse_e
 }
 
 #[devkit::test]
-async fn recall_time_and_day_work_while_mark_refuses(db: devkit::pg::TestDatabase) {
+async fn recall_time_and_day_work_and_a_missing_mark_is_reported(db: devkit::pg::TestDatabase) {
     let w = world(db).await;
     admit_events(
         &w,
@@ -70,7 +69,7 @@ async fn recall_time_and_day_work_while_mark_refuses(db: devkit::pg::TestDatabas
     }
     for around in ["mark"] {
         let (_, body) = call(&w, Some(READ), json!({"method":"recall", "around":around})).await;
-        assert_eq!(body["outcome"], "refused");
-        assert_eq!(body["not_built"], true);
+        assert_eq!(body["outcome"], "ok");
+        assert_eq!(body["result"]["recall"]["status"], "no_known_moment_mark");
     }
 }

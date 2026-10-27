@@ -14,6 +14,7 @@ mod analysis;
 mod forecast;
 mod operations;
 mod privacy;
+mod queries;
 
 /// The daemon's read side and its handle on the writer.
 #[derive(Clone)]
@@ -202,6 +203,44 @@ impl Api {
                 self.query(caller, &query, Page { size: page, cursor })
                     .await
             }
+            Request::QueryComplete { query } => data(json!({"fields": query::complete(&query)})),
+            Request::QueryList => {
+                let mut conn = match self.acquire(caller).await {
+                    Ok(c) => c,
+                    Err(e) => return refused(e.to_string()),
+                };
+                match queries::list(&mut conn).await {
+                    Ok(definitions) => data(json!({"queries": definitions})),
+                    Err(e) => refused(e),
+                }
+            }
+            request @ (Request::QuerySave { .. } | Request::Mark { .. }) => {
+                match self.query_record(request, caller).await {
+                    Ok(value) => data(value),
+                    Err(e) => refused(e),
+                }
+            }
+            Request::Context {
+                since,
+                until,
+                page,
+                cursor,
+            } => {
+                self.context_view(caller, since, until, Page { size: page, cursor })
+                    .await
+            }
+            Request::Timeline {
+                query,
+                page,
+                cursor,
+            } => {
+                self.query(
+                    caller,
+                    &format!("events {}", query.unwrap_or_default()),
+                    Page { size: page, cursor },
+                )
+                .await
+            }
             Request::Search {
                 words,
                 page,
@@ -262,6 +301,15 @@ impl Api {
                     Ok(r) => r,
                     Err(e) => return query_refusal(&reference, e),
                 };
+                if let query::Reference::Window { from, to } = &r {
+                    return self
+                        .query(
+                            caller,
+                            &format!("recall sinex:window/{from}/{to}"),
+                            Page::default(),
+                        )
+                        .await;
+                }
                 let mut conn = match self.acquire(caller).await {
                     Ok(c) => c,
                     Err(e) => return refused(e.to_string()),
@@ -436,9 +484,6 @@ impl Api {
             Request::Same { .. } | Request::Distinct { .. } => not_built(
                 "duplicate decisions need the fusion derivation's decision records, not built yet",
             ),
-            Request::Mark { .. } => {
-                not_built("moment marks need the operator.mark event type, not registered yet")
-            }
             r @ (Request::PrivacyRules { .. }
             | Request::PrivacyRule { .. }
             | Request::PrivacyEnd { .. }
@@ -487,13 +532,21 @@ impl Api {
             Ok(ctx) => ctx,
             Err(e) => return refused(e.to_string()),
         };
-        let bound = match query::bind(text, &ctx) {
-            Ok(q) => q,
-            Err(e) => return query_refusal(text, e),
-        };
         let mut conn = match self.acquire(caller).await {
             Ok(c) => c,
             Err(e) => return refused(e.to_string()),
+        };
+        let definitions = if let Some(name) = query::saved::reference_name(text) {
+            match queries::definitions(&mut conn, &name).await {
+                Ok(d) => d,
+                Err(e) => return refused(e),
+            }
+        } else {
+            std::collections::BTreeMap::new()
+        };
+        let bound = match query::saved::bind_saved(text, &ctx, &definitions) {
+            Ok(q) => q,
+            Err(e) => return query_refusal(text, e),
         };
         match sinex_store::query::run(&mut conn, text, &bound, &ctx, &page).await {
             Ok(answer) => data(answer_json(answer)),

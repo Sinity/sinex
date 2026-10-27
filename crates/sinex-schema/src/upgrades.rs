@@ -42,5 +42,53 @@ pub(crate) fn upgrades() -> Vec<Vec<String>> {
             "DROP INDEX IF EXISTS core.events_coverage".into(),
             crate::tables::COVERAGE_RUNS.into(),
         ],
+        register_kinds(&["operator.mark", "query.saved"], false),
     ]
+}
+
+/// Register payload schemas and views together. Replacing a kind also updates its registry row.
+pub(crate) fn register_kinds(names: &[&str], replace: bool) -> Vec<String> {
+    let mut statements = Vec::new();
+    for name in names {
+        assert!(
+            sinex_model::event_types::ALL
+                .iter()
+                .any(|kind| kind.event_type == *name),
+            "unknown event type {name}"
+        );
+    }
+    for kind in sinex_model::event_types::ALL
+        .iter()
+        .filter(|k| names.contains(&k.event_type))
+    {
+        if replace {
+            statements.push(format!(
+                "DROP VIEW IF EXISTS event_types.{}",
+                crate::quote_ident(&kind.event_type.replace('.', "_"))
+            ));
+        }
+        statements.push(crate::kind_view(kind));
+        statements.push(format!(
+            "GRANT SELECT ON event_types.{} TO sinex_reader, sinex_writer",
+            crate::quote_ident(&kind.event_type.replace('.', "_"))
+        ));
+    }
+    for (name, schema, key_kind, fields, rule) in crate::registry_rows()
+        .into_iter()
+        .filter(|(name, ..)| names.contains(&name.as_str()))
+    {
+        let literal = |s: &str| format!("'{}'", s.replace('\'', "''"));
+        let fields = fields
+            .iter()
+            .map(|s| literal(s))
+            .collect::<Vec<_>>()
+            .join(",");
+        let conflict = if replace {
+            " ON CONFLICT (name) DO UPDATE SET payload_schema=EXCLUDED.payload_schema, key_kind=EXCLUDED.key_kind, key_fields=EXCLUDED.key_fields, replace_rule=EXCLUDED.replace_rule"
+        } else {
+            ""
+        };
+        statements.push(format!("INSERT INTO registry.event_types (name,payload_schema,key_kind,key_fields,replace_rule) VALUES ({},{}::jsonb,{},ARRAY[{fields}]::text[],{}){conflict}",literal(&name),literal(&schema.to_string()),literal(key_kind),literal(rule)));
+    }
+    statements
 }

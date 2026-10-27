@@ -8,7 +8,12 @@ impl Parser<'_> {
         let lhs = Operand::Field(self.main_time(scope, at)?);
         let t = self.value_token()?;
         let from = if let Some(secs) = time::duration(&t.text) {
-            self.ctx.now - SignedDuration::from_secs_f64(secs)
+            self.ctx
+                .now
+                .checked_sub(SignedDuration::from_secs_f64(secs))
+                .map_err(|_| {
+                    QueryError::at(t.at, "duration exceeds the supported timestamp range")
+                })?
         } else {
             self.instant_from(&t)?
         };
@@ -170,8 +175,19 @@ impl Parser<'_> {
                     }
                     ("last", _) => {
                         if let Some(secs) = time::duration(&what) {
-                            Some((ctx.now - SignedDuration::from_secs_f64(secs), ctx.now))
+                            Some((
+                                ctx.now
+                                    .checked_sub(SignedDuration::from_secs_f64(secs))
+                                    .map_err(|_| out_of_range())?,
+                                ctx.now,
+                            ))
                         } else if let Ok(n) = what.parse::<i64>() {
+                            if n <= 0 {
+                                return Err(QueryError::at(
+                                    next.at,
+                                    "last N days needs a positive day count",
+                                ));
+                            }
                             self.expect_word("days")?;
                             let from = today
                                 .checked_sub(jiff::Span::new().days(n - 1))

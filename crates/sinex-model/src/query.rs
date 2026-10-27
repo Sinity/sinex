@@ -3,18 +3,22 @@
 //! the logical-day start once, then compiled to SQL by `sinex-store::query`.
 //! Every query reads back as a sentence ([`read_as`]).
 mod ast;
+mod fill;
 mod lex;
 mod parse;
 mod read_as;
+pub mod saved;
 pub mod tables;
 pub mod text;
 pub mod time;
+mod typed;
 
 pub use ast::*;
 pub use parse::{bind, parse_reference};
 pub use read_as::read_as;
 pub use tables::{ALIASES, Alias, Field, FieldType, Table};
 pub use time::Context;
+pub use typed::{Completion, complete};
 
 /// Why a query was refused.
 #[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
@@ -55,9 +59,9 @@ impl QueryError {
 
     /// The message with a caret under the place in `text`, for terminals.
     pub fn render(&self, text: &str) -> String {
-        match self.at {
-            Some(at) if at <= text.len() => {
-                let column = text[..at].chars().count();
+        match self.at.and_then(|at| text.get(..at)) {
+            Some(prefix) => {
+                let column = prefix.chars().count();
                 format!("{}\n  {text}\n  {}^", self.message, " ".repeat(column))
             }
             _ => self.message.clone(),
