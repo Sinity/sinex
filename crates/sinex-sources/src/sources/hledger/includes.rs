@@ -222,7 +222,8 @@ fn resolve(parent: &Path, target: &str, settings: &Settings) -> Result<Vec<PathB
             Some(home) => home.as_str().map(PathBuf::from),
             None => std::env::var_os("HOME").map(PathBuf::from),
         };
-        home.ok_or("include home directory is unavailable")?.join(rest)
+        home.ok_or("include home directory is unavailable")?
+            .join(rest)
     } else {
         parent.parent().unwrap_or(Path::new(".")).join(target)
     };
@@ -235,10 +236,15 @@ fn resolve(parent: &Path, target: &str, settings: &Settings) -> Result<Vec<PathB
     let root = Path::new(&pattern[..slash.max(1)]);
     let expression = glob_expression(pattern)?;
     let matcher = regex::Regex::new(&expression).map_err(|e| e.to_string())?;
-    let hidden_names = pattern.match_indices("/.").map(|(at, _)| {
-        let end = pattern[at+1..].find('/').map_or(pattern.len(), |end| at+1+end);
-        regex::Regex::new(&glob_expression(&pattern[..end])?).map_err(|e| e.to_string())
-    }).collect::<Result<Vec<_>, String>>()?;
+    let hidden_names = pattern
+        .match_indices("/.")
+        .map(|(at, _)| {
+            let end = pattern[at + 1..]
+                .find('/')
+                .map_or(pattern.len(), |end| at + 1 + end);
+            regex::Regex::new(&glob_expression(&pattern[..end])?).map_err(|e| e.to_string())
+        })
+        .collect::<Result<Vec<_>, String>>()?;
     let current = std::fs::canonicalize(&parent).map_err(|e| e.to_string())?;
     let mut paths = Vec::new();
     let mut dirs = vec![root.to_path_buf()];
@@ -255,7 +261,9 @@ fn resolve(parent: &Path, target: &str, settings: &Settings) -> Result<Vec<PathB
                 .is_some_and(|s| s.as_encoded_bytes().starts_with(b"."))
             {
                 let relative = path.strip_prefix(root).map_err(|e| e.to_string())?;
-                let literal_hidden = path.to_str().is_some_and(|path| hidden_names.iter().any(|name| name.is_match(path)));
+                let literal_hidden = path
+                    .to_str()
+                    .is_some_and(|path| hidden_names.iter().any(|name| name.is_match(path)));
                 let nested_directory =
                     pattern.contains("**") && path.is_dir() && relative.components().count() > 1;
                 if !literal_hidden && !nested_directory {

@@ -306,7 +306,10 @@ fn parser_carry_measurement_preserves_nonadjacent_duplicates_without_a_record_li
     }
     println!("journal parser carry (distinct records, serialized bytes): {measurements:?}");
     assert_eq!(carry.seen.len(), 1000);
-    assert_eq!(measurements, [(1, 105), (10, 726), (100, 6936), (1000, 69036)]);
+    assert_eq!(
+        measurements,
+        [(1, 105), (10, 726), (100, 6936), (1000, 69036)]
+    );
     assert!(measurements.windows(2).all(|pair| pair[1].1 > pair[0].1));
 }
 
