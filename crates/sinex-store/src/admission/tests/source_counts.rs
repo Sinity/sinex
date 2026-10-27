@@ -116,7 +116,14 @@ async fn upgrading_from_version_0_counts_the_stored_events(db: devkit::pg::TestD
         .await
         .unwrap();
 
-    // Version 0 is this schema without the counts.
+    // Version 0 stored one event/stream pair per row.
+    sqlx::raw_sql(
+        "DROP TABLE core.published;
+         CREATE TABLE core.published (event_id uuid PRIMARY KEY, stream_seq bigint NOT NULL)",
+    )
+    .execute(&mut conn)
+    .await
+    .unwrap();
     conn.execute("DROP TABLE core.source_counts").await.unwrap();
     conn.execute("ALTER TABLE core.runs DROP COLUMN events")
         .await
