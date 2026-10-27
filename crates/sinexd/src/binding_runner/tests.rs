@@ -115,12 +115,14 @@ async fn rediscovery_reuses_saved_alias_and_cursor_after_restart(db: devkit::pg:
         .remove(0);
     crate::backfill::record(&mut conn, &original).await.unwrap();
     let cursor = json!({"synthetic_offset":17});
-    sqlx::query("INSERT INTO raw.positions(binding,cursor,carry) VALUES($1,$2,'null')")
-        .bind(&original.name)
-        .bind(&cursor)
-        .execute(&mut conn)
-        .await
-        .unwrap();
+    sqlx::query(
+        "INSERT INTO raw.positions(binding,cursor,carry,committed_seq) VALUES($1,$2,'null',0)",
+    )
+    .bind(&original.name)
+    .bind(&cursor)
+    .execute(&mut conn)
+    .await
+    .unwrap();
     let config = config(
         json!({"sources":{"terminal.zsh-history":{"paths":[real],"zone":"UTC","class":"guarded"}}}),
     );
