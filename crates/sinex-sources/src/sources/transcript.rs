@@ -267,7 +267,7 @@ impl TranscriptParser {
         if let (Some(start), Some(end)) = (&payload.start_seconds, &payload.end_seconds)
             && decimal::compare(start, end).is_gt()
         {
-            return Err(RecordError::new("cue ends before it starts")));
+            return Err(RecordError::new("cue ends before it starts"));
         }
         if let (Some(start), Some(end)) = (payload.start_ms, payload.end_ms)
             && end < start
