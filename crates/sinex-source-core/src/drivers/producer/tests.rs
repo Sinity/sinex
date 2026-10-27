@@ -36,7 +36,7 @@ async fn standin(
     subjects: &Subjects,
     producer: &str,
 ) -> Arc<Mutex<Vec<Ingress>>> {
-    standin_with_refusal(nats, subjects, producer, None).await
+    standin_with_refusal(nats, subjects, producer, None, false).await
 }
 
 async fn standin_with_refusal(
@@ -44,6 +44,7 @@ async fn standin_with_refusal(
     subjects: &Subjects,
     producer: &str,
     mut refuse_offset: Option<u64>,
+    mut refuse_events: bool,
 ) -> Arc<Mutex<Vec<Ingress>>> {
     use async_nats::jetstream::{consumer, stream};
     let client = async_nats::connect(nats.url()).await.unwrap();
@@ -82,6 +83,10 @@ async fn standin_with_refusal(
                     refuse_offset = None;
                     Some("synthetic interruption".into())
                 }
+                Ingress::Events { .. } | Ingress::LargeFrame { .. } if refuse_events => {
+                    refuse_events = false;
+                    Some("synthetic invalid event".into())
+                }
                 _ => None,
             };
             let ack = Acknowledgment {
@@ -113,8 +118,14 @@ async fn standin_with_refusal(
 async fn an_unacknowledged_batch_is_resent_with_uploaded_bytes() {
     let nats = devkit::nats::test_nats().unwrap();
     let subjects = Subjects::new(nats.prefix());
-    let received =
-        standin_with_refusal(&nats, &subjects, "node-test", Some(CHUNK_BYTES as u64)).await;
+    let received = standin_with_refusal(
+        &nats,
+        &subjects,
+        "node-test",
+        Some(CHUNK_BYTES as u64),
+        false,
+    )
+    .await;
     let dir = std::env::temp_dir().join(format!("sinex-pend-{}", uuid::Uuid::now_v7()));
     let state = dir.join("positions");
     let store = Store::open(&dir.join("store")).unwrap();
@@ -344,4 +355,68 @@ fn spooled(store: &Store, producer: &str, bytes: &[u8], frame: &str) -> String {
     let blob = format!("blake3:{}", blake3::hash(bytes).to_hex());
     frame_bytes::write(&store.0, producer, frame, &blob, bytes.len() as u64, bytes).unwrap();
     blob
+}
+
+#[devkit::test(multi_thread)]
+async fn a_recorded_invalid_frame_is_skipped_and_the_next_frame_is_sent() {
+    let nats = devkit::nats::test_nats().unwrap();
+    let subjects = Subjects::new(nats.prefix());
+    let received = standin_with_refusal(&nats, &subjects, "invalid", None, true).await;
+    let dir = tempfile::tempdir().unwrap();
+    let store = Store::open(&dir.path().join("store")).unwrap();
+    let state = dir.path().join("positions");
+    let mut producer = Producer::connect(nats.url(), None, subjects, "invalid")
+        .await
+        .unwrap();
+    let snapshots = Snapshots::new().unwrap();
+    let invalid = producer
+        .prepare(
+            Ingress::Events {
+                frame: "invalid".into(),
+                events: vec![event(2 * producer.max_message)],
+                failures: vec![],
+            },
+            &snapshots,
+            &store,
+        )
+        .unwrap();
+    assert!(matches!(invalid, Ingress::LargeFrame { .. }));
+    UnacknowledgedFrames {
+        frames: vec![
+            invalid,
+            Ingress::Events {
+                frame: "valid".into(),
+                events: vec![event(1)],
+                failures: vec![],
+            },
+        ],
+        position: Position {
+            cursor: json!({"segment":3}),
+            carry: Value::Null,
+        },
+    }
+    .save(&state, "binding")
+    .unwrap();
+    assert_eq!(
+        producer
+            .position("binding", &state, &store)
+            .await
+            .unwrap()
+            .cursor,
+        json!({"segment":3})
+    );
+    assert!(
+        UnacknowledgedFrames::load(&state, "binding")
+            .unwrap()
+            .is_none()
+    );
+    assert_eq!(
+        received
+            .lock()
+            .unwrap()
+            .iter()
+            .map(Ingress::frame)
+            .collect::<Vec<_>>(),
+        vec!["invalid/large", "valid"]
+    );
 }

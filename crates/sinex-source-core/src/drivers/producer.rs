@@ -60,7 +60,13 @@ pub enum Error {
     #[error("state file {0}: {1}")]
     State(PathBuf, String),
     #[error("Sinex refused frame {frame}: {reason}")]
-    Refused { frame: String, reason: String },
+    Refused {
+        frame: String,
+        reason: String,
+        recorded: bool,
+    },
+    #[error("local storage: {0}")]
+    Local(String),
     #[error("no acknowledgment for frame {0}")]
     NoAck(String),
 }
@@ -72,6 +78,7 @@ fn nats(e: impl std::fmt::Display) -> Error {
 /// The content store root shared with Sinex, whose frame directories receive the bytes;
 /// or, for a producer on another host, a local root whose frame directories hold them
 /// until they are sent in chunks.
+#[derive(Clone)]
 pub struct Store(PathBuf);
 impl Store {
     pub fn open(root: &Path) -> std::io::Result<Self> {
@@ -249,14 +256,63 @@ impl Producer {
         store: &Store,
     ) -> Result<Position, Error> {
         if let Some(unacknowledged) = UnacknowledgedFrames::load(state, binding)? {
-            for frame in &unacknowledged.frames {
-                self.deliver(frame.clone(), store).await?;
-            }
+            self.deliver_batch(
+                &unacknowledged.frames,
+                &unacknowledged.position,
+                state,
+                binding,
+                store,
+            )
+            .await?;
             unacknowledged.position.save(state, binding)?;
             self.clear_frame_directories(&unacknowledged.frames, store)?;
             UnacknowledgedFrames::clear(state, binding)?;
         }
         Position::load(state, binding)
+    }
+
+    /// A recorded refusal is final. Its reason remains in Sinex's frame
+    /// record; a refused material also prevents sending events that cite it.
+    async fn deliver_batch(
+        &mut self,
+        frames: &[Ingress],
+        position: &Position,
+        state: &Path,
+        binding: &str,
+        store: &Store,
+    ) -> Result<Vec<Option<Acknowledgment>>, Error> {
+        let mut acknowledgments = Vec::new();
+        for (index, frame) in frames.iter().enumerate() {
+            let mut skip_rest = false;
+            match self.deliver(frame.clone(), store).await {
+                Ok(ack) => acknowledgments.push(Some(ack)),
+                Err(Error::Refused {
+                    frame: id,
+                    reason,
+                    recorded: true,
+                }) if id == frame.frame() => {
+                    acknowledgments.push(None);
+                    eprintln!("Sinex refused frame {id}: {reason}; skipping recorded refusal");
+                    skip_rest = matches!(frame, Ingress::Material { .. });
+                }
+                Err(error) => return Err(error),
+            }
+            UnacknowledgedFrames {
+                frames: if skip_rest {
+                    vec![]
+                } else {
+                    frames[index + 1..].to_vec()
+                },
+                position: position.clone(),
+            }
+            .save(state, binding)?;
+            self.clear_frame_directories(std::slice::from_ref(frame), store)?;
+            if skip_rest {
+                self.clear_frame_directories(&frames[index + 1..], store)?;
+                break;
+            }
+        }
+        Ok(acknowledgments)
     }
 
     /// The root whose frame directories hold this producer's bytes.
@@ -268,7 +324,7 @@ impl Producer {
         for frame in frames {
             if matches!(frame, Ingress::Material { .. } | Ingress::LargeFrame { .. }) {
                 frame_bytes::discard(self.frame_root(shared), &self.name, frame.frame())
-                    .map_err(Error::Nats)?;
+                    .map_err(Error::Local)?;
             }
         }
         Ok(())
@@ -307,7 +363,7 @@ impl Producer {
                 material.length,
                 snapshots.open(&material.blob)?,
             )
-            .map_err(Error::Nats)?;
+            .map_err(Error::Local)?;
         }
         if let Ingress::LargeFrame { blob, length, .. } = &frame {
             frame_bytes::write(
@@ -318,7 +374,7 @@ impl Producer {
                 *length,
                 body.as_slice(),
             )
-            .map_err(Error::Nats)?;
+            .map_err(Error::Local)?;
         }
         Ok(frame)
     }
@@ -331,13 +387,16 @@ impl Producer {
             let dir = frame_bytes::directory(&root, &self.name, frame.frame());
             if dir.exists() {
                 let mut names = Vec::new();
-                for entry in std::fs::read_dir(&dir).map_err(nats)? {
-                    let entry = entry.map_err(nats)?;
+                for entry in std::fs::read_dir(&dir).map_err(|e| Error::Local(e.to_string()))? {
+                    let entry = entry.map_err(|e| Error::Local(e.to_string()))?;
                     let name = entry.file_name().to_string_lossy().into_owned();
                     if blake3::Hash::from_hex(&name).is_ok() {
                         names.push((
                             format!("blake3:{name}"),
-                            entry.metadata().map_err(nats)?.len(),
+                            entry
+                                .metadata()
+                                .map_err(|e| Error::Local(e.to_string()))?
+                                .len(),
                         ));
                     }
                 }
@@ -361,14 +420,16 @@ impl Producer {
         total: u64,
         root: &Path,
     ) -> Result<(), Error> {
-        let mut reader =
-            frame_bytes::snapshot(root, &self.name, for_frame, blob, total).map_err(Error::Nats)?;
+        let mut reader = frame_bytes::snapshot(root, &self.name, for_frame, blob, total)
+            .map_err(Error::Local)?;
         let attempt = uuid::Uuid::now_v7();
         let mut offset = 0u64;
         let mut bytes = vec![0; total.min(CHUNK_BYTES as u64) as usize];
         loop {
             let count = (total - offset).min(CHUNK_BYTES as u64) as usize;
-            reader.read_exact(&mut bytes[..count]).map_err(nats)?;
+            reader
+                .read_exact(&mut bytes[..count])
+                .map_err(|e| Error::Local(e.to_string()))?;
             self.send(Ingress::Chunk {
                 frame: format!("{blob}/{attempt}/{offset}"),
                 for_frame: for_frame.to_owned(),
@@ -423,6 +484,7 @@ impl Producer {
             return Err(Error::Refused {
                 frame: id,
                 reason: reason.clone(),
+                recorded: ack.commit_seq.is_some(),
             });
         }
         Ok(ack)
@@ -572,9 +634,11 @@ impl Producer {
                 position: after.clone(),
             }
             .save(state, binding)?;
-            for (frame, is_events) in frames.iter().zip(events_frames) {
-                let ack = self.deliver(frame.clone(), sink).await?;
-                if is_events {
+            let acknowledgments = self
+                .deliver_batch(&frames, &after, state, binding, sink)
+                .await?;
+            for (ack, is_events) in acknowledgments.iter().zip(events_frames) {
+                if is_events && let Some(ack) = ack {
                     sent.admitted += ack.admitted.len();
                     sent.frames += 1;
                 }

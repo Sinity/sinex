@@ -173,6 +173,26 @@ event each. A type can declare the least class its events are stored
 under (`class = guarded` on `polylogue.message`), whatever class the producer
 asks for. Sinex has no AI-chat parser of its own.
 
+The live producers start capture before connecting to NATS. Connection and
+publishing failures retry with exponential delays from one to 30 seconds while
+capture keeps writing. Each acknowledged frame is removed from the durable
+pending batch before another is sent. Recorded invalid-frame refusals are
+skipped; a refused material also skips the events that cite it. Unrecorded
+refusals and failures to upload chunks remain pending for retry. The writer
+keeps temporary database and storage failures separate from invalid content,
+so the ingress leaves those frames pending rather than recording refusals.
+Capture source failures also restart independently of publishing. Unwritable
+local storage and undecodable state stop production because reconnecting cannot
+repair them.
+
+Every two seconds the producer writes `positions/health.json` in its state
+directory, independently of publishing. It reports the observation time and
+unpublished captured bytes and frames for each spool. `sinexctl status` includes
+the local session report, including when the daemon is unreachable;
+`--capture-state PATH` selects another local producer's state directory.
+`status --offline --database URL` includes the same report. The observation time
+must be checked because the last report remains on disk after capture stops.
+
 The outside producers start their capture threads with `sinex-sources::live`,
 which registers signal handlers first and stops every capture before joining
 it. `capture::CaptureStop` owns interruptible waits, socket shutdown and child

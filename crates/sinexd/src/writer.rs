@@ -31,6 +31,8 @@ pub(crate) enum Priority {
 pub(crate) enum WriteError {
     #[error("admission refused the batch: {0}")]
     Refused(String),
+    #[error("admission is unavailable: {0}")]
+    Unavailable(String),
     #[error("the writer has stopped")]
     Stopped,
 }
@@ -279,14 +281,14 @@ pub(crate) async fn run_notifying(
                 .await
                 .map(Done::Excised),
         };
-        if let Err(WriteError::Refused(_)) = &result
+        if result.is_err()
             && connection.ping().await.is_err()
             && let Ok(mut fresh) = PgConnection::connect(&url).await
         {
             // The lock went with the lost connection; without it this
             // process is no longer the writer.
             if let Err(e) = claim(&mut fresh).await {
-                let _ = job.reply.send(Err(WriteError::Refused(e)));
+                let _ = job.reply.send(Err(WriteError::Unavailable(e)));
                 return;
             }
             connection = fresh;
@@ -305,33 +307,50 @@ async fn admit_checked(
     store: Option<&Blobs>,
     check: &(dyn Fn() -> Result<(), String> + Send + Sync),
 ) -> Result<Outcome, WriteError> {
-    let refuse = |e: &dyn std::fmt::Display| WriteError::Refused(e.to_string());
+    let unavailable = |e: &dyn std::fmt::Display| WriteError::Unavailable(e.to_string());
     check().map_err(WriteError::Refused)?;
     for name in batch.stored_bytes() {
         let present = match store {
-            Some(store) => store.contains(name).map_err(|e| refuse(&e))?,
+            Some(store) => store.contains(name).map_err(|e| unavailable(&e))?,
             None => false,
         };
         if !present {
-            return Err(WriteError::Refused(format!(
+            return Err(WriteError::Unavailable(format!(
                 "the content store does not hold {name}; store the bytes again and resubmit"
             )));
         }
     }
-    let mut tx = connection.begin().await.map_err(|e| refuse(&e))?;
+    let mut tx = connection.begin().await.map_err(|e| unavailable(&e))?;
     match sinex_store::admit(&mut tx, batch, keys).await {
         Ok(outcome) => {
             if let Err(error) = check() {
-                tx.rollback().await.map_err(|e| refuse(&e))?;
+                tx.rollback().await.map_err(|e| unavailable(&e))?;
                 return Err(WriteError::Refused(error));
             }
-            tx.commit().await.map_err(|e| refuse(&e))?;
+            tx.commit().await.map_err(|e| unavailable(&e))?;
             Ok(outcome)
         }
         Err(error) => {
-            tx.rollback().await.map_err(|e| refuse(&e))?;
-            Err(refuse(&error))
+            tx.rollback().await.map_err(|e| unavailable(&e))?;
+            Err(admission_error(error))
         }
+    }
+}
+
+/// A transaction that could not run must remain pending at the producer.
+/// Only invalid content can be recorded as a final refusal.
+fn admission_error(error: sinex_store::Error) -> WriteError {
+    let invalid = match &error {
+        sinex_store::Error::Invalid(_) | sinex_store::Error::Unsealed(_) => true,
+        sinex_store::Error::Database(sqlx::Error::Database(error)) => error
+            .code()
+            .is_some_and(|code| code.starts_with("22") || code.starts_with("23")),
+        _ => false,
+    };
+    if invalid {
+        WriteError::Refused(error.to_string())
+    } else {
+        WriteError::Unavailable(error.to_string())
     }
 }
 

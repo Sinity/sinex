@@ -33,6 +33,7 @@ these names and no others.
 - **cursor**: how far a binding's input has been admitted.
 - **reader memory**: what a reader remembers about its input (each row's hash, each file's size, time and hash), saved with the cursor at the end of a part so a restart reads only the parts after it.
 - **shared pass**: one read of a stored file for every compatible binding of it (export archives); each binding keeps its own parts and cursor.
+- **backlog**: captured bytes and frames after a spool's last acknowledged position. A frame here is one complete captured line or media segment, before it is grouped into ingress frames.
 - **spool**: a live capture's directory of segment files, which its binding then reads like a growing file.
 
 ## Events

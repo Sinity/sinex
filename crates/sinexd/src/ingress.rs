@@ -186,6 +186,7 @@ impl Ingest {
         match self.writer.submit(Priority::Live, batch).await {
             Ok(_) => {}
             Err(WriteError::Stopped) => return Err("the writer has stopped".into()),
+            Err(WriteError::Unavailable(reason)) => return Err(reason),
             Err(WriteError::Refused(reason)) => {
                 // Handled meanwhile by a redelivery: answer from the record.
                 if let Some(stored) = self.stored(producer, &name).await? {

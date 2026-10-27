@@ -70,7 +70,10 @@ fn cli() -> Command {
     for c in COMMANDS {
         let mut sub = sinex_protocol::cli::subcommand(c);
         if c.name == "status" {
-            sub = sub
+            sub =
+                sub.arg(Arg::new("capture-state").long("capture-state").help(
+                    "local capture state directory (default: $XDG_STATE_HOME/sinex-session)",
+                ))
                 .arg(
                     Arg::new("offline")
                         .long("offline")
@@ -285,7 +288,11 @@ async fn main() -> ExitCode {
                 return fail(1, "status --offline needs --database");
             };
             return match sinex_diagnostics::run("status", database, None).await {
-                Ok(v) => {
+                Ok(mut v) => {
+                    capture_health::attach(
+                        &mut v,
+                        sub.get_one::<String>("capture-state").map(String::as_str),
+                    );
                     print_json(&v);
                     ExitCode::SUCCESS
                 }
@@ -375,11 +382,20 @@ async fn main() -> ExitCode {
         let reply = match client.call(&request).await {
             Ok((_, reply)) => reply,
             Err(ClientError::Unreachable(m)) => {
+                if name == "status" {
+                    let mut status = serde_json::json!({"daemon": {"unavailable": m}});
+                    capture_health::attach(
+                        &mut status,
+                        sub.get_one::<String>("capture-state").map(String::as_str),
+                    );
+                    print_json(&status);
+                    return ExitCode::from(UNREACHABLE);
+                }
                 return fail(UNREACHABLE, format!("the daemon is not reachable: {m}"));
             }
             Err(e) => return fail(1, e),
         };
-        let result = match reply {
+        let mut result = match reply {
             Reply::Ok { result } => result,
             Reply::Refused {
                 reason,
@@ -387,6 +403,12 @@ async fn main() -> ExitCode {
             } => return fail(NOT_BUILT, format!("not built yet: {reason}")),
             Reply::Refused { reason, .. } => return fail(REFUSED, reason),
         };
+        if name == "status" {
+            capture_health::attach(
+                &mut result,
+                sub.get_one::<String>("capture-state").map(String::as_str),
+            );
+        }
         let paged = result["page"].is_object() && result["rows"].is_array();
         if !paged {
             if json {
@@ -451,3 +473,5 @@ async fn main() -> ExitCode {
 
 #[cfg(test)]
 mod tests;
+
+mod capture_health;
