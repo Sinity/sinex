@@ -310,6 +310,7 @@ impl Context<'_, '_> {
                 stored: Some(StoredBytes::Blob {
                     name: self.capture.blob.clone(),
                     length: self.capture.length,
+                    records: None,
                 }),
                 records: Vec::new(),
                 part_index: 0,
@@ -521,6 +522,7 @@ impl Context<'_, '_> {
                     stored: Some(StoredBytes::Blob {
                         name: blob.clone(),
                         length: bytes.len() as u64,
+                        records: None,
                     }),
                     records,
                     part_index,

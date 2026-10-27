@@ -9,9 +9,9 @@
 mod pipeline;
 use crate::material_sink::Sink;
 use crate::reader_context::ReaderContext;
-use crate::writer::{self, Priority};
+use crate::writer;
 use sinex_model::RunId;
-use sinex_sources::{Binding, InputFormat, Limits, Settings, Source, drivers, sources};
+use sinex_sources::{Binding, InputFormat, Settings, Source, drivers, sources};
 use sinex_store::{bindings, positions, runs};
 use sqlx::PgConnection;
 use std::path::PathBuf;
@@ -49,10 +49,10 @@ pub(crate) struct Totals {
     materials: usize,
     material_bytes: usize,
     batches: usize,
-    events_offered: usize,
-    admitted: usize,
+    pub(crate) events_offered: usize,
+    pub(crate) admitted: usize,
     repeats: usize,
-    replaced: usize,
+    pub(crate) replaced: usize,
     older: usize,
     hidden: usize,
     superseded: usize,
@@ -308,14 +308,18 @@ pub(crate) async fn drive(
             unlock.check()?;
         }
         if let (Some(sealing), Some(material)) = (&sealing, &acquired.material)
-            && let Some(drivers::StoredBytes::FramedReader(stored)) = &material.stored
-            && sink.0.is_sealed(&stored.blob).map_err(|e| e.to_string())?
+            && let Some(drivers::StoredBytes::Blob {
+                name,
+                records: Some(_),
+                ..
+            }) = &material.stored
+            && sink.0.is_sealed(name).map_err(|e| e.to_string())?
         {
             let unlock = access
                 .unlock
                 .ok_or("stored sealed material needs an operator unlock")?;
             let key = unlock.data_key(read_conn, material.id).await?;
-            sealing.restore_key(stored.blob.clone(), key)?;
+            sealing.restore_key(name.clone(), key)?;
         }
         let carry = match (&sealing, acquired.material.is_some()) {
             (Some(s), true) => open_carry(read_conn, binding, &carry, s, access.unlock).await?,
@@ -325,20 +329,36 @@ pub(crate) async fn drive(
             return Err(format!("{binding}: {reason}"));
         }
         let had_material = acquired.material.is_some();
-        let pipeline = pipeline::Pipeline {
+        check()?;
+        let registered = pipeline::reopen_stored(
+            read_conn,
+            &sink.0,
+            source,
+            &mut acquired,
+            sealing.as_ref(),
+            access.unlock,
+        )
+        .await?;
+        let material_sink: &dyn drivers::MaterialSink = match &sealing {
+            Some(sealing) => sealing,
+            None => sink,
+        };
+        crate::intake::Intake {
             writer: handle,
-            blobs: &sink.0,
             source,
             binding,
             run,
+            sink: material_sink,
             class: effective_class,
             sealing: sealing.as_ref(),
             unlock: access.unlock,
             check: check.clone(),
-        };
-        pipeline
-            .submit(read_conn, carry, acquired, &mut totals)
-            .await?;
+            priority: crate::writer::Priority::Bulk,
+            atomic: false,
+            registered,
+        }
+        .submit(acquired, carry, &mut totals)
+        .await?;
         if !had_material {
             break;
         }
@@ -347,91 +367,22 @@ pub(crate) async fn drive(
     Ok(totals)
 }
 
-/// Submit one acquisition through the same drain and writer in every binding reader.
-#[allow(clippy::too_many_arguments)]
-pub(crate) async fn submit(
-    handle: &writer::WriterHandle,
-    run: RunId,
-    source: &dyn Source,
-    binding: &str,
-    material_sink: &dyn drivers::MaterialSink,
-    sealing: Option<&crate::material_sink::SealingSink>,
-    unlock: Option<&crate::sealed_access::Unlock>,
-    minimum_class: sinex_model::Class,
-    acquired: drivers::Acquired,
-    carry: serde_json::Value,
-    totals: &mut Totals,
-) -> Result<(), String> {
-    totals.polls += 1;
-    // Batches are submitted as they are drained, so memory holds one
-    // batch at a time, never a whole material's events.
-    let stored_material = acquired.material.as_ref().and_then(|material| {
-        matches!(
-            &material.stored,
-            Some(drivers::StoredBytes::FramedReader(_))
-        )
-        .then_some(material.id)
-    });
-    let prepared = drivers::prepare(
-        source,
-        binding,
-        run,
-        acquired,
-        carry,
-        material_sink,
-        Limits::default(),
-    )
-    .map_err(|e| e.to_string())?;
-    let had_material = prepared.material_len();
-    if let Some(bytes) = had_material {
-        totals.materials += 1;
-        totals.material_bytes += bytes;
-    }
-    for batch in prepared.batches().map_err(|e| e.to_string())? {
-        let mut one = [batch.map_err(|e| e.to_string())?];
-        for record in &mut one[0].records {
-            if let sinex_model::RecordOutcome::Events { events, .. } = record {
-                for event in events {
-                    event.class = event.class.max(minimum_class);
-                }
-            }
-        }
-        if let Some(s) = sealing {
-            s.seal(&mut one)?;
-            if let (Some(material), sinex_model::BatchKind::Source(progress)) =
-                (stored_material, &mut one[0].kind)
-            {
-                // Admission already owned this key. An authorized cached read
-                // cannot publish it again after excision destroyed it.
-                progress.data_keys.retain(|key| key.material != material);
-            }
-        }
-        if let Some(unlock) = unlock {
-            unlock.check()?;
-        }
-        let [batch] = one;
-        totals.batches += 1;
-        totals.events_offered += batch.event_count();
-        let t = Instant::now();
-        let out = handle
-            .submit(Priority::Bulk, batch)
-            .await
-            .map_err(|e| e.to_string())?;
-        totals.admit_time += t.elapsed();
-        totals.admitted += out.admitted;
-        totals.repeats += out.repeats;
-        totals.replaced += out.replaced;
-        totals.older += out.older;
-        totals.hidden += out.hidden;
-        totals.superseded += out.superseded;
-        totals.failures += out.failures;
-        totals.dirty_keys += out.dirty_keys;
-    }
-    Ok(())
-}
-
 impl Totals {
-    fn add_outcome(&mut self, out: sinex_store::Outcome) {
+    pub(crate) fn poll(&mut self, length: Option<usize>) {
+        self.polls += 1;
+        if let Some(length) = length {
+            self.materials += 1;
+            self.material_bytes += length;
+        }
+    }
+
+    pub(crate) fn batch(&mut self, events: usize, elapsed: Duration) {
+        self.batches += 1;
+        self.events_offered += events;
+        self.admit_time += elapsed;
+    }
+
+    pub(crate) fn add_outcome(&mut self, out: &sinex_store::Outcome) {
         self.admitted += out.admitted;
         self.repeats += out.repeats;
         self.replaced += out.replaced;
