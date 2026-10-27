@@ -85,10 +85,9 @@ fn unchanged_changed_removed_and_missing_roots_are_distinct() {
     assert!(driver.poll(&cursor, &mut state).unwrap().material.is_none());
     std::fs::write(temp.path().join("a.txt"), b"changed").unwrap();
     let second = driver.poll(&cursor, &mut state).unwrap();
-    assert_eq!(
-        parse(&first)[0].equivalence_key,
-        parse(&second)[0].equivalence_key
-    );
+    assert_ne!(parse(&first)[0].origin, parse(&second)[0].origin);
+    assert!(parse(&first)[0].equivalence_key.is_none());
+    assert!(parse(&second)[0].equivalence_key.is_none());
     let m = second.material.as_ref().unwrap();
     let cursor = (m.cursor_at)(m.records.last().unwrap().1).unwrap();
     std::fs::remove_file(temp.path().join("a.txt")).unwrap();
@@ -257,7 +256,8 @@ fn native_document_names_remain_distinct_from_utf8_names() {
             .unwrap(),
     );
     assert_eq!(events.len(), 2);
-    assert_ne!(events[0].equivalence_key, events[1].equivalence_key);
+    assert_ne!(events[0].origin, events[1].origin);
+    assert_ne!(events[0].payload["native_path_bytes"], events[1].payload["native_path_bytes"]);
     assert_eq!(
         events
             .iter()

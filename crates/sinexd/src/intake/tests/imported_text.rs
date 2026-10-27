@@ -27,7 +27,7 @@ async fn ingest(
     binding
 }
 async fn live(ctx: &mut ReaderContext, event_type: &str) -> Vec<Value> {
-    sqlx::query_scalar("SELECT payload FROM core.events WHERE event_type=$1 AND id IN (SELECT event_id FROM core.live_locations UNION ALL SELECT event_id FROM core.live_equivalence) ORDER BY payload->>'provider_id'")
+    sqlx::query_scalar("SELECT payload FROM core.events WHERE event_type=$1 AND id IN (SELECT event_id FROM core.live_locations UNION ALL SELECT event_id FROM core.live_equivalence) ORDER BY payload->>'provider_id', payload::text")
         .bind(event_type).fetch_all(&mut ctx.read_conn).await.unwrap()
 }
 async fn replay(ctx: &mut ReaderContext, binding: &Binding) {
@@ -129,8 +129,10 @@ async fn imported_json_metadata_survives_writer_restart_and_replay(db: devkit::p
     std::fs::write(&path, corrected).unwrap();
     ingest(&mut ctx, &transcript::WHISPER_FORMAT, &path, json!({})).await;
     let before = live(&mut ctx, "transcript.cue").await;
-    assert_eq!(before.len(), 2);
-    assert!(before.iter().all(|p| p["language"] == "en"));
+    assert_eq!(before.len(), 4);
+    for language in ["pl", "en"] {
+        assert_eq!(before.iter().filter(|p| p["language"] == language).count(), 2);
+    }
     ctx.close().await.unwrap();
     std::fs::remove_file(&path).unwrap();
     let mut ctx = ReaderContext::open(&db.url(None), &store).await.unwrap();
@@ -140,7 +142,7 @@ async fn imported_json_metadata_survives_writer_restart_and_replay(db: devkit::p
 }
 
 #[devkit::test]
-async fn document_metadata_changes_replace_readings_without_changing_bytes(
+async fn document_metadata_changes_keep_distinct_observations_of_the_same_bytes(
     db: devkit::pg::TestDatabase,
 ) {
     let dir = tempfile::tempdir().unwrap();
@@ -159,9 +161,9 @@ async fn document_metadata_changes_replace_readings_without_changing_bytes(
         .unwrap();
     ingest(&mut ctx, &documents::FORMAT, &root, json!({})).await;
     let after = live(&mut ctx, "document.captured").await;
-    assert_eq!(after.len(), 1);
-    assert_eq!(after[0]["content"], before[0]["content"]);
-    assert_ne!(after[0]["modified_at"], before[0]["modified_at"]);
+    assert_eq!(after.len(), 2);
+    assert!(after.iter().all(|payload| payload["content"] == before[0]["content"]));
+    assert_ne!(after[0]["modified_at"], after[1]["modified_at"]);
     std::fs::remove_dir_all(&root).unwrap();
     replay(&mut ctx, &binding).await;
     assert_eq!(live(&mut ctx, "document.captured").await, after);

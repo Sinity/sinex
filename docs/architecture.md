@@ -438,7 +438,11 @@ and SRT; OCR imports accept JSON, Tesseract TSV and plain text. JSON files are
 whole records with one event per output index. Their file defaults and outputs
 therefore replay together, including for sealed bindings. Whisper offsets keep
 the decimal seconds exactly as written; milliseconds are derived estimates.
-Filename hints are library derivations of captured copies.
+Filename hints are library derivations of captured copies. Documents and imported
+text use their record locations as identity. A changed file or a different
+import keeps a separate observation, including when the provider repeats an ID;
+replay still reads each stored record. Provider IDs, models and external runs
+remain payload fields for downstream fusion.
 
 ## Host discovery
 

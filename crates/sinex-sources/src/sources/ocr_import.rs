@@ -232,8 +232,6 @@ impl OcrParser {
             }
             _ => return Err(RecordError::new("incomplete or negative bounding box size")),
         };
-        payload.provider_id_stable = payload.provider_id.is_some()
-            && (matches!(self.format, Format::Json) || payload.external_run.is_some());
         payload.extra = object;
         Ok((vec![payload], carry))
     }
@@ -297,7 +295,8 @@ impl Parser for OcrParser {
         if !matches!(self.format, Format::Json) {
             return self.parse_item(record, carry, context);
         }
-        let (records, defaults) = super::transcript::json_records(record, true)?;
+        let nested = record.iter().find(|byte| !byte.is_ascii_whitespace()) == Some(&b'{');
+        let (records, defaults) = super::transcript::json_records(record, nested)?;
         let mut manifest = context.manifest.clone();
         manifest.details.insert("file_metadata".into(), defaults);
         let context = RecordContext {

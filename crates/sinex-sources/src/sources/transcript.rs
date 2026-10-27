@@ -203,13 +203,6 @@ impl TranscriptParser {
                         .checked_add(ns)
                         .and_then(|ns| Timestamp::from_unix_ns(ns).ok());
                 }
-                payload.provider_id_stable = payload.provider_id.is_some()
-                    && (self.format == Format::Json
-                        || (payload.external_run.is_some()
-                            && matches!(
-                                context.manifest.detail("source_container").as_str(),
-                                Some("stateless" | "gzip")
-                            )));
                 payload.extra = object;
             }
             Format::Text => {

@@ -8,9 +8,6 @@ use serde_json::{Map, Value};
 pub struct TranscriptCue {
     pub input: String,
     pub provider_id: Option<String>,
-    /// Whether this ID identifies the output across revisions of the input.
-    #[serde(default)]
-    pub provider_id_stable: bool,
     pub text: String,
     /// Decimal seconds exactly as written in the import.
     pub start_seconds: Option<String>,
@@ -41,9 +38,6 @@ pub struct BoundingBox {
 pub struct OcrText {
     pub input: String,
     pub provider_id: Option<String>,
-    /// Whether this ID identifies the output across revisions of the input.
-    #[serde(default)]
-    pub provider_id_stable: bool,
     pub text: String,
     pub page: Option<u64>,
     pub block: Option<u64>,
@@ -63,15 +57,8 @@ pub struct OcrText {
 
 impl EventPayload for TranscriptCue {
     const EVENT_TYPE: &'static str = "transcript.cue";
-    const KEY: KeyKind = KeyKind::Fields(&["input", "external_run", "model", "provider_id"]);
+    const KEY: KeyKind = KeyKind::Location;
     const REPLACE: ReplaceRule = ReplaceRule::ReplaceWhenNewer;
-    fn key_kind(&self) -> KeyKind {
-        if self.provider_id_stable && self.provider_id.is_some() {
-            Self::KEY
-        } else {
-            KeyKind::Location
-        }
-    }
     fn ts_orig(&self) -> TsOrig {
         TsOrig::maybe(self.at, TimeQuality::Intrinsic)
     }
@@ -82,15 +69,8 @@ impl EventPayload for TranscriptCue {
 
 impl EventPayload for OcrText {
     const EVENT_TYPE: &'static str = "ocr.text";
-    const KEY: KeyKind = KeyKind::Fields(&["input", "external_run", "engine", "provider_id"]);
+    const KEY: KeyKind = KeyKind::Location;
     const REPLACE: ReplaceRule = ReplaceRule::ReplaceWhenNewer;
-    fn key_kind(&self) -> KeyKind {
-        if self.provider_id_stable && self.provider_id.is_some() {
-            Self::KEY
-        } else {
-            KeyKind::Location
-        }
-    }
     fn ts_orig(&self) -> TsOrig {
         TsOrig::unknown()
     }

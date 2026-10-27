@@ -35,7 +35,7 @@ fn ocr_boxes_keep_units_and_confidence_scale() {
     assert_eq!(p.confidence_scale.as_deref(), Some("0-100"));
     assert_eq!(p.external_run.as_deref(), Some("example-run"));
     assert_eq!(p.extra["custom"], true);
-    assert!(matches!(p.key_kind(), KeyKind::Fields(_)));
+    assert!(matches!(p.key_kind(), KeyKind::Location));
     assert_eq!(p.ts_orig().at, None);
 }
 #[devkit::test]
@@ -79,4 +79,20 @@ fn invalid_ocr_is_diagnosed_and_missing_confidence_stays_unknown() {
     assert_eq!(rows[0].bounding_box, None);
     let (rows, _) = read(Format::Text, "Żółw\r\n".as_bytes(), &Carry::default()).unwrap();
     assert_eq!(rows[0].text, "Żółw");
+}
+
+#[devkit::test]
+fn native_ocr_json_arrays_keep_each_box_and_reject_malformed_entries() {
+    let parser = OcrParser { input: "native-array".into(), format: Format::Json };
+    let bytes = br#"[{"text":"first","bbox":[10,20,300,60],"coordinate_units":"pixels","confidence":0.87},{"text":"second"}]"#;
+    let (rows, _) = parser.parse(&bytes.as_slice(), &Carry::default(), &RecordContext::none()).unwrap();
+    assert_eq!(rows.len(), 2);
+    assert_eq!(rows[0].text, "first");
+    assert_eq!(rows[0].bounding_box.as_ref().unwrap().left, 10.0);
+    assert_eq!(rows[0].confidence, Some(0.87));
+    assert_eq!(rows[1].text, "second");
+    assert_eq!(rows[1].confidence, None);
+    for bytes in [br#"[{"bbox":[1,2,3,4]}]"#.as_slice(), b"[42]", b"[{", &[0xff]] {
+        assert!(parser.parse(&bytes, &Carry::default(), &RecordContext::none()).is_err());
+    }
 }

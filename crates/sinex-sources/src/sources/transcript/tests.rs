@@ -94,13 +94,13 @@ fn cues_keep_multiline_text_and_relative_time() {
     assert!(read(Format::WebVtt, b"00:61.000 --> 01:02.000\nx").is_err());
 }
 #[devkit::test]
-fn stable_provider_ids_and_unidentified_outputs_have_their_declared_keys() {
+fn provider_ids_do_not_merge_outputs_from_distinct_materials() {
     let rows = read(
         Format::Json,
         br#"[{"id":"stable","text":"same"},{"text":"same"}]"#,
     )
     .unwrap();
-    assert!(matches!(rows[0].key_kind(), KeyKind::Fields(_)));
+    assert!(matches!(rows[0].key_kind(), KeyKind::Location));
     assert!(matches!(rows[1].key_kind(), KeyKind::Location));
 }
 #[derive(Default)]
