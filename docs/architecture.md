@@ -122,7 +122,13 @@ does not know which driver a binding uses.
 - **Directory snapshots.** Changed files stream into one unnamed bundle. Each
   file is preceded by one byte outside its source range, so empty files have
   distinct anchors. The cursor confirms the reader's file facts only at the
-  bundle's last byte.
+  bundle's last byte. Paths are keyed and reopened as native bytes, including
+  in saved reader memory. Manifest paths keep valid UTF-8 names verbatim. Non-UTF-8 names add
+  `native_path_bytes` with base64-encoded native bytes; reopening uses that field
+  when present. A file that cannot be read contributes a failure record when
+  its failure appears or changes and is retried on the next poll. A file that
+  changes during capture is skipped and retried. Walk failures suppress removals
+  only within the failed path; a walk cut by the part size records no removals.
 - **Export archives.** An archive is stored once and read in one forward pass
   for every compatible binding (same host and class); each binding keeps its
   own record parts and cursor. A sealed archive uses one key per binding.

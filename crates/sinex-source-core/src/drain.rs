@@ -379,6 +379,17 @@ fn parse_one<P: Parser>(
     carry: &P::Carry,
     context: &RecordContext<'_>,
 ) -> Result<(Vec<P::Payload>, P::Carry), RecordError> {
+    if context.manifest.media_type.as_deref() == Some("application/x-sinex-file-bundle")
+        && let Some(reason) = context
+            .member
+            .and_then(|member| member.details.get("read_error"))
+            .and_then(Value::as_str)
+    {
+        return Err(RecordError::new(format!(
+            "{}: {reason}",
+            context.path().unwrap_or_default()
+        )));
+    }
     // Decoding is the parser's code too: a panic there fails this record,
     // never the run.
     match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {

@@ -1,6 +1,7 @@
 //! Rebuild the file facts of a restarted reader from its saved memory and the
 //! admitted bundles after it.
 use super::*;
+use std::os::unix::ffi::{OsStrExt, OsStringExt};
 
 type Facts = Option<(u64, i128, [u8; 32])>;
 
@@ -20,7 +21,10 @@ impl DirState {
             let member = manifest
                 .member_at(start)
                 .ok_or_else(|| DriverError::Cursor("directory member is ambiguous".into()))?;
-            let path = member.path.as_str();
+            if member.details.contains_key("read_error") {
+                continue;
+            }
+            let path = paths::native(member)?;
             if !self.remembered.insert(path.to_owned()) {
                 continue;
             }
@@ -36,9 +40,9 @@ impl DirState {
         let mut rest = memory;
         while !rest.is_empty() {
             let length = u32::from_le_bytes(take(&mut rest)?) as usize;
-            let path = std::str::from_utf8(take_slice(&mut rest, length)?)
-                .map_err(|_| damaged())?
-                .to_owned();
+            let path = PathBuf::from(std::ffi::OsString::from_vec(
+                take_slice(&mut rest, length)?.to_vec(),
+            ));
             let file = match take::<1>(&mut rest)? {
                 [0] => None,
                 [1] => Some((
@@ -79,14 +83,15 @@ fn take<const N: usize>(rest: &mut &[u8]) -> Result<[u8; N], DriverError> {
 }
 
 /// The memory to save: for each file, in path order, the path's length
-/// (four bytes, little-endian) and UTF-8 bytes, then 1 and its size (eight
+/// (four bytes, little-endian) and native bytes, then 1 and its size (eight
 /// bytes), modification time (sixteen) and content hash (32), or 0 when the
 /// facts are unknown.
-pub(super) fn memory_of(files: &HashMap<String, Facts>) -> Arc<[u8]> {
-    let mut paths: Vec<(&String, &Facts)> = files.iter().collect();
+pub(super) fn memory_of(files: &HashMap<PathBuf, Facts>) -> Arc<[u8]> {
+    let mut paths: Vec<(&PathBuf, &Facts)> = files.iter().collect();
     paths.sort_by(|a, b| a.0.cmp(b.0));
     let mut bytes = Vec::new();
     for (path, file) in paths {
+        let path = path.as_os_str();
         bytes.extend_from_slice(&(path.len() as u32).to_le_bytes());
         bytes.extend_from_slice(path.as_bytes());
         match file {
