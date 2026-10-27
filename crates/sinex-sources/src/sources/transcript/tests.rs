@@ -394,3 +394,44 @@ fn webvtt_headers_allow_tabs_and_later_header_named_cues_remain_text() {
         .is_err()
     );
 }
+
+#[devkit::test]
+fn changed_file_defaults_change_segment_readings_with_the_same_native_identity() {
+    let parser = TranscriptParser {
+        format: Format::Whisper,
+        input: "example".into(),
+    };
+    let raw = br#"{"id":0,"text":"same","start":0,"end":1}"#;
+    let read = |language| {
+        let manifest = Manifest::from_json(
+            serde_json::json!({"path":"example.json","imported_text":{"language":language,"model":"example-model","external_run":"example-run"}}),
+        );
+        crate::drain(
+            &parser,
+            crate::DrainInput {
+                source: WHISPER.name,
+                class: Class::Guarded,
+                material: sinex_model::MaterialId::new(),
+                bytes: raw.as_slice().into(),
+                records: &[(0, raw.len())],
+                carry: Value::Null,
+                reading_order: &|_| sinex_model::ReadingOrder(0),
+                limits: crate::Limits::default(),
+                manifest: &manifest,
+            },
+        )
+        .unwrap()
+        .into_iter()
+        .flat_map(|b| b.outcomes)
+        .find_map(|o| match o {
+            sinex_model::RecordOutcome::Events { mut events, .. } => events.pop(),
+            _ => None,
+        })
+        .unwrap()
+    };
+    let first = read("pl");
+    let corrected = read("en");
+    assert_eq!(first.equivalence_key, corrected.equivalence_key);
+    assert_ne!(first.payload["language"], corrected.payload["language"]);
+    assert_ne!(first.record_hash, corrected.record_hash);
+}
