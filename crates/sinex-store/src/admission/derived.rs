@@ -16,7 +16,6 @@ pub enum DerivedScope {
     Keys {
         keys: Vec<ComputedKey>,
         /// How far archiving and excision had gone when the inputs were read.
-        #[serde(default)]
         read: ReadMark,
     },
     /// A per-event derivation's outputs for committed events up to `position`.
@@ -24,7 +23,6 @@ pub enum DerivedScope {
         /// Successfully computed inputs, including those with no output.
         inputs: Vec<Uuid>,
         position: i64,
-        #[serde(default)]
         read: ReadMark,
     },
     /// Recompute these keys (a version change, `sinexctl recompute`). Carries
@@ -34,8 +32,8 @@ pub enum DerivedScope {
 
 /// How far archiving and excision had gone when a derivation read its
 /// inputs: if neither has moved since, every input it read is still live and
-/// admission need not look. The default is before both began.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+/// admission need not look.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct ReadMark {
     /// The newest visibility change (`audit.archive_changes`).
     pub changes: i64,
@@ -463,3 +461,6 @@ pub(crate) async fn mark_archived_dirty(
     }
     Ok(marked)
 }
+
+#[cfg(test)]
+mod tests;
