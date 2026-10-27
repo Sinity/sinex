@@ -499,6 +499,7 @@ pub fn experiment_driver(root: PathBuf, host: String) -> DirSnapshot {
     DirSnapshot {
         root,
         host,
+        removed_at_source: false,
         select: experiment_file,
         part_bytes: 64 << 20,
     }

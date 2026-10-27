@@ -57,6 +57,8 @@ pub struct MailMessage {
     pub from: Vec<String>,
     pub to: Vec<String>,
     pub cc: Vec<String>,
+    /// Blind-copy recipients, when kept in the source headers.
+    pub bcc: Vec<String>,
     pub subject: Option<String>,
     pub in_reply_to: Option<String>,
     pub references: Vec<String>,

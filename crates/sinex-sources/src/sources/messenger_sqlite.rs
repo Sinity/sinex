@@ -85,8 +85,10 @@ pub fn driver(path: PathBuf, host: String) -> SqliteRows {
              FROM messages m LEFT JOIN threads t ON t.uid = m.thread_id)",
         ),
         required: &["uid", "thread_id", "timestamp", "author", "text", "data"],
-        mutable: None,
-        full_pass_secs: 86_400,
+        changes: crate::drivers::sqlite_rows::Changes::InPlace {
+            mutable: "0",
+            full_pass_secs: 86_400,
+        },
     }
 }
 

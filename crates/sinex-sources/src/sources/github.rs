@@ -647,8 +647,14 @@ impl Github {
                 None
             };
             if let Some(wait) = wait {
-                *self.wait_until.lock().expect("lock") =
-                    Some(Instant::now() + wait.max(self.interval));
+                let deadline = Instant::now()
+                    .checked_add(wait.max(self.interval))
+                    .ok_or_else(|| {
+                        DriverError::Io(
+                            "GitHub retry deadline is outside the monotonic clock's range".into(),
+                        )
+                    })?;
+                *self.wait_until.lock().expect("lock") = Some(deadline);
             }
             let message = serde_json::from_str::<Value>(&body)
                 .ok()
@@ -929,7 +935,12 @@ impl Api for Github {
         if result.is_err() {
             let mut wait = self.wait_until.lock().expect("lock");
             if wait.is_none_or(|until| until <= Instant::now()) {
-                *wait = Some(Instant::now() + self.interval);
+                let deadline = Instant::now().checked_add(self.interval).ok_or_else(|| {
+                    DriverError::Io(
+                        "GitHub interval deadline is outside the monotonic clock's range".into(),
+                    )
+                })?;
+                *wait = Some(deadline);
             }
         }
         let records = result?;

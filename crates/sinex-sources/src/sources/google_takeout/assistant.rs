@@ -8,7 +8,6 @@
 //! identity. Exports from 2019 and 2020 write that time in UTC; one from 2022
 //! wrote the same notes an hour later, in the operator's zone, so its
 //! readings are separate notes. The time is read as UTC.
-use super::super::fields;
 use crate::drivers::export_archive::{ExportArchive, Framing, PART_BYTES};
 use crate::registry::{DeclaredSource, Driver, SourceSpec};
 use crate::{Parser, RecordContext, RecordError};

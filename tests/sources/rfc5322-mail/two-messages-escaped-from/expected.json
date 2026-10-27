@@ -18,6 +18,7 @@
             "bob@example.org"
           ],
           "cc": [],
+          "bcc": [],
           "subject": "first",
           "in_reply_to": null,
           "references": [],
@@ -50,6 +51,7 @@
             "alice@example.org"
           ],
           "cc": [],
+          "bcc": [],
           "subject": "Re: first",
           "in_reply_to": "one@example.org",
           "references": [],

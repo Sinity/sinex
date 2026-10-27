@@ -85,7 +85,7 @@ fn whitespace(bytes: &[u8], position: &mut usize) {
     }
 }
 
-fn frame(bytes: &[u8], eof: bool) -> (Vec<(usize, usize)>, usize) {
+fn day_records(bytes: &[u8], eof: bool) -> (Vec<(usize, usize)>, usize) {
     let mut records = Vec::new();
     let mut position = 0;
     whitespace(bytes, &mut position);
@@ -128,6 +128,10 @@ fn frame(bytes: &[u8], eof: bool) -> (Vec<(usize, usize)>, usize) {
             None => return (records, start),
         }
     }
+}
+
+fn frame(bytes: &[u8]) -> (Vec<(usize, usize)>, usize) {
+    day_records(bytes, true)
 }
 
 pub fn source() -> DeclaredSource<FreedomParser> {

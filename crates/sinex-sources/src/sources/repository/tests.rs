@@ -335,3 +335,36 @@ fn an_unreadable_commit_is_a_record_failure() {
     let error = parse(record.as_object().unwrap()).unwrap_err();
     assert!(error.0.contains("abc") && error.0.contains("corrupt object"));
 }
+
+#[devkit::test]
+fn a_non_utf8_message_does_not_drop_its_neighboring_commits() {
+    let directory = repository();
+    git(
+        &directory,
+        &["commit", "-q", "--allow-empty", "-m", "before"],
+    );
+    let parent = rev(&directory, "HEAD");
+    let tree = rev(&directory, "HEAD^{tree}");
+    let mut object = format!("tree {tree}\nparent {parent}\nauthor A <a@example.org> 1767225600 +0000\ncommitter C <c@example.org> 1767225610 +0000\n\n").into_bytes();
+    object.extend_from_slice(b"bad\xff\n");
+    let bad = git_input(
+        &directory,
+        &["hash-object", "-t", "commit", "-w", "--stdin"],
+        &object,
+    );
+    git(&directory, &["update-ref", "refs/heads/main", &bad]);
+    git(
+        &directory,
+        &["commit", "-q", "--allow-empty", "-m", "after"],
+    );
+    let acquired = driver(directory, "h".into()).poll(&Value::Null).unwrap();
+    let read = commits(&acquired);
+    assert_eq!(read.len(), 3);
+    assert!(read.iter().any(|record| record["message"] == "before\n"));
+    assert!(read.iter().any(|record| record["message"] == "after\n"));
+    let bad = read
+        .iter()
+        .find(|record| record["commit"].as_str() == Some(bad.as_str()))
+        .unwrap();
+    assert_eq!(bad["original_bytes"]["/message"], "YmFk/wo=");
+}

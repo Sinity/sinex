@@ -27,7 +27,7 @@ pub const PST: SourceSpec = SourceSpec {
     purpose: "mail recall and correspondence history",
     class: Class::Open,
     parser: "rfc5322-mail",
-    parser_version: 1,
+    parser_version: 2,
     event_types: &["mail.message"],
     framer: crate::Framer::export(
         crate::drivers::export_archive::frame_mbox,
@@ -42,7 +42,7 @@ pub const CSV: SourceSpec = SourceSpec {
     purpose: "mail recall and correspondence history",
     class: Class::Open,
     parser: "outlook-csv",
-    parser_version: 1,
+    parser_version: 2,
     event_types: &["mail.message"],
     framer: crate::Framer::export(frame_csv, crate::drivers::export_archive::Framing::Csv),
 };
@@ -162,8 +162,8 @@ impl Parser for CsvParser {
                 .filter(|p| !p.is_empty())
                 .collect()
         };
-        let mut cc = people("DW");
-        cc.extend(people("UDW"));
+        let cc = people("DW");
+        let bcc = people("UDW");
         let labels = column("Kategorie")
             .map(|c| c.split(';').map(|l| l.trim().to_owned()).collect())
             .unwrap_or_default();
@@ -177,6 +177,7 @@ impl Parser for CsvParser {
                 from: people("Od"),
                 to: people("Do"),
                 cc,
+                bcc,
                 subject: column("Temat").map(str::to_owned),
                 in_reply_to: None,
                 references: vec![],

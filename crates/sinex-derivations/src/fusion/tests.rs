@@ -696,6 +696,7 @@ fn mail(source: &str, id: &str, secs: f64) -> Event {
             from: vec!["a@example.org".into()],
             to: vec![],
             cc: vec![],
+            bcc: vec![],
             subject: Some(format!("about {id}")),
             in_reply_to: None,
             references: vec![],

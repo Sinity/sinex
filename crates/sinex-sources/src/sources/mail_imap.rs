@@ -44,7 +44,7 @@ pub const SPEC: SourceSpec = SourceSpec {
     purpose: "mail recall and correspondence history",
     class: Class::Open,
     parser: "rfc5322-mail",
-    parser_version: 1,
+    parser_version: 2,
     event_types: &["mail.message"],
     framer: crate::Framer::export(
         crate::drivers::export_archive::frame_whole,
@@ -141,9 +141,14 @@ struct Line {
 
 impl Connection {
     fn open(cfg: &ImapConfig) -> Result<Self, DriverError> {
+        let timeout = cfg
+            .idle_seconds
+            .max(60)
+            .checked_add(30)
+            .ok_or_else(|| io("idle timeout", "outside the clock's range"))?;
         let tcp =
             TcpStream::connect((cfg.host.as_str(), cfg.port)).map_err(|e| io("connect", e))?;
-        tcp.set_read_timeout(Some(Duration::from_secs(cfg.idle_seconds.max(60) + 30)))
+        tcp.set_read_timeout(Some(Duration::from_secs(timeout)))
             .map_err(|e| io("connect", e))?;
         let stream: Box<dyn Stream> = if cfg.tls {
             let roots = rustls::RootCertStore {
@@ -323,8 +328,9 @@ impl ImapMail {
         {
             let tag = c.send("IDLE")?;
             let _continuation = c.read_line()?;
-            let deadline =
-                std::time::Instant::now() + Duration::from_secs(self.config.idle_seconds);
+            let deadline = std::time::Instant::now()
+                .checked_add(Duration::from_secs(self.config.idle_seconds))
+                .ok_or_else(|| io("idle deadline", "outside the monotonic clock's range"))?;
             while std::time::Instant::now() < deadline {
                 match c.read_line() {
                     Ok(l) if l.text.contains("EXISTS") || l.text.contains("EXPUNGE") => {

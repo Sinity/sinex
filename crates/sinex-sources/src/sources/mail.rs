@@ -36,7 +36,7 @@ pub const MBOX: SourceSpec = SourceSpec {
     purpose: "mail recall and correspondence history",
     class: Class::Open,
     parser: "rfc5322-mail",
-    parser_version: 1,
+    parser_version: 2,
     event_types: &["mail.message"],
     framer: crate::Framer::export(
         crate::drivers::export_archive::frame_mbox,
@@ -51,7 +51,7 @@ pub const MAILDIR: SourceSpec = SourceSpec {
     purpose: "mail recall and correspondence history",
     class: Class::Open,
     parser: "rfc5322-mail",
-    parser_version: 2,
+    parser_version: 3,
     event_types: &["mail.message"],
     framer: crate::Framer::export(
         crate::drivers::export_archive::frame_whole,
@@ -99,8 +99,18 @@ pub fn parse_message(raw: &[u8]) -> Result<MailMessage, RecordError> {
         .unwrap_or_else(|| format!("blake3:{}", blake3::hash(&message).to_hex()));
     let date = one("Date")
         .and_then(|d| mailparse::dateparse(&d).ok())
-        // `dateparse` reads text holding no date as the epoch.
-        .filter(|secs| *secs != 0)
+        // `dateparse` also returns zero for text holding no date. An actual
+        // epoch date must be a readable RFC 2822 date, rather than guessed.
+        .filter(|secs| {
+            *secs != 0
+                || one("Date").is_some_and(|date| {
+                    time::OffsetDateTime::parse(
+                        &date,
+                        &time::format_description::well_known::Rfc2822,
+                    )
+                    .is_ok_and(|date| date.unix_timestamp() == 0)
+                })
+        })
         .and_then(|secs| Timestamp::from_unix_secs(secs).ok());
     let addresses = |name: &str| -> Vec<String> {
         headers
@@ -127,6 +137,7 @@ pub fn parse_message(raw: &[u8]) -> Result<MailMessage, RecordError> {
         from: addresses("From"),
         to: addresses("To"),
         cc: addresses("Cc"),
+        bcc: addresses("Bcc"),
         subject: one("Subject"),
         in_reply_to: one("In-Reply-To").map(|v| strip_angles(&v)),
         references: ids("References"),

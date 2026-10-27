@@ -32,3 +32,20 @@ fn csv_rows_are_windows_1250_with_polish_headers() {
             .is_err()
     );
 }
+
+#[devkit::test]
+fn blind_copies_are_distinct_from_ordinary_copies() {
+    let header = cp1250("Temat,DW: (adres),UDW: (adres)\n");
+    let (_, header) = CsvParser
+        .parse(&header.as_slice(), &vec![], &crate::RecordContext::none())
+        .unwrap();
+    let (messages, _) = CsvParser
+        .parse(
+            &b"Subject,cc@example.org,bcc@example.org\n".as_slice(),
+            &header,
+            &crate::RecordContext::none(),
+        )
+        .unwrap();
+    assert_eq!(messages[0].cc, ["cc@example.org"]);
+    assert_eq!(messages[0].bcc, ["bcc@example.org"]);
+}

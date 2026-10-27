@@ -533,3 +533,13 @@ fn a_restart_remembers_from_saved_memory_and_later_materials() {
     assert_eq!(uids, [1, 3, 5]);
     assert_eq!(reader.known[&5].material, newer);
 }
+
+#[devkit::test]
+fn an_unrepresentable_idle_timeout_fails_before_connecting() {
+    let mut reader = mail(0, Some("synthetic"), None);
+    reader.config.idle_seconds = u64::MAX;
+    let error = Connection::open(&reader.config)
+        .err()
+        .expect("invalid timeout");
+    assert!(error.to_string().contains("idle timeout"), "{error}");
+}

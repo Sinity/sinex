@@ -207,3 +207,23 @@ fn a_deleted_maildir_message_is_removed_where_it_was_read() {
         .sum();
     assert_eq!(events, 1);
 }
+
+#[devkit::test]
+fn blind_copy_recipients_survive_a_non_utf8_body() {
+    let mail = parse_message(b"Message-ID: <synthetic@example.org>\r\nFrom: sender@example.org\r\nBcc: Hidden <hidden@example.org>\r\nContent-Type: text/plain; charset=iso-8859-1\r\n\r\nCaf\xe9\r\n").unwrap();
+    assert_eq!(mail.message_id, "synthetic@example.org");
+    assert_eq!(mail.bcc, ["Hidden <hidden@example.org>"]);
+    assert!(mail.text.as_deref().unwrap().contains("Caf\u{e9}"));
+}
+
+#[devkit::test]
+fn the_epoch_is_a_known_mail_date() {
+    let mail = parse_message(b"Date: Thu, 01 Jan 1970 00:00:00 +0000\r\n\r\nbody").unwrap();
+    assert_eq!(mail.date, Timestamp::from_unix_secs(0).ok());
+    assert!(
+        parse_message(b"Date: not a date\r\n\r\nbody")
+            .unwrap()
+            .date
+            .is_none()
+    );
+}

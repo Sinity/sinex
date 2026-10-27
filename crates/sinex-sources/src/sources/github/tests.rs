@@ -503,3 +503,33 @@ fn pagination_never_sends_the_token_to_another_api() {
     );
     assert!(asked.lock().unwrap().is_empty());
 }
+
+#[devkit::test]
+fn a_retry_deadline_outside_the_clock_range_is_an_error() {
+    let (url, _) = serve(|_| {
+        (
+            429,
+            vec![("retry-after", u64::MAX.to_string())],
+            json!({"message":"wait"}).to_string(),
+        )
+    });
+    let error = github(&url)
+        .fetch(&Value::Null)
+        .err()
+        .expect("unrepresentable deadline");
+    assert!(error.to_string().contains("deadline"), "{error}");
+    let (url, _) = serve(|_| {
+        (
+            500,
+            Vec::new(),
+            json!({"message":"unavailable"}).to_string(),
+        )
+    });
+    let mut reader = github(&url);
+    reader.interval = Duration::from_secs(u64::MAX);
+    let error = reader
+        .fetch(&Value::Null)
+        .err()
+        .expect("unrepresentable interval");
+    assert!(error.to_string().contains("deadline"), "{error}");
+}

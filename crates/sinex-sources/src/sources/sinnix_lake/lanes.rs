@@ -251,6 +251,7 @@ fn notification(at: Timestamp, n: Notification) -> Result<NotificationShown, Rec
     }
     Ok(NotificationShown {
         captured_by: sinex_model::event_types::session::CaptureProgram::Sinnix,
+        notification_id: None,
         received_at: n.timestamp.map(seconds).transpose()?.unwrap_or(at),
         app: n.app_name.unwrap_or_default(),
         summary: n.summary.unwrap_or_default(),
