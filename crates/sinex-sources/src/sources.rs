@@ -24,6 +24,8 @@ pub mod journald;
 pub mod kitty_scrollback;
 /// The media library: scans of library roots and library requests.
 pub mod library;
+/// Records Sinnix keeps about the machine: activations, backups, audits.
+pub mod machine_records;
 pub mod mail;
 /// Live mail over IMAP, with IDLE and XOAUTH2.
 pub mod mail_imap;
@@ -43,6 +45,8 @@ pub mod raindrop;
 pub mod reddit;
 /// Commits in local repositories (`code.git`).
 pub mod repository;
+/// The home router's lanes in the Sinnix capture lake.
+pub mod router;
 pub mod samsung_cloud;
 pub mod samsung_health;
 pub mod samsung_sms;
@@ -119,6 +123,8 @@ pub fn formats() -> &'static [&'static InputFormat] {
         &library::FORMAT,
         &forecast::FORMAT,
         &page_crawl::FORMAT,
+        &machine_records::FORMAT,
+        &router::FORMAT,
     ]
 }
 

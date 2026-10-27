@@ -37,6 +37,10 @@ these names and no others.
 - **lake lane**: one stream of the Sinnix capture lake (`clipboard`, `netflow`), written as day files of `sinnix-capture-v1` records and read by the `sinnix-lake` format under its catalog source. A lane emits the event types Sinex's own capture of the same thing emits.
 - **snapshot** (of a live source): what its capture reads of the current state when it starts (players present, devices attached, the system bus's objects), spooled before the changes that follow.
 - **reflection**: what Sinex records about itself, such as its own journal entries (`from_sinex`); kept out of figures about the machine's activity.
+- **capture lake**: the files Sinnix capture writes, one directory per **lane** (a producer's stable name) with a **day file** per UTC day of `sinnix-capture-v1` records (`sinnix-lake`, `router`).
+- **machine records**: the files Sinnix keeps about the machine at its machine root (`/realm/device/<host>`): activations, backup checks, restore drills, audits, the usage census, configuration drift and experiment runs (`machine-records`).
+- **sample**: one look at a state that keeps changing (a lease table, a running traffic total), recorded as `<thing>.sampled` with the time it was taken.
+- **DHCP lease**: an address the router lends a device until it expires; the only sense in which "lease" is used.
 
 ## Events
 
