@@ -1,7 +1,7 @@
 use super::*;
 use crate::test_support::body;
-use sinex_source_core::{DrainInput, Limits};
 use sinex_model::{EventPayload, MaterialId, ReadingOrder, RecordOutcome};
+use sinex_source_core::{DrainInput, Limits};
 
 #[devkit::test]
 fn only_line_terminators_are_removed_and_no_time_is_invented() {

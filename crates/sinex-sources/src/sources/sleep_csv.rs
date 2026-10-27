@@ -1,12 +1,12 @@
 //! Optional joined sleep CSV. Supplied civil times and unresolved DST cases
 //! remain distinct from native health records and known instants.
+use serde::{Deserialize, Serialize};
+use serde_json::{Map, Value};
+use sinex_model::{Class, Timestamp, event_types::sleep_import::SleepSessionImported};
 use sinex_source_core::binding::{self, InputFormat, Settings};
 use sinex_source_core::drivers::export_archive::{ExportArchive, Framing, PART_BYTES};
 use sinex_source_core::registry::{DeclaredSource, Driver, SourceSpec};
 use sinex_source_core::{Parser, RecordContext, RecordError};
-use serde::{Deserialize, Serialize};
-use serde_json::{Map, Value};
-use sinex_model::{Class, Timestamp, event_types::sleep_import::SleepSessionImported};
 use std::path::PathBuf;
 
 pub const SPEC: SourceSpec = SourceSpec {

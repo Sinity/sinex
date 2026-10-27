@@ -2,15 +2,15 @@
 //! ordered postings with decimal quantities. Includes are not traversed.
 pub mod framing;
 
-use sinex_source_core::binding::{self, InputFormat};
-use sinex_source_core::drivers::export_archive::{ExportArchive, Framing, PART_BYTES};
-use sinex_source_core::registry::{DeclaredSource, Driver, SourceSpec};
-use sinex_source_core::{Parser, RecordContext, RecordError};
 use serde::{Deserialize, Serialize};
 use sinex_model::{
     Class,
     event_types::finance::{Posting, TransactionPosted},
 };
+use sinex_source_core::binding::{self, InputFormat};
+use sinex_source_core::drivers::export_archive::{ExportArchive, Framing, PART_BYTES};
+use sinex_source_core::registry::{DeclaredSource, Driver, SourceSpec};
+use sinex_source_core::{Parser, RecordContext, RecordError};
 use std::path::PathBuf;
 
 const TRANSACTIONS: Framing = Framing::Custom {
@@ -90,6 +90,14 @@ impl Parser for HledgerParser {
                 Ok::<_, RecordError>((m.path.clone(), index))
             })
             .transpose()?;
+        let member_duplicate = match context.member {
+            Some(member) => member
+                .details
+                .get("member_duplicate")
+                .and_then(serde_json::Value::as_u64)
+                .ok_or_else(|| RecordError::new("export member duplicate number is missing"))?,
+            None => 0,
+        };
         let mut next = if carry.member == member {
             carry.clone()
         } else {
@@ -102,7 +110,7 @@ impl Parser for HledgerParser {
         let Some(header) = lines.next() else {
             return Ok((vec![], next));
         };
-        if header.starts_with(';') || header.starts_with('#') {
+        if header.trim_start().starts_with([';', '#']) {
             if lines.any(|line| !line.trim_start().starts_with([';', '#'])) {
                 return Err(RecordError::new(
                     "unsupported journal directive after comment",
@@ -173,7 +181,7 @@ impl Parser for HledgerParser {
             host: self.host.clone(),
             journal: self.journal.clone(),
             member: member.as_ref().map(|(path, _)| path.clone()),
-            member_index: member.as_ref().map(|(_, index)| *index),
+            member_duplicate,
             block_hash: hash,
             duplicate,
             date: date.into(),

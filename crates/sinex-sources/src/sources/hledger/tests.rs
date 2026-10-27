@@ -56,7 +56,8 @@ fn equal_blocks_are_numbered_and_later_postings_change_identity() {
     assert_ne!(first[0].block_hash, third[0].block_hash);
     let member = Member {
         path: "second.journal".into(),
-        details: serde_json::from_value(serde_json::json!({"member_index":1})).unwrap(),
+        details: serde_json::from_value(serde_json::json!({"member_index":1,"member_duplicate":0}))
+            .unwrap(),
         ..Default::default()
     };
     let context = RecordContext {
@@ -215,4 +216,50 @@ fn decimal_quantities_keep_written_fraction_and_signs() {
         assert_eq!(value.amount.as_deref(), Some(amount));
         assert_eq!(value.currency.as_deref(), Some("TEST"));
     }
+}
+
+#[devkit::test]
+fn indented_prefix_comments_emit_no_transactions() {
+    let input = b"  ; example\n\t# another comment\n";
+    let (events, carry) = parser()
+        .parse(&input.as_slice(), &Carry::default(), &RecordContext::none())
+        .unwrap();
+    assert!(events.is_empty());
+    assert!(carry.seen.is_empty());
+}
+
+#[devkit::test]
+fn reordered_distinct_archive_members_keep_transaction_keys() {
+    fn archive(names: &[&str]) -> Vec<u8> {
+        let mut builder = tar::Builder::new(Vec::new());
+        for name in names {
+            let mut header = tar::Header::new_gnu();
+            header.set_size(TRANSACTION.len() as u64);
+            header.set_mode(0o600);
+            header.set_cksum();
+            builder
+                .append_data(&mut header, *name, TRANSACTION)
+                .unwrap();
+        }
+        builder.into_inner().unwrap()
+    }
+    let parse = |bytes: Vec<u8>| {
+        let events = intake::export_restart(
+            &bytes,
+            driver("example.tar".into(), "example-host".into()),
+            &source("example-host".into(), "example.tar".into()),
+            2,
+            0,
+        );
+        let mut keys = events
+            .iter()
+            .map(|event| event.equivalence_key.clone())
+            .collect::<Vec<_>>();
+        keys.sort();
+        keys
+    };
+    assert_eq!(
+        parse(archive(&["first.journal", "second.journal"])),
+        parse(archive(&["second.journal", "first.journal"]))
+    );
 }

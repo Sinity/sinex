@@ -12,12 +12,12 @@ pub struct Posting {
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
-#[event(type = "transaction.posted", key = ["host", "journal", "member", "member_index", "block_hash", "duplicate"], replace = repeat)]
+#[event(type = "transaction.posted", key = ["host", "journal", "member", "member_duplicate", "block_hash", "duplicate"], replace = repeat)]
 pub struct TransactionPosted {
     pub host: String,
     pub journal: String,
     pub member: Option<String>,
-    pub member_index: Option<u64>,
+    pub member_duplicate: u64,
     /// Digest of the complete source block, including every posting.
     pub block_hash: String,
     /// Zero-based number among equal blocks in the member.
