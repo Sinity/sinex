@@ -29,6 +29,7 @@ pub struct IncludedFrom {
     pub block_hash: String,
     pub duplicate: u64,
     pub parent: Option<Box<IncludedFrom>>,
+    pub year: Option<i16>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]

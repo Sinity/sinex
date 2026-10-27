@@ -100,10 +100,9 @@ fn visit(
                     .strip_prefix('Y')
                     .or_else(|| header.strip_prefix("year "))
                     .or_else(|| header.strip_prefix("apply year "))
+                    && let Ok(value) = super::split_comment(value).0.trim().parse::<i16>()
                 {
-                    if let Ok(value) = super::split_comment(value).0.trim().parse::<i16>() {
-                        year = Some(value);
-                    }
+                    year = Some(value);
                 }
                 let Some(target) = header
                     .strip_prefix("include ")
@@ -131,6 +130,7 @@ fn visit(
                     block_hash: hash.clone(),
                     duplicate: *duplicate,
                     parent: from.clone().map(Box::new),
+                year,
                 };
                 *duplicate += 1;
                 let targets = match resolve(path, target.trim(), settings) {
@@ -157,7 +157,7 @@ fn visit(
                                 .unwrap_or_default();
                             options.insert("journal_format".into(), json!(format));
                             child_settings.options = options.into();
-                            match visit(
+                            visit(
                                 &target,
                                 journal,
                                 &child_settings,
@@ -165,10 +165,7 @@ fn visit(
                                 Some(from.clone()),
                                 active,
                                 out,
-                            ) {
-                                Ok(()) => None,
-                                Err(e) => Some(e),
-                            }
+                            ).err()
                         }
                     };
                     includes

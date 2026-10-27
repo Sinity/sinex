@@ -132,6 +132,8 @@ async fn included_journal_changes_are_read_when_the_parent_is_unchanged_and_repl
     )
     .unwrap();
     crate::backfill::run(options()).await.unwrap();
+    std::fs::write(&parent, "Y2036\ninclude child.journal\ninclude child.journal\n").unwrap();
+    crate::backfill::run(options()).await.unwrap();
     std::fs::remove_file(&child).unwrap();
     std::fs::remove_file(&parent).unwrap();
     let mut ctx = crate::reader_context::ReaderContext::open(&db.url(None), &store)
@@ -139,6 +141,9 @@ async fn included_journal_changes_are_read_when_the_parent_is_unchanged_and_repl
         .unwrap();
     let changed: i64 = sqlx::query_scalar("SELECT count(*) FROM core.events WHERE event_type='transaction.posted' AND payload->>'resolved_date'='2032-03-01'").fetch_one(&mut ctx.read_conn).await.unwrap();
     assert_eq!(changed, 2);
+    let inherited: i64 = sqlx::query_scalar("SELECT count(*) FROM core.events WHERE event_type='transaction.posted' AND payload->>'resolved_date'='2036-03-01'")
+        .fetch_one(&mut ctx.read_conn).await.unwrap();
+    assert_eq!(inherited, 2);
     let report = crate::replay::run(
         &mut ctx.read_conn,
         &ctx.blobs,
@@ -160,7 +165,7 @@ async fn included_journal_changes_are_read_when_the_parent_is_unchanged_and_repl
     .await
     .unwrap();
     assert!(report.events_read >= 7);
-    let changed: i64 = sqlx::query_scalar("SELECT count(*) FROM (SELECT event_id FROM core.live_equivalence) l JOIN core.events e ON e.id=l.event_id WHERE e.event_type='transaction.posted' AND e.payload->>'resolved_date'='2032-03-01'").fetch_one(&mut ctx.read_conn).await.unwrap();
+    let changed: i64 = sqlx::query_scalar("SELECT count(*) FROM (SELECT event_id FROM core.live_equivalence) l JOIN core.events e ON e.id=l.event_id WHERE e.event_type='transaction.posted' AND e.payload->>'resolved_date'='2036-03-01'").fetch_one(&mut ctx.read_conn).await.unwrap();
     assert_eq!(changed, 2);
     ctx.close().await.unwrap();
 }

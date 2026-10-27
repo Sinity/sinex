@@ -302,3 +302,20 @@ fn changed_include_block_reports_unavailable_resolution_without_using_the_previo
             .contains("unavailable")
     );
 }
+
+#[devkit::test]
+fn a_changed_parent_year_changes_the_child_binding_identity() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("main.journal");
+    let child = dir.path().join("child.journal");
+    std::fs::write(&child, "03/01 Child\n  Assets:Example\n").unwrap();
+    std::fs::write(&root, "Y2032\ninclude child.journal\n").unwrap();
+    let first = plan(&root,&Settings::new("example-host")).unwrap();
+    std::fs::write(&root, "Y2036\ninclude child.journal\n").unwrap();
+    let second = plan(&root,&Settings::new("example-host")).unwrap();
+    let first = first.iter().find(|b|b.input==child).unwrap();
+    let second = second.iter().find(|b|b.input==child).unwrap();
+    assert_ne!(first.name, second.name);
+    assert_eq!(first.settings.options["included_from"]["year"],2032);
+    assert_eq!(second.settings.options["included_from"]["year"],2036);
+}
