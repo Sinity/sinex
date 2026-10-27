@@ -144,7 +144,7 @@ fn extend_fields(extra: &Map<String, Value>, path: &str, fields: &mut Vec<String
 /// An observation keeps material-location identity. Host, lane and sequence
 /// describe the producer envelope and never become a replacement key.
 #[derive(Clone, Debug, PartialEq, crate::EventPayload)]
-#[event(type = "lake.observed", key = location, replace = repeat, time = observed_at, quality = captured)]
+#[event(version = 2, type = "lake.observed", key = location, replace = repeat, time = observed_at, quality = captured)]
 pub struct LakeObservation {
     pub observed_at: Timestamp,
     lane: String,

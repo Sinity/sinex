@@ -86,3 +86,5 @@ async fn replacing_registered_kinds_updates_schemas_and_recreates_views(
         .await
         .unwrap();
 }
+
+mod kinds;

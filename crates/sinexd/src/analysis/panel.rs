@@ -102,7 +102,7 @@ async fn figures(
     };
     let mut out = Vec::new();
     loop {
-        let answer = sinex_store::query::run(conn, &text, &query, ctx, &page)
+        let answer = sinex_store::query::run(conn, &text, Some(&query), ctx, &page)
             .await
             .map_err(|e| e.to_string())?;
         out.extend(answer.rows.iter().filter_map(figure));

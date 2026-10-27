@@ -496,9 +496,9 @@ async fn commit_seq_is_dense_and_in_batch_order(db: devkit::pg::TestDatabase) {
 
 struct ByDay;
 impl DirtyKeys for ByDay {
-    fn keys(&self, e: &KeyInput<'_>) -> Vec<(&'static str, Value)> {
+    fn keys(&self, e: &KeyInput<'_>) -> Vec<(String, Value)> {
         e.ts_orig
-            .map(|t| vec![("daily", json!(t.date().to_string()))])
+            .map(|t| vec![("daily".to_string(), json!(t.date().to_string()))])
             .unwrap_or_default()
     }
 }
@@ -538,10 +538,10 @@ async fn dirty_keys_keep_each_derivation_and_advance_existing_keys(db: devkit::p
     let offered = derived::mark_dirty(
         &mut tx,
         vec![
-            ("daily", first.clone()),
-            ("daily", first.clone()),
-            ("hourly", first.clone()),
-            ("daily", second.clone()),
+            ("daily".to_string(), first.clone()),
+            ("daily".to_string(), first.clone()),
+            ("hourly".to_string(), first.clone()),
+            ("daily".to_string(), second.clone()),
         ],
         3,
     )
@@ -550,7 +550,10 @@ async fn dirty_keys_keep_each_derivation_and_advance_existing_keys(db: devkit::p
     assert_eq!(offered, 4);
     let offered = derived::mark_dirty(
         &mut tx,
-        vec![("daily", first.clone()), ("daily", first.clone())],
+        vec![
+            ("daily".to_string(), first.clone()),
+            ("daily".to_string(), first.clone()),
+        ],
         7,
     )
     .await
@@ -653,3 +656,5 @@ async fn untimed_zsh_occurrences_coexist_and_only_same_locations_repeat(
 
 mod archive_history;
 mod source_counts;
+
+mod kinds;

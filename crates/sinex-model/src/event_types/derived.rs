@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 /// interval derivation. Identified by its start evidence; the end may still
 /// be unknown (`ended_at` is `None` while the state holds).
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
-#[event(
+#[event(version = 2,
     type = "state.interval",
     key = ["interval_id"],
     replace = newer,
@@ -39,7 +39,7 @@ pub struct StateInterval {
 /// counted in has no figure; whether that means zero or unobserved depends on
 /// whether the sources were observing, which is read with the figures.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
-#[event(
+#[event(version = 2,
     type = "metric.figure",
     key = ["metric", "grain", "period_start", "dimension", "dimension_value"],
     replace = newer,
@@ -74,7 +74,7 @@ pub struct MetricFigure {
 /// position, their count, sum, minimum and maximum. Hourly figures are
 /// computed from the points, daily ones from the day's hourly figures.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
-#[event(
+#[event(version = 2,
     type = "health.figure",
     key = ["grain", "period_start", "provider", "series"],
     replace = newer,

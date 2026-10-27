@@ -10,6 +10,7 @@ license.workspace = true
 sinex-macros.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+serde_path_to_error = "0.1"
 uuid.workspace = true
 time.workspace = true
 blake3.workspace = true

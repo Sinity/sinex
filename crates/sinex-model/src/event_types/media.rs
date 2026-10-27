@@ -9,7 +9,7 @@ use serde_json::{Map, Value};
 /// in the older account-data export) and how long it played; the start is
 /// derived from those two.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
-#[event(
+#[event(version = 2,
     type = "music.played",
     key = ["ended_at", "played_ms", "track_uri", "episode_uri", "track_name", "artist_name"],
     replace = repeat,
@@ -48,7 +48,7 @@ pub struct MusicPlayed {
 /// the identity, so an edited or moved bookmark is a newer reading; one in the
 /// trash is removed at the source.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
-#[event(
+#[event(version = 2,
     type = "bookmark.saved",
     key = ["service", "native_id"],
     replace = newer,
@@ -83,7 +83,7 @@ pub struct BookmarkSaved {
 /// and the path inside it identify it; an edit is a newer reading, and a file
 /// missing from a completed scan is removed at the source.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
-#[event(
+#[event(version = 2,
     type = "note.document",
     key = ["vault", "path"],
     replace = newer,
@@ -146,7 +146,7 @@ pub enum NoteFrontMatterError {
 /// A book shelved or read in a reading tracker (Goodreads). Dates are days,
 /// so these serve long-horizon interest, not daily behaviour.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
-#[event(
+#[event(version = 2,
     type = "book.status",
     key = ["service", "book_id", "action"],
     replace = newer,

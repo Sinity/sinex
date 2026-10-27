@@ -62,6 +62,8 @@ pub(crate) fn tables(c: &Checks) -> Vec<String> {
   record_hash bytea NOT NULL,
   record_state text NOT NULL DEFAULT 'present' {record_state},
   class text NOT NULL DEFAULT 'open' {class},
+  kind_version bigint NOT NULL DEFAULT 1 CHECK (kind_version > 0),
+  validation text NOT NULL DEFAULT 'unvalidated' CHECK (validation IN ('validated', 'unvalidated')),
   CONSTRAINT one_origin CHECK ((material_id IS NOT NULL AND anchor IS NOT NULL AND parents IS NULL) OR (material_id IS NULL AND anchor IS NULL AND parents IS NOT NULL AND cardinality(parents) > 0)),
   CONSTRAINT id_is_uuidv7 CHECK (uuid_extract_version(id) = 7),
   CONSTRAINT time_pair CHECK ((ts_orig IS NULL) = (ts_quality = 'unknown')),
@@ -334,13 +336,10 @@ pub(crate) fn tables(c: &Checks) -> Vec<String> {
   scope jsonb NOT NULL,
   at timestamptz NOT NULL DEFAULT now()
 )".into(),
-        format!("CREATE TABLE registry.event_types (
-  name text PRIMARY KEY,
-  payload_schema jsonb NOT NULL,
-  key_kind text NOT NULL CHECK (key_kind IN ('location', 'fields')),
-  key_fields text[] NOT NULL,
-  replace_rule text NOT NULL {replace}
-)", replace = c.replace_rule),
+        KIND_PREFIXES.into(),
+        KIND_DECLARATIONS.into(),
+        REPLAY_REFUSALS.into(),
+        KIND_IMMUTABILITY.into(),
         "CREATE TABLE registry.sources (
   name text PRIMARY KEY,
   driver text NOT NULL,
@@ -470,7 +469,9 @@ pub(crate) fn tables(c: &Checks) -> Vec<String> {
   reading_order bigint NOT NULL,
   record_hash bytea NOT NULL,
   record_state text NOT NULL,
-  class text NOT NULL
+  class text NOT NULL,
+  kind_version bigint NOT NULL,
+  validation text NOT NULL
 )".into(),
     ]
 }
@@ -522,3 +523,38 @@ BEGIN
   RETURN OLD;
 END $$"
 }
+
+pub(crate) const KIND_PREFIXES: &str = "CREATE TABLE registry.kind_prefixes (
+  prefix text PRIMARY KEY,
+  declaring_producer text NOT NULL
+)";
+
+pub(crate) const KIND_DECLARATIONS: &str = "CREATE TABLE registry.event_types (
+  name text NOT NULL,
+  version bigint NOT NULL CHECK (version > 0),
+  declaring_producer text NOT NULL,
+  payload_schema jsonb,
+  normalization text NOT NULL CHECK (normalization IN ('rust', 'json')),
+  key_rule jsonb NOT NULL,
+  replace_rule text,
+  time_rule jsonb NOT NULL,
+  least_class text NOT NULL CHECK (least_class IN ('open', 'guarded', 'sealed')),
+  removed_rule jsonb NOT NULL,
+  keep_known text[] NOT NULL,
+  owned_blobs jsonb NOT NULL,
+  index_text boolean NOT NULL,
+  definition_hash text NOT NULL,
+  registered_at timestamptz NOT NULL DEFAULT now(),
+  PRIMARY KEY (name, version)
+)";
+
+pub(crate) const REPLAY_REFUSALS: &str = "CREATE TABLE core.replay_refusals (
+  operation_id uuid NOT NULL REFERENCES core.operations(id),
+  material_id uuid NOT NULL,
+  refusal jsonb NOT NULL,
+  PRIMARY KEY (operation_id, material_id)
+)";
+
+pub(crate) const KIND_IMMUTABILITY: &str = "CREATE FUNCTION registry.keep_definition() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'kind definitions and owners are immutable'; END $$;
+CREATE TRIGGER keep_definition BEFORE UPDATE OR DELETE ON registry.event_types FOR EACH ROW EXECUTE FUNCTION registry.keep_definition();
+CREATE TRIGGER keep_owner BEFORE UPDATE OR DELETE ON registry.kind_prefixes FOR EACH ROW EXECUTE FUNCTION registry.keep_definition()";

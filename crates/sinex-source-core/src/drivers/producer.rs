@@ -503,7 +503,7 @@ impl Producer {
                                 Origin::Derived { .. } => (None, 0),
                             };
                             events.push(ProducerEvent {
-                                event_type: e.event_type.to_owned(),
+                                kind: e.kind_ref(),
                                 payload: e.payload.clone(),
                                 location,
                                 output_index,

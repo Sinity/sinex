@@ -9,7 +9,7 @@ use serde_json::{Map, Value};
 /// entry read again (after a capture restart overlaps, or from an export) is
 /// a repeat.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
-#[event(type = "journal.entry", key = ["cursor"], replace = repeat, time = logged_at, quality = intrinsic)]
+#[event(version = 2, type = "journal.entry", key = ["cursor"], replace = repeat, time = logged_at, quality = intrinsic)]
 pub struct JournalEntry {
     /// `__CURSOR`.
     pub cursor: String,
@@ -37,7 +37,7 @@ pub struct JournalEntry {
 
 /// A change to a watched file or directory, as the kernel reported it.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
-#[event(type = "file.changed", key = location, replace = repeat, time = received_at, quality = captured)]
+#[event(version = 2, type = "file.changed", key = location, replace = repeat, time = received_at, quality = captured)]
 pub struct FileChanged {
     pub received_at: Timestamp,
     /// `created`, `modified`, `written` (closed after writing), `removed`,
@@ -62,7 +62,7 @@ pub use capture::{CapturePayload, LakeObservation};
 /// environment, from the recording's header. The recording's place is its
 /// identity.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
-#[event(type = "terminal.session", key = location, replace = repeat, time = started_at, quality = intrinsic)]
+#[event(version = 2, type = "terminal.session", key = location, replace = repeat, time = started_at, quality = intrinsic)]
 pub struct TerminalSession {
     pub session: String,
     pub started_at: Option<Timestamp>,
@@ -82,7 +82,7 @@ pub struct TerminalSession {
 /// stream is replayable from the material; per-event detail is a read over
 /// it.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
-#[event(type = "terminal.output", key = location, replace = repeat, time = started_at, quality = intrinsic)]
+#[event(version = 2, type = "terminal.output", key = location, replace = repeat, time = started_at, quality = intrinsic)]
 pub struct TerminalOutput {
     pub session: String,
     pub started_at: Timestamp,
@@ -106,7 +106,7 @@ pub struct TerminalOutput {
 /// same window, escape sequences removed; the stored material keeps the
 /// capture as taken.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
-#[event(type = "scrollback.captured", key = location, replace = repeat, time = captured_at, quality = captured)]
+#[event(version = 2, type = "scrollback.captured", key = location, replace = repeat, time = captured_at, quality = captured)]
 pub struct ScrollbackCaptured {
     pub captured_at: Timestamp,
     pub host: Option<String>,
@@ -132,7 +132,7 @@ pub struct ScrollbackCaptured {
 /// The window a lake scrollback snapshot was taken of, from the snapshot's
 /// sidecar file: kitty's title and working directory at capture.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
-#[event(type = "scrollback.window", key = location, replace = repeat, time = captured_at, quality = captured)]
+#[event(version = 2, type = "scrollback.window", key = location, replace = repeat, time = captured_at, quality = captured)]
 pub struct ScrollbackWindow {
     pub captured_at: Timestamp,
     pub host: Option<String>,

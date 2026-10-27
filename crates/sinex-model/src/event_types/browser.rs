@@ -9,7 +9,7 @@ use serde_json::{Map, Value};
 /// its duration when the page is left, so a newer reading replaces the live
 /// one.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
-#[event(
+#[event(version = 2,
     type = "browser.visit",
     key = ["profile", "visit_id"],
     replace = newer,
@@ -40,7 +40,7 @@ pub struct BrowserVisit {
 /// One row of a Chromium-family browser's `urls` table: a page and its
 /// running counts, updated in place as it is visited again.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
-#[event(
+#[event(version = 2,
     type = "browser.url",
     key = ["profile", "url_id"],
     replace = newer,
@@ -65,7 +65,7 @@ pub struct BrowserUrl {
 /// One entry of a Google Takeout Chrome history export. It has no ID, so the
 /// URL and time identify it, and a later export of the same entry is a repeat.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
-#[event(
+#[event(version = 2,
     type = "browser.history_entry",
     key = ["url", "visited_at"],
     replace = repeat,

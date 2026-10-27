@@ -24,6 +24,7 @@
 //! materials the producer registered, and `<root>.excise.<producer>` excises
 //! whole materials the producer registered.
 mod bytes;
+pub(crate) mod replay;
 
 use crate::writer::{Priority, WriteError, WriterHandle};
 use async_nats::jetstream::{self, AckKind, consumer, stream};
@@ -32,7 +33,7 @@ use futures::StreamExt;
 use serde_json::Value;
 use sinex_model::{
     Batch, BatchKind, EventId, IngressFrame, MaterialRef, ObservationFacts, Origin, ReadingOrder,
-    RecordOutcome, RevisionChange, RunId, SourceProgress, Timestamp, event_types,
+    RecordOutcome, RevisionChange, RunId, SourceProgress, Timestamp,
 };
 use sinex_protocol::{
     Acknowledgment, Excise, ExciseReply, Ingress, MaterialFrame, Materials, ProducerEvent,
@@ -89,7 +90,6 @@ pub(crate) struct Ingest {
     pub conn: PgConnection,
     pub blobs: Blobs,
     pub host: String,
-    validators: HashMap<&'static str, jsonschema::Validator>,
     runs: HashMap<String, RunId>,
 }
 
@@ -101,20 +101,12 @@ impl Ingest {
         blobs: Blobs,
         host: String,
     ) -> Result<Self, String> {
-        let mut validators = HashMap::new();
-        for kind in event_types::ALL {
-            let schema = (kind.json_schema)();
-            let validator = jsonschema::validator_for(&schema)
-                .map_err(|e| format!("schema of {}: {e}", kind.event_type))?;
-            validators.insert(kind.event_type, validator);
-        }
         Ok(Self {
             subjects,
             writer,
             conn,
             blobs,
             host,
-            validators,
             runs: HashMap::new(),
         })
     }
@@ -132,7 +124,11 @@ impl Ingest {
             Err(error) => {
                 // No frame name to record it under; the refusal goes back on
                 // the producer's acknowledgment subject only.
-                return Ok(refused_unrecorded(&format!("not a frame: {error}")));
+                return Ok(refused_unrecorded(&format!(
+                    "invalid frame at line {}, column {}",
+                    error.line(),
+                    error.column()
+                )));
             }
         };
         let name = frame.frame().to_owned();
@@ -144,8 +140,16 @@ impl Ingest {
             return Ok(acknowledgment(stored));
         }
         let run = self.run(producer).await?;
+        let mut declarations = Vec::new();
         let checked = match self.unwrap_large_frame(producer, frame).await {
             Err(check) => Err(check),
+            Ok(Ingress::RegisterKinds { declarations: offered, .. }) => {
+                declarations = offered;
+                Ok((None, vec![]))
+            }
+            Ok(Ingress::ReplaySequence { sequence, .. }) => {
+                return self.replay_sequence(producer, &name, run, *sequence).await;
+            }
             Ok(Ingress::Material { material, .. }) => match self.sealed(producer).await? {
                 true => Err(Check::Refused(
                     "this producer's records are sealed, and producer bytes cannot be stored sealed"
@@ -176,6 +180,7 @@ impl Ingest {
                     frame: name.clone(),
                     material: progress,
                     refusal: None,
+                    declarations,
                 })),
                 records,
                 archive: vec![],
@@ -185,6 +190,7 @@ impl Ingest {
         };
         match self.writer.submit(Priority::Live, batch).await {
             Ok(_) => {}
+            Err(WriteError::Unavailable(error)) => return Err(error),
             Err(WriteError::Stopped) => return Err("the writer has stopped".into()),
             Err(WriteError::Refused(reason)) => {
                 // Handled meanwhile by a redelivery: answer from the record.
@@ -318,30 +324,30 @@ impl Ingest {
                 )));
             }
         }
+        let sizes = sinex_store::material_bytes::lengths(&mut self.conn, &cited)
+            .await
+            .map_err(|e| Check::Unavailable(e.to_string()))?;
+        for location in events
+            .iter()
+            .filter_map(|e| e.location)
+            .chain(failures.iter().map(|f| f.location))
+        {
+            if sizes.get(&location.material.0).is_none_or(|length| {
+                i64::try_from(location.anchor).map_or(true, |anchor| anchor > *length)
+            }) {
+                return Err(Check::Refused(
+                    "record location is outside its material".into(),
+                ));
+            }
+        }
         let mut records = Vec::with_capacity(events.len());
         for (i, e) in events.iter().enumerate() {
             let at =
-                |reason: String| Check::Refused(format!("event {i} ({}): {reason}", e.event_type));
-            let kind = event_types::find(&e.event_type)
-                .ok_or_else(|| at("not a registered event type".into()))?;
-            if let Some(validator) = self.validators.get(kind.event_type) {
-                let errors: Vec<String> = validator
-                    .iter_errors(&e.payload)
-                    .map(|err| {
-                        let path = err.instance_path().to_string();
-                        if path.is_empty() {
-                            err.to_string()
-                        } else {
-                            format!("{err} at {path}")
-                        }
-                    })
-                    .collect();
-                if !errors.is_empty() {
-                    return Err(at(errors.join("; ")));
-                }
-            }
+                |reason: String| Check::Refused(format!("event {i} ({}): {reason}", e.kind.name));
+            e.kind.database_version().map_err(at)?;
             let origin = match (e.location, e.parents.is_empty()) {
-                (Some(location), _) => Origin::Record {
+                (Some(_), false) => return Err(at("choose a record location or parents".into())),
+                (Some(location), true) => Origin::Record {
                     location,
                     output_index: e.output_index,
                 },
@@ -352,15 +358,15 @@ impl Ingest {
                     return Err(at("needs a record location or parent events".into()));
                 }
             };
-            let event = (kind.build)(
-                &e.payload,
-                producer,
+            let event = sinex_model::Event::submitted(
+                e.kind.clone(),
+                e.payload.clone(),
+                producer.into(),
                 origin,
                 ReadingOrder(e.reading_order),
-                record_hash(kind.event_type, &e.payload),
+                record_hash(&e.kind.name, &e.payload),
                 e.class,
-            )
-            .map_err(|err| at(err.to_string()))?;
+            );
             records.push(RecordOutcome::Events {
                 location: e.location,
                 events: vec![event],
@@ -374,11 +380,33 @@ impl Ingest {
     }
 }
 
-enum Check {
+#[derive(Debug, thiserror::Error)]
+pub(crate) enum Check {
     /// The frame itself is wrong; it is recorded as refused.
+    #[error("{0}")]
     Refused(String),
     /// Sinex could not check it now; it is delivered again.
+    #[error("{0}")]
     Unavailable(String),
+}
+
+impl From<String> for Check {
+    fn from(reason: String) -> Self {
+        Self::Refused(reason)
+    }
+}
+impl From<&str> for Check {
+    fn from(reason: &str) -> Self {
+        Self::Refused(reason.into())
+    }
+}
+impl Check {
+    pub(crate) fn write_error(self) -> WriteError {
+        match self {
+            Self::Refused(reason) => WriteError::Refused(reason),
+            Self::Unavailable(error) => WriteError::Unavailable(error),
+        }
+    }
 }
 
 /// The record hash of a producer's event: BLAKE3 over its type and payload as
@@ -399,6 +427,7 @@ fn refusal(run: RunId, producer: &str, frame: &str, reason: String) -> Batch {
             frame: frame.to_owned(),
             material: None,
             refusal: Some(reason),
+            declarations: vec![],
         })),
         records: vec![],
         archive: vec![],
@@ -526,7 +555,7 @@ impl Requests {
             match serde_json::from_slice::<RecordedQuery>(payload) {
                 Ok(query) => match self.recorded(&producer, &query).await {
                     Ok(acks) => serde_json::json!(acks),
-                    Err(error) => serde_json::json!({ "refusal": error }),
+                    Err(error) => serde_json::json!({ "refusal": error.to_string() }),
                 },
                 Err(error) => {
                     serde_json::json!({ "refusal": format!("not a recorded query: {error}") })
@@ -536,11 +565,31 @@ impl Requests {
             match serde_json::from_slice::<Materials>(payload) {
                 Ok(page) => match self.materials(&producer, &page).await {
                     Ok(materials) => serde_json::json!(materials),
-                    Err(error) => serde_json::json!({ "refusal": error }),
+                    Err(error) => serde_json::json!({ "refusal": error.to_string() }),
                 },
                 Err(error) => {
                     serde_json::json!({ "refusal": format!("not a materials request: {error}") })
                 }
+            }
+        } else if subject == self.subjects.replay_scope(&producer) {
+            match serde_json::from_slice::<sinex_protocol::ReplayScopeQuery>(payload) {
+                Ok(query) => {
+                    let mut conn = match self.reads.acquire().await {
+                        Ok(conn) => conn,
+                        Err(error) => {
+                            return Some(
+                                serde_json::json!({"refusal": error.to_string()})
+                                    .to_string()
+                                    .into_bytes(),
+                            );
+                        }
+                    };
+                    match replay::select(&mut conn, &producer, &query).await {
+                        Ok(sequences) => serde_json::json!(sequences),
+                        Err(error) => serde_json::json!({"refusal": error.to_string()}),
+                    }
+                }
+                Err(_) => serde_json::json!({"refusal": "invalid replay scope"}),
             }
         } else {
             let reply = match serde_json::from_slice::<Excise>(payload) {
@@ -650,6 +699,7 @@ async fn serve(client: async_nats::Client, requests: Requests) -> Result<(), Str
         subscribe(requests.subjects.recorded_all()).await?,
         subscribe(requests.subjects.materials_all()).await?,
         subscribe(requests.subjects.excise_all()).await?,
+        subscribe(requests.subjects.replay_scope_all()).await?,
     ]);
     client.flush().await.map_err(|e| e.to_string())?;
     let slots = std::sync::Arc::new(tokio::sync::Semaphore::new(REQUESTS_AT_ONCE));

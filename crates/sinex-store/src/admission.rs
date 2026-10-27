@@ -27,6 +27,7 @@ mod archive;
 pub use archive::erase_archive_history;
 mod classify;
 mod derived;
+mod kinds;
 mod register;
 mod write;
 
@@ -45,14 +46,14 @@ pub struct KeyInput<'a> {
 /// The key functions of the keyed derivations, supplied by the daemon, which
 /// owns the derivation registry. Admission marks every returned key dirty.
 pub trait DirtyKeys: Send + Sync {
-    fn keys(&self, event: &KeyInput<'_>) -> Vec<(&'static str, Value)>;
+    fn keys(&self, event: &KeyInput<'_>) -> Vec<(String, Value)>;
 }
 
 /// No keyed derivations registered.
 pub struct NoDerivations;
 
 impl DirtyKeys for NoDerivations {
-    fn keys(&self, _: &KeyInput<'_>) -> Vec<(&'static str, Value)> {
+    fn keys(&self, _: &KeyInput<'_>) -> Vec<(String, Value)> {
         Vec::new()
     }
 }
@@ -78,6 +79,7 @@ pub struct Outcome {
     /// The commit sequence range given to admitted events.
     pub commit_seq: Option<(i64, i64)>,
     pub admitted_ids: Vec<EventId>,
+    pub registered_kinds: Vec<(sinex_model::KindRef, String)>,
 }
 
 /// Admit `batch` inside the caller's open transaction.
@@ -88,6 +90,12 @@ pub async fn admit(
 ) -> Result<Outcome> {
     sinex_schema::require_current(conn).await?;
     let mut outcome = Outcome::default();
+    if let BatchKind::Ingress(frame) = &batch.kind
+        && frame.refusal.is_none()
+    {
+        outcome.registered_kinds =
+            sinex_schema::kinds::register(conn, &frame.producer, &frame.declarations).await?;
+    }
     // The live reading each offered event ends as: itself when admitted, the
     // reading it repeats when suppressed. A derived batch's keys own these.
     let mut resolved: Vec<Option<Uuid>> = Vec::new();
@@ -120,12 +128,27 @@ pub async fn admit(
     }
 
     let mut events: Vec<Event> = batch.events().cloned().collect();
+    let mut declarations = kinds::prepare(conn, batch, &mut events).await?;
     apply_privacy(conn, batch, &mut events).await?;
     removed_at_source(conn, batch, &mut events).await?;
+    let missing: Vec<_> = events
+        .iter()
+        .map(Event::kind_ref)
+        .filter(|r| !declarations.contains_key(r))
+        .collect::<std::collections::BTreeSet<_>>()
+        .into_iter()
+        .collect();
+    let added = sinex_schema::kinds::load(conn, &missing).await?;
+    if missing.iter().any(|r| !added.contains_key(r)) {
+        return Err(crate::Error::Invalid(
+            "a removal cites an unavailable declaration".into(),
+        ));
+    }
+    declarations.extend(added);
 
     if !events.is_empty() {
         let classified = classify::stage_and_classify(conn, &events, &mut outcome).await?;
-        classify::keep_known(conn, &events, &classified.replaced).await?;
+        classify::keep_known(conn, &events, &classified.replaced, &declarations).await?;
         if !classified.admit.is_empty() {
             write::insert_admitted(conn, batch, &events, &classified, keys, &mut outcome).await?;
         }
@@ -143,7 +166,9 @@ pub async fn admit(
     for request in &batch.archive {
         outcome.dirty_keys += archive::request(conn, request, keys).await?;
     }
-    if let BatchKind::Ingress(frame) = &batch.kind {
+    if let BatchKind::Ingress(frame) = &batch.kind
+        && !frame.frame.is_empty()
+    {
         register::frame(conn, frame, &outcome).await?;
     }
     Ok(outcome)
@@ -269,6 +294,8 @@ async fn removed_at_source(
                         *hash.finalize().as_bytes()
                     },
                     record_state: sinex_model::RecordState::Removed,
+                    replace: Some(sinex_model::ReplaceRule::ReplaceWhenNewer),
+                    validation: sinex_model::Validation::Unvalidated,
                     ..live
                 });
             }

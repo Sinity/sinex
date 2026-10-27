@@ -228,11 +228,25 @@ impl Parser<'_> {
             (FieldRef::Field(f), _) if f.ty == FieldType::Time => Ok(()),
             (FieldRef::Payload(_), _) => Ok(()),
             (FieldRef::Group(_), Scope::Grouped(_)) => Ok(()),
+            (FieldRef::Payload(path), _) if self.payload_time(path) => Ok(()),
             _ => Err(QueryError::at(
                 at,
                 format!("`{}` is not a time", field.name()),
             )),
         }
+    }
+
+    fn payload_time(&self, path: &[String]) -> bool {
+        self.ctx
+            .catalog
+            .as_ref()
+            .and_then(|catalog| catalog.field(path))
+            .is_none_or(|field| {
+                matches!(
+                    field.ty,
+                    super::super::catalog::DataType::Time | super::super::catalog::DataType::Json
+                )
+            })
     }
 
     /// The table's main time, for `since`, `until` and `in` without a field.
@@ -263,6 +277,14 @@ impl Parser<'_> {
                 return Err(QueryError::at(
                     at,
                     format!("`{}` is not a time; `in` takes a time range", f.name),
+                ));
+            }
+            if let Operand::Field(FieldRef::Payload(path)) = &lhs
+                && !self.payload_time(path)
+            {
+                return Err(QueryError::at(
+                    at,
+                    "payload field is not a date-time; `in` takes a time range",
                 ));
             }
             return Ok(Expr::Within { lhs, from, to });

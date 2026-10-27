@@ -97,6 +97,9 @@ pub(super) fn bind_tokens(
         end,
     };
     let mut query = p.query(false)?;
+    if let Some(catalog) = &ctx.catalog {
+        catalog.bind(&mut query, ctx)?;
+    }
     if let Some(t) = p.peek() {
         return Err(QueryError::at(
             t.at,

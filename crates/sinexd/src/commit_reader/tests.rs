@@ -210,7 +210,7 @@ async fn excised_events_never_reach_consumers(db: devkit::pg::TestDatabase) {
         page.events[0].payload,
         json!({"command": "keep", "hostname": "h", "started_at": "2023-11-14T22:13:21Z", "header_elapsed": 0, "n": 0})
     );
-    let event = page.events[0].to_event().unwrap().unwrap();
+    let event = page.events[0].to_event().unwrap();
     assert_eq!(event.event_type, "command.imported");
     assert!(event.location().is_some());
 }

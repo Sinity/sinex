@@ -835,3 +835,36 @@ mod archive_history;
 mod forecast;
 
 mod queries;
+
+#[devkit::test]
+async fn declaration_discovery_pages_through_the_public_commands(db: devkit::pg::TestDatabase) {
+    let w = world(db).await;
+    let mut cursor: Option<String> = None;
+    let mut names = std::collections::BTreeSet::new();
+    loop {
+        let (status, body) = call(
+            &w,
+            Some(READ),
+            json!({"method":"kinds","page":7,"cursor":cursor}),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        for row in body["result"]["kinds"].as_array().expect(&body.to_string()) {
+            assert!(names.insert(row["declaration"]["kind"].clone().to_string()));
+        }
+        cursor = body["result"]["cursor"].as_str().map(String::from);
+        if cursor.is_none() {
+            break;
+        }
+    }
+    assert_eq!(names.len(), sinex_model::event_types::ALL.len());
+    let (status, body) = call(
+        &w,
+        Some(READ),
+        json!({"method":"fields","kind":"command.executed","page":1}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["result"]["fields"].as_array().unwrap().len(), 1);
+    assert!(body["result"]["cursor"].is_string());
+}

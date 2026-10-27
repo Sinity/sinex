@@ -27,6 +27,7 @@ async fn evidence_keeps_visibility_positions_unknown_times_and_archived_run_reco
     conn.execute("DELETE FROM registry.event_types WHERE name IN ('operator.mark','query.saved')")
         .await
         .unwrap();
+    crate::test_schema::downgrade(&mut conn).await;
     conn.execute("UPDATE sinex_schema.applied SET version = 2")
         .await
         .unwrap();

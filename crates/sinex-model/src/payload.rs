@@ -1,7 +1,6 @@
-//! Typed payloads. Every event type is a Rust type deriving `EventPayload`,
+//! Bundled typed payloads derive `EventPayload`,
 //! which declares its type name, how a repeat of it is recognized, which
-//! reading wins, and when it happened. Schemaless events are a fallback only;
-//! they are not modelled here.
+//! reading wins, and when it happened. Outside JSON kinds use stored declarations.
 use crate::{Class, RecordState, TsOrig};
 use serde::{Serialize, de::DeserializeOwned};
 use serde_json::Value;
@@ -18,7 +17,9 @@ pub enum KeyKind {
 }
 
 /// What admission does with a second reading of a live record.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, serde::Serialize, crate::DbCheck)]
+#[derive(
+    Clone, Copy, Debug, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize, crate::DbCheck,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum ReplaceRule {
     /// A record can change: a newer reading with different content replaces
@@ -69,6 +70,8 @@ pub struct OwnedBlob {
 }
 
 pub trait EventPayload: Serialize + DeserializeOwned + Send + Sync + 'static {
+    const VERSION: u64 = 1;
+    const INDEX_TEXT: bool = true;
     /// The stored event type, such as `command.executed`.
     const EVENT_TYPE: &'static str;
     /// The declared equivalence key. A record that lacks those fields is
@@ -104,9 +107,11 @@ pub trait EventPayload: Serialize + DeserializeOwned + Send + Sync + 'static {
         Vec::new()
     }
 
-    /// The JSON Schema registered for this type and used to validate payloads
-    /// arriving over the NATS ingress.
+    /// The JSON Schema describing this type for field discovery. Bundled
+    /// validation uses Rust decoding and serialization.
     fn payload_schema() -> Value;
+
+    fn declaration() -> crate::KindDeclaration;
 }
 
 /// What a parser's `parse` returns per event: one typed payload, or an enum
