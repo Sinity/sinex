@@ -146,14 +146,16 @@ async fn acknowledgment_timeout_keeps_capture_writing_and_recovery_drains_withou
         upload: false,
     };
     let task_positions = positions.clone();
+    let private_mode = sinex_transport::private_mode::PrivateMode::new(spool.join("private"));
     let run = tokio::spawn(async move {
-        run(
+        run_with_private_mode(
             connection,
             &store,
             &task_positions,
             vec![(&SYNTHETIC, binding)],
             Duration::from_millis(20),
             Some(Instant::now() + Duration::from_secs(38)),
+            private_mode,
         )
         .await
     });
@@ -219,7 +221,7 @@ async fn unavailable_connection_does_not_delay_capture_start() {
     let spool = dir.path().join("spool");
     let (_, binding) = binding("hyprland", &spool, "synthetic", Value::Null).unwrap();
     let store = Store::open(&dir.path().join("store")).unwrap();
-    run(
+    run_with_private_mode(
         Connection {
             url,
             password_file: None,
@@ -232,6 +234,7 @@ async fn unavailable_connection_does_not_delay_capture_start() {
         vec![(&SYNTHETIC, binding)],
         Duration::from_millis(20),
         Some(Instant::now() + Duration::from_secs(2)),
+        sinex_transport::private_mode::PrivateMode::new(spool.join("private")),
     )
     .await
     .unwrap();
@@ -279,7 +282,7 @@ async fn a_source_failure_restarts_capture_while_the_bus_is_unavailable() {
     let url = format!("nats://{}", listener.local_addr().unwrap());
     drop(listener);
     let store = Store::open(&dir.path().join("store")).unwrap();
-    run(
+    run_with_private_mode(
         Connection {
             url,
             password_file: None,
@@ -292,6 +295,7 @@ async fn a_source_failure_restarts_capture_while_the_bus_is_unavailable() {
         vec![(&INTERRUPTED, binding)],
         Duration::from_millis(20),
         Some(Instant::now() + Duration::from_secs(3)),
+        sinex_transport::private_mode::PrivateMode::new(spool.join("private")),
     )
     .await
     .unwrap();
@@ -319,7 +323,7 @@ async fn an_unwritable_spool_is_a_local_fault_that_ends_the_session() {
     let spool = dir.path().join("spool");
     let (_, binding) = binding("hyprland", &spool, "synthetic", Value::Null).unwrap();
     let store = Store::open(&dir.path().join("store")).unwrap();
-    let result = run(
+    let result = run_with_private_mode(
         Connection {
             url: "nats://127.0.0.1:1".into(),
             password_file: None,
@@ -332,6 +336,7 @@ async fn an_unwritable_spool_is_a_local_fault_that_ends_the_session() {
         vec![(&BROKEN_SPOOL, binding)],
         Duration::from_millis(20),
         Some(Instant::now() + Duration::from_secs(3)),
+        sinex_transport::private_mode::PrivateMode::new(spool.join("private")),
     )
     .await;
     assert!(result.unwrap_err().contains("spool"));

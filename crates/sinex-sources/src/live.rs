@@ -187,6 +187,27 @@ pub async fn run(
     every: Duration,
     until: Option<Instant>,
 ) -> Result<(), String> {
+    run_with_private_mode(
+        connection,
+        store,
+        positions,
+        bindings,
+        every,
+        until,
+        sinex_transport::private_mode::PrivateMode::default(),
+    )
+    .await
+}
+
+async fn run_with_private_mode(
+    connection: Connection,
+    store: &Store,
+    positions: &Path,
+    bindings: Vec<(&'static InputFormat, Binding)>,
+    every: Duration,
+    until: Option<Instant>,
+    private_mode: sinex_transport::private_mode::PrivateMode,
+) -> Result<(), String> {
     // Register before any capture thread or child can start.
     let shutdown = sinex_source_core::capture::shutdown_signal().map_err(|e| e.to_string())?;
     let (failed, mut failures) = tokio::sync::mpsc::unbounded_channel();
@@ -204,7 +225,7 @@ pub async fn run(
         }
     };
     let result = tokio::select! {
-        result = produce_spools(connection, store, positions, &mut lives, every) => result,
+        result = produce_spools(connection, store, positions, &mut lives, every, private_mode) => result,
         result = health::report(positions, health_bindings) => result,
         Some(error) = failures.recv() => Err(error),
         _ = shutdown => Ok(()),
@@ -226,8 +247,8 @@ async fn produce_spools(
     positions: &Path,
     lives: &mut [Live],
     every: Duration,
+    private: sinex_transport::private_mode::PrivateMode,
 ) -> Result<(), String> {
-    let private = sinex_transport::private_mode::PrivateMode::default();
     let mut producer = None;
     let mut retry = Retry::default();
     loop {
