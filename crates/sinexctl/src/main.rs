@@ -72,7 +72,7 @@ fn cli() -> Command {
         if c.name == "status" {
             sub =
                 sub.arg(Arg::new("capture-state").long("capture-state").help(
-                    "local capture state directory (default: $XDG_STATE_HOME/sinex-session)",
+                    "local capture state directory (default: $SINEX_CAPTURE_STATE or $XDG_STATE_HOME/sinex-session)",
                 ))
                 .arg(
                     Arg::new("offline")
