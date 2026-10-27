@@ -11,6 +11,7 @@
 //! because it never sees the bookkeeping.
 pub mod binding;
 pub mod capture;
+pub mod discovery;
 pub mod drain;
 pub mod drivers;
 pub mod nats;

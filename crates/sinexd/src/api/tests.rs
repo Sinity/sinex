@@ -106,6 +106,13 @@ async fn admit_events(w: &World, events: Vec<Event>) {
 }
 
 async fn world(db: devkit::pg::TestDatabase) -> World {
+    world_with_config(db, Default::default()).await
+}
+
+async fn world_with_config(
+    db: devkit::pg::TestDatabase,
+    source_config: crate::binding_runner::Config,
+) -> World {
     let url = db.url(None);
     let connection = <sqlx::PgConnection as sqlx::Connection>::connect(&url)
         .await
@@ -126,6 +133,7 @@ async fn world(db: devkit::pg::TestDatabase) -> World {
         .await
         .unwrap();
     let api = Api {
+        source_config: Arc::new(source_config),
         reads: reads.clone(),
         writer: Some(handle.clone()),
         blobs: blobs.clone(),
@@ -835,3 +843,5 @@ mod archive_history;
 mod forecast;
 
 mod queries;
+
+mod enable_status;

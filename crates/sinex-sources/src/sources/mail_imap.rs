@@ -443,6 +443,19 @@ pub fn source() -> DeclaredSource<super::mail::MailParser> {
 pub const FORMAT: sinex_source_core::binding::InputFormat =
     sinex_source_core::binding::InputFormat {
         name: "imap",
+        discovery: sinex_source_core::discovery::DiscoverySpec {
+            owner: sinex_source_core::discovery::Owner::System,
+            locations: &[sinex_source_core::discovery::Location {
+                root: "input",
+                path: "imap",
+            }],
+            capabilities: &[],
+            credentials: &["token_file or password_file"],
+            streams: &[],
+            requests: &[],
+            request_only: false,
+        },
+        discover,
         specs: || vec![&SPEC],
         plan: Some(|input, settings| {
             let config = config(input)?;
@@ -467,6 +480,39 @@ pub const FORMAT: sinex_source_core::binding::InputFormat =
         }),
         capture: None,
     };
+
+fn discover(
+    format: &sinex_source_core::InputFormat,
+    context: &sinex_source_core::discovery::DiscoveryContext,
+) -> Vec<sinex_source_core::discovery::DiscoveredInput> {
+    use sinex_source_core::discovery::Availability;
+    let mut inputs = crate::discovery::discover_format(format, context);
+    for input in &mut inputs {
+        if input.availability != Availability::Reading {
+            continue;
+        }
+        let checked = input
+            .input
+            .as_deref()
+            .ok_or_else(|| "missing account configuration".to_string())
+            .and_then(config)
+            .and_then(|account| {
+                let credential = account
+                    .token_file
+                    .or(account.password_file)
+                    .ok_or_else(|| "IMAP account has no token_file or password_file".to_string())?;
+                std::fs::File::open(&credential)
+                    .map(|_| ())
+                    .map_err(|error| format!("IMAP credential {}: {error}", credential.display()))
+            });
+        if let Err(error) = checked {
+            input.availability = Availability::Unavailable;
+            input.reason = Some(error);
+            input.bindings.clear();
+        }
+    }
+    inputs
+}
 
 fn config(path: &std::path::Path) -> Result<ImapConfig, String> {
     serde_json::from_slice(&std::fs::read(path).map_err(|e| format!("{}: {e}", path.display()))?)

@@ -32,6 +32,7 @@ pub(crate) struct Api {
     pub unlock: std::sync::Arc<tokio::sync::Mutex<Option<Unlocked>>>,
     /// This machine's name, for library requests and scans.
     pub host: String,
+    pub source_config: std::sync::Arc<crate::binding_runner::Config>,
 }
 
 /// An unlock session: the operator's identity until it expires, and the data
@@ -616,6 +617,17 @@ impl Api {
             Reply::Ok { result } => result.get("rows").cloned().unwrap_or(Value::Null),
             Reply::Refused { reason, .. } => json!({ "unavailable": reason }),
         };
+        let context = self.source_config.context(&self.host);
+        let discovery =
+            tokio::task::spawn_blocking(move || sinex_sources::discovery::status(&context))
+                .await
+                .map_err(|error| error.to_string())??;
+        let exclusions: std::collections::BTreeMap<_, _> = self
+            .source_config
+            .exclude
+            .iter()
+            .filter_map(|(name, exclusion)| exclusion.as_ref().map(|exclusion| (name, exclusion)))
+            .collect();
         // The daemon's own switch, which pauses the binding runner.
         let private = sinex_transport::private_mode::PrivateMode::default();
         let switch = private.state();
@@ -635,6 +647,8 @@ impl Api {
             "zone": self.context().zone_name(),
             "day_start": self.day_start.to_string(),
             "sources": sources,
+            "discovery": discovery,
+            "exclusions": exclusions,
         }))
     }
 }

@@ -219,6 +219,27 @@ fn selection(b: &sinex_source_core::binding::Binding) -> &'static str {
 pub const FORMAT: sinex_source_core::binding::InputFormat =
     sinex_source_core::binding::InputFormat {
         name: "clipboard",
+        discovery: sinex_source_core::discovery::DiscoverySpec {
+            owner: sinex_source_core::discovery::Owner::Session,
+            locations: &[],
+            capabilities: &["wayland", "wl-paste"],
+            credentials: &[],
+            streams: &[
+                sinex_source_core::discovery::CaptureStream {
+                    spool: "clipboard",
+                    options: "{\"selection\":\"clipboard\"}",
+                    capabilities: &[],
+                },
+                sinex_source_core::discovery::CaptureStream {
+                    spool: "primary",
+                    options: "{\"selection\":\"primary\"}",
+                    capabilities: &[],
+                },
+            ],
+            requests: &[],
+            request_only: false,
+        },
+        discover: crate::discovery::discover_format,
         specs: || vec![&SPEC],
         plan: Some(|spool, settings| {
             Ok(sinex_source_core::binding::single(&SPEC, spool, settings)

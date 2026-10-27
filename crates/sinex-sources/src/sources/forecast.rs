@@ -144,6 +144,16 @@ pub fn request_material(
 pub const FORMAT: sinex_source_core::binding::InputFormat =
     sinex_source_core::binding::InputFormat {
         name: "forecast",
+        discovery: sinex_source_core::discovery::DiscoverySpec {
+            owner: sinex_source_core::discovery::Owner::System,
+            locations: &[],
+            capabilities: &[],
+            credentials: &[],
+            streams: &[],
+            requests: &[],
+            request_only: true,
+        },
+        discover: crate::discovery::discover_format,
         specs: || vec![&REQUEST],
         plan: None,
         source: |_| Ok(Box::new(request_source())),
