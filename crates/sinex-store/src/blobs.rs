@@ -7,6 +7,7 @@ use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 mod plain_seek;
+mod unadmitted;
 
 #[derive(Clone)]
 pub struct Blobs(Arc<hashed_blobs::Store>, PathBuf);
@@ -36,15 +37,16 @@ impl Blobs {
 
     /// Store `bytes` and return their name, `blake3:<hex>`.
     pub fn put(&self, bytes: &[u8]) -> Result<String> {
-        let hash = self.0.put(bytes, 3)?;
+        let prepared = self.0.prepare_plain(bytes, 3)?;
+        self.note_unadmitted(prepared.hash())?;
+        let hash = prepared.install()?;
         Ok(format!("blake3:{}", hash.hex()))
     }
 
     /// Store bytes sealed under `key` (the sealed class): encrypted frames
     /// named by a keyed hash, so the store never confirms a known plaintext.
     pub fn put_sealed(&self, bytes: &[u8], key: &sinex_sealing::DataKey) -> Result<String> {
-        let hash = self.0.put_sealed(std::io::Cursor::new(bytes), 3, key)?;
-        Ok(format!("blake3:{}", hash.hex()))
+        self.put_sealed_reader(std::io::Cursor::new(bytes), key)
     }
 
     /// Seal a seekable input in bounded frames without staging plaintext on disk.
@@ -53,7 +55,9 @@ impl Blobs {
         reader: impl Read + Seek,
         key: &sinex_sealing::DataKey,
     ) -> Result<String> {
-        let hash = self.0.put_sealed(reader, 3, key)?;
+        let prepared = self.0.prepare_sealed(reader, 3, key)?;
+        self.note_unadmitted(prepared.hash())?;
+        let hash = prepared.install()?;
         Ok(format!("blake3:{}", hash.hex()))
     }
 
@@ -88,7 +92,9 @@ impl Blobs {
     /// Store bytes read from `reader` (an export archive of any size) without
     /// holding them in memory, and return their name.
     pub fn put_reader(&self, reader: impl std::io::Read) -> Result<String> {
-        let hash = self.0.put(reader, 3)?;
+        let prepared = self.0.prepare_plain(reader, 3)?;
+        self.note_unadmitted(prepared.hash())?;
+        let hash = prepared.install()?;
         Ok(format!("blake3:{}", hash.hex()))
     }
 
@@ -208,7 +214,8 @@ pub struct FilesWithoutRows {
 /// How many listed names one query checks against `core.blobs`.
 const NAMES_PER_QUERY: usize = 1000;
 
-/// Delete every blob file that no `core.blobs` row names. A driver writes a
+/// Delete unadmitted blob files that no `core.blobs` row names. After the
+/// first sweep, only names recorded before installation are examined. A driver writes a
 /// material's bytes before the admission that adds their row, so a process
 /// that stops before that admission commits leaves a file with no row.
 ///
@@ -220,7 +227,7 @@ pub async fn delete_files_without_rows(
     blobs: &Blobs,
 ) -> Result<FilesWithoutRows> {
     let mut found = FilesWithoutRows::default();
-    let mut names = blobs.names()?;
+    let mut names = blobs.unadmitted_names()?;
     loop {
         let mut listed = Vec::with_capacity(NAMES_PER_QUERY);
         for name in names.by_ref() {
@@ -238,6 +245,7 @@ pub async fn delete_files_without_rows(
             }
         }
         if listed.is_empty() {
+            blobs.sweep_finished()?;
             return Ok(found);
         }
         let with_rows: std::collections::HashSet<String> =
@@ -247,10 +255,35 @@ pub async fn delete_files_without_rows(
                 .into_iter()
                 .collect();
         for name in listed {
-            if !with_rows.contains(&name) {
+            if !with_rows.contains(&name) && blobs.contains(&name)? {
                 blobs.delete(&name)?;
-                found.deleted.push(name);
+                found.deleted.push(name.clone());
             }
+            blobs.forget_unadmitted(&name)?;
+        }
+    }
+}
+
+/// Forget installed names whose admission committed, after the caller drains
+/// the writer and while it still holds writer access. Unadmitted names stay
+/// for the next startup's deletion check.
+pub async fn forget_files_with_rows(conn: &mut sqlx::PgConnection, blobs: &Blobs) -> Result<()> {
+    let mut names = blobs.recorded_names()?;
+    loop {
+        let listed = names
+            .by_ref()
+            .take(NAMES_PER_QUERY)
+            .collect::<hashed_blobs::Result<Vec<_>>>()?;
+        if listed.is_empty() {
+            blobs.sync_recorded_names()?;
+            return Ok(());
+        }
+        let with_rows =
+            sqlx::query_scalar!("SELECT hash FROM core.blobs WHERE hash = ANY($1)", &listed)
+                .fetch_all(&mut *conn)
+                .await?;
+        for name in with_rows {
+            blobs.forget_unadmitted(&name)?;
         }
     }
 }

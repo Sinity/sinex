@@ -513,20 +513,32 @@ pub fn record_ranges(
     bytes: &dyn crate::drain::RecordRead,
     framer: crate::Framer,
 ) -> std::io::Result<Vec<(usize, usize)>> {
-    struct Sequential<'a> {
-        bytes: &'a dyn crate::drain::RecordRead,
-        at: u64,
-    }
-    impl std::io::Read for Sequential<'_> {
-        fn read(&mut self, out: &mut [u8]) -> std::io::Result<usize> {
-            let left = self.bytes.length().saturating_sub(self.at);
-            let n = usize::try_from(left).unwrap_or(usize::MAX).min(out.len());
-            self.bytes.read_exact_at(self.at, &mut out[..n])?;
-            self.at += n as u64;
-            Ok(n)
-        }
-    }
     framer.ranges(&mut Sequential { bytes, at: 0 })
+}
+
+pub(crate) fn tail_ranges(
+    bytes: &dyn crate::drain::RecordRead,
+    framer: crate::Framer,
+    admitted: u64,
+) -> std::io::Result<(Vec<(usize, usize)>, bool)> {
+    framer.tail_ranges(
+        &mut std::io::Read::take(Sequential { bytes, at: 0 }, admitted),
+        append_file::TailBounds::default(),
+    )
+}
+
+struct Sequential<'a> {
+    bytes: &'a dyn crate::drain::RecordRead,
+    at: u64,
+}
+impl std::io::Read for Sequential<'_> {
+    fn read(&mut self, out: &mut [u8]) -> std::io::Result<usize> {
+        let left = self.bytes.length().saturating_sub(self.at);
+        let n = usize::try_from(left).unwrap_or(usize::MAX).min(out.len());
+        self.bytes.read_exact_at(self.at, &mut out[..n])?;
+        self.at += n as u64;
+        Ok(n)
+    }
 }
 
 /// The material a committed cursor names and how much of it was admitted, for

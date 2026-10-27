@@ -54,8 +54,12 @@ the file under that row's lock, then the row. Deletion and admission both run
 in the writer, and the writer checks that every file a batch cites is present
 just before admitting it, so a batch never cites a file that is gone. A
 process that stops between writing bytes and admitting them leaves a file with
-no row; the daemon deletes such files when it starts, holding the writer, before
-any source reads.
+no row. Before installing a blob, the content store syncs its name in
+`unadmitted-blobs/`. The daemon checks those names against the database at
+start, holding the writer, before any source reads. After draining the writer
+at shutdown it removes the names that have rows. The first start of an existing
+store checks every file once, then syncs `unadmitted-blobs-ready` so later starts
+check only the recorded names.
 
 A failed admission is retried from the material the reader holds: the append,
 directory, SQLite-row and IMAP readers keep their newest material in memory
@@ -72,7 +76,8 @@ the material its committed cursor points at, and the daemon offers it that
 material and the parts before it, newest first, until the reader has enough.
 The parts are read a page at a time, so a reader that stops early reads no
 more of the part sequence. The append reader keeps the tail of the current
-revision's records, to align a rewrite.
+revision's records, to align a rewrite. It frames stored parts in chunks and
+keeps only the tail's range metadata, including one oversized record whole.
 
 The SQLite-row reader keeps each row's newest hash and the directory reader
 each file's size, modification time and content hash. Both save this reader

@@ -142,3 +142,85 @@ fn whole_reader_keeps_each_declarations_empty_record_semantics() {
         }
     }
 }
+
+#[devkit::test]
+fn tail_ranges_match_completed_records_with_multiline_and_large_records() {
+    use sinex_source_core::drivers::append_file::TailBounds;
+    let framer = Framer::incremental(sinex_sources::sources::zsh::frame);
+    let bytes = b": 1:0;first\\\ncontinued\n: 2:0;last\npartial";
+    let expected = framer.frame(bytes).0;
+    for chunk in [1, 7, 65536] {
+        let ranges = framer
+            .tail_ranges(
+                &mut Tiny(Cursor::new(bytes), chunk),
+                TailBounds {
+                    records: 1,
+                    bytes: 1,
+                },
+            )
+            .unwrap();
+        assert_eq!(ranges.0, expected[expected.len() - 1..]);
+        assert!(!ranges.1);
+    }
+}
+
+fn tail_range_measurement(bounded: bool) {
+    use sinex_source_core::drivers::append_file::{TailBounds, lines};
+    // Ten-byte records, generated without holding the input in memory.
+    struct Records(u64);
+    impl Read for Records {
+        fn read(&mut self, out: &mut [u8]) -> std::io::Result<usize> {
+            let n = out.len().min(self.0 as usize);
+            // Read chunks ending on the ten-byte record boundary.
+            let n = n - n % 10;
+            for chunk in out[..n].as_chunks_mut::<10>().0 {
+                chunk.copy_from_slice(b"123456789\n");
+            }
+            self.0 -= n as u64;
+            Ok(n)
+        }
+    }
+    let length = (64 << 20) / 10 * 10;
+    let mut input = Records(length);
+    let framer = Framer::incremental(lines);
+    let started = std::time::Instant::now();
+    let ranges = if bounded {
+        framer
+            .tail_ranges(&mut input, TailBounds::default())
+            .unwrap()
+            .0
+    } else {
+        framer.ranges(&mut input).unwrap()
+    };
+    let status = std::fs::read_to_string("/proc/self/status").unwrap();
+    let peak = status
+        .lines()
+        .find(|line| line.starts_with("VmHWM:"))
+        .unwrap();
+    eprintln!(
+        "bounded={bounded} bytes={length} ranges={} elapsed={:?} {peak}",
+        ranges.len(),
+        started.elapsed()
+    );
+    assert_eq!(ranges.last().unwrap().1, length as usize);
+    assert_eq!(
+        ranges.len(),
+        if bounded {
+            200_000
+        } else {
+            length as usize / 10
+        }
+    );
+}
+
+#[devkit::test]
+#[ignore = "64 MiB allocation measurement"]
+fn measure_all_ranges() {
+    tail_range_measurement(false);
+}
+
+#[devkit::test]
+#[ignore = "64 MiB allocation measurement"]
+fn measure_tail_ranges() {
+    tail_range_measurement(true);
+}
