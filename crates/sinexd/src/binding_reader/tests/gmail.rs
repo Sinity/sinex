@@ -245,3 +245,33 @@ async fn gmail_backfill_reads_past_baseline_and_empty_pages_in_one_invocation(
     assert_eq!(cursor["api"]["page_index"], 0);
     ctx.close().await.unwrap();
 }
+
+#[devkit::test]
+async fn a_reader_that_changes_only_its_cursor_stops_after_one_poll(db: devkit::pg::TestDatabase) {
+    struct Progress(std::sync::Arc<std::sync::atomic::AtomicUsize>);
+    impl Reader for Progress {
+        fn poll(&mut self, _: &Value) -> Result<sinex_source_core::drivers::Acquired, sinex_source_core::drivers::DriverError> {
+            let next = self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1;
+            Ok(sinex_source_core::drivers::Acquired {
+                input: sinex_model::InputRef { kind: "synthetic".into(), locator: "progress".into(), host: "synthetic".into() },
+                observation: Default::default(),
+                revision: sinex_model::RevisionChange::Same,
+                material: None,
+                cursor_without_material: json!({"next": next}),
+            })
+        }
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let mut ctx = ReaderContext::open(&db.url(None), dir.path()).await.unwrap();
+    let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let mut reader = PolledReader::new(Box::new(Progress(calls.clone())));
+    sinex_store::bindings::save(&mut ctx.read_conn, &sinex_store::bindings::Stored {
+        binding: "synthetic-progress".into(), source: gmail::SPEC.name.into(), input: "progress".into(), settings: json!({"host":"synthetic"}),
+    }).await.unwrap();
+    let (_keep, stop) = tokio::sync::watch::channel(false);
+    crate::backfill::drive(&mut ctx.read_conn, &ctx.writer, RunId::new(), Arc::new(gmail::source()), "synthetic-progress", &crate::sealing::Sink(ctx.blobs.clone()), crate::sealing::Access::default(), Class::Open, &mut reader, stop).await.unwrap();
+    assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 1);
+    let (cursor, _) = sinex_store::positions::load(&mut ctx.read_conn, "synthetic-progress").await.unwrap().unwrap();
+    assert_eq!(cursor["next"], 1);
+    ctx.close().await.unwrap();
+}

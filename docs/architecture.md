@@ -113,6 +113,7 @@ does not know which driver a binding uses.
   query, so SQLite's own locking gives a committed view. A locked database is
   unavailable for that poll. The first poll after a start reads every row and
   stores only those whose hash changed.
+- **Gmail.** The account file and its credential files are discovered through `input:gmail`. Profile baselines and listing pages are stored as material, so backfill reads through empty pages through ordinary admission. An expired history ID records a gap, then automatically starts a full listing from a new stored baseline. Mail identity and fusion distinguish accounts. See [gmail.md](gmail.md).
 - **IMAP.** An answer records the UIDs it holds and the server's UID window. A
   cursor inside an answer resumes at its first UID, so a restart fetches the
   whole answer again and admission drops the repeats.

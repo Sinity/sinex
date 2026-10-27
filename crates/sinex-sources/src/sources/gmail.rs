@@ -305,6 +305,16 @@ impl<T: api::Transport + 'static> Reader for GmailReader<T> {
 pub const FORMAT: sinex_source_core::binding::InputFormat =
     sinex_source_core::binding::InputFormat {
         name: "gmail",
+        discovery: sinex_source_core::discovery::DiscoverySpec {
+            owner: sinex_source_core::discovery::Owner::System,
+            locations: &[sinex_source_core::discovery::Location { root: "input", path: "gmail" }],
+            capabilities: &[],
+            credentials: &["client_id_file", "client_secret_file", "refresh_token_file"],
+            streams: &[],
+            requests: &[],
+            request_only: false,
+        },
+        discover,
         specs: || vec![&SPEC],
         plan: Some(|input, settings| {
             let config = Config::load(input)?;
@@ -331,6 +341,39 @@ pub const FORMAT: sinex_source_core::binding::InputFormat =
         }),
         capture: None,
     };
+
+fn discover(
+    format: &sinex_source_core::InputFormat,
+    context: &sinex_source_core::discovery::DiscoveryContext,
+) -> Vec<sinex_source_core::discovery::DiscoveredInput> {
+    use sinex_source_core::discovery::Availability;
+    let mut inputs = crate::discovery::discover_format(format, context);
+    for input in &mut inputs {
+        if input.availability != Availability::Reading {
+            continue;
+        }
+        let checked = input.input.as_deref()
+            .ok_or_else(|| "missing Gmail account configuration".to_string())
+            .and_then(Config::load)
+            .and_then(|account| {
+                for (name, path) in [
+                    ("client_id_file", account.credentials.client_id_file),
+                    ("client_secret_file", account.credentials.client_secret_file),
+                    ("refresh_token_file", account.credentials.refresh_token_file),
+                ] {
+                    std::fs::File::open(&path)
+                        .map_err(|error| format!("awaiting credentials: Gmail {name}: {error}"))?;
+                }
+                Ok(())
+            });
+        if let Err(reason) = checked {
+            input.availability = Availability::Unavailable;
+            input.reason = Some(reason);
+            input.bindings.clear();
+        }
+    }
+    inputs
+}
 
 #[cfg(test)]
 mod tests;
