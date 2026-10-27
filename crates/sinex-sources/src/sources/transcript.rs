@@ -11,6 +11,7 @@ use std::path::Path;
 
 pub(super) mod discovery;
 pub mod framing;
+mod decimal;
 
 pub const CUE_FRAMING: Framing = Framing::Custom {
     name: "cue-blocks",
@@ -189,8 +190,14 @@ impl TranscriptParser {
                     })
                     .transpose()?;
                 let offset_ns = if self.format == Format::Whisper {
-                    payload.start_seconds.as_deref().and_then(|text| decimal_ms(text, 9).ok()).map(i128::from)
-                } else { payload.start_ms.map(|ms| i128::from(ms) * 1_000_000) };
+                    payload
+                        .start_seconds
+                        .as_deref()
+                        .and_then(|text| decimal_ms(text, 9).ok())
+                        .map(i128::from)
+                } else {
+                    payload.start_ms.map(|ms| i128::from(ms) * 1_000_000)
+                };
                 if let (Some(at), Some(ns)) = (recording_start, offset_ns) {
                     payload.at = at
                         .unix_ns()
@@ -256,6 +263,11 @@ impl TranscriptParser {
                 }
                 payload.text = lines.collect::<Vec<_>>().join("\n");
             }
+        }
+        if let (Some(start), Some(end)) = (&payload.start_seconds, &payload.end_seconds)
+            && decimal::compare(start, end).is_gt()
+        {
+            return Err(RecordError::new("cue ends before it starts")));
         }
         if let (Some(start), Some(end)) = (payload.start_ms, payload.end_ms)
             && end < start
@@ -543,7 +555,13 @@ fn decimal_text(value: Option<&str>) -> Result<Option<String>, RecordError> {
 
 /// An archive member is a separate imported input even when its provider reuses IDs.
 pub(super) fn input_identity(input: &str, context: &RecordContext<'_>) -> String {
-    if matches!(context.manifest.detail("source_container").as_str(), Some("zip" | "tar" | "tar-gzip")) {
-        serde_json::to_string(&(input, context.member.map(|member| member.path.as_str()))).expect("paths serialize")
-    } else { input.into() }
+    if matches!(
+        context.manifest.detail("source_container").as_str(),
+        Some("zip" | "tar" | "tar-gzip")
+    ) {
+        serde_json::to_string(&(input, context.member.map(|member| member.path.as_str())))
+            .expect("paths serialize")
+    } else {
+        input.into()
+    }
 }

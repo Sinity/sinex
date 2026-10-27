@@ -335,15 +335,40 @@ fn named_import_roots_are_validated_and_registered_for_discovery() {
 
 #[devkit::test]
 fn archived_provider_ids_are_scoped_to_the_member_path() {
-    let parser=TranscriptParser {format:Format::Json,input:"example.zip".into()};
-    let manifest=Manifest::from_json(serde_json::json!({"source_container":"zip"}));
-    let read=|path:&str| {
-        parser.parse(&br#"[{"id":"same","text":"same"}]"#.as_slice(),&Carry::default(),&RecordContext {manifest:&manifest,member:Some(&sinex_model::Member {path:path.into(),..Default::default()})}).unwrap().0.remove(0)
+    let parser = TranscriptParser {
+        format: Format::Json,
+        input: "example.zip".into(),
     };
-    assert_ne!(read("a.json").input,read("b.json").input);
+    let manifest = Manifest::from_json(serde_json::json!({"source_container":"zip"}));
+    let read = |path: &str| {
+        parser
+            .parse(
+                &br#"[{"id":"same","text":"same"}]"#.as_slice(),
+                &Carry::default(),
+                &RecordContext {
+                    manifest: &manifest,
+                    member: Some(&sinex_model::Member {
+                        path: path.into(),
+                        ..Default::default()
+                    }),
+                },
+            )
+            .unwrap()
+            .0
+            .remove(0)
+    };
+    assert_ne!(read("a.json").input, read("b.json").input);
 }
 #[devkit::test]
 fn recording_time_uses_the_written_offset_before_millisecond_rounding() {
     let rows=read(Format::Whisper,br#"{"segments":[{"text":"x","start":0.0005}],"recording_started_at":"2026-01-01T00:00:00Z"}"#).unwrap();
-    assert_eq!(rows[0].at.unwrap().unix_ns(),Timestamp::from_unix_secs(1_767_225_600).unwrap().unix_ns()+500_000);
+    assert_eq!(
+        rows[0].at.unwrap().unix_ns(),
+        Timestamp::from_unix_secs(1_767_225_600).unwrap().unix_ns() + 500_000
+    );
+}
+
+#[devkit::test]
+fn reversed_submillisecond_offsets_fail_before_rounding() {
+    assert!(read(Format::Whisper,br#"{"segments":[{"text":"x","start":1.0004,"end":1.0003}]}"#).is_err());
 }
