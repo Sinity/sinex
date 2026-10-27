@@ -75,8 +75,8 @@ pub(crate) async fn run(o: Options) -> Result<(), String> {
     let (handle, queues) = writer::channels();
     let mut tasks: JoinSet<(&'static str, Result<(), String>)> = JoinSet::new();
 
-    let mut writer_conn = connect(&o.database).await?;
-    writer::claim(&mut writer_conn).await?;
+    let writer_conn = connect(&o.database).await?;
+    let mut writer_conn = writer::claim(writer_conn).await?;
     // Blob files an excision committed to deleting but a crash left behind.
     let (deleted, left) = sinex_store::excision::finish_deletions(&mut writer_conn, &blobs)
         .await

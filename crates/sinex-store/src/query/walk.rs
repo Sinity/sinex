@@ -79,7 +79,7 @@ pub async fn resolve(conn: &mut PgConnection, reference: &Reference) -> Result<U
             key,
         } => {
             let found = sqlx::query_scalar!(
-                "SELECT event_id FROM core.live_equivalence WHERE source = $1 AND event_type = $2 AND equivalence_key = $3",
+                "SELECT event_id FROM core.live_equivalence WHERE source = $1 AND event_type = $2 AND equivalence_key = core.encode_equivalence_key($3)",
                 source,
                 event_type,
                 key

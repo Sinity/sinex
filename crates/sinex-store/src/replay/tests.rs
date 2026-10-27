@@ -1,6 +1,6 @@
 //! The replay diff: archived readings against the new live readings.
 use super::*;
-use crate::admission::{NoDerivations, admit};
+use crate::admission::NoDerivations;
 use sinex_model::event_types::CommandExecuted;
 use sinex_model::{
     ArchiveRequest, Batch, BatchKind, Class, Event, MaterialId, Origin, ReadingOrder,
@@ -54,14 +54,13 @@ fn batch(events: Vec<Event>, archive: Vec<ArchiveRequest>, operation: OperationI
 
 #[devkit::test]
 async fn diff_names_changed_added_removed_and_counts_unchanged(db: devkit::pg::TestDatabase) {
-    let mut conn = <sqlx::PgConnection as sqlx::Connection>::connect(&db.url(None))
+    let mut conn = crate::AdmissionContext::connect(&db.url(None))
         .await
         .unwrap();
     let m = MaterialId::new();
     let first = OperationId::new();
     let mut tx = conn.begin().await.unwrap();
-    admit(
-        &mut tx,
+    tx.admit(
         &batch(
             vec![
                 reading(m, "same", "ls"),
@@ -79,27 +78,27 @@ async fn diff_names_changed_added_removed_and_counts_unchanged(db: devkit::pg::T
 
     let operation = OperationId::new();
     let mut tx = conn.begin().await.unwrap();
-    let out = admit(
-        &mut tx,
-        &batch(
-            vec![
-                reading(m, "same", "ls"),
-                reading(m, "edit", "new"),
-                reading(m, "born", "make"),
-            ],
-            vec![ArchiveRequest::Replay {
-                scope: ReplayScope {
-                    materials: vec![m],
-                    ..ReplayScope::default()
-                },
+    let out = tx
+        .admit(
+            &batch(
+                vec![
+                    reading(m, "same", "ls"),
+                    reading(m, "edit", "new"),
+                    reading(m, "born", "make"),
+                ],
+                vec![ArchiveRequest::Replay {
+                    scope: ReplayScope {
+                        materials: vec![m],
+                        ..ReplayScope::default()
+                    },
+                    operation,
+                }],
                 operation,
-            }],
-            operation,
-        ),
-        &NoDerivations,
-    )
-    .await
-    .unwrap();
+            ),
+            &NoDerivations,
+        )
+        .await
+        .unwrap();
     assert_eq!((out.replay_archived, out.admitted), (3, 3));
     let ids: Vec<Uuid> = out.admitted_ids.iter().map(|i| i.0).collect();
     let diff = diff(&mut tx, operation, &ids).await.unwrap();

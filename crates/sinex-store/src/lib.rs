@@ -5,6 +5,8 @@
 //! SQL is checked at compile time against a live development database with
 //! `sqlx::query!`; there is no offline cache.
 pub mod admission;
+mod admission_context;
+pub use admission_context::{AdmissionContext, AdmissionTransaction};
 pub mod bindings;
 pub mod blobs;
 pub mod commit_log;
@@ -26,9 +28,7 @@ pub mod sealed;
 mod stage;
 pub mod writer_lock;
 
-pub use admission::{
-    ComputedKey, DerivedScope, DirtyKeys, KeyInput, NoDerivations, Outcome, admit,
-};
+pub use admission::{ComputedKey, DerivedScope, DirtyKeys, KeyInput, NoDerivations, Outcome};
 pub use blobs::Blobs;
 pub use hashed_blobs::Verified;
 /// The connection the store's reads take, for crates that call them without

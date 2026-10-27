@@ -105,9 +105,7 @@ async fn submit(handle: &WriterHandle, range: std::ops::Range<u64>) {
 #[devkit::test]
 async fn read_models_get_every_event_once_across_restarts(db: devkit::pg::TestDatabase) {
     let url = db.url(None);
-    let connection = <sqlx::PgConnection as sqlx::Connection>::connect(&url)
-        .await
-        .unwrap();
+    let connection = sinex_store::AdmissionContext::connect(&url).await.unwrap();
     let mut check = PgConnection::connect(&url).await.unwrap();
     // The primary key makes a second application of an event fail.
     sqlx::query("CREATE TABLE test_counter (seq bigint PRIMARY KEY, command text)")
@@ -133,7 +131,7 @@ async fn read_models_get_every_event_once_across_restarts(db: devkit::pg::TestDa
             let consumers: Vec<Box<dyn Consumer>> =
                 vec![Box::new(ReadModelRunner(Box::new(Counter)))];
             run(
-                PgConnection::connect(&url).await.unwrap(),
+                sinex_store::AdmissionContext::connect(&url).await.unwrap(),
                 consumers,
                 commits,
                 stop,
@@ -171,9 +169,7 @@ async fn read_models_get_every_event_once_across_restarts(db: devkit::pg::TestDa
 #[devkit::test]
 async fn excised_events_never_reach_consumers(db: devkit::pg::TestDatabase) {
     let url = db.url(None);
-    let mut connection = <sqlx::PgConnection as sqlx::Connection>::connect(&url)
-        .await
-        .unwrap();
+    let mut connection = sinex_store::AdmissionContext::connect(&url).await.unwrap();
     let dir = tempfile::tempdir().unwrap();
     let blobs = sinex_store::Blobs::open(dir.path()).unwrap();
     crate::excision::tests::register(
@@ -188,13 +184,9 @@ async fn excised_events_never_reach_consumers(db: devkit::pg::TestDatabase) {
     let keep = imported("keep", 1);
     let excise_target = secret.id;
     let mut tx = connection.begin().await.unwrap();
-    sinex_store::admit(
-        &mut tx,
-        &api_batch(vec![secret, keep]),
-        &sinex_store::NoDerivations,
-    )
-    .await
-    .unwrap();
+    tx.admit(&api_batch(vec![secret, keep]), &sinex_store::NoDerivations)
+        .await
+        .unwrap();
     tx.commit().await.unwrap();
     crate::excision::tests::excise_directly(
         &mut connection,

@@ -50,11 +50,9 @@ fn batch(events: Vec<Event>, archive: Vec<ArchiveRequest>) -> Batch {
     }
 }
 
-async fn admit(conn: &mut PgConnection, b: Batch) {
+async fn admit(conn: &mut sinex_store::AdmissionContext, b: Batch) {
     let mut tx = conn.begin().await.unwrap();
-    sinex_store::admit(&mut tx, &b, &sinex_store::NoDerivations)
-        .await
-        .unwrap();
+    tx.admit(&b, &sinex_store::NoDerivations).await.unwrap();
     tx.commit().await.unwrap();
 }
 
@@ -85,9 +83,7 @@ async fn publishes_in_commit_order_masked_once(db: devkit::pg::TestDatabase) {
     let js = context(async_nats::connect(nats.url()).await.unwrap());
     ensure_stream(&js, &subjects).await.unwrap();
     let url = db.url(None);
-    let mut conn = <sqlx::PgConnection as sqlx::Connection>::connect(&url)
-        .await
-        .unwrap();
+    let mut conn = sinex_store::AdmissionContext::connect(&url).await.unwrap();
 
     let first = executed("1", "ls", 1, Class::Open);
     let first_id = first.id;
@@ -160,9 +156,7 @@ async fn an_event_larger_than_a_message_goes_out_without_its_payload(db: devkit:
     ensure_stream(&js, &subjects).await.unwrap();
     let limit = js.client().server_info().max_payload as u64;
     let url = db.url(None);
-    let mut conn = <sqlx::PgConnection as sqlx::Connection>::connect(&url)
-        .await
-        .unwrap();
+    let mut conn = sinex_store::AdmissionContext::connect(&url).await.unwrap();
     let huge = "x".repeat(usize::try_from(limit).unwrap() * 2);
     admit(
         &mut conn,
@@ -203,9 +197,7 @@ async fn a_page_published_twice_is_stored_once(db: devkit::pg::TestDatabase) {
     let js = context(async_nats::connect(nats.url()).await.unwrap());
     ensure_stream(&js, &subjects).await.unwrap();
     let url = db.url(None);
-    let mut conn = <sqlx::PgConnection as sqlx::Connection>::connect(&url)
-        .await
-        .unwrap();
+    let mut conn = sinex_store::AdmissionContext::connect(&url).await.unwrap();
     admit(
         &mut conn,
         batch(vec![executed("1", "ls", 1, Class::Open)], vec![]),
@@ -235,9 +227,7 @@ async fn hide_after_publishing_sends_a_notice(db: devkit::pg::TestDatabase) {
     let js = context(async_nats::connect(nats.url()).await.unwrap());
     ensure_stream(&js, &subjects).await.unwrap();
     let url = db.url(None);
-    let mut conn = <sqlx::PgConnection as sqlx::Connection>::connect(&url)
-        .await
-        .unwrap();
+    let mut conn = sinex_store::AdmissionContext::connect(&url).await.unwrap();
     let event = executed("1", "ls", 1, Class::Open);
     let id = event.id;
     admit(&mut conn, batch(vec![event], vec![])).await;
@@ -286,9 +276,7 @@ async fn excision_erases_the_published_message(db: devkit::pg::TestDatabase) {
     let js = context(async_nats::connect(nats.url()).await.unwrap());
     ensure_stream(&js, &subjects).await.unwrap();
     let url = db.url(None);
-    let mut conn = <sqlx::PgConnection as sqlx::Connection>::connect(&url)
-        .await
-        .unwrap();
+    let mut conn = sinex_store::AdmissionContext::connect(&url).await.unwrap();
     let dir = tempfile::tempdir().unwrap();
     let blobs = sinex_store::Blobs::open(dir.path()).unwrap();
     crate::excision::tests::register(
@@ -383,9 +371,7 @@ async fn archive_consumer_observes_hide_restore_hide_without_duplicate_events(
     let js = context(async_nats::connect(nats.url()).await.unwrap());
     ensure_stream(&js, &subjects).await.unwrap();
     let url = db.url(None);
-    let mut conn = <sqlx::PgConnection as sqlx::Connection>::connect(&url)
-        .await
-        .unwrap();
+    let mut conn = sinex_store::AdmissionContext::connect(&url).await.unwrap();
     let event = executed("lifecycle", "pwd", 1, Class::Open);
     let id = event.id;
     admit(&mut conn, batch(vec![event], vec![])).await;

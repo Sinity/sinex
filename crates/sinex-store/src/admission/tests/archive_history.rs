@@ -32,7 +32,7 @@ async fn visible(conn: &mut PgConnection, position: i64) -> i64 {
 async fn archive_history_preserves_hide_unhide_hide_intervals_without_new_events(
     db: devkit::pg::TestDatabase,
 ) {
-    let mut conn = <sqlx::PgConnection as sqlx::Connection>::connect(&db.url(None))
+    let mut conn = crate::AdmissionContext::connect(&db.url(None))
         .await
         .unwrap();
     let events: Vec<_> = (0..3).map(|key| keyed("history", key, 1, 1)).collect();
@@ -105,7 +105,7 @@ async fn archive_history_preserves_hide_unhide_hide_intervals_without_new_events
 
 #[devkit::test]
 async fn archive_changes_and_positions_roll_back_together(db: devkit::pg::TestDatabase) {
-    let mut conn = <sqlx::PgConnection as sqlx::Connection>::connect(&db.url(None))
+    let mut conn = crate::AdmissionContext::connect(&db.url(None))
         .await
         .unwrap();
     let event = keyed("rollback", 1, 1, 1);
@@ -113,7 +113,7 @@ async fn archive_changes_and_positions_roll_back_together(db: devkit::pg::TestDa
     for hide in [true, false] {
         let before = commit_log::latest(&mut conn).await.unwrap();
         let mut tx = conn.begin().await.unwrap();
-        admit(&mut tx, &action(event.id, hide), &NoDerivations)
+        tx.admit(&action(event.id, hide), &NoDerivations)
             .await
             .unwrap();
         assert_eq!(commit_log::latest(&mut tx).await.unwrap(), before + 1);
@@ -140,17 +140,19 @@ async fn archive_changes_and_positions_roll_back_together(db: devkit::pg::TestDa
 async fn cancelling_an_archive_transaction_does_not_publish_partial_history_or_a_position(
     db: devkit::pg::TestDatabase,
 ) {
-    let mut conn = <sqlx::PgConnection as sqlx::Connection>::connect(&db.url(None))
+    let mut conn = crate::AdmissionContext::connect(&db.url(None))
         .await
         .unwrap();
     let event = keyed("cancel", 1, 1, 1);
     admit_one(&mut conn, &batch(vec![event.clone()])).await;
     let url = db.url(None);
+    conn.close().await.unwrap();
+    let mut conn = PgConnection::connect(&url).await.unwrap();
     let (ready, started) = tokio::sync::oneshot::channel();
     let task = tokio::spawn(async move {
-        let mut connection = PgConnection::connect(&url).await.unwrap();
+        let mut connection = crate::AdmissionContext::connect(&url).await.unwrap();
         let mut tx = connection.begin().await.unwrap();
-        admit(&mut tx, &action(event.id, true), &NoDerivations)
+        tx.admit(&action(event.id, true), &NoDerivations)
             .await
             .unwrap();
         ready.send(()).unwrap();
@@ -182,7 +184,7 @@ async fn cancelling_an_archive_transaction_does_not_publish_partial_history_or_a
 
 #[devkit::test]
 async fn commit_pages_cover_deleted_tail_gaps_and_refuse_zero_limits(db: devkit::pg::TestDatabase) {
-    let mut conn = <sqlx::PgConnection as sqlx::Connection>::connect(&db.url(None))
+    let mut conn = crate::AdmissionContext::connect(&db.url(None))
         .await
         .unwrap();
     admit_one(
@@ -212,7 +214,7 @@ async fn commit_pages_cover_deleted_tail_gaps_and_refuse_zero_limits(db: devkit:
 
 #[devkit::test]
 async fn a_commit_page_ends_once_its_payloads_pass_the_byte_bound(db: devkit::pg::TestDatabase) {
-    let mut conn = <sqlx::PgConnection as sqlx::Connection>::connect(&db.url(None))
+    let mut conn = crate::AdmissionContext::connect(&db.url(None))
         .await
         .unwrap();
     admit_one(

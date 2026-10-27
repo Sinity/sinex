@@ -24,46 +24,51 @@ pub(super) async fn insert_admitted(
     let admit_ords = &classified.admit;
     let replaced = &classified.replaced;
     let n = i64::try_from(admit_ords.len()).expect("count fits i64");
+    let started = std::time::Instant::now();
     let last = sqlx::query_scalar!(
         "UPDATE core.counters SET value = value + $1 WHERE name = 'commit_seq' RETURNING value",
         n
     )
     .fetch_one(&mut *conn)
     .await?;
+    outcome.timings.insert("sequence", started.elapsed());
     let first = last - n + 1;
     outcome.commit_seq = Some((first, last));
 
+    let started = std::time::Instant::now();
     sqlx::query!(
         r#"WITH a AS (
-             SELECT s.*, $2::bigint + row_number() OVER (ORDER BY s.ord) - 1 AS seq
-             FROM core.admission_stage s WHERE s.ord = ANY($1))
+             SELECT s.*, $1::bigint + row_number() OVER (ORDER BY s.ord) - 1 AS seq
+             FROM core.admission_stage s)
            INSERT INTO core.events (id, event_type, source, run_id, material_id, anchor, output_index,
              parents, ts_orig, ts_quality, commit_seq, payload, equivalence_key, reading_order,
              record_hash, record_state, class)
-           SELECT id, event_type, source, $3, material_id, anchor, output_index, parents, ts_orig,
+           SELECT id, event_type, source, $2, material_id, anchor, output_index, parents, ts_orig,
              ts_quality, seq, payload, equivalence_key, reading_order, record_hash, record_state,
              class
            FROM a"#,
-        admit_ords,
         first,
         batch.run.0,
     )
     .execute(&mut *conn)
     .await?;
+    outcome.timings.insert("events", started.elapsed());
 
+    let started = std::time::Instant::now();
     sqlx::query!(
         r#"INSERT INTO core.source_counts AS c (source, events, first_event, last_event, last_seen)
            SELECT source, count(*), min(ts_orig), max(ts_orig), max(uuid_extract_timestamp(id))
-           FROM core.admission_stage WHERE ord = ANY($1) GROUP BY source
+           FROM core.admission_stage GROUP BY source
            ON CONFLICT (source) DO UPDATE SET events = c.events + EXCLUDED.events,
              first_event = least(c.first_event, EXCLUDED.first_event),
              last_event = greatest(c.last_event, EXCLUDED.last_event),
              last_seen = greatest(c.last_seen, EXCLUDED.last_seen)"#,
-        admit_ords,
     )
     .execute(&mut *conn)
     .await?;
+    outcome.timings.insert("source_counts", started.elapsed());
 
+    let started = std::time::Instant::now();
     sqlx::query!(
         "UPDATE core.runs SET events = events + $2 WHERE id = $1",
         batch.run.0,
@@ -71,45 +76,52 @@ pub(super) async fn insert_admitted(
     )
     .execute(&mut *conn)
     .await?;
+    outcome.timings.insert("run_count", started.elapsed());
 
+    let started = std::time::Instant::now();
     sqlx::query!(
         r#"INSERT INTO core.commit_log (commit_seq, event_id, event_type)
-           SELECT $2::bigint + row_number() OVER (ORDER BY s.ord) - 1, s.id, s.event_type
-           FROM core.admission_stage s WHERE s.ord = ANY($1)"#,
-        admit_ords,
+           SELECT $1::bigint + row_number() OVER (ORDER BY s.ord) - 1, s.id, s.event_type
+           FROM core.admission_stage s"#,
         first,
     )
     .execute(&mut *conn)
     .await?;
+    outcome.timings.insert("commit_log", started.elapsed());
 
+    let started = std::time::Instant::now();
     sqlx::query!(
         r#"INSERT INTO core.live_equivalence (source, event_type, equivalence_key, event_id, reading_order, record_hash)
-           SELECT s.source, s.event_type, s.equivalence_key, s.id, s.reading_order, s.record_hash
+           SELECT s.source, s.event_type, core.encode_equivalence_key(s.equivalence_key), s.id, s.reading_order, s.record_hash
            FROM core.admission_stage s
-           WHERE s.ord = ANY($1) AND s.equivalence_key IS NOT NULL
-           ORDER BY s.source, s.event_type, s.equivalence_key
+           WHERE s.equivalence_key IS NOT NULL
+           ORDER BY s.source, s.event_type, core.encode_equivalence_key(s.equivalence_key)
            ON CONFLICT (source, event_type, equivalence_key) DO UPDATE
            SET event_id = EXCLUDED.event_id, reading_order = EXCLUDED.reading_order,
                record_hash = EXCLUDED.record_hash"#,
-        admit_ords,
     )
     .execute(&mut *conn)
     .await?;
+    outcome
+        .timings
+        .insert("live_equivalence", started.elapsed());
 
+    let started = std::time::Instant::now();
     sqlx::query!(
         r#"INSERT INTO core.live_locations (material_id, anchor, event_type, output_index, event_id, reading_order, record_hash)
            SELECT s.material_id, s.anchor, s.event_type, s.output_index, s.id, s.reading_order, s.record_hash
            FROM core.admission_stage s
-           WHERE s.ord = ANY($1) AND s.equivalence_key IS NULL AND s.material_id IS NOT NULL
+           WHERE s.equivalence_key IS NULL AND s.material_id IS NOT NULL
            ORDER BY s.material_id, s.anchor, s.event_type, s.output_index
            ON CONFLICT (material_id, anchor, event_type, output_index) DO UPDATE
            SET event_id = EXCLUDED.event_id, reading_order = EXCLUDED.reading_order,
                record_hash = EXCLUDED.record_hash"#,
-        admit_ords,
     )
     .execute(&mut *conn)
     .await?;
+    outcome.timings.insert("live_locations", started.elapsed());
 
+    let started = std::time::Instant::now();
     if !replaced.is_empty() {
         let (ords, live): (Vec<i32>, Vec<Uuid>) = replaced.iter().copied().unzip();
         let mut replacements = Vec::with_capacity(ords.len());
@@ -133,6 +145,8 @@ pub(super) async fn insert_admitted(
         outcome.dirty_keys += mark_archived_dirty(conn, &live, last, keys).await?;
     }
 
+    outcome.timings.insert("archive", started.elapsed());
+    let started = std::time::Instant::now();
     outcome.admitted = admit_ords.len();
     let mut dirty = Vec::new();
     for ord in admit_ords {
@@ -146,6 +160,7 @@ pub(super) async fn insert_admitted(
         dirty.extend(keys.keys(&input));
     }
     outcome.dirty_keys += mark_dirty(conn, dirty, last).await?;
+    outcome.timings.insert("dirty_keys", started.elapsed());
     record_citations(conn, events, admit_ords).await?;
     Ok(())
 }

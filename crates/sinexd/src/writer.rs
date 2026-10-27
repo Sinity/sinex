@@ -12,7 +12,7 @@ use serde_json::Value;
 use sinex_model::{Batch, OperationId};
 use sinex_store::excision::{self, Applied, Plan, Target};
 use sinex_store::replay::{self, Diff};
-use sinex_store::{Blobs, DirtyKeys, Outcome};
+use sinex_store::{AdmissionContext, Blobs, DirtyKeys, Outcome};
 use sqlx::{Connection, PgConnection};
 use std::sync::Arc;
 use tokio::sync::{mpsc, oneshot, watch};
@@ -81,6 +81,7 @@ enum Done {
 }
 
 struct Job {
+    queued_at: std::time::Instant,
     work: WriterJob,
     reply: oneshot::Sender<Result<Done, WriteError>>,
 }
@@ -156,7 +157,11 @@ impl WriterHandle {
             Priority::Bulk => &self.bulk,
         };
         channel
-            .send(Job { work, reply })
+            .send(Job {
+                queued_at: std::time::Instant::now(),
+                work,
+                reply,
+            })
             .await
             .map_err(|_| WriteError::Stopped)?;
         answer.await.map_err(|_| WriteError::Stopped)?
@@ -198,28 +203,12 @@ pub(crate) fn channels() -> (WriterHandle, Queues) {
 /// second one is refused.
 ///
 /// A writer that was just killed holds the lock until the server notices its
-/// backend is gone, so a restart waits up to [`CLAIM_WAIT`] before refusing.
-pub(crate) async fn claim(connection: &mut PgConnection) -> Result<(), String> {
-    sinex_schema::require_current(connection)
+/// backend is gone, so a restart waits up to five seconds before refusing.
+pub(crate) async fn claim(connection: PgConnection) -> Result<AdmissionContext, String> {
+    AdmissionContext::claim(connection)
         .await
-        .map_err(|error| error.to_string())?;
-    let deadline = tokio::time::Instant::now() + CLAIM_WAIT;
-    loop {
-        let won = sinex_store::writer_lock::try_claim(connection)
-            .await
-            .map_err(|e| format!("database: {e}"))?;
-        if won {
-            return Ok(());
-        }
-        if tokio::time::Instant::now() >= deadline {
-            return Err("another sinexd writer is running against this database".into());
-        }
-        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-    }
+        .map_err(|error| error.to_string())
 }
-
-/// How long a starting writer waits for a previous writer's lock to go.
-const CLAIM_WAIT: std::time::Duration = std::time::Duration::from_secs(5);
 
 /// Run the writer until every handle is dropped. A failed batch is rolled back
 /// and refused; the writer continues with the next. If the connection is lost
@@ -232,7 +221,7 @@ const CLAIM_WAIT: std::time::Duration = std::time::Duration::from_secs(5);
 /// without a store admits only batches that register no bytes.
 pub(crate) async fn run(
     url: String,
-    connection: PgConnection,
+    connection: AdmissionContext,
     queues: Queues,
     keys: Arc<dyn DirtyKeys>,
     store: Option<Blobs>,
@@ -244,7 +233,7 @@ pub(crate) async fn run(
 /// commit-log reader and the publisher.
 pub(crate) async fn run_notifying(
     url: String,
-    mut connection: PgConnection,
+    mut connection: AdmissionContext,
     mut queues: Queues,
     keys: Arc<dyn DirtyKeys>,
     store: Option<Blobs>,
@@ -259,7 +248,9 @@ pub(crate) async fn run_notifying(
             Some(job) = queues.bulk.recv() => job,
             else => return,
         };
-        let result = match job.work {
+        let queue_time = job.queued_at.elapsed();
+        let service_started = std::time::Instant::now();
+        let mut result = match job.work {
             WriterJob::Admit(batch) => {
                 admit_checked(&mut connection, &batch, keys.as_ref(), store, &|| Ok(()))
                     .await
@@ -281,15 +272,21 @@ pub(crate) async fn run_notifying(
         };
         if let Err(WriteError::Refused(_)) = &result
             && connection.ping().await.is_err()
-            && let Ok(mut fresh) = PgConnection::connect(&url).await
+            && let Ok(fresh) = PgConnection::connect(&url).await
         {
             // The lock went with the lost connection; without it this
             // process is no longer the writer.
-            if let Err(e) = claim(&mut fresh).await {
-                let _ = job.reply.send(Err(WriteError::Refused(e)));
-                return;
+            match claim(fresh).await {
+                Ok(fresh) => connection = fresh,
+                Err(error) => {
+                    let _ = job.reply.send(Err(WriteError::Refused(error)));
+                    return;
+                }
             }
-            connection = fresh;
+        }
+        if let Ok(Done::Admitted(outcome)) = &mut result {
+            outcome.timings.insert("queue", queue_time);
+            outcome.timings.insert("service", service_started.elapsed());
         }
         if result.is_ok() {
             commits.send_modify(|n| *n += 1);
@@ -299,13 +296,14 @@ pub(crate) async fn run_notifying(
 }
 
 async fn admit_checked(
-    connection: &mut PgConnection,
+    connection: &mut AdmissionContext,
     batch: &Batch,
     keys: &dyn DirtyKeys,
     store: Option<&Blobs>,
     check: &(dyn Fn() -> Result<(), String> + Send + Sync),
 ) -> Result<Outcome, WriteError> {
     let refuse = |e: &dyn std::fmt::Display| WriteError::Refused(e.to_string());
+    let checks_started = std::time::Instant::now();
     check().map_err(WriteError::Refused)?;
     for name in batch.stored_bytes() {
         let present = match store {
@@ -318,14 +316,21 @@ async fn admit_checked(
             )));
         }
     }
+    let checks_time = checks_started.elapsed();
+    let begin_started = std::time::Instant::now();
     let mut tx = connection.begin().await.map_err(|e| refuse(&e))?;
-    match sinex_store::admit(&mut tx, batch, keys).await {
-        Ok(outcome) => {
+    let begin_time = begin_started.elapsed();
+    match tx.admit(batch, keys).await {
+        Ok(mut outcome) => {
             if let Err(error) = check() {
                 tx.rollback().await.map_err(|e| refuse(&e))?;
                 return Err(WriteError::Refused(error));
             }
+            let started = std::time::Instant::now();
             tx.commit().await.map_err(|e| refuse(&e))?;
+            outcome.timings.insert("commit", started.elapsed());
+            outcome.timings.insert("checks", checks_time);
+            outcome.timings.insert("begin", begin_time);
             Ok(outcome)
         }
         Err(error) => {
@@ -336,7 +341,7 @@ async fn admit_checked(
 }
 
 async fn replay_sequence(
-    connection: &mut PgConnection,
+    connection: &mut AdmissionContext,
     sequence: &mut ReplaySequence,
     keys: &dyn DirtyKeys,
 ) -> Result<(Vec<Outcome>, Diff), WriteError> {
@@ -353,11 +358,7 @@ async fn replay_sequence(
     let mut outcomes = Vec::new();
     while let Some(batch) = sequence.batches.recv().await {
         let batch = batch.map_err(|e| refuse(&e))?;
-        outcomes.push(
-            sinex_store::admit(&mut tx, &batch, keys)
-                .await
-                .map_err(|e| refuse(&e))?,
-        );
+        outcomes.push(tx.admit(&batch, keys).await.map_err(|e| refuse(&e))?);
     }
     let admitted: Vec<uuid::Uuid> = outcomes
         .iter()
@@ -378,7 +379,7 @@ async fn replay_sequence(
 }
 
 async fn excise(
-    connection: &mut PgConnection,
+    connection: &mut AdmissionContext,
     e: &Excision,
     keys: &dyn DirtyKeys,
 ) -> Result<Excised, WriteError> {

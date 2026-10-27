@@ -19,7 +19,7 @@ pub(crate) async fn catch_up_search_text(conn: &mut PgConnection) -> Result<i64>
 
 #[devkit::test]
 async fn indexes_committed_payload_text_once_and_resumes(db: devkit::pg::TestDatabase) {
-    let mut conn = <sqlx::PgConnection as sqlx::Connection>::connect(&db.url(None))
+    let mut conn = crate::AdmissionContext::connect(&db.url(None))
         .await
         .unwrap();
     let ids = crate::query::tests::admit_commands(

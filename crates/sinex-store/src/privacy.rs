@@ -447,7 +447,7 @@ fn remove_pointer(payload: &mut Value, pointer: &str) {
 
 /// The key that makes hashed values join without revealing them. Created once
 /// per database, never rotated (a new key would split every hashed join).
-async fn hash_key(conn: &mut PgConnection) -> Result<[u8; 32]> {
+pub(crate) async fn hash_key(conn: &mut PgConnection) -> Result<[u8; 32]> {
     let fresh: [u8; 32] = {
         let mut k = [0u8; 32];
         getrandom::fill(&mut k).map_err(|e| Error::Invalid(format!("random key: {e}")))?;
@@ -516,6 +516,96 @@ pub async fn load<'a>(
         floors,
         hash_key: hash_key(conn).await?,
     })
+}
+
+/// Compiled rules belong to one validated writer session. The complete set
+/// covers sources first seen after the cache was filled.
+pub(crate) struct Cache {
+    hash_key: [u8; 32],
+    version: Option<(i64, i64)>,
+    rules: RuleSet,
+}
+
+impl Cache {
+    pub(crate) fn new(hash_key: [u8; 32]) -> Self {
+        Self {
+            hash_key,
+            version: None,
+            rules: RuleSet::default(),
+        }
+    }
+
+    pub(crate) async fn load(&mut self, conn: &mut PgConnection) -> Result<&RuleSet> {
+        let version = sqlx::query!(
+            r#"SELECT (SELECT coalesce(max(seq), 0) FROM privacy.rules) AS "rules!",
+                      (SELECT coalesce(max(seq), 0) FROM privacy.source_classes) AS "floors!""#
+        )
+        .fetch_one(&mut *conn)
+        .await?;
+        if self.version == Some((version.rules, version.floors)) {
+            return Ok(&self.rules);
+        }
+        // One statement's snapshot supplies both the versions and contents.
+        // A change committed later is loaded at the next batch boundary.
+        let snapshot = sqlx::query!(
+            r#"SELECT (SELECT coalesce(max(seq), 0) FROM privacy.rules) AS "rules_seq!",
+                      (SELECT coalesce(max(seq), 0) FROM privacy.source_classes) AS "floors_seq!",
+                      (SELECT coalesce(jsonb_agg(to_jsonb(r)), '[]'::jsonb) FROM
+                        (SELECT DISTINCT ON (name) id, name, source, event_type, field,
+                          matcher, matcher_arg, class, action, ended
+                         FROM privacy.rules ORDER BY name, seq DESC) r) AS "rules!",
+                      (SELECT coalesce(jsonb_object_agg(source, class), '{}'::jsonb) FROM
+                        (SELECT DISTINCT ON (source) source, class FROM privacy.source_classes
+                         ORDER BY source, seq DESC) f) AS "floors!""#
+        )
+        .fetch_one(&mut *conn)
+        .await?;
+        #[derive(serde::Deserialize)]
+        struct StoredRule {
+            id: Uuid,
+            name: String,
+            source: String,
+            event_type: Option<String>,
+            field: Option<String>,
+            matcher: String,
+            matcher_arg: Option<String>,
+            class: String,
+            action: String,
+            ended: bool,
+        }
+        let stored: Vec<StoredRule> = serde_json::from_value(snapshot.rules)
+            .map_err(|e| Error::Invalid(format!("privacy rules: {e}")))?;
+        let rules = stored
+            .into_iter()
+            .filter(|r| !r.ended)
+            .map(|r| {
+                Ok(Rule {
+                    id: r.id,
+                    name: r.name,
+                    source: r.source,
+                    event_type: r.event_type,
+                    field: r.field,
+                    matcher: Matcher::parse(&r.matcher, r.matcher_arg.as_deref())?,
+                    class: parse_class(&r.class)?,
+                    action: Action::parse(&r.action)?,
+                })
+            })
+            .collect::<Result<Vec<_>>>()?;
+        let floors: HashMap<String, String> = serde_json::from_value(snapshot.floors)
+            .map_err(|e| Error::Invalid(format!("privacy source classes: {e}")))?;
+        let floors = floors
+            .into_iter()
+            .map(|(source, class)| Ok((source, parse_class(&class)?)))
+            .collect::<Result<HashMap<_, _>>>()?;
+        self.rules = RuleSet {
+            seq: snapshot.rules_seq,
+            rules,
+            floors,
+            hash_key: self.hash_key,
+        };
+        self.version = Some((snapshot.rules_seq, snapshot.floors_seq));
+        Ok(&self.rules)
+    }
 }
 
 /// A new rule, or a new version of the rule named `name`.

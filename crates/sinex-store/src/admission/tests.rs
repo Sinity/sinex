@@ -60,9 +60,9 @@ fn batch(events: Vec<Event>) -> Batch {
     }
 }
 
-async fn admit_one(conn: &mut PgConnection, b: &Batch) -> Outcome {
+async fn admit_one(conn: &mut crate::AdmissionContext, b: &Batch) -> Outcome {
     let mut tx = conn.begin().await.unwrap();
-    let out = admit(&mut tx, b, &NoDerivations).await.unwrap();
+    let out = tx.admit(b, &NoDerivations).await.unwrap();
     tx.commit().await.unwrap();
     out
 }
@@ -125,7 +125,7 @@ async fn newer_replaces_older_suppresses_one_live_per_key() {
     // Property cases block on this runtime from proptest's thread, so the
     // test needs a multi-threaded runtime and takes its database directly.
     let db = devkit::pg::test_database().unwrap();
-    let conn = <sqlx::PgConnection as sqlx::Connection>::connect(&db.url(None))
+    let conn = crate::AdmissionContext::connect(&db.url(None))
         .await
         .unwrap();
     let conn = tokio::sync::Mutex::new(conn);
@@ -174,7 +174,7 @@ async fn newer_replaces_older_suppresses_one_live_per_key() {
 /// order, leave the same live readings.
 #[devkit::test]
 async fn equal_reading_orders_are_decided_by_content_not_arrival(db: devkit::pg::TestDatabase) {
-    let mut conn = <sqlx::PgConnection as sqlx::Connection>::connect(&db.url(None))
+    let mut conn = crate::AdmissionContext::connect(&db.url(None))
         .await
         .unwrap();
     let readings = [(0u8, 1u8, 5i64), (0, 2, 5), (1, 0, 3), (1, 2, 3), (1, 1, 3)];
@@ -219,7 +219,7 @@ async fn equal_reading_orders_are_decided_by_content_not_arrival(db: devkit::pg:
 
 #[devkit::test]
 async fn replaced_readings_are_archived_with_their_successor(db: devkit::pg::TestDatabase) {
-    let mut conn = <sqlx::PgConnection as sqlx::Connection>::connect(&db.url(None))
+    let mut conn = crate::AdmissionContext::connect(&db.url(None))
         .await
         .unwrap();
     let first = keyed("s", 1, 1, 1);
@@ -273,7 +273,7 @@ fn watched(title: Option<&str>, order: i64) -> Event {
 
 #[devkit::test]
 async fn a_newer_reading_keeps_known_fields_it_leaves_unknown(db: devkit::pg::TestDatabase) {
-    let mut conn = <sqlx::PgConnection as sqlx::Connection>::connect(&db.url(None))
+    let mut conn = crate::AdmissionContext::connect(&db.url(None))
         .await
         .unwrap();
     admit_one(&mut conn, &batch(vec![watched(Some("A talk"), 1)])).await;
@@ -302,7 +302,7 @@ async fn a_newer_reading_keeps_known_fields_it_leaves_unknown(db: devkit::pg::Te
 async fn location_keyed_records_are_one_live_reading_and_never_replaced(
     db: devkit::pg::TestDatabase,
 ) {
-    let mut conn = <sqlx::PgConnection as sqlx::Connection>::connect(&db.url(None))
+    let mut conn = crate::AdmissionContext::connect(&db.url(None))
         .await
         .unwrap();
     let material = MaterialId::new();
@@ -344,7 +344,7 @@ async fn location_keyed_records_are_one_live_reading_and_never_replaced(
 
 #[devkit::test]
 async fn hidden_stays_hidden_across_readmission_until_unhidden(db: devkit::pg::TestDatabase) {
-    let mut conn = <sqlx::PgConnection as sqlx::Connection>::connect(&db.url(None))
+    let mut conn = crate::AdmissionContext::connect(&db.url(None))
         .await
         .unwrap();
     let e = keyed("s", 7, 1, 1);
@@ -374,7 +374,7 @@ async fn hidden_stays_hidden_across_readmission_until_unhidden(db: devkit::pg::T
 
 #[devkit::test]
 async fn a_dropped_record_gets_a_removed_reading_once(db: devkit::pg::TestDatabase) {
-    let mut conn = <sqlx::PgConnection as sqlx::Connection>::connect(&db.url(None))
+    let mut conn = crate::AdmissionContext::connect(&db.url(None))
         .await
         .unwrap();
     let location = RecordLocation {
@@ -431,7 +431,7 @@ async fn a_dropped_record_gets_a_removed_reading_once(db: devkit::pg::TestDataba
 
 #[devkit::test]
 async fn events_and_progress_commit_together(db: devkit::pg::TestDatabase) {
-    let mut conn = <sqlx::PgConnection as sqlx::Connection>::connect(&db.url(None))
+    let mut conn = crate::AdmissionContext::connect(&db.url(None))
         .await
         .unwrap();
     let progress = |cursor: i64| SourceProgress {
@@ -463,7 +463,7 @@ async fn events_and_progress_commit_together(db: devkit::pg::TestDatabase) {
     let mut bad = batch(vec![keyed("s", 3, 1, 1), bad_event]);
     bad.kind = BatchKind::Source(Box::new(progress(20)));
     let mut tx = conn.begin().await.unwrap();
-    assert!(admit(&mut tx, &bad, &NoDerivations).await.is_err());
+    assert!(tx.admit(&bad, &NoDerivations).await.is_err());
     tx.rollback().await.unwrap();
 
     let cursor = crate::positions::load(&mut conn, "b")
@@ -477,7 +477,7 @@ async fn events_and_progress_commit_together(db: devkit::pg::TestDatabase) {
 
 #[devkit::test]
 async fn commit_seq_is_dense_and_in_batch_order(db: devkit::pg::TestDatabase) {
-    let mut conn = <sqlx::PgConnection as sqlx::Connection>::connect(&db.url(None))
+    let mut conn = crate::AdmissionContext::connect(&db.url(None))
         .await
         .unwrap();
     let events: Vec<Event> = (0..5).map(|k| keyed("s", k, 1, 1)).collect();
@@ -505,17 +505,17 @@ impl DirtyKeys for ByDay {
 
 #[devkit::test]
 async fn admitted_and_archived_readings_mark_dirty_keys(db: devkit::pg::TestDatabase) {
-    let mut conn = <sqlx::PgConnection as sqlx::Connection>::connect(&db.url(None))
+    let mut conn = crate::AdmissionContext::connect(&db.url(None))
         .await
         .unwrap();
     let mut tx = conn.begin().await.unwrap();
-    let out = admit(
-        &mut tx,
-        &batch(vec![keyed("s", 1, 1, 1), keyed("s", 2, 1, 1)]),
-        &ByDay,
-    )
-    .await
-    .unwrap();
+    let out = tx
+        .admit(
+            &batch(vec![keyed("s", 1, 1, 1), keyed("s", 2, 1, 1)]),
+            &ByDay,
+        )
+        .await
+        .unwrap();
     tx.commit().await.unwrap();
     assert_eq!(out.dirty_keys, 2);
     let n: i64 = sqlx::query_scalar!(
@@ -529,7 +529,7 @@ async fn admitted_and_archived_readings_mark_dirty_keys(db: devkit::pg::TestData
 
 #[devkit::test]
 async fn dirty_keys_keep_each_derivation_and_advance_existing_keys(db: devkit::pg::TestDatabase) {
-    let mut conn = <sqlx::PgConnection as sqlx::Connection>::connect(&db.url(None))
+    let mut conn = crate::AdmissionContext::connect(&db.url(None))
         .await
         .unwrap();
     let first = json!({"day": "2026-01-01"});
@@ -588,7 +588,7 @@ mod privacy;
 async fn untimed_zsh_occurrences_coexist_and_only_same_locations_repeat(
     db: devkit::pg::TestDatabase,
 ) {
-    let mut conn = <sqlx::PgConnection as sqlx::Connection>::connect(&db.url(None))
+    let mut conn = crate::AdmissionContext::connect(&db.url(None))
         .await
         .unwrap();
     let first = MaterialId::new();
@@ -653,3 +653,7 @@ async fn untimed_zsh_occurrences_coexist_and_only_same_locations_repeat(
 
 mod archive_history;
 mod source_counts;
+
+mod cache;
+mod equivalence;
+mod known_fields;

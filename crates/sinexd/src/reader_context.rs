@@ -25,10 +25,10 @@ impl ReaderContext {
             .await
             .map_err(|e| e.to_string())?;
         let blobs = Blobs::open(store).map_err(|e| e.to_string())?;
-        let mut writer_conn = PgConnection::connect(database)
+        let writer_conn = PgConnection::connect(database)
             .await
             .map_err(|e| e.to_string())?;
-        writer::claim(&mut writer_conn).await?;
+        let writer_conn = writer::claim(writer_conn).await?;
         let (writer, queues) = writer::channels();
         let task = tokio::spawn(writer::run(
             database.to_owned(),
