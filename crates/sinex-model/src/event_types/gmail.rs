@@ -20,8 +20,8 @@ pub struct ProviderMessage {
 pub struct MessageReference {
     pub id: String,
     pub thread_id: Option<String>,
-    #[serde(default)]
-    pub label_ids: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub label_ids: Option<Vec<String>>,
     #[serde(flatten)]
     pub extra: serde_json::Map<String, serde_json::Value>,
 }
@@ -30,8 +30,8 @@ pub struct MessageReference {
 #[serde(rename_all = "camelCase")]
 pub struct MessageChange {
     pub message: MessageReference,
-    #[serde(default)]
-    pub label_ids: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub label_ids: Option<Vec<String>>,
     #[serde(flatten)]
     pub extra: serde_json::Map<String, serde_json::Value>,
 }
