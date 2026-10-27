@@ -112,6 +112,7 @@ fn to_window(q: &InputQuery) -> Window {
         start: q.window.0.0,
         end: q.window.1.0,
         before: q.before.iter().map(nearest).collect(),
+        intervals: q.intervals.clone(),
         after: q.after.iter().map(nearest).collect(),
     }
 }

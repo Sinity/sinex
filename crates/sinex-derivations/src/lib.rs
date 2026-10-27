@@ -44,6 +44,8 @@ pub struct InputQuery {
     pub window: (Timestamp, Timestamp),
     /// The latest events before the window: the state a key starts in.
     pub before: Vec<Neighbour>,
+    /// Earlier intervals that still overlap the window.
+    pub intervals: Vec<(&'static str, sinex_model::clock::IntervalEnd)>,
     /// The earliest events after the window: what ends a state the key opened.
     pub after: Vec<Neighbour>,
 }
@@ -63,6 +65,7 @@ impl InputQuery {
             kinds,
             window: (start, end),
             before: Vec::new(),
+            intervals: Vec::new(),
             after: Vec::new(),
         }
     }
@@ -79,14 +82,19 @@ impl InputQuery {
     /// Whether `event` is one the window part reads (neighbours aside): what
     /// the store's query selects, for code that filters events in memory.
     pub fn admits(&self, event: &Event) -> bool {
-        event
-            .ts_orig
-            .at
-            .is_some_and(|t| t >= self.window.0 && t < self.window.1)
-            && self
-                .kinds
-                .iter()
-                .any(|k| k.admits(event.event_type, &event.payload))
+        event.ts_orig.at.is_some_and(|t| {
+            t < self.window.1
+                && (t >= self.window.0
+                    || self.intervals.iter().any(|(kind, end)| {
+                        *kind == event.event_type
+                            && end
+                                .at(t, &event.payload)
+                                .is_none_or(|end| end >= self.window.0)
+                    }))
+        }) && self
+            .kinds
+            .iter()
+            .any(|k| k.admits(event.event_type, &event.payload))
     }
 
     /// The event types read, without repeats.

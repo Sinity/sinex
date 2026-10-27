@@ -202,3 +202,24 @@ fn absence_boundaries_exclude_moments_inside_and_keep_the_first_moment_after() {
         assert!(parents.contains(&absence.id));
     }
 }
+
+#[devkit::test]
+fn commands_and_absences_crossing_a_day_start_are_read_in_both_days() {
+    let inputs = [command(64_000, 1_400), absent(64_600, 65_000)];
+    for input in &inputs {
+        let keys = ActivitySpans.keys_for(
+            &KeyView {
+                event_type: input.event_type,
+                ts_orig: input.ts_orig.at,
+                payload: &input.payload,
+            },
+            &env(),
+        );
+        assert_eq!(
+            keys,
+            [json!({"day": "2024-06-15"}), json!({"day": "2024-06-16"})]
+        );
+        let query = ActivitySpans.inputs(&keys[1], &env()).unwrap();
+        assert!(query.admits(input));
+    }
+}
