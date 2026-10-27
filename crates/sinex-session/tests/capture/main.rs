@@ -1,3 +1,4 @@
+use std::io::BufRead;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Output, Stdio};
@@ -8,6 +9,49 @@ struct Session {
 }
 
 impl Session {
+    fn signal(&self, signal: &str) {
+        assert!(
+            Command::new("sh")
+                .args([
+                    "-c",
+                    "kill -$1 $2",
+                    "fixture",
+                    signal,
+                    &self.child.as_ref().unwrap().id().to_string(),
+                ])
+                .status()
+                .unwrap()
+                .success()
+        );
+    }
+
+    fn stop(self) -> Output {
+        self.signal("TERM");
+        self.finish()
+    }
+
+    fn publishing_failed(&mut self, count: usize) -> String {
+        let mut reader =
+            std::io::BufReader::new(self.child.as_mut().unwrap().stderr.as_mut().unwrap());
+        let mut log = String::new();
+        let mut failed = 0;
+        loop {
+            let mut line = String::new();
+            assert_ne!(
+                reader.read_line(&mut line).unwrap(),
+                0,
+                "session ended before publishing failed: {log}"
+            );
+            log.push_str(&line);
+            if line.contains("no stream found for given subject") {
+                failed += 1;
+                if failed == count {
+                    return log;
+                }
+            }
+        }
+    }
+
     fn finish(mut self) -> Output {
         let until = Instant::now() + Duration::from_secs(5);
         loop {
@@ -104,7 +148,7 @@ exec sleep 30
             .env("FAKE_PIDS", &self.pids)
             .env("FAKE_DESCENDANTS", self.root.join("descendants"))
             .env("FAKE_HEARTBEAT", self.root.join("heartbeat"))
-            .env("SINEX_STATE_DIR", self.root.join("private-state"))
+            .env("SINEX_PRIVATE_MODE", self.root.join("private"))
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
@@ -158,6 +202,49 @@ exec sleep 30
             .lines()
             .map(|s| s.parse().unwrap())
             .collect()
+    }
+
+    fn keeps_capturing(&self, session: &mut Session) {
+        let before = std::fs::metadata(self.root.join("heartbeat"))
+            .unwrap()
+            .len();
+        let until = Instant::now() + Duration::from_secs(5);
+        while std::fs::metadata(self.root.join("heartbeat"))
+            .unwrap()
+            .len()
+            == before
+        {
+            assert!(
+                session
+                    .child
+                    .as_mut()
+                    .unwrap()
+                    .try_wait()
+                    .unwrap()
+                    .is_none(),
+                "publishing failure ended the session"
+            );
+            assert!(
+                Instant::now() < until,
+                "capture stopped after publishing failed"
+            );
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert!(
+            session
+                .child
+                .as_mut()
+                .unwrap()
+                .try_wait()
+                .unwrap()
+                .is_none()
+        );
+        for pid in self.pids().into_iter().chain(self.descendants()) {
+            assert!(
+                Path::new(&format!("/proc/{pid}")).exists(),
+                "capture child {pid} stopped after publishing failed"
+            );
+        }
     }
 
     fn all_reaped(&self) {
@@ -236,19 +323,7 @@ fn run_signals_join_capture_threads_and_reap_children() {
             child: Some(fixture.run(&nats).spawn().unwrap()),
         };
         fixture.started(2);
-        assert!(
-            Command::new("sh")
-                .args([
-                    "-c",
-                    "kill -$1 $2",
-                    "fixture",
-                    signal,
-                    &session.child.as_ref().unwrap().id().to_string()
-                ])
-                .status()
-                .unwrap()
-                .success()
-        );
+        session.signal(signal);
         let output = session.finish();
         assert!(
             output.status.success(),
@@ -260,29 +335,29 @@ fn run_signals_join_capture_threads_and_reap_children() {
 }
 
 #[devkit::test]
-fn a_producer_error_stops_already_running_capture_children() {
+fn publishing_errors_leave_capture_children_running_until_stopped() {
     let nats = devkit::nats::test_nats().unwrap();
     let fixture = Fixture::new();
     // No ingress stream exists: publishing the captured synthetic line fails.
-    let output = Session {
+    let mut session = Session {
         child: Some(fixture.run(&nats).env("FAKE_EMIT", "1").spawn().unwrap()),
-    }
-    .finish();
-    assert!(!output.status.success());
-    assert!(
-        String::from_utf8_lossy(&output.stderr).contains("no stream found for given subject"),
-        "{}",
-        String::from_utf8_lossy(&output.stderr)
-    );
+    };
+    fixture.started(2);
+    let mut log = session.publishing_failed(2);
+    fixture.keeps_capturing(&mut session);
+    let output = session.stop();
+    log.push_str(&String::from_utf8_lossy(&output.stderr));
+    assert!(output.status.success(), "{log}");
+    assert_eq!(log.matches("no stream found for given subject").count(), 2);
     fixture.all_reaped();
 }
 
 #[devkit::test]
-fn a_first_record_after_saved_empty_polls_reaches_transport_and_reaps_children() {
+fn a_first_record_after_saved_empty_polls_reaches_transport_while_capture_continues() {
     let nats = devkit::nats::test_nats().unwrap();
     let fixture = Fixture::new();
     let release = fixture.root.join("emit");
-    let session = Session {
+    let mut session = Session {
         child: Some(
             fixture
                 .run(&nats)
@@ -312,12 +387,11 @@ fn a_first_record_after_saved_empty_polls_reaches_transport_and_reaps_children()
         std::thread::sleep(Duration::from_millis(10));
     }
     std::fs::write(release, b"emit").unwrap();
-    let output = session.finish();
-    assert!(!output.status.success());
-    assert!(
-        String::from_utf8_lossy(&output.stderr).contains("no stream found for given subject"),
-        "{}",
-        String::from_utf8_lossy(&output.stderr)
-    );
+    let mut log = session.publishing_failed(2);
+    fixture.keeps_capturing(&mut session);
+    let output = session.stop();
+    log.push_str(&String::from_utf8_lossy(&output.stderr));
+    assert!(output.status.success(), "{log}");
+    assert_eq!(log.matches("no stream found for given subject").count(), 2);
     fixture.all_reaped();
 }
