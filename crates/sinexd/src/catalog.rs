@@ -126,7 +126,9 @@ pub(crate) fn registry_sources() -> Vec<sinex_store::registry::Source> {
 
 /// The catalog as committed: pretty JSON with a trailing newline.
 pub(crate) fn render() -> String {
-    let mut text = serde_json::to_string_pretty(&catalog()).expect("catalog serializes");
+    let mut catalog = catalog();
+    catalog.sort_all_objects();
+    let mut text = serde_json::to_string_pretty(&catalog).expect("catalog serializes");
     text.push('\n');
     text
 }

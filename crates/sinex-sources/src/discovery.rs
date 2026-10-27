@@ -415,13 +415,7 @@ pub fn spools(
             return Err(input.reason.unwrap_or_else(|| "spool unavailable".into()));
         }
         let format = sources::format(&input.format).expect("capture format");
-        bindings.extend(
-            input
-                .bindings
-                .into_iter()
-                .filter(|binding| binding.input.is_dir())
-                .map(|binding| (format, binding)),
-        );
+        bindings.extend(input.bindings.into_iter().map(|binding| (format, binding)));
     }
     Ok(bindings)
 }
