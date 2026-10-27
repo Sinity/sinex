@@ -188,16 +188,10 @@ impl Parser for TranscriptParser {
                     })
                     .transpose()?;
                 if let (Some(at), Some(ms)) = (recording_start, payload.start_ms) {
-                    payload.at = Some(
-                        Timestamp::from_unix_ns(
-                            at.unix_ns()
-                                .checked_add(i128::from(ms) * 1_000_000)
-                                .ok_or_else(|| {
-                                    RecordError::new("absolute segment time overflow")
-                                })?,
-                        )
-                        .map_err(|_| RecordError::new("absolute segment time out of range"))?,
-                    );
+                    payload.at = at
+                        .unix_ns()
+                        .checked_add(i128::from(ms) * 1_000_000)
+                        .and_then(|ns| Timestamp::from_unix_ns(ns).ok());
                 }
                 payload.provider_id_stable = payload.provider_segment_id.is_some()
                     && (self.format == Format::Json || payload.external_run.is_some());
@@ -307,9 +301,10 @@ fn raw_offset(value: Option<&str>, seconds: bool) -> Result<Option<u64>, RecordE
         Some(text) => decimal_ms(text, if seconds { 3 } else { 0 }).map(Some),
     }
 }
-/// Convert decimal provider offsets without a floating point multiplication.
+/// Whisper seconds round to the nearest millisecond without floating point arithmetic.
+/// Explicit millisecond fields must be integral.
 pub fn decimal_ms(text: &str, places: u32) -> Result<u64, RecordError> {
-    let invalid = || RecordError::new("offset must be nonnegative exact milliseconds within u64");
+    let invalid = || RecordError::new("offset must resolve to nonnegative milliseconds within u64");
     if text.starts_with('-') {
         return Err(invalid());
     }
@@ -340,11 +335,18 @@ pub fn decimal_ms(text: &str, places: u32) -> Result<u64, RecordError> {
         .ok_or_else(invalid)?;
     let value = if shift < 0 {
         let cut = usize::try_from(shift.unsigned_abs()).map_err(|_| invalid())?;
-        let split = digits.len().checked_sub(cut).ok_or_else(invalid)?;
-        if !digits[split..].bytes().all(|b| b == b'0') {
+        let split = digits.len().saturating_sub(cut);
+        let discarded = &digits[split..];
+        if places == 0 && !discarded.bytes().all(|b| b == b'0') {
             return Err(invalid());
         }
-        digits[..split].parse::<u64>().map_err(|_| invalid())?
+        let whole = if split == 0 {
+            0
+        } else {
+            digits[..split].parse::<u64>().map_err(|_| invalid())?
+        };
+        let round_up = places > 0 && cut <= digits.len() && discarded.as_bytes()[0] >= b'5';
+        whole.checked_add(u64::from(round_up)).ok_or_else(invalid)?
     } else {
         let shift = u32::try_from(shift).map_err(|_| invalid())?;
         digits
