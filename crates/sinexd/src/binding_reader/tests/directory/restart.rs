@@ -1,6 +1,7 @@
 use super::*;
 use sinex_model::{BatchKind, MaterialRef};
-use sinex_sources::{Limits, sources::notes};
+use sinex_source_core::Limits;
+use sinex_sources::sources::notes;
 
 #[devkit::test]
 async fn restarted_directory_reader_observes_files_removed_after_its_committed_capture(
@@ -94,7 +95,7 @@ async fn prefix(
     ctx: &mut ReaderContext,
     b: &mut BindingReader,
     sink: &dyn drivers::MaterialSink,
-    sealing: Option<&crate::material_sink::SealingSink>,
+    sealing: Option<&crate::sealing::SealingSink>,
 ) -> MaterialRef {
     crate::backfill::record(&mut ctx.read_conn, &b.binding)
         .await
@@ -143,7 +144,7 @@ async fn sealed_history_needs_no_private_key_and_keeps_the_binding_sealed(
     let root = dir.path().join("vault");
     std::fs::create_dir_all(&root).unwrap();
     std::fs::write(root.join("a.md"), "synthetic sealed alpha").unwrap();
-    let identity = sinex_store::sealed::Identity::generate();
+    let identity = sinex_sealing::Identity::generate();
     let recipient = identity.to_public();
     let mut ctx = ReaderContext::open(&url, &dir.path().join("store"))
         .await
@@ -222,7 +223,7 @@ async fn sealed_history_needs_no_private_key_and_keeps_the_binding_sealed(
 }
 
 struct IgnoreFirst;
-impl sinex_sources::Parser for IgnoreFirst {
+impl sinex_source_core::Parser for IgnoreFirst {
     type Record<'a> = &'a [u8];
     type Carry = ();
     type Payload = sinex_model::event_types::media::NoteDocument;
@@ -230,21 +231,21 @@ impl sinex_sources::Parser for IgnoreFirst {
         &self,
         record: &&[u8],
         carry: &(),
-        context: &sinex_sources::drain::RecordContext<'_>,
-    ) -> Result<(Vec<Self::Payload>, ()), sinex_sources::RecordError> {
+        context: &sinex_source_core::drain::RecordContext<'_>,
+    ) -> Result<(Vec<Self::Payload>, ()), sinex_source_core::RecordError> {
         if context
             .member
             .is_some_and(|m| m.path == "a.md" && !m.details.contains_key("removed_at_ns"))
         {
             return Ok((Vec::new(), ()));
         }
-        sinex_sources::Parser::parse(&notes::NotesParser, record, carry, context)
+        sinex_source_core::Parser::parse(&notes::NotesParser, record, carry, context)
     }
 }
 fn ignore_first(b: &mut BindingReader) {
     let mut spec = notes::SPEC;
     spec.parser_version = 99;
-    b.source = Box::new(sinex_sources::DeclaredSource {
+    b.source = Box::new(sinex_source_core::DeclaredSource {
         spec,
         parser: IgnoreFirst,
     });

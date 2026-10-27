@@ -1,11 +1,11 @@
 //! A binding owns its parser and cursor; bindings of the same stored file share one pass over it.
 use crate::backfill::{self, Totals};
-use crate::material_sink::Sink;
+use crate::sealing::Sink;
 use crate::writer::WriterHandle;
 use serde_json::Value;
 use sinex_model::{Class, RunId};
-use sinex_sources::shared_pass::SharedReadStart;
-use sinex_sources::{Binding, InputFormat, Reader, Reading, Source, drivers};
+use sinex_source_core::shared_pass::SharedReadStart;
+use sinex_source_core::{Binding, InputFormat, Reader, Reading, Source, drivers};
 use sinex_store::{Blobs, positions};
 use sqlx::PgConnection;
 use std::sync::Arc;
@@ -37,7 +37,7 @@ impl BindingReader {
     }
 }
 
-pub(crate) use crate::sealed_access::Access;
+pub(crate) use crate::sealing::Access;
 
 mod shared;
 use shared::{SharedFileRead, read_shared, same_file};
@@ -142,7 +142,7 @@ pub(crate) async fn read(
             }
         } else if let Reading::Polled(reader) = &mut b.reading {
             // Taken before the poll, so bytes appended during it change them.
-            let facts = (b.source.spec().driver == sinex_sources::Driver::AppendFile)
+            let facts = (b.source.spec().driver == sinex_source_core::Driver::AppendFile)
                 .then(|| drivers::file_facts(&b.binding.input).ok())
                 .flatten();
             if let (Some(now), Some(then)) = (&facts, &b.settled)
@@ -185,7 +185,6 @@ pub(crate) async fn read(
             blobs,
             writer,
             run,
-            sink,
             readers,
             &pass,
             stop.clone(),
@@ -249,7 +248,7 @@ pub(crate) async fn restore_reader(
     blobs: &Blobs,
     reader: &mut dyn Reader,
     binding: &str,
-    unlock: Option<&crate::sealed_access::Unlock>,
+    unlock: Option<&crate::sealing::Unlock>,
     stop: &watch::Receiver<bool>,
 ) -> Result<bool, String> {
     let cursor = positions::load(conn, binding)
@@ -289,13 +288,13 @@ pub(crate) async fn restore_reader(
                 break 'parts;
             }
             let bytes =
-                crate::stored::MaterialOnDemand::new(conn, blobs, reference.clone(), unlock)
+                crate::sealing::MaterialOnDemand::new(conn, blobs, reference.clone(), unlock)
                     .await?;
             sealed |= bytes.sealed();
             let more = reader
                 .restore(
                     &cursor,
-                    sinex_sources::StoredMaterial {
+                    sinex_source_core::StoredMaterial {
                         reference,
                         bytes: Arc::new(bytes),
                         same_revision: revision == newest_revision,

@@ -21,11 +21,11 @@
 //!
 //! Times are UTC: Lynchpin's materialized view read them as local time and is
 //! two hours late in summer.
-use crate::drivers::append_file::AppendFile;
-use crate::registry::{DeclaredSource, Driver, SourceSpec};
-use crate::{Parser, RecordError};
 use sinex_model::event_types::desktop::{SampledWindow, WindowSampled};
 use sinex_model::{Class, Timestamp};
+use sinex_source_core::drivers::append_file::AppendFile;
+use sinex_source_core::registry::{DeclaredSource, Driver, SourceSpec};
+use sinex_source_core::{Parser, RecordError};
 use std::path::PathBuf;
 
 const MAGIC: &[u8] = b"arbtt-timelog-v1\n";
@@ -39,7 +39,7 @@ pub const SPEC: SourceSpec = SourceSpec {
     parser: "arbtt-timelog-v1",
     parser_version: 1,
     event_types: &["window.sampled"],
-    framer: crate::Framer::incremental(frame),
+    framer: sinex_source_core::Framer::incremental(frame),
 };
 
 /// The previous sample's strings, which a reference byte indexes.
@@ -56,7 +56,7 @@ impl Parser for ArbttParser {
         &self,
         record: &&[u8],
         previous: &Carry,
-        _context: &crate::RecordContext<'_>,
+        _context: &sinex_source_core::RecordContext<'_>,
     ) -> Result<(Vec<WindowSampled>, Carry), RecordError> {
         let mut r = Reader {
             bytes: record,
@@ -263,32 +263,33 @@ pub fn driver(path: PathBuf, host: String) -> AppendFile {
     AppendFile {
         path,
         host,
-        framer: crate::Framer::incremental(frame),
+        framer: sinex_source_core::Framer::incremental(frame),
     }
 }
 
 /// `--read arbtt=PATH`: each ARBTT `capture.log` under PATH.
-pub const FORMAT: crate::binding::InputFormat = crate::binding::InputFormat {
-    name: "arbtt",
-    specs: || vec![&SPEC],
-    plan: Some(|input, settings| {
-        Ok(crate::binding::per_file(
-            &SPEC,
-            input,
-            settings,
-            true,
-            |p| p.file_name().is_some_and(|n| n == "capture.log"),
-        ))
-    }),
-    source: |_| Ok(Box::new(source())),
-    reader: Some(|b| {
-        Ok(crate::binding::appended(driver(
-            b.input.clone(),
-            b.settings.host.clone(),
-        )))
-    }),
-    capture: None,
-};
+pub const FORMAT: sinex_source_core::binding::InputFormat =
+    sinex_source_core::binding::InputFormat {
+        name: "arbtt",
+        specs: || vec![&SPEC],
+        plan: Some(|input, settings| {
+            Ok(sinex_source_core::binding::per_file(
+                &SPEC,
+                input,
+                settings,
+                true,
+                |p| p.file_name().is_some_and(|n| n == "capture.log"),
+            ))
+        }),
+        source: |_| Ok(Box::new(source())),
+        reader: Some(|b| {
+            Ok(sinex_source_core::binding::appended(driver(
+                b.input.clone(),
+                b.settings.host.clone(),
+            )))
+        }),
+        capture: None,
+    };
 
 #[cfg(test)]
 mod tests;

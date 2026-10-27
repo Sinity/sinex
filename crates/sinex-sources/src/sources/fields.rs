@@ -1,7 +1,7 @@
 //! Reading typed fields out of a JSON record, with errors that name the field.
-use crate::RecordError;
 use serde_json::{Map, Value};
 use sinex_model::Timestamp;
+use sinex_source_core::RecordError;
 
 pub(crate) fn text(row: &Map<String, Value>, name: &str) -> Result<String, RecordError> {
     match row.get(name) {

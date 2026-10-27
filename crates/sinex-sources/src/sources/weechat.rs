@@ -7,11 +7,11 @@
 //! change takes the earlier instant. The prefix says what the line is: a nick
 //! (with a mode prefix such as `@`), ` *` for an action, `-->` for a join,
 //! `<--` for a part or quit, `--` for notices and other client lines.
-use crate::drivers::append_file::AppendFile;
-use crate::registry::{DeclaredSource, Driver, SourceSpec};
-use crate::{Parser, RecordError};
 use sinex_model::event_types::communication::{ChatLineKind, ChatMessage};
 use sinex_model::{Class, Timestamp};
+use sinex_source_core::drivers::append_file::AppendFile;
+use sinex_source_core::registry::{DeclaredSource, Driver, SourceSpec};
+use sinex_source_core::{Parser, RecordError};
 use std::path::PathBuf;
 
 pub const SPEC: SourceSpec = SourceSpec {
@@ -23,7 +23,7 @@ pub const SPEC: SourceSpec = SourceSpec {
     parser: "weechat-log",
     parser_version: 1,
     event_types: &["chat.message"],
-    framer: crate::Framer::incremental(framer),
+    framer: sinex_source_core::Framer::incremental(framer),
 };
 
 /// The buffer a line belongs to is named by its log's folder (or, for a flat
@@ -44,7 +44,7 @@ impl Parser for WeeChatParser {
         &self,
         record: &&[u8],
         carry: &(),
-        context: &crate::RecordContext<'_>,
+        context: &sinex_source_core::RecordContext<'_>,
     ) -> Result<(Vec<ChatMessage>, ()), RecordError> {
         self.line(
             record,
@@ -163,30 +163,31 @@ pub fn driver(path: PathBuf, host: String) -> AppendFile {
 
 /// `--read weechat=PATH`: each WeeChat log under PATH, read in the
 /// binding's zone (WeeChat writes local times), recorded when it is planned.
-pub const FORMAT: crate::binding::InputFormat = crate::binding::InputFormat {
-    name: "weechat",
-    specs: || vec![&SPEC],
-    plan: Some(|input, settings| {
-        Ok(crate::binding::per_file(
-            &SPEC,
-            input,
-            &settings.clone().with_zone()?,
-            true,
-            |p| {
-                p.extension()
-                    .is_some_and(|e| e == "log" || e == "weechatlog")
-            },
-        ))
-    }),
-    source: |b| Ok(Box::new(source(b.settings.zone()?))),
-    reader: Some(|b| {
-        Ok(crate::binding::appended(driver(
-            b.input.clone(),
-            b.settings.host.clone(),
-        )))
-    }),
-    capture: None,
-};
+pub const FORMAT: sinex_source_core::binding::InputFormat =
+    sinex_source_core::binding::InputFormat {
+        name: "weechat",
+        specs: || vec![&SPEC],
+        plan: Some(|input, settings| {
+            Ok(sinex_source_core::binding::per_file(
+                &SPEC,
+                input,
+                &settings.clone().with_zone()?,
+                true,
+                |p| {
+                    p.extension()
+                        .is_some_and(|e| e == "log" || e == "weechatlog")
+                },
+            ))
+        }),
+        source: |b| Ok(Box::new(source(b.settings.zone()?))),
+        reader: Some(|b| {
+            Ok(sinex_source_core::binding::appended(driver(
+                b.input.clone(),
+                b.settings.host.clone(),
+            )))
+        }),
+        capture: None,
+    };
 
 #[cfg(test)]
 mod tests;

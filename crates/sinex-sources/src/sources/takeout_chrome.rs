@@ -2,12 +2,12 @@
 //! `History.json` in older exports), on `ExportArchive`: the elements of its
 //! `Browser History` array. Times are microseconds since the Unix epoch.
 use super::fields;
-use crate::drivers::export_archive::{ExportArchive, Framing, PART_BYTES};
-use crate::registry::{DeclaredSource, Driver, SourceSpec};
-use crate::{Parser, RecordError};
 use serde_json::{Map, Value};
 use sinex_model::Class;
 use sinex_model::event_types::browser::BrowserHistoryEntry;
+use sinex_source_core::drivers::export_archive::{ExportArchive, Framing, PART_BYTES};
+use sinex_source_core::registry::{DeclaredSource, Driver, SourceSpec};
+use sinex_source_core::{Parser, RecordError};
 use std::path::PathBuf;
 
 pub const SPEC: SourceSpec = SourceSpec {
@@ -19,9 +19,9 @@ pub const SPEC: SourceSpec = SourceSpec {
     parser: "takeout-chrome-history",
     parser_version: 1,
     event_types: &["browser.history_entry"],
-    framer: crate::Framer::export(
+    framer: sinex_source_core::Framer::export(
         frame,
-        crate::drivers::export_archive::Framing::JsonArray("/Browser History"),
+        sinex_source_core::drivers::export_archive::Framing::JsonArray("/Browser History"),
     ),
 };
 
@@ -45,7 +45,7 @@ impl Parser for TakeoutChromeParser {
         &self,
         row: &Map<String, Value>,
         _: &(),
-        _context: &crate::RecordContext<'_>,
+        _context: &sinex_source_core::RecordContext<'_>,
     ) -> Result<(Vec<BrowserHistoryEntry>, ()), RecordError> {
         let payload = BrowserHistoryEntry {
             url: fields::text(row, "url")?,
@@ -87,27 +87,28 @@ pub fn driver(path: PathBuf, host: String) -> ExportArchive {
 }
 
 /// `--read takeout-chrome=PATH`: each Takeout Chrome history in PATH.
-pub const FORMAT: crate::binding::InputFormat = crate::binding::InputFormat {
-    name: "takeout-chrome",
-    specs: || vec![&SPEC],
-    plan: Some(|input, settings| {
-        Ok(crate::binding::per_file(
-            &SPEC,
-            input,
-            settings,
-            false,
-            crate::binding::any,
-        ))
-    }),
-    source: |_| Ok(Box::new(source())),
-    reader: Some(|b| {
-        Ok(crate::binding::shared(driver(
-            b.input.clone(),
-            b.settings.host.clone(),
-        )))
-    }),
-    capture: None,
-};
+pub const FORMAT: sinex_source_core::binding::InputFormat =
+    sinex_source_core::binding::InputFormat {
+        name: "takeout-chrome",
+        specs: || vec![&SPEC],
+        plan: Some(|input, settings| {
+            Ok(sinex_source_core::binding::per_file(
+                &SPEC,
+                input,
+                settings,
+                false,
+                sinex_source_core::binding::any,
+            ))
+        }),
+        source: |_| Ok(Box::new(source())),
+        reader: Some(|b| {
+            Ok(sinex_source_core::binding::shared(driver(
+                b.input.clone(),
+                b.settings.host.clone(),
+            )))
+        }),
+        capture: None,
+    };
 
 #[cfg(test)]
 mod tests;

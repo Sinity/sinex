@@ -7,12 +7,12 @@
 //! event records which), and a date is a whole day. `DTSTAMP` is when the
 //! export was written, so it is left out of the event and of the record hash,
 //! or every export would revise every event.
-use crate::drivers::export_archive::{ExportArchive, Framing, PART_BYTES};
-use crate::registry::{DeclaredSource, Driver, SourceSpec};
-use crate::{Parser, RecordContext, RecordError, RecordShape};
 use serde_json::{Map, Value};
 use sinex_model::event_types::account::CalendarEvent;
 use sinex_model::{Class, Timestamp};
+use sinex_source_core::drivers::export_archive::{ExportArchive, Framing, PART_BYTES};
+use sinex_source_core::registry::{DeclaredSource, Driver, SourceSpec};
+use sinex_source_core::{Parser, RecordContext, RecordError, RecordShape};
 use std::path::PathBuf;
 
 pub const SPEC: SourceSpec = SourceSpec {
@@ -24,9 +24,9 @@ pub const SPEC: SourceSpec = SourceSpec {
     parser: "icalendar",
     parser_version: 1,
     event_types: &["calendar.event"],
-    framer: crate::Framer::export(
+    framer: sinex_source_core::Framer::export(
         frame,
-        crate::drivers::export_archive::Framing::Delimited(EVENT),
+        sinex_source_core::drivers::export_archive::Framing::Delimited(EVENT),
     ),
 };
 
@@ -373,27 +373,28 @@ pub fn driver(path: PathBuf, host: String) -> ExportArchive {
 
 /// `--read calendar=PATH`: each calendar export in PATH. Floating times are
 /// read in the binding's zone, recorded when it is planned.
-pub const FORMAT: crate::binding::InputFormat = crate::binding::InputFormat {
-    name: "calendar",
-    specs: || vec![&SPEC],
-    plan: Some(|input, settings| {
-        Ok(crate::binding::per_file(
-            &SPEC,
-            input,
-            &settings.clone().with_zone()?,
-            false,
-            crate::binding::any,
-        ))
-    }),
-    source: |b| Ok(Box::new(source(b.settings.zone()?))),
-    reader: Some(|b| {
-        Ok(crate::binding::shared(driver(
-            b.input.clone(),
-            b.settings.host.clone(),
-        )))
-    }),
-    capture: None,
-};
+pub const FORMAT: sinex_source_core::binding::InputFormat =
+    sinex_source_core::binding::InputFormat {
+        name: "calendar",
+        specs: || vec![&SPEC],
+        plan: Some(|input, settings| {
+            Ok(sinex_source_core::binding::per_file(
+                &SPEC,
+                input,
+                &settings.clone().with_zone()?,
+                false,
+                sinex_source_core::binding::any,
+            ))
+        }),
+        source: |b| Ok(Box::new(source(b.settings.zone()?))),
+        reader: Some(|b| {
+            Ok(sinex_source_core::binding::shared(driver(
+                b.input.clone(),
+                b.settings.host.clone(),
+            )))
+        }),
+        capture: None,
+    };
 
 #[cfg(test)]
 mod tests;

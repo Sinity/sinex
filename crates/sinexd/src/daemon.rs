@@ -67,7 +67,7 @@ pub(crate) async fn run(o: Options) -> Result<(), String> {
     let blobs = Blobs::open(&o.store).map_err(|e| e.to_string())?;
     let tokens =
         api::Tokens::load(&o.api.tokens).map_err(|e| format!("{}: {e}", o.api.tokens.display()))?;
-    let client = sinex_sources::nats::connect(&o.nats, o.nats_password_file.as_deref()).await?;
+    let client = sinex_source_core::nats::connect(&o.nats, o.nats_password_file.as_deref()).await?;
     let js = publisher::context(client.clone());
 
     let (stop_tx, stop) = watch::channel(false);

@@ -8,10 +8,10 @@ pub mod location;
 pub mod purchases;
 pub mod tasks;
 
-use crate::Source;
-use crate::binding::{Binding, InputFormat, Reading, shared};
-use crate::drivers::export_archive::ExportArchive;
-use crate::registry::SourceSpec;
+use sinex_source_core::Source;
+use sinex_source_core::binding::{Binding, InputFormat, Reading, shared};
+use sinex_source_core::drivers::export_archive::ExportArchive;
+use sinex_source_core::registry::SourceSpec;
 use std::path::PathBuf;
 
 /// Each product read from a Takeout archive: its spec, its parser and its
@@ -69,7 +69,8 @@ pub const FORMAT: InputFormat = InputFormat {
     plan: Some(|input, settings| {
         let zoned = settings.clone().with_zone()?;
         let mut out = Vec::new();
-        for file in crate::binding::files(input, false, crate::binding::any) {
+        for file in sinex_source_core::binding::files(input, false, sinex_source_core::binding::any)
+        {
             out.push(Binding::of(&super::calendar::SPEC, &file, zoned.clone()));
             out.extend(
                 PRODUCTS

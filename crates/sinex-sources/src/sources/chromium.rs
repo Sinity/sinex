@@ -9,13 +9,13 @@
 //! both are newer readings of the same key. Times are microseconds since
 //! 1601-01-01; 0 means "none".
 use super::fields;
-use crate::drain::RecordContext;
-use crate::drivers::sqlite_rows::SqliteRows;
-use crate::registry::{DeclaredSource, Driver, SourceSpec};
-use crate::{Parser, RecordError};
 use serde_json::{Map, Value};
 use sinex_model::Class;
 use sinex_model::event_types::browser::{BrowserUrl, BrowserVisit};
+use sinex_source_core::drain::RecordContext;
+use sinex_source_core::drivers::sqlite_rows::SqliteRows;
+use sinex_source_core::registry::{DeclaredSource, Driver, SourceSpec};
+use sinex_source_core::{Parser, RecordError};
 use std::path::{Path, PathBuf};
 
 pub const VISITS: SourceSpec = SourceSpec {
@@ -27,7 +27,7 @@ pub const VISITS: SourceSpec = SourceSpec {
     parser: "chromium-visits",
     parser_version: 1,
     event_types: &["browser.visit"],
-    framer: crate::Framer::incremental(crate::drivers::append_file::lines),
+    framer: sinex_source_core::Framer::incremental(sinex_source_core::drivers::append_file::lines),
 };
 
 pub const URLS: SourceSpec = SourceSpec {
@@ -39,7 +39,7 @@ pub const URLS: SourceSpec = SourceSpec {
     parser: "chromium-urls",
     parser_version: 1,
     event_types: &["browser.url"],
-    framer: crate::Framer::incremental(crate::drivers::append_file::lines),
+    framer: sinex_source_core::Framer::incremental(sinex_source_core::drivers::append_file::lines),
 };
 
 /// The profile a `History` path belongs to: `<browser dir>/<profile dir>`.
@@ -236,36 +236,40 @@ fn profiles(user_data: &Path) -> Vec<(String, PathBuf)> {
 
 /// `--read chromium=PATH`: every profile under a browser's user-data
 /// directory, its visits and its URLs each a binding.
-pub const FORMAT: crate::binding::InputFormat = crate::binding::InputFormat {
-    name: "chromium",
-    specs: || vec![&VISITS, &URLS],
-    plan: Some(|input, settings| {
-        Ok(profiles(input)
-            .into_iter()
-            .flat_map(|(profile, history)| {
-                [&VISITS, &URLS].map(|spec| {
-                    crate::binding::Binding::of(spec, &history, settings.clone()).named(&profile)
+pub const FORMAT: sinex_source_core::binding::InputFormat =
+    sinex_source_core::binding::InputFormat {
+        name: "chromium",
+        specs: || vec![&VISITS, &URLS],
+        plan: Some(|input, settings| {
+            Ok(profiles(input)
+                .into_iter()
+                .flat_map(|(profile, history)| {
+                    [&VISITS, &URLS].map(|spec| {
+                        sinex_source_core::binding::Binding::of(spec, &history, settings.clone())
+                            .named(&profile)
+                    })
                 })
-            })
-            .collect())
-    }),
-    source: |b| {
-        if b.source == VISITS.name {
-            Ok(Box::new(visits()))
-        } else {
-            Ok(Box::new(urls()))
-        }
-    },
-    reader: Some(|b| {
-        let (input, host) = (b.input.clone(), b.settings.host.clone());
-        Ok(crate::binding::rows(if b.source == VISITS.name {
-            visits_driver(input, host)
-        } else {
-            urls_driver(input, host)
-        }))
-    }),
-    capture: None,
-};
+                .collect())
+        }),
+        source: |b| {
+            if b.source == VISITS.name {
+                Ok(Box::new(visits()))
+            } else {
+                Ok(Box::new(urls()))
+            }
+        },
+        reader: Some(|b| {
+            let (input, host) = (b.input.clone(), b.settings.host.clone());
+            Ok(sinex_source_core::binding::rows(
+                if b.source == VISITS.name {
+                    visits_driver(input, host)
+                } else {
+                    urls_driver(input, host)
+                },
+            ))
+        }),
+        capture: None,
+    };
 
 #[cfg(test)]
 mod tests;

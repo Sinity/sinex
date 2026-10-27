@@ -7,14 +7,14 @@
 //! interface to match on, so a shown notification records the id it replaces
 //! but not its own; closing and actions are recorded by id.
 use super::dbus::{self, Message};
-use crate::drivers::live_stream::{self, LiveStream};
-use crate::registry::{DeclaredSource, Driver, SourceSpec};
-use crate::{Parser, RecordError};
 use serde_json::{Map, Value};
 use sinex_model::Class;
 use sinex_model::event_types::session::{
     NotificationAction, NotificationClosed, NotificationShown,
 };
+use sinex_source_core::drivers::live_stream::{self, LiveStream};
+use sinex_source_core::registry::{DeclaredSource, Driver, SourceSpec};
+use sinex_source_core::{Parser, RecordError};
 use std::path::{Path, PathBuf};
 
 pub const SPEC: SourceSpec = SourceSpec {
@@ -31,7 +31,7 @@ pub const SPEC: SourceSpec = SourceSpec {
         "notification.closed",
         "notification.action",
     ],
-    framer: crate::Framer::incremental(crate::drivers::append_file::lines),
+    framer: sinex_source_core::Framer::incremental(sinex_source_core::drivers::append_file::lines),
 };
 
 /// The match rules capture monitors.
@@ -80,7 +80,7 @@ impl Parser for NotificationsParser {
         &self,
         record: &Map<String, Value>,
         _: &(),
-        _context: &crate::RecordContext<'_>,
+        _context: &sinex_source_core::RecordContext<'_>,
     ) -> Result<(Vec<Notification>, ()), RecordError> {
         let (received_at, bytes) = live_stream::received(record).map_err(RecordError::new)?;
         let m = Message::parse(&bytes).map_err(RecordError::new)?;
@@ -150,25 +150,31 @@ pub fn driver(spool: PathBuf, host: String) -> LiveStream {
     dbus::driver(spool, host, "dbus:session:org.freedesktop.Notifications")
 }
 
-pub fn capture(spool: &Path, stop: &crate::capture::CaptureStop) -> std::io::Result<u64> {
+pub fn capture(
+    spool: &Path,
+    stop: &sinex_source_core::capture::CaptureStop,
+) -> std::io::Result<u64> {
     dbus::capture(MATCHES, &[], spool, stop)
 }
 
 /// `--read notifications=SPOOL`: desktop notifications on the session
 /// bus, captured into SPOOL.
-pub const FORMAT: crate::binding::InputFormat = crate::binding::InputFormat {
-    name: "notifications",
-    specs: || vec![&SPEC],
-    plan: Some(|spool, settings| Ok(crate::binding::single(&SPEC, spool, settings))),
-    source: |_| Ok(Box::new(source())),
-    reader: Some(|b| {
-        Ok(crate::binding::stateless(driver(
-            b.input.clone(),
-            b.settings.host.clone(),
-        )))
-    }),
-    capture: Some(|b, stop| capture(&b.input, stop).map_err(|e| e.to_string())),
-};
+pub const FORMAT: sinex_source_core::binding::InputFormat =
+    sinex_source_core::binding::InputFormat {
+        name: "notifications",
+        specs: || vec![&SPEC],
+        plan: Some(|spool, settings| {
+            Ok(sinex_source_core::binding::single(&SPEC, spool, settings))
+        }),
+        source: |_| Ok(Box::new(source())),
+        reader: Some(|b| {
+            Ok(sinex_source_core::binding::stateless(driver(
+                b.input.clone(),
+                b.settings.host.clone(),
+            )))
+        }),
+        capture: Some(|b, stop| capture(&b.input, stop).map_err(|e| e.to_string())),
+    };
 
 #[cfg(test)]
 mod tests;

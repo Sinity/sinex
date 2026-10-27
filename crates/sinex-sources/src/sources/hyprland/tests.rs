@@ -1,6 +1,6 @@
 use super::*;
-use crate::{DrainInput, Limits, Source};
 use sinex_model::{MaterialId, ReadingOrder, RecordOutcome};
+use sinex_source_core::{DrainInput, Limits, Source};
 
 fn rec(line: &str, ns: i128) -> Map<String, Value> {
     serde_json::from_slice(&live_stream::frame(
@@ -18,7 +18,7 @@ fn parse_all(lines: &[&str]) -> Vec<Desktop> {
             .parse(
                 &rec(line, 1_000_000_000 + i as i128),
                 &carry,
-                &crate::RecordContext::none(),
+                &sinex_source_core::RecordContext::none(),
             )
             .unwrap();
         out.extend(events);
@@ -120,7 +120,7 @@ fn spooled_capture_drains_to_typed_events() {
             source: SPEC.name,
             class: SPEC.class,
             material: MaterialId::new(),
-            bytes: m.body().into(),
+            bytes: crate::test_support::body(&m).into(),
             records: &m.records,
             carry: Value::Null,
             reading_order: &|a| ReadingOrder(a as i64),

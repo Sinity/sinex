@@ -12,17 +12,17 @@ mod commit_reader;
 mod crawl;
 mod daemon;
 mod derivation_runner;
+mod diagnostics;
 mod dirty_keys;
 mod excision;
 mod ingress;
 mod library;
-mod material_sink;
 mod publisher;
 mod reader_context;
 mod replay;
 mod requests;
 mod screen_text;
-mod sealed_access;
+mod sealing;
 mod stored;
 mod writer;
 
@@ -274,7 +274,7 @@ async fn publish(
     let mut conn = sqlx::PgConnection::connect(database)
         .await
         .map_err(|e| format!("database: {e}"))?;
-    let client = sinex_sources::nats::connect(nats, nats_password_file).await?;
+    let client = sinex_source_core::nats::connect(nats, nats_password_file).await?;
     let js = publisher::context(client);
     let report =
         publisher::publish_all(&mut conn, &js, &sinex_protocol::Subjects::new(subject_root))

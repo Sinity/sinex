@@ -6,6 +6,11 @@ use std::path::PathBuf;
 
 #[derive(Subcommand)]
 pub(crate) enum Admin {
+    /// Read-only checks that work without a running daemon.
+    Diagnostics {
+        #[command(subcommand)]
+        command: crate::diagnostics::Command,
+    },
     /// Create the schema in an empty database, or confirm it is current.
     Schema {
         #[arg(long)]
@@ -48,6 +53,7 @@ pub(crate) enum Admin {
 
 pub(crate) async fn run(command: Admin) -> Result<(), String> {
     match command {
+        Admin::Diagnostics { command } => crate::diagnostics::run(command).await,
         Admin::Table(args) => admin_table(args).await,
         Admin::Schema { database } => sinex_schema::apply_url(&database)
             .await

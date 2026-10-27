@@ -10,14 +10,14 @@
 //! `scrollback` lines carry a window's new scrollback lines and become
 //! `scrollback.captured`, the type the lake's snapshots have; its other
 //! lines are `terminal.reported`, a `cmd_end` with the command's output.
-use crate::drivers::live_stream::{self, LiveStream, Rotation, SpoolWriter};
-use crate::registry::{DeclaredSource, Driver, SourceSpec};
 use crate::sources::terminal_text::strip_escapes;
-use crate::{Parser, RecordError};
 use serde_json::{Map, Value};
 use sinex_model::event_types::machine::ScrollbackCaptured;
 use sinex_model::event_types::session::{EditorReport, TerminalReport};
 use sinex_model::{Class, InputRef, Timestamp};
+use sinex_source_core::drivers::live_stream::{self, LiveStream, Rotation, SpoolWriter};
+use sinex_source_core::registry::{DeclaredSource, Driver, SourceSpec};
+use sinex_source_core::{Parser, RecordError};
 use std::io::{BufRead, BufReader};
 use std::net::Shutdown;
 use std::os::unix::net::{UnixListener, UnixStream};
@@ -39,7 +39,7 @@ pub const SPEC: SourceSpec = SourceSpec {
         "terminal.reported",
         "scrollback.captured",
     ],
-    framer: crate::Framer::incremental(crate::drivers::append_file::lines),
+    framer: sinex_source_core::Framer::incremental(sinex_source_core::drivers::append_file::lines),
 };
 
 sinex_model::payload_enum! {
@@ -67,13 +67,17 @@ pub fn default_path() -> Option<PathBuf> {
 /// `seconds` pass (forever otherwise). Stopping closes reception on accepted
 /// connections and drains their queued bytes before returning the lines captured.
 pub fn capture(socket: &Path, spool: &Path, seconds: Option<Duration>) -> std::io::Result<u64> {
-    capture_until(socket, spool, &crate::capture::CaptureStop::new(seconds))
+    capture_until(
+        socket,
+        spool,
+        &sinex_source_core::capture::CaptureStop::new(seconds),
+    )
 }
 
 fn capture_until(
     socket: &Path,
     spool: &Path,
-    stop: &crate::capture::CaptureStop,
+    stop: &sinex_source_core::capture::CaptureStop,
 ) -> std::io::Result<u64> {
     if let Some(dir) = socket.parent() {
         std::fs::create_dir_all(dir)?;
@@ -257,7 +261,7 @@ impl Parser for SessionSocketParser {
         &self,
         record: &Map<String, Value>,
         _: &(),
-        _context: &crate::RecordContext<'_>,
+        _context: &sinex_source_core::RecordContext<'_>,
     ) -> Result<(Vec<Produced>, ()), RecordError> {
         let (received_at, bytes) = live_stream::received(record).map_err(RecordError::new)?;
         let mut m: Map<String, Value> = serde_json::from_slice(&bytes)
@@ -343,27 +347,30 @@ pub fn source() -> DeclaredSource<SessionSocketParser> {
 /// `--read integration-socket=SPOOL`: lines the editor and terminal
 /// integrations write to the integration socket (the `socket` option, or the default path),
 /// captured into SPOOL.
-pub const FORMAT: crate::binding::InputFormat = crate::binding::InputFormat {
-    name: "integration-socket",
-    specs: || vec![&SPEC],
-    plan: Some(|spool, settings| Ok(crate::binding::single(&SPEC, spool, settings))),
-    source: |_| Ok(Box::new(source())),
-    reader: Some(|b| {
-        Ok(crate::binding::stateless(driver(
-            b.input.clone(),
-            b.settings.host.clone(),
-        )))
-    }),
-    capture: Some(|b, stop| {
-        let socket = b
-            .settings
-            .option("socket")
-            .map(PathBuf::from)
-            .or_else(default_path)
-            .ok_or("no integration socket path (XDG_RUNTIME_DIR unset)")?;
-        capture_until(&socket, &b.input, stop).map_err(|e| e.to_string())
-    }),
-};
+pub const FORMAT: sinex_source_core::binding::InputFormat =
+    sinex_source_core::binding::InputFormat {
+        name: "integration-socket",
+        specs: || vec![&SPEC],
+        plan: Some(|spool, settings| {
+            Ok(sinex_source_core::binding::single(&SPEC, spool, settings))
+        }),
+        source: |_| Ok(Box::new(source())),
+        reader: Some(|b| {
+            Ok(sinex_source_core::binding::stateless(driver(
+                b.input.clone(),
+                b.settings.host.clone(),
+            )))
+        }),
+        capture: Some(|b, stop| {
+            let socket = b
+                .settings
+                .option("socket")
+                .map(PathBuf::from)
+                .or_else(default_path)
+                .ok_or("no integration socket path (XDG_RUNTIME_DIR unset)")?;
+            capture_until(&socket, &b.input, stop).map_err(|e| e.to_string())
+        }),
+    };
 
 #[cfg(test)]
 mod tests;

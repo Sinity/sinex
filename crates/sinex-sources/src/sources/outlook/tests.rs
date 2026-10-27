@@ -10,13 +10,21 @@ fn csv_rows_are_windows_1250_with_polish_headers() {
         "\"Temat\",\"Treść\",\"Od: (imię/nazwisko)\",\"Od: (adres)\",\"Od: (rodzaj)\",\"Do: (imię/nazwisko)\",\"Do: (adres)\",\"Do: (rodzaj)\",\"DW: (imię/nazwisko)\",\"DW: (adres)\",\"DW: (rodzaj)\",\"Kategorie\"\n",
     );
     let (_, h) = CsvParser
-        .parse(&header.as_slice(), &vec![], &crate::RecordContext::none())
+        .parse(
+            &header.as_slice(),
+            &vec![],
+            &sinex_source_core::RecordContext::none(),
+        )
         .unwrap();
     let row = cp1250(
         "\"Studia, umowa\",\"Zażółć\nlinia\",\"Jan Kowalski\",\"jan@x.pl\",\"SMTP\",\"Anna\",\"anna@y.pl\",\"SMTP\",\"\",\"\",\"\",\"Praca\"\n",
     );
     let (out, _) = CsvParser
-        .parse(&row.as_slice(), &h, &crate::RecordContext::none())
+        .parse(
+            &row.as_slice(),
+            &h,
+            &sinex_source_core::RecordContext::none(),
+        )
         .unwrap();
     let m = &out[0];
     assert_eq!(m.subject.as_deref(), Some("Studia, umowa"));
@@ -28,7 +36,11 @@ fn csv_rows_are_windows_1250_with_polish_headers() {
     assert!(m.message_id.starts_with("blake3:"));
     assert!(
         CsvParser
-            .parse(&row.as_slice(), &vec![], &crate::RecordContext::none())
+            .parse(
+                &row.as_slice(),
+                &vec![],
+                &sinex_source_core::RecordContext::none()
+            )
             .is_err()
     );
 }

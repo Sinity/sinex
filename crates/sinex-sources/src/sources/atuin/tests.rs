@@ -13,11 +13,11 @@ fn row(duration: i64, exit: i64) -> Map<String, Value> {
 #[devkit::test]
 fn running_commands_have_unknown_duration_and_exit() {
     let (p, ()) = AtuinParser
-        .parse(&row(-1, -1), &(), &crate::RecordContext::none())
+        .parse(&row(-1, -1), &(), &sinex_source_core::RecordContext::none())
         .unwrap();
     assert_eq!((p[0].duration_ns, p[0].exit_code), (None, None));
     let (p, ()) = AtuinParser
-        .parse(&row(5, -9), &(), &crate::RecordContext::none())
+        .parse(&row(5, -9), &(), &sinex_source_core::RecordContext::none())
         .unwrap();
     assert_eq!(
         (p[0].duration_ns, p[0].exit_code),
@@ -31,7 +31,7 @@ fn unknown_columns_are_kept_and_deletion_is_removal() {
     let mut r = row(5, 0);
     r.insert("deleted_at".into(), json!(1_743_722_300_000_000_000i64));
     let (p, ()) = AtuinParser
-        .parse(&r, &(), &crate::RecordContext::none())
+        .parse(&r, &(), &sinex_source_core::RecordContext::none())
         .unwrap();
     assert_eq!(p[0].extra.get("future_column"), Some(&json!(3)));
     assert!(p[0].deleted_at.is_some());
@@ -47,7 +47,7 @@ fn wrong_types_fail_the_record() {
     r.insert("command".into(), json!(7));
     assert!(
         AtuinParser
-            .parse(&r, &(), &crate::RecordContext::none())
+            .parse(&r, &(), &sinex_source_core::RecordContext::none())
             .is_err()
     );
 }

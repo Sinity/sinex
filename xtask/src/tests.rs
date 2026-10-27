@@ -71,3 +71,29 @@ fn compile_requires_and_preserves_explicit_selection() {
     };
     assert_eq!(args, ["-p", "sinex-model", "--tests"]);
 }
+
+#[devkit::test]
+fn compile_prepares_a_database_only_for_packages_with_checked_queries() {
+    for args in [
+        vec!["-p", "sinexctl"],
+        vec!["--package=sinex-session", "--tests"],
+        vec!["-psinex-capture"],
+        vec!["-p", "sinex-schema", "-p", "sinex-model"],
+    ] {
+        assert!(database_free(
+            &args.into_iter().map(String::from).collect::<Vec<_>>()
+        ));
+    }
+    for args in [
+        vec![],
+        vec!["--workspace"],
+        vec!["-p", "sinex-store"],
+        vec!["-p", "sinexctl", "--workspace"],
+        vec!["-p", "sinexctl", "-p", "sinexd"],
+        vec!["-p"],
+    ] {
+        assert!(!database_free(
+            &args.into_iter().map(String::from).collect::<Vec<_>>()
+        ));
+    }
+}

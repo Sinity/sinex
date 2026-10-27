@@ -2,7 +2,7 @@
 //! on the allow list and that have not been fetched yet. The allow list is the
 //! opt-in: nothing is fetched without one.
 use crate::backfill::{Totals, drive};
-use crate::material_sink::Sink;
+use crate::sealing::Sink;
 use crate::writer::WriterHandle;
 use sinex_sources::sources::page_crawl::{self, Crawl};
 use sinex_store::Blobs;
@@ -82,7 +82,7 @@ pub(crate) async fn run(
         .await
         .map_err(|e| e.to_string())?;
     let mut crawl =
-        sinex_sources::binding::Stateless(Crawl::new(todo, allow, pause, host.to_owned()));
+        sinex_source_core::binding::Stateless(Crawl::new(todo, allow, pause, host.to_owned()));
     let source = page_crawl::source();
     let sink = Sink(blobs.clone());
     // Each crawl is its own list, so its binding starts from the beginning.
@@ -91,7 +91,7 @@ pub(crate) async fn run(
         read_conn,
         &sinex_store::bindings::Stored {
             binding: binding.clone(),
-            source: sinex_sources::Source::spec(&source).name.into(),
+            source: sinex_source_core::Source::spec(&source).name.into(),
             input: "page-crawl".into(),
             settings: serde_json::json!({"host":host}),
         },

@@ -5,12 +5,20 @@ const HEADER: &[u8] = b"Id,Tz,From,To,Sched,Hours,Rating,Comment,Framerate,Snore
 #[devkit::test]
 fn derives_the_offset_from_from_and_id_and_drops_sentinels() {
     let (_, header) = SleepParser
-        .parse(&HEADER, &Carry::default(), &crate::RecordContext::none())
+        .parse(
+            &HEADER,
+            &Carry::default(),
+            &sinex_source_core::RecordContext::none(),
+        )
         .unwrap();
     // 2025-10-05 02:49 UTC, written as 04:49 local: +2 h, whatever Tz says.
     let row = b"\"1759632540000\",\"GMT-02:00\",\"05. 10. 2025 4:49\",\"05. 10. 2025 6:53\",\"05. 10. 2025 6:53\",\"2.070\",\"0.0\",\" #cloud\",\"10008\",\"-1\",\"-1.0\",\"3\",\"0.48\",\"-40\",\"\",\"LIGHT_START-1759632540000\",\"HR-1759632900000-88.0\"\n";
     let (out, _) = SleepParser
-        .parse(&&row[..], &header, &crate::RecordContext::none())
+        .parse(
+            &&row[..],
+            &header,
+            &sinex_source_core::RecordContext::none(),
+        )
         .unwrap();
     let r = &out[0];
     assert_eq!(r.offset_minutes, Some(120));
@@ -42,7 +50,7 @@ fn a_row_without_its_header_is_an_error() {
             .parse(
                 &&b"\"1\",\"x\"\n"[..],
                 &Carry::default(),
-                &crate::RecordContext::none()
+                &sinex_source_core::RecordContext::none()
             )
             .is_err()
     );
@@ -51,15 +59,27 @@ fn a_row_without_its_header_is_an_error() {
 #[devkit::test]
 fn a_noise_row_belongs_to_the_session_before_it() {
     let (_, header) = SleepParser
-        .parse(&HEADER, &Carry::default(), &crate::RecordContext::none())
+        .parse(
+            &HEADER,
+            &Carry::default(),
+            &sinex_source_core::RecordContext::none(),
+        )
         .unwrap();
     let row = b"\"1759632540000\",\"GMT-02:00\",\"05. 10. 2025 4:49\",\"05. 10. 2025 6:53\",\"05. 10. 2025 6:53\",\"2.070\",\"0.0\",\"\",\"10008\",\"-1\",\"-1.0\",\"3\",\"0.48\",\"-40\",\"\",\"\",\"\"\n";
     let (_, after) = SleepParser
-        .parse(&&row[..], &header, &crate::RecordContext::none())
+        .parse(
+            &&row[..],
+            &header,
+            &sinex_source_core::RecordContext::none(),
+        )
         .unwrap();
     let noise = b",,,,,,,,,,,,,\"20643.4\",\"287.5\"\n";
     let (out, after) = SleepParser
-        .parse(&&noise[..], &after, &crate::RecordContext::none())
+        .parse(
+            &&noise[..],
+            &after,
+            &sinex_source_core::RecordContext::none(),
+        )
         .unwrap();
     assert_eq!(out[0].category(), "sleep-noise");
     assert_eq!(out[0].native_id, "1759632540000:noise");
@@ -69,7 +89,11 @@ fn a_noise_row_belongs_to_the_session_before_it() {
     );
     assert!(
         SleepParser
-            .parse(&&noise[..], &after, &crate::RecordContext::none())
+            .parse(
+                &&noise[..],
+                &after,
+                &sinex_source_core::RecordContext::none()
+            )
             .is_err(),
         "only one per session"
     );

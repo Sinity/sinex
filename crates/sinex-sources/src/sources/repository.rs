@@ -4,14 +4,14 @@
 //! previous poll saw, so only commits reachable for the first time are read.
 //! A commit is immutable and named by its ID, so reading it again (a ref moved
 //! back, a branch recreated) is a repeat.
-use crate::drivers::DriverError;
-use crate::drivers::api_cursor::{Api, ApiCursor, Page};
-use crate::registry::{DeclaredSource, Driver, SourceSpec};
-use crate::{Parser, RecordError};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 use sinex_model::event_types::code::GitCommit;
 use sinex_model::{Class, InputRef, Timestamp};
+use sinex_source_core::drivers::DriverError;
+use sinex_source_core::drivers::api_cursor::{Api, ApiCursor, Page};
+use sinex_source_core::registry::{DeclaredSource, Driver, SourceSpec};
+use sinex_source_core::{Parser, RecordError};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 
@@ -24,7 +24,7 @@ pub const SPEC: SourceSpec = SourceSpec {
     parser: "git-commits",
     parser_version: 1,
     event_types: &["git.commit"],
-    framer: crate::Framer::incremental(crate::drivers::append_file::lines),
+    framer: sinex_source_core::Framer::incremental(sinex_source_core::drivers::append_file::lines),
 };
 
 pub struct GitParser;
@@ -38,7 +38,7 @@ impl Parser for GitParser {
         &self,
         record: &Map<String, Value>,
         _: &(),
-        _context: &crate::RecordContext<'_>,
+        _context: &sinex_source_core::RecordContext<'_>,
     ) -> Result<(Vec<GitCommit>, ()), RecordError> {
         let commit: GitCommit = serde_json::from_value(Value::Object(record.clone()))
             .map_err(|e| RecordError::new(format!("not a commit record: {e}")))?;
@@ -169,19 +169,22 @@ pub fn driver(path: PathBuf, host: String) -> ApiCursor<Repository> {
 }
 
 /// `--read repository=PATH`: a local repository's commits.
-pub const FORMAT: crate::binding::InputFormat = crate::binding::InputFormat {
-    name: "repository",
-    specs: || vec![&SPEC],
-    plan: Some(|input, settings| Ok(crate::binding::single(&SPEC, input, settings))),
-    source: |_| Ok(Box::new(source())),
-    reader: Some(|b| {
-        Ok(crate::binding::stateless(driver(
-            b.input.clone(),
-            b.settings.host.clone(),
-        )))
-    }),
-    capture: None,
-};
+pub const FORMAT: sinex_source_core::binding::InputFormat =
+    sinex_source_core::binding::InputFormat {
+        name: "repository",
+        specs: || vec![&SPEC],
+        plan: Some(|input, settings| {
+            Ok(sinex_source_core::binding::single(&SPEC, input, settings))
+        }),
+        source: |_| Ok(Box::new(source())),
+        reader: Some(|b| {
+            Ok(sinex_source_core::binding::stateless(driver(
+                b.input.clone(),
+                b.settings.host.clone(),
+            )))
+        }),
+        capture: None,
+    };
 
 #[cfg(test)]
 mod tests;

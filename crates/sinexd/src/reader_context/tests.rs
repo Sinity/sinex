@@ -1,14 +1,15 @@
 use super::*;
-use crate::material_sink::Sink;
+use crate::sealing::Sink;
 use serde_json::Value;
-use sinex_sources::{Limits, drivers};
+use sinex_source_core::{Limits, drivers};
 
 #[devkit::test]
 async fn staged_directory_resumes_from_actual_admitted_cursor_with_original_bytes(
     db: devkit::pg::TestDatabase,
 ) {
     use sinex_model::{BatchKind, RunId};
-    use sinex_sources::{binding, sources::notes};
+    use sinex_source_core::binding;
+    use sinex_sources::sources::notes;
     let url = db.url(None);
     let dir = std::env::temp_dir().join(format!("sinex-directory-{}", uuid::Uuid::now_v7()));
     std::fs::create_dir(&dir).unwrap();

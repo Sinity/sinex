@@ -3,7 +3,7 @@
 use crate::writer::{Priority, WriterHandle};
 use serde_json::Value;
 use sinex_model::{Class, MaterialId, RunId};
-use sinex_sources::{Limits, Source, drivers};
+use sinex_source_core::{Limits, Source, drivers};
 use sinex_store::{Blobs, Outcome, bindings};
 use sqlx::PgConnection;
 use std::sync::Arc;
@@ -81,7 +81,7 @@ fn prepare(
         RunId::new(),
         acquired,
         Value::Null,
-        &crate::material_sink::Sink(blobs.clone()),
+        &crate::sealing::Sink(blobs.clone()),
         Limits {
             max_events: usize::MAX,
             max_bytes: usize::MAX,

@@ -18,7 +18,8 @@ use sinex_model::{
     ArchiveRequest, Batch, BatchKind, MaterialId, OperationId, RecordOutcome, ReplayScope, RunId,
     Timestamp,
 };
-use sinex_sources::{DrainInput, Limits, Source, drivers, sources};
+use sinex_source_core::{DrainInput, Limits, Source, drivers};
+use sinex_sources::sources;
 use sinex_store::Blobs;
 use sinex_store::bindings;
 use sinex_store::replay::{self, Change, Diff, Stored};
@@ -128,7 +129,7 @@ pub(crate) struct Options {
     pub compare: bool,
     pub resume: Option<OperationId>,
     pub actor: String,
-    pub unlock: Option<crate::sealed_access::Unlock>,
+    pub unlock: Option<crate::sealing::Unlock>,
 }
 
 /// Replay with its parts: a read connection, the content store and the writer
@@ -190,22 +191,18 @@ pub(crate) async fn run(
         }
         let sequence: Vec<Stored> = sequence[..=last].iter().map(|m| (*m).clone()).collect();
         let parsers = sources_of(read_conn, &sequence).await?;
-        let mut keys = HashMap::new();
-        for material in &sequence {
-            if material.manifest.role == sinex_model::MaterialRole::OriginalArchive {
-                continue;
-            }
-            if blobs.is_sealed(&material.blob).map_err(|e| e.to_string())? {
-                let unlock = o.unlock.as_ref().ok_or_else(|| {
-                    format!(
-                        "material {}: sealed replay needs an operator unlock and --sealed",
-                        material.id
-                    )
-                })?;
-                let key = unlock.data_key(read_conn, MaterialId(material.id)).await?;
-                keys.insert(material.id, key);
-            }
-        }
+        let keys = crate::sealing::replay_keys(
+            read_conn,
+            blobs,
+            sequence
+                .iter()
+                .filter(|material| {
+                    material.manifest.role != sinex_model::MaterialRole::OriginalArchive
+                })
+                .map(|material| (material.id, material.blob.as_str())),
+            o.unlock.as_ref(),
+        )
+        .await?;
         let unlock = o.unlock.clone();
         // The sequence is read on a blocking thread while the writer admits its
         // batches as they come, a few at a time.
@@ -266,7 +263,7 @@ async fn sources_of(
     sequence: &[Stored],
 ) -> Result<Vec<Box<dyn Source>>, String> {
     let mut out = Vec::with_capacity(sequence.len());
-    let mut bound: HashMap<String, sinex_sources::Binding> = HashMap::new();
+    let mut bound: HashMap<String, sinex_source_core::Binding> = HashMap::new();
     for m in sequence {
         let stored_binding = match &m.binding {
             Some(name) if !bound.contains_key(name) => {
@@ -274,7 +271,7 @@ async fn sources_of(
                     .await
                     .map_err(|e| e.to_string())?;
                 if let Some(s) = found {
-                    let b = sinex_sources::Binding {
+                    let b = sinex_source_core::Binding {
                         name: s.binding,
                         source: s.source,
                         parser: m.parser.clone(),
@@ -291,7 +288,7 @@ async fn sources_of(
         };
         // The material names the parser it was read with.
         let binding = match stored_binding {
-            Some(b) => sinex_sources::Binding {
+            Some(b) => sinex_source_core::Binding {
                 parser: m.parser.clone(),
                 ..b
             },
@@ -358,8 +355,8 @@ fn read_sequence(
     scope: &Scope,
     operation: OperationId,
     out: &tokio::sync::mpsc::Sender<Result<Batch, String>>,
-    keys: &HashMap<Uuid, sinex_store::sealed::DataKey>,
-    unlock: Option<&crate::sealed_access::Unlock>,
+    keys: &HashMap<Uuid, sinex_sealing::DataKey>,
+    unlock: Option<&crate::sealing::Unlock>,
 ) -> Read {
     let mut read = Read::default();
     if let Err(error) = read_sequence_into(
@@ -381,8 +378,8 @@ fn read_sequence_into(
     operation: OperationId,
     out: &tokio::sync::mpsc::Sender<Result<Batch, String>>,
     report: &mut Read,
-    keys: &HashMap<Uuid, sinex_store::sealed::DataKey>,
-    unlock: Option<&crate::sealed_access::Unlock>,
+    keys: &HashMap<Uuid, sinex_sealing::DataKey>,
+    unlock: Option<&crate::sealing::Unlock>,
 ) -> Result<(), String> {
     let send = |batch: Batch| {
         if let Some(unlock) = unlock {
@@ -440,7 +437,7 @@ fn read_sequence_into(
             manifest: m.manifest.clone(),
         };
         let sender = out.clone();
-        let stored = crate::stored::open_checked(
+        let stored = crate::sealing::open_checked(
             blobs,
             reference,
             key.cloned(),
@@ -467,7 +464,7 @@ fn read_sequence_into(
                 source: source.spec().name,
                 class: source.spec().class,
                 material: MaterialId(m.id),
-                bytes: sinex_sources::drain::RecordBytes::Reader(&*stored),
+                bytes: sinex_source_core::drain::RecordBytes::Reader(&*stored),
                 records: &records,
                 carry: carry.clone(),
                 reading_order: &*order,
@@ -507,24 +504,7 @@ fn read_sequence_into(
             if records.is_empty() {
                 continue;
             }
-            if let Some(key) = key {
-                for record in &mut records {
-                    match record {
-                        RecordOutcome::Events { events, .. } => {
-                            for event in events {
-                                sinex_store::sealed::seal_event(event, key)
-                                    .map_err(|e| e.to_string())?;
-                            }
-                        }
-                        RecordOutcome::Failure { reason, .. } => {
-                            *reason =
-                                sinex_store::sealed::seal_value(&Value::String(reason.clone()), key)
-                                    .map_err(|e| e.to_string())?
-                                    .to_string()
-                        }
-                    }
-                }
-            }
+            crate::sealing::seal_records(&mut records, key)?;
             send(Batch {
                 run: RunId::new(),
                 kind: BatchKind::Replay { operation },

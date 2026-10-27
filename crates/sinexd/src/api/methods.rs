@@ -36,8 +36,8 @@ pub(crate) struct Api {
 /// An unlock session: the operator's identity until it expires, and the data
 /// keys it has unwrapped.
 pub(crate) struct Unlocked {
-    unlock: crate::sealed_access::Unlock,
-    keys: std::collections::HashMap<String, age::secrecy::zeroize::Zeroizing<[u8; 32]>>,
+    unlock: crate::sealing::Unlock,
+    keys: std::collections::HashMap<String, sinex_sealing::Zeroizing<[u8; 32]>>,
 }
 
 impl Drop for Unlocked {
@@ -88,13 +88,13 @@ fn data(result: Value) -> Reply {
 }
 
 fn collect_sealed(value: &Value, out: &mut Vec<String>) {
-    if let Some(r) = sinex_store::sealed::key_ref(value) {
+    if let Some(r) = sinex_sealing::key_ref(value) {
         out.push(r.to_string());
         return;
     }
     match value {
         Value::String(text) => {
-            if let Some(value) = sinex_store::sealed::sealed_text(text) {
+            if let Some(value) = sinex_sealing::sealed_text(text) {
                 collect_sealed(&value, out);
             }
         }
@@ -106,11 +106,11 @@ fn collect_sealed(value: &Value, out: &mut Vec<String>) {
 
 fn unseal_in(
     value: &mut Value,
-    keys: &std::collections::HashMap<String, age::secrecy::zeroize::Zeroizing<[u8; 32]>>,
+    keys: &std::collections::HashMap<String, sinex_sealing::Zeroizing<[u8; 32]>>,
 ) {
-    if let Some(r) = sinex_store::sealed::key_ref(value) {
+    if let Some(r) = sinex_sealing::key_ref(value) {
         if let Some(key) = keys.get(r)
-            && let Ok(plain) = sinex_store::sealed::unseal_payload(value, key)
+            && let Ok(plain) = sinex_sealing::unseal_payload(value, key)
         {
             *value = plain;
         }
@@ -118,9 +118,9 @@ fn unseal_in(
     }
     match value {
         Value::String(text) => {
-            if let Some(mut sealed) = sinex_store::sealed::sealed_text(text) {
+            if let Some(mut sealed) = sinex_sealing::sealed_text(text) {
                 unseal_in(&mut sealed, keys);
-                if !sinex_store::sealed::is_sealed(&sealed) {
+                if !sinex_sealing::is_sealed(&sealed) {
                     *value = sealed;
                 }
             }
@@ -223,7 +223,7 @@ impl Api {
                 .map_err(|e| e.to_string())?
             {
                 let key = s.unlock.unwrap(&wrapped)?;
-                s.keys.insert(r, age::secrecy::zeroize::Zeroizing::new(key));
+                s.keys.insert(r, sinex_sealing::Zeroizing::new(key));
             }
         }
         s.unlock.check()?;
