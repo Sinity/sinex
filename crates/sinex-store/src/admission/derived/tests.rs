@@ -2,7 +2,7 @@ use super::DerivedScope;
 use serde_json::json;
 
 #[devkit::test]
-fn computed_outputs_require_the_read_marker() {
+fn computed_outputs_require_the_read_mark() {
     for mut scope in [
         json!({"keys": {"keys": [], "read": {"changes": 0, "excised": 0}}}),
         json!({"position": {"inputs": [], "position": 0, "read": {"changes": 0, "excised": 0}}}),

@@ -59,6 +59,7 @@ these names and no others.
 - **commit log**: committed events in commit order; each entry has a **commit position**.
 - **visibility change**: a reading leaving or rejoining the live set (archived, hidden, unhidden), numbered by its **change position** in `audit.archive_changes`.
 - **derivation**: keyed (recomputes a **dirty key** when its inputs change; a **computed key** is one key's new output set) or per-event.
+- **read mark**: the change position and excision count when a derivation read its inputs, carried with computed outputs so admission can check whether those inputs are still live.
 - **superseded input**: an input a derivation read that stopped being live (a newer reading or a replay archived it, or excision removed it) before the outputs computed from it were stored; those outputs are dropped and computed again from what is live.
 - **kind** (of what a key reads): events of one type, optionally only those whose payload fields have given values.
 - **tag assignment**: a `tag.applied` derived event naming the input record, its tag and the rules that matched.
