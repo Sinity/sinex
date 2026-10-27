@@ -1,4 +1,5 @@
 use super::*;
+use serde_json::Value;
 use sinex_model::event_types::CommandImported;
 
 /// A zsh command stated at `secs`.
