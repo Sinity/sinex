@@ -156,7 +156,7 @@ async fn public_cursor_refuses_obsolete_and_overflow_values(db: devkit::pg::Test
     admit(&w, &["one", "two"], 0).await;
     let page = first(&w, READ, "events sort when").await;
     let raw = page["result"]["page"]["cursor"].as_str().unwrap();
-    let value: Value = encoding::decode(&raw).unwrap();
+    let value: Value = encoding::decode(raw).unwrap();
     let mut tokens = vec!["1.1".to_owned(), "broken".to_owned()];
     for (field, bad) in [
         ("version", json!(0)),

@@ -240,9 +240,7 @@ async fn register_checked(
 pub async fn reconcile(conn: &mut PgConnection, owners: &Owners) -> Result<(), Error> {
     for k in event_types::ALL {
         let p = k.event_type.split_once('.').expect("bundled name").0;
-        if p != "polylogue" {
-            prefix(conn, p, "sinex").await?;
-        }
+        prefix(conn, p, "sinex").await?;
     }
     for (p, owner) in &owners.prefixes {
         prefix(conn, p, owner).await?;
