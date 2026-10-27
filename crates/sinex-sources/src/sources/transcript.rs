@@ -443,7 +443,7 @@ fn source(
         },
     }))
 }
-macro_rules! format {
+macro_rules! input_format {
     ($name:ident, $spec:ident, $format:ident, $framing:expr) => {
         pub const $name: InputFormat = InputFormat {
             name: $spec.parser,
@@ -457,11 +457,11 @@ macro_rules! format {
         };
     };
 }
-format!(JSON_FORMAT, JSON, Json, Framing::Whole);
-format!(WHISPER_FORMAT, WHISPER, Whisper, JSON_FRAMING);
-format!(TEXT_FORMAT, TEXT, Text, Framing::Lines);
-format!(WEBVTT_FORMAT, WEBVTT, WebVtt, CUE_FRAMING);
-format!(SRT_FORMAT, SRT, Srt, CUE_FRAMING);
+input_format!(JSON_FORMAT, JSON, Json, Framing::Whole);
+input_format!(WHISPER_FORMAT, WHISPER, Whisper, JSON_FRAMING);
+input_format!(TEXT_FORMAT, TEXT, Text, Framing::Lines);
+input_format!(WEBVTT_FORMAT, WEBVTT, WebVtt, CUE_FRAMING);
+input_format!(SRT_FORMAT, SRT, Srt, CUE_FRAMING);
 
 #[cfg(test)]
 mod tests;

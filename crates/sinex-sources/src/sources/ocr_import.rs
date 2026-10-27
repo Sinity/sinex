@@ -265,7 +265,7 @@ fn source(
         },
     }))
 }
-macro_rules! format {
+macro_rules! input_format {
     ($name:ident, $spec:ident, $format:ident, $framing:expr) => {
         pub const $name: InputFormat = InputFormat {
             name: $spec.parser,
@@ -279,9 +279,9 @@ macro_rules! format {
         };
     };
 }
-format!(JSON_FORMAT, JSON, Json, super::transcript::JSON_FRAMING);
-format!(TSV_FORMAT, TSV, Tsv, Framing::Lines);
-format!(TEXT_FORMAT, TEXT, Text, Framing::Lines);
+input_format!(JSON_FORMAT, JSON, Json, super::transcript::JSON_FRAMING);
+input_format!(TSV_FORMAT, TSV, Tsv, Framing::Lines);
+input_format!(TEXT_FORMAT, TEXT, Text, Framing::Lines);
 #[cfg(test)]
 mod tests;
 impl Parser for OcrParser {
