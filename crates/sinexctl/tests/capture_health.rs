@@ -149,15 +149,20 @@ fn status_uses_the_module_capture_state_path() {
 #[devkit::test]
 fn a_missing_native_state_path_is_reported_as_unavailable() {
     use std::os::unix::ffi::OsStringExt;
-    let root = std::env::temp_dir().join(format!("capture-native-{}",std::process::id()));
+    let root = std::env::temp_dir().join(format!("capture-native-{}", std::process::id()));
     std::fs::create_dir_all(&root).unwrap();
     let state = root.join(std::ffi::OsString::from_vec(b"state-\xff".to_vec()));
     let output = std::process::Command::new(env!("CARGO_BIN_EXE_sinexctl"))
-        .args(["status","--offline","--database","not-a-database-url"])
-        .env("SINEX_CAPTURE_STATE",&state).output().unwrap();
-    assert_eq!(output.status.code(),Some(1));
+        .args(["status", "--offline", "--database", "not-a-database-url"])
+        .env("SINEX_CAPTURE_STATE", &state)
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(1));
     let status: Value = serde_json::from_slice(&output.stdout).unwrap();
     assert!(status["local_capture"]["unavailable"].is_string());
-    assert_eq!(status["local_capture"]["report"],state.join("health.json").to_string_lossy().as_ref());
+    assert_eq!(
+        status["local_capture"]["report"],
+        state.join("health.json").to_string_lossy().as_ref()
+    );
     std::fs::remove_dir_all(root).unwrap();
 }

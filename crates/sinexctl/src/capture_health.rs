@@ -17,9 +17,12 @@ pub(crate) fn attach(status: &mut Value, state: Option<&str>) {
     if let Some(root) = root {
         let path = root.join("health.json");
         status["local_capture"] = match std::fs::read(&path) {
-            Ok(bytes) => serde_json::from_slice(&bytes)
-                .unwrap_or_else(|error| json!({"unavailable": error.to_string(), "report": path.to_string_lossy()})),
-            Err(error) => json!({"unavailable": error.to_string(), "report": path.to_string_lossy()}),
+            Ok(bytes) => serde_json::from_slice(&bytes).unwrap_or_else(
+                |error| json!({"unavailable": error.to_string(), "report": path.to_string_lossy()}),
+            ),
+            Err(error) => {
+                json!({"unavailable": error.to_string(), "report": path.to_string_lossy()})
+            }
         };
     }
 }

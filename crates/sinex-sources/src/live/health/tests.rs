@@ -156,12 +156,18 @@ fn startup_counts_an_unacknowledged_batch_once_and_then_counts_new_capture() {
 fn a_native_spool_name_does_not_stop_health_reporting() {
     use std::os::unix::ffi::OsStringExt;
     let dir = tempfile::tempdir().unwrap();
-    let spool = dir.path().join(std::ffi::OsString::from_vec(b"spool-\xff".to_vec()));
+    let spool = dir
+        .path()
+        .join(std::ffi::OsString::from_vec(b"spool-\xff".to_vec()));
     let positions = dir.path().join("positions");
     std::fs::create_dir(&spool).unwrap();
     let (_, binding) = super::super::binding("hyprland", &spool, "synthetic", Value::Null).unwrap();
     let counter = initialize(&positions, &binding).unwrap();
-    snapshot(&positions, &[(binding,counter)]).unwrap();
-    let report: Value = serde_json::from_slice(&std::fs::read(dir.path().join("health.json")).unwrap()).unwrap();
-    assert_eq!(report["spools"][0]["spool"],spool.to_string_lossy().as_ref());
+    snapshot(&positions, &[(binding, counter)]).unwrap();
+    let report: Value =
+        serde_json::from_slice(&std::fs::read(dir.path().join("health.json")).unwrap()).unwrap();
+    assert_eq!(
+        report["spools"][0]["spool"],
+        spool.to_string_lossy().as_ref()
+    );
 }
