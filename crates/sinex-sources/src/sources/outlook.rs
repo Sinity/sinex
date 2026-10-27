@@ -213,8 +213,10 @@ pub fn csv_driver(path: PathBuf, host: String) -> ExportArchive {
     }
 }
 
-/// Where PST stores are converted to mbox files before they are read; the
-/// mbox bytes go to the content store, so this is only a cache.
+/// Where PST stores are converted to mbox files before they are read: under
+/// `TMPDIR`, which the NixOS module points at the daemon's state directory,
+/// since a PST can outgrow a tmpfs. The mbox bytes go to the content store,
+/// so this is only a cache.
 fn staging() -> PathBuf {
     std::env::temp_dir().join("sinex-outlook")
 }

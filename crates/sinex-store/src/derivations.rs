@@ -490,7 +490,7 @@ async fn nearest(
     Ok(out)
 }
 
-/// Live committed events of `event_types` after `after_seq`, in commit order.
+/// Live committed and unhidden events after `after_seq`, in writer order.
 pub async fn after_seq(
     conn: &mut PgConnection,
     event_types: &[String],
@@ -501,7 +501,7 @@ pub async fn after_seq(
     let rows = sqlx::query!(
         r#"SELECT e.id, e.event_type, e.source, e.material_id, e.anchor, e.output_index, e.parents,
              e.ts_orig, e.ts_quality, e.payload, e.equivalence_key, e.reading_order, e.record_hash,
-             e.record_state, e.class, e.commit_seq
+             e.record_state, e.class, page.seq AS "commit_seq!"
            FROM core.events e JOIN (
              SELECT p.id, p.seq FROM (
                SELECT q.id, q.seq, (sum(q.size) OVER (ORDER BY q.seq) - q.size)::bigint AS before
@@ -510,7 +510,12 @@ pub async fn after_seq(
                  FROM core.commit_log l JOIN core.events s ON s.id = l.event_id
                  WHERE l.commit_seq > $2 AND l.event_type = ANY($1)
                    AND NOT EXISTS (SELECT 1 FROM audit.archived a WHERE a.event_id = s.id)
-                 ORDER BY l.commit_seq LIMIT $3
+                 UNION ALL
+                 SELECT c.event_id AS id, c.commit_seq AS seq, pg_column_size(s.payload)::bigint AS size
+                 FROM audit.archive_changes c JOIN core.events s ON s.id = c.event_id
+                 WHERE c.commit_seq > $2 AND NOT c.archived AND s.event_type = ANY($1)
+                   AND NOT EXISTS (SELECT 1 FROM audit.archived a WHERE a.event_id = s.id)
+                 ORDER BY seq LIMIT $3
                ) q
              ) p WHERE p.before < $4::bigint
            ) page ON page.id = e.id
@@ -603,6 +608,18 @@ pub async fn waiting(conn: &mut PgConnection, derivation: &str) -> Result<Vec<(V
     .into_iter()
     .map(|r| (r.key, Timestamp(r.since)))
     .collect())
+}
+
+/// Every key `derivation` has outputs under, so a recompute also reaches
+/// keys its current key function no longer produces (a new version that
+/// keys its windows differently).
+pub async fn output_keys(conn: &mut PgConnection, derivation: &str) -> Result<Vec<Value>> {
+    Ok(sqlx::query_scalar!(
+        r#"SELECT DISTINCT key AS "key!" FROM derivation.outputs WHERE derivation = $1"#,
+        derivation
+    )
+    .fetch_all(&mut *conn)
+    .await?)
 }
 
 /// The live outputs a key last produced.

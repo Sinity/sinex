@@ -59,3 +59,12 @@ pub async fn source_evidence(
             .collect(),
     })
 }
+
+/// Every source that has events, by name.
+pub async fn sources(conn: &mut PgConnection) -> Result<Vec<String>> {
+    Ok(
+        sqlx::query_scalar!("SELECT source FROM core.source_counts ORDER BY source")
+            .fetch_all(&mut *conn)
+            .await?,
+    )
+}

@@ -22,7 +22,7 @@ pub const WRITER_LOCK: i64 = 0x7369_6e65_7857_5254;
 
 /// The schema version these declarations create: one more than the last
 /// upgrade starts from.
-pub const VERSION: i32 = 2;
+pub const VERSION: i32 = 3;
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
@@ -161,6 +161,15 @@ $$"
   e.reading_order, e.record_hash, e.record_state, e.class
 FROM core.events e"
             .to_string(),
+        "CREATE VIEW telemetry.visible_events AS SELECT
+  e.id, e.event_type, e.source, e.run_id, e.material_id, e.anchor, e.output_index, e.parents,
+  e.ts_orig, e.ts_quality, e.ts_coided, e.ts_persisted, e.commit_seq,
+  CASE WHEN core.class_visible(e.class) THEN e.payload
+       ELSE jsonb_build_object('withheld', e.class) END AS payload,
+  CASE WHEN core.class_visible(e.class) THEN e.equivalence_key END AS equivalence_key,
+  e.reading_order, e.record_hash, e.record_state, e.class
+FROM telemetry.events e"
+            .to_string(),
         "CREATE VIEW core.visible_search_text AS SELECT s.event_id, s.text, s.tsv
 FROM core.search_text s JOIN core.events e ON e.id = s.event_id
 WHERE core.class_visible(e.class)"
@@ -189,8 +198,13 @@ fn kind_view(kind: &event_types::RegisteredEventType) -> String {
             columns.push(format!("e.payload->'{field}' AS {}", quote_ident(field)));
         }
     }
+    let from = if event_types::is_telemetry(kind.event_type) {
+        "telemetry.visible_events"
+    } else {
+        "core.visible_events"
+    };
     format!(
-        "CREATE VIEW event_types.{} AS SELECT {} FROM core.visible_events e WHERE e.event_type='{}' AND NOT EXISTS (SELECT 1 FROM audit.archived a WHERE a.event_id=e.id)",
+        "CREATE VIEW event_types.{} AS SELECT {} FROM {from} e WHERE e.event_type='{}' AND NOT EXISTS (SELECT 1 FROM audit.archived a WHERE a.event_id=e.id)",
         quote_ident(&kind.event_type.replace('.', "_")),
         columns.join(", "),
         kind.event_type
@@ -430,3 +444,32 @@ pub async fn catalog(connection: &mut PgConnection) -> Result<Vec<String>, Error
 
 #[cfg(test)]
 mod tests;
+
+/// Register added kinds and their views as part of a numbered upgrade.
+fn added_kinds(names: &[&str]) -> Vec<String> {
+    fn literal(value: &str) -> String {
+        format!("'{}'", value.replace('\'', "''"))
+    }
+    let mut statements = Vec::new();
+    for (name, schema, key_kind, fields, replace) in registry_rows()
+        .into_iter()
+        .filter(|(name, ..)| names.contains(&name.as_str()))
+    {
+        let fields = fields
+            .iter()
+            .map(|field| literal(field))
+            .collect::<Vec<_>>()
+            .join(", ");
+        statements.push(format!(
+            "INSERT INTO registry.event_types (name, payload_schema, key_kind, key_fields, replace_rule) VALUES ({}, {}::jsonb, {}, ARRAY[{fields}]::text[], {})",
+            literal(&name), literal(&schema.to_string()), literal(key_kind), literal(replace)));
+        statements.push(kind_view(
+            event_types::find(&name).expect("registered kind"),
+        ));
+        statements.push(format!(
+            "GRANT SELECT ON event_types.{} TO sinex_reader, sinex_writer",
+            quote_ident(&name.replace('.', "_"))
+        ));
+    }
+    statements
+}

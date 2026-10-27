@@ -6,14 +6,15 @@
 //!
 //! Built: the writer, the derivation runner for keyed and per-event
 //! derivations, the commit-log reader for read models, the confirmed-stream
-//! publisher and the NATS ingress with its have responder. Every commit wakes
+//! publisher, the NATS ingress with its have responder, and the telemetry
+//! sampler, whose spool the binding runner reads with the configured sources. Every commit wakes
 //! the runner, the reader and the publisher, and the API serves reads from its
 //! own pool and writes through the writer. The source tasks and signals are
 //! added here by their lanes.
 use crate::api::{self, Api};
 use crate::commit_reader::{self, Consumer, ReadModelRunner};
 use crate::dirty_keys::Registered;
-use crate::{binding_runner, derivation_runner, ingress, publisher, writer};
+use crate::{binding_runner, derivation_runner, ingress, publisher, telemetry, writer};
 use sinex_protocol::Subjects;
 use sinex_store::Blobs;
 use sqlx::{Connection, PgConnection};
@@ -44,6 +45,8 @@ pub(crate) struct Options {
     pub api: ApiOptions,
     /// The sources configuration (`sources.json`) the binding runner reads.
     pub sources: Option<PathBuf>,
+    /// Where the daemon spools its telemetry samples.
+    pub telemetry_spool: PathBuf,
 }
 
 pub(crate) struct ApiOptions {
@@ -121,11 +124,24 @@ pub(crate) async fn run(o: Options) -> Result<(), String> {
 
     // The configured derivations run in the runner, keyed and per-event
     // (screen text included).
-    let sources = match &o.sources {
+    let mut sources = match &o.sources {
         Some(file) => binding_runner::Config::load(file)?,
         None => binding_runner::Config::default(),
     };
-    let (keyed, per_event) = (sinex_derivations::keyed(), derivation_runner::per_event());
+    // The daemon reads its own telemetry spool, whatever is configured.
+    let telemetry_spool = o.telemetry_spool.clone();
+    sources.sources.insert(
+        sinex_sources::sources::telemetry::SPEC.name.to_owned(),
+        binding_runner::SourceConfig {
+            enable: true,
+            paths: vec![telemetry_spool.display().to_string()],
+            ..Default::default()
+        },
+    );
+    let (keyed, per_event) = (
+        sinex_derivations::keyed(),
+        derivation_runner::available_per_event(),
+    );
     if let Some(name) = sources.derivations.keys().find(|name| {
         !keyed.iter().any(|d| d.name() == name.as_str())
             && !per_event.iter().any(|d| d.name() == name.as_str())
@@ -222,25 +238,32 @@ pub(crate) async fn run(o: Options) -> Result<(), String> {
         )
     });
 
-    // The configured sources, read continuously by the binding runner.
-    if o.sources.is_some() {
-        // A configuration naming an unknown source or format stops the
-        // daemon here; the runner plans it again as files appear.
-        binding_runner::plan(&sources, &o.host)?;
-        let (read_conn, b, w, host, s) = (
-            connect(&o.database).await?,
-            blobs.clone(),
-            handle.clone(),
-            o.host.clone(),
-            stop.clone(),
-        );
-        tasks.spawn(async move {
-            (
-                "binding runner",
-                binding_runner::run(read_conn, b, w, host, sources, BINDINGS_EVERY, s).await,
-            )
-        });
-    }
+    // The daemon's own state, sampled into its telemetry spool.
+    let (sample_conn, s) = (connect(&o.database).await?, stop.clone());
+    tasks.spawn(async move {
+        (
+            "telemetry",
+            telemetry::run(sample_conn, telemetry_spool, s).await,
+        )
+    });
+
+    // The configured sources and the telemetry spool, read continuously by
+    // the binding runner. A configuration naming an unknown source or format
+    // stops the daemon here; the runner plans it again as files appear.
+    binding_runner::plan(&sources, &o.host)?;
+    let (read_conn, b, w, host, s) = (
+        connect(&o.database).await?,
+        blobs.clone(),
+        handle.clone(),
+        o.host.clone(),
+        stop.clone(),
+    );
+    tasks.spawn(async move {
+        (
+            "binding runner",
+            binding_runner::run(read_conn, b, w, host, sources, BINDINGS_EVERY, s).await,
+        )
+    });
 
     let requests = ingress::Requests {
         subjects: subjects.clone(),

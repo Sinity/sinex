@@ -43,7 +43,10 @@ these names and no others.
 - **reading order**: which of two readings of a record is newer.
 - **equivalence key**: the per-type key that recognizes the same thing seen again in another material.
 - **clocks**: `ts_orig` (when it happened, or unknown), `ts_coided` (when Sinex read it, from the UUIDv7 ID), `ts_persisted` (when it was committed).
+- **time suspect**: the query field that labels a stated time that looks wrong (`future`: later than Sinex read it; `epoch zero`); the time is kept as stated, never refused or changed.
+- **producer version**: the version of the producer whose run wrote an event, so outputs of two derivation versions are told apart while a recompute runs.
 - **derived event**: an event computed by a derivation, naming its parents.
+- **telemetry**: Sinex's own state, sampled by the daemon every minute as `sinex.telemetry` events (a **sample** per part: the writer, the publisher, the search index, each derivation and source) and kept in `telemetry.events`, apart from the activity record.
 - **fusion**: joining what several sources observed of one thing into one **fused record**: `command.fused`, `focus.fused`, `visit.fused`, `play.fused`, `clipboard.fused`, `notification.fused`, `mail.fused`. Each fused kind has one **fusion rule**; a **fusion input** (`FusionInput`) reads one source's events for it as **fusion records** (`FusionRecord`) (an identity, a start, maybe an end, the fields it supplies). A **fused command** is a `command.fused` event.
 - **shell session**: the `shell.session` derived event: a run of commands in one terminal; `recall last` reads around the latest one.
 - **batch**: what a producer hands the writer: records with their events or failures, and progress.
@@ -56,8 +59,11 @@ these names and no others.
 - **commit log**: committed events in commit order; each entry has a **commit position**.
 - **visibility change**: a reading leaving or rejoining the live set (archived, hidden, unhidden), numbered by its **change position** in `audit.archive_changes`.
 - **derivation**: keyed (recomputes a **dirty key** when its inputs change; a **computed key** is one key's new output set) or per-event.
+- **superseded input**: an input a derivation read that stopped being live (a newer reading or a replay archived it, or excision removed it) before the outputs computed from it were stored; those outputs are dropped and computed again from what is live.
 - **kind** (of what a key reads): events of one type, optionally only those whose payload fields have given values.
+- **tag assignment**: a `tag.applied` derived event naming the captured record, its tag and the rules that matched.
 - **metric**: a declared count over events (events, seconds of their intervals, or a ratio), with its **dimensions** (payload fields it is broken down by) and the sources that observe it. A **tracked metric** is one the brief compares with its recent level.
+- **calculation**: how a metric counts its inputs: events, seconds or a ratio.
 - **figure**: a metric's number over one civil hour or logical day, total or for one **dimension value**, as a `metric.figure` event; a **health figure** (`health.figure`) is the same for one series of health points.
 - **coverage**: the stretches in which a source could have recorded what it records, computed from its runs and records when asked for.
 - **panel**: logical days by metrics, each **cell** observed, partial, recorded or missing with its reason, from the daily figures and coverage.
@@ -66,7 +72,7 @@ these names and no others.
 - **derivation runner**, **binding runner**: the daemon tasks that run derivations and keep configured bindings read.
 - **comparison**: what a recompute with `--compare` would change, kept in `derivation.comparisons` without writing outputs.
 - **replay**: reading stored bytes again with the current parsers, one part sequence per transaction.
-- **query table**: what a query reads (`events`, `archive`, `materials`, `runs`, `sources`, `operations`, `failures`), each with its fields.
+- **query table**: what a query reads (`events`, `archive`, `materials`, `runs`, `sources`, `operations`, `failures`, `telemetry`), each with its fields.
 - **reference**: how a command names one event: an event ID or `sinex:ev/<id>`, `sinex:record/<material>/<offset>[/<event type>[/<output index>]]`, or `sinex:key/<source>/<event type>/<equivalence key>`.
 - **operation**: something the operator or an agent did to Sinex, attributed and logged.
 - **purpose**: what a source's events are for (`command fusion and shell recall`).

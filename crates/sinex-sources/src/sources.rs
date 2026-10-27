@@ -55,6 +55,8 @@ pub mod sinnix_lake;
 pub mod sleep_as_android;
 pub mod spotify;
 pub mod takeout_chrome;
+/// Sinex's own state, sampled by the daemon.
+pub mod telemetry;
 pub(crate) mod terminal_text;
 pub mod weechat;
 pub mod wykop;
@@ -113,6 +115,7 @@ pub fn formats() -> &'static [&'static InputFormat] {
         &library::FORMAT,
         &forecast::FORMAT,
         &page_crawl::FORMAT,
+        &telemetry::FORMAT,
     ]
 }
 

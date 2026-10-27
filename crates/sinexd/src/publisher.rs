@@ -310,6 +310,8 @@ fn confirmed_event(e: &Committed) -> Result<ConfirmedEvent, String> {
         record_state: e.record_state.clone(),
         class,
         equivalence_key: e.equivalence_key.clone(),
+        reading_order: e.reading_order,
+        record_hash: e.record_hash.iter().map(|b| format!("{b:02x}")).collect(),
         payload: (class == Class::Open).then(|| e.payload.clone()),
         withheld: (class != Class::Open).then_some(Withheld::Class),
     })

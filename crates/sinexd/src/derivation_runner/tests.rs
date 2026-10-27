@@ -408,6 +408,7 @@ async fn a_key_dirtied_again_stays_dirty(db: devkit::pg::TestDatabase) {
                     dirty_seq: 0,
                     waiting: false,
                 }],
+                read: Default::default(),
             }
             .to_value(),
         },
@@ -634,6 +635,8 @@ async fn windows_read_in_pages_equal_windows_read_alone(db: devkit::pg::TestData
 }
 
 mod shutdown;
+mod superseded_inputs;
+mod versions;
 
 /// A new version's recompute that stops before its keys are marked is marked
 /// again at the next start: the registry keeps the old version until then.
@@ -678,3 +681,5 @@ async fn a_recompute_stopped_part_way_is_marked_again_at_the_next_start(
     assert!(w.count(fusion_dirty).await > 0);
     assert_eq!(w.count(stored_version).await, version);
 }
+
+mod tags;

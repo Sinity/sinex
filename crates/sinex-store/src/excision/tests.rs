@@ -1,4 +1,4 @@
-//! Excision laws: every reading of the one record and its descendants go, a
+//! Excision: every reading of the one record and its descendants go, a
 //! tombstone stays, each material the record was read from goes whole with
 //! only its digest kept, and nothing that is not the record changes. Every record
 //! here is alone in its material, as the caller requires.

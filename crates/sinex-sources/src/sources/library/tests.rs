@@ -1,7 +1,14 @@
+use super::files::sniff;
 use super::*;
+use crate::Parser;
+use crate::drivers::Acquired;
 use crate::{DrainInput, Limits, drain};
+use serde_json::{Map, Value, json};
+use sinex_model::Timestamp;
+use sinex_model::event_types::library::{Assignment, FileCopy, Item, LibraryRecord, Rendition};
 use sinex_model::event_types::library::{Level, Target};
 use sinex_model::{RecordOutcome, RecordState};
+use std::path::{Path, PathBuf};
 
 fn tmp() -> PathBuf {
     let d = std::env::temp_dir().join(format!("sinex-library-{}", uuid::Uuid::now_v7()));

@@ -5,6 +5,6 @@ fn committed_catalog_is_current() {
     assert!(
         committed == super::render(),
         "nix/catalog.json is stale; regenerate it with \
-         `cargo run -p sinexd -- admin catalog > nix/catalog.json`"
+         `sinexd admin catalog > nix/catalog.json`"
     );
 }

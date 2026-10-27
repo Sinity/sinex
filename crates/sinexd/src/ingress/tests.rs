@@ -876,3 +876,5 @@ async fn frames_flow_while_a_request_waits(db: devkit::pg::TestDatabase) {
     assert_eq!(acks.len(), 1);
     assert_eq!(acks[0].frame, "m1");
 }
+
+mod nothing_lost;

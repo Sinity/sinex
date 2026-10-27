@@ -7,7 +7,7 @@ impl Api {
     /// rendered from their slots, so every surface reads the same text.
     pub(super) async fn analysis(&self, caller: &Caller, request: Request) -> Reply {
         use crate::analysis::{self, Recipe};
-        use sinex_derivations::figures::{Law, METRICS};
+        use sinex_derivations::figures::{Calculation, METRICS};
         if let Request::AnalysisCatalog = request {
             let metrics: Vec<Value> = METRICS
                 .iter()
@@ -24,13 +24,13 @@ impl Api {
                             json!({"event_type": k.event_type, "only": only})
                         })
                         .collect();
-                    let law = match m.law {
-                        Law::Count => "count",
-                        Law::Seconds { .. } => "seconds",
-                        Law::Ratio { .. } => "ratio",
+                    let calculation = match m.calculation {
+                        Calculation::Count => "count",
+                        Calculation::Seconds { .. } => "seconds",
+                        Calculation::Ratio { .. } => "ratio",
                     };
                     json!({"id": m.name, "description": m.description, "counts": counts,
-                           "law": law, "sources": m.sources, "dimensions": m.dimensions,
+                           "calculation": calculation, "sources": m.sources, "dimensions": m.dimensions,
                            "tracked": m.tracked})
                 })
                 .collect();
@@ -105,6 +105,17 @@ impl Api {
                         "as_of": p.as_of, "day_setting": settings.label,
                         "coverage": p.coverage, "cells": p.cells,
                     }))
+                }
+                Request::Gaps { from, to, source } => {
+                    let gaps = analysis::gaps(
+                        &mut conn,
+                        &settings,
+                        source.as_deref(),
+                        analysis::parse_day(&from)?,
+                        analysis::parse_day(&to)?,
+                    )
+                    .await?;
+                    Ok(json!({ "day_setting": settings.label, "gaps": gaps }))
                 }
                 Request::AnalysisWhy { metric, day } => {
                     let metric = metrics(&[metric])?[0];

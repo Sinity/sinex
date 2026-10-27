@@ -37,5 +37,15 @@ pub(crate) fn upgrades() -> Vec<Vec<String>> {
             "GRANT SELECT ON core.excised_materials TO sinex_reader, sinex_writer".into(),
             "GRANT INSERT, UPDATE, DELETE ON core.excised_materials TO sinex_writer".into(),
         ],
+        // 2 to 3: telemetry reads its own table with the same visibility
+        // rules as activity; new event kinds get their registry rows and views.
+        {
+            let mut statements: Vec<String> = crate::visibility().into_iter()
+                .filter(|sql| sql.starts_with("CREATE VIEW telemetry.visible_events"))
+                .collect();
+            statements.push("GRANT SELECT ON telemetry.visible_events TO sinex_reader, sinex_writer".into());
+            statements.extend(crate::added_kinds(&["sinex.telemetry", "tag.applied"]));
+            statements
+        },
     ]
 }
