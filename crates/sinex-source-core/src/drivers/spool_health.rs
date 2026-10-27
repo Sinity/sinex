@@ -46,16 +46,30 @@ impl Backlog {
     pub fn recovered(&mut self, cursor: &Value) {
         self.subtract(self.recovery);
         if let Some(segment) = cursor.get("segment").and_then(Value::as_u64) {
-            let passed_records: u64 = self.segments.range(..segment).map(|(_, counts)| counts.records).sum();
+            let passed_records: u64 = self
+                .segments
+                .range(..segment)
+                .map(|(_, counts)| counts.records)
+                .sum();
             self.segments.retain(|index, _| *index >= segment);
             if let Some(counts) = self.segments.get_mut(&segment) {
-                let offset = cursor.pointer("/inner/offset").and_then(Value::as_u64).unwrap_or(0);
+                let offset = cursor
+                    .pointer("/inner/offset")
+                    .and_then(Value::as_u64)
+                    .unwrap_or(0);
                 let previous = if self.cursor.get("segment") == cursor.get("segment") {
-                    self.cursor.pointer("/inner/offset").and_then(Value::as_u64).unwrap_or(0)
-                } else { 0 };
+                    self.cursor
+                        .pointer("/inner/offset")
+                        .and_then(Value::as_u64)
+                        .unwrap_or(0)
+                } else {
+                    0
+                };
                 counts.bytes = counts.bytes.saturating_sub(offset.saturating_sub(previous));
                 // Earlier segments have already been removed from the map.
-                counts.records = counts.records.saturating_sub(self.recovery.records.saturating_sub(passed_records));
+                counts.records = counts
+                    .records
+                    .saturating_sub(self.recovery.records.saturating_sub(passed_records));
             }
         }
         self.recovery = Counts::default();
@@ -67,23 +81,44 @@ impl Backlog {
 
     pub fn prepare(&mut self, cursor: &Value, records: u64) {
         let segment = cursor.get("segment").and_then(Value::as_u64);
-        let passed = segment.map(|segment| self.segments.range(..segment).fold(Counts::default(), |mut total, (_, counts)| {
-            total.bytes += counts.bytes; total.records += counts.records; total
-        })).unwrap_or_default();
+        let passed = segment
+            .map(|segment| {
+                self.segments
+                    .range(..segment)
+                    .fold(Counts::default(), |mut total, (_, counts)| {
+                        total.bytes += counts.bytes;
+                        total.records += counts.records;
+                        total
+                    })
+            })
+            .unwrap_or_default();
         let bytes = if let Some(last) = cursor.get("last").and_then(Value::as_str) {
             let mut bytes = 0;
             for (stem, size) in &self.media {
-                if stem.as_str() <= last { bytes += *size; }
+                if stem.as_str() <= last {
+                    bytes += *size;
+                }
             }
             bytes
         } else {
-            let offset = cursor.pointer("/inner/offset").and_then(Value::as_u64).unwrap_or(0);
+            let offset = cursor
+                .pointer("/inner/offset")
+                .and_then(Value::as_u64)
+                .unwrap_or(0);
             let previous = if self.cursor.get("segment") == cursor.get("segment") {
-                self.cursor.pointer("/inner/offset").and_then(Value::as_u64).unwrap_or(0)
-            } else { 0 };
+                self.cursor
+                    .pointer("/inner/offset")
+                    .and_then(Value::as_u64)
+                    .unwrap_or(0)
+            } else {
+                0
+            };
             offset.saturating_sub(previous)
         };
-        self.recovery = Counts { bytes: bytes + passed.bytes, records: records + passed.records };
+        self.recovery = Counts {
+            bytes: bytes + passed.bytes,
+            records: records + passed.records,
+        };
     }
 }
 

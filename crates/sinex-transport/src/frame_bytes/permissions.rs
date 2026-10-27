@@ -44,7 +44,10 @@ pub(super) fn prepare_directory(root: &Path, leaf: &Path) -> Result<Option<u32>,
     Ok(Some(group))
 }
 
-pub(super) fn share_completed_file(file: &std::fs::File, group: Option<u32>) -> Result<(), super::Error> {
+pub(super) fn share_completed_file(
+    file: &std::fs::File,
+    group: Option<u32>,
+) -> Result<(), super::Error> {
     if let Some(group) = group {
         if file.metadata().map_err(super::error)?.gid() != group {
             return Err("producer frame file does not belong to the store group".into());

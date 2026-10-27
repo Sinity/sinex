@@ -137,7 +137,9 @@ impl SpoolWriter {
         let bytes = frame(received, line);
         let mut health = self.health.as_ref().map(|counter| counter.lock().unwrap());
         self.file.write_all(&bytes)?;
-        if let Some(health) = &mut health { health.captured_line(self.index, bytes.len() as u64); }
+        if let Some(health) = &mut health {
+            health.captured_line(self.index, bytes.len() as u64);
+        }
         self.written += bytes.len() as u64;
         self.unsynced += 1;
         Ok(())

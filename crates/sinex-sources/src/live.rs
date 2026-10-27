@@ -220,10 +220,17 @@ async fn run_with_private_mode(
     let (failed, mut failures) = tokio::sync::mpsc::unbounded_channel();
     let state_positions = positions.to_owned();
     let mut lives = tokio::task::spawn_blocking(move || {
-        bindings.into_iter().map(|(format, binding)| start(format, binding, &state_positions, failed.clone()))
+        bindings
+            .into_iter()
+            .map(|(format, binding)| start(format, binding, &state_positions, failed.clone()))
             .collect::<Result<Vec<_>, _>>()
-    }).await.map_err(|e| e.to_string())??;
-    let health_bindings: Vec<_> = lives.iter().map(|live| (live.binding.clone(), live.health.clone())).collect();
+    })
+    .await
+    .map_err(|e| e.to_string())??;
+    let health_bindings: Vec<_> = lives
+        .iter()
+        .map(|live| (live.binding.clone(), live.health.clone()))
+        .collect();
     let deadline = async {
         match until {
             Some(until) => {
@@ -288,24 +295,26 @@ async fn produce_spools(
             }
         }
         let producer = producer.as_mut().expect("connected above");
-        for live in lives.iter() { producer.monitor(&live.binding.name, live.health.clone()); }
+        for live in lives.iter() {
+            producer.monitor(&live.binding.name, live.health.clone());
+        }
         for live in lives.iter_mut().filter(|live| live.retry.ready()) {
             // A failed batch is replayed with its original frame IDs before
             // the reader may advance to newly captured material.
             match produce_spool(producer, store, positions, live).await {
-                    Ok(_) => live.retry.recovered(&live.binding.name),
-                    Err(error @ (Error::Nats(_) | Error::NoAck(_) | Error::Refused { .. })) => {
-                        let state = match error {
-                            Error::NoAck(_) => "awaiting acknowledgment",
-                            Error::Refused { .. } => "awaiting admission",
-                            _ => "unavailable",
-                        };
-                        live.retry.failed(&live.binding.name, state, &error);
-                    }
-                    // Unwritable spool/state storage or an undecodable local
-                    // cursor cannot be repaired by reconnecting to the bus.
-                    Err(error) => return Err(error.to_string()),
+                Ok(_) => live.retry.recovered(&live.binding.name),
+                Err(error @ (Error::Nats(_) | Error::NoAck(_) | Error::Refused { .. })) => {
+                    let state = match error {
+                        Error::NoAck(_) => "awaiting acknowledgment",
+                        Error::Refused { .. } => "awaiting admission",
+                        _ => "unavailable",
+                    };
+                    live.retry.failed(&live.binding.name, state, &error);
                 }
+                // Unwritable spool/state storage or an undecodable local
+                // cursor cannot be repaired by reconnecting to the bus.
+                Err(error) => return Err(error.to_string()),
+            }
         }
         tokio::time::sleep(every.max(Duration::from_millis(100))).await;
     }

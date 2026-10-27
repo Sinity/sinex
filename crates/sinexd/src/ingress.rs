@@ -140,7 +140,9 @@ impl Ingest {
             return Ok(refused_unrecorded("a frame needs a name"));
         }
         if let Some(stored) = self.stored(producer, &name).await? {
-            if stored.refusal.is_none() { self.discard(producer, &name); }
+            if stored.refusal.is_none() {
+                self.discard(producer, &name);
+            }
             return Ok(acknowledgment(stored));
         }
         let run = self.run(producer).await?;
@@ -190,7 +192,9 @@ impl Ingest {
             Err(WriteError::Refused(reason)) => {
                 // Handled meanwhile by a redelivery: answer from the record.
                 if let Some(stored) = self.stored(producer, &name).await? {
-                    if stored.refusal.is_none() { self.discard(producer, &name); }
+                    if stored.refusal.is_none() {
+                        self.discard(producer, &name);
+                    }
                     return Ok(acknowledgment(stored));
                 }
                 // Admission refused the content (a NUL in a payload, an
@@ -213,7 +217,9 @@ impl Ingest {
             .stored(producer, &name)
             .await?
             .ok_or_else(|| format!("frame {name} from {producer} was not recorded"))?;
-        if stored.refusal.is_none() { self.discard(producer, &name); }
+        if stored.refusal.is_none() {
+            self.discard(producer, &name);
+        }
         Ok(acknowledgment(stored))
     }
 
