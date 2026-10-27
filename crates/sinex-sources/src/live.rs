@@ -31,9 +31,9 @@ struct Retry {
 }
 
 impl Retry {
-    fn failed(&mut self, state: &'static str, error: &dyn std::fmt::Display) {
+    fn failed(&mut self, name: &str, state: &'static str, error: &dyn std::fmt::Display) {
         if self.failure != Some(state) {
-            eprintln!("publishing {state}: {error}; capture continues");
+            eprintln!("{name}: publishing {state}: {error}; capture continues");
         }
         self.failure = Some(state);
         self.delay = (self.delay * 2)
@@ -46,9 +46,9 @@ impl Retry {
         self.after.is_none_or(|after| Instant::now() >= after)
     }
 
-    fn recovered(&mut self) {
+    fn recovered(&mut self, name: &str) {
         if self.failure.take().is_some() {
-            eprintln!("publishing recovered");
+            eprintln!("{name}: publishing recovered");
         }
         self.delay = Duration::ZERO;
         self.after = None;
@@ -271,10 +271,10 @@ async fn produce_spools(
                     } else {
                         connected
                     });
-                    retry.recovered();
+                    retry.recovered(&connection.producer);
                 }
                 Err(error) => {
-                    retry.failed("connecting", &error);
+                    retry.failed(&connection.producer, "connecting", &error);
                     continue;
                 }
             }
@@ -286,7 +286,7 @@ async fn produce_spools(
             loop {
                 match produce_spool(producer, store, positions, live).await {
                     Ok(had_material) => {
-                        live.retry.recovered();
+                        live.retry.recovered(&live.binding.name);
                         if !had_material {
                             break;
                         }
@@ -297,7 +297,7 @@ async fn produce_spools(
                             Error::Refused { .. } => "awaiting admission",
                             _ => "unavailable",
                         };
-                        live.retry.failed(state, &error);
+                        live.retry.failed(&live.binding.name, state, &error);
                         break;
                     }
                     // Unwritable spool/state storage or an undecodable local
