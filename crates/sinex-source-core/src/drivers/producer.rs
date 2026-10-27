@@ -271,7 +271,6 @@ impl Producer {
             )
             .await?;
             unacknowledged.position.save(state, binding)?;
-            self.clear_frame_directories(&unacknowledged.frames, store)?;
             UnacknowledgedFrames::clear(state, binding)?;
         }
         Position::load(state, binding)
@@ -476,21 +475,36 @@ impl Producer {
             }
             None
         };
-        let ack = match tokio::time::timeout(ACK_WAIT, wait).await {
-            Ok(Some(ack)) => ack,
+        let (mut ack, mut recorded) = match tokio::time::timeout(ACK_WAIT, wait).await {
+            Ok(Some(ack)) => (ack, false),
             // Missed it: ask what Sinex has recorded for this frame.
-            _ => self
+            _ => (
+                self.recorded(std::slice::from_ref(&id))
+                    .await?
+                    .into_iter()
+                    .find(|ack| ack.frame == id)
+                    .ok_or_else(|| Error::NoAck(id.clone()))?,
+                true,
+            ),
+        };
+        // Refused frames admit no events, so their commit sequence can be
+        // absent. The recorded query, not that sequence, confirms durability.
+        if ack.refusal.is_some()
+            && !recorded
+            && let Some(stored) = self
                 .recorded(std::slice::from_ref(&id))
                 .await?
                 .into_iter()
-                .next()
-                .ok_or_else(|| Error::NoAck(id.clone()))?,
-        };
+                .find(|ack| ack.frame == id)
+        {
+            ack = stored;
+            recorded = true;
+        }
         if let Some(reason) = &ack.refusal {
             return Err(Error::Refused {
                 frame: id,
                 reason: reason.clone(),
-                recorded: ack.commit_seq.is_some(),
+                recorded,
             });
         }
         Ok(ack)
@@ -644,13 +658,14 @@ impl Producer {
                 .deliver_batch(&frames, &after, state, binding, sink)
                 .await?;
             for (ack, is_events) in acknowledgments.iter().zip(events_frames) {
-                if is_events && let Some(ack) = ack {
-                    sent.admitted += ack.admitted.len();
+                if is_events {
                     sent.frames += 1;
+                    if let Some(ack) = ack {
+                        sent.admitted += ack.admitted.len();
+                    }
                 }
             }
             after.save(state, binding)?;
-            self.clear_frame_directories(&frames, sink)?;
             UnacknowledgedFrames::clear(state, binding)?;
         }
         Ok(sent)
