@@ -73,6 +73,7 @@ pub struct DirState {
     /// The newest bundle and the file facts it records once admitted.
     held: Option<HeldSnapshot>,
     failures: HashMap<PathBuf, String>,
+    retries: HashSet<PathBuf>,
     /// Paths a restart has already decided from a newer bundle.
     remembered: HashSet<PathBuf>,
 }
@@ -81,6 +82,7 @@ struct HeldSnapshot {
     material: super::held::HeldMaterial,
     files: FileMemory,
     failures: HashMap<PathBuf, String>,
+    retries: HashSet<PathBuf>,
 }
 
 /// The marker a removed file's member holds.
@@ -110,6 +112,7 @@ impl DirSnapshot {
             if held.material.admitted(cursor) {
                 state.files = held.files;
                 state.failures = held.failures;
+                state.retries = held.retries;
             } else {
                 let acquired = held.material.acquired(cursor)?;
                 state.held = Some(held);
@@ -158,6 +161,7 @@ impl DirSnapshot {
         let mut length = 0usize;
         let mut next_files = state.files.clone();
         let mut next_failures = state.failures.clone();
+        let mut next_retries = state.retries.clone();
         let mut records = Vec::new();
         let mut members = Vec::new();
         let mut complete = true;
@@ -188,6 +192,7 @@ impl DirSnapshot {
                 && *s == *size
                 && *m == *mtime
                 && !state.failures.contains_key(relative)
+                && !state.retries.contains(relative)
             {
                 next_failures.remove(relative);
                 continue;
@@ -204,9 +209,7 @@ impl DirSnapshot {
             let (actual_size, hash) = match captured {
                 Ok(Some(captured)) => captured,
                 Ok(None) => {
-                    if let Some(facts) = next_files.get_mut(relative) {
-                        *facts = None;
-                    }
+                    next_retries.insert(relative.clone());
                     bundle.set_len(length as u64).map_err(io)?;
                     bundle
                         .seek(std::io::SeekFrom::Start(length as u64))
@@ -235,6 +238,7 @@ impl DirSnapshot {
                 }
             };
             next_failures.remove(relative);
+            next_retries.remove(relative);
             let same = state
                 .files
                 .get(relative)
@@ -281,6 +285,7 @@ impl DirSnapshot {
             gone.sort();
             for relative in gone {
                 next_files.remove(&relative);
+                next_retries.remove(&relative);
                 let display = paths::display(&relative);
                 let marker = removed_marker(&display);
                 bundle.write_all(&[format::PREFIX]).map_err(io)?;
@@ -298,6 +303,9 @@ impl DirSnapshot {
             }
         }
         if complete {
+            next_retries.retain(|path| {
+                seen.contains(path) || failed.iter().any(|prefix| path.starts_with(prefix))
+            });
             next_failures.retain(|path, _| {
                 seen.contains(path) || failed.iter().any(|prefix| path.starts_with(prefix))
             });
@@ -313,6 +321,7 @@ impl DirSnapshot {
         if records.is_empty() {
             state.files = next_files;
             state.failures = next_failures;
+            state.retries = next_retries;
             facts.changed = false;
             return Ok(Acquired {
                 input: self.input(),
@@ -407,6 +416,7 @@ impl DirSnapshot {
             material: held,
             files: next_files,
             failures: next_failures,
+            retries: next_retries,
         });
         Ok(acquired)
     }
