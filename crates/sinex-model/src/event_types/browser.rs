@@ -7,13 +7,11 @@ use serde_json::{Map, Value};
 /// One visit in a Chromium-family browser's `History` database (`visits`
 /// joined with `urls`). Chromium writes the visit when it starts and fills in
 /// its duration when the page is left, so a newer reading replaces the live
-/// one. The visit's time is part of its identity: a profile whose history
-/// database was deleted and created again numbers its visits from the start,
-/// and a visit ID seen again at another time is another visit.
+/// one.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
 #[event(
     type = "browser.visit",
-    key = ["profile", "visit_id", "visited_at"],
+    key = ["profile", "visit_id"],
     replace = newer,
     time = visited_at,
     quality = intrinsic

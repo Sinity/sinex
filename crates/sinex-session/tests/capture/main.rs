@@ -1,4 +1,4 @@
-use std::os::unix::{fs::PermissionsExt, process::CommandExt};
+use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Output, Stdio};
 use std::time::{Duration, Instant};
@@ -341,18 +341,20 @@ async fn capture_stops_its_child_when_only_the_command_receives_sigterm() {
         dir.path().display(),
         std::env::var("PATH").unwrap()
     );
-    let mut daemon = Session { child: Some(
-        Command::new(env!("CARGO_BIN_EXE_sinex-session"))
-            .args(["capture", "journald", "--spool"])
-            .arg(dir.path().join("spool"))
-            .args(["--option", "follow=true"])
-            .env("PATH", path)
-            .env("TEST_CHILD_PID", &child_pid_file)
-            .process_group(0)
-            .stdout(Stdio::null())
-            .stderr(Stdio::piped())
-            .spawn()
-            .unwrap()),
+    let mut daemon = Session {
+        child: Some(
+            Command::new(env!("CARGO_BIN_EXE_sinex-session"))
+                .args(["capture", "journald", "--spool"])
+                .arg(dir.path().join("spool"))
+                .args(["--option", "follow=true"])
+                .env("PATH", path)
+                .env("TEST_CHILD_PID", &child_pid_file)
+                .process_group(0)
+                .stdout(Stdio::null())
+                .stderr(Stdio::piped())
+                .spawn()
+                .unwrap(),
+        ),
     };
     let deadline = Instant::now() + Duration::from_secs(10);
     let child = loop {
