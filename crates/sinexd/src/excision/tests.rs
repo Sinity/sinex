@@ -1,8 +1,8 @@
 //! Excision as the API runs it: planned and checked here, applied by the
 //! writer, on a real database.
 use super::*;
+use crate::material_access::Sink;
 use crate::reader_context::ReaderContext;
-use crate::sealing::Sink;
 use crate::writer::Priority;
 use serde_json::Value;
 use sinex_model::event_types::machine::FileChanged;

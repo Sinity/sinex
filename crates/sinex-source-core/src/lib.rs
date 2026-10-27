@@ -108,3 +108,6 @@ pub trait Parser: Send + Sync + 'static {
 
 #[cfg(test)]
 mod test_parser;
+
+#[cfg(test)]
+mod test_support;

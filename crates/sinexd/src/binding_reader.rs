@@ -1,6 +1,6 @@
 //! A binding owns its parser and cursor; bindings of the same stored file share one pass over it.
 use crate::backfill::{self, Totals};
-use crate::sealing::Sink;
+use crate::material_access::Sink;
 use crate::writer::WriterHandle;
 use serde_json::Value;
 use sinex_model::{Class, RunId};
@@ -87,7 +87,7 @@ pub(crate) async fn once(
     Ok(totals)
 }
 
-pub(crate) use crate::sealing::Access;
+use crate::material_access::Access;
 
 mod shared;
 use shared::{SharedFileRead, read_shared, same_file};
@@ -168,7 +168,7 @@ pub(crate) async fn read(
                     // file facts permit aliases without conflating configured input identities.
                     let compatible = passes.iter_mut().find(|g| {
                         g.class == class
-                            && crate::sealing::can_share(class)
+                            && class != Class::Sealed
                             && same_file(&g.facts, &facts)
                             && g.host == b.binding.settings.host
                     });
@@ -296,7 +296,7 @@ pub(crate) async fn restore_reader(
     blobs: &Blobs,
     reader: &mut dyn Reader,
     binding: &str,
-    unlock: Option<&crate::sealing::Unlock>,
+    unlock: Option<&crate::material_access::sealing::Unlock>,
     stop: &watch::Receiver<bool>,
 ) -> Result<Class, String> {
     let cursor = positions::load(conn, binding)
@@ -335,9 +335,13 @@ pub(crate) async fn restore_reader(
                 reached_saved = true;
                 break 'parts;
             }
-            let bytes =
-                crate::sealing::MaterialOnDemand::new(conn, blobs, reference.clone(), unlock)
-                    .await?;
+            let bytes = crate::material_access::MaterialOnDemand::new(
+                conn,
+                blobs,
+                reference.clone(),
+                unlock,
+            )
+            .await?;
             floor = floor.max(bytes.floor());
             let more = reader
                 .restore(
@@ -359,7 +363,12 @@ pub(crate) async fn restore_reader(
             .restore_memory(&saved.bytes)
             .map_err(|e| e.to_string())?;
         // The parts the saved memory stands for were not opened.
-        floor = floor.max(crate::sealing::history_floor(conn, binding).await?);
+        if sinex_store::positions::has_sealed_material(conn, binding)
+            .await
+            .map_err(|e| e.to_string())?
+        {
+            floor = Class::Sealed;
+        }
     }
     reader.restored().map_err(|e| e.to_string())?;
     Ok(floor)

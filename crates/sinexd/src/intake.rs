@@ -19,7 +19,7 @@ pub(crate) struct Intake<'a> {
     pub source: &'a dyn Source,
     pub binding: &'a str,
     pub run: RunId,
-    pub material: &'a crate::sealing::Materials,
+    pub material: &'a crate::material_access::MaterialAccess,
     pub check: AdmissionCheck,
     pub priority: Priority,
     /// Requests commit together and refuse parser failures before admission.
@@ -129,8 +129,11 @@ pub(crate) async fn request(
     .await
     .map_err(|e| e.to_string())?;
     let class = request_class(conn, source.as_ref()).await?;
-    let material =
-        crate::sealing::Materials::new(blobs.clone(), class, crate::sealing::Access::default())?;
+    let material = crate::material_access::MaterialAccess::new(
+        blobs.clone(),
+        class,
+        crate::material_access::Access::default(),
+    )?;
     Intake {
         writer,
         source: source.as_ref(),

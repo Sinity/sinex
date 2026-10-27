@@ -1,6 +1,6 @@
 //! Open a stored material's bytes for reading again: plain, or sealed with the
 //! operator's unlock.
-use crate::sealing::Unlock;
+use crate::material_access::sealing::Unlock;
 use crate::stored::StoredReader;
 use sinex_model::{MaterialId, MaterialRef};
 use sinex_sealing::DataKey;
@@ -142,7 +142,7 @@ pub(crate) fn open_checked(
                 &reference.blob,
                 Some(reference.length),
                 key,
-                crate::sealing::read_limits(reference.length)?,
+                crate::material_access::sealing::read_limits(reference.length)?,
                 move || cancel().map_err(std::io::Error::other).map_err(Into::into),
             )
             .map_err(|e| e.to_string())?;

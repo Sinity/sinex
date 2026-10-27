@@ -8,14 +8,6 @@ use std::sync::{
 };
 use std::time::{Duration, Instant};
 
-/// Capture can use a public recipient; reading stored sealed bytes needs the
-/// operation's unlock.
-#[derive(Clone, Copy, Default)]
-pub(crate) struct Access<'a> {
-    pub recipient: Option<&'a sinex_sealing::Recipient>,
-    pub unlock: Option<&'a Unlock>,
-}
-
 #[derive(Clone)]
 pub(crate) struct Unlock {
     identity: Arc<Identity>,

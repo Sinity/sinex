@@ -27,84 +27,9 @@ fn frames_fit_one_message_and_a_large_event_travels_alone() {
     );
 }
 
-use std::sync::{Arc, Mutex};
-
-/// A stand-in for `sinexd`'s ingress that records the frames it receives
-/// and acknowledges each one.
-async fn standin(
-    nats: &devkit::nats::TestNats,
-    subjects: &Subjects,
-    producer: &str,
-) -> Arc<Mutex<Vec<Ingress>>> {
-    standin_with_refusal(nats, subjects, producer, None).await
-}
-
-async fn standin_with_refusal(
-    nats: &devkit::nats::TestNats,
-    subjects: &Subjects,
-    producer: &str,
-    mut refuse_offset: Option<u64>,
-) -> Arc<Mutex<Vec<Ingress>>> {
-    use async_nats::jetstream::{consumer, stream};
-    let client = async_nats::connect(nats.url()).await.unwrap();
-    let js = jetstream::new(client.clone());
-    let stream = js
-        .get_or_create_stream(stream::Config {
-            name: subjects.ingress_stream(),
-            subjects: vec![subjects.ingress_all()],
-            ..Default::default()
-        })
-        .await
-        .unwrap();
-    let consumer = stream
-        .create_consumer(consumer::pull::Config {
-            durable_name: Some("standin".into()),
-            ..Default::default()
-        })
-        .await
-        .unwrap();
-    let received: Arc<Mutex<Vec<Ingress>>> = Arc::default();
-    let (seen, acker, ack_subject) = (received.clone(), client, subjects.ack(producer));
-    tokio::spawn(async move {
-        let mut messages = consumer.messages().await.unwrap();
-        while let Some(Ok(message)) = messages.next().await {
-            let frame: Ingress = serde_json::from_slice(&message.payload).unwrap();
-            let (material, admitted) = match &frame {
-                Ingress::Material { material, .. } => (Some(material.id), vec![]),
-                Ingress::Events { events, .. } => (
-                    None,
-                    events.iter().map(|_| sinex_model::EventId::new()).collect(),
-                ),
-                Ingress::Chunk { .. } | Ingress::LargeFrame { .. } => (None, vec![]),
-            };
-            let refusal = match &frame {
-                Ingress::Chunk { offset, .. } if refuse_offset == Some(*offset) => {
-                    refuse_offset = None;
-                    Some("synthetic interruption".into())
-                }
-                _ => None,
-            };
-            let ack = Acknowledgment {
-                frame: frame.frame().to_owned(),
-                material,
-                admitted,
-                outcome: json!({}),
-                refusal,
-                commit_seq: Some(1),
-            };
-            seen.lock().unwrap().push(frame);
-            acker
-                .publish(
-                    ack_subject.clone(),
-                    serde_json::to_vec(&ack).unwrap().into(),
-                )
-                .await
-                .unwrap();
-            message.ack().await.unwrap();
-        }
-    });
-    received
-}
+#[path = "../../../tests/support/producer.rs"]
+mod support;
+use support::standin;
 
 /// A batch a stop left unacknowledged before its position was saved is sent
 /// again on the next start, with its bytes uploaded in chunks; a frame larger
@@ -113,8 +38,7 @@ async fn standin_with_refusal(
 async fn an_unacknowledged_batch_is_resent_with_uploaded_bytes() {
     let nats = devkit::nats::test_nats().unwrap();
     let subjects = Subjects::new(nats.prefix());
-    let received =
-        standin_with_refusal(&nats, &subjects, "node-test", Some(CHUNK_BYTES as u64)).await;
+    let received = standin(&nats, &subjects, "node-test", Some(CHUNK_BYTES as u64)).await;
     let dir = std::env::temp_dir().join(format!("sinex-pend-{}", uuid::Uuid::now_v7()));
     let state = dir.join("positions");
     let store = Store::open(&dir.join("store")).unwrap();
@@ -266,7 +190,7 @@ fn assert_chunks(frames: &[Ingress], expected: &[u8]) {
 async fn streamed_upload_preserves_empty_and_chunk_boundary_materials() {
     let nats = devkit::nats::test_nats().unwrap();
     let subjects = Subjects::new(nats.prefix());
-    let received = standin(&nats, &subjects, "boundaries").await;
+    let received = standin(&nats, &subjects, "boundaries", None).await;
     let dir = tempfile::tempdir().unwrap();
     let store = Store::open(dir.path()).unwrap();
     let mut producer = Producer::connect(nats.url(), None, subjects, "boundaries")
@@ -302,7 +226,7 @@ async fn streamed_upload_preserves_empty_and_chunk_boundary_materials() {
 async fn damaged_producer_material_sends_no_chunks() {
     let nats = devkit::nats::test_nats().unwrap();
     let subjects = Subjects::new(nats.prefix());
-    let received = standin(&nats, &subjects, "damaged").await;
+    let received = standin(&nats, &subjects, "damaged", None).await;
     let dir = tempfile::tempdir().unwrap();
     let store = Store::open(dir.path()).unwrap();
     let bytes = b"synthetic stored material";

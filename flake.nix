@@ -12,7 +12,7 @@
       # The Rust toolchain comes from a pinned nixpkgs that matches the released shared crates.
       rustPkgs = import rust-nixpkgs { inherit system; };
       postgres = pkgs.postgresql_18.withPackages (p: [ p.timescaledb ]);
-      package = rustPkgs.rustPlatform.buildRustPackage {
+      server = rustPkgs.rustPlatform.buildRustPackage {
         pname = "sinex";
         version = "0.1.0";
         src = ./.;
@@ -40,7 +40,7 @@
           cargo build --offline --locked -p sinex-schema --target-dir target --target ${rustPkgs.stdenv.hostPlatform.rust.rustcTarget}
           target/${rustPkgs.stdenv.hostPlatform.rust.rustcTarget}/debug/sinex-schema apply "$DATABASE_URL"
         '';
-        cargoBuildFlags = [ "-p" "sinexd" "-p" "sinexctl" "-p" "sinex-session" "-p" "sinex-capture" "-p" "xtask" ];
+        cargoBuildFlags = [ "-p" "sinexd" "-p" "sinexctl" "-p" "xtask" ];
         doCheck = true;
         # Captures check the private-mode switch under $XDG_RUNTIME_DIR; the
         # builder has none, and a switch that cannot be checked counts as on.
@@ -52,6 +52,21 @@
         checkFlags = [ "--skip" "drivers::tests::backfill_of_a_large_file_peaks_well_under_its_size" ];
         # Database tests need devkit's server; they run under `xtask test`.
         cargoTestFlags = [ "-p" "sinex-model" "-p" "sinex-protocol" "-p" "sinex-schema" "-p" "sinex-sources" "-p" "sinex-source-core" "-p" "sinex-sealing" "-p" "sinex-derivations" ];
+      };
+      capture = rustPkgs.rustPlatform.buildRustPackage {
+        pname = "sinex-capture";
+        version = "0.1.0";
+        src = ./.;
+        cargoLock = {
+          lockFile = ./Cargo.lock;
+          allowBuiltinFetchGit = true;
+        };
+        cargoBuildFlags = [ "-p" "sinex-session" "-p" "sinex-capture" ];
+        doCheck = false;
+      };
+      package = pkgs.symlinkJoin {
+        name = "sinex-0.1.0";
+        paths = [ server capture ];
       };
     in {
       packages.${system} = { default = package; sinexd = package; sinexctl = package; };

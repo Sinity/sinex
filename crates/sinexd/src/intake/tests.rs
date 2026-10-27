@@ -109,10 +109,10 @@ async fn submission_checks_again_inside_the_writer(db: devkit::pg::TestDatabase)
         .unwrap();
     let calls = Arc::new(AtomicUsize::new(0));
     let check_calls = calls.clone();
-    let material = crate::sealing::Materials::new(
+    let material = crate::material_access::MaterialAccess::new(
         ctx.blobs.clone(),
         Class::Guarded,
-        crate::sealing::Access::default(),
+        crate::material_access::Access::default(),
     )
     .unwrap();
     let result = Intake {

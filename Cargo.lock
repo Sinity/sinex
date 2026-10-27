@@ -4188,14 +4188,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "sinex-diagnostics"
-version = "0.1.0"
-dependencies = [
- "serde_json",
- "tokio",
-]
-
-[[package]]
 name = "sinex-library"
 version = "0.1.0"
 dependencies = [
@@ -4351,7 +4343,6 @@ dependencies = [
  "proptest",
  "regex",
  "rusqlite",
- "rustix",
  "rustls",
  "serde",
  "serde-saphyr",
@@ -4363,7 +4354,6 @@ dependencies = [
  "sinex-transport",
  "tar",
  "tempfile",
- "thiserror 2.0.21",
  "time",
  "tokio",
  "ureq",
@@ -4420,9 +4410,9 @@ dependencies = [
  "jiff",
  "rmcp",
  "serde_json",
- "sinex-diagnostics",
  "sinex-protocol",
  "sinex-transport",
+ "tempfile",
  "tokio",
 ]
 
@@ -4430,6 +4420,7 @@ dependencies = [
 name = "sinexd"
 version = "0.1.0"
 dependencies = [
+ "age",
  "async-nats",
  "axum",
  "base64 0.22.1",

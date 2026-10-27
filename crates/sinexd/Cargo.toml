@@ -8,7 +8,7 @@ license.workspace = true
 
 [dependencies]
 sinex-sealing.workspace = true
-sinex-source-core.workspace = true
+sinex-source-core = { workspace = true, features = ["archives", "sqlite"] }
 sinex-transport.workspace = true
 tempfile = "3"
 sinex-model.workspace = true
@@ -39,6 +39,7 @@ tokio-stream.workspace = true
 credential-masking.workspace = true
 
 [dev-dependencies]
+age.workspace = true
 hashed-blobs.workspace = true
 zip = { version = "2", default-features = false, features = ["deflate"] }
 tar = "0.4"

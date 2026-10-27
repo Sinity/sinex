@@ -129,7 +129,7 @@ pub(crate) struct Options {
     pub compare: bool,
     pub resume: Option<OperationId>,
     pub actor: String,
-    pub unlock: Option<crate::sealing::Unlock>,
+    pub unlock: Option<crate::material_access::sealing::Unlock>,
 }
 
 /// Replay with its parts: a read connection, the content store and the writer
@@ -191,7 +191,7 @@ pub(crate) async fn run(
         }
         let sequence: Vec<Stored> = sequence[..=last].iter().map(|m| (*m).clone()).collect();
         let parsers = sources_of(read_conn, &sequence).await?;
-        let keys = crate::sealing::replay_keys(
+        let keys = crate::material_access::sealing::replay_keys(
             read_conn,
             blobs,
             sequence
@@ -357,7 +357,7 @@ fn read_sequence(
     operation: OperationId,
     out: &tokio::sync::mpsc::Sender<Result<Batch, String>>,
     keys: &HashMap<Uuid, sinex_sealing::DataKey>,
-    unlock: Option<&crate::sealing::Unlock>,
+    unlock: Option<&crate::material_access::sealing::Unlock>,
 ) -> Read {
     let mut read = Read::default();
     if let Err(error) = read_sequence_into(
@@ -380,7 +380,7 @@ fn read_sequence_into(
     out: &tokio::sync::mpsc::Sender<Result<Batch, String>>,
     report: &mut Read,
     keys: &HashMap<Uuid, sinex_sealing::DataKey>,
-    unlock: Option<&crate::sealing::Unlock>,
+    unlock: Option<&crate::material_access::sealing::Unlock>,
 ) -> Result<(), String> {
     let send = |batch: Batch| {
         if let Some(unlock) = unlock {
@@ -438,7 +438,7 @@ fn read_sequence_into(
             manifest: m.manifest.clone(),
         };
         let sender = out.clone();
-        let stored = crate::sealing::open_checked(
+        let stored = crate::material_access::open_checked(
             blobs,
             reference,
             key.cloned(),
@@ -505,7 +505,7 @@ fn read_sequence_into(
             if records.is_empty() {
                 continue;
             }
-            crate::sealing::seal_records(&mut records, key)?;
+            crate::material_access::sealing::seal_records(&mut records, key)?;
             send(Batch {
                 run: RunId::new(),
                 kind: BatchKind::Replay { operation },
