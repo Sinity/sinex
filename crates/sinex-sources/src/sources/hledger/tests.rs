@@ -206,3 +206,13 @@ fn indented_comments_keep_their_posting_and_attached_commodities_keep_precision(
     );
     assert_eq!(payload.postings[1].currency.as_deref(), Some("TEST"));
 }
+
+#[devkit::test]
+fn decimal_quantities_keep_written_fraction_and_signs() {
+    for amount in [".5", "-.50", "+.00", "1.", "001.00"] {
+        let text = format!("Assets:Example  {amount} TEST");
+        let value = posting(&text).unwrap();
+        assert_eq!(value.amount.as_deref(), Some(amount));
+        assert_eq!(value.currency.as_deref(), Some("TEST"));
+    }
+}
