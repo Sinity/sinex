@@ -1,8 +1,9 @@
 //! Conversation days: each conversation's messages on one logical day, within
 //! one provider. Chat lines group by their buffer, Messenger and SMS messages
-//! by their thread (its participants), and mail by its thread ID, or by its
-//! subject without reply and forward prefixes when it has none. Mail is read
-//! fused, so a message several mail sources hold counts once.
+//! by their thread (its participants), and mail by its recorded thread ID. Mail
+//! without a thread ID stays separate by message ID: a shared subject does not
+//! identify a conversation. Mail is read fused, so a message several sources
+//! hold counts once.
 //!
 //! The key is the logical day: one read of the day's messages gives every
 //! conversation's day, so a thread of any length costs one key per day it was
@@ -19,26 +20,6 @@ use std::collections::BTreeMap;
 pub struct ConversationDays;
 
 type Messages<'a> = Vec<(&'a Event, String, Timestamp)>;
-
-/// A subject as its thread: without leading reply and forward prefixes, case
-/// and spacing ignored.
-fn thread_subject(subject: &str) -> String {
-    let mut s = subject.trim();
-    loop {
-        let lower = s.to_lowercase();
-        let Some(rest) = ["re:", "fwd:", "fw:", "aw:", "odp:", "pd:"]
-            .iter()
-            .find_map(|p| lower.starts_with(p).then(|| &s[p.len()..]))
-        else {
-            break;
-        };
-        s = rest.trim_start();
-    }
-    s.split_whitespace()
-        .collect::<Vec<_>>()
-        .join(" ")
-        .to_lowercase()
-}
 
 /// The channel, conversation, sender and time of one message.
 fn message(e: &Event) -> Option<(&'static str, String, String, Timestamp)> {
@@ -62,8 +43,8 @@ fn message(e: &Event) -> Option<(&'static str, String, String, Timestamp)> {
             let thread = m
                 .thread_id
                 .filter(|t| !t.trim().is_empty())
-                .or_else(|| m.subject.as_deref().map(thread_subject))
-                .unwrap_or_else(|| m.message_id.clone());
+                .map(|thread| format!("thread:{thread}"))
+                .unwrap_or_else(|| format!("message:{}", m.message_id));
             Some((
                 "mail",
                 thread,
@@ -81,7 +62,7 @@ fn day_of(key: &Value) -> Option<jiff::civil::Date> {
 
 impl Keyed for ConversationDays {
     const NAME: &'static str = "conversation.days";
-    const VERSION: u32 = 1;
+    const VERSION: u32 = 2;
     const INPUTS: &'static [&'static str] = &[
         ChatMessage::EVENT_TYPE,
         ConversationMessage::EVENT_TYPE,

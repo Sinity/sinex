@@ -1113,7 +1113,7 @@ async fn every_revision_reads_back_after_later_ones() {
 /// read, and no activity event lands there; derivations never see it.
 #[devkit::test]
 async fn telemetry_is_kept_apart_from_activity() {
-    use sinex_sources::drivers::live_stream;
+    use sinex_source_core::drivers::live_stream;
     let dir = Dir::new();
     let t = Target::new(&dir);
     let zsh = dir.file("zsh", small_zsh().as_bytes());

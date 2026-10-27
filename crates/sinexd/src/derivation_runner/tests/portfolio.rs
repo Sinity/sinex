@@ -387,3 +387,142 @@ async fn every_derivation_gives_the_same_outputs_at_once_and_piece_by_piece(
         "at once only: {only_once:#?}\npiece by piece only: {only_pieces:#?}"
     );
 }
+
+struct ChangedHourlyMetrics;
+
+impl Keyed for ChangedHourlyMetrics {
+    const NAME: &'static str = sinex_derivations::figures::HourlyMetrics::NAME;
+    const VERSION: u32 = sinex_derivations::figures::HourlyMetrics::VERSION + 1;
+    const INPUTS: &'static [&'static str] = sinex_derivations::figures::HourlyMetrics::INPUTS;
+    const OUTPUTS: &'static [&'static str] = sinex_derivations::figures::HourlyMetrics::OUTPUTS;
+
+    fn keys_for(&self, input: &KeyView<'_>, env: &Env) -> Vec<Value> {
+        Keyed::keys_for(&sinex_derivations::figures::HourlyMetrics, input, env)
+    }
+
+    fn inputs(&self, key: &Value, env: &Env) -> Option<InputQuery> {
+        Keyed::inputs(&sinex_derivations::figures::HourlyMetrics, key, env)
+    }
+
+    fn compute(&self, key: &Value, inputs: &[Event], env: &Env) -> Computed {
+        let mut computed =
+            Keyed::compute(&sinex_derivations::figures::HourlyMetrics, key, inputs, env);
+        for event in &mut computed.outputs {
+            let mut payload: MetricFigure = event.payload_as().unwrap();
+            if payload.metric != "shell.commands" {
+                continue;
+            }
+            payload.value = payload.value.map(|value| value + 1.0);
+            let Origin::Derived { parents } = &event.origin else {
+                panic!("a metric figure has derived parents")
+            };
+            *event = sinex_derivations::derived_event::derived(
+                &payload,
+                Self::NAME,
+                inputs.iter().filter(|input| parents.contains(&input.id)),
+            );
+        }
+        computed
+    }
+
+    fn key_state(&self, key: &Value, env: &Env) -> KeyState {
+        Keyed::key_state(&sinex_derivations::figures::HourlyMetrics, key, env)
+    }
+}
+
+fn changed_portfolio() -> Vec<Box<dyn AnyKeyed>> {
+    sinex_derivations::keyed()
+        .into_iter()
+        .map(|derivation| {
+            if derivation.name() == ChangedHourlyMetrics::NAME {
+                Box::new(ChangedHourlyMetrics) as Box<dyn AnyKeyed>
+            } else {
+                derivation
+            }
+        })
+        .collect()
+}
+
+#[devkit::test]
+async fn comparing_then_switching_the_portfolio_matches_a_fresh_computation(
+    db: devkit::pg::TestDatabase,
+) {
+    let events = world();
+    let switched = World::new(db).await;
+    switched.admit(events.clone()).await;
+    derive_all(&switched).await;
+    let before = derived_set(&switched).await;
+    let stored = switched.count("SELECT count(*) FROM core.events").await;
+    let mut read = PgConnection::connect(&switched.url).await.unwrap();
+    let previous_hourly: Vec<uuid::Uuid> = sqlx::query_scalar(
+        "SELECT e.id FROM core.events e WHERE e.source = $1
+         AND EXISTS (SELECT 1 FROM core.live_equivalence l WHERE l.event_id = e.id)",
+    )
+    .bind(ChangedHourlyMetrics::NAME)
+    .fetch_all(&mut read)
+    .await
+    .unwrap();
+    assert!(!previous_hourly.is_empty());
+
+    let mut changed = switched
+        .driver_with(
+            changed_portfolio(),
+            sinex_derivations::per_event_with(&configuration()).unwrap(),
+        )
+        .await;
+    changed.clock = Some(at(86_400 * 5));
+    let comparison = changed
+        .compare(ChangedHourlyMetrics::NAME, None, 3)
+        .await
+        .unwrap();
+    assert!(
+        comparison.keys > 0 && comparison.changed > 0,
+        "{comparison}"
+    );
+    assert!(
+        comparison.same > 0,
+        "the fixture includes unchanged outputs: {comparison}"
+    );
+    assert_eq!((comparison.added, comparison.removed), (0, 0));
+    assert_eq!(derived_set(&switched).await, before);
+    assert_eq!(
+        switched.count("SELECT count(*) FROM core.events").await,
+        stored
+    );
+
+    changed.catch_up().await.unwrap();
+    let after = derived_set(&switched).await;
+    assert_ne!(after, before);
+    let versions: Vec<String> = sqlx::query_scalar(
+        "SELECT DISTINCT m.version FROM core.events e
+         JOIN core.runs r ON r.id = e.run_id
+         JOIN core.manifests m ON m.id = r.manifest_id
+         WHERE e.source = $1
+           AND EXISTS (SELECT 1 FROM core.live_equivalence l WHERE l.event_id = e.id)",
+    )
+    .bind(ChangedHourlyMetrics::NAME)
+    .fetch_all(&mut read)
+    .await
+    .unwrap();
+    assert_eq!(versions, [ChangedHourlyMetrics::VERSION.to_string()]);
+    let archived: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM audit.archived WHERE event_id = ANY($1)")
+            .bind(&previous_hourly)
+            .fetch_one(&mut read)
+            .await
+            .unwrap();
+    assert_eq!(archived, i64::try_from(previous_hourly.len()).unwrap());
+    read.close().await.unwrap();
+
+    let fresh = World::new(devkit::pg::test_database().unwrap()).await;
+    fresh.admit(events).await;
+    let mut recomputed = fresh
+        .driver_with(
+            changed_portfolio(),
+            sinex_derivations::per_event_with(&configuration()).unwrap(),
+        )
+        .await;
+    recomputed.clock = Some(at(86_400 * 5));
+    recomputed.catch_up().await.unwrap();
+    assert_eq!(after, derived_set(&fresh).await);
+}

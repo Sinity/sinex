@@ -125,9 +125,9 @@ fn page(times: &[&str]) -> String {
 /// The events and failure reasons of one export page, drained.
 fn drained(html: &str) -> (Vec<(sinex_model::Timestamp, String)>, Vec<String>) {
     let (records, _) = frame(html.as_bytes());
-    let chunks = crate::drain::drain(
+    let chunks = sinex_source_core::drain::drain(
         &MyActivityParser,
-        crate::drain::DrainInput {
+        sinex_source_core::drain::DrainInput {
             source: "google.takeout.my-activity",
             class: Class::Open,
             material: sinex_model::MaterialId::new(),
@@ -135,8 +135,8 @@ fn drained(html: &str) -> (Vec<(sinex_model::Timestamp, String)>, Vec<String>) {
             records: &records,
             carry: serde_json::Value::Null,
             reading_order: &|_| sinex_model::ReadingOrder(0),
-            limits: crate::drain::Limits::default(),
-            manifest: crate::RecordContext::none().manifest,
+            limits: sinex_source_core::drain::Limits::default(),
+            manifest: sinex_source_core::RecordContext::none().manifest,
         },
     )
     .unwrap();

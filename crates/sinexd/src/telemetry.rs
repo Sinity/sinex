@@ -4,7 +4,7 @@
 //! binding reads the spool like any live capture, and admission keeps those
 //! events in `telemetry.events`, apart from the activity record.
 use sinex_model::Timestamp;
-use sinex_sources::drivers::live_stream::{Rotation, SpoolWriter};
+use sinex_source_core::drivers::live_stream::{Rotation, SpoolWriter};
 use sinex_sources::sources::telemetry::Sample;
 use sqlx::PgConnection;
 use std::path::{Path, PathBuf};

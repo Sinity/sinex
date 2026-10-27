@@ -19,7 +19,7 @@ async fn a_sample_spools_one_line_per_part(db: devkit::pg::TestDatabase) {
         .map(|l| {
             let record: serde_json::Map<String, serde_json::Value> =
                 serde_json::from_str(l).unwrap();
-            let (_, bytes) = sinex_sources::drivers::live_stream::received(&record).unwrap();
+            let (_, bytes) = sinex_source_core::drivers::live_stream::received(&record).unwrap();
             serde_json::from_slice(&bytes).unwrap()
         })
         .collect();

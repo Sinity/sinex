@@ -238,8 +238,9 @@ the content blob for PDF, HTML, Markdown, plain text, Word (`.docx`) and
 OpenDocument (`.odt`), and writes searchable `document.text` events with their
 input as parent. PDF text and screen OCR run at idle priority. Activity spans
 join observed activity within logical days, excluding absent intervals;
-conversation days group a provider's messages, and rest fusion joins sleep
-and nap records from health providers.
+conversation days group a provider's messages. Mail uses recorded thread IDs;
+without one, each message stays separate, since a shared subject does not
+identify a thread. Rest fusion joins sleep and nap records from health providers.
 
 ### Metric figures
 
@@ -269,6 +270,10 @@ input's replacement is read in its turn. A full recompute also reaches every
 key the derivation has outputs under, so a version that keys its windows
 differently archives the old keys' outputs instead of counting an input
 twice.
+
+A derived output's record hash includes its producer name and version. A new
+version writes a new reading even when its payload and parents match;
+recomputing unchanged inputs under the same version remains a repeat.
 
 The commit log orders committed events and visibility changes (hide, unhide,
 replacement). Hide and unhide change what is live and append to the visibility
