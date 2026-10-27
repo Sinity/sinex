@@ -243,6 +243,8 @@ impl Parser for OcrParser {
             }
             _ => return Err(RecordError::new("incomplete or negative bounding box size")),
         };
+        payload.provider_id_stable = payload.provider_segment_id.is_some()
+            && (matches!(self.format, Format::Json) || payload.external_run.is_some());
         payload.extra = object;
         Ok((vec![payload], carry))
     }

@@ -199,6 +199,8 @@ impl Parser for TranscriptParser {
                         .map_err(|_| RecordError::new("absolute segment time out of range"))?,
                     );
                 }
+                payload.provider_id_stable = payload.provider_segment_id.is_some()
+                    && (self.format == Format::Json || payload.external_run.is_some());
                 payload.extra = object;
             }
             Format::Text => {

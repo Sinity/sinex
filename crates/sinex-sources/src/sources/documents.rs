@@ -52,12 +52,13 @@ impl Parser for DocumentParser {
                 .transpose()
         };
         let removed_at = time("removed_at_ns")?;
-        let content = removed_at
-            .is_none()
-            .then(|| format!("blake3:{}", blake3::hash(record).to_hex()));
+        let digest = removed_at.is_none().then(|| blake3::hash(record));
+        let content = digest
+            .as_ref()
+            .map(|hash| format!("blake3:{}", hash.to_hex()));
         if let Some(expected) = member.details.get("hash").and_then(Value::as_str)
-            && removed_at.is_none()
-            && expected != blake3::hash(record).to_hex().as_str()
+            && let Some(digest) = digest
+            && expected != digest.to_hex().as_str()
         {
             return Err(RecordError::new(
                 "document content differs from member digest",
@@ -183,7 +184,7 @@ pub const FORMAT: InputFormat = InputFormat {
                     .and_then(|s| s.to_str())
                     .ok_or("document file needs a UTF-8 name")?,
             ) {
-                return Err("the selected file belongs to notes or is hidden".into());
+                return Err("document acquisition excludes Markdown and hidden files".into());
             }
             Ok(sinex_source_core::binding::polled(file::FileReader::new(
                 binding.input.clone(),
