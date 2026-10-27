@@ -33,7 +33,7 @@ pub enum DerivedScope {
 /// How far archiving and excision had gone when a derivation read its
 /// inputs: if neither has moved since, every input it read is still live and
 /// admission need not look.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct ReadMark {
     /// The newest visibility change (`audit.archive_changes`).
     pub changes: i64,
