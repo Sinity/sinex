@@ -31,11 +31,9 @@ pub enum Format {
     Srt,
 }
 
-pub const fn spec(
-    parser: &'static str,
-    framing: Framing,
-    frame: fn(&[u8]) -> (Vec<(usize, usize)>, usize),
-) -> SourceSpec {
+type Frame = fn(&[u8]) -> (Vec<(usize, usize)>, usize);
+
+pub const fn spec(parser: &'static str, framing: Framing, frame: Frame) -> SourceSpec {
     SourceSpec {
         name: "media.transcripts",
         driver: Driver::ExportArchive,
