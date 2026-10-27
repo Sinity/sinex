@@ -276,3 +276,18 @@ fn parsed_include_records_keep_one_resolution_list_per_duplicate() {
     assert_eq!(events[1].payload["duplicate"], 1);
     assert!(events[2].payload["includes"][0]["reason"].is_string());
 }
+
+#[devkit::test]
+fn changed_include_block_reports_unavailable_resolution_without_using_the_previous_plan() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("main.journal");
+    std::fs::write(&root, "include child.journal\n").unwrap();
+    std::fs::write(dir.path().join("child.journal"), "; child\n").unwrap();
+    let bindings = plan(&root, &Settings::new("example-host")).unwrap();
+    let binding = bindings.iter().find(|b| b.input == root).unwrap();
+    let source = (super::super::FORMAT.source)(binding).unwrap();
+    let changed = b"include other.journal\n";
+    let events = super::super::tests::intake::export_restart(changed, super::super::driver(root,"example-host".into()), source.as_ref(),1,0);
+    assert_eq!(events[0].payload["includes"][0]["path"],"other.journal");
+    assert!(events[0].payload["includes"][0]["reason"].as_str().unwrap().contains("unavailable"));
+}

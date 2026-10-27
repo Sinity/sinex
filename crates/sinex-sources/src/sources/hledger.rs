@@ -172,7 +172,14 @@ impl Parser for HledgerParser {
                 .includes
                 .get(&format!("{hash}:{duplicate}"))
                 .cloned()
-                .unwrap_or_default();
+                .unwrap_or_else(|| {
+                    if directive == "include" {
+                        vec![sinex_model::event_types::finance::IncludeTarget {
+                            path: header.trim_start_matches("include").trim().into(),
+                            reason: Some("include resolution is unavailable for this captured block".into()),
+                        }]
+                    } else { vec![] }
+                });
             return Ok((
                 vec![JournalRecord::Directive(JournalDirective {
                     host: self.host.clone(),
