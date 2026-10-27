@@ -65,6 +65,18 @@ fn product(b: &Binding) -> Result<&'static Product, String> {
 /// own cursor.
 pub const FORMAT: InputFormat = InputFormat {
     name: "takeout",
+    discovery: sinex_source_core::discovery::DiscoverySpec {
+        owner: sinex_source_core::discovery::Owner::System,
+        locations: &[sinex_source_core::discovery::Location {
+            root: "input",
+            path: "takeout",
+        }],
+        capabilities: &[],
+        credentials: &[],
+        streams: &[],
+        request_only: false,
+    },
+    discover: crate::discovery::discover_format,
     specs: || PRODUCTS.iter().map(|p| p.0).collect(),
     plan: Some(|input, settings| {
         let zoned = settings.clone().with_zone()?;

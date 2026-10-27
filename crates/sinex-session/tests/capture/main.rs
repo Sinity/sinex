@@ -85,6 +85,24 @@ exec sleep 30
             std::fs::write(&path, format!("#!{}\n{body}", shell.trim())).unwrap();
             std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o700)).unwrap();
         }
+        let runtime = root.join("run");
+        std::fs::create_dir(&runtime).unwrap();
+        std::fs::write(runtime.join("wayland-test"), b"").unwrap();
+        let excluded: serde_json::Map<String, serde_json::Value> = sinex_sources::sources::specs()
+            .iter()
+            .filter(|spec| spec.name != "desktop.clipboard")
+            .map(|spec| {
+                (
+                    spec.name.to_owned(),
+                    serde_json::json!({"reason":"fixture captures only the clipboard"}),
+                )
+            })
+            .collect();
+        std::fs::write(
+            root.join("sources.json"),
+            serde_json::to_vec(&serde_json::json!({"exclude":excluded})).unwrap(),
+        )
+        .unwrap();
         let pids = root.join("pids");
         Self {
             _dir: dir,
@@ -101,6 +119,10 @@ exec sleep 30
         ));
         command
             .env("PATH", std::env::join_paths(path).unwrap())
+            .env("XDG_RUNTIME_DIR", self.root.join("run"))
+            .env("WAYLAND_DISPLAY", "wayland-test")
+            .env_remove("HYPRLAND_INSTANCE_SIGNATURE")
+            .env_remove("DBUS_SESSION_BUS_ADDRESS")
             .env("FAKE_PIDS", &self.pids)
             .env("FAKE_DESCENDANTS", self.root.join("descendants"))
             .env("FAKE_HEARTBEAT", self.root.join("heartbeat"))
@@ -122,10 +144,11 @@ exec sleep 30
                 nats.prefix(),
                 "--producer",
                 "fixture",
-                "--clipboard",
                 "--every",
                 "1",
             ])
+            .arg("--sources")
+            .arg(self.root.join("sources.json"))
             .arg("--state")
             .arg(self.root.join("state"))
             .arg("--store")

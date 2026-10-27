@@ -380,3 +380,30 @@ material another producer or a binding registered is refused, and nothing
 changes. An excised material is no longer listed on
 `<root>.materials.<producer>`. The operator's excision refuses producers'
 materials.
+
+## Host discovery
+
+`services.sinex.enable` starts discovery. Each input format declares its owner,
+canonical locations, capture streams, capabilities and credentials. Runtime
+checks use the operator's declared home/XDG roots, subject roots, provider inputs
+and filesystem layout. Nix evaluation serializes these facts without probing
+files. Declared backfill inputs are also ordinary discovered inputs.
+
+A nullable `exclude.<source>` entry applies to every format and binding of that
+source. An exclusion requires a reason; status includes the complete exclusion
+map even when no source has run. Derivation options continue to control derived
+outputs. Source paths, classes, options and time zones remain configurable.
+
+The binding runner reconciles inputs every 60 seconds. It compares aliases only
+within the same source, parser, host and distinguishing suffix, and reuses saved
+binding names and input spellings. Conflicting saved identities are reported;
+cursors stay attached to their original names. A missing input waits, an empty
+readable input has zero bindings or records, and an unreadable input reports its
+error independently of the other inputs.
+
+`sinex-session run` selects every available session stream by default, using the
+same exclusions and source settings. Its state directory holds the existing
+spool names and positions. The Nix unit creates it with mode 0700 and uses umask
+0077. Sinnix supplies a directory under its `/realm` state root.
+`sinexd admin discover --sources /etc/sinex/sources.json --host HOST --json`
+prints the read-only input plan used by the daemon and permission preparation.

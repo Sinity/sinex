@@ -27,6 +27,15 @@ pub(crate) enum Admin {
     /// Print every source and derivation as JSON, for the NixOS module's
     /// generated options (`nix/catalog.json`).
     Catalog,
+    /// Read-only discovery of this host's inputs and exclusions.
+    Discover {
+        #[arg(long)]
+        sources: Option<PathBuf>,
+        #[arg(long, default_value = "localhost")]
+        host: String,
+        #[arg(long)]
+        json: bool,
+    },
     /// Print the NATS server `authorization` block: the daemon user with full
     /// access and one user per producer limited to its own subjects. Passwords
     /// are read from files, so they never pass through the Nix store, and the
@@ -67,6 +76,28 @@ pub(crate) async fn run(command: Admin) -> Result<(), String> {
             sinex_schema::prepare(&mut connection, &owner)
                 .await
                 .map_err(|e| e.to_string())
+        }
+        Admin::Discover {
+            sources,
+            host,
+            json: _,
+        } => {
+            let config = sources
+                .as_deref()
+                .map(crate::binding_runner::Config::load)
+                .transpose()?
+                .unwrap_or_default();
+            let context = if sources.is_some() {
+                config.context(&host)
+            } else {
+                sinex_sources::discovery::DiscoveryContext::for_process(&host, PathBuf::new())
+            };
+            let inputs = sinex_sources::discovery::discover(&context)?;
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&inputs).map_err(|error| error.to_string())?
+            );
+            Ok(())
         }
         Admin::Catalog => {
             print!("{}", catalog::render());
@@ -181,6 +212,7 @@ async fn admin_table(args: Vec<String>) -> Result<(), String> {
         .await
         .map_err(|e| e.to_string())?;
     let local = api::Api {
+        source_config: Default::default(),
         reads,
         writer: Some(ctx.writer.clone()),
         blobs: ctx.blobs.clone(),

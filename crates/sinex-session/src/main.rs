@@ -10,7 +10,6 @@
 //! daemon or the bus is away, and publishing drains the spool through the
 //! same drivers and parsers `sinexd` uses.
 use clap::{Parser, Subcommand};
-use serde_json::Value;
 use sinex_sources::live;
 use std::path::PathBuf;
 use std::process::ExitCode;
@@ -62,30 +61,12 @@ struct Run {
     state: PathBuf,
     #[arg(long, default_value = "localhost")]
     host: String,
-    /// Capture Hyprland's event socket.
+    /// Host inputs, settings and source exclusions.
     #[arg(long)]
-    hyprland: bool,
+    sources: Option<PathBuf>,
     /// A directory whose file changes to capture; repeatable.
     #[arg(long = "watch")]
     watch: Vec<PathBuf>,
-    /// Capture desktop notifications.
-    #[arg(long)]
-    notifications: bool,
-    /// Capture media players (MPRIS).
-    #[arg(long)]
-    players: bool,
-    /// Capture the clipboard and the primary selection.
-    #[arg(long)]
-    clipboard: bool,
-    /// Listen on the integration socket for the editor and terminal integrations.
-    #[arg(long)]
-    integrations: bool,
-    /// Take a still of every output this often, in seconds.
-    #[arg(long)]
-    screen_every: Option<u64>,
-    /// Record the default audio source in segments of this many seconds.
-    #[arg(long)]
-    audio_segment: Option<u64>,
     /// Seconds between productions of what was captured.
     #[arg(long, default_value_t = 2)]
     every: u64,
@@ -178,63 +159,35 @@ fn capture_source(
     (format.capture.expect("live formats capture"))(&binding, stop)
 }
 
-/// The live sources `run` asks for, as formats and their options.
-fn requested(run: &Run) -> Vec<(&'static str, &'static str, Value)> {
-    let mut out: Vec<(&'static str, &'static str, Value)> = Vec::new();
-    if run.hyprland {
-        out.push(("hyprland", "hyprland", Value::Null));
-    }
-    if !run.watch.is_empty() {
-        let roots: Vec<Value> = run
-            .watch
-            .iter()
-            .map(|p| p.display().to_string().into())
-            .collect();
-        out.push(("file-watch", "files", serde_json::json!({ "roots": roots })));
-    }
-    if run.notifications {
-        out.push(("notifications", "notifications", Value::Null));
-    }
-    if run.players {
-        out.push(("players", "players", Value::Null));
-    }
-    if run.clipboard {
-        out.push((
-            "clipboard",
-            "clipboard",
-            serde_json::json!({"selection": "clipboard"}),
-        ));
-        out.push((
-            "clipboard",
-            "primary",
-            serde_json::json!({"selection": "primary"}),
-        ));
-    }
-    if run.integrations {
-        out.push(("integration-socket", "integrations", Value::Null));
-    }
-    if let Some(every) = run.screen_every {
-        out.push((
-            "media",
-            "screen",
-            serde_json::json!({"kind": "screen", "every": every}),
-        ));
-    }
-    if let Some(segment) = run.audio_segment {
-        out.push((
-            "media",
-            "audio",
-            serde_json::json!({"kind": "audio", "segment": segment}),
-        ));
-    }
-    out
+fn requested(
+    run: &Run,
+) -> Result<
+    Vec<(
+        &'static sinex_source_core::InputFormat,
+        sinex_source_core::Binding,
+    )>,
+    String,
+> {
+    use sinex_sources::discovery::{self, Configuration, DiscoveryContext, Owner};
+    let configuration = run
+        .sources
+        .as_deref()
+        .map(Configuration::load)
+        .transpose()?
+        .unwrap_or_default();
+    let mut context = DiscoveryContext::for_process(&run.host, run.state.join("spool"));
+    context.sources = configuration.sources;
+    context.exclude = configuration.exclude;
+    context.watch = run.watch.clone();
+    context.watch.extend(configuration.discovery.watch);
+    discovery::captures(&context, Owner::Session)
 }
 
 /// Capture threads write spools; the shared loop produces what they wrote.
 async fn produce(run: Run) -> Result<(), String> {
     use sinex_source_core::drivers::producer::{Producer, Store};
 
-    let spools = run.state.join("spool");
+    requested(&run)?;
     let store = Store::open(&run.store).map_err(|e| format!("content store: {e}"))?;
     let mut producer = Producer::connect(
         &run.nats,
@@ -244,15 +197,6 @@ async fn produce(run: Run) -> Result<(), String> {
     )
     .await
     .map_err(|e| e.to_string())?;
-    let bindings = requested(&run)
-        .into_iter()
-        .map(|(format, spool, options)| {
-            live::binding(format, &spools.join(spool), &run.host, options)
-        })
-        .collect::<Result<Vec<_>, _>>()?;
-    if bindings.is_empty() {
-        return Err("nothing to capture: pass at least one source flag".into());
-    }
     let until = run
         .seconds
         .map(|s| std::time::Instant::now() + Duration::from_secs(s));
@@ -260,7 +204,7 @@ async fn produce(run: Run) -> Result<(), String> {
         &mut producer,
         &store,
         &run.state.join("positions"),
-        bindings,
+        || requested(&run),
         Duration::from_secs(run.every),
         until,
     )
