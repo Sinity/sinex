@@ -152,7 +152,8 @@ impl DirSnapshot {
         let excluded: Vec<_> = excluded
             .iter()
             .filter_map(|path| {
-                path.strip_prefix(&boundary)
+                path.strip_prefix(&self.root)
+                    .or_else(|_| path.strip_prefix(&boundary))
                     .ok()
                     .map(|relative| self.root.join(relative))
             })

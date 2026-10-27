@@ -6,7 +6,7 @@ use sinex_source_core::registry::SourceSpec;
 use sinex_source_core::{Binding, InputFormat, Settings};
 use std::path::{Path, PathBuf};
 
-pub const fn spec(transcripts: bool) -> DiscoverySpec {
+pub(crate) const fn spec(transcripts: bool) -> DiscoverySpec {
     DiscoverySpec {
         owner: Owner::System,
         locations: if transcripts {
@@ -28,7 +28,7 @@ pub const fn spec(transcripts: bool) -> DiscoverySpec {
     }
 }
 
-pub fn discover(format: &InputFormat, context: &DiscoveryContext) -> Vec<DiscoveredInput> {
+pub(crate) fn discover(format: &InputFormat, context: &DiscoveryContext) -> Vec<DiscoveredInput> {
     let mut found = Vec::new();
     for mut input in crate::discovery::discover_format(format, context) {
         let selected = input.input.as_ref().is_some_and(|path| {
@@ -75,7 +75,7 @@ pub fn discover(format: &InputFormat, context: &DiscoveryContext) -> Vec<Discove
     found
 }
 
-pub fn plan(spec: &SourceSpec, input: &Path, settings: &Settings) -> Result<Vec<Binding>, String> {
+pub(super) fn plan(spec: &SourceSpec, input: &Path, settings: &Settings) -> Result<Vec<Binding>, String> {
     if input.as_os_str().is_empty() {
         return Err("import needs a path".into());
     }

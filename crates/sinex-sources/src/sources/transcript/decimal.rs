@@ -1,7 +1,7 @@
 //! Compare written nonnegative decimals without rounding or a fixed exponent range.
 use std::cmp::Ordering;
 
-pub fn compare(left: &str, right: &str) -> Ordering {
+pub(super) fn compare(left: &str, right: &str) -> Ordering {
     let left = parts(left);
     let right = parts(right);
     match (left, right) {
