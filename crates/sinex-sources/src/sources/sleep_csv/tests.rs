@@ -77,6 +77,21 @@ fn dst_fold_and_gap_remain_unresolved_but_offsets_resolve() {
 }
 
 #[devkit::test]
+fn iso_offsets_without_seconds_are_resolved_from_the_supplied_offset() {
+    let payload =
+        parse(b"example-offset,2030-10-27T02:10+02:00,2030-10-27T02:40+01:00,,,,,,,,,,,,\n")
+            .unwrap();
+    assert_eq!(
+        serde_json::to_value(payload.started_at).unwrap(),
+        "2030-10-27T00:10:00Z"
+    );
+    assert_eq!(
+        serde_json::to_value(payload.ended_at).unwrap(),
+        "2030-10-27T01:40:00Z"
+    );
+}
+
+#[devkit::test]
 fn invalid_dates_numbers_counts_and_headers_fail() {
     for row in [
         "example,bad,2030-01-01T03:00:00,,,,,,,,,,,,\n",
