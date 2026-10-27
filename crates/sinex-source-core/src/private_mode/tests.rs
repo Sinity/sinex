@@ -246,3 +246,41 @@ fn failed_health_writes_do_not_reopen_private_buffers() {
         "private_mode"
     );
 }
+
+#[devkit::test]
+fn short_quiet_pauses_are_not_lost_between_checks() {
+    let directory = tempfile::tempdir().unwrap();
+    let mode = PrivateMode::new(directory.path().join("switch"));
+    let (capture, gaps) = gate(&directory.path().join("spool"), mode.clone());
+    let permit = capture.permit().unwrap();
+    {
+        let _held = capture.shared.0.lock().unwrap();
+        for _ in 0..2 {
+            mode.set(true).unwrap();
+            mode.set(false).unwrap();
+        }
+    }
+    assert!(capture.allowed().unwrap());
+    assert!(capture.store(permit, || Ok(())).unwrap().is_none());
+    for _ in 0..2 {
+        let gap = gaps.recv_timeout(Duration::from_secs(2)).unwrap();
+        assert_eq!(gap.start, None);
+        assert_eq!(gap.end, None);
+    }
+    assert!(gaps.try_recv().is_err());
+}
+
+#[devkit::test]
+fn other_files_beside_the_switch_do_not_pause_capture() {
+    let directory = tempfile::tempdir().unwrap();
+    let mode = PrivateMode::new(directory.path().join("switch"));
+    let (capture, gaps) = gate(&directory.path().join("spool"), mode);
+    let permit = capture.permit().unwrap();
+    {
+        let _held = capture.shared.0.lock().unwrap();
+        std::fs::write(directory.path().join("other"), b"unrelated").unwrap();
+        std::fs::remove_file(directory.path().join("other")).unwrap();
+    }
+    assert!(capture.store(permit, || Ok(())).unwrap().is_some());
+    assert!(gaps.try_recv().is_err());
+}

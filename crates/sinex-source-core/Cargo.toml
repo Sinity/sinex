@@ -24,7 +24,7 @@ jiff.workspace = true
 imbl = "5"
 csv = "1"
 tempfile = "3"
-rustix = { version = "1", features = ["process"] }
+rustix = { version = "1", features = ["process", "fs"] }
 rusqlite = { workspace = true, optional = true }
 zip = { version = "2", default-features = false, features = ["deflate", "bzip2"], optional = true }
 tar = { version = "0.4", optional = true }

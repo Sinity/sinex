@@ -2,7 +2,9 @@
 //! too, so their gaps and health do not depend on a record arriving.
 use serde::{Deserialize, Serialize};
 use sinex_model::{EventPayload, KeyKind, ReplaceRule, TimeQuality, Timestamp, TsOrig};
+mod changes;
 mod switch;
+use changes::{Change, SwitchWatch};
 use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Condvar, Mutex};
@@ -47,6 +49,8 @@ struct Inner {
     health: Health,
     gap: Option<Gap>,
     gap_saved: bool,
+    gap_end_unknown: bool,
+    changes: Option<SwitchWatch>,
     checked: bool,
     private_changes: u64,
     sink: Sink,
@@ -147,6 +151,8 @@ impl Gate {
             gap_path,
             gap,
             gap_saved,
+            gap_end_unknown: false,
+            changes: None,
             checked: false,
             private_changes: 0,
             sink: Box::new(sink),
@@ -213,6 +219,7 @@ impl Gate {
         let mut inner = self.shared.0.lock().unwrap_or_else(|e| e.into_inner());
         inner.close_gap(Some(Timestamp::now()))?;
         inner.mode = mode;
+        inner.changes = None;
         inner.private_changes += 1;
         inner.check()?;
         Ok(())
@@ -271,20 +278,72 @@ impl Gate {
 }
 
 impl Inner {
-    fn check(&mut self) -> io::Result<bool> {
-        let state = self.mode.state();
-        let now = Timestamp::now();
-        let blocked = state != State::Off;
-        if blocked && self.gap.is_none() {
-            // Invalidate active reads before metadata IO can fail or block.
+    fn begin_gap(&mut self, start: Option<Timestamp>, end_unknown: bool) {
+        if self.gap.is_none() {
+            // Invalidate reads before metadata IO can fail or block.
             self.private_changes += 1;
             self.gap = Some(Gap {
                 stream: self.stream.clone(),
-                start: self.checked.then_some(now),
+                start,
                 end: None,
                 reason: "private_mode".into(),
             });
             self.gap_saved = false;
+            self.gap_end_unknown = end_unknown;
+        }
+    }
+
+    fn check(&mut self) -> io::Result<bool> {
+        let mut state = self.mode.state();
+        let changes = (|| -> io::Result<Vec<Change>> {
+            if self.changes.is_none() {
+                self.changes = Some(SwitchWatch::open(self.mode.path())?);
+            }
+            self.changes.as_mut().expect("switch watcher opened").read()
+        })();
+        let now = Timestamp::now();
+        let had_gap = self.gap.is_some();
+        match changes {
+            Ok(changes) => {
+                state = self.mode.state();
+                for change in changes {
+                    match change {
+                        Change::On => self.begin_gap(None, true),
+                        Change::Off => {
+                            let end = (state == State::Off).then_some(now);
+                            self.close_gap(end)?;
+                        }
+                        Change::Permissions => {
+                            if !matches!(state, State::Unchecked(_)) {
+                                state = State::Unchecked(
+                                    "switch directory permissions changed between checks".into(),
+                                );
+                            }
+                            self.begin_gap(None, true);
+                        }
+                    }
+                }
+            }
+            Err(error) => {
+                self.changes = None;
+                if !matches!(state, State::Unchecked(_)) {
+                    state = State::Unchecked(format!(
+                        "cannot watch {}: {error}",
+                        self.mode.path().display()
+                    ));
+                }
+                self.begin_gap(None, true);
+            }
+        }
+        let blocked = state != State::Off;
+        if blocked {
+            if self.gap.is_none() {
+                self.begin_gap(self.checked.then_some(now), false);
+            } else if !had_gap && matches!(state, State::On) {
+                self.gap.as_mut().expect("blocked capture has a gap").start =
+                    self.checked.then_some(now);
+                self.gap_end_unknown = false;
+            }
         }
         self.checked = true;
         let health = Health {
@@ -324,7 +383,7 @@ impl Inner {
 
     fn close_gap(&mut self, end: Option<Timestamp>) -> io::Result<()> {
         if let Some(mut gap) = self.gap.clone() {
-            gap.end = end;
+            gap.end = if self.gap_end_unknown { None } else { end };
             (self.sink)(gap)?;
             match std::fs::remove_file(&self.gap_path) {
                 Err(error) if error.kind() == io::ErrorKind::NotFound => {}
@@ -333,6 +392,7 @@ impl Inner {
             std::fs::File::open(self.gap_path.parent().expect("spool directory"))?.sync_all()?;
             self.gap = None;
             self.gap_saved = false;
+            self.gap_end_unknown = false;
         }
         Ok(())
     }
