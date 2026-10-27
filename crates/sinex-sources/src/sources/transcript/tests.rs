@@ -298,7 +298,7 @@ fn json_file_metadata_and_progress_survive_part_restart() {
     let mut events = Vec::new();
     for pass in 0..2 {
         let mut next_cursor = cursor.clone();
-        sinex_source_core::shared_pass::read(
+        let result = sinex_source_core::shared_pass::read(
             sinex_source_core::shared_pass::Input::Sequential(Box::new(std::io::Cursor::new(
                 bytes.clone(),
             ))),
@@ -350,8 +350,15 @@ fn json_file_metadata_and_progress_survive_part_restart() {
                 }
                 Ok(true)
             },
-        )
-        .unwrap();
+        );
+        if pass == 0 {
+            assert!(matches!(
+                result,
+                Err(sinex_source_core::drivers::DriverError::Cancelled)
+            ));
+        } else {
+            result.unwrap();
+        }
         cursor = next_cursor;
         carry = serde_json::from_slice(&serde_json::to_vec(&carry).unwrap()).unwrap();
     }

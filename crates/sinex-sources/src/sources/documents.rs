@@ -6,7 +6,7 @@ use sinex_source_core::binding::{Binding, InputFormat, Settings};
 use sinex_source_core::drivers::dir_snapshot::DirSnapshot;
 use sinex_source_core::registry::{DeclaredSource, Driver, SourceSpec};
 use sinex_source_core::{Parser, RecordContext, RecordError};
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 
 mod file;
 
@@ -141,15 +141,41 @@ fn validate(input: &Path, settings: &Settings) -> Result<(), String> {
         return Err("a document root must not be a symbolic link".into());
     }
     let roots = settings.options.get("existing_roots").and_then(Value::as_array).ok_or("documents need existing_roots listing notes and library roots (an empty list is explicit)")?;
-    let root = std::fs::canonicalize(input).unwrap_or_else(|_| input.to_path_buf());
+    let root = resolved_path(input)?;
     for other in roots {
         let other = other.as_str().ok_or("existing_roots must contain paths")?;
-        let other = std::fs::canonicalize(other).unwrap_or_else(|_| PathBuf::from(other));
+        if other.is_empty() {
+            return Err("existing_roots must contain nonempty paths".into());
+        }
+        let other = resolved_path(Path::new(other))?;
         if root.starts_with(&other) || other.starts_with(&root) {
             return Err("document roots must not overlap notes or library roots".into());
         }
     }
     Ok(())
+}
+fn resolved_path(path: &Path) -> Result<PathBuf, String> {
+    let absolute = std::path::absolute(path).map_err(|error| format!("document path: {error}"))?;
+    for parent in absolute.ancestors() {
+        if let Ok(mut resolved) = std::fs::canonicalize(parent) {
+            for part in absolute
+                .strip_prefix(parent)
+                .expect("an ancestor is a prefix")
+                .components()
+            {
+                match part {
+                    Component::Normal(name) => resolved.push(name),
+                    Component::ParentDir => {
+                        resolved.pop();
+                    }
+                    Component::CurDir => {}
+                    _ => return Err("document path has an invalid root".into()),
+                }
+            }
+            return Ok(resolved);
+        }
+    }
+    Err("document path needs an accessible parent".into())
 }
 pub const FORMAT: InputFormat = InputFormat {
     name: "documents",
