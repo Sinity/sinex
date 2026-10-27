@@ -45,3 +45,28 @@ fn titles_are_read_from_html() {
     );
     assert_eq!(title(b"no title"), None);
 }
+
+#[devkit::test]
+fn crawl_format_obeys_the_limit_and_requires_an_allow_list() {
+    let mut settings = crate::Settings::new("synthetic");
+    settings.options = serde_json::json!({"urls":["https://example.test/allowed"], "allow":"example.test", "limit":0});
+    let mut binding = crate::Binding::of(&SPEC, std::path::Path::new("crawl"), settings);
+    let mut reader = (FORMAT.reader.unwrap())(&binding)
+        .unwrap()
+        .into_polled()
+        .unwrap();
+    assert!(
+        reader
+            .poll(&serde_json::Value::Null)
+            .unwrap()
+            .material
+            .is_none()
+    );
+    binding
+        .settings
+        .options
+        .as_object_mut()
+        .unwrap()
+        .remove("allow");
+    assert!((FORMAT.reader.unwrap())(&binding).is_err());
+}

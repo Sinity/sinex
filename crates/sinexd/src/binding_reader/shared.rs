@@ -278,20 +278,35 @@ pub(super) async fn read_shared(
                 None => sink,
             };
             let total = totals[slot].as_mut().map_err(|e| e.clone())?;
-            backfill::submit(
+            crate::intake::Intake {
                 writer,
                 run,
-                b.source.as_ref(),
-                &b.binding.name,
-                archive_sink,
-                sealing.as_deref(),
-                access.unlock,
-                pass.class,
-                acquired,
-                carry,
-                total,
-            )
+                source: b.source.as_ref(),
+                binding: &b.binding.name,
+                sink: archive_sink,
+                sealing: sealing.as_deref(),
+                unlock: access.unlock,
+                class: pass.class,
+                check: Arc::new(|| {
+                    if sinex_transport::private_mode::PrivateMode::default().on() {
+                        Err("private mode is on; admission stopped".into())
+                    } else {
+                        Ok(())
+                    }
+                }),
+                priority: crate::writer::Priority::Bulk,
+                atomic: false,
+                registered: matches!(
+                    acquired.material.as_ref().and_then(|m| m.stored.as_ref()),
+                    Some(drivers::StoredBytes::Blob {
+                        records: Some(_),
+                        ..
+                    })
+                ),
+            }
+            .submit(acquired, carry, total)
             .await
+            .map(|_| ())
         }
         .await;
         let keep = result.is_ok();

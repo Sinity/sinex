@@ -146,6 +146,7 @@ these names and no others.
 - **stored file** (`StoredFile`): the blob, length and material named by a shared reader's cursor.
 - **interruptible reader** (`InterruptibleReader`): a reader that checks for a stop request before reading.
 - **validated reader** (`ValidatedReader`): a reader that runs the supplied validation before reading.
+- **intake** (`Intake`): the writer, source, settings and access used to submit an acquisition.
 - **submission** (`Submission`): the admission outcome and material of a submitted request.
 - **authored at** (`authored_at`): the author timestamp supplied by a Git commit, distinct from its commit timestamp.
 - **request record**: a forecast or library request submitted as a material and admitted through the writer.

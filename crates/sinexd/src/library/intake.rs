@@ -5,8 +5,7 @@ use serde_json::{Value, json};
 use sinex_library::{items, reads};
 use sinex_model::Timestamp;
 use sinex_model::event_types::library::{FileCopy, Item, LibraryRecord};
-use sinex_sources::sources::library as library_source;
-use sinex_sources::{Reader, drivers};
+use sinex_sources::{Settings, sources};
 use sqlx::PgConnection;
 use std::collections::HashMap;
 use std::path::Path;
@@ -19,90 +18,21 @@ impl Library<'_> {
         path: &Path,
         reference: bool,
     ) -> R<Value> {
-        let given =
-            std::fs::canonicalize(path).map_err(|err| format!("{}: {err}", path.display()))?;
-        // A single file is scanned within its folder, alone: nothing else in
-        // the folder is read or reported missing.
-        let (root, only) = if given.is_dir() {
-            (given, None)
-        } else {
-            let parent = given
-                .parent()
-                .ok_or_else(|| format!("{}: no folder holds it", given.display()))?
-                .to_path_buf();
-            let name = given
-                .file_name()
-                .map(|n| n.to_string_lossy().into_owned())
-                .ok_or_else(|| format!("{}: not a file name", given.display()))?;
-            (parent, Some(name))
-        };
-        let root_text = root.display().to_string();
-        let binding = format!("library.scan:{root_text}@{}", self.host);
-        let mut reader = library_source::LibraryReader::new(library_source::LibraryScan {
-            root: root.clone(),
-            host: self.host.to_owned(),
-            keep_bytes: !reference,
-            probe: true,
-            bytes_per_poll: 1 << 30,
-            only,
-        });
-        // What the scan knew when it last stopped, so a second add of the
-        // same root hashes only what changed.
-        let (_stop, stop) = tokio::sync::watch::channel(false);
-        crate::binding_reader::restore_reader(conn, self.blobs, &mut reader, &binding, None, &stop)
-            .await?;
-        let mut cursor = sinex_store::positions::load(conn, &binding)
-            .await
-            .map_err(e)?
-            .map(|(c, _)| c)
-            .unwrap_or(Value::Null);
-        let mut reader = Some(reader);
-        let (mut files, mut seen) = (0usize, 0usize);
-        loop {
-            let mut r = reader.take().expect("the reader is returned each poll");
-            let c = cursor.clone();
-            let (r, out) = tokio::task::spawn_blocking(move || {
-                let out = r.poll(&c).and_then(|a| {
-                    if let Some(reason) = &a.observation.unavailable {
-                        return Err(drivers::DriverError::Io(reason.clone()));
-                    }
-                    let next = a
-                        .material
-                        .as_ref()
-                        .map(|m| {
-                            let length = match &m.stored {
-                                Some(drivers::StoredBytes::FramedMemory(bytes)) => bytes.len(),
-                                _ => m.bytes.len(),
-                            };
-                            Ok::<_, drivers::DriverError>(((m.cursor_at)(length)?, m.records.len()))
-                        })
-                        .transpose()?;
-                    Ok((next, a))
-                });
-                (r, out)
-            })
-            .await
-            .map_err(e)?;
-            reader = Some(r);
-            let (next, acquired) = out.map_err(e)?;
-            let admitted = crate::requests::submit(
-                conn,
-                self.writer,
-                self.blobs,
-                std::sync::Arc::new(library_source::scan_source()),
-                &binding,
-                acquired,
-            )
-            .await?;
-            seen += admitted.outcome.admitted + admitted.outcome.replaced;
-            match next {
-                Some((c, records)) => {
-                    cursor = c;
-                    files += records;
-                }
-                None => break,
-            }
-        }
+        let format = sources::format("library").ok_or("library format is not registered")?;
+        let mut settings = Settings::new(self.host);
+        settings.options = json!({"reference": reference});
+        let binding = (format.plan.ok_or("library format has no planner")?)(path, &settings)?
+            .into_iter()
+            .next()
+            .ok_or("library input has no binding")?;
+        let root_text = binding.input.display().to_string();
+        let reader = crate::binding_reader::BindingReader::new(format, binding)?;
+        crate::intake::request_class(conn, reader.source.as_ref()).await?;
+        let counts =
+            crate::binding_reader::once(conn, self.blobs, self.writer, self.host, vec![reader])
+                .await?;
+        let files = counts.events_offered;
+        let seen = counts.admitted + counts.replaced;
         // Every present copy under the root, against the items its
         // path belongs to.
         let copies = reads::copies(conn, self.host, &root_text)

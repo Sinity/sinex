@@ -7,7 +7,7 @@ questions about all of it. Stored bytes are the record of truth: every event
 points at the byte range it came from, or at the events it was derived from,
 and can be read again when a parser or rule changes.
 
-[ARCHITECTURE.md](ARCHITECTURE.md) describes how the crates divide the work,
+[docs/architecture.md](docs/architecture.md) describes how the crates divide the work,
 and [docs/vocabulary.md](docs/vocabulary.md) names the concepts.
 
 ## What it does
