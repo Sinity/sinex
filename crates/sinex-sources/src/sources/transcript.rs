@@ -1,16 +1,26 @@
 //! Explicit transcript imports. Relative offsets are never receipt timestamps.
-use crate::binding::{Binding, InputFormat, Settings};
-use crate::drivers::export_archive::{ExportArchive, Framing, PART_BYTES};
-use crate::registry::{DeclaredSource, Driver, SourceSpec};
-use crate::{Parser, RecordContext, RecordError};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use sinex_model::event_types::imported_text::TranscriptSegment;
 use sinex_model::{Class, Timestamp};
+use sinex_source_core::binding::{Binding, InputFormat, Settings};
+use sinex_source_core::drivers::export_archive::{ExportArchive, Framing, PART_BYTES};
+use sinex_source_core::registry::{DeclaredSource, Driver, SourceSpec};
+use sinex_source_core::{Parser, RecordContext, RecordError};
 use std::path::Path;
 
 pub mod framing;
 pub mod metadata;
+
+pub const CUE_FRAMING: Framing = Framing::Custom {
+    name: "cue-blocks",
+    frame: framing::frame,
+};
+pub const JSON_FRAMING: Framing = Framing::JsonArrayWithMetadata {
+    name: "imported-text",
+    pointer: "/segments",
+    project: metadata::project,
+};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Format {
@@ -35,26 +45,26 @@ pub const fn spec(
         parser,
         parser_version: 1,
         event_types: &["transcript.segment"],
-        framer: crate::Framer::export(frame, framing),
+        framer: sinex_source_core::Framer::export(frame, framing),
     }
 }
 pub const JSON: SourceSpec = spec(
     "transcript-json",
     Framing::JsonArray(""),
-    crate::drivers::export_archive::frame_json_array,
+    sinex_source_core::drivers::export_archive::frame_json_array,
 );
 pub const WHISPER: SourceSpec = spec(
     "whisper-json",
     Framing::JsonArray("/segments"),
-    crate::drivers::export_archive::frame_json_array,
+    sinex_source_core::drivers::export_archive::frame_json_array,
 );
 pub const TEXT: SourceSpec = spec(
     "transcript-text",
     Framing::Lines,
-    crate::drivers::export_archive::frame_lines,
+    sinex_source_core::drivers::export_archive::frame_lines,
 );
-pub const WEBVTT: SourceSpec = spec("webvtt", Framing::Cues, framing::whole);
-pub const SRT: SourceSpec = spec("srt", Framing::Cues, framing::whole);
+pub const WEBVTT: SourceSpec = spec("webvtt", CUE_FRAMING, framing::whole);
+pub const SRT: SourceSpec = spec("srt", CUE_FRAMING, framing::whole);
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct Carry {
@@ -124,7 +134,7 @@ impl Parser for TranscriptParser {
             Format::Json | Format::Whisper => {
                 let mut object: Map<String, Value> = serde_json::from_str(text)
                     .map_err(|e| RecordError::new(format!("transcript object: {e}")))?;
-                let defaults = context.manifest.detail("imported_text").as_object();
+                let defaults = context.manifest.detail("file_metadata").as_object();
                 for key in [
                     "language",
                     "model",
@@ -383,8 +393,8 @@ fn cue_time(text: &str, srt: bool) -> Result<u64, RecordError> {
     Ok(total)
 }
 
-pub fn archive(binding: &Binding, framing: Framing) -> crate::binding::Reading {
-    crate::binding::shared(ExportArchive {
+pub fn archive(binding: &Binding, framing: Framing) -> sinex_source_core::binding::Reading {
+    sinex_source_core::binding::shared(ExportArchive {
         path: binding.input.clone(),
         host: binding.settings.host.clone(),
         select: |_| true,
@@ -399,13 +409,13 @@ fn plan(spec: &SourceSpec, input: &Path, settings: &Settings) -> Result<Vec<Bind
     if settings.option("input").is_none_or(str::is_empty) {
         return Err("an explicit input identity is required".into());
     }
-    Ok(crate::binding::single(spec, input, settings))
+    Ok(sinex_source_core::binding::single(spec, input, settings))
 }
 fn source(
     binding: &Binding,
     format: Format,
     spec: SourceSpec,
-) -> Result<Box<dyn crate::Source>, String> {
+) -> Result<Box<dyn sinex_source_core::Source>, String> {
     Ok(Box::new(DeclaredSource {
         spec,
         parser: TranscriptParser {
@@ -431,22 +441,17 @@ macro_rules! format {
     };
 }
 format!(JSON_FORMAT, JSON, Json, Framing::JsonArray(""));
-format!(
-    WHISPER_FORMAT,
-    WHISPER,
-    Whisper,
-    Framing::ImportedJson("/segments")
-);
+format!(WHISPER_FORMAT, WHISPER, Whisper, JSON_FRAMING);
 format!(TEXT_FORMAT, TEXT, Text, Framing::Lines);
-format!(WEBVTT_FORMAT, WEBVTT, WebVtt, Framing::Cues);
-format!(SRT_FORMAT, SRT, Srt, Framing::Cues);
+format!(WEBVTT_FORMAT, WEBVTT, WebVtt, CUE_FRAMING);
+format!(SRT_FORMAT, SRT, Srt, CUE_FRAMING);
 
 #[cfg(test)]
 mod tests;
 
 /// File metadata supplies part of a segment's meaning even when its text is unchanged.
 pub fn hash_with_metadata(raw: &[u8], context: &RecordContext<'_>) -> [u8; 32] {
-    let metadata = context.manifest.detail("imported_text");
+    let metadata = context.manifest.detail("file_metadata");
     if metadata.is_null() || metadata.as_object().is_some_and(Map::is_empty) {
         return *blake3::hash(raw).as_bytes();
     }

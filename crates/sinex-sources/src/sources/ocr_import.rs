@@ -1,12 +1,12 @@
 //! Explicit OCR imports preserve provider confidence scales and geometry.
 use super::transcript::{Carry, identifier, optional_number, optional_string, required_string};
-use crate::binding::{Binding, InputFormat, Settings};
-use crate::drivers::export_archive::Framing;
-use crate::registry::{DeclaredSource, Driver, SourceSpec};
-use crate::{Parser, RecordContext, RecordError};
 use serde_json::{Map, Value};
 use sinex_model::Class;
 use sinex_model::event_types::imported_text::{BoundingBox, OcrSegment};
+use sinex_source_core::binding::{Binding, InputFormat, Settings};
+use sinex_source_core::drivers::export_archive::Framing;
+use sinex_source_core::registry::{DeclaredSource, Driver, SourceSpec};
+use sinex_source_core::{Parser, RecordContext, RecordError};
 use std::path::Path;
 
 #[derive(Clone, Copy)]
@@ -33,23 +33,23 @@ pub const fn spec(
         parser,
         parser_version: 1,
         event_types: &["ocr.segment"],
-        framer: crate::Framer::export(frame, framing),
+        framer: sinex_source_core::Framer::export(frame, framing),
     }
 }
 pub const JSON: SourceSpec = spec(
     "ocr-json",
     Framing::JsonArray("/segments"),
-    crate::drivers::export_archive::frame_json_array,
+    sinex_source_core::drivers::export_archive::frame_json_array,
 );
 pub const TSV: SourceSpec = spec(
     "ocr-tsv",
     Framing::Lines,
-    crate::drivers::export_archive::frame_lines,
+    sinex_source_core::drivers::export_archive::frame_lines,
 );
 pub const TEXT: SourceSpec = spec(
     "ocr-text",
     Framing::Lines,
-    crate::drivers::export_archive::frame_lines,
+    sinex_source_core::drivers::export_archive::frame_lines,
 );
 
 impl Parser for OcrParser {
@@ -98,7 +98,7 @@ impl Parser for OcrParser {
                     "window",
                 ] {
                     if !object.contains_key(key)
-                        && let Some(value) = context.manifest.detail("imported_text").get(key)
+                        && let Some(value) = context.manifest.detail("file_metadata").get(key)
                     {
                         object.insert(key.into(), value.clone());
                     }
@@ -265,13 +265,13 @@ fn plan(spec: &SourceSpec, input: &Path, settings: &Settings) -> Result<Vec<Bind
     if input.as_os_str().is_empty() || settings.option("input").is_none_or(str::is_empty) {
         return Err("an explicit import path and input identity are required".into());
     }
-    Ok(crate::binding::single(spec, input, settings))
+    Ok(sinex_source_core::binding::single(spec, input, settings))
 }
 fn source(
     binding: &Binding,
     format: Format,
     spec: SourceSpec,
-) -> Result<Box<dyn crate::Source>, String> {
+) -> Result<Box<dyn sinex_source_core::Source>, String> {
     Ok(Box::new(DeclaredSource {
         spec,
         parser: OcrParser {
@@ -296,7 +296,7 @@ macro_rules! format {
         };
     };
 }
-format!(JSON_FORMAT, JSON, Json, Framing::ImportedJson("/segments"));
+format!(JSON_FORMAT, JSON, Json, super::transcript::JSON_FRAMING);
 format!(TSV_FORMAT, TSV, Tsv, Framing::Lines);
 format!(TEXT_FORMAT, TEXT, Text, Framing::Lines);
 #[cfg(test)]

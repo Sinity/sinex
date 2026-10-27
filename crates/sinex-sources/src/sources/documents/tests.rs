@@ -1,8 +1,8 @@
 use super::*;
-use crate::drivers::dir_snapshot::DirState;
-use crate::{DrainInput, Limits, drain};
 use sinex_model::{ReadingOrder, RecordOutcome};
-pub(super) fn parse(acquired: &crate::Acquired) -> Vec<sinex_model::Event> {
+use sinex_source_core::drivers::dir_snapshot::DirState;
+use sinex_source_core::{DrainInput, Limits, drain};
+pub(super) fn parse(acquired: &sinex_source_core::Acquired) -> Vec<sinex_model::Event> {
     let m = acquired.material.as_ref().unwrap();
     drain(
         &DocumentParser,
@@ -114,12 +114,12 @@ fn acquisition_requires_scope_and_rejects_notes_library_and_symlink_overlap() {
 
 #[devkit::test]
 fn reader_restart_rebuilds_file_facts_and_keeps_held_bytes() {
-    use crate::drivers::prepare;
     use sinex_model::{BatchKind, RunId};
+    use sinex_source_core::drivers::prepare;
     let temp = tempfile::tempdir().unwrap();
     std::fs::write(temp.path().join("a.txt"), b"captured").unwrap();
-    let crate::Reading::Polled(mut reader) =
-        crate::binding::walked(driver(temp.path().into(), "example-host".into()))
+    let sinex_source_core::Reading::Polled(mut reader) =
+        sinex_source_core::binding::walked(driver(temp.path().into(), "example-host".into()))
     else {
         panic!()
     };
@@ -151,8 +151,8 @@ fn reader_restart_rebuilds_file_facts_and_keeps_held_bytes() {
     };
     let reference = progress.material.unwrap();
     let bytes = sink.0.lock().unwrap().get(&reference.blob).unwrap().clone();
-    let crate::Reading::Polled(mut restarted) =
-        crate::binding::walked(driver(temp.path().into(), "example-host".into()))
+    let sinex_source_core::Reading::Polled(mut restarted) =
+        sinex_source_core::binding::walked(driver(temp.path().into(), "example-host".into()))
     else {
         panic!()
     };
@@ -160,7 +160,7 @@ fn reader_restart_rebuilds_file_facts_and_keeps_held_bytes() {
     restarted
         .restore(
             &progress.cursor,
-            crate::StoredMaterial {
+            sinex_source_core::StoredMaterial {
                 reference,
                 bytes: std::sync::Arc::new(Bytes(bytes)),
                 same_revision: true,
@@ -174,7 +174,7 @@ fn reader_restart_rebuilds_file_facts_and_keeps_held_bytes() {
 
 #[derive(Default)]
 struct Sink(std::sync::Mutex<std::collections::BTreeMap<String, Vec<u8>>>);
-impl crate::MaterialSink for Sink {
+impl sinex_source_core::MaterialSink for Sink {
     fn put_file(&self, path: &Path) -> Result<String, String> {
         self.put(&std::fs::read(path).map_err(|e| e.to_string())?)
     }
@@ -185,7 +185,7 @@ impl crate::MaterialSink for Sink {
     }
 }
 struct Bytes(Vec<u8>);
-impl crate::drain::RecordRead for Bytes {
+impl sinex_source_core::drain::RecordRead for Bytes {
     fn length(&self) -> u64 {
         self.0.len() as u64
     }
