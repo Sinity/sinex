@@ -30,7 +30,7 @@ fn reading(component: &'static str, name: &str, measures: &[(&str, i64)]) -> Rea
 /// Every part's numbers now.
 pub async fn read(conn: &mut PgConnection) -> Result<Vec<Reading>> {
     let mut tx = conn.begin().await?;
-    sqlx::query!("SET TRANSACTION READ ONLY")
+    sqlx::query!("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY")
         .execute(&mut *tx)
         .await?;
     let head = sqlx::query!(
@@ -111,3 +111,6 @@ pub async fn latest(conn: &mut PgConnection) -> Result<Vec<serde_json::Value>> {
     .fetch_all(&mut *conn)
     .await?)
 }
+
+#[cfg(test)]
+mod tests;

@@ -107,7 +107,7 @@ pub struct FigureValue {
     pub max: f64,
 }
 
-/// A stretch of continuous attention at the machine on one logical day: the
+/// A stretch of recorded activity at the machine on one logical day: the
 /// operator's own activity (commands, window focus, page visits, copies)
 /// joined across sources while the gaps between it stay short, minus the time
 /// presence says nobody was there. It says that someone was active, never
