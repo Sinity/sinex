@@ -75,3 +75,47 @@ fn invalid_ocr_is_diagnosed_and_missing_confidence_stays_unknown() {
     let (rows, _) = read(Format::Text, "Żółw\r\n".as_bytes(), &Carry::default()).unwrap();
     assert_eq!(rows[0].text, "Żółw");
 }
+
+#[devkit::test]
+fn corrected_file_confidence_scale_changes_a_reading_without_changing_its_identity() {
+    let parser = OcrParser {
+        format: Format::Json,
+        input: "example".into(),
+    };
+    let raw = br#"{"id":"word-a","text":"same","confidence":87}"#;
+    let read = |scale| {
+        let manifest = Manifest::from_json(
+            serde_json::json!({"path":"example.json","imported_text":{"confidence_scale":scale,"engine":"example-engine","external_run":"example-run"}}),
+        );
+        crate::drain(
+            &parser,
+            crate::DrainInput {
+                source: JSON.name,
+                class: Class::Guarded,
+                material: sinex_model::MaterialId::new(),
+                bytes: raw.as_slice().into(),
+                records: &[(0, raw.len())],
+                carry: Value::Null,
+                reading_order: &|_| sinex_model::ReadingOrder(0),
+                limits: crate::Limits::default(),
+                manifest: &manifest,
+            },
+        )
+        .unwrap()
+        .into_iter()
+        .flat_map(|b| b.outcomes)
+        .find_map(|o| match o {
+            sinex_model::RecordOutcome::Events { mut events, .. } => events.pop(),
+            _ => None,
+        })
+        .unwrap()
+    };
+    let first = read("provider");
+    let corrected = read("0-100");
+    assert_eq!(first.equivalence_key, corrected.equivalence_key);
+    assert_ne!(
+        first.payload["confidence_scale"],
+        corrected.payload["confidence_scale"]
+    );
+    assert_ne!(first.record_hash, corrected.record_hash);
+}

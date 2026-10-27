@@ -101,6 +101,9 @@ impl Parser for TranscriptParser {
     type Record<'a> = &'a [u8];
     type Carry = Carry;
     type Payload = TranscriptSegment;
+    fn record_hash(&self, raw: &[u8], context: &RecordContext<'_>) -> [u8; 32] {
+        hash_with_metadata(raw, context)
+    }
     fn parse(
         &self,
         record: &&[u8],
@@ -440,3 +443,17 @@ format!(SRT_FORMAT, SRT, Srt, Framing::Cues);
 
 #[cfg(test)]
 mod tests;
+
+/// File metadata supplies part of a segment's meaning even when its text is unchanged.
+pub fn hash_with_metadata(raw: &[u8], context: &RecordContext<'_>) -> [u8; 32] {
+    let metadata = context.manifest.detail("imported_text");
+    if metadata.is_null() || metadata.as_object().is_some_and(Map::is_empty) {
+        return *blake3::hash(raw).as_bytes();
+    }
+    let metadata = serde_json::to_vec(metadata).expect("JSON metadata serializes");
+    let mut hash = blake3::Hasher::new();
+    hash.update(&(raw.len() as u64).to_le_bytes());
+    hash.update(raw);
+    hash.update(&metadata);
+    *hash.finalize().as_bytes()
+}
