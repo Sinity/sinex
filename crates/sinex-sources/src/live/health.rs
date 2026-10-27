@@ -136,7 +136,7 @@ fn snapshot(positions: &Path, bindings: &[(Binding, Counter)]) -> Result<(), Str
         let counter = counter.lock().unwrap();
         serde_json::json!({
             "binding": binding.name,
-            "spool": binding.input,
+            "spool": binding.input.to_string_lossy(),
             "unpublished": {"bytes": counter.counts.bytes, "records": counter.counts.records, "frames": counter.frames},
         })
     }).collect();
