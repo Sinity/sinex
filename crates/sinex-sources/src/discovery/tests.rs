@@ -463,6 +463,7 @@ fn daemon_status_reports_session_ownership_without_session_capabilities() {
     for input in captures {
         if sources::format(&input.format).unwrap().discovery.owner == Owner::Session {
             assert_eq!(input.availability, Availability::ProducerReported);
+            assert!(input.input.is_none());
             assert!(input.bindings.is_empty());
             assert!(
                 input
