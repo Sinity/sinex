@@ -179,7 +179,12 @@ impl AnyPerEvent for TagApplier {
                 let mut output = derived(
                     &TagApplied {
                         tag: tag.to_owned(),
-                        record: record_identity(event),
+                        record: serde_json::to_string(&(
+                            &event.source,
+                            event.event_type,
+                            record_identity(event),
+                        ))
+                        .expect("record identity serializes"),
                         event_type: event.event_type.to_owned(),
                         rules,
                         at: event.ts_orig.at,

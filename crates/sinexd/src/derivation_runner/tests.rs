@@ -574,6 +574,7 @@ async fn windows_read_in_pages_equal_windows_read_alone(db: devkit::pg::TestData
         start: at(h * 3_600).0,
         end: at((h + 1) * 3_600).0,
         before: vec![],
+        intervals: vec![],
         after: vec![],
     };
     let hour =
@@ -688,3 +689,5 @@ async fn a_recompute_stopped_part_way_is_marked_again_at_the_next_start(
 }
 
 mod tags;
+
+mod activity;

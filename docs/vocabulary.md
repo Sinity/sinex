@@ -151,3 +151,5 @@ these names and no others.
 - **submission** (`Submission`): the admission outcome and material of a submitted request.
 - **authored at** (`authored_at`): the author timestamp supplied by a Git commit, distinct from its commit timestamp.
 - **request record**: a forecast or library request submitted as a material and admitted through the writer.
+
+An **interval end** in an input query names either the payload timestamp that ends the interval or its duration in nanoseconds. A window reads earlier intervals whose ends overlap it, as well as records that start inside it.
