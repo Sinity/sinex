@@ -411,7 +411,7 @@ changes. An excised material is no longer listed on
 `<root>.materials.<producer>`. The operator's excision refuses producers'
 materials.
 
-### Documents and imported text
+## Documents and imported text
 
 Document discovery reads the declared `documents` and `downloads` roots. Notes
 and library roots own their subtrees; the document walk excludes those subtrees.
