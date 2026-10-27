@@ -320,7 +320,7 @@ impl Producer {
         store: &Store,
     ) -> Result<Position, Error> {
         if let Some(mut batch) = UnacknowledgedFrames::load(state, binding)? {
-            self.deliver_batch(&mut batch, state, binding, store)
+            self.deliver_batch(&mut batch, state, binding, store, None)
                 .await?;
             batch.position.save(state, binding)?;
             UnacknowledgedFrames::clear(state, binding)?;
@@ -804,7 +804,9 @@ impl Producer {
         };
         batch.save(state, binding)?;
         self.frames_changed(binding, batch.frames.len());
-        let acknowledgments = self.deliver_batch(&mut batch, state, binding, sink, Some(&snapshots)).await?;
+        let acknowledgments = self
+            .deliver_batch(&mut batch, state, binding, sink, Some(&snapshots))
+            .await?;
         for (ack, is_events) in acknowledgments.iter().zip(events_frames) {
             if is_events {
                 sent.frames += 1;
