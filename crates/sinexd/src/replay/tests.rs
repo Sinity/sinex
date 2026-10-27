@@ -1,7 +1,7 @@
 //! Replay through the real writer and the zsh driver, on a real database.
 use super::*;
 use crate::material_sink::Sink;
-use crate::one_shot::OneShot;
+use crate::reader_context::ReaderContext;
 use crate::writer::Priority;
 use sinex_sources::drivers::append_file::AppendState;
 use sinex_sources::sources::zsh;
@@ -30,7 +30,7 @@ async fn hide(writer: &crate::writer::WriterHandle, target: sinex_model::EventId
 
 struct Fixture {
     _db: devkit::pg::TestDatabase,
-    ctx: OneShot,
+    ctx: ReaderContext,
     dir: PathBuf,
 }
 
@@ -43,17 +43,17 @@ impl Drop for Fixture {
 async fn fixture(db: devkit::pg::TestDatabase) -> Fixture {
     let url = db.url(None);
     let dir = std::env::temp_dir().join(format!("sinexd-replay-{}", Uuid::now_v7()));
-    let ctx = OneShot::open(&url, &dir.join("store")).await.unwrap();
+    let ctx = ReaderContext::open(&url, &dir.join("store")).await.unwrap();
     Fixture { _db: db, ctx, dir }
 }
 
 /// Read `path` through the zsh driver to the end, as backfill does.
-async fn ingest(ctx: &mut OneShot, path: &Path, state: &mut AppendState) {
+async fn ingest(ctx: &mut ReaderContext, path: &Path, state: &mut AppendState) {
     let driver = zsh::driver(path.to_owned(), "h".into());
     ingest_with(ctx, |cursor| driver.poll(cursor, state).unwrap()).await;
 }
 
-async fn ingest_with(ctx: &mut OneShot, mut poll: impl FnMut(&Value) -> drivers::Acquired) {
+async fn ingest_with(ctx: &mut ReaderContext, mut poll: impl FnMut(&Value) -> drivers::Acquired) {
     let source = zsh::source("h".into());
     let sink = Sink(ctx.blobs.clone());
     loop {

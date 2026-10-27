@@ -78,7 +78,7 @@ impl Library<'_> {
                     serde_json::to_value(cited).map_err(e)?,
                 );
         }
-        let result = crate::authored::submit(
+        let result = crate::requests::submit(
             conn,
             self.writer,
             self.blobs,

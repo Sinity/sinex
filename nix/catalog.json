@@ -934,7 +934,7 @@
       "drivers": [
         "api-request"
       ],
-      "purpose": "authored probability forecasts",
+      "purpose": "submitted probability forecasts",
       "class": "guarded",
       "eventTypes": [
         "forecast.issued",

@@ -284,7 +284,7 @@ fn observed_by(v: &Value) -> Vec<&str> {
 fn every_rule_reads_and_writes_registered_types() {
     for rule in RULES {
         let mut types: Vec<&str> = Vec::new();
-        for o in rule.observers {
+        for o in rule.fusion_inputs {
             if !types.contains(&o.event_type) {
                 types.push(o.event_type);
             }
@@ -295,7 +295,7 @@ fn every_rule_reads_and_writes_registered_types() {
             "{}",
             rule.output
         );
-        for o in rule.observers {
+        for o in rule.fusion_inputs {
             assert!(
                 sinex_model::event_types::find(o.event_type).is_some(),
                 "{}",
@@ -711,7 +711,7 @@ fn a_message_in_imap_and_an_mbox_is_one_message() {
 }
 
 #[devkit::test]
-fn mail_from_a_source_no_observer_names_is_not_fused() {
+fn mail_from_a_source_no_input_names_is_not_fused() {
     let out = fuse(&MAIL, &[mail("communication.elsewhere", "<1@x>", H + 5.0)]);
     assert!(out.is_empty());
 }

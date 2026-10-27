@@ -12,7 +12,7 @@ pub const REQUEST: SourceSpec = SourceSpec {
     name: "forecast.request",
     driver: Driver::ApiRequest,
     excisable: true,
-    purpose: "authored probability forecasts",
+    purpose: "submitted probability forecasts",
     class: Class::Guarded,
     parser: "forecast-request",
     parser_version: 1,

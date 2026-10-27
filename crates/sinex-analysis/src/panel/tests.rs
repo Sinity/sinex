@@ -173,11 +173,11 @@ fn breakdowns_share_the_day_coverage() {
 
 #[devkit::test]
 fn logical_days_follow_the_day_setting() {
-    let civil = Civil::new("Europe/Warsaw", 4, 0).unwrap();
+    let time_settings = TimeSettings::new("Europe/Warsaw", 4, 0).unwrap();
     // 2026-10-25 is the autumn DST change in Warsaw: a 25-hour day.
     let from: jiff::civil::Date = "2026-10-24".parse().unwrap();
     let to: jiff::civil::Date = "2026-10-26".parse().unwrap();
-    let days = days(&civil, from, to).unwrap();
+    let days = days(&time_settings, from, to).unwrap();
     assert_eq!(days.len(), 3);
     assert_eq!(days[0].label, "2026-10-24");
     assert_eq!(days[0].span.len(), 25 * 3600 * MICROS_PER_SECOND);

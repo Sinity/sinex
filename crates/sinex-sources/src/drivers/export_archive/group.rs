@@ -1,7 +1,7 @@
 //! One forward archive traversal shared by compatible logical bindings.
 use super::{Container, DriverError, ExportArchive, Framing, file_name, io, is_tar, records};
 use crate::drivers::{Acquired, MaterialSink, NewMaterial, StoredBytes};
-use crate::shared_pass::{Resume, StoredCopy};
+use crate::shared_pass::{SharedReadStart, StoredFile};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use sinex_model::{Class, MaterialId, ObservationFacts, RevisionChange};
@@ -53,16 +53,16 @@ impl crate::shared_pass::SharedPass for ExportArchive {
         cursor: &Value,
         facts: &ObservationFacts,
         class: Class,
-    ) -> Result<Resume, DriverError> {
+    ) -> Result<SharedReadStart, DriverError> {
         let Some(cursor) =
             Cursor::parse(cursor)?.filter(|c| c.same_file(facts) && c.capture.class == class)
         else {
-            return Ok(Resume::Read(None));
+            return Ok(SharedReadStart::Read(None));
         };
         if cursor.done {
-            return Ok(Resume::Finished);
+            return Ok(SharedReadStart::Finished);
         }
-        Ok(Resume::Read(Some(StoredCopy {
+        Ok(SharedReadStart::Read(Some(StoredFile {
             blob: cursor.capture.blob,
             length: cursor.capture.length,
             material: cursor.original_material,

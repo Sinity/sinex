@@ -77,12 +77,12 @@ impl Keyed for Presence {
             start
         };
         let mut out = Vec::new();
-        let Ok(mut day) = env.civil.day(start) else {
+        let Ok(mut day) = env.time_settings.day(start) else {
             return out;
         };
         loop {
             out.push(json!({"day": day.to_string()}));
-            match env.civil.day_end(day) {
+            match env.time_settings.day_end(day) {
                 Ok(next) if next < end => {}
                 _ => break,
             }
@@ -96,8 +96,8 @@ impl Keyed for Presence {
         let day = day_of(key)?;
         let mut q = InputQuery::window(
             Self::INPUTS,
-            env.civil.day_start(day).ok()?,
-            env.civil.day_end(day).ok()?,
+            env.time_settings.day_start(day).ok()?,
+            env.time_settings.day_end(day).ok()?,
         );
         // A span that began on an earlier day and still covers this one.
         q.before.push(Neighbour {
@@ -112,8 +112,10 @@ impl Keyed for Presence {
         let Some(day) = day_of(key) else {
             return Computed::default();
         };
-        let (Ok(day_start), Ok(day_end)) = (env.civil.day_start(day), env.civil.day_end(day))
-        else {
+        let (Ok(day_start), Ok(day_end)) = (
+            env.time_settings.day_start(day),
+            env.time_settings.day_end(day),
+        ) else {
             return Computed::default();
         };
         let evidence: Vec<(i128, &Event)> = inputs
@@ -172,7 +174,7 @@ impl Keyed for Presence {
     }
 
     fn key_state(&self, key: &Value, env: &Env) -> KeyState {
-        match day_of(key).and_then(|d| env.civil.day_end(d).ok()) {
+        match day_of(key).and_then(|d| env.time_settings.day_end(d).ok()) {
             Some(end) if env.now >= end => KeyState::Closed,
             Some(_) => KeyState::Open,
             None => KeyState::Closed,

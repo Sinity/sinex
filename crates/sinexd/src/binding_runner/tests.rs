@@ -98,12 +98,12 @@ fn planning_again_starts_files_that_appeared_since() {
     }));
     let mut bindings = Bindings::default();
     bindings.extend(&config, "h");
-    assert_eq!(bindings.bound.len(), 1);
+    assert_eq!(bindings.readers.len(), 1);
     std::fs::write(dir.join("b.zip"), b"x").unwrap();
     bindings.extend(&config, "h");
     bindings.extend(&config, "h");
     let mut names: Vec<&str> = bindings
-        .bound
+        .readers
         .iter()
         .map(|b| b.binding.name.as_str())
         .collect();

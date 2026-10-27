@@ -159,11 +159,11 @@ Takeout export the same visit, Sinex's live capture and the Sinnix capture
 lake the same clipboard change, notification or track, IMAP and an mbox the
 same mail. One mechanism joins
 them (`sinex-derivations/src/fusion.rs`). Each fused kind is a rule in
-`fusion/rules.rs`: its observers in preference order, each reading one
-source's events as sightings of something with an identity, a start and
-perhaps an end, and the windows within which sightings match. Sightings of
+`fusion/rules.rs`: its inputs in preference order, each reading one
+source's events as fusion records of something with an identity, a start and
+perhaps an end, and the windows within which fusion records match. Fusion records of
 one identity pair closest first within a short window, then within a longer
-one when the pair is unambiguous. For kinds whose sightings are spans or
+one when the pair is unambiguous. For kinds whose fusion records are spans or
 repeat (focus, plays), a group whose start falls inside a group led by a more
 preferred source joins it: ActivityWatch's title changes inside a focus the
 compositor reported, a player's reports of a track a streaming export holds.
@@ -233,7 +233,7 @@ Health figures show the shape for a dense series. `health.hourly` reads one
 civil hour of Google Fit points and writes one `health.figure` per data
 source (count, sum, minimum and maximum per value), naming the points as
 parents. `health.daily` reads a logical day's hourly figures, never the points;
-the logical day is the operator's `Civil` setting (Europe/Warsaw, from 04:00),
+the logical day is the operator's time settings (`TimeSettings`) (Europe/Warsaw, from 04:00),
 the same one the metric figures use.
 
 The derivation runner reads a pass's keys a page at a time: adjacent keys
@@ -252,7 +252,7 @@ are generated from the command table. `sinex-diagnostics` works while the
 daemon is down.
 
 Forecast issues and resolutions are ordinary `forecast.request` records. Both
-commands write through `sinexd/src/authored.rs`, as library requests do: one
+commands write through `sinexd/src/requests.rs`, as library requests do: one
 material, stored and then admitted in one batch. The parser takes the caller's
 role and the submission time from the material's manifest. The report reads
 the live issues, resolutions and evidence in one transaction and scores them

@@ -464,7 +464,7 @@ impl<const V: u32> Keyed for Count<V> {
 }
 
 #[devkit::test]
-async fn compare_shows_a_version_change_before_switching(db: devkit::pg::TestDatabase) {
+async fn compare_shows_a_derivation_update_before_switching(db: devkit::pg::TestDatabase) {
     let w = World::new(db).await;
     w.admit(vec![zsh("a", 0, 1), zsh("b", 10, 2)]).await;
     let mut v1 = w.driver_with(vec![Box::new(Count::<1>)], vec![]).await;

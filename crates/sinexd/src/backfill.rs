@@ -8,7 +8,7 @@
 //! second run reads only what changed.
 mod pipeline;
 use crate::material_sink::Sink;
-use crate::one_shot::OneShot;
+use crate::reader_context::ReaderContext;
 use crate::writer::{self, Priority};
 use sinex_model::RunId;
 use sinex_sources::{Binding, InputFormat, Limits, Settings, Source, drivers, sources};
@@ -131,7 +131,7 @@ pub(crate) async fn run(o: Options) -> Result<(), String> {
             planned.push((format, b));
         }
     }
-    let mut ctx = OneShot::open(&o.database, &o.store).await?;
+    let mut ctx = ReaderContext::open(&o.database, &o.store).await?;
     let sink = Sink(ctx.blobs.clone());
     let emits: Vec<&'static str> = {
         let mut types: Vec<&'static str> = planned
@@ -155,9 +155,9 @@ pub(crate) async fn run(o: Options) -> Result<(), String> {
         .map_err(|e| e.to_string())?;
     // Totals per source, in the order sources were first read.
     let mut per_source: Vec<(String, Totals)> = Vec::new();
-    let mut bound = planned
+    let mut readers = planned
         .into_iter()
-        .map(|(format, b)| crate::binding_reader::Bound::new(format, b))
+        .map(|(format, b)| crate::binding_reader::BindingReader::new(format, b))
         .collect::<Result<Vec<_>, _>>()?;
     let (_stop, stop) = tokio::sync::watch::channel(false);
     let results = crate::binding_reader::read(
@@ -166,7 +166,7 @@ pub(crate) async fn run(o: Options) -> Result<(), String> {
         &ctx.writer,
         run,
         &sink,
-        &mut bound,
+        &mut readers,
         stop,
         crate::binding_reader::Access {
             recipient: None,

@@ -8,7 +8,7 @@
 //! - [`brief`]: the daily brief and why a cell is what it is.
 use sinex_analysis::Span;
 use sinex_model::Timestamp;
-use sinex_model::civil::Civil;
+use sinex_model::time_settings::TimeSettings;
 
 mod brief;
 mod panel;
@@ -21,17 +21,17 @@ pub(crate) use recipes::{Recipe, run};
 /// The day setting the figures are derived under.
 #[derive(Clone)]
 pub(crate) struct Settings {
-    pub civil: Civil,
+    pub time_settings: TimeSettings,
     /// `04:00 Europe/Warsaw`: reported with every answer.
     pub label: String,
 }
 
 impl Settings {
     pub(crate) fn operator_default() -> Self {
-        let civil = Civil::operator_default();
+        let time_settings = TimeSettings::operator_default();
         Self {
-            label: civil.label(),
-            civil,
+            label: time_settings.label(),
+            time_settings,
         }
     }
 
@@ -40,16 +40,21 @@ impl Settings {
         from: jiff::civil::Date,
         to_inclusive: jiff::civil::Date,
     ) -> Result<Span, String> {
-        let start = self.civil.day_start(from).map_err(|e| e.to_string())?;
+        let start = self
+            .time_settings
+            .day_start(from)
+            .map_err(|e| e.to_string())?;
         let end = self
-            .civil
+            .time_settings
             .day_end(to_inclusive)
             .map_err(|e| e.to_string())?;
         Ok(Span::new(micros(start), micros(end)))
     }
 
     pub(crate) fn today(&self) -> Result<jiff::civil::Date, String> {
-        self.civil.day(Timestamp::now()).map_err(|e| e.to_string())
+        self.time_settings
+            .day(Timestamp::now())
+            .map_err(|e| e.to_string())
     }
 }
 

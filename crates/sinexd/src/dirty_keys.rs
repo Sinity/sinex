@@ -3,19 +3,19 @@
 use serde_json::Value;
 use sinex_derivations::{AnyKeyed, Env, KeyView};
 use sinex_model::Timestamp;
-use sinex_model::civil::Civil;
+use sinex_model::time_settings::TimeSettings;
 use sinex_store::{DirtyKeys, KeyInput};
 
 pub(crate) struct Registered {
     derivations: Vec<Box<dyn AnyKeyed>>,
-    civil: Civil,
+    time_settings: TimeSettings,
 }
 
 impl Registered {
     pub(crate) fn new(derivations: Vec<Box<dyn AnyKeyed>>) -> Self {
         Self {
             derivations,
-            civil: Civil::operator_default(),
+            time_settings: TimeSettings::operator_default(),
         }
     }
 }
@@ -29,7 +29,7 @@ impl DirtyKeys for Registered {
         };
         let env = Env {
             now: Timestamp::now(),
-            civil: self.civil.clone(),
+            time_settings: self.time_settings.clone(),
             settings: Value::Null,
         };
         self.derivations

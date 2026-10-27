@@ -13,7 +13,7 @@ impl MaterialSink for Sink {
         self.0.put(bytes).map_err(|e| e.to_string())
     }
 
-    /// An export archive is streamed into the store, never held in memory.
+    /// An export archive is streamed into the store, never kept in memory.
     fn put_file(&self, path: &std::path::Path) -> Result<String, String> {
         let file = std::fs::File::open(path).map_err(|e| format!("{}: {e}", path.display()))?;
         self.0
@@ -67,10 +67,10 @@ impl SealingSink {
     }
 
     pub(crate) fn key(&self, blob: &str) -> Result<sinex_store::sealed::DataKey, String> {
-        Ok(self.held(blob)?.data)
+        Ok(self.sealing_key(blob)?.data)
     }
 
-    fn held(&self, blob: &str) -> Result<SealingKey, String> {
+    fn sealing_key(&self, blob: &str) -> Result<SealingKey, String> {
         let state = self.state.lock().expect("sealing state");
         state
             .unadmitted
@@ -161,9 +161,9 @@ impl SealingSink {
             };
             let checkpoint = material.is_none() && batch.records.is_empty();
             if let Some(material) = material {
-                let held = self.held(&material.blob)?;
-                let key = &held.data;
-                let wrapped = held.wrapped.clone();
+                let sealing_key = self.sealing_key(&material.blob)?;
+                let key = &sealing_key.data;
+                let wrapped = sealing_key.wrapped.clone();
                 let wrapped = sinex_model::WrappedDataKey {
                     material: material.id,
                     key_ref: key.key_ref.clone(),
@@ -174,10 +174,10 @@ impl SealingSink {
                 }
                 let mut state = self.state.lock().expect("sealing state");
                 state.unadmitted.remove(&material.blob);
-                state.current = Some((material.id, material.blob.clone(), held));
+                state.current = Some((material.id, material.blob.clone(), sealing_key));
             }
             let current = self.state.lock().expect("sealing state").current.clone();
-            let Some((material, _, held)) = current else {
+            let Some((material, _, sealing_key)) = current else {
                 let sinex_model::BatchKind::Source(progress) = &batch.kind else {
                     unreachable!()
                 };
@@ -190,7 +190,7 @@ impl SealingSink {
                     "sealed source state needs its data key; explicit unlock is required".into(),
                 );
             };
-            let key = &held.data;
+            let key = &sealing_key.data;
             for record in &mut batch.records {
                 match record {
                     sinex_model::RecordOutcome::Events { events, .. } => {

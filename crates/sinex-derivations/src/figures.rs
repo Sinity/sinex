@@ -295,7 +295,7 @@ fn key_parts(key: &Value) -> Option<(&'static Metric, jiff::civil::Date)> {
 }
 
 fn day_state(key: &Value, env: &Env) -> KeyState {
-    match key_parts(key).and_then(|(_, d)| env.civil.day_end(d).ok()) {
+    match key_parts(key).and_then(|(_, d)| env.time_settings.day_end(d).ok()) {
         Some(end) if env.now >= end => KeyState::Closed,
         Some(_) => KeyState::Open,
         None => KeyState::Closed,
@@ -306,9 +306,9 @@ fn day_state(key: &Value, env: &Env) -> KeyState {
 /// logical day it started in, whichever is earlier.
 fn open_end(start: Timestamp, env: &Env) -> Timestamp {
     let day_end = env
-        .civil
+        .time_settings
         .day(start)
-        .and_then(|d| env.civil.day_end(d))
+        .and_then(|d| env.time_settings.day_end(d))
         .unwrap_or(start);
     env.now.min(day_end).max(start)
 }
@@ -473,12 +473,12 @@ impl Keyed for HourlyMetrics {
             .filter(|m| m.admits(input.event_type, input.payload))
         {
             let (_, end) = span(m.law, start, input.payload, env);
-            let Ok(mut day) = env.civil.day(start) else {
+            let Ok(mut day) = env.time_settings.day(start) else {
                 continue;
             };
             loop {
                 keys.push(json!({"metric": m.name, "day": day.to_string()}));
-                let Ok(next_start) = env.civil.day_end(day) else {
+                let Ok(next_start) = env.time_settings.day_end(day) else {
                     break;
                 };
                 if next_start.unix_ns() >= end {
@@ -496,8 +496,8 @@ impl Keyed for HourlyMetrics {
         let kinds = m.kinds().to_vec();
         let mut q = InputQuery::of(
             kinds.clone(),
-            env.civil.day_start(day).ok()?,
-            env.civil.day_end(day).ok()?,
+            env.time_settings.day_start(day).ok()?,
+            env.time_settings.day_end(day).ok()?,
         );
         if let Law::Seconds { .. } = m.law {
             // The interval that may still run when the day starts.
@@ -514,14 +514,17 @@ impl Keyed for HourlyMetrics {
         let Some((m, day)) = key_parts(key) else {
             return Computed::default();
         };
-        let (Ok(start), Ok(end)) = (env.civil.day_start(day), env.civil.day_end(day)) else {
+        let (Ok(start), Ok(end)) = (
+            env.time_settings.day_start(day),
+            env.time_settings.day_end(day),
+        ) else {
             return Computed::default();
         };
         let label = day.to_string();
         let mut outputs = Vec::new();
         let mut hour = start;
         while hour < end {
-            let Ok(next) = env.civil.hour_end(hour) else {
+            let Ok(next) = env.time_settings.hour_end(hour) else {
                 break;
             };
             let period = (hour.unix_ns(), next.unix_ns());
@@ -580,8 +583,8 @@ impl Keyed for DailyMetrics {
         Some(
             InputQuery::window(
                 &[MetricFigure::EVENT_TYPE],
-                env.civil.day_start(day).ok()?,
-                env.civil.day_end(day).ok()?,
+                env.time_settings.day_start(day).ok()?,
+                env.time_settings.day_end(day).ok()?,
             )
             .only("grain", json!("hour"))
             .only("metric", json!(m.name)),
@@ -592,7 +595,10 @@ impl Keyed for DailyMetrics {
         let Some((m, day)) = key_parts(key) else {
             return Computed::default();
         };
-        let (Ok(start), Ok(end)) = (env.civil.day_start(day), env.civil.day_end(day)) else {
+        let (Ok(start), Ok(end)) = (
+            env.time_settings.day_start(day),
+            env.time_settings.day_end(day),
+        ) else {
             return Computed::default();
         };
         let mut sums: Figures<'_> = BTreeMap::new();

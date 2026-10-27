@@ -4,14 +4,14 @@ use crate::material_sink::Sink;
 use crate::writer::WriterHandle;
 use serde_json::Value;
 use sinex_model::{Class, RunId};
-use sinex_sources::shared_pass::Resume;
+use sinex_sources::shared_pass::SharedReadStart;
 use sinex_sources::{Binding, InputFormat, Reader, Reading, Source, drivers};
 use sinex_store::{Blobs, positions};
 use sqlx::PgConnection;
 use std::sync::Arc;
 use tokio::sync::watch;
 
-pub(crate) struct Bound {
+pub(crate) struct BindingReader {
     pub binding: Binding,
     pub source: Box<dyn Source>,
     reading: Reading,
@@ -21,7 +21,7 @@ pub(crate) struct Bound {
     /// they hold, nothing was appended and the poll is skipped.
     settled: Option<sinex_model::ObservationFacts>,
 }
-impl Bound {
+impl BindingReader {
     pub(crate) fn new(kind: &InputFormat, binding: Binding) -> Result<Self, String> {
         let reader = kind
             .reader
@@ -40,7 +40,7 @@ impl Bound {
 pub(crate) use crate::sealed_access::Access;
 
 mod shared;
-use shared::{Pass, read_shared, same_file};
+use shared::{SharedFileRead, read_shared, same_file};
 
 /// Each binding's outcome as it is read: its source and result, kept for the
 /// caller, and handed at once to `report` with the binding's name.
@@ -66,7 +66,7 @@ pub(crate) async fn read(
     writer: &WriterHandle,
     run: RunId,
     sink: &Sink,
-    bound: &mut [Bound],
+    readers: &mut [BindingReader],
     stop: watch::Receiver<bool>,
     access: Access<'_>,
     report: &mut (dyn FnMut(&str, &Result<Totals, String>) + Send),
@@ -75,8 +75,8 @@ pub(crate) async fn read(
         list: Vec::new(),
         report,
     };
-    let mut passes: Vec<Pass> = Vec::new();
-    for (index, b) in bound.iter_mut().enumerate() {
+    let mut passes: Vec<SharedFileRead> = Vec::new();
+    for (index, b) in readers.iter_mut().enumerate() {
         let init = async {
             if !b.remembered {
                 backfill::record(conn, &b.binding).await?;
@@ -113,9 +113,9 @@ pub(crate) async fn read(
             }
             .await;
             match choice {
-                Ok((Resume::Read(stored), facts, class)) => {
+                Ok((SharedReadStart::Read(stored), facts, class)) => {
                     // Host and effective class are the acquisition/privacy context. Physical
-                    // file facts permit aliases without conflating authored logical identities.
+                    // file facts permit aliases without conflating configured input identities.
                     let compatible = passes.iter_mut().find(|g| {
                         g.class == class
                             && class != Class::Sealed
@@ -126,7 +126,7 @@ pub(crate) async fn read(
                         group.indices.push(index);
                         group.stored = group.stored.take().or(stored);
                     } else {
-                        passes.push(Pass {
+                        passes.push(SharedFileRead {
                             indices: vec![index],
                             stored,
                             facts,
@@ -135,7 +135,9 @@ pub(crate) async fn read(
                         });
                     }
                 }
-                Ok((Resume::Finished, _, _)) => results.add(&b.binding, Ok(Totals::default())),
+                Ok((SharedReadStart::Finished, _, _)) => {
+                    results.add(&b.binding, Ok(Totals::default()))
+                }
                 Err(e) => results.add(&b.binding, Err(format!("{}: {e}", b.binding.name))),
             }
         } else if let Reading::Polled(reader) = &mut b.reading {
@@ -184,7 +186,7 @@ pub(crate) async fn read(
             writer,
             run,
             sink,
-            bound,
+            readers,
             &pass,
             stop.clone(),
             access,
@@ -193,13 +195,13 @@ pub(crate) async fn read(
         match outcome {
             Ok(per_route) => {
                 for (&i, r) in pass.indices.iter().zip(per_route) {
-                    results.add(&bound[i].binding, r);
+                    results.add(&readers[i].binding, r);
                 }
             }
             Err(e) => {
                 for &i in &pass.indices {
-                    let failed = Err(format!("{}: {e}", bound[i].binding.name));
-                    results.add(&bound[i].binding, failed);
+                    let failed = Err(format!("{}: {e}", readers[i].binding.name));
+                    results.add(&readers[i].binding, failed);
                 }
             }
         }
@@ -212,7 +214,7 @@ pub(crate) async fn read(
 async fn restore(
     conn: &mut PgConnection,
     blobs: &Blobs,
-    b: &mut Bound,
+    b: &mut BindingReader,
     access: Access<'_>,
     stop: &watch::Receiver<bool>,
 ) -> Result<(), String> {

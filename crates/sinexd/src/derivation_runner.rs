@@ -31,7 +31,7 @@
 use crate::writer::{Priority, WriterHandle};
 use serde_json::Value;
 use sinex_derivations::{AnyKeyed, AnyPerEvent, Env, Input, InputQuery, KeyView, Neighbour};
-use sinex_model::civil::Civil;
+use sinex_model::time_settings::TimeSettings;
 use sinex_model::{Batch, BatchKind, Event, ReadingOrder, RecordOutcome, RunId, Timestamp};
 use sinex_store::blobs::Blobs;
 use sinex_store::derivations::{self, Nearest, Window};
@@ -78,7 +78,7 @@ pub(crate) struct DerivationRunner {
     passes: u32,
     /// The time derivations see; the current time unless a test sets it.
     pub(crate) clock: Option<Timestamp>,
-    civil: Civil,
+    time_settings: TimeSettings,
     read: PgConnection,
     writer: WriterHandle,
     runs: BTreeMap<&'static str, RunId>,
@@ -166,7 +166,7 @@ impl DerivationRunner {
             ranks,
             passes: 0,
             clock: None,
-            civil: Civil::operator_default(),
+            time_settings: TimeSettings::operator_default(),
             read,
             writer,
             runs,
@@ -198,7 +198,7 @@ impl DerivationRunner {
     fn env(&self) -> Env {
         Env {
             now: self.clock.unwrap_or_else(Timestamp::now),
-            civil: self.civil.clone(),
+            time_settings: self.time_settings.clone(),
             settings: Value::Null,
         }
     }
@@ -286,7 +286,7 @@ impl DerivationRunner {
             ranks: BTreeMap::new(),
             passes: 0,
             clock: None,
-            civil: Civil::operator_default(),
+            time_settings: TimeSettings::operator_default(),
             read,
             writer,
             runs,
