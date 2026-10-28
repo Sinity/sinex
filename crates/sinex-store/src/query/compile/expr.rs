@@ -21,10 +21,7 @@ impl Compiler<'_> {
                 let mut raw = SqlFragment::text(Self::template(cols, "({t}.payload #> "));
                 raw.param(V::String(Some(text_array(path))))
                     .push("::text[])");
-                Ok((
-                    Self::typed_json(raw, *ty),
-                    Kind::Typed(*ty),
-                ))
+                Ok((Self::typed_json(raw, *ty), Kind::Typed(*ty)))
             }
             (Cols::Base { .. }, FieldRef::Group(name)) => Err(invalid(format!(
                 "`{name}` names a group column outside a grouping"
