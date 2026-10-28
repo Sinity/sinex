@@ -72,6 +72,9 @@ impl Ingest {
                 "a large frame's inner frame needs a name".into(),
             ));
         }
+        if inner.frame().contains('\0') {
+            return Err(Check::Malformed("a large frame's inner name contains NUL".into()));
+        }
         match inner {
             Ingress::Material { .. } | Ingress::Events { .. } => Ok(inner),
             _ => Err(Check::Malformed(

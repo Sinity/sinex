@@ -134,7 +134,7 @@ impl Ingest {
             .as_ref()
             .ok()
             .map(|f| f.frame())
-            .filter(|name| !name.is_empty())
+            .filter(|name| !name.is_empty() && !name.contains('\0'))
             .map(str::to_owned)
             .unwrap_or_else(|| format!("malformed/{}", blake3::hash(body).to_hex()));
         if let Some(stored) = self.stored(producer, &name).await? {
@@ -145,6 +145,7 @@ impl Ingest {
         let configuration = self.configuration(producer).await?;
         let offered = decoded.as_ref().ok().cloned();
         let decoded = match decoded {
+            Ok(frame) if frame.frame().contains('\0') => Err(Check::Malformed("a frame name contains NUL".into())),
             Ok(frame) if !frame.frame().is_empty() => {
                 self.unwrap_large_frame(producer, frame).await
             }
@@ -152,8 +153,9 @@ impl Ingest {
             Err(error) => Err(Check::Malformed(format!("not a frame: {error}"))),
         };
         let details = decoded.as_ref().ok().or(offered.as_ref());
-        let checked = match &decoded {
-            _ if configuration.is_some() => Err(Check::Configuration(configuration.unwrap())),
+        let checked = if let Some(reason) = configuration {
+            Err(Check::Configuration(reason))
+        } else { match &decoded {
             Err(check) => Err(check.clone()),
             Ok(Ingress::Material { material, .. }) => {
                 match self.store_material(producer, &name, material).await {
@@ -172,7 +174,7 @@ impl Ingest {
                 .await
                 .map(|()| (None, vec![])),
             Ok(Ingress::LargeFrame { .. }) => unreachable!("large frame was decoded"),
-        };
+        }};
         let batch = match checked {
             Ok((progress, records)) => Batch {
                 run,
@@ -515,7 +517,7 @@ fn frame_source(frame: Option<&Ingress>) -> Option<String> {
             binding
                 .split_once(':')
                 .map_or(binding, |(source, _)| source)
-                .to_owned()
+                .replace('\0', "\\0")
         })
         .filter(|source| !source.is_empty())
 }
@@ -524,7 +526,8 @@ fn frame_event_types(frame: Option<&Ingress>) -> Vec<String> {
     let mut names = match frame {
         Some(Ingress::Events { events, .. }) => events
             .iter()
-            .map(|event| event.event_type.clone())
+            // PostgreSQL JSONB cannot represent NUL; diagnostic names use a visible escape.
+            .map(|event| event.event_type.replace('\0', "\\0"))
             .collect::<Vec<_>>(),
         _ => vec![],
     };

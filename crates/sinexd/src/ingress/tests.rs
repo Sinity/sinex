@@ -1065,15 +1065,18 @@ async fn content_failures_use_the_named_material_and_missing_locations_are_malfo
 ) {
     let h = Harness::start(db).await;
     let (first, frame) = h.material_frame("a/material/first", b": 1760788800:0;first\n");
-    h.send("session", &frame).await;
+    assert!(h.send("session", &frame).await.refusal.is_none());
     let (second, frame) = h.material_frame("b/material/second", b": 1760788801:0;second\n");
-    h.send("session", &frame).await;
+    assert!(h.send("session", &frame).await.refusal.is_none());
+    let mut nul_type = imported(first, 0, "synthetic");
+    nul_type.event_type = "not.\0declared".into();
     let mut no_location = imported(first, 0, "synthetic");
     no_location.location = None;
     let mut wrong_location = imported(second, 0, "synthetic");
     wrong_location.event_type = "not.declared".into();
     for (name, event, expected) in [
         ("nul", imported(first, 0, "a\0b"), FrameRefusal::Content),
+        ("nul-type", nul_type, FrameRefusal::Content),
         (
             "unknown-material",
             imported(MaterialId::new(), 0, "synthetic"),
@@ -1093,6 +1096,9 @@ async fn content_failures_use_the_named_material_and_missing_locations_are_malfo
             )
             .await;
         assert_eq!(ack.refusal_kind(), Some(expected), "{ack:?}");
+        if name == "nul-type" {
+            assert_eq!(ack.outcome["event_types"], json!(["not.\\0declared"]));
+        }
         assert_eq!(
             ack.outcome["failures"],
             if expected == FrameRefusal::Content {
@@ -1103,13 +1109,13 @@ async fn content_failures_use_the_named_material_and_missing_locations_are_malfo
             "{ack:?}"
         );
     }
-    assert_eq!(h.count("SELECT count(*) FROM raw.failures").await, 3);
+    assert_eq!(h.count("SELECT count(*) FROM raw.failures").await, 4);
     assert_eq!(
         h.count(&format!(
             "SELECT count(*) FROM raw.failures WHERE material_id = '{first}'"
         ))
         .await,
-        3
+        4
     );
     assert_eq!(
         h.count(&format!(
@@ -1232,18 +1238,19 @@ async fn producer_configuration_is_refused_at_connect_before_any_frame(
 }
 
 #[devkit::test]
-async fn malformed_frames_with_no_name_are_recorded_once(db: devkit::pg::TestDatabase) {
+async fn malformed_frames_with_invalid_names_are_recorded_once(db: devkit::pg::TestDatabase) {
     let h = Harness::start(db).await;
     for bytes in [
         b"{not json".as_slice(),
         br#"{"kind":"events","frame":"","events":[]}"#.as_slice(),
+        br#"{"kind":"events","frame":"nul\u0000name","events":[]}"#.as_slice(),
     ] {
         let ack = h.send_raw("session", bytes.to_vec()).await;
         assert_eq!(ack.refusal_kind(), Some(FrameRefusal::Malformed));
         assert_eq!(h.send_raw("session", bytes.to_vec()).await, ack);
         assert_eq!(h.recorded("session", &[&ack.frame]).await, vec![ack]);
     }
-    assert_eq!(h.count("SELECT count(*) FROM core.ingress_frames").await, 2);
+    assert_eq!(h.count("SELECT count(*) FROM core.ingress_frames").await, 3);
 }
 
 #[devkit::test]
@@ -1255,6 +1262,10 @@ async fn malformed_large_frames_are_errors_and_byte_refusals_remove_transfer_byt
         (
             "no-inner-name",
             json!({"kind":"events","frame":"","events":[]}),
+        ),
+        (
+            "nul-inner-name",
+            json!({"kind":"events","frame":"nul\0name","events":[]}),
         ),
         (
             "wrong-inner-kind",
@@ -1385,7 +1396,7 @@ async fn daemon_status_counts_refusals_by_producer_source_and_event_type(
             {"producer":"node","source":"a","event_type":"not.declared","refusal_kind":"content","frames":1},
             {"producer":"node","source":"b","event_type":null,"refusal_kind":"bytes","frames":1},
             {"producer":"node","source":"d","event_type":null,"refusal_kind":"configuration","frames":1},
-            {"producer":"other-node","source":"c","event_type":"command.executed","refusal_kind":"malformed","frames":1},
+            {"producer":"other-node","source":"c","event_type":"command.imported","refusal_kind":"malformed","frames":1},
             {"producer":"unknown-node","source":null,"event_type":null,"refusal_kind":"malformed","frames":1},
         ])
     );
