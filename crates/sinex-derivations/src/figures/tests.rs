@@ -48,6 +48,10 @@ fn focus(app: &str, from: i64, to: Option<i64>) -> Event {
 }
 
 fn journal(secs: i64, priority: u8) -> Event {
+    journal_from(secs, priority, false)
+}
+
+fn journal_from(secs: i64, priority: u8, from_sinex: bool) -> Event {
     Event::build(
         &JournalEntry {
             cursor: format!("c{secs}"),
@@ -63,6 +67,7 @@ fn journal(secs: i64, priority: u8) -> Event {
             uid: None,
             command: None,
             transport: None,
+            from_sinex,
             fields: Default::default(),
         },
         "machine.journald",
@@ -111,7 +116,7 @@ fn total_at(figures: &[MetricFigure], secs: i64) -> &MetricFigure {
 #[devkit::test]
 fn the_hourly_inputs_are_every_type_a_metric_counts() {
     let mut declared: Vec<&str> = HourlyMetrics::INPUTS.to_vec();
-    let mut counted: Vec<&str> = METRICS
+    let mut counted: Vec<String> = METRICS
         .iter()
         .flat_map(|m| (m.inputs)())
         .map(|k| k.event_type)
@@ -229,7 +234,7 @@ fn an_old_open_interval_stops_counting_at_its_day_end() {
     let now = 2 * 365 * 86_400;
     let e = focus("vim", 0, None);
     let view = KeyView {
-        event_type: e.event_type,
+        event_type: &e.event_type,
         ts_orig: e.ts_orig.at,
         payload: &e.payload,
     };
@@ -250,7 +255,7 @@ fn an_old_open_interval_stops_counting_at_its_day_end() {
 fn a_long_interval_dirties_every_day_it_covers() {
     let e = focus("vim", 0, Some(2 * 86_400));
     let view = KeyView {
-        event_type: e.event_type,
+        event_type: &e.event_type,
         ts_orig: e.ts_orig.at,
         payload: &e.payload,
     };
@@ -298,7 +303,12 @@ fn a_day_is_the_logical_day() {
 fn only_error_entries_count_as_journal_errors() {
     let out = hourly(
         "machine.journal_errors",
-        &[journal(10, 3), journal(20, 4), journal(30, 0)],
+        &[
+            journal(10, 3),
+            journal(20, 4),
+            journal(30, 0),
+            journal_from(40, 3, true),
+        ],
         100_000,
     );
     assert_eq!(total_at(&out, 0).value, Some(2.0));
@@ -322,7 +332,7 @@ fn a_day_adds_up_its_hours() {
         let q = DailyMetrics.inputs(&key(metric), &env).unwrap();
         assert!(hours.iter().all(|h| q.admits(h)));
         let view = KeyView {
-            event_type: hours[0].event_type,
+            event_type: &hours[0].event_type,
             ts_orig: hours[0].ts_orig.at,
             payload: &hours[0].payload,
         };

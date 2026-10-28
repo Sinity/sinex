@@ -294,11 +294,31 @@ fn invalid_staged_ranges_are_refused_before_record_allocation() {
 }
 
 #[devkit::test]
-fn directory_bundles_keep_empty_members_at_distinct_anchors() {
+fn directory_tar_members_keep_distinct_anchors_and_reject_overlaps() {
     use crate::test_parser::NotesParser;
+    let mut archive = tar::Builder::new(Vec::new());
+    let mut records = Vec::new();
+    let mut members = Vec::new();
+    for (path, body) in [("a.md", b"alpha".as_slice()), ("b.md", b"".as_slice())] {
+        archive
+            .append_pax_extensions([("path", path.as_bytes())])
+            .unwrap();
+        let mut header = tar::Header::new_ustar();
+        header.set_path(path).unwrap();
+        header.set_size(body.len() as u64);
+        header.set_mode(0o600);
+        header.set_uid(0);
+        header.set_gid(0);
+        header.set_mtime(0);
+        header.set_cksum();
+        let start = archive.get_ref().len() + 512;
+        archive.append(&header, body).unwrap();
+        records.push((start, start + body.len()));
+        members.push(serde_json::json!({"path":path, "stream_offset":start, "length":body.len()}));
+    }
+    let bytes = archive.into_inner().unwrap();
     let manifest = sinex_model::Manifest::from_json(serde_json::json!({
-        "path":"synthetic-vault", "media_type":"application/x-sinex-file-bundle",
-        "members":[{"path":"a.md", "stream_offset":1, "length":5}, {"path":"b.md", "stream_offset":7, "length":0}],
+        "path":"synthetic-vault", "media_type":"application/x-tar", "scan_complete":true, "members":members,
     }));
     let run = |manifest: &sinex_model::Manifest, records: &[(usize, usize)]| {
         drain(
@@ -307,7 +327,7 @@ fn directory_bundles_keep_empty_members_at_distinct_anchors() {
                 source: "synthetic",
                 class: Class::Open,
                 material: MaterialId::new(),
-                bytes: b"\0alpha\0".as_slice().into(),
+                bytes: bytes.as_slice().into(),
                 records,
                 carry: Value::Null,
                 reading_order: &|_| ReadingOrder(0),
@@ -319,11 +339,14 @@ fn directory_bundles_keep_empty_members_at_distinct_anchors() {
             },
         )
     };
-    let chunks = run(&manifest, &[(1, 6), (7, 7)]).unwrap();
+    let chunks = run(&manifest, &records).unwrap();
     let outcomes: Vec<_> = chunks.into_iter().flat_map(|c| c.outcomes).collect();
-    for (index, (path, text, anchor)) in [("a.md", "alpha", 1), ("b.md", "", 7)]
-        .into_iter()
-        .enumerate()
+    for (index, (path, text, anchor)) in [
+        ("a.md", "alpha", records[0].0 as u64),
+        ("b.md", "", records[1].0 as u64),
+    ]
+    .into_iter()
+    .enumerate()
     {
         let RecordOutcome::Events { location, events } = &outcomes[index] else {
             panic!()
@@ -335,11 +358,12 @@ fn directory_bundles_keep_empty_members_at_distinct_anchors() {
     let mut overlap = manifest.clone();
     overlap.members[1] = sinex_model::Member {
         path: "b.md".into(),
-        stream_offset: 3,
+        stream_offset: (records[0].0 + 2) as u64,
         length: 3,
+        node: None,
         details: Default::default(),
     };
-    assert!(run(&overlap, &[(1, 6), (3, 6)]).is_err());
+    assert!(run(&overlap, &[records[0], (records[0].0 + 2, records[0].1)]).is_err());
 }
 
 #[devkit::test]
@@ -418,4 +442,30 @@ fn a_blank_record_is_no_record_and_leaves_the_carry_alone() {
     .unwrap();
     assert_eq!(commands(&chunks), vec![(3, "kept".into())]);
     assert_eq!(chunks.last().unwrap().carry, serde_json::json!(1));
+}
+
+#[devkit::test]
+fn an_export_tar_member_can_hold_several_records() {
+    let bytes = b"a\nb\n";
+    let records = lines(bytes);
+    let manifest = sinex_model::Manifest::from_json(serde_json::json!({
+        "media_type": "application/x-tar",
+        "members": [{"path": "commands", "stream_offset": 0, "length": bytes.len()}],
+    }));
+    let chunks = drain(
+        &Lines,
+        DrainInput {
+            source: "synthetic",
+            class: Class::Open,
+            material: MaterialId::new(),
+            bytes: bytes.as_slice().into(),
+            records: &records,
+            carry: Value::Null,
+            reading_order: &|anchor| ReadingOrder(anchor as i64),
+            limits: Limits::default(),
+            manifest: &manifest,
+        },
+    )
+    .unwrap();
+    assert_eq!(commands(&chunks), [(0, "a".into()), (2, "b".into())]);
 }

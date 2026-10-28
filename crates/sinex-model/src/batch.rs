@@ -76,6 +76,21 @@ pub struct IngressFrame {
     /// Set when the frame was refused as a whole: it is recorded, with no
     /// events, so asking again gets the same answer.
     pub refusal: Option<String>,
+    pub declarations: Vec<crate::KindDeclaration>,
+    pub refusal_kind: Option<FrameRefusal>,
+    /// The source named at the start of a capture binding; otherwise unknown.
+    pub source: Option<String>,
+    pub event_types: Vec<String>,
+}
+
+/// What a producer must do after a refused frame.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FrameRefusal {
+    Content,
+    Bytes,
+    Malformed,
+    Configuration,
 }
 
 /// One framed record's result: its events, or why the parser could not read it.
@@ -248,7 +263,7 @@ impl ReplayScope {
     /// the caller, which only re-reads in-scope materials).
     pub fn includes(&self, event: &Event) -> bool {
         if let Some(types) = &self.event_types
-            && !types.iter().any(|t| t == event.event_type)
+            && !types.iter().any(|t| t == &event.event_type)
         {
             return false;
         }

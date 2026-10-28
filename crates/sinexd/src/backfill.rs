@@ -6,8 +6,8 @@
 //! binding is recorded with its settings (so a replay reads it the same way)
 //! and its driver state is rebuilt from the materials it stored, so a
 //! second run reads only what changed.
+use crate::material_access::Sink;
 use crate::reader_context::ReaderContext;
-use crate::sealing::Sink;
 use crate::writer;
 use sinex_model::RunId;
 use sinex_source_core::{Binding, InputFormat, Settings, Source, drivers};
@@ -110,7 +110,7 @@ pub(crate) async fn run(o: Options) -> Result<(), String> {
             let text =
                 std::fs::read_to_string(path).map_err(|e| format!("{}: {e}", path.display()))?;
             let identity = sinex_sealing::parse_identity(text.trim()).map_err(|e| e.to_string())?;
-            crate::sealing::Unlock::new(identity, Duration::from_secs(480 * 60))
+            crate::material_access::sealing::Unlock::new(identity, Duration::from_secs(480 * 60))
         })
         .transpose()?;
     let mut settings = Settings::new(o.host.clone());
@@ -171,7 +171,7 @@ pub(crate) async fn run(o: Options) -> Result<(), String> {
         &sink,
         &mut readers,
         stop,
-        crate::binding_reader::Access {
+        crate::material_access::Access {
             recipient: None,
             unlock: unlock.as_ref(),
         },
@@ -237,14 +237,13 @@ pub(crate) async fn drive(
     source: std::sync::Arc<dyn Source>,
     binding: &str,
     sink: &Sink,
-    access: crate::sealing::Access<'_>,
+    access: crate::material_access::Access<'_>,
     minimum_class: sinex_model::Class,
     reader: &mut crate::binding_reader::polled::PolledReader,
     stop: tokio::sync::watch::Receiver<bool>,
 ) -> Result<Totals, String> {
     let mut totals = Totals::default();
     let started = Instant::now();
-    let private = sinex_transport::private_mode::PrivateMode::default();
     // The source's class: its declaration, raised by the operator's floor.
     // A sealed source seals each material and its events as they are read.
     let floor = sinex_store::privacy::load(read_conn, std::iter::once(source.spec().name))
@@ -255,31 +254,18 @@ pub(crate) async fn drive(
         .copied()
         .unwrap_or_default();
     let effective_class = source.spec().class.max(floor).max(minimum_class);
-    let material = crate::sealing::Materials::new(sink.0.clone(), effective_class, access)
-        .map_err(|e| format!("{}: {e}", source.spec().name))?;
+    let material =
+        crate::material_access::MaterialAccess::new(sink.0.clone(), effective_class, access)
+            .map_err(|e| format!("{}: {e}", source.spec().name))?;
     let checked_stop = stop.clone();
-    // Checked for every buffer read, so the switch is looked at only every
-    // quarter second.
-    let checked_private = sinex_transport::private_mode::Cached::new(
-        sinex_transport::private_mode::PrivateMode::default(),
-        std::time::Duration::from_millis(250),
-    );
     let check: std::sync::Arc<dyn Fn() -> Result<(), String> + Send + Sync> =
         std::sync::Arc::new(move || {
-            let private = checked_private.on();
-            if *checked_stop.borrow() || private {
-                return Err("capture cancelled or private mode is on".into());
+            if *checked_stop.borrow() {
+                return Err("capture cancelled".into());
             }
             Ok(())
         });
     loop {
-        // Private mode: capture nothing, and say so rather than report a gap.
-        if private.on() {
-            return Err(format!(
-                "private mode is on ({}); nothing was read",
-                private.path().display()
-            ));
-        }
         if *stop.borrow() {
             return Err("capture cancelled".into());
         }

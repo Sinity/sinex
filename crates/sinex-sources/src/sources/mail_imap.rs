@@ -10,6 +10,14 @@
 //! mailbox, so reading starts over (a message already read is then a repeat
 //! by its Message-ID).
 //!
+//! The reader remembers where each message it read is stored, by UID. Each
+//! poll asks the server which of those UIDs it still holds (`UID SEARCH`);
+//! a message expunged since is recorded as removed at the source, and its
+//! UID is listed in the manifest (`expunged`) of the poll's material, which
+//! then may hold no message at all. The reader saves what it remembers with
+//! the cursor on the cadence of [`sinex_source_core::drivers::memory_due`] and rebuilds
+//! it after a restart from that and the materials after it.
+//!
 //! Credentials come from files (`password_file`, `token_file`), never from
 //! the configuration itself, and never appear in errors.
 //!
@@ -22,6 +30,7 @@ use serde_json::{Value, json};
 use sinex_model::{Class, InputRef, MaterialId, ObservationFacts, RevisionChange, Timestamp};
 use sinex_source_core::drivers::{Acquired, DriverError, NewMaterial};
 use sinex_source_core::registry::{DeclaredSource, Driver, SourceSpec};
+use std::collections::{BTreeMap, HashSet};
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::TcpStream;
 use std::path::PathBuf;
@@ -35,7 +44,7 @@ pub const SPEC: SourceSpec = SourceSpec {
     purpose: "mail recall and correspondence history",
     class: Class::Open,
     parser: "rfc5322-mail",
-    parser_version: 1,
+    parser_version: 3,
     event_types: &["mail.message"],
     framer: sinex_source_core::Framer::export(
         sinex_source_core::drivers::export_archive::frame_whole,
@@ -94,6 +103,22 @@ pub struct Cursor {
     /// How many bytes of `material` were admitted.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub through: Option<usize>,
+    /// The part at whose end the reader last saved what it remembers.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub memory_part: Option<u32>,
+    /// Messages read or expunged since that part.
+    #[serde(default)]
+    pub changed_since_memory: u64,
+}
+
+/// Where each message the reader read is stored, by UID.
+pub type Known = BTreeMap<u32, sinex_model::RecordLocation>;
+
+/// What one poll produced, and what the reader remembers once its material
+/// is admitted (`None` when it produced none).
+pub struct Polled {
+    pub acquired: Acquired,
+    pub known: Option<Known>,
 }
 
 trait Stream: Read + Write + Send {}
@@ -116,9 +141,14 @@ struct Line {
 
 impl Connection {
     fn open(cfg: &ImapConfig) -> Result<Self, DriverError> {
+        let timeout = cfg
+            .idle_seconds
+            .max(60)
+            .checked_add(30)
+            .ok_or_else(|| io("idle timeout", "outside the clock's range"))?;
         let tcp =
             TcpStream::connect((cfg.host.as_str(), cfg.port)).map_err(|e| io("connect", e))?;
-        tcp.set_read_timeout(Some(Duration::from_secs(cfg.idle_seconds.max(60) + 30)))
+        tcp.set_read_timeout(Some(Duration::from_secs(timeout)))
             .map_err(|e| io("connect", e))?;
         let stream: Box<dyn Stream> = if cfg.tls {
             let roots = rustls::RootCertStore {
@@ -273,9 +303,10 @@ impl ImapMail {
         Ok(())
     }
 
-    /// Fetch the next batch of messages after the cursor; when none is new,
-    /// wait with IDLE for `idle_seconds` (when set) and look once more.
-    pub fn poll(&self, cursor: &Value) -> Result<Acquired, DriverError> {
+    /// Fetch the next batch of messages after the cursor, and find which of
+    /// the `known` messages were expunged; when nothing changed, wait with
+    /// IDLE for `idle_seconds` (when set) and look once more.
+    pub fn poll(&self, cursor: &Value, known: &Known) -> Result<Polled, DriverError> {
         let previous: Cursor = if cursor.is_null() {
             Cursor::default()
         } else {
@@ -297,11 +328,12 @@ impl ImapMail {
         {
             let tag = c.send("IDLE")?;
             let _continuation = c.read_line()?;
-            let deadline =
-                std::time::Instant::now() + Duration::from_secs(self.config.idle_seconds);
+            let deadline = std::time::Instant::now()
+                .checked_add(Duration::from_secs(self.config.idle_seconds))
+                .ok_or_else(|| io("idle deadline", "outside the monotonic clock's range"))?;
             while std::time::Instant::now() < deadline {
                 match c.read_line() {
-                    Ok(l) if l.text.contains("EXISTS") => {
+                    Ok(l) if l.text.contains("EXISTS") || l.text.contains("EXPUNGE") => {
                         break;
                     }
                     Ok(_) => {}
@@ -323,7 +355,19 @@ impl ImapMail {
         let server_next = selected
             .iter()
             .find_map(|l| number_after(&l.text, "UIDNEXT"));
-        // A renumbered mailbox: start over.
+        // A renumbered mailbox: start over, and its old UIDs say nothing.
+        let renumbered = previous.uid_validity.is_some() && previous.uid_validity != uid_validity;
+        let expunged: Vec<u32> = match known.keys().next_back() {
+            Some(highest) if !renumbered => {
+                let present = search(&mut c, *highest)?;
+                known
+                    .keys()
+                    .filter(|uid| !present.contains(uid))
+                    .copied()
+                    .collect()
+            }
+            _ => Vec::new(),
+        };
         let start = first_uid(&previous, uid_validity);
         let window_end = start.saturating_add(self.config.batch.max(1) - 1);
         let known_next = server_next.filter(|n| *n > start);
@@ -348,13 +392,13 @@ impl ImapMail {
         let _ = c.run("LOGOUT", "logout");
         messages.sort_by_key(|(uid, _)| *uid);
         let now = Timestamp::now();
-        let Some(last_uid) = messages.last().map(|(u, _)| *u) else {
+        if messages.is_empty() && expunged.is_empty() {
             let next = Cursor {
                 uid_validity,
                 uid_next: examined_next,
                 ..previous
             };
-            return Ok(Acquired {
+            let acquired = Acquired {
                 input: self.input(),
                 observation: ObservationFacts {
                     observed_at: Some(now),
@@ -364,8 +408,13 @@ impl ImapMail {
                 revision: RevisionChange::Same,
                 material: None,
                 cursor_without_material: serde_json::to_value(next).expect("cursor serializes"),
+            };
+            return Ok(Polled {
+                acquired,
+                known: None,
             });
-        };
+        }
+        let last_uid = messages.last().map(|(u, _)| *u);
         let mut bytes = Vec::new();
         let mut records = Vec::new();
         let mut uids = Vec::new();
@@ -375,12 +424,48 @@ impl ImapMail {
             records.push((start, bytes.len()));
             uids.push(*uid);
         }
+        let members: Vec<_> = uids
+            .iter()
+            .zip(&records)
+            .map(|(uid, (start, end))| {
+                json!({
+                    "path": uid.to_string(), "stream_offset": start, "length": end - start,
+                    "native_id": uid_validity.map(|validity| json!([
+                        "imap", self.input().locator, validity, uid
+                    ]).to_string()),
+                })
+            })
+            .collect();
         let manifest = sinex_model::Manifest::from_json(json!({
-            "media_type": "message/rfc822",
+            "account": self.config.username,
+            "media_type": "message/rfc822", "members": members,
             "mailbox": self.config.mailbox, "uid_validity": uid_validity, "uids": uids,
+            "expunged": expunged,
             "records": records, "read_at_ns": i64::try_from(now.unix_ns()).unwrap_or(i64::MAX),
         }));
         let id = MaterialId::new();
+        let removed = expunged
+            .iter()
+            .filter_map(|uid| known.get(uid))
+            .copied()
+            .collect();
+        let mut remembered = if renumbered {
+            Known::new()
+        } else {
+            known.clone()
+        };
+        for uid in &expunged {
+            remembered.remove(uid);
+        }
+        for (uid, (record_start, _)) in uids.iter().zip(&records) {
+            remembered.insert(
+                *uid,
+                sinex_model::RecordLocation {
+                    material: id,
+                    anchor: *record_start as u64,
+                },
+            );
+        }
         let part_index = if previous.material.is_some() {
             previous
                 .part_index
@@ -389,17 +474,35 @@ impl ImapMail {
         } else {
             0
         };
+        let changed = previous
+            .changed_since_memory
+            .saturating_add((uids.len() + expunged.len()) as u64);
+        let save = sinex_source_core::drivers::memory_due(
+            part_index,
+            previous.memory_part,
+            changed,
+            remembered.len() as u64,
+        );
         let next = Cursor {
             uid_validity,
-            uid_next: examined_next.max(last_uid.saturating_add(1)),
+            uid_next: last_uid.map_or(examined_next, |last| {
+                examined_next.max(last.saturating_add(1))
+            }),
             material: Some(id),
             part_index,
             through: Some(bytes.len()),
+            memory_part: if save {
+                Some(part_index)
+            } else {
+                previous.memory_part
+            },
+            changed_since_memory: if save { 0 } else { changed },
         };
         let length = bytes.len();
         let size = length as u64;
         let cursor_records = records.clone();
-        Ok(Acquired {
+        let memory = save.then(|| memory_of(&remembered));
+        let acquired = Acquired {
             input: self.input(),
             observation: ObservationFacts {
                 observed_at: Some(now),
@@ -422,13 +525,62 @@ impl ImapMail {
                         .map(|cursor| serde_json::to_value(cursor).expect("cursor serializes"))
                 }),
                 aligned: false,
-                removed: Vec::new(),
-                memory: None,
+                removed,
+                memory,
                 owned_files: Vec::new(),
             }),
             cursor_without_material: Value::Null,
+        };
+        Ok(Polled {
+            acquired,
+            known: Some(remembered),
         })
     }
+}
+
+/// The UIDs up to `highest` the selected mailbox holds.
+fn search(c: &mut Connection, highest: u32) -> Result<HashSet<u32>, DriverError> {
+    let mut present = HashSet::new();
+    for line in c.run(&format!("UID SEARCH UID 1:{highest}"), "search")? {
+        if let Some(rest) = line.text.strip_prefix("* SEARCH") {
+            present.extend(
+                rest.split_whitespace()
+                    .filter_map(|n| n.parse::<u32>().ok()),
+            );
+        }
+    }
+    Ok(present)
+}
+
+/// What the reader remembers, to save: for each UID in order, the UID (four
+/// bytes, little-endian), its material's ID (sixteen) and the record's
+/// anchor (eight).
+fn memory_of(known: &Known) -> Arc<[u8]> {
+    let mut bytes = Vec::with_capacity(known.len() * 28);
+    for (uid, location) in known {
+        bytes.extend_from_slice(&uid.to_le_bytes());
+        bytes.extend_from_slice(location.material.0.as_bytes());
+        bytes.extend_from_slice(&location.anchor.to_le_bytes());
+    }
+    bytes.into()
+}
+
+fn read_memory(mut rest: &[u8]) -> Result<Vec<(u32, sinex_model::RecordLocation)>, DriverError> {
+    let mut out = Vec::new();
+    while !rest.is_empty() {
+        if rest.len() < 28 {
+            return Err(invalid("the saved IMAP memory is damaged"));
+        }
+        let (entry, after) = rest.split_at(28);
+        rest = after;
+        let uid = u32::from_le_bytes(entry[..4].try_into().expect("four bytes"));
+        let material = MaterialId(uuid::Uuid::from_bytes(
+            entry[4..20].try_into().expect("sixteen bytes"),
+        ));
+        let anchor = u64::from_le_bytes(entry[20..].try_into().expect("eight bytes"));
+        out.push((uid, sinex_model::RecordLocation { material, anchor }));
+    }
+    Ok(out)
 }
 
 pub fn source() -> DeclaredSource<super::mail::MailParser> {
@@ -443,6 +595,19 @@ pub fn source() -> DeclaredSource<super::mail::MailParser> {
 pub const FORMAT: sinex_source_core::binding::InputFormat =
     sinex_source_core::binding::InputFormat {
         name: "imap",
+        discovery: sinex_source_core::discovery::DiscoverySpec {
+            owner: sinex_source_core::discovery::Owner::System,
+            locations: &[sinex_source_core::discovery::Location {
+                root: "input",
+                path: "imap",
+            }],
+            capabilities: &[],
+            credentials: &["token_file or password_file"],
+            streams: &[],
+            requests: &[],
+            request_only: false,
+        },
+        discover,
         specs: || vec![&SPEC],
         plan: Some(|input, settings| {
             let config = config(input)?;
@@ -456,43 +621,148 @@ pub const FORMAT: sinex_source_core::binding::InputFormat =
         source: |_| Ok(Box::new(source())),
         reader: Some(|b| {
             Ok(sinex_source_core::binding::Reading::Polled(Box::new(
-                ImapReader {
-                    mail: ImapMail {
-                        config: config(&b.input)?,
-                        host: b.settings.host.clone(),
-                    },
-                    held: None,
-                },
+                ImapReader::new(ImapMail {
+                    config: config(&b.input)?,
+                    host: b.settings.host.clone(),
+                }),
             )))
         }),
         capture: None,
     };
+
+fn discover(
+    format: &sinex_source_core::InputFormat,
+    context: &sinex_source_core::discovery::DiscoveryContext,
+) -> Vec<sinex_source_core::discovery::DiscoveredInput> {
+    use sinex_source_core::discovery::Availability;
+    let mut inputs = crate::discovery::discover_format(format, context);
+    for input in &mut inputs {
+        if input.availability != Availability::Reading {
+            continue;
+        }
+        let checked = input
+            .input
+            .as_deref()
+            .ok_or_else(|| "missing account configuration".to_string())
+            .and_then(config)
+            .and_then(|account| {
+                let credential = account
+                    .token_file
+                    .or(account.password_file)
+                    .ok_or_else(|| "IMAP account has no token_file or password_file".to_string())?;
+                std::fs::File::open(&credential)
+                    .map(|_| ())
+                    .map_err(|error| format!("IMAP credential {}: {error}", credential.display()))
+            });
+        if let Err(error) = checked {
+            input.availability = Availability::Unavailable;
+            input.reason = Some(error);
+            input.bindings.clear();
+        }
+    }
+    inputs
+}
 
 fn config(path: &std::path::Path) -> Result<ImapConfig, String> {
     serde_json::from_slice(&std::fs::read(path).map_err(|e| format!("{}: {e}", path.display()))?)
         .map_err(|e| format!("{}: {e}", path.display()))
 }
 
-struct ImapReader {
-    mail: ImapMail,
-    held: Option<sinex_source_core::drivers::held::HeldMaterial>,
+pub(super) struct ImapReader {
+    pub(super) mail: ImapMail,
+    held: Option<(sinex_source_core::drivers::held::HeldMaterial, Known)>,
+    /// Where each message read is stored, as of the admitted cursor.
+    pub(super) known: Known,
+    /// UIDs a restart already decided from a newer material.
+    decided: HashSet<u32>,
+}
+
+impl ImapReader {
+    pub(super) fn new(mail: ImapMail) -> Self {
+        Self {
+            mail,
+            held: None,
+            known: Known::new(),
+            decided: HashSet::new(),
+        }
+    }
 }
 
 impl sinex_source_core::binding::Reader for ImapReader {
+    fn history_from(&self, cursor: &Value) -> Option<MaterialId> {
+        serde_json::from_value::<Cursor>(cursor.clone())
+            .ok()
+            .and_then(|c| c.material)
+    }
+
+    fn restore(
+        &mut self,
+        cursor: &Value,
+        material: sinex_source_core::binding::StoredMaterial,
+    ) -> Result<bool, DriverError> {
+        let cursor: Cursor =
+            serde_json::from_value(cursor.clone()).map_err(|e| invalid(&e.to_string()))?;
+        let reference = &material.reference;
+        let manifest = &reference.manifest;
+        // An older numbering of the mailbox says nothing about its UIDs now.
+        if manifest.detail("uid_validity").as_u64() != cursor.uid_validity.map(u64::from) {
+            return Ok(false);
+        }
+        let admitted = match (cursor.material, cursor.through) {
+            (Some(id), Some(through)) if id == reference.id => through as u64,
+            _ => reference.length,
+        };
+        let uids = |key: &str| -> Result<Vec<u32>, DriverError> {
+            serde_json::from_value(manifest.detail(key).clone())
+                .map_err(|_| invalid("an IMAP material lists invalid UIDs"))
+        };
+        for uid in uids("expunged")? {
+            self.decided.insert(uid);
+        }
+        let records = manifest.records.clone().unwrap_or_default();
+        for (uid, (start, end)) in uids("uids")?.into_iter().zip(records) {
+            if end as u64 <= admitted && self.decided.insert(uid) {
+                self.known.insert(
+                    uid,
+                    sinex_model::RecordLocation {
+                        material: reference.id,
+                        anchor: start as u64,
+                    },
+                );
+            }
+        }
+        Ok(true)
+    }
+
+    fn restore_memory(&mut self, memory: &[u8]) -> Result<(), DriverError> {
+        for (uid, location) in read_memory(memory)? {
+            if self.decided.insert(uid) {
+                self.known.insert(uid, location);
+            }
+        }
+        Ok(())
+    }
+
+    fn restored(&mut self) -> Result<(), DriverError> {
+        self.decided = HashSet::new();
+        Ok(())
+    }
+
     fn poll(&mut self, cursor: &Value) -> Result<Acquired, DriverError> {
-        if let Some(held) = &self.held {
+        if let Some((held, _)) = &self.held {
             if !held.admitted(cursor) {
                 return held.acquired(cursor);
             }
-            self.held = None;
+            let (_, known) = self.held.take().expect("checked");
+            self.known = known;
         }
-        let acquired = self.mail.poll(cursor)?;
-        if acquired.material.is_none() {
-            return Ok(acquired);
-        }
-        let held = sinex_source_core::drivers::held::HeldMaterial::hold(acquired, cursor)?;
+        let polled = self.mail.poll(cursor, &self.known)?;
+        let Some(known) = polled.known else {
+            return Ok(polled.acquired);
+        };
+        let held = sinex_source_core::drivers::held::HeldMaterial::hold(polled.acquired, cursor)?;
         let acquired = held.acquired(cursor)?;
-        self.held = Some(held);
+        self.held = Some((held, known));
         Ok(acquired)
     }
 }

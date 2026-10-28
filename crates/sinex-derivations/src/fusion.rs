@@ -5,35 +5,35 @@
 //! some the others missed. Every fused kind is declared as a [`FusionRule`]
 //! in [`rules`]; the matching below is the same for all of them.
 //!
-//! A [`FusionReader`] reads one source's events as [`Sighting`]s: what must be
-//! equal for two sightings to be the same thing (`identity`), when it began,
+//! A [`FusionInput`] reads one source's events as [`FusionRecord`]s: what must be
+//! equal for two fusion records to be the same thing (`identity`), when it began,
 //! when it ended if the source knows, and the output fields it can supply.
-//! Fusion readers are listed in preference order. Sightings of one identity from
-//! different readers match:
+//! Fusion inputs are listed in preference order. Fusion records of one identity from
+//! different inputs match:
 //!
 //! 1. strong pass: the globally closest pairs within `window`, closest first
 //!    (ties by preference, then commit order);
-//! 2. fallback pass: among sightings still alone, pairs within `fallback`
+//! 2. fallback pass: among fusion records still alone, pairs within `fallback`
 //!    where each side has exactly one possible partner;
 //! 3. with `absorb` set, a group whose first start falls inside a group of
-//!    the same identity led by a more preferred reader joins it, as does a
-//!    lone sighting inside one led by the same reader: a window title change
+//!    the same identity led by a more preferred input joins it, as does a
+//!    lone fusion record inside one led by the same input: a window title change
 //!    inside a focus the compositor reported, a player's reports of a track
 //!    the streaming export holds, a player's repeated report of one track. A
 //!    group's extent runs from `window` before its first start to its latest
 //!    end (a span still open reaches `absorb`), and no later than `absorb`
 //!    after its first start.
-//! 4. every other sighting is fused alone.
+//! 4. every other fusion record is fused alone.
 //!
-//! Pairing puts at most one sighting per reader in a group. The fused
+//! Pairing puts at most one fusion record per input in a group. The fused
 //! event takes its start and end from the group's most preferred member,
 //! every other field from the most preferred member that has it, and names
-//! every member as a parent. Sightings with an unknown time never match and
+//! every member as a parent. Fusion records with an unknown time never match and
 //! never fuse.
 //!
-//! The key is the UTC hour a group's first sighting starts in. Each hour reads
+//! The key is the UTC hour a group's first fusion record starts in. Each hour reads
 //! a margin on both sides wide enough for any group that reaches into it, and
-//! emits only groups whose first sighting starts inside it, so a group
+//! emits only groups whose first fusion record starts inside it, so a group
 //! straddling an hour edge is emitted exactly once.
 use crate::derived_event::{derived_json, record_identity};
 use crate::{AnyKeyed, Computed, Env, InputQuery, KeyState, KeyView, Kind};
@@ -44,19 +44,19 @@ pub mod rules;
 
 /// How one source's events are read for a fusion rule.
 #[derive(Clone, Copy)]
-pub struct FusionReader {
+pub struct FusionInput {
     pub event_type: &'static str,
     /// Payload fields an event must have these values in to be read.
     pub only: &'static [(&'static str, &'static str)],
     /// The one source whose events it reads, when several sources write the
     /// same type (mail from IMAP and from an mbox); `None` reads any.
     pub source: Option<&'static str>,
-    /// Whether sightings are spans, so one without an end is still open.
+    /// Whether fusion records are spans, so one without an end is still open.
     pub spans: bool,
-    pub read: fn(&Event) -> Option<Sighting>,
+    pub read: fn(&Event) -> Option<FusionRecord>,
 }
 
-impl FusionReader {
+impl FusionInput {
     fn admits(&self, event_type: &str, payload: &Value) -> bool {
         self.event_type == event_type
             && self
@@ -66,18 +66,18 @@ impl FusionReader {
     }
 }
 
-/// One source's sighting of something, ready to match.
+/// One source's observation of something, ready to match.
 #[derive(Clone, Debug, PartialEq)]
-pub struct Sighting {
-    /// What must be equal for two sightings to be the same thing.
+pub struct FusionRecord {
+    /// What must be equal for two fusion records to be the same thing.
     pub identity: String,
     pub start: Timestamp,
     pub end: Option<Timestamp>,
-    /// Output payload fields this sighting supplies.
+    /// Output payload fields this fusion record supplies.
     pub fields: Map<String, Value>,
 }
 
-/// One fused kind: its readers in preference order and how they match.
+/// One fused kind: its inputs in preference order and how they match.
 #[derive(Clone, Copy)]
 pub struct FusionRule {
     /// The derivation's registered name.
@@ -85,13 +85,13 @@ pub struct FusionRule {
     pub version: u32,
     /// The fused event type.
     pub output: &'static str,
-    pub readers: &'static [FusionReader],
-    /// The readers' event types, once each (a test checks the list).
-    pub event_types: &'static [&'static str],
+    pub fusion_inputs: &'static [FusionInput],
+    /// The inputs' event types, once each (a test checks the list).
+    pub inputs: &'static [&'static str],
     pub window_ns: i128,
     pub fallback_ns: i128,
     /// How long after a group's first start a later group of the same
-    /// identity can join it; `None` when every sighting is a thing of its own
+    /// identity can join it; `None` when every fusion record is a thing of its own
     /// (two runs of `ls` are two commands).
     pub absorb_ns: Option<i128>,
     /// The output fields the group's start and end are written to.
@@ -105,31 +105,31 @@ const HOUR_NS: i128 = 3_600_000_000_000;
 const SETTLE_NS: i128 = 900_000_000_000;
 
 impl FusionRule {
-    /// How far outside its hour a key reads, and how far from a sighting the
+    /// How far outside its hour a key reads, and how far from a fusion record the
     /// hours it affects reach.
     fn margin(&self) -> i128 {
         self.window_ns + self.fallback_ns + self.absorb_ns.unwrap_or(0)
     }
 
-    fn reader(&self, event_type: &str, payload: &Value) -> Option<usize> {
-        self.readers
+    fn input(&self, event_type: &str, payload: &Value) -> Option<usize> {
+        self.fusion_inputs
             .iter()
             .position(|o| o.admits(event_type, payload))
     }
 }
 
-/// One sighting during matching.
+/// One fusion record during matching.
 struct Seen<'a> {
     event: &'a Event,
     rank: usize,
     spans: bool,
-    sighting: Sighting,
+    fusion_record: FusionRecord,
     at: i128,
 }
 
 impl Seen<'_> {
     fn end(&self, absorb_ns: i128) -> i128 {
-        match self.sighting.end {
+        match self.fusion_record.end {
             Some(end) => end.unix_ns().max(self.at),
             None if self.spans => self.at + absorb_ns,
             None => self.at,
@@ -141,30 +141,31 @@ fn read<'a>(rule: &FusionRule, event: &'a Event) -> Option<Seen<'a>> {
     if event.record_state == RecordState::Removed {
         return None;
     }
-    let rank = rule.readers.iter().position(|o| {
-        o.admits(event.event_type, &event.payload) && o.source.is_none_or(|s| s == event.source)
+    let rank = rule.fusion_inputs.iter().position(|o| {
+        o.admits(&event.event_type, &event.payload) && o.source.is_none_or(|s| s == event.source)
     })?;
-    let reader = &rule.readers[rank];
-    let sighting = (reader.read)(event)?;
+    let input = &rule.fusion_inputs[rank];
+    let fusion_record = (input.read)(event)?;
     Some(Seen {
         event,
         rank,
-        spans: reader.spans,
-        at: sighting.start.unix_ns(),
-        sighting,
+        spans: input.spans,
+        at: fusion_record.start.unix_ns(),
+        fusion_record,
     })
 }
 
-/// Group sightings, sorted by time, by the rule. Returns groups of indices
+/// Group fusion records, sorted by time, by the rule. Returns groups of indices
 /// into `seen`, each sorted by preference, then time.
 fn group(seen: &[Seen<'_>], rule: &FusionRule) -> Vec<Vec<usize>> {
     let n = seen.len();
     let mut group_of: Vec<usize> = (0..n).collect();
     let mut members: Vec<Vec<usize>> = (0..n).map(|i| vec![i]).collect();
-    let compatible =
-        |a: &Seen<'_>, b: &Seen<'_>| a.rank != b.rank && a.sighting.identity == b.sighting.identity;
+    let compatible = |a: &Seen<'_>, b: &Seen<'_>| {
+        a.rank != b.rank && a.fusion_record.identity == b.fusion_record.identity
+    };
 
-    // Possible pairs, closest first. Sightings are sorted by time, so the
+    // Possible pairs, closest first. Fusion records are sorted by time, so the
     // inner loop stops once the gap exceeds the fallback window.
     let mut pairs: Vec<(i128, usize, usize)> = Vec::new();
     for i in 0..n {
@@ -209,7 +210,7 @@ fn group(seen: &[Seen<'_>], rule: &FusionRule) -> Vec<Vec<usize>> {
         }
     }
 
-    // Fallback pass: only between sightings still alone, and only when each
+    // Fallback pass: only between fusion records still alone, and only when each
     // side has exactly one such partner.
     let alone = |i: usize, members: &Vec<Vec<usize>>, group_of: &Vec<usize>| {
         members[group_of[i]].len() == 1
@@ -245,7 +246,7 @@ fn group(seen: &[Seen<'_>], rule: &FusionRule) -> Vec<Vec<usize>> {
 
 /// Join groups, in order of their first start, to the group of their
 /// identity whose extent holds that start and whose lead is more preferred
-/// (or equally preferred, for a lone sighting): the most preferred such
+/// (or equally preferred, for a lone fusion record): the most preferred such
 /// group, then the one starting nearest to it.
 fn absorb(
     seen: &[Seen<'_>],
@@ -291,7 +292,9 @@ fn absorb(
             let target = lead_of(group);
             let preferred = seen[target].rank < seen[lead].rank
                 || (alone && seen[target].rank == seen[lead].rank);
-            if !preferred || seen[target].sighting.identity != seen[lead].sighting.identity {
+            if !preferred
+                || seen[target].fusion_record.identity != seen[lead].fusion_record.identity
+            {
                 continue;
             }
             let first = first_of(group);
@@ -319,21 +322,26 @@ fn absorb(
     }
 }
 
-fn fused(rule: &FusionRule, group: &[usize], seen: &[Seen<'_>]) -> Option<Event> {
+fn fused(
+    rule: &FusionRule,
+    group: &[usize],
+    seen: &[Seen<'_>],
+    registered: &sinex_model::event_types::RegisteredEventType,
+) -> Result<Event, sinex_model::BuildError> {
     // Members are in preference order; the first with a value wins.
     let lead = &seen[group[0]];
     let mut payload = Map::new();
     for &m in group {
-        for (field, value) in &seen[m].sighting.fields {
+        for (field, value) in &seen[m].fusion_record.fields {
             if !value.is_null() && payload.get(field).is_none_or(Value::is_null) {
                 payload.insert(field.clone(), value.clone());
             }
         }
     }
     payload.insert("record".into(), json!(record_identity(lead.event)));
-    payload.insert(rule.start_field.into(), json!(lead.sighting.start));
+    payload.insert(rule.start_field.into(), json!(lead.fusion_record.start));
     if let Some(end_field) = rule.end_field {
-        payload.insert(end_field.into(), json!(lead.sighting.end));
+        payload.insert(end_field.into(), json!(lead.fusion_record.end));
     }
     let mut observed_by: Vec<&str> = Vec::new();
     for &m in group {
@@ -344,7 +352,8 @@ fn fused(rule: &FusionRule, group: &[usize], seen: &[Seen<'_>]) -> Option<Event>
     }
     payload.insert("observed_by".into(), json!(observed_by));
     derived_json(
-        rule.output,
+        &(registered.declaration)(),
+        Some(registered.build),
         &Value::Object(payload),
         rule.derivation,
         group.iter().map(|&m| seen[m].event),
@@ -372,7 +381,7 @@ impl AnyKeyed for Fusion {
     }
 
     fn inputs_types(&self) -> &'static [&'static str] {
-        self.0.event_types
+        self.0.inputs
     }
 
     fn output_types(&self) -> &'static [&'static str] {
@@ -381,7 +390,7 @@ impl AnyKeyed for Fusion {
 
     fn keys_for(&self, input: &KeyView<'_>, _env: &Env) -> Vec<Value> {
         let rule = self.0;
-        let (Some(_), Some(t)) = (rule.reader(input.event_type, input.payload), input.ts_orig)
+        let (Some(_), Some(t)) = (rule.input(input.event_type, input.payload), input.ts_orig)
         else {
             // No time, or nothing this rule reads: nothing to fuse with.
             return vec![];
@@ -396,7 +405,7 @@ impl AnyKeyed for Fusion {
         let rule = self.0;
         let start = hour_of(key)? * HOUR_NS;
         let kinds = rule
-            .readers
+            .fusion_inputs
             .iter()
             .map(|o| Kind::only(o.event_type, o.only))
             .collect();
@@ -414,15 +423,34 @@ impl AnyKeyed for Fusion {
         };
         let mut seen: Vec<Seen<'_>> = inputs.iter().filter_map(|e| read(rule, e)).collect();
         seen.sort_by_key(|s| (s.at, s.rank));
+        let Some(registered) = sinex_model::event_types::find(rule.output) else {
+            return Computed {
+                error: Some(sinex_model::BuildError::Declaration(format!(
+                    "validator_unavailable: {}",
+                    rule.output
+                ))),
+                ..Computed::default()
+            };
+        };
         let outputs = group(&seen, rule)
             .into_iter()
             .filter(|g| {
                 let first = g.iter().map(|&m| seen[m].at).min().unwrap_or(i128::MIN);
                 (start..start + HOUR_NS).contains(&first)
             })
-            .filter_map(|g| fused(rule, &g, &seen))
-            .collect();
+            .map(|g| fused(rule, &g, &seen, registered))
+            .collect::<Result<Vec<_>, _>>();
+        let outputs = match outputs {
+            Ok(outputs) => outputs,
+            Err(error) => {
+                return Computed {
+                    error: Some(error),
+                    ..Computed::default()
+                };
+            }
+        };
         Computed {
+            error: None,
             outputs,
             waiting: false,
         }

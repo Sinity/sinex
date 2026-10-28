@@ -10,7 +10,7 @@ use serde_json::{Map, Value};
 /// operator deletes it), so a newer reading with different content replaces
 /// the live one.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
-#[event(
+#[event(version = 2,
     type = "command.executed",
     key = ["native_id"],
     replace = newer,
@@ -68,6 +68,7 @@ pub struct CommandImported {
 }
 
 impl crate::EventPayload for CommandImported {
+    const VERSION: u64 = 2;
     const EVENT_TYPE: &'static str = "command.imported";
     const KEY: crate::KeyKind = crate::KeyKind::Fields(&["hostname", "started_at", "command", "n"]);
     const REPLACE: crate::ReplaceRule = crate::ReplaceRule::SuppressRepeat;
@@ -84,6 +85,40 @@ impl crate::EventPayload for CommandImported {
         crate::TsOrig::maybe(self.started_at, crate::TimeQuality::Intrinsic)
     }
 
+    fn declaration() -> crate::KindDeclaration {
+        crate::KindDeclaration {
+            kind: crate::KindRef {
+                name: Self::EVENT_TYPE.into(),
+                version: Self::VERSION,
+            },
+            declaring_producer: "sinex".into(),
+            payload_schema: Some(Self::payload_schema()),
+            normalization: crate::kinds::Normalization::Rust,
+            key_rule: Some(crate::kinds::KeyRule::WhenPresent {
+                field: "started_at".into(),
+                fields: ["hostname", "started_at", "command", "n"]
+                    .map(String::from)
+                    .to_vec(),
+            }),
+            replace_rule: Some(Self::REPLACE),
+            time_rule: Some(crate::kinds::TimeRule::FirstPresent {
+                fields: vec!["started_at".into()],
+                quality: crate::TimeQuality::Intrinsic,
+            }),
+            field_hints: Self::FIELD_HINTS
+                .iter()
+                .map(|(field, class)| crate::kinds::FieldHint {
+                    field: (*field).into(),
+                    class: *class,
+                })
+                .collect(),
+            removed_rule: Some(crate::kinds::RemovedRule::Never),
+            keep_known: vec![],
+            owned_blobs: vec![],
+            search: Self::SEARCH,
+        }
+    }
+
     fn payload_schema() -> Value {
         serde_json::to_value(schemars::schema_for!(Self)).expect("schemas serialize")
     }
@@ -94,7 +129,7 @@ impl crate::EventPayload for CommandImported {
 /// from fused commands; identified by host and start (its end moves as it
 /// grows; its start does not), so a session that grows replaces its earlier reading.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
-#[event(
+#[event(version = 2,
     type = "shell.session",
     key = ["host", "started_at"],
     replace = newer,

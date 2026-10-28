@@ -1,17 +1,21 @@
 //! State intervals: transitions and observed spans become `state.interval`
 //! events, one per span during which a state held (a focused window, a
-//! workspace). One rule per state kind, as data; a new point, transition or
-//! span source adds a rule, never a new derivation.
+//! workspace, an active systemd unit). One rule per state kind, as data; a
+//! new point, transition or span source adds a rule, never a new derivation.
 //!
-//! Two rule shapes:
+//! Three rule shapes:
 //!
 //! - **adjacent transitions** (window focus, workspace): a state holds until
 //!   the next transition to a different subject, or until an interruption;
 //! - **spans** (ActivityWatch's presence spans, already joined at the
 //!   source): each span is one interval, cut short by an interruption inside
-//!   it.
+//!   it;
+//! - **start/stop pairs** (systemd units): a start opens a subject, the
+//!   matching stop closes it; a second start closes the first at its own time.
 //!
-//! Going AFK is an interruption: it ends focus and workspace at its own time.
+//! Interruptions end desktop-attention states at their own time: the machine
+//! going to sleep ends focus, workspace and presence; going AFK ends focus
+//! and workspace.
 //!
 //! The key is the rule and the logical day. A key emits the intervals that
 //! start inside its day; it reads the earliest transitions after the day to end
@@ -24,10 +28,12 @@ use crate::{Computed, Env, InputQuery, KeyState, KeyView, Keyed, Kind, Neighbour
 use serde_json::{Value, json};
 use sinex_model::event_types::StateInterval;
 use sinex_model::{Event, EventPayload, Origin, Timestamp};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Interruption {
+    /// The machine entered a sleep state.
+    Sleep,
     /// The operator went AFK.
     Afk,
 }
@@ -36,6 +42,11 @@ impl Interruption {
     /// The neighbour query that finds the next interruption of this kind.
     fn neighbour(self) -> Neighbour {
         match self {
+            Self::Sleep => Neighbour {
+                kinds: vec![Kind::all("sleep.started")],
+                per: None,
+                count: 1,
+            },
             Self::Afk => Neighbour {
                 kinds: vec![Kind::only("presence.span", &[("status", "afk")])],
                 per: None,
@@ -47,6 +58,7 @@ impl Interruption {
     fn of(event_type: &str, payload: &Value) -> Option<Self> {
         let field = |f: &str| payload.get(f).and_then(Value::as_str);
         match event_type {
+            "sleep.started" => Some(Self::Sleep),
             "presence.span" if field("status") == Some("afk") => Some(Self::Afk),
             _ => None,
         }
@@ -59,6 +71,19 @@ pub enum Shape {
     /// The source already observed the span: the payload carries its end.
     Span {
         end: &'static str,
+    },
+    /// A start opens the subject and the next stop closes it. `run` names
+    /// the payload field that identifies one run of the subject: a start
+    /// whose run already stopped opens nothing (a oneshot unit logs its exit
+    /// before its start job finishes), and a stop of another run leaves the
+    /// open one alone.
+    StartStopPair {
+        start: &'static str,
+        stop: &'static str,
+        run: Option<&'static str>,
+        /// The payload field a key reads the next start or stop after its
+        /// day by, one per value, to end the states still open.
+        per: &'static str,
     },
 }
 
@@ -112,7 +137,7 @@ pub const RULES: &[IntervalRule] = &[
         },
         label: |p| app_and_title(p, "class", "title"),
         attributes: &["window", "class", "title"],
-        ended_by: &[Interruption::Afk],
+        ended_by: &[Interruption::Sleep, Interruption::Afk],
     },
     IntervalRule {
         state_kind: "desktop.workspace",
@@ -129,7 +154,7 @@ pub const RULES: &[IntervalRule] = &[
                 .or_else(|| scalar(p, "workspace_id"))
         },
         attributes: &["workspace_id", "workspace_name"],
-        ended_by: &[Interruption::Afk],
+        ended_by: &[Interruption::Sleep, Interruption::Afk],
     },
     IntervalRule {
         state_kind: "desktop.activitywatch.afk",
@@ -138,6 +163,36 @@ pub const RULES: &[IntervalRule] = &[
         subject: |p| text(p, "status").map(|s| format!("status:{s}")),
         label: |p| text(p, "status").map(str::to_owned),
         attributes: &["bucket", "status"],
+        ended_by: &[Interruption::Sleep],
+    },
+    // The journal's unit events; a user's unit is a different subject from
+    // the system's unit of the same name.
+    IntervalRule {
+        state_kind: "machine.unit",
+        event_types: &["unit.started", "unit.stopped"],
+        shape: Shape::StartStopPair {
+            start: "unit.started",
+            stop: "unit.stopped",
+            run: Some("invocation_id"),
+            per: "unit",
+        },
+        subject: |p| {
+            let unit = text(p, "unit")?;
+            Some(match text(p, "manager") {
+                Some("user") => format!("user:{}:{unit}", scalar(p, "uid").unwrap_or_default()),
+                _ => unit.to_owned(),
+            })
+        },
+        label: |p| text(p, "unit").map(str::to_owned),
+        attributes: &[
+            "unit",
+            "manager",
+            "uid",
+            "invocation_id",
+            "job",
+            "outcome",
+            "result",
+        ],
         ended_by: &[],
     },
 ];
@@ -147,7 +202,14 @@ pub fn rule(state_kind: &str) -> Option<&'static IntervalRule> {
 }
 
 /// Every event type any rule reads, as transitions, spans or interruptions.
-const INPUT_TYPES: &[&str] = &["window.focused", "workspace.switched", "presence.span"];
+const INPUT_TYPES: &[&str] = &[
+    "window.focused",
+    "workspace.switched",
+    "presence.span",
+    "unit.started",
+    "unit.stopped",
+    "sleep.started",
+];
 
 /// An open state during the fold.
 #[derive(Clone, Debug)]
@@ -230,7 +292,7 @@ fn to_event(rule: &IntervalRule, l: PendingInterval<'_>) -> Event {
 }
 
 fn interrupts(rule: &IntervalRule, e: &Event) -> bool {
-    Interruption::of(e.event_type, &e.payload).is_some_and(|f| rule.ended_by.contains(&f))
+    Interruption::of(&e.event_type, &e.payload).is_some_and(|f| rule.ended_by.contains(&f))
 }
 
 /// Fold one rule over time-sorted events. Returns every interval whose start
@@ -247,11 +309,11 @@ fn fold<'a>(rule: &IntervalRule, events: &[&'a Event]) -> Vec<PendingInterval<'a
                 {
                     out.push(PendingInterval {
                         open: o,
-                        end: Some((at, e.event_type)),
+                        end: Some((at, e.event_type.as_str())),
                         closers: vec![e],
                     });
                 }
-                if !rule.event_types.contains(&e.event_type) {
+                if !rule.event_types.contains(&e.event_type.as_str()) {
                     continue;
                 }
                 let current = Open::new(rule, e, at);
@@ -265,7 +327,7 @@ fn fold<'a>(rule: &IntervalRule, events: &[&'a Event]) -> Vec<PendingInterval<'a
                         let o = open.replace(current).expect("matched Some");
                         out.push(PendingInterval {
                             open: o,
-                            end: Some((at, e.event_type)),
+                            end: Some((at, e.event_type.as_str())),
                             closers: vec![e],
                         });
                     }
@@ -286,7 +348,7 @@ fn fold<'a>(rule: &IntervalRule, events: &[&'a Event]) -> Vec<PendingInterval<'a
                 .filter_map(|&e| Some((e, e.ts_orig.at?)))
                 .collect();
             for &e in events {
-                if !rule.event_types.contains(&e.event_type) {
+                if !rule.event_types.contains(&e.event_type.as_str()) {
                     continue;
                 }
                 let Some(at) = e.ts_orig.at else { continue };
@@ -300,15 +362,84 @@ fn fold<'a>(rule: &IntervalRule, events: &[&'a Event]) -> Vec<PendingInterval<'a
                     .iter()
                     .find(|(_, f)| *f > at && observed.is_none_or(|o| *f < o));
                 let (end, closers) = match interrupted {
-                    Some(&(interruption, f)) => {
-                        (Some((f, interruption.event_type)), vec![interruption])
-                    }
-                    None => (observed.map(|o| (o, e.event_type)), vec![]),
+                    Some(&(interruption, f)) => (
+                        Some((f, interruption.event_type.as_str())),
+                        vec![interruption],
+                    ),
+                    None => (observed.map(|o| (o, e.event_type.as_str())), vec![]),
                 };
                 out.push(PendingInterval {
                     open: Open::new(rule, e, at),
                     end,
                     closers,
+                });
+            }
+        }
+        Shape::StartStopPair {
+            start, stop, run, ..
+        } => {
+            let mut open: BTreeMap<String, Open<'a>> = BTreeMap::new();
+            let mut stopped_runs: BTreeSet<String> = BTreeSet::new();
+            let run_of = |e: &Event| run.and_then(|f| scalar(&e.payload, f));
+            for &e in events {
+                let Some(at) = e.ts_orig.at else { continue };
+                if interrupts(rule, e) {
+                    for (_, o) in std::mem::take(&mut open) {
+                        let end = at.max(o.at);
+                        out.push(PendingInterval {
+                            open: o,
+                            end: Some((end, e.event_type.as_str())),
+                            closers: vec![e],
+                        });
+                    }
+                }
+                if !rule.event_types.contains(&e.event_type.as_str()) {
+                    continue;
+                }
+                let current = Open::new(rule, e, at);
+                let Some(subject) = current.subject.clone() else {
+                    continue;
+                };
+                let this_run = run_of(e);
+                if e.event_type == start {
+                    if this_run.as_ref().is_some_and(|r| stopped_runs.contains(r)) {
+                        continue;
+                    }
+                    // A second start means the previous run ended by now.
+                    if let Some(previous) = open.remove(&subject) {
+                        out.push(PendingInterval {
+                            open: previous,
+                            end: Some((at, e.event_type.as_str())),
+                            closers: vec![e],
+                        });
+                    }
+                    open.insert(subject, current);
+                } else if e.event_type == stop {
+                    if let Some(r) = &this_run {
+                        stopped_runs.insert(r.clone());
+                    }
+                    let other_run = |o: &Open<'_>| matches!((&this_run, run_of(o.start)), (Some(a), Some(b)) if *a != b);
+                    // A stop with no open start of its run belongs to an
+                    // interval an earlier key emits, or to no interval.
+                    if open.get(&subject).is_some_and(|o| !other_run(o))
+                        && let Some(mut previous) = open.remove(&subject)
+                    {
+                        previous.attributes.extend(current.attributes);
+                        // A stop at or before its start is a zero-length run.
+                        let end = at.max(previous.at);
+                        out.push(PendingInterval {
+                            open: previous,
+                            end: Some((end, e.event_type.as_str())),
+                            closers: vec![e],
+                        });
+                    }
+                }
+            }
+            for (_, o) in open {
+                out.push(PendingInterval {
+                    open: o,
+                    end: None,
+                    closers: vec![],
                 });
             }
         }
@@ -326,7 +457,7 @@ fn key_parts(key: &Value) -> Option<(&'static IntervalRule, jiff::civil::Date)> 
 
 impl Keyed for StateIntervals {
     const NAME: &'static str = "state.intervals";
-    const VERSION: u32 = 1;
+    const VERSION: u32 = 2;
     const INPUTS: &'static [&'static str] = INPUT_TYPES;
     const OUTPUTS: &'static [&'static str] = &[StateInterval::EVENT_TYPE];
 
@@ -352,15 +483,19 @@ impl Keyed for StateIntervals {
         let (r, day) = key_parts(key)?;
         let start = env.time_settings.day_start(day).ok()?;
         let end = env.time_settings.day_end(day).ok()?;
-        let mut types: Vec<&'static str> = r.event_types.to_vec();
+        let mut types: Vec<String> = r.event_types.iter().map(|t| (*t).into()).collect();
         for f in r.ended_by {
             for k in f.neighbour().kinds {
                 if !types.contains(&k.event_type) {
-                    types.push(k.event_type);
+                    types.push(k.event_type.clone());
                 }
             }
         }
-        let mut q = InputQuery::window(&types, start, end);
+        let mut q = InputQuery::window(
+            &types.iter().map(String::as_str).collect::<Vec<_>>(),
+            start,
+            end,
+        );
         match r.shape {
             Shape::AdjacentTransitions => q.after.push(Neighbour {
                 kinds: r.event_types.iter().map(|t| Kind::all(t)).collect(),
@@ -368,6 +503,11 @@ impl Keyed for StateIntervals {
                 count: AFTER_COUNT,
             }),
             Shape::Span { .. } => {}
+            Shape::StartStopPair { per, .. } => q.after.push(Neighbour {
+                kinds: r.event_types.iter().map(|t| Kind::all(t)).collect(),
+                per: Some(per),
+                count: 1,
+            }),
         }
         for f in r.ended_by {
             q.after.push(f.neighbour());
@@ -396,7 +536,11 @@ impl Keyed for StateIntervals {
                 to_event(r, l)
             })
             .collect();
-        Computed { outputs, waiting }
+        Computed {
+            outputs,
+            waiting,
+            error: None,
+        }
     }
 
     fn key_state(&self, _key: &Value, _env: &Env) -> KeyState {

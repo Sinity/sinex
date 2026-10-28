@@ -16,8 +16,10 @@ fn driver(path: PathBuf) -> SqliteRows {
         table: "t",
         from: None,
         required: &["id", "n"],
-        mutable: Some("n = -1"),
-        full_pass_secs: 3600,
+        changes: Changes::InPlace {
+            mutable: "n = -1",
+            full_pass_secs: 3600,
+        },
     }
 }
 
@@ -203,7 +205,10 @@ fn locked_rollback_spill_is_unavailable_until_rollback() {
 fn failed_poll_retries_same_material_before_reading_source_changes() {
     let path = db();
     let mut d = driver(path.clone());
-    d.full_pass_secs = 0;
+    d.changes = Changes::InPlace {
+        mutable: "n = -1",
+        full_pass_secs: 0,
+    };
     let mut state = RowState::default();
     let first = d.poll(&Value::Null, &mut state).unwrap();
     let first_material = first.material.as_ref().unwrap();
@@ -285,4 +290,113 @@ fn a_read_stays_on_its_committed_view_and_the_next_read_sees_wal_commits() {
     assert_eq!(n(&read), 1, "rows stay on the view the read began with");
     drop(read);
     assert_eq!(n(&open_for_read(&path).unwrap()), 99);
+}
+
+fn appended(path: PathBuf) -> SqliteRows {
+    SqliteRows {
+        changes: Changes::Appended,
+        ..driver(path)
+    }
+}
+
+fn end_cursor(a: &Acquired) -> Value {
+    match &a.material {
+        Some(m) => (m.cursor_at)(material_bytes(m).len()).unwrap(),
+        None => a.cursor_without_material.clone(),
+    }
+}
+
+fn insert(path: &std::path::Path, rows: usize) {
+    Connection::open(path)
+        .unwrap()
+        .execute(
+            "WITH RECURSIVE n(x) AS (VALUES(1) UNION ALL SELECT x+1 FROM n WHERE x<?1)
+             INSERT INTO t SELECT 'new', x, NULL FROM n",
+            [rows as i64],
+        )
+        .unwrap();
+}
+
+#[devkit::test]
+fn an_appended_table_is_read_a_page_at_a_time() {
+    let path = db();
+    insert(&path, ROWS_PER_PART + 1);
+    let d = appended(path.clone());
+    let mut state = RowState::default();
+    let first = d.poll(&Value::Null, &mut state).unwrap();
+    assert_eq!(
+        first.material.as_ref().unwrap().records.len(),
+        ROWS_PER_PART
+    );
+    let cursor = end_cursor(&first);
+    assert_eq!(cursor["max_rowid"], json!(ROWS_PER_PART));
+    let second = d.poll(&cursor, &mut state).unwrap();
+    let rows = lines(&second);
+    assert_eq!(rows.len(), 3, "the next page continues after the first");
+    assert_eq!(rows[0]["_rowid"], json!(ROWS_PER_PART + 1));
+    let cursor = end_cursor(&second);
+    assert_eq!(cursor["max_rowid"], json!(ROWS_PER_PART + 3));
+    let quiet = d.poll(&cursor, &mut state).unwrap();
+    assert!(quiet.material.is_none());
+    assert_eq!(
+        quiet.cursor_without_material["max_rowid"],
+        json!(ROWS_PER_PART + 3)
+    );
+}
+
+#[devkit::test]
+fn an_appended_table_remembers_nothing_but_its_cursor() {
+    let path = db();
+    let d = appended(path.clone());
+    let mut state = RowState::default();
+    let first = d.poll(&Value::Null, &mut state).unwrap();
+    let m = first.material.as_ref().unwrap();
+    assert!(m.memory.is_none(), "no row memory is saved");
+    assert_eq!(lines(&first).len(), 2);
+    let cursor = end_cursor(&first);
+    assert_eq!(cursor["open"], Value::Null, "no row is open");
+    let quiet = d.poll(&cursor, &mut state).unwrap();
+    assert!(quiet.material.is_none());
+    assert!(state.is_empty(), "no row hashes are kept");
+
+    // A new process with no memory reads on from the cursor: no full pass,
+    // so a row changed behind the cursor is not read again.
+    Connection::open(&path)
+        .unwrap()
+        .execute_batch("UPDATE t SET n = 9 WHERE id = 'a'")
+        .unwrap();
+    insert(&path, 1);
+    let mut rebuilt = RowState::default();
+    let after = d.poll(&cursor, &mut rebuilt).unwrap();
+    let rows = lines(&after);
+    assert_eq!(rows.len(), 1, "only the appended row");
+    assert_eq!(rows[0]["_rowid"], json!(3));
+    assert!(rebuilt.is_empty());
+}
+
+#[devkit::test]
+fn an_appended_table_reads_no_history_on_a_restart() {
+    let path = db();
+    let mut reader = crate::binding::rows(appended(path.clone()))
+        .into_polled()
+        .unwrap();
+    let first = reader.poll(&Value::Null).unwrap();
+    assert!(reader.history_from(&end_cursor(&first)).is_none());
+    let mut changing = crate::binding::rows(driver(path)).into_polled().unwrap();
+    let first = changing.poll(&Value::Null).unwrap();
+    assert!(changing.history_from(&end_cursor(&first)).is_some());
+}
+
+#[devkit::test]
+fn a_partly_admitted_page_resumes_after_its_last_admitted_row() {
+    let path = db();
+    let d = appended(path);
+    let mut state = RowState::default();
+    let first = d.poll(&Value::Null, &mut state).unwrap();
+    let m = first.material.as_ref().unwrap();
+    let after_first = (m.cursor_at)(m.records[0].1).unwrap();
+    assert_eq!(after_first["max_rowid"], json!(1));
+    // The held material is offered again until its end is admitted.
+    let retry = d.poll(&after_first, &mut state).unwrap();
+    assert_eq!(retry.material.as_ref().unwrap().id, m.id);
 }

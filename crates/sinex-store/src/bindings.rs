@@ -45,6 +45,16 @@ pub async fn load(conn: &mut PgConnection, binding: &str) -> Result<Option<Store
     .await?)
 }
 
+/// Saved names and settings. This reads only the small binding table, not materials.
+pub async fn all(conn: &mut PgConnection) -> Result<Vec<Stored>> {
+    Ok(sqlx::query_as!(
+        Stored,
+        "SELECT binding, source, input, settings FROM raw.bindings"
+    )
+    .fetch_all(conn)
+    .await?)
+}
+
 /// Every stored binding of a source.
 pub async fn for_source(conn: &mut PgConnection, source: &str) -> Result<Vec<Stored>> {
     Ok(sqlx::query_as!(

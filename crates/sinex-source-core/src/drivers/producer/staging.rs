@@ -8,9 +8,9 @@ impl Snapshots {
     pub(crate) fn new() -> Result<Self, Error> {
         tempfile::tempdir()
             .map(Self)
-            .map_err(|e| Error::Nats(e.to_string()))
+            .map_err(|e| Error::Local(e.to_string()))
     }
-    fn write(&self, mut reader: impl Read) -> Result<String, String> {
+    pub(super) fn put_reader(&self, mut reader: impl Read) -> Result<String, String> {
         let mut file = tempfile::NamedTempFile::new_in(self.0.path()).map_err(|e| e.to_string())?;
         let mut hash = blake3::Hasher::new();
         let mut buffer = [0; 65536];
@@ -30,16 +30,16 @@ impl Snapshots {
     pub(crate) fn open(&self, name: &str) -> Result<std::fs::File, Error> {
         let hash = name
             .strip_prefix("blake3:")
-            .ok_or_else(|| Error::Nats("invalid private snapshot name".into()))?;
-        blake3::Hash::from_hex(hash).map_err(|e| Error::Nats(e.to_string()))?;
-        std::fs::File::open(self.0.path().join(hash)).map_err(|e| Error::Nats(e.to_string()))
+            .ok_or_else(|| Error::Local("invalid private snapshot name".into()))?;
+        blake3::Hash::from_hex(hash).map_err(|e| Error::Local(e.to_string()))?;
+        std::fs::File::open(self.0.path().join(hash)).map_err(|e| Error::Local(e.to_string()))
     }
 }
 impl MaterialSink for Snapshots {
     fn put(&self, bytes: &[u8]) -> Result<String, String> {
-        self.write(bytes)
+        self.put_reader(bytes)
     }
     fn put_file(&self, path: &Path) -> Result<String, String> {
-        self.write(std::fs::File::open(path).map_err(|e| e.to_string())?)
+        self.put_reader(std::fs::File::open(path).map_err(|e| e.to_string())?)
     }
 }

@@ -6,11 +6,10 @@ use crate::Result;
 use serde_json::Value;
 use sinex_model::{
     Class, EquivalenceKey, Event, EventId, MaterialId, Origin, ReadingOrder, RecordLocation,
-    RecordState, ReplaceRule, TimeQuality, Timestamp, TsOrig, event_types,
+    RecordState, ReplaceRule, TimeQuality, Timestamp, TsOrig,
 };
 use sqlx::PgConnection;
 use std::collections::HashSet;
-use std::sync::{Mutex, OnceLock};
 use time::OffsetDateTime;
 use uuid::Uuid;
 
@@ -64,26 +63,6 @@ pub struct DirtyKey {
     pub last_dirty_seq: i64,
 }
 
-/// The type name as a `&'static str`: the registered one when known,
-/// otherwise interned once (type names are a small, fixed set per build plus
-/// whatever outside producers register).
-pub fn static_type(name: &str) -> &'static str {
-    if let Some(k) = event_types::find(name) {
-        return k.event_type;
-    }
-    static NAMES: OnceLock<Mutex<HashSet<&'static str>>> = OnceLock::new();
-    let mut names = NAMES
-        .get_or_init(Default::default)
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
-    if let Some(n) = names.get(name) {
-        return n;
-    }
-    let leaked: &'static str = Box::leak(name.to_owned().into_boxed_str());
-    names.insert(leaked);
-    leaked
-}
-
 fn text_enum<T: serde::de::DeserializeOwned>(value: &str, column: &str) -> Result<T> {
     serde_json::from_value(Value::String(value.to_owned()))
         .map_err(|_| crate::Error::Invalid(format!("unknown {column} {value:?}")))
@@ -93,6 +72,9 @@ fn text_enum<T: serde::de::DeserializeOwned>(value: &str, column: &str) -> Resul
 fn event_from_row(
     id: Uuid,
     event_type: &str,
+    kind_version: i64,
+    validation: &str,
+    replace_rule: Option<&str>,
     source: String,
     material_id: Option<Uuid>,
     anchor: Option<i64>,
@@ -107,7 +89,6 @@ fn event_from_row(
     record_state: &str,
     class: &str,
 ) -> Result<Event> {
-    let event_type = static_type(event_type);
     let origin = match (material_id, anchor, parents) {
         (Some(material), Some(anchor), _) => Origin::Record {
             location: RecordLocation {
@@ -126,13 +107,18 @@ fn event_from_row(
     let quality: TimeQuality = text_enum(ts_quality, "time quality")?;
     Ok(Event {
         id: EventId(id),
-        event_type,
+        event_type: event_type.into(),
+        kind_version: u64::try_from(kind_version)
+            .map_err(|_| crate::Error::Invalid("invalid kind version".into()))?,
+        validation: text_enum(validation, "validation")?,
         source,
         origin,
         ts_orig: TsOrig::maybe(ts_orig.map(Timestamp), quality),
         payload,
         equivalence_key: equivalence_key.map(EquivalenceKey),
-        replace: event_types::find(event_type).map_or(ReplaceRule::SuppressRepeat, |k| k.replace),
+        replace: replace_rule
+            .map(|r| text_enum::<ReplaceRule>(r, "replacement rule"))
+            .transpose()?,
         reading_order: ReadingOrder(reading_order),
         record_hash: record_hash
             .try_into()
@@ -150,6 +136,9 @@ macro_rules! committed {
             event: event_from_row(
                 $r.id,
                 &$r.event_type,
+                $r.kind_version,
+                &$r.validation,
+                $r.replace_rule.as_deref(),
                 $r.source,
                 $r.material_id,
                 $r.anchor,
@@ -175,7 +164,8 @@ pub async fn read_window(conn: &mut PgConnection, w: &Window) -> Result<Vec<Comm
     let rows = sqlx::query!(
         r#"SELECT e.id, e.event_type, e.source, e.material_id, e.anchor, e.output_index, e.parents,
              e.ts_orig, e.ts_quality, e.payload, e.equivalence_key, e.reading_order, e.record_hash,
-             e.record_state, e.class, e.commit_seq
+             e.record_state, e.class, e.commit_seq, e.kind_version, e.validation,
+             (SELECT replace_rule FROM registry.event_types k WHERE k.name=e.event_type AND k.version=e.kind_version) AS replace_rule
            FROM core.events e
            WHERE e.event_type = ANY($1) AND e.ts_orig >= $2 AND e.ts_orig < $3
              AND EXISTS (SELECT 1 FROM unnest($1::text[], $4::jsonb[]) AS k(event_type, contains)
@@ -228,7 +218,8 @@ async fn window_page(
     let rows = sqlx::query!(
         r#"SELECT e.id, e.event_type, e.source, e.material_id, e.anchor, e.output_index, e.parents,
              e.ts_orig, e.ts_quality, e.payload, e.equivalence_key, e.reading_order, e.record_hash,
-             e.record_state, e.class, e.commit_seq, page.matched AS "matched!"
+             e.record_state, e.class, e.commit_seq, e.kind_version, e.validation,
+             (SELECT replace_rule FROM registry.event_types k WHERE k.name=e.event_type AND k.version=e.kind_version) AS replace_rule, page.matched AS "matched!"
            FROM core.events e JOIN (
              SELECT p.id, p.matched FROM (
                SELECT q.id, count(*) OVER () AS matched,
@@ -340,7 +331,8 @@ impl ValueGroup {
         let rows = sqlx::query!(
             r#"SELECT e.id, e.event_type, e.source, e.material_id, e.anchor, e.output_index, e.parents,
                  e.ts_orig, e.ts_quality, e.payload, e.equivalence_key, e.reading_order, e.record_hash,
-                 e.record_state, e.class, e.commit_seq, page.value AS "value!", page.matched AS "matched!"
+                 e.record_state, e.class, e.commit_seq, e.kind_version, e.validation,
+                 (SELECT replace_rule FROM registry.event_types t WHERE t.name=e.event_type AND t.version=e.kind_version) AS replace_rule, page.value AS "value!", page.matched AS "matched!"
                FROM core.events e JOIN (
                  SELECT p.id, p.value, p.matched FROM (
                    SELECT q.id, q.value, count(*) OVER () AS matched,
@@ -560,7 +552,8 @@ async fn nearest(
             let rows = sqlx::query!(
                 r#"SELECT e.id, e.event_type, e.source, e.material_id, e.anchor, e.output_index, e.parents,
                      e.ts_orig, e.ts_quality, e.payload, e.equivalence_key, e.reading_order, e.record_hash,
-                     e.record_state, e.class, e.commit_seq
+                     e.record_state, e.class, e.commit_seq, e.kind_version, e.validation,
+             (SELECT replace_rule FROM registry.event_types k WHERE k.name=e.event_type AND k.version=e.kind_version) AS replace_rule
                    FROM core.events e
                    WHERE e.event_type = ANY($1)
                      AND (($2 AND e.ts_orig >= $3) OR (NOT $2 AND e.ts_orig < $3))
@@ -602,9 +595,10 @@ async fn nearest(
                      x.ts_quality AS "ts_quality!", x.payload AS "payload!", x.equivalence_key,
                      x.reading_order AS "reading_order!", x.record_hash AS "record_hash!",
                      x.record_state AS "record_state!", x.class AS "class!",
+                     x.kind_version AS "kind_version!", x.validation AS "validation!", x.replace_rule,
                      x.commit_seq AS "commit_seq!"
                    FROM unnest($5::text[]) AS v(val) CROSS JOIN LATERAL (
-                     SELECT e.* FROM core.events e
+                     SELECT e.*, (SELECT replace_rule FROM registry.event_types k WHERE k.name=e.event_type AND k.version=e.kind_version) AS replace_rule FROM core.events e
                      WHERE e.event_type = ANY($1)
                        AND (($2 AND e.ts_orig >= $3) OR (NOT $2 AND e.ts_orig < $3))
                        AND e.payload->>$6 = v.val
@@ -642,7 +636,8 @@ pub async fn after_seq(
     let rows = sqlx::query!(
         r#"SELECT e.id, e.event_type, e.source, e.material_id, e.anchor, e.output_index, e.parents,
              e.ts_orig, e.ts_quality, e.payload, e.equivalence_key, e.reading_order, e.record_hash,
-             e.record_state, e.class, e.commit_seq
+             e.record_state, e.class, e.commit_seq, e.kind_version, e.validation,
+             (SELECT replace_rule FROM registry.event_types k WHERE k.name=e.event_type AND k.version=e.kind_version) AS replace_rule
            FROM core.events e JOIN (
              SELECT p.id, p.seq FROM (
                SELECT q.id, q.seq, (sum(q.size) OVER (ORDER BY q.seq) - q.size)::bigint AS before
@@ -681,7 +676,8 @@ pub async fn live_at(conn: &mut PgConnection, locations: &[RecordLocation]) -> R
     let rows = sqlx::query!(
         r#"SELECT e.id, e.event_type, e.source, e.material_id, e.anchor, e.output_index, e.parents,
              e.ts_orig, e.ts_quality, e.payload, e.equivalence_key, e.reading_order, e.record_hash,
-             e.record_state, e.class, e.commit_seq
+             e.record_state, e.class, e.commit_seq, e.kind_version, e.validation,
+             (SELECT replace_rule FROM registry.event_types k WHERE k.name=e.event_type AND k.version=e.kind_version) AS replace_rule
            FROM unnest($1::uuid[], $2::bigint[]) AS l(material_id, anchor)
            JOIN core.events e ON e.material_id = l.material_id AND e.anchor = l.anchor
            WHERE EXISTS (SELECT 1 FROM core.live_locations c WHERE c.event_id = e.id)
@@ -751,7 +747,8 @@ pub async fn outputs(conn: &mut PgConnection, derivation: &str, key: &Value) -> 
     let rows = sqlx::query!(
         r#"SELECT e.id, e.event_type, e.source, e.material_id, e.anchor, e.output_index, e.parents,
              e.ts_orig, e.ts_quality, e.payload, e.equivalence_key, e.reading_order, e.record_hash,
-             e.record_state, e.class, e.commit_seq
+             e.record_state, e.class, e.commit_seq, e.kind_version, e.validation,
+             (SELECT replace_rule FROM registry.event_types k WHERE k.name=e.event_type AND k.version=e.kind_version) AS replace_rule
            FROM derivation.outputs o JOIN core.events e ON e.id = o.event_id
            WHERE o.derivation = $1 AND o.key = $2
              AND NOT EXISTS (SELECT 1 FROM audit.archived a WHERE a.event_id = e.id)

@@ -13,7 +13,7 @@
       rustPkgs = import rust-nixpkgs { inherit system; };
       compilerTools = rustPkgs.rustc.llvmPackages;
       postgres = pkgs.postgresql_18.withPackages (p: [ p.timescaledb ]);
-      package = rustPkgs.rustPlatform.buildRustPackage {
+      server = rustPkgs.rustPlatform.buildRustPackage {
         pname = "sinex";
         version = "0.1.0";
         src = ./.;
@@ -25,7 +25,7 @@
         nativeBuildInputs = [ postgres ];
         # sinex-sources tests start a throwaway NATS server and make git
         # repositories.
-        nativeCheckInputs = [ pkgs.nats-server pkgs.git ];
+        nativeCheckInputs = [ pkgs.nats-server pkgs.git pkgs.gnutar ];
         preBuild = ''
           cargo run --offline --locked -p xtask -- boundaries
           export PGDATA=$(mktemp -d)
@@ -41,21 +41,38 @@
           cargo build --offline --locked -p sinex-schema --target-dir target --target ${rustPkgs.stdenv.hostPlatform.rust.rustcTarget}
           target/${rustPkgs.stdenv.hostPlatform.rust.rustcTarget}/debug/sinex-schema apply "$DATABASE_URL"
         '';
-        cargoBuildFlags = [ "-p" "sinexd" "-p" "sinexctl" "-p" "sinex-session" "-p" "sinex-capture" "-p" "xtask" ];
+        cargoBuildFlags = [ "-p" "sinexd" "-p" "sinexctl" "-p" "xtask" ];
         doCheck = true;
-        # Captures check the private-mode switch under $XDG_RUNTIME_DIR; the
-        # builder has none, and a switch that cannot be checked counts as on.
         preCheck = ''
-          export XDG_RUNTIME_DIR=$(mktemp -d)
           export DEVKIT_PG_SOCKET="$PGHOST"
           export DEVKIT_PG_TEMPLATE=foundation
         '';
         # The memory test measures its process's peak RSS, so it needs a
         # process of its own, which nextest gives it and `cargo test` does not.
-        checkFlags = [ "--skip" "drivers::tests::backfill_of_a_large_file_peaks_well_under_its_size" ];
+        # Nix's syscall filter prevents setting xattrs and ACLs. The native
+        # xtask suite runs the GNU tar restoration test with those assertions.
+        checkFlags = [
+          "--skip" "drivers::tests::backfill_of_a_large_file_peaks_well_under_its_size"
+          "--skip" "drivers::dir_snapshot::tests::restore_tar::gnu_tar_restores_native_names_sparse_data_attributes_and_access_acl"
+        ];
         # Schema tests clone the builder's prepared database. Store and daemon
         # database tests run under `xtask test`.
         cargoTestFlags = [ "-p" "sinex-model" "-p" "sinex-protocol" "-p" "sinex-schema" "-p" "sinex-sources" "-p" "sinex-source-core" "-p" "sinex-sealing" "-p" "sinex-derivations" ];
+      };
+      capture = rustPkgs.rustPlatform.buildRustPackage {
+        pname = "sinex-capture";
+        version = "0.1.0";
+        src = ./.;
+        cargoLock = {
+          lockFile = ./Cargo.lock;
+          allowBuiltinFetchGit = true;
+        };
+        cargoBuildFlags = [ "-p" "sinex-session" "-p" "sinex-capture" ];
+        doCheck = false;
+      };
+      package = pkgs.symlinkJoin {
+        name = "sinex-0.1.0";
+        paths = [ server capture ];
       };
     in {
       packages.${system} = { default = package; sinexd = package; sinexctl = package; };
@@ -63,6 +80,7 @@
       # VM tests: the deployed stack, a satellite capture node, the restore
       # drill. Built on demand, not by `package`.
       checks.${system} = {
+        module = import ./nix/tests/module.nix self pkgs;
         vm-stack = pkgs.testers.runNixOSTest (import ./nix/tests/stack.nix self);
         vm-topology = pkgs.testers.runNixOSTest (import ./nix/tests/topology.nix self);
         vm-restore = pkgs.testers.runNixOSTest (import ./nix/tests/restore.nix self);
@@ -83,6 +101,15 @@
             fi
           fi
           export CARGO_TARGET_DIR="''${CARGO_TARGET_DIR:-$PWD/target}"
+          # Build against a checkout of polylogue-sinex-common when there is
+          # one ($POLYLOGUE_SINEX_COMMON, else the sibling directory), unless
+          # `cargo xtask unlink-common` turned that off.
+          if [ -z "''${LINKING_COMMON:-}" ] && [ -f crates/sinexd/Cargo.toml ] \
+            && [ -f "''${POLYLOGUE_SINEX_COMMON:-../polylogue-sinex-common}/Cargo.toml" ] \
+            && [ ! -e .cargo/local.toml ] && [ ! -e .cargo/common-link.off ]; then
+            LINKING_COMMON=1 cargo xtask link-common \
+              || echo "sinex: linking polylogue-sinex-common failed; see cargo xtask link-common" >&2
+          fi
         '';
       };
     };

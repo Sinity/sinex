@@ -16,6 +16,8 @@ tokio.workspace = true
 serde_json.workspace = true
 
 [dev-dependencies]
+async-nats.workspace = true
+futures.workspace = true
 tempfile = "3"
 devkit.workspace = true
 

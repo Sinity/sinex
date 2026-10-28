@@ -211,3 +211,50 @@ fn cli_cannot_acquire_database_work_through_a_wrapper() {
         "forbidden transitive dependency: sinexctl -> sqlx"
     );
 }
+
+#[devkit::test]
+fn compilation_follows_selected_packages_to_database_dependencies() {
+    let graph = metadata(&[
+        ("sinexctl", vec![], vec!["sinex-protocol"]),
+        ("sinex-protocol", vec![], vec![]),
+        ("sinexd", vec![], vec!["sinex-store"]),
+        ("sinex-store", vec![], vec!["sqlx"]),
+        ("sinex-schema", vec![], vec!["sqlx"]),
+        ("new-package", vec![], vec!["sinexd"]),
+    ]);
+    assert!(selection_database_free(&graph, &["sinexctl"], false, false));
+    // Bootstrap uses dynamic SQL and compiles before the schema database exists.
+    assert!(selection_database_free(
+        &graph,
+        &["sinex-schema"],
+        false,
+        false
+    ));
+    for selected in [
+        vec!["sinexd"],
+        vec!["new-package"],
+        vec!["sinexctl", "sinexd"],
+        vec!["unknown"],
+    ] {
+        assert!(!selection_database_free(&graph, &selected, false, false));
+    }
+    assert!(!selection_database_free(&graph, &[], true, false));
+}
+
+#[devkit::test]
+fn compilation_counts_development_dependencies_only_for_test_targets() {
+    let mut graph = metadata(&[("application", vec![dep("sqlx", Some("dev"))], vec!["sqlx"])]);
+    graph.resolve.nodes[0].deps[0].dep_kinds[0].kind = Some("dev".into());
+    assert!(selection_database_free(
+        &graph,
+        &["application"],
+        false,
+        false
+    ));
+    assert!(!selection_database_free(
+        &graph,
+        &["application"],
+        false,
+        true
+    ));
+}

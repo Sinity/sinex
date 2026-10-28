@@ -110,7 +110,7 @@ impl World {
         let (handle, queues) = writer::channels();
         let task = tokio::spawn(writer::run(
             url.clone(),
-            connection,
+            writer::claim(connection).await.unwrap(),
             queues,
             Arc::new(Keys::new(keyed)),
             None,
@@ -319,6 +319,7 @@ impl Keyed for Waiting {
             observed_by: vec![],
         };
         Computed {
+            error: None,
             outputs: vec![sinex_derivations::derived_event::derived(
                 &payload,
                 "test.waiting",
@@ -450,6 +451,7 @@ impl<const V: u32> Keyed for Count<V> {
             observed_by: vec![],
         };
         Computed {
+            error: None,
             outputs: vec![sinex_derivations::derived_event::derived(
                 &payload,
                 "test.count",

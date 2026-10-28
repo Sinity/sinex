@@ -3,17 +3,23 @@
 //! way; an mbox record starts with its `From ` separator line, which is not
 //! part of the message.
 //!
-//! The `Message-ID` header is the identity, so the same message in a later
+//! The account and provider ID identify a message when supplied; otherwise
+//! the `Message-ID` header identifies the same message in a later
 //! export of the same source is one record; a message without one is identified
-//! by a hash of its raw bytes. An mbox export and a Maildir are two sources (a
+//! by its provider ID or record location. An mbox export and a Maildir are two sources (a
 //! Gmail export and a local mail store); the same message in both is combined
 //! by fusion, not by admission. Gmail's labels and thread ID are read from its
 //! `X-Gmail-Labels` and `X-GM-THRID` headers. The first plain-text part is kept
 //! as text; attachments are listed with their size, and their bytes stay in the
 //! material.
 //!
-//! A message deleted from a Maildir is not recorded as removed yet: the
-//! removed file's marker names only its path, not its Message-ID.
+//! A message deleted from a Maildir is recorded as removed at the source,
+//! where its file was last read: the removed file's marker names only its
+//! path, so the parser reads
+//! the marker as nothing. A flag change renames the file, which reads the
+//! message again under its new name and records the old name's reading as
+//! removed; the new reading is the newer one. A message kept in two folders
+//! and deleted from the one it was last read in is recorded as removed.
 use mailparse::{MailHeaderMap, ParsedMail};
 use sinex_model::event_types::communication::{MailAttachment, MailMessage};
 use sinex_model::{Class, Timestamp};
@@ -31,7 +37,7 @@ pub const MBOX: SourceSpec = SourceSpec {
     purpose: "mail recall and correspondence history",
     class: Class::Open,
     parser: "rfc5322-mail",
-    parser_version: 1,
+    parser_version: 3,
     event_types: &["mail.message"],
     framer: sinex_source_core::Framer::export(
         sinex_source_core::drivers::export_archive::frame_mbox,
@@ -46,7 +52,7 @@ pub const MAILDIR: SourceSpec = SourceSpec {
     purpose: "mail recall and correspondence history",
     class: Class::Open,
     parser: "rfc5322-mail",
-    parser_version: 2,
+    parser_version: 6,
     event_types: &["mail.message"],
     framer: sinex_source_core::Framer::export(
         sinex_source_core::drivers::export_archive::frame_whole,
@@ -67,14 +73,28 @@ impl Parser for MailParser {
         _: &(),
         context: &RecordContext<'_>,
     ) -> Result<(Vec<MailMessage>, ()), RecordError> {
-        // A removed Maildir file: nothing to read (see the module note).
+        // A removed Maildir file: its removal is recorded at the source.
         if context
             .member
             .is_some_and(|m| m.details.contains_key("removed_at_ns"))
         {
             return Ok((vec![], ()));
         }
-        parse_message(record).map(|m| (vec![m], ()))
+        let mut message = parse_message(record)?;
+        message.native_id = context.member.and_then(|member| {
+            member
+                .details
+                .get("native_id")
+                .and_then(serde_json::Value::as_str)
+                .map(str::to_owned)
+        });
+        message.account = context
+            .manifest
+            .details
+            .get("account")
+            .and_then(serde_json::Value::as_str)
+            .map(str::to_owned);
+        Ok((vec![message], ()))
     }
 }
 
@@ -91,9 +111,21 @@ pub fn parse_message(raw: &[u8]) -> Result<MailMessage, RecordError> {
     };
     let message_id = one("Message-ID")
         .map(|id| strip_angles(&id))
-        .unwrap_or_else(|| format!("blake3:{}", blake3::hash(&message).to_hex()));
+        .filter(|id| !id.trim().is_empty());
     let date = one("Date")
         .and_then(|d| mailparse::dateparse(&d).ok())
+        // `dateparse` also returns zero for text holding no date. An actual
+        // epoch date must be a readable RFC 2822 date, rather than guessed.
+        .filter(|secs| {
+            *secs != 0
+                || one("Date").is_some_and(|date| {
+                    time::OffsetDateTime::parse(
+                        &date,
+                        &time::format_description::well_known::Rfc2822,
+                    )
+                    .is_ok_and(|date| date.unix_timestamp() == 0)
+                })
+        })
         .and_then(|secs| Timestamp::from_unix_secs(secs).ok());
     let addresses = |name: &str| -> Vec<String> {
         headers
@@ -115,11 +147,14 @@ pub fn parse_message(raw: &[u8]) -> Result<MailMessage, RecordError> {
     let mut attachments = Vec::new();
     walk(&parsed, &mut text, &mut html, &mut attachments)?;
     Ok(MailMessage {
+        account: None,
+        native_id: None,
         message_id,
         date,
         from: addresses("From"),
         to: addresses("To"),
         cc: addresses("Cc"),
+        bcc: addresses("Bcc"),
         subject: one("Subject"),
         in_reply_to: one("In-Reply-To").map(|v| strip_angles(&v)),
         references: ids("References"),
@@ -229,10 +264,76 @@ pub fn mbox_source() -> DeclaredSource<MailParser> {
     }
 }
 
-pub fn maildir_source() -> DeclaredSource<MailParser> {
+pub struct MaildirParser;
+
+impl Parser for MaildirParser {
+    type Record<'a> = &'a [u8];
+    type Carry = ();
+    type Payload = MailMessage;
+
+    fn record_hash(&self, raw: &[u8], context: &RecordContext<'_>) -> [u8; 32] {
+        context.hash_with_path(raw)
+    }
+
+    fn parse(
+        &self,
+        record: &&[u8],
+        carry: &(),
+        context: &RecordContext<'_>,
+    ) -> Result<(Vec<MailMessage>, ()), RecordError> {
+        let (mut messages, ()) = MailParser.parse(record, carry, context)?;
+        for message in &mut messages {
+            if let (Some(member), Some(root), Some(host)) = (
+                context.member,
+                context.manifest.path.as_deref(),
+                context.manifest.detail("host").as_str(),
+            ) {
+                use base64::Engine;
+                use std::os::unix::ffi::{OsStrExt, OsStringExt};
+                let path = match member.details.get("native_path_bytes") {
+                    Some(native) => {
+                        let bytes = native
+                            .as_str()
+                            .and_then(|value| {
+                                base64::engine::general_purpose::STANDARD.decode(value).ok()
+                            })
+                            .ok_or_else(|| RecordError::new("invalid native Maildir path bytes"))?;
+                        PathBuf::from(std::ffi::OsString::from_vec(bytes))
+                    }
+                    None => PathBuf::from(&member.path),
+                };
+                if let (Some(filename), Some(folder)) = (
+                    path.file_name(),
+                    path.parent().and_then(std::path::Path::parent),
+                ) {
+                    let filename = filename.as_bytes();
+                    let end = filename
+                        .windows(3)
+                        .rposition(|part| part == b":2,")
+                        .unwrap_or(filename.len());
+                    message.native_id = Some(
+                        serde_json::json!([
+                            "maildir",
+                            host,
+                            root,
+                            context.manifest.detail("native_path_bytes"),
+                            base64::engine::general_purpose::STANDARD
+                                .encode(folder.as_os_str().as_bytes()),
+                            base64::engine::general_purpose::STANDARD.encode(&filename[..end]),
+                        ])
+                        .to_string(),
+                    );
+                }
+            }
+        }
+        Ok((messages, ()))
+    }
+}
+
+pub fn maildir_source() -> DeclaredSource<MaildirParser> {
     DeclaredSource {
         spec: MAILDIR,
-        parser: MailParser,
+        parser: MaildirParser,
     }
 }
 
@@ -248,6 +349,7 @@ pub fn mbox_driver(path: PathBuf, host: String) -> ExportArchive {
 
 pub fn maildir_driver(root: PathBuf, host: String) -> DirSnapshot {
     DirSnapshot {
+        removed_at_source: true,
         root,
         host,
         select: |p| {
@@ -264,6 +366,19 @@ pub fn maildir_driver(root: PathBuf, host: String) -> DirSnapshot {
 pub const MBOX_FORMAT: sinex_source_core::binding::InputFormat =
     sinex_source_core::binding::InputFormat {
         name: "mbox",
+        discovery: sinex_source_core::discovery::DiscoverySpec {
+            owner: sinex_source_core::discovery::Owner::System,
+            locations: &[sinex_source_core::discovery::Location {
+                root: "input",
+                path: "mbox",
+            }],
+            capabilities: &[],
+            credentials: &[],
+            streams: &[],
+            requests: &[],
+            request_only: false,
+        },
+        discover: crate::discovery::discover_format,
         specs: || vec![&MBOX],
         plan: Some(|input, settings| {
             Ok(sinex_source_core::binding::per_file(
@@ -288,6 +403,19 @@ pub const MBOX_FORMAT: sinex_source_core::binding::InputFormat =
 pub const MAILDIR_FORMAT: sinex_source_core::binding::InputFormat =
     sinex_source_core::binding::InputFormat {
         name: "maildir",
+        discovery: sinex_source_core::discovery::DiscoverySpec {
+            owner: sinex_source_core::discovery::Owner::System,
+            locations: &[sinex_source_core::discovery::Location {
+                root: "input",
+                path: "maildir",
+            }],
+            capabilities: &[],
+            credentials: &[],
+            streams: &[],
+            requests: &[],
+            request_only: false,
+        },
+        discover: crate::discovery::discover_format,
         specs: || vec![&MAILDIR],
         plan: Some(|input, settings| {
             Ok(sinex_source_core::binding::single(

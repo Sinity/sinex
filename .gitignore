@@ -4,3 +4,7 @@
 /result-*
 /.foundation/
 __pycache__/
+
+# `cargo xtask link-common`: the patch, the saved lock and the opt-out marker.
+/.cargo/local.toml
+/.cargo/common-link.*

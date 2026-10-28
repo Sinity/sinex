@@ -3,10 +3,10 @@ slow-timeout = { period = "30s", terminate-after = 4 }
 fail-fast = false
 
 # The crash harness runs whole backfills against the development PostgreSQL,
-# whose data lives on a few-GB tmpfs shared with other work; four at a time
-# keep its databases within that.
+# whose data lives on a few-GB tmpfs shared with other work; two at a time
+# bound the competing backfills and replay transactions.
 [test-groups]
-crash = { max-threads = 4 }
+crash = { max-threads = 2 }
 
 [[profile.default.overrides]]
 filter = "binary(crash)"

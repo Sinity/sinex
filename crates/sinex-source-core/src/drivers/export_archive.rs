@@ -5,16 +5,25 @@
 pub mod group;
 pub(crate) mod records;
 
-#[cfg(any(feature = "archives", test))]
+#[cfg(feature = "archives")]
 use super::DriverError;
 use serde::{Deserialize, Serialize};
 #[cfg(feature = "archives")]
 use sinex_model::InputRef;
 use std::path::PathBuf;
 
+/// Complete record ranges and the decided byte end, given true EOF or a buffer prefix.
+pub type RecordFramer = fn(&[u8], bool) -> (Vec<(usize, usize)>, usize);
+
 /// How records are framed inside one member (or a plain file).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug)]
 pub enum Framing {
+    /// A source-supplied pure framer. Equal names must identify the same
+    /// framing rule so compatible bindings can share one read.
+    Custom {
+        name: &'static str,
+        frame: RecordFramer,
+    },
     /// One record per line; a final line without a newline counts at the end.
     Lines,
     /// The elements of the JSON array at this JSON pointer (`""` for a
@@ -32,10 +41,28 @@ pub enum Framing {
     Delimited(&'static [u8]),
 }
 
+impl PartialEq for Framing {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Self::Lines, Self::Lines)
+            | (Self::Csv, Self::Csv)
+            | (Self::Mbox, Self::Mbox)
+            | (Self::Whole, Self::Whole) => true,
+            (Self::JsonArray(a), Self::JsonArray(b)) => a == b,
+            (Self::Delimited(a), Self::Delimited(b)) => a == b,
+            (Self::Custom { name: a, .. }, Self::Custom { name: b, .. }) => a == b,
+            _ => false,
+        }
+    }
+}
+
+impl Eq for Framing {}
+
 impl Framing {
     #[cfg(feature = "archives")]
     fn name(self) -> String {
         match self {
+            Self::Custom { name, .. } => name.into(),
             Self::Lines => "lines".into(),
             Self::JsonArray(p) => format!("json-array:{p}"),
             Self::Csv => "csv".into(),
@@ -49,6 +76,7 @@ impl Framing {
     /// false a trailing record that may be incomplete is left out.
     pub fn frame(self, bytes: &[u8], eof: bool) -> (Vec<(usize, usize)>, usize) {
         match self {
+            Self::Custom { frame, .. } => frame(bytes, eof),
             Self::Lines => lines(bytes, eof),
             Self::JsonArray(pointer) => match json_array(bytes, pointer) {
                 Ok(records) => (records, bytes.len()),
@@ -115,7 +143,7 @@ fn file_name(path: &std::path::Path) -> String {
         .unwrap_or_default()
 }
 
-#[cfg(any(feature = "archives", test))]
+#[cfg(feature = "archives")]
 fn io(e: impl std::fmt::Display) -> DriverError {
     DriverError::Io(e.to_string())
 }

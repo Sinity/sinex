@@ -36,3 +36,23 @@ fn crossing_quoted_values_are_masked_and_nested_credential_keys_refuse() {
         assert_eq!(raw["nested"][0][&text], 1);
     }
 }
+
+#[devkit::test]
+fn declaration_cursors_survive_masking_without_exempting_result_fields() {
+    let declarations: Vec<_> = sinex_model::event_types::declarations()
+        .iter()
+        .map(|d| (&d.kind, d.definition_hash()))
+        .collect();
+    let cursor = sinex_model::query::cursor::encode(&declarations).unwrap();
+    assert_eq!(mask_str(&cursor), cursor);
+    let decoded: Value = sinex_model::query::cursor::decode(&cursor).unwrap();
+    assert_eq!(decoded, serde_json::to_value(&declarations).unwrap());
+    for invalid in ["z0", "0", "é0", ""] {
+        assert!(sinex_model::query::cursor::decode::<Value>(invalid).is_err());
+    }
+    let secret = format!("ghp_{}", "a".repeat(36));
+    assert_ne!(
+        mask_json(json!({"cursor": secret})).unwrap()["cursor"],
+        secret
+    );
+}

@@ -13,6 +13,7 @@ self: {
       services.sinex = {
         enable = true;
         noCow = false;
+        database.sharedBuffers = "128MB";
         nats = {
           address = "0.0.0.0";
           daemonPasswordFile = "/etc/sinex-test/nats-daemon";
@@ -40,12 +41,12 @@ self: {
       };
       systemd.tmpfiles.rules = [ "d /srv/watched 0755 root root -" ];
       users.groups.sinex.gid = 2900;
+      services.sinex.exclude."machine.journald".reason = "The satellite fixture tests only file changes.";
       services.sinex.captureNode = {
         enable = true;
         nats = "server:4222";
         passwordFile = "/etc/sinex-test/nats";
         store = "/mnt/sinex-store";
-        journald = false;
         watch = [ "/srv/watched" ];
       };
     };

@@ -1,10 +1,9 @@
-//! Sinnix capture-lake JSONL day files become stored material and typed
-//! observations under each lane's catalog source. Configuration names the
-//! directories relative to the lake root and the accepted envelope lanes. An
-//! unbound lane is a record failure. Every record is one event, network flows
-//! included.
+//! Sinnix capture-lake JSONL day files become stored material and events
+//! under each lane's catalog source. Configuration names the directories
+//! relative to the lake root and the accepted envelope lanes. An unbound lane
+//! is a record failure. Stream-owned lanes keep `lake.observed`; the other
+//! lanes produce domain events, one per observed record or listed device.
 use serde_json::{Map, Value};
-use sinex_model::event_types::machine::LakeObservation;
 use sinex_model::{Class, Timestamp};
 use sinex_source_core::drivers::append_file::{AppendFile, lines};
 use sinex_source_core::registry::{DeclaredSource, Driver, SourceSpec};
@@ -22,7 +21,12 @@ pub struct LakeSource {
     pub lane_values: &'static [&'static str],
 }
 
-const fn spec(name: &'static str, parser: &'static str, purpose: &'static str) -> SourceSpec {
+const fn spec(
+    name: &'static str,
+    parser: &'static str,
+    purpose: &'static str,
+    event_types: &'static [&'static str],
+) -> SourceSpec {
     SourceSpec {
         name,
         driver: Driver::AppendFile,
@@ -32,8 +36,8 @@ const fn spec(name: &'static str, parser: &'static str, purpose: &'static str) -
         // without a code change.
         class: Class::Open,
         parser,
-        parser_version: 2,
-        event_types: &["lake.observed"],
+        parser_version: 3,
+        event_types,
         framer: sinex_source_core::Framer::incremental(lines),
     }
 }
@@ -47,6 +51,7 @@ const LAKE_SOURCES: &[LakeSource] = &[
             "desktop.clipboard",
             "sinnix-lake:desktop.clipboard",
             "recall, prompt provenance",
+            &["lake.observed"],
         ),
         dirs: &["activity/desktop/clipboard", "activity/desktop/selection"],
         lane_values: &["clipboard", "primary"],
@@ -56,6 +61,7 @@ const LAKE_SOURCES: &[LakeSource] = &[
             "desktop.notifications",
             "sinnix-lake:desktop.notifications",
             "recall, interruption analysis",
+            &["lake.observed"],
         ),
         dirs: &["activity/desktop/notification"],
         lane_values: &["notifications"],
@@ -65,6 +71,7 @@ const LAKE_SOURCES: &[LakeSource] = &[
             "desktop.media",
             "sinnix-lake:desktop.media",
             "listening and attention timeline",
+            &["lake.observed"],
         ),
         dirs: &["activity/desktop/media"],
         lane_values: &["mpris"],
@@ -74,6 +81,7 @@ const LAKE_SOURCES: &[LakeSource] = &[
             "desktop.a11y",
             "sinnix-lake:desktop.a11y",
             "what was on screen, recall",
+            &["lake.observed"],
         ),
         dirs: &["activity/desktop/accessibility"],
         lane_values: &["a11y"],
@@ -83,6 +91,7 @@ const LAKE_SOURCES: &[LakeSource] = &[
             "desktop.idle-inhibitor",
             "sinnix-lake:desktop.idle-inhibitor",
             "presence and AFK evidence",
+            &["lake.observed"],
         ),
         dirs: &["activity/desktop/idle-inhibitor"],
         lane_values: &["idle-inhibitors"],
@@ -92,6 +101,7 @@ const LAKE_SOURCES: &[LakeSource] = &[
             "media.screen",
             "sinnix-lake:media.screen",
             "screen recall and OCR",
+            &["lake.observed"],
         ),
         dirs: &["activity/desktop/frame"],
         lane_values: &["screen-frames"],
@@ -101,6 +111,7 @@ const LAKE_SOURCES: &[LakeSource] = &[
             "media.audio",
             "sinnix-lake:media.audio",
             "audio recall, speech index, device state",
+            &["lake.observed"],
         ),
         dirs: &[
             "activity/audio/device",
@@ -114,6 +125,7 @@ const LAKE_SOURCES: &[LakeSource] = &[
             "browser.navigation",
             "sinnix-lake:browser.navigation",
             "browsing trails, recall",
+            &["link.followed"],
         ),
         dirs: &["activity/browser/navigation"],
         lane_values: &["browser-nav-edges"],
@@ -123,6 +135,7 @@ const LAKE_SOURCES: &[LakeSource] = &[
             "reading.stack",
             "sinnix-lake:reading.stack",
             "reading queue",
+            &["reading_stack.changed"],
         ),
         dirs: &["activity/browser/reading"],
         lane_values: &["reading-stack"],
@@ -132,17 +145,19 @@ const LAKE_SOURCES: &[LakeSource] = &[
             "desktop.display",
             "sinnix-lake:desktop.display",
             "machine state timeline",
+            &["display.sampled"],
         ),
         dirs: &["device/sinnix-prime/monitor"],
         lane_values: &["monitor"],
     },
     LakeSource {
         spec: SourceSpec {
-            parser_version: 3,
+            parser_version: 4,
             ..spec(
                 "network.netflow",
                 "sinnix-lake:network.netflow",
                 "network flows by connection",
+                &["lake.observed"],
             )
         },
         dirs: &["device/sinnix-prime/netflow"],
@@ -153,6 +168,7 @@ const LAKE_SOURCES: &[LakeSource] = &[
             "machine.peripheral",
             "sinnix-lake:machine.peripheral",
             "battery and audio device state",
+            &["battery.sampled", "bluetooth_audio.sampled"],
         ),
         dirs: &[
             "device/sinnix-prime/peripheral/bt-audio",
@@ -166,6 +182,7 @@ const LAKE_SOURCES: &[LakeSource] = &[
             "environment.awair",
             "sinnix-lake:environment.awair",
             "room air, sleep and focus analysis",
+            &["air.sampled"],
         ),
         dirs: &["health/environment"],
         lane_values: &["awair", "environment"],
@@ -176,10 +193,18 @@ pub struct EnvelopeParser {
     lake_source: &'static LakeSource,
 }
 
-fn envelope(
-    record: &Map<String, Value>,
-    source: &LakeSource,
-) -> Result<LakeObservation, RecordError> {
+/// The `sinnix-capture-v1` envelope around every record.
+struct Envelope {
+    lane: String,
+    host: String,
+    seq: u64,
+    observed_at: Timestamp,
+    payload: Value,
+    /// The path of a file the record describes (a frame, an audio segment).
+    raw_ref: Option<String>,
+}
+
+fn envelope(record: &Map<String, Value>, source: &LakeSource) -> Result<Envelope, RecordError> {
     match record.get("schema").and_then(Value::as_str) {
         Some("sinnix-capture-v1") => {}
         other => {
@@ -191,63 +216,65 @@ fn envelope(
     if record.get("schema_version").and_then(Value::as_i64) != Some(1) {
         return Err(RecordError::new("envelope schema_version is not 1"));
     }
-    let name = record
+    let lane = record
         .get("lane")
         .and_then(Value::as_str)
         .ok_or_else(|| RecordError::new("envelope has no lane"))?;
-    if !source.lane_values.contains(&name) {
+    if !source.lane_values.contains(&lane) {
         return Err(RecordError::new(format!(
-            "lane {name:?} is not bound to {} (accepted: {})",
+            "lane {lane:?} is not bound to {} (accepted: {})",
             source.spec.name,
             source.lane_values.join(", ")
         )));
+    }
+    if record
+        .get("host")
+        .and_then(Value::as_str)
+        .is_none_or(str::is_empty)
+    {
+        return Err(RecordError::new("envelope host is not a nonempty string"));
+    }
+    if record.get("seq").and_then(Value::as_u64).is_none() {
+        return Err(RecordError::new("envelope seq is not an unsigned integer"));
+    }
+    if record
+        .get("raw_ref")
+        .is_some_and(|value| !value.is_null() && !value.is_string())
+    {
+        return Err(RecordError::new("envelope raw_ref is not a string or null"));
     }
     let ts = record
         .get("ts")
         .and_then(Value::as_f64)
         .ok_or_else(|| RecordError::new("envelope has no ts"))?;
-    // A float of seconds holds about microseconds at today's epoch; whole
-    // seconds plus rounded microseconds avoid inventing nanoseconds.
-    let seconds = ts.floor();
-    let micros = ((ts - seconds) * 1e6).round() as i128;
-    let observed_at = Timestamp::from_unix_ns(seconds as i128 * 1_000_000_000 + micros * 1_000)
-        .map_err(|e| RecordError::new(format!("ts {ts} out of range: {e}")))?;
-    LakeObservation::new(
-        observed_at,
-        name.to_string(),
-        record
-            .get("host")
-            .and_then(Value::as_str)
-            .ok_or_else(|| RecordError::new("envelope has no host"))?
-            .to_string(),
-        record
-            .get("seq")
-            .and_then(Value::as_i64)
-            .ok_or_else(|| RecordError::new("envelope has no seq"))?,
-        record
+    Ok(Envelope {
+        lane: lane.to_owned(),
+        host: record["host"].as_str().expect("validated host").to_owned(),
+        seq: record["seq"].as_u64().expect("validated sequence"),
+        observed_at: lanes::seconds(ts)?,
+        payload: record
             .get("payload")
             .cloned()
             .ok_or_else(|| RecordError::new("envelope has no payload"))?,
-        record
+        raw_ref: record
             .get("raw_ref")
             .and_then(Value::as_str)
             .map(str::to_owned),
-    )
-    .map_err(|error| RecordError::new(error.to_string()))
+    })
 }
 
 impl Parser for EnvelopeParser {
     type Record<'a> = Map<String, Value>;
     type Carry = ();
-    type Payload = LakeObservation;
+    type Payload = lanes::LakeEvent;
 
     fn parse(
         &self,
         record: &Map<String, Value>,
         _: &(),
         _context: &sinex_source_core::RecordContext<'_>,
-    ) -> Result<(Vec<LakeObservation>, ()), RecordError> {
-        Ok((vec![envelope(record, self.lake_source)?], ()))
+    ) -> Result<(Vec<lanes::LakeEvent>, ()), RecordError> {
+        Ok((lanes::events(&envelope(record, self.lake_source)?)?, ()))
     }
 }
 
@@ -264,14 +291,17 @@ pub fn source(lake_source: &'static LakeSource) -> DeclaredSource<EnvelopeParser
 
 /// The source's day files (`L-YYYYMMDD.jsonl`) under `root`, in name order. The
 /// index, sequence, lock and high-water files are not material.
-fn day_files(root: &Path, source: &LakeSource) -> Vec<PathBuf> {
+fn day_files(root: &Path, source: &LakeSource) -> Result<Vec<PathBuf>, String> {
     let mut out = Vec::new();
     for dir in source.dirs {
-        for entry in std::fs::read_dir(root.join(dir))
-            .into_iter()
-            .flatten()
-            .flatten()
-        {
+        let path = root.join(dir);
+        let entries = match std::fs::read_dir(&path) {
+            Ok(entries) => entries,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(error) => return Err(format!("{}: {error}", path.display())),
+        };
+        for entry in entries {
+            let entry = entry.map_err(|error| format!("{}: {error}", path.display()))?;
             let p = entry.path();
             let Some(name) = p.file_name().and_then(|n| n.to_str()) else {
                 continue;
@@ -286,7 +316,7 @@ fn day_files(root: &Path, source: &LakeSource) -> Vec<PathBuf> {
         }
     }
     out.sort();
-    out
+    Ok(out)
 }
 
 pub fn driver(path: PathBuf, host: String) -> AppendFile {
@@ -310,16 +340,29 @@ fn lake_source_of(b: &sinex_source_core::binding::Binding) -> Result<&'static La
 pub const FORMAT: sinex_source_core::binding::InputFormat =
     sinex_source_core::binding::InputFormat {
         name: "sinnix-lake",
+        discovery: sinex_source_core::discovery::DiscoverySpec {
+            owner: sinex_source_core::discovery::Owner::System,
+            locations: &[sinex_source_core::discovery::Location {
+                root: "declared",
+                path: "realm",
+            }],
+            capabilities: &[],
+            credentials: &[],
+            streams: &[],
+            requests: &[],
+            request_only: false,
+        },
+        discover: crate::discovery::discover_format,
         specs: || LAKE_SOURCES.iter().map(|l| &l.spec).collect(),
         plan: Some(|input, settings| {
-            Ok(LAKE_SOURCES
-                .iter()
-                .flat_map(|source| {
-                    day_files(input, source).into_iter().map(|f| {
-                        sinex_source_core::binding::Binding::of(&source.spec, &f, settings.clone())
-                    })
-                })
-                .collect())
+            std::fs::read_dir(input).map_err(|error| format!("{}: {error}", input.display()))?;
+            let mut bindings = Vec::new();
+            for source in LAKE_SOURCES {
+                bindings.extend(day_files(input, source)?.into_iter().map(|file| {
+                    sinex_source_core::binding::Binding::of(&source.spec, &file, settings.clone())
+                }));
+            }
+            Ok(bindings)
         }),
         source: |b| Ok(Box::new(source(lake_source_of(b)?))),
         reader: Some(|b| {
@@ -330,6 +373,8 @@ pub const FORMAT: sinex_source_core::binding::InputFormat =
         }),
         capture: None,
     };
+
+mod lanes;
 
 #[cfg(test)]
 mod tests;

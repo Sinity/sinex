@@ -56,6 +56,8 @@ pub(crate) fn field(table: Table, name: &str) -> Option<String> {
         Some(match name {
             "id" => "{t}.id",
             "event_type" => "{t}.event_type",
+            "kind_version" => "{t}.kind_version",
+            "validation" => "{t}.validation",
             "source" => "{t}.source",
             "host" => "(SELECT r.host FROM core.runs r WHERE r.id = {t}.run_id)",
             "when" => "{t}.ts_orig",
@@ -191,9 +193,7 @@ fn payload_number(path: &str) -> String {
 }
 
 fn payload_time(path: &str) -> String {
-    format!(
-        "(CASE WHEN ({{t}}.payload #>> '{{{path}}}') ~ '^\\d{{4}}-\\d{{2}}-\\d{{2}}T' THEN ({{t}}.payload #>> '{{{path}}}')::timestamptz END)"
-    )
+    format!("core.payload_time({{t}}.payload #>> '{{{path}}}')")
 }
 
 fn payload_bool(path: &str) -> String {

@@ -17,6 +17,8 @@ pub mod chromium;
 pub mod clipboard;
 /// Capture from the session bus, shared by the D-Bus sources.
 pub mod dbus;
+#[cfg(feature = "full")]
+pub mod documents;
 pub(crate) mod fields;
 pub mod file_watch;
 #[cfg(feature = "full")]
@@ -24,9 +26,13 @@ pub mod fish;
 #[cfg(feature = "full")]
 pub mod forecast;
 #[cfg(feature = "full")]
+pub mod gmail;
+#[cfg(feature = "full")]
 pub mod goodreads;
 #[cfg(feature = "full")]
 pub mod google_takeout;
+#[cfg(feature = "full")]
+pub mod hledger;
 pub mod hyprland;
 /// The keyboard and pointer log (scribe-tap).
 #[cfg(feature = "full")]
@@ -52,6 +58,8 @@ pub mod mpris;
 pub mod notes;
 /// Desktop notifications on the session bus.
 pub mod notifications;
+#[cfg(feature = "full")]
+pub mod ocr_import;
 #[cfg(feature = "full")]
 pub mod operator;
 #[cfg(feature = "full")]
@@ -89,12 +97,47 @@ pub mod spotify;
 #[cfg(feature = "full")]
 pub mod takeout_chrome;
 pub(crate) mod terminal_text;
+pub mod text_history;
+#[cfg(feature = "full")]
+pub mod transcript;
 #[cfg(feature = "full")]
 pub mod weechat;
 #[cfg(feature = "full")]
 pub mod wykop;
 #[cfg(feature = "full")]
 pub mod zsh;
+
+#[cfg(feature = "full")]
+pub mod agentctl;
+
+#[cfg(feature = "full")]
+pub mod beads;
+
+#[cfg(feature = "full")]
+pub mod freedom;
+
+#[cfg(feature = "full")]
+pub mod github;
+
+#[cfg(feature = "full")]
+pub mod machine_records;
+
+#[cfg(feature = "full")]
+pub mod machine_telemetry;
+
+#[cfg(feature = "full")]
+pub mod messenger_sqlite;
+
+#[cfg(feature = "full")]
+pub mod reddit_archive;
+
+#[cfg(feature = "full")]
+pub mod router;
+
+#[cfg(feature = "full")]
+pub mod taskwarrior;
+
+pub mod udev;
 
 use sinex_source_core::binding::{Binding, InputFormat, Settings};
 use sinex_source_core::registry::{Source, SourceSpec};
@@ -103,91 +146,95 @@ use sinex_source_core::registry::{Source, SourceSpec};
 /// catalog, backfill, the binding runner, `sinex-session` and replay all
 /// work from.
 pub fn formats() -> &'static [&'static InputFormat] {
-    &[
-        #[cfg(feature = "full")]
+    #[cfg(not(feature = "full"))]
+    const FORMATS: &[&InputFormat] = &[
+        &hyprland::FORMAT,
+        &journald::FORMAT,
+        &file_watch::FORMAT,
+        &kitty_scrollback::FORMAT,
+        &notifications::FORMAT,
+        &mpris::FORMAT,
+        &clipboard::FORMAT,
+        &session_socket::FORMAT,
+        &media_capture::FORMAT,
+        &udev::FORMAT,
+    ];
+    // Order selects the default when several formats read the same source name.
+    #[cfg(feature = "full")]
+    const FORMATS: &[&InputFormat] = &[
+        &hledger::FORMAT,
+        &text_history::FORMAT,
+        &documents::FORMAT,
+        &transcript::JSON_FORMAT,
+        &transcript::WHISPER_FORMAT,
+        &transcript::TEXT_FORMAT,
+        &transcript::WEBVTT_FORMAT,
+        &transcript::SRT_FORMAT,
+        &ocr_import::JSON_FORMAT,
+        &ocr_import::TSV_FORMAT,
+        &ocr_import::TEXT_FORMAT,
+        &udev::FORMAT,
+        &taskwarrior::FORMAT,
+        &router::FORMAT,
+        &reddit_archive::FORMAT,
+        &messenger_sqlite::FORMAT,
+        &machine_telemetry::FORMAT,
+        &machine_records::FORMAT,
+        &github::FORMAT,
+        &freedom::FORMAT,
+        &beads::FORMAT,
+        &agentctl::FORMAT,
         &atuin::FORMAT,
-        #[cfg(feature = "full")]
         &zsh::FORMAT,
-        #[cfg(feature = "full")]
         &bash::FORMAT,
-        #[cfg(feature = "full")]
         &fish::FORMAT,
         &hyprland::FORMAT,
         &journald::FORMAT,
         &file_watch::FORMAT,
-        #[cfg(feature = "full")]
         &activitywatch::FORMAT,
-        #[cfg(feature = "full")]
         &repository::FORMAT,
-        #[cfg(feature = "full")]
         &chromium::FORMAT,
-        #[cfg(feature = "full")]
         &takeout_chrome::FORMAT,
-        #[cfg(feature = "full")]
         &spotify::FORMAT,
-        #[cfg(feature = "full")]
         &raindrop::FORMAT,
-        #[cfg(feature = "full")]
         &notes::FORMAT,
-        #[cfg(feature = "full")]
         &mail::MBOX_FORMAT,
-        #[cfg(feature = "full")]
         &mail::MAILDIR_FORMAT,
-        #[cfg(feature = "full")]
         &mail_imap::FORMAT,
         #[cfg(feature = "full")]
+        &gmail::FORMAT,
+        #[cfg(feature = "full")]
         &outlook::FORMAT,
-        #[cfg(feature = "full")]
         &outlook::CSV_FORMAT,
-        #[cfg(feature = "full")]
         &weechat::FORMAT,
-        #[cfg(feature = "full")]
         &calendar::FORMAT,
-        #[cfg(feature = "full")]
         &google_takeout::FORMAT,
-        #[cfg(feature = "full")]
         &goodreads::FORMAT,
-        #[cfg(feature = "full")]
         &messenger::FORMAT,
-        #[cfg(feature = "full")]
         &sleep_as_android::FORMAT,
-        #[cfg(feature = "full")]
         &wykop::FORMAT,
-        #[cfg(feature = "full")]
         &reddit::FORMAT,
-        #[cfg(feature = "full")]
         &samsung_health::FORMAT,
-        #[cfg(feature = "full")]
         &samsung_sms::FORMAT,
-        #[cfg(feature = "full")]
         &samsung_cloud::FORMAT,
-        #[cfg(feature = "full")]
         &arbtt::FORMAT,
-        #[cfg(feature = "full")]
         &asciinema::FORMAT,
         &kitty_scrollback::FORMAT,
-        #[cfg(feature = "full")]
         &input_log::FORMAT,
-        #[cfg(feature = "full")]
         &operator::RAW_LOG_FORMAT,
-        #[cfg(feature = "full")]
         &operator::STEERING_FORMAT,
-        #[cfg(feature = "full")]
         &sinnix_lake::FORMAT,
         &notifications::FORMAT,
         &mpris::FORMAT,
         &clipboard::FORMAT,
         &session_socket::FORMAT,
         &media_capture::FORMAT,
-        #[cfg(feature = "full")]
         &library::FORMAT,
-        #[cfg(feature = "full")]
         &forecast::FORMAT,
-        #[cfg(feature = "full")]
         &query::FORMAT,
-        #[cfg(feature = "full")]
         &page_crawl::FORMAT,
-    ]
+    ];
+    FORMATS
 }
 
 /// Every source's declaration, each once.
@@ -209,15 +256,6 @@ pub fn specs() -> Vec<&'static SourceSpec> {
 /// The format named `name` (`--read NAME=PATH`).
 pub fn format(name: &str) -> Option<&'static InputFormat> {
     formats().iter().copied().find(|k| k.name == name)
-}
-
-/// The format that reads the source `spec_name`.
-///
-/// Several formats can read one source name (the live clipboard and its lake
-/// lane); this is the first registered, and a configuration names the format
-/// to choose another.
-pub fn format_of(spec_name: &str) -> Option<&'static InputFormat> {
-    formats().iter().copied().find(|k| k.reads(spec_name))
 }
 
 /// The format reading the source `name` with `parser`. Neither is unique
@@ -245,7 +283,39 @@ pub fn source_for(binding: &Binding) -> Result<Box<dyn Source>, String> {
             binding.source, binding.parser
         )
     })?;
-    (format.source)(binding)
+    let source = (format.source)(binding)?;
+    let Some(class) = binding.settings.class else {
+        return Ok(source);
+    };
+    let mut spec = source.spec().clone();
+    spec.class = spec.class.max(class);
+    Ok(Box::new(ConfiguredSource { source, spec }))
+}
+
+struct ConfiguredSource {
+    source: Box<dyn Source>,
+    spec: SourceSpec,
+}
+
+impl Source for ConfiguredSource {
+    fn spec(&self) -> &SourceSpec {
+        &self.spec
+    }
+    fn drainer<'a>(
+        &'a self,
+        mut input: sinex_source_core::DrainInput<'a>,
+    ) -> Result<
+        Box<
+            dyn Iterator<
+                    Item = Result<sinex_source_core::DrainOutput, sinex_source_core::RecordError>,
+                > + Send
+                + 'a,
+        >,
+        sinex_source_core::RecordError,
+    > {
+        input.class = input.class.max(self.spec.class);
+        self.source.drainer(input)
+    }
 }
 
 /// The binding a material read by `parser` on `host` had, for a material

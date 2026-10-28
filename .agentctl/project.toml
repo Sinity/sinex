@@ -104,7 +104,7 @@ unit_properties = ["MemoryHigh=8G"]
 
 [operations.bench]
 description = "Run the corpus benchmark through the shared job queue"
-exec = ["cargo", "run", "--locked", "--quiet", "-p", "xtask", "--", "bench"]
+exec = ["cargo", "run", "--locked", "--quiet", "--target-dir", "target/bench", "-p", "xtask", "--", "bench"]
 arguments = "required"
 pool = "measure"
 result = "exit"

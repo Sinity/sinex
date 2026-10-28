@@ -27,6 +27,25 @@ use sqlx::PgConnection;
 use std::collections::{BTreeSet, HashMap};
 use uuid::Uuid;
 
+pub(crate) fn build_identity() -> Result<Value, String> {
+    static BUILD: std::sync::OnceLock<Result<String, String>> = std::sync::OnceLock::new();
+    let build = BUILD
+        .get_or_init(|| {
+            let mut executable =
+                std::fs::File::open("/proc/self/exe").map_err(|e| e.to_string())?;
+            let mut hash = blake3::Hasher::new();
+            std::io::copy(&mut executable, &mut hash).map_err(|e| e.to_string())?;
+            Ok(hash.finalize().to_hex().to_string())
+        })
+        .clone()?;
+    let mut declarations: Vec<_> = sinex_model::event_types::declarations()
+        .iter()
+        .map(|d| (d.kind.clone(), d.definition_hash()))
+        .collect();
+    declarations.sort();
+    Ok(json!({"build": build, "declarations": declarations}))
+}
+
 #[derive(Clone, Debug, Default)]
 pub(crate) struct Scope {
     pub materials: Vec<Uuid>,
@@ -73,13 +92,14 @@ pub(crate) struct Report {
     pub archived: usize,
     pub admitted: usize,
     pub diff: Diff,
+    pub refused: Vec<Value>,
 }
 
 impl std::fmt::Display for Report {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         writeln!(
             f,
-            "operation {} | sequences {} (skipped as done: {}) | materials re-read {} | readings {} | failures {} | archived {} | admitted {}",
+            "operation {} | sequences {} (skipped as done: {}) | materials re-read {} | readings {} | failures {} | archived {} | admitted {} | refused materials {}",
             self.operation,
             self.sequences,
             self.sequences_skipped,
@@ -87,7 +107,8 @@ impl std::fmt::Display for Report {
             self.events_read,
             self.failures,
             self.archived,
-            self.admitted
+            self.admitted,
+            self.refused.len()
         )?;
         write!(
             f,
@@ -106,6 +127,8 @@ impl Report {
     pub(crate) fn to_json(&self, compare: bool, all: bool) -> Value {
         json!({
             "operation": self.operation,
+            "refused": self.refused,
+            "partial": !self.refused.is_empty(),
             "compare_only": compare,
             "sequences": self.sequences,
             "sequences_skipped": self.sequences_skipped,
@@ -129,7 +152,7 @@ pub(crate) struct Options {
     pub compare: bool,
     pub resume: Option<OperationId>,
     pub actor: String,
-    pub unlock: Option<crate::sealing::Unlock>,
+    pub unlock: Option<crate::material_access::sealing::Unlock>,
 }
 
 /// Replay with its parts: a read connection, the content store and the writer
@@ -140,7 +163,7 @@ pub(crate) async fn run(
     writer: &WriterHandle,
     o: Options,
 ) -> Result<Report, String> {
-    let (operation, scope, done) = match o.resume {
+    let (operation, scope, done, prior_scope) = match o.resume {
         Some(op) => {
             let stored = replay::scope_of(read_conn, op)
                 .await
@@ -151,22 +174,26 @@ pub(crate) async fn run(
                 .map_err(|e| e.to_string())?
                 .into_iter()
                 .collect();
-            (op, Scope::from_json(&stored)?, done)
+            (op, Scope::from_json(&stored)?, done, Some(stored))
         }
-        None => (OperationId::new(), o.scope, BTreeSet::new()),
+        None => (OperationId::new(), o.scope, BTreeSet::new(), None),
     };
-    let in_scope: BTreeSet<Uuid> = replay::select(
-        read_conn,
-        &scope.materials,
-        scope.binding.as_deref(),
-        scope.event_types.as_deref(),
-        scope.from.map(|t| t.0),
-        scope.until.map(|t| t.0),
-    )
-    .await
-    .map_err(|e| e.to_string())?
-    .into_iter()
-    .collect();
+    let in_scope: BTreeSet<Uuid> = match &prior_scope {
+        Some(saved) => serde_json::from_value(saved["selected_materials"].clone())
+            .map_err(|_| "stored replay material selection is invalid")?,
+        None => replay::select(
+            read_conn,
+            &scope.materials,
+            scope.binding.as_deref(),
+            scope.event_types.as_deref(),
+            scope.from.map(|t| t.0),
+            scope.until.map(|t| t.0),
+        )
+        .await
+        .map_err(|e| e.to_string())?
+        .into_iter()
+        .collect(),
+    };
     let in_scope_list: Vec<Uuid> = in_scope.iter().copied().collect();
     let inputs = replay::inputs_of(read_conn, &in_scope_list)
         .await
@@ -175,6 +202,28 @@ pub(crate) async fn run(
         .await
         .map_err(|e| e.to_string())?;
 
+    let saved_scope = match &prior_scope {
+        Some(saved) => saved.clone(),
+        None => {
+            let mut saved = scope.to_json();
+            saved["identity"] = build_identity()?;
+            saved["sealed"] = Value::Bool(o.unlock.is_some());
+            saved["selected_materials"] = json!(in_scope_list);
+            saved["parsers"] = json!(
+                stored
+                    .iter()
+                    .map(|m| (&m.parser, m.parser_version))
+                    .collect::<BTreeSet<_>>()
+            );
+            saved
+        }
+    };
+    if !o.compare && prior_scope.is_none() {
+        writer
+            .record_replay(operation, o.actor.clone(), saved_scope.clone(), vec![])
+            .await
+            .map_err(|e| e.to_string())?;
+    }
     let mut report = Report {
         operation,
         ..Report::default()
@@ -189,9 +238,34 @@ pub(crate) async fn run(
             report.sequences_skipped += 1;
             continue;
         }
+        if saved_scope["identity"] != build_identity()? {
+            return Err("replay_build_changed: running build or declarations differ".into());
+        }
         let sequence: Vec<Stored> = sequence[..=last].iter().map(|m| (*m).clone()).collect();
-        let parsers = sources_of(read_conn, &sequence).await?;
-        let keys = crate::sealing::replay_keys(
+        let parsers = match sources_of(read_conn, &sequence).await {
+            Ok(parsers) => parsers,
+            Err(reason) => {
+                let refusals: Vec<_> = sequence.iter().filter(|m| in_scope.contains(&m.id)).map(|m| {
+                    json!({"material":m.id, "parser":m.parser, "parser_version":m.parser_version,
+                        "reason": if m.binding.as_deref().is_some_and(|b| b.starts_with("ingress:")) { "producer_required" } else { "parser_unavailable" },
+                        "detail":reason})
+                }).collect();
+                if !o.compare {
+                    writer
+                        .record_replay(
+                            operation,
+                            o.actor.clone(),
+                            saved_scope.clone(),
+                            refusals.clone(),
+                        )
+                        .await
+                        .map_err(|e| e.to_string())?;
+                }
+                report.refused.extend(refusals);
+                continue;
+            }
+        };
+        let keys = crate::material_access::sealing::replay_keys(
             read_conn,
             blobs,
             sequence
@@ -226,13 +300,10 @@ pub(crate) async fn run(
         };
         let replayed = writer
             .replay(ReplaySequence {
+                ingress: None,
                 operation,
                 actor: o.actor.clone(),
-                scope: {
-                    let mut value = scope.to_json();
-                    value["sealed"] = Value::Bool(o.unlock.is_some());
-                    value
-                },
+                scope: saved_scope.clone(),
                 root,
                 compare: o.compare,
                 batches,
@@ -254,15 +325,20 @@ pub(crate) async fn run(
     Ok(report)
 }
 
-/// Group stored materials into sequences, each first part to last.
-/// Each material's parser, built with the settings its binding was read with
-/// (stored by backfill and the binding runner). A material with no stored
-/// binding (sent by an outside producer) is read by the source whose parser
-/// it names.
+/// Daemon replay uses the saved local binding or its named parser. An `ingress:`
+/// binding belongs to its producer, which supplies replacement readings through
+/// ReplayScopeQuery and ReplaySequence.
 async fn sources_of(
     read_conn: &mut sqlx::PgConnection,
     sequence: &[Stored],
 ) -> Result<Vec<Box<dyn Source>>, String> {
+    if sequence.iter().any(|m| {
+        m.binding
+            .as_deref()
+            .is_some_and(|b| b.starts_with("ingress:"))
+    }) {
+        return Err("producer_required".into());
+    }
     let mut out = Vec::with_capacity(sequence.len());
     let mut bound: HashMap<String, sinex_source_core::Binding> = HashMap::new();
     for m in sequence {
@@ -357,7 +433,7 @@ fn read_sequence(
     operation: OperationId,
     out: &tokio::sync::mpsc::Sender<Result<Batch, String>>,
     keys: &HashMap<Uuid, sinex_sealing::DataKey>,
-    unlock: Option<&crate::sealing::Unlock>,
+    unlock: Option<&crate::material_access::sealing::Unlock>,
 ) -> Read {
     let mut read = Read::default();
     if let Err(error) = read_sequence_into(
@@ -380,7 +456,7 @@ fn read_sequence_into(
     out: &tokio::sync::mpsc::Sender<Result<Batch, String>>,
     report: &mut Read,
     keys: &HashMap<Uuid, sinex_sealing::DataKey>,
-    unlock: Option<&crate::sealing::Unlock>,
+    unlock: Option<&crate::material_access::sealing::Unlock>,
 ) -> Result<(), String> {
     let send = |batch: Batch| {
         if let Some(unlock) = unlock {
@@ -438,7 +514,7 @@ fn read_sequence_into(
             manifest: m.manifest.clone(),
         };
         let sender = out.clone();
-        let stored = crate::sealing::open_checked(
+        let stored = crate::material_access::open_checked(
             blobs,
             reference,
             key.cloned(),
@@ -505,7 +581,7 @@ fn read_sequence_into(
             if records.is_empty() {
                 continue;
             }
-            crate::sealing::seal_records(&mut records, key)?;
+            crate::material_access::sealing::seal_records(&mut records, key)?;
             send(Batch {
                 run: RunId::new(),
                 kind: BatchKind::Replay { operation },

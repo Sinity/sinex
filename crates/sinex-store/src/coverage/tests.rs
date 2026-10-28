@@ -17,6 +17,21 @@ async fn evidence_keeps_visibility_positions_unknown_times_and_archived_run_reco
             .bind(run).bind(seconds.map(|s| s as f64)).bind(if seconds.is_some() { "intrinsic" } else { "unknown" })
             .bind(sequence).execute(&mut conn).await.unwrap();
     }
+    let before = crate::test_schema::catalog(&mut conn).await;
+    crate::test_schema::downgrade(&mut conn).await;
+    sqlx::raw_sql(include_str!(
+        "../../../sinex-schema/src/tests/version_two.sql"
+    ))
+    .execute(&mut conn)
+    .await
+    .unwrap();
+    sinex_schema::apply(&mut conn).await.unwrap();
+    assert_eq!(crate::test_schema::catalog(&mut conn).await, before);
+    let events: i64 = sqlx::query_scalar("SELECT count(*) FROM core.events")
+        .fetch_one(&mut conn)
+        .await
+        .unwrap();
+    assert_eq!(events, 3);
     let first = source_evidence(&mut conn, "test.source", 1).await.unwrap();
     assert_eq!(first.records.unwrap().0.unix_timestamp(), 10);
     assert_eq!(first.runs[0].last_record.unwrap().unix_timestamp(), 10);
@@ -104,7 +119,7 @@ async fn version_two_with_compressed_chunks_upgrades_without_changing_rows(
     db: devkit::pg::TestDatabase,
 ) {
     let mut conn = PgConnection::connect(&db.url(None)).await.unwrap();
-    let fresh = sinex_schema::catalog(&mut conn).await.unwrap();
+    let fresh = crate::test_schema::catalog(&mut conn).await;
     conn.execute("DROP SCHEMA sinex_schema, core, audit, raw, registry, derivation, privacy, telemetry, event_types CASCADE")
         .await.unwrap();
     sqlx::raw_sql(include_str!("version_two.sql"))
@@ -150,11 +165,12 @@ async fn version_two_with_compressed_chunks_upgrades_without_changing_rows(
     let compressed_before: i64 = sqlx::query_scalar("SELECT count(*) FROM timescaledb_information.chunks WHERE hypertable_schema='core' AND hypertable_name='events' AND is_compressed")
         .fetch_one(&mut conn).await.unwrap();
     assert!(compressed_before > 0);
-    let rows_before: Vec<serde_json::Value> =
-        sqlx::query_scalar("SELECT to_jsonb(e) FROM core.events e ORDER BY e.id")
-            .fetch_all(&mut conn)
-            .await
-            .unwrap();
+    let rows_before: Vec<serde_json::Value> = sqlx::query_scalar(
+        "SELECT to_jsonb(e)-'kind_version'-'validation' FROM core.events e ORDER BY e.id",
+    )
+    .fetch_all(&mut conn)
+    .await
+    .unwrap();
     assert_eq!(rows_before.len(), 4096);
     assert_eq!(
         sinex_schema::apply(&mut conn).await.unwrap(),
@@ -163,12 +179,13 @@ async fn version_two_with_compressed_chunks_upgrades_without_changing_rows(
             to: sinex_schema::VERSION
         }
     );
-    assert_eq!(sinex_schema::catalog(&mut conn).await.unwrap(), fresh);
-    let rows_after: Vec<serde_json::Value> =
-        sqlx::query_scalar("SELECT to_jsonb(e) FROM core.events e ORDER BY e.id")
-            .fetch_all(&mut conn)
-            .await
-            .unwrap();
+    assert_eq!(crate::test_schema::catalog(&mut conn).await, fresh);
+    let rows_after: Vec<serde_json::Value> = sqlx::query_scalar(
+        "SELECT to_jsonb(e)-'kind_version'-'validation' FROM core.events e ORDER BY e.id",
+    )
+    .fetch_all(&mut conn)
+    .await
+    .unwrap();
     assert_eq!(rows_after, rows_before);
     let compressed_after: i64 = sqlx::query_scalar("SELECT count(*) FROM timescaledb_information.chunks WHERE hypertable_schema='core' AND hypertable_name='events' AND is_compressed")
         .fetch_one(&mut conn).await.unwrap();

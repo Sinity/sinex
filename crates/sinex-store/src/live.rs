@@ -25,6 +25,8 @@ pub async fn class_and_payload(
 pub struct LiveEvent {
     pub id: Uuid,
     pub event_type: String,
+    pub kind_version: i64,
+    pub validation: String,
     pub payload: Option<Value>,
 }
 
@@ -32,7 +34,7 @@ pub struct LiveEvent {
 pub async fn of_types(conn: &mut PgConnection, types: &[String]) -> Result<Vec<LiveEvent>> {
     Ok(sqlx::query_as!(
         LiveEvent,
-        r#"SELECT e.id AS "id!", e.event_type AS "event_type!", e.payload FROM core.visible_events e
+        r#"SELECT e.id AS "id!", e.event_type AS "event_type!", e.kind_version AS "kind_version!", e.validation AS "validation!", e.payload FROM core.visible_events e
            WHERE e.event_type = ANY($1)
              AND NOT EXISTS (SELECT 1 FROM audit.archived a WHERE a.event_id = e.id)
            ORDER BY e.commit_seq, e.id"#,

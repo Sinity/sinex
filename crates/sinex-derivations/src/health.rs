@@ -168,6 +168,7 @@ impl Keyed for HourlyFigures {
             })
             .collect();
         Computed {
+            error: None,
             outputs,
             waiting: false,
         }
@@ -244,6 +245,7 @@ impl Keyed for DailyFigures {
             })
             .collect();
         Computed {
+            error: None,
             outputs,
             waiting: false,
         }

@@ -1,428 +1,137 @@
 # Architecture
 
-How the crates divide the work today. [vocabulary.md](vocabulary.md)
-defines the terms; planned work is in Beads.
+Sinex keeps the exact bytes of everything one person's digital life produces and holds readings of them that can be regenerated, moved to the archive, restored and, deliberately, destroyed. This page is the orientation: purpose, scope, principles, how data flows from a source to an answer, the components, the durability order, the pipeline and its targets, and how configuration and clocks reach the code. Each area's behaviour is owned by its own page, linked below; the crate table is in [AGENTS.md](../AGENTS.md); the terms are in [vocabulary.md](vocabulary.md).
 
-## Reading sources
+## Purpose
 
-`sinex-source-core` holds the parser traits, drain, shared drivers and record
-framing. `sinex-sources` holds source declarations, parsers and the live loop.
-Its `full` feature selects archive, database, repository and network source
-families; capture-only nodes leave it off. A driver gets bytes from an input; a parser reads one
-framed record and opens no files, sockets or clocks. The drain around the
-parser attaches record locations, hashes, carry and record failures to each
-batch. Anything specific to one provider lives here, not in the store or the
-daemon.
+Sinex is the substrate for everything the operator's life produces: shell history, browsers, the desktop session, mail, chat, exports from online services, files, devices, audio, and the AI sessions Polylogue sends. Its core takes a firehose, survives interruption, and says what it holds, what it failed to read and what it has not processed yet. Above the stored readings it builds derived events in layers (fused records, intervals, presence, activity, figures) and answers questions about all of it through one query language, recall, the CLI, MCP, HTTP and the reader web.
 
-`sinexd` runs the sources: `backfill` reads them to the end, and the daemon's
-binding runner reads them continuously. Both hand batches to the writer. A cursor
-records admitted progress; bytes being stored does not mean their records were
-read.
+## Scope
 
-`sinexd/src/intake.rs` is the one acquisition submission path. It stores the
-material through `drivers::prepare`, drains it, applies the effective class,
-seals when required, and sends each batch through the writer with the caller's
-cancellation and unlock checks. Reader polls, material storage and parsing run
-as owned blocking work, with at most four workers shared across bindings and
-requests. Bulk work uses at most three, leaving capacity for live requests. Each
-submission takes a permit before advancing its parser: two permits cover the
-committing batch and one parsed batch ahead. The next acquisition waits for
-every commit answer. A failed answer closes the batch channel and joins the
-parser before returning; provisional cursor and carry never advance stored
-progress. Dropping a submission also cancels its queued admission check. An API
-request uses one batch and refuses every record if any record fails to parse.
-The caller supplies priority and sealing access. Resuming a registered material
-uses its stored bytes and never registers its data key again.
+- **Sinex's concepts are its own.** Polylogue is about AI work: sessions, their lineage, and the accumulated understanding of them (Pages, annotations, judgments). Sinex is the substrate. Similar words do not make a shared concept, and neither product bends a concept to fit the other. Ruling, 2026-10-27: "it is not really about the feature being on one product or another. polylogue annotations are about ai work. sinex could potentially have some sort of its own, unrelated annotations" (cc:ee52794c-8a9e-43b6-9fbc-9749c7e78e8f:a5b1490b-01e2-4dd1-9c85-8370ccc4bfee).
+- **Polylogue runs alone or on Sinex.** On Sinex (primary mode) Polylogue is an outside producer and consumer like any other: it sends its materials and readings through the ingress and reads the confirmed stream. Sinex has no AI-session parser of its own. What Polylogue sends is described in [Polylogue's primary mode](https://github.com/Sinity/polylogue/blob/master/docs/primary-mode.md); the generic contract is [producers.md](producers.md).
+- **Code is shared only where the mechanics are identical:** the segment container ([hashed-blobs](https://github.com/Sinity/polylogue-sinex-common/blob/master/crates/hashed-blobs/README.md)), the query grammar and the logical day ([query-language](https://github.com/Sinity/polylogue-sinex-common/blob/master/docs/query-language.md)), the operation table and failure kinds ([command-surface](https://github.com/Sinity/polylogue-sinex-common/blob/master/docs/command-surface.md)), the web frame ([web-shell](https://github.com/Sinity/polylogue-sinex-common/blob/master/docs/web-shell.md)), the signal rules ([signals](https://github.com/Sinity/polylogue-sinex-common/blob/master/docs/signals.md)) and the test tooling ([devkit](https://github.com/Sinity/polylogue-sinex-common/blob/master/crates/devkit/README.md)).
 
-Library roots are planned by their format. Crawl commands supply their filtered
-URL list to a reader in memory; only the allow list, limit and pause are binding
-settings. Both are read by the binding runner. A library file selection
-is a scan of that file within its root; files beside it are neither read nor
-reported removed. File and directory selections inside a configured root use
-that root's item identities. An unreadable entry records a scan failure and the
-walk continues elsewhere; earlier facts under the unreadable path stay in
-place until a successful retry. A scan records only paths whose size, modification time,
-device, inode or stored-byte setting changed, plus paths found missing.
-Unchanged polls write no material or copy events. One completion record closes
-each changed scan after its last part; it produces no copy event. Unchanged
-facts reuse the previous hashes and media metadata, including after restart.
-Each copy has a key made from the host, resolved root and original relative
-path. The captured material identifies each scan part; its part index orders
-changes even when clocks repeat or move backwards. A move within the root
-keeps that key when the old path is missing and the bytes match: a unique
-device and inode match takes precedence, otherwise a unique equal-content
-match is required in both directions. The scan compares all possible matches
-before emitting its first part. Ambiguous copies list their move candidates,
-create new items and leave existing curation separate. A new file at a moved
-item's original path gets a key that also names its first scan material, so
-two present files cannot take the same item key. Changed bytes at the same key create a
-revision named by the content hash, including replacement by another inode.
-Moving or renaming a whole root starts new items until an explicit root
-relocation is recorded. Root relocation recording is not yet implemented.
+## Principles
 
-`library.items` derives items and original renditions from visible scan
-records. Item IDs are hashes of their keys; original rendition IDs also name
-the content hash. Rendering a preview records `library.preview`, which the
-same derivation turns into a rendition with both the rendering and its scan
-evidence as parents. Hiding a scan invalidates its derived outputs; the runner
-recomputes them from the latest visible change at each path. An item and its renditions
-stay visible when another scan supplies their evidence. Revisions are content
-hashes, so hiding an earlier scan cannot change their identities.
-Revision history follows ordered copy records, so A to B to A keeps all
-three transitions while reusing A's rendition. Library commands report actual
-admission counts and wait for their requested keys through the same batched
-computation engine as the background runner. A shared lock serializes keyed
-computations before reading inputs, so an older read cannot overwrite a
-command's newer outputs. Item keys with the same input range share one paged
-query over all their values, rather than reading the library once per item. Command runs end on both success and failure.
+**Raw bytes are truth; events are readings.** Everything stored above the bytes is an interpretation that can be regenerated by reading the bytes again; every event points at the byte range it came from or at the events it was derived from. Ruling, 2025-12-28: "that SOMETHING, the exact byte stream, is transparently captured into source materials. At least conceptually, EVENTS ARE CREATED FROM THESE SOURCE MATERIALS." (codex:019b609a-340f-7053-ba60-55f4aee3830b@2025-12-28T14:10Z). See [materials.md](materials.md) and [events.md](events.md).
 
-Schema version 5 adds the scan identity fields and the preview evidence type.
-It upgrades databases without library records. A database containing library
-records is refused before any schema or data changes: its request-created
-IDs and external references need an explicit migration decision.
+**One ingestion concept: staging.** History and live input take one path: stage, acquire material, parse, admit. A continuous source is a staged input declared in configuration; a one-shot import is the same thing done once. See [materials.md](materials.md#staging).
 
-Crawl reads URLs from the `visit.fused` derivation, or from the command's
-explicit URLs. The command filters allowed domains and already fetched URLs
-before applying the caller's optional limit. Crawl requests run one at a time so the binding's cursor belongs to one
-URL list. A second request refuses with "a crawl is running". The journald service uses `sinex-session capture journald`, which builds
-capture from the format registry and stops it through the shared capture lifetime.
+**Nothing is deleted by default; deletion is a lifecycle.** Readings are live, then archived (reversible), then tombstoned (irreversible, archived only), and whole chains move together. There is no automatic retention: material is kept until the operator archives it. See [lifecycle.md](lifecycle.md).
 
-### Stored bytes and admission
+**Invariants by construction, not repair.** A crash leaves only states that the ordinary open path treats as normal (see [durability](#durability-order)). There is no repair, reconcile or verify-and-fix command and no scheduled check, because a state that needs repairing is a defect in the code that produced it.
 
-`StoredBytes` has three forms: an unnamed file of framed records, shared
-in-memory records, or a stored blob. A stored blob can supply its decoded
-record reader when reopened; an archive instead supplies decoded records
-separately. Storing and draining use those same bytes on retries. Plain seekable inputs use
-`put_seekable`: repeated content is verified without recompression. Each completed
-input pass records its name before installation, including the compression pass
-when a file changes after its first hash pass.
+**No arbitrary limits.** Batch, turn and page sizes schedule work; nothing truncates or refuses valid input, and paged answers continue. See [query.md](query.md) and [interfaces.md](interfaces.md).
 
-A driver's bytes are written to the content store before the batch that cites
-them is admitted. Admission inserts the material and its `core.blobs` row in
-the same transaction as its first events and the cursor. Only excision deletes
-bytes: it marks a blob `deleting` once nothing cites it, and the writer deletes
-the file under that row's lock, then the row. Deletion and admission both run
-in the writer, and the writer checks that every file a batch cites is present
-just before admitting it, so a batch never cites a file that is gone. A
-process that stops between writing bytes and admitting them leaves a file with
-no row. Before installing a blob, the content store syncs its name in
-`unadmitted-blobs/`. The daemon checks those names against the database at
-start, holding the writer, before any source reads. After draining the writer
-at shutdown it removes the names that have rows. The first start of an existing
-store checks every file once, then syncs `unadmitted-blobs-ready` with the
-database system identifier, name, highest event commit position and blob-change
-counter. The counter also advances for material admissions that produce no events.
-Later starts check only the recorded names when the database identity matches
-and both positions have stayed the same or advanced; a different database or
-a rollback requires a full scan. Clean
-shutdown saves the new position after forgetting admitted names.
+**Privacy never limits capture.** Privacy acts at output, through configured field-level rules, none shipped enabled, so stored payloads stay raw and a rule change needs no reprocessing. See [privacy.md](privacy.md).
 
-A failed admission is retried from the material the reader holds: the append,
-directory, SQLite-row and IMAP readers keep their newest material in memory
-until its final cursor is admitted, then read on. After a restart nothing
-unadmitted is kept; the reader continues from the committed cursor, and a
-material admitted only in part is completed by reading the source again. The
-new part's manifest records how much of the part before it was admitted
-(`previous_through`), and replay reads that part only that far.
+**Agents are primary users.** They get no fewer powers than the operator; what distinguishes the operator is authorship, which the daemon computes and no caller supplies. See [interfaces.md](interfaces.md).
 
-### Restart
+**Throughput is a product requirement.** Sources emit one event per record they read, and coarser views are derivations, so the finest grain stays queryable; the write path is built to carry that. Ruling, 2026-05-01: "If the system can't handle firehose of events, the system is pointless." (chatgpt:69f4b37f-ebc8-83eb-a356-f21885b03f05:5c7da4ca-2e26-40cd-b1f3-25132fe1121b). See [targets](#throughput-targets).
 
-Each reader rebuilds what it remembers through the `Reader` trait: it names
-the material its committed cursor points at, and the daemon offers it that
-material and the parts before it, newest first, until the reader has enough.
-The parts are read a page at a time, so a reader that stops early reads no
-more of the part sequence. The append reader keeps the tail of the current
-revision's records, to align a rewrite. It frames stored parts in chunks and
-keeps only the tail's range metadata, including one oversized record whole.
+**Sources read external formats.** A source reads data as an outside service or program produces it (an export archive, a database another program writes, a protocol stream), not a format the operator once invented to hold data; an exception is allowed but is the exception ([external formats](sources.md#external-formats)).
 
-The SQLite-row reader keeps each row's newest hash and the directory reader
-each file's size, modification time and content hash. Both save this reader
-memory with the cursor at the end of a part: at their first part, once the
-entries stored since the last save reach a quarter of what they remember, and
-at least every 1,000 parts. `raw.reader_memory` keeps only the latest per
-binding, replaced in the cursor's transaction. A restart stops the walk at the
-part the memory was saved at and takes the rest from the memory, so it reads
-at most 1,000 parts, and an unchanged row or file is not stored again.
+**Window managers and terminals are ordinary sources.** Hyprland and Kitty are data sources like any other, captured behind interfaces that make adding another compositor or terminal a new source declaration rather than a change to the core ([sources](sources.md#window-managers-and-terminals)).
 
-A binding is either polled alone through `Reader` or read in a pass over a
-stored file shared with every compatible binding of that file (`SharedPass`,
-export archives). These are the two reader interfaces. A polled driver
-implements `Reader` directly, including drivers with no reader memory. Capture
-is a separate operation that fills a spool, not an alternate reading path.
-A shared-pass binding keeps no memory: its cursor names the
-stored copy and the next record, so a restart reads on from there, and a
-cursor that already covers the unchanged file reads nothing.
+**No part of Sinex depends on the operator's host.** No path, zone, day start, account name or host routing is written into the code or the repository: each is configuration, and vendor facts (the zone a service writes its timestamps in) are source declarations. Anyone with Nix builds, tests and deploys Sinex with plain commands. See [operations.md](operations.md#configuration).
 
-A sealed part keeps the binding sealed after its class is lowered. The daemon
-does not know which driver a binding uses.
+## Data flow
 
-### Drivers
+```
+source ──► stage ──► material (segment log) ──► parse ──► admission ──► PostgreSQL
+                                                              │            │
+                                       outside producers ─► NATS ingress   ├─► read models (search, detector hits)
+                                                                           ├─► in-daemon derivations ─► admission
+                                                                           ├─► confirmed stream ─► outside consumers
+                                                                           └─► query, recall, CLI, MCP, HTTP, web
+```
 
-- **SQLite rows.** One read transaction covers the schema check and the row
-  query, so SQLite's own locking gives a committed view. A locked database is
-  unavailable for that poll. The first poll after a start reads every row and
-  stores only those whose hash changed.
-- **IMAP.** An answer records the UIDs it holds and the server's UID window. A
-  cursor inside an answer resumes at its first UID, so a restart fetches the
-  whole answer again and admission drops the repeats.
-- **Directory snapshots.** Changed files stream into one unnamed bundle. Each
-  file is preceded by one byte outside its source range, so empty files have
-  distinct anchors. The cursor confirms the reader's file facts only at the
-  bundle's last byte.
-- **Export archives.** An archive is stored once and read in one forward pass
-  for every compatible binding (same host and class); each binding keeps its
-  own record parts and cursor. A sealed archive uses one key per binding.
-  After a restart the stored archive is read again from each cursor; the
-  rest of a part only partly admitted becomes a new part.
+1. **Acquisition.** A source declaration names its inputs and how they change; a driver acquires bytes from an input and stores them as material in the segment log before any event cites them. Live streams are saved as material parts as they arrive, never only parsed in flight. See [sources.md](sources.md), [streams.md](streams.md) and [materials.md](materials.md).
+2. **Parsing.** A parser reads one framed record at a time from stored bytes and opens no files, sockets or clocks; a record it cannot read becomes a record failure tied to its bytes. See [admission.md](admission.md#failures-and-progress).
+3. **Admission.** One function stores every event, in one transaction with the cursors, failures, dirty keys and the operation that cover it, run by one writer. Writes inside the daemon (its own sources, derivations, replay, lifecycle operations, API requests) go straight to it; writes from outside the daemon (Polylogue, `sinex-session`, `sinex-capture`, any program in any language) arrive through the [NATS ingress](producers.md). See [admission.md](admission.md).
+4. **Identity and liveness.** Admission classifies every reading against the live tables, so each record has exactly one live reading: a repeat is suppressed, a newer changed reading supersedes. See [events.md](events.md) and [admission.md](admission.md#liveness).
+5. **Commit order.** Every admitted event and lifecycle change takes a commit position. Readers in the daemon follow the commit log; every committed change is published in commit order on the [confirmed stream](producers.md) for consumers outside it.
+6. **Derivation.** Derivations inside the daemon read PostgreSQL in commit order and admit their outputs directly; derivations outside are durable subscribers of the confirmed stream and send their outputs back through the ingress. Derived events are the one store of derived results. See [derivations.md](derivations.md) and [higher-layer.md](higher-layer.md).
+7. **Reading.** Queries, recall, the CLI, MCP, HTTP and the reader web read the live set (or an as-of set) through the output rules of [privacy.md](privacy.md). See [query.md](query.md), [recall.md](recall.md), [interfaces.md](interfaces.md) and [web.md](web.md).
+8. **Lifecycle.** Archive, restore, replay, undo and tombstone are operations through the same admission path, moving whole chains. See [lifecycle.md](lifecycle.md).
 
-### Typed payloads
+## Components
 
-Notes keep the complete text, the file time and `(vault, path)` identity, and
-add a title, a native note ID, sorted tags and wikilinks. The YAML front matter
-is parsed into JSON values or reported as absent, invalid or unsupported, with
-only an error kind and position; the text is kept either way.
+**The daemon, `sinexd`,** holds the one writer and the admission function, the binding reader that runs continuous sources, the publisher that feeds the confirmed stream, replay, the derivation runner, the read-model consumers, the API (Unix socket and HTTP), the reader web and status. Database work lives only in the daemon.
 
-Steering rows, Sinnix lake observations and health records are decoded into a
-type chosen by their table, lane or category before their fields are read. A
-malformed known field is a record failure with its bytes kept. Fields the type
-does not know are kept, and the event lists their JSON pointers in
-`unknown_fields`; a category with no type at all is marked `untyped: true`.
-Samsung account tables other than health stay generic `account.row` rows,
-always marked `untyped`.
+**The stores.** PostgreSQL with TimescaleDB is the store of record, every position included. Raw bytes live in an append-only segment log beside it. NATS with JetStream carries the ingress work queue and the confirmed stream; it holds no position Sinex depends on, and the confirmed stream can be rebuilt from PostgreSQL. See [admission.md](admission.md#storage-representation).
 
-### Outside producers
+**Clients and producers.** `sinexctl` is the CLI and the MCP server, a client of the daemon with no store dependency; offline diagnostics invoke the sibling `sinexd admin diagnostics` command while the daemon is stopped. `sinex-session` captures the desktop session as the operator's user, and `sinex-capture` runs capture on a host or for a stream outside the daemon; both are outside producers with their own spools, built on the one producer client. `sinex-schema` creates and upgrades the schema. CLI, MCP and HTTP are generated from one operation table. See [interfaces.md](interfaces.md) and [producers.md](producers.md).
 
-`sinex-session`, `sinex-capture` and Polylogue send frames over the NATS
-ingress. The bytes a frame needs go in that frame's directory under the
-content store root (`sinex_transport::frame_bytes`): a producer on the same host
-writes them there, and one elsewhere sends them in chunk frames. Sinex copies
-the bytes, checks them against their name, stores them, admits the frame and
-records its acknowledgment in one transaction, then removes the frame
-directory. A frame sent again is answered from that record. A producer keeps a
-batch's frames and the position after them until every frame is acknowledged,
-and sends them again after a restart. In a store root with mode 2770, frame
-directories are 2770 and finished files 0640, so a producer running as another
-user in the store's group can hand over bytes without write access to the
-content store. Producer bytes are never stored sealed. A producer pages
-through the materials it registered (`<root>.materials.<producer>`), so one
-that keeps nothing of its own rebuilds from Sinex what it sent.
+**Declarations.** Kinds (with field hints and search participation), sources, derivations, consumers and streams are each declared once in Rust; the generated references ([kinds](reference/kinds.md), [sources](reference/sources.md), [derivations](reference/derivations.md), [settings](reference/settings.md), [commands](reference/commands.md), [query tables](reference/query-tables.md)) and the NixOS module are produced from those declarations.
 
-Polylogue is the producer for AI sessions. Each file an AI tool wrote is a
-material of its real input (origin, path, host), a growing file a chain of
-parts, named with the Polylogue parser that reads it. Polylogue parses it and
-sends `polylogue.session`, `polylogue.message`, `polylogue.tool_call` and
-`polylogue.turn` events anchored at their records and keyed by Polylogue's own
-IDs, so the same message in two files, or read again by a changed parser, is
-one occurrence whose newer reading replaces the older. Notes, settings, kept
-results, deliveries and excisions arrive as small request materials with one
-event each. A type can declare the least class its events are stored
-under (`class = guarded` on `polylogue.message`), whatever class the producer
-asks for. Sinex has no AI-chat parser of its own.
+## Durability order
 
-The outside producers start their capture threads with `sinex-sources::live`,
-which registers signal handlers first and stops every capture before joining
-it. `capture::CaptureStop` owns interruptible waits, socket shutdown and child
-process groups: it interrupts a group, escalates after 250 ms, and reaps its
-children, including descendants adopted through Linux subreaper support.
+Every write follows one order, so a crash at any point leaves a state the ordinary code resumes from:
 
-## Storing and deriving
+1. Bytes are appended to the segment log and synced.
+2. The extents and the rows that cite them commit in one transaction.
+3. Every derived store (derivation runner, read models, publisher) saves the position of what it applied in the same transaction as the applied rows.
+4. Source cursors and producer positions are saved only for committed rows.
 
-`sinex-store` owns PostgreSQL access, the content store and admission. The
-daemon's writer schedules the transactions; admission stores events and source
-progress together and marks the derivation keys they affect. No other code
-inserts events.
+**The writer's use of the segment log.** The single writer appends a group's new blobs, issues one sync per group on a dedicated thread overlapped with the next group, and commits the extents in the same transaction as the rows that cite them. Deduplication checks the hash index plus the hashes appended in groups not yet committed. A segment opens at its last committed extent and truncates any tail; a tombstoned extent that is marked but not yet punched is punched on open. The container format (seekable zstd frames, plain or sealed, member access, hash checks) is [hashed-blobs](https://github.com/Sinity/polylogue-sinex-common/blob/master/crates/hashed-blobs/README.md).
 
-`sinex-derivations` holds computations over supplied events. The daemon's
-derivation runner reads their inputs and submits each key's new outputs
-through admission. Derived events are the one store for derived results:
-nothing a derivation or an analysis computes is kept anywhere else.
+**Crash states.** A crash leaves at most one of the following, and ordinary code resumes each:
 
-A key reads events of some kinds in a time window: a kind is an event type,
-optionally only the events whose payload fields have given values (Sinnix lake
-observations of one lane, journal entries of one priority), so a key never
-reads a whole type to use a sliver of it.
+| State left | Resumed by |
+|---|---|
+| an uncommitted segment tail | truncation when the segment opens |
+| an unpunched tombstoned extent | the punch when the segment opens, or at the writer's next group |
+| a derived store behind its saved position | the consumer reading on from its position |
+| a source position behind its committed rows | re-reading from the committed cursor; admission suppresses the repeats |
 
-### Fusion
+How the positions themselves are stored is in [admission.md](admission.md#commit-log-and-positions); backups record the same boundary ([operations.md](operations.md#backup-and-restore)).
 
-Several sources often see the same thing: Atuin and zsh the same command,
-the compositor and ActivityWatch the same focus, a browser's history and its
-Takeout export the same visit, Sinex's live capture and the Sinnix capture
-lake the same clipboard change, notification or track, IMAP and an mbox the
-same mail. One mechanism joins
-them (`sinex-derivations/src/fusion.rs`). Each fused kind is a rule in
-`fusion/rules.rs`: its inputs in preference order, each reading one
-source's events as fusion records of something with an identity, a start and
-perhaps an end, and the windows within which fusion records match. Fusion records of
-one identity pair closest first within a short window, then within a longer
-one when the pair is unambiguous. For kinds whose fusion records are spans or
-repeat (focus, plays), a group whose start falls inside a group led by a more
-preferred source joins it: ActivityWatch's title changes inside a focus the
-compositor reported, a player's reports of a track a streaming export holds.
-The fused event (`command.fused`, `focus.fused`, `visit.fused`, `play.fused`,
-`clipboard.fused`, `notification.fused`, `mail.fused`) takes its times from its most
-preferred member and each field from the most preferred member that has it,
-names every member as a parent and lists the sources in `observed_by`. A
-record no other source saw is fused alone, so a fused kind counts each thing
-once whichever sources were running. Metrics and aliases read the fused
-kinds.
+## Pipeline
 
-### Metric figures
+No stage waits on another that has nothing to do with its data, and the one serial stage only appends and commits:
 
-A metric (`sinex-derivations/src/figures.rs`) declares the kinds it counts,
-how it counts them (events, seconds of their intervals, or a ratio of two
-counts), the fields it breaks down by, and the sources whose coverage says a
-day was observed. `metric.hourly` writes one `metric.figure` per civil hour
-and breakdown value from a logical day's inputs; `metric.daily` adds a day's
-hourly figures up, never reading the inputs. Each figure names what it
-counted as parents.
+- **acquisition** of bytes from inputs, live inputs before bulk;
+- **parsing** on blocking workers with permits, at most one batch parsed ahead of the batch awaiting its answer, memory bounded by waiting;
+- **one writer**: one classification snapshot, one binary `COPY` and one commit per batch;
+- **bulk transactions bounded by duration**, with live batches served between them;
+- **consumers** (derivations, read models, publisher) each with their own position.
 
-`sinex-analysis` reads those figures, never the events under them. A panel
-reads the daily figures through the query language (`figures`) with the
-caller's grants and the coverage of each metric's sources at the same commit
-position, from the store's runs and records; a day is observed, partly
-observed, recorded with unknown coverage, or missing with its reason, so a
-zero is only ever a measured zero. Methods (correlations, trends, change
-points, deviations) and the brief run over panels when asked for. Their
-answers are not stored: they depend on coverage, which is not an event, and
-asking again at the same commit position gives the same answer.
+The writer's priorities and transaction are in [admission.md](admission.md#admission-and-the-writer); capture-side costs are in [sources.md](sources.md).
 
-The commit log orders committed events and visibility changes (hide, unhide,
-replacement). Hide and unhide change what is live and append to the visibility
-history in one transaction. Readers move past positions an excision left
-empty. Time lookups use stored events and the visibility history, so pruning
-the commit log loses nothing. The publisher sends committed events on the
-confirmed stream, with `Archived`, `Unhidden` and `Excised` messages.
+## Throughput targets
 
-On shutdown the derivation runner finishes its current pass and releases its
-writer handle; the writer drains queued work once every producer has released
-its handle. The supervisor gives tasks ten seconds before stopping them.
+Targets are hardware-independent: every figure is reported as bytes per event, bytes kept per event, WAL per event, syncs per group and stage utilisation, together with the absolute rate on whichever host ran it. Host tuning is deployment configuration. Ruling, 2026-10-27: "dont overfit to current hardware" (cc:ee52794c-8a9e-43b6-9fbc-9749c7e78e8f:453f3ef1-80cc-4269-8de5-13764daa556b).
 
-`sinex-schema` declares the current schema in Rust. `sinex-schema apply`
-creates it in an empty database, or upgrades a deployed database through the
-numbered forward upgrades in `upgrades.rs`, in one transaction and only while
-no writer holds the database; a newer version is refused, and no other command
-creates or changes the schema. Each upgrade keeps every row, and the
-declarations carry the same change, so a fresh database matches an upgraded
-one. Checked SQL in `sinex-store` compiles against that schema.
+| Target | Value |
+|---|---|
+| admitted, searchable and acknowledged source events | at least 15,000/s on a busy host, 40,000/s on a quiet one |
+| live latency, submission to commit, during backfill or replay | p99 at most 1 s |
+| idle stages | none while a queue waits for them |
 
-### Volume
+Write-path targets (lifecycle operations on compressed chunks, segment throughput) are in [admission.md](admission.md#performance); query and command latency budgets in [interfaces.md](interfaces.md); how figures are measured in [testing.md](testing.md).
 
-Every source makes one event per record it reads: a Fit point, a journal
-entry, a network flow, a shell command. No parser combines records to keep
-the count down; coarser figures are derivations, so the finest grain stays
-queryable and the coarse views can be recomputed from it.
+## Configuration and clocks
 
-Admission is sized for that. A batch of up to 10,000 events is staged with one
-`COPY` and classified and written by a fixed number of set-based statements,
-so its cost grows with rows, not round trips. Equivalence keys are hashes,
-so the live side tables are written in key order; even so, once the key index
-outgrows PostgreSQL's buffers, a batch touches most of its pages, and that
-and the event indexes are where admission spends its time (`xtask bench
-synthetic` reports it by statement).
+**A setting is read once, typed, and passed explicitly.** Each binary's `main` loads one typed configuration (the deployment's configuration file, then flags, then environment variables where meaningful) and validates it there: the zone resolved to a named zone (refusing to start otherwise), the day start checked, paths absolute. That value and a `Clock` are passed to every component. Libraries never read the environment or the system zone, and no component has a default constructor for a setting, so no setting can be re-read with a different default where it is used.
 
-Health figures show the shape for a dense series. `health.hourly` reads one
-civil hour of Google Fit points and writes one `health.figure` per data
-source (count, sum, minimum and maximum per value), naming the points as
-parents. `health.daily` reads a logical day's hourly figures, never the points;
-the logical day is the operator's time settings (`TimeSettings`) (Europe/Warsaw, from 04:00),
-the same one the metric figures use.
+**One home per setting.**
+- **Deployment configuration** holds what the operator sets for a machine; what it contains and where it comes from is in [operations.md](operations.md#configuration).
+- **Changeable settings** (quiet hours, the interrupt budget, enabled variants, briefing switches) come from a declared catalog with a type, default and scope per key. Writes are validated and unknown keys refused; the daemon holds a typed snapshot, replaces it on change and passes it on.
+- **Source options are typed** and reject unknown fields; **vendor facts are source declarations** (a service that writes local times in one zone says so in its declaration).
+- **Each default is defined once;** integrations in other languages (Kitty, Neovim) read one variable the deployment sets.
 
-The derivation runner reads a pass's keys a page at a time: adjacent keys
-share one paged query, and a key is computed as soon as the pages pass its
-end, so the runner holds a page and the keys still open, not every key's
-inputs. A key's own inputs are held whole, so a derivation over a dense series
-keys by hour.
+**One logical day.** One type, `DaySetting` (a named zone and a start), with one implementation in [query-language](https://github.com/Sinity/polylogue-sinex-common/blob/master/docs/query-language.md), used by queries, SQL generation, derivations, analysis, recall and rendering. A zone travels with its name, so SQL never falls back to UTC. The setting and its default are in [operations.md](operations.md#logical-day).
 
-## Interfaces
+**Outputs record their settings.** Derived outputs and cursors record the settings they were made under, and a changed setting re-derives them through the ordinary version mechanism of [derivations.md](derivations.md).
 
-`sinex-model` holds identities and payloads. `sinex-protocol` declares the
-public commands and wire types without IO. `sinex-transport` holds the
-private-mode switch and the frame directories, so the daemon, drivers and CLI
-share them without the wire types touching the filesystem. CLI, MCP and HTTP
-are generated from the command table. `sinex-diagnostics` is a database-free client of `sinexd admin diagnostics`.
-Offline commands invoke the sibling daemon executable without starting the
-daemon. The database work lives in the daemon; the CLI has no store or SQLx
-dependency.
+**One instant type, one clock, one error enum.** Sinex has one instant type, one `Clock` passed in (tests drive it), and one error enum whose kind names are stable on the wire; conversions happen only at the storage boundary.
 
-Forecast issues and resolutions are ordinary `forecast.request` records. Both
-commands use `sinexd/src/intake.rs`, as library requests do: one
-material, stored and then admitted in one batch. The parser takes the caller's
-role and the submission time from the material's manifest. The report reads
-the live issues, resolutions and evidence in one transaction and scores them
-with `sinex-analysis`; nothing about forecasts is cached.
+## Laws
 
-Query aliases read only kinds something produces: `commands`, `focus`,
-`visits` and `plays` the fused kinds, `figures` the metric figures,
-`intervals` and `now` the state intervals.
-
-The `shell-sessions` query alias reads the `shell.session` derivation; `start`
-and `observed_until` cover the recorded commands, including a last command of
-unknown duration. `recall last` picks the latest matching session with the
-ordinary query compiler and reads every source in its span, at one commit
-position. When no session matches, it says no session is known, not that
-nothing was recorded.
-
-A query continuation is bound to its question, the caller's grants, the
-resolved clock and time settings, and the commit position. It also carries the
-answer's size, counted on the first page, and a hash of the rows already
-handed out; when excision or a metadata change alters those rows, the
-continuation is refused and the query must be asked again. A page reads the
-numbered answer only up to its own last row, so it costs the rows before it,
-never the whole answer.
-
-Every output goes through credential masking. A JSON key that looks like a
-credential refuses the whole reply, since renaming the key could change the
-object's meaning. Follow streams check a page before sending its first row.
-
-Shared blob storage, credential masking and the development tooling come from
-released `polylogue-sinex-common` versions.
-
-## Sealing and excision
-
-`sinex-sealing` owns age and payload cryptography. The daemon's `sealing`
-module handles material keys, stored reads and batch protection through one
-material-reading interface. The store holds only the wrapped-key queries.
-
-A sealed source encrypts each material under its own data key, wrapped for the
-sealed class key; its events' payloads are encrypted under the same key, and
-their equivalence keys and record hashes are keyed hashes. Capture needs only
-the class key's public half. Reading sealed payloads, replaying sealed
-materials and continuing a sealed archive need an operator unlock.
-
-Excision (`excise`) is a rare operator action. It removes one record (or one
-material the operator names): every reading of it, every event derived from
-it, and its bytes. It works on whole materials: a record is excised only when
-every material it was read from holds nothing else, and each such material
-goes whole: its row, its failures, the producer frames that registered it,
-and its blob once nothing else cites it; an input left with no material goes
-too. Only the material's ID and digest stay (`core.excised_materials`), so
-the same bytes are refused if they are registered again. A later part, or a
-binding's cursor, that named a removed material names the part before it; a
-material a later part continues inside is refused. A tombstone (identity and time) stays for each event. The request is
-recorded once in
-`core.operations`, planned, and applied by the writer in one transaction
-after a fresh plan matches; running it again finds only what is left. Nothing
-that is not the record changes: a material other records share is never
-touched, and equal bytes elsewhere are other records and stay.
-
-Excision refuses, before anything changes, what it cannot remove cleanly.
-Only sources whose every stored copy of a record is one of its readings
-declare themselves excisable (`SourceSpec::excisable`): the live streams with
-records identified by their location (clipboard, file changes, Hyprland,
-MPRIS, notifications, editor and terminal sessions), media capture and
-forecasts. Every other source can read a record again or store another copy
-of it: an append-only file is rewritten, SQLite rows and directories are read
-again, an API cursor fetches again, an export archive holds the original
-bytes of every record in it, and a request can repeat a record. The
-operator's excision of their records is refused, as is excision of a record
-that shares its material with other records, of sealed material, of a
-derived event (excise what it was derived from), and of a material whose
-bytes another part of the same revision shares.
-
-An outside producer knows which of its materials hold what, so it excises
-its own: a request on `<root>.excise.<producer>` names whole materials it
-registered, and runs the same excision with the producer as the actor. A
-material another producer or a binding registered is refused, and nothing
-changes. An excised material is no longer listed on
-`<root>.materials.<producer>`. The operator's excision refuses producers'
-materials.
+- **crash-leaves-no-row-citing-missing-bytes**: a crash at every point between append, sync, commit and truncate leaves no committed row citing missing bytes and no unrecorded bytes after the segment opens.
+- **crash-states-resume-by-ordinary-open**: after a crash at any point, the next start finds at most an uncommitted tail, an unpunched tombstoned extent, a derived store behind its position or a source behind its rows, and resumes each with no repair step; the final state equals an uninterrupted run's.
+- **setting-read-once**: every component given the same configuration uses the same values; no library reads the environment or the system zone (checked by running components with a configuration that differs from the host's).
+- **unknown-setting-refused**: writing an unknown key or an ill-typed value to the changeable catalog is refused and changes nothing.
+- **outputs-record-their-settings**: every derived output and cursor names the settings it was made under; changing a setting re-derives the affected outputs and no others.

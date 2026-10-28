@@ -117,6 +117,38 @@ impl RecordContext<'static> {
 }
 
 impl RecordContext<'_> {
+    /// A moved file is a new reading even when its bytes are unchanged.
+    /// Bundle offsets are excluded: packing files must not change a reading.
+    pub fn hash_with_path(&self, raw: &[u8]) -> [u8; 32] {
+        let bytes_hash = blake3::hash(raw);
+        let Some(path) = self.path() else {
+            return *bytes_hash.as_bytes();
+        };
+        let mut hash = blake3::Hasher::new();
+        hash.update(b"record path\0");
+        hash.update(bytes_hash.as_bytes());
+        hash.update(path.as_bytes());
+        let native = self
+            .member
+            .and_then(|member| member.details.get("native_path_bytes"))
+            .unwrap_or_else(|| self.manifest.detail("native_path_bytes"));
+        if let Some(native) = native.as_str() {
+            hash.update(b"\0native_path_bytes\0");
+            hash.update(native.as_bytes());
+        }
+        if let Some(node) = self.member.and_then(|member| member.node.as_ref()) {
+            hash.update(b"\0file node\0");
+            // Reading changes access time; packing chooses attribute offsets.
+            let mut facts = node.clone();
+            facts.atime_ns.clear();
+            for attribute in &mut facts.extended_attributes {
+                attribute.value_at = 0;
+            }
+            hash.update(&serde_json::to_vec(&facts).expect("file node serializes"));
+        }
+        *hash.finalize().as_bytes()
+    }
+
     /// The member's path, or the material's own `path`.
     pub fn path(&self) -> Option<&str> {
         self.member
@@ -220,9 +252,8 @@ impl<'a, P: Parser> Drainer<'a, P> {
         match parse_one(self.parser, raw, &self.carry, &context) {
             Ok((payloads, next)) => {
                 self.carry = next;
-                // A record shape's own hash that panics falls back to the
-                // bytes' hash rather than stopping the run.
-                let hash = record_hash::<P>(raw);
+                // A hash panic falls back to bytes rather than stopping the run.
+                let hash = record_hash(self.parser, raw, &context);
                 let order = (input.reading_order)(start);
                 let mut events = Vec::with_capacity(payloads.len());
                 let mut failure = None;
@@ -273,10 +304,15 @@ impl<'a, P: Parser> Drainer<'a, P> {
     }
 }
 
-/// Shared with acquisition exclusion matching, including records emitting no events.
-pub(crate) fn record_hash<P: Parser>(raw: &[u8]) -> [u8; 32] {
-    std::panic::catch_unwind(|| <P::Record<'_> as RecordShape>::hash(raw, P::VOLATILE))
-        .unwrap_or_else(|_| *blake3::hash(raw).as_bytes())
+pub(crate) fn record_hash<P: Parser>(
+    parser: &P,
+    raw: &[u8],
+    context: &RecordContext<'_>,
+) -> [u8; 32] {
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        parser.record_hash(raw, context)
+    }))
+    .unwrap_or_else(|_| *blake3::hash(raw).as_bytes())
 }
 
 fn empty_chunk() -> DrainOutput {
@@ -326,14 +362,25 @@ impl<P: Parser> Iterator for Drainer<'_, P> {
                     ))));
                 }
             };
+            let raw = match crate::drivers::dir_snapshot::decode_record(
+                self.input.manifest,
+                start,
+                raw,
+            ) {
+                Ok(raw) => raw,
+                Err(error) => {
+                    self.finished = true;
+                    return Some(Err(error));
+                }
+            };
             // Only spaces and newlines: no record is there, so nothing is
             // read and nothing fails.
-            if is_blank(&raw) {
+            if !crate::drivers::dir_snapshot::is_directory(self.input.manifest) && is_blank(&raw) {
                 current.end = end;
                 continue;
             }
             let outcome = self.outcome(&raw, start);
-            let size = end - start;
+            let size = raw.len();
             let events = match &outcome {
                 RecordOutcome::Events { events, .. } => events.len(),
                 RecordOutcome::Failure { .. } => 0,
@@ -379,6 +426,17 @@ fn parse_one<P: Parser>(
     carry: &P::Carry,
     context: &RecordContext<'_>,
 ) -> Result<(Vec<P::Payload>, P::Carry), RecordError> {
+    if crate::drivers::dir_snapshot::is_directory(context.manifest)
+        && let Some(reason) = context
+            .member
+            .and_then(|member| member.details.get("read_error"))
+            .and_then(Value::as_str)
+    {
+        return Err(RecordError::new(format!(
+            "{}: {reason}",
+            context.path().unwrap_or_default()
+        )));
+    }
     // Decoding is the parser's code too: a panic there fails this record,
     // never the run.
     match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {

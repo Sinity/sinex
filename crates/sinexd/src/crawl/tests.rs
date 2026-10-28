@@ -1,6 +1,5 @@
 use super::*;
 use sinex_model::{ArchiveRequest, Batch, BatchKind, EventId, MaterialId, OperationId, RunId};
-use sqlx::Connection;
 
 #[devkit::test]
 async fn crawl_never_records_history_urls_in_binding_settings(db: devkit::pg::TestDatabase) {
@@ -41,7 +40,7 @@ async fn crawl_never_records_history_urls_in_binding_settings(db: devkit::pg::Te
         sqlx::query("INSERT INTO core.events(id,event_type,source,run_id,material_id,anchor,ts_quality,commit_seq,payload,equivalence_key,reading_order,record_hash,class) VALUES ($1,'visit.fused','synthetic.visits',$2,$3,0,'unknown',$4,$5,$6,0,decode(repeat('00',32),'hex'),'guarded')")
             .bind(id).bind(run).bind(material.0).bind(sequence).bind(serde_json::json!({"url":url})).bind(name)
             .execute(&mut ctx.read_conn).await.unwrap();
-        sqlx::query("INSERT INTO core.live_equivalence(source,event_type,equivalence_key,event_id,reading_order,record_hash) VALUES ('synthetic.visits','visit.fused',$1,$2,0,decode(repeat('00',32),'hex'))")
+        sqlx::query("INSERT INTO core.live_equivalence(source,event_type,equivalence_key,event_id,reading_order,record_hash) VALUES ('synthetic.visits','visit.fused',core.encode_equivalence_key($1),$2,0,decode(repeat('00',32),'hex'))")
             .bind(name).bind(id).execute(&mut ctx.read_conn).await.unwrap();
         visits.push((EventId(id), material, url));
     }
@@ -58,25 +57,23 @@ async fn crawl_never_records_history_urls_in_binding_settings(db: devkit::pg::Te
         .execute(&mut ctx.read_conn)
         .await
         .unwrap();
-    let mut tx = ctx.read_conn.begin().await.unwrap();
-    sinex_store::admit(
-        &mut tx,
-        &Batch {
-            run: RunId::new(),
-            kind: BatchKind::Api {
-                actor: "test".into(),
+    ctx.writer
+        .submit(
+            crate::writer::Priority::Bulk,
+            Batch {
+                run: RunId::new(),
+                kind: BatchKind::Api {
+                    actor: "test".into(),
+                },
+                records: vec![],
+                archive: vec![ArchiveRequest::Hide {
+                    target: visits[0].0,
+                    operation: OperationId::new(),
+                }],
             },
-            records: vec![],
-            archive: vec![ArchiveRequest::Hide {
-                target: visits[0].0,
-                operation: OperationId::new(),
-            }],
-        },
-        &sinex_store::NoDerivations,
-    )
-    .await
-    .unwrap();
-    tx.commit().await.unwrap();
+        )
+        .await
+        .unwrap();
     let target = sinex_store::excision::Target::Material(visits[1].1);
     let plan = sinex_store::excision::plan(&mut ctx.read_conn, target)
         .await

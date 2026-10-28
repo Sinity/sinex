@@ -4,6 +4,17 @@ use std::net::TcpListener;
 const M1: &str = "Message-ID: <1@x>\r\nFrom: a@x\r\nTo: b@x\r\nSubject: one\r\nDate: Mon, 5 Oct 2026 10:00:00 +0000\r\n\r\nhello\r\n";
 const M2: &str = "Message-ID: <2@x>\r\nFrom: a@x\r\nTo: b@x\r\nSubject: two\r\nDate: Mon, 5 Oct 2026 11:00:00 +0000\r\n\r\nworld\r\n";
 
+/// A poll by a reader that remembers no message.
+trait PollFresh {
+    fn poll_fresh(&self, cursor: &Value) -> Result<Acquired, DriverError>;
+}
+
+impl PollFresh for ImapMail {
+    fn poll_fresh(&self, cursor: &Value) -> Result<Acquired, DriverError> {
+        self.poll(cursor, &Known::new()).map(|p| p.acquired)
+    }
+}
+
 /// A scripted IMAP server: answers LOGIN/AUTHENTICATE, SELECT and UID
 /// FETCH from `messages` (uid, body).
 fn server(messages: Vec<(u32, &'static str)>, uid_validity: u32, expect_token: bool) -> u16 {
@@ -56,6 +67,14 @@ fn server(messages: Vec<(u32, &'static str)>, uid_validity: u32, expect_token: b
                         }
                     }
                     out + &format!("{tag} OK fetched\r\n")
+                } else if let Some(range) = cmd.strip_prefix("UID SEARCH UID 1:") {
+                    let highest: u32 = range.trim().parse().unwrap();
+                    let uids: Vec<String> = messages
+                        .iter()
+                        .filter(|(uid, _)| *uid <= highest)
+                        .map(|(uid, _)| uid.to_string())
+                        .collect();
+                    format!("* SEARCH {}\r\n{tag} OK searched\r\n", uids.join(" "))
                 } else if cmd.starts_with("LOGOUT") {
                     let _ = s.write_all(format!("* BYE\r\n{tag} OK bye\r\n").as_bytes());
                     break;
@@ -99,7 +118,7 @@ fn mail(port: u16, password: Option<&str>, token: Option<&str>) -> ImapMail {
 fn new_messages_are_fetched_after_the_cursor_and_parse() {
     let port = server(vec![(4, M1), (7, M2)], 99, false);
     let imap = mail(port, Some("secret"), None);
-    let a = imap.poll(&Value::Null).unwrap();
+    let a = imap.poll_fresh(&Value::Null).unwrap();
     let m = a.material.unwrap();
     assert_eq!(m.records.len(), 2);
     assert_eq!(&m.bytes[m.records[0].0..m.records[0].1], M1.as_bytes());
@@ -110,7 +129,9 @@ fn new_messages_are_fetched_after_the_cursor_and_parse() {
         super::super::mail::parse_message(&m.bytes[m.records[1].0..m.records[1].1]).unwrap();
     assert_eq!(parsed.subject.as_deref(), Some("two"));
     // Nothing after UID 7.
-    let again = imap.poll(&serde_json::to_value(&cursor).unwrap()).unwrap();
+    let again = imap
+        .poll_fresh(&serde_json::to_value(&cursor).unwrap())
+        .unwrap();
     assert!(again.material.is_none());
 }
 
@@ -119,13 +140,13 @@ fn xoauth2_is_used_when_a_token_file_is_set_and_bad_credentials_fail_without_ech
     let port = server(vec![(1, M1)], 5, true);
     assert!(
         mail(port, None, Some("tok"))
-            .poll(&Value::Null)
+            .poll_fresh(&Value::Null)
             .unwrap()
             .material
             .is_some()
     );
     let port = server(vec![(1, M1)], 5, false);
-    let err = match mail(port, Some("wrong-password"), None).poll(&Value::Null) {
+    let err = match mail(port, Some("wrong-password"), None).poll_fresh(&Value::Null) {
         Err(e) => e.to_string(),
         Ok(_) => panic!("bad credentials were accepted"),
     };
@@ -144,9 +165,10 @@ fn a_renumbered_mailbox_is_read_from_the_start() {
         through: None,
         material: None,
         part_index: 0,
+        ..Cursor::default()
     };
     let m = mail(port, Some("secret"), None)
-        .poll(&serde_json::to_value(old).unwrap())
+        .poll_fresh(&serde_json::to_value(old).unwrap())
         .unwrap()
         .material
         .unwrap();
@@ -157,12 +179,12 @@ fn a_renumbered_mailbox_is_read_from_the_start() {
 fn an_empty_examined_window_reaches_the_later_message() {
     let port = server(vec![(201, M1)], 99, false);
     let imap = mail(port, Some("secret"), None);
-    let first = imap.poll(&Value::Null).unwrap();
+    let first = imap.poll_fresh(&Value::Null).unwrap();
     assert!(first.material.is_none());
     let next: Cursor = serde_json::from_value(first.cursor_without_material.clone()).unwrap();
     assert_eq!(next.uid_next, 201);
     let second = imap
-        .poll(&first.cursor_without_material)
+        .poll_fresh(&first.cursor_without_material)
         .unwrap()
         .material
         .unwrap();
@@ -227,7 +249,9 @@ fn examined_empty_progress_is_clamped_and_unknown_or_stale_bounds_stay_put() {
             (fetch, "{tag} OK fetched\r\n".into()),
             ("LOGOUT", "{tag} OK bye\r\n".into()),
         ]);
-        let acquired = mail(port, Some("secret"), None).poll(&Value::Null).unwrap();
+        let acquired = mail(port, Some("secret"), None)
+            .poll_fresh(&Value::Null)
+            .unwrap();
         let cursor: Cursor = serde_json::from_value(acquired.cursor_without_material).unwrap();
         assert_eq!(cursor.uid_next, expected, "boundary={boundary:?}");
         server.join().unwrap();
@@ -246,7 +270,11 @@ fn failed_fetch_returns_no_progress_and_the_same_cursor_can_retry() {
             "{tag} NO fetch failed\r\n".into(),
         ),
     ]);
-    assert!(mail(port, Some("secret"), None).poll(&previous).is_err());
+    assert!(
+        mail(port, Some("secret"), None)
+            .poll_fresh(&previous)
+            .is_err()
+    );
     server.join().unwrap();
     assert_eq!(previous, original);
     let (port, server) = scripted(vec![
@@ -258,7 +286,9 @@ fn failed_fetch_returns_no_progress_and_the_same_cursor_can_retry() {
         ),
         ("LOGOUT", "{tag} OK bye\r\n".into()),
     ]);
-    let acquired = mail(port, Some("secret"), None).poll(&previous).unwrap();
+    let acquired = mail(port, Some("secret"), None)
+        .poll_fresh(&previous)
+        .unwrap();
     assert_eq!(acquired.cursor_without_material["uid_next"], 201);
     server.join().unwrap();
 }
@@ -281,7 +311,7 @@ fn idle_refreshes_uidnext_and_validity_before_the_next_fetch() {
         let mut imap = mail(port, Some("secret"), None);
         imap.config.idle_seconds = 1;
         let acquired = imap
-            .poll(&json!({"uid_validity":99, "uid_next":201,
+            .poll_fresh(&json!({"uid_validity":99, "uid_next":201,
             "material":null, "part_index":0}))
             .unwrap();
         assert_eq!(acquired.cursor_without_material["uid_next"], expected);
@@ -305,7 +335,9 @@ fn returned_uids_allow_progress_without_a_usable_uidnext() {
             ),
             ("LOGOUT", "{tag} OK bye\r\n".into()),
         ]);
-        let acquired = mail(port, Some("secret"), None).poll(&Value::Null).unwrap();
+        let acquired = mail(port, Some("secret"), None)
+            .poll_fresh(&Value::Null)
+            .unwrap();
         let material = acquired.material.unwrap();
         assert_eq!(material.bytes, M1.as_bytes());
         assert_eq!(
@@ -329,7 +361,7 @@ fn partial_admission_keeps_unfed_uids_available_for_retry() {
     }
     let port = server(vec![(4, M1), (7, M2)], 99, false);
     let imap = mail(port, Some("secret"), None);
-    let acquired = imap.poll(&Value::Null).unwrap();
+    let acquired = imap.poll_fresh(&Value::Null).unwrap();
     let source = source();
     let prepared = sinex_source_core::drivers::prepare(
         &source,
@@ -358,21 +390,18 @@ fn partial_admission_keeps_unfed_uids_available_for_retry() {
     };
     let partial = progress(&batches[0]);
     assert_eq!(partial["uid_next"], 1);
-    let repeated = imap.poll(&partial).unwrap().material.unwrap();
+    let repeated = imap.poll_fresh(&partial).unwrap().material.unwrap();
     assert_eq!(repeated.manifest.detail("uids"), &json!([4, 7]));
     let complete = progress(&batches[1]);
     assert_eq!(complete["uid_next"], 8);
-    assert!(imap.poll(&complete).unwrap().material.is_none());
+    assert!(imap.poll_fresh(&complete).unwrap().material.is_none());
 }
 
 #[devkit::test]
 fn the_reader_retries_its_held_answer_without_asking_the_server_again() {
     use sinex_source_core::binding::Reader;
     let port = server(vec![(4, M1), (7, M2)], 99, false);
-    let mut reader = ImapReader {
-        mail: mail(port, Some("secret"), None),
-        held: None,
-    };
+    let mut reader = ImapReader::new(mail(port, Some("secret"), None));
     let first = reader.poll(&Value::Null).unwrap();
     let material = first.material.unwrap();
     let partial = (material.cursor_at)(material.records[0].1).unwrap();
@@ -383,4 +412,174 @@ fn the_reader_retries_its_held_answer_without_asking_the_server_again() {
     let retry = reader.poll(&Value::Null).unwrap().material.unwrap();
     assert_eq!(retry.id, material.id);
     assert_eq!(retry.records, material.records);
+}
+
+#[devkit::test]
+fn an_expunged_message_is_removed_where_it_was_read() {
+    use sinex_source_core::binding::Reader;
+    let first_port = server(vec![(4, M1), (7, M2)], 99, false);
+    let mut reader = ImapReader::new(mail(first_port, Some("secret"), None));
+    let first = reader.poll(&Value::Null).unwrap().material.unwrap();
+    let admitted = (first.cursor_at)(first.records.last().unwrap().1).unwrap();
+    assert!(first.removed.is_empty());
+    // UID 4 is gone from the server; nothing is new.
+    reader.mail = mail(server(vec![(7, M2)], 99, false), Some("secret"), None);
+    let second = reader.poll(&admitted).unwrap().material.unwrap();
+    assert!(second.records.is_empty());
+    assert_eq!(second.manifest.detail("expunged"), &json!([4]));
+    assert_eq!(
+        second.removed,
+        vec![sinex_model::RecordLocation {
+            material: first.id,
+            anchor: 0
+        }]
+    );
+    let after: Cursor =
+        serde_json::from_value((second.cursor_at)(second.bytes.len()).unwrap()).unwrap();
+    assert_eq!(after.uid_next, 8, "the next UID is unchanged");
+    // Once admitted, the reader no longer remembers UID 4.
+    reader.mail = mail(server(vec![(7, M2)], 99, false), Some("secret"), None);
+    let third = reader.poll(&serde_json::to_value(&after).unwrap()).unwrap();
+    assert!(third.material.is_none());
+    assert_eq!(reader.known.keys().copied().collect::<Vec<_>>(), [7]);
+}
+
+#[devkit::test]
+fn a_renumbered_mailbox_removes_nothing() {
+    let mut known = Known::new();
+    known.insert(
+        4,
+        sinex_model::RecordLocation {
+            material: MaterialId::new(),
+            anchor: 0,
+        },
+    );
+    let port = server(vec![(1, M2)], 100, false);
+    let polled = mail(port, Some("secret"), None)
+        .poll(
+            &json!({"uid_validity": 99, "uid_next": 8, "part_index": 0}),
+            &known,
+        )
+        .unwrap();
+    let m = polled.acquired.material.unwrap();
+    assert!(m.removed.is_empty());
+    assert_eq!(
+        polled.known.unwrap().keys().copied().collect::<Vec<_>>(),
+        [1]
+    );
+}
+
+/// A stored material whose bytes the restore does not read.
+struct NoBytes;
+
+impl sinex_source_core::drain::RecordRead for NoBytes {
+    fn length(&self) -> u64 {
+        0
+    }
+    fn read_exact_at(&self, _: u64, _: &mut [u8]) -> std::io::Result<()> {
+        Err(std::io::Error::other("the restore reads manifests only"))
+    }
+}
+
+#[devkit::test]
+fn a_restart_remembers_from_saved_memory_and_later_materials() {
+    use sinex_source_core::binding::Reader;
+    let older = MaterialId::new();
+    let newer = MaterialId::new();
+    let mut saved = Known::new();
+    for uid in [1, 2, 3] {
+        saved.insert(
+            uid,
+            sinex_model::RecordLocation {
+                material: older,
+                anchor: u64::from(uid) * 100,
+            },
+        );
+    }
+    let memory = memory_of(&saved);
+    let manifest = sinex_model::Manifest::from_json(json!({
+        "media_type": "message/rfc822", "uid_validity": 99, "uids": [5, 6],
+        "expunged": [2], "records": [[0, 10], [10, 20]],
+    }));
+    let cursor = json!({"uid_validity": 99, "uid_next": 7, "material": newer,
+        "part_index": 3, "through": 10});
+    let mut reader = ImapReader::new(mail(1, None, None));
+    assert_eq!(reader.history_from(&cursor), Some(newer));
+    let more = reader
+        .restore(
+            &cursor,
+            sinex_source_core::binding::StoredMaterial {
+                reference: sinex_model::MaterialRef {
+                    id: newer,
+                    input: None,
+                    blob: String::new(),
+                    length: 20,
+                    part_index: 3,
+                    previous_part: Some(older),
+                    parser: "rfc5322-mail".into(),
+                    parser_version: 1,
+                    manifest,
+                },
+                bytes: std::sync::Arc::new(NoBytes),
+                same_revision: true,
+            },
+        )
+        .unwrap();
+    assert!(more);
+    reader.restore_memory(&memory).unwrap();
+    reader.restored().unwrap();
+    let uids: Vec<u32> = reader.known.keys().copied().collect();
+    // UID 6 lies past the admitted cursor; UID 2 was expunged later.
+    assert_eq!(uids, [1, 3, 5]);
+    assert_eq!(reader.known[&5].material, newer);
+}
+
+#[devkit::test]
+fn an_unrepresentable_idle_timeout_fails_before_connecting() {
+    let mut reader = mail(0, Some("synthetic"), None);
+    reader.config.idle_seconds = u64::MAX;
+    let error = Connection::open(&reader.config)
+        .err()
+        .expect("invalid timeout");
+    assert!(error.to_string().contains("idle timeout"), "{error}");
+}
+
+#[devkit::test]
+fn uid_coordinates_distinguish_equal_messages_and_survive_retries() {
+    use sinex_model::EventPayload;
+    use sinex_source_core::Parser;
+    const NO_ID: &str = "Subject: identical\r\n\r\nbody\r\n";
+    let imap = mail(
+        server(vec![(4, NO_ID), (7, NO_ID)], 99, false),
+        Some("secret"),
+        None,
+    );
+    let read = || {
+        let material = imap.poll_fresh(&Value::Null).unwrap().material.unwrap();
+        material
+            .records
+            .iter()
+            .map(|(start, end)| {
+                let context = sinex_source_core::RecordContext {
+                    manifest: &material.manifest,
+                    member: material.manifest.member_at(*start),
+                };
+                super::super::mail::MailParser
+                    .parse(&&material.bytes[*start..*end], &(), &context)
+                    .unwrap()
+                    .0
+                    .remove(0)
+            })
+            .collect::<Vec<_>>()
+    };
+    let first = read();
+    let retry = read();
+    assert_ne!(first[0].native_id, first[1].native_id);
+    assert_eq!(first[0].native_id, retry[0].native_id);
+    assert_eq!(first[1].native_id, retry[1].native_id);
+    assert_eq!(first[0].message_id, None);
+    assert_eq!(
+        first[0].key_kind(),
+        sinex_model::KeyKind::Fields(&["account", "native_id"])
+    );
 }

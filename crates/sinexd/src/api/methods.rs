@@ -12,6 +12,7 @@ use sqlx::PgPool;
 
 mod analysis;
 mod forecast;
+mod kinds;
 mod operations;
 mod privacy;
 mod queries;
@@ -32,13 +33,14 @@ pub(crate) struct Api {
     pub unlock: std::sync::Arc<tokio::sync::Mutex<Option<Unlocked>>>,
     /// This machine's name, for library requests and scans.
     pub host: String,
+    pub source_config: std::sync::Arc<crate::binding_runner::Config>,
     pub library_roots: Vec<std::path::PathBuf>,
 }
 
 /// An unlock session: the operator's identity until it expires, and the data
 /// keys it has unwrapped.
 pub(crate) struct Unlocked {
-    unlock: crate::sealing::Unlock,
+    unlock: crate::material_access::sealing::Unlock,
     keys: std::collections::HashMap<String, sinex_sealing::Zeroizing<[u8; 32]>>,
 }
 
@@ -162,7 +164,7 @@ impl Api {
     /// each data key once per session.
     async fn unseal(&self, value: &mut Value) -> Result<(), String> {
         let mut refs = Vec::new();
-        crate::sealing::collect_sealed(value, &mut refs);
+        crate::material_access::sealing::collect_sealed(value, &mut refs);
         if refs.is_empty() {
             return Ok(());
         }
@@ -185,13 +187,19 @@ impl Api {
             }
         }
         s.unlock.check()?;
-        crate::sealing::unseal_in(value, &s.keys);
+        crate::material_access::sealing::unseal_in(value, &s.keys);
         Ok(())
     }
 
     async fn dispatch(&self, request: Request, caller: &Caller) -> Reply {
         let actor = caller.actor;
         match request {
+            Request::Kinds { kind, page, cursor } => {
+                self.kind_fields(caller, kind, page, cursor, false).await
+            }
+            Request::Fields { kind, page, cursor } => {
+                self.kind_fields(caller, kind, page, cursor, true).await
+            }
             Request::Status => match self.status(caller).await {
                 Ok(v) => Reply::Ok { result: v },
                 Err(e) => refused(e.to_string()),
@@ -530,7 +538,7 @@ impl Api {
     }
 
     async fn query(&self, caller: &Caller, text: &str, page: Page) -> Reply {
-        let ctx = match sinex_store::query::context_for_page(&self.context(), &page) {
+        let mut ctx = match sinex_store::query::context_for_page(&self.context(), &page) {
             Ok(ctx) => ctx,
             Err(e) => return refused(e.to_string()),
         };
@@ -538,20 +546,26 @@ impl Api {
             Ok(c) => c,
             Err(e) => return refused(e.to_string()),
         };
-        let definitions = if let Some(name) = query::saved::reference_name(text) {
-            match queries::definitions(&mut conn, &name).await {
+        let bound = if let Some(name) = query::saved::reference_name(text) {
+            let definitions = match queries::definitions(&mut conn, &name).await {
                 Ok(d) => d,
                 Err(e) => return refused(e),
+            };
+            let declarations = match sinex_schema::kinds::all(&mut conn).await {
+                Ok(d) => d,
+                Err(e) => return refused(e.to_string()),
+            };
+            ctx.catalog = Some(query::QueryCatalog::new(declarations.into_values()));
+            match query::saved::bind_saved(text, &ctx, &definitions) {
+                Ok(q) => Some(q),
+                Err(e) => return query_refusal(text, e),
             }
         } else {
-            std::collections::BTreeMap::new()
+            None
         };
-        let bound = match query::saved::bind_saved(text, &ctx, &definitions) {
-            Ok(q) => q,
-            Err(e) => return query_refusal(text, e),
-        };
-        match sinex_store::query::run(&mut conn, text, &bound, &ctx, &page).await {
+        match sinex_store::query::run(&mut conn, text, bound.as_ref(), &ctx, &page).await {
             Ok(answer) => data(answer_json(answer)),
+            Err(sinex_store::Error::Query(error)) => query_refusal(text, error),
             Err(e) => refused(e.to_string()),
         }
     }
@@ -603,6 +617,12 @@ impl Api {
         let row = sinex_store::diagnostics::positions(&mut conn)
             .await
             .map_err(|e| e.to_string())?;
+        let refusals = sinex_store::diagnostics::ingress_refusals(&mut conn)
+            .await
+            .map_err(|e| e.to_string())?;
+        let producer_errors = sinex_store::diagnostics::producer_errors(&mut conn)
+            .await
+            .map_err(|e| e.to_string())?;
         drop(conn);
         let sources = match self
             .query(
@@ -618,25 +638,33 @@ impl Api {
             Reply::Ok { result } => result.get("rows").cloned().unwrap_or(Value::Null),
             Reply::Refused { reason, .. } => json!({ "unavailable": reason }),
         };
-        // The daemon's own switch, which pauses the binding runner.
-        let private = sinex_transport::private_mode::PrivateMode::default();
-        let switch = private.state();
+        let context = self.source_config.context(&self.host);
+        let discovery =
+            tokio::task::spawn_blocking(move || sinex_sources::discovery::status(&context))
+                .await
+                .map_err(|error| error.to_string())??;
+        let exclusions: std::collections::BTreeMap<_, _> = self
+            .source_config
+            .exclude
+            .iter()
+            .filter_map(|(name, exclusion)| exclusion.as_ref().map(|exclusion| (name, exclusion)))
+            .collect();
         Ok(json!({
             "commit_seq": row.commit_seq,
-            "private_mode": {
-                "state": switch.name(),
-                "switch": private.path(),
-                "reason": switch.reason(),
-            },
             "search_index": {
                 "position": row.search_position,
                 "behind": row.commit_seq - row.search_position.unwrap_or(0),
             },
             "schema_version": row.schema_version,
+            "failures_24h": row.failures_24h,
+            "ingress_refusals_24h": refusals,
+            "producer_errors": producer_errors,
             "writer": self.writer.is_some(),
             "zone": self.context().zone_name(),
             "day_start": self.day_start.to_string(),
             "sources": sources,
+            "discovery": discovery,
+            "exclusions": exclusions,
         }))
     }
 }

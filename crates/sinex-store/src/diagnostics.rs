@@ -51,7 +51,6 @@ pub async fn snapshot(conn: &mut PgConnection) -> Result<Snapshot> {
     let positions = positions(&mut tx).await?;
     let row = sqlx::query!(
         r#"SELECT
-             (SELECT count(*) FROM raw.failures WHERE failed_at > now() - interval '24 hours') AS "failures_24h!",
              (SELECT count(*) FROM core.blobs WHERE status = 'present') AS "blobs!""#,
     )
     .fetch_one(&mut *tx)
@@ -75,7 +74,7 @@ pub async fn snapshot(conn: &mut PgConnection) -> Result<Snapshot> {
         commit_seq: positions.commit_seq,
         schema_version: positions.schema_version,
         search_position: positions.search_position,
-        failures_24h: row.failures_24h,
+        failures_24h: positions.failures_24h,
         blobs: row.blobs,
         sources,
     })
@@ -86,6 +85,7 @@ pub struct Positions {
     pub commit_seq: i64,
     pub schema_version: Option<i32>,
     pub search_position: Option<i64>,
+    pub failures_24h: i64,
 }
 
 pub async fn positions(conn: &mut PgConnection) -> Result<Positions> {
@@ -94,7 +94,8 @@ pub async fn positions(conn: &mut PgConnection) -> Result<Positions> {
         r#"SELECT
              (SELECT value FROM core.counters WHERE name = 'commit_seq') AS "commit_seq!",
              (SELECT max(version) FROM sinex_schema.applied) AS schema_version,
-             (SELECT commit_seq FROM core.consumer_positions WHERE consumer = $1) AS search_position"#,
+             (SELECT commit_seq FROM core.consumer_positions WHERE consumer = $1) AS search_position,
+             (SELECT count(*) FROM raw.failures WHERE failed_at > now() - interval '24 hours') AS "failures_24h!""#,
         crate::read_models::SEARCH_TEXT
     )
     .fetch_one(&mut *conn)
@@ -108,4 +109,47 @@ pub async fn blob_names(conn: &mut PgConnection) -> Result<Vec<String>> {
             .fetch_all(&mut *conn)
             .await?,
     )
+}
+
+/// Recorded refusals in the last 24 hours, counted once for each event type
+/// in a frame. A frame without a source or event type keeps that value unknown.
+#[derive(Debug, serde::Serialize)]
+pub struct IngressRefusals {
+    pub producer: String,
+    pub source: Option<String>,
+    pub event_type: Option<String>,
+    pub refusal_kind: Option<String>,
+    pub frames: i64,
+}
+
+pub async fn ingress_refusals(conn: &mut PgConnection) -> Result<Vec<IngressRefusals>> {
+    Ok(sqlx::query_as!(IngressRefusals, r#"SELECT f.producer,
+        f.outcome->>'source' AS source, kinds.event_type,
+        f.outcome->>'refusal_kind' AS refusal_kind, count(*) AS "frames!"
+        FROM core.ingress_frames f
+        LEFT JOIN LATERAL jsonb_array_elements_text(f.outcome->'event_types') kinds(event_type) ON true
+        WHERE f.refusal IS NOT NULL AND f.received_at > now() - interval '24 hours'
+        GROUP BY f.producer, f.outcome->>'source', kinds.event_type, f.outcome->>'refusal_kind'
+        ORDER BY f.producer, source, kinds.event_type, refusal_kind"#)
+        .fetch_all(&mut *conn).await?)
+}
+
+/// The newest recorded malformed refusal of every producer that has one.
+#[derive(Debug, serde::Serialize)]
+pub struct ProducerError {
+    pub producer: String,
+    pub frame: String,
+    pub reason: String,
+}
+
+pub async fn producer_errors(conn: &mut PgConnection) -> Result<Vec<ProducerError>> {
+    Ok(sqlx::query_as!(
+        ProducerError,
+        r#"SELECT DISTINCT ON (producer)
+        producer, frame, refusal AS "reason!" FROM core.ingress_frames
+        WHERE refusal IS NOT NULL AND outcome->>'refusal_kind' = 'malformed'
+        ORDER BY producer, number DESC"#
+    )
+    .fetch_all(&mut *conn)
+    .await?)
 }

@@ -1,6 +1,6 @@
 use super::*;
-use sinex_model::{MaterialId, ReadingOrder, RecordOutcome};
-use sinex_source_core::drivers::dir_snapshot::{DirState, removed_marker};
+use sinex_model::{ReadingOrder, RecordOutcome};
+use sinex_source_core::drivers::dir_snapshot::DirState;
 use sinex_source_core::{DrainInput, Limits, drain};
 
 #[devkit::test]
@@ -20,7 +20,7 @@ fn notes_and_their_removal() {
             DrainInput {
                 source: "t",
                 class: Class::Open,
-                material: MaterialId(uuid::Uuid::nil()),
+                material: m.id,
                 bytes: m.record_bytes(),
                 records: &m.records,
                 carry: Value::Null,
@@ -32,8 +32,11 @@ fn notes_and_their_removal() {
         .unwrap();
         out.into_iter()
             .flat_map(|c| c.outcomes)
-            .map(|o| match o {
-                RecordOutcome::Events { events, .. } => events[0].payload.clone(),
+            .flat_map(|o| match o {
+                RecordOutcome::Events { events, .. } => events
+                    .into_iter()
+                    .map(|event| event.payload)
+                    .collect::<Vec<_>>(),
                 RecordOutcome::Failure { reason, .. } => panic!("{reason}"),
             })
             .collect::<Vec<_>>()
@@ -47,15 +50,26 @@ fn notes_and_their_removal() {
     assert_eq!(first[0]["text"], "# A\n");
     assert!(first[0]["modified_at"].is_string());
     std::fs::remove_file(root.join("a.md")).unwrap();
-    let second = run(&d.poll(&cursor, &mut state).unwrap());
-    assert_eq!(second[0]["path"], "a.md");
-    assert!(second[0]["removed_at"].is_string());
-    assert!(second[0]["text"].is_null());
-    assert!(!removed_marker("a.md").is_empty());
+    let removed = d.poll(&cursor, &mut state).unwrap();
+    assert!(
+        run(&removed).is_empty(),
+        "removal markers carry no invented note text"
+    );
+    assert_eq!(
+        removed.material.unwrap().removed,
+        vec![sinex_model::RecordLocation {
+            material: m.id,
+            anchor: m.records[0].0 as u64,
+        }]
+    );
 }
 
 fn note(text: &str, path: &str) -> NoteDocument {
-    let manifest = sinex_model::Manifest::from_json(serde_json::json!({"path":"/vault/MyVault"}));
+    note_in_vault(text, path, "/vault/MyVault", "synthetic")
+}
+
+fn note_in_vault(text: &str, path: &str, root: &str, host: &str) -> NoteDocument {
+    let manifest = sinex_model::Manifest::from_json(serde_json::json!({"path":root,"host":host}));
     let member =
         serde_json::from_value::<sinex_model::Member>(serde_json::json!({"path":path})).unwrap();
     let context = RecordContext {
@@ -235,12 +249,14 @@ fn unsupported_yaml_values_and_expansion_keep_text_with_structural_diagnostics()
 }
 
 #[devkit::test]
-fn payloads_without_metadata_and_removed_notes_do_not_claim_metadata() {
-    let old = serde_json::json!({"vault":"v","path":"a.md","text":"","size":0,"modified_at":null,"removed_at":null});
-    let payload: NoteDocument = serde_json::from_value(old.clone()).unwrap();
+fn payloads_without_metadata_and_removed_markers_keep_unknown_information() {
+    use sinex_model::EventPayload;
+    let partial = serde_json::json!({"vault":"v","path":"a.md","text":"","size":0,"modified_at":null,"removed_at":null});
+    let payload: NoteDocument = serde_json::from_value(partial.clone()).unwrap();
     assert_eq!(payload.front_matter, None);
     assert_eq!(payload.tags, None);
-    assert_eq!(serde_json::to_value(payload).unwrap(), old);
+    assert_eq!(payload.key_kind(), sinex_model::KeyKind::Location);
+    assert_eq!(serde_json::to_value(payload).unwrap(), partial);
     let manifest = sinex_model::Manifest::from_json(serde_json::json!({"path":"/vault/v"}));
     let member = serde_json::from_value::<sinex_model::Member>(
         serde_json::json!({"path":"a.md","removed_at_ns":"1700000000000000000"}),
@@ -250,15 +266,8 @@ fn payloads_without_metadata_and_removed_notes_do_not_claim_metadata() {
         manifest: &manifest,
         member: Some(&member),
     };
-    let payload = NotesParser
-        .parse(&b"".as_slice(), &(), &context)
-        .unwrap()
-        .0
-        .remove(0);
-    assert_eq!(payload.text, None);
-    assert_eq!(payload.front_matter, None);
-    assert_eq!(payload.title, None);
-    assert_eq!(payload.tags, None);
+    let (payloads, ()) = NotesParser.parse(&b"".as_slice(), &(), &context).unwrap();
+    assert!(payloads.is_empty());
 }
 
 #[devkit::test]
@@ -269,4 +278,187 @@ fn front_matter_of_any_size_is_parsed() {
         note(&text, "large.md").front_matter,
         Some(NoteFrontMatter::Parsed { .. })
     ));
+}
+
+fn key(note: &NoteDocument) -> sinex_model::EquivalenceKey {
+    use sinex_model::EventPayload;
+    match note.key_kind() {
+        sinex_model::KeyKind::Fields(fields) => sinex_model::EquivalenceKey::of(
+            NoteDocument::EVENT_TYPE,
+            fields,
+            &serde_json::to_value(note).unwrap(),
+        ),
+        sinex_model::KeyKind::Location => panic!("this fixture has a known vault"),
+    }
+}
+
+#[devkit::test]
+fn a_renamed_note_keeps_one_identity() {
+    let text = "---\nid: projects.alpha\n---\nAlpha\n";
+    let first = note(text, "alpha.md");
+    let moved = note(text, "projects/alpha.md");
+    assert_eq!(key(&first), key(&moved));
+}
+
+#[devkit::test]
+fn a_note_without_an_id_is_its_path() {
+    let first = note("text\n", "plain.md");
+    let renamed = note("text\n", "other.md");
+    assert_ne!(key(&first), key(&renamed), "equal text never joins");
+    let empty = note("---\nid: \"\"\n---\n", "e.md");
+    assert_eq!(empty.note_id.as_deref(), Some(""));
+    assert_eq!(key(&empty), key(&note("x\n", "e.md")));
+}
+
+#[devkit::test]
+fn equally_named_vaults_do_not_join_notes() {
+    use sinex_model::EventPayload;
+    let text = "---\nid: synthetic\n---\nA note\n";
+    let first = note_in_vault(text, "a.md", "/one/MyVault", "one");
+    let other_root = note_in_vault(text, "a.md", "/two/MyVault", "one");
+    let other_host = note_in_vault(text, "a.md", "/one/MyVault", "two");
+    assert_eq!(first.vault, other_root.vault);
+    assert_eq!(first.vault, other_host.vault);
+    assert_ne!(key(&first), key(&other_root));
+    assert_ne!(key(&first), key(&other_host));
+    let mut unknown = first;
+    unknown.host = None;
+    assert_eq!(unknown.key_kind(), sinex_model::KeyKind::Location);
+}
+#[devkit::test]
+fn native_note_paths_stay_distinct_after_reader_memory_and_removal() {
+    use std::os::unix::ffi::OsStringExt;
+    let directory = tempfile::tempdir().unwrap();
+    let raw_name = std::ffi::OsString::from_vec(b"a\xff.md".to_vec());
+    std::fs::write(directory.path().join(&raw_name), "same text").unwrap();
+    std::fs::write(directory.path().join("a%FF.md"), "same text").unwrap();
+    let driver = driver(directory.path().to_owned(), "host".into());
+    let mut state = DirState::default();
+    let material = driver
+        .poll(&Value::Null, &mut state)
+        .unwrap()
+        .material
+        .unwrap();
+    let cursor = (material.cursor_at)(material.records.last().unwrap().1).unwrap();
+    let outputs = drain(
+        &NotesParser,
+        DrainInput {
+            source: SPEC.name,
+            class: Class::Open,
+            material: material.id,
+            bytes: material.record_bytes(),
+            records: &material.records,
+            carry: Value::Null,
+            reading_order: &|_| ReadingOrder(0),
+            limits: Limits::default(),
+            manifest: &material.manifest,
+        },
+    )
+    .unwrap();
+    let events: Vec<_> = outputs
+        .into_iter()
+        .flat_map(|output| output.outcomes)
+        .flat_map(|outcome| match outcome {
+            RecordOutcome::Events { events, .. } => events,
+            RecordOutcome::Failure { reason, .. } => panic!("{reason}"),
+        })
+        .collect();
+    assert_eq!(events.len(), 2);
+    assert_eq!(events[0].payload["path"], events[1].payload["path"]);
+    assert_ne!(events[0].equivalence_key, events[1].equivalence_key);
+    for event in &events {
+        let declared = <NoteDocument as sinex_model::EventPayload>::declaration()
+            .evaluate(&event.payload, event.class)
+            .unwrap();
+        assert_eq!(declared.equivalence_key, event.equivalence_key);
+    }
+    assert_ne!(events[0].record_hash, events[1].record_hash);
+    let raw_member = material
+        .manifest
+        .members
+        .iter()
+        .find(|member| member.details.contains_key("native_path_bytes"))
+        .unwrap();
+    let location = sinex_model::RecordLocation {
+        material: material.id,
+        anchor: raw_member.stream_offset,
+    };
+    let mut restarted = DirState::default();
+    restarted
+        .remember_saved(material.memory.as_deref().unwrap())
+        .unwrap();
+    restarted.finish_remembering();
+    std::fs::remove_file(directory.path().join(raw_name)).unwrap();
+    let removed = driver
+        .poll(&cursor, &mut restarted)
+        .unwrap()
+        .material
+        .unwrap();
+    assert_eq!(removed.removed, [location]);
+    assert_eq!(removed.records.len(), 1);
+    let admitted = (removed.cursor_at)(removed.records.last().unwrap().1).unwrap();
+    assert!(
+        driver
+            .poll(&admitted, &mut restarted)
+            .unwrap()
+            .material
+            .is_none()
+    );
+}
+
+#[devkit::test]
+fn native_vault_roots_stay_distinct_from_equal_display_names() {
+    use sinex_model::EventPayload;
+    use std::os::unix::ffi::OsStringExt;
+    let directory = tempfile::tempdir().unwrap();
+    let roots = [
+        directory.path().join("vault%FF"),
+        directory
+            .path()
+            .join(std::ffi::OsString::from_vec(b"vault\xff".to_vec())),
+    ];
+    let mut notes = Vec::new();
+    for root in roots {
+        std::fs::create_dir(&root).unwrap();
+        std::fs::write(root.join("note.md"), "---\nid: fixed\n---\nsame text").unwrap();
+        let material = driver(root, "host".into())
+            .poll(&Value::Null, &mut DirState::default())
+            .unwrap()
+            .material
+            .unwrap();
+        let member = &material.manifest.members[0];
+        let bytes = material
+            .record_bytes()
+            .record(material.records[0].0, material.records[0].1)
+            .unwrap();
+        notes.push(
+            NotesParser
+                .parse(
+                    &bytes.as_ref(),
+                    &(),
+                    &RecordContext {
+                        manifest: &material.manifest,
+                        member: Some(member),
+                    },
+                )
+                .unwrap()
+                .0
+                .remove(0),
+        );
+    }
+    assert_eq!(notes[0].vault_path, notes[1].vault_path);
+    let keys: Vec<_> = notes
+        .iter()
+        .map(|note| {
+            let sinex_model::KeyKind::Fields(fields) = note.key_kind() else {
+                panic!("note key missing")
+            };
+            sinex_model::EquivalenceKey::of(
+                "note.document",
+                fields,
+                &serde_json::to_value(note).unwrap(),
+            )
+        })
+        .collect();
+    assert_ne!(keys[0], keys[1]);
 }

@@ -26,16 +26,14 @@ self: {
     ];
     services.sinex = {
       enable = true;
+      database.sharedBuffers = "128MB";
       nats.daemonPasswordFile = "/etc/sinex-test/nats-daemon";
-      journald.enable = true;
       readAnyFile = true;
       sources."terminal.zsh-history" = {
-        enable = true;
         paths = [ "/home/alice/.zsh_history" ];
       };
       backfills.books = [ "goodreads=/etc/sinex-test/library_export.csv" ];
       session = {
-        enable = true;
         user = "alice";
         passwordFile = "/etc/sinex-test/nats-session";
         watch = [ "/home/alice/notes" ];
@@ -54,6 +52,11 @@ self: {
     machine.wait_for_unit("sinexd.service")
     machine.wait_for_unit("sinex-capture-journald.service")
     machine.wait_for_unit("sinex-session.service", user="alice")
+    owner_mode = machine.succeed("stat -c %U:%a /home/alice/.local/state/sinex-session").strip()
+    assert owner_mode == "alice:700", owner_mode
+    for parent in ["/home/alice/.local", "/home/alice/.local/state"]:
+        owner = machine.succeed(f"stat -c %U {parent}").strip()
+        assert owner == "alice", f"{parent} is owned by {owner}"
 
     with subtest("NATS passwords are only hashes in the server config and never in arguments"):
         machine.succeed("grep -q 'password: \"\\$2a\\$' /run/sinex-nats/nats.conf")
@@ -64,9 +67,16 @@ self: {
     with subtest("PostgreSQL is set up as the module says"):
         machine.succeed("sudo -u postgres psql -tAc 'show wal_compression' | grep -qx lz4")
         machine.succeed("sudo -u postgres psql -tAc 'show full_page_writes' | grep -qx on")
-        for setting, expected in {"shared_buffers": "128MB", "max_wal_size": "1GB", "checkpoint_timeout": "5min", "work_mem": "4MB", "log_temp_files": "16MB"}.items():
+        for setting, expected in {
+            "shared_buffers": "128MB", "effective_cache_size": "12GB",
+            "work_mem": "64MB", "maintenance_work_mem": "512MB",
+            "max_wal_size": "16GB", "checkpoint_timeout": "30min",
+            "checkpoint_completion_target": "0.9", "jit": "off",
+            "synchronous_commit": "on", "fsync": "on",
+            "log_temp_files": "16MB", "max_connections": "64", "shared_preload_libraries": "timescaledb",
+        }.items():
             shown = machine.succeed(f"sudo -u postgres psql -tAc 'show {setting}'").strip()
-            assert shown == expected, f"{setting}: {shown!r}"
+            assert shown == expected, f"{setting}: {shown!r} != {expected!r}"
         # PostgreSQL 18 made log_connections a list; off may show as empty.
         shown = machine.succeed("sudo -u postgres psql -tAc 'show log_connections'").strip()
         assert shown in ("", "off", "false", "no"), f"log_connections is {shown!r}"
@@ -103,11 +113,8 @@ self: {
             timeout=120,
         )
 
-    with subtest("the operator's login shell reaches the daemon and its private-mode switch"):
+    with subtest("the operator's login shell reaches the daemon"):
         machine.succeed("su - alice -c 'sinexctl status'")
-        machine.succeed("su - alice -c 'sinexctl private on'")
-        machine.succeed("test -e /run/sinex/private-mode")
-        machine.succeed("su - alice -c 'sinexctl private off'")
 
     with subtest("a declared backfill stops sinexd, imports, and starts it again"):
         machine.succeed("systemctl start sinex-backfill-books.service")

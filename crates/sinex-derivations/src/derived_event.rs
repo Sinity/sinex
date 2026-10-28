@@ -47,20 +47,53 @@ pub fn derived<'a, P: EventPayload>(
     .expect("derived payloads are keyed objects with at least one parent")
 }
 
-/// A derived event of the registered `event_type` from a JSON payload, which
-/// is decoded through that type's Rust payload first. `None` when the type is
-/// not registered or the payload does not decode.
+/// A declared JSON output; bundled declarations also supply their exact Rust
+/// validator. Invalid and unavailable definitions are explicit errors.
 pub fn derived_json<'a>(
-    event_type: &str,
+    declaration: &sinex_model::KindDeclaration,
+    validator: Option<sinex_model::event_types::Build>,
     payload: &Value,
     derivation: &str,
     inputs: impl IntoIterator<Item = &'a Event>,
-) -> Option<Event> {
-    let registered = sinex_model::event_types::find(event_type)?;
+) -> Result<Event, BuildError> {
     build(payload, inputs, |origin, hash, class| {
-        (registered.build)(payload, derivation, origin, ReadingOrder(0), hash, class)
+        if declaration.normalization == sinex_model::kinds::Normalization::Rust {
+            let validator =
+                validator.ok_or_else(|| BuildError::Declaration("validator_unavailable".into()))?;
+            let event = validator(payload, derivation, origin, ReadingOrder(0), hash, class)?;
+            if event.kind_ref() != declaration.kind {
+                return Err(BuildError::Declaration("validator_unavailable".into()));
+            }
+            return Ok(event);
+        }
+        let evaluated = declaration
+            .evaluate(payload, class)
+            .map_err(BuildError::Declaration)?;
+        if evaluated.equivalence_key.is_none() {
+            return Err(BuildError::DerivedWithoutKey(declaration.kind.name.clone()));
+        }
+        if let Origin::Derived { parents } = &origin
+            && parents.is_empty()
+        {
+            return Err(BuildError::NoParents);
+        }
+        let mut event = Event::submitted(
+            declaration.kind.clone(),
+            payload.clone(),
+            derivation.into(),
+            origin,
+            ReadingOrder(0),
+            hash,
+            class,
+        );
+        event.equivalence_key = evaluated.equivalence_key;
+        event.ts_orig = evaluated.ts_orig;
+        event.record_state = evaluated.record_state;
+        event.owned_blobs = evaluated.owned_blobs;
+        event.class = evaluated.class;
+        event.replace = declaration.replace_rule;
+        Ok(event)
     })
-    .ok()
 }
 
 fn build<'a>(

@@ -130,7 +130,7 @@ fn time_citations_require_absolute_time_and_marks_have_positive_numbers() {
 fn parameters_do_not_stand_for_fields_and_text_parameters_stay_text() {
     let saved = SavedQuery {
         name: "typed".into(),
-        query: "events where payload.command = $value".into(),
+        query: "commands where payload.command = $value".into(),
         parameters: vec![Parameter {
             name: "value".into(),
             field_type: ParameterType::Text,
@@ -219,14 +219,14 @@ fn recall_last_payload_conditions_use_the_session_schema() {
 #[devkit::test]
 fn text_list_fields_compare_members_without_treating_the_array_as_json_text() {
     for condition in [
-        "payload.cwd ~ tide",
-        "payload.cwd ^ /src",
-        "payload.cwd = [/src/tide, /src/other]",
-        "payload.cwd != /src/tide",
+        "payload.cwds ~ tide",
+        "payload.cwds ^ /src",
+        "payload.cwds = [/src/tide, /src/other]",
+        "payload.cwds != /src/tide",
     ] {
         assert!(
             bind(
-                &format!("events where event_type = polylogue.session and {condition}"),
+                &format!("events where event_type = shell.session and {condition}"),
                 &ctx()
             )
             .is_ok(),
@@ -234,19 +234,19 @@ fn text_list_fields_compare_members_without_treating_the_array_as_json_text() {
         );
     }
     assert!(
-        err("events where event_type = polylogue.session and payload.cwd > x")
+        err("events where event_type = shell.session and payload.cwds > x")
             .message
             .contains("ordered")
     );
-    let choices = complete("events where event_type = polylogue.session and payload.cw");
+    let choices = complete("events where event_type = shell.session and payload.cw");
     assert_eq!(choices[0].field_type, "textlist");
 }
 
 #[devkit::test]
 fn min_and_max_refuse_payload_values_without_an_ordered_scalar_aggregate() {
     for query in [
-        "events where event_type = polylogue.session min(payload.cwd)",
-        "events where event_type = polylogue.session max(payload.cwd)",
+        "events where event_type = shell.session min(payload.cwds)",
+        "events where event_type = shell.session max(payload.cwds)",
     ] {
         assert!(err(query).message.contains("ordered scalar"));
     }
@@ -528,4 +528,25 @@ fn typed_saved_arguments_keep_their_type_when_quoted() {
         bind_saved(&invocation, &ctx(), &definitions)
             .unwrap_or_else(|error| panic!("{query}: {error}"));
     }
+}
+
+#[devkit::test]
+fn event_type_parameters_check_each_invocation_and_require_one_coherent_schema() {
+    let saved = SavedQuery {
+        name: "by-kind".into(),
+        query: "events where event_type = $kind and payload.command ~ synthetic".into(),
+        parameters: vec![Parameter {
+            name: "kind".into(),
+            field_type: ParameterType::Text,
+        }],
+    };
+    saved.validate(&ctx()).unwrap();
+    let definitions = BTreeMap::from([("by-kind".into(), saved.clone())]);
+    assert!(bind_saved("query:by-kind(kind=command.executed)", &ctx(), &definitions).is_ok());
+    assert!(bind_saved("query:by-kind(kind=window.focused)", &ctx(), &definitions).is_err());
+    let invalid = SavedQuery {
+        query: "events where event_type = $kind and payload.never_declared exists".into(),
+        ..saved
+    };
+    assert!(invalid.validate(&ctx()).is_err());
 }

@@ -99,12 +99,28 @@ impl Subjects {
         format!("{}.recorded.*", self.root)
     }
 
+    pub fn connect(&self, producer: &str) -> String {
+        format!("{}.connect.{producer}", self.root)
+    }
+
+    pub fn connect_all(&self) -> String {
+        format!("{}.connect.*", self.root)
+    }
+
     pub fn materials(&self, producer: &str) -> String {
         format!("{}.materials.{producer}", self.root)
     }
 
     pub fn materials_all(&self) -> String {
         format!("{}.materials.*", self.root)
+    }
+
+    pub fn replay_scope(&self, producer: &str) -> String {
+        format!("{}.replay_scope.{producer}", self.root)
+    }
+
+    pub fn replay_scope_all(&self) -> String {
+        format!("{}.replay_scope.*", self.root)
     }
 
     pub fn excise(&self, producer: &str) -> String {
@@ -123,9 +139,11 @@ impl Subjects {
             .strip_prefix('.')?;
         let producer = rest
             .strip_prefix("ingress.")
+            .or_else(|| rest.strip_prefix("connect."))
             .or_else(|| rest.strip_prefix("recorded."))
             .or_else(|| rest.strip_prefix("materials."))
-            .or_else(|| rest.strip_prefix("excise."))?;
+            .or_else(|| rest.strip_prefix("excise."))
+            .or_else(|| rest.strip_prefix("replay_scope."))?;
         valid_producer(producer).then_some(producer)
     }
 
@@ -136,9 +154,11 @@ impl Subjects {
         (
             vec![
                 self.ingress(producer),
+                self.connect(producer),
                 self.recorded(producer),
                 self.materials(producer),
                 self.excise(producer),
+                self.replay_scope(producer),
             ],
             vec![self.ack(producer), "_INBOX.>".into()],
         )
@@ -182,7 +202,6 @@ impl Subjects {
 /// Producer names are one subject token: lowercase letters, digits, `-`, `_`.
 pub fn valid_producer(name: &str) -> bool {
     !name.is_empty()
-        && name.len() <= 64
         && name
             .chars()
             .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-' || c == '_')
@@ -200,6 +219,14 @@ pub fn valid_producer(name: &str) -> bool {
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum Ingress {
+    RegisterKinds {
+        frame: String,
+        declarations: Vec<sinex_model::KindDeclaration>,
+    },
+    ReplaySequence {
+        frame: String,
+        sequence: Box<ProducerReplay>,
+    },
     /// Register a material. Its bytes are in the content store already, or
     /// in this frame's directory, from where Sinex stores them before
     /// admitting the frame. Send it, and wait for its acknowledgment, before
@@ -243,12 +270,66 @@ pub enum Ingress {
 impl Ingress {
     pub fn frame(&self) -> &str {
         match self {
-            Ingress::Material { frame, .. }
+            Ingress::RegisterKinds { frame, .. }
+            | Ingress::ReplaySequence { frame, .. }
+            | Ingress::Material { frame, .. }
             | Ingress::Events { frame, .. }
             | Ingress::Chunk { frame, .. }
             | Ingress::LargeFrame { frame, .. } => frame,
         }
     }
+}
+
+/// Exact declarations a producer used while parsing a replacement.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct DeclarationHash {
+    pub kind: sinex_model::KindRef,
+    pub hash: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct ReplayScopeQuery {
+    pub materials: Vec<MaterialId>,
+    pub event_types: Option<Vec<String>>,
+    pub from: Option<Timestamp>,
+    pub until: Option<Timestamp>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct ReplaySelection {
+    pub root: MaterialId,
+    pub materials: Vec<ReplayMaterial>,
+    pub rows: u64,
+    pub expected_live_hash: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ReplayMaterial {
+    pub id: MaterialId,
+    pub blob: String,
+}
+
+/// One completely parsed replacement. Acquisition can spool while publication
+/// for this sequence waits for its atomic acknowledgment.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct ProducerReplay {
+    pub operation: sinex_model::OperationId,
+    pub root: MaterialId,
+    pub materials: Vec<ReplayMaterial>,
+    pub event_types: Option<Vec<String>>,
+    pub from: Option<Timestamp>,
+    pub until: Option<Timestamp>,
+    pub declarations: Vec<DeclarationHash>,
+    pub parser_build: String,
+    pub parser_version: String,
+    pub expected_live_hash: String,
+    pub batches: Vec<ReplayBatch>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct ReplayBatch {
+    pub events: Vec<ProducerEvent>,
+    pub failures: Vec<ProducerFailure>,
 }
 
 /// A record a producer's parser could not read.
@@ -284,7 +365,7 @@ pub struct MaterialFrame {
 /// other source.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct ProducerEvent {
-    pub event_type: String,
+    pub kind: sinex_model::KindRef,
     pub payload: Value,
     /// Where in a registered material the record starts. Absent for an event
     /// derived from `parents`.
@@ -319,6 +400,38 @@ pub struct Acknowledgment {
     pub refusal: Option<String>,
     /// The last commit position of the frame's events.
     pub commit_seq: Option<i64>,
+}
+
+impl Acknowledgment {
+    pub fn refusal_kind(&self) -> Option<sinex_model::FrameRefusal> {
+        serde_json::from_value(self.outcome["refusal_kind"].clone()).ok()
+    }
+}
+
+pub const PRODUCER_VERSION: u32 = 1;
+
+/// Checked before any material or events are sent. Event declarations can
+/// be registered here before checking the names the producer will emit.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ProducerHello {
+    pub version: u32,
+    pub event_types: Vec<String>,
+    pub class: Class,
+}
+
+impl Default for ProducerHello {
+    fn default() -> Self {
+        Self {
+            version: PRODUCER_VERSION,
+            event_types: Vec::new(),
+            class: Class::Open,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ProducerWelcome {
+    pub refusal: Option<String>,
 }
 
 /// A request on `<root>.recorded.<producer>`: which of these frames Sinex has
@@ -391,6 +504,8 @@ pub enum Confirmed {
 /// class is `open`: consumers of the stream hold no class grants.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct ConfirmedEvent {
+    pub kind_version: u64,
+    pub validation: sinex_model::Validation,
     pub commit_seq: i64,
     pub id: EventId,
     pub event_type: String,

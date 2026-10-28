@@ -20,7 +20,8 @@ fn lines_of(a: &Acquired) -> Vec<String> {
     m.records
         .iter()
         .map(|(s, e)| {
-            let record: Map<String, Value> = serde_json::from_slice(&m.body()[*s..*e]).unwrap();
+            let record: Map<String, Value> =
+                serde_json::from_slice(&crate::test_support::body(m)[*s..*e]).unwrap();
             String::from_utf8(received(&record).unwrap().1).unwrap()
         })
         .collect()
@@ -28,7 +29,7 @@ fn lines_of(a: &Acquired) -> Vec<String> {
 
 fn end_cursor(a: &Acquired) -> Value {
     let m = a.material.as_ref().unwrap();
-    (m.cursor_at)(m.body().len()).unwrap()
+    (m.cursor_at)(crate::test_support::body(m).len()).unwrap()
 }
 
 #[devkit::test]
@@ -43,33 +44,6 @@ fn captured_lines_are_acquired_once_in_order() {
     let cursor = end_cursor(&first);
     let again = live.poll(&cursor).unwrap();
     assert!(again.material.is_none());
-}
-
-/// While private mode is on a live capture writes nothing, and after it ends
-/// capture resumes; the lines in between were never stored, which is what
-/// private mode means, not a loss.
-#[devkit::test]
-fn private_mode_drops_lines_while_on() {
-    let spool = dir();
-    let switch = sinex_transport::private_mode::PrivateMode::new(dir().join("private-mode"));
-    let mut writer = SpoolWriter::open(&spool, Rotation::default())
-        .unwrap()
-        .with_private_mode(switch.clone());
-    capture_lines(&b"before\n"[..], &mut writer, Duration::ZERO).unwrap();
-    switch.set(true).unwrap();
-    std::thread::sleep(Duration::from_millis(300));
-    capture_lines(
-        &b"private one\nprivate two\n"[..],
-        &mut writer,
-        Duration::ZERO,
-    )
-    .unwrap();
-    assert_eq!(writer.dropped, 2);
-    switch.set(false).unwrap();
-    std::thread::sleep(Duration::from_millis(300));
-    capture_lines(&b"after\n"[..], &mut writer, Duration::ZERO).unwrap();
-    let got = lines_of(&stream(&spool).poll(&Value::Null).unwrap());
-    assert_eq!(got, vec!["before", "after"]);
 }
 
 #[devkit::test]
