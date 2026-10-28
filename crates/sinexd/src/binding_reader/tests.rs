@@ -290,7 +290,7 @@ async fn cancelled_archive_worker_joins_and_restart_catches_up(db: devkit::pg::T
     std::fs::remove_dir_all(&dir).unwrap();
 }
 
-struct SmallBatches(Box<dyn Source>);
+struct SmallBatches(Arc<dyn Source>);
 impl Source for SmallBatches {
     fn spec(&self) -> &sinex_source_core::SourceSpec {
         self.0.spec()
@@ -345,10 +345,7 @@ async fn sealed_archive_restart_replay_and_class_changes_preserve_exact_material
             bindings.truncate(1);
             let b = &mut bindings[0];
             b.reading = Reading::Shared(Box::new(takeout_driver(&b.binding, 1 << 20)));
-            b.source = Box::new(SmallBatches(std::mem::replace(
-                &mut b.source,
-                Box::new(fit::source()),
-            )));
+            b.source = Arc::new(SmallBatches(b.source.clone()));
             bindings
         };
         // The second batch fails through real admission, leaving a durable partial part.

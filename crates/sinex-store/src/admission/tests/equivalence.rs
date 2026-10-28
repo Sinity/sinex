@@ -88,6 +88,8 @@ async fn rows(conn: &mut PgConnection) -> Vec<Value> {
             format!(
                 "SELECT to_jsonb(pair) FROM {name} t CROSS JOIN LATERAL unnest(event_ids,stream_seqs) pair(event_id,stream_seq) ORDER BY 1"
             )
+        } else if table == "counters" {
+            format!("SELECT to_jsonb(t) FROM {name} t WHERE name <> 'blob_changes' ORDER BY 1")
         } else if table == "search_text" {
             format!("SELECT to_jsonb(t)-'trigram_indexed' FROM {name} t ORDER BY 1")
         } else {

@@ -7,6 +7,7 @@ use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 mod plain_seek;
+mod seekable;
 mod unadmitted;
 
 #[derive(Clone)]
@@ -29,10 +30,12 @@ impl Blobs {
         } else {
             0o600
         };
-        Ok(Self(
+        let blobs = Self(
             Arc::new(hashed_blobs::Store::open(root, vec![], mode)?),
             root.join("incoming"),
-        ))
+        );
+        blobs.prepare_unadmitted_dir()?;
+        Ok(blobs)
     }
 
     /// Store `bytes` and return their name, `blake3:<hex>`.
@@ -87,15 +90,6 @@ impl Blobs {
     /// places a material's bytes before registering it).
     pub fn contains(&self, name: &str) -> Result<bool> {
         Ok(self.0.contains(&parse(name)?))
-    }
-
-    /// Store bytes read from `reader` (an export archive of any size) without
-    /// holding them in memory, and return their name.
-    pub fn put_reader(&self, reader: impl std::io::Read) -> Result<String> {
-        let prepared = self.0.prepare_plain(reader, 3)?;
-        self.note_unadmitted(prepared.hash())?;
-        let hash = prepared.install()?;
-        Ok(format!("blake3:{}", hash.hex()))
     }
 
     pub fn read_range(&self, name: &str, offset: u64, len: u64) -> Result<Vec<u8>> {
@@ -226,8 +220,30 @@ pub async fn delete_files_without_rows(
     conn: &mut sqlx::PgConnection,
     blobs: &Blobs,
 ) -> Result<FilesWithoutRows> {
+    check_files(conn, blobs, true).await
+}
+
+/// Forget installed names whose admission committed, after the caller drains
+/// the writer and while it still holds writer access. Unadmitted names stay
+/// for the next startup's deletion check.
+pub async fn forget_files_with_rows(conn: &mut sqlx::PgConnection, blobs: &Blobs) -> Result<()> {
+    check_files(conn, blobs, false).await.map(|_| ())
+}
+
+async fn check_files(
+    conn: &mut sqlx::PgConnection,
+    blobs: &Blobs,
+    delete_unadmitted: bool,
+) -> Result<FilesWithoutRows> {
+    let position = unadmitted::DatabasePosition::read(conn).await?;
+    // Forgetting markers alone never substitutes for the first full scan or a rollback scan.
+    let save_position = delete_unadmitted || blobs.can_advance_position(&position)?;
     let mut found = FilesWithoutRows::default();
-    let mut names = blobs.unadmitted_names()?;
+    let mut names = if delete_unadmitted {
+        blobs.unadmitted_names(&position)?
+    } else {
+        blobs.recorded_names()?
+    };
     loop {
         let mut listed = Vec::with_capacity(NAMES_PER_QUERY);
         for name in names.by_ref() {
@@ -245,7 +261,11 @@ pub async fn delete_files_without_rows(
             }
         }
         if listed.is_empty() {
-            blobs.sweep_finished()?;
+            if save_position {
+                blobs.sweep_finished(&position)?;
+            } else {
+                blobs.sync_recorded_names()?;
+            }
             return Ok(found);
         }
         let with_rows: std::collections::HashSet<String> =
@@ -255,35 +275,14 @@ pub async fn delete_files_without_rows(
                 .into_iter()
                 .collect();
         for name in listed {
-            if !with_rows.contains(&name) && blobs.contains(&name)? {
+            let admitted = with_rows.contains(&name);
+            if delete_unadmitted && !admitted && blobs.contains(&name)? {
                 blobs.delete(&name)?;
                 found.deleted.push(name.clone());
             }
-            blobs.forget_unadmitted(&name)?;
-        }
-    }
-}
-
-/// Forget installed names whose admission committed, after the caller drains
-/// the writer and while it still holds writer access. Unadmitted names stay
-/// for the next startup's deletion check.
-pub async fn forget_files_with_rows(conn: &mut sqlx::PgConnection, blobs: &Blobs) -> Result<()> {
-    let mut names = blobs.recorded_names()?;
-    loop {
-        let listed = names
-            .by_ref()
-            .take(NAMES_PER_QUERY)
-            .collect::<hashed_blobs::Result<Vec<_>>>()?;
-        if listed.is_empty() {
-            blobs.sync_recorded_names()?;
-            return Ok(());
-        }
-        let with_rows =
-            sqlx::query_scalar!("SELECT hash FROM core.blobs WHERE hash = ANY($1)", &listed)
-                .fetch_all(&mut *conn)
-                .await?;
-        for name in with_rows {
-            blobs.forget_unadmitted(&name)?;
+            if delete_unadmitted || admitted {
+                blobs.forget_unadmitted(&name)?;
+            }
         }
     }
 }

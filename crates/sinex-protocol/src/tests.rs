@@ -71,11 +71,49 @@ fn unadvertised_requests_keep_wire_decoding_and_explicit_write_access() {
         json!({"method":"stage", "path":"/synthetic/input"}),
         json!({"method":"same", "a":"sinex:ev/a", "b":"sinex:ev/b"}),
         json!({"method":"distinct", "a":"sinex:ev/a", "b":"sinex:ev/b"}),
-        json!({"method":"mark", "text":"synthetic moment"}),
     ] {
         let request: Request = serde_json::from_value(value).unwrap();
         assert!(command(request.method()).is_none());
         assert_eq!(request.access(), Access::Agent);
         assert!(Request::from_args(request.method(), Map::new()).is_err());
+    }
+}
+
+#[cfg(feature = "cli")]
+#[devkit::test]
+fn query_authoring_options_are_not_consumed_by_the_text_argument() {
+    for (name, args, field, expected) in [
+        (
+            "mark",
+            vec!["mark", "synthetic note", "--at", "2026-09-14T08:00:00Z"],
+            "at",
+            json!("2026-09-14T08:00:00Z"),
+        ),
+        (
+            "query-save",
+            vec![
+                "query-save",
+                "by-source",
+                "events where source = $name",
+                "--parameter",
+                "name:text",
+            ],
+            "parameter",
+            json!(["name:text"]),
+        ),
+        (
+            "timeline",
+            vec!["timeline", "where source = synthetic", "--page", "2"],
+            "page",
+            json!(2),
+        ),
+    ] {
+        let spec = command(name).unwrap();
+        let matches = crate::cli::subcommand(spec)
+            .try_get_matches_from(args)
+            .unwrap();
+        let arguments = crate::cli::arguments(spec, &matches);
+        assert_eq!(arguments[field], expected);
+        Request::from_args(name, arguments).unwrap();
     }
 }

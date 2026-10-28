@@ -1,12 +1,12 @@
 //! One pass over a stored file shared by every compatible binding of it:
 //! the file is stored once (sealed when the bindings' class is), read forward
 //! once, and each binding's acquisitions are admitted as the pass reaches them.
+use super::Reading;
 use super::{Access, BindingReader};
 use crate::backfill::Totals;
 use crate::writer::WriterHandle;
 use serde_json::Value;
 use sinex_model::{Class, ObservationFacts, RunId};
-use sinex_source_core::Reading;
 use sinex_source_core::drivers;
 use sinex_source_core::shared_pass::{self, StoredFile};
 use sinex_store::{Blobs, positions};
@@ -50,21 +50,28 @@ impl Drop for Cancel {
 struct InterruptibleReader<R> {
     input: R,
     stop: Arc<AtomicBool>,
-    private: Arc<std::sync::Mutex<sinex_transport::private_mode::Cached>>,
+    private: Arc<sinex_transport::private_mode::Cached>,
 }
 impl<R: Read> Read for InterruptibleReader<R> {
     fn read(&mut self, bytes: &mut [u8]) -> std::io::Result<usize> {
-        if self.stop.load(Ordering::Relaxed)
-            || self
-                .private
-                .lock()
-                .map_err(|_| std::io::Error::other("private-mode check poisoned"))?
-                .on()
-        {
+        if self.stop.load(Ordering::Relaxed) || self.private.on() {
             return Err(std::io::Error::other("capture cancelled"));
         }
         self.input.read(bytes)
     }
+}
+
+fn admission_check(
+    private: sinex_transport::private_mode::PrivateMode,
+    stop: watch::Receiver<bool>,
+) -> crate::writer::AdmissionCheck {
+    Arc::new(move || {
+        if *stop.borrow() || private.on() {
+            Err("capture cancelled or private mode is on; admission stopped".into())
+        } else {
+            Ok(())
+        }
+    })
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -79,12 +86,14 @@ pub(super) async fn read_shared(
     access: Access<'_>,
 ) -> Result<Vec<Result<Totals, String>>, String> {
     let started = std::time::Instant::now();
-    let private = Arc::new(std::sync::Mutex::new(
-        sinex_transport::private_mode::Cached::new(
-            sinex_transport::private_mode::PrivateMode::default(),
-            std::time::Duration::from_millis(250),
-        ),
+    let private = Arc::new(sinex_transport::private_mode::Cached::new(
+        sinex_transport::private_mode::PrivateMode::default(),
+        std::time::Duration::from_millis(250),
     ));
+    let check = admission_check(
+        sinex_transport::private_mode::PrivateMode::default(),
+        stop.clone(),
+    );
     let cancel = Cancel(Arc::new(AtomicBool::new(false)));
     let material = crate::sealing::Materials::archive(blobs.clone(), pass.class, access)?;
     material.restore_archive(conn, pass.stored.as_ref()).await?;
@@ -154,12 +163,7 @@ pub(super) async fn read_shared(
         let verify_stop = Arc::clone(&cancelled);
         let verify_private = Arc::clone(&private);
         let check = move || {
-            if verify_stop.load(Ordering::Relaxed)
-                || verify_private
-                    .lock()
-                    .map_err(|_| std::io::Error::other("private-mode check poisoned"))?
-                    .on()
-            {
+            if verify_stop.load(Ordering::Relaxed) || verify_private.on() {
                 return Err(std::io::Error::other("verification cancelled"));
             }
             operation.check().map_err(std::io::Error::other)?;
@@ -216,9 +220,7 @@ pub(super) async fn read_shared(
         let b = &mut readers[index];
         let result = async {
             let mut acquired = delivery.acquired.map_err(|e| e.to_string())?;
-            if sinex_transport::private_mode::PrivateMode::default().on() {
-                return Err("private mode is on; admission stopped".into());
-            }
+            check()?;
             material.check()?;
             let (cursor, carry) = positions::load(conn, &b.binding.name)
                 .await
@@ -232,16 +234,10 @@ pub(super) async fn read_shared(
             crate::intake::Intake {
                 writer,
                 run,
-                source: b.source.as_ref(),
+                source: b.source.clone(),
                 binding: &b.binding.name,
-                material: &material,
-                check: Arc::new(|| {
-                    if sinex_transport::private_mode::PrivateMode::default().on() {
-                        Err("private mode is on; admission stopped".into())
-                    } else {
-                        Ok(())
-                    }
-                }),
+                material: material.clone(),
+                check: check.clone(),
                 priority: crate::writer::Priority::Bulk,
                 atomic: false,
                 registered: crate::sealing::registered(&acquired),
@@ -258,13 +254,13 @@ pub(super) async fn read_shared(
         let _ = delivery.ack.send(keep);
     }
     drop(receive);
-    let physical = worker.await.map_err(|e| e.to_string())?;
-    if let Ok((work, captured)) = &physical
+    let result = worker.await.map_err(|e| e.to_string())?;
+    if let Ok((work, captured)) = &result
         && let Some(total) = totals.iter_mut().find_map(|t| t.as_mut().ok())
     {
         total.pass_work(work, *captured);
     }
-    if let Err(e) = physical {
+    if let Err(e) = result {
         // A stopped route has its own error; a traversal-wide error affects every
         // route still running, without claiming completed source progress.
         for total in &mut totals {

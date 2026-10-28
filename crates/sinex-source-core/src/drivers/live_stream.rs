@@ -13,6 +13,7 @@
 //! arrived.
 use super::append_file::{AppendFile, AppendState, lines};
 use super::{Acquired, DriverError};
+use crate::binding::Reader;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 use sinex_model::{InputRef, MaterialId, RevisionChange, Timestamp};
@@ -239,8 +240,8 @@ pub struct Cursor {
     pub last_material: Option<MaterialId>,
 }
 
-impl LiveStream {
-    pub fn poll(&self, cursor: &Value) -> Result<Acquired, DriverError> {
+impl Reader for LiveStream {
+    fn poll(&mut self, cursor: &Value) -> Result<Acquired, DriverError> {
         let mut state: Cursor = if cursor.is_null() {
             Cursor::default()
         } else {
@@ -346,18 +347,21 @@ impl LiveStream {
     /// Remove closed segments that every committed cursor has passed. Called
     /// after the batch carrying `committed` is stored; the bytes are in the
     /// content store by then, so the spool copy is no longer needed.
-    pub fn remove_passed(&self, committed: &Value) -> std::io::Result<usize> {
-        let Ok(state) = serde_json::from_value::<Cursor>(committed.clone()) else {
-            return Ok(0);
-        };
-        let mut removed = 0;
-        for index in segments(&self.spool)? {
-            if index < state.segment {
-                std::fs::remove_file(segment_path(&self.spool, index))?;
-                removed += 1;
+    fn remove_passed(&self, committed: &Value) -> Result<usize, DriverError> {
+        (|| -> std::io::Result<usize> {
+            let Ok(state) = serde_json::from_value::<Cursor>(committed.clone()) else {
+                return Ok(0);
+            };
+            let mut removed = 0;
+            for index in segments(&self.spool)? {
+                if index < state.segment {
+                    std::fs::remove_file(segment_path(&self.spool, index))?;
+                    removed += 1;
+                }
             }
-        }
-        Ok(removed)
+            Ok(removed)
+        })()
+        .map_err(|e| DriverError::Io(e.to_string()))
     }
 }
 

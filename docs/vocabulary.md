@@ -44,7 +44,7 @@ these names and no others.
 - **equivalence key**: the per-type key that recognizes the same thing seen again in another material.
 - **clocks**: `ts_orig` (when it happened, or unknown), `ts_coided` (when Sinex read it, from the UUIDv7 ID), `ts_persisted` (when it was committed).
 - **derived event**: an event computed by a derivation, naming its parents.
-- **fusion**: joining what several sources observed of one thing into one **fused record**: `command.fused`, `focus.fused`, `visit.fused`, `play.fused`, `clipboard.fused`, `notification.fused`, `mail.fused`. Each fused kind has one **fusion rule**; a **fusion input** (`FusionInput`) reads one source's events for it as **fusion records** (`FusionRecord`) (an identity, a start, maybe an end, the fields it supplies). A **fused command** is a `command.fused` event.
+- **fusion**: joining what several sources observed of one thing into one **fused record**: `command.fused`, `focus.fused`, `visit.fused`, `play.fused`, `clipboard.fused`, `notification.fused`, `mail.fused`. Each fused kind has one **fusion rule**; a **fusion reader** (`FusionReader`) reads one source's events for it as **sightings** (`Sighting`) (an identity, a start, maybe an end, the fields it supplies). A **fused command** is a `command.fused` event.
 - **shell session**: the `shell.session` derived event: a run of commands in one terminal; `recall last` reads around the latest one.
 - **batch**: what a producer hands the writer: records with their events or failures, and progress.
 - **run**: one execution of a producer; every event names its run.
@@ -58,7 +58,7 @@ these names and no others.
 - **derivation**: keyed (recomputes a **dirty key** when its inputs change; a **computed key** is one key's new output set) or per-event.
 - **kind** (of what a key reads): events of one type, optionally only those whose payload fields have given values.
 - **metric**: a declared count over events (events, seconds of their intervals, or a ratio), with its **dimensions** (payload fields it is broken down by) and the sources that observe it. A **tracked metric** is one the brief compares with its recent level.
-- **figure**: a metric's number over one civil hour or logical day, total or for one **dimension value**, as a `metric.figure` event; a **health figure** (`health.figure`) is the same for one series of health points.
+- **figure**: a metric's number over one local hour or logical day, total or for one **dimension value**, as a `metric.figure` event; a **health figure** (`health.figure`) is the same for one series of health points.
 - **coverage**: the stretches in which a source could have recorded what it records, computed from its runs and records when asked for.
 - **panel**: logical days by metrics, each **cell** observed, partial, recorded or missing with its reason, from the daily figures and coverage.
 - **finding**: a typed statement in a brief or a recipe's answer, with its caveats and the figures it cites.
@@ -66,8 +66,14 @@ these names and no others.
 - **derivation runner**, **binding runner**: the daemon tasks that run derivations and keep configured bindings read.
 - **comparison**: what a recompute with `--compare` would change, kept in `derivation.comparisons` without writing outputs.
 - **replay**: reading stored bytes again with the current parsers, one part sequence per transaction.
-- **query table**: what a query reads (`events`, `archive`, `materials`, `runs`, `sources`, `operations`, `failures`), each with its fields.
-- **reference**: how a command names one event: an event ID or `sinex:ev/<id>`, `sinex:record/<material>/<offset>[/<event type>[/<output index>]]`, or `sinex:key/<source>/<event type>/<equivalence key>`.
+- **text list**: a field declared as an array of strings; a comparison matches a member, and inequality excludes every matching member.
+- **query table**: what a query reads (`events`, `archive`, `materials`, `runs`, `sources`, `operations`, `failures`, `gaps`, `drift`), each with its fields.
+- **reference**: how a command names one event: an event ID or `sinex:ev/<id>`, `sinex:record/<material>/<offset>[/<event type>[/<output index>]]`, `sinex:key/<source>/<event type>/<equivalence key>`, or a time citation.
+- **moment mark**: an operator-authored moment, note and client-observed context (`operator.mark`); `recall mark` reads around it.
+- **saved query**: a named query definition (`query.saved`) with declared scalar parameters, invoked as `query:NAME` or `query:NAME@AUTHOR`.
+- **parameter**: a named scalar value supplied when running a saved query; never a field or a clause.
+- **filled bucket**: a time group emitted even when it has no records, with its observation coverage.
+- **time citation**: `sinex:at/TIME/TYPE`, the live spanning output containing an absolute instant; `sinex:window/FROM/TO` names a recall window.
 - **operation**: something the operator or an agent did to Sinex, attributed and logged.
 - **purpose**: what a source's events are for (`command fusion and shell recall`).
 
@@ -94,6 +100,14 @@ these names and no others.
 - **class**: a privacy class: `open`, `guarded` or `sealed`.
 - **sealed**: encrypted at rest under a per-material **data key**, wrapped for the operator's **class key**; equivalence keys and record hashes become keyed hashes under a **hash key** derived from the data key; reading needs an **unlock**.
 - **rule**: a privacy rule applied at admission; **masking** hides credentials on output.
+
+## Development tooling
+
+- **scenario**: one exported NixOS check selected for a VM run.
+- **development stack**: a checkout's owned PostgreSQL and NATS services, daemon and explicitly selected session captures.
+- **development lock**: an exclusive file lock held while a checkout's development stack runs.
+- **corpus**: the input files a fuzz experiment starts with and grows.
+- **region**: a source span and execution count reported by LLVM coverage.
 
 ## Words not used
 
@@ -145,3 +159,11 @@ these names and no others.
 - **submission** (`Submission`): the admission outcome and material of a submitted request.
 - **authored at** (`authored_at`): the author timestamp supplied by a Git commit, distinct from its commit timestamp.
 - **request record**: a forecast or library request submitted as a material and admitted through the writer.
+
+## Library
+
+- **item key**: the host, resolved library root and original relative path of a file. A move within that root keeps the key when the bytes match and the old path is gone. A new file whose initial key is still held by another file also names its first scan material.
+- **move candidates**: the missing and new paths with equal bytes in an ambiguous move. The scan records them without moving curation between items.
+- **scan record**: a file's changed facts or removal in a captured scan part, identified by its material and path, with its item key, content hash and acquisition time. The part index orders changes independently of the wall clock. A completion record closes the scan after its last part.
+- **item revision**: one content hash of an item. Returning to the same bytes returns to that revision.
+- **preview evidence**: the stored output of rendering an item revision; the library derivation produces its rendition.

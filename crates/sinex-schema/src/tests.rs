@@ -206,3 +206,36 @@ async fn search_upgrade_refuses_writer_and_rolls_back_failed_index_build(
 }
 
 mod preservation;
+
+#[devkit::test]
+async fn replacing_registered_kinds_updates_schemas_and_recreates_views(
+    db: devkit::pg::TestDatabase,
+) {
+    let mut conn = <PgConnection as Connection>::connect(&db.url(None))
+        .await
+        .unwrap();
+    let expected: serde_json::Value = sqlx::query_scalar(
+        "SELECT payload_schema FROM registry.event_types WHERE name='query.saved'",
+    )
+    .fetch_one(&mut conn)
+    .await
+    .unwrap();
+    conn.execute(
+        "UPDATE registry.event_types SET payload_schema='{}'::jsonb WHERE name='query.saved'",
+    )
+    .await
+    .unwrap();
+    for statement in upgrades::register_kinds(&["query.saved"], true) {
+        conn.execute(statement.as_str()).await.unwrap();
+    }
+    let actual: serde_json::Value = sqlx::query_scalar(
+        "SELECT payload_schema FROM registry.event_types WHERE name='query.saved'",
+    )
+    .fetch_one(&mut conn)
+    .await
+    .unwrap();
+    assert_eq!(actual, expected);
+    conn.execute("SELECT * FROM event_types.query_saved LIMIT 0")
+        .await
+        .unwrap();
+}

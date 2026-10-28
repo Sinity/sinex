@@ -368,14 +368,7 @@ async fn main() -> ExitCode {
     {
         return open_and_record(&client, &request, item).await;
     }
-    let paged = matches!(
-        request,
-        Request::Query { .. }
-            | Request::Search { .. }
-            | Request::Recall { .. }
-            | Request::Trace { .. }
-    );
-    let all = matches.get_flag("all") && paged;
+    let all = matches.get_flag("all");
     let mut request = request;
     let mut collected: Vec<Value> = Vec::new();
     loop {
@@ -394,6 +387,7 @@ async fn main() -> ExitCode {
             } => return fail(NOT_BUILT, format!("not built yet: {reason}")),
             Reply::Refused { reason, .. } => return fail(REFUSED, reason),
         };
+        let paged = result["page"].is_object() && result["rows"].is_array();
         if !paged {
             if json {
                 print_json(&result);
@@ -418,9 +412,14 @@ async fn main() -> ExitCode {
         if all {
             collected.extend(result["rows"].as_array().cloned().unwrap_or_default());
             if let Some(c) = cursor {
-                let mut next = args.clone();
-                next.insert("cursor".into(), Value::String(c));
-                request = Request::from_args(&name, next).expect("the same request with a cursor");
+                let Some(query) = result["query"].as_str() else {
+                    return fail(REFUSED, "paged answer has no query text");
+                };
+                request = Request::Query {
+                    query: query.into(),
+                    page: result["page"]["size"].as_u64(),
+                    cursor: Some(c),
+                };
                 continue;
             }
             let mut whole = result.clone();
@@ -437,7 +436,13 @@ async fn main() -> ExitCode {
             print_json(&result);
         } else {
             let local = output::Local::new(result["resolved"]["zone"].as_str());
-            let hint = format!("sinexctl {name} …");
+            let hint = format!(
+                "sinexctl query '{}'",
+                result["query"]
+                    .as_str()
+                    .unwrap_or("")
+                    .replace('\'', "'\\''")
+            );
             print!("{}", output::answer(&result, &local, Some(&hint)));
         }
         return ExitCode::SUCCESS;

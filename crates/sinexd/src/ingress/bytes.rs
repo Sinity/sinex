@@ -100,7 +100,7 @@ impl Ingest {
                 ))
             })?;
             let stored = blobs
-                .put_reader(std::io::BufReader::new(file))
+                .put_seekable(std::io::BufReader::new(file))
                 .map_err(|e| Check::Unavailable(e.to_string()))?;
             if stored != blob {
                 return Err(Check::Refused(format!(

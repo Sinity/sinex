@@ -28,7 +28,10 @@ impl ReaderContext {
         let writer_conn = PgConnection::connect(database)
             .await
             .map_err(|e| e.to_string())?;
-        let writer_conn = writer::claim(writer_conn).await?;
+        let mut writer_conn = writer::claim(writer_conn).await?;
+        sinex_store::blobs::delete_files_without_rows(&mut writer_conn, &blobs)
+            .await
+            .map_err(|e| e.to_string())?;
         let (writer, queues) = writer::channels();
         let task = tokio::spawn(writer::run(
             database.to_owned(),

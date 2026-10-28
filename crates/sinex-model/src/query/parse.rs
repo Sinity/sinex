@@ -79,7 +79,14 @@ const RESERVED: &[&str] = &[
 
 /// Parse and bind `text` against `ctx`.
 pub fn bind(text: &str, ctx: &Context) -> Result<Query, QueryError> {
-    let toks = tokens(text)?;
+    bind_tokens(tokens(text)?, ctx, text.len())
+}
+
+pub(super) fn bind_tokens(
+    toks: Vec<Token>,
+    ctx: &Context,
+    end: usize,
+) -> Result<Query, QueryError> {
     if toks.is_empty() {
         return Err(QueryError::new("empty query"));
     }
@@ -87,15 +94,17 @@ pub fn bind(text: &str, ctx: &Context) -> Result<Query, QueryError> {
         toks,
         at: 0,
         ctx,
-        end: text.len(),
+        end,
     };
-    let query = p.query(false)?;
+    let mut query = p.query(false)?;
     if let Some(t) = p.peek() {
         return Err(QueryError::at(
             t.at,
             format!("unexpected `{}`; expected a clause or the end", t.text),
         ));
     }
+    super::typed::check(&mut query, ctx)?;
+    super::fill::bind(&mut query, ctx)?;
     Ok(query)
 }
 
@@ -325,6 +334,7 @@ fn has_words(e: &Expr) -> bool {
         | Expr::Compare { .. }
         | Expr::Exists(_)
         | Expr::Within { .. }
-        | Expr::TimeDiff { .. } => false,
+        | Expr::TimeDiff { .. }
+        | Expr::Overlaps { .. } => false,
     }
 }

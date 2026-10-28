@@ -1,8 +1,8 @@
-//! Development commands: `check`, `test`, `db`, `boundaries`, plus devkit's
-//! `status`, `history` and `changed`.
+//! Sinex development commands and shared devkit runners.
 mod bench;
 mod boundaries;
 mod database;
+mod development;
 
 use clap::Parser;
 use devkit::{Nextest, Run, pg::Schema};
@@ -16,6 +16,12 @@ type Result<T = ()> = std::result::Result<T, String>;
 enum Cli {
     /// fmt, dependency boundaries and clippy against the schema database.
     Check,
+    /// Run exported NixOS checks and record scenario results.
+    Vm(devkit::vm::Vm),
+    /// Run isolated development services and daemon, optionally watching source edits.
+    Run(development::Development),
+    /// LLVM line coverage with explicit output and optional threshold.
+    Coverage(devkit::coverage::Coverage),
     /// Compile selected packages or targets against the schema database.
     Compile {
         #[arg(trailing_var_arg = true, allow_hyphen_values = true, required = true)]
@@ -42,9 +48,26 @@ enum Cli {
 
 fn main() -> ExitCode {
     match Cli::parse() {
+        Cli::Vm(options) => recorded("vm", &invocation(), |run| {
+            devkit::vm::execute(run, &options, &["vm-stack", "vm-topology", "vm-restore"])
+        }),
+        Cli::Run(options) => recorded("run", &invocation(), |run| {
+            development::execute(run, &options)
+        }),
+        Cli::Coverage(options) => recorded("coverage", &invocation(), |run| {
+            with_services(run, |run, env| {
+                devkit::coverage::execute(run, &options, env)
+            })
+        }),
         Cli::Check => recorded("check", &[], check),
         Cli::Compile { args } => recorded("compile", &args, |run| compile(run, &args)),
-        Cli::Test { args } => recorded("test", &args, |run| test(run, &args)),
+        Cli::Test { args } => {
+            let threads = std::env::var("NEXTEST_TEST_THREADS").ok();
+            let arguments = test_arguments(&args, threads.as_deref());
+            recorded("test", &arguments, |run| {
+                test(run, &args, threads.as_deref())
+            })
+        }
         Cli::Db(command) => {
             let (hash, apply) = match database::schema(Path::new(".")) {
                 Ok(schema) => schema,
@@ -92,6 +115,16 @@ fn check(run: &mut Run) -> Result {
         "fmt",
         devkit::cargo_command().args(["fmt", "--all", "--", "--check"]),
     )?;
+    run.command(
+        "fuzz-fmt",
+        devkit::cargo_command().args([
+            "fmt",
+            "--manifest-path",
+            "fuzz/Cargo.toml",
+            "--",
+            "--check",
+        ]),
+    )?;
     run.step("boundaries", |run| Ok(boundaries::check(&run.root)?))?;
     let mut prepared = None;
     run.step("database", |run| {
@@ -100,11 +133,29 @@ fn check(run: &mut Run) -> Result {
     })?;
     // The server (stopped on drop when this run started it) lives until clippy ends.
     let (server, databases) = prepared.expect("prepared");
-    run.cargo_with(
+    let result = run.cargo_with(
         "clippy",
         &["clippy", "--locked", "--workspace", "--all-targets"],
         &database::env(&server, &databases),
-    )?;
+    );
+    let result = result.and_then(|_| {
+        run.cargo_with(
+            "fuzz-clippy",
+            &[
+                "clippy",
+                "--locked",
+                "--manifest-path",
+                "fuzz/Cargo.toml",
+                "--all-targets",
+            ],
+            &database::env(&server, &databases),
+        )
+    });
+    run.step("cleanup", |_| {
+        drop(server);
+        Ok(())
+    })?;
+    result?;
     Ok(())
 }
 
@@ -122,7 +173,12 @@ fn compile(run: &mut Run, args: &[String]) -> Result {
             Ok(())
         })?;
         let (server, databases) = prepared.expect("prepared");
-        run.cargo_with("compile", &selected, &database::env(&server, &databases))?;
+        let result = run.cargo_with("compile", &selected, &database::env(&server, &databases));
+        run.step("cleanup", |_| {
+            drop(server);
+            Ok(())
+        })?;
+        result?;
     }
     Ok(())
 }
@@ -165,24 +221,104 @@ fn database_free(args: &[String]) -> bool {
         })
 }
 
-fn test(run: &mut Run, args: &[String]) -> Result {
+fn services(
+    run: &mut Run,
+) -> Result<(
+    devkit::pg::Server,
+    devkit::pg::SchemaDatabases,
+    devkit::nats::Server,
+)> {
     let mut prepared = None;
     run.step("database", |run| {
         prepared = Some(database::prepare(&run.root)?);
         Ok(())
     })?;
-    let (server, databases) = prepared.expect("prepared");
-    // One NATS server for the run; each test takes its own subject prefix
-    // (`devkit::nats::test_nats`). It stops when the run ends.
+    let (server, databases) = prepared.ok_or("database not prepared")?;
     let mut nats = None;
     run.step("nats", |_| {
         nats = Some(devkit::nats::Server::start()?);
         Ok(())
     })?;
+    Ok((server, databases, nats.ok_or("NATS not started")?))
+}
+
+fn with_services(
+    run: &mut Run,
+    command: impl FnOnce(&mut Run, &[(String, String)]) -> Result,
+) -> Result {
+    let (server, databases, nats) = services(run)?;
     let mut env = database::env(&server, &databases);
-    env.extend(nats.as_ref().expect("started").test_env());
-    run.nextest("test", &test_options(args, env))?;
-    Ok(())
+    env.extend(nats.test_env());
+    let result = command(run, &env);
+    run.step("cleanup", |_| {
+        drop((nats, server));
+        Ok(())
+    })?;
+    result
+}
+
+fn test(run: &mut Run, args: &[String], threads: Option<&str>) -> Result {
+    let arguments = test_arguments(args, threads);
+    with_services(run, |run, env| {
+        if full_test(&arguments) {
+            run.cargo_with(
+                "fuzz-tests",
+                &[
+                    "test",
+                    "--locked",
+                    "--manifest-path",
+                    "fuzz/Cargo.toml",
+                    "--lib",
+                ],
+                env,
+            )?;
+        }
+        let mut options = test_options(args, env.to_vec());
+        options.args = test_arguments(&options.args, threads);
+        run.nextest("test", &options)?;
+        Ok(())
+    })
+}
+
+fn full_test(args: &[String]) -> bool {
+    let mut args = args.iter();
+    while let Some(arg) = args.next() {
+        match arg.as_str() {
+            "--workspace" | "--all" | "--locked" => {}
+            "--test-threads" | "--jobs" | "-j" => {
+                if args.next().is_none() {
+                    return false;
+                }
+            }
+            _ if thread_option(arg) => {}
+            _ => return false,
+        }
+    }
+    true
+}
+
+fn thread_option(arg: &str) -> bool {
+    matches!(arg, "--test-threads" | "--jobs" | "-j")
+        || arg.starts_with("--test-threads=")
+        || arg.starts_with("--jobs=")
+        || (arg.starts_with("-j") && arg.len() > 2)
+}
+
+// Record environment concurrency as arguments so history keeps different test setups apart.
+fn test_arguments(args: &[String], threads: Option<&str>) -> Vec<String> {
+    let Some(threads) = threads else {
+        return args.to_vec();
+    };
+    let explicit_threads = args
+        .iter()
+        .take_while(|arg| arg.as_str() != "--")
+        .any(|arg| thread_option(arg));
+    if explicit_threads {
+        return args.to_vec();
+    }
+    let mut arguments = vec!["--test-threads".into(), threads.into()];
+    arguments.extend_from_slice(args);
+    arguments
 }
 
 fn test_options(args: &[String], env: Vec<(String, String)>) -> Nextest {
@@ -214,6 +350,10 @@ fn test_options(args: &[String], env: Vec<(String, String)>) -> Nextest {
 
 fn target_dir() -> PathBuf {
     std::env::var_os("CARGO_TARGET_DIR").map_or_else(|| PathBuf::from("target"), PathBuf::from)
+}
+
+fn invocation() -> Vec<String> {
+    std::env::args().skip(2).collect()
 }
 
 #[cfg(test)]

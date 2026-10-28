@@ -1,6 +1,7 @@
 //! Staging a batch's events with one `COPY` into `core.admission_stage`, in
 //! PostgreSQL's text format. One statement per batch instead of several round
 //! trips per row is most of admission's speed.
+use crate::copy_text::escape;
 use crate::{Error, Result};
 use sinex_model::{DbCheck, Event, Origin};
 use sqlx::PgConnection;
@@ -97,19 +98,6 @@ fn row(buf: &mut String, ord: i32, e: &Event) -> Result<()> {
     }
     buf.push('\n');
     Ok(())
-}
-
-/// Text-format escaping: backslash, tab, newline and carriage return.
-fn escape(buf: &mut String, text: &str) {
-    for c in text.chars() {
-        match c {
-            '\\' => buf.push_str("\\\\"),
-            '\t' => buf.push_str("\\t"),
-            '\n' => buf.push_str("\\n"),
-            '\r' => buf.push_str("\\r"),
-            c => buf.push(c),
-        }
-    }
 }
 
 #[cfg(test)]

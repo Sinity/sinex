@@ -4,11 +4,9 @@ use super::*;
 fn interruptible_reads_share_private_mode_checks_and_still_honor_cancellation() {
     let dir = tempfile::tempdir().unwrap();
     let mode = sinex_transport::private_mode::PrivateMode::new(dir.path().join("private"));
-    let private = Arc::new(std::sync::Mutex::new(
-        sinex_transport::private_mode::Cached::new(
-            mode.clone(),
-            std::time::Duration::from_secs(60),
-        ),
+    let private = Arc::new(sinex_transport::private_mode::Cached::new(
+        mode.clone(),
+        std::time::Duration::from_secs(60),
     ));
     let stop = Arc::new(AtomicBool::new(false));
     let mut first = InterruptibleReader {
@@ -33,30 +31,16 @@ fn interruptible_reads_share_private_mode_checks_and_still_honor_cancellation() 
 }
 
 #[devkit::test]
-#[ignore = "10,000-read private-mode measurement"]
-fn measure_private_mode_reads() {
+fn admission_checks_private_mode_immediately_and_honors_cancellation() {
     let dir = tempfile::tempdir().unwrap();
     let mode = sinex_transport::private_mode::PrivateMode::new(dir.path().join("private"));
-    let started = std::time::Instant::now();
-    for _ in 0..10_000 {
-        assert!(!mode.on());
-    }
-    let before = started.elapsed();
-    let private = Arc::new(std::sync::Mutex::new(
-        sinex_transport::private_mode::Cached::new(mode, std::time::Duration::from_millis(250)),
-    ));
-    let mut input = InterruptibleReader {
-        input: std::io::repeat(1),
-        stop: Arc::new(AtomicBool::new(false)),
-        private,
-    };
-    let started = std::time::Instant::now();
-    let mut byte = [0];
-    for _ in 0..10_000 {
-        input.read_exact(&mut byte).unwrap();
-    }
-    eprintln!(
-        "private-mode reads=10000 before={before:?} after={:?}",
-        started.elapsed()
-    );
+    let (send, stop) = watch::channel(false);
+    let check = admission_check(mode.clone(), stop);
+    check().unwrap();
+    mode.set(true).unwrap();
+    assert!(check().is_err());
+    mode.set(false).unwrap();
+    check().unwrap();
+    send.send(true).unwrap();
+    assert!(check().is_err());
 }

@@ -4,7 +4,7 @@ use super::{Library, R, e};
 use serde_json::{Value, json};
 use sinex_library::{items, reads, render};
 use sinex_model::Timestamp;
-use sinex_model::event_types::library::{LibraryRecord, Rendition, RenditionRole};
+use sinex_model::event_types::library::{LibraryRecord, Preview, RenditionRole};
 use sinex_sources::sources::library as library_source;
 use sqlx::PgConnection;
 use std::path::PathBuf;
@@ -70,7 +70,7 @@ impl Library<'_> {
         rendition: Option<&str>,
     ) -> R<Value> {
         let it = self.item_or(conn, item).await?;
-        let (content, media_type, rendition_id) = match rendition {
+        let (content, media_type, rendition_id, revision) = match rendition {
             Some(id) => {
                 let r = reads::renditions(conn, item)
                     .await
@@ -78,14 +78,19 @@ impl Library<'_> {
                     .into_iter()
                     .find(|r| r.rendition == id && r.withdrawn_at.is_none())
                     .ok_or_else(|| format!("{item} has no rendition {id}"))?;
-                (r.content, r.media_type, Some(r.rendition))
+                (r.content, r.media_type, Some(r.rendition), r.revision)
             }
-            None => (it.content.clone(), it.media_type.clone(), None),
+            None => (
+                it.content.clone(),
+                it.media_type.clone(),
+                None,
+                it.revision.clone(),
+            ),
         };
         let (path, on_disk) = self.local_copy(conn, &content, &media_type).await?;
         Ok(json!({
             "item": item,
-            "revision": it.revision,
+            "revision": revision,
             "rendition": rendition_id,
             "content": content,
             "media_type": media_type,
@@ -125,7 +130,9 @@ impl Library<'_> {
                 let (w, h, _) = library_source::dimensions(&d.head, &d.media_type);
                 let file = std::fs::File::open(&o).map_err(e)?;
                 let size = file.metadata().map_err(e)?.len();
-                let blob = blobs.put_reader(std::io::BufReader::new(file)).map_err(e)?;
+                let blob = blobs
+                    .put_seekable(std::io::BufReader::new(file))
+                    .map_err(e)?;
                 let _ = std::fs::remove_file(&o);
                 Ok((sinex_model::OwnedBlob { blob, size }, w, h))
             },
@@ -133,10 +140,10 @@ impl Library<'_> {
         .await
         .map_err(e)??;
         let content = stored.blob.clone();
-        let r = Rendition {
+        let r = Preview {
             rendition: items::new_id(),
             item: item.to_owned(),
-            revision: it.revision,
+            revision: it.revision.clone(),
             role: RenditionRole::Preview,
             content: content.clone(),
             media_type: "image/webp".into(),
@@ -152,10 +159,18 @@ impl Library<'_> {
         let id = r.rendition.clone();
         self.write_citing(
             conn,
-            vec![LibraryRecord::Rendition(r)],
+            vec![LibraryRecord::Preview(r)],
             actor,
             "preview",
             vec![stored],
+        )
+        .await?;
+        crate::derivation_runner::compute_now(
+            conn,
+            self.writer,
+            &sinex_derivations::library::LibraryItems,
+            vec![json!(item)],
+            self.host,
         )
         .await?;
         Ok(json!({ "item": item, "rendition": id, "content": content, "width": w, "height": h }))

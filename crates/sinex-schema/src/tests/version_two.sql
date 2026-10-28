@@ -24,5 +24,10 @@ INSERT INTO core.published SELECT pairs.event_id, pairs.stream_seq FROM core.pub
 DROP TABLE core.published_pages;
 GRANT SELECT ON core.published TO sinex_reader, sinex_writer;
 GRANT INSERT, UPDATE, DELETE ON core.published TO sinex_writer;
+DROP VIEW event_types.operator_mark, event_types.query_saved;
+DELETE FROM registry.event_types WHERE name IN ('operator.mark','query.saved');
+DROP TRIGGER blob_changes ON core.blobs;
+DROP FUNCTION core.note_blob_change();
+DELETE FROM core.counters WHERE name='blob_changes';
 DELETE FROM sinex_schema.applied;
 INSERT INTO sinex_schema.applied (version) VALUES (2);

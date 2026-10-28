@@ -245,7 +245,7 @@ impl sinex_source_core::Parser for IgnoreFirst {
 fn ignore_first(b: &mut BindingReader) {
     let mut spec = notes::SPEC;
     spec.parser_version = 99;
-    b.source = Box::new(sinex_source_core::DeclaredSource {
+    b.source = Arc::new(sinex_source_core::DeclaredSource {
         spec,
         parser: IgnoreFirst,
     });

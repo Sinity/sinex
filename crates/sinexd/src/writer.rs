@@ -89,6 +89,7 @@ struct Job {
 /// Where producers hand batches to the writer.
 #[derive(Clone)]
 pub(crate) struct WriterHandle {
+    derivations: Arc<tokio::sync::Mutex<()>>,
     live: mpsc::Sender<Job>,
     derived: mpsc::Sender<Job>,
     bulk: mpsc::Sender<Job>,
@@ -99,6 +100,11 @@ pub(crate) struct WriterHandle {
 pub(crate) type AdmissionCheck = Arc<dyn Fn() -> Result<(), String> + Send + Sync>;
 
 impl WriterHandle {
+    /// Shared by keyed computations in commands and the background runner.
+    pub(crate) async fn lock_derivations(&self) -> tokio::sync::OwnedMutexGuard<()> {
+        self.derivations.clone().lock_owned().await
+    }
+
     pub(crate) async fn submit_checked(
         &self,
         priority: Priority,
@@ -186,6 +192,7 @@ pub(crate) fn channels() -> (WriterHandle, Queues) {
     let (bulk, bulk_rx) = mpsc::channel(DEPTH);
     (
         WriterHandle {
+            derivations: Arc::new(tokio::sync::Mutex::new(())),
             live,
             derived,
             bulk,

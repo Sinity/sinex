@@ -915,8 +915,7 @@
       "purpose": "the media library",
       "class": "open",
       "eventTypes": [
-        "library.item",
-        "library.rendition",
+        "library.preview",
         "library.assignment",
         "library.collection",
         "library.entry",
@@ -939,6 +938,21 @@
       "eventTypes": [
         "forecast.issued",
         "forecast.resolved"
+      ]
+    },
+    {
+      "name": "query.request",
+      "formats": [
+        "query"
+      ],
+      "drivers": [
+        "api-request"
+      ],
+      "purpose": "moment marks and saved queries",
+      "class": "guarded",
+      "eventTypes": [
+        "operator.mark",
+        "query.saved"
       ]
     },
     {
@@ -1033,6 +1047,18 @@
       ],
       "outputs": [
         "mail.fused"
+      ]
+    },
+    {
+      "name": "library.items",
+      "kind": "keyed",
+      "inputs": [
+        "library.copy",
+        "library.preview"
+      ],
+      "outputs": [
+        "library.item",
+        "library.rendition"
       ]
     },
     {

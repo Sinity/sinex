@@ -657,3 +657,44 @@ mod source_counts;
 mod cache;
 mod equivalence;
 mod known_fields;
+
+#[devkit::test]
+fn outcomes_add_all_counts_positions_and_ids() {
+    let first_id = sinex_model::EventId::new();
+    let second_id = sinex_model::EventId::new();
+    let mut total = Outcome::default();
+    for (position, id) in [((5, 6), first_id), ((9, 12), second_id)] {
+        total += Outcome {
+            admitted: 2,
+            repeats: 3,
+            replaced: 4,
+            older: 5,
+            hidden: 6,
+            superseded: 7,
+            failures: 8,
+            dirty_keys: 9,
+            replay_archived: 10,
+            commit_seq: Some(position),
+            admitted_ids: vec![id],
+        };
+    }
+    total += Outcome::default();
+    assert_eq!(
+        total,
+        Outcome {
+            admitted: 4,
+            repeats: 6,
+            replaced: 8,
+            older: 10,
+            hidden: 12,
+            superseded: 14,
+            failures: 16,
+            dirty_keys: 18,
+            replay_archived: 20,
+            commit_seq: Some((5, 12)),
+            admitted_ids: vec![first_id, second_id],
+        }
+    );
+}
+
+mod library_upgrade;

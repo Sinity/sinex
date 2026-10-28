@@ -18,7 +18,7 @@ impl MaterialSink for Sink {
     fn put_file(&self, path: &std::path::Path) -> Result<String, String> {
         let file = std::fs::File::open(path).map_err(|e| format!("{}: {e}", path.display()))?;
         self.0
-            .put_reader(std::io::BufReader::new(file))
+            .put_seekable(std::io::BufReader::new(file))
             .map_err(|e| e.to_string())
     }
 }

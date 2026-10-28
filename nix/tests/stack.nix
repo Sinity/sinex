@@ -84,6 +84,13 @@ self: {
         machine.succeed("grep -q 'session-machine' /run/sinex-nats/nats.conf")
         machine.fail("grep -rq session-secret /etc/systemd/system/sinex-nats.service /etc/systemd/system/sinexd.service")
 
+    with subtest("journald capture delivers journal entries"):
+        machine.succeed("echo sinex-journal-arrival | systemd-cat -t sinex-stack-test")
+        machine.wait_until_succeeds(
+            "test $(sudo -u postgres psql -d sinex -tAc \"select count(*) from core.events where event_type = 'journal.entry' and payload->>'message' = 'sinex-journal-arrival'\") -gt 0",
+            timeout=180,
+        )
+
     with subtest("a file change reaches the database through the ingress"):
         machine.succeed("su alice -c 'echo hello > /home/alice/notes/a.txt'")
         machine.wait_until_succeeds(

@@ -22,21 +22,69 @@ read.
 `sinexd/src/intake.rs` is the one acquisition submission path. It stores the
 material through `drivers::prepare`, drains it, applies the effective class,
 seals when required, and sends each batch through the writer with the caller's
-cancellation and unlock checks. Bindings stream one batch at a time; an API
+cancellation and unlock checks. Reader polls, material storage and parsing run
+as owned blocking work, with at most four workers shared across bindings and
+requests. Bulk work uses at most three, leaving capacity for live requests. Each
+submission takes a permit before advancing its parser: two permits cover the
+committing batch and one parsed batch ahead. The next acquisition waits for
+every commit answer. A failed answer closes the batch channel and joins the
+parser before returning; provisional cursor and carry never advance stored
+progress. Dropping a submission also cancels its queued admission check. An API
 request uses one batch and refuses every record if any record fails to parse.
 The caller supplies priority and sealing access. Resuming a registered material
 uses its stored bytes and never registers its data key again.
 
-Library roots are planned by their format; crawl commands supply their URL
-list as binding settings. Both are read by the binding runner. A library file selection
+Library roots are planned by their format. Crawl commands supply their filtered
+URL list to a reader in memory; only the allow list, limit and pause are binding
+settings. Both are read by the binding runner. A library file selection
 is a scan of that file within its root; files beside it are neither read nor
-reported removed. `library-add` then turns the copies into item and rendition
-requests, preserving item identity across moves and revisions. This item
-creation still runs in the library command adapter.
+reported removed. File and directory selections inside a configured root use
+that root's item identities. An unreadable entry records a scan failure and the
+walk continues elsewhere; earlier facts under the unreadable path stay in
+place until a successful retry. A scan records only paths whose size, modification time,
+device, inode or stored-byte setting changed, plus paths found missing.
+Unchanged polls write no material or copy events. One completion record closes
+each changed scan after its last part; it produces no copy event. Unchanged
+facts reuse the previous hashes and media metadata, including after restart.
+Each copy has a key made from the host, resolved root and original relative
+path. The captured material identifies each scan part; its part index orders
+changes even when clocks repeat or move backwards. A move within the root
+keeps that key when the old path is missing and the bytes match: a unique
+device and inode match takes precedence, otherwise a unique equal-content
+match is required in both directions. The scan compares all possible matches
+before emitting its first part. Ambiguous copies list their move candidates,
+create new items and leave existing curation separate. A new file at a moved
+item's original path gets a key that also names its first scan material, so
+two present files cannot take the same item key. Changed bytes at the same key create a
+revision named by the content hash, including replacement by another inode.
+Moving or renaming a whole root starts new items until an explicit root
+relocation is recorded. Root relocation recording is not yet implemented.
+
+`library.items` derives items and original renditions from visible scan
+records. Item IDs are hashes of their keys; original rendition IDs also name
+the content hash. Rendering a preview records `library.preview`, which the
+same derivation turns into a rendition with both the rendering and its scan
+evidence as parents. Hiding a scan invalidates its derived outputs; the runner
+recomputes them from the latest visible change at each path. An item and its renditions
+stay visible when another scan supplies their evidence. Revisions are content
+hashes, so hiding an earlier scan cannot change their identities.
+Revision history follows ordered copy records, so A to B to A keeps all
+three transitions while reusing A's rendition. Library commands report actual
+admission counts and wait for their requested keys through the same batched
+computation engine as the background runner. A shared lock serializes keyed
+computations before reading inputs, so an older read cannot overwrite a
+command's newer outputs. Item keys with the same input range share one paged
+query over all their values, rather than reading the library once per item. Command runs end on both success and failure.
+
+Schema version 5 adds the scan identity fields and the preview evidence type.
+It upgrades databases without library records. A database containing library
+records is refused before any schema or data changes: its request-created
+IDs and external references need an explicit migration decision.
 
 Crawl reads URLs from the `visit.fused` derivation, or from the command's
-explicit URLs. Its format owns domain filtering and the caller's optional
-limit. The journald service uses `sinex-session capture journald`, which builds
+explicit URLs. The command filters allowed domains and already fetched URLs
+before applying the caller's optional limit. Crawl requests run one at a time so the binding's cursor belongs to one
+URL list. A second request refuses with "a crawl is running". The journald service uses `sinex-session capture journald`, which builds
 capture from the format registry and stops it through the shared capture lifetime.
 
 ### Stored bytes and admission
@@ -44,7 +92,10 @@ capture from the format registry and stops it through the shared capture lifetim
 `StoredBytes` has three forms: an unnamed file of framed records, shared
 in-memory records, or a stored blob. A stored blob can supply its decoded
 record reader when reopened; an archive instead supplies decoded records
-separately. Storing and draining use those same bytes on retries.
+separately. Storing and draining use those same bytes on retries. Plain seekable inputs use
+`put_seekable`: repeated content is verified without recompression. Each completed
+input pass records its name before installation, including the compression pass
+when a file changes after its first hash pass.
 
 A driver's bytes are written to the content store before the batch that cites
 them is admitted. Admission inserts the material and its `core.blobs` row in
@@ -58,8 +109,13 @@ no row. Before installing a blob, the content store syncs its name in
 `unadmitted-blobs/`. The daemon checks those names against the database at
 start, holding the writer, before any source reads. After draining the writer
 at shutdown it removes the names that have rows. The first start of an existing
-store checks every file once, then syncs `unadmitted-blobs-ready` so later starts
-check only the recorded names.
+store checks every file once, then syncs `unadmitted-blobs-ready` with the
+database system identifier, name, highest event commit position and blob-change
+counter. The counter also advances for material admissions that produce no events.
+Later starts check only the recorded names when the database identity matches
+and both positions have stayed the same or advanced; a different database or
+a rollback requires a full scan. Clean
+shutdown saves the new position after forgetting admitted names.
 
 A failed admission is retried from the material the reader holds: the append,
 directory, SQLite-row and IMAP readers keep their newest material in memory

@@ -112,6 +112,24 @@ pub(crate) fn answer(result: &Value, local: &Local, next_hint: Option<&str>) -> 
         out.push_str(&table(&columns, &rows, local));
     }
     if let Some(recall) = result.get("recall").filter(|r| !r.is_null()) {
+        if let Some(reason) = recall["reason"].as_str() {
+            let reason: String = reason
+                .chars()
+                .map(|c| if c.is_control() { ' ' } else { c })
+                .collect();
+            let _ = writeln!(out, "{reason}");
+        }
+        if let Some(mark) = recall.get("mark").filter(|m| !m.is_null()) {
+            let _ = writeln!(out, "Mark: {}", cell(local, &mark["payload"]["text"]));
+        }
+        if let Some(latest) = recall["latest_by_source"]
+            .as_array()
+            .filter(|rows| !rows.is_empty())
+        {
+            out.push_str("Latest by source:\n");
+            let fields = ["source", "event_type", "when", "payload"].map(str::to_owned);
+            out.push_str(&table(&fields, latest, local));
+        }
         for s in recall["by_source"].as_array().into_iter().flatten() {
             let _ = writeln!(
                 out,
