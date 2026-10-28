@@ -766,7 +766,7 @@ async fn restoring_a_chain_refuses_an_independently_archived_parent(db: devkit::
     });
     let mut tx = conn.begin().await.unwrap();
     assert!(matches!(
-        admit(&mut tx, &restore, &NoKeys, None).await,
+        admit(&mut tx, &restore, &NoDerivations).await,
         Err(crate::Error::Invalid(_))
     ));
     tx.rollback().await.unwrap();

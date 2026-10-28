@@ -28,9 +28,9 @@ impl Default for ActivityProfile {
 fn selection_time(ns: i128) -> Timestamp {
     Timestamp::from_unix_ns(ns).unwrap_or_else(|_| {
         Timestamp(if ns < 0 {
-            time::OffsetDateTime::MIN
+            time::PrimitiveDateTime::MIN.assume_utc()
         } else {
-            time::OffsetDateTime::MAX
+            time::PrimitiveDateTime::MAX.assume_utc()
         })
     })
 }

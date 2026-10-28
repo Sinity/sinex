@@ -164,7 +164,7 @@ impl Keyed for WorkEpisodes {
                     start_field: "started_at",
                     end_field: "last_activity",
                     start: Timestamp::from_unix_ns(at.unix_ns() - 14 * 86_400 * SECOND)
-                        .unwrap_or(Timestamp(time::OffsetDateTime::MIN)),
+                        .unwrap_or(Timestamp(time::PrimitiveDateTime::MIN.assume_utc())),
                     end: input
                         .payload
                         .get("ended_at")
@@ -641,7 +641,7 @@ impl Keyed for ActivityDays {
             let agent_s = (!agent_intervals.is_empty()).then(|| union_seconds(agent_intervals));
             outputs.push(derived(
                 &ActivityDay {
-                    day_id: start.to_string(),
+                    day_id: start.unix_ns().to_string(),
                     started_at: *start,
                     ended_at: end,
                     boundary_method: "wake".into(),
