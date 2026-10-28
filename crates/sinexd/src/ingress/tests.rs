@@ -1081,7 +1081,7 @@ async fn a_refused_event_between_good_frames_is_a_queryable_material_failure_and
     let answer = sinex_store::query::run(
         &mut conn,
         "failures",
-        &bound,
+        Some(&bound),
         &context,
         &sinex_store::query::Page {
             size: None,

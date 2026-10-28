@@ -288,19 +288,18 @@ impl Ingest {
                         .map_err(|e| e.to_string())?;
                 }
             },
-            Err(Check::Unavailable(error)) => return Err(error),
-            Err(Check::Refused(reason)) => {
+            Err(error) => {
+                let (kind, reason) = match error {
+                    Check::Unavailable(error) => return Err(error),
+                    Check::Refused(reason) => (sinex_model::FrameRefusal::Content, reason),
+                    Check::Bytes(reason) => (sinex_model::FrameRefusal::Bytes, reason),
+                    Check::Malformed(reason) => (sinex_model::FrameRefusal::Malformed, reason),
+                    Check::Configuration(reason) => {
+                        (sinex_model::FrameRefusal::Configuration, reason)
+                    }
+                };
                 self.writer
-                    .submit(
-                        Priority::Live,
-                        refusal(
-                            run,
-                            producer,
-                            frame,
-                            sinex_model::FrameRefusal::Content,
-                            reason,
-                        ),
-                    )
+                    .submit(Priority::Live, refusal(run, producer, frame, kind, reason))
                     .await
                     .map_err(|e| e.to_string())?;
             }
