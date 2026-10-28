@@ -4,7 +4,10 @@ These pages are the design of record: what Sinex does, its model and formats,
 the laws its tests check, and the reasons behind the choices. They describe
 Sinex as designed. What exists today is shown by the generated
 [reference](reference/README.md) and by each module's documentation; the
-work between the two is tracked outside the repository.
+work between the two is tracked outside the repository. The current generated
+[source and derivation catalog](../nix/catalog.json) is also a module and
+discovery input; its generator and test are described in
+[the reference index](reference/README.md).
 
 ## Pages
 

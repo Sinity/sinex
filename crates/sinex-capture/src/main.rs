@@ -8,7 +8,7 @@
 //! with `--upload`, the node keeps its own store and sends each material's
 //! bytes over the link in chunk frames first.
 use clap::Parser;
-use sinex_source_core::drivers::producer::{Producer, Store};
+use sinex_source_core::drivers::producer::Store;
 use sinex_sources::live;
 use std::path::PathBuf;
 use std::process::ExitCode;
@@ -45,9 +45,9 @@ struct Cli {
     /// This host's name, recorded with every input.
     #[arg(long)]
     host: String,
-    /// Capture the systemd journal.
+    /// Host inputs, settings and source exclusions.
     #[arg(long)]
-    journald: bool,
+    sources: Option<PathBuf>,
     /// A directory whose file changes to capture; repeatable.
     #[arg(long = "watch")]
     watch: Vec<PathBuf>,
@@ -78,41 +78,35 @@ async fn run(cli: Cli) -> Result<(), String> {
     let spools = cli.state.join("spool");
     let positions = cli.state.join("positions");
     let store = Store::open(&cli.store).map_err(|e| format!("content store: {e}"))?;
-    let mut producer = Producer::connect(
-        &cli.nats,
-        cli.nats_password_file.as_deref(),
-        sinex_protocol::Subjects::new(cli.subject_root.clone()),
-        &cli.producer,
-    )
-    .await
-    .map_err(|e| e.to_string())?;
-    if cli.upload {
-        let own = Store::open(&cli.store).map_err(|e| format!("content store: {e}"))?;
-        producer = producer.upload_bytes(own);
-    }
-
-    let mut requested: Vec<(&str, &str, serde_json::Value)> = Vec::new();
-    if cli.journald {
-        requested.push(("journald", "journald", serde_json::json!({"follow": true})));
-    }
-    if !cli.watch.is_empty() {
-        let roots: Vec<String> = cli.watch.iter().map(|p| p.display().to_string()).collect();
-        requested.push(("file-watch", "files", serde_json::json!({ "roots": roots })));
-    }
-    if requested.is_empty() {
-        return Err("nothing to capture: pass --journald and/or --watch".into());
-    }
-    let bindings = requested
-        .into_iter()
-        .map(|(format, spool, options)| {
-            live::binding(format, &spools.join(spool), &cli.host, options)
-        })
-        .collect::<Result<Vec<_>, _>>()?;
+    let connection = live::Connection {
+        url: cli.nats.clone(),
+        password_file: cli.nats_password_file.clone(),
+        subjects: sinex_protocol::Subjects::new(cli.subject_root.clone()),
+        producer: cli.producer.clone(),
+        upload: cli.upload,
+    };
+    use sinex_sources::discovery::{self, Configuration, DiscoveryContext, Owner};
+    let configuration = cli
+        .sources
+        .as_deref()
+        .map(Configuration::load)
+        .transpose()?
+        .unwrap_or_default();
+    let mut context = DiscoveryContext::for_process(&cli.host, spools);
+    context.sources = configuration.sources;
+    context.exclude = configuration.exclude;
+    context.watch = cli.watch;
+    context.watch.extend(configuration.discovery.watch);
     live::run(
-        &mut producer,
+        connection,
         &store,
         &positions,
-        bindings,
+        || {
+            let mut plan = discovery::captures(&context, Owner::System)?;
+            plan.bindings
+                .extend(discovery::captures(&context, Owner::Session)?.bindings);
+            Ok(plan)
+        },
         Duration::from_secs(cli.every),
         None,
     )

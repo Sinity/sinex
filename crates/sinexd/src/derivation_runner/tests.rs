@@ -110,7 +110,7 @@ impl World {
         let (handle, queues) = writer::channels();
         let task = tokio::spawn(writer::run(
             url.clone(),
-            connection,
+            writer::claim(connection).await.unwrap(),
             queues,
             Arc::new(Keys::new(keyed)),
             None,
@@ -319,6 +319,7 @@ impl Keyed for Waiting {
             observed_by: vec![],
         };
         Computed {
+            error: None,
             outputs: vec![sinex_derivations::derived_event::derived(
                 &payload,
                 "test.waiting",
@@ -450,6 +451,7 @@ impl<const V: u32> Keyed for Count<V> {
             observed_by: vec![],
         };
         Computed {
+            error: None,
             outputs: vec![sinex_derivations::derived_event::derived(
                 &payload,
                 "test.count",
@@ -559,6 +561,9 @@ async fn windows_read_in_pages_equal_windows_read_alone(db: devkit::pg::TestData
         events.push(zsh(&format!("z{i}"), secs, u64::try_from(i).unwrap() * 100));
         events.push(atuin(&format!("a{i}"), &format!("a{i}"), secs, 0, 1));
     }
+    for (index, command) in ["Z", "a", "Å"].into_iter().enumerate() {
+        events.push(zsh(command, 500_000, 1_000 + index as u64 * 100));
+    }
     w.admit(events).await;
     let kind = |t: &str, contains: Value| derivations::Kind {
         event_type: t.to_owned(),
@@ -581,6 +586,16 @@ async fn windows_read_in_pages_equal_windows_read_alone(db: devkit::pg::TestData
         hour(111, &["command.imported"]),
         hour(2, &["command.imported"]),
         hour(0, &["command.imported", "command.executed"]),
+        filtered(0, vec![kind("command.imported", json!({"command": "z1"}))]),
+        filtered(0, vec![kind("command.imported", json!({"command": "z0"}))]),
+        filtered(
+            0,
+            vec![kind("command.imported", json!({"command": "absent"}))],
+        ),
+        filtered(0, vec![kind("command.imported", json!({"command": "z1"}))]),
+        filtered(138, vec![kind("command.imported", json!({"command": "Å"}))]),
+        filtered(138, vec![kind("command.imported", json!({"command": "a"}))]),
+        filtered(138, vec![kind("command.imported", json!({"command": "Z"}))]),
         // A condition applies to its own type only.
         filtered(
             0,
@@ -623,7 +638,7 @@ async fn windows_read_in_pages_equal_windows_read_alone(db: devkit::pg::TestData
             5,
             "the first hour's five zsh commands"
         );
-        let picked: Vec<&str> = read[7]
+        let picked: Vec<&str> = read[14]
             .as_ref()
             .unwrap()
             .iter()
@@ -678,3 +693,5 @@ async fn a_recompute_stopped_part_way_is_marked_again_at_the_next_start(
     assert!(w.count(fusion_dirty).await > 0);
     assert_eq!(w.count(stored_version).await, version);
 }
+
+mod commands;

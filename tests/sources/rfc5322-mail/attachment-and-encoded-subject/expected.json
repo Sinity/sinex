@@ -6,16 +6,19 @@
         "type": "mail.message",
         "ts": "2024-01-03T09:00:00Z",
         "time": "Intrinsic",
-        "key": "d708a3fe88d1e87d5c28c7b2dbc26625687dba680b01ca221a4bad3e7bc7cd9e",
+        "key": "06bf7ee24607f85ce405f92887aeb2a98272fb0527fe0ef17c45e930514c738c",
         "state": "Present",
         "payload": {
+          "account": null,
           "message_id": "att@example.org",
+          "native_id": null,
           "date": "2024-01-03T09:00:00Z",
           "from": [
             "x@example.org"
           ],
           "to": [],
           "cc": [],
+          "bcc": [],
           "subject": "Zażółć gęślą jaźń",
           "in_reply_to": null,
           "references": [],

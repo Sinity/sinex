@@ -7,7 +7,7 @@ the brief and agent arrival in [recall](recall.md); Today and the reader in
 [web](web.md). The shared mechanics (the `Operation` trait, request and answer
 envelopes, the failure-to-exit-and-HTTP table, latency classes and deadlines, SSE
 framing, the status figure format) are the common
-[`command-surface`](https://github.com/Sinity/polylogue-sinex-common/blob/master/crates/command-surface/README.md)
+[`command-surface`](https://github.com/Sinity/polylogue-sinex-common/blob/master/docs/command-surface.md)
 crate's; the signal rule schema and evaluator are common
 [signals](https://github.com/Sinity/polylogue-sinex-common/blob/master/docs/signals.md).
 

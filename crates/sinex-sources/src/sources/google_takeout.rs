@@ -1,6 +1,7 @@
 //! Google Takeout products, each its own source over the same archives. Chrome
 //! history is `takeout_chrome`, mail is `mail`, calendars are `calendar`.
 pub mod activity;
+pub mod assistant;
 pub mod cells;
 pub mod fit;
 pub mod keep;
@@ -34,6 +35,11 @@ const PRODUCTS: &[Product] = &[
         activity::youtube_driver,
     ),
     (&keep::SPEC, || Box::new(keep::source()), keep::driver),
+    (
+        &assistant::SPEC,
+        || Box::new(assistant::source()),
+        assistant::driver,
+    ),
     (&tasks::SPEC, || Box::new(tasks::source()), tasks::driver),
     (
         &purchases::PLAY_STORE,
@@ -65,6 +71,19 @@ fn product(b: &Binding) -> Result<&'static Product, String> {
 /// own cursor.
 pub const FORMAT: InputFormat = InputFormat {
     name: "takeout",
+    discovery: sinex_source_core::discovery::DiscoverySpec {
+        owner: sinex_source_core::discovery::Owner::System,
+        locations: &[sinex_source_core::discovery::Location {
+            root: "input",
+            path: "takeout",
+        }],
+        capabilities: &[],
+        credentials: &[],
+        streams: &[],
+        requests: &[],
+        request_only: false,
+    },
+    discover: crate::discovery::discover_format,
     specs: || PRODUCTS.iter().map(|p| p.0).collect(),
     plan: Some(|input, settings| {
         let zoned = settings.clone().with_zone()?;

@@ -1,8 +1,8 @@
 //! Excision as the API runs it: planned and checked here, applied by the
 //! writer, on a real database.
 use super::*;
+use crate::material_access::Sink;
 use crate::reader_context::ReaderContext;
-use crate::sealing::Sink;
 use crate::writer::Priority;
 use serde_json::Value;
 use sinex_model::event_types::machine::FileChanged;
@@ -10,6 +10,7 @@ use sinex_model::{
     Batch, BatchKind, Class, Event, EventId, MaterialId, Origin, ReadingOrder, RecordLocation,
     RecordOutcome, RunId, Timestamp,
 };
+use sinex_source_core::Reader;
 use sinex_source_core::drivers::{self, live_stream};
 use sinex_source_core::{Binding, Limits, Settings, SourceSpec};
 use sinex_sources::sources::clipboard;
@@ -138,7 +139,7 @@ impl Clipboard {
                 .write_all(&live_stream::frame(received, &line))
                 .unwrap();
         }
-        let driver = clipboard::driver(self.binding.input.clone(), "h".into(), "clipboard");
+        let mut driver = clipboard::driver(self.binding.input.clone(), "h".into(), "clipboard");
         let source = clipboard::source();
         let sink = Sink(self.ctx.blobs.clone());
         loop {

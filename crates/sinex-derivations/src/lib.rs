@@ -14,10 +14,12 @@ use serde_json::Value;
 use sinex_model::time_settings::TimeSettings;
 use sinex_model::{Event, EventId, Timestamp};
 
+pub mod calendar;
 pub mod derived_event;
 pub mod figures;
 pub mod fusion;
 pub mod health;
+pub mod library;
 pub mod presence;
 pub mod session;
 pub mod state_interval;
@@ -46,7 +48,7 @@ pub struct InputQuery {
 
 impl InputQuery {
     /// Every event of `event_types` in the window.
-    pub fn window(event_types: &[&'static str], start: Timestamp, end: Timestamp) -> Self {
+    pub fn window(event_types: &[&str], start: Timestamp, end: Timestamp) -> Self {
         Self::of(
             event_types.iter().map(|t| Kind::all(t)).collect(),
             start,
@@ -67,7 +69,7 @@ impl InputQuery {
     #[must_use]
     pub fn only(mut self, field: &'static str, value: Value) -> Self {
         for k in &mut self.kinds {
-            k.equal.push((field, value.clone()));
+            k.equal.push((field.into(), value.clone()));
         }
         self
     }
@@ -82,15 +84,15 @@ impl InputQuery {
             && self
                 .kinds
                 .iter()
-                .any(|k| k.admits(event.event_type, &event.payload))
+                .any(|k| k.admits(&event.event_type, &event.payload))
     }
 
     /// The event types read, without repeats.
-    pub fn event_types(&self) -> Vec<&'static str> {
-        let mut out: Vec<&'static str> = Vec::new();
+    pub fn event_types(&self) -> Vec<String> {
+        let mut out: Vec<String> = Vec::new();
         for k in &self.kinds {
             if !out.contains(&k.event_type) {
-                out.push(k.event_type);
+                out.push(k.event_type.clone());
             }
         }
         out
@@ -101,24 +103,24 @@ impl InputQuery {
 /// values. Several kinds of one type read the events any of them admits.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Kind {
-    pub event_type: &'static str,
-    pub equal: Vec<(&'static str, Value)>,
+    pub event_type: String,
+    pub equal: Vec<(String, Value)>,
 }
 
 impl Kind {
-    pub fn all(event_type: &'static str) -> Self {
+    pub fn all(event_type: &str) -> Self {
         Self {
-            event_type,
+            event_type: event_type.into(),
             equal: Vec::new(),
         }
     }
 
-    pub fn only(event_type: &'static str, equal: &[(&'static str, &'static str)]) -> Self {
+    pub fn only(event_type: &str, equal: &[(&'static str, &'static str)]) -> Self {
         Self {
-            event_type,
+            event_type: event_type.into(),
             equal: equal
                 .iter()
-                .map(|(f, v)| (*f, Value::String((*v).to_owned())))
+                .map(|(f, v)| ((*f).into(), Value::String((*v).to_owned())))
                 .collect(),
         }
     }
@@ -128,7 +130,7 @@ impl Kind {
             && self
                 .equal
                 .iter()
-                .all(|(f, v)| payload.get(*f).is_some_and(|p| p == v))
+                .all(|(f, v)| payload.get(f).is_some_and(|p| p == v))
     }
 }
 
@@ -172,6 +174,7 @@ impl Env {
 /// What one key's computation produced.
 #[derive(Clone, Debug, Default)]
 pub struct Computed {
+    pub error: Option<sinex_model::BuildError>,
     pub outputs: Vec<Event>,
     /// Some output still waits for evidence that may arrive later and outside
     /// the key's window (an interval still open, a session still growing).
@@ -300,7 +303,8 @@ pub fn keyed() -> Vec<Box<dyn AnyKeyed>> {
         .iter()
         .map(|rule| Box::new(fusion::Fusion(rule)) as Box<dyn AnyKeyed>)
         .collect();
-    all.extend::<[Box<dyn AnyKeyed>; 7]>([
+    all.extend::<[Box<dyn AnyKeyed>; 9]>([
+        Box::new(library::LibraryItems),
         Box::new(session::ShellSessions),
         Box::new(state_interval::StateIntervals),
         Box::new(figures::HourlyMetrics),
@@ -308,6 +312,7 @@ pub fn keyed() -> Vec<Box<dyn AnyKeyed>> {
         Box::new(presence::Presence),
         Box::new(health::HourlyFigures),
         Box::new(health::DailyFigures),
+        Box::new(calendar::Instances),
     ]);
     all
 }
@@ -315,7 +320,7 @@ pub fn keyed() -> Vec<Box<dyn AnyKeyed>> {
 /// Every pure per-event derivation. Those that need a local tool (screen text
 /// through an OCR engine) are added by `sinexd`, which may run them.
 pub fn per_event() -> Vec<Box<dyn AnyPerEvent>> {
-    Vec::new()
+    vec![Box::new(library::Hints)]
 }
 
 /// The parent IDs of a set of input events, in input order, without repeats.

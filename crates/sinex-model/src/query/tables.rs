@@ -45,6 +45,8 @@ macro_rules! event_fields {
         &[
             f("id", FieldType::Id, "event ID"),
             f("event_type", FieldType::Text, "event type"),
+            f("kind_version", FieldType::Integer, "kind version"),
+            f("validation", FieldType::Enum(crate::Validation::VALUES), "validation"),
             f("source", FieldType::Text, "source"),
             f("host", FieldType::Text, "host"),
             f("when", FieldType::Time, "time it happened"),
@@ -268,10 +270,20 @@ impl Table {
     pub fn default_fields(self) -> &'static [&'static str] {
         match self {
             Table::Gaps => &["source", "run", "start", "end", "reason"],
-            Table::Events | Table::Drift => &["id", "event_type", "source", "when", "payload"],
+            Table::Events | Table::Drift => &[
+                "id",
+                "event_type",
+                "kind_version",
+                "validation",
+                "source",
+                "when",
+                "payload",
+            ],
             Table::Archive => &[
                 "id",
                 "event_type",
+                "kind_version",
+                "validation",
                 "source",
                 "when",
                 "archived",
@@ -456,7 +468,11 @@ pub const ALIASES: &[Alias] = &[
         fields: &[
             f("item", FieldType::Text, "item"),
             f("label", FieldType::Text, "label"),
-            f("revision", FieldType::Integer, "revision"),
+            f(
+                "revision",
+                FieldType::Text,
+                "content hash naming the revision",
+            ),
             f("content", FieldType::Text, "content hash"),
             f("media_type", FieldType::Text, "media type"),
         ],

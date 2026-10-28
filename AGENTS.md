@@ -76,7 +76,7 @@ concepts an agent needs before opening it.
 | `crates/sinex-analysis` | statistical methods over derived events as pure code |
 | `crates/sinex-library` | the media library |
 | `crates/sinexd` | the daemon: writer, admission, binding reader, publisher, replay, derivation runner, API, reader web, status |
-| `crates/sinexctl`, `crates/sinex-diagnostics` | the CLI and MCP server; diagnostics that work while the daemon is down |
+| `crates/sinexctl` | the CLI and MCP server; offline diagnostics run the sibling `sinexd` executable |
 | `crates/sinex-session`, `crates/sinex-capture` | the session producer and the capture-only node, outside producers over the NATS ingress |
 | `xtask/` | developer commands, built on `devkit` from polylogue-sinex-common |
 | `nix/` | the NixOS module, the Home Manager module for session capture, and the VM tests |
@@ -101,10 +101,14 @@ hooks once with `git config core.hooksPath .githooks`.
 
 | Command | Does |
 |---|---|
-| `cargo xtask check` | formatting, boundaries and clippy against the schema database |
+| `cargo xtask check` | formatting, boundaries, workspace and reduced-capture Clippy against the schema database, including the fuzz harness |
 | `cargo xtask compile -p <crate> [--tests]` | compile selected packages, preparing the schema database when needed |
 | `cargo xtask test -p <crate> -E 'test(<name>)'` | selected Rust tests under nextest |
-| `cargo xtask test` | every Rust test |
+| `cargo xtask test` | every Rust test and bounded fuzz-corpus replay |
+| `cargo xtask test --no-run` | build every test binary without running tests |
+| `cargo xtask run --watch --output DIR` | an isolated development stack and watched rebuilds |
+| `cargo xtask vm --output DIR` | the module check and three exported NixOS VM scenarios |
+| `cargo xtask coverage --output DIR --format html -- -p <crate>` | LLVM coverage of selected tests |
 | `cargo xtask changed` | the nextest filter for packages changed since the merge base, and their dependents |
 | `cargo xtask db ensure` | build the database for the current schema and print its `DATABASE_URL`; `db exec` runs a command with it set |
 | `cargo xtask bench ...` | backfill and derivation on a fixed sample of real inputs |
@@ -116,9 +120,11 @@ hooks once with `git config core.hooksPath .githooks`.
 Package selection limits the build; a name filter alone still builds the
 workspace. Every xtask run is recorded in devkit's history database.
 Fuzzing runs as tests: bounded corpus replay inside `test`, longer runs as a
-test profile over the same harness. The design adds `cargo xtask coverage`,
-`vm`, `docs` (renders [docs/reference/](docs/reference/README.md)) and `laws`
-(lists each law key and the tests named after it); they do not exist yet.
+test profile over the same harness. The designed `cargo xtask docs` (renders
+[docs/reference/](docs/reference/README.md)) and `laws` (lists each law key
+and the tests named after it) are not implemented yet. Development runs,
+coverage, VM scenarios and history comparisons are described in
+[testing.md](docs/testing.md#development-runs-and-reports).
 
 **SQL is checked against a real schema.** The store's queries are SQLx
 checked queries compiled against a live database built from the current
@@ -362,3 +368,38 @@ real captures, private reports and real databases stay out of Git, and so do
 paths into a particular machine and personal account names. Reading the
 operator's real data on the development machine for development and
 measurement is fine; report figures, not contents.
+
+## Cloud sessions and changes to polylogue-sinex-common
+
+Cloud sessions (Claude Code on the web, Codex cloud) run on a fresh
+VM without AgentCTL, `/realm` or the operator's services; run `cargo xtask`
+commands there directly. The environment's setup script runs
+`bash dev/cloud/setup.sh`, after which every shell is in the development
+shell, with PostgreSQL, TimescaleDB and nats-server on `PATH`.
+
+- A Sinex session must include the polylogue-sinex-common repository: Cargo
+  fetches Git dependencies from it, and a session reaches only the
+  repositories it includes.
+- `cargo xtask check`, `cargo xtask compile -p <package> [--tests]` and
+  `cargo xtask test [-p <package>] [-E <filterset>]` work as on the host.
+  Each run owns its PostgreSQL cluster and NATS server; PostgreSQL runs as
+  `nobody` when started by root and as the calling user otherwise. The setup
+  installer needs elevated permissions; ordinary commands need not run as root.
+  The first workspace build takes minutes; run it in the background. The
+  NixOS VM checks, `xtask bench` and anything that reads the operator's data
+  do not run there; report them as not run.
+- Push a branch and open a pull request; do not merge.
+
+A change that needs polylogue-sinex-common changed too starts there.
+`cargo xtask link-common [<path>]` builds this workspace against a checkout
+of it (the path, else `$POLYLOGUE_SINEX_COMMON`, else
+`../polylogue-sinex-common`), and entering the development shell does the
+same when that checkout exists. It writes the git-ignored
+`.cargo/local.toml`, and the workspace locks (the root and `fuzz/`) then name
+the local crates, so those lock changes are not committed.
+`cargo xtask unlink-common` restores both locks and keeps the shell from
+linking again. Merge the common pull request
+first; its workflow then opens a pull request here that moves Cargo.lock to
+the new commit. Convert the callers on that branch, or run `cargo update -p
+devkit -p hashed-blobs -p credential-masking` on the branch that converts
+them, so the lock change and the callers land together.

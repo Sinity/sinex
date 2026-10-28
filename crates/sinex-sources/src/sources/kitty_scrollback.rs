@@ -308,6 +308,7 @@ pub fn driver(root: PathBuf, host: String) -> DirSnapshot {
     DirSnapshot {
         root,
         host,
+        removed_at_source: false,
         select,
         part_bytes: 64 << 20,
     }
@@ -317,6 +318,19 @@ pub fn driver(root: PathBuf, host: String) -> DirSnapshot {
 pub const FORMAT: sinex_source_core::binding::InputFormat =
     sinex_source_core::binding::InputFormat {
         name: "kitty-scrollback",
+        discovery: sinex_source_core::discovery::DiscoverySpec {
+            owner: sinex_source_core::discovery::Owner::System,
+            locations: &[sinex_source_core::discovery::Location {
+                root: "capture",
+                path: "kitty-scrollback",
+            }],
+            capabilities: &[],
+            credentials: &[],
+            streams: &[],
+            requests: &[],
+            request_only: false,
+        },
+        discover: crate::discovery::discover_format,
         specs: || vec![&SPEC],
         plan: Some(|input, settings| {
             Ok(sinex_source_core::binding::single(&SPEC, input, settings))

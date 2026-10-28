@@ -1,3 +1,6 @@
+#[path = "../../../sinex-source-core/tests/support/hello.rs"]
+mod hello;
+use std::io::BufRead;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Output, Stdio};
@@ -8,6 +11,49 @@ struct Session {
 }
 
 impl Session {
+    fn signal(&self, signal: &str) {
+        assert!(
+            Command::new("sh")
+                .args([
+                    "-c",
+                    "kill -$1 $2",
+                    "fixture",
+                    signal,
+                    &self.child.as_ref().unwrap().id().to_string(),
+                ])
+                .status()
+                .unwrap()
+                .success()
+        );
+    }
+
+    fn stop(self) -> Output {
+        self.signal("TERM");
+        self.finish()
+    }
+
+    fn publishing_failed(&mut self, count: usize) -> String {
+        let mut reader =
+            std::io::BufReader::new(self.child.as_mut().unwrap().stderr.as_mut().unwrap());
+        let mut log = String::new();
+        let mut failed = 0;
+        loop {
+            let mut line = String::new();
+            assert_ne!(
+                reader.read_line(&mut line).unwrap(),
+                0,
+                "session ended before publishing failed: {log}"
+            );
+            log.push_str(&line);
+            if line.contains("no stream found for given subject") {
+                failed += 1;
+                if failed == count {
+                    return log;
+                }
+            }
+        }
+    }
+
     fn finish(mut self) -> Output {
         let until = Instant::now() + Duration::from_secs(5);
         loop {
@@ -85,6 +131,24 @@ exec sleep 30
             std::fs::write(&path, format!("#!{}\n{body}", shell.trim())).unwrap();
             std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o700)).unwrap();
         }
+        let runtime = root.join("run");
+        std::fs::create_dir(&runtime).unwrap();
+        std::fs::write(runtime.join("wayland-test"), b"").unwrap();
+        let excluded: serde_json::Map<String, serde_json::Value> = sinex_sources::sources::specs()
+            .iter()
+            .filter(|spec| spec.name != "desktop.clipboard")
+            .map(|spec| {
+                (
+                    spec.name.to_owned(),
+                    serde_json::json!({"reason":"fixture captures only the clipboard"}),
+                )
+            })
+            .collect();
+        std::fs::write(
+            root.join("sources.json"),
+            serde_json::to_vec(&serde_json::json!({"exclude":excluded})).unwrap(),
+        )
+        .unwrap();
         let pids = root.join("pids");
         Self {
             _dir: dir,
@@ -101,10 +165,13 @@ exec sleep 30
         ));
         command
             .env("PATH", std::env::join_paths(path).unwrap())
+            .env("XDG_RUNTIME_DIR", self.root.join("run"))
+            .env("WAYLAND_DISPLAY", "wayland-test")
+            .env_remove("HYPRLAND_INSTANCE_SIGNATURE")
+            .env_remove("DBUS_SESSION_BUS_ADDRESS")
             .env("FAKE_PIDS", &self.pids)
             .env("FAKE_DESCENDANTS", self.root.join("descendants"))
             .env("FAKE_HEARTBEAT", self.root.join("heartbeat"))
-            .env("SINEX_STATE_DIR", self.root.join("private-state"))
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
@@ -122,10 +189,11 @@ exec sleep 30
                 nats.prefix(),
                 "--producer",
                 "fixture",
-                "--clipboard",
                 "--every",
                 "1",
             ])
+            .arg("--sources")
+            .arg(self.root.join("sources.json"))
             .arg("--state")
             .arg(self.root.join("state"))
             .arg("--store")
@@ -158,6 +226,49 @@ exec sleep 30
             .lines()
             .map(|s| s.parse().unwrap())
             .collect()
+    }
+
+    fn keeps_capturing(&self, session: &mut Session) {
+        let before = std::fs::metadata(self.root.join("heartbeat"))
+            .unwrap()
+            .len();
+        let until = Instant::now() + Duration::from_secs(5);
+        while std::fs::metadata(self.root.join("heartbeat"))
+            .unwrap()
+            .len()
+            == before
+        {
+            assert!(
+                session
+                    .child
+                    .as_mut()
+                    .unwrap()
+                    .try_wait()
+                    .unwrap()
+                    .is_none(),
+                "publishing failure ended the session"
+            );
+            assert!(
+                Instant::now() < until,
+                "capture stopped after publishing failed"
+            );
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert!(
+            session
+                .child
+                .as_mut()
+                .unwrap()
+                .try_wait()
+                .unwrap()
+                .is_none()
+        );
+        for pid in self.pids().into_iter().chain(self.descendants()) {
+            assert!(
+                Path::new(&format!("/proc/{pid}")).exists(),
+                "capture child {pid} stopped after publishing failed"
+            );
+        }
     }
 
     fn all_reaped(&self) {
@@ -213,6 +324,12 @@ fn capture_deadline_reaps_clipboard_and_audio_children() {
 #[devkit::test]
 fn run_deadline_reaps_both_clipboard_selections() {
     let nats = devkit::nats::test_nats().unwrap();
+    let _runtime = tokio::runtime::Runtime::new().unwrap();
+    _runtime.block_on(hello::hello(
+        &nats,
+        &sinex_protocol::Subjects::new(nats.prefix()),
+        "fixture",
+    ));
     let fixture = Fixture::new();
     let output = Session {
         child: Some(fixture.run(&nats).args(["--seconds", "1"]).spawn().unwrap()),
@@ -231,24 +348,18 @@ fn run_deadline_reaps_both_clipboard_selections() {
 fn run_signals_join_capture_threads_and_reap_children() {
     for signal in ["INT", "TERM"] {
         let nats = devkit::nats::test_nats().unwrap();
+        let _runtime = tokio::runtime::Runtime::new().unwrap();
+        _runtime.block_on(hello::hello(
+            &nats,
+            &sinex_protocol::Subjects::new(nats.prefix()),
+            "fixture",
+        ));
         let fixture = Fixture::new();
         let session = Session {
             child: Some(fixture.run(&nats).spawn().unwrap()),
         };
         fixture.started(2);
-        assert!(
-            Command::new("sh")
-                .args([
-                    "-c",
-                    "kill -$1 $2",
-                    "fixture",
-                    signal,
-                    &session.child.as_ref().unwrap().id().to_string()
-                ])
-                .status()
-                .unwrap()
-                .success()
-        );
+        session.signal(signal);
         let output = session.finish();
         assert!(
             output.status.success(),
@@ -260,29 +371,41 @@ fn run_signals_join_capture_threads_and_reap_children() {
 }
 
 #[devkit::test]
-fn a_producer_error_stops_already_running_capture_children() {
+fn publishing_errors_leave_capture_children_running_until_stopped() {
     let nats = devkit::nats::test_nats().unwrap();
+    let _runtime = tokio::runtime::Runtime::new().unwrap();
+    _runtime.block_on(hello::hello(
+        &nats,
+        &sinex_protocol::Subjects::new(nats.prefix()),
+        "fixture",
+    ));
     let fixture = Fixture::new();
     // No ingress stream exists: publishing the captured synthetic line fails.
-    let output = Session {
+    let mut session = Session {
         child: Some(fixture.run(&nats).env("FAKE_EMIT", "1").spawn().unwrap()),
-    }
-    .finish();
-    assert!(!output.status.success());
-    assert!(
-        String::from_utf8_lossy(&output.stderr).contains("no stream found for given subject"),
-        "{}",
-        String::from_utf8_lossy(&output.stderr)
-    );
+    };
+    fixture.started(2);
+    let mut log = session.publishing_failed(2);
+    fixture.keeps_capturing(&mut session);
+    let output = session.stop();
+    log.push_str(&String::from_utf8_lossy(&output.stderr));
+    assert!(output.status.success(), "{log}");
+    assert_eq!(log.matches("no stream found for given subject").count(), 2);
     fixture.all_reaped();
 }
 
 #[devkit::test]
-fn a_first_record_after_saved_empty_polls_reaches_transport_and_reaps_children() {
+fn a_first_record_after_saved_empty_polls_reaches_transport_while_capture_continues() {
     let nats = devkit::nats::test_nats().unwrap();
+    let _runtime = tokio::runtime::Runtime::new().unwrap();
+    _runtime.block_on(hello::hello(
+        &nats,
+        &sinex_protocol::Subjects::new(nats.prefix()),
+        "fixture",
+    ));
     let fixture = Fixture::new();
     let release = fixture.root.join("emit");
-    let session = Session {
+    let mut session = Session {
         child: Some(
             fixture
                 .run(&nats)
@@ -312,12 +435,87 @@ fn a_first_record_after_saved_empty_polls_reaches_transport_and_reaps_children()
         std::thread::sleep(Duration::from_millis(10));
     }
     std::fs::write(release, b"emit").unwrap();
-    let output = session.finish();
+    let mut log = session.publishing_failed(2);
+    fixture.keeps_capturing(&mut session);
+    let output = session.stop();
+    log.push_str(&String::from_utf8_lossy(&output.stderr));
+    assert!(output.status.success(), "{log}");
+    assert_eq!(log.matches("no stream found for given subject").count(), 2);
+    fixture.all_reaped();
+}
+
+#[devkit::test]
+fn drain_without_spools_exits_without_starting_session_captures() {
+    let nats = devkit::nats::test_nats().unwrap();
+    let _runtime = tokio::runtime::Runtime::new().unwrap();
+    _runtime.block_on(hello::hello(
+        &nats,
+        &sinex_protocol::Subjects::new(nats.prefix()),
+        "fixture",
+    ));
+    let fixture = Fixture::new();
+    let output = Session {
+        child: Some(fixture.run(&nats).arg("--drain").spawn().unwrap()),
+    }
+    .finish();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(fixture.pids().is_empty());
+    assert!(!fixture.root.join("state/spool").exists());
+}
+
+#[devkit::test]
+fn drain_reads_a_stopped_spool_without_session_capabilities_and_keeps_unacknowledged_bytes() {
+    use sinex_source_core::drivers::live_stream::{Rotation, SpoolWriter};
+    let nats = devkit::nats::test_nats().unwrap();
+    let _runtime = tokio::runtime::Runtime::new().unwrap();
+    _runtime.block_on(hello::hello(
+        &nats,
+        &sinex_protocol::Subjects::new(nats.prefix()),
+        "fixture",
+    ));
+    let fixture = Fixture::new();
+    let spool = fixture.root.join("state/spool/clipboard");
+    let mut writer = SpoolWriter::open(&spool, Rotation::default()).unwrap();
+    writer
+        .append(
+            sinex_model::Timestamp::now(),
+            br#"{"selection":"clipboard","types":[],"secret":false,"text":"synthetic drain"}"#,
+        )
+        .unwrap();
+    writer.sync().unwrap();
+    drop(writer);
+    let before: Vec<_> = std::fs::read_dir(&spool)
+        .unwrap()
+        .map(|entry| {
+            let path = entry.unwrap().path();
+            let bytes = std::fs::read(&path).unwrap();
+            (path, bytes)
+        })
+        .collect();
+    let output = Session {
+        child: Some(
+            fixture
+                .run(&nats)
+                .arg("--drain")
+                .env_remove("WAYLAND_DISPLAY")
+                .spawn()
+                .unwrap(),
+        ),
+    }
+    .finish();
+    // There is no ingress stream, so finished data must remain available to retry.
     assert!(!output.status.success());
     assert!(
         String::from_utf8_lossy(&output.stderr).contains("no stream found for given subject"),
         "{}",
         String::from_utf8_lossy(&output.stderr)
     );
-    fixture.all_reaped();
+    assert!(fixture.pids().is_empty());
+    for (path, bytes) in before {
+        assert_eq!(std::fs::read(path).unwrap(), bytes);
+    }
 }

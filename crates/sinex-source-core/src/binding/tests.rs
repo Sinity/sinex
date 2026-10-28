@@ -47,6 +47,7 @@ fn per_file_reads_a_file_or_a_directorys_kept_files_in_order() {
 #[devkit::test]
 fn settings_round_trip_and_keep_a_resolved_zone() {
     let s = Settings {
+        class: None,
         zone: Some("Europe/Warsaw".into()),
         ..Settings::new("h")
     };
@@ -55,4 +56,57 @@ fn settings_round_trip_and_keep_a_resolved_zone() {
     assert_eq!(back.zone().unwrap().iana_name(), Some("Europe/Warsaw"));
     let resolved = Settings::new("h").with_zone().unwrap();
     assert!(resolved.zone.is_some());
+}
+
+#[devkit::test]
+fn removal_readers_require_record_locations_in_saved_memory() {
+    use crate::drivers::dir_snapshot::DirState;
+    let directory = tempfile::tempdir().unwrap();
+    std::fs::write(directory.path().join("note.md"), "synthetic note").unwrap();
+    let driver = |removed_at_source| DirSnapshot {
+        root: directory.path().to_owned(),
+        host: "fixture".into(),
+        select: |_| true,
+        part_bytes: 4096,
+        removed_at_source,
+    };
+    let facts = driver(false)
+        .poll(&Value::Null, &mut DirState::default())
+        .unwrap()
+        .material
+        .unwrap()
+        .memory
+        .unwrap();
+    let Reading::Polled(mut reader) = walked(driver(true)) else {
+        panic!("directory reader")
+    };
+    assert!(
+        reader
+            .restore_memory(&facts)
+            .unwrap_err()
+            .to_string()
+            .contains("removal locations")
+    );
+    let complete = driver(true)
+        .poll(&Value::Null, &mut DirState::default())
+        .unwrap()
+        .material
+        .unwrap()
+        .memory
+        .unwrap();
+    let Reading::Polled(mut reader) = walked(driver(true)) else {
+        panic!("directory reader")
+    };
+    reader.restore_memory(&complete).unwrap();
+}
+
+#[devkit::test]
+fn only_declared_boolean_options_convert_strings() {
+    let mut settings = Settings::new("synthetic");
+    settings.options =
+        serde_json::json!({"follow":"true", "reference":false, "kind":"false", "bad":"yes"});
+    assert_eq!(settings.boolean("follow").unwrap(), Some(true));
+    assert_eq!(settings.boolean("reference").unwrap(), Some(false));
+    assert_eq!(settings.option("kind"), Some("false"));
+    assert!(settings.boolean("bad").is_err());
 }

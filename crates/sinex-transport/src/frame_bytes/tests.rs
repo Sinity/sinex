@@ -136,3 +136,36 @@ fn discard_leaves_files_it_did_not_put_there() {
 }
 
 mod group;
+
+#[devkit::test]
+fn storage_faults_and_invalid_content_have_different_errors() {
+    let root = tempfile::tempdir().unwrap();
+    let bytes = b"synthetic";
+    let blob = name(bytes);
+    let length = bytes.len() as u64;
+    assert!(matches!(
+        snapshot(root.path(), "node", "missing", &blob, length),
+        Err(Error::Storage(_))
+    ));
+    let blocked = root.path().join("not-a-directory");
+    std::fs::write(&blocked, b"file").unwrap();
+    assert!(matches!(
+        receive(&blocked, "node", "frame", &blob, length, 0, bytes),
+        Err(Error::Storage(_))
+    ));
+    assert!(matches!(
+        receive(root.path(), "node", "frame", "invalid", length, 0, bytes),
+        Err(Error::Invalid(_))
+    ));
+    assert!(matches!(
+        write(
+            root.path(),
+            "node",
+            "frame",
+            &blob,
+            length,
+            b"different".as_slice()
+        ),
+        Err(Error::Mismatch(_))
+    ));
+}

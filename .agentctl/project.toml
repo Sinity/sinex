@@ -104,7 +104,7 @@ unit_properties = ["MemoryHigh=8G"]
 
 [operations.bench]
 description = "Run the corpus benchmark through the shared job queue"
-exec = ["cargo", "run", "--locked", "--quiet", "-p", "xtask", "--", "bench"]
+exec = ["cargo", "run", "--locked", "--quiet", "--target-dir", "target/bench", "-p", "xtask", "--", "bench"]
 arguments = "required"
 pool = "measure"
 result = "exit"
@@ -133,3 +133,60 @@ pool = "codex"
 result = "exit"
 timeout_seconds = 28800
 cache = "none"
+
+[operations.vm_stack]
+description = "Build and run the stack VM, including journal event delivery"
+exec = ["nix", "build", "--no-link", ".#checks.x86_64-linux.vm-stack", "--print-build-logs", "--max-jobs", "1"]
+pool = "bulk"
+result = "exit"
+timeout_seconds = 7200
+scratch = "nvme"
+cache = "none"
+cap = "cargo"
+unit_properties = ["MemoryHigh=8G"]
+
+[operations.verify]
+description = "Full Rust tests followed by format, boundaries and clippy in one job"
+exec = ["bash", "-euc", "timeout 900s cargo run --locked --quiet -p xtask -- test\ntimeout 1800s cargo run --locked --quiet -p xtask -- check"]
+pool = "bulk"
+result = "exit"
+timeout_seconds = 2700
+scratch = "tmpfs"
+cache = "none"
+cap = "cargo"
+unit_properties = ["MemoryHigh=8G"]
+
+[operations.vm]
+description = "Run xtask vm with explicit arguments and recorded results"
+exec = ["cargo", "run", "--locked", "--quiet", "-p", "xtask", "--", "vm"]
+arguments = "required"
+pool = "bulk"
+result = "exit"
+timeout_seconds = 7200
+scratch = "nvme"
+cache = "none"
+cap = "cargo"
+unit_properties = ["MemoryHigh=8G"]
+
+[operations.development]
+description = "Run xtask run with explicit arguments and recorded results"
+exec = ["cargo", "run", "--locked", "--quiet", "-p", "xtask", "--", "run"]
+arguments = "required"
+pool = "normal"
+result = "exit"
+timeout_seconds = 28800
+scratch = "nvme"
+cache = "none"
+unit_properties = ["MemoryHigh=8G"]
+
+[operations.coverage]
+description = "Run xtask coverage with explicit arguments and recorded results"
+exec = ["cargo", "run", "--locked", "--quiet", "-p", "xtask", "--", "coverage"]
+arguments = "required"
+pool = "bulk"
+result = "exit"
+timeout_seconds = 3600
+scratch = "nvme"
+cache = "none"
+cap = "cargo"
+unit_properties = ["MemoryHigh=8G"]

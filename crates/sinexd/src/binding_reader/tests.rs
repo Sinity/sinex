@@ -416,8 +416,11 @@ async fn sealed_archive_restart_replay_and_class_changes_preserve_exact_material
                 .unwrap(),
             checkpoint
         );
-        let unlock =
-            crate::sealing::Unlock::new(identity, std::time::Duration::from_secs(60)).unwrap();
+        let unlock = crate::material_access::sealing::Unlock::new(
+            identity,
+            std::time::Duration::from_secs(60),
+        )
+        .unwrap();
         let mut restarted = make_bound();
         let unlocked = read(
             &mut ctx.read_conn,
@@ -639,8 +642,9 @@ async fn an_unchanged_append_only_file_is_not_polled_again(db: devkit::pg::TestD
     let mut ctx = ReaderContext::open(&url, &dir.join("store")).await.unwrap();
     let sink = Sink(ctx.blobs.clone());
     let (_stop, stop) = watch::channel(false);
-    let format = sinex_sources::sources::format_of("terminal.zsh-history").unwrap();
+    let format = sinex_sources::sources::format("zsh").unwrap();
     let settings = Settings {
+        class: None,
         host: "h".into(),
         zone: None,
         options: Value::Null,
@@ -695,3 +699,5 @@ async fn an_unchanged_append_only_file_is_not_polled_again(db: devkit::pg::TestD
     ctx.close().await.unwrap();
     std::fs::remove_dir_all(&dir).unwrap();
 }
+
+mod gmail;

@@ -43,6 +43,16 @@ a template (`devkit::pg::test_database()`), so database tests run in
 parallel. Disposable PostgreSQL clusters and NATS servers are owned by the
 test run and reaped on every exit path.
 
+## Development runs and reports
+
+`cargo xtask run --watch --output DIR` builds the daemon and runs it with an owned PostgreSQL cluster, schema database and NATS server. The output directory must be new; it holds private tokens, runtime process/socket identities and any explicitly selected session spools. The runner never selects the host's services. Readiness requires HTTP 200 from the API. A failed rebuild leaves the previous daemon running and records the build failure; edits during a build trigger another build. `--seconds SECONDS` bounds a smoke run. Cancellation stops the owned processes; retained private output is inspected separately from disposable service data.
+
+Sources are explicit in a development run: `--sources FILE` selects daemon bindings, and repeated `--session-source NAME` selects session captures. The generated session source file preserves configured exclusions and excludes every unselected catalog capture, including media and file watches. The watcher ignores its output directory. A checkout has one development-stack lock, released when the process exits.
+
+`cargo xtask history explain RUN` shows resolved arguments, stages and slow tests. `history compare BEFORE AFTER` compares passed runs with matching command, exact arguments, host and toolchain; `history compare-days DATE DATE` groups UTC days by those same fields. Parallel test durations are separate from wall time. Recorded overlap does not by itself establish resource contention. `NEXTEST_TEST_THREADS` selects test concurrency unless explicit nextest options override it, and the resolved setting is recorded with the run.
+
+`cargo xtask coverage --output DIR --format html -- -p CRATE` uses a separate instrumented build. Formats are `html`, `lcov` and `json`; `coverage.json` retains LLVM data and `summary.json` records arguments, line coverage and function regions. `--threshold PERCENT` is an optional caller-selected threshold. Output directories are new; failed children, empty selections and malformed or missing reports are errors. The shared runner mechanics belong to [devkit](https://github.com/Sinity/polylogue-sinex-common/blob/master/crates/devkit/README.md).
+
 ## The synthetic world
 
 The higher layer (episodes, presence, attention, project attribution, the
@@ -104,7 +114,7 @@ laws and citations are shared with Polylogue and described in its
   when several tests check one law. Finding a law's tests is a name search.
 - **Shared laws live with the shared code.** The query language's law suite
   is in common's
-  [`query-language`](https://github.com/Sinity/polylogue-sinex-common/blob/master/crates/query-language/README.md)
+  [`query-language`](https://github.com/Sinity/polylogue-sinex-common/blob/master/docs/query-language.md)
   and runs against Sinex's catalog as well as Polylogue's;
   [query.md](query.md) lists only Sinex's own query laws.
 - **Coverage is a report.** `cargo xtask laws` lists each law key with the
@@ -136,9 +146,14 @@ NixOS VM tests boot the shipped modules
 
 | Test | Covers |
 |---|---|
+| `module` | module evaluation, service ownership, permissions and option wiring |
 | `vm-stack` | the daemon, PostgreSQL, NATS and session capture on one machine, from enabled sources to answered queries |
 | `vm-topology` | outside producers on a second machine sending over the NATS ingress |
 | `vm-restore` | the backup and restore drill: a database rebuilt from a dump and the stored bytes |
+
+Run `cargo xtask vm --output DIR`, optionally repeating `--scenario NAME`, on committed source so Nix and the run record use the same input. The runner attempts every selected scenario and preserves original build logs plus `results.json`.
+
+The native Rust suite tests GNU tar restoration of sparse files, native names, extended attributes and access ACLs. The Nix package check excludes only that exact setter-dependent restoration test because the builder's syscall filter prevents setting xattrs and ACLs; native assertions remain enabled. Its existing peak-RSS test also runs under native nextest, which gives it the separate process required by its measurement. Package checks do not replace the native suite.
 
 ## Fuzzing
 

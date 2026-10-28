@@ -3,7 +3,7 @@
 Today, the view Sinex opens with, and the reader web, where the operator and agents
 query, browse and trace the substrate. The tokens, the page shell, shared keys, the
 palette and copy are the common
-[`web-shell`](https://github.com/Sinity/polylogue-sinex-common/blob/master/crates/web-shell/README.md);
+[`web-shell`](https://github.com/Sinity/polylogue-sinex-common/blob/master/docs/web-shell.md);
 the operations every view calls are in [interfaces](interfaces.md), and the answers they
 render in [query](query.md) and [recall](recall.md).
 

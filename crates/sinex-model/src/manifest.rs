@@ -60,7 +60,7 @@ pub struct Manifest {
 }
 
 /// One member of a material made of members: an archive member or a file of
-/// a directory bundle.
+/// a directory tar.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Member {
     pub path: String,
@@ -69,8 +69,45 @@ pub struct Member {
     pub stream_offset: u64,
     #[serde(default)]
     pub length: u64,
+    /// Captured filesystem metadata, present for files in a directory tar.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub node: Option<FileNode>,
     #[serde(flatten)]
     pub details: Map<String, Value>,
+}
+
+/// Filesystem facts retained independently of a parser's interpretation.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FileNode {
+    pub mode: u32,
+    pub uid: u32,
+    pub gid: u32,
+    pub size: u64,
+    pub inode: u64,
+    pub device_id: u64,
+    pub links: u64,
+    pub mtime_ns: String,
+    pub atime_ns: String,
+    pub ctime_ns: String,
+    pub content_hash: [u8; 32],
+    pub extended_attributes: Vec<ExtendedAttribute>,
+    /// Data ranges of a sparse file; absent for a dense file.
+    pub sparse: Option<Vec<FileExtent>>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ExtendedAttribute {
+    pub name: Vec<u8>,
+    /// The value remains in the tar, protected with the material's bytes.
+    pub value_at: u64,
+    pub length: u64,
+    pub hash: [u8; 32],
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FileExtent {
+    pub offset: u64,
+    pub length: u64,
 }
 
 impl Manifest {

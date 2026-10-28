@@ -117,3 +117,19 @@ day setting, operation, failure kind, deadline class) are named in common's
 - **status**: what Sinex holds, what it failed to read and what it has not processed.
 - **follow**: a live, resumable read of new events matching a query.
 - **Today**: the view Sinex opens with ([web](web.md#today)).
+
+## Library
+
+- **item key**: the host, resolved root and original relative path identifying an item; an unambiguous equal-byte move within the root keeps it.
+- **move candidates**: missing and new equal-byte paths whose correspondence is ambiguous; curation stays separate.
+- **scan record**: a file's changed facts or removal in a captured scan part; part order is independent of wall-clock order.
+- **item revision**: an item's content hash; returning to the same bytes reuses the revision while preserving the transition history.
+- **preview evidence**: the stored result of rendering a revision, from which the library derives a rendition.
+
+## Development tooling
+
+- **scenario**: one exported NixOS check selected for a VM run.
+- **development stack**: a checkout's owned PostgreSQL and NATS services, daemon and explicitly selected session captures.
+- **development lock**: the exclusive lock held while a checkout's development stack runs.
+- **corpus**: input files replayed by fuzz tests and expanded by longer test runs.
+- **region**: a source span with an execution count in an LLVM coverage report.

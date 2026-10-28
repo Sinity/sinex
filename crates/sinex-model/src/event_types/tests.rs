@@ -81,7 +81,7 @@ fn json_payloads_build_through_the_rust_type() {
             [0; 32],
             crate::Class::Open
         ),
-        Err(crate::BuildError::Payload("command.executed", _))
+        Err(crate::BuildError::Payload(ref name, _)) if name == "command.executed"
     ));
     assert!(find("no.such.type").is_none());
 }
@@ -92,4 +92,54 @@ fn catalog_lists_each_type_once() {
     names.sort_unstable();
     names.dedup();
     assert_eq!(names.len(), ALL.len());
+}
+
+#[devkit::test]
+fn decoder_errors_name_fields_without_echoing_payload_values() {
+    let kind = find("command.executed").unwrap();
+    let check = |payload: Value| {
+        (kind.build)(
+            &payload,
+            "test",
+            crate::Origin::Record {
+                location: crate::RecordLocation {
+                    material: crate::MaterialId::new(),
+                    anchor: 0,
+                },
+                output_index: 0,
+            },
+            crate::ReadingOrder(0),
+            [0; 32],
+            crate::Class::Open,
+        )
+        .unwrap_err()
+        .to_string()
+    };
+    let mut value = serde_json::to_value(atuin(false)).unwrap();
+    value["exit_code"] = serde_json::json!("synthetic-private-value");
+    let error = check(value);
+    assert!(error.contains("decode at /exit_code"));
+    assert!(!error.contains("synthetic-private-value"));
+    let mut missing = serde_json::to_value(atuin(false)).unwrap();
+    missing.as_object_mut().unwrap().remove("hostname");
+    assert!(check(missing).contains("required at /hostname"));
+}
+
+#[devkit::test]
+fn search_policy_keeps_full_text_for_high_volume_kinds() {
+    let excluded: Vec<_> = ALL
+        .iter()
+        .filter(|kind| !kind.trigram_indexed)
+        .map(|kind| kind.event_type)
+        .collect();
+    assert_eq!(excluded, ["journal.entry", "lake.observed"]);
+    assert!(find("command.imported").unwrap().trigram_indexed);
+}
+
+#[devkit::test]
+fn current_declarations_reserve_version_one_for_historical_readings() {
+    for kind in ALL {
+        let declaration = (kind.declaration)();
+        assert!(declaration.kind.version >= 2, "{}", declaration.kind.name);
+    }
 }

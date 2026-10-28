@@ -55,6 +55,7 @@ pub(crate) async fn item_view(conn: &mut PgConnection, item: &str) -> R<Value> {
                 "present": a.vanished_at.is_none(),
                 "same_bytes_as_item": a.content == it.content,
                 "stored": a.stored,
+                "move_candidates": a.move_candidates,
             })
         })
         .collect();
@@ -65,7 +66,7 @@ pub(crate) async fn item_view(conn: &mut PgConnection, item: &str) -> R<Value> {
         "withdrawn": it.withdrawn_at.is_some(),
         "content": it.content,
         "media_type": it.media_type,
-        "revisions": revisions.iter().map(|r| json!({"revision": r.revision, "content": r.content, "at": r.at})).collect::<Vec<_>>(),
+        "revisions": revisions.iter().map(|r| json!({"revision": r.revision, "replaces": r.replaces, "content": r.content, "at": r.at})).collect::<Vec<_>>(),
         "renditions": renditions.iter().filter(|r| r.withdrawn_at.is_none()).map(|r| json!({
             "rendition": r.rendition, "revision": r.revision, "role": r.role, "media_type": r.media_type,
             "width": r.width, "height": r.height, "duration_ms": r.duration_ms, "content": r.content})).collect::<Vec<_>>(),

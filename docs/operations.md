@@ -1,6 +1,6 @@
 # Operations
 
-How Sinex is deployed, configured and backed up: the flake's NixOS and Home Manager modules, the deployment configuration (listen address, authentication, the logical-day setting), and backup and restore with the restore drill. How settings flow through the code is in [architecture.md](architecture.md#configuration-and-clocks); every option, key and environment variable is listed in [reference/settings.md](reference/settings.md); the meaning of the logical day is the `DaySetting` of [query-language](https://github.com/Sinity/polylogue-sinex-common/blob/master/crates/query-language/README.md).
+How Sinex is deployed, configured and backed up: the flake's NixOS and Home Manager modules, the deployment configuration (listen address, authentication, the logical-day setting), and backup and restore with the restore drill. How settings flow through the code is in [architecture.md](architecture.md#configuration-and-clocks); every option, key and environment variable is listed in [reference/settings.md](reference/settings.md); the meaning of the logical day is the `DaySetting` of [query-language](https://github.com/Sinity/polylogue-sinex-common/blob/master/docs/query-language.md).
 
 ## Deployment
 
@@ -26,13 +26,21 @@ Kinds, CHECK lists, streams, consumers, derivations and sources are declared onc
 
 The Home Manager module runs `sinex-session` as a user service in the operator's graphical session, with each session stream enabled by its own option. It is an outside producer with its own spool and credential ([producers.md](producers.md)); the streams it captures are in [streams.md](streams.md).
 
+### Session capture state
+
+The session user service creates its declared state directory under its own home in `preStart`, then sets that directory to mode `0700`; it runs with umask `0077`. It does not change permissions on home-directory parents. A state path outside that user's home remains administrator-created through the module's tmpfiles declaration, with the configured user as owner and mode `0700`.
+
+A session binding's identity includes the input path spelling. Moving state preserves `session.stateDir` and the producer's installed arguments, using a bind mount at that same path. First stop capture and verify its children have exited; preserve the state, positions, pending frames and a private inventory. Run the replacement session binary with the installed producer, exclusions and credentials plus `--drain`, which reads existing spools without starting capture and waits for frame acknowledgments. An undrained included spool holds the move.
+
+After a successful drain, copy the stopped state with ownership, modes and bytes preserved, compare hashes and positions, and mount the copy at the original path before restarting. Drain again through that path, verify unchanged binding names and positions, then restart capture and verify new admitted events and writes at the destination. Keep the original copy until the activation owner accepts the result; cleanup is a separate action. Changing the `--state` spelling creates new bindings even when the bytes were copied.
+
 ### Upgrading
 
 Activating a new version does not change the schema. When a version brings a schema upgrade, stop `sinexd`, run `sinex-schema apply`, then start it; until then the daemon refuses to start and names the command ([admission.md](admission.md#schema-evolution)). Producers keep spooling while the daemon is stopped, so an upgrade pauses admission, not capture.
 
 ### PostgreSQL tuning
 
-The module exposes PostgreSQL's settings. Buffer sizes, WAL size, checkpoint interval and work memory are host tuning: the deployment chooses them for its hardware, and Sinex's targets are stated independently of them ([architecture.md](architecture.md#throughput-targets)).
+The module keeps PostgreSQL's stock memory and checkpoint defaults and sets `log_temp_files = 16MB`. Buffer sizes, WAL size, checkpoint interval and work memory are host tuning: the deployment chooses them for its hardware, and Sinex's targets are stated independently of them ([architecture.md](architecture.md#throughput-targets)).
 
 ## Configuration
 

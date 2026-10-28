@@ -190,7 +190,7 @@ fn observations(
         DrainInput {
             manifest: sinex_source_core::RecordContext::none().manifest,
             source: SPEC.name,
-            class: Class::Guarded,
+            class: SPEC.class,
             material: MaterialId(uuid::Uuid::nil()),
             bytes: bytes.into(),
             records: &records,

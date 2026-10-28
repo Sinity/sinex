@@ -106,6 +106,13 @@ async fn admit_events(w: &World, events: Vec<Event>) {
 }
 
 async fn world(db: devkit::pg::TestDatabase) -> World {
+    world_with_config(db, Default::default()).await
+}
+
+async fn world_with_config(
+    db: devkit::pg::TestDatabase,
+    source_config: crate::binding_runner::Config,
+) -> World {
     let url = db.url(None);
     let connection = <sqlx::PgConnection as sqlx::Connection>::connect(&url)
         .await
@@ -115,7 +122,7 @@ async fn world(db: devkit::pg::TestDatabase) -> World {
     let (handle, queues) = writer::channels();
     tokio::spawn(writer::run(
         url.clone(),
-        connection,
+        writer::claim(connection).await.unwrap(),
         queues,
         Arc::new(sinex_store::NoDerivations),
         Some(blobs.clone()),
@@ -126,6 +133,7 @@ async fn world(db: devkit::pg::TestDatabase) -> World {
         .await
         .unwrap();
     let api = Api {
+        source_config: Arc::new(source_config),
         reads: reads.clone(),
         writer: Some(handle.clone()),
         blobs: blobs.clone(),
@@ -134,6 +142,7 @@ async fn world(db: devkit::pg::TestDatabase) -> World {
         agent_grants: vec![],
         unlock: Default::default(),
         host: "h".into(),
+        library_roots: Vec::new(),
     };
     let (commits, rx) = watch::channel(0u64);
     let (stop, stopped) = watch::channel(false);
@@ -441,7 +450,7 @@ async fn replay_is_offered_through_the_api(db: devkit::pg::TestDatabase) {
         assert_eq!(body["outcome"], "refused", "{body}");
     }
     let identity = sinex_sealing::Identity::generate();
-    use sinex_sealing::ExposeSecret;
+    use age::secrecy::ExposeSecret;
     let (_, body) = call(
         &w,
         Some(OPERATOR),
@@ -704,7 +713,7 @@ async fn sealed_values_need_the_unlocked_operator_and_die_with_their_key(
     let query = json!({"method": "query", "query": "events"});
     let (_, locked) = call(&w, Some(OPERATOR), query.clone()).await;
     assert!(!first(&locked).contains("diary"), "locked: {locked}");
-    use sinex_sealing::ExposeSecret;
+    use age::secrecy::ExposeSecret;
     let (_, body) = call(
         &w,
         Some(OPERATOR),
@@ -835,3 +844,41 @@ mod archive_history;
 mod forecast;
 
 mod queries;
+
+mod enable_status;
+
+#[devkit::test]
+async fn declaration_discovery_pages_through_the_public_commands(db: devkit::pg::TestDatabase) {
+    let w = world(db).await;
+    let mut cursor: Option<String> = None;
+    let mut names = std::collections::BTreeSet::new();
+    loop {
+        let (status, body) = call(
+            &w,
+            Some(READ),
+            json!({"method":"kinds","page":7,"cursor":cursor}),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        for row in body["result"]["kinds"]
+            .as_array()
+            .unwrap_or_else(|| panic!("{body}"))
+        {
+            assert!(names.insert(row["declaration"]["kind"].clone().to_string()));
+        }
+        cursor = body["result"]["cursor"].as_str().map(String::from);
+        if cursor.is_none() {
+            break;
+        }
+    }
+    assert_eq!(names.len(), sinex_model::event_types::ALL.len());
+    let (status, body) = call(
+        &w,
+        Some(READ),
+        json!({"method":"fields","kind":"command.executed","page":1}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["result"]["fields"].as_array().unwrap().len(), 1);
+    assert!(body["result"]["cursor"].is_string());
+}

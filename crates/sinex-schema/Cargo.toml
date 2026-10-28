@@ -13,6 +13,7 @@ sqlx.workspace = true
 tokio.workspace = true
 thiserror.workspace = true
 blake3.workspace = true
+jsonschema.workspace = true
 
 [[bin]]
 name = "sinex-schema"

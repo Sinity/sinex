@@ -11,7 +11,7 @@
 //!     quality = intrinsic,         // TimeQuality variant, snake_case
 //!     removed_when = deleted_at,   // optional `Option<_>` field: Some means removed at source
 //!     keep_known = ["title"],      // optional fields a newer reading does not erase
-//!     class = guarded,             // optional: the least class its events are stored under
+//!     search = words,              // optional: none, words or words_and_trigram
 //!     owns(field = content, size = size, when = stored), // optional: stored bytes the event owns
 //! )]
 //! ```
@@ -70,6 +70,8 @@ fn expand_event_payload(input: &DeriveInput) -> syn::Result<proc_macro2::TokenSt
     };
 
     let mut event_type: Option<LitStr> = None;
+    let mut version: Option<syn::LitInt> = None;
+    let mut search: Option<Ident> = None;
     let mut key: Option<Key> = None;
     let mut replace: Option<Ident> = None;
     let mut time: Option<Ident> = None;
@@ -77,10 +79,17 @@ fn expand_event_payload(input: &DeriveInput) -> syn::Result<proc_macro2::TokenSt
     let mut removed_when: Option<Ident> = None;
     let mut keep_known: Vec<LitStr> = Vec::new();
     let mut owns: Option<(Ident, Ident, Option<Ident>)> = None;
-    let mut class: Option<Ident> = None;
     for attr in input.attrs.iter().filter(|a| a.path().is_ident("event")) {
         attr.parse_nested_meta(|meta| {
-            if meta.path.is_ident("type") {
+            if meta.path.is_ident("version") {
+                let value: syn::LitInt = meta.value()?.parse()?;
+                if value.base10_parse::<u64>()? == 0 {
+                    return Err(meta.error("kind version must be positive"));
+                }
+                version = Some(value);
+            } else if meta.path.is_ident("search") {
+                search = Some(meta.value()?.parse()?);
+            } else if meta.path.is_ident("type") {
                 event_type = Some(meta.value()?.parse()?);
             } else if meta.path.is_ident("key") {
                 let value = meta.value()?;
@@ -113,8 +122,6 @@ fn expand_event_payload(input: &DeriveInput) -> syn::Result<proc_macro2::TokenSt
                 syn::bracketed!(content in value);
                 let list = content.parse_terminated(|p| p.parse::<LitStr>(), syn::Token![,])?;
                 keep_known = list.into_iter().collect();
-            } else if meta.path.is_ident("class") {
-                class = Some(meta.value()?.parse()?);
             } else if meta.path.is_ident("owns") {
                 let (mut field, mut size, mut when) = (None, None, None);
                 meta.parse_nested_meta(|inner| {
@@ -185,24 +192,28 @@ fn expand_event_payload(input: &DeriveInput) -> syn::Result<proc_macro2::TokenSt
             ));
         }
     }
-    let class_tokens = match &class {
-        None => None,
-        Some(word) => {
-            let variant = match word.to_string().as_str() {
-                "open" => quote!(Open),
-                "guarded" => quote!(Guarded),
-                "sealed" => quote!(Sealed),
-                _ => {
-                    return Err(syn::Error::new_spanned(
-                        word,
-                        "class is `open`, `guarded` or `sealed`",
-                    ));
+    let mut hints = Vec::new();
+    for field in &fields.named {
+        for attr in field.attrs.iter().filter(|a| a.path().is_ident("event")) {
+            attr.parse_nested_meta(|meta| {
+                if !meta.path.is_ident("class") {
+                    return Err(meta.error("a field hint is `class = open`, `guarded` or `sealed`"));
                 }
-            };
-            Some(quote!(const CLASS: ::sinex_model::Class = ::sinex_model::Class::#variant;))
+                let class: Ident = meta.value()?.parse()?;
+                let variant = match class.to_string().as_str() {
+                    "open" => quote!(Open),
+                    "guarded" => quote!(Guarded),
+                    "sealed" => quote!(Sealed),
+                    _ => return Err(meta.error("class is `open`, `guarded` or `sealed`")),
+                };
+                let field_name = field.ident.as_ref().expect("named field").to_string();
+                let pointer = format!("/{}", field_name.replace('~', "~0").replace('/', "~1"));
+                hints.push(quote!((#pointer, ::sinex_model::Class::#variant)));
+                Ok(())
+            })?;
         }
-    };
-    let removed_tokens = removed_when.map(|field| {
+    }
+    let removed_tokens = removed_when.as_ref().map(|field| {
         quote! {
             fn record_state(&self) -> ::sinex_model::RecordState {
                 if self.#field.is_some() {
@@ -238,13 +249,76 @@ fn expand_event_payload(input: &DeriveInput) -> syn::Result<proc_macro2::TokenSt
         }
     };
 
+    let key_rule = match &key {
+        Key::Location => quote!(::sinex_model::kinds::KeyRule::Location),
+        Key::Fields(fields) => quote!(::sinex_model::kinds::KeyRule::Fields {
+            fields: ::std::vec![#(#fields.to_string()),*]
+        }),
+    };
+    let time_rule = match &time {
+        None => quote!(::sinex_model::kinds::TimeRule::Unknown),
+        Some(field) => {
+            let field = field.to_string();
+            let quality = quality.as_ref().expect("time quality checked");
+            let variant = Ident::new(&camel(&quality.to_string()), quality.span());
+            quote!(::sinex_model::kinds::TimeRule::FirstPresent {
+                fields: ::std::vec![#field.to_string()], quality: ::sinex_model::TimeQuality::#variant,
+            })
+        }
+    };
+    let removed_rule = match &removed_when {
+        None => quote!(::sinex_model::kinds::RemovedRule::Never),
+        Some(field) => {
+            let field = field.to_string();
+            quote!(::sinex_model::kinds::RemovedRule::WhenPresent { field: #field.to_string() })
+        }
+    };
+    let blob_rules = match &owns {
+        None => quote!(::std::vec![]),
+        Some((field, size, when)) => {
+            let (field, size) = (field.to_string(), size.to_string());
+            let when = match when {
+                None => quote!(None),
+                Some(field) => {
+                    let field = field.to_string();
+                    quote!(Some(#field.to_string()))
+                }
+            };
+            quote!(
+                ::std::vec![::sinex_model::kinds::OwnedBlobRule { field: #field.to_string(), size: #size.to_string(), when: #when }]
+            )
+        }
+    };
+
+    let version = version.map(|value| quote!(const VERSION: u64 = #value;));
+    let search = match search {
+        None => None,
+        Some(value) => {
+            let variant = match value.to_string().as_str() {
+                "none" => quote!(None),
+                "words" => quote!(Words),
+                "words_and_trigram" => quote!(WordsAndTrigram),
+                _ => {
+                    return Err(syn::Error::new_spanned(
+                        value,
+                        "search is `none`, `words` or `words_and_trigram`",
+                    ));
+                }
+            };
+            Some(
+                quote!(const SEARCH: ::sinex_model::kinds::Search = ::sinex_model::kinds::Search::#variant;),
+            )
+        }
+    };
     Ok(quote! {
         impl ::sinex_model::EventPayload for #name {
+            #version
+            #search
             const EVENT_TYPE: &'static str = #event_type;
             const KEY: ::sinex_model::KeyKind = #key_tokens;
             const REPLACE: ::sinex_model::ReplaceRule = #replace_tokens;
             const KEEP_KNOWN: &'static [&'static str] = &[#(#keep_known),*];
-            #class_tokens
+            const FIELD_HINTS: &'static [(&'static str, ::sinex_model::Class)] = &[#(#hints),*];
 
             fn ts_orig(&self) -> ::sinex_model::TsOrig {
                 #time_tokens
@@ -253,6 +327,18 @@ fn expand_event_payload(input: &DeriveInput) -> syn::Result<proc_macro2::TokenSt
             #removed_tokens
 
             #owns_tokens
+
+            fn declaration() -> ::sinex_model::KindDeclaration {
+                ::sinex_model::KindDeclaration {
+                    kind: ::sinex_model::KindRef { name: Self::EVENT_TYPE.to_string(), version: Self::VERSION },
+                    declaring_producer: "sinex".to_string(), payload_schema: Some(Self::payload_schema()),
+                    normalization: ::sinex_model::kinds::Normalization::Rust,
+                    key_rule: Some(#key_rule), replace_rule: Some(Self::REPLACE), time_rule: Some(#time_rule),
+                    field_hints: Self::FIELD_HINTS.iter().map(|(field, class)| ::sinex_model::kinds::FieldHint { field: (*field).into(), class: *class }).collect(), removed_rule: Some(#removed_rule),
+                    keep_known: ::std::vec![#(#keep_known.to_string()),*], owned_blobs: #blob_rules,
+                    search: Self::SEARCH,
+                }
+            }
 
             fn payload_schema() -> ::sinex_model::__private::serde_json::Value {
                 ::sinex_model::__private::serde_json::to_value(

@@ -1,30 +1,37 @@
 # The Sinex NixOS module. It deploys sinexd with its
-# PostgreSQL and NATS, the session service, the journald capture, a
-# capture-only node for satellite hosts, and the backups. Source and derivation
+# PostgreSQL and NATS, the session service, the system captures (journal,
+# udev), a capture-only node for satellite hosts, and the backups. Source and derivation
 # options come from the registries through the generated `catalog.json`.
+#
+# Before upgrading producers, let the old binaries drain until no
+# positions/*.unacknowledged.json remains, then stop them and activate.
+# Check every user's session stateDir (by default XDG_STATE_HOME/sinex-session)
+# and every capture node's stateDir/positions. Old unacknowledged-frame files
+# are refused with their path and must be drained by the old producer first.
 self:
 { config, lib, pkgs, ... }:
 let
   inherit (lib) mkOption mkEnableOption mkIf mkMerge types optional optionals optionalString
-    concatStringsSep concatMapStringsSep mapAttrs mapAttrsToList filterAttrs escapeShellArg;
+    concatStringsSep concatMapStringsSep mapAttrs mapAttrsToList escapeShellArg;
 
   cfg = config.services.sinex;
   node = config.services.sinex.captureNode;
   catalog = lib.importJSON ./catalog.json;
+  postgresDefaults = lib.importJSON ./postgres.json;
   system = pkgs.stdenv.hostPlatform.system;
   defaultPackage = self.packages.${system}.default;
 
   postgres = cfg.database.package;
   dbUrl = "postgresql:///sinex?host=/run/postgresql";
-  # One private-mode switch for the daemon, the session service and the
-  # operator's sinexctl; the operator reaches it through the sinex group.
-  privateSwitch = "/run/sinex/private-mode";
   natsListen = "${cfg.nats.address}:${toString cfg.nats.port}";
+  sessionHome = if cfg.session.user == "" then null else config.users.users.${cfg.session.user}.home;
+  sessionStateInHome = sessionHome != null && (toString cfg.session.stateDir == sessionHome
+    || lib.hasPrefix "${sessionHome}/" (toString cfg.session.stateDir));
 
   # Producers allowed onto the ingress: those declared, plus the session
   # service on this host.
   producers = cfg.nats.producers
-    // lib.optionalAttrs cfg.session.enable {
+    // lib.optionalAttrs (cfg.session.user != "") {
       ${cfg.session.producer} = { passwordFile = cfg.session.passwordFile; };
     };
 
@@ -44,8 +51,12 @@ let
     StartLimitIntervalSec = 600;
   };
 
+  backfillInputs = lib.mapAttrs (_: inputs:
+    map (input: lib.concatStringsSep "=" (lib.tail (lib.splitString "=" input))) inputs
+  ) (lib.groupBy (input: lib.head (lib.splitString "=" input)) (lib.flatten (lib.attrValues cfg.backfills)));
+  discoveryInputs = lib.zipAttrsWith (_: values: lib.unique (lib.flatten values)) [ cfg.discovery.inputs backfillInputs ];
+
   sourceOption = spec: {
-    enable = mkEnableOption "the ${spec.name} source (${concatStringsSep ", " spec.drivers}; for ${spec.purpose})";
     paths = mkOption {
       type = types.listOf types.str;
       default = [ ];
@@ -59,7 +70,7 @@ let
     format = mkOption {
       type = types.nullOr types.str;
       default = null;
-      description = "The format to read ${spec.name} with: one of ${concatStringsSep ", " spec.formats}; the first when null.";
+      description = "The format for ${spec.name}'s explicit paths: one of ${concatStringsSep ", " spec.formats}; every applicable format when null. Canonical discovery still considers every format.";
     };
     zone = mkOption {
       type = types.nullOr types.str;
@@ -137,7 +148,7 @@ in
     database = {
       package = mkOption {
         type = types.package;
-        default = pkgs.postgresql_18.withPackages (p: [ p.timescaledb ]);
+        default = (if config.services.postgresql.enableJIT then pkgs.postgresql_18.withJIT else pkgs.postgresql_18).withPackages (p: [ p.timescaledb ]);
       };
       dataDir = mkOption {
         type = types.path;
@@ -146,8 +157,48 @@ in
       };
       maxConnections = mkOption {
         type = types.int;
-        default = 64;
+        default = postgresDefaults.max_connections;
         description = "Room for the writer, the readers, the API pool and admin commands.";
+      };
+      sharedBuffers = mkOption {
+        type = types.str;
+        default = postgresDefaults.shared_buffers;
+        description = "Shared PostgreSQL cache. Changing it requires a server restart.";
+      };
+      effectiveCacheSize = mkOption {
+        type = types.str;
+        default = postgresDefaults.effective_cache_size;
+        description = "Planner estimate of available database and operating-system cache; this allocates no memory.";
+      };
+      workMem = mkOption {
+        type = types.str;
+        default = postgresDefaults.work_mem;
+        description = "Memory per sort or hash operation and parallel worker, rather than a cluster memory limit.";
+      };
+      maintenanceWorkMem = mkOption {
+        type = types.str;
+        default = postgresDefaults.maintenance_work_mem;
+        description = "Memory per maintenance operation, including index builds.";
+      };
+      maxWalSize = mkOption {
+        type = types.str;
+        default = postgresDefaults.max_wal_size;
+        description = "Checkpoint target for WAL size; this is not a hard disk-use bound.";
+      };
+      checkpointTimeout = mkOption {
+        type = types.str;
+        default = postgresDefaults.checkpoint_timeout;
+        description = "Maximum interval between automatic WAL checkpoints.";
+      };
+      checkpointCompletionTarget = mkOption {
+        type = types.numbers.between 0.0 1.0;
+        default = postgresDefaults.checkpoint_completion_target;
+        description = "Fraction of the checkpoint interval used to spread writes.";
+      };
+      jit = mkOption {
+        type = types.bool;
+        default = postgresDefaults.jit;
+        description = "Enable PostgreSQL just-in-time query compilation.";
       };
     };
 
@@ -193,43 +244,41 @@ in
       })
       catalog.derivations);
 
-    journald.enable = mkOption {
-      type = types.bool;
-      default = cfg.sources."machine.journald".enable;
-      defaultText = lib.literalExpression ''config.services.sinex.sources."machine.journald".enable'';
-      description = "Capture the systemd journal into its spool.";
+    exclude = lib.listToAttrs (map (source: {
+      name = source.name;
+      value = mkOption {
+        type = types.nullOr (types.submodule {
+          options.reason = mkOption {
+            type = types.addCheck types.str (reason: builtins.match "[[:space:]]*" reason == null);
+            description = "The operator's reason for excluding ${source.name}.";
+          };
+        });
+        default = null;
+        description = "Exclude every binding of ${source.name}; null includes it.";
+      };
+    }) catalog.sources);
+
+    discovery = {
+      layoutFile = mkOption { type = types.nullOr types.path; default = null; description = "The host filesystem-layout.json with named capture locations."; };
+      home = mkOption { type = types.nullOr types.path; default = if cfg.session.user == "" then null else config.users.users.${cfg.session.user}.home; };
+      dataHome = mkOption { type = types.nullOr types.path; default = if cfg.discovery.home == null then null else "${cfg.discovery.home}/.local/share"; };
+      configHome = mkOption { type = types.nullOr types.path; default = if cfg.discovery.home == null then null else "${cfg.discovery.home}/.config"; };
+      inputRoots = mkOption { type = types.attrsOf (types.listOf types.str); default = { }; description = "Canonical input roots: realm, projects, notes, raw-log, steering, library, documents and downloads."; };
+      inputs = mkOption { type = types.attrsOf (types.listOf types.str); default = { }; description = "Provider-owned inputs by catalog format, transcript and OCR import roots, and named capture roots."; };
+      environment = mkOption { type = types.attrsOf types.str; default = { }; description = "Resolved application paths, including ZSH_HISTFILE and BASH_HISTFILE."; };
     };
 
     session = {
-      enable = mkEnableOption "the session service for the operator's graphical session";
       user = mkOption { type = types.str; default = ""; description = "The operator's account."; };
       producer = mkOption { type = types.str; default = "session-${cfg.host}"; };
       passwordFile = mkOption {
         type = types.path;
         description = "The session producer's NATS password, readable by the operator's account.";
       };
-      hyprland = mkOption { type = types.bool; default = false; };
-      notifications = mkOption { type = types.bool; default = false; description = "Capture desktop notifications."; };
-      players = mkOption { type = types.bool; default = false; description = "Capture media players (MPRIS)."; };
-      clipboard = mkOption {
-        type = types.bool;
-        default = false;
-        description = "Capture the clipboard and primary selection (content marked secret by its owner is not read).";
-      };
-      integrations = mkOption {
-        type = types.bool;
-        default = false;
-        description = "Listen on the integration socket for the Neovim and kitty integrations.";
-      };
-      screenEvery = mkOption {
-        type = types.nullOr types.ints.positive;
-        default = null;
-        description = "Seconds between stills of every output; no screen capture when null.";
-      };
-      audioSegment = mkOption {
-        type = types.nullOr types.ints.positive;
-        default = null;
-        description = "Seconds per audio segment of the default source; no audio capture when null.";
+      stateDir = mkOption {
+        type = types.path;
+        default = if cfg.discovery.home == null then "${cfg.stateDir}/sinex-session/${cfg.session.user}" else "${cfg.discovery.home}/.local/state/sinex-session";
+        description = "Session spools and positions. Preserve the existing input spelling; Sinnix supplies /realm storage with the producer's binding and cursor mapping.";
       };
       watch = mkOption {
         type = types.listOf types.str;
@@ -250,6 +299,7 @@ in
         One-shot imports of large exports, each a `sinex-backfill-NAME`
         service that is started by hand, never at activation. Each entry is a
         list of `format=path` inputs (`sinexd admin catalog` lists the formats).
+        These paths also enter automatic discovery as provider inputs.
         The database has one writer, so starting a backfill stops sinexd and
         starts it again when the backfill ends; live captures spool meanwhile.
         The inputs are mounted read-only for it.
@@ -314,7 +364,6 @@ in
     };
     stateDir = mkOption { type = types.path; default = "/var/lib/sinex-capture"; };
     host = mkOption { type = types.str; default = config.networking.hostName; };
-    journald = mkOption { type = types.bool; default = true; };
     watch = mkOption { type = types.listOf types.str; default = [ ]; };
   };
 
@@ -326,43 +375,37 @@ in
           group = cfg.group;
           home = cfg.stateDir;
         };
-      } // lib.optionalAttrs cfg.session.enable {
+      } // lib.optionalAttrs (cfg.session.user != "") {
         # Producers on this host write material bytes into the store.
         ${cfg.session.user}.extraGroups = [ cfg.group ];
       };
-      assertions = [{
-        assertion = !cfg.session.enable || cfg.session.user != "";
-        message = "services.sinex.session.user must name the operator's account";
-      }];
       users.groups.${cfg.group} = { };
       environment.systemPackages = [ cfg.package ];
-      # sinexctl in a login shell talks to this daemon with the agent token
-      # and flips the daemon's private-mode switch. The Unix socket is the
-      # daemon user's own; other users reach the API over loopback HTTP.
+      # sinexctl in a login shell talks to this daemon with the agent token.
+      # The Unix socket is the daemon user's own; other users reach the API
+      # over loopback HTTP.
       environment.sessionVariables = {
         SINEX_ENDPOINT = if cfg.api.listen != null then "http://${cfg.api.listen}" else "unix:${cfg.api.socket}";
         SINEX_TOKEN_FILE = "${cfg.stateDir}/tokens/agent.token";
-        SINEX_PRIVATE_MODE = privateSwitch;
+      } // lib.optionalAttrs (cfg.session.user != "") {
+        SINEX_CAPTURE_STATE = cfg.session.stateDir;
       };
 
       # Bindings from the registry-generated options, for the daemon's sources.
-      # The journald capture's spool is the journald source's input.
+      # Each system capture's spool is its source's input.
       environment.etc."sinex/sources.json".text = builtins.toJSON {
-        sources = filterAttrs (_: s: s.enable) (cfg.sources
-          // lib.optionalAttrs cfg.journald.enable {
-            "machine.journald" = cfg.sources."machine.journald" // {
-              enable = true;
-              paths = [ "${cfg.stateDir}/spool/journald" ];
-            };
-          });
+        sources = cfg.sources;
+        exclude = cfg.exclude;
+        discovery = cfg.discovery // {
+          spool = "${cfg.stateDir}/spool";
+          watch = cfg.session.watch;
+          inputs = discoveryInputs;
+        };
         derivations = mapAttrs (_: d: d.enable) cfg.derivations;
       };
 
       systemd.tmpfiles.rules = [
         "d ${cfg.stateDir} 0750 ${cfg.user} ${cfg.group} -"
-        # The private-mode switch's directory exists before sinexd first runs,
-        # so the session service can check it.
-        "d /run/sinex 0770 ${cfg.user} ${cfg.group} -"
         # Group mode 2770 marks the store root as shared with producers on this
         # host; they write only under incoming/producers (frame directories).
         "d ${cfg.storeDir} 2770 ${cfg.user} ${cfg.group} -"
@@ -383,9 +426,17 @@ in
         package = postgres;
         dataDir = cfg.database.dataDir;
         enableTCPIP = false;
+        enableJIT = lib.mkDefault cfg.database.jit;
         ensureDatabases = [ "sinex" ];
         ensureUsers = [{ name = cfg.user; ensureDBOwnership = true; }];
-        settings = {
+        settings = mapAttrs (_: value: lib.mkDefault value) (builtins.removeAttrs postgresDefaults [ "jit" ] // {
+          shared_buffers = cfg.database.sharedBuffers;
+          effective_cache_size = cfg.database.effectiveCacheSize;
+          work_mem = cfg.database.workMem;
+          maintenance_work_mem = cfg.database.maintenanceWorkMem;
+          max_wal_size = cfg.database.maxWalSize;
+          checkpoint_timeout = cfg.database.checkpointTimeout;
+          checkpoint_completion_target = cfg.database.checkpointCompletionTarget;
           shared_preload_libraries = "timescaledb";
           "timescaledb.telemetry_level" = "off";
           "timescaledb.enable_chunk_skipping" = "on";
@@ -393,15 +444,10 @@ in
           wal_compression = "lz4";
           password_encryption = "scram-sha-256";
           max_connections = cfg.database.maxConnections;
-          shared_buffers = lib.mkDefault "4GB";
-          max_wal_size = lib.mkDefault "16GB";
-          checkpoint_timeout = lib.mkDefault "30min";
-          work_mem = lib.mkDefault "64MB";
-          log_temp_files = lib.mkDefault "16MB";
           # Connection logs would feed back into the journald source.
           log_connections = false;
           log_disconnections = false;
-        };
+        });
         authentication = lib.mkBefore ''
           local sinex ${cfg.user} peer
           local all postgres peer
@@ -485,11 +531,7 @@ in
           User = cfg.user;
           Group = cfg.group;
           RuntimeDirectory = "sinex";
-          # It holds the private-mode switch, which the operator sets through
-          # the group and a backfill run while the daemon is stopped checks
-          # too; a missing directory counts as on.
           RuntimeDirectoryMode = "0770";
-          RuntimeDirectoryPreserve = "yes";
           LoadCredential = [ "nats:${cfg.nats.daemonPasswordFile}" ];
           UMask = "0007";
           # A schema upgrade can read every stored event; a start timeout
@@ -499,7 +541,6 @@ in
           AmbientCapabilities = [ "CAP_DAC_READ_SEARCH" ];
           CapabilityBoundingSet = [ "CAP_DAC_READ_SEARCH" ];
         };
-        environment.SINEX_PRIVATE_MODE = privateSwitch;
         preStart = ''
           # Tokens are made once; a missing file disables that level.
           for level in read agent operator; do
@@ -526,7 +567,7 @@ in
         '';
       };
 
-      systemd.services.sinex-capture-journald = mkIf cfg.journald.enable {
+      systemd.services.sinex-capture-journald = mkIf (cfg.exclude."machine.journald" == null) {
         description = "Sinex journald capture into its spool";
         after = [ "systemd-journald.service" ];
         wantedBy = [ "multi-user.target" ];
@@ -543,17 +584,40 @@ in
         '';
       };
 
+      systemd.services.sinex-capture-udev = mkIf (cfg.exclude."machine.udev" == null) {
+        description = "Sinex udev capture into its spool";
+        after = [ "systemd-udevd.service" ];
+        wantedBy = [ "multi-user.target" ];
+        unitConfig = startLimit;
+        serviceConfig = restartPolicy // {
+          User = cfg.user;
+          Group = cfg.group;
+        };
+        path = [ config.systemd.package ];
+        script = ''
+          exec ${cfg.package}/bin/sinex-session capture udev --spool ${cfg.stateDir}/spool/udev
+        '';
+      };
+
       # The session service runs in the operator's graphical session for the
       # live sources that need it (Hyprland, D-Bus, the clipboard, file
       # changes) and produces them over the ingress. Files the sources read
       # (shell histories, databases, notes) are read by sinexd.
-      systemd.user.services.sinex-session = mkIf cfg.session.enable {
+      systemd.tmpfiles.settings.sinex-session = lib.mkIf (cfg.session.user != "" && !sessionStateInHome) {
+        "${cfg.session.stateDir}".d = { mode = "0700"; user = cfg.session.user; group = config.users.users.${cfg.session.user}.group; };
+      };
+      systemd.user.services.sinex-session = mkIf (cfg.session.user != "") {
         description = "Sinex session sources";
         wantedBy = cfg.session.wantedBy;
         partOf = cfg.session.wantedBy;
-        unitConfig = startLimit // { ConditionUser = cfg.session.user; };
-        serviceConfig = restartPolicy;
-        environment.SINEX_PRIVATE_MODE = privateSwitch;
+        unitConfig = { ConditionUser = cfg.session.user; StartLimitIntervalSec = 0; };
+        serviceConfig = { Restart = "always"; RestartSec = "2s"; UMask = "0077"; };
+        # Home parents belong to the user; root tmpfiles cannot safely create
+        # them through a user-owned home. Only the declared state is chmodded.
+        preStart = ''
+          ${pkgs.coreutils}/bin/mkdir -p -- ${escapeShellArg cfg.session.stateDir}
+          ${pkgs.coreutils}/bin/chmod 0700 -- ${escapeShellArg cfg.session.stateDir}
+        '';
         # busctl, wl-paste, grim, pw-record and ffmpeg run as capture children.
         path = with pkgs; [ systemd wl-clipboard grim pipewire ffmpeg-headless ];
         script = ''
@@ -562,16 +626,9 @@ in
             --subject-root ${escapeShellArg cfg.nats.subjectRoot} \
             --producer ${escapeShellArg cfg.session.producer} \
             --store ${escapeShellArg cfg.storeDir} \
-            --state "$HOME/.local/state/sinex-session" \
+            --state ${escapeShellArg cfg.session.stateDir} \
             --host ${escapeShellArg cfg.host} \
-            ${optionalString cfg.session.hyprland "--hyprland"} \
-            ${optionalString cfg.session.notifications "--notifications"} \
-            ${optionalString cfg.session.players "--players"} \
-            ${optionalString cfg.session.clipboard "--clipboard"} \
-            ${optionalString cfg.session.integrations "--integrations"} \
-            ${optionalString (cfg.session.screenEvery != null) "--screen-every ${toString cfg.session.screenEvery}"} \
-            ${optionalString (cfg.session.audioSegment != null) "--audio-segment ${toString cfg.session.audioSegment}"} \
-            ${concatMapStringsSep " " (d: "--watch ${escapeShellArg d}") cfg.session.watch}
+            --sources /etc/sinex/sources.json
         '';
       };
 
@@ -625,7 +682,6 @@ in
           requires = [ "sinex-db-setup.service" ];
           restartIfChanged = false;
           path = [ pkgs.tesseract pkgs.coreutils ];
-          environment.SINEX_PRIVATE_MODE = privateSwitch;
           serviceConfig = {
             Type = "oneshot";
             User = cfg.user;
@@ -655,6 +711,11 @@ in
     })
 
     (mkIf node.enable {
+      environment.etc."sinex/capture-sources.json".text = builtins.toJSON {
+        sources = cfg.sources;
+        exclude = cfg.exclude;
+        discovery = cfg.discovery // { watch = node.watch; spool = "${node.stateDir}/spool"; };
+      };
       users.users.${node.user} = {
         isSystemUser = true;
         group = node.group;
@@ -665,20 +726,16 @@ in
         after = [ "network-online.target" "remote-fs.target" ];
         wants = [ "network-online.target" ];
         wantedBy = [ "multi-user.target" ];
-        unitConfig = startLimit;
-        serviceConfig = restartPolicy // {
+        unitConfig.StartLimitIntervalSec = 0;
+        serviceConfig = {
+          Restart = "always";
+          RestartSec = "2s";
           User = node.user;
           Group = node.group;
           UMask = "0007";
           StateDirectory = "sinex-capture";
-          # The private-mode switch: a file here turns capture off. The
-          # capture user cannot create the default /run/sinex, and a switch
-          # it cannot check counts as on (the node logs why, once).
-          RuntimeDirectory = "sinex-capture";
-          RuntimeDirectoryPreserve = "yes";
-          SupplementaryGroups = optional node.journald "systemd-journal";
+          SupplementaryGroups = optional (cfg.exclude."machine.journald" == null) "systemd-journal";
         };
-        environment.SINEX_PRIVATE_MODE = "/run/sinex-capture/private-mode";
         path = [ config.systemd.package ];
         script = ''
           exec ${node.package}/bin/sinex-capture \
@@ -689,8 +746,7 @@ in
             --state ${escapeShellArg node.stateDir} \
             --host ${escapeShellArg node.host} \
             ${optionalString node.upload "--upload"} \
-            ${optionalString node.journald "--journald"} \
-            ${concatMapStringsSep " " (d: "--watch ${escapeShellArg d}") node.watch}
+            --sources /etc/sinex/capture-sources.json
         '';
       };
     })

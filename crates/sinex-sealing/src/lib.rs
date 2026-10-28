@@ -12,11 +12,6 @@
 #[derive(Debug, thiserror::Error)]
 #[error("{0}")]
 pub struct Error(String);
-impl Error {
-    fn invalid(reason: String) -> Self {
-        Self(reason)
-    }
-}
 pub type Result<T> = std::result::Result<T, Error>;
 use base64::Engine;
 use chacha20poly1305::aead::{Aead, KeyInit};
@@ -31,7 +26,7 @@ pub use hashed_blobs::DataKey;
 /// A fresh data key, named by a new key reference.
 pub fn new_key() -> Result<DataKey> {
     let mut key = [0u8; 32];
-    getrandom::fill(&mut key).map_err(|e| Error::invalid(format!("random key: {e}")))?;
+    getrandom::fill(&mut key).map_err(|e| Error(format!("random key: {e}")))?;
     Ok(DataKey {
         key_ref: uuid::Uuid::now_v7().to_string(),
         key,
@@ -42,7 +37,7 @@ pub fn new_key() -> Result<DataKey> {
 pub fn parse_recipient(text: &str) -> Result<age::x25519::Recipient> {
     text.trim()
         .parse()
-        .map_err(|e| Error::invalid(format!("class key recipient: {e}")))
+        .map_err(|e| Error(format!("class key recipient: {e}")))
 }
 
 /// The operator's identity, as an unlock session holds it.
@@ -50,40 +45,39 @@ pub fn parse_identity(text: &str) -> Result<age::x25519::Identity> {
     text.lines()
         .map(str::trim)
         .find(|l| l.starts_with("AGE-SECRET-KEY-"))
-        .ok_or_else(|| Error::invalid("no AGE-SECRET-KEY- line in the identity".into()))?
+        .ok_or_else(|| Error("no AGE-SECRET-KEY- line in the identity".into()))?
         .parse()
-        .map_err(|e| Error::invalid(format!("identity: {e}")))
+        .map_err(|e| Error(format!("identity: {e}")))
 }
 
 /// Wrap a data key for storage: age-encrypted to the class key.
 pub fn wrap(key: &DataKey, recipient: &age::x25519::Recipient) -> Result<Vec<u8>> {
     let encryptor =
         age::Encryptor::with_recipients(std::iter::once(recipient as &dyn age::Recipient))
-            .map_err(|e| Error::invalid(format!("wrap: {e}")))?;
+            .map_err(|e| Error(format!("wrap: {e}")))?;
     let mut out = Vec::new();
     let mut writer = encryptor
         .wrap_output(&mut out)
-        .map_err(|e| Error::invalid(format!("wrap: {e}")))?;
+        .map_err(|e| Error(format!("wrap: {e}")))?;
     writer
         .write_all(&key.key)
         .and_then(|()| writer.finish().map(drop))
-        .map_err(|e| Error::invalid(format!("wrap: {e}")))?;
+        .map_err(|e| Error(format!("wrap: {e}")))?;
     Ok(out)
 }
 
 /// Unwrap a stored data key with the operator's identity.
 pub fn unwrap(wrapped: &[u8], identity: &age::x25519::Identity) -> Result<[u8; 32]> {
-    let decryptor =
-        age::Decryptor::new(wrapped).map_err(|e| Error::invalid(format!("unwrap: {e}")))?;
+    let decryptor = age::Decryptor::new(wrapped).map_err(|e| Error(format!("unwrap: {e}")))?;
     let mut reader = decryptor
         .decrypt(std::iter::once(identity as &dyn age::Identity))
-        .map_err(|e| Error::invalid(format!("unwrap: {e}")))?;
+        .map_err(|e| Error(format!("unwrap: {e}")))?;
     let mut key = Vec::new();
     reader
         .read_to_end(&mut key)
-        .map_err(|e| Error::invalid(format!("unwrap: {e}")))?;
+        .map_err(|e| Error(format!("unwrap: {e}")))?;
     key.try_into()
-        .map_err(|_| Error::invalid("unwrapped key is not 32 bytes".into()))
+        .map_err(|_| Error("unwrapped key is not 32 bytes".into()))
 }
 
 fn hash_key_for(key: &[u8; 32]) -> [u8; 32] {
@@ -129,13 +123,13 @@ pub fn seal_event(event: &mut Event, key: &DataKey) -> Result<()> {
 /// Seal one stored value from a reading, including parser carry or failure
 /// details.
 pub fn seal_value(value: &Value, key: &DataKey) -> Result<Value> {
-    let plain = serde_json::to_vec(value).map_err(|e| Error::invalid(e.to_string()))?;
+    let plain = serde_json::to_vec(value).map_err(|e| Error(e.to_string()))?;
     let mut nonce = [0u8; 24];
-    getrandom::fill(&mut nonce).map_err(|e| Error::invalid(format!("random nonce: {e}")))?;
+    getrandom::fill(&mut nonce).map_err(|e| Error(format!("random nonce: {e}")))?;
     let cipher = XChaCha20Poly1305::new((&payload_key(&key.key)).into());
     let sealed = cipher
         .encrypt(&XNonce::from(nonce), plain.as_slice())
-        .map_err(|_| Error::invalid("payload encryption failed".into()))?;
+        .map_err(|_| Error("payload encryption failed".into()))?;
     let mut body = nonce.to_vec();
     body.extend(sealed);
     Ok(json!({
@@ -154,23 +148,23 @@ pub fn sealed_text(text: &str) -> Option<Value> {
 pub fn unseal_payload(payload: &Value, key: &[u8; 32]) -> Result<Value> {
     let body = payload["sealed"]
         .as_str()
-        .ok_or_else(|| Error::invalid("not a sealed payload".into()))?;
+        .ok_or_else(|| Error("not a sealed payload".into()))?;
     let body = base64::engine::general_purpose::STANDARD
         .decode(body)
-        .map_err(|e| Error::invalid(format!("sealed payload: {e}")))?;
+        .map_err(|e| Error(format!("sealed payload: {e}")))?;
     if body.len() < 24 {
-        return Err(Error::invalid("sealed payload is too short".into()));
+        return Err(Error("sealed payload is too short".into()));
     }
     let (nonce, ct) = body.split_at(24);
     let nonce: [u8; 24] = nonce.try_into().expect("split at 24");
     let cipher = XChaCha20Poly1305::new((&payload_key(key)).into());
     let plain = cipher
         .decrypt(&XNonce::from(nonce), ct)
-        .map_err(|_| Error::invalid("sealed payload does not decrypt under its key".into()))?;
-    serde_json::from_slice(&plain).map_err(|e| Error::invalid(format!("sealed payload: {e}")))
+        .map_err(|_| Error("sealed payload does not decrypt under its key".into()))?;
+    serde_json::from_slice(&plain).map_err(|e| Error(format!("sealed payload: {e}")))
 }
 
-pub use age::secrecy::{ExposeSecret, zeroize::Zeroizing};
+pub use age::secrecy::zeroize::Zeroizing;
 
 #[cfg(test)]
 mod tests;

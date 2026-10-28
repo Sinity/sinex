@@ -1,0 +1,67 @@
+[package]
+name = "sinex-fuzz"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[package.metadata]
+cargo-fuzz = true
+
+[workspace]
+
+[dependencies]
+libfuzzer-sys = "0.4"
+serde_json = { version = "1", features = ["float_roundtrip"] }
+jiff = "0.2"
+sinex-store = { path = "../crates/sinex-store" }
+sqlx = { version = "0.8.6", default-features = false, features = ["runtime-tokio", "postgres"] }
+tokio = { version = "1", features = ["rt-multi-thread"] }
+sinex-model = { path = "../crates/sinex-model" }
+sinex-protocol = { path = "../crates/sinex-protocol" }
+
+[[bin]]
+name = "manifest_roundtrip"
+path = "fuzz_targets/manifest_roundtrip.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "producer_roundtrip"
+path = "fuzz_targets/producer_roundtrip.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "query"
+path = "fuzz_targets/query.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "copy_escape"
+path = "fuzz_targets/copy_escape.rs"
+test = false
+doc = false
+bench = false
+
+[dev-dependencies]
+devkit = { git = "https://github.com/Sinity/polylogue-sinex-common", branch = "master", features = ["pg"] }
+
+# Match the main workspace so unsanitized checks can reuse its build products.
+[profile.dev]
+debug = "line-tables-only"
+
+[profile.dev.package.blake3]
+opt-level = 3
+
+[profile.dev.package.sha2]
+opt-level = 3
+
+[profile.dev.package.md-5]
+opt-level = 3
+
+[profile.dev.package."*"]
+debug = false

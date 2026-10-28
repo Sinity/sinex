@@ -19,6 +19,7 @@ pub mod held;
 pub mod live_stream;
 pub mod media;
 pub mod producer;
+pub mod spool_health;
 #[cfg(feature = "sqlite")]
 pub mod sqlite_rows;
 
@@ -166,15 +167,6 @@ pub fn memory_due(part_index: u32, saved_at: Option<u32>, changed: u64, remember
 }
 
 impl NewMaterial {
-    /// The material's bytes, wherever it holds them in memory.
-    #[cfg(test)]
-    pub(crate) fn body(&self) -> &[u8] {
-        match &self.stored {
-            Some(StoredBytes::FramedMemory(bytes)) => bytes,
-            _ => &self.bytes,
-        }
-    }
-
     fn decoded_len(&self, stored_len: u64) -> usize {
         match &self.stored {
             Some(

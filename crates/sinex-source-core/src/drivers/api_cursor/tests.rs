@@ -27,7 +27,7 @@ impl Api for List {
 
 #[devkit::test]
 fn each_answer_is_one_material_and_the_cursor_moves_only_at_its_end() {
-    let d = ApiCursor {
+    let mut d = ApiCursor {
         api: List(RefCell::new(vec!["a", "b"])),
     };
     let first = d.poll(&Value::Null).unwrap();

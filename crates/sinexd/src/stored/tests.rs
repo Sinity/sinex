@@ -19,7 +19,7 @@ fn sealed_stored_seek_rechecks_the_unlock_even_for_a_cached_record() {
     let key = sinex_sealing::new_key().unwrap();
     let bytes = b"first\nother\n";
     let name = blobs.put_sealed(bytes, &key).unwrap();
-    let unlock = crate::sealing::Unlock::new(
+    let unlock = crate::material_access::sealing::Unlock::new(
         sinex_sealing::Identity::generate(),
         std::time::Duration::from_secs(30),
     )
@@ -30,7 +30,7 @@ fn sealed_stored_seek_rechecks_the_unlock_even_for_a_cached_record() {
             &name,
             Some(bytes.len() as u64),
             &key,
-            crate::sealing::read_limits(bytes.len() as u64).unwrap(),
+            crate::material_access::sealing::read_limits(bytes.len() as u64).unwrap(),
             move || check.check().map_err(|e| std::io::Error::other(e).into()),
         )
         .unwrap();

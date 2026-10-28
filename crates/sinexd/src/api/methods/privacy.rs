@@ -113,7 +113,7 @@ impl Api {
                 let Some(seconds) = minutes.checked_mul(60) else {
                     return refused("unlock duration exceeds u64 seconds");
                 };
-                let unlock = match crate::sealing::Unlock::new(
+                let unlock = match crate::material_access::sealing::Unlock::new(
                     identity,
                     std::time::Duration::from_secs(seconds),
                 ) {

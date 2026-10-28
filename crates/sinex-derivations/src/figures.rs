@@ -1,4 +1,4 @@
-//! Metric figures: each metric's number per civil hour and per logical day,
+//! Metric figures: each metric's number per local hour and per logical day,
 //! as `metric.figure` events. These are the daily and hourly figures every
 //! reader uses: the panel, the brief and the statistical methods read them
 //! through the query language, and `trace` leads from a day's number to the
@@ -10,7 +10,7 @@
 //! source's view of them, so a command two shells saw counts once.
 //!
 //! The hourly derivation is keyed by metric and logical day and emits that
-//! day's civil hours (23 to 25 of them) from the day's input events. The
+//! day's local hours (23 to 25 of them) from the day's input events. The
 //! daily derivation is keyed the same way and reads the day's hourly figures,
 //! never the inputs: a day's hours partition it, so counts, seconds and a
 //! ratio's parts add up exactly.
@@ -236,12 +236,16 @@ pub static METRICS: &[Metric] = &[
     Metric {
         name: "machine.journal_errors",
         description: "Journal entries at error priority or worse",
-        // syslog priorities 0-3: emergency, alert, critical, error.
+        // syslog priorities 0-3: emergency, alert, critical, error. Sinex's
+        // own entries are its reflection, not the machine's activity.
         inputs: || {
             (0..=3)
                 .map(|p| Kind {
-                    event_type: "journal.entry",
-                    equal: vec![("priority", json!(p))],
+                    event_type: "journal.entry".into(),
+                    equal: vec![
+                        ("priority".into(), json!(p)),
+                        ("from_sinex".into(), json!(false)),
+                    ],
                 })
                 .collect()
         },
@@ -264,8 +268,8 @@ pub static METRICS: &[Metric] = &[
         description: "Pointer buttons pressed",
         inputs: || {
             vec![Kind {
-                event_type: "pointer.button",
-                equal: vec![("pressed", json!(true))],
+                event_type: "pointer.button".into(),
+                equal: vec![("pressed".into(), json!(true))],
             }]
         },
         law: Law::Count,
@@ -531,7 +535,7 @@ impl Keyed for HourlyMetrics {
             let mut sums: Figures<'_> = BTreeMap::new();
             for e in inputs {
                 let Some(at) = e.ts_orig.at else { continue };
-                if !m.admits(e.event_type, &e.payload) {
+                if !m.admits(&e.event_type, &e.payload) {
                     continue;
                 }
                 let (s, f) = span(m.law, at, &e.payload, env);
@@ -551,6 +555,7 @@ impl Keyed for HourlyMetrics {
             hour = next;
         }
         Computed {
+            error: None,
             outputs,
             waiting: false,
         }
@@ -626,6 +631,7 @@ impl Keyed for DailyMetrics {
             })
             .collect();
         Computed {
+            error: None,
             outputs,
             waiting: false,
         }

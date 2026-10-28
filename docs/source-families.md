@@ -10,7 +10,7 @@ Family F01.
 
 **History databases.** Atuin and Nushell read every history row, including open commands, revisions and observed soft deletions. A record keeps command bytes, cwd, host, shell, session, exit, duration, IDs and unknown columns. A negative duration or an unknown-exit sentinel stays unknown. A new database or file generation never reuses the earlier generation's IDs.
 
-**History files.** Zsh handles metafied bytes, extended headers and multiline commands; Bash handles optional timestamp records; Fish handles its escaped multiline structure and path lists. An explicitly declared plain-text history never guesses a timestamp or a shell. When an untimed file is rewritten, its records are aligned by sequence and multiplicity ([alignment](events.md#identity)); an ambiguous alignment is reported rather than collapsing all equal text into one command.
+**History files.** Zsh handles metafied bytes, extended headers and multiline commands; Bash handles optional timestamp records; Fish handles its escaped multiline structure and path lists. An explicitly declared plain-text history removes only LF or CRLF, preserving spaces, backslashes and timestamp-looking text as command content. Empty lines emit no event; whitespace-only lines are commands. Starts and durations stay unknown. It never guesses a timestamp or a shell. When an untimed file is rewritten, its records are aligned by sequence and multiplicity ([alignment](events.md#identity)); an ambiguous alignment is reported rather than collapsing all equal text into one command.
 
 **Terminal sessions** are captured automatically.
 - Asciicast v2 and v3 keep the full header and one event per native input, output, resize, marker and exit record. V2 absolute offsets and v3 relative intervals resolve with exact decimal arithmetic. No command-span framing replaces native records; plain-text rendering and command spans are derivations.
@@ -91,6 +91,27 @@ Family F05.
 - Quota and backoff delay work; they never narrow labels, age, attachments or record count.
 - OAuth refresh and credentials belong to the acquisition code, not to the parser.
 
+**Gmail configuration.**
+
+Discovery reads the account file declared as `input:gmail`; `--read gmail=PATH` uses the same file. It names the expected account and credential files:
+
+```json
+{
+  "account": "owner@example.test",
+  "credentials": {
+    "client_id_file": "secrets/client-id",
+    "client_secret_file": "secrets/client-secret",
+    "refresh_token_file": "secrets/refresh-token"
+  }
+}
+```
+
+Relative credential paths resolve beside that file. Unknown fields, inline secrets and empty credential files are refused. Credentials are read at refresh time; access tokens stay in memory. Grant the capture process read access to those files without placing their contents in binding settings or Nix store files. OAuth requests the full `https://mail.google.com/` scope and offline access; the operator completes consent and supplies the refresh token. Capture neither opens a browser nor broadens an earlier grant, and the first profile must match the configured account.
+
+After a history 404, capture admits the gap, saves a new profile baseline, lists the complete mailbox, then resumes history from that baseline. Restart resumes from admitted progress; authorization failures, rate limits and temporary provider errors retain the previous progress. Missing credential files report unavailable, awaiting credentials. Raw mail and label records replay without Gmail or credentials. Provider label IDs remain with their observations; RFC mail records carry label names and Gmail thread IDs.
+
+Provider references: [raw message retrieval and scopes](https://developers.google.com/workspace/gmail/api/reference/rest/v1/users.messages/get), [offline OAuth consent and refresh](https://developers.google.com/identity/protocols/oauth2/web-server).
+
 **Calendars.** ICS and CalDAV keep VEVENT, VTODO, VJOURNAL, recurrence rules, exceptions, UIDs and RECURRENCE-ID, VTIMEZONE, all-day dates, floating times, invitations, cancellations and unknown properties. Definitions are stored; occurrences are expanded over a bounded range at query time, so an infinite recurrence is valid. Sync tokens, ETags and explicit tombstones drive changes.
 
 **Contacts.** vCard, CardDAV and phone contacts keep groups, structured fields, photos, provider IDs, repeated properties and unknown extensions. Calendar and contact imports and live sync are one family with format-specific readers.
@@ -106,6 +127,10 @@ Family F06.
 - Derived balancing or generated postings cite their source rules. Capture never edits the ledger or fills an implicit amount.
 - Identity is a supplied transaction ID where present, otherwise the source identity plus the complete block identity and a duplicate number; never the first amount or the description alone.
 - A directive the reader does not support is reported as unsupported with its bytes.
+
+The journal reader discovers `LEDGER_FILE`, `~/.hledger.journal` and configured finance roots, and accepts `--read hledger=PATH`. Include paths may be relative, absolute or home-relative, with `journal:` prefixes and globs. Each included file is an ordinary binding; missing files, cycles and unsupported targets are reported. Included files inherit the authored year at their include. Native timeclock and timedot imports stay written `journal.imported` records, not generated accounting transactions.
+
+Partial dates remain partial; a known year resolves a civil date without inventing an original instant. Quantities, commodity quoting, virtual accounts, posting status, prices, balance assertions, lot annotations and valuation expressions retain their written forms. Capture does not balance a transaction or execute its automatic rules. Record identity includes the journal/member context, complete block digest and duplicate occurrence, including across scan parts. A changed inherited year causes an unchanged child to be read in that new context; a fully dated transaction does not change identity for an unused default year.
 
 **Bank statements.** CSV, MT940 and CAMT keep the original statement, message and entry identities, debit or credit sign, exact amount and currency, booking and value dates, counterparty, references, pending or reversed state, balances and fees. A provider revision is a newer reading, and correspondence across imports is explicit. Statement IDs are scoped by account.
 

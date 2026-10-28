@@ -7,7 +7,7 @@ use serde_json::{Map, Value};
 
 /// A fallback for account-export tables with no declared field types.
 #[derive(Clone, Debug, PartialEq, Deserialize, crate::EventPayload)]
-#[event(
+#[event(version = 2,
     type = "account.row",
     key = ["service", "table", "native_id"],
     replace = newer,

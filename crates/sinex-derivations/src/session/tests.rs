@@ -59,7 +59,7 @@ fn key_is_host_and_logical_day() {
     let e = fused(T, None, 0);
     let keys = ShellSessions.keys_for(
         &KeyView {
-            event_type: e.event_type,
+            event_type: &e.event_type,
             ts_orig: e.ts_orig.at,
             payload: &e.payload,
         },
@@ -70,7 +70,7 @@ fn key_is_host_and_logical_day() {
     let early = fused(T - 6 * 3600 - 1800, None, 0);
     let keys = ShellSessions.keys_for(
         &KeyView {
-            event_type: early.event_type,
+            event_type: &early.event_type,
             ts_orig: early.ts_orig.at,
             payload: &early.payload,
         },

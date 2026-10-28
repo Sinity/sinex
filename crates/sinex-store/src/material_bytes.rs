@@ -109,3 +109,17 @@ pub async fn parts_from(
         })
         .collect()
 }
+
+/// Byte lengths used to check producer record locations.
+pub async fn lengths(
+    conn: &mut PgConnection,
+    materials: &[uuid::Uuid],
+) -> Result<std::collections::HashMap<uuid::Uuid, i64>> {
+    let rows = sqlx::query!(
+        "SELECT id,length FROM raw.materials WHERE id=ANY($1)",
+        materials
+    )
+    .fetch_all(conn)
+    .await?;
+    Ok(rows.into_iter().map(|row| (row.id, row.length)).collect())
+}

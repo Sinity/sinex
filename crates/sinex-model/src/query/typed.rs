@@ -6,92 +6,61 @@ use std::sync::OnceLock;
 
 #[derive(Clone, Debug)]
 struct PayloadField {
-    event_type: &'static str,
+    event_type: String,
     path: Vec<String>,
     ty: FieldType,
     values: Option<Vec<String>>,
 }
 
+fn payload_fields(catalog: &QueryCatalog) -> Vec<PayloadField> {
+    catalog
+        .kinds
+        .iter()
+        .flat_map(|kind| {
+            kind.fields
+                .iter()
+                .flat_map(|fields| fields.values())
+                .map(move |field| PayloadField {
+                    event_type: kind.kind.name.clone(),
+                    path: field.path.clone(),
+                    ty: match &field.ty {
+                        catalog::DataType::Text => FieldType::Text,
+                        catalog::DataType::Integer => FieldType::Integer,
+                        catalog::DataType::Number => FieldType::Number,
+                        catalog::DataType::Bool => FieldType::Bool,
+                        catalog::DataType::Time => FieldType::Time,
+                        catalog::DataType::Array(item) if **item == catalog::DataType::Text => {
+                            FieldType::TextList
+                        }
+                        _ => FieldType::Json,
+                    },
+                    values: (!field.values.is_empty() && field.values.iter().all(Json::is_string))
+                        .then(|| {
+                            field
+                                .values
+                                .iter()
+                                .filter_map(Json::as_str)
+                                .map(str::to_owned)
+                                .collect()
+                        }),
+                })
+        })
+        .collect()
+}
+
 fn fields() -> &'static [PayloadField] {
     static FIELDS: OnceLock<Vec<PayloadField>> = OnceLock::new();
     FIELDS.get_or_init(|| {
-        let mut out = Vec::new();
-        for event in crate::event_types::ALL {
-            let root = (event.json_schema)();
-            collect(
-                &root,
-                &root,
-                event.event_type,
-                &mut Vec::new(),
-                &mut BTreeSet::new(),
-                &mut out,
-            );
-        }
-        out
+        payload_fields(&QueryCatalog::new(
+            crate::event_types::declarations().iter().cloned(),
+        ))
     })
 }
 
-fn collect(
-    root: &Json,
-    schema: &Json,
-    event_type: &'static str,
-    path: &mut Vec<String>,
-    refs: &mut BTreeSet<String>,
-    out: &mut Vec<PayloadField>,
-) {
-    if let Some(reference) = schema["$ref"].as_str().and_then(|s| s.strip_prefix('#')) {
-        if refs.insert(reference.into()) {
-            if let Some(target) = root.pointer(reference) {
-                collect(root, target, event_type, path, refs, out);
-            }
-            refs.remove(reference);
-        }
-        return;
-    }
-    for name in ["anyOf", "oneOf", "allOf"] {
-        if let Some(branches) = schema[name].as_array() {
-            for branch in branches {
-                collect(root, branch, event_type, path, refs, out);
-            }
-            return;
-        }
-    }
-    let ty = schema["type"].as_str().or_else(|| {
-        schema["type"]
-            .as_array()?
-            .iter()
-            .filter_map(Json::as_str)
-            .find(|s| *s != "null")
-    });
-    let ty = match ty {
-        Some("integer") => FieldType::Integer,
-        Some("number") => FieldType::Number,
-        Some("boolean") => FieldType::Bool,
-        Some("string") if schema["format"] == "date-time" => FieldType::Time,
-        Some("string") => FieldType::Text,
-        Some("array") if schema["items"]["type"] == "string" => FieldType::TextList,
-        Some("null") | None => return,
-        _ => FieldType::Json,
-    };
-    if !path.is_empty() {
-        out.push(PayloadField {
-            event_type,
-            path: path.clone(),
-            ty,
-            values: schema["enum"].as_array().map(|vs| {
-                vs.iter()
-                    .filter_map(Json::as_str)
-                    .map(str::to_owned)
-                    .collect()
-            }),
-        });
-    }
-    if let Some(properties) = schema["properties"].as_object() {
-        for (name, field) in properties {
-            path.push(name.clone());
-            collect(root, field, event_type, path, refs, out);
-            path.pop();
-        }
+fn definitions(ctx: &Context) -> Vec<PayloadField> {
+    match &ctx.catalog {
+        Some(catalog) => payload_fields(catalog),
+        None => fields().to_vec(),
     }
 }
 
@@ -135,7 +104,7 @@ pub fn complete(text: &str) -> Vec<Completion> {
                     } else {
                         Value::Text(value.text.clone())
                     };
-                    if let Some(selected) = selected_value(&value) {
+                    if let Some(selected) = selected_value(&value, None) {
                         mentioned.extend(selected);
                     }
                 }
@@ -164,7 +133,7 @@ pub fn complete(text: &str) -> Vec<Completion> {
     if table.is_events() {
         for field in fields()
             .iter()
-            .filter(|f| kinds.as_ref().is_none_or(|ks| ks.contains(f.event_type)))
+            .filter(|f| kinds.as_ref().is_none_or(|ks| ks.contains(&f.event_type)))
         {
             let name = format!("payload.{}", field.path.join("."));
             let field_type = format!("{:?}", field.ty).to_lowercase();
@@ -217,20 +186,29 @@ fn glob_matches(pattern: &str, text: &str) -> bool {
     p == pattern.len()
 }
 
-fn selected_value(value: &Value) -> Option<BTreeSet<String>> {
+fn selected_value(value: &Value, ctx: Option<&Context>) -> Option<BTreeSet<String>> {
     match value {
         Value::Text(s) => Some(BTreeSet::from([s.clone()])),
         Value::Glob(pattern) => Some(
-            crate::event_types::ALL
-                .iter()
-                .filter(|event| glob_matches(pattern, event.event_type))
-                .map(|event| event.event_type.into())
-                .collect(),
+            match ctx.and_then(|ctx| ctx.catalog.as_ref()) {
+                Some(catalog) => catalog
+                    .declarations
+                    .iter()
+                    .map(|(kind, _)| kind.name.clone())
+                    .collect::<BTreeSet<_>>(),
+                None => crate::event_types::ALL
+                    .iter()
+                    .map(|kind| kind.event_type.to_owned())
+                    .collect(),
+            }
+            .into_iter()
+            .filter(|name| glob_matches(pattern, name))
+            .collect(),
         ),
         Value::List(values) => {
             let mut out = BTreeSet::new();
             for value in values {
-                out.extend(selected_value(value)?);
+                out.extend(selected_value(value, ctx)?);
             }
             Some(out)
         }
@@ -238,28 +216,51 @@ fn selected_value(value: &Value) -> Option<BTreeSet<String>> {
     }
 }
 
-fn selected(e: &Expr) -> Option<BTreeSet<String>> {
+fn selected(e: &Expr, ctx: &Context) -> Option<BTreeSet<String>> {
     match e {
         Expr::Compare {
             lhs: Operand::Field(FieldRef::Field(f)),
             op: Op::Eq,
             rhs,
-        } if f.name == "event_type" => selected_value(rhs),
-        Expr::And(a, b) => match (selected(a), selected(b)) {
+        } if f.name == "event_type" => selected_value(rhs, Some(ctx)),
+        Expr::And(a, b) => match (selected(a, ctx), selected(b, ctx)) {
             (Some(a), Some(b)) => Some(a.intersection(&b).cloned().collect()),
             (a, b) => a.or(b),
         },
-        Expr::Or(a, b) => Some(selected(a)?.union(&selected(b)?).cloned().collect()),
+        Expr::Or(a, b) => Some(
+            selected(a, ctx)?
+                .union(&selected(b, ctx)?)
+                .cloned()
+                .collect(),
+        ),
         _ => None,
     }
 }
 
-fn field_type(path: &[String], kinds: &Option<BTreeSet<String>>) -> Result<FieldType, QueryError> {
-    let mut types = fields()
+fn field_type(
+    path: &[String],
+    kinds: &Option<BTreeSet<String>>,
+    ctx: &Context,
+) -> Result<FieldType, QueryError> {
+    if ctx.catalog.as_ref().is_some_and(|catalog| {
+        catalog.kinds.iter().any(|kind| {
+            kind.fields.is_none()
+                && kinds
+                    .as_ref()
+                    .is_none_or(|names| names.contains(&kind.kind.name))
+        })
+    }) {
+        return Ok(FieldType::Json);
+    }
+    let definitions = definitions(ctx);
+    let mut types = definitions
         .iter()
-        .filter(|f| f.path == path && kinds.as_ref().is_none_or(|ks| ks.contains(f.event_type)))
+        .filter(|f| f.path == path && kinds.as_ref().is_none_or(|ks| ks.contains(&f.event_type)))
         .map(|f| f.ty);
     let Some(mut ty) = types.next() else {
+        if ctx.catalog.as_ref().is_some_and(|c| c.schemaless) {
+            return Ok(FieldType::Json);
+        }
         return Err(QueryError::new(format!(
             "payload.{} is not declared by the selected event schemas",
             path.join(".")
@@ -272,6 +273,9 @@ fn field_type(path: &[String], kinds: &Option<BTreeSet<String>>) -> Result<Field
         ) {
             ty = FieldType::Number;
         } else if ty != other {
+            if ctx.catalog.is_some() {
+                return Ok(FieldType::Json);
+            }
             return Err(QueryError::new(format!(
                 "payload.{} has different types; select an event_type",
                 path.join(".")
@@ -281,22 +285,36 @@ fn field_type(path: &[String], kinds: &Option<BTreeSet<String>>) -> Result<Field
     Ok(ty)
 }
 
-fn field(f: &mut FieldRef, kinds: &Option<BTreeSet<String>>) -> Result<(), QueryError> {
-    if let FieldRef::Payload(path) = f {
+fn field(
+    f: &mut FieldRef,
+    kinds: &Option<BTreeSet<String>>,
+    ctx: &Context,
+) -> Result<(), QueryError> {
+    if let FieldRef::Payload(path) | FieldRef::TypedPayload { path, .. } = f {
         *f = FieldRef::TypedPayload {
-            ty: field_type(path, kinds)?,
+            ty: field_type(path, kinds, ctx)?,
             path: path.clone(),
         };
     }
     Ok(())
 }
-fn operand(o: &mut Operand, kinds: &Option<BTreeSet<String>>) -> Result<(), QueryError> {
+fn operand(
+    o: &mut Operand,
+    kinds: &Option<BTreeSet<String>>,
+    ctx: &Context,
+) -> Result<(), QueryError> {
     match o {
-        Operand::Field(f) => field(f, kinds),
+        Operand::Field(f) => field(f, kinds, ctx),
         Operand::TimeFn(_, f) => {
-            field(f, kinds)?;
+            field(f, kinds, ctx)?;
+            if let FieldRef::TypedPayload { ty, .. } = f
+                && *ty == FieldType::Json
+            {
+                *ty = FieldType::Time;
+            }
             if let FieldRef::TypedPayload { ty, .. } = f
                 && *ty != FieldType::Time
+                && !(ctx.catalog.is_some() && *ty == FieldType::Json)
             {
                 return Err(QueryError::new("time functions require a time field"));
             }
@@ -305,11 +323,22 @@ fn operand(o: &mut Operand, kinds: &Option<BTreeSet<String>>) -> Result<(), Quer
     }
 }
 fn validate_value(v: &mut Value, ty: FieldType, ctx: &Context) -> Result<(), QueryError> {
+    if ty == FieldType::Json {
+        return Ok(());
+    }
     if let Value::List(values) = v {
         for value in values {
             validate_value(value, ty, ctx)?;
         }
         return Ok(());
+    }
+    if ty == FieldType::Text && matches!(v, Value::Integer(_) | Value::Number(_) | Value::Bool(_)) {
+        *v = Value::Text(match &*v {
+            Value::Integer(v) => v.to_string(),
+            Value::Number(v) => v.to_string(),
+            Value::Bool(v) => v.to_string(),
+            _ => unreachable!(),
+        });
     }
     if ty == FieldType::Time
         && let Value::Text(text) = v
@@ -318,6 +347,9 @@ fn validate_value(v: &mut Value, ty: FieldType, ctx: &Context) -> Result<(), Que
             time::instant(ctx, text)
                 .ok_or_else(|| QueryError::new("a payload time requires an absolute timestamp"))?,
         );
+    }
+    if ty == FieldType::Json {
+        return Ok(());
     }
     let valid = matches!(
         (ty, &*v),
@@ -340,7 +372,7 @@ fn validate_value(v: &mut Value, ty: FieldType, ctx: &Context) -> Result<(), Que
     }
 }
 fn expr(e: &mut Expr, kinds: &Option<BTreeSet<String>>, ctx: &Context) -> Result<(), QueryError> {
-    let narrowed = selected(e).map(|selected| {
+    let narrowed = selected(e, ctx).map(|selected| {
         kinds.as_ref().map_or(selected.clone(), |ks| {
             ks.intersection(&selected).cloned().collect()
         })
@@ -353,25 +385,28 @@ fn expr(e: &mut Expr, kinds: &Option<BTreeSet<String>>, ctx: &Context) -> Result
         }
         Expr::Not(e) => expr(e, kinds, ctx)?,
         Expr::Compare { lhs, op, rhs } => {
-            operand(lhs, kinds)?;
+            operand(lhs, kinds, ctx)?;
             if let Operand::Field(FieldRef::TypedPayload { ty, .. }) = lhs {
                 if matches!(op, Op::Contains | Op::Prefix)
                     && !matches!(ty, FieldType::Text | FieldType::TextList)
+                    && !(ctx.catalog.is_some() && *ty == FieldType::Json)
                 {
                     return Err(QueryError::new("~ and ^ require a text payload field"));
                 }
                 if op.ordering()
                     && matches!(ty, FieldType::Bool | FieldType::Json | FieldType::TextList)
+                    && !(ctx.catalog.is_some() && *ty == FieldType::Json)
                 {
                     return Err(QueryError::new("this payload field cannot be ordered"));
                 }
                 validate_value(rhs, *ty, ctx)?;
                 if let Operand::Field(FieldRef::TypedPayload { path, .. }) = lhs {
-                    let definitions: Vec<_> = fields()
+                    let available = definitions(ctx);
+                    let definitions: Vec<_> = available
                         .iter()
                         .filter(|f| {
                             f.path == *path
-                                && kinds.as_ref().is_none_or(|ks| ks.contains(f.event_type))
+                                && kinds.as_ref().is_none_or(|ks| ks.contains(&f.event_type))
                         })
                         .collect();
                     if !definitions.is_empty() && definitions.iter().all(|f| f.values.is_some()) {
@@ -403,24 +438,107 @@ fn expr(e: &mut Expr, kinds: &Option<BTreeSet<String>>, ctx: &Context) -> Result
             }
         }
         Expr::Within { lhs, .. } => {
-            operand(lhs, kinds)?;
+            operand(lhs, kinds, ctx)?;
+            if let Operand::Field(FieldRef::TypedPayload { ty, .. }) = lhs
+                && *ty == FieldType::Json
+            {
+                *ty = FieldType::Time;
+            }
             if let Operand::Field(FieldRef::TypedPayload { ty, .. }) = lhs
                 && *ty != FieldType::Time
+                && !(ctx.catalog.is_some() && *ty == FieldType::Json)
             {
                 return Err(QueryError::new("in requires a time field"));
             }
         }
-        Expr::Exists(o) => operand(o, kinds)?,
+        Expr::Exists(o) => operand(o, kinds, ctx)?,
         Expr::TimeDiff { a, b, .. } => {
-            field(a, kinds)?;
-            field(b, kinds)?;
+            field(a, kinds, ctx)?;
+            field(b, kinds, ctx)?;
+            for field in [&mut *a, &mut *b] {
+                if let FieldRef::TypedPayload { ty, .. } = field
+                    && *ty == FieldType::Json
+                {
+                    *ty = FieldType::Time;
+                }
+            }
+            if [a, b].iter().any(|field| matches!(field, FieldRef::TypedPayload { ty, .. } if *ty != FieldType::Time)) {
+                return Err(QueryError::new("time differences require time fields"));
+            }
         }
         Expr::Words(_) | Expr::Overlaps { .. } => {}
     }
     Ok(())
 }
 
+fn select_parameter(expression: &mut Expr, name: &str) -> bool {
+    fn select_value(input: &mut Value, name: &str) -> bool {
+        match input {
+            Value::PlaceholderText(_) => {
+                *input = Value::Text(name.to_owned());
+                true
+            }
+            Value::List(values) => {
+                let mut changed = false;
+                for item in values {
+                    changed |= select_value(item, name);
+                }
+                changed
+            }
+            _ => false,
+        }
+    }
+    match expression {
+        Expr::And(a, b) | Expr::Or(a, b) => select_parameter(a, name) | select_parameter(b, name),
+        Expr::Not(e) => select_parameter(e, name),
+        Expr::Compare {
+            lhs: Operand::Field(FieldRef::Field(f)),
+            rhs,
+            ..
+        } if f.name == "event_type" => select_value(rhs, name),
+        _ => false,
+    }
+}
+
+fn select_query_parameter(query: &mut Query, name: &str) -> bool {
+    let mut changed = false;
+    if let Some(filter) = &mut query.filter {
+        changed |= select_parameter(filter, name);
+    }
+    if let Source::RecallLast {
+        filter: Some(filter),
+    } = &mut query.source
+    {
+        changed |= select_parameter(filter, name);
+    }
+    for stage in &mut query.stages {
+        if let Stage::Where(filter) = stage {
+            changed |= select_parameter(filter, name);
+        }
+    }
+    changed
+}
+
 pub(super) fn check(q: &mut Query, ctx: &Context) -> Result<(), QueryError> {
+    // A template's event-type argument is checked when an invocation supplies it.
+    // Its definition must be valid for at least one declared event type.
+    if ctx.catalog.is_none() && select_query_parameter(&mut q.clone(), "") {
+        let mut first_error = None;
+        for kind in crate::event_types::ALL {
+            let mut trial = q.clone();
+            select_query_parameter(&mut trial, kind.event_type);
+            match check(&mut trial, ctx) {
+                Ok(()) => {
+                    *q = trial;
+                    return Ok(());
+                }
+                Err(error) => {
+                    first_error.get_or_insert(error);
+                }
+            }
+        }
+        return Err(first_error.unwrap_or_else(|| QueryError::new("no event type is declared")));
+    }
     if let Source::RecallLast { filter: Some(e) } = &mut q.source {
         let alias = Alias::from_name("shell-sessions").expect("shell sessions declared");
         let kinds = Some(alias.kinds.iter().map(|s| (*s).into()).collect());
@@ -442,7 +560,7 @@ pub(super) fn check(q: &mut Query, ctx: &Context) -> Result<(), QueryError> {
                 }
             }),
     ) {
-        if let Some(selected) = selected(e) {
+        if let Some(selected) = selected(e, ctx) {
             kinds = Some(kinds.map_or(selected.clone(), |ks| {
                 ks.intersection(&selected).cloned().collect()
             }));
@@ -457,23 +575,23 @@ pub(super) fn check(q: &mut Query, ctx: &Context) -> Result<(), QueryError> {
             Stage::Join(j) => check(&mut j.inner, ctx)?,
             Stage::Fields(fs) => {
                 for f in fs {
-                    field(f, &kinds)?;
+                    field(f, &kinds, ctx)?;
                 }
             }
             Stage::Sort(keys) => {
                 for k in keys {
                     if let SortBy::Operand(o) = &mut k.key {
-                        operand(o, &kinds)?;
+                        operand(o, &kinds, ctx)?;
                     }
                 }
             }
             Stage::Group(g) => {
                 for k in &mut g.keys {
-                    operand(k, &kinds)?;
+                    operand(k, &kinds, ctx)?;
                 }
                 for a in &mut g.aggregates {
                     if let Some(f) = &mut a.field {
-                        field(f, &kinds)?;
+                        field(f, &kinds, ctx)?;
                         let ty = match f {
                             FieldRef::TypedPayload { ty, .. } => Some(*ty),
                             FieldRef::Field(f) => Some(f.ty),
@@ -499,6 +617,7 @@ pub(super) fn check(q: &mut Query, ctx: &Context) -> Result<(), QueryError> {
                         if matches!(a.function, AggFn::Sum | AggFn::Avg)
                             && ty.is_some_and(|ty| {
                                 !matches!(ty, FieldType::Integer | FieldType::Number)
+                                    && !(ctx.catalog.is_some() && ty == FieldType::Json)
                             })
                         {
                             return Err(QueryError::new(format!(

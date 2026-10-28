@@ -5,7 +5,7 @@ fields, clocks, the logical day as Sinex uses it, units and fill, joins, read co
 paging and budgets, saved queries and kept results, citation forms, and `read`, `trace`
 and `related`. The grammar, spelling, AST semantics, three-valued logic, time
 expressions, sealed cursors and the shared query laws belong to the common
-[`query-language`](https://github.com/Sinity/polylogue-sinex-common/blob/master/crates/query-language/README.md)
+[`query-language`](https://github.com/Sinity/polylogue-sinex-common/blob/master/docs/query-language.md)
 crate; how the CLI, MCP and HTTP carry a query is in [interfaces](interfaces.md); what a
 record and a citation identify is in [events](events.md#identity).
 

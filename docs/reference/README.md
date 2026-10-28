@@ -1,10 +1,14 @@
 # Generated reference
 
-The pages in this directory are generated, not written by hand. `cargo xtask
-docs` renders them from the declarations the code already serves at run
-time, and they are committed so they read on GitHub and in a checkout without
-building. The ordinary test suite renders them again and compares, so a
-declaration change and its page change land together.
+The designed `cargo xtask docs` generator will render the pages below from
+the declarations served at run time. They will be committed and compared
+with their rendered declarations by the ordinary test suite. That generator
+is not implemented yet.
+
+The current generated source and derivation catalog is
+[`nix/catalog.json`](../../nix/catalog.json), emitted by `sinexd admin catalog`
+and checked by a golden test. The Nix module and discovery code read it;
+change the declarations and regenerate it rather than editing it by hand.
 
 | Page | Rendered from |
 |---|---|

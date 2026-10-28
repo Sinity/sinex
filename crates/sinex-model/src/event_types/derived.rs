@@ -9,8 +9,7 @@ use serde::{Deserialize, Serialize};
 /// interval derivation. Identified by its start evidence; the end may still
 /// be unknown (`ended_at` is `None` while the state holds).
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
-#[event(
-    type = "state.interval",
+#[event(version = 2, type = "state.interval",
     key = ["interval_id"],
     replace = newer,
     time = started_at,
@@ -32,15 +31,14 @@ pub struct StateInterval {
     pub attributes: std::collections::BTreeMap<String, String>,
 }
 
-/// One metric over one civil hour or logical day: how many input events it
+/// One metric over one local hour or logical day: how many input events it
 /// counted and the metric's number for them, in total or for one value of a
 /// breakdown field. Hourly figures are computed from the metric's input
 /// events, daily ones from the day's hourly figures. A period nothing was
 /// counted in has no figure; whether that means zero or unobserved depends on
 /// whether the sources were observing, which is read with the figures.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
-#[event(
-    type = "metric.figure",
+#[event(version = 2, type = "metric.figure",
     key = ["metric", "grain", "period_start", "dimension", "dimension_value"],
     replace = newer,
     time = period_start,
@@ -69,13 +67,12 @@ pub struct MetricFigure {
     pub rows: u64,
 }
 
-/// Figures over one series of health points in one civil hour or logical
+/// Figures over one series of health points in one local hour or logical
 /// day: how many points started in the period and, for each numeric value
 /// position, their count, sum, minimum and maximum. Hourly figures are
 /// computed from the points, daily ones from the day's hourly figures.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
-#[event(
-    type = "health.figure",
+#[event(version = 2, type = "health.figure",
     key = ["grain", "period_start", "provider", "series"],
     replace = newer,
     time = period_start,

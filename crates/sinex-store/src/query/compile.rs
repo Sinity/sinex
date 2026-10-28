@@ -416,7 +416,14 @@ impl<'c> Compiler<'c> {
                         let mut c = match (&agg.function, &agg.field) {
                             (AggFn::Count, None) => SqlFragment::text("count(*)"),
                             (func, Some(f)) => {
-                                let (arg, _) = self.field(&gcols, f)?;
+                                let (arg, kind) = self.field(&gcols, f)?;
+                                let arg = if kind == Kind::Typed(FieldType::Json)
+                                    && matches!(func, AggFn::Sum | AggFn::Avg)
+                                {
+                                    Self::json_as(arg, &Value::Number(0.0))
+                                } else {
+                                    arg
+                                };
                                 let mut c = SqlFragment::text(match func {
                                     AggFn::Count => "count(",
                                     AggFn::Sum => "sum(",

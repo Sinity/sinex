@@ -83,7 +83,7 @@ pub async fn resolve(conn: &mut PgConnection, reference: &Reference) -> Result<U
             key,
         } => {
             let found = sqlx::query_scalar!(
-                "SELECT event_id FROM core.live_equivalence WHERE source = $1 AND event_type = $2 AND equivalence_key = $3",
+                "SELECT event_id FROM core.live_equivalence WHERE source = $1 AND event_type = $2 AND equivalence_key = core.encode_equivalence_key($3)",
                 source,
                 event_type,
                 key
@@ -103,7 +103,7 @@ pub async fn show(conn: &mut PgConnection, reference: &Reference) -> Result<Json
     let id = resolve(conn, reference).await?;
     let row = sqlx::query_scalar!(
         r#"SELECT jsonb_build_object(
-             'id', e.id, 'event_type', e.event_type, 'source', e.source,
+             'id', e.id, 'event_type', e.event_type, 'kind_version', e.kind_version, 'validation', e.validation, 'source', e.source,
              'when', e.ts_orig, 'time_quality', e.ts_quality, 'seen', e.ts_coided,
              'written', e.ts_persisted, 'commit_seq', e.commit_seq,
              'state', CASE WHEN a.event_id IS NULL THEN 'live' ELSE 'archived' END,
@@ -139,7 +139,7 @@ pub(crate) async fn walk(
         Walk::Parents => {
             sqlx::query_scalar!(
                 r#"SELECT jsonb_build_object(
-                     'id', e.id, 'event_type', e.event_type, 'source', e.source, 'when', e.ts_orig,
+                     'id', e.id, 'event_type', e.event_type, 'kind_version', e.kind_version, 'validation', e.validation, 'source', e.source, 'when', e.ts_orig,
                      'state', CASE WHEN a.event_id IS NULL THEN 'live' ELSE 'archived' END,
                      'material', e.material_id, 'offset', e.anchor, 'payload', e.payload) AS "row!"
                    FROM core.visible_events c
@@ -162,7 +162,7 @@ pub(crate) async fn walk(
                      WHERE d.depth < $2
                    ), first AS (SELECT id, min(depth) AS depth FROM d GROUP BY id)
                    SELECT jsonb_build_object(
-                     'depth', f.depth, 'id', e.id, 'event_type', e.event_type, 'source', e.source,
+                     'depth', f.depth, 'id', e.id, 'event_type', e.event_type, 'kind_version', e.kind_version, 'validation', e.validation, 'source', e.source,
                      'when', e.ts_orig,
                      'state', CASE WHEN a.event_id IS NULL THEN 'live' ELSE 'archived' END,
                      'depth_bound_reached', f.depth >= $2,
@@ -187,7 +187,7 @@ pub(crate) async fn walk(
                      WHERE up.depth < $2
                    ), first AS (SELECT id, min(depth) AS depth FROM up GROUP BY id)
                    SELECT jsonb_build_object(
-                     'depth', f.depth, 'id', e.id, 'event_type', e.event_type, 'source', e.source,
+                     'depth', f.depth, 'id', e.id, 'event_type', e.event_type, 'kind_version', e.kind_version, 'validation', e.validation, 'source', e.source,
                      'when', e.ts_orig,
                      'state', CASE WHEN a.event_id IS NULL THEN 'live' ELSE 'archived' END,
                      'origin', CASE WHEN e.material_id IS NULL THEN 'derived' ELSE 'material' END,

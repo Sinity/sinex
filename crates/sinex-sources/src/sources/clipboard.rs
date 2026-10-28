@@ -27,7 +27,7 @@ pub const SPEC: SourceSpec = SourceSpec {
     // Anything the operator copies, passwords included unless marked secret.
     class: Class::Guarded,
     parser: "wl-clipboard",
-    parser_version: 1,
+    parser_version: 2,
     event_types: &["clipboard.copied"],
     framer: sinex_source_core::Framer::incremental(sinex_source_core::drivers::append_file::lines),
 };
@@ -157,29 +157,30 @@ impl Parser for ClipboardParser {
             .map(str::to_owned);
         Ok((
             vec![ClipboardCopied {
+                captured_by: sinex_model::event_types::session::CaptureProgram::Sinex,
                 received_at,
                 selection: f
                     .get("selection")
                     .and_then(Value::as_str)
                     .unwrap_or("clipboard")
                     .to_owned(),
-                mime_types: f
-                    .get("types")
-                    .and_then(Value::as_array)
-                    .map(|xs| {
-                        xs.iter()
-                            .filter_map(Value::as_str)
-                            .map(str::to_owned)
-                            .collect()
-                    })
-                    .unwrap_or_default(),
+                mime_types: f.get("types").and_then(Value::as_array).map(|xs| {
+                    xs.iter()
+                        .filter_map(Value::as_str)
+                        .map(str::to_owned)
+                        .collect()
+                }),
                 mime_type,
                 text,
-                bytes: content.as_ref().map_or(0, |c| c.len() as u64),
+                bytes: content.as_ref().map(|c| c.len() as u64),
                 content_hash: content
                     .as_ref()
                     .map(|c| blake3::hash(c).to_hex().to_string()),
+                sha256: None,
+                window: None,
+                imported_from: None,
                 secret,
+                extra: Map::new(),
             }],
             (),
         ))
@@ -219,6 +220,33 @@ fn selection(b: &sinex_source_core::binding::Binding) -> &'static str {
 pub const FORMAT: sinex_source_core::binding::InputFormat =
     sinex_source_core::binding::InputFormat {
         name: "clipboard",
+        discovery: sinex_source_core::discovery::DiscoverySpec {
+            owner: sinex_source_core::discovery::Owner::Session,
+            locations: &[],
+            capabilities: &["wayland", "wl-paste"],
+            credentials: &[],
+            streams: &[
+                sinex_source_core::discovery::CaptureStream {
+                    spool: "clipboard",
+                    options: &[sinex_source_core::discovery::CaptureOption {
+                        name: "selection",
+                        value: sinex_source_core::discovery::CaptureValue::Text("clipboard"),
+                    }],
+                    capabilities: &[],
+                },
+                sinex_source_core::discovery::CaptureStream {
+                    spool: "primary",
+                    options: &[sinex_source_core::discovery::CaptureOption {
+                        name: "selection",
+                        value: sinex_source_core::discovery::CaptureValue::Text("primary"),
+                    }],
+                    capabilities: &[],
+                },
+            ],
+            requests: &[],
+            request_only: false,
+        },
+        discover: crate::discovery::discover_format,
         specs: || vec![&SPEC],
         plan: Some(|spool, settings| {
             Ok(sinex_source_core::binding::single(&SPEC, spool, settings)

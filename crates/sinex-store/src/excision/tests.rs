@@ -4,7 +4,7 @@
 //! here is alone in its material, as the caller requires.
 use super::*;
 use crate::Blobs;
-use crate::admission::{NoDerivations, admit};
+use crate::admission::NoDerivations;
 use sinex_model::event_types::{CommandExecuted, CommandFused};
 use sinex_model::{
     Batch, BatchKind, Class, Event, Origin, OwnedBlob, ReadingOrder, RecordLocation, RecordOutcome,
@@ -149,25 +149,25 @@ fn keyless(material: MaterialId, bytes: &[u8], anchor: usize) -> Event {
     .unwrap()
 }
 
-async fn admit_events(conn: &mut PgConnection, events: Vec<Event>) -> crate::Outcome {
+async fn admit_events(conn: &mut crate::AdmissionContext, events: Vec<Event>) -> crate::Outcome {
     let mut tx = conn.begin().await.unwrap();
-    let out = admit(
-        &mut tx,
-        &Batch {
-            run: RunId::new(),
-            kind: BatchKind::Api {
-                actor: "test".into(),
+    let out = tx
+        .admit(
+            &Batch {
+                run: RunId::new(),
+                kind: BatchKind::Api {
+                    actor: "test".into(),
+                },
+                records: vec![RecordOutcome::Events {
+                    location: None,
+                    events,
+                }],
+                archive: vec![],
             },
-            records: vec![RecordOutcome::Events {
-                location: None,
-                events,
-            }],
-            archive: vec![],
-        },
-        &NoDerivations,
-    )
-    .await
-    .unwrap();
+            &NoDerivations,
+        )
+        .await
+        .unwrap();
     tx.commit().await.unwrap();
     out
 }
@@ -198,8 +198,10 @@ async fn count(conn: &mut PgConnection, sql: &str) -> i64 {
         .unwrap()
 }
 
-async fn connect(db: &devkit::pg::TestDatabase) -> PgConnection {
-    PgConnection::connect(&db.url(None)).await.unwrap()
+async fn connect(db: &devkit::pg::TestDatabase) -> crate::AdmissionContext {
+    crate::AdmissionContext::connect(&db.url(None))
+        .await
+        .unwrap()
 }
 
 #[devkit::test]
@@ -690,9 +692,17 @@ async fn excision_removes_search_text(db: devkit::pg::TestDatabase) {
         count(&mut conn, "SELECT count(*) FROM core.search_text").await,
         2
     );
+    let page = crate::commit_log::after(&mut conn, 0, 10, i64::MAX)
+        .await
+        .unwrap();
     excise(&mut conn, &store, Target::Event(target.id))
         .await
         .unwrap();
+    let mut tx = conn.begin().await.unwrap();
+    crate::read_models::apply_search_text(&mut tx, &page.events)
+        .await
+        .unwrap();
+    tx.commit().await.unwrap();
     let left: Vec<Uuid> = sqlx::query_scalar!("SELECT event_id FROM core.search_text")
         .fetch_all(&mut conn)
         .await

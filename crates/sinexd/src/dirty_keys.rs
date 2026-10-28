@@ -21,7 +21,7 @@ impl Registered {
 }
 
 impl DirtyKeys for Registered {
-    fn keys(&self, event: &KeyInput<'_>) -> Vec<(&'static str, Value)> {
+    fn keys(&self, event: &KeyInput<'_>) -> Vec<(String, Value)> {
         let view = KeyView {
             event_type: event.event_type,
             ts_orig: event.ts_orig.map(Timestamp),
@@ -38,7 +38,7 @@ impl DirtyKeys for Registered {
             .flat_map(|d| {
                 d.keys_for(&view, &env)
                     .into_iter()
-                    .map(move |k| (d.name(), k))
+                    .map(move |k| (d.name().to_string(), k))
             })
             .collect()
     }
