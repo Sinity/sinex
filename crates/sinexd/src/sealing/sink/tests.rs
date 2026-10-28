@@ -13,7 +13,13 @@ async fn sealed_material_encrypts_every_chunk_in_the_actual_admission_pipeline(
     std::fs::create_dir_all(&dir).unwrap();
     let path = dir.join("history");
     std::fs::write(&path,b": 1700000000:0;synthetic_secret_a\n: 1700000001:0;synthetic_secret_b\n: 1700000002:0;synthetic_secret_c\n").unwrap();
-    let mut ctx = ReaderContext::open(&url, &dir.join("store"), sinex_model::time_settings::TimeSettings::operator_default()).await.unwrap();
+    let mut ctx = ReaderContext::open(
+        &url,
+        &dir.join("store"),
+        sinex_model::time_settings::TimeSettings::operator_default(),
+    )
+    .await
+    .unwrap();
     let identity = sinex_sealing::Identity::generate();
     let sink = SealingSink::new(ctx.blobs.clone(), identity.to_public());
     let source = zsh::source("synthetic".into());
@@ -104,7 +110,13 @@ async fn sealed_failure_details_are_encrypted_and_exactly_recoverable(
     std::fs::create_dir_all(&dir).unwrap();
     let path = dir.join("history");
     std::fs::write(&path, b": 1700000000:0;synthetic_command\n").unwrap();
-    let mut ctx = ReaderContext::open(&url, &dir.join("store"), sinex_model::time_settings::TimeSettings::operator_default()).await.unwrap();
+    let mut ctx = ReaderContext::open(
+        &url,
+        &dir.join("store"),
+        sinex_model::time_settings::TimeSettings::operator_default(),
+    )
+    .await
+    .unwrap();
     let identity = sinex_sealing::Identity::generate();
     let sink = SealingSink::new(ctx.blobs.clone(), identity.to_public());
     let source = zsh::source("synthetic".into());

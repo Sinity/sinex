@@ -105,9 +105,13 @@ struct Clipboard {
 impl Clipboard {
     async fn new(db: devkit::pg::TestDatabase) -> Self {
         let dir = tempfile::tempdir().unwrap();
-        let mut ctx = ReaderContext::open(&db.url(None), &dir.path().join("store"), sinex_model::time_settings::TimeSettings::operator_default())
-            .await
-            .unwrap();
+        let mut ctx = ReaderContext::open(
+            &db.url(None),
+            &dir.path().join("store"),
+            sinex_model::time_settings::TimeSettings::operator_default(),
+        )
+        .await
+        .unwrap();
         let spool = dir.path().join("spool");
         std::fs::create_dir_all(&spool).unwrap();
         let binding = Binding::of(&clipboard::SPEC, &spool, Settings::new("h"));
@@ -300,9 +304,13 @@ async fn records_of_sources_that_read_again_are_refused_without_changes(
 ) {
     use sinex_sources::sources::{atuin, library, mail_imap, notes, takeout_chrome, zsh};
     let dir = tempfile::tempdir().unwrap();
-    let mut ctx = ReaderContext::open(&db.url(None), &dir.path().join("store"), sinex_model::time_settings::TimeSettings::operator_default())
-        .await
-        .unwrap();
+    let mut ctx = ReaderContext::open(
+        &db.url(None),
+        &dir.path().join("store"),
+        sinex_model::time_settings::TimeSettings::operator_default(),
+    )
+    .await
+    .unwrap();
     let bytes = b"synthetic record\n";
     for spec in [
         &zsh::SPEC,

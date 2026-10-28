@@ -134,7 +134,12 @@ pub(crate) async fn run(o: Options) -> Result<(), String> {
             planned.push((format, b));
         }
     }
-    let mut ctx = ReaderContext::open(&o.database, &o.store, sinex_model::time_settings::TimeSettings::operator_default()).await?;
+    let mut ctx = ReaderContext::open(
+        &o.database,
+        &o.store,
+        sinex_model::time_settings::TimeSettings::operator_default(),
+    )
+    .await?;
     let sink = Sink(ctx.blobs.clone());
     let emits: Vec<&'static str> = {
         let mut types: Vec<&'static str> = planned

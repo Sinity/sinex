@@ -27,9 +27,13 @@ fn acquisition(id: &str) -> drivers::Acquired {
 #[devkit::test]
 async fn request_refuses_all_records_when_one_does_not_parse(db: devkit::pg::TestDatabase) {
     let dir = tempfile::tempdir().unwrap();
-    let mut ctx = crate::reader_context::ReaderContext::open(&db.url(None), dir.path(), sinex_model::time_settings::TimeSettings::operator_default())
-        .await
-        .unwrap();
+    let mut ctx = crate::reader_context::ReaderContext::open(
+        &db.url(None),
+        dir.path(),
+        sinex_model::time_settings::TimeSettings::operator_default(),
+    )
+    .await
+    .unwrap();
     let mut acquired = acquisition("first");
     let material = acquired.material.as_mut().unwrap();
     let start = material.bytes.len();
@@ -66,9 +70,13 @@ async fn request_refuses_all_records_when_one_does_not_parse(db: devkit::pg::Tes
 #[devkit::test]
 async fn request_commits_its_records_together_with_the_source_class(db: devkit::pg::TestDatabase) {
     let dir = tempfile::tempdir().unwrap();
-    let mut ctx = crate::reader_context::ReaderContext::open(&db.url(None), dir.path(), sinex_model::time_settings::TimeSettings::operator_default())
-        .await
-        .unwrap();
+    let mut ctx = crate::reader_context::ReaderContext::open(
+        &db.url(None),
+        dir.path(),
+        sinex_model::time_settings::TimeSettings::operator_default(),
+    )
+    .await
+    .unwrap();
     let mut acquired = acquisition("first");
     let second = acquisition("second").material.unwrap();
     let material = acquired.material.as_mut().unwrap();
@@ -104,9 +112,13 @@ async fn request_commits_its_records_together_with_the_source_class(db: devkit::
 async fn submission_checks_again_inside_the_writer(db: devkit::pg::TestDatabase) {
     use std::sync::atomic::{AtomicBool, Ordering};
     let dir = tempfile::tempdir().unwrap();
-    let mut ctx = crate::reader_context::ReaderContext::open(&db.url(None), dir.path(), sinex_model::time_settings::TimeSettings::operator_default())
-        .await
-        .unwrap();
+    let mut ctx = crate::reader_context::ReaderContext::open(
+        &db.url(None),
+        dir.path(),
+        sinex_model::time_settings::TimeSettings::operator_default(),
+    )
+    .await
+    .unwrap();
     let stopped = Arc::new(AtomicBool::new(false));
     let checked_stop = stopped.clone();
     let result = Intake {

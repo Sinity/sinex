@@ -17,7 +17,11 @@ pub(crate) struct ReaderContext {
 }
 
 impl ReaderContext {
-    pub(crate) async fn open(database: &str, store: &Path, time_settings: sinex_model::time_settings::TimeSettings) -> Result<Self, String> {
+    pub(crate) async fn open(
+        database: &str,
+        store: &Path,
+        time_settings: sinex_model::time_settings::TimeSettings,
+    ) -> Result<Self, String> {
         let mut read_conn = PgConnection::connect(database)
             .await
             .map_err(|e| e.to_string())?;
@@ -34,10 +38,7 @@ impl ReaderContext {
             database.to_owned(),
             writer_conn,
             queues,
-            Arc::new(Registered::new(
-                sinex_derivations::keyed(),
-                time_settings,
-            )),
+            Arc::new(Registered::new(sinex_derivations::keyed(), time_settings)),
             Some(blobs.clone()),
         ));
         Ok(Self {
