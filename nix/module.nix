@@ -608,7 +608,7 @@ in
         wantedBy = cfg.session.wantedBy;
         partOf = cfg.session.wantedBy;
         unitConfig = { ConditionUser = cfg.session.user; StartLimitIntervalSec = 0; };
-        serviceConfig = { Restart = "always"; RestartSec = "2s"; };
+        serviceConfig = { Restart = "always"; RestartSec = "2s"; UMask = "0077"; };
         # busctl, wl-paste, grim, pw-record and ffmpeg run as capture children.
         path = with pkgs; [ systemd wl-clipboard grim pipewire ffmpeg-headless ];
         script = ''
