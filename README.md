@@ -207,7 +207,7 @@ time.
 The [query guide](docs/query.md) covers typed fields, completion, filled time
 buckets, marks, time citations, saved queries and context views.
 
-See [the development guide](docs/development.md) for isolated watched runs, VM scenarios, history comparisons, coverage and fuzz experiments.
+See [the development guide](docs/development.md) for isolated watched runs, VM scenarios, history comparisons, coverage and fuzz regression tests.
 
 ## Benchmarks
 

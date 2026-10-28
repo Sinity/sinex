@@ -2,7 +2,7 @@ use std::process::Command;
 
 #[test]
 fn public_commands_describe_explicit_scope_and_budgets() {
-    for command in ["vm", "run", "coverage", "fuzz"] {
+    for command in ["vm", "run", "coverage"] {
         let output = Command::new(env!("CARGO_BIN_EXE_xtask"))
             .args([command, "--help"])
             .output()
@@ -26,7 +26,6 @@ fn public_commands_reject_missing_scope_and_unknown_capture() {
             "--session-source",
             "everything",
         ],
-        vec!["fuzz", "run", "query", "--output", "unused"],
     ] {
         assert!(
             !Command::new(env!("CARGO_BIN_EXE_xtask"))
@@ -37,4 +36,16 @@ fn public_commands_reject_missing_scope_and_unknown_capture() {
                 .success()
         );
     }
+}
+
+#[test]
+fn test_command_owns_fuzz_regressions() {
+    let output = Command::new(env!("CARGO_BIN_EXE_xtask"))
+        .arg("--help")
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let help = String::from_utf8(output.stdout).unwrap();
+    assert!(help.contains("test"));
+    assert!(!help.lines().any(|line| line.trim_start().starts_with("fuzz")));
 }

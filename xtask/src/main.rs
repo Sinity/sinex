@@ -22,12 +22,6 @@ enum Cli {
     Run(development::Development),
     /// LLVM line coverage with explicit output and optional threshold.
     Coverage(devkit::coverage::Coverage),
-    /// Discover, run and replay substantive fuzz targets.
-    #[command(subcommand)]
-    Fuzz(devkit::fuzz::Fuzz),
-    /// Internal child with the database environment prepared by `fuzz`.
-    #[command(hide = true, subcommand)]
-    FuzzWithDatabase(devkit::fuzz::Fuzz),
     /// Compile selected packages or targets against the schema database.
     Compile {
         #[arg(trailing_var_arg = true, allow_hyphen_values = true, required = true)]
@@ -64,25 +58,6 @@ fn main() -> ExitCode {
             with_services(run, |run, env| {
                 devkit::coverage::execute(run, &options, env)
             })
-        }),
-        Cli::Fuzz(options) => recorded("fuzz", &invocation(), |run| {
-            if matches!(options, devkit::fuzz::Fuzz::List) {
-                return devkit::fuzz::execute(run, &options);
-            }
-            with_services(run, |run, env| {
-                let mut child = std::process::Command::new(
-                    std::env::current_exe().map_err(|error| error.to_string())?,
-                );
-                child
-                    .arg("fuzz-with-database")
-                    .args(invocation())
-                    .envs(env.iter().cloned());
-                run.command("fuzz", &mut child)?;
-                Ok(())
-            })
-        }),
-        Cli::FuzzWithDatabase(options) => recorded("fuzz", &invocation(), |run| {
-            devkit::fuzz::execute(run, &options)
         }),
         Cli::Check => recorded("check", &[], check),
         Cli::Compile { args } => recorded("compile", &args, |run| compile(run, &args)),

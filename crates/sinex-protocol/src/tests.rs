@@ -79,6 +79,7 @@ fn unadvertised_requests_keep_wire_decoding_and_explicit_write_access() {
     }
 }
 
+#[cfg(feature = "cli")]
 #[devkit::test]
 fn query_authoring_options_are_not_consumed_by_the_text_argument() {
     for (name, args, field, expected) in [
