@@ -57,6 +57,10 @@ fn each_version_after_0_has_its_upgrade() {
 }
 
 async fn search_version_two(conn: &mut PgConnection) {
+    sqlx::raw_sql(include_str!("tests/version_four.sql"))
+        .execute(&mut *conn)
+        .await
+        .unwrap();
     sqlx::raw_sql(include_str!("tests/version_two.sql"))
         .execute(conn)
         .await

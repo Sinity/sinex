@@ -37,10 +37,6 @@ pub(crate) enum WriteError {
     Stopped,
 }
 
-fn database_error(error: sqlx::Error) -> WriteError {
-    admission_error(error.into())
-}
-
 fn store_error(error: sinex_store::Error) -> WriteError {
     admission_error(error)
 }
@@ -263,8 +259,12 @@ pub(crate) fn channels() -> (WriterHandle, Queues) {
 /// A writer that was just killed holds the lock until the server notices its
 /// backend is gone, so a restart waits up to five seconds before refusing.
 pub(crate) async fn claim(connection: PgConnection) -> Result<AdmissionContext, String> {
-    let mut context = AdmissionContext::claim(connection).await.map_err(|error| error.to_string())?;
-    sinex_schema::kinds::require_bundled(&mut context).await.map_err(|error| error.to_string())?;
+    let mut context = AdmissionContext::claim(connection)
+        .await
+        .map_err(|error| error.to_string())?;
+    sinex_schema::kinds::require_bundled(&mut context)
+        .await
+        .map_err(|error| error.to_string())?;
     Ok(context)
 }
 
@@ -308,23 +308,37 @@ pub(crate) async fn run_notifying(
         };
         let queue_time = job.queued_at.elapsed();
         let offered = match &job.work {
-            WriterJob::Admit(batch) | WriterJob::Checked(batch, _) | WriterJob::Source(batch, _) => Some(batch.event_count()),
+            WriterJob::Admit(batch)
+            | WriterJob::Checked(batch, _)
+            | WriterJob::Source(batch, _) => Some(batch.event_count()),
             _ => None,
         };
         let service_started = std::time::Instant::now();
         let mut result = match job.work {
-            WriterJob::Admit(batch) => {
-                admit_checked(&mut connection, &batch, keys.as_ref(), store, &|| Ok(()), false)
-                    .await
-                    .map(Done::Admitted)
-            }
-            WriterJob::Checked(batch, check) => {
-                admit_checked(&mut connection, &batch, keys.as_ref(), store, &*check, false)
-                    .await
-                    .map(Done::Admitted)
-            }
+            WriterJob::Admit(batch) => admit_checked(
+                &mut connection,
+                &batch,
+                keys.as_ref(),
+                store,
+                &|| Ok(()),
+                false,
+            )
+            .await
+            .map(Done::Admitted),
+            WriterJob::Checked(batch, check) => admit_checked(
+                &mut connection,
+                &batch,
+                keys.as_ref(),
+                store,
+                &*check,
+                false,
+            )
+            .await
+            .map(Done::Admitted),
             WriterJob::Source(batch, check) => {
-                admit_checked(&mut connection, &batch, keys.as_ref(), store, &*check, true).await.map(Done::Admitted)
+                admit_checked(&mut connection, &batch, keys.as_ref(), store, &*check, true)
+                    .await
+                    .map(Done::Admitted)
             }
             WriterJob::Replay(mut sequence) => {
                 replay_sequence(&mut connection, &mut sequence, keys.as_ref())
@@ -343,8 +357,10 @@ pub(crate) async fn run_notifying(
                 .await
                 .map(Done::Excised),
         };
-        if matches!(&result, Err(WriteError::Refused(_) | WriteError::Unavailable(_)))
-            && connection.ping().await.is_err()
+        if matches!(
+            &result,
+            Err(WriteError::Refused(_) | WriteError::Unavailable(_))
+        ) && connection.ping().await.is_err()
             && let Ok(fresh) = PgConnection::connect(&url).await
         {
             // The lock went with the lost connection; without it this
@@ -411,24 +427,36 @@ async fn admit_checked(
     }
     let checks_time = checks_started.elapsed();
     let begin_started = std::time::Instant::now();
-    let mut tx = connection.begin().await.map_err(database_error)?;
+    let mut tx = connection
+        .begin()
+        .await
+        .map_err(|error| store_error(error.into()))?;
     let begin_time = begin_started.elapsed();
     match tx.admit(batch, keys).await {
         Ok(mut outcome) => {
             if let Err(error) = check() {
-                tx.rollback().await.map_err(database_error)?;
+                tx.rollback()
+                    .await
+                    .map_err(|error| store_error(error.into()))?;
                 return Err(WriteError::Refused(error));
             }
             let started = std::time::Instant::now();
-            tx.commit().await.map_err(database_error)?;
+            tx.commit()
+                .await
+                .map_err(|error| store_error(error.into()))?;
             outcome.timings.insert("commit", started.elapsed());
             outcome.timings.insert("checks", checks_time);
             outcome.timings.insert("begin", begin_time);
             Ok(outcome)
         }
         Err(error) => {
-            tx.rollback().await.map_err(database_error)?;
-            if record_refusals && content_error(&error) && let Some(failed) = refused_source(batch, &error.to_string()) {
+            tx.rollback()
+                .await
+                .map_err(|error| store_error(error.into()))?;
+            if record_refusals
+                && content_error(&error)
+                && let Some(failed) = refused_source(batch, &error.to_string())
+            {
                 check().map_err(WriteError::Refused)?;
                 let mut tx = connection.begin().await.map_err(store_error)?;
                 let outcome = tx.admit(&failed, keys).await.map_err(store_error)?;
@@ -448,7 +476,9 @@ fn content_error(error: &sinex_store::Error) -> bool {
         sinex_store::Error::Database(error) => error
             .as_database_error()
             .and_then(|error| error.code())
-            .is_some_and(|code| code.starts_with("22") || code.starts_with("23") || code.starts_with("54")),
+            .is_some_and(|code| {
+                code.starts_with("22") || code.starts_with("23") || code.starts_with("54")
+            }),
         _ => false,
     }
 }
@@ -510,12 +540,18 @@ async fn replay_sequence(
     if !sequence.compare
         && let Some(ingress) = &sequence.ingress
     {
-        let mut scope_tx = connection.begin().await.map_err(database_error)?;
+        let mut scope_tx = connection
+            .begin()
+            .await
+            .map_err(|error| store_error(error.into()))?;
         if let Some(recorded) = crate::ingress::replay::recorded(&mut scope_tx, ingress)
             .await
             .map_err(crate::ingress::Check::write_error)?
         {
-            scope_tx.rollback().await.map_err(database_error)?;
+            scope_tx
+                .rollback()
+                .await
+                .map_err(|error| store_error(error.into()))?;
             return Ok((vec![recorded], Diff::default()));
         }
         crate::ingress::replay::check_scope(&mut scope_tx, ingress)
@@ -531,15 +567,23 @@ async fn replay_sequence(
         )
         .await
         .map_err(store_error)?;
-        scope_tx.commit().await.map_err(database_error)?;
+        scope_tx
+            .commit()
+            .await
+            .map_err(|error| store_error(error.into()))?;
     }
-    let mut tx = connection.begin().await.map_err(database_error)?;
+    let mut tx = connection
+        .begin()
+        .await
+        .map_err(|error| store_error(error.into()))?;
     if let Some(ingress) = &sequence.ingress {
         if let Some(recorded) = crate::ingress::replay::recorded(&mut tx, ingress)
             .await
             .map_err(crate::ingress::Check::write_error)?
         {
-            tx.rollback().await.map_err(database_error)?;
+            tx.rollback()
+                .await
+                .map_err(|error| store_error(error.into()))?;
             return Ok((vec![recorded], Diff::default()));
         }
         crate::ingress::replay::check(&mut tx, ingress)
@@ -572,12 +616,16 @@ async fn replay_sequence(
             .map_err(crate::ingress::Check::write_error)?;
     }
     if sequence.compare {
-        tx.rollback().await.map_err(database_error)?;
+        tx.rollback()
+            .await
+            .map_err(|error| store_error(error.into()))?;
     } else {
         replay::sequence_done(&mut tx, sequence.operation, sequence.root)
             .await
             .map_err(store_error)?;
-        tx.commit().await.map_err(database_error)?;
+        tx.commit()
+            .await
+            .map_err(|error| store_error(error.into()))?;
     }
     Ok((outcomes, diff))
 }
@@ -589,14 +637,19 @@ async fn record_replay(
     scope: &Value,
     refusals: &[Value],
 ) -> Result<Outcome, WriteError> {
-    let mut tx = connection.begin().await.map_err(database_error)?;
+    let mut tx = connection
+        .begin()
+        .await
+        .map_err(|error| store_error(error.into()))?;
     replay::begin(&mut tx, operation, actor, scope)
         .await
         .map_err(store_error)?;
     replay::record_refusals(&mut tx, operation, refusals)
         .await
         .map_err(store_error)?;
-    tx.commit().await.map_err(database_error)?;
+    tx.commit()
+        .await
+        .map_err(|error| store_error(error.into()))?;
     Ok(Outcome::default())
 }
 
@@ -606,15 +659,22 @@ async fn excise(
     keys: &dyn DirtyKeys,
 ) -> Result<Excised, WriteError> {
     let refuse = |e: &dyn std::fmt::Display| WriteError::Refused(e.to_string());
-    let mut tx = connection.begin().await.map_err(database_error)?;
+    let mut tx = connection
+        .begin()
+        .await
+        .map_err(|error| store_error(error.into()))?;
     let applied =
         match excision::apply(&mut tx, e.target, &e.plan, e.operation, &e.actor, keys).await {
             Ok(applied) => {
-                tx.commit().await.map_err(database_error)?;
+                tx.commit()
+                    .await
+                    .map_err(|error| store_error(error.into()))?;
                 applied
             }
             Err(error) => {
-                tx.rollback().await.map_err(database_error)?;
+                tx.rollback()
+                    .await
+                    .map_err(|error| store_error(error.into()))?;
                 return Err(refuse(&error));
             }
         };

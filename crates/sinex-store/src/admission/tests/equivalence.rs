@@ -62,6 +62,7 @@ async fn every_key_form_keeps_its_identity_and_public_spelling(db: devkit::pg::T
 }
 
 pub(super) async fn version_two_keys(conn: &mut PgConnection) {
+    crate::test_schema::downgrade(conn).await;
     sqlx::raw_sql(include_str!(
         "../../../../sinex-schema/src/tests/version_two.sql"
     ))

@@ -42,9 +42,15 @@ fn landed() -> Vec<Vec<String>> {
     ]
 }
 
-
 pub(crate) const LANDED_VERSION: i32 = 4;
-pub(crate) const NAMED: &[&str] = &["blob_change_tracking", "library_scans", "compact_equivalence_keys", "search_text", "publication_pages", "kind_declarations"];
+pub(crate) const NAMED: &[&str] = &[
+    "blob_change_tracking",
+    "library_scans",
+    "compact_equivalence_keys",
+    "search_text",
+    "publication_pages",
+    "kind_declarations",
+];
 
 pub(crate) fn upgrades() -> Vec<Vec<String>> {
     let mut steps = landed();
@@ -55,7 +61,8 @@ pub(crate) fn upgrades() -> Vec<Vec<String>> {
     steps.push(publication_pages());
     let before = crate::description::Description::before_kind_declarations();
     let after = crate::description::Description::current();
-    let mut statements = vec!["ALTER TABLE registry.event_types RENAME TO unversioned_event_types".into()];
+    let mut statements =
+        vec!["ALTER TABLE registry.event_types RENAME TO unversioned_event_types".into()];
     statements.extend(after.changes_from(&before, &["registry.event_types"]));
     steps.push(statements);
     steps

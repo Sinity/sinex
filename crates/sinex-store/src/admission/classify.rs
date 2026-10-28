@@ -151,7 +151,8 @@ pub(super) async fn keep_known(
         .iter()
         .filter_map(|(ord, live)| {
             let event = &events[usize::try_from(*ord).expect("ord is an index")];
-            let fields = declarations.get(&event.kind_ref())
+            let fields = declarations
+                .get(&event.kind_ref())
                 .map_or(&[][..], |kind| kind.keep_known.as_slice());
             (!fields.is_empty())
                 .then(|| serde_json::json!({"ord": ord, "live_id": live, "fields": fields}))

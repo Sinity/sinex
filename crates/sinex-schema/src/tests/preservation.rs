@@ -1,6 +1,10 @@
 use super::*;
 
 async fn version_two(conn: &mut PgConnection) {
+    sqlx::raw_sql(include_str!("version_four.sql"))
+        .execute(&mut *conn)
+        .await
+        .unwrap();
     sqlx::raw_sql(include_str!("version_two.sql"))
         .execute(conn)
         .await
@@ -8,6 +12,10 @@ async fn version_two(conn: &mut PgConnection) {
 }
 
 async fn populated(conn: &mut PgConnection) {
+    sqlx::raw_sql(include_str!("version_four.sql"))
+        .execute(&mut *conn)
+        .await
+        .unwrap();
     sqlx::raw_sql(include_str!("preserved_rows.sql"))
         .execute(conn)
         .await

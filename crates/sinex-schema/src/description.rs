@@ -51,8 +51,13 @@ impl Description {
         Self {
             tables: version_nine::tables(&Checks::from_model()),
             after_tables: version_nine::after_tables(),
-            visibility: vec![], views: vec![], kinds: vec![],
-            previous_producer_views: version_four::MOVED_VIEWS.iter().map(|name| (*name).into()).collect(),
+            visibility: vec![],
+            views: vec![],
+            kinds: vec![],
+            previous_producer_views: version_four::MOVED_VIEWS
+                .iter()
+                .map(|name| (*name).into())
+                .collect(),
         }
     }
 

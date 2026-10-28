@@ -1,5 +1,4 @@
 use super::*;
-use crate::test_schema::without_positions;
 use sqlx::Executor;
 
 type Time = time::OffsetDateTime;
@@ -48,6 +47,22 @@ async fn under_run(conn: &mut crate::AdmissionContext, events: Vec<Event>) -> Ru
     b.run = run;
     admit_one(conn, &b).await;
     run
+}
+
+/// The schema description without column positions: the dropped column that
+/// makes this test's version 0 keeps its position, so the column added back
+/// comes after it. Positions are compared by the fresh-schema test.
+fn without_positions(catalog: Vec<String>) -> Vec<String> {
+    catalog
+        .into_iter()
+        .map(|row| match row.split_once(' ') {
+            Some((name, rest)) if name.matches('.').count() == 2 => {
+                let rest = rest.split_once(' ').map_or(rest, |(_, after)| after);
+                format!("{name} {rest}")
+            }
+            _ => row,
+        })
+        .collect()
 }
 
 fn change(target: sinex_model::EventId, hide: bool) -> Batch {
@@ -101,8 +116,6 @@ async fn upgrading_from_version_0_counts_the_stored_events(db: devkit::pg::TestD
         .await
         .unwrap();
 
-    crate::test_schema::downgrade(&mut conn).await;
-    // Version 0 is this schema without the counts.
     super::equivalence::version_two_keys(&mut conn).await;
     // Version 0 is this schema without the counts.
     conn.execute("DROP TABLE core.source_counts").await.unwrap();
@@ -112,11 +125,6 @@ async fn upgrading_from_version_0_counts_the_stored_events(db: devkit::pg::TestD
     conn.execute("DROP TABLE core.excised_materials")
         .await
         .unwrap();
-    conn.execute("DELETE FROM registry.event_types WHERE name IN ('operator.mark','query.saved')")
-        .await
-        .unwrap();
-    conn.execute("DROP TRIGGER blob_changes ON core.blobs; DROP FUNCTION core.note_blob_change(); DELETE FROM core.counters WHERE name='blob_changes'")
-        .await.unwrap();
     conn.execute("UPDATE sinex_schema.applied SET version = 0")
         .await
         .unwrap();
@@ -153,10 +161,6 @@ async fn upgrading_from_version_0_counts_the_stored_events(db: devkit::pg::TestD
 #[devkit::test]
 async fn an_upgrade_waits_for_no_writer(db: devkit::pg::TestDatabase) {
     let url = db.url(None);
-    let mut conn = <sqlx::PgConnection as sqlx::Connection>::connect(&url)
-        .await
-        .unwrap();
-    crate::test_schema::downgrade(&mut conn).await;
     let mut conn = PgConnection::connect(&url).await.unwrap();
     super::equivalence::version_two_keys(&mut conn).await;
     conn.execute("DROP TABLE core.source_counts").await.unwrap();
@@ -166,11 +170,6 @@ async fn an_upgrade_waits_for_no_writer(db: devkit::pg::TestDatabase) {
     conn.execute("DROP TABLE core.excised_materials")
         .await
         .unwrap();
-    conn.execute("DELETE FROM registry.event_types WHERE name IN ('operator.mark','query.saved')")
-        .await
-        .unwrap();
-    conn.execute("DROP TRIGGER blob_changes ON core.blobs; DROP FUNCTION core.note_blob_change(); DELETE FROM core.counters WHERE name='blob_changes'")
-        .await.unwrap();
     conn.execute("UPDATE sinex_schema.applied SET version = 0")
         .await
         .unwrap();
@@ -204,10 +203,6 @@ async fn upgrading_from_version_3_registers_query_kinds_and_keeps_events(
         .fetch_all(&mut conn)
         .await
         .unwrap();
-    conn.execute("DELETE FROM registry.event_types WHERE name IN ('operator.mark','query.saved')")
-        .await
-        .unwrap();
-    conn.execute("DROP TRIGGER blob_changes ON core.blobs; DROP FUNCTION core.note_blob_change(); DELETE FROM core.counters WHERE name='blob_changes'")
     super::equivalence::version_two_keys(&mut conn).await;
     conn.execute("CREATE INDEX events_coverage ON core.events (source, run_id, ts_orig) INCLUDE (commit_seq)")
         .await.unwrap();
@@ -226,8 +221,5 @@ async fn upgrading_from_version_3_registers_query_kinds_and_keeps_events(
         .await
         .unwrap();
     assert_eq!(before, after);
-    assert_eq!(
-        without_positions(sinex_schema::catalog(&mut conn).await.unwrap()),
-        without_positions(fresh)
-    );
+    assert_eq!(sinex_schema::catalog(&mut conn).await.unwrap(), fresh);
 }

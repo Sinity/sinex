@@ -18,6 +18,7 @@ async fn evidence_keeps_visibility_positions_unknown_times_and_archived_run_reco
             .bind(sequence).execute(&mut conn).await.unwrap();
     }
     let before = sinex_schema::catalog(&mut conn).await.unwrap();
+    crate::test_schema::downgrade(&mut conn).await;
     sqlx::raw_sql(include_str!(
         "../../../sinex-schema/src/tests/version_two.sql"
     ))
@@ -121,6 +122,7 @@ async fn version_two_with_compressed_chunks_upgrades_without_changing_rows(
     let fresh = sinex_schema::catalog(&mut conn).await.unwrap();
     conn.execute("DROP SCHEMA sinex_schema, core, audit, raw, registry, derivation, privacy, telemetry, event_types CASCADE")
         .await.unwrap();
+    crate::test_schema::downgrade(&mut conn).await;
     sqlx::raw_sql(include_str!("version_two.sql"))
         .execute(&mut conn)
         .await
