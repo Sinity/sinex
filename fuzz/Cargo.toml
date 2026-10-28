@@ -48,7 +48,7 @@ doc = false
 bench = false
 
 [dev-dependencies]
-devkit = { git = "https://github.com/Sinity/polylogue-sinex-common", tag = "v0.7.6", features = ["pg"] }
+devkit = { git = "https://github.com/Sinity/polylogue-sinex-common", branch = "master", features = ["pg"] }
 
 # Match the main workspace so unsanitized checks can reuse its build products.
 [profile.dev]
