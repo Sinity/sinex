@@ -1,5 +1,4 @@
-//! Table declarations: the whole current schema, which a fresh database is
-//! created with.
+//! The schema after admission transformations and before kind declarations.
 pub(crate) struct Checks {
     time_quality: String,
     record_state: String,
@@ -8,7 +7,6 @@ pub(crate) struct Checks {
     archive_change_reason: String,
     replace_rule: String,
 }
-
 
 /// Per source: its live events, and the oldest and newest event time and the
 /// newest reading time of every event admitted from it. Admission, archival,

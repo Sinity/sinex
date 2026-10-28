@@ -58,7 +58,7 @@ pub(crate) fn upgrades() -> Vec<Vec<String>> {
     steps.push(vec!["DO $$ BEGIN IF EXISTS (SELECT 1 FROM core.events WHERE event_type LIKE 'library.%') THEN RAISE EXCEPTION 'library records use request-created item IDs; decide how their references should follow deterministic item IDs before upgrading'; END IF; END $$".into()]);
     steps.push(compact_equivalence_keys());
     steps.push(search_text());
-    steps.push(publication_pages());
+    steps.push(publication_pairs());
     let before = crate::description::Description::before_kind_declarations();
     let after = crate::description::Description::current();
     let mut statements =
