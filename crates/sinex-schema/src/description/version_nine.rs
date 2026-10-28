@@ -1,4 +1,5 @@
-//! The schema after the admission transformations and before kind declarations.
+//! Table declarations: the whole current schema, which a fresh database is
+//! created with.
 pub(crate) struct Checks {
     time_quality: String,
     record_state: String,
@@ -7,6 +8,7 @@ pub(crate) struct Checks {
     archive_change_reason: String,
     replace_rule: String,
 }
+
 
 /// Per source: its live events, and the oldest and newest event time and the
 /// newest reading time of every event admitted from it. Admission, archival,
@@ -174,9 +176,8 @@ pub(crate) fn tables(c: &Checks) -> Vec<String> {
   change_seq bigint NOT NULL DEFAULT 0,
   updated_at timestamptz NOT NULL DEFAULT now()
 )".into(),
-        // Exact event/stream pairs per publisher page, kept until erased.
+        // Every acknowledged event/stream pair is kept until erased.
         PUBLISHED.into(),
-        PUBLISHED_BOUNDS.into(),
         // Frames outside producers sent over the NATS ingress and what Sinex
         // did with each, written by admission with the frame's events, so a
         // producer can ask what Sinex holds and a redelivered frame is answered
@@ -538,23 +539,12 @@ BEGIN
 END $$"
 }
 
-/// Exact event/stream pairs; bounds select pages, never individual messages.
+/// One row per acknowledged copy, including redelivery after deduplication expires.
 pub(crate) const PUBLISHED: &str = "CREATE TABLE core.published (
-  id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-  first_event uuid NOT NULL,
-  last_event uuid NOT NULL,
-  event_ids uuid[] NOT NULL,
-  stream_seqs bigint[] NOT NULL,
-  CHECK (cardinality(event_ids) > 0 AND cardinality(event_ids) = cardinality(stream_seqs)),
-  CHECK (array_ndims(event_ids) = 1 AND array_lower(event_ids, 1) = 1),
-  CHECK (array_ndims(stream_seqs) = 1 AND array_lower(stream_seqs, 1) = 1),
-  CHECK (array_position(event_ids, NULL) IS NULL AND array_position(stream_seqs, NULL) IS NULL),
-  CHECK (first_event = event_ids[1] AND last_event = event_ids[cardinality(event_ids)]),
-  CHECK (first_event <= ALL(event_ids) AND last_event >= ALL(event_ids))
+  event_id uuid NOT NULL,
+  stream_seq bigint NOT NULL,
+  CONSTRAINT published_pairs_pkey PRIMARY KEY (event_id, stream_seq)
 )";
-
-pub(crate) const PUBLISHED_BOUNDS: &str =
-    "CREATE INDEX published_bounds ON core.published (first_event, last_event)";
 
 /// Blob-only admissions also need a position when pairing a store with a restored database.
 pub(crate) fn blob_changes() -> Vec<String> {

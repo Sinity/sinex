@@ -477,8 +477,8 @@ no writer holds the database; a newer version is refused, and no other command
 creates or changes the schema. Each upgrade keeps every row, and the
 declarations carry the same change, so a fresh database matches an upgraded
 one. The admission upgrades convert only live equivalence keys to full-width
-binary values, add search-index eligibility, then pack exact confirmed-stream
-pairs into pages. Historical keys, stored search text and every recorded
+binary values, add search-index eligibility, and key publication rows by both
+event and acknowledged stream position. Historical keys, stored search text and every recorded
 stream copy retain their meaning. Each step has populated preservation and
 writer-refusal tests. Checked SQL in `sinex-store` compiles against that schema.
 

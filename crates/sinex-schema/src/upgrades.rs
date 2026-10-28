@@ -48,7 +48,7 @@ pub(crate) const NAMED: &[&str] = &[
     "library_scans",
     "compact_equivalence_keys",
     "search_text",
-    "publication_pages",
+    "publication_pairs",
     "kind_declarations",
 ];
 
@@ -93,36 +93,11 @@ fn compact_equivalence_keys() -> Vec<String> {
         ]
 }
 
-fn publication_pages() -> Vec<String> {
+fn publication_pairs() -> Vec<String> {
     vec![
-            "ALTER TABLE core.published RENAME TO published_events".into(),
-            "ALTER TABLE core.published_events RENAME CONSTRAINT published_pkey TO published_events_pkey".into(),
-            crate::tables::PUBLISHED.into(),
-            crate::tables::PUBLISHED_BOUNDS.into(),
-            "INSERT INTO core.published (first_event, last_event, event_ids, stream_seqs)
-             SELECT (array_agg(event_id ORDER BY event_id))[1],
-                    (array_agg(event_id ORDER BY event_id DESC))[1],
-                    array_agg(event_id ORDER BY event_id), array_agg(stream_seq ORDER BY event_id)
-             FROM (SELECT event_id, stream_seq, (row_number() OVER (ORDER BY event_id) - 1) / 1000 AS page
-                   FROM core.published_events) p GROUP BY page ORDER BY page".into(),
-            "DO $$ BEGIN
-               IF EXISTS (
-                 (SELECT event_id, stream_seq FROM core.published_events
-                  EXCEPT ALL
-                  SELECT m.event_id, m.stream_seq FROM core.published p,
-                    LATERAL unnest(p.event_ids, p.stream_seqs) m(event_id, stream_seq))
-                 UNION ALL
-                 (SELECT m.event_id, m.stream_seq FROM core.published p,
-                    LATERAL unnest(p.event_ids, p.stream_seqs) m(event_id, stream_seq)
-                  EXCEPT ALL
-                  SELECT event_id, stream_seq FROM core.published_events)
-               ) THEN RAISE EXCEPTION 'published event/stream pairs changed during upgrade'; END IF;
-             END $$".into(),
-            "GRANT SELECT ON core.published TO sinex_reader, sinex_writer".into(),
-            "GRANT INSERT, UPDATE, DELETE ON core.published TO sinex_writer".into(),
-            "GRANT USAGE ON SEQUENCE core.published_id_seq TO sinex_writer".into(),
-            "DROP TABLE core.published_events".into(),
-        ]
+        "ALTER TABLE core.published DROP CONSTRAINT published_pkey".into(),
+        "ALTER TABLE core.published ADD CONSTRAINT published_pairs_pkey PRIMARY KEY (event_id, stream_seq)".into(),
+    ]
 }
 
 fn search_text() -> Vec<String> {

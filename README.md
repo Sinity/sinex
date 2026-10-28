@@ -77,10 +77,12 @@ binary, then restart the daemon. Schema application refuses an active admission
 writer and applies the numbered upgrades in one transaction.
 
 The admission upgrades convert live equivalence keys, add search-index
-eligibility and pack the exact event-to-stream mappings. In a disposable
+eligibility and retain every acknowledged event-to-stream pair in indexed rows.
+A redelivery can have another stream position; erasure removes only acknowledged
+copies and retains the others. In a disposable
 database with 2.48 million live keys, key conversion and its complete
 preservation checks took 522 seconds (about 8.7 minutes). Allow for that
-measured interruption plus the search and stream-mapping upgrades; their total
+measured interruption plus the search and publication-key upgrades; their total
 duration depends on the stored population and host load. This measurement is
 not a duration guarantee for the deployed database.
 
