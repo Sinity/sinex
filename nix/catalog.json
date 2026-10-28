@@ -2,6 +2,248 @@
   "eventKinds": [
     {
       "kind": {
+        "name": "operator.mark",
+        "version": 2
+      },
+      "declaring_producer": "sinex",
+      "payload_schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "title": "Mark",
+        "type": "object",
+        "properties": {
+          "host": {
+            "type": "string"
+          },
+          "at": {
+            "$ref": "#/$defs/Timestamp"
+          },
+          "text": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "cwd": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "command": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "app": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "title": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "by": {
+            "type": "string"
+          },
+          "written_at": {
+            "$ref": "#/$defs/Timestamp"
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "host",
+          "at",
+          "by",
+          "written_at"
+        ],
+        "$defs": {
+          "Timestamp": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "normalization": "rust",
+      "key_rule": {
+        "rule": "location"
+      },
+      "replace_rule": "suppress_repeat",
+      "time_rule": {
+        "rule": "first_present",
+        "fields": [
+          "at"
+        ],
+        "quality": "operator"
+      },
+      "field_hints": [
+        {
+          "field": "/host",
+          "class": "guarded"
+        },
+        {
+          "field": "/at",
+          "class": "guarded"
+        },
+        {
+          "field": "/text",
+          "class": "guarded"
+        },
+        {
+          "field": "/cwd",
+          "class": "guarded"
+        },
+        {
+          "field": "/command",
+          "class": "guarded"
+        },
+        {
+          "field": "/app",
+          "class": "guarded"
+        },
+        {
+          "field": "/title",
+          "class": "guarded"
+        },
+        {
+          "field": "/by",
+          "class": "guarded"
+        },
+        {
+          "field": "/written_at",
+          "class": "guarded"
+        }
+      ],
+      "removed_rule": {
+        "rule": "never"
+      },
+      "keep_known": [],
+      "owned_blobs": [],
+      "search": "words_and_trigram"
+    },
+    {
+      "kind": {
+        "name": "query.saved",
+        "version": 2
+      },
+      "declaring_producer": "sinex",
+      "payload_schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "title": "Saved",
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "query": {
+            "type": "string"
+          },
+          "parameters": {
+            "type": "array",
+            "items": {
+              "$ref": "#/$defs/Parameter"
+            }
+          },
+          "by": {
+            "type": "string"
+          },
+          "written_at": {
+            "$ref": "#/$defs/Timestamp"
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "name",
+          "query",
+          "parameters",
+          "by",
+          "written_at"
+        ],
+        "$defs": {
+          "Parameter": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string"
+              },
+              "field_type": {
+                "$ref": "#/$defs/ParameterType"
+              }
+            },
+            "additionalProperties": false,
+            "required": [
+              "name",
+              "field_type"
+            ]
+          },
+          "ParameterType": {
+            "type": "string",
+            "enum": [
+              "text",
+              "integer",
+              "number",
+              "bool",
+              "time",
+              "duration"
+            ]
+          },
+          "Timestamp": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "normalization": "rust",
+      "key_rule": {
+        "rule": "fields",
+        "fields": [
+          "name",
+          "by"
+        ]
+      },
+      "replace_rule": "replace_when_newer",
+      "time_rule": {
+        "rule": "first_present",
+        "fields": [
+          "written_at"
+        ],
+        "quality": "intrinsic"
+      },
+      "field_hints": [
+        {
+          "field": "/name",
+          "class": "guarded"
+        },
+        {
+          "field": "/query",
+          "class": "guarded"
+        },
+        {
+          "field": "/parameters",
+          "class": "guarded"
+        },
+        {
+          "field": "/by",
+          "class": "guarded"
+        },
+        {
+          "field": "/written_at",
+          "class": "guarded"
+        }
+      ],
+      "removed_rule": {
+        "rule": "never"
+      },
+      "keep_known": [],
+      "owned_blobs": [],
+      "search": "words_and_trigram"
+    },
+    {
+      "kind": {
         "name": "capture.gap",
         "version": 2
       },

@@ -167,6 +167,7 @@ async fn compressed_upgrade_keeps_immutable_rows_and_historical_metadata(
         .unwrap();
     let before:Vec<(uuid::Uuid,Value,Vec<u8>)>=sqlx::query_as("SELECT id,payload,record_hash FROM core.events UNION ALL SELECT id,payload,record_hash FROM telemetry.events ORDER BY id").fetch_all(&mut conn).await.unwrap();
     crate::test_schema::downgrade(&mut conn).await;
+    conn.execute("INSERT INTO registry.event_types (name,payload_schema,key_fields,replace_rule) VALUES ('historic..reading','{}',ARRAY[]::text[],'suppress_repeat')").await.unwrap();
     conn.execute("UPDATE sinex_schema.applied SET version=3")
         .await
         .unwrap();
@@ -201,6 +202,8 @@ async fn compressed_upgrade_keeps_immutable_rows_and_historical_metadata(
             .values()
             .all(|d| d.payload_schema.is_none() && d.key_rule.is_none())
     );
+    let historical_name = KindRef { name: "historic..reading".into(), version: 1 };
+    assert!(sinex_schema::kinds::load(&mut conn, std::slice::from_ref(&historical_name)).await.unwrap().contains_key(&historical_name));
     let once = sinex_schema::catalog(&mut conn).await.unwrap();
     sinex_schema::apply(&mut conn).await.unwrap();
     assert_eq!(once, sinex_schema::catalog(&mut conn).await.unwrap());

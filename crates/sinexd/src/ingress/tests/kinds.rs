@@ -117,9 +117,15 @@ async fn registration_is_atomic_and_a_reconnect_gets_the_saved_hashes(
     for name in ["example..reading", "example.reading.", "example."] {
         let mut invalid = d.clone();
         invalid.kind.name = name.into();
-        let refused = h.send("example", &Ingress::RegisterKinds {
-            frame: format!("invalid-name-{name}"), declarations: vec![invalid],
-        }).await;
+        let refused = h
+            .send(
+                "example",
+                &Ingress::RegisterKinds {
+                    frame: format!("invalid-name-{name}"),
+                    declarations: vec![invalid],
+                },
+            )
+            .await;
         assert!(refused.refusal.unwrap().contains("invalid kind name"));
     }
     let (material, frame) = h.material_frame("bytes", b"one\n");

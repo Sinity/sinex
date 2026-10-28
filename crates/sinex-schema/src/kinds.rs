@@ -108,10 +108,14 @@ async fn prefix(conn: &mut PgConnection, name: &str, owner: &str) -> Result<(), 
 }
 
 fn prefix_from_name(name: &str) -> Result<&str, String> {
-    let (prefix, _) = name.split_once('.').ok_or("kind name needs a producer prefix")?;
-    if name.split('.').any(str::is_empty) || name.chars().any(|c| {
-        !(c.is_ascii_lowercase() || c.is_ascii_digit() || c == '.' || c == '_' || c == '-')
-    }) {
+    let (prefix, _) = name
+        .split_once('.')
+        .ok_or("kind name needs a producer prefix")?;
+    if name.split('.').any(str::is_empty)
+        || name.chars().any(|c| {
+            !(c.is_ascii_lowercase() || c.is_ascii_digit() || c == '.' || c == '_' || c == '-')
+        })
+    {
         return Err("invalid kind name".into());
     }
     Ok(prefix)
@@ -293,7 +297,6 @@ pub async fn upgrade_historical(conn: &mut PgConnection, owners: &Owners) -> Res
 }
 
 pub fn check(d: &KindDeclaration) -> Result<(), String> {
-    prefix_from_name(&d.kind.name)?;
     let mut hints = std::collections::BTreeSet::new();
     for hint in &d.field_hints {
         if !hint.field.starts_with('/') || !hints.insert(&hint.field) {
@@ -318,6 +321,7 @@ pub fn check(d: &KindDeclaration) -> Result<(), String> {
         }
         return Err("declaration is missing rules".into());
     }
+    prefix_from_name(&d.kind.name)?;
     let mut fields: Vec<&str> = Vec::new();
     match d.key_rule.as_ref().expect("checked") {
         KeyRule::Location => {}
