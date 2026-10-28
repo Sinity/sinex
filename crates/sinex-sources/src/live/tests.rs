@@ -885,3 +885,19 @@ async fn run_bindings(
     )
     .await
 }
+
+#[devkit::test]
+fn a_failed_spool_directory_names_the_binding_and_path() {
+    let root = tempfile::tempdir().unwrap();
+    let spool = root.path().join("existing-file");
+    std::fs::write(&spool, b"synthetic blocker").unwrap();
+    let (format, binding) = binding("file-watch", &spool, "fixture", Value::Null).unwrap();
+    let name = binding.name.clone();
+    let (failed, _failures) = tokio::sync::mpsc::unbounded_channel();
+    let error = start(format, binding, &root.path().join("positions"), failed)
+        .err()
+        .expect("a file cannot be a spool directory");
+    assert!(error.contains(&name), "{error}");
+    assert!(error.contains(spool.to_str().unwrap()), "{error}");
+    assert_eq!(std::fs::read(spool).unwrap(), b"synthetic blocker");
+}

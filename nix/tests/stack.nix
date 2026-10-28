@@ -52,6 +52,11 @@ self: {
     machine.wait_for_unit("sinexd.service")
     machine.wait_for_unit("sinex-capture-journald.service")
     machine.wait_for_unit("sinex-session.service", user="alice")
+    owner_mode = machine.succeed("stat -c %U:%a /home/alice/.local/state/sinex-session").strip()
+    assert owner_mode == "alice:700", owner_mode
+    for parent in ["/home/alice/.local", "/home/alice/.local/state"]:
+        owner = machine.succeed(f"stat -c %U {parent}").strip()
+        assert owner == "alice", f"{parent} is owned by {owner}"
 
     with subtest("NATS passwords are only hashes in the server config and never in arguments"):
         machine.succeed("grep -q 'password: \"\\$2a\\$' /run/sinex-nats/nats.conf")

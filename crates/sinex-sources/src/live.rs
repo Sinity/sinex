@@ -127,7 +127,13 @@ fn start(
 ) -> Result<Live, String> {
     let capture = k.capture.expect("live formats capture");
     // An unwritable spool is a local fault; reconnecting cannot repair it.
-    std::fs::create_dir_all(&binding.input).map_err(|e| e.to_string())?;
+    std::fs::create_dir_all(&binding.input).map_err(|error| {
+        format!(
+            "{} spool directory {}: {error}",
+            binding.name,
+            binding.input.display()
+        )
+    })?;
     check_spool(&binding.input).map_err(|e| format!("{} spool: {e}", binding.name))?;
     // Construct fallible readers before starting a capture that must be joined.
     let reader = (k

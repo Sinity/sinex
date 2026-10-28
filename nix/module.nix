@@ -24,6 +24,9 @@ let
   postgres = cfg.database.package;
   dbUrl = "postgresql:///sinex?host=/run/postgresql";
   natsListen = "${cfg.nats.address}:${toString cfg.nats.port}";
+  sessionHome = if cfg.session.user == "" then null else config.users.users.${cfg.session.user}.home;
+  sessionStateInHome = sessionHome != null && (toString cfg.session.stateDir == sessionHome
+    || lib.hasPrefix "${sessionHome}/" (toString cfg.session.stateDir));
 
   # Producers allowed onto the ingress: those declared, plus the session
   # service on this host.
@@ -600,7 +603,7 @@ in
       # live sources that need it (Hyprland, D-Bus, the clipboard, file
       # changes) and produces them over the ingress. Files the sources read
       # (shell histories, databases, notes) are read by sinexd.
-      systemd.tmpfiles.settings.sinex-session = lib.mkIf (cfg.session.user != "") {
+      systemd.tmpfiles.settings.sinex-session = lib.mkIf (cfg.session.user != "" && !sessionStateInHome) {
         "${cfg.session.stateDir}".d = { mode = "0700"; user = cfg.session.user; group = config.users.users.${cfg.session.user}.group; };
       };
       systemd.user.services.sinex-session = mkIf (cfg.session.user != "") {
@@ -609,6 +612,12 @@ in
         partOf = cfg.session.wantedBy;
         unitConfig = { ConditionUser = cfg.session.user; StartLimitIntervalSec = 0; };
         serviceConfig = { Restart = "always"; RestartSec = "2s"; UMask = "0077"; };
+        # Home parents belong to the user; root tmpfiles cannot safely create
+        # them through a user-owned home. Only the declared state is chmodded.
+        preStart = ''
+          ${pkgs.coreutils}/bin/mkdir -p -- ${escapeShellArg cfg.session.stateDir}
+          ${pkgs.coreutils}/bin/chmod 0700 -- ${escapeShellArg cfg.session.stateDir}
+        '';
         # busctl, wl-paste, grim, pw-record and ffmpeg run as capture children.
         path = with pkgs; [ systemd wl-clipboard grim pipewire ffmpeg-headless ];
         script = ''

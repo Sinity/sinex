@@ -16,6 +16,8 @@ self: {
       enable = true;
       database.sharedBuffers = "128MB";
       nats.daemonPasswordFile = "/etc/sinex-test/nats-daemon";
+      exclude."machine.journald".reason = "The restore fixture captures only its synthetic backfill.";
+      exclude."machine.udev".reason = "The restore fixture captures only its synthetic backfill.";
       backup = {
         repo = "/backup/sinex";
         keysRepo = "/backup/sinex-keys";
@@ -42,6 +44,7 @@ self: {
     machine.succeed("systemctl start sinexd.service")
     machine.wait_for_unit("sinexd.service")
     before = state()
+    before_files = machine.succeed("cd /var/lib/sinex/store && find . -type f | sort | xargs -r sha256sum").strip()
     assert not before[0].startswith("0|"), before
 
     with subtest("dump and back up"):
@@ -70,6 +73,7 @@ self: {
         machine.wait_for_unit("sinexd.service")
 
     after = state()
-    assert after == before, f"restored state differs: {before} vs {after}"
+    after_files = machine.succeed("cd /var/lib/sinex/store && find . -type f | sort | xargs -r sha256sum").strip()
+    assert after == before, f"restored state differs: {before} vs {after}; files before={before_files!r}; files after={after_files!r}"
   '';
 }

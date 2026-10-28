@@ -42,6 +42,8 @@ let
     (plan.discovery.inputs.spotify == [ "/exports/current" "/exports/earlier" ])
     (plan.discovery.home == "/home/alice")
     ((evaluate { }).services.sinex.session.stateDir == "/home/alice/.local/state/sinex-session")
+    (!(builtins.hasAttr "/home/alice/.local/state/sinex-session" ((evaluate { }).systemd.tmpfiles.settings.sinex-session or { })))
+    (lib.hasInfix "mkdir -p -- /home/alice/.local/state/sinex-session" (evaluate { }).systemd.user.services.sinex-session.preStart)
     (plan.discovery.environment.ZSH_HISTFILE == "/host-declared/history")
     (config.systemd.user.services.sinex-session.serviceConfig.UMask == "0077")
     (lib.hasInfix "--state /realm/state/sinex-session/alice" config.systemd.user.services.sinex-session.script)
