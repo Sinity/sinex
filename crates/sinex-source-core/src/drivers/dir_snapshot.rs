@@ -31,16 +31,19 @@ use std::io::{Read, Seek, Write};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-type FileMemory = HashMap<String, Option<(u64, i128, [u8; 32])>>;
+type EntryFacts = Result<(u64, i128), String>;
+type CaptureResult = Result<Option<(u64, [u8; 32])>, String>;
+type FileMemory = HashMap<PathBuf, Option<(u64, i128, [u8; 32])>>;
 
 mod format;
+mod paths;
 mod restore;
 pub(crate) use format::validate as validate_records;
 
 pub struct DirSnapshot {
     pub root: PathBuf,
     pub host: String,
-    /// Which files to read, by path relative to the root.
+    /// Which files to read, by display path relative to the root.
     pub select: fn(&str) -> bool,
     /// Bytes per material; a walk that reaches it continues on the next poll.
     pub part_bytes: usize,
@@ -68,9 +71,19 @@ pub struct Cursor {
 pub struct DirState {
     files: FileMemory,
     /// The newest bundle and the file facts it records once admitted.
-    held: Option<(super::held::HeldMaterial, FileMemory)>,
+    held: Option<HeldSnapshot>,
+    failures: HashMap<PathBuf, String>,
+    /// Unstable files need a read even if their size and time return to cached values.
+    retries: HashSet<PathBuf>,
     /// Paths a restart has already decided from a newer bundle.
-    remembered: HashSet<String>,
+    remembered: HashSet<PathBuf>,
+}
+
+struct HeldSnapshot {
+    material: super::held::HeldMaterial,
+    files: FileMemory,
+    failures: HashMap<PathBuf, String>,
+    retries: HashSet<PathBuf>,
 }
 
 /// The marker a removed file's member holds.
@@ -84,7 +97,7 @@ impl DirSnapshot {
     fn input(&self) -> InputRef {
         InputRef {
             kind: "directory".into(),
-            locator: self.root.display().to_string(),
+            locator: paths::display(&self.root),
             host: self.host.clone(),
         }
     }
@@ -96,16 +109,18 @@ impl DirSnapshot {
             serde_json::from_value(cursor.clone())
                 .map_err(|e| DriverError::Cursor(e.to_string()))?
         };
-        if let Some((held, files)) = state.held.take() {
-            if held.admitted(cursor) {
-                state.files = files;
+        if let Some(held) = state.held.take() {
+            if held.material.admitted(cursor) {
+                state.files = held.files;
+                state.failures = held.failures;
+                state.retries = held.retries;
             } else {
-                let acquired = held.acquired(cursor)?;
-                state.held = Some((held, files));
+                let acquired = held.material.acquired(cursor)?;
+                state.held = Some(held);
                 return Ok(acquired);
             }
         }
-        let mut facts = match file_facts(&self.root) {
+        let facts = match file_facts(&self.root) {
             Ok(f) => f,
             Err(e) => {
                 return Ok(Acquired {
@@ -122,46 +137,109 @@ impl DirSnapshot {
                 });
             }
         };
-        let now = Timestamp::now();
         // Sorted walk: a stable order makes materials and part cuts repeatable.
         let mut found = BTreeMap::new();
-        walk(&self.root, &self.root, self.select, &mut found)?;
+        walk(&self.root, &self.root, self.select, &mut found);
+        self.poll_entries(cursor, state, previous, facts, found)
+    }
+
+    fn poll_entries(
+        &self,
+        cursor: &Value,
+        state: &mut DirState,
+        previous: Cursor,
+        mut facts: ObservationFacts,
+        found: BTreeMap<PathBuf, EntryFacts>,
+    ) -> Result<Acquired, DriverError> {
+        let now = Timestamp::now();
+        let failed: Vec<_> = found
+            .iter()
+            .filter(|(_, facts)| facts.is_err())
+            .map(|(path, _)| path.clone())
+            .collect();
 
         let mut bundle = tempfile::tempfile().map_err(io)?;
         let mut length = 0usize;
         let mut next_files = state.files.clone();
+        let mut next_failures = state.failures.clone();
+        let mut next_retries = state.retries.clone();
         let mut records = Vec::new();
         let mut members = Vec::new();
         let mut complete = true;
         let mut seen = HashSet::new();
-        for (relative, (size, mtime)) in &found {
+        let mut files_read = false;
+        for (relative, entry) in &found {
             seen.insert(relative.clone());
+            let display = paths::display(relative);
+            let (size, mtime) = match entry {
+                Ok(facts) => facts,
+                Err(reason) => {
+                    if next_failures.get(relative) == Some(reason) {
+                        continue;
+                    }
+                    next_failures.insert(relative.clone(), reason.clone());
+                    entry_failure(
+                        &mut bundle,
+                        &mut length,
+                        &mut members,
+                        &mut records,
+                        relative,
+                        reason,
+                    )?;
+                    continue;
+                }
+            };
             if let Some(Some((s, m, _))) = state.files.get(relative)
                 && *s == *size
                 && *m == *mtime
+                && !state.failures.contains_key(relative)
+                && !state.retries.contains(relative)
             {
+                next_failures.remove(relative);
                 continue;
             }
-            if length > 0
+            if files_read
                 && (size.saturating_add(1) > self.part_bytes.saturating_sub(length) as u64)
             {
                 complete = false;
                 break;
             }
-            let mut file = File::open(self.root.join(relative))
-                .map_err(|error| DriverError::Io(format!("{relative}: {error}")))?;
-            let before = file.metadata().map_err(io)?;
-            bundle.write_all(&[format::PREFIX]).map_err(io)?;
-            let (actual_size, hash) = copy_hashed(&mut file, &mut bundle).map_err(io)?;
-            let after = file.metadata().map_err(io)?;
-            if !same_file(&before, &after)
-                || actual_size != *size
-                || metadata_mtime(&before) != *mtime
-            {
-                return Err(DriverError::Io(format!(
-                    "{relative}: changed during capture"
-                )));
-            }
+            // Source failures leave this file's remembered facts unchanged, so
+            // the next poll retries it. Bundle writes still fail the poll.
+            let captured = capture(&self.root.join(relative), &mut bundle, *size, *mtime)?;
+            let (actual_size, hash) = match captured {
+                Ok(Some(captured)) => captured,
+                Ok(None) => {
+                    next_retries.insert(relative.clone());
+                    bundle.set_len(length as u64).map_err(io)?;
+                    bundle
+                        .seek(std::io::SeekFrom::Start(length as u64))
+                        .map_err(io)?;
+                    continue;
+                }
+                Err(reason) => {
+                    bundle.set_len(length as u64).map_err(io)?;
+                    bundle
+                        .seek(std::io::SeekFrom::Start(length as u64))
+                        .map_err(io)?;
+                    if state.failures.get(relative) == Some(&reason) {
+                        next_failures.insert(relative.clone(), reason);
+                        continue;
+                    }
+                    next_failures.insert(relative.clone(), reason.clone());
+                    entry_failure(
+                        &mut bundle,
+                        &mut length,
+                        &mut members,
+                        &mut records,
+                        relative,
+                        &reason,
+                    )?;
+                    continue;
+                }
+            };
+            next_failures.remove(relative);
+            next_retries.remove(relative);
             let same = state
                 .files
                 .get(relative)
@@ -178,12 +256,13 @@ impl DirSnapshot {
                 DriverError::Io("directory bundle exceeds addressable size".into())
             })?;
             members.push(json!({
-                "path": relative,
+                "path": display,
                 "stream_offset": offset,
                 "length": actual_size,
                 "mtime_ns": mtime.to_string(),
                 "hash": blake3::Hash::from(hash).to_hex().as_str(),
             }));
+            paths::add_native(members.last_mut().expect("member added"), relative);
             length =
                 offset
                     .checked_add(usize::try_from(actual_size).map_err(|_| {
@@ -193,33 +272,47 @@ impl DirSnapshot {
                         DriverError::Io("directory bundle exceeds addressable size".into())
                     })?;
             records.push((offset, length));
+            files_read = true;
         }
         if complete {
-            let mut gone: Vec<String> = state
+            let mut gone: Vec<PathBuf> = state
                 .files
                 .keys()
-                .filter(|p| !seen.contains(*p))
+                .filter(|p| {
+                    !seen.contains(*p) && !failed.iter().any(|prefix| p.starts_with(prefix))
+                })
                 .cloned()
                 .collect();
             gone.sort();
             for relative in gone {
                 next_files.remove(&relative);
-                let marker = removed_marker(&relative);
+                next_retries.remove(&relative);
+                let display = paths::display(&relative);
+                let marker = removed_marker(&display);
                 bundle.write_all(&[format::PREFIX]).map_err(io)?;
                 let offset = length + 1;
                 members.push(json!({
-                    "path": relative,
+                    "path": display,
                     "stream_offset": offset,
                     "length": marker.len(),
                     "removed_at_ns": now.unix_ns().to_string(),
                 }));
+                paths::add_native(members.last_mut().expect("member added"), &relative);
                 records.push((offset, offset + marker.len()));
                 bundle.write_all(&marker).map_err(io)?;
                 length = offset + marker.len();
             }
         }
+        if complete {
+            next_retries.retain(|path| {
+                seen.contains(path) || failed.iter().any(|prefix| path.starts_with(prefix))
+            });
+            next_failures.retain(|path, _| {
+                seen.contains(path) || failed.iter().any(|prefix| path.starts_with(prefix))
+            });
+        }
         let mut scanned = Cursor {
-            last_complete_scan_ns: if complete {
+            last_complete_scan_ns: if complete && failed.is_empty() {
                 Some(now.unix_ns())
             } else {
                 previous.last_complete_scan_ns
@@ -228,6 +321,8 @@ impl DirSnapshot {
         };
         if records.is_empty() {
             state.files = next_files;
+            state.failures = next_failures;
+            state.retries = next_retries;
             facts.changed = false;
             return Ok(Acquired {
                 input: self.input(),
@@ -240,10 +335,10 @@ impl DirSnapshot {
         // Every file read by one walk is as new as the walk; the records are
         // listed so a replay or an excision finds them in the bundle.
         let manifest = sinex_model::Manifest::from_json(json!({
-            "path": self.root.display().to_string(),
+            "path": paths::display(&self.root),
             "host": self.host,
             "media_type": format::MEDIA_TYPE,
-            "scan_complete": complete,
+            "scan_complete": complete && failed.is_empty(),
             "members": members,
             "records": records,
             "read_at_ns": i64::try_from(now.unix_ns()).unwrap_or(i64::MAX),
@@ -318,7 +413,12 @@ impl DirSnapshot {
         };
         let held = super::held::HeldMaterial::hold(acquired, cursor)?;
         let acquired = held.acquired(cursor)?;
-        state.held = Some((held, next_files));
+        state.held = Some(HeldSnapshot {
+            material: held,
+            files: next_files,
+            failures: next_failures,
+            retries: next_retries,
+        });
         Ok(acquired)
     }
 }
@@ -327,22 +427,71 @@ fn io(error: std::io::Error) -> DriverError {
     DriverError::Io(error.to_string())
 }
 
-fn copy_hashed(input: &mut File, output: &mut File) -> std::io::Result<(u64, [u8; 32])> {
+// The outer error belongs to the bundle; the inner error belongs to the entry.
+fn capture(
+    path: &Path,
+    output: &mut File,
+    size: u64,
+    mtime: i128,
+) -> Result<CaptureResult, DriverError> {
+    let mut input = match File::open(path) {
+        Ok(file) => file,
+        Err(error) => return Ok(Err(error.to_string())),
+    };
+    let before = match input.metadata() {
+        Ok(metadata) => metadata,
+        Err(error) => return Ok(Err(error.to_string())),
+    };
+    output.write_all(&[format::PREFIX]).map_err(io)?;
     let mut hash = blake3::Hasher::new();
     let mut length = 0u64;
     let mut bytes = [0; 64 * 1024];
     loop {
         let count = match input.read(&mut bytes) {
             Err(error) if error.kind() == std::io::ErrorKind::Interrupted => continue,
-            result => result?,
+            Err(error) => return Ok(Err(error.to_string())),
+            Ok(count) => count,
         };
         if count == 0 {
-            return Ok((length, *hash.finalize().as_bytes()));
+            break;
         }
-        output.write_all(&bytes[..count])?;
+        output.write_all(&bytes[..count]).map_err(io)?;
         hash.update(&bytes[..count]);
         length += count as u64;
     }
+    let after = match input.metadata() {
+        Ok(metadata) => metadata,
+        Err(error) => return Ok(Err(error.to_string())),
+    };
+    if !same_file(&before, &after) || length != size || metadata_mtime(&before) != mtime {
+        return Ok(Ok(None));
+    }
+    Ok(Ok(Some((length, *hash.finalize().as_bytes()))))
+}
+
+fn entry_failure(
+    bundle: &mut File,
+    length: &mut usize,
+    members: &mut Vec<Value>,
+    records: &mut Vec<(usize, usize)>,
+    path: &Path,
+    reason: &str,
+) -> Result<(), DriverError> {
+    let display = paths::display(path);
+    let marker = json!({"path": display, "read_error": reason}).to_string();
+    bundle.write_all(&[format::PREFIX]).map_err(io)?;
+    let offset = *length + 1;
+    bundle.write_all(marker.as_bytes()).map_err(io)?;
+    *length = offset + marker.len();
+    members.push(json!({
+        "path": display,
+        "stream_offset": offset,
+        "length": marker.len(),
+        "read_error": reason,
+    }));
+    paths::add_native(members.last_mut().expect("member added"), path);
+    records.push((offset, *length));
+    Ok(())
 }
 
 fn metadata_mtime(metadata: &std::fs::Metadata) -> i128 {
@@ -365,32 +514,47 @@ fn walk(
     root: &Path,
     dir: &Path,
     select: fn(&str) -> bool,
-    found: &mut BTreeMap<String, (u64, i128)>,
-) -> Result<(), DriverError> {
-    let entries =
-        std::fs::read_dir(dir).map_err(|e| DriverError::Io(format!("{}: {e}", dir.display())))?;
+    found: &mut BTreeMap<PathBuf, EntryFacts>,
+) {
+    let entries = match std::fs::read_dir(dir) {
+        Ok(entries) => entries,
+        Err(error) => {
+            found.insert(
+                dir.strip_prefix(root).expect("within root").to_owned(),
+                Err(error.to_string()),
+            );
+            return;
+        }
+    };
     for entry in entries {
-        let entry = entry.map_err(io)?;
-        let kind = entry.file_type().map_err(io)?;
-        let path = entry.path();
-        if kind.is_dir() {
-            walk(root, &path, select, found)?;
-        } else if kind.is_file() {
-            let Ok(relative) = path.strip_prefix(root) else {
-                continue;
-            };
-            let relative = relative.to_string_lossy().into_owned();
-            if !select(&relative) {
+        let entry = match entry {
+            Ok(entry) => entry,
+            Err(error) => {
+                found.insert(
+                    dir.strip_prefix(root).expect("within root").to_owned(),
+                    Err(error.to_string()),
+                );
                 continue;
             }
-            let facts = file_facts(&path).map_err(io)?;
-            found.insert(
-                relative,
-                (facts.size.unwrap_or(0), facts.mtime_ns.unwrap_or(0)),
-            );
+        };
+        let path = entry.path();
+        let relative = path.strip_prefix(root).expect("within root").to_owned();
+        let kind = match entry.file_type() {
+            Ok(kind) => kind,
+            Err(error) => {
+                found.insert(relative, Err(error.to_string()));
+                continue;
+            }
+        };
+        if kind.is_dir() {
+            walk(root, &path, select, found);
+        } else if kind.is_file() && select(&paths::display(&relative)) {
+            let facts = file_facts(&path)
+                .map(|facts| (facts.size.unwrap_or(0), facts.mtime_ns.unwrap_or(0)))
+                .map_err(|error| error.to_string());
+            found.insert(relative, facts);
         }
     }
-    Ok(())
 }
 
 #[cfg(test)]
