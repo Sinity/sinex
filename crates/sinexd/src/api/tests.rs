@@ -134,6 +134,7 @@ async fn world(db: devkit::pg::TestDatabase) -> World {
         agent_grants: vec![],
         unlock: Default::default(),
         host: "h".into(),
+        library_roots: Vec::new(),
     };
     let (commits, rx) = watch::channel(0u64);
     let (stop, stopped) = watch::channel(false);
