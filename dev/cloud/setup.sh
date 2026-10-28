@@ -40,11 +40,14 @@ set +u
 set -u
 
 # Sinex's Git dependencies come from polylogue-sinex-common; a session
-# without access to it cannot fetch them.
-if ! cargo fetch --locked; then
-    echo "setup: cargo fetch failed; a Sinex session needs the polylogue-sinex-common repository" >&2
-    exit 1
-fi
+# without access to it cannot fetch them. The corpus tests have a separate lock,
+# so fetch both workspaces while the setup phase has network access.
+for manifest in Cargo.toml fuzz/Cargo.toml; do
+    if ! cargo fetch --locked --manifest-path "$manifest"; then
+        echo "setup: cargo fetch failed for $manifest; a Sinex session needs the polylogue-sinex-common repository" >&2
+        exit 1
+    fi
+done
 
 if [ "${CLOUD_PREBUILD:-0}" = 1 ]; then
     cargo xtask test --no-run
