@@ -170,14 +170,6 @@ async fn an_upgrade_waits_for_no_writer(db: devkit::pg::TestDatabase) {
     conn.execute("DROP TABLE core.excised_materials")
         .await
         .unwrap();
-    conn.execute("DROP VIEW event_types.operator_mark, event_types.query_saved")
-        .await
-        .unwrap();
-    conn.execute("DELETE FROM registry.event_types WHERE name IN ('operator.mark','query.saved')")
-        .await
-        .unwrap();
-    conn.execute("DROP TRIGGER blob_changes ON core.blobs; DROP FUNCTION core.note_blob_change(); DELETE FROM core.counters WHERE name='blob_changes'")
-        .await.unwrap();
     conn.execute("UPDATE sinex_schema.applied SET version = 0")
         .await
         .unwrap();

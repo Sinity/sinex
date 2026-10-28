@@ -31,6 +31,9 @@ async fn stored_rows(conn: &mut PgConnection) -> Vec<serde_json::Value> {
             "published" if pages => format!(
                 "SELECT to_jsonb(pair) FROM {name} t CROSS JOIN LATERAL unnest(event_ids,stream_seqs) pair(event_id,stream_seq) ORDER BY 1"
             ),
+            "event_types" if schema == "registry" => format!(
+                "SELECT to_jsonb(t) FROM {name} t WHERE name NOT IN ('operator.mark', 'query.saved') ORDER BY 1"
+            ),
             "counters" => {
                 format!("SELECT to_jsonb(t) FROM {name} t WHERE name <> 'blob_changes' ORDER BY 1")
             }
