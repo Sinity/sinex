@@ -26,6 +26,7 @@ these names and no others.
 - **unadmitted bytes**: blobs written before the admission that will cite them. A failed admission is retried from them while the reader holds them; a file a crash leaves with no `core.blobs` row is deleted when the daemon next starts.
 - **held material**: the newest material a reader keeps in memory until its final cursor is admitted, so a failed admission retries the same bytes.
 - **framing**: splitting a material's bytes into records (lines, delimiters, archive members); a **framer** is a source's framing, used alike by its driver, replay and excision.
+- **file node**: captured native file metadata in a PAX tar member index, including ownership, times, extended attributes and sparse extents.
 - **record**: one unit a parser reads from a material (a line, a row, a file, a message).
 - **record location**: `(material, anchor)`, where a record starts; the **anchor** is its byte offset. The query language and references call it the offset.
 - **output index**: which of a record's events an event is, when one record yields several.
@@ -166,3 +167,12 @@ these names and no others.
 - **posting**: one ordered account entry in a transaction, with an optional exact decimal amount and commodity.
 - **journal directive**: an authored journal declaration, rule, include or comment, kept as a record without executing it.
 - **text history**: an appended file with one untimed command per complete line.
+- **transcript cue**: one imported speech-text output with its written offsets; `transcript.cue`.
+- **OCR text**: one imported recognized-text output, with any page coordinates; `ocr.text`.
+
+## Library
+
+- **item key**: the host, resolved library root and original relative path of a file. A move within that root keeps the key when the bytes match and the old path is gone.
+- **scan record**: one file observed in a captured scan part, identified by its material and path, with its item key, content hash and acquisition time. The part index orders observations independently of the wall clock.
+- **item revision**: one content hash of an item. Returning to the same bytes returns to that revision.
+- **preview evidence**: the stored output of rendering an item revision; the library derivation produces its rendition.

@@ -80,6 +80,18 @@
     },
     {
       "inputs": [
+        "library.copy",
+        "library.preview"
+      ],
+      "kind": "keyed",
+      "name": "library.items",
+      "outputs": [
+        "library.item",
+        "library.rendition"
+      ]
+    },
+    {
+      "inputs": [
         "command.fused"
       ],
       "kind": "keyed",
@@ -164,6 +176,16 @@
       "outputs": [
         "health.figure"
       ]
+    },
+    {
+      "inputs": [
+        "library.copy"
+      ],
+      "kind": "per-event",
+      "name": "library.filename-hints",
+      "outputs": [
+        "library.filename_hints"
+      ]
     }
   ],
   "sources": [
@@ -177,15 +199,11 @@
             "credentials": [],
             "locations": [
               {
-                "path": "LEDGER_FILE",
-                "root": "environment"
+                "path": "documents",
+                "root": "declared"
               },
               {
-                "path": ".hledger.journal",
-                "root": "home"
-              },
-              {
-                "path": "finance",
+                "path": "downloads",
                 "root": "declared"
               }
             ],
@@ -194,22 +212,20 @@
             "requests": [],
             "streams": []
           },
-          "format": "hledger"
+          "format": "documents"
         }
       ],
       "drivers": [
-        "export-archive"
+        "dir-snapshot"
       ],
       "eventTypes": [
-        "transaction.posted",
-        "journal.directive",
-        "journal.imported"
+        "document.captured"
       ],
       "formats": [
-        "hledger"
+        "documents"
       ],
-      "name": "finance.hledger",
-      "purpose": "journal transactions and their postings"
+      "name": "knowledge.documents",
+      "purpose": "configured document bytes for recall and text extraction"
     },
     {
       "class": "guarded",
@@ -221,7 +237,7 @@
             "credentials": [],
             "locations": [
               {
-                "path": "text-history",
+                "path": "transcripts",
                 "root": "input"
               }
             ],
@@ -230,20 +246,168 @@
             "requests": [],
             "streams": []
           },
-          "format": "text-history"
+          "format": "transcript-json"
+        },
+        {
+          "capture": false,
+          "description": {
+            "capabilities": [],
+            "credentials": [],
+            "locations": [
+              {
+                "path": "transcripts",
+                "root": "input"
+              }
+            ],
+            "owner": "system",
+            "request_only": false,
+            "requests": [],
+            "streams": []
+          },
+          "format": "whisper-json"
+        },
+        {
+          "capture": false,
+          "description": {
+            "capabilities": [],
+            "credentials": [],
+            "locations": [
+              {
+                "path": "transcripts",
+                "root": "input"
+              }
+            ],
+            "owner": "system",
+            "request_only": false,
+            "requests": [],
+            "streams": []
+          },
+          "format": "transcript-text"
+        },
+        {
+          "capture": false,
+          "description": {
+            "capabilities": [],
+            "credentials": [],
+            "locations": [
+              {
+                "path": "transcripts",
+                "root": "input"
+              }
+            ],
+            "owner": "system",
+            "request_only": false,
+            "requests": [],
+            "streams": []
+          },
+          "format": "webvtt"
+        },
+        {
+          "capture": false,
+          "description": {
+            "capabilities": [],
+            "credentials": [],
+            "locations": [
+              {
+                "path": "transcripts",
+                "root": "input"
+              }
+            ],
+            "owner": "system",
+            "request_only": false,
+            "requests": [],
+            "streams": []
+          },
+          "format": "srt"
         }
       ],
       "drivers": [
-        "append-file"
+        "export-archive"
       ],
       "eventTypes": [
-        "command.imported"
+        "transcript.cue"
       ],
       "formats": [
-        "text-history"
+        "transcript-json",
+        "whisper-json",
+        "transcript-text",
+        "webvtt",
+        "srt"
       ],
-      "name": "terminal.text-history",
-      "purpose": "explicit untimed command history"
+      "name": "media.transcripts",
+      "purpose": "imported timed speech text"
+    },
+    {
+      "class": "guarded",
+      "discovery": [
+        {
+          "capture": false,
+          "description": {
+            "capabilities": [],
+            "credentials": [],
+            "locations": [
+              {
+                "path": "ocr",
+                "root": "input"
+              }
+            ],
+            "owner": "system",
+            "request_only": false,
+            "requests": [],
+            "streams": []
+          },
+          "format": "ocr-json"
+        },
+        {
+          "capture": false,
+          "description": {
+            "capabilities": [],
+            "credentials": [],
+            "locations": [
+              {
+                "path": "ocr",
+                "root": "input"
+              }
+            ],
+            "owner": "system",
+            "request_only": false,
+            "requests": [],
+            "streams": []
+          },
+          "format": "ocr-tsv"
+        },
+        {
+          "capture": false,
+          "description": {
+            "capabilities": [],
+            "credentials": [],
+            "locations": [
+              {
+                "path": "ocr",
+                "root": "input"
+              }
+            ],
+            "owner": "system",
+            "request_only": false,
+            "requests": [],
+            "streams": []
+          },
+          "format": "ocr-text"
+        }
+      ],
+      "drivers": [
+        "export-archive"
+      ],
+      "eventTypes": [
+        "ocr.text"
+      ],
+      "formats": [
+        "ocr-json",
+        "ocr-tsv",
+        "ocr-text"
+      ],
+      "name": "media.ocr-imports",
+      "purpose": "imported OCR text and geometry"
     },
     {
       "class": "open",
@@ -2539,8 +2703,7 @@
         "api-request"
       ],
       "eventTypes": [
-        "library.item",
-        "library.rendition",
+        "library.preview",
         "library.assignment",
         "library.collection",
         "library.entry",
@@ -2584,6 +2747,36 @@
       ],
       "name": "forecast.request",
       "purpose": "submitted probability forecasts"
+    },
+    {
+      "class": "guarded",
+      "discovery": [
+        {
+          "capture": false,
+          "description": {
+            "capabilities": [],
+            "credentials": [],
+            "locations": [],
+            "owner": "system",
+            "request_only": true,
+            "requests": [],
+            "streams": []
+          },
+          "format": "query"
+        }
+      ],
+      "drivers": [
+        "api-request"
+      ],
+      "eventTypes": [
+        "operator.mark",
+        "query.saved"
+      ],
+      "formats": [
+        "query"
+      ],
+      "name": "query.request",
+      "purpose": "moment marks and saved queries"
     },
     {
       "class": "guarded",

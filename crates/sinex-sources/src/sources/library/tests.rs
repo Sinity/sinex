@@ -17,7 +17,7 @@ fn png(w: u32, h: u32) -> Vec<u8> {
     b
 }
 
-fn read(a: &Acquired, parser: &ScanParser) -> Vec<FileCopy> {
+fn read_events(a: &Acquired, parser: &ScanParser) -> Vec<sinex_model::Event> {
     let m = a.material.as_ref().expect("a material");
     let out = drain(
         parser,
@@ -40,10 +40,14 @@ fn read(a: &Acquired, parser: &ScanParser) -> Vec<FileCopy> {
             RecordOutcome::Events { events, .. } => events,
             RecordOutcome::Failure { reason, .. } => panic!("{reason}"),
         })
-        .map(|e| {
-            assert_eq!(e.event_type, "library.copy");
-            e.payload_as::<FileCopy>().unwrap()
-        })
+        .inspect(|event| assert_eq!(event.event_type, "library.copy"))
+        .collect()
+}
+
+fn read(a: &Acquired, parser: &ScanParser) -> Vec<FileCopy> {
+    read_events(a, parser)
+        .into_iter()
+        .map(|event| event.payload_as().unwrap())
         .collect()
 }
 
@@ -84,6 +88,13 @@ fn a_single_file_scan_reads_and_misses_nothing_else() {
     let mut mem = ScanState::default();
     let all = scan(&root).poll(&Value::Null, &mut mem).unwrap();
     assert_eq!(read(&all, &ScanParser).len(), 2);
+    assert!(
+        scan(&root)
+            .poll(&Value::Null, &mut mem)
+            .unwrap()
+            .material
+            .is_none()
+    );
 
     std::fs::write(root.join("one.png"), png(30, 30)).unwrap();
     std::fs::write(root.join("three.png"), png(40, 40)).unwrap();
@@ -156,11 +167,12 @@ fn scan_describes_stores_and_follows_renames_edits_and_removals() {
     let gone_at = seen.iter().position(|a| a.vanished_at.is_some()).unwrap();
     assert!(moved_at < gone_at);
 
+    assert!(s.poll(&Value::Null, &mut mem).unwrap().material.is_none());
     std::fs::remove_file(root.join("renamed.png")).unwrap();
     let fourth = s.poll(&Value::Null, &mut mem).unwrap();
     let seen = read(&fourth, &parser);
-    assert_eq!(seen.len(), 1);
-    assert!(seen[0].vanished_at.is_some());
+    assert_eq!(seen.len(), 2);
+    assert!(seen.iter().any(|copy| copy.vanished_at.is_some()));
     std::fs::remove_dir_all(&root).unwrap();
 }
 
@@ -200,7 +212,7 @@ fn stored(acquired: &Acquired) -> (sinex_source_core::binding::StoredMaterial, V
 }
 
 #[devkit::test]
-fn a_restarted_scan_reads_only_what_changed_since_its_stored_parts() {
+fn a_restarted_scan_keeps_item_keys_and_records_every_present_file() {
     use sinex_source_core::binding::Reader;
     let root = tmp();
     std::fs::write(root.join("one.png"), png(10, 10)).unwrap();
@@ -222,7 +234,7 @@ fn a_restarted_scan_reads_only_what_changed_since_its_stored_parts() {
     assert!(again.restore(&cursor_b, part_b).unwrap());
     assert!(again.restore(&cursor_b, part_a).unwrap());
     again.restored().unwrap();
-    assert!(again.poll(&cursor_b).unwrap().material.is_none());
+    assert_eq!(read(&again.poll(&cursor_b).unwrap(), &ScanParser).len(), 2);
 
     // From the newest part and the memory saved at the first one.
     let (part_b, _) = stored(&b);
@@ -233,8 +245,12 @@ fn a_restarted_scan_reads_only_what_changed_since_its_stored_parts() {
     std::fs::write(root.join("two.png"), png(30, 30)).unwrap();
     let c = saved.poll(&cursor_b).unwrap();
     let seen = read(&c, &ScanParser);
-    assert_eq!(seen.len(), 1, "only the edited file: {seen:?}");
-    assert!(seen[0].path.ends_with("two.png"));
+    assert_eq!(
+        seen.len(),
+        2,
+        "every present file is scan evidence: {seen:?}"
+    );
+    assert!(seen.iter().any(|copy| copy.path.ends_with("two.png")));
     std::fs::remove_dir_all(&root).unwrap();
 }
 
@@ -269,18 +285,6 @@ fn sniffs_types_from_bytes_not_names() {
 
 #[devkit::test]
 fn requests_take_author_and_time_from_the_manifest() {
-    let item = Item {
-        item: "i1".into(),
-        revision: 1,
-        replaces: None,
-        content: "blake3:x".into(),
-        media_type: "image/png".into(),
-        copies: vec!["h:/r/a.png".into()],
-        label: Some("a.png".into()),
-        by: "forged".into(),
-        at: Timestamp::from_unix_secs(1).unwrap(),
-        withdrawn_at: None,
-    };
     let tag = Assignment {
         assignment: "as1".into(),
         target: Target {
@@ -295,12 +299,7 @@ fn requests_take_author_and_time_from_the_manifest() {
         at: Timestamp::from_unix_secs(1).unwrap(),
         withdrawn_at: Some(Timestamp::from_unix_secs(2).unwrap()),
     };
-    let a = request_material(
-        &[LibraryRecord::Item(item), LibraryRecord::Assignment(tag)],
-        "operator",
-        "h",
-        "test",
-    );
+    let a = request_material(&[LibraryRecord::Assignment(tag)], "operator", "h", "test");
     let m = a.material.as_ref().unwrap();
     let out = drain(
         &RequestParser,
@@ -325,21 +324,20 @@ fn requests_take_author_and_time_from_the_manifest() {
             RecordOutcome::Failure { reason, .. } => panic!("{reason}"),
         })
         .collect();
-    assert_eq!(events.len(), 2);
-    assert_eq!(events[0].event_type, "library.item");
+    assert_eq!(events.len(), 1);
+    assert_eq!(events[0].event_type, "library.assignment");
     assert_eq!(events[0].payload["by"], "operator");
     assert_ne!(events[0].payload["at"], json!("1970-01-01T00:00:01Z"));
-    assert_eq!(events[1].event_type, "library.assignment");
-    assert_eq!(events[1].record_state, RecordState::Removed);
+    assert_eq!(events[0].record_state, RecordState::Removed);
 }
 
 #[devkit::test]
 fn request_citation_facts_preserve_payload_identity_and_refuse_supplied_invalid_evidence() {
     let blob = format!("blake3:{}", blake3::hash(b"synthetic preview"));
-    let record = LibraryRecord::Rendition(Rendition {
+    let record = LibraryRecord::Preview(Preview {
         rendition: "r".into(),
         item: "i".into(),
-        revision: 1,
+        revision: "blake3:x".into(),
         role: sinex_model::event_types::library::RenditionRole::Preview,
         content: blob.clone(),
         media_type: "image/webp".into(),
@@ -439,4 +437,162 @@ fn library_format_plans_one_file_without_reading_its_neighbours() {
         serde_json::from_slice(crate::test_support::body(&material)).unwrap();
     assert!(line["path"].as_str().unwrap().ends_with("selected.txt"));
     assert_eq!(line["stored"], false);
+}
+
+#[devkit::test]
+fn equal_content_moves_prefer_each_files_device_and_inode() {
+    let root = tmp();
+    std::fs::write(root.join("one.png"), png(10, 10)).unwrap();
+    std::fs::write(root.join("two.png"), png(10, 10)).unwrap();
+    let scanner = scan(&root);
+    let mut state = ScanState::default();
+    let first = read(
+        &scanner.poll(&Value::Null, &mut state).unwrap(),
+        &ScanParser,
+    );
+    let one = first
+        .iter()
+        .find(|copy| copy.path.ends_with("one.png"))
+        .unwrap();
+    let two = first
+        .iter()
+        .find(|copy| copy.path.ends_with("two.png"))
+        .unwrap();
+    assert_ne!(one.item, two.item);
+    assert!(
+        scanner
+            .poll(&Value::Null, &mut state)
+            .unwrap()
+            .material
+            .is_none()
+    );
+    std::fs::rename(root.join("one.png"), root.join("z.png")).unwrap();
+    std::fs::rename(root.join("two.png"), root.join("a.png")).unwrap();
+    let moved = read(
+        &scanner.poll(&Value::Null, &mut state).unwrap(),
+        &ScanParser,
+    );
+    assert_eq!(
+        moved
+            .iter()
+            .find(|copy| copy.path.ends_with("z.png"))
+            .unwrap()
+            .item,
+        one.item
+    );
+    assert_eq!(
+        moved
+            .iter()
+            .find(|copy| copy.path.ends_with("a.png"))
+            .unwrap()
+            .item,
+        two.item
+    );
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[devkit::test]
+fn a_copy_then_removal_keeps_identity_without_the_same_inode() {
+    let root = tmp();
+    std::fs::write(root.join("one.png"), png(10, 10)).unwrap();
+    let scanner = scan(&root);
+    let mut state = ScanState::default();
+    let first = read(
+        &scanner.poll(&Value::Null, &mut state).unwrap(),
+        &ScanParser,
+    );
+    assert!(
+        scanner
+            .poll(&Value::Null, &mut state)
+            .unwrap()
+            .material
+            .is_none()
+    );
+    std::fs::copy(root.join("one.png"), root.join("two.png")).unwrap();
+    std::fs::remove_file(root.join("one.png")).unwrap();
+    let moved = read(
+        &scanner.poll(&Value::Null, &mut state).unwrap(),
+        &ScanParser,
+    );
+    let present = moved
+        .iter()
+        .find(|copy| copy.vanished_at.is_none())
+        .unwrap();
+    assert_eq!(present.item, first[0].item);
+    assert_eq!(present.item_key, first[0].item_key);
+    assert_ne!(present.inode, first[0].inode);
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[devkit::test]
+fn full_rescans_record_every_file_without_hashing_unchanged_bytes() {
+    use sinex_source_core::binding::Reader;
+    let root = tmp();
+    std::fs::write(root.join("one.png"), png(10, 10)).unwrap();
+    std::fs::write(root.join("two.png"), png(20, 20)).unwrap();
+    let mut reader = LibraryReader::new(scan(&root));
+    let first = reader.poll(&Value::Null).unwrap();
+    let (_, cursor) = stored(&first);
+    let memory = first.material.as_ref().unwrap().memory.clone().unwrap();
+    assert_eq!(reader.state.files_hashed, 2);
+    assert!(reader.poll(&cursor).unwrap().material.is_none());
+    let again = reader.poll(&cursor).unwrap();
+    assert_eq!(read(&again, &ScanParser).len(), 2);
+    assert!(again.material.as_ref().unwrap().owned_files.is_empty());
+    assert_eq!(reader.state.files_hashed, 2, "the rescan hashes zero files");
+
+    let mut restarted = LibraryReader::new(scan(&root));
+    restarted.restore_memory(&memory).unwrap();
+    restarted.restored().unwrap();
+    let after_restart = restarted.poll(&cursor).unwrap();
+    assert_eq!(read(&after_restart, &ScanParser).len(), 2);
+    assert_eq!(restarted.state.files_hashed, 0);
+    let (_, cursor) = stored(&after_restart);
+    assert!(restarted.poll(&cursor).unwrap().material.is_none());
+    let mut changed = png(30, 30);
+    changed.push(0);
+    std::fs::write(root.join("two.png"), changed).unwrap();
+    assert_eq!(
+        read(&restarted.poll(&cursor).unwrap(), &ScanParser).len(),
+        2
+    );
+    assert_eq!(
+        restarted.state.files_hashed, 1,
+        "only the edited file is hashed"
+    );
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[devkit::test]
+fn scans_with_equal_timestamps_are_independent_evidence() {
+    let root = tmp();
+    std::fs::write(root.join("one.txt"), "one").unwrap();
+    let scanner = scan(&root);
+    let mut state = ScanState::default();
+    let mut first = scanner.poll(&Value::Null, &mut state).unwrap();
+    let (_, cursor) = stored(&first);
+    assert!(
+        scanner
+            .poll(&cursor, &mut state)
+            .unwrap()
+            .material
+            .is_none()
+    );
+    let mut second = scanner.poll(&cursor, &mut state).unwrap();
+    for acquired in [&mut first, &mut second] {
+        acquired.material.as_mut().unwrap().manifest.read_at_ns = Some(1_000_000_000);
+    }
+
+    let first = read_events(&first, &ScanParser);
+    let second = read_events(&second, &ScanParser);
+    assert_eq!(
+        first[0].payload["scanned_at"],
+        second[0].payload["scanned_at"]
+    );
+    assert_eq!(first[0].record_hash, second[0].record_hash);
+    assert_ne!(first[0].equivalence_key, second[0].equivalence_key);
+    assert_ne!(first[0].payload["scan"], second[0].payload["scan"]);
+    assert_eq!(first[0].payload["part_index"], 0);
+    assert_eq!(second[0].payload["part_index"], 1);
+    std::fs::remove_dir_all(root).unwrap();
 }

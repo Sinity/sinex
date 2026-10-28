@@ -2,13 +2,10 @@
 //! Maildir).
 //!
 //! Each poll walks the tree comparing file facts with what was already read.
-//! New and changed files stream into an unnamed temporary bundle, stored as one
-//! material: one framing byte precedes each record, outside its exact source
-//! byte range. The prefix gives even empty files distinct anchors and cursor
-//! ends. A manifest member describes each file
-//! (path, range in the material, size, modification time). One file is one
-//! record. Draining reads one record at a time; an oversized single file still
-//! needs its complete decoded record in memory. Unchanged content is skipped.
+//! New and changed files stream into one unnamed PAX tar material, retaining
+//! native file names, ownership, times, permissions, extended attributes, ACLs
+//! and sparse ranges. The manifest indexes the stored member data offsets.
+//! One member is one record; sparse records expand before parsing and replay.
 //!
 //! When a walk completes without reaching the part size, files read before but
 //! not seen now are recorded as removed: a member holding a short marker line,
@@ -16,7 +13,7 @@
 //!
 //! The admitted cursor confirms cached file facts. Until its final byte commits,
 //! a retry offers the same bundle again. Each member records the file's size,
-//! modification time and content hash, and the reader saves its file facts
+//! change time and content hash, and the reader saves its file facts
 //! with the cursor on the cadence of [`super::memory_due`]. A restart takes
 //! the facts from that saved memory and the bundles after it, so an unchanged
 //! file is not read or stored again and a file removed while Sinex was down is
@@ -26,19 +23,17 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use sinex_model::{InputRef, MaterialId, ObservationFacts, RevisionChange, Timestamp};
 use std::collections::{BTreeMap, HashMap, HashSet};
-use std::fs::File;
-use std::io::{Read, Seek, Write};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 type EntryFacts = Result<(u64, i128), String>;
-type CaptureResult = Result<Option<(u64, [u8; 32])>, String>;
 type FileMemory = HashMap<PathBuf, Option<(u64, i128, [u8; 32])>>;
 
 mod format;
 mod paths;
 mod restore;
-pub(crate) use format::validate as validate_records;
+mod tar;
+pub(crate) use format::{decode as decode_record, validate as validate_records};
 
 pub struct DirSnapshot {
     pub root: PathBuf,
@@ -66,7 +61,7 @@ pub struct Cursor {
     pub changed_since_memory: u64,
 }
 
-/// What was already read, by relative path: size, modification time, hash.
+/// What was already read, by relative path: size, change time, hash.
 #[derive(Default)]
 pub struct DirState {
     files: FileMemory,
@@ -103,6 +98,15 @@ impl DirSnapshot {
     }
 
     pub fn poll(&self, cursor: &Value, state: &mut DirState) -> Result<Acquired, DriverError> {
+        self.poll_excluding(cursor, state, &[])
+    }
+
+    pub fn poll_excluding(
+        &self,
+        cursor: &Value,
+        state: &mut DirState,
+        excluded: &[PathBuf],
+    ) -> Result<Acquired, DriverError> {
         let previous: Cursor = if cursor.is_null() {
             Cursor::default()
         } else {
@@ -139,8 +143,22 @@ impl DirSnapshot {
         };
         // Sorted walk: a stable order makes materials and part cuts repeatable.
         let mut found = BTreeMap::new();
-        walk(&self.root, &self.root, self.select, &mut found);
-        self.poll_entries(cursor, state, previous, facts, found)
+        let boundary = std::fs::canonicalize(&self.root).unwrap_or_else(|_| self.root.clone());
+        let excluded: Vec<_> = excluded
+            .iter()
+            .filter_map(|path| {
+                path.strip_prefix(&self.root)
+                    .or_else(|_| path.strip_prefix(&boundary))
+                    .ok()
+                    .map(|relative| self.root.join(relative))
+            })
+            .collect();
+        walk(&self.root, &self.root, self.select, &excluded, &mut found);
+        let excluded: Vec<_> = excluded
+            .iter()
+            .filter_map(|path| path.strip_prefix(&self.root).ok().map(Path::to_path_buf))
+            .collect();
+        self.poll_entries(cursor, state, previous, facts, found, &excluded)
     }
 
     fn poll_entries(
@@ -150,6 +168,7 @@ impl DirSnapshot {
         previous: Cursor,
         mut facts: ObservationFacts,
         found: BTreeMap<PathBuf, EntryFacts>,
+        excluded: &[PathBuf],
     ) -> Result<Acquired, DriverError> {
         let now = Timestamp::now();
         let failed: Vec<_> = found
@@ -158,7 +177,7 @@ impl DirSnapshot {
             .map(|(path, _)| path.clone())
             .collect();
 
-        let mut bundle = tempfile::tempfile().map_err(io)?;
+        let mut bundle = tar::Archive::new(tempfile::tempfile().map_err(io)?);
         let mut length = 0usize;
         let mut next_files = state.files.clone();
         let mut next_failures = state.failures.clone();
@@ -171,7 +190,7 @@ impl DirSnapshot {
         for (relative, entry) in &found {
             seen.insert(relative.clone());
             let display = paths::display(relative);
-            let (size, mtime) = match entry {
+            let (size, changed) = match entry {
                 Ok(facts) => facts,
                 Err(reason) => {
                     if next_failures.get(relative) == Some(reason) {
@@ -191,7 +210,7 @@ impl DirSnapshot {
             };
             if let Some(Some((s, m, _))) = state.files.get(relative)
                 && *s == *size
-                && *m == *mtime
+                && *m == *changed
                 && !state.failures.contains_key(relative)
                 && !state.retries.contains(relative)
             {
@@ -206,22 +225,22 @@ impl DirSnapshot {
             }
             // Source failures leave this file's remembered facts unchanged, so
             // the next poll retries it. Bundle writes still fail the poll.
-            let captured = capture(&self.root.join(relative), &mut bundle, *size, *mtime)?;
-            let (actual_size, hash) = match captured {
+            let captured = tar::capture(
+                &self.root.join(relative),
+                relative,
+                &mut bundle,
+                *size,
+                *changed,
+            )?;
+            let captured = match captured {
                 Ok(Some(captured)) => captured,
                 Ok(None) => {
                     next_retries.insert(relative.clone());
-                    bundle.set_len(length as u64).map_err(io)?;
-                    bundle
-                        .seek(std::io::SeekFrom::Start(length as u64))
-                        .map_err(io)?;
+                    tar::rewind(&mut bundle, length)?;
                     continue;
                 }
                 Err(reason) => {
-                    bundle.set_len(length as u64).map_err(io)?;
-                    bundle
-                        .seek(std::io::SeekFrom::Start(length as u64))
-                        .map_err(io)?;
+                    tar::rewind(&mut bundle, length)?;
                     if state.failures.get(relative) == Some(&reason) {
                         next_failures.insert(relative.clone(), reason);
                         continue;
@@ -240,38 +259,22 @@ impl DirSnapshot {
             };
             next_failures.remove(relative);
             next_retries.remove(relative);
-            let same = state
-                .files
-                .get(relative)
-                .is_some_and(|facts| facts.as_ref().is_some_and(|(_, _, h)| *h == hash));
-            next_files.insert(relative.clone(), Some((*size, *mtime, hash)));
-            if same {
-                bundle.set_len(length as u64).map_err(io)?;
-                bundle
-                    .seek(std::io::SeekFrom::Start(length as u64))
-                    .map_err(io)?;
-                continue;
-            }
-            let offset = length.checked_add(1).ok_or_else(|| {
-                DriverError::Io("directory bundle exceeds addressable size".into())
-            })?;
+            next_files.insert(relative.clone(), Some((*size, *changed, captured.hash)));
+            let offset = captured.offset;
+            let end = offset
+                .checked_add(captured.length)
+                .ok_or_else(|| DriverError::Io("tar exceeds addressable size".into()))?;
             members.push(json!({
                 "path": display,
                 "stream_offset": offset,
-                "length": actual_size,
-                "mtime_ns": mtime.to_string(),
-                "hash": blake3::Hash::from(hash).to_hex().as_str(),
+                "length": captured.length,
+                "mtime_ns": captured.node.mtime_ns,
+                "hash": blake3::Hash::from(captured.hash).to_hex().as_str(),
+                "node": captured.node,
             }));
             paths::add_native(members.last_mut().expect("member added"), relative);
-            length =
-                offset
-                    .checked_add(usize::try_from(actual_size).map_err(|_| {
-                        DriverError::Io("file exceeds addressable record size".into())
-                    })?)
-                    .ok_or_else(|| {
-                        DriverError::Io("directory bundle exceeds addressable size".into())
-                    })?;
-            records.push((offset, length));
+            length = tar::position(&mut bundle)?;
+            records.push((offset, end));
             files_read = true;
         }
         if complete {
@@ -279,7 +282,9 @@ impl DirSnapshot {
                 .files
                 .keys()
                 .filter(|p| {
-                    !seen.contains(*p) && !failed.iter().any(|prefix| p.starts_with(prefix))
+                    !seen.contains(*p)
+                        && !failed.iter().any(|prefix| p.starts_with(prefix))
+                        && !excluded.iter().any(|prefix| p.starts_with(prefix))
                 })
                 .cloned()
                 .collect();
@@ -289,8 +294,7 @@ impl DirSnapshot {
                 next_retries.remove(&relative);
                 let display = paths::display(&relative);
                 let marker = removed_marker(&display);
-                bundle.write_all(&[format::PREFIX]).map_err(io)?;
-                let offset = length + 1;
+                let offset = tar::marker(&mut bundle, &marker)?;
                 members.push(json!({
                     "path": display,
                     "stream_offset": offset,
@@ -299,16 +303,18 @@ impl DirSnapshot {
                 }));
                 paths::add_native(members.last_mut().expect("member added"), &relative);
                 records.push((offset, offset + marker.len()));
-                bundle.write_all(&marker).map_err(io)?;
-                length = offset + marker.len();
             }
         }
         if complete {
             next_retries.retain(|path| {
-                seen.contains(path) || failed.iter().any(|prefix| path.starts_with(prefix))
+                seen.contains(path)
+                    || failed.iter().any(|prefix| path.starts_with(prefix))
+                    || excluded.iter().any(|prefix| path.starts_with(prefix))
             });
             next_failures.retain(|path, _| {
-                seen.contains(path) || failed.iter().any(|prefix| path.starts_with(prefix))
+                seen.contains(path)
+                    || failed.iter().any(|prefix| path.starts_with(prefix))
+                    || excluded.iter().any(|prefix| path.starts_with(prefix))
             });
         }
         let mut scanned = Cursor {
@@ -366,8 +372,10 @@ impl DirSnapshot {
         scanned.changed_since_memory = if due { 0 } else { changed };
         let memory = due.then(|| restore::memory_of(&next_files));
         let previous_part = previous.material;
+        let record_end = records.last().expect("records present").1;
         let cursor_at = move |end: usize| {
-            let last = end == length;
+            let last = end >= record_end;
+            let end = end.min(record_end);
             serde_json::to_value(Cursor {
                 material: Some(id),
                 part_index,
@@ -397,7 +405,9 @@ impl DirSnapshot {
             material: Some(NewMaterial {
                 id,
                 bytes: Vec::new(),
-                stored: Some(StoredBytes::FramedFile(Arc::new(bundle))),
+                stored: Some(StoredBytes::FramedFile(Arc::new(
+                    bundle.into_inner().map_err(io)?,
+                ))),
                 records,
                 part_index,
                 previous_part,
@@ -427,50 +437,8 @@ fn io(error: std::io::Error) -> DriverError {
     DriverError::Io(error.to_string())
 }
 
-// The outer error belongs to the bundle; the inner error belongs to the entry.
-fn capture(
-    path: &Path,
-    output: &mut File,
-    size: u64,
-    mtime: i128,
-) -> Result<CaptureResult, DriverError> {
-    let mut input = match File::open(path) {
-        Ok(file) => file,
-        Err(error) => return Ok(Err(error.to_string())),
-    };
-    let before = match input.metadata() {
-        Ok(metadata) => metadata,
-        Err(error) => return Ok(Err(error.to_string())),
-    };
-    output.write_all(&[format::PREFIX]).map_err(io)?;
-    let mut hash = blake3::Hasher::new();
-    let mut length = 0u64;
-    let mut bytes = [0; 64 * 1024];
-    loop {
-        let count = match input.read(&mut bytes) {
-            Err(error) if error.kind() == std::io::ErrorKind::Interrupted => continue,
-            Err(error) => return Ok(Err(error.to_string())),
-            Ok(count) => count,
-        };
-        if count == 0 {
-            break;
-        }
-        output.write_all(&bytes[..count]).map_err(io)?;
-        hash.update(&bytes[..count]);
-        length += count as u64;
-    }
-    let after = match input.metadata() {
-        Ok(metadata) => metadata,
-        Err(error) => return Ok(Err(error.to_string())),
-    };
-    if !same_file(&before, &after) || length != size || metadata_mtime(&before) != mtime {
-        return Ok(Ok(None));
-    }
-    Ok(Ok(Some((length, *hash.finalize().as_bytes()))))
-}
-
 fn entry_failure(
-    bundle: &mut File,
+    bundle: &mut tar::Archive,
     length: &mut usize,
     members: &mut Vec<Value>,
     records: &mut Vec<(usize, usize)>,
@@ -479,10 +447,8 @@ fn entry_failure(
 ) -> Result<(), DriverError> {
     let display = paths::display(path);
     let marker = json!({"path": display, "read_error": reason}).to_string();
-    bundle.write_all(&[format::PREFIX]).map_err(io)?;
-    let offset = *length + 1;
-    bundle.write_all(marker.as_bytes()).map_err(io)?;
-    *length = offset + marker.len();
+    let offset = tar::marker(bundle, marker.as_bytes())?;
+    *length = tar::position(bundle)?;
     members.push(json!({
         "path": display,
         "stream_offset": offset,
@@ -490,7 +456,7 @@ fn entry_failure(
         "read_error": reason,
     }));
     paths::add_native(members.last_mut().expect("member added"), path);
-    records.push((offset, *length));
+    records.push((offset, offset + marker.len()));
     Ok(())
 }
 
@@ -514,6 +480,7 @@ fn walk(
     root: &Path,
     dir: &Path,
     select: fn(&str) -> bool,
+    excluded: &[PathBuf],
     found: &mut BTreeMap<PathBuf, EntryFacts>,
 ) {
     let entries = match std::fs::read_dir(dir) {
@@ -538,6 +505,9 @@ fn walk(
             }
         };
         let path = entry.path();
+        if excluded.iter().any(|root| path.starts_with(root)) {
+            continue;
+        }
         let relative = path.strip_prefix(root).expect("within root").to_owned();
         let kind = match entry.file_type() {
             Ok(kind) => kind,
@@ -547,10 +517,10 @@ fn walk(
             }
         };
         if kind.is_dir() {
-            walk(root, &path, select, found);
+            walk(root, &path, select, excluded, found);
         } else if kind.is_file() && select(&paths::display(&relative)) {
-            let facts = file_facts(&path)
-                .map(|facts| (facts.size.unwrap_or(0), facts.mtime_ns.unwrap_or(0)))
+            let facts = std::fs::metadata(&path)
+                .map(|facts| (facts.len(), tar::change_time(&facts)))
                 .map_err(|error| error.to_string());
             found.insert(relative, facts);
         }

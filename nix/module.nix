@@ -63,7 +63,7 @@ let
     format = mkOption {
       type = types.nullOr types.str;
       default = null;
-      description = "The format for ${spec.name}'s explicit paths: one of ${concatStringsSep ", " spec.formats}; every applicable format when null. Discovery at declared locations still considers every format.";
+      description = "The format for ${spec.name}'s explicit paths: one of ${concatStringsSep ", " spec.formats}; every applicable format when null. Canonical discovery still considers every format.";
     };
     zone = mkOption {
       type = types.nullOr types.str;
@@ -216,8 +216,8 @@ in
       home = mkOption { type = types.nullOr types.path; default = if cfg.session.user == "" then null else config.users.users.${cfg.session.user}.home; };
       dataHome = mkOption { type = types.nullOr types.path; default = if cfg.discovery.home == null then null else "${cfg.discovery.home}/.local/share"; };
       configHome = mkOption { type = types.nullOr types.path; default = if cfg.discovery.home == null then null else "${cfg.discovery.home}/.config"; };
-      inputRoots = mkOption { type = types.attrsOf (types.listOf types.str); default = { }; description = "Declared input roots: realm, projects, notes, raw-log, steering and library."; };
-      inputs = mkOption { type = types.attrsOf (types.listOf types.str); default = { }; description = "Provider-owned inputs by catalog format, and named capture roots."; };
+      inputRoots = mkOption { type = types.attrsOf (types.listOf types.str); default = { }; description = "Canonical input roots: realm, projects, notes, raw-log, steering, library, documents and downloads."; };
+      inputs = mkOption { type = types.attrsOf (types.listOf types.str); default = { }; description = "Provider-owned inputs by catalog format, transcript and OCR import roots, and named capture roots."; };
       environment = mkOption { type = types.attrsOf types.str; default = { }; description = "Resolved application paths, including ZSH_HISTFILE and BASH_HISTFILE."; };
     };
 
@@ -231,7 +231,7 @@ in
       stateDir = mkOption {
         type = types.path;
         default = if cfg.discovery.home == null then "${cfg.stateDir}/sinex-session/${cfg.session.user}" else "${cfg.discovery.home}/.local/state/sinex-session";
-        description = "Session spools and positions. Keep the input spelling when moving storage so existing binding names and positions stay attached.";
+        description = "Session spools and positions. Preserve the existing input spelling; Sinnix supplies /realm storage with the producer's binding and cursor mapping.";
       };
       watch = mkOption {
         type = types.listOf types.str;

@@ -3,30 +3,37 @@
 //! (which tag applies, which property value is shown, a collection's order) are
 //! read from them, never stored beside them.
 //!
-//! Identity follows the library's rules: exact bytes are named by their content
-//! hash; an item is a continuing object with an opaque ID, never inferred from
-//! a path or from equal bytes alone; a copy of the bytes seen at a path is an
-//! copy.
-use crate::Timestamp;
+//! An item follows its root and original relative path across revisions and
+//! moves. Its opaque ID is deterministic; equal bytes at unrelated paths are
+//! separate items.
+use crate::{EventId, Timestamp};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
-/// A file seen in a library root by a scan. Identified by host and path: a
-/// changed file is a newer reading, a file missing from a completed scan is
-/// removed at the source. The bytes are named by `content` whether or not the
-/// scan kept them.
+/// One file observed by one scan. Another scan is independent evidence,
+/// including when the bytes are unchanged. A missing file describes availability;
+/// its earlier scans remain evidence of the item and original rendition.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
 #[event(
     type = "library.copy",
-    key = ["host", "path"],
+    key = ["host", "root", "path", "scan"],
     replace = newer,
-    time = modified_at,
-    quality = file_mtime,
+    time = scanned_at,
+    quality = intrinsic,
     removed_when = vanished_at,
     owns(field = content, size = size, when = stored)
 )]
 pub struct FileCopy {
+    /// The material identifying this captured scan part.
+    pub scan: String,
+    /// Capture order within the root.
+    pub part_index: u32,
+    /// The root and original relative path, kept across moves.
+    pub item_key: String,
+    /// Deterministic opaque identifier of `item_key`.
+    pub item: String,
+    pub scanned_at: Timestamp,
     pub host: String,
     /// The library root the scan walked.
     pub root: String,
@@ -61,9 +68,8 @@ pub struct FileCopy {
 }
 
 /// One revision of an item. The live reading is the current revision; the
-/// archived readings are its history. New bytes make a new revision only
-/// when continuity was shown (a library operation, or the same file changing
-/// in place); an unrelated copy of the same bytes is a different item.
+/// original renditions describe its revisions. New bytes at the same item key
+/// make a new revision; equal bytes at an unrelated key are a different item.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
 #[event(
     type = "library.item",
@@ -74,11 +80,11 @@ pub struct FileCopy {
     removed_when = withdrawn_at
 )]
 pub struct Item {
-    /// Opaque: independent of digests, paths, labels and event IDs.
+    /// Opaque identifier computed from the item key.
     pub item: String,
-    pub revision: u32,
+    pub revision: String,
     /// The revision this one replaces.
-    pub replaces: Option<u32>,
+    pub replaces: Option<String>,
     /// The original rendition's bytes, `blake3:<hex>`.
     pub content: String,
     pub media_type: String,
@@ -114,7 +120,39 @@ pub enum RenditionRole {
 pub struct Rendition {
     pub rendition: String,
     pub item: String,
-    pub revision: u32,
+    pub revision: String,
+    /// The first visible scan part observing this revision.
+    pub part_index: u32,
+    pub role: RenditionRole,
+    pub content: String,
+    pub media_type: String,
+    pub width: Option<u32>,
+    pub height: Option<u32>,
+    pub duration_ms: Option<u64>,
+    /// The rendition it was made from; `None` for an original.
+    pub made_from: Option<String>,
+    /// How it was made: the tool and its settings.
+    #[serde(default, skip_serializing_if = "Map::is_empty")]
+    pub made_with: Map<String, Value>,
+    pub by: String,
+    pub at: Timestamp,
+    pub withdrawn_at: Option<Timestamp>,
+}
+
+/// A rendered preview submitted as evidence for a rendition.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
+#[event(
+    type = "library.preview",
+    key = ["rendition"],
+    replace = newer,
+    time = at,
+    quality = intrinsic,
+    removed_when = withdrawn_at
+)]
+pub struct Preview {
+    pub rendition: String,
+    pub item: String,
+    pub revision: String,
     pub role: RenditionRole,
     pub content: String,
     pub media_type: String,
@@ -137,7 +175,7 @@ pub struct Rendition {
 pub struct Target {
     pub item: String,
     /// Fixed revision; `None` follows the item.
-    pub revision: Option<u32>,
+    pub revision: Option<String>,
     pub rendition: Option<String>,
     /// A selector inside the rendition: `t=12.5-40` (seconds, half-open) or
     /// `xywh=10,10,200,120` (pixels).
@@ -322,8 +360,7 @@ crate::payload_enum! {
     /// Whatever one line of a library request writes.
     #[derive(Clone, Debug, PartialEq)]
     pub enum LibraryRecord {
-        Item(Item),
-        Rendition(Rendition),
+        Preview(Preview),
         Assignment(Assignment),
         Collection(Collection),
         Entry(Entry),
@@ -336,8 +373,7 @@ crate::payload_enum! {
 
 /// The event types library requests write.
 pub const REQUEST_TYPES: &[&str] = &[
-    "library.item",
-    "library.rendition",
+    "library.preview",
     "library.assignment",
     "library.collection",
     "library.entry",
@@ -346,3 +382,26 @@ pub const REQUEST_TYPES: &[&str] = &[
     "library.view",
     "library.dismissal",
 ];
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
+#[event(type = "library.filename_hints", key = ["copy"], replace = newer)]
+pub struct FilenameHints {
+    pub copy: EventId,
+    pub path: String,
+    pub content: String,
+    pub author_hint: Option<String>,
+    pub title_hint: Option<String>,
+    pub year_hint: Option<u16>,
+    pub external_id_hint: Option<String>,
+    pub rule_version: u32,
+}
+
+/// A root's identity includes the host and its resolved path.
+pub fn item_key(host: &str, root: &str, relative: &str) -> String {
+    serde_json::to_string(&[host, root, relative]).expect("strings serialize")
+}
+
+/// An item's identity depends on its first key, never its content.
+pub fn item_id(key: &str) -> String {
+    format!("library:{}", blake3::hash(key.as_bytes()).to_hex())
+}

@@ -4,8 +4,11 @@
 //! directly and matches an upgraded one.
 
 /// The statements of each upgrade, by the version it starts from.
+pub(crate) const LANDED: i32 = 4;
+pub(crate) const PENDING: &[&str] = &["library-scans-and-imported-text"];
+
 pub(crate) fn upgrades() -> Vec<Vec<String>> {
-    vec![
+    let mut numbered = vec![
         // 0 to 1: per-source and per-run counts, filled from the events
         // already stored in one read of them.
         vec![
@@ -43,7 +46,14 @@ pub(crate) fn upgrades() -> Vec<Vec<String>> {
             crate::tables::COVERAGE_RUNS.into(),
         ],
         register_kinds(&["operator.mark", "query.saved"], false),
-    ]
+    ];
+    for name in PENDING {
+        numbered.push(match *name {
+            "library-scans-and-imported-text" => library_scans(),
+            _ => unreachable!("declared schema step"),
+        });
+    }
+    numbered
 }
 
 /// Register payload schemas and views together. Replacing a kind also updates its registry row.
@@ -91,4 +101,26 @@ pub(crate) fn register_kinds(names: &[&str], replace: bool) -> Vec<String> {
         statements.push(format!("INSERT INTO registry.event_types (name,payload_schema,key_kind,key_fields,replace_rule) VALUES ({},{}::jsonb,{},ARRAY[{fields}]::text[],{}){conflict}",literal(&name),literal(&schema.to_string()),literal(key_kind),literal(rule)));
     }
     statements
+}
+
+/// Request-created identifiers need an explicit decision about their references.
+fn library_scans() -> Vec<String> {
+    let mut statements = vec![
+        "DO $$ BEGIN IF EXISTS (SELECT 1 FROM core.events WHERE event_type LIKE 'library.%') THEN
+         RAISE EXCEPTION 'library records use request-created item IDs; decide how their references should follow deterministic item IDs before upgrading';
+         END IF; END $$".into(),
+    ];
+    let names: Vec<_> = sinex_model::event_types::ALL
+        .iter()
+        .filter(|kind| source_kind(kind.event_type))
+        .map(|kind| kind.event_type)
+        .collect();
+    statements.extend(register_kinds(&names, true));
+    statements
+}
+
+fn source_kind(name: &str) -> bool {
+    ["library.", "document.", "transcript.", "ocr."]
+        .iter()
+        .any(|prefix| name.starts_with(prefix))
 }

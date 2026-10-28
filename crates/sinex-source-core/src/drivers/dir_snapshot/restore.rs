@@ -84,7 +84,7 @@ fn take<const N: usize>(rest: &mut &[u8]) -> Result<[u8; N], DriverError> {
 
 /// The memory to save: for each file, in path order, the path's length
 /// (four bytes, little-endian) and native bytes, then 1 and its size (eight
-/// bytes), modification time (sixteen) and content hash (32), or 0 when the
+/// bytes), change time (sixteen) and content hash (32), or 0 when the
 /// facts are unknown.
 pub(super) fn memory_of(files: &HashMap<PathBuf, Facts>) -> Arc<[u8]> {
     let mut paths: Vec<(&PathBuf, &Facts)> = files.iter().collect();
@@ -96,10 +96,10 @@ pub(super) fn memory_of(files: &HashMap<PathBuf, Facts>) -> Arc<[u8]> {
         bytes.extend_from_slice(path.as_bytes());
         match file {
             None => bytes.push(0),
-            Some((size, mtime, hash)) => {
+            Some((size, changed, hash)) => {
                 bytes.push(1);
                 bytes.extend_from_slice(&size.to_le_bytes());
-                bytes.extend_from_slice(&mtime.to_le_bytes());
+                bytes.extend_from_slice(&changed.to_le_bytes());
                 bytes.extend_from_slice(hash);
             }
         }
@@ -107,7 +107,7 @@ pub(super) fn memory_of(files: &HashMap<PathBuf, Facts>) -> Arc<[u8]> {
     bytes.into()
 }
 
-/// A member's size, modification time and content hash.
+/// A member's size, change time and content hash.
 fn facts(member: &sinex_model::Member) -> Result<Facts, DriverError> {
     let invalid = || DriverError::Cursor("directory member facts are invalid".into());
     let Some(hash) = member.details.get("hash") else {
@@ -117,12 +117,10 @@ fn facts(member: &sinex_model::Member) -> Result<Facts, DriverError> {
         .as_str()
         .and_then(|hex| blake3::Hash::from_hex(hex).ok())
         .ok_or_else(invalid)?;
-    let size = member.length;
-    let mtime = member.details["mtime_ns"]
-        .as_str()
-        .and_then(|text| text.parse::<i128>().ok())
-        .ok_or_else(invalid)?;
-    Ok(Some((size, mtime, *hash.as_bytes())))
+    let node = member.node.as_ref().ok_or_else(invalid)?;
+    let size = node.size;
+    let changed = node.ctime_ns.parse::<i128>().ok().ok_or_else(invalid)?;
+    Ok(Some((size, changed, *hash.as_bytes())))
 }
 
 fn records(manifest: &sinex_model::Manifest) -> Result<Vec<(usize, usize)>, DriverError> {

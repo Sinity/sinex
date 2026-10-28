@@ -18,6 +18,7 @@ pub mod derived_event;
 pub mod figures;
 pub mod fusion;
 pub mod health;
+pub mod library;
 pub mod presence;
 pub mod session;
 pub mod state_interval;
@@ -300,7 +301,8 @@ pub fn keyed() -> Vec<Box<dyn AnyKeyed>> {
         .iter()
         .map(|rule| Box::new(fusion::Fusion(rule)) as Box<dyn AnyKeyed>)
         .collect();
-    all.extend::<[Box<dyn AnyKeyed>; 7]>([
+    all.extend::<[Box<dyn AnyKeyed>; 8]>([
+        Box::new(library::LibraryItems),
         Box::new(session::ShellSessions),
         Box::new(state_interval::StateIntervals),
         Box::new(figures::HourlyMetrics),
@@ -315,7 +317,7 @@ pub fn keyed() -> Vec<Box<dyn AnyKeyed>> {
 /// Every pure per-event derivation. Those that need a local tool (screen text
 /// through an OCR engine) are added by `sinexd`, which may run them.
 pub fn per_event() -> Vec<Box<dyn AnyPerEvent>> {
-    Vec::new()
+    vec![Box::new(library::Hints)]
 }
 
 /// The parent IDs of a set of input events, in input order, without repeats.

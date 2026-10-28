@@ -37,9 +37,34 @@ uses its stored bytes and never registers its data key again.
 Library roots are planned by their format; crawl commands supply their URL
 list as binding settings. Both are read by the binding runner. A library file selection
 is a scan of that file within its root; files beside it are neither read nor
-reported removed. `library-add` then turns the copies into item and rendition
-requests, preserving item identity across moves and revisions. This item
-creation still runs in the library command adapter.
+reported removed. Each completed scan records every present file, including
+unchanged files, with a key made from the host, resolved root and original
+relative path. The captured material identifies each scan part; its part
+index orders observations even when clocks repeat or move backwards.
+Unchanged size, modification time, device and inode reuse the
+previous hashes and media metadata; the new scan still records that file. A move within the root keeps that key when the old path is
+missing and the bytes match; matching device and inode take precedence over
+another new copy of those bytes. Changed bytes at the same key create a new
+revision, named by the content hash, including replacement by a different inode.
+
+`library.items` derives items and original renditions from visible scan
+records. Item IDs are hashes of their keys; original rendition IDs also name
+the content hash. Rendering a preview records `library.preview`, which the
+same derivation turns into a rendition with both the rendering and its scan
+evidence as parents. Hiding a scan invalidates its derived outputs; the runner
+recomputes them from the remaining visible scans. An item and its renditions
+stay visible when another scan supplies their evidence. Revisions are content
+hashes, so hiding an earlier scan cannot change their identities.
+Library commands wait for their requested keys through the same batched
+computation engine as the background runner. A shared lock serializes keyed
+computations before reading inputs, so an older read cannot overwrite a
+command's newer outputs. Command runs end on both success and failure.
+
+The named `library-scans-and-imported-text` schema step adds scan identity fields,
+preview evidence and the document, transcript and OCR kinds.
+It upgrades databases without library records. A database containing library
+records is refused before any schema or data changes: its request-created
+IDs and external references need an explicit migration decision.
 
 Crawl reads URLs from the `visit.fused` derivation, or from the command's
 explicit URLs. Its format owns domain filtering and the caller's optional
@@ -90,13 +115,19 @@ revision's records, to align a rewrite. It frames stored parts in chunks and
 keeps only the tail's range metadata, including one oversized record whole.
 
 The SQLite-row reader keeps each row's newest hash and the directory reader
-each file's size, modification time and content hash. Both save this reader
-memory with the cursor at the end of a part: at their first part, once the
-entries stored since the last save reach a quarter of what they remember, and
-at least every 1,000 parts. `raw.reader_memory` keeps only the latest per
-binding, replaced in the cursor's transaction. A restart stops the walk at the
-part the memory was saved at and takes the rest from the memory, so it reads
-at most 1,000 parts, and an unchanged row or file is not stored again.
+each file's size, change time and content hash. Directory captures are PAX tar
+materials. Their typed file nodes preserve native names, ownership, permissions,
+all three file times, extended attributes, access ACLs and sparse data ranges.
+The member index records actual tar body offsets. The drain expands a sparse
+body before parsing, so capture and replay read the same logical file bytes.
+The directory reader records read failures and removals as membership facts.
+
+Both readers save their memory with the cursor at the end of a part: at their
+first part, once the entries stored since the last save reach a quarter of what
+they remember, and at least every 1,000 parts. `raw.reader_memory` keeps only the
+latest per binding, replaced in the cursor's transaction. A restart stops the
+walk at the part the memory was saved at and takes the rest from the memory,
+so it reads at most 1,000 parts, and an unchanged row or file is not stored again.
 
 A binding is either polled alone through `Reader` or read in a pass over a
 stored file shared with every compatible binding of that file (`SharedPass`,
@@ -392,6 +423,32 @@ Journal transactions and untimed command history use the shared export and
 append readers. Discovery follows local journal includes into ordinary file
 bindings. Their syntax, identity and discovery locations are documented in
 [imported records](imported-records.md).
+
+## Documents and imported text
+
+Document discovery reads the declared `documents` and `downloads` roots. Notes
+and library roots own their subtrees; the document walk excludes those subtrees.
+Every other regular file is captured, including hidden and Markdown files.
+Symbolic-link roots report their resolved boundary. Native file names retain
+their raw bytes alongside their display path. Removed documents have unknown
+size and media type.
+
+Document options are a typed list of excluded roots. Transcript and OCR
+imports have no format options; unknown fields and JSON strings are refused
+when bindings are planned. The source facts and typed options remain in each
+source module until the shared source declaration generates their configuration.
+
+The `transcripts` and `ocr` input roots discover a binding for each matching
+file. Transcript imports accept JSON arrays, Whisper JSON, plain text, WebVTT
+and SRT; OCR imports accept JSON, Tesseract TSV and plain text. JSON files are
+whole records with one event per output index. Their file defaults and outputs
+therefore replay together, including for sealed bindings. Whisper offsets keep
+the decimal seconds exactly as written; milliseconds are derived estimates.
+Filename hints are library derivations of captured copies. Documents and imported
+text use their record locations as identity. A changed file or a different
+import keeps a separate observation, including when the provider repeats an ID;
+replay still reads each stored record. Provider IDs, models and external runs
+remain payload fields for downstream fusion.
 
 ## Host discovery
 

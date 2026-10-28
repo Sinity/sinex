@@ -17,6 +17,8 @@ pub mod chromium;
 pub mod clipboard;
 /// Capture from the session bus, shared by the D-Bus sources.
 pub mod dbus;
+#[cfg(feature = "full")]
+pub mod documents;
 pub(crate) mod fields;
 pub mod file_watch;
 #[cfg(feature = "full")]
@@ -54,6 +56,8 @@ pub mod mpris;
 pub mod notes;
 /// Desktop notifications on the session bus.
 pub mod notifications;
+#[cfg(feature = "full")]
+pub mod ocr_import;
 #[cfg(feature = "full")]
 pub mod operator;
 #[cfg(feature = "full")]
@@ -93,6 +97,8 @@ pub mod takeout_chrome;
 pub(crate) mod terminal_text;
 pub mod text_history;
 #[cfg(feature = "full")]
+pub mod transcript;
+#[cfg(feature = "full")]
 pub mod weechat;
 #[cfg(feature = "full")]
 pub mod wykop;
@@ -123,6 +129,15 @@ pub fn formats() -> &'static [&'static InputFormat] {
     const FORMATS: &[&InputFormat] = &[
         &hledger::FORMAT,
         &text_history::FORMAT,
+        &documents::FORMAT,
+        &transcript::JSON_FORMAT,
+        &transcript::WHISPER_FORMAT,
+        &transcript::TEXT_FORMAT,
+        &transcript::WEBVTT_FORMAT,
+        &transcript::SRT_FORMAT,
+        &ocr_import::JSON_FORMAT,
+        &ocr_import::TSV_FORMAT,
+        &ocr_import::TEXT_FORMAT,
         &atuin::FORMAT,
         &zsh::FORMAT,
         &bash::FORMAT,

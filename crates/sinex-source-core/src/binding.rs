@@ -453,12 +453,19 @@ impl Reader for Rows {
 struct Walked {
     driver: DirSnapshot,
     state: DirState,
+    excluded: Vec<PathBuf>,
 }
 
 pub fn walked(driver: DirSnapshot) -> Reading {
+    walked_excluding(driver, Vec::new())
+}
+
+/// Subtrees owned by another source are left out of this directory walk.
+pub fn walked_excluding(driver: DirSnapshot, excluded: Vec<PathBuf>) -> Reading {
     Reading::Polled(Box::new(Walked {
         driver,
         state: DirState::default(),
+        excluded,
     }))
 }
 
@@ -489,7 +496,8 @@ impl Reader for Walked {
     }
 
     fn poll(&mut self, cursor: &Value) -> Result<Acquired, DriverError> {
-        self.driver.poll(cursor, &mut self.state)
+        self.driver
+            .poll_excluding(cursor, &mut self.state, &self.excluded)
     }
 }
 

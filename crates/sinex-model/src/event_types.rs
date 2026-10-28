@@ -10,9 +10,11 @@ pub mod communication;
 pub mod derived;
 pub mod desktop;
 pub mod finance;
+pub mod documents;
 pub mod forecast;
 pub mod fused;
 pub mod health;
+pub mod imported_text;
 pub mod input;
 pub mod library;
 pub mod machine;
@@ -83,6 +85,10 @@ fn build_from_json<P: EventPayload>(
 pub const ALL: &[RegisteredEventType] = &[
     info::<query::Mark>(),
     info::<query::Saved>(),
+    info::<documents::DocumentCaptured>(),
+    info::<library::FilenameHints>(),
+    info::<imported_text::TranscriptCue>(),
+    info::<imported_text::OcrText>(),
     info::<forecast::Issued>(),
     info::<forecast::Resolved>(),
     info::<CommandExecuted>(),
@@ -188,6 +194,7 @@ pub const ALL: &[RegisteredEventType] = &[
     info::<library::FileCopy>(),
     info::<library::Item>(),
     info::<library::Rendition>(),
+    info::<library::Preview>(),
     info::<library::Assignment>(),
     info::<library::Collection>(),
     info::<library::Entry>(),

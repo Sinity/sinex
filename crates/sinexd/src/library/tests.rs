@@ -31,7 +31,9 @@ async fn world(db: devkit::pg::TestDatabase) -> World {
         url.clone(),
         connection,
         queues,
-        Arc::new(sinex_store::NoDerivations),
+        Arc::new(crate::dirty_keys::Registered::new(
+            sinex_derivations::keyed(),
+        )),
         Some(blobs.clone()),
     ));
     let conn = <PgConnection as sqlx::Connection>::connect(&url)
@@ -159,7 +161,7 @@ async fn the_library_end_to_end(db: devkit::pg::TestDatabase) {
     let ia = w.item_at(&a).await;
     let ib = w.item_at(&b).await;
 
-    // Adding again changes nothing.
+    // Another scan keeps the items and adds independent file evidence.
     let again = w
         .ok(Request::LibraryAdd {
             path: w.root.display().to_string(),
@@ -331,11 +333,22 @@ async fn the_library_end_to_end(db: devkit::pg::TestDatabase) {
     let vb = w.ok(Request::LibraryItem { item: ib.clone() }).await;
     assert_eq!(vb["properties"]["medium"]["state"], "empty");
 
-    // The library through the query language.
+    // Items are derived once; media keeps both scans of each image.
     assert_eq!(rows(&mut w.conn, "items").await, 3);
     assert_eq!(
+        rows(
+            &mut w.conn,
+            &format!(
+                "items where revision = \"{}\"",
+                view["revision"].as_str().unwrap()
+            )
+        )
+        .await,
+        1
+    );
+    assert_eq!(
         rows(&mut w.conn, "media where media_type = \"image/png\"").await,
-        2
+        4
     );
     assert!(rows(&mut w.conn, "assignments where level = import").await >= 4);
 
@@ -414,8 +427,25 @@ async fn the_library_end_to_end(db: devkit::pg::TestDatabase) {
             .any(|t| t["tag"] == "colour:red")
     );
     let vb = w.ok(Request::LibraryItem { item: ib.clone() }).await;
-    assert_eq!(vb["revision"], 2);
+    assert_eq!(vb["revision"], vb["content"]);
     assert_eq!(vb["revisions"].as_array().unwrap().len(), 2);
+    let old = vb["renditions"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|rendition| {
+            rendition["role"] == "original" && rendition["revision"] != vb["revision"]
+        })
+        .unwrap();
+    let opened = w
+        .ok(Request::LibraryOpen {
+            item: ib.clone(),
+            rendition: Some(old["rendition"].as_str().unwrap().into()),
+        })
+        .await;
+    assert_eq!(opened["revision"], old["revision"]);
+    assert_eq!(opened["content"], old["content"]);
+    std::fs::remove_file(opened["path"].as_str().unwrap()).unwrap();
 
     // Bytes gone from disk are still openable from the content store.
     std::fs::remove_file(&moved).unwrap();
@@ -463,7 +493,7 @@ async fn copy(conn: &mut PgConnection, path: &Path) -> (uuid::Uuid, String) {
     let row: (uuid::Uuid, String) = sqlx::query_as(
         "SELECT e.id, e.payload->>'content' FROM core.events e
          JOIN core.live_equivalence l ON l.event_id = e.id
-         WHERE e.event_type = 'library.copy' AND e.payload->>'path' = $1",
+         WHERE e.event_type = 'library.copy' AND e.payload->>'path' = $1 ORDER BY e.commit_seq DESC LIMIT 1",
     )
     .bind(path.display().to_string())
     .fetch_one(conn)
@@ -547,6 +577,142 @@ async fn library_add_through_an_alias_keeps_one_copy(db: devkit::pg::TestDatabas
     .fetch_one(&mut w.conn)
     .await
     .unwrap();
-    assert_eq!(count, 1);
+    assert_eq!(count, 2);
+    std::fs::remove_dir_all(w.root.parent().unwrap()).unwrap();
+}
+
+#[devkit::test]
+async fn hiding_scans_recomputes_items_and_preview_renditions(db: devkit::pg::TestDatabase) {
+    use sinex_model::{ArchiveRequest, Batch, BatchKind, EventId, OperationId, RunId};
+    let mut w = world(db).await;
+    let file = w.root.join("a.png");
+    image(&file, "red");
+    let add = Request::LibraryAdd {
+        path: w.root.display().to_string(),
+        reference: None,
+    };
+    w.ok(add.clone()).await;
+    let item = w.item_at(&file).await;
+    let (first, _) = copy(&mut w.conn, &file).await;
+    w.ok(add).await;
+    let (second, _) = copy(&mut w.conn, &file).await;
+    assert_ne!(first, second, "a rescan is independent evidence");
+    if ffmpeg() {
+        w.ok(Request::LibraryPreview { item: item.clone() }).await;
+    }
+    let read = <PgConnection as sqlx::Connection>::connect(&w._db.url(None))
+        .await
+        .unwrap();
+    let mut runner = crate::derivation_runner::DerivationRunner::start(
+        read,
+        w.writer.clone(),
+        vec![Box::new(sinex_derivations::library::LibraryItems)],
+        vec![],
+        "h",
+    )
+    .await
+    .unwrap();
+    runner.catch_up().await.unwrap();
+    for (id, visible) in [(first, true), (second, false)] {
+        w.writer
+            .submit(
+                writer::Priority::Live,
+                Batch {
+                    run: RunId::new(),
+                    kind: BatchKind::Api {
+                        actor: "operator".into(),
+                    },
+                    records: vec![],
+                    archive: vec![ArchiveRequest::Hide {
+                        target: EventId(id),
+                        operation: OperationId::new(),
+                    }],
+                },
+            )
+            .await
+            .unwrap();
+        runner.catch_up().await.unwrap();
+        assert_eq!(
+            sinex_library::reads::item(&mut w.conn, &item)
+                .await
+                .unwrap()
+                .is_some(),
+            visible
+        );
+        let renditions = sinex_library::reads::renditions(&mut w.conn, &item)
+            .await
+            .unwrap();
+        assert_eq!(!renditions.is_empty(), visible);
+        if visible && ffmpeg() {
+            assert!(renditions.iter().any(|rendition| rendition.role
+                == sinex_model::event_types::library::RenditionRole::Preview));
+        }
+    }
+    w.writer
+        .submit(
+            writer::Priority::Live,
+            Batch {
+                run: RunId::new(),
+                kind: BatchKind::Api {
+                    actor: "operator".into(),
+                },
+                records: vec![],
+                archive: vec![ArchiveRequest::Unhide {
+                    target: EventId(second),
+                    operation: OperationId::new(),
+                }],
+            },
+        )
+        .await
+        .unwrap();
+    runner.catch_up().await.unwrap();
+    assert!(
+        sinex_library::reads::item(&mut w.conn, &item)
+            .await
+            .unwrap()
+            .is_some()
+    );
+    std::fs::remove_dir_all(w.root.parent().unwrap()).unwrap();
+}
+
+#[devkit::test]
+async fn a_returning_path_continues_its_item_and_curation(db: devkit::pg::TestDatabase) {
+    let mut w = world(db).await;
+    let file = w.root.join("a.txt");
+    std::fs::write(&file, "first revision").unwrap();
+    let add = Request::LibraryAdd {
+        path: w.root.display().to_string(),
+        reference: None,
+    };
+    w.ok(add.clone()).await;
+    let item = w.item_at(&file).await;
+    w.ok(Request::LibraryTag {
+        item: item.clone(),
+        tag: "kept".into(),
+    })
+    .await;
+    let moved = w.root.join("b.txt");
+    std::fs::rename(&file, &moved).unwrap();
+    w.ok(add.clone()).await;
+    std::fs::write(&moved, "second revision").unwrap();
+    w.ok(add.clone()).await;
+    std::fs::remove_file(&moved).unwrap();
+    w.ok(add.clone()).await;
+    std::fs::write(&file, "first revision").unwrap();
+    let returned = w.ok(add).await;
+    assert_eq!(returned["items_new"], 0);
+    assert_eq!(returned["item_revisions"], 1);
+    assert_eq!(returned["items_moved"], 0);
+    assert_eq!(w.item_at(&file).await, item);
+    let view = w.ok(Request::LibraryItem { item }).await;
+    assert_eq!(view["revision"], view["content"]);
+    assert_eq!(view["revisions"].as_array().unwrap().len(), 2);
+    assert!(
+        view["tags"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|tag| tag["tag"] == "kept")
+    );
     std::fs::remove_dir_all(w.root.parent().unwrap()).unwrap();
 }

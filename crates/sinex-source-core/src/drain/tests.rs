@@ -297,7 +297,7 @@ fn invalid_staged_ranges_are_refused_before_record_allocation() {
 fn directory_bundles_keep_empty_members_at_distinct_anchors() {
     use crate::test_parser::NotesParser;
     let manifest = sinex_model::Manifest::from_json(serde_json::json!({
-        "path":"synthetic-vault", "media_type":"application/x-sinex-file-bundle",
+        "path":"synthetic-vault", "media_type":"application/x-tar",
         "members":[{"path":"a.md", "stream_offset":1, "length":5}, {"path":"b.md", "stream_offset":7, "length":0}],
     }));
     let run = |manifest: &sinex_model::Manifest, records: &[(usize, usize)]| {
@@ -337,6 +337,7 @@ fn directory_bundles_keep_empty_members_at_distinct_anchors() {
         path: "b.md".into(),
         stream_offset: 3,
         length: 3,
+        node: None,
         details: Default::default(),
     };
     assert!(run(&overlap, &[(1, 6), (3, 6)]).is_err());
