@@ -9,7 +9,9 @@
         "key": null,
         "state": "Present",
         "payload": {
+          "account": null,
           "message_id": null,
+          "native_id": null,
           "date": "2024-01-02T10:00:00Z",
           "from": [
             "x@example.org"
@@ -25,8 +27,7 @@
           "text": "body\n",
           "html_only": false,
           "attachments": [],
-          "size": 79,
-          "native_id": null
+          "size": 79
         }
       }
     ]

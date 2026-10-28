@@ -348,15 +348,19 @@ async fn search_modes_apply_to_live_indexing_and_its_rebuild(db: devkit::pg::Tes
     let page = crate::commit_log::after(&mut *conn, 0, 10, crate::PAGE_BYTES)
         .await
         .unwrap();
-    crate::read_models::apply_search_text(&mut *conn, &page.events)
+    let mut tx = conn.begin().await.unwrap();
+    crate::read_models::apply_search_text(&mut tx, &page.events)
         .await
         .unwrap();
+    tx.commit().await.unwrap();
     let indexed:Vec<String>=sqlx::query_scalar("SELECT e.event_type FROM core.search_text s JOIN core.events e ON e.id=s.event_id ORDER BY 1").fetch_all(&mut *conn).await.unwrap();
     assert_eq!(indexed, ["example.typed", "example.words"]);
     conn.execute("TRUNCATE core.search_text").await.unwrap();
-    crate::read_models::apply_search_text(&mut *conn, &page.events)
+    let mut tx = conn.begin().await.unwrap();
+    crate::read_models::apply_search_text(&mut tx, &page.events)
         .await
         .unwrap();
+    tx.commit().await.unwrap();
     let indexed:Vec<String>=sqlx::query_scalar("SELECT e.event_type FROM core.search_text s JOIN core.events e ON e.id=s.event_id ORDER BY 1").fetch_all(&mut *conn).await.unwrap();
     assert_eq!(indexed, ["example.typed", "example.words"]);
 }

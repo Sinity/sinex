@@ -580,6 +580,6 @@ fn uid_coordinates_distinguish_equal_messages_and_survive_retries() {
     assert_eq!(first[0].message_id, None);
     assert_eq!(
         first[0].key_kind(),
-        sinex_model::KeyKind::Fields(&["native_id"])
+        sinex_model::KeyKind::Fields(&["account", "native_id"])
     );
 }

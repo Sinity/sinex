@@ -5,6 +5,8 @@ use std::{path::Path, time::Duration};
 #[path = "../../sinex-source-core/tests/support/producer.rs"]
 mod support;
 use support::standin;
+#[path = "../../sinex-source-core/tests/support/hello.rs"]
+mod hello;
 
 #[devkit::test(multi_thread)]
 async fn a_spool_is_produced_once_material_first() {
@@ -179,6 +181,7 @@ async fn drain_retries_pending_frames_then_requires_the_missing_spool() {
     use sinex_sources::{discovery, live};
     let nats = devkit::nats::test_nats().unwrap();
     let subjects = Subjects::new(nats.prefix());
+    hello::hello(&nats, &subjects, "session-test").await;
     let root = tempfile::tempdir().unwrap();
     let spool_root = root.path().join("spool");
     let spool = spool_root.join("hyprland");

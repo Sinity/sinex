@@ -2,7 +2,7 @@ use super::*;
 use sinex_model::event_types::library::FileCopy;
 use sinex_model::{Class, MaterialId, Origin, ReadingOrder, RecordLocation, Timestamp};
 fn copy(path: &str) -> Event {
-    let payload: FileCopy = serde_json::from_value(serde_json::json!({"scan":"example-scan","part_index":0,"item_key":"example-key","item":"example-item","scanned_at":"1960-01-01T00:00:00Z","host":"example-host","root":"/example","path":path,"content":"blake3:example","size":1,"sha256":"example","md5":"example","media_type":"application/pdf","width":null,"height":null,"duration_ms":null,"stored":false,"device":null,"inode":null,"modified_at":"1960-01-01T00:00:00Z","vanished_at":null,"moved_from":null,"previous_content":null})).unwrap();
+    let payload: FileCopy = serde_json::from_value(serde_json::json!({"scan":"example-scan","part_index":0,"item_key":"example-key","item":"example-item","scanned_at":"1960-01-01T00:00:00Z","host":"example-host","root":"/example","path":path,"content":"blake3:example","size":1,"sha256":"example","md5":"example","media_type":"application/pdf","width":null,"height":null,"duration_ms":null,"stored":false,"device":null,"inode":null,"modified_at":"1960-01-01T00:00:00Z","vanished_at":null,"moved_from":null,"previous_content":null,"move_candidates":[]})).unwrap();
     Event::build(
         &payload,
         "library.scan",

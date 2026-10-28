@@ -1,3 +1,5 @@
+#[path = "../../../sinex-source-core/tests/support/hello.rs"]
+mod hello;
 use std::io::BufRead;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
@@ -322,6 +324,12 @@ fn capture_deadline_reaps_clipboard_and_audio_children() {
 #[devkit::test]
 fn run_deadline_reaps_both_clipboard_selections() {
     let nats = devkit::nats::test_nats().unwrap();
+    let _runtime = tokio::runtime::Runtime::new().unwrap();
+    _runtime.block_on(hello::hello(
+        &nats,
+        &sinex_protocol::Subjects::new(nats.prefix()),
+        "fixture",
+    ));
     let fixture = Fixture::new();
     let output = Session {
         child: Some(fixture.run(&nats).args(["--seconds", "1"]).spawn().unwrap()),
@@ -340,6 +348,12 @@ fn run_deadline_reaps_both_clipboard_selections() {
 fn run_signals_join_capture_threads_and_reap_children() {
     for signal in ["INT", "TERM"] {
         let nats = devkit::nats::test_nats().unwrap();
+        let _runtime = tokio::runtime::Runtime::new().unwrap();
+        _runtime.block_on(hello::hello(
+            &nats,
+            &sinex_protocol::Subjects::new(nats.prefix()),
+            "fixture",
+        ));
         let fixture = Fixture::new();
         let session = Session {
             child: Some(fixture.run(&nats).spawn().unwrap()),
@@ -359,6 +373,12 @@ fn run_signals_join_capture_threads_and_reap_children() {
 #[devkit::test]
 fn publishing_errors_leave_capture_children_running_until_stopped() {
     let nats = devkit::nats::test_nats().unwrap();
+    let _runtime = tokio::runtime::Runtime::new().unwrap();
+    _runtime.block_on(hello::hello(
+        &nats,
+        &sinex_protocol::Subjects::new(nats.prefix()),
+        "fixture",
+    ));
     let fixture = Fixture::new();
     // No ingress stream exists: publishing the captured synthetic line fails.
     let mut session = Session {
@@ -377,6 +397,12 @@ fn publishing_errors_leave_capture_children_running_until_stopped() {
 #[devkit::test]
 fn a_first_record_after_saved_empty_polls_reaches_transport_while_capture_continues() {
     let nats = devkit::nats::test_nats().unwrap();
+    let _runtime = tokio::runtime::Runtime::new().unwrap();
+    _runtime.block_on(hello::hello(
+        &nats,
+        &sinex_protocol::Subjects::new(nats.prefix()),
+        "fixture",
+    ));
     let fixture = Fixture::new();
     let release = fixture.root.join("emit");
     let mut session = Session {
@@ -421,6 +447,12 @@ fn a_first_record_after_saved_empty_polls_reaches_transport_while_capture_contin
 #[devkit::test]
 fn drain_without_spools_exits_without_starting_session_captures() {
     let nats = devkit::nats::test_nats().unwrap();
+    let _runtime = tokio::runtime::Runtime::new().unwrap();
+    _runtime.block_on(hello::hello(
+        &nats,
+        &sinex_protocol::Subjects::new(nats.prefix()),
+        "fixture",
+    ));
     let fixture = Fixture::new();
     let output = Session {
         child: Some(fixture.run(&nats).arg("--drain").spawn().unwrap()),
@@ -439,6 +471,12 @@ fn drain_without_spools_exits_without_starting_session_captures() {
 fn drain_reads_a_stopped_spool_without_session_capabilities_and_keeps_unacknowledged_bytes() {
     use sinex_source_core::drivers::live_stream::{Rotation, SpoolWriter};
     let nats = devkit::nats::test_nats().unwrap();
+    let _runtime = tokio::runtime::Runtime::new().unwrap();
+    _runtime.block_on(hello::hello(
+        &nats,
+        &sinex_protocol::Subjects::new(nats.prefix()),
+        "fixture",
+    ));
     let fixture = Fixture::new();
     let spool = fixture.root.join("state/spool/clipboard");
     let mut writer = SpoolWriter::open(&spool, Rotation::default()).unwrap();

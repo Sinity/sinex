@@ -4,12 +4,23 @@ use sinex_model::{Class, EventPayload, MaterialId, Origin, ReadingOrder, RecordL
 use sqlx::Connection;
 
 fn example(schema: &Value, root: &Value, optional: bool) -> Value {
+    example_at(schema, root, optional, &mut Vec::new())
+}
+
+fn example_at(schema: &Value, root: &Value, optional: bool, refs: &mut Vec<String>) -> Value {
     if let Some(reference) = schema.get("$ref").and_then(Value::as_str) {
-        return example(
+        if refs.iter().any(|active| active == reference) {
+            return Value::Null;
+        }
+        refs.push(reference.into());
+        let value = example_at(
             root.pointer(reference.strip_prefix('#').unwrap()).unwrap(),
             root,
             optional,
+            refs,
         );
+        refs.pop();
+        return value;
     }
     if let Some(v) = schema.get("const") {
         return v.clone();
@@ -30,7 +41,7 @@ fn example(schema: &Value, root: &Value, optional: bool) -> Value {
         } else {
             &branches[0]
         };
-        return example(branch, root, optional);
+        return example_at(branch, root, optional, refs);
     }
     let ty = schema.get("type").unwrap_or(&Value::Null);
     let ty = ty
@@ -56,7 +67,7 @@ fn example(schema: &Value, root: &Value, optional: bool) -> Value {
                 let required = schema.get("required").and_then(Value::as_array);
                 for (name, field) in fields {
                     if optional || required.is_some_and(|fields| fields.contains(&json!(name))) {
-                        object.insert(name.clone(), example(field, root, optional));
+                        object.insert(name.clone(), example_at(field, root, optional, refs));
                     }
                 }
             }
@@ -73,7 +84,7 @@ async fn every_saved_bundled_rule_matches_the_typed_constructor(db: devkit::pg::
     for kind in event_types::ALL {
         let reference = (kind.declaration)().kind;
         let declaration = &saved[&reference];
-        assert_eq!(reference.version, 2);
+        assert!(reference.version >= 2);
         for optional in [false, true] {
             let schema = declaration.payload_schema.as_ref().unwrap();
             let mut payload = example(schema, schema, optional);

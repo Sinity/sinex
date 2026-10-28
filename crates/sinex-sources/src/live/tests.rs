@@ -12,7 +12,7 @@ fn options_keep_numbers_and_flags_and_collect_lists() {
     .unwrap();
     assert_eq!(
         o,
-        serde_json::json!({"every": 60, "kind": "false", "follow": "true", "roots": ["/a", "/b"]})
+        serde_json::json!({"every": 60, "kind": false, "follow": true, "roots": ["/a", "/b"]})
     );
     assert_eq!(options(&[]).unwrap(), Value::Null);
     assert!(options(&["novalue".into()]).is_err());

@@ -4297,8 +4297,10 @@ dependencies = [
 name = "sinex-session"
 version = "0.1.0"
 dependencies = [
+ "async-nats",
  "clap",
  "devkit",
+ "futures",
  "serde_json",
  "sinex-model",
  "sinex-protocol",

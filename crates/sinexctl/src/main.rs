@@ -262,7 +262,7 @@ async fn main() -> ExitCode {
                 Err(e) => fail(1, e),
             };
         }
-        "status" if sub.get_flag("offline") => {
+        "status" if offline => {
             let Some(database) = sub.get_one::<String>("database") else {
                 return fail(1, "status --offline needs --database");
             };

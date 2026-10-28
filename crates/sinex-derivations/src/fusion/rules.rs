@@ -461,21 +461,26 @@ pub static NOTIFICATIONS: FusionRule = FusionRule {
 
 fn mail(event: &Event) -> Option<FusionRecord> {
     let p = &event.payload;
-    let message_id = text(p, "/message_id").filter(|id| !id.trim().is_empty())?;
-    let identity = match text(p, "/account") {
-        Some(account) => json!(["account", account, message_id]),
-        None => json!(["source", event.source, message_id]),
-    }
-    .to_string();
+    let message_id = text(p, "/message_id");
+    let identity = match (text(p, "/account"), message_id) {
+        (Some(account), Some(id)) => json!(["account", account, id]).to_string(),
+        (None, Some(id)) => json!(["source", event.source, id]).to_string(),
+        (_, None) => format!("record\0{}", crate::derived_event::record_identity(event)),
+    };
     fusion_record(
         event,
         identity,
         None,
         fields([
+            ("account", p.get("account").cloned()),
             ("message_id", Some(json!(message_id))),
             ("subject", p.get("subject").cloned()),
             ("from", p.get("from").cloned()),
             ("thread_id", p.get("thread_id").cloned()),
+            (
+                "labels",
+                Some(p.get("labels").cloned().unwrap_or_else(|| json!([]))),
+            ),
         ]),
     )
 }

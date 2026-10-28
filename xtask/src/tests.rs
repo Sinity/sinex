@@ -85,7 +85,6 @@ fn compile_prepares_a_database_only_for_packages_with_checked_queries() {
     };
     for args in [
         vec!["-p", "sinexctl"],
-        vec!["--package=sinex-session", "--tests"],
         vec!["-psinex-capture"],
         vec!["-p", "sinex-schema", "-p", "sinex-model"],
     ] {
@@ -97,6 +96,7 @@ fn compile_prepares_a_database_only_for_packages_with_checked_queries() {
         vec![],
         vec!["--workspace"],
         vec!["-p", "sinex-store"],
+        vec!["--package=sinex-session", "--tests"],
         vec!["-p", "sinexctl", "--workspace"],
         vec!["-p", "sinexctl", "-p", "sinexd"],
         vec!["-p"],

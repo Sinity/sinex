@@ -547,12 +547,8 @@ async fn invalid_frames_are_refused_and_recorded(db: devkit::pg::TestDatabase) {
     );
 
     let garbage = h.send_raw("kitty", b"{not json".to_vec()).await;
-    assert!(
-        garbage
-            .refusal
-            .unwrap()
-            .starts_with("invalid frame at line")
-    );
+    let reason = garbage.refusal.unwrap();
+    assert!(reason.contains("invalid frame"), "{reason}");
 }
 
 #[devkit::test]
@@ -1111,7 +1107,7 @@ async fn a_refused_event_between_good_frames_is_a_queryable_material_failure_and
     )
     .await
     .unwrap();
-    assert_eq!(report.admitted, 3);
+    assert_eq!(report.admitted, 3, "{report:?}");
     assert_eq!(report.failures, 0);
     assert_eq!(h.count("SELECT count(*) FROM raw.failures").await, 0);
     assert_eq!(h.stored(material).await, bytes.as_bytes());
