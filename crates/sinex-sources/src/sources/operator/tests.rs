@@ -110,6 +110,7 @@ fn steering_rows_take_their_tables_time() {
 #[devkit::test]
 fn each_steering_table_is_its_own_binding() {
     let settings = sinex_source_core::Settings {
+        class: None,
         host: "h".into(),
         zone: None,
         options: Value::Null,

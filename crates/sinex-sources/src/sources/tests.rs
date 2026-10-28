@@ -71,6 +71,7 @@ fn every_source_resolves_its_parser_from_a_binding() {
         // Sources reading local times need a zone; give every binding one.
         let binding = Binding {
             settings: Settings {
+                class: None,
                 zone: Some("UTC".into()),
                 options: serde_json::json!({"kind": "screen"}),
                 ..binding.settings

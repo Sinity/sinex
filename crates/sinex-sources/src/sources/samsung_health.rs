@@ -336,6 +336,19 @@ pub fn driver(path: PathBuf, host: String) -> ExportArchive {
 pub const FORMAT: sinex_source_core::binding::InputFormat =
     sinex_source_core::binding::InputFormat {
         name: "samsung-health",
+        discovery: sinex_source_core::discovery::DiscoverySpec {
+            owner: sinex_source_core::discovery::Owner::System,
+            locations: &[sinex_source_core::discovery::Location {
+                root: "input",
+                path: "samsung-health",
+            }],
+            capabilities: &[],
+            credentials: &[],
+            streams: &[],
+            requests: &[],
+            request_only: false,
+        },
+        discover: crate::discovery::discover_format,
         specs: || vec![&SPEC, &ATTACHMENTS],
         plan: Some(|input, settings| {
             let zip = |p: &std::path::Path| p.extension().is_some_and(|e| e == "zip");

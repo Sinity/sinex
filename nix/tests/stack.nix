@@ -29,15 +29,12 @@ self: {
     services.sinex = {
       enable = true;
       nats.daemonPasswordFile = "/etc/sinex-test/nats-daemon";
-      journald.enable = true;
       readAnyFile = true;
       sources."terminal.zsh-history" = {
-        enable = true;
         paths = [ "/home/alice/.zsh_history" ];
       };
       backfills.books = [ "goodreads=/etc/sinex-test/library_export.csv" ];
       session = {
-        enable = true;
         user = "alice";
         passwordFile = "/etc/sinex-test/nats-session";
         watch = [ "/home/alice/notes" ];

@@ -30,6 +30,8 @@ pub fn zone(name: Option<&str>) -> Result<jiff::tz::TimeZone, String> {
 pub struct Settings {
     /// The host the input is on.
     pub host: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub class: Option<sinex_model::Class>,
     /// IANA zone for sources whose records carry local times without one,
     /// resolved when the binding is planned.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -199,8 +201,11 @@ pub type Capture = fn(&Binding, &crate::capture::CaptureStop) -> Result<u64, Str
 
 /// An input format and the sources that read it: what `--read FORMAT=PATH`,
 /// `sources.json` and `sinex-session` name.
+#[derive(Debug)]
 pub struct InputFormat {
     pub name: &'static str,
+    pub discovery: crate::discovery::DiscoverySpec,
+    pub discover: crate::discovery::Discover,
     pub specs: fn() -> Vec<&'static SourceSpec>,
     /// `None` for sources written only through another path (the API's
     /// library requests, the crawl command): they are replayable but not
