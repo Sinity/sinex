@@ -2,6 +2,7 @@ use async_nats::jetstream;
 use futures::StreamExt;
 use serde_json::json;
 use sinex_protocol::{Acknowledgment, Ingress, Subjects};
+use sinex_source_core::Reader;
 use sinex_source_core::drivers::producer::{Position, Producer, Store};
 use std::{
     path::Path,
@@ -104,13 +105,13 @@ async fn a_spool_is_produced_once_material_first() {
     .unwrap();
     let store = Store::open(&dir.join("store")).unwrap();
     let positions = dir.join("positions");
-    let driver = hyprland::driver(spool, "h".into());
+    let mut driver = hyprland::driver(spool, "h".into());
     let source = hyprland::source();
     let mut producer = Producer::connect(nats.url(), None, subjects, "session-test")
         .await
         .unwrap();
 
-    let poll = |producer_positions: &Path| {
+    let mut poll = |producer_positions: &Path| {
         let p = Position::load(producer_positions, "hyprland@h").unwrap();
         driver.poll(&p.cursor).unwrap()
     };

@@ -130,6 +130,8 @@ async fn upgrading_from_version_0_counts_the_stored_events(db: devkit::pg::TestD
     conn.execute("DELETE FROM registry.event_types WHERE name IN ('operator.mark','query.saved')")
         .await
         .unwrap();
+    conn.execute("DROP TRIGGER blob_changes ON core.blobs; DROP FUNCTION core.note_blob_change(); DELETE FROM core.counters WHERE name='blob_changes'")
+        .await.unwrap();
     conn.execute("UPDATE sinex_schema.applied SET version = 0")
         .await
         .unwrap();
@@ -182,6 +184,8 @@ async fn an_upgrade_waits_for_no_writer(db: devkit::pg::TestDatabase) {
     conn.execute("DELETE FROM registry.event_types WHERE name IN ('operator.mark','query.saved')")
         .await
         .unwrap();
+    conn.execute("DROP TRIGGER blob_changes ON core.blobs; DROP FUNCTION core.note_blob_change(); DELETE FROM core.counters WHERE name='blob_changes'")
+        .await.unwrap();
     conn.execute("UPDATE sinex_schema.applied SET version = 0")
         .await
         .unwrap();
@@ -223,6 +227,8 @@ async fn upgrading_from_version_3_registers_query_kinds_and_keeps_events(
     conn.execute("DELETE FROM registry.event_types WHERE name IN ('operator.mark','query.saved')")
         .await
         .unwrap();
+    conn.execute("DROP TRIGGER blob_changes ON core.blobs; DROP FUNCTION core.note_blob_change(); DELETE FROM core.counters WHERE name='blob_changes'")
+        .await.unwrap();
     conn.execute("UPDATE sinex_schema.applied SET version=3")
         .await
         .unwrap();

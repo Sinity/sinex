@@ -167,7 +167,7 @@ impl PrivateMode {
 pub struct Cached {
     mode: PrivateMode,
     every: Duration,
-    last: Option<(Instant, bool)>,
+    last: std::sync::Mutex<Option<(Instant, bool)>>,
 }
 
 impl Cached {
@@ -175,16 +175,19 @@ impl Cached {
         Self {
             mode,
             every,
-            last: None,
+            last: std::sync::Mutex::new(None),
         }
     }
 
-    pub fn on(&mut self) -> bool {
-        match self.last {
+    pub fn on(&self) -> bool {
+        let Ok(mut last) = self.last.lock() else {
+            return true;
+        };
+        match *last {
             Some((at, on)) if at.elapsed() < self.every => on,
             _ => {
                 let on = self.mode.on();
-                self.last = Some((Instant::now(), on));
+                *last = Some((Instant::now(), on));
                 on
             }
         }

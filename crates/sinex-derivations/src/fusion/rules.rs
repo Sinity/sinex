@@ -8,7 +8,7 @@
 //! made), window samples from arbtt (one record every few seconds, not one
 //! per focus), and the terminal's command reports (they carry no host, which
 //! a command's identity needs).
-use super::{FusionInput, FusionRecord, FusionRule};
+use super::{FusionReader, FusionRule, Sighting};
 use serde_json::{Map, Value, json};
 use sinex_model::Event;
 use sinex_model::Timestamp;
@@ -44,13 +44,13 @@ fn fields<const N: usize>(pairs: [(&str, Option<Value>); N]) -> Map<String, Valu
         .collect()
 }
 
-fn fusion_record(
+fn sighting(
     event: &Event,
     identity: String,
     end: Option<Timestamp>,
     fields: Map<String, Value>,
-) -> Option<FusionRecord> {
-    Some(FusionRecord {
+) -> Option<Sighting> {
+    Some(Sighting {
         identity,
         start: event.ts_orig.at?,
         end,
@@ -65,7 +65,7 @@ fn host_of(hostname: &str) -> &str {
     hostname.split(':').next().unwrap_or(hostname)
 }
 
-fn command(event: &Event, extra: Map<String, Value>) -> Option<FusionRecord> {
+fn command(event: &Event, extra: Map<String, Value>) -> Option<Sighting> {
     let p = &event.payload;
     let command = p.get("command")?.as_str()?.trim();
     let host = host_of(p.get("hostname")?.as_str()?);
@@ -74,15 +74,15 @@ fn command(event: &Event, extra: Map<String, Value>) -> Option<FusionRecord> {
         ("host", Some(json!(host))),
     ]);
     fields.extend(extra);
-    fusion_record(event, format!("{host}\0{command}"), None, fields)
+    sighting(event, format!("{host}\0{command}"), None, fields)
 }
 
 pub static COMMANDS: FusionRule = FusionRule {
     derivation: "command.fusion",
     version: 2,
     output: "command.fused",
-    fusion_inputs: &[
-        FusionInput {
+    readers: &[
+        FusionReader {
             event_type: "command.executed",
             only: &[],
             source: None,
@@ -100,7 +100,7 @@ pub static COMMANDS: FusionRule = FusionRule {
                 )
             },
         },
-        FusionInput {
+        FusionReader {
             event_type: "command.imported",
             only: &[],
             source: None,
@@ -108,7 +108,7 @@ pub static COMMANDS: FusionRule = FusionRule {
             read: |e| command(e, Map::new()),
         },
     ],
-    inputs: &["command.executed", "command.imported"],
+    event_types: &["command.executed", "command.imported"],
     window_ns: secs(2),
     fallback_ns: secs(60),
     absorb_ns: None,
@@ -116,7 +116,7 @@ pub static COMMANDS: FusionRule = FusionRule {
     end_field: None,
 };
 
-// Window focus. Focus is exclusive, so every focus fusion record has one identity:
+// Window focus. Focus is exclusive, so every focus sighting has one identity:
 // what one source calls `kitty` and another `Kitty` is the same focus when it
 // began at the same moment.
 
@@ -125,8 +125,8 @@ fn focus(
     end: Option<Timestamp>,
     app: Option<&str>,
     title: Option<&str>,
-) -> Option<FusionRecord> {
-    fusion_record(
+) -> Option<Sighting> {
+    sighting(
         event,
         String::new(),
         end,
@@ -141,9 +141,9 @@ pub static FOCUS: FusionRule = FusionRule {
     derivation: "focus.fusion",
     version: 1,
     output: "focus.fused",
-    fusion_inputs: &[
+    readers: &[
         // The compositor's focus changes, as intervals cut by going AFK.
-        FusionInput {
+        FusionReader {
             event_type: "state.interval",
             only: &[("state_kind", "desktop.focus")],
             source: None,
@@ -158,7 +158,7 @@ pub static FOCUS: FusionRule = FusionRule {
                 )
             },
         },
-        FusionInput {
+        FusionReader {
             event_type: "window.span",
             only: &[],
             source: None,
@@ -169,7 +169,7 @@ pub static FOCUS: FusionRule = FusionRule {
             },
         },
     ],
-    inputs: &["state.interval", "window.span"],
+    event_types: &["state.interval", "window.span"],
     window_ns: secs(2),
     fallback_ns: secs(30),
     absorb_ns: Some(secs(4 * 3600)),
@@ -179,8 +179,8 @@ pub static FOCUS: FusionRule = FusionRule {
 
 // Page visits.
 
-fn visit(event: &Event, url: &str, title: Option<&str>) -> Option<FusionRecord> {
-    fusion_record(
+fn visit(event: &Event, url: &str, title: Option<&str>) -> Option<Sighting> {
+    sighting(
         event,
         url.to_owned(),
         None,
@@ -195,22 +195,22 @@ pub static VISITS: FusionRule = FusionRule {
     derivation: "visit.fusion",
     version: 1,
     output: "visit.fused",
-    fusion_inputs: &[
-        FusionInput {
+    readers: &[
+        FusionReader {
             event_type: "browser.visit",
             only: &[],
             source: None,
             spans: false,
             read: |e| visit(e, text(&e.payload, "/url")?, text(&e.payload, "/title")),
         },
-        FusionInput {
+        FusionReader {
             event_type: "browser.history_entry",
             only: &[],
             source: None,
             spans: false,
             read: |e| visit(e, text(&e.payload, "/url")?, text(&e.payload, "/title")),
         },
-        FusionInput {
+        FusionReader {
             event_type: "lake.observed",
             only: &[("lane", "browser-nav-edges")],
             source: None,
@@ -225,7 +225,7 @@ pub static VISITS: FusionRule = FusionRule {
             },
         },
     ],
-    inputs: &["browser.visit", "browser.history_entry", "lake.observed"],
+    event_types: &["browser.visit", "browser.history_entry", "lake.observed"],
     window_ns: secs(3),
     fallback_ns: secs(30),
     absorb_ns: None,
@@ -243,13 +243,13 @@ fn play(
     artist: Option<&str>,
     end: Option<Timestamp>,
     extra: [(&str, Option<Value>); 2],
-) -> Option<FusionRecord> {
+) -> Option<Sighting> {
     let mut fields = fields([
         ("title", Some(json!(title))),
         ("artist", artist.map(|a| json!(a))),
     ]);
     fields.extend(self::fields(extra));
-    fusion_record(
+    sighting(
         event,
         format!("{}\0{}", norm(title), artist.map(norm).unwrap_or_default()),
         end,
@@ -277,8 +277,8 @@ pub static PLAYS: FusionRule = FusionRule {
     derivation: "play.fusion",
     version: 2,
     output: "play.fused",
-    fusion_inputs: &[
-        FusionInput {
+    readers: &[
+        FusionReader {
             event_type: "music.played",
             only: &[],
             source: None,
@@ -296,7 +296,7 @@ pub static PLAYS: FusionRule = FusionRule {
                 )
             },
         },
-        FusionInput {
+        FusionReader {
             event_type: "player.changed",
             only: &[],
             source: None,
@@ -319,7 +319,7 @@ pub static PLAYS: FusionRule = FusionRule {
                 )
             },
         },
-        FusionInput {
+        FusionReader {
             event_type: "lake.observed",
             only: &[("lane", "mpris")],
             source: None,
@@ -345,7 +345,7 @@ pub static PLAYS: FusionRule = FusionRule {
             },
         },
     ],
-    inputs: &["music.played", "player.changed", "lake.observed"],
+    event_types: &["music.played", "player.changed", "lake.observed"],
     window_ns: secs(10),
     fallback_ns: secs(60),
     absorb_ns: Some(secs(2 * 3600)),
@@ -362,13 +362,13 @@ fn copy(
     text: Option<&str>,
     mime_type: Option<&str>,
     bytes: Option<u64>,
-) -> Option<FusionRecord> {
+) -> Option<Sighting> {
     let content = match (text, mime_type, bytes) {
         (Some(t), _, _) => format!("text\0{t}"),
         (None, Some(m), Some(b)) => format!("{m}\0{b}"),
         _ => return None,
     };
-    fusion_record(
+    sighting(
         event,
         format!("{selection}\0{content}"),
         None,
@@ -380,7 +380,7 @@ fn copy(
     )
 }
 
-fn lake_copy(event: &Event, selection: &str) -> Option<FusionRecord> {
+fn lake_copy(event: &Event, selection: &str) -> Option<Sighting> {
     let p = &event.payload;
     copy(
         event,
@@ -395,8 +395,8 @@ pub static CLIPBOARD: FusionRule = FusionRule {
     derivation: "clipboard.fusion",
     version: 1,
     output: "clipboard.fused",
-    fusion_inputs: &[
-        FusionInput {
+    readers: &[
+        FusionReader {
             event_type: "clipboard.copied",
             only: &[],
             source: None,
@@ -415,14 +415,14 @@ pub static CLIPBOARD: FusionRule = FusionRule {
                 )
             },
         },
-        FusionInput {
+        FusionReader {
             event_type: "lake.observed",
             only: &[("lane", "clipboard")],
             source: None,
             spans: false,
             read: |e| lake_copy(e, "clipboard"),
         },
-        FusionInput {
+        FusionReader {
             event_type: "lake.observed",
             only: &[("lane", "primary")],
             source: None,
@@ -430,7 +430,7 @@ pub static CLIPBOARD: FusionRule = FusionRule {
             read: |e| lake_copy(e, "primary"),
         },
     ],
-    inputs: &["clipboard.copied", "lake.observed"],
+    event_types: &["clipboard.copied", "lake.observed"],
     window_ns: secs(2),
     fallback_ns: secs(10),
     absorb_ns: None,
@@ -438,13 +438,8 @@ pub static CLIPBOARD: FusionRule = FusionRule {
     end_field: None,
 };
 
-fn notification(
-    event: &Event,
-    app: &str,
-    summary: &str,
-    body: Option<&str>,
-) -> Option<FusionRecord> {
-    fusion_record(
+fn notification(event: &Event, app: &str, summary: &str, body: Option<&str>) -> Option<Sighting> {
+    sighting(
         event,
         format!("{app}\0{summary}\0{}", body.unwrap_or_default()),
         None,
@@ -460,8 +455,8 @@ pub static NOTIFICATIONS: FusionRule = FusionRule {
     derivation: "notification.fusion",
     version: 1,
     output: "notification.fused",
-    fusion_inputs: &[
-        FusionInput {
+    readers: &[
+        FusionReader {
             event_type: "notification.shown",
             only: &[],
             source: None,
@@ -471,7 +466,7 @@ pub static NOTIFICATIONS: FusionRule = FusionRule {
                 notification(e, text(p, "/app")?, text(p, "/summary")?, text(p, "/body"))
             },
         },
-        FusionInput {
+        FusionReader {
             event_type: "lake.observed",
             only: &[("lane", "notifications")],
             source: None,
@@ -487,7 +482,7 @@ pub static NOTIFICATIONS: FusionRule = FusionRule {
             },
         },
     ],
-    inputs: &["notification.shown", "lake.observed"],
+    event_types: &["notification.shown", "lake.observed"],
     window_ns: secs(2),
     fallback_ns: secs(10),
     absorb_ns: None,
@@ -497,10 +492,10 @@ pub static NOTIFICATIONS: FusionRule = FusionRule {
 
 // Mail: one message stored by several mail sources.
 
-fn mail(event: &Event) -> Option<FusionRecord> {
+fn mail(event: &Event) -> Option<Sighting> {
     let p = &event.payload;
     let message_id = text(p, "/message_id")?;
-    fusion_record(
+    sighting(
         event,
         message_id.to_owned(),
         None,
@@ -513,8 +508,8 @@ fn mail(event: &Event) -> Option<FusionRecord> {
     )
 }
 
-const fn mail_from(source: &'static str) -> FusionInput {
-    FusionInput {
+const fn mail_from(source: &'static str) -> FusionReader {
+    FusionReader {
         event_type: "mail.message",
         only: &[],
         source: Some(source),
@@ -527,14 +522,14 @@ pub static MAIL: FusionRule = FusionRule {
     derivation: "mail.fusion",
     version: 1,
     output: "mail.fused",
-    fusion_inputs: &[
+    readers: &[
         mail_from("communication.imap"),
         mail_from("communication.maildir"),
         mail_from("communication.mbox"),
         mail_from("communication.outlook"),
         mail_from("communication.outlook-csv"),
     ],
-    inputs: &["mail.message"],
+    event_types: &["mail.message"],
     // The same `Date` header wherever the message is stored.
     window_ns: secs(1),
     fallback_ns: secs(1),

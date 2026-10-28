@@ -393,10 +393,6 @@ in
           wal_compression = "lz4";
           password_encryption = "scram-sha-256";
           max_connections = cfg.database.maxConnections;
-          shared_buffers = lib.mkDefault "4GB";
-          max_wal_size = lib.mkDefault "16GB";
-          checkpoint_timeout = lib.mkDefault "30min";
-          work_mem = lib.mkDefault "64MB";
           log_temp_files = lib.mkDefault "16MB";
           # Connection logs would feed back into the journald source.
           log_connections = false;
