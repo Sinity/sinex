@@ -97,9 +97,18 @@ impl QueryCatalog {
     }
 }
 
+fn combined_type(a: &DataType, b: &DataType) -> DataType {
+    match (a, b) {
+        (a, b) if a == b => a.clone(),
+        (DataType::Integer, DataType::Number) | (DataType::Number, DataType::Integer) => DataType::Number,
+        (DataType::Array(a), DataType::Array(b)) => DataType::Array(Box::new(combined_type(a, b))),
+        _ => DataType::Json,
+    }
+}
+
 fn merge(a: &mut FieldDescription, b: FieldDescription) {
     if a.ty != b.ty {
-        a.ty = DataType::Json;
+        a.ty = combined_type(&a.ty, &b.ty);
         a.values.clear();
     } else if a.values.is_empty() || b.values.is_empty() {
         a.values.clear();
@@ -136,11 +145,7 @@ fn datatype(schema: &Json, root: &Json, active: &mut BTreeSet<String>) -> DataTy
             .filter(|s| s["type"] != "null")
             .map(|s| datatype(s, root, active))
             .collect();
-        return types
-            .first()
-            .filter(|t| types.iter().all(|other| other == *t))
-            .cloned()
-            .unwrap_or(DataType::Json);
+        return types.into_iter().reduce(|a, b| combined_type(&a, &b)).unwrap_or(DataType::Json);
     }
     let ty = if let Some(ty) = schema["type"].as_str() {
         Some(ty)

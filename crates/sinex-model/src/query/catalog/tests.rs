@@ -169,3 +169,16 @@ fn schema_binding_rechecks_programmatic_payload_fields() {
         matches!(&query.stages[0], Stage::Fields(fields) if matches!(&fields[0], FieldRef::TypedPayload { ty: FieldType::Integer, .. }))
     );
 }
+
+#[test]
+fn integer_and_number_unions_keep_numeric_fields_and_array_items() {
+    let catalog = QueryCatalog::new([declaration(json!({"type":"object","properties":{
+        "value":{"anyOf":[{"type":"integer"},{"type":"number"}]},
+        "values":{"type":"array","items":{"anyOf":[{"type":"integer"},{"type":"number"}]}}
+    }}))]);
+    assert_eq!(catalog.fields["value"].ty, DataType::Number);
+    assert_eq!(catalog.fields["values"].ty, DataType::Array(Box::new(DataType::Number)));
+    let mut ctx = Context::utc("2026-10-27T15:00:00Z".parse().unwrap());
+    ctx.catalog = Some(catalog);
+    assert!(crate::query::bind("events where event_type = example.reading sum payload.value", &ctx).is_ok());
+}
