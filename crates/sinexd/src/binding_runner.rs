@@ -3,8 +3,7 @@
 //! from the configured paths, recorded with their settings, and read in turn; the
 //! paths are planned again every minute, so files a source starts later are
 //! read too. A binding that fails is reported and retried on the next round,
-//! never stopping the others or the daemon. Private mode pauses every read
-//! until it is off again.
+//! never stopping the others or the daemon.
 use crate::binding_reader::{self, BindingReader};
 use crate::sealing::Sink;
 use crate::writer::WriterHandle;
@@ -225,49 +224,46 @@ pub(crate) async fn run(
         .await
         .map_err(|e| e.to_string())?;
     let sink = Sink(blobs.clone());
-    let private = sinex_transport::private_mode::PrivateMode::default();
     let mut bindings = Bindings::default();
     let mut planned_at: Option<std::time::Instant> = None;
     loop {
-        if !private.on() {
-            if planned_at.is_none_or(|at| at.elapsed() >= PLAN_EVERY) {
-                let before = bindings.readers.len();
-                bindings.extend(&config, &host);
-                if bindings.readers.len() != before {
-                    eprintln!("sinexd: reading {} bindings", bindings.readers.len());
-                }
-                planned_at = Some(std::time::Instant::now());
+        if planned_at.is_none_or(|at| at.elapsed() >= PLAN_EVERY) {
+            let before = bindings.readers.len();
+            bindings.extend(&config, &host);
+            if bindings.readers.len() != before {
+                eprintln!("sinexd: reading {} bindings", bindings.readers.len());
             }
-            // Each failure is logged as it happens, once until it changes or
-            // the binding reads again.
-            let said = &mut bindings.said;
-            binding_reader::read(
-                &mut read_conn,
-                &blobs,
-                &writer,
-                run,
-                &sink,
-                &mut bindings.readers,
-                stop.clone(),
-                binding_reader::Access::default(),
-                &mut |binding, result| {
-                    let key = format!("binding {binding}");
-                    match result {
-                        Err(e) => {
-                            let message = format!("sinexd: binding {binding}: {e}");
-                            if said.get(&key) != Some(&message) {
-                                eprintln!("{message}");
-                                said.insert(key, message);
-                            }
-                        }
-                        Ok(_) => {
-                            said.remove(&key);
+            planned_at = Some(std::time::Instant::now());
+        }
+        // Each failure is logged as it happens, once until it changes or
+        // the binding reads again.
+        let said = &mut bindings.said;
+        binding_reader::read(
+            &mut read_conn,
+            &blobs,
+            &writer,
+            run,
+            &sink,
+            &mut bindings.readers,
+            stop.clone(),
+            binding_reader::Access::default(),
+            &mut |binding, result| {
+                let key = format!("binding {binding}");
+                match result {
+                    Err(e) => {
+                        let message = format!("sinexd: binding {binding}: {e}");
+                        if said.get(&key) != Some(&message) {
+                            eprintln!("{message}");
+                            said.insert(key, message);
                         }
                     }
-                },
-            )
-            .await;
-        }
+                    Ok(_) => {
+                        said.remove(&key);
+                    }
+                }
+            },
+        )
+        .await;
         tokio::select! {
             _ = tokio::time::sleep(interval) => {}
             _ = stop.wait_for(|s| *s) => break,

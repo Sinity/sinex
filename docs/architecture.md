@@ -290,9 +290,9 @@ keys by hour.
 ## Interfaces
 
 `sinex-model` holds identities and payloads. `sinex-protocol` declares the
-public commands and wire types without IO. `sinex-transport` holds the
-private-mode switch and the frame directories, so the daemon, drivers and CLI
-share them without the wire types touching the filesystem. CLI, MCP and HTTP
+public commands and wire types without IO. `sinex-transport` holds the frame
+directories, so the daemon and producers share them without the wire types
+touching the filesystem. CLI, MCP and HTTP
 are generated from the command table. `sinex-diagnostics` is a database-free client of `sinexd admin diagnostics`.
 Offline commands invoke the sibling daemon executable without starting the
 daemon. The database work lives in the daemon; the CLI has no store or SQLx

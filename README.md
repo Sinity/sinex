@@ -35,8 +35,7 @@ and [docs/vocabulary.md](docs/vocabulary.md) names the concepts.
   it registered; replay of stored bytes with the
   current parsers. Hidden records stay out when the source is read again.
 - **Privacy.** Rules applied at admission, the classes `open`, `guarded` and
-  `sealed`, and a private-mode switch that stops capture. Sealed sources are
-  encrypted at rest; capture needs only the class key's public half, and
+  `sealed`. Sealed sources are encrypted at rest; capture needs only the class key's public half, and
   reading or replaying sealed data needs an operator unlock.
 - **Reading.** One query language, search, recall, provenance and read-only
   SQL, through `sinexctl`, the HTTP API and MCP, all generated from one command
@@ -131,13 +130,9 @@ deploy, restart them by hand (`systemctl restart sinex-db-setup sinexd`) and
 check the running binary
 (`readlink /proc/$(systemctl show -p MainPID --value sinexd)/exe`) and
 `sinexctl status`. Login shells get `SINEX_ENDPOINT` (the loopback HTTP API;
-the Unix socket is the daemon user's own), `SINEX_TOKEN_FILE` (the agent token)
-and `SINEX_PRIVATE_MODE`, so `sinexctl` talks to the daemon and
-`sinexctl private on` stops every capture on the host. The operator reads the
-token and sets the switch through the `sinex` group, which takes effect at
-their next login. A switch that cannot be checked also stops capture: each
-process logs the reason once, and `sinexctl private` and `sinexctl status`
-show it.
+the Unix socket is the daemon user's own) and `SINEX_TOKEN_FILE` (the agent token),
+so `sinexctl` talks to the daemon. The operator reads the token through the
+`sinex` group, which takes effect at their next login.
 
 The database has one writer. Starting a backfill
 (`systemctl start sinex-backfill-NAME`) stops sinexd, reads the inputs

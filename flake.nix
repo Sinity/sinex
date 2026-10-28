@@ -42,11 +42,6 @@
         '';
         cargoBuildFlags = [ "-p" "sinexd" "-p" "sinexctl" "-p" "sinex-session" "-p" "sinex-capture" "-p" "xtask" ];
         doCheck = true;
-        # Captures check the private-mode switch under $XDG_RUNTIME_DIR; the
-        # builder has none, and a switch that cannot be checked counts as on.
-        preCheck = ''
-          export XDG_RUNTIME_DIR=$(mktemp -d)
-        '';
         # The memory test measures its process's peak RSS, so it needs a
         # process of its own, which nextest gives it and `cargo test` does not.
         checkFlags = [ "--skip" "drivers::tests::backfill_of_a_large_file_peaks_well_under_its_size" ];

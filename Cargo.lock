@@ -4378,7 +4378,6 @@ dependencies = [
  "sinex-model",
  "sinex-protocol",
  "sinex-source-core",
- "sinex-transport",
  "tar",
  "tempfile",
  "thiserror 2.0.21",
@@ -4440,7 +4439,6 @@ dependencies = [
  "serde_json",
  "sinex-diagnostics",
  "sinex-protocol",
- "sinex-transport",
  "tokio",
 ]
 

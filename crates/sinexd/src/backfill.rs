@@ -244,7 +244,6 @@ pub(crate) async fn drive(
 ) -> Result<Totals, String> {
     let mut totals = Totals::default();
     let started = Instant::now();
-    let private = sinex_transport::private_mode::PrivateMode::default();
     // The source's class: its declaration, raised by the operator's floor.
     // A sealed source seals each material and its events as they are read.
     let floor = sinex_store::privacy::load(read_conn, std::iter::once(source.spec().name))
@@ -258,30 +257,14 @@ pub(crate) async fn drive(
     let material = crate::sealing::Materials::new(sink.0.clone(), effective_class, access)
         .map_err(|e| format!("{}: {e}", source.spec().name))?;
     let checked_stop = stop.clone();
-    // Checked for every buffer read, so the switch is looked at only every
-    // quarter second.
-    let checked_private = std::sync::Mutex::new(sinex_transport::private_mode::Cached::new(
-        sinex_transport::private_mode::PrivateMode::default(),
-        std::time::Duration::from_millis(250),
-    ));
     let check: std::sync::Arc<dyn Fn() -> Result<(), String> + Send + Sync> =
         std::sync::Arc::new(move || {
-            let private = checked_private
-                .lock()
-                .map_or(true, |mut cached| cached.on());
-            if *checked_stop.borrow() || private {
-                return Err("capture cancelled or private mode is on".into());
+            if *checked_stop.borrow() {
+                return Err("capture cancelled".into());
             }
             Ok(())
         });
     loop {
-        // Private mode: capture nothing, and say so rather than report a gap.
-        if private.on() {
-            return Err(format!(
-                "private mode is on ({}); nothing was read",
-                private.path().display()
-            ));
-        }
         if *stop.borrow() {
             return Err("capture cancelled".into());
         }

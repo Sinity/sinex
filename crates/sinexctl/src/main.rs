@@ -87,15 +87,6 @@ fn cli() -> Command {
     }
     app.subcommand(Command::new("mcp").about("Serve the MCP tools on stdin and stdout"))
         .subcommand(
-            Command::new("private")
-                .about("Private mode: while on, no source captures anything")
-                .arg(
-                    Arg::new("state")
-                        .value_parser(["on", "off", "status"])
-                        .default_value("status"),
-                ),
-        )
-        .subcommand(
             Command::new("doctor")
                 .about("Diagnose Sinex without the daemon: database, schema, content store, search index")
                 .arg(Arg::new("database").long("database").required(true))
@@ -247,38 +238,6 @@ async fn main() -> ExitCode {
                 }
                 Err(e) => fail(1, e),
             };
-        }
-        "private" => {
-            use sinex_transport::private_mode::State;
-            let mode = sinex_transport::private_mode::PrivateMode::default();
-            let state = sub
-                .get_one::<String>("state")
-                .map_or("status", String::as_str);
-            if state != "status"
-                && let Err(e) = mode.set(state == "on")
-            {
-                return fail(1, format!("{}: {e}", mode.path().display()));
-            }
-            let switch = mode.state();
-            if json {
-                print_json(&serde_json::json!({
-                    "private_mode": switch.name(),
-                    "switch": mode.path(),
-                    "reason": switch.reason(),
-                }));
-            } else {
-                let said = match &switch {
-                    State::Off => "off".to_string(),
-                    State::On => "on: nothing is captured".to_string(),
-                    State::Unchecked(reason) => {
-                        format!(
-                            "unknown: the switch cannot be checked ({reason}), so nothing is captured"
-                        )
-                    }
-                };
-                println!("private mode is {said} ({})", mode.path().display());
-            }
-            return ExitCode::SUCCESS;
         }
         "status" if sub.get_flag("offline") => {
             let Some(database) = sub.get_one::<String>("database") else {

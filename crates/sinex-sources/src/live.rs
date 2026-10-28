@@ -98,7 +98,7 @@ fn start(k: &'static InputFormat, binding: Binding) -> Result<Live, String> {
 }
 
 /// Produce what every spool holds, every `every`, until `until` (forever
-/// otherwise). Private mode pauses capture and production until it is off.
+/// otherwise).
 pub async fn run(
     producer: &mut Producer,
     store: &Store,
@@ -143,12 +143,7 @@ async fn produce_spools(
     lives: &mut [Live],
     every: Duration,
 ) -> Result<(), String> {
-    let private = sinex_transport::private_mode::PrivateMode::default();
     loop {
-        if private.on() {
-            tokio::time::sleep(Duration::from_secs(1)).await;
-            continue;
-        }
         for live in lives.iter_mut() {
             // Drain everything captured so far, one material at a time.
             loop {
