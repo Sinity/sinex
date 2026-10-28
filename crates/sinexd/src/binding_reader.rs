@@ -69,6 +69,7 @@ pub(crate) async fn once(
         .iter()
         .flat_map(|b| b.source.spec().event_types.iter().copied())
         .collect();
+    emits.push("source.coverage");
     emits.sort_unstable();
     emits.dedup();
     let run = sinex_store::runs::start(
@@ -77,7 +78,7 @@ pub(crate) async fn once(
             name: "sinexd sources",
             kind: "source",
             version: env!("CARGO_PKG_VERSION"),
-            build: option_env!("SINEX_BUILD").unwrap_or("dev"),
+            build: crate::build_identity::current()?,
             emits: &emits,
         },
         host,
@@ -109,12 +110,15 @@ pub(crate) async fn once(
 
 use crate::material_access::Access;
 
+pub(crate) mod coverage;
 mod shared;
 use shared::{SharedFileRead, read_shared, same_file};
 
 /// Each binding's outcome as it is read: its source and result, kept for the
 /// caller, and handed at once to `report` with the binding's name.
 struct Results<'a> {
+    coverage: Vec<sinex_model::event_types::coverage::SourceCoverage>,
+    started_at: sinex_model::Timestamp,
     list: Vec<(String, Result<Totals, String>)>,
     report: &'a mut (dyn FnMut(&str, &Result<Totals, String>) + Send),
 }
@@ -122,6 +126,7 @@ struct Results<'a> {
 impl Results<'_> {
     fn add(&mut self, binding: &Binding, result: Result<Totals, String>) {
         (self.report)(&binding.name, &result);
+        self.coverage.push(coverage::outcome(binding, self.started_at, &result));
         self.list.push((binding.source.clone(), result));
     }
 }
@@ -142,11 +147,15 @@ pub(crate) async fn read(
     report: &mut (dyn FnMut(&str, &Result<Totals, String>) + Send),
 ) -> Vec<(String, Result<Totals, String>)> {
     let mut results = Results {
+        coverage: Vec::new(),
+        started_at: sinex_model::Timestamp::now(),
         list: Vec::new(),
         report,
     };
     let mut passes: Vec<SharedFileRead> = Vec::new();
     for (index, b) in readers.iter_mut().enumerate() {
+        coverage::flush(conn, blobs, writer, run, access, &mut results.coverage, &mut results.list).await;
+        results.started_at = sinex_model::Timestamp::now();
         let init = async {
             if !b.remembered {
                 backfill::record(conn, &b.binding).await?;
@@ -249,7 +258,10 @@ pub(crate) async fn read(
             results.add(&b.binding, result);
         }
     }
+    coverage::flush(conn, blobs, writer, run, access, &mut results.coverage, &mut results.list).await;
     for pass in passes {
+        coverage::flush(conn, blobs, writer, run, access, &mut results.coverage, &mut results.list).await;
+        results.started_at = sinex_model::Timestamp::now();
         let outcome = read_shared(
             conn,
             blobs,
@@ -275,6 +287,7 @@ pub(crate) async fn read(
             }
         }
     }
+    coverage::flush(conn, blobs, writer, run, access, &mut results.coverage, &mut results.list).await;
     results.list
 }
 /// Offer a polled reader the stored history it rebuilds its memory from. A
