@@ -11,6 +11,7 @@
       };
       # The Rust toolchain comes from a pinned nixpkgs that matches the released shared crates.
       rustPkgs = import rust-nixpkgs { inherit system; };
+      compilerTools = rustPkgs.rustc.llvmPackages;
       postgres = pkgs.postgresql_18.withPackages (p: [ p.timescaledb ]);
       package = rustPkgs.rustPlatform.buildRustPackage {
         pname = "sinex";
@@ -64,9 +65,12 @@
         vm-restore = pkgs.testers.runNixOSTest (import ./nix/tests/restore.nix self);
       };
       devShells.${system}.default = pkgs.mkShell {
-        packages = [ rustPkgs.cargo rustPkgs.cargo-nextest rustPkgs.rustc rustPkgs.rustfmt rustPkgs.clippy postgres pkgs.nats-server pkgs.python3 pkgs.pkg-config pkgs.mold ];
+        packages = [ rustPkgs.cargo rustPkgs.cargo-nextest rustPkgs.rustc rustPkgs.rustfmt rustPkgs.clippy compilerTools.llvm pkgs.cargo-llvm-cov pkgs.cargo-fuzz postgres pkgs.nats-server pkgs.python3 pkgs.pkg-config pkgs.mold ];
         # mold links the test binaries several times faster than the default
         # linker; linking was a third to a half of each test binary's build.
+        DEVKIT_FUZZ_RUSTFLAGS = "-Zexternal-clangrt -Clinker=${compilerTools.clang}/bin/clang -Clink-arg=-fsanitize=address";
+        LLVM_COV = "${compilerTools.llvm}/bin/llvm-cov";
+        LLVM_PROFDATA = "${compilerTools.llvm}/bin/llvm-profdata";
         CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUSTFLAGS = "-C link-arg=-fuse-ld=mold";
         shellHook = ''
           # Optional host placement; an explicit CARGO_TARGET_DIR is left as is.

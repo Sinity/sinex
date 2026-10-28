@@ -155,3 +155,50 @@ scratch = "tmpfs"
 cache = "none"
 cap = "cargo"
 unit_properties = ["MemoryHigh=8G"]
+
+[operations.vm]
+description = "Run xtask vm with explicit arguments and recorded results"
+exec = ["cargo", "run", "--locked", "--quiet", "-p", "xtask", "--", "vm"]
+arguments = "required"
+pool = "bulk"
+result = "exit"
+timeout_seconds = 7200
+scratch = "nvme"
+cache = "none"
+cap = "cargo"
+unit_properties = ["MemoryHigh=8G"]
+
+[operations.development]
+description = "Run xtask run with explicit arguments and recorded results"
+exec = ["cargo", "run", "--locked", "--quiet", "-p", "xtask", "--", "run"]
+arguments = "required"
+pool = "normal"
+result = "exit"
+timeout_seconds = 28800
+scratch = "nvme"
+cache = "none"
+unit_properties = ["MemoryHigh=8G"]
+
+[operations.coverage]
+description = "Run xtask coverage with explicit arguments and recorded results"
+exec = ["cargo", "run", "--locked", "--quiet", "-p", "xtask", "--", "coverage"]
+arguments = "required"
+pool = "bulk"
+result = "exit"
+timeout_seconds = 3600
+scratch = "nvme"
+cache = "none"
+cap = "cargo"
+unit_properties = ["MemoryHigh=8G"]
+
+[operations.fuzz]
+description = "Run xtask fuzz with explicit arguments and recorded results"
+exec = ["cargo", "run", "--locked", "--quiet", "-p", "xtask", "--", "fuzz"]
+arguments = "required"
+pool = "bulk"
+result = "exit"
+timeout_seconds = 7200
+scratch = "nvme"
+cache = "none"
+cap = "cargo"
+unit_properties = ["MemoryHigh=8G"]
