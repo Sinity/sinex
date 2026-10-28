@@ -61,3 +61,27 @@ fn declaration_discovery_exposes_the_same_paginated_requests() {
         assert_eq!(encoded["cursor"], "saved");
     }
 }
+
+#[devkit::test]
+fn tool_effects_match_backend_command_access() {
+    let tools = tools();
+    for (name, read_only) in [
+        ("sinex_status", true),
+        ("sinex_query", true),
+        ("sinex_sql", true),
+        ("sinex_hide", false),
+        ("sinex_forecast-issue", false),
+        ("sinex_library-tag", false),
+    ] {
+        let tool = tools.iter().find(|tool| tool.name == name).unwrap();
+        assert_eq!(
+            tool.annotations.as_ref().and_then(|a| a.read_only_hint),
+            Some(read_only),
+            "{name}",
+        );
+    }
+    for spec in COMMANDS.iter().filter(|spec| spec.mcp) {
+        let tool = tools.iter().find(|tool| tool.name == format!("sinex_{}", spec.name)).unwrap();
+        assert_eq!(tool.annotations.as_ref().unwrap().read_only_hint, Some(spec.access == sinex_protocol::Access::Read));
+    }
+}
