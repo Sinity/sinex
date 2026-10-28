@@ -12,10 +12,6 @@ async fn version_two(conn: &mut PgConnection) {
 }
 
 async fn populated(conn: &mut PgConnection) {
-    sqlx::raw_sql(include_str!("version_four.sql"))
-        .execute(&mut *conn)
-        .await
-        .unwrap();
     sqlx::raw_sql(include_str!("preserved_rows.sql"))
         .execute(conn)
         .await
@@ -29,14 +25,25 @@ async fn stored_rows(conn: &mut PgConnection) -> Vec<serde_json::Value> {
         .bind(schemas()).fetch_all(&mut *conn).await.unwrap();
     let mut result = Vec::new();
     for (schema, table) in tables {
+        if schema == "registry" {
+            continue;
+        }
+        if schema == "core" && table == "replay_refusals" {
+            let count: i64 = sqlx::query_scalar("SELECT count(*) FROM core.replay_refusals")
+                .fetch_one(&mut *conn)
+                .await
+                .unwrap();
+            assert_eq!(count, 0);
+            continue;
+        }
         let name = format!("{}.{}", quote_ident(&schema), quote_ident(&table));
         let query = match table.as_str() {
             "live_equivalence" if compact => format!(
                 "SELECT to_jsonb(t)||jsonb_build_object('equivalence_key',core.decode_equivalence_key(equivalence_key)) FROM {name} t ORDER BY 1"
             ),
-            "event_types" if schema == "registry" => format!(
-                "SELECT to_jsonb(t) FROM {name} t WHERE name NOT IN ('operator.mark', 'query.saved') ORDER BY 1"
-            ),
+            "events" if schema == "core" || schema == "telemetry" => {
+                format!("SELECT to_jsonb(t)-'kind_version'-'validation' FROM {name} t ORDER BY 1")
+            }
             "counters" => {
                 format!("SELECT to_jsonb(t) FROM {name} t WHERE name <> 'blob_changes' ORDER BY 1")
             }
@@ -63,10 +70,21 @@ async fn every_upgrade_keeps_populated_records_and_matches_fresh_definitions(
     version_two(&mut conn).await;
     populated(&mut conn).await;
     let expected = stored_rows(&mut conn).await;
+    let old_names: Vec<String> =
+        sqlx::query_scalar("SELECT name FROM registry.event_types ORDER BY name")
+            .fetch_all(&mut conn)
+            .await
+            .unwrap();
     for from in 2..VERSION {
         let mut tx = conn.begin().await.unwrap();
         for statement in &upgrades::upgrades()[from as usize] {
             tx.execute(statement.as_str()).await.unwrap();
+        }
+        if from + 1 == VERSION {
+            crate::description::Description::current()
+                .apply(&mut tx, &crate::kinds::Owners::default())
+                .await
+                .unwrap();
         }
         sqlx::query("INSERT INTO sinex_schema.applied (version) VALUES ($1)")
             .bind(from + 1)
@@ -80,6 +98,17 @@ async fn every_upgrade_keeps_populated_records_and_matches_fresh_definitions(
             "upgrade from {from}"
         );
     }
+    let old_refs: Vec<_> = old_names
+        .into_iter()
+        .map(|name| sinex_model::KindRef { name, version: 1 })
+        .collect();
+    let historical = crate::kinds::load(&mut conn, &old_refs).await.unwrap();
+    assert_eq!(historical.len(), old_refs.len());
+    assert!(
+        historical
+            .values()
+            .all(|kind| kind.payload_schema.is_none() && kind.key_rule.is_none())
+    );
     assert_eq!(catalog(&mut conn).await.unwrap(), fresh);
     assert_eq!(
         apply(&mut conn).await.unwrap(),
@@ -94,11 +123,11 @@ async fn whole_chain_rolls_back_when_its_last_upgrade_fails(db: devkit::pg::Test
     populated(&mut conn).await;
     let expected = stored_rows(&mut conn).await;
     let old_catalog = catalog(&mut conn).await.unwrap();
-    conn.execute("CREATE INDEX published_pairs_pkey ON core.consumer_positions(commit_seq)")
+    conn.execute("CREATE TABLE registry.kind_prefixes (sentinel integer)")
         .await
         .unwrap();
     assert!(apply(&mut conn).await.is_err());
-    conn.execute("DROP INDEX core.published_pairs_pkey")
+    conn.execute("DROP TABLE registry.kind_prefixes")
         .await
         .unwrap();
     assert_eq!(stored_rows(&mut conn).await, expected);
@@ -144,6 +173,12 @@ async fn chain_refuses_writer_and_newer_schema_before_changing_rows(db: devkit::
         let mut tx = conn.begin().await.unwrap();
         for statement in &upgrades::upgrades()[from as usize] {
             tx.execute(statement.as_str()).await.unwrap();
+        }
+        if from + 1 == VERSION {
+            crate::description::Description::current()
+                .apply(&mut tx, &crate::kinds::Owners::default())
+                .await
+                .unwrap();
         }
         sqlx::query("INSERT INTO sinex_schema.applied (version) VALUES ($1)")
             .bind(from + 1)

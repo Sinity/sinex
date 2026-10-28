@@ -141,7 +141,7 @@ pub struct Rendition {
 
 /// A rendered preview submitted as evidence for a rendition.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
-#[event(
+#[event(version = 2,
     type = "library.preview",
     key = ["rendition"],
     replace = newer,
@@ -384,7 +384,7 @@ pub const REQUEST_TYPES: &[&str] = &[
 ];
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
-#[event(type = "library.filename_hints", key = ["copy"], replace = newer)]
+#[event(version = 2, type = "library.filename_hints", key = ["copy"], replace = newer)]
 pub struct FilenameHints {
     pub copy: EventId,
     pub path: String,

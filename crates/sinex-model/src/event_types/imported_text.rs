@@ -7,7 +7,7 @@ use serde_json::{Map, Value};
 #[derive(
     Clone, Debug, Default, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload,
 )]
-#[event(type = "transcript.cue", key = location, replace = newer, time = at, quality = intrinsic)]
+#[event(version = 2, type = "transcript.cue", key = location, replace = newer, time = at, quality = intrinsic)]
 pub struct TranscriptCue {
     pub input: String,
     pub provider_id: Option<String>,
@@ -40,7 +40,7 @@ pub struct BoundingBox {
 #[derive(
     Clone, Debug, Default, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload,
 )]
-#[event(type = "ocr.text", key = location, replace = newer)]
+#[event(version = 2, type = "ocr.text", key = location, replace = newer)]
 pub struct OcrText {
     pub input: String,
     pub provider_id: Option<String>,

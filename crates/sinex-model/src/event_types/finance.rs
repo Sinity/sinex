@@ -40,7 +40,7 @@ pub struct IncludeTarget {
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
-#[event(type = "transaction.posted", key = ["host", "journal", "member", "member_duplicate", "block_hash", "duplicate", "included_from", "resolved_date", "resolved_effective_date"], replace = repeat)]
+#[event(version = 2, type = "transaction.posted", key = ["host", "journal", "member", "member_duplicate", "block_hash", "duplicate", "included_from", "resolved_date", "resolved_effective_date"], replace = repeat)]
 pub struct TransactionPosted {
     pub host: String,
     pub journal: String,
@@ -67,7 +67,7 @@ pub struct TransactionPosted {
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
-#[event(type = "journal.directive", key = ["host", "journal", "member", "member_duplicate", "block_hash", "duplicate", "included_from"], replace = repeat)]
+#[event(version = 2, type = "journal.directive", key = ["host", "journal", "member", "member_duplicate", "block_hash", "duplicate", "included_from"], replace = repeat)]
 pub struct JournalDirective {
     pub host: String,
     pub journal: String,
@@ -82,7 +82,7 @@ pub struct JournalDirective {
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
-#[event(type = "journal.imported", key = ["host", "journal", "member", "member_duplicate", "block_hash", "duplicate", "included_from"], replace = repeat)]
+#[event(version = 2, type = "journal.imported", key = ["host", "journal", "member", "member_duplicate", "block_hash", "duplicate", "included_from"], replace = repeat)]
 pub struct JournalImported {
     pub host: String,
     pub journal: String,

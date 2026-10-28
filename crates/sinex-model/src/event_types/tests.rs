@@ -135,3 +135,11 @@ fn search_policy_keeps_full_text_for_high_volume_kinds() {
     assert_eq!(excluded, ["journal.entry", "lake.observed"]);
     assert!(find("command.imported").unwrap().trigram_indexed);
 }
+
+#[devkit::test]
+fn current_declarations_reserve_version_one_for_historical_readings() {
+    for kind in ALL {
+        let declaration = (kind.declaration)();
+        assert!(declaration.kind.version >= 2, "{}", declaration.kind.name);
+    }
+}

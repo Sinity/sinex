@@ -32,7 +32,17 @@ fn kind_upgrade_uses_the_current_column_definitions() {
                 .any(|view| view.name == kind.kind.name.replace('.', "_"))
         );
     }
-    assert_eq!(crate::upgrades::NAMED, &["kind_declarations"]);
+    assert_eq!(
+        crate::upgrades::NAMED,
+        &[
+            "blob_change_tracking",
+            "library_scans",
+            "compact_equivalence_keys",
+            "search_text",
+            "publication_pairs",
+            "kind_declarations"
+        ]
+    );
 }
 
 #[test]

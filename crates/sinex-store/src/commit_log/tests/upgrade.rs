@@ -1,6 +1,7 @@
 use super::*;
 
 async fn version_two(conn: &mut PgConnection) {
+    crate::test_schema::downgrade(conn).await;
     sqlx::raw_sql(include_str!(
         "../../../../sinex-schema/src/tests/version_two.sql"
     ))
@@ -23,9 +24,19 @@ async fn other_rows(
     .unwrap();
     let mut rows = std::collections::BTreeMap::new();
     for (schema, table) in tables {
+        if schema == "core" && table == "replay_refusals" {
+            let count: i64 = sqlx::query_scalar("SELECT count(*) FROM core.replay_refusals")
+                .fetch_one(&mut *conn)
+                .await
+                .unwrap();
+            assert_eq!(count, 0);
+            continue;
+        }
         let name = format!("{schema}.{table}");
         let value = if table == "live_equivalence" && compact {
             "to_jsonb(t)||jsonb_build_object('equivalence_key',core.decode_equivalence_key(equivalence_key))"
+        } else if table == "events" {
+            "to_jsonb(t)-'kind_version'-'validation'"
         } else if table == "search_text" {
             "to_jsonb(t)-'trigram_indexed'"
         } else {

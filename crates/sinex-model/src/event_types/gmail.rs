@@ -4,7 +4,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
-#[event(type = "mail.provider_message", key = ["account", "provider_message_id", "history_id"], replace = repeat)]
+#[event(version = 2, type = "mail.provider_message", key = ["account", "provider_message_id", "history_id"], replace = repeat)]
 pub struct ProviderMessage {
     pub account: String,
     pub provider_message_id: String,
@@ -37,7 +37,7 @@ pub struct MessageChange {
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
-#[event(type = "mail.changed", key = ["account", "history_id"], replace = repeat)]
+#[event(version = 2, type = "mail.changed", key = ["account", "history_id"], replace = repeat)]
 pub struct MailChanged {
     pub account: String,
     pub history_id: String,
@@ -49,7 +49,7 @@ pub struct MailChanged {
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
-#[event(type = "mail.history_gap", key = ["account", "requested_history_id"], replace = repeat)]
+#[event(version = 2, type = "mail.history_gap", key = ["account", "requested_history_id"], replace = repeat)]
 pub struct HistoryGap {
     pub account: String,
     pub requested_history_id: String,
@@ -60,7 +60,7 @@ pub struct HistoryGap {
 
 /// The provider could list a message but no longer supplies its bytes.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
-#[event(type = "mail.provider_missing", key = ["account", "provider_message_id", "requested_history_id"], replace = repeat)]
+#[event(version = 2, type = "mail.provider_missing", key = ["account", "provider_message_id", "requested_history_id"], replace = repeat)]
 pub struct ProviderMissing {
     pub account: String,
     pub provider_message_id: String,

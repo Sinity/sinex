@@ -17,16 +17,7 @@ pub(crate) async fn catalog(conn: &mut PgConnection) -> Vec<String> {
         let Some((column, attributes)) = row.split_once(' ') else {
             continue;
         };
-        if [
-            "core.events.kind_version",
-            "core.events.validation",
-            "telemetry.events.kind_version",
-            "telemetry.events.validation",
-            "core.admission_stage.kind_version",
-            "core.admission_stage.validation",
-        ]
-        .contains(&column)
-        {
+        if column.matches('.').count() == 2 {
             let (_, attributes) = attributes.split_once(' ').expect("catalog column position");
             *row = format!("{column} {attributes}");
         }

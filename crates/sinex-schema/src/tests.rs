@@ -239,3 +239,18 @@ async fn query_kinds_keep_their_definitions_when_apply_recreates_a_view(
 }
 
 mod kinds;
+
+/// A synthetic downgrade leaves unused column slots; names and definitions remain the contract.
+async fn catalog(conn: &mut PgConnection) -> Result<Vec<String>, Error> {
+    Ok(super::catalog(conn)
+        .await?
+        .into_iter()
+        .map(|row| match row.split_once(' ') {
+            Some((name, rest)) if name.matches('.').count() == 2 => {
+                let rest = rest.split_once(' ').map_or(rest, |(_, after)| after);
+                format!("{name} {rest}")
+            }
+            _ => row,
+        })
+        .collect())
+}
