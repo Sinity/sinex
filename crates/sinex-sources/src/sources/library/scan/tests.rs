@@ -1,5 +1,5 @@
 use super::*;
-use crate::sources::library::tests::{png, scan, stored, read};
+use crate::sources::library::tests::{png, scan, stored, read, tmp};
 use sinex_model::{Class, RecordOutcome};
 use sinex_source_core::{DrainInput, Limits, drain};
 
@@ -71,5 +71,50 @@ fn an_unreadable_directory_reports_partial_coverage_and_other_files_continue() {
     let retry = read(&scanner.poll(&next, &mut state).unwrap(), &ScanParser);
     assert_eq!(retry.len(), 1);
     assert!(retry[0].path.ends_with("nested/second.png"));
+}
+
+
+#[devkit::test]
+fn a_scan_records_completion_once_after_all_parts() {
+    let root = tmp();
+    std::fs::write(root.join("one.png"), png(10, 10)).unwrap();
+    std::fs::write(root.join("two.png"), png(20, 20)).unwrap();
+    let scanner = LibraryScan {
+        bytes_per_poll: 1,
+        ..scan(&root)
+    };
+    let mut state = ScanState::default();
+    let mut cursor = Value::Null;
+    let mut copies = 0;
+    let mut completions = 0;
+    for expected_complete in [false, true] {
+        let acquired = scanner.poll(&cursor, &mut state).unwrap();
+        let material = acquired.material.as_ref().unwrap();
+        assert_eq!(
+            material.manifest.details["walk_complete"],
+            expected_complete
+        );
+        copies += read(&acquired, &ScanParser).len();
+        for &(start, end) in &material.records {
+            if matches!(
+                serde_json::from_slice::<ScanLine>(&material.bytes[start..end]).unwrap(),
+                ScanLine::Complete { .. }
+            ) {
+                completions += 1;
+            }
+        }
+        cursor = (material.cursor_at)(material.bytes.len()).unwrap();
+    }
+    assert_eq!((copies, completions), (2, 1));
+    for _ in 0..3 {
+        assert!(
+            scanner
+                .poll(&cursor, &mut state)
+                .unwrap()
+                .material
+                .is_none()
+        );
+    }
+    std::fs::remove_dir_all(root).unwrap();
 }
 

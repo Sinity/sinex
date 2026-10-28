@@ -10,7 +10,7 @@ use sinex_source_core::drivers::Acquired;
 use sinex_source_core::{DrainInput, Limits, drain};
 use std::path::{Path, PathBuf};
 
-fn tmp() -> PathBuf {
+pub(super) fn tmp() -> PathBuf {
     let d = std::env::temp_dir().join(format!("sinex-library-{}", uuid::Uuid::now_v7()));
     std::fs::create_dir_all(&d).unwrap();
     d
@@ -553,7 +553,7 @@ fn three_unchanged_polls_write_zero_copy_events_and_reuse_hashes_after_restart()
     let (_, cursor) = stored(&first);
     let memory = first.material.as_ref().unwrap().memory.clone().unwrap();
     assert_eq!(read(&first, &ScanParser).len(), 2);
-    assert_eq!(reader.state.files_hashed(), 2);
+    assert_eq!(reader.files_hashed(), 2);
     for _ in 0..3 {
         let unchanged = reader.poll(&cursor).unwrap();
         assert!(
@@ -561,13 +561,13 @@ fn three_unchanged_polls_write_zero_copy_events_and_reuse_hashes_after_restart()
             "an unchanged poll writes zero copies"
         );
     }
-    assert_eq!(reader.state.files_hashed(), 2);
+    assert_eq!(reader.files_hashed(), 2);
 
     let mut restarted = LibraryReader::new(scan(&root));
     restarted.restore_memory(&memory).unwrap();
     restarted.restored().unwrap();
     assert!(restarted.poll(&cursor).unwrap().material.is_none());
-    assert_eq!(restarted.state.files_hashed(), 0);
+    assert_eq!(restarted.files_hashed(), 0);
     let mut changed = png(30, 30);
     changed.push(0);
     std::fs::write(root.join("two.png"), changed).unwrap();
@@ -575,51 +575,7 @@ fn three_unchanged_polls_write_zero_copy_events_and_reuse_hashes_after_restart()
         read(&restarted.poll(&cursor).unwrap(), &ScanParser).len(),
         1
     );
-    assert_eq!(restarted.state.files_hashed(), 1);
-    std::fs::remove_dir_all(root).unwrap();
-}
-
-#[devkit::test]
-fn a_scan_records_completion_once_after_all_parts() {
-    let root = tmp();
-    std::fs::write(root.join("one.png"), png(10, 10)).unwrap();
-    std::fs::write(root.join("two.png"), png(20, 20)).unwrap();
-    let scanner = LibraryScan {
-        bytes_per_poll: 1,
-        ..scan(&root)
-    };
-    let mut state = ScanState::default();
-    let mut cursor = Value::Null;
-    let mut copies = 0;
-    let mut completions = 0;
-    for expected_complete in [false, true] {
-        let acquired = scanner.poll(&cursor, &mut state).unwrap();
-        let material = acquired.material.as_ref().unwrap();
-        assert_eq!(
-            material.manifest.details["walk_complete"],
-            expected_complete
-        );
-        copies += read(&acquired, &ScanParser).len();
-        for &(start, end) in &material.records {
-            if matches!(
-                serde_json::from_slice::<ScanLine>(&material.bytes[start..end]).unwrap(),
-                ScanLine::Complete { .. }
-            ) {
-                completions += 1;
-            }
-        }
-        cursor = (material.cursor_at)(material.bytes.len()).unwrap();
-    }
-    assert_eq!((copies, completions), (2, 1));
-    for _ in 0..3 {
-        assert!(
-            scanner
-                .poll(&cursor, &mut state)
-                .unwrap()
-                .material
-                .is_none()
-        );
-    }
+    assert_eq!(restarted.files_hashed(), 1);
     std::fs::remove_dir_all(root).unwrap();
 }
 

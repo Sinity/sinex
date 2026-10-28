@@ -521,6 +521,7 @@ impl Windows {
             Default::default();
         plain.retain(|&index| {
             let window = &windows[index];
+            let (Some(start), Some(end)) = (window.start, window.end) else { return true };
             let Some((field, value)) = field_value(window) else {
                 return true;
             };
@@ -532,12 +533,12 @@ impl Windows {
             kinds.sort();
             kinds.dedup();
             let group = value_groups
-                .entry((kinds.clone(), field.to_owned(), window.start, window.end))
+                .entry((kinds.clone(), field.to_owned(), start, end))
                 .or_insert_with(|| ValueGroup {
                     kinds,
                     field: field.to_owned(),
-                    start: window.start,
-                    end: window.end,
+                    start,
+                    end,
                     open: Default::default(),
                     rows: Default::default(),
                     after: None,
