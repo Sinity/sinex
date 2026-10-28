@@ -1,7 +1,7 @@
 use super::*;
 
 fn options(args: &[&str]) -> Nextest {
-    let Cli::Test { args } =
+    let Cli::Test { args, .. } =
         Cli::try_parse_from(["xtask", "test"].into_iter().chain(args.iter().copied())).unwrap()
     else {
         panic!("expected test command")

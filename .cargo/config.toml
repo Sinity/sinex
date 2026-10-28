@@ -1,0 +1,6 @@
+# `cargo xtask link-common` writes this file, which Git ignores, to build
+# against a local checkout of polylogue-sinex-common.
+include = [{ path = "local.toml", optional = true }]
+
+[alias]
+xtask = "run --quiet --locked -p xtask --"

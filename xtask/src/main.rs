@@ -2,6 +2,7 @@
 //! `status`, `history` and `changed`.
 mod bench;
 mod boundaries;
+mod common_link;
 mod database;
 
 use clap::Parser;
@@ -23,6 +24,10 @@ enum Cli {
     },
     /// Rust tests under nextest; each database test clones the schema template.
     Test {
+        /// Build every test binary against the schema database without
+        /// running any (a cloud environment's warm build).
+        #[arg(long, conflicts_with = "args")]
+        no_run: bool,
         /// Further `cargo nextest run` arguments: packages, filters, names.
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
         args: Vec<String>,
@@ -36,6 +41,15 @@ enum Cli {
     /// Backfill and derivation on a fixed sample of the real inputs.
     #[command(subcommand)]
     Bench(bench::Bench),
+    /// Build against a local checkout of polylogue-sinex-common instead of
+    /// the commit Cargo.lock pins.
+    LinkCommon {
+        /// The checkout; by default `$POLYLOGUE_SINEX_COMMON`, else
+        /// `../polylogue-sinex-common`.
+        checkout: Option<PathBuf>,
+    },
+    /// Return to the commit of polylogue-sinex-common that Cargo.lock pinned.
+    UnlinkCommon,
     #[command(flatten)]
     Shared(devkit::cli::Command),
 }
@@ -44,7 +58,8 @@ fn main() -> ExitCode {
     match Cli::parse() {
         Cli::Check => recorded("check", &[], check),
         Cli::Compile { args } => recorded("compile", &args, |run| compile(run, &args)),
-        Cli::Test { args } => recorded("test", &args, |run| test(run, &args)),
+        Cli::Test { no_run: true, .. } => recorded("test", &["--no-run".into()], build_tests),
+        Cli::Test { args, .. } => recorded("test", &args, |run| test(run, &args)),
         Cli::Db(command) => {
             let (hash, apply) = match database::schema(Path::new(".")) {
                 Ok(schema) => schema,
@@ -73,7 +88,19 @@ fn main() -> ExitCode {
             }
         }
         Cli::Bench(command) => bench::execute(command),
+        Cli::LinkCommon { checkout } => exit_code(common_link::link(checkout)),
+        Cli::UnlinkCommon => exit_code(common_link::unlink()),
         Cli::Shared(command) => devkit::cli::execute("sinex", command),
+    }
+}
+
+fn exit_code(result: Result) -> ExitCode {
+    match result {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(error) => {
+            eprintln!("{error}");
+            ExitCode::FAILURE
+        }
     }
 }
 
@@ -182,6 +209,22 @@ fn test(run: &mut Run, args: &[String]) -> Result {
     let mut env = database::env(&server, &databases);
     env.extend(nats.as_ref().expect("started").test_env());
     run.nextest("test", &test_options(args, env))?;
+    Ok(())
+}
+
+/// Every test binary, built against the schema database and not run.
+fn build_tests(run: &mut Run) -> Result {
+    let mut prepared = None;
+    run.step("database", |run| {
+        prepared = Some(database::prepare(&run.root)?);
+        Ok(())
+    })?;
+    let (server, databases) = prepared.expect("prepared");
+    run.cargo_with(
+        "test build",
+        &["test", "--no-run", "--locked", "--workspace"],
+        &database::env(&server, &databases),
+    )?;
     Ok(())
 }
 

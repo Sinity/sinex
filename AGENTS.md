@@ -108,3 +108,36 @@ Optimize for fast integration.
 The repository is public: fixtures are synthetic, and credentials, real
 captures, private reports and real databases stay out of Git. Reading the
 operator's real files on this machine for development and measurement is fine.
+
+## Cloud sessions and changes to polylogue-sinex-common
+
+Cloud sessions (Claude Code on the web, Codex cloud) run as root on a fresh
+VM without AgentCTL, `/realm` or the operator's services; run `cargo xtask`
+commands there directly. The environment's setup script runs
+`bash dev/cloud/setup.sh`, after which every shell is in the development
+shell, with PostgreSQL, TimescaleDB and nats-server on `PATH`.
+
+- A Sinex session must include the polylogue-sinex-common repository: Cargo
+  fetches Git dependencies from it, and a session reaches only the
+  repositories it includes.
+- `cargo xtask check`, `cargo xtask compile -p <package> [--tests]` and
+  `cargo xtask test [-p <package>] [-E <filterset>]` work as on the host.
+  Each run starts its own throwaway PostgreSQL cluster (as `nobody`, since
+  PostgreSQL refuses root) and nats-server; nothing has to be started first.
+  The first workspace build takes minutes; run it in the background. The
+  NixOS VM checks, `xtask bench` and anything that reads the operator's data
+  do not run there; report them as not run.
+- Push a branch and open a pull request; do not merge.
+
+A change that needs polylogue-sinex-common changed too starts there.
+`cargo xtask link-common [<path>]` builds this workspace against a checkout
+of it (the path, else `$POLYLOGUE_SINEX_COMMON`, else
+`../polylogue-sinex-common`), and entering the development shell does the
+same when that checkout exists. It writes the git-ignored
+`.cargo/local.toml`, and Cargo.lock then names the local crates, so the lock
+is not committed in that state. `cargo xtask unlink-common` restores the
+lock and keeps the shell from linking again. Merge the common pull request
+first; its workflow then opens a pull request here that moves Cargo.lock to
+the new commit. Convert the callers on that branch, or run `cargo update -p
+devkit -p hashed-blobs -p credential-masking` on the branch that converts
+them, so the lock change and the callers land together.
