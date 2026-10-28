@@ -676,6 +676,7 @@ fn outcomes_add_all_counts_positions_and_ids() {
             replay_archived: 10,
             commit_seq: Some(position),
             admitted_ids: vec![id],
+            timings: Default::default(),
         };
     }
     total += Outcome::default();
@@ -693,6 +694,7 @@ fn outcomes_add_all_counts_positions_and_ids() {
             replay_archived: 20,
             commit_seq: Some((5, 12)),
             admitted_ids: vec![first_id, second_id],
+            timings: Default::default(),
         }
     );
 }

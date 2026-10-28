@@ -4,7 +4,9 @@ use super::*;
 async fn fill_keeps_missing_buckets_unknown_and_composes_with_paging_and_filters(
     db: devkit::pg::TestDatabase,
 ) {
-    let mut conn = PgConnection::connect(&db.url(None)).await.unwrap();
+    let mut conn = crate::AdmissionContext::connect(&db.url(None))
+        .await
+        .unwrap();
     world(&mut conn).await;
     let text = "commands where when in 2026-09 group by day(when) count fill";
     let answer = ask(&mut conn, text).await;
@@ -56,7 +58,9 @@ async fn fill_keeps_missing_buckets_unknown_and_composes_with_paging_and_filters
 async fn typed_payload_aggregates_preserve_unknown_and_sort_as_numbers(
     db: devkit::pg::TestDatabase,
 ) {
-    let mut conn = PgConnection::connect(&db.url(None)).await.unwrap();
+    let mut conn = crate::AdmissionContext::connect(&db.url(None))
+        .await
+        .unwrap();
     world(&mut conn).await;
     let a = ask(&mut conn,"events where event_type = command.executed sum(payload.exit_code) count(payload.exit_code)").await;
     assert_eq!(a.rows[0]["sum_payload_exit_code"], 2);
@@ -70,7 +74,9 @@ async fn typed_payload_aggregates_preserve_unknown_and_sort_as_numbers(
 async fn source_views_distinguish_unknown_continuity_and_drift_from_no_changes(
     db: devkit::pg::TestDatabase,
 ) {
-    let mut conn = PgConnection::connect(&db.url(None)).await.unwrap();
+    let mut conn = crate::AdmissionContext::connect(&db.url(None))
+        .await
+        .unwrap();
     world(&mut conn).await;
     let a = ask(
         &mut conn,
@@ -88,7 +94,9 @@ async fn source_views_distinguish_unknown_continuity_and_drift_from_no_changes(
 
 #[devkit::test]
 async fn fill_uses_wall_clock_days_through_a_change_of_offset(db: devkit::pg::TestDatabase) {
-    let mut conn = PgConnection::connect(&db.url(None)).await.unwrap();
+    let mut conn = crate::AdmissionContext::connect(&db.url(None))
+        .await
+        .unwrap();
     let ctx = Context::new(
         "2026-11-01T00:00:00Z".parse().unwrap(),
         jiff::tz::TimeZone::get("Europe/Warsaw").unwrap(),
@@ -112,7 +120,9 @@ async fn fill_uses_wall_clock_days_through_a_change_of_offset(db: devkit::pg::Te
 
 #[devkit::test]
 async fn a_live_run_keeps_unrecorded_buckets_unknown(db: devkit::pg::TestDatabase) {
-    let mut conn = PgConnection::connect(&db.url(None)).await.unwrap();
+    let mut conn = crate::AdmissionContext::connect(&db.url(None))
+        .await
+        .unwrap();
     world(&mut conn).await;
     sqlx::query("INSERT INTO registry.sources(name,driver,version,event_types,purpose) VALUES ('terminal.atuin','live-stream',1,ARRAY['command.executed'],'synthetic query test')").execute(&mut conn).await.unwrap();
     let unknown = ask(
@@ -145,7 +155,9 @@ async fn a_live_run_keeps_unrecorded_buckets_unknown(db: devkit::pg::TestDatabas
 async fn source_gaps_merge_overlapping_runs_and_drift_keeps_recorded_changes(
     db: devkit::pg::TestDatabase,
 ) {
-    let mut conn = PgConnection::connect(&db.url(None)).await.unwrap();
+    let mut conn = crate::AdmissionContext::connect(&db.url(None))
+        .await
+        .unwrap();
     world(&mut conn).await;
     sqlx::query("INSERT INTO registry.sources(name,driver,version,event_types,purpose) VALUES ('terminal.atuin','live-stream',1,ARRAY['command.executed'],'synthetic query test')").execute(&mut conn).await.unwrap();
     sqlx::query(
@@ -195,7 +207,7 @@ async fn source_gaps_merge_overlapping_runs_and_drift_keeps_recorded_changes(
         archive: vec![],
     };
     let mut tx = conn.begin().await.unwrap();
-    admit(&mut tx, &batch, &NoDerivations).await.unwrap();
+    tx.admit(&batch, &NoDerivations).await.unwrap();
     tx.commit().await.unwrap();
     sqlx::query("INSERT INTO core.runs (id,name,host,started_at,ended_at) VALUES ($1,'synthetic','synthetic','2026-09-14T08:30:00Z','2026-09-14T08:45:00Z')").bind(batch.run.0).execute(&mut conn).await.unwrap();
     let a = ask(
@@ -236,7 +248,7 @@ async fn source_gaps_merge_overlapping_runs_and_drift_keeps_recorded_changes(
         operation: OperationId::new(),
     });
     let mut tx = conn.begin().await.unwrap();
-    admit(&mut tx, &hidden, &NoDerivations).await.unwrap();
+    tx.admit(&hidden, &NoDerivations).await.unwrap();
     tx.commit().await.unwrap();
     let now = ask(
         &mut conn,
@@ -285,7 +297,9 @@ async fn source_gaps_merge_overlapping_runs_and_drift_keeps_recorded_changes(
 
 #[devkit::test]
 async fn text_lists_compare_members_and_return_the_declared_array(db: devkit::pg::TestDatabase) {
-    let mut conn = PgConnection::connect(&db.url(None)).await.unwrap();
+    let mut conn = crate::AdmissionContext::connect(&db.url(None))
+        .await
+        .unwrap();
     world(&mut conn).await;
     spanning_session(&mut conn).await;
     for (condition, total) in [
@@ -348,7 +362,7 @@ async fn spanning_session(conn: &mut PgConnection) {
         archive: vec![],
     };
     let mut tx = conn.begin().await.unwrap();
-    admit(&mut tx, &batch, &NoDerivations).await.unwrap();
+    tx.admit(&batch, &NoDerivations).await.unwrap();
     tx.commit().await.unwrap();
 }
 
@@ -356,7 +370,9 @@ async fn spanning_session(conn: &mut PgConnection) {
 async fn filled_recall_keeps_recorded_buckets_before_its_window_and_intersects_filters(
     db: devkit::pg::TestDatabase,
 ) {
-    let mut conn = PgConnection::connect(&db.url(None)).await.unwrap();
+    let mut conn = crate::AdmissionContext::connect(&db.url(None))
+        .await
+        .unwrap();
     world(&mut conn).await;
     spanning_session(&mut conn).await;
     let answer = ask(&mut conn, "recall sinex:window/2026-09-14T08:30:00Z/2026-09-14T09:00:00Z group by day(when) count fill").await;
@@ -374,7 +390,9 @@ async fn filled_recall_keeps_recorded_buckets_before_its_window_and_intersects_f
 
 #[devkit::test]
 async fn source_gaps_page_without_embedding_run_history(db: devkit::pg::TestDatabase) {
-    let mut conn = PgConnection::connect(&db.url(None)).await.unwrap();
+    let mut conn = crate::AdmissionContext::connect(&db.url(None))
+        .await
+        .unwrap();
     sqlx::query("INSERT INTO registry.sources(name,driver,version,event_types,purpose) VALUES ('terminal.atuin','live-stream',1,ARRAY['command.executed'],'synthetic query test')").execute(&mut conn).await.unwrap();
     for (index, command) in [
         "synthetic first",
@@ -430,7 +448,7 @@ async fn source_gaps_page_without_embedding_run_history(db: devkit::pg::TestData
             archive: vec![],
         };
         let mut tx = conn.begin().await.unwrap();
-        let admitted = admit(&mut tx, &batch, &NoDerivations).await.unwrap();
+        let admitted = tx.admit(&batch, &NoDerivations).await.unwrap();
         assert_eq!(admitted.admitted, 1);
         tx.commit().await.unwrap();
     }

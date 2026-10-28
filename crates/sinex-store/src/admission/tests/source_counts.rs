@@ -202,7 +202,7 @@ async fn an_upgrade_waits_for_no_writer(db: devkit::pg::TestDatabase) {
 async fn upgrading_from_version_3_registers_query_kinds_and_keeps_events(
     db: devkit::pg::TestDatabase,
 ) {
-    let mut conn = <sqlx::PgConnection as sqlx::Connection>::connect(&db.url(None))
+    let mut conn = crate::AdmissionContext::connect(&db.url(None))
         .await
         .unwrap();
     under_run(&mut conn, vec![keyed("synthetic", 1, 1, 1)]).await;
@@ -211,13 +211,8 @@ async fn upgrading_from_version_3_registers_query_kinds_and_keeps_events(
         .fetch_all(&mut conn)
         .await
         .unwrap();
-    conn.execute("DROP VIEW event_types.operator_mark, event_types.query_saved")
-        .await
-        .unwrap();
-    conn.execute("DELETE FROM registry.event_types WHERE name IN ('operator.mark','query.saved')")
-        .await
-        .unwrap();
-    conn.execute("DROP TRIGGER blob_changes ON core.blobs; DROP FUNCTION core.note_blob_change(); DELETE FROM core.counters WHERE name='blob_changes'")
+    super::equivalence::version_two_keys(&mut conn).await;
+    conn.execute("CREATE INDEX events_coverage ON core.events (source, run_id, ts_orig) INCLUDE (commit_seq)")
         .await.unwrap();
     conn.execute("UPDATE sinex_schema.applied SET version=3")
         .await
