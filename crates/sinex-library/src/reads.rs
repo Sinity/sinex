@@ -84,7 +84,14 @@ pub async fn copies_of(conn: &mut Conn, content: &str) -> Result<Vec<FileCopy>> 
         RecordStates::Any,
     )
     .await?;
-    let mut all = latest_copies(rows)?;
+    let keys: Vec<_> = decode::<FileCopy>(COPY, rows)?
+        .into_iter()
+        .map(|copy| format!("{}:{}", copy.host, copy.path))
+        .collect::<std::collections::BTreeSet<_>>()
+        .into_iter()
+        .collect();
+    let mut all = copies_at(conn, &keys).await?;
+    all.retain(|copy| copy.content == content);
     all.sort_by_key(|a| a.vanished_at.is_some());
     Ok(all)
 }
@@ -109,34 +116,35 @@ pub async fn items_with(conn: &mut Conn, content: &str) -> Result<Vec<Item>> {
     decode(ITEM, rows)
 }
 
-/// Every revision an item ever had, oldest first.
+/// Visible content transitions of an item, oldest first.
 pub async fn revisions(conn: &mut Conn, item: &str) -> Result<Vec<Item>> {
     let Some(current) = self::item(conn, item).await? else {
         return Ok(Vec::new());
     };
-    let mut originals: Vec<_> = renditions(conn, item)
-        .await?
-        .into_iter()
-        .filter(|rendition| {
-            rendition.role == sinex_model::event_types::library::RenditionRole::Original
-        })
-        .collect();
-    originals.sort_by_key(|rendition| rendition.part_index);
+    let copies: Vec<FileCopy> = about(conn, COPY, &["item"], item).await?;
+    Ok(revision_history(current, copies))
+}
+
+fn revision_history(current: Item, mut copies: Vec<FileCopy>) -> Vec<Item> {
+    copies.sort_by(|a, b| (a.part_index, &a.path).cmp(&(b.part_index, &b.path)));
     let mut previous = None;
     let mut all = Vec::new();
-    for rendition in originals {
+    for copy in copies.into_iter().filter(|copy| copy.vanished_at.is_none()) {
+        if previous.as_ref() == Some(&copy.content) {
+            continue;
+        }
         let revision = Item {
-            revision: rendition.revision.clone(),
+            revision: copy.content.clone(),
             replaces: previous,
-            content: rendition.content,
-            media_type: rendition.media_type,
-            at: rendition.at,
+            content: copy.content.clone(),
+            media_type: copy.media_type,
+            at: copy.scanned_at,
             ..current.clone()
         };
-        previous = Some(rendition.revision);
+        previous = Some(copy.content);
         all.push(revision);
     }
-    Ok(all)
+    all
 }
 
 async fn about<T: DeserializeOwned>(

@@ -142,6 +142,7 @@ async fn world_with_config(
         agent_grants: vec![],
         unlock: Default::default(),
         host: "h".into(),
+        library_roots: Vec::new(),
     };
     let (commits, rx) = watch::channel(0u64);
     let (stop, stopped) = watch::channel(false);

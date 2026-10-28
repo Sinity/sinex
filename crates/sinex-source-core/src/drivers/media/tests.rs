@@ -14,7 +14,7 @@ fn segments_are_stored_one_per_poll_in_order_and_removed_after() {
     }
     // A segment still being written is not complete.
     std::fs::write(dir.join("000003-000004.screen.jpg.partial"), b"c").unwrap();
-    let media = Media {
+    let mut media = Media {
         spool: dir.clone(),
         input: InputRef {
             kind: "media".into(),

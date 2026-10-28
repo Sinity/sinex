@@ -78,6 +78,7 @@ these names and no others.
 - **derived event**: an event computed by a derivation, naming its parents.
 - **fusion**: joining what several sources observed of one thing into one **fused record**: `command.fused`, `focus.fused`, `visit.fused`, `play.fused`, `clipboard.fused`, `notification.fused`, `mail.fused`, `post.fused`, `conversation.fused`. Each fused kind has one **fusion rule**; a **fusion input** (`FusionInput`) reads one source's events for it as **fusion records** (`FusionRecord`) (an identity, a start, maybe an end, the fields it supplies). A **fused command** is a `command.fused` event.
 - **calendar instance**: one dated instance of a calendar event, `calendar.instance`: a start a repeating event's rule gives, with a changed instance's own times, or the one instance of an event that does not repeat; a **series** is a repeating event with its rule and changed instances.
+- **fusion**: joining what several sources observed of one thing into one **fused record**: `command.fused`, `focus.fused`, `visit.fused`, `play.fused`, `clipboard.fused`, `notification.fused`, `mail.fused`. Each fused kind has one **fusion rule**; a **fusion reader** (`FusionReader`) reads one source's events for it as **sightings** (`Sighting`) (an identity, a start, maybe an end, the fields it supplies). A **fused command** is a `command.fused` event.
 - **shell session**: the `shell.session` derived event: a run of commands in one terminal; `recall last` reads around the latest one.
 - **batch**: what a producer hands the writer: records with their events or failures, and progress.
 - **run**: one execution of a producer; every event names its run.
@@ -91,7 +92,7 @@ these names and no others.
 - **derivation**: keyed (recomputes a **dirty key** when its inputs change; a **computed key** is one key's new output set) or per-event.
 - **kind** (of what a key reads): events of one type, optionally only those whose payload fields have given values.
 - **metric**: a declared count over events (events, seconds of their intervals, or a ratio), with its **dimensions** (payload fields it is broken down by) and the sources that observe it. A **tracked metric** is one the brief compares with its recent level.
-- **figure**: a metric's number over one civil hour or logical day, total or for one **dimension value**, as a `metric.figure` event; a **health figure** (`health.figure`) is the same for one series of health points.
+- **figure**: a metric's number over one local hour or logical day, total or for one **dimension value**, as a `metric.figure` event; a **health figure** (`health.figure`) is the same for one series of health points.
 - **coverage**: the stretches in which a source could have recorded what it records, computed from its runs and records when asked for.
 - **panel**: logical days by metrics, each **cell** observed, partial, recorded or missing with its reason, from the daily figures and coverage.
 - **finding**: a typed statement in a brief or a recipe's answer, with its caveats and the figures it cites.
@@ -135,6 +136,14 @@ these names and no others.
 - **field hint**: a payload field's default privacy class, which operator rules may raise or lower.
 - **search**: a kind's search read model: `none`, `words`, or `words_and_trigram`.
 - **rule**: a privacy rule applied at admission; **masking** hides credentials on output.
+
+## Development tooling
+
+- **scenario**: one exported NixOS check selected for a VM run.
+- **development stack**: a checkout's owned PostgreSQL and NATS services, daemon and explicitly selected session captures.
+- **development lock**: an exclusive file lock held while a checkout's development stack runs.
+- **corpus**: the input files a fuzz experiment starts with and grows.
+- **region**: a source span and execution count reported by LLVM coverage.
 
 ## Words not used
 
@@ -207,3 +216,11 @@ these names and no others.
 - **preview evidence**: the stored output of rendering an item revision; the library derivation produces its rendition.
 
 - **file node**: a directory tar member's captured filesystem facts, including ownership, times, permissions, attributes and sparse data ranges.
+
+## Library
+
+- **item key**: the host, resolved library root and original relative path of a file. A move within that root keeps the key when the bytes match and the old path is gone. A new file whose initial key is still held by another file also names its first scan material.
+- **move candidates**: the missing and new paths with equal bytes in an ambiguous move. The scan records them without moving curation between items.
+- **scan record**: a file's changed facts or removal in a captured scan part, identified by its material and path, with its item key, content hash and acquisition time. The part index orders changes independently of the wall clock. A completion record closes the scan after its last part.
+- **item revision**: one content hash of an item. Returning to the same bytes returns to that revision.
+- **preview evidence**: the stored output of rendering an item revision; the library derivation produces its rendition.

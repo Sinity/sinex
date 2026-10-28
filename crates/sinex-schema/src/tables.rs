@@ -503,6 +503,7 @@ pub(crate) fn after_tables() -> Vec<String> {
             out.push(template.replace("$T", table));
         }
     }
+    out.extend(blob_changes());
     out.push(COVERAGE_RUNS.into());
     out
 }
@@ -575,4 +576,20 @@ fn kind_columns() -> String {
         Validation::Unvalidated.as_db(),
         Validation::check("validation")
     )
+}
+
+/// Blob-only admissions also need a position when pairing a store with a restored database.
+pub(crate) fn blob_changes() -> Vec<String> {
+    vec![
+        "INSERT INTO core.counters (name, value) VALUES ('blob_changes', 0)".into(),
+        "CREATE FUNCTION core.note_blob_change() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+  UPDATE core.counters SET value = value + 1 WHERE name = 'blob_changes';
+  RETURN NULL;
+END $$"
+            .into(),
+        "CREATE TRIGGER blob_changes AFTER INSERT OR DELETE OR TRUNCATE ON core.blobs
+         FOR EACH STATEMENT EXECUTE FUNCTION core.note_blob_change()"
+            .into(),
+    ]
 }

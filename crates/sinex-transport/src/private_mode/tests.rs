@@ -64,7 +64,7 @@ fn an_uncheckable_switch_is_reported_once_and_its_recovery_once() {
 #[devkit::test]
 fn cached_rechecks_after_the_interval() {
     let m = PrivateMode::new(dir().join("private-mode"));
-    let mut c = Cached::new(m.clone(), Duration::from_millis(0));
+    let c = Cached::new(m.clone(), Duration::from_millis(0));
     assert!(!c.on());
     m.set(true).unwrap();
     assert!(c.on());

@@ -117,12 +117,10 @@ access to every file instead (it never writes them). A path with nothing to
 read, and a binding that fails, is logged when it happens, once, and again
 only when that changes.
 
-The module defaults PostgreSQL to `shared_buffers = 4GB`, `max_wal_size = 16GB`,
-`checkpoint_timeout = 30min`, `work_mem = 64MB` and `log_temp_files = 16MB`.
-These settings support bulk admission and record temporary files of at least
-16 MB in the PostgreSQL log. `work_mem` applies to each sort or hash operation,
-so concurrent queries can use several allocations. Deployments can override
-these defaults through `services.postgresql.settings`.
+PostgreSQL keeps its stock memory and checkpoint defaults. Deployments tune
+these through `services.postgresql.settings`. The module sets
+`log_temp_files = 16MB` to record temporary files of at least 16 MB in the
+PostgreSQL log.
 
 Activation does not restart sinexd, NATS or the database setup. After a
 deploy, restart them by hand (`systemctl restart sinex-db-setup sinexd`) and
@@ -205,6 +203,9 @@ agentctl job start sinex focused -- -p sinexd --bin sinexd -E 'test(derivation_r
 agentctl job start sinex compile -- -p sinex-store --tests
 ```
 
+`agentctl job start sinex verify` runs the full Rust test suite and full check in
+one job, using the test suite's tmpfs scratch and each command's time limit.
+
 `xtask test` passes its arguments to `cargo nextest run`. `-p` limits what is
 built; a name or `-E` filter alone still builds the whole workspace, and within
 a package `--lib`, `--bin sinexd` or `--test NAME` limits it to one target.
@@ -214,6 +215,8 @@ time.
 
 The [query guide](docs/query.md) covers typed fields, completion, filled time
 buckets, marks, time citations, saved queries and context views.
+
+See [the development guide](docs/development.md) for isolated watched runs, VM scenarios, history comparisons, coverage and fuzz regression tests.
 
 ## Benchmarks
 

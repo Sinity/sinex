@@ -1,4 +1,5 @@
 use super::*;
+use sinex_source_core::Reader;
 use std::io::{Read, Write};
 
 fn parse(line: &str) -> Result<Produced, RecordError> {

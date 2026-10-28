@@ -22,6 +22,7 @@ pub(crate) struct Library<'a> {
     pub writer: &'a WriterHandle,
     pub blobs: &'a Blobs,
     pub host: &'a str,
+    pub roots: &'a [std::path::PathBuf],
 }
 
 type R<T> = Result<T, String>;
@@ -136,6 +137,7 @@ pub(crate) async fn dispatch(
     writer: Option<&WriterHandle>,
     blobs: &Blobs,
     host: &str,
+    roots: &[std::path::PathBuf],
     request: Request,
     actor: &str,
 ) -> R<Value> {
@@ -167,6 +169,7 @@ pub(crate) async fn dispatch(
         writer,
         blobs,
         host,
+        roots,
     };
     let number = |s: &str, what: &str| {
         s.trim()

@@ -6,8 +6,6 @@ self: {
   name = "sinex-stack";
   nodes.machine = { pkgs, ... }: {
     imports = [ self.nixosModules.default ];
-    # This VM has 3 GiB total; use a smaller database buffer pool.
-    services.postgresql.settings.shared_buffers = "128MB";
     virtualisation = { memorySize = 3072; cores = 2; diskSize = 4096; };
     environment.etc."sinex-test/nats-daemon".text = "daemon secret: with @ and /";
     environment.etc."sinex-test/nats-session".text = "session-secret";
@@ -63,7 +61,7 @@ self: {
     with subtest("PostgreSQL is set up as the module says"):
         machine.succeed("sudo -u postgres psql -tAc 'show wal_compression' | grep -qx lz4")
         machine.succeed("sudo -u postgres psql -tAc 'show full_page_writes' | grep -qx on")
-        for setting, expected in {"shared_buffers": "128MB", "max_wal_size": "16GB", "checkpoint_timeout": "30min", "work_mem": "64MB", "log_temp_files": "16MB"}.items():
+        for setting, expected in {"shared_buffers": "128MB", "max_wal_size": "1GB", "checkpoint_timeout": "5min", "work_mem": "4MB", "log_temp_files": "16MB"}.items():
             shown = machine.succeed(f"sudo -u postgres psql -tAc 'show {setting}'").strip()
             assert shown == expected, f"{setting}: {shown!r}"
         # PostgreSQL 18 made log_connections a list; off may show as empty.
@@ -74,6 +72,13 @@ self: {
     with subtest("NATS refuses a producer outside its own subjects"):
         machine.succeed("grep -q 'session-machine' /run/sinex-nats/nats.conf")
         machine.fail("grep -rq session-secret /etc/systemd/system/sinex-nats.service /etc/systemd/system/sinexd.service")
+
+    with subtest("journald capture delivers journal entries"):
+        machine.succeed("echo sinex-journal-arrival | systemd-cat -t sinex-stack-test")
+        machine.wait_until_succeeds(
+            "test $(sudo -u postgres psql -d sinex -tAc \"select count(*) from core.events where event_type = 'journal.entry' and payload->>'message' = 'sinex-journal-arrival'\") -gt 0",
+            timeout=180,
+        )
 
     with subtest("a file change reaches the database through the ingress"):
         machine.succeed("su alice -c 'echo hello > /home/alice/notes/a.txt'")

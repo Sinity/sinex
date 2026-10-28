@@ -83,7 +83,7 @@ fn only_newly_reachable_commits_are_read() {
         &dir,
         &["commit", "-q", "--allow-empty", "-m", "two\n\nbody"],
     );
-    let d = driver(dir.clone(), "h".into());
+    let mut d = driver(dir.clone(), "h".into());
     let first = d.poll(&Value::Null).unwrap();
     let read = commits(&first);
     assert_eq!(read.len(), 2);

@@ -99,3 +99,14 @@ fn removal_readers_require_record_locations_in_saved_memory() {
     };
     reader.restore_memory(&complete).unwrap();
 }
+
+#[devkit::test]
+fn only_declared_boolean_options_convert_strings() {
+    let mut settings = Settings::new("synthetic");
+    settings.options =
+        serde_json::json!({"follow":"true", "reference":false, "kind":"false", "bad":"yes"});
+    assert_eq!(settings.boolean("follow").unwrap(), Some(true));
+    assert_eq!(settings.boolean("reference").unwrap(), Some(false));
+    assert_eq!(settings.option("kind"), Some("false"));
+    assert!(settings.boolean("bad").is_err());
+}

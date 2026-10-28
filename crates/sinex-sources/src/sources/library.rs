@@ -1,10 +1,10 @@
 //! The media library's two sources.
 //!
-//! **Scan** (`library.scan`): a walk of a library root. Every present
-//! file is hashed once (BLAKE3, SHA-256, MD5), its type sniffed from its
+//! **Scan** (`library.scan`): a walk of a library root. Every changed file is hashed once (BLAKE3, SHA-256, MD5), its type sniffed from its
 //! bytes, its bytes streamed into the content store unless the root is
 //! indexed by reference only, and described by one JSON line. The material is
-//! those lines; one line is one `library.copy`. A file that left its
+//! those lines; a file line is one `library.copy`. A completion line closes
+//! each changed scan once, without another copy event. A file that left its
 //! path and whose bytes turned up at a new path is a move (`moved_from`);
 //! matching device and inode are considered first. An edited file names the
 //! bytes it held (`previous_content`). A file gone from a completed walk, and
@@ -86,8 +86,26 @@ struct ScannedFile {
     /// Decimal nanoseconds, as text (beyond JSON's safe integers).
     pub mtime_ns: Option<String>,
     pub moved_from: Option<String>,
+    pub move_candidates: Vec<String>,
     pub previous_content: Option<String>,
     pub vanished_at_ns: Option<String>,
+}
+
+/// File changes and the end of a completed walk share its stored material.
+#[derive(Serialize, Deserialize)]
+#[serde(tag = "record", rename_all = "snake_case")]
+enum ScanLine {
+    File(Box<ScannedFile>),
+    Unreadable {
+        path: String,
+        reason: String,
+    },
+    Complete {
+        host: String,
+        root: String,
+        only: Option<String>,
+        unreadable: Vec<String>,
+    },
 }
 
 fn nanos(text: &Option<String>) -> Option<Timestamp> {
@@ -103,8 +121,7 @@ impl Parser for ScanParser {
     type Carry = ();
     type Payload = FileCopy;
 
-    /// File facts do not change a record's reading. Its item key and scan
-    /// time do: every scan is independent evidence of the item.
+    /// Location and file facts do not change the hash of the captured bytes.
     const VOLATILE: &'static [&'static str] = &[
         "host",
         "root",
@@ -123,8 +140,18 @@ impl Parser for ScanParser {
         _: &(),
         context: &sinex_source_core::RecordContext<'_>,
     ) -> Result<(Vec<FileCopy>, ()), RecordError> {
-        let d: ScannedFile = serde_json::from_value(Value::Object(record.clone()))
+        let line: ScanLine = serde_json::from_value(Value::Object(record.clone()))
             .map_err(|e| RecordError::new(format!("not a library scan line: {e}")))?;
+        let d = match line {
+            ScanLine::File(d) => d,
+            ScanLine::Unreadable { path, reason } => {
+                return Err(RecordError::new(format!(
+                    "partial library scan: {path}: {reason}"
+                )));
+            }
+            ScanLine::Complete { .. } => return Ok((Vec::new(), ())),
+        };
+        let d = *d;
         let key = d.item_key.clone();
         let scanned_at = context
             .manifest
@@ -168,6 +195,7 @@ impl Parser for ScanParser {
             device: d.device,
             inode: d.inode,
             moved_from: d.moved_from,
+            move_candidates: d.move_candidates,
             previous_content: d.previous_content,
         };
         Ok((vec![payload], ()))
@@ -192,8 +220,8 @@ pub struct LibraryScan {
     /// File bytes described per poll, so one poll's material stays a sensible size
     /// and progress commits as it goes. A file larger than this is read alone.
     pub bytes_per_poll: u64,
-    /// Scan only this file (a path relative to `root`); the rest of the root
-    /// is neither read nor reported missing.
+    /// Scan only this file or directory within `root`; paths outside the
+    /// selection are neither read nor reported missing.
     pub only: Option<String>,
 }
 
@@ -227,7 +255,14 @@ pub struct ScanState {
     queue: VecDeque<Pending>,
     /// Paths missing from the current walk, with the file identity they had.
     missing: BTreeMap<String, Known>,
+    prepared: HashMap<String, Prepared>,
+    moves: HashMap<String, String>,
+    move_candidates: HashMap<String, Vec<String>>,
+    keys: std::collections::HashSet<String>,
+    unreadable: BTreeMap<String, String>,
+    problems: Vec<(String, String)>,
     walk_pending: bool,
+    walk_changed: bool,
     completed: bool,
     #[cfg(test)]
     files_hashed: usize,
@@ -263,8 +298,12 @@ impl ScanState {
             bytes
                 .read_exact_at(start as u64, &mut line)
                 .map_err(|e| DriverError::Io(e.to_string()))?;
-            let d: ScannedFile = serde_json::from_slice(&line)
+            let line: ScanLine = serde_json::from_slice(&line)
                 .map_err(|e| DriverError::Cursor(format!("stored scan line: {e}")))?;
+            let ScanLine::File(d) = line else {
+                continue;
+            };
+            let d = *d;
             let Ok(relative) = Path::new(&d.path).strip_prefix(root) else {
                 continue;
             };
@@ -443,10 +482,51 @@ impl LibraryScan {
         }
     }
 
+    fn prepare(&self, path: &Path) -> std::io::Result<Prepared> {
+        let mut digests = digest(path)?;
+        let (mut width, mut height, mut duration_ms) =
+            dimensions(&digests.head, &digests.media_type);
+        if self.probe
+            && (digests.media_type.starts_with("video/")
+                || digests.media_type.starts_with("audio/"))
+            && let Some(probed) = ffprobe(path)
+        {
+            width = width.or(probed.0);
+            height = height.or(probed.1);
+            duration_ms = duration_ms.or(probed.2);
+        }
+        digests.head = Vec::new();
+        Ok(Prepared {
+            content: format!("blake3:{}", digests.blake3),
+            digests,
+            width,
+            height,
+            duration_ms,
+        })
+    }
+
     /// Walk the root and queue what changed; note what is missing.
-    fn walk(&self, state: &mut ScanState) -> Result<(), DriverError> {
+    fn walk(&self, state: &mut ScanState) {
         let mut found = BTreeMap::new();
-        walk(&self.root, &self.root, &mut found)?;
+        let mut unreadable = BTreeMap::new();
+        if let Some(only) = &self.only {
+            let path = self.root.join(only);
+            match std::fs::symlink_metadata(&path) {
+                Ok(metadata) if !skipped(only) && metadata.is_file() => {
+                    found.insert(only.clone(), file_identity(&metadata));
+                }
+                Ok(metadata) if metadata.is_dir() => {
+                    walk(&self.root, &path, &mut found, &mut unreadable);
+                }
+                Ok(_) => {}
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                Err(error) => {
+                    unreadable.insert(only.clone(), error.to_string());
+                }
+            }
+        } else {
+            walk(&self.root, &self.root, &mut found, &mut unreadable);
+        }
         // Sidecars (`a.jpg.json`, `a.jpg.txt`, `a.json`) describe the file
         // beside them; library import reads them. They are not items.
         let stems: std::collections::BTreeSet<String> = found
@@ -462,32 +542,132 @@ impl LibraryScan {
         for s in sidecars {
             found.remove(&s);
         }
-        if let Some(only) = &self.only {
-            found.retain(|path, _| path == only);
-        }
         let mut missing = BTreeMap::new();
         for (path, known) in &state.files {
-            if self.only.as_ref().is_some_and(|o| o != path) {
+            if self
+                .only
+                .as_ref()
+                .is_some_and(|only| !Path::new(path).starts_with(only))
+            {
                 continue;
             }
-            if !found.contains_key(path) {
+            if !found.contains_key(path)
+                && !unreadable
+                    .keys()
+                    .any(|blocked| Path::new(path).starts_with(blocked))
+            {
                 missing.insert(path.clone(), known.clone());
             }
         }
         for (path, (size, mtime, dev, ino)) in found {
-            state.queue.push_back((path, size, mtime, dev, ino));
+            if state.files.get(&path).is_none_or(|known| {
+                known.size != size
+                    || known.mtime_ns != mtime
+                    || known.device != dev
+                    || known.inode != ino
+                    || known.stored != self.keep_bytes
+            }) {
+                state.queue.push_back((path, size, mtime, dev, ino));
+            }
         }
-        state
-            .queue
-            .make_contiguous()
-            .sort_by_key(|(_, _, _, device, inode)| {
-                !missing.values().any(|known| {
-                    inode.is_some() && known.inode == *inode && known.device == *device
-                })
-            });
+        state.keys = state
+            .files
+            .values()
+            .map(|known| known.item_key.clone())
+            .collect();
+        state.prepared.clear();
+        state.moves.clear();
+        state.move_candidates.clear();
+        // Compare every possible new copy before choosing a move, including
+        // copies that will be emitted in later parts of this walk.
+        let missing_sizes: std::collections::HashSet<_> =
+            missing.values().map(|known| known.size).collect();
+        for (path, size, _, _, _) in &state.queue {
+            if state.files.contains_key(path) || !missing_sizes.contains(size) {
+                continue;
+            }
+            match self.prepare(&self.root.join(path)) {
+                Ok(prepared) => {
+                    #[cfg(test)]
+                    {
+                        state.files_hashed += 1;
+                    }
+                    state.prepared.insert(path.clone(), prepared);
+                }
+                Err(error) => {
+                    unreadable.insert(path.clone(), error.to_string());
+                }
+            }
+        }
+        let mut by_content: BTreeMap<&str, Vec<&String>> = BTreeMap::new();
+        let mut by_identity: BTreeMap<(&str, Option<u64>, u64), Vec<&String>> = BTreeMap::new();
+        for (path, _, _, device, inode) in &state.queue {
+            if let Some(prepared) = state.prepared.get(path) {
+                by_content.entry(&prepared.content).or_default().push(path);
+                if let Some(inode) = inode {
+                    by_identity
+                        .entry((&prepared.content, *device, *inode))
+                        .or_default()
+                        .push(path);
+                }
+            }
+        }
+        let mut old_content: BTreeMap<&str, Vec<&String>> = BTreeMap::new();
+        let mut old_identity: BTreeMap<(&str, Option<u64>, u64), Vec<&String>> = BTreeMap::new();
+        for (path, known) in &missing {
+            old_content.entry(&known.content).or_default().push(path);
+            if let Some(inode) = known.inode {
+                old_identity
+                    .entry((&known.content, known.device, inode))
+                    .or_default()
+                    .push(path);
+            }
+        }
+        let mut matched = std::collections::HashSet::new();
+        for (identity, paths) in &by_identity {
+            if let Some(old) = old_identity.get(identity)
+                && paths.len() == 1
+                && old.len() == 1
+            {
+                state.moves.insert((*paths[0]).clone(), (*old[0]).clone());
+                matched.insert((*old[0]).clone());
+            }
+        }
+        for (content, paths) in by_content {
+            let remaining: Vec<_> = paths
+                .into_iter()
+                .filter(|p| !state.moves.contains_key(*p))
+                .collect();
+            let old: Vec<_> = old_content
+                .get(content)
+                .into_iter()
+                .flatten()
+                .filter(|p| !matched.contains(**p))
+                .copied()
+                .collect();
+            if remaining.len() == 1 && old.len() == 1 {
+                state.moves.insert(remaining[0].clone(), old[0].clone());
+            } else if !old.is_empty() {
+                let candidates: Vec<_> = old
+                    .iter()
+                    .chain(remaining.iter())
+                    .map(|p| self.root.join(p).display().to_string())
+                    .collect();
+                for path in remaining {
+                    state
+                        .move_candidates
+                        .insert(path.clone(), candidates.clone());
+                }
+            }
+        }
+        state.problems = unreadable
+            .iter()
+            .filter(|(path, reason)| state.unreadable.get(*path) != Some(*reason))
+            .map(|(path, reason)| (path.clone(), reason.clone()))
+            .collect();
+        state.unreadable = unreadable;
         state.missing = missing;
         state.walk_pending = true;
-        Ok(())
     }
 
     /// One poll: continue the current walk's queue, or start a new walk.
@@ -515,24 +695,25 @@ impl LibraryScan {
                 });
             }
         };
-        if !state.walk_pending && state.completed {
-            state.completed = false;
-            facts.changed = false;
-            return Ok(Acquired {
-                input: self.input(),
-                observation: facts,
-                revision: RevisionChange::Same,
-                material: None,
-                cursor_without_material: cursor.clone(),
-            });
-        }
         if !state.walk_pending {
-            self.walk(state)?;
+            self.walk(state);
         }
         let now = Timestamp::now();
+        let id = MaterialId::new();
         let root = self.root.display().to_string();
         let mut lines: Vec<u8> = Vec::new();
         let mut records = Vec::new();
+        let mut files_described = 0u64;
+        for (path, reason) in std::mem::take(&mut state.problems) {
+            push_line(
+                &mut lines,
+                &mut records,
+                &ScanLine::Unreadable {
+                    path: self.root.join(path).display().to_string(),
+                    reason,
+                },
+            );
+        }
         let mut moved_away: Vec<(String, Known)> = Vec::new();
         let mut owned_files = Vec::new();
         let mut budget = 0u64;
@@ -543,6 +724,9 @@ impl LibraryScan {
             state.queue.pop_front();
             budget += size.max(1);
             let full = self.root.join(&relative);
+            if state.unreadable.contains_key(&relative) {
+                continue;
+            }
             let before = state.files.get(&relative).cloned();
             if let Some(known) = &before
                 && known.size == size
@@ -568,6 +752,7 @@ impl LibraryScan {
                     inode: ino,
                     mtime_ns: Some(mtime.to_string()),
                     moved_from: None,
+                    move_candidates: Vec::new(),
                     previous_content: None,
                     vanished_at_ns: None,
                 };
@@ -577,32 +762,46 @@ impl LibraryScan {
                         blob: known.content.clone(),
                     });
                 }
-                push_line(&mut lines, &mut records, &line);
+                push_line(
+                    &mut lines,
+                    &mut records,
+                    &ScanLine::File(Box::new(line.clone())),
+                );
+                files_described += 1;
                 state.files.get_mut(&relative).expect("known file").stored = self.keep_bytes;
                 continue;
             }
-            #[cfg(test)]
-            {
-                state.files_hashed += 1;
-            }
-            let digests = match digest(&full) {
-                Ok(d) => d,
-                // Gone or unreadable between the walk and the read: the next
-                // walk sees it again.
-                Err(_) => continue,
+            let prepared = match state.prepared.remove(&relative) {
+                Some(prepared) => prepared,
+                None => match self.prepare(&full) {
+                    Ok(prepared) => {
+                        #[cfg(test)]
+                        {
+                            state.files_hashed += 1;
+                        }
+                        prepared
+                    }
+                    Err(error) => {
+                        let reason = error.to_string();
+                        if state.unreadable.get(&relative) != Some(&reason) {
+                            push_line(
+                                &mut lines,
+                                &mut records,
+                                &ScanLine::Unreadable {
+                                    path: full.display().to_string(),
+                                    reason: reason.clone(),
+                                },
+                            );
+                        }
+                        state.unreadable.insert(relative, reason);
+                        continue;
+                    }
+                },
             };
-            let content = format!("blake3:{}", digests.blake3);
+            let content = prepared.content;
+            let digests = prepared.digests;
             let stored = self.keep_bytes;
-            // Only a missing path with unchanged bytes can continue at a
-            // new path. The walk orders matching inodes before new copies.
-            let moved_from = state
-                .missing
-                .iter()
-                .filter(|(_, known)| before.is_none() && known.content == content)
-                .min_by_key(|(_, known)| {
-                    !(ino.is_some() && known.inode == ino && known.device == dev)
-                })
-                .map(|(p, _)| p.clone());
+            let moved_from = state.moves.remove(&relative);
             let item_key = before
                 .as_ref()
                 .map(|k| k.item_key.clone())
@@ -613,8 +812,15 @@ impl LibraryScan {
                         .map(|k| k.item_key.clone())
                 })
                 .unwrap_or_else(|| {
-                    sinex_model::event_types::library::item_key(&self.host, &root, &relative)
+                    let key =
+                        sinex_model::event_types::library::item_key(&self.host, &root, &relative);
+                    if state.keys.contains(&key) {
+                        format!("{key}@{id}")
+                    } else {
+                        key
+                    }
                 });
+            state.keys.insert(item_key.clone());
             if let Some(old) = &moved_from {
                 // The old path is gone; its line comes after this one's, so
                 // whoever reads the move sees the new path first.
@@ -627,17 +833,6 @@ impl LibraryScan {
                 .as_ref()
                 .filter(|known| known.content != content)
                 .map(|k| k.content.clone());
-            let (width, height, mut duration_ms) = dimensions(&digests.head, &digests.media_type);
-            let (mut width, mut height) = (width, height);
-            if self.probe
-                && (digests.media_type.starts_with("video/")
-                    || digests.media_type.starts_with("audio/"))
-                && let Some(p) = ffprobe(&full)
-            {
-                width = width.or(p.0);
-                height = height.or(p.1);
-                duration_ms = duration_ms.or(p.2);
-            }
             let line = ScannedFile {
                 item_key: item_key.clone(),
                 host: self.host.clone(),
@@ -648,18 +843,24 @@ impl LibraryScan {
                 sha256: digests.sha256,
                 md5: digests.md5,
                 media_type: digests.media_type,
-                width,
-                height,
-                duration_ms,
+                width: prepared.width,
+                height: prepared.height,
+                duration_ms: prepared.duration_ms,
                 stored,
                 device: dev,
                 inode: ino,
                 mtime_ns: Some(mtime.to_string()),
                 moved_from: moved_from.map(|p| self.root.join(p).display().to_string()),
+                move_candidates: state.move_candidates.remove(&relative).unwrap_or_default(),
                 previous_content,
                 vanished_at_ns: None,
             };
-            push_line(&mut lines, &mut records, &line);
+            push_line(
+                &mut lines,
+                &mut records,
+                &ScanLine::File(Box::new(line.clone())),
+            );
+            files_described += 1;
             if stored {
                 owned_files.push(sinex_source_core::drivers::OwnedFile {
                     path: full.clone(),
@@ -692,7 +893,6 @@ impl LibraryScan {
             // not moved: it vanished.
             gone.extend(std::mem::take(&mut state.missing));
             state.walk_pending = false;
-            state.completed = true;
         }
         {
             for (relative, known) in gone {
@@ -711,11 +911,35 @@ impl LibraryScan {
                     media_type: String::new(),
                     ..Default::default()
                 };
-                push_line(&mut lines, &mut records, &line);
+                push_line(
+                    &mut lines,
+                    &mut records,
+                    &ScanLine::File(Box::new(line.clone())),
+                );
+                files_described += 1;
             }
         }
+        state.walk_changed |= !records.is_empty();
+        if walk_done && (state.walk_changed || (previous.material.is_none() && !state.completed)) {
+            push_line(
+                &mut lines,
+                &mut records,
+                &ScanLine::Complete {
+                    host: self.host.clone(),
+                    root: root.clone(),
+                    only: self.only.clone(),
+                    unreadable: state
+                        .unreadable
+                        .keys()
+                        .map(|path| self.root.join(path).display().to_string())
+                        .collect(),
+                },
+            );
+            state.walk_changed = false;
+        }
+        state.completed |= walk_done;
         let scanned = ScanCursor {
-            last_complete_walk_ns: if walk_done {
+            last_complete_walk_ns: if walk_done && state.unreadable.is_empty() {
                 Some(now.unix_ns().to_string())
             } else {
                 previous.last_complete_walk_ns.clone()
@@ -733,7 +957,6 @@ impl LibraryScan {
             });
         }
         let read_at = i64::try_from(now.unix_ns()).unwrap_or(i64::MAX);
-        let id = MaterialId::new();
         let part_index = if previous.material.is_some() {
             previous.part_index + 1
         } else {
@@ -742,12 +965,12 @@ impl LibraryScan {
         let manifest = sinex_model::Manifest::from_json(json!({
             "path": root, "host": self.host,
             "media_type": "application/x-sinex-library-scan", "keep_bytes": self.keep_bytes,
-            "walk_complete": walk_done, "read_at_ns": read_at,
+            "walk_complete": walk_done, "only": self.only, "read_at_ns": read_at,
             "scan": id.to_string(), "part_index": part_index,
         }));
         let changed = previous
             .changed_since_memory
-            .saturating_add(records.len() as u64);
+            .saturating_add(files_described);
         let due = sinex_source_core::drivers::memory_due(
             part_index,
             previous.memory_part,
@@ -807,7 +1030,7 @@ impl LibraryScan {
     }
 }
 
-fn push_line(lines: &mut Vec<u8>, records: &mut Vec<(usize, usize)>, line: &ScannedFile) {
+fn push_line(lines: &mut Vec<u8>, records: &mut Vec<(usize, usize)>, line: &ScanLine) {
     let start = lines.len();
     serde_json::to_writer(&mut *lines, line).expect("scan lines serialize");
     lines.push(b'\n');
@@ -816,35 +1039,66 @@ fn push_line(lines: &mut Vec<u8>, records: &mut Vec<(usize, usize)>, line: &Scan
 
 type Found = BTreeMap<String, (u64, i128, Option<u64>, Option<u64>)>;
 
-fn walk(root: &Path, dir: &Path, found: &mut Found) -> Result<(), DriverError> {
+fn file_identity(metadata: &std::fs::Metadata) -> (u64, i128, Option<u64>, Option<u64>) {
     use std::os::unix::fs::MetadataExt;
-    let entries =
-        std::fs::read_dir(dir).map_err(|e| DriverError::Io(format!("{}: {e}", dir.display())))?;
-    for entry in entries.flatten() {
-        let path = entry.path();
-        let Ok(relative) = path.strip_prefix(root) else {
-            continue;
+    let modified = i128::from(metadata.mtime()) * 1_000_000_000 + i128::from(metadata.mtime_nsec());
+    (
+        metadata.len(),
+        modified,
+        Some(metadata.dev()),
+        Some(metadata.ino()),
+    )
+}
+
+fn walk(root: &Path, dir: &Path, found: &mut Found, unreadable: &mut BTreeMap<String, String>) {
+    let relative = |path: &Path| {
+        path.strip_prefix(root)
+            .unwrap_or(path)
+            .to_string_lossy()
+            .into_owned()
+    };
+    let entries = match std::fs::read_dir(dir) {
+        Ok(entries) => entries,
+        Err(error) => {
+            unreadable.insert(relative(dir), error.to_string());
+            return;
+        }
+    };
+    for entry in entries {
+        let entry = match entry {
+            Ok(entry) => entry,
+            Err(error) => {
+                unreadable.insert(relative(dir), error.to_string());
+                continue;
+            }
         };
-        let relative = relative.to_string_lossy().into_owned();
-        if skipped(&relative) {
+        let path = entry.path();
+        let name = relative(&path);
+        if skipped(&name) {
             continue;
         }
-        // Symlinks are not followed: a link can point anywhere, including
-        // outside the root.
-        let Ok(meta) = std::fs::symlink_metadata(&path) else {
-            continue;
+        // Symlinks may point outside the root and are not followed.
+        let metadata = match std::fs::symlink_metadata(&path) {
+            Ok(metadata) => metadata,
+            Err(error) => {
+                unreadable.insert(name, error.to_string());
+                continue;
+            }
         };
-        if meta.is_dir() {
-            walk(root, &path, found)?;
-        } else if meta.is_file() {
-            let mtime = i128::from(meta.mtime()) * 1_000_000_000 + i128::from(meta.mtime_nsec());
-            found.insert(
-                relative,
-                (meta.len(), mtime, Some(meta.dev()), Some(meta.ino())),
-            );
+        if metadata.is_dir() {
+            walk(root, &path, found, unreadable);
+        } else if metadata.is_file() {
+            found.insert(name, file_identity(&metadata));
         }
     }
-    Ok(())
+}
+
+struct Prepared {
+    content: String,
+    digests: Digests,
+    width: Option<u32>,
+    height: Option<u32>,
+    duration_ms: Option<u64>,
 }
 
 pub struct Digests {
@@ -1274,40 +1528,29 @@ pub fn request_material(
 pub const FORMAT: sinex_source_core::binding::InputFormat =
     sinex_source_core::binding::InputFormat {
         name: "library",
-        discovery: sinex_source_core::discovery::DiscoverySpec {
-            owner: sinex_source_core::discovery::Owner::System,
-            locations: &[sinex_source_core::discovery::Location {
-                root: "declared",
-                path: "library",
-            }],
-            capabilities: &[],
-            credentials: &[],
-            streams: &[],
-            requests: &["library.request"],
-            request_only: false,
-        },
-        discover: crate::discovery::discover_format,
         specs: || vec![&SCAN, &REQUEST],
         plan: Some(|path, settings| {
             let path =
                 std::fs::canonicalize(path).map_err(|e| format!("{}: {e}", path.display()))?;
             let mut settings = settings.clone();
-            let root = if path.is_dir() {
-                path
+            let root = if let Some(root) = settings.option("root") {
+                std::fs::canonicalize(root).map_err(|error| format!("{root}: {error}"))?
+            } else if path.is_dir() {
+                path.clone()
             } else {
-                let name = path
-                    .file_name()
-                    .ok_or("library input has no file name")?
-                    .to_string_lossy()
-                    .into_owned();
-                if !settings.options.is_object() {
-                    settings.options = json!({});
-                }
-                settings.options["only"] = json!(name);
                 path.parent()
                     .ok_or("library input has no parent")?
                     .to_path_buf()
             };
+            let selection = path
+                .strip_prefix(&root)
+                .map_err(|_| "library selection is outside its root")?;
+            if !selection.as_os_str().is_empty() {
+                if !settings.options.is_object() {
+                    settings.options = json!({});
+                }
+                settings.options["only"] = json!(selection.to_string_lossy());
+            }
             Ok(sinex_source_core::binding::single(&SCAN, &root, &settings))
         }),
         source: |b| {
@@ -1325,12 +1568,7 @@ pub const FORMAT: sinex_source_core::binding::InputFormat =
                 LibraryScan {
                     root: b.input.clone(),
                     host: b.settings.host.clone(),
-                    keep_bytes: !b
-                        .settings
-                        .options
-                        .get("reference")
-                        .and_then(Value::as_bool)
-                        .unwrap_or(false),
+                    keep_bytes: !b.settings.boolean("reference")?.unwrap_or(false),
                     probe: true,
                     bytes_per_poll: 1 << 30,
                     only: b.settings.option("only").map(str::to_owned),

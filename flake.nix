@@ -11,6 +11,7 @@
       };
       # The Rust toolchain comes from a pinned nixpkgs that matches the released shared crates.
       rustPkgs = import rust-nixpkgs { inherit system; };
+      compilerTools = rustPkgs.rustc.llvmPackages;
       postgres = pkgs.postgresql_18.withPackages (p: [ p.timescaledb ]);
       server = rustPkgs.rustPlatform.buildRustPackage {
         pname = "sinex";
@@ -29,7 +30,7 @@
           cargo run --offline --locked -p xtask -- boundaries
           export PGDATA=$(mktemp -d)
           export PGHOST=$(mktemp -d)
-          export PGPORT=55439
+          export PGPORT=5432
           initdb --no-locale --auth=trust --data-checksums > /dev/null
           pg_ctl -D "$PGDATA" -o "-k $PGHOST -c listen_addresses= -c shared_preload_libraries=timescaledb -c timescaledb.telemetry_level=off -c timescaledb.enable_chunk_skipping=on -p $PGPORT" -w start > /dev/null
           trap 'pg_ctl -D "$PGDATA" -m immediate -w stop >/dev/null || true' EXIT
@@ -46,11 +47,14 @@
         # builder has none, and a switch that cannot be checked counts as on.
         preCheck = ''
           export XDG_RUNTIME_DIR=$(mktemp -d)
+          export DEVKIT_PG_SOCKET="$PGHOST"
+          export DEVKIT_PG_TEMPLATE=foundation
         '';
         # The memory test measures its process's peak RSS, so it needs a
         # process of its own, which nextest gives it and `cargo test` does not.
         checkFlags = [ "--skip" "drivers::tests::backfill_of_a_large_file_peaks_well_under_its_size" ];
-        # Database tests need devkit's server; they run under `xtask test`.
+        # Schema tests clone the builder's prepared database. Store and daemon
+        # database tests run under `xtask test`.
         cargoTestFlags = [ "-p" "sinex-model" "-p" "sinex-protocol" "-p" "sinex-schema" "-p" "sinex-sources" "-p" "sinex-source-core" "-p" "sinex-sealing" "-p" "sinex-derivations" ];
       };
       capture = rustPkgs.rustPlatform.buildRustPackage {
@@ -80,9 +84,12 @@
         vm-restore = pkgs.testers.runNixOSTest (import ./nix/tests/restore.nix self);
       };
       devShells.${system}.default = pkgs.mkShell {
-        packages = [ rustPkgs.cargo rustPkgs.cargo-nextest rustPkgs.rustc rustPkgs.rustfmt rustPkgs.clippy postgres pkgs.nats-server pkgs.python3 pkgs.pkg-config pkgs.mold ];
+        packages = [ rustPkgs.cargo rustPkgs.cargo-nextest rustPkgs.rustc rustPkgs.rustfmt rustPkgs.clippy compilerTools.llvm pkgs.cargo-llvm-cov pkgs.cargo-fuzz postgres pkgs.nats-server pkgs.python3 pkgs.pkg-config pkgs.mold ];
         # mold links the test binaries several times faster than the default
         # linker; linking was a third to a half of each test binary's build.
+        DEVKIT_FUZZ_RUSTFLAGS = "-Zexternal-clangrt -Clinker=${compilerTools.clang}/bin/clang -Clink-arg=-fsanitize=address";
+        LLVM_COV = "${compilerTools.llvm}/bin/llvm-cov";
+        LLVM_PROFDATA = "${compilerTools.llvm}/bin/llvm-profdata";
         CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUSTFLAGS = "-C link-arg=-fuse-ld=mold";
         shellHook = ''
           # Optional host placement; an explicit CARGO_TARGET_DIR is left as is.

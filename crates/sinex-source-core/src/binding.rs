@@ -74,6 +74,19 @@ impl Settings {
         self.options.get(key).and_then(Value::as_str)
     }
 
+    /// A declared boolean option from JSON or a command's key=value pair.
+    pub fn boolean(&self, key: &str) -> Result<Option<bool>, String> {
+        match self.options.get(key) {
+            None => Ok(None),
+            Some(Value::Bool(value)) => Ok(Some(*value)),
+            Some(Value::String(value)) => value
+                .parse::<bool>()
+                .map(Some)
+                .map_err(|_| format!("option {key}: expected true or false")),
+            Some(_) => Err(format!("option {key}: expected true or false")),
+        }
+    }
+
     /// An unsigned option.
     pub fn number(&self, key: &str) -> Option<u64> {
         self.options.get(key).and_then(Value::as_u64)
@@ -281,34 +294,6 @@ pub fn polled(driver: impl Reader + 'static) -> Reading {
 #[cfg(feature = "archives")]
 pub fn shared(driver: crate::drivers::export_archive::ExportArchive) -> Reading {
     Reading::Shared(Box::new(driver))
-}
-
-impl Reader for crate::drivers::live_stream::LiveStream {
-    fn poll(&mut self, cursor: &Value) -> Result<Acquired, DriverError> {
-        Self::poll(self, cursor)
-    }
-
-    fn remove_passed(&self, committed: &Value) -> Result<usize, DriverError> {
-        Self::remove_passed(self, committed).map_err(|e| DriverError::Io(e.to_string()))
-    }
-}
-
-impl Reader for crate::drivers::media::Media {
-    fn poll(&mut self, cursor: &Value) -> Result<Acquired, DriverError> {
-        Self::poll(self, cursor)
-    }
-
-    fn remove_passed(&self, committed: &Value) -> Result<usize, DriverError> {
-        Self::remove_passed(self, committed).map_err(|e| DriverError::Io(e.to_string()))
-    }
-}
-
-impl<A: crate::drivers::api_cursor::Api + Send + Sync + 'static> Reader
-    for crate::drivers::api_cursor::ApiCursor<A>
-{
-    fn poll(&mut self, cursor: &Value) -> Result<Acquired, DriverError> {
-        Self::poll(self, cursor)
-    }
 }
 
 /// An append-only file read with state about the records it stored, so a

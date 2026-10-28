@@ -113,19 +113,7 @@ impl Intake<'_> {
                 totals.writer(queue, elapsed.saturating_sub(queue));
                 totals.batch(events, elapsed);
                 totals.add_outcome(&admitted);
-                outcome.admitted += admitted.admitted;
-                outcome.repeats += admitted.repeats;
-                outcome.replaced += admitted.replaced;
-                outcome.older += admitted.older;
-                outcome.hidden += admitted.hidden;
-                outcome.superseded += admitted.superseded;
-                outcome.failures += admitted.failures;
-                outcome.dirty_keys += admitted.dirty_keys;
-                outcome.replay_archived += admitted.replay_archived;
-                if let Some((start, end)) = admitted.commit_seq {
-                    outcome.commit_seq =
-                        Some((outcome.commit_seq.map_or(start, |(first, _)| first), end));
-                }
+                outcome += &admitted;
                 // Streaming submissions do not keep every committed event ID.
                 if self.atomic {
                     outcome.admitted_ids = admitted.admitted_ids;

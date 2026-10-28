@@ -34,6 +34,7 @@ pub(crate) struct Api {
     /// This machine's name, for library requests and scans.
     pub host: String,
     pub source_config: std::sync::Arc<crate::binding_runner::Config>,
+    pub library_roots: Vec<std::path::PathBuf>,
 }
 
 /// An unlock session: the operator's identity until it expires, and the data
@@ -529,6 +530,7 @@ impl Api {
             self.writer.as_ref(),
             &self.blobs,
             &self.host,
+            &self.library_roots,
             request,
             caller.actor,
         )

@@ -4,7 +4,7 @@ use super::*;
 fn options_keep_numbers_and_flags_and_collect_lists() {
     let o = options(&[
         "every=60".into(),
-        "kind=screen".into(),
+        "kind=false".into(),
         "follow=true".into(),
         "roots=/a".into(),
         "roots=/b".into(),
@@ -12,7 +12,7 @@ fn options_keep_numbers_and_flags_and_collect_lists() {
     .unwrap();
     assert_eq!(
         o,
-        serde_json::json!({"every": 60, "kind": "screen", "follow": true, "roots": ["/a", "/b"]})
+        serde_json::json!({"every": 60, "kind": "false", "follow": "true", "roots": ["/a", "/b"]})
     );
     assert_eq!(options(&[]).unwrap(), Value::Null);
     assert!(options(&["novalue".into()]).is_err());

@@ -1,7 +1,5 @@
-//! Forward upgrades of a deployed database. `upgrades()[n]` takes a database
-//! at version `n` to `n + 1` and keeps every row; the declarations carry the
-//! same change, so a fresh database is created at [`crate::VERSION`]
-//! directly and matches an upgraded one.
+//! Forward upgrades preserve every row. The declarations carry the same
+//! changes, so fresh and upgraded databases have the same schema.
 
 /// The statements of each upgrade, by the version it starts from.
 fn landed() -> Vec<Vec<String>> {
@@ -48,10 +46,11 @@ fn landed() -> Vec<Vec<String>> {
 }
 
 /// Unlanded transformations have names; their position is assigned at landing.
-pub(crate) const NAMED: &[&str] = &["library_scans", "kind_declarations"];
+pub(crate) const NAMED: &[&str] = &["blob_change_tracking", "library_scans", "kind_declarations"];
 
 pub(crate) fn upgrades() -> Vec<Vec<String>> {
     let mut steps = landed();
+    steps.push(crate::tables::blob_changes());
     steps.push(vec!["DO $$ BEGIN IF EXISTS (SELECT 1 FROM core.events WHERE event_type LIKE 'library.%') THEN RAISE EXCEPTION 'library records use request-created item IDs; decide how their references should follow deterministic item IDs before upgrading'; END IF; END $$".into()]);
     let before = crate::description::Description::version_four();
     let after = crate::description::Description::current();

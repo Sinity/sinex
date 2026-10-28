@@ -78,6 +78,9 @@ pub async fn prepare(connection: &mut PgConnection, owner: &str) -> Result<(), E
         connection.execute(statement.as_str()).await?;
     }
     connection
+        .execute("GRANT EXECUTE ON FUNCTION pg_control_system() TO sinex_writer")
+        .await?;
+    connection
         .execute(format!("GRANT sinex_writer, sinex_reader TO {}", quote_ident(owner)).as_str())
         .await?;
     Ok(())

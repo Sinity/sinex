@@ -205,6 +205,12 @@ pub(crate) async fn run(o: Options) -> Result<(), String> {
             .map_err(|e| format!("{}: {e}", o.api.tokens.display()))?,
         unlock: Default::default(),
         host: o.host.clone(),
+        library_roots: sources
+            .sources
+            .get("library.scan")
+            .filter(|source| source.enable)
+            .map(|source| source.paths.iter().map(std::path::PathBuf::from).collect())
+            .unwrap_or_default(),
     };
     let config = api::Config {
         socket: o.api.socket.clone(),
@@ -287,14 +293,23 @@ pub(crate) async fn run(o: Options) -> Result<(), String> {
     .await
     .is_ok();
     tasks.abort_all();
-    if drained {
-        let mut conn = connect(&o.database).await?;
-        writer::claim(&mut conn).await?;
-        sinex_store::blobs::forget_files_with_rows(&mut conn, &blobs)
-            .await
-            .map_err(|e| format!("forgetting admitted blob names: {e}"))?;
+    if drained && let Err(error) = forget_admitted(&o.database, &blobs).await {
+        eprintln!("sinexd: forgetting admitted blob names at shutdown: {error}");
     }
+
     outcome
+}
+
+async fn forget_admitted(database: &str, blobs: &Blobs) -> Result<(), String> {
+    let mut conn = connect(database).await?;
+    writer::claim(&mut conn).await?;
+    let result = sinex_store::blobs::forget_files_with_rows(&mut conn, blobs)
+        .await
+        .map_err(|e| e.to_string());
+    // Closing the session releases its writer claim even when cleanup fails.
+    use sqlx::Connection;
+    let closed = conn.close().await.map_err(|e| e.to_string());
+    result.and(closed)
 }
 
 async fn shutdown_signal() {
@@ -305,3 +320,6 @@ async fn shutdown_signal() {
         _ = term.recv() => {}
     }
 }
+
+#[cfg(test)]
+mod tests;

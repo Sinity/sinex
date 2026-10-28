@@ -307,14 +307,10 @@ pub fn options(pairs: &[String]) -> Result<Value, String> {
         let (k, v) = pair
             .split_once('=')
             .ok_or_else(|| format!("option {pair}: expected key=value"))?;
-        let value = match v {
-            "true" => Value::Bool(true),
-            "false" => Value::Bool(false),
-            _ => v
-                .parse::<u64>()
-                .map(Value::from)
-                .unwrap_or_else(|_| Value::from(v)),
-        };
+        let value = v
+            .parse::<u64>()
+            .map(Value::from)
+            .unwrap_or_else(|_| Value::from(v));
         match map.get_mut(k) {
             Some(Value::Array(list)) => list.push(value),
             Some(first) => *first = Value::Array(vec![first.take(), value]),

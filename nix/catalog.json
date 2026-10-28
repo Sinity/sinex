@@ -14510,8 +14510,7 @@
       "purpose": "the media library",
       "class": "open",
       "eventTypes": [
-        "library.item",
-        "library.rendition",
+        "library.preview",
         "library.assignment",
         "library.collection",
         "library.entry",

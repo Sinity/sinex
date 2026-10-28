@@ -549,7 +549,12 @@ pub const FORMAT: sinex_source_core::binding::InputFormat =
             )))
         }),
         capture: Some(|b, stop| {
-            capture(&b.input, CaptureSettings::of(&b.settings), stop).map_err(|e| e.to_string())
+            let start = match b.settings.option("since") {
+                Some(s) => Start::Since(s),
+                None => Start::Beginning,
+            };
+            let follow = b.settings.boolean("follow")?.unwrap_or(false);
+            capture_until(&b.input, follow, start, stop).map_err(|e| e.to_string())
         }),
     };
 

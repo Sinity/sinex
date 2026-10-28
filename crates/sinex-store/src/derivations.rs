@@ -272,6 +272,7 @@ pub struct Windows {
     page: i64,
     bytes: i64,
     alone: Vec<usize>,
+    values: std::collections::VecDeque<ValueGroup>,
     groups: std::collections::VecDeque<Group>,
 }
 
@@ -286,10 +287,139 @@ struct Group {
     finished: bool,
 }
 
+/// Windows with the same range and types, selecting string values of one
+/// field, read all selected values in one paged query.
+type ValueGroupKey = (Vec<String>, String, OffsetDateTime, OffsetDateTime);
+
+struct ValueGroup {
+    kinds: Vec<String>,
+    field: String,
+    start: OffsetDateTime,
+    end: OffsetDateTime,
+    open: std::collections::BTreeMap<String, Vec<usize>>,
+    rows: std::collections::BTreeMap<String, Vec<Committed>>,
+    after: Option<(String, OffsetDateTime, i64)>,
+}
+
+fn field_value(window: &Window) -> Option<(&str, &str)> {
+    let first = window.kinds.first()?.contains.as_object()?;
+    if first.len() != 1
+        || window
+            .kinds
+            .iter()
+            .any(|kind| kind.contains != window.kinds[0].contains)
+    {
+        return None;
+    }
+    let (field, value) = first.iter().next()?;
+    Some((field, value.as_str()?))
+}
+
+impl ValueGroup {
+    async fn next(
+        &mut self,
+        conn: &mut PgConnection,
+        page: i64,
+        bytes: i64,
+    ) -> Result<Vec<(usize, Vec<Committed>)>> {
+        let values: Vec<_> = self.open.keys().cloned().collect();
+        let (after_value, after_ts, after_seq) = self
+            .after
+            .clone()
+            .map(|(value, ts, seq)| (Some(value), Some(ts), Some(seq)))
+            .unwrap_or_default();
+        let rows = sqlx::query!(
+            r#"SELECT e.id, e.event_type, e.source, e.material_id, e.anchor, e.output_index, e.parents,
+                 e.ts_orig, e.ts_quality, e.payload, e.equivalence_key, e.reading_order, e.record_hash,
+                 e.record_state, e.class, e.commit_seq, page.value AS "value!", page.matched AS "matched!"
+               FROM core.events e JOIN (
+                 SELECT p.id, p.value, p.matched FROM (
+                   SELECT q.id, q.value, count(*) OVER () AS matched,
+                          (sum(q.size) OVER (ORDER BY q.value, q.ts_orig, q.commit_seq) - q.size)::bigint AS before
+                   FROM (
+                     SELECT s.id, v.value COLLATE "C" AS value, s.ts_orig, s.commit_seq, pg_column_size(s.payload)::bigint AS size
+                     FROM unnest($1::text[]) v(value)
+                     JOIN core.events s ON s.payload->>$2 = v.value AND jsonb_typeof(s.payload->$2) = 'string'
+                     WHERE s.event_type = ANY($3) AND s.ts_orig >= $4 AND s.ts_orig < $5
+                       AND ($6::text IS NULL OR (v.value COLLATE "C", s.ts_orig, s.commit_seq) > ($6 COLLATE "C", $7::timestamptz, $8::bigint))
+                       AND NOT EXISTS (SELECT 1 FROM audit.archived a WHERE a.event_id = s.id)
+                     ORDER BY v.value COLLATE "C", s.ts_orig, s.commit_seq
+                     LIMIT $9
+                   ) q
+                 ) p WHERE p.before < $10::bigint
+               ) page ON page.id = e.id
+               ORDER BY page.value, e.ts_orig, e.commit_seq"#,
+            &values, self.field, &self.kinds, self.start, self.end,
+            after_value, after_ts, after_seq, page, bytes,
+        ).fetch_all(&mut *conn).await?;
+        let matched = rows.first().map_or(0, |row| row.matched);
+        let finished = matched < page && rows.len() as i64 == matched;
+        for row in rows {
+            self.after = Some((
+                row.value.clone(),
+                row.ts_orig.expect("window time"),
+                row.commit_seq,
+            ));
+            self.rows
+                .entry(row.value.clone())
+                .or_default()
+                .push(committed!(row));
+        }
+        let complete: Vec<_> = self
+            .open
+            .keys()
+            .filter(|value| {
+                finished
+                    || self
+                        .after
+                        .as_ref()
+                        .is_some_and(|(last, _, _)| *value < last)
+            })
+            .cloned()
+            .collect();
+        let mut done = Vec::new();
+        for value in complete {
+            let rows = self.rows.remove(&value).unwrap_or_default();
+            for index in self.open.remove(&value).expect("open value") {
+                done.push((index, rows.clone()));
+            }
+        }
+        Ok(done)
+    }
+}
+
 impl Windows {
     pub fn new(windows: Vec<Window>, page: i64, bytes: i64) -> Self {
         let (alone, mut plain): (Vec<usize>, Vec<usize>) = (0..windows.len())
             .partition(|&i| !windows[i].before.is_empty() || !windows[i].after.is_empty());
+        let mut value_groups: std::collections::BTreeMap<ValueGroupKey, ValueGroup> =
+            Default::default();
+        plain.retain(|&index| {
+            let window = &windows[index];
+            let Some((field, value)) = field_value(window) else {
+                return true;
+            };
+            let mut kinds: Vec<_> = window
+                .kinds
+                .iter()
+                .map(|kind| kind.event_type.clone())
+                .collect();
+            kinds.sort();
+            kinds.dedup();
+            let group = value_groups
+                .entry((kinds.clone(), field.to_owned(), window.start, window.end))
+                .or_insert_with(|| ValueGroup {
+                    kinds,
+                    field: field.to_owned(),
+                    start: window.start,
+                    end: window.end,
+                    open: Default::default(),
+                    rows: Default::default(),
+                    after: None,
+                });
+            group.open.entry(value.to_owned()).or_default().push(index);
+            false
+        });
         // Group by kinds, then chain by start.
         plain.sort_by(|&a, &b| {
             let (wa, wb) = (&windows[a], &windows[b]);
@@ -329,6 +459,7 @@ impl Windows {
             page: page.max(1),
             bytes,
             alone,
+            values: value_groups.into_values().collect(),
             groups,
         }
     }
@@ -341,6 +472,16 @@ impl Windows {
     ) -> Result<Option<Vec<(usize, Vec<Committed>)>>> {
         if let Some(i) = self.alone.pop() {
             return Ok(Some(vec![(i, read_window(conn, &self.windows[i]).await?)]));
+        }
+        while let Some(group) = self.values.front_mut() {
+            if group.open.is_empty() {
+                self.values.pop_front();
+                continue;
+            }
+            let done = group.next(conn, self.page, self.bytes).await?;
+            if !done.is_empty() {
+                return Ok(Some(done));
+            }
         }
         while let Some(group) = self.groups.front_mut() {
             if group.open.is_empty() {
@@ -721,3 +862,6 @@ pub async fn comparisons(
         })
         .collect())
 }
+
+#[cfg(test)]
+mod tests;

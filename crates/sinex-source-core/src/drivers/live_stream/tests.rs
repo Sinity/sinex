@@ -38,7 +38,7 @@ fn captured_lines_are_acquired_once_in_order() {
     let mut writer = SpoolWriter::open(&spool, Rotation::default()).unwrap();
     let n = capture_lines(&b"a>>1\nb>>2\nc>>3"[..], &mut writer, Duration::ZERO).unwrap();
     assert_eq!(n, 3);
-    let live = stream(&spool);
+    let mut live = stream(&spool);
     let first = live.poll(&Value::Null).unwrap();
     assert_eq!(lines_of(&first), vec!["a>>1", "b>>2", "c>>3"]);
     let cursor = end_cursor(&first);
@@ -83,7 +83,7 @@ fn parts_continue_across_segments() {
     let mut writer = SpoolWriter::open(&spool, rotation).unwrap();
     writer.append(Timestamp::now(), b"one").unwrap();
     writer.sync().unwrap();
-    let live = stream(&spool);
+    let mut live = stream(&spool);
     let first = live.poll(&Value::Null).unwrap();
     let m1 = first.material.as_ref().unwrap();
     assert_eq!((m1.part_index, m1.previous_part), (0, None));
@@ -139,7 +139,7 @@ fn a_restarted_capture_starts_a_new_segment() {
 fn empty_spool_is_unchanged_not_an_error() {
     let spool = dir();
     std::fs::create_dir_all(&spool).unwrap();
-    let live = stream(&spool);
+    let mut live = stream(&spool);
     let a = live.poll(&Value::Null).unwrap();
     assert!(a.material.is_none());
     assert!(a.observation.unavailable.is_none() && !a.observation.changed);
@@ -152,7 +152,7 @@ fn empty_spool_is_unchanged_not_an_error() {
 fn first_capture_after_an_empty_segment_poll_survives_restart() {
     let dir = tempfile::tempdir().unwrap();
     let mut writer = SpoolWriter::open(dir.path(), Rotation::default()).unwrap();
-    let live = stream(dir.path());
+    let mut live = stream(dir.path());
     let first = live.poll(&Value::Null).unwrap();
     assert!(first.material.is_none());
     let saved: Value =
