@@ -982,7 +982,9 @@ fn retry(frame: &mut Ingress) {
         uuid::Uuid::now_v7()
     );
     match frame {
-        Ingress::Material { frame, .. }
+        Ingress::RegisterKinds { frame, .. }
+        | Ingress::ReplaySequence { frame, .. }
+        | Ingress::Material { frame, .. }
         | Ingress::Events { frame, .. }
         | Ingress::LargeFrame { frame, .. }
         | Ingress::Chunk { frame, .. } => *frame = name,

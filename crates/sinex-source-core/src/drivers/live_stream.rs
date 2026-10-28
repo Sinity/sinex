@@ -105,7 +105,6 @@ impl SpoolWriter {
             .append(true)
             .open(segment_path(&dir, index))?;
         Ok(Self {
-            dropped: 0,
             health: super::spool_health::counter(&dir),
             dir,
             rotation,

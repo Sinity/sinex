@@ -48,7 +48,7 @@ async fn every_key_form_keeps_its_identity_and_public_spelling(db: devkit::pg::T
     for event in &events {
         let reference = sinex_model::query::Reference::Key {
             source: "s".into(),
-            event_type: event.event_type.into(),
+            event_type: event.event_type.clone(),
             key: event.equivalence_key.as_ref().unwrap().0.clone(),
         };
         // Resolve through the public query path as well as classification.

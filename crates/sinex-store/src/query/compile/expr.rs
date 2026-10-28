@@ -144,7 +144,7 @@ impl Compiler<'_> {
         }
     }
 
-    fn json_as(raw: SqlFragment, value: &Value) -> SqlFragment {
+    pub(super) fn json_as(raw: SqlFragment, value: &Value) -> SqlFragment {
         let ty = match value {
             Value::Integer(_) | Value::Number(_) => FieldType::Number,
             Value::Bool(_) => FieldType::Bool,

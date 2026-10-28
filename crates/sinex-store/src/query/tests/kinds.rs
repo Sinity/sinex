@@ -24,7 +24,7 @@ async fn register(
     d
 }
 
-async fn points(conn: &mut PgConnection, d: &KindDeclaration) {
+async fn points(conn: &mut crate::AdmissionContext, d: &KindDeclaration) {
     let events = (1..=3)
         .map(|value| {
             Event::submitted(
@@ -56,7 +56,7 @@ async fn points(conn: &mut PgConnection, d: &KindDeclaration) {
         archive: vec![],
     };
     let mut tx = conn.begin().await.unwrap();
-    admit(&mut tx, &b, &NoDerivations).await.unwrap();
+    tx.admit(&b, &NoDerivations).await.unwrap();
     tx.commit().await.unwrap();
 }
 
@@ -64,12 +64,14 @@ async fn points(conn: &mut PgConnection, d: &KindDeclaration) {
 async fn continuation_keeps_its_field_types_when_another_version_registers(
     db: devkit::pg::TestDatabase,
 ) {
-    let mut conn = PgConnection::connect(&db.url(None)).await.unwrap();
-    let d = register(&mut conn, 9, json!({"type":"integer"})).await;
+    let mut conn = crate::AdmissionContext::connect(&db.url(None))
+        .await
+        .unwrap();
+    let d = register(&mut *conn, 9, json!({"type":"integer"})).await;
     points(&mut conn, &d).await;
     let text = "events where event_type = example.point sort payload.value fields payload.value, payload.at";
     let first = ask_page(
-        &mut conn,
+        &mut *conn,
         text,
         Page {
             size: Some(1),
@@ -82,9 +84,9 @@ async fn continuation_keeps_its_field_types_when_another_version_registers(
         first.rows[0]["payload.at"],
         json!("2026-10-27T12:00:00+00:00")
     );
-    register(&mut conn, 10, json!({"type":"string"})).await;
+    register(&mut *conn, 10, json!({"type":"string"})).await;
     let next = ask_page(
-        &mut conn,
+        &mut *conn,
         text,
         Page {
             size: Some(1),
@@ -99,16 +101,18 @@ async fn continuation_keeps_its_field_types_when_another_version_registers(
 async fn timestamp_extraction_checks_calendar_dates_and_schemaless_mixed_values(
     db: devkit::pg::TestDatabase,
 ) {
-    let mut conn = PgConnection::connect(&db.url(None)).await.unwrap();
+    let mut conn = crate::AdmissionContext::connect(&db.url(None))
+        .await
+        .unwrap();
     let valid: Option<time::OffsetDateTime> =
         sqlx::query_scalar("SELECT core.payload_time('2026-10-27T14:00:00+02:00')")
-            .fetch_one(&mut conn)
+            .fetch_one(&mut *conn)
             .await
             .unwrap();
     assert_eq!(valid.unwrap().unix_timestamp(), 1793102400);
     let lowercase: Option<time::OffsetDateTime> =
         sqlx::query_scalar("SELECT core.payload_time('2026-10-27t12:00:00z')")
-            .fetch_one(&mut conn)
+            .fetch_one(&mut *conn)
             .await
             .unwrap();
     assert_eq!(lowercase.unwrap().unix_timestamp(), 1793102400);
@@ -123,7 +127,7 @@ async fn timestamp_extraction_checks_calendar_dates_and_schemaless_mixed_values(
         let parsed: Option<time::OffsetDateTime> =
             sqlx::query_scalar("SELECT core.payload_time($1)")
                 .bind(text)
-                .fetch_one(&mut conn)
+                .fetch_one(&mut *conn)
                 .await
                 .unwrap();
         assert!(parsed.is_none(), "{text}");

@@ -2,12 +2,12 @@ use super::*;
 
 struct Titles;
 impl DirtyKeys for Titles {
-    fn keys(&self, event: &KeyInput<'_>) -> Vec<(&'static str, Value)> {
+    fn keys(&self, event: &KeyInput<'_>) -> Vec<(String, Value)> {
         event
             .payload
             .get("title")
             .filter(|v| !v.is_null())
-            .map(|title| vec![("test.titles", title.clone())])
+            .map(|title| vec![("test.titles".into(), title.clone())])
             .unwrap_or_default()
     }
 }

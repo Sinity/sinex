@@ -331,7 +331,8 @@ impl ValueGroup {
         let rows = sqlx::query!(
             r#"SELECT e.id, e.event_type, e.source, e.material_id, e.anchor, e.output_index, e.parents,
                  e.ts_orig, e.ts_quality, e.payload, e.equivalence_key, e.reading_order, e.record_hash,
-                 e.record_state, e.class, e.commit_seq, page.value AS "value!", page.matched AS "matched!"
+                 e.record_state, e.class, e.commit_seq, e.kind_version, e.validation,
+                 (SELECT replace_rule FROM registry.event_types t WHERE t.name=e.event_type AND t.version=e.kind_version) AS replace_rule, page.value AS "value!", page.matched AS "matched!"
                FROM core.events e JOIN (
                  SELECT p.id, p.value, p.matched FROM (
                    SELECT q.id, q.value, count(*) OVER () AS matched,

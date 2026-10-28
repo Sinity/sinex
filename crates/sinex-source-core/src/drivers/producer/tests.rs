@@ -1,4 +1,5 @@
 use super::*;
+use crate::Reader;
 use serde_json::json;
 use std::collections::HashMap;
 
@@ -162,7 +163,10 @@ async fn refusing(
                     None,
                     events.iter().map(|_| sinex_model::EventId::new()).collect(),
                 ),
-                Ingress::Chunk { .. } | Ingress::LargeFrame { .. } => (None, vec![]),
+                Ingress::Chunk { .. }
+                | Ingress::LargeFrame { .. }
+                | Ingress::RegisterKinds { .. }
+                | Ingress::ReplaySequence { .. } => (None, vec![]),
             };
             let refusal = match &frame {
                 Ingress::Chunk { offset, .. } if refuse_offset == Some(*offset) => {
@@ -394,7 +398,7 @@ fn assert_chunks(frames: &[Ingress], expected: &[u8]) {
 async fn streamed_upload_preserves_empty_and_chunk_boundary_materials() {
     let nats = devkit::nats::test_nats().unwrap();
     let subjects = Subjects::new(nats.prefix());
-    let received = standin(&nats, &subjects, "boundaries", None).await;
+    let received = standin(&nats, &subjects, "boundaries").await;
     let dir = tempfile::tempdir().unwrap();
     let store = Store::open(dir.path()).unwrap();
     let mut producer = Producer::connect(
@@ -436,7 +440,7 @@ async fn streamed_upload_preserves_empty_and_chunk_boundary_materials() {
 async fn damaged_producer_material_sends_no_chunks() {
     let nats = devkit::nats::test_nats().unwrap();
     let subjects = Subjects::new(nats.prefix());
-    let received = standin(&nats, &subjects, "damaged", None).await;
+    let received = standin(&nats, &subjects, "damaged").await;
     let dir = tempfile::tempdir().unwrap();
     let store = Store::open(dir.path()).unwrap();
     let bytes = b"synthetic stored material";
