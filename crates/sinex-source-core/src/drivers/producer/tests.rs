@@ -1056,19 +1056,42 @@ async fn a_saved_invalid_name_restarts_under_a_valid_attempt_name() {
     let material = sinex_model::MaterialId::new();
     let prefix = format!("synthetic:/spool/\0@host/events/{material}/0/0");
     UnacknowledgedFrames {
-        frames: vec![Ingress::Events { frame: prefix, events: vec![event(1)], failures: vec![] }],
-        position: Position { cursor: json!({"segment":1}), ..Default::default() },
-        sources: vec![], mismatch: None, skip_position: None, records: 1,
-        refusal: Some(FrameRefusal::Malformed), reporting_failure: false,
-    }.save(&state, "binding").unwrap();
-    let mut producer = Producer::connect(nats.url(), None, subjects, "restart-name", &ProducerHello::default()).await.unwrap();
+        frames: vec![Ingress::Events {
+            frame: prefix,
+            events: vec![event(1)],
+            failures: vec![],
+        }],
+        position: Position {
+            cursor: json!({"segment":1}),
+            ..Default::default()
+        },
+        sources: vec![],
+        mismatch: None,
+        skip_position: None,
+        records: 1,
+        refusal: Some(FrameRefusal::Malformed),
+        reporting_failure: false,
+    }
+    .save(&state, "binding")
+    .unwrap();
+    let mut producer = Producer::connect(
+        nats.url(),
+        None,
+        subjects,
+        "restart-name",
+        &ProducerHello::default(),
+    )
+    .await
+    .unwrap();
     let position = producer.position("binding", &state, &store).await.unwrap();
     assert_eq!(position.cursor, json!({"segment":1}));
     let received = received.lock().unwrap();
     assert_eq!(received.len(), 1);
     let mut frame = received[0].clone();
     assert!(!frame.frame().contains('\0'));
-    assert!(frame.frame().starts_with(&format!("synthetic:/spool/\\0@host/events/{material}/0/0/retry/")));
+    assert!(frame.frame().starts_with(&format!(
+        "synthetic:/spool/\\0@host/events/{material}/0/0/retry/"
+    )));
     let first_name = frame.frame().to_owned();
     retry(&mut frame);
     assert_ne!(frame.frame(), first_name);
