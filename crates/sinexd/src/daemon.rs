@@ -205,12 +205,29 @@ pub(crate) async fn run(o: Options) -> Result<(), String> {
             .map_err(|e| format!("{}: {e}", o.api.tokens.display()))?,
         unlock: Default::default(),
         host: o.host.clone(),
-        library_roots: sources
-            .sources
+        library_roots: if sources
+            .exclude
             .get("library.scan")
-            .filter(|source| source.enable)
-            .map(|source| source.paths.iter().map(std::path::PathBuf::from).collect())
-            .unwrap_or_default(),
+            .is_some_and(Option::is_some)
+        {
+            Vec::new()
+        } else {
+            sources
+                .sources
+                .get("library.scan")
+                .into_iter()
+                .flat_map(|source| source.paths.iter().map(std::path::PathBuf::from))
+                .chain(
+                    sources
+                        .discovery
+                        .input_roots
+                        .get("library")
+                        .into_iter()
+                        .flatten()
+                        .cloned(),
+                )
+                .collect()
+        },
     };
     let config = api::Config {
         socket: o.api.socket.clone(),

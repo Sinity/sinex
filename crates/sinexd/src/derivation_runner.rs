@@ -384,7 +384,7 @@ impl DerivationRunner {
             writer: &self.writer,
             derivation: self.keyed[index].as_ref(),
             run,
-            counts: self.counts.entry(name).or_default(),
+            counts: self.counts.entry(name.to_owned()).or_default(),
         }
         .compute(work, env)
         .await
@@ -804,6 +804,9 @@ impl KeyComputation<'_> {
                 } else {
                     sinex_derivations::Computed::default()
                 };
+                if let Some(error) = &computed.error {
+                    return Err(error.to_string());
+                }
                 let c = &mut *self.counts;
                 c.compute += t.elapsed();
                 c.inputs += input.len();
@@ -887,7 +890,7 @@ pub(crate) async fn compute_now(
     derivation: &dyn AnyKeyed,
     keys: Vec<Value>,
     host: &str,
-) -> Result<(), String> {
+) -> Result<Counts, String> {
     let version = derivation.version().to_string();
     let manifest = runs::Manifest {
         name: derivation.name(),
@@ -899,29 +902,25 @@ pub(crate) async fn compute_now(
     let run = runs::start(conn, &manifest, host)
         .await
         .map_err(|e| e.to_string())?;
-    let result = async {
+    let result: Result<Counts, String> = async {
         let env = Env::at(Timestamp::now());
         let mut counts = Counts::default();
-        for chunk in keys.chunks(KEYS_PER_BATCH) {
-            let head = derivations::head(conn).await.map_err(|e| e.to_string())?;
-            let work = chunk
-                .iter()
-                .cloned()
-                .map(|key| (key, head, false))
-                .collect();
-            KeyComputation {
-                read: conn,
-                writer,
-                derivation,
-                run,
-                counts: &mut counts,
-            }
-            .compute(work, &env)
-            .await?;
+        let head = derivations::head(conn).await.map_err(|e| e.to_string())?;
+        let work = keys.into_iter().map(|key| (key, head, false)).collect();
+        KeyComputation {
+            read: conn,
+            writer,
+            derivation,
+            run,
+            counts: &mut counts,
         }
-        Ok(())
+        .compute(work, &env)
+        .await?;
+        Ok(counts)
     }
     .await;
     let ended = runs::end(conn, run).await.map_err(|e| e.to_string());
-    result.and(ended)
+    let counts = result?;
+    ended?;
+    Ok(counts)
 }

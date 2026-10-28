@@ -1,4 +1,8 @@
+use async_nats::jetstream;
+use futures::StreamExt;
+use sinex_protocol::Acknowledgment;
 use sinex_protocol::{Ingress, Subjects};
+use sinex_source_core::Reader;
 use sinex_source_core::drivers::producer::{Position, Producer, Store};
 use std::{
     path::Path,
@@ -64,7 +68,10 @@ async fn standin_with_refusal(
                     None,
                     events.iter().map(|_| sinex_model::EventId::new()).collect(),
                 ),
-                Ingress::Chunk { .. } | Ingress::LargeFrame { .. } => (None, vec![]),
+                Ingress::Chunk { .. }
+                | Ingress::LargeFrame { .. }
+                | Ingress::RegisterKinds { .. }
+                | Ingress::ReplaySequence { .. } => (None, vec![]),
             };
             let refusal = match &frame {
                 Ingress::Chunk { offset, .. } if refuse_offset == Some(*offset) => {
@@ -107,7 +114,7 @@ async fn a_spool_is_produced_once_material_first() {
 
     let nats = devkit::nats::test_nats().unwrap();
     let subjects = Subjects::new(nats.prefix());
-    let received = standin(&nats, &subjects, "session-test", None).await;
+    let received = standin(&nats, &subjects, "session-test").await;
 
     let dir = std::env::temp_dir().join(format!("sinex-prod-{}", uuid::Uuid::now_v7()));
     let spool = dir.join("spool");
@@ -218,9 +225,15 @@ async fn draining_after_moving_session_storage_keeps_names_and_positions() {
         .clone();
     let store = Store::open(&root.path().join("store")).unwrap();
     let positions = state.join("positions");
-    let mut producer = Producer::connect(nats.url(), None, subjects, "session-test")
-        .await
-        .unwrap();
+    let mut producer = Producer::connect(
+        nats.url(),
+        None,
+        subjects,
+        "session-test",
+        &Default::default(),
+    )
+    .await
+    .unwrap();
     live::drain(&mut producer, &store, &positions, bindings)
         .await
         .unwrap();
@@ -236,7 +249,7 @@ async fn draining_after_moving_session_storage_keeps_names_and_positions() {
                 Ingress::Events { events, .. } => events.as_slice(),
                 _ => &[],
             })
-            .filter(|event| event.event_type == "window.focused")
+            .filter(|event| event.kind.name == "window.focused")
             .count(),
         1
     );
@@ -285,9 +298,15 @@ async fn drain_retries_pending_frames_then_requires_the_missing_spool() {
     };
     let store = Store::open(&root.path().join("store")).unwrap();
     let positions = root.path().join("positions");
-    let mut producer = Producer::connect(nats.url(), None, subjects.clone(), "session-test")
-        .await
-        .unwrap();
+    let mut producer = Producer::connect(
+        nats.url(),
+        None,
+        subjects.clone(),
+        "session-test",
+        &Default::default(),
+    )
+    .await
+    .unwrap();
     let error = live::drain(
         &mut producer,
         &store,
@@ -303,9 +322,15 @@ async fn drain_retries_pending_frames_then_requires_the_missing_spool() {
     drop(producer);
     std::fs::rename(&spool, root.path().join("kept-spool")).unwrap();
     let received = standin(&nats, &subjects, "session-test").await;
-    let mut producer = Producer::connect(nats.url(), None, subjects, "session-test")
-        .await
-        .unwrap();
+    let mut producer = Producer::connect(
+        nats.url(),
+        None,
+        subjects,
+        "session-test",
+        &Default::default(),
+    )
+    .await
+    .unwrap();
     let missing = live::drain(
         &mut producer,
         &store,
@@ -342,7 +367,7 @@ async fn drain_retries_pending_frames_then_requires_the_missing_spool() {
                 Ingress::Events { events, .. } => events.as_slice(),
                 _ => &[],
             })
-            .filter(|event| event.event_type == "window.focused")
+            .filter(|event| event.kind.name == "window.focused")
             .count(),
         1
     );

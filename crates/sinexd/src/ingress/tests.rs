@@ -1045,7 +1045,7 @@ async fn a_refused_event_between_good_frames_is_a_queryable_material_failure_and
     for (index, command) in ["first", "second", "third"].iter().enumerate() {
         let mut event = imported(material, offset, command);
         if index == 1 {
-            event.event_type = "not.declared".into();
+            event.kind.name = "not.declared".into();
         }
         let frame = Ingress::Events {
             frame: format!("events-{index}"),
@@ -1127,11 +1127,11 @@ async fn content_failures_use_the_named_material_and_missing_locations_are_malfo
     let (second, frame) = h.material_frame("b/material/second", b": 1760788801:0;second\n");
     assert!(h.send("session", &frame).await.refusal.is_none());
     let mut nul_type = imported(first, 0, "synthetic");
-    nul_type.event_type = "not.\0declared".into();
+    nul_type.kind.name = "not.\0declared".into();
     let mut no_location = imported(first, 0, "synthetic");
     no_location.location = None;
     let mut wrong_location = imported(second, 0, "synthetic");
-    wrong_location.event_type = "not.declared".into();
+    wrong_location.kind.name = "not.declared".into();
     for (name, event, expected) in [
         ("nul", imported(first, 0, "a\0b"), FrameRefusal::Content),
         ("nul-type", nul_type, FrameRefusal::Content),
@@ -1378,7 +1378,7 @@ async fn daemon_status_counts_refusals_by_producer_source_and_event_type(
     );
     h.send("node", &frame).await;
     let mut event = imported(material, 0, "synthetic");
-    event.event_type = "not.declared".into();
+    event.kind.name = "not.declared".into();
     let content = Ingress::Events {
         frame: format!("a:/spool/capture@host/events/{material}/content"),
         events: vec![event.clone(), event],
@@ -1430,6 +1430,8 @@ async fn daemon_status_counts_refusals_by_producer_source_and_event_type(
         Some(FrameRefusal::Malformed)
     );
     let api = crate::api::Api {
+        source_config: Default::default(),
+        library_roots: Vec::new(),
         reads: h.reads.clone(),
         writer: Some(h.writer.clone()),
         blobs: h.blobs.clone(),

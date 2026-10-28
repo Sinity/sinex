@@ -205,6 +205,7 @@ pub(super) async fn read_shared(
                 .carry(conn, &b.binding.name, carry, &acquired)
                 .await?;
             let total = totals[slot].as_mut().map_err(|e| e.clone())?;
+            let checked_stop = stop.clone();
             crate::intake::Intake {
                 writer,
                 run,

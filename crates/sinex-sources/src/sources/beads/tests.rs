@@ -174,7 +174,7 @@ fn removal_survives_a_failed_admission_and_a_restart() {
         "cursor holds no issue text"
     );
     export(&path, &[line("demo-a", "A", "open")]);
-    for reader in [reader, driver(path.clone(), "h".into())] {
+    for mut reader in [reader, driver(path.clone(), "h".into())] {
         for _ in 0..2 {
             let acquired = reader.poll(&admitted).unwrap();
             let records = records(&acquired);

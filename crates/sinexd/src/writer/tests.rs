@@ -314,7 +314,7 @@ async fn source_content_refusals_keep_material_failures_and_advance_the_cursor(
 ) {
     use sinex_model::{InputRef, Manifest, MaterialRef, RevisionChange, SourceProgress};
     let url = db.url(None);
-    let connection = PgConnection::connect(&url).await.unwrap();
+    let connection = AdmissionContext::connect(&url).await.unwrap();
     let mut reader = PgConnection::connect(&url).await.unwrap();
     let dir = tempfile::tempdir().unwrap();
     let blobs = Blobs::open(dir.path()).unwrap();
@@ -459,13 +459,13 @@ async fn source_content_refusals_keep_material_failures_and_advance_the_cursor(
 
 #[devkit::test]
 async fn temporary_database_errors_remain_retryable(db: devkit::pg::TestDatabase) {
-    let mut conn = PgConnection::connect(&db.url(None)).await.unwrap();
+    let mut conn = AdmissionContext::connect(&db.url(None)).await.unwrap();
     sqlx::query("SET statement_timeout = '5ms'")
-        .execute(&mut conn)
+        .execute(&mut *conn)
         .await
         .unwrap();
     let timeout = sqlx::query("SELECT pg_sleep(1)")
-        .execute(&mut conn)
+        .execute(&mut *conn)
         .await
         .unwrap_err();
     assert!(matches!(
@@ -473,11 +473,11 @@ async fn temporary_database_errors_remain_retryable(db: devkit::pg::TestDatabase
         WriteError::Unavailable(_)
     ));
     sqlx::query("SET statement_timeout = 0")
-        .execute(&mut conn)
+        .execute(&mut *conn)
         .await
         .unwrap();
     let invalid = sqlx::query("SELECT 'invalid'::integer")
-        .execute(&mut conn)
+        .execute(&mut *conn)
         .await
         .unwrap_err();
     assert!(matches!(
@@ -490,6 +490,7 @@ async fn temporary_database_errors_remain_retryable(db: devkit::pg::TestDatabase
         &sinex_store::NoDerivations,
         None,
         &|| Ok(()),
+        false,
     )
     .await
     .unwrap();

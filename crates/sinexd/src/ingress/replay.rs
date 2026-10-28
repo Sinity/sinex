@@ -274,7 +274,16 @@ impl Ingest {
                 Err(WriteError::Stopped) => return Err("the writer stopped".into()),
                 Err(WriteError::Refused(reason)) => {
                     self.writer
-                        .submit(Priority::Live, refusal(run, producer, frame, reason))
+                        .submit(
+                            Priority::Live,
+                            refusal(
+                                run,
+                                producer,
+                                frame,
+                                sinex_model::FrameRefusal::Content,
+                                reason,
+                            ),
+                        )
                         .await
                         .map_err(|e| e.to_string())?;
                 }
@@ -282,7 +291,16 @@ impl Ingest {
             Err(Check::Unavailable(error)) => return Err(error),
             Err(Check::Refused(reason)) => {
                 self.writer
-                    .submit(Priority::Live, refusal(run, producer, frame, reason))
+                    .submit(
+                        Priority::Live,
+                        refusal(
+                            run,
+                            producer,
+                            frame,
+                            sinex_model::FrameRefusal::Content,
+                            reason,
+                        ),
+                    )
                     .await
                     .map_err(|e| e.to_string())?;
             }
