@@ -971,7 +971,11 @@ impl Producer {
 }
 
 fn retry(frame: &mut Ingress) {
-    let name = format!("{}/retry/{}", frame.frame(), uuid::Uuid::now_v7());
+    let current = frame.frame();
+    let original = current.rsplit_once("/retry/")
+        .filter(|(_, attempt)| uuid::Uuid::parse_str(attempt).is_ok())
+        .map_or(current, |(original, _)| original);
+    let name = format!("{}/retry/{}", original.replace('\0', "\\0"), uuid::Uuid::now_v7());
     match frame {
         Ingress::Material { frame, .. }
         | Ingress::Events { frame, .. }

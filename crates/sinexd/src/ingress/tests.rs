@@ -1422,3 +1422,24 @@ async fn daemon_status_counts_refusals_by_producer_source_and_event_type(
     assert_eq!(result["ingress_refusals_24h"].as_array().unwrap().len(), 4);
     assert_eq!(result["producer_errors"].as_array().unwrap().len(), 2);
 }
+
+#[devkit::test]
+async fn a_configuration_refusal_removes_the_partial_chunk_transfer(db: devkit::pg::TestDatabase) {
+    let h = Harness::start(db).await;
+    let bytes = b"synthetic bytes";
+    let blob = format!("blake3:{}", blake3::hash(bytes).to_hex());
+    let chunk = |name: &str, offset, data: &[u8]| Ingress::Chunk {
+        frame: name.into(), for_frame: "pending-material".into(), blob: blob.clone(),
+        offset, total: bytes.len() as u64,
+        data: base64::engine::general_purpose::STANDARD.encode(data),
+    };
+    assert!(h.send("node", &chunk("prefix", 0, &bytes[..3])).await.refusal.is_none());
+    let directory = frame_bytes::directory(&h.store_dir, "node", "pending-material");
+    assert!(directory.exists());
+    let mut conn = PgConnection::connect(&h.url).await.unwrap();
+    sinex_store::privacy::set_source_class(&mut conn, "node", sinex_model::Class::Sealed, "test").await.unwrap();
+    let ack = h.send("node", &chunk("remaining", 3, &bytes[3..])).await;
+    assert_eq!(ack.refusal_kind(), Some(FrameRefusal::Configuration));
+    assert!(!directory.exists());
+    assert_eq!(h.count("SELECT count(*) FROM raw.materials").await, 0);
+}
