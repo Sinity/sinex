@@ -47,27 +47,26 @@ fn titles_are_read_from_html() {
 }
 
 #[devkit::test]
-fn crawl_format_obeys_the_limit_and_requires_an_allow_list() {
-    let mut settings = sinex_source_core::Settings::new("synthetic");
-    settings.options = serde_json::json!({"urls":["https://example.test/allowed"], "allow":"example.test", "limit":0});
-    let mut binding =
-        sinex_source_core::Binding::of(&SPEC, std::path::Path::new("crawl"), settings);
-    let mut reader = (FORMAT.reader.unwrap())(&binding)
-        .unwrap()
-        .into_polled()
-        .unwrap();
-    assert!(
-        reader
-            .poll(&serde_json::Value::Null)
-            .unwrap()
-            .material
-            .is_none()
+fn a_new_crawl_starts_its_url_list_again_and_keeps_the_material_sequence() {
+    use sinex_source_core::Reader;
+    let material = MaterialId::new();
+    let previous = Cursor {
+        next: 99,
+        material: Some(material),
+        part_index: 10,
+    };
+    let mut reader = Crawl::new(
+        vec!["file:///first".into(), "file:///second".into()],
+        vec!["allowed.test".into()],
+        Duration::ZERO,
+        "synthetic".into(),
     );
-    binding
-        .settings
-        .options
-        .as_object_mut()
-        .unwrap()
-        .remove("allow");
-    assert!((FORMAT.reader.unwrap())(&binding).is_err());
+    let acquired = reader
+        .poll(&serde_json::to_value(previous).unwrap())
+        .unwrap();
+    assert!(acquired.material.is_none());
+    let next: Cursor = serde_json::from_value(acquired.cursor_without_material).unwrap();
+    assert_eq!(next.next, 2);
+    assert_eq!(next.material, Some(material));
+    assert_eq!(next.part_index, 10);
 }

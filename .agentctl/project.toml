@@ -133,3 +133,25 @@ pool = "codex"
 result = "exit"
 timeout_seconds = 28800
 cache = "none"
+
+[operations.vm_stack]
+description = "Build and run the stack VM, including journal event delivery"
+exec = ["nix", "build", "--no-link", ".#checks.x86_64-linux.vm-stack", "--print-build-logs", "--max-jobs", "1"]
+pool = "bulk"
+result = "exit"
+timeout_seconds = 7200
+scratch = "nvme"
+cache = "none"
+cap = "cargo"
+unit_properties = ["MemoryHigh=8G"]
+
+[operations.verify]
+description = "Full Rust tests followed by format, boundaries and clippy in one job"
+exec = ["bash", "-euc", "timeout 900s cargo run --locked --quiet -p xtask -- test\ntimeout 1800s cargo run --locked --quiet -p xtask -- check"]
+pool = "bulk"
+result = "exit"
+timeout_seconds = 2700
+scratch = "tmpfs"
+cache = "none"
+cap = "cargo"
+unit_properties = ["MemoryHigh=8G"]

@@ -1,4 +1,4 @@
-//! Metric figures: each metric's number per civil hour and per logical day,
+//! Metric figures: each metric's number per local hour and per logical day,
 //! as `metric.figure` events. These are the daily and hourly figures every
 //! reader uses: the panel, the brief and the statistical methods read them
 //! through the query language, and `trace` leads from a day's number to the
@@ -10,7 +10,7 @@
 //! source's view of them, so a command two shells saw counts once.
 //!
 //! The hourly derivation is keyed by metric and logical day and emits that
-//! day's civil hours (23 to 25 of them) from the day's input events. The
+//! day's local hours (23 to 25 of them) from the day's input events. The
 //! daily derivation is keyed the same way and reads the day's hourly figures,
 //! never the inputs: a day's hours partition it, so counts, seconds and a
 //! ratio's parts add up exactly.

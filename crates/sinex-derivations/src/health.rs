@@ -3,7 +3,7 @@
 //! series is the data source it came from, and each numeric entry of its
 //! `fitValue` list is one value position.
 //!
-//! The hourly derivation is keyed by civil hour and reads that hour's points,
+//! The hourly derivation is keyed by local hour and reads that hour's points,
 //! so a key holds at most one hour of points. It emits one figure per series
 //! with points starting in the hour, naming those points as parents. The daily
 //! derivation is keyed by logical day and reads that day's hourly figures,

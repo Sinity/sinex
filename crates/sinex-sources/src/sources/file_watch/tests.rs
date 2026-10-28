@@ -1,4 +1,5 @@
 use super::*;
+use sinex_source_core::Reader;
 
 fn temp() -> PathBuf {
     let d = std::env::temp_dir().join(format!("sinex-fw-{}", uuid::Uuid::now_v7()));

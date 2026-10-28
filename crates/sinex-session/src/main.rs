@@ -97,7 +97,7 @@ struct Run {
 #[derive(clap::Args)]
 struct Live {
     /// The live format (`hyprland`, `notifications`, `players`,
-    /// `clipboard`, `producers`, `media`, `file-watch`).
+    /// `clipboard`, `producers`, `media`, `file-watch`, `journald`).
     format: String,
     #[arg(long)]
     spool: PathBuf,

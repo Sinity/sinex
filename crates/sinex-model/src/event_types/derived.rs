@@ -32,7 +32,7 @@ pub struct StateInterval {
     pub attributes: std::collections::BTreeMap<String, String>,
 }
 
-/// One metric over one civil hour or logical day: how many input events it
+/// One metric over one local hour or logical day: how many input events it
 /// counted and the metric's number for them, in total or for one value of a
 /// breakdown field. Hourly figures are computed from the metric's input
 /// events, daily ones from the day's hourly figures. A period nothing was
@@ -69,7 +69,7 @@ pub struct MetricFigure {
     pub rows: u64,
 }
 
-/// Figures over one series of health points in one civil hour or logical
+/// Figures over one series of health points in one local hour or logical
 /// day: how many points started in the period and, for each numeric value
 /// position, their count, sum, minimum and maximum. Hourly figures are
 /// computed from the points, daily ones from the day's hourly figures.

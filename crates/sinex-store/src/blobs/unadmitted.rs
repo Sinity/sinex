@@ -1,20 +1,54 @@
 //! Names recorded durably before installation, checked on the next start.
 use super::*;
 use std::fs::{File, OpenOptions};
+use std::io::Write;
 use std::os::unix::fs::OpenOptionsExt;
 type Result<T> = hashed_blobs::Result<T>;
 type Names<'a> = Box<dyn Iterator<Item = hashed_blobs::Result<String>> + Send + 'a>;
+
+#[derive(serde::Serialize, serde::Deserialize, PartialEq, Eq)]
+pub(super) struct DatabasePosition {
+    system_identifier: String,
+    database: String,
+    commit_seq: i64,
+    blob_changes: i64,
+}
+
+impl DatabasePosition {
+    pub(super) async fn read(conn: &mut sqlx::PgConnection) -> crate::Result<Self> {
+        let (system_identifier, database): (String, String) = sqlx::query_as(
+            "SELECT system_identifier::text, current_database()::text FROM pg_control_system()",
+        )
+        .fetch_one(&mut *conn)
+        .await?;
+        Ok(Self {
+            system_identifier,
+            database,
+            commit_seq: crate::commit_log::latest(conn).await?,
+            blob_changes: sqlx::query_scalar(
+                "SELECT value FROM core.counters WHERE name = 'blob_changes'",
+            )
+            .fetch_one(&mut *conn)
+            .await?,
+        })
+    }
+}
 
 impl Blobs {
     fn unadmitted_dir(&self) -> PathBuf {
         self.root().join("unadmitted-blobs")
     }
 
+    pub(super) fn prepare_unadmitted_dir(&self) -> Result<()> {
+        std::fs::create_dir_all(self.unadmitted_dir())?;
+        File::open(self.unadmitted_dir())?.sync_all()?;
+        // Every opener syncs the parent, including one racing the directory's creator.
+        File::open(self.root())?.sync_all()?;
+        Ok(())
+    }
+
     pub(super) fn note_unadmitted(&self, hash: hashed_blobs::Hash) -> Result<()> {
         let dir = self.unadmitted_dir();
-        std::fs::create_dir_all(&dir)?;
-        // Concurrent puts can see the new directory before its creator synced it.
-        File::open(self.root())?.sync_all()?;
         let marker = OpenOptions::new()
             .write(true)
             .create(true)
@@ -40,27 +74,44 @@ impl Blobs {
         Ok(())
     }
 
-    pub(super) fn unadmitted_names(&self) -> Result<Names<'_>> {
-        if !self.root().join("unadmitted-blobs-ready").try_exists()? {
-            // Existing stores need one complete sweep before the recorded
-            // names cover every file that could lack a row.
+    fn saved_position(&self) -> Result<Option<DatabasePosition>> {
+        match std::fs::read(self.root().join("unadmitted-blobs-ready")) {
+            Ok(bytes) => Ok(serde_json::from_slice::<DatabasePosition>(&bytes).ok()),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+            Err(error) => Err(error.into()),
+        }
+    }
+
+    pub(super) fn can_advance_position(&self, position: &DatabasePosition) -> Result<bool> {
+        Ok(self.saved_position()?.is_some_and(|saved| {
+            saved.system_identifier == position.system_identifier
+                && saved.database == position.database
+                && saved.commit_seq <= position.commit_seq
+                && saved.blob_changes <= position.blob_changes
+        }))
+    }
+
+    pub(super) fn unadmitted_names(&self, position: &DatabasePosition) -> Result<Names<'_>> {
+        if !self.can_advance_position(position)? {
+            // A different database or rollback can leave historical files without rows.
             return Ok(Box::new(
                 self.names()
-                    .map_err(|e| hashed_blobs::Error::Io(std::io::Error::other(e)))?,
+                    .map_err(|e| hashed_blobs::Error::Io(std::io::Error::other(e)))?
+                    .chain(self.recorded_names()?),
             ));
         }
         self.recorded_names()
     }
 
     pub(super) fn recorded_names(&self) -> Result<Names<'_>> {
-        let dir = self.unadmitted_dir();
-        std::fs::create_dir_all(&dir)?;
-        Ok(Box::new(std::fs::read_dir(dir)?.map(|entry| {
-            let entry = entry?;
-            let name = format!("blake3:{}", entry.file_name().to_string_lossy());
-            parse(&name).map_err(|e| hashed_blobs::Error::Io(std::io::Error::other(e)))?;
-            Ok(name)
-        })))
+        Ok(Box::new(std::fs::read_dir(self.unadmitted_dir())?.map(
+            |entry| {
+                let entry = entry?;
+                let name = format!("blake3:{}", entry.file_name().to_string_lossy());
+                parse(&name).map_err(|e| hashed_blobs::Error::Io(std::io::Error::other(e)))?;
+                Ok(name)
+            },
+        )))
     }
 
     pub(super) fn sync_recorded_names(&self) -> Result<()> {
@@ -68,16 +119,20 @@ impl Blobs {
         Ok(())
     }
 
-    pub(super) fn sweep_finished(&self) -> Result<()> {
-        std::fs::create_dir_all(self.unadmitted_dir())?;
-        File::open(self.unadmitted_dir())?.sync_all()?;
-        OpenOptions::new()
+    pub(super) fn sweep_finished(&self, position: &DatabasePosition) -> Result<()> {
+        self.sync_recorded_names()?;
+        let path = self
+            .root()
+            .join(format!(".unadmitted-blobs-ready-{}", uuid::Uuid::now_v7()));
+        let mut file = OpenOptions::new()
             .write(true)
-            .create(true)
-            .truncate(false)
+            .create_new(true)
             .mode(0o600)
-            .open(self.root().join("unadmitted-blobs-ready"))?
-            .sync_all()?;
+            .open(&path)?;
+        let bytes = serde_json::to_vec(position).map_err(std::io::Error::other)?;
+        file.write_all(&bytes)?;
+        file.sync_all()?;
+        std::fs::rename(path, self.root().join("unadmitted-blobs-ready"))?;
         File::open(self.root())?.sync_all()?;
         Ok(())
     }
