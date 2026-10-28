@@ -35,7 +35,7 @@ async fn other_rows(
         let name = format!("{schema}.{table}");
         let value = if table == "live_equivalence" && compact {
             "to_jsonb(t)||jsonb_build_object('equivalence_key',core.decode_equivalence_key(equivalence_key))"
-        } else if table == "events" {
+        } else if matches!(table.as_str(), "events" | "admission_stage") {
             "to_jsonb(t)-'kind_version'-'validation'"
         } else if table == "search_text" {
             "to_jsonb(t)-'trigram_indexed'"

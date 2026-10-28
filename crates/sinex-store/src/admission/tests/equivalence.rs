@@ -76,6 +76,9 @@ async fn rows(conn: &mut PgConnection) -> Vec<Value> {
         .bind(sinex_schema::schemas()).fetch_all(&mut *conn).await.unwrap();
     let mut rows = Vec::new();
     for (schema, table) in tables {
+        if schema == "registry" {
+            continue;
+        }
         let name = format!(
             "\"{}\".\"{}\"",
             schema.replace('"', "\"\""),
@@ -85,6 +88,8 @@ async fn rows(conn: &mut PgConnection) -> Vec<Value> {
             format!(
                 "SELECT to_jsonb(t)||jsonb_build_object('equivalence_key',core.decode_equivalence_key(t.equivalence_key)) FROM {name} t ORDER BY 1"
             )
+        } else if matches!(table.as_str(), "events" | "admission_stage") {
+            format!("SELECT to_jsonb(t)-'kind_version'-'validation' FROM {name} t ORDER BY 1")
         } else if table == "counters" {
             format!("SELECT to_jsonb(t) FROM {name} t WHERE name <> 'blob_changes' ORDER BY 1")
         } else if table == "search_text" {
@@ -186,7 +191,7 @@ async fn populated_key_upgrade_preserves_all_rows_and_matches_fresh_schema(
         .await
         .unwrap();
     let before = rows(&mut conn).await;
-    let catalog = sinex_schema::catalog(&mut conn).await.unwrap();
+    let catalog = crate::test_schema::catalog(&mut conn).await;
     version_two_keys(&mut conn).await;
     sqlx::query("UPDATE sinex_schema.applied SET version=2")
         .execute(&mut conn)
@@ -200,7 +205,7 @@ async fn populated_key_upgrade_preserves_all_rows_and_matches_fresh_schema(
         }
     );
     assert_eq!(rows(&mut conn).await, before);
-    assert_eq!(sinex_schema::catalog(&mut conn).await.unwrap(), catalog);
+    assert_eq!(crate::test_schema::catalog(&mut conn).await, catalog);
 }
 
 #[devkit::test]

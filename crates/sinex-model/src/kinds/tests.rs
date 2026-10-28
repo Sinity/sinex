@@ -90,12 +90,23 @@ fn first_present_time_refuses_a_malformed_selected_value() {
 /// Build small inputs from the declared schemas; optional fields are also
 /// exercised as absent and present so conditional rules are compared.
 fn example(schema: &Value, root: &Value, optional: bool) -> Value {
+    example_at(schema, root, optional, &mut Vec::new())
+}
+
+fn example_at(schema: &Value, root: &Value, optional: bool, refs: &mut Vec<String>) -> Value {
     if let Some(reference) = schema.get("$ref").and_then(Value::as_str) {
-        return example(
+        if refs.iter().any(|active| active == reference) {
+            return Value::Null;
+        }
+        refs.push(reference.into());
+        let value = example_at(
             root.pointer(reference.strip_prefix('#').unwrap()).unwrap(),
             root,
             optional,
+            refs,
         );
+        refs.pop();
+        return value;
     }
     if let Some(v) = schema.get("const") {
         return v.clone();
@@ -116,7 +127,7 @@ fn example(schema: &Value, root: &Value, optional: bool) -> Value {
         } else {
             &branches[0]
         };
-        return example(branch, root, optional);
+        return example_at(branch, root, optional, refs);
     }
     let ty = schema.get("type").unwrap_or(&Value::Null);
     let ty = ty
@@ -142,7 +153,7 @@ fn example(schema: &Value, root: &Value, optional: bool) -> Value {
                 let required = schema.get("required").and_then(Value::as_array);
                 for (name, field) in fields {
                     if optional || required.is_some_and(|fields| fields.contains(&json!(name))) {
-                        object.insert(name.clone(), example(field, root, optional));
+                        object.insert(name.clone(), example_at(field, root, optional, refs));
                     }
                 }
             }
@@ -156,7 +167,7 @@ fn every_bundled_declaration_matches_its_rust_methods() {
     let mut checked = 0;
     for kind in crate::event_types::ALL {
         let d = (kind.declaration)();
-        assert_eq!(d.kind.version, 2, "{}", kind.event_type);
+        assert!(d.kind.version >= 2, "{}", kind.event_type);
         for optional in [false, true] {
             let schema = d.payload_schema.as_ref().unwrap();
             let mut payload = example(schema, schema, optional);

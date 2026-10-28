@@ -4,10 +4,12 @@ ALTER TABLE telemetry.events DROP COLUMN kind_version, DROP COLUMN validation;
 ALTER TABLE core.admission_stage DROP COLUMN kind_version, DROP COLUMN validation;
 DROP TABLE core.replay_refusals;
 DROP TABLE registry.kind_prefixes;
-ALTER TABLE registry.event_types RENAME TO test_declarations;
+CREATE TEMP TABLE test_declarations AS SELECT * FROM registry.event_types;
+DROP TABLE registry.event_types;
 CREATE TABLE registry.event_types (name text PRIMARY KEY, payload_schema jsonb, key_fields text[], replace_rule text NOT NULL);
-INSERT INTO registry.event_types SELECT DISTINCT ON (name) name,payload_schema,ARRAY[]::text[],replace_rule FROM registry.test_declarations ORDER BY name,version DESC;
-DROP TABLE registry.test_declarations;
+
+INSERT INTO registry.event_types SELECT DISTINCT ON (name) name,payload_schema,ARRAY[]::text[],replace_rule FROM test_declarations ORDER BY name,version DESC;
+DROP TABLE test_declarations;
 DROP FUNCTION registry.keep_definition();
 ALTER TABLE core.live_equivalence ALTER COLUMN equivalence_key TYPE text USING core.decode_equivalence_key(equivalence_key);
 DROP FUNCTION core.encode_equivalence_key(text), core.decode_equivalence_key(bytea);

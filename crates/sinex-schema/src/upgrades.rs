@@ -61,8 +61,14 @@ pub(crate) fn upgrades() -> Vec<Vec<String>> {
     steps.push(publication_pairs());
     let before = crate::description::Description::before_kind_declarations();
     let after = crate::description::Description::current();
-    let mut statements =
-        vec!["ALTER TABLE registry.event_types RENAME TO unversioned_event_types".into()];
+    let mut statements = vec![
+        "ALTER TABLE registry.event_types RENAME TO unversioned_event_types".into(),
+        "DO $$ DECLARE c record; BEGIN
+           FOR c IN SELECT oid,conname FROM pg_constraint WHERE conrelid='registry.unversioned_event_types'::regclass LOOP
+             EXECUTE format('ALTER TABLE registry.unversioned_event_types RENAME CONSTRAINT %I TO %I',c.conname,'unversioned_event_types_'||c.oid);
+           END LOOP;
+         END $$".into(),
+    ];
     statements.extend(after.changes_from(&before, &["registry.event_types"]));
     steps.push(statements);
     steps

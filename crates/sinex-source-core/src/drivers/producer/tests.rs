@@ -1,7 +1,6 @@
 use super::*;
 use crate::Reader;
 use serde_json::json;
-use std::collections::HashMap;
 
 fn event(n: usize) -> ProducerEvent {
     ProducerEvent {

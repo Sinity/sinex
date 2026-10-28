@@ -165,11 +165,12 @@ async fn version_two_with_compressed_chunks_upgrades_without_changing_rows(
     let compressed_before: i64 = sqlx::query_scalar("SELECT count(*) FROM timescaledb_information.chunks WHERE hypertable_schema='core' AND hypertable_name='events' AND is_compressed")
         .fetch_one(&mut conn).await.unwrap();
     assert!(compressed_before > 0);
-    let rows_before: Vec<serde_json::Value> =
-        sqlx::query_scalar("SELECT to_jsonb(e) FROM core.events e ORDER BY e.id")
-            .fetch_all(&mut conn)
-            .await
-            .unwrap();
+    let rows_before: Vec<serde_json::Value> = sqlx::query_scalar(
+        "SELECT to_jsonb(e)-'kind_version'-'validation' FROM core.events e ORDER BY e.id",
+    )
+    .fetch_all(&mut conn)
+    .await
+    .unwrap();
     assert_eq!(rows_before.len(), 4096);
     assert_eq!(
         sinex_schema::apply(&mut conn).await.unwrap(),
@@ -179,11 +180,12 @@ async fn version_two_with_compressed_chunks_upgrades_without_changing_rows(
         }
     );
     assert_eq!(crate::test_schema::catalog(&mut conn).await, fresh);
-    let rows_after: Vec<serde_json::Value> =
-        sqlx::query_scalar("SELECT to_jsonb(e) FROM core.events e ORDER BY e.id")
-            .fetch_all(&mut conn)
-            .await
-            .unwrap();
+    let rows_after: Vec<serde_json::Value> = sqlx::query_scalar(
+        "SELECT to_jsonb(e)-'kind_version'-'validation' FROM core.events e ORDER BY e.id",
+    )
+    .fetch_all(&mut conn)
+    .await
+    .unwrap();
     assert_eq!(rows_after, rows_before);
     let compressed_after: i64 = sqlx::query_scalar("SELECT count(*) FROM timescaledb_information.chunks WHERE hypertable_schema='core' AND hypertable_name='events' AND is_compressed")
         .fetch_one(&mut conn).await.unwrap();

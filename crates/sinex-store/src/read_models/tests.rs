@@ -112,7 +112,6 @@ pub(crate) async fn admit_search_kinds(
 
 #[devkit::test]
 async fn writes_kind_policy_and_skips_unchanged_rows(db: devkit::pg::TestDatabase) {
-    use sqlx::Connection;
     let mut conn = crate::AdmissionContext::connect(&db.url(None))
         .await
         .unwrap();
@@ -168,7 +167,6 @@ async fn writes_kind_policy_and_skips_unchanged_rows(db: devkit::pg::TestDatabas
 
 #[devkit::test]
 async fn sealed_and_empty_text_still_advance_search_position(db: devkit::pg::TestDatabase) {
-    use sqlx::Connection;
     let mut conn = crate::AdmissionContext::connect(&db.url(None))
         .await
         .unwrap();

@@ -109,7 +109,7 @@ async fn upgrading_from_version_0_counts_the_stored_events(db: devkit::pg::TestD
     assert_eq!(run_events(&mut conn, run).await, 3);
     admit_one(&mut conn, &batch(vec![keyed("b", 9, 1, 1)])).await;
     admit_one(&mut conn, &change(first[0].id, true)).await;
-    let fresh = without_positions(sinex_schema::catalog(&mut conn).await.unwrap());
+    let fresh = without_positions(crate::test_schema::catalog(&mut conn).await);
     let expected = kept(&mut conn).await;
     let events: i64 = sqlx::query_scalar("SELECT count(*) FROM core.events")
         .fetch_one(&mut conn)
@@ -145,7 +145,7 @@ async fn upgrading_from_version_0_counts_the_stored_events(db: devkit::pg::TestD
         "every stored event of the run"
     );
     assert_eq!(
-        without_positions(sinex_schema::catalog(&mut conn).await.unwrap()),
+        without_positions(crate::test_schema::catalog(&mut conn).await),
         fresh
     );
     let after: i64 = sqlx::query_scalar("SELECT count(*) FROM core.events")
@@ -198,7 +198,7 @@ async fn upgrading_from_version_3_registers_query_kinds_and_keeps_events(
         .await
         .unwrap();
     under_run(&mut conn, vec![keyed("synthetic", 1, 1, 1)]).await;
-    let fresh = sinex_schema::catalog(&mut conn).await.unwrap();
+    let fresh = crate::test_schema::catalog(&mut conn).await;
     let before: Vec<Uuid> = sqlx::query_scalar("SELECT id FROM core.events ORDER BY id")
         .fetch_all(&mut conn)
         .await
@@ -221,5 +221,5 @@ async fn upgrading_from_version_3_registers_query_kinds_and_keeps_events(
         .await
         .unwrap();
     assert_eq!(before, after);
-    assert_eq!(sinex_schema::catalog(&mut conn).await.unwrap(), fresh);
+    assert_eq!(crate::test_schema::catalog(&mut conn).await, fresh);
 }

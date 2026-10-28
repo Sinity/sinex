@@ -88,11 +88,12 @@ async fn search_upgrade_preserves_populated_text_and_other_rows(db: devkit::pg::
             .fetch_all(&mut conn)
             .await
             .unwrap();
-    let events: Vec<serde_json::Value> =
-        sqlx::query_scalar("SELECT to_jsonb(e) FROM core.events e ORDER BY id")
-            .fetch_all(&mut conn)
-            .await
-            .unwrap();
+    let events: Vec<serde_json::Value> = sqlx::query_scalar(
+        "SELECT to_jsonb(e)-'kind_version'-'validation' FROM core.events e ORDER BY id",
+    )
+    .fetch_all(&mut conn)
+    .await
+    .unwrap();
     assert_eq!(
         apply(&mut conn).await.unwrap(),
         Applied::Upgraded {
@@ -109,7 +110,7 @@ async fn search_upgrade_preserves_populated_text_and_other_rows(db: devkit::pg::
     assert_eq!(after, before);
     assert_eq!(
         sqlx::query_scalar::<_, serde_json::Value>(
-            "SELECT to_jsonb(e) FROM core.events e ORDER BY id"
+            "SELECT to_jsonb(e)-'kind_version'-'validation' FROM core.events e ORDER BY id"
         )
         .fetch_all(&mut conn)
         .await

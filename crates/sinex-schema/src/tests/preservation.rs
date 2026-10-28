@@ -81,6 +81,9 @@ async fn every_upgrade_keeps_populated_records_and_matches_fresh_definitions(
             tx.execute(statement.as_str()).await.unwrap();
         }
         if from + 1 == VERSION {
+            crate::kinds::upgrade_historical(&mut tx, &crate::kinds::Owners::default())
+                .await
+                .unwrap();
             crate::description::Description::current()
                 .apply(&mut tx, &crate::kinds::Owners::default())
                 .await
@@ -175,6 +178,9 @@ async fn chain_refuses_writer_and_newer_schema_before_changing_rows(db: devkit::
             tx.execute(statement.as_str()).await.unwrap();
         }
         if from + 1 == VERSION {
+            crate::kinds::upgrade_historical(&mut tx, &crate::kinds::Owners::default())
+                .await
+                .unwrap();
             crate::description::Description::current()
                 .apply(&mut tx, &crate::kinds::Owners::default())
                 .await

@@ -37,7 +37,7 @@ impl BindingReader {
     }
 
     pub(crate) fn with_reading(
-        kind: &InputFormat,
+        _kind: &InputFormat,
         binding: Binding,
         reading: sinex_source_core::Reading,
     ) -> Result<Self, String> {

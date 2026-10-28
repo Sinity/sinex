@@ -181,7 +181,7 @@ impl DirSnapshot {
         cursor: &Value,
         state: &mut DirState,
         previous: Cursor,
-        mut facts: ObservationFacts,
+        facts: ObservationFacts,
         found: BTreeMap<PathBuf, EntryFacts>,
     ) -> Result<Acquired, DriverError> {
         self.poll_entries_excluding(cursor, state, previous, facts, found, &[])

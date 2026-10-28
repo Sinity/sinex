@@ -10,7 +10,7 @@ use std::{
 
 /// A stand-in for `sinexd`'s ingress that records the frames it receives
 /// and acknowledges each one.
-pub async fn standin(
+pub(crate) async fn standin(
     nats: &devkit::nats::TestNats,
     subjects: &Subjects,
     producer: &str,
@@ -18,7 +18,7 @@ pub async fn standin(
     standin_with_refusal(nats, subjects, producer, None, 0, FrameRefusal::Content).await
 }
 
-pub async fn standin_with_refusal(
+pub(crate) async fn standin_with_refusal(
     nats: &devkit::nats::TestNats,
     subjects: &Subjects,
     producer: &str,
@@ -38,7 +38,7 @@ pub async fn standin_with_refusal(
     .await
 }
 
-pub async fn refusing(
+pub(crate) async fn refusing(
     nats: &devkit::nats::TestNats,
     subjects: &Subjects,
     producer: &str,
