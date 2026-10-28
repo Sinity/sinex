@@ -47,5 +47,9 @@ fn test_command_owns_fuzz_regressions() {
     assert!(output.status.success());
     let help = String::from_utf8(output.stdout).unwrap();
     assert!(help.contains("test"));
-    assert!(!help.lines().any(|line| line.trim_start().starts_with("fuzz")));
+    assert!(
+        !help
+            .lines()
+            .any(|line| line.trim_start().starts_with("fuzz"))
+    );
 }
