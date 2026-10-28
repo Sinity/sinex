@@ -31,7 +31,11 @@ async fn other_rows(
         } else {
             "to_jsonb(t)"
         };
-        let predicate = if table == "counters" { " WHERE name <> 'blob_changes'" } else { "" };
+        let predicate = if table == "counters" {
+            " WHERE name <> 'blob_changes'"
+        } else {
+            ""
+        };
         let sql = format!(
             "SELECT coalesce(jsonb_agg({value} ORDER BY {value}), '[]'::jsonb) FROM \"{schema}\".\"{table}\" t{predicate}"
         );
