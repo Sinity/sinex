@@ -101,6 +101,14 @@ these names and no others.
 - **sealed**: encrypted at rest under a per-material **data key**, wrapped for the operator's **class key**; equivalence keys and record hashes become keyed hashes under a **hash key** derived from the data key; reading needs an **unlock**.
 - **rule**: a privacy rule applied at admission; **masking** hides credentials on output.
 
+## Development tooling
+
+- **scenario**: one exported NixOS check selected for a VM run.
+- **development stack**: a checkout's owned PostgreSQL and NATS services, daemon and explicitly selected session captures.
+- **development lock**: an exclusive file lock held while a checkout's development stack runs.
+- **corpus**: the input files a fuzz experiment starts with and grows.
+- **region**: a source span and execution count reported by LLVM coverage.
+
 ## Words not used
 
 | Not used | Say instead |

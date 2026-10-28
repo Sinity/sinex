@@ -1,0 +1,1 @@
+events where source = 'synthetic' | count
