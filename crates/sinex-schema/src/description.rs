@@ -21,7 +21,7 @@ pub(crate) struct Description {
 }
 
 impl Description {
-    pub fn current() -> Self {
+    pub(crate) fn current() -> Self {
         Self {
             tables: tables::tables(&Checks::from_model()),
             after_tables: tables::after_tables(),
@@ -32,7 +32,7 @@ impl Description {
         }
     }
 
-    pub fn version_four() -> Self {
+    pub(crate) fn version_four() -> Self {
         Self {
             tables: version_four::tables(&version_four::checks()),
             after_tables: version_four::after_tables(),
@@ -46,7 +46,7 @@ impl Description {
         }
     }
 
-    pub async fn apply(
+    pub(crate) async fn apply(
         &self,
         connection: &mut sqlx::PgConnection,
         owners: &crate::kinds::Owners,
@@ -55,7 +55,7 @@ impl Description {
         crate::apply_views(connection, self).await
     }
 
-    pub fn statements(&self) -> Vec<String> {
+    pub(crate) fn statements(&self) -> Vec<String> {
         let mut statements = self.tables.clone();
         statements.extend(self.after_tables.clone());
         statements.extend(self.visibility.clone());
@@ -65,7 +65,7 @@ impl Description {
 
     /// Table renames that preserve rows for a data transformation happen first.
     /// Every other structural change is derived from the two descriptions.
-    pub fn changes_from(&self, before: &Self, renamed: &[&str]) -> Vec<String> {
+    pub(crate) fn changes_from(&self, before: &Self, renamed: &[&str]) -> Vec<String> {
         let before_tables: BTreeMap<_, _> = before
             .tables
             .iter()

@@ -88,7 +88,7 @@ const CURSOR: Arg = opt("cursor", ArgKind::Text, "the cursor from the previous p
 pub const COMMANDS: &[Command] = &[
     Command {
         name: "kinds",
-        summary: "List immutable event-kind declarations",
+        summary: "List immutable kind declarations",
         access: Access::Read,
         mcp: true,
         args: &[opt("kind", ArgKind::Text, "event type"), PAGE, CURSOR],

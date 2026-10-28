@@ -96,7 +96,7 @@ async fn fill_uses_wall_clock_days_through_a_change_of_offset(db: devkit::pg::Te
     );
     let text = "commands where when in 2026-10 group by day(when) count fill";
     let q = bind(text, &ctx).unwrap();
-    let a = run(&mut conn, text, &q, &ctx, &Page::default())
+    let a = run(&mut conn, text, Some(&q), &ctx, &Page::default())
         .await
         .unwrap();
     assert_eq!(a.total, 31);
@@ -104,7 +104,7 @@ async fn fill_uses_wall_clock_days_through_a_change_of_offset(db: devkit::pg::Te
     assert_eq!(a.rows[30]["day"], "2026-10-31");
     let text = "commands where when in 2026-10 group by week(when) count fill";
     let q = bind(text, &ctx).unwrap();
-    let a = run(&mut conn, text, &q, &ctx, &Page::default())
+    let a = run(&mut conn, text, Some(&q), &ctx, &Page::default())
         .await
         .unwrap();
     assert_eq!(a.total, 5);

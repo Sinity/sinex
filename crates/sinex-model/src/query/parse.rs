@@ -1,5 +1,5 @@
 //! Parsing and binding: one pass that reads the tokens, checks every field
-//! against its table's table, and resolves every time against the context. A
+//! against its table, and resolves every time against the context. A
 //! query that cannot mean what it says is refused with the reason; nothing
 //! falls back silently.
 use super::QueryError;
