@@ -388,8 +388,8 @@ pub(crate) fn tables(c: &Checks) -> Vec<String> {
         "CREATE TABLE derivation.waiting (
   derivation text NOT NULL,
   key jsonb NOT NULL,
-  refresh_at timestamptz,
   since timestamptz NOT NULL DEFAULT now(),
+  refresh_at timestamptz,
   PRIMARY KEY (derivation, key)
 )".into(),
         // A comparison: what a recompute of a derivation would change,

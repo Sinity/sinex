@@ -134,10 +134,26 @@ fn branch_objectives_survive_days_and_keep_agent_work_separate() {
     assert_eq!(suspension.intervening_episodes.len(), 1);
     let mut reversed = inputs.clone();
     reversed.reverse();
+    // Recomputing creates new readings; compare the stable record references.
+    fn stable_references(value: &mut Value) {
+        match value {
+            Value::Object(fields) => {
+                if fields.contains_key("record") && fields.contains_key("event_type") {
+                    fields.remove("event");
+                }
+                fields.values_mut().for_each(stable_references);
+            }
+            Value::Array(values) => values.iter_mut().for_each(stable_references),
+            _ => {}
+        }
+    }
     let payloads = |events: Vec<Event>| {
         events
             .into_iter()
-            .map(|event| (event.event_type, event.payload))
+            .map(|mut event| {
+                stable_references(&mut event.payload);
+                (event.event_type, event.payload)
+            })
             .collect::<Vec<_>>()
     };
     assert_eq!(payloads(output), payloads(compute(&reversed)));

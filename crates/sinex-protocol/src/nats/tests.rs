@@ -49,7 +49,7 @@ fn frames_round_trip_with_defaults() {
     let json = serde_json::json!({
         "kind": "events",
         "frame": "f1",
-        "events": [{"event_type": "command.imported", "payload": {"command": "ls"}}]
+        "events": [{"event_type": "command.imported", "payload": {"command": "ls"}, "reading_order": 0}]
     });
     let frame: Ingress = serde_json::from_value(json).unwrap();
     let Ingress::Events { frame, events, .. } = frame else {

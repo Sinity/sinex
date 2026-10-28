@@ -422,7 +422,7 @@ fn only_sleep_journal_records_are_read_or_mark_activity_keys() {
     );
     let query = Keyed::inputs(
         &ActivitySessions(ActivityProfile::default()),
-        &json!({}),
+        &json!({"at":at(0),"scope":"synthetic"}),
         &env(),
     )
     .unwrap();

@@ -268,7 +268,7 @@ async fn an_output_no_longer_produced_is_archived(db: devkit::pg::TestDatabase) 
     assert_eq!(fused[0].observed_by, vec!["terminal.zsh"]);
     assert!(
         w.count(
-            "SELECT count(*) FROM audit.archived WHERE reason IN ('recomputed', 'newer_reading')"
+            "SELECT count(*) FROM audit.archived a JOIN core.events e ON e.id = a.event_id WHERE e.event_type = 'command.fused' AND a.reason = 'hide'"
         )
         .await
             >= 1
@@ -662,7 +662,7 @@ async fn windows_read_in_pages_equal_windows_read_alone(db: devkit::pg::TestData
             .map(|c| c.event.payload["command"].as_str().unwrap())
             .collect();
         assert_eq!(picked, ["a0", "z1", "a1", "a2", "a3", "a4"]);
-        let all = read[8].as_ref().unwrap();
+        let all = read.last().unwrap().as_ref().unwrap();
         assert_eq!(all.len(), 11);
         assert_eq!(all.first().unwrap().event.payload["command"], "ancient");
         assert_eq!(all.last().unwrap().event.payload["command"], "future");

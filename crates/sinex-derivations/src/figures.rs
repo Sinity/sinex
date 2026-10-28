@@ -150,7 +150,7 @@ pub static METRICS: &[Metric] = &[
             open: false,
         },
         dimensions: &[],
-        sources: &["input.scribe", "polylogue", "operator.raw-log"],
+        sources: &["desktop.input-log", "polylogue", "operator.raw-log"],
         tracked: true,
     },
     Metric {

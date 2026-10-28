@@ -49,6 +49,8 @@ pub fn completeness(source: &str) -> Completeness {
         | "terminal.bash-history"
         | "terminal.fish-history"
         | "desktop.input-log"
+        | "polylogue"
+        | "operator.raw-log"
         | "code.git"
         | "browser.chromium-visits"
         | "browser.takeout-chrome-history"
