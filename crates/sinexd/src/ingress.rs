@@ -241,8 +241,10 @@ impl Ingest {
         {
             self.discard(producer, &stored.frame);
         }
-        if matches!(kind, Some(FrameRefusal::Bytes | FrameRefusal::Configuration))
-            && let Some(Ingress::Chunk { for_frame, .. }) = frame
+        if matches!(
+            kind,
+            Some(FrameRefusal::Bytes | FrameRefusal::Configuration)
+        ) && let Some(Ingress::Chunk { for_frame, .. }) = frame
         {
             self.discard(producer, for_frame);
         }
