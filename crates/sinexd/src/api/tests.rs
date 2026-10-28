@@ -449,7 +449,7 @@ async fn replay_is_offered_through_the_api(db: devkit::pg::TestDatabase) {
         assert_eq!(body["outcome"], "refused", "{body}");
     }
     let identity = sinex_sealing::Identity::generate();
-    use sinex_sealing::ExposeSecret;
+    use age::secrecy::ExposeSecret;
     let (_, body) = call(
         &w,
         Some(OPERATOR),
@@ -712,7 +712,7 @@ async fn sealed_values_need_the_unlocked_operator_and_die_with_their_key(
     let query = json!({"method": "query", "query": "events"});
     let (_, locked) = call(&w, Some(OPERATOR), query.clone()).await;
     assert!(!first(&locked).contains("diary"), "locked: {locked}");
-    use sinex_sealing::ExposeSecret;
+    use age::secrecy::ExposeSecret;
     let (_, body) = call(
         &w,
         Some(OPERATOR),

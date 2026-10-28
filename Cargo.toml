@@ -17,7 +17,6 @@ members = [
     "crates/sinex-session",
     "crates/sinex-capture",
     "crates/sinexctl",
-    "crates/sinex-diagnostics",
     "xtask",
 ]
 
@@ -81,7 +80,6 @@ sinex-sealing = { path = "crates/sinex-sealing" }
 sinex-derivations = { path = "crates/sinex-derivations" }
 sinex-analysis = { path = "crates/sinex-analysis" }
 sinex-library = { path = "crates/sinex-library" }
-sinex-diagnostics = { path = "crates/sinex-diagnostics" }
 
 [workspace.lints.rust]
 unsafe_code = "forbid"

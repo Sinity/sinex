@@ -8,6 +8,8 @@ mod client;
 mod mcp;
 mod output;
 
+mod diagnostics;
+
 use clap::{Arg, ArgAction, ArgMatches, Command};
 use client::{Client, ClientError, Endpoint};
 use serde_json::{Map, Value};
@@ -204,7 +206,7 @@ async fn main() -> ExitCode {
         "doctor" => {
             let database = sub.get_one::<String>("database").expect("required");
             let store = sub.get_one::<PathBuf>("store").expect("required");
-            let report = match sinex_diagnostics::run("doctor", database, Some(store)).await {
+            let report = match diagnostics::run("doctor", database, Some(store)).await {
                 Ok(report) => report,
                 Err(error) => return fail(1, error),
             };
@@ -236,7 +238,7 @@ async fn main() -> ExitCode {
             };
             let database = v.get_one::<String>("database").expect("required");
             let store = v.get_one::<PathBuf>("store").expect("required");
-            return match sinex_diagnostics::run("verify-store", database, Some(store)).await {
+            return match diagnostics::run("verify-store", database, Some(store)).await {
                 Ok(report) => {
                     print_json(&report);
                     if report["ok"] == Value::Bool(true) {
@@ -284,7 +286,7 @@ async fn main() -> ExitCode {
             let Some(database) = sub.get_one::<String>("database") else {
                 return fail(1, "status --offline needs --database");
             };
-            return match sinex_diagnostics::run("status", database, None).await {
+            return match diagnostics::run("status", database, None).await {
                 Ok(v) => {
                     print_json(&v);
                     ExitCode::SUCCESS

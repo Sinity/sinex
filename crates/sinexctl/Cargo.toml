@@ -7,7 +7,6 @@ publish.workspace = true
 license.workspace = true
 
 [dependencies]
-sinex-diagnostics.workspace = true
 sinex-transport.workspace = true
 sinex-protocol = { workspace = true, features = ["cli"] }
 clap.workspace = true
@@ -20,6 +19,7 @@ rmcp.workspace = true
 jiff.workspace = true
 
 [dev-dependencies]
+tempfile = "3"
 devkit.workspace = true
 
 [lints]

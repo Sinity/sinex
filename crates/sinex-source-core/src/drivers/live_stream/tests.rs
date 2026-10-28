@@ -20,7 +20,8 @@ fn lines_of(a: &Acquired) -> Vec<String> {
     m.records
         .iter()
         .map(|(s, e)| {
-            let record: Map<String, Value> = serde_json::from_slice(&m.body()[*s..*e]).unwrap();
+            let record: Map<String, Value> =
+                serde_json::from_slice(&crate::test_support::body(m)[*s..*e]).unwrap();
             String::from_utf8(received(&record).unwrap().1).unwrap()
         })
         .collect()
@@ -28,7 +29,7 @@ fn lines_of(a: &Acquired) -> Vec<String> {
 
 fn end_cursor(a: &Acquired) -> Value {
     let m = a.material.as_ref().unwrap();
-    (m.cursor_at)(m.body().len()).unwrap()
+    (m.cursor_at)(crate::test_support::body(m).len()).unwrap()
 }
 
 #[devkit::test]

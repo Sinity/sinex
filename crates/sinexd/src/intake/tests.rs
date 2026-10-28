@@ -318,7 +318,7 @@ async fn failed_commit_discards_the_batch_ahead_and_joins_the_parser() {
 struct SlowSink {
     entered: std::sync::Mutex<Option<tokio::sync::oneshot::Sender<()>>>,
     release: std::sync::Mutex<std::sync::mpsc::Receiver<()>>,
-    sink: crate::sealing::Sink,
+    sink: crate::material_access::Sink,
 }
 impl SlowSink {
     fn wait(&self) -> Result<(), String> {
@@ -355,7 +355,7 @@ async fn synchronous_storage_does_not_stop_other_runtime_tasks() {
     let sink = SlowSink {
         entered: std::sync::Mutex::new(Some(entered)),
         release: std::sync::Mutex::new(resume),
-        sink: crate::sealing::Sink(blobs),
+        sink: crate::material_access::Sink(blobs),
     };
     let mut batches = blocking::Batches::start(Priority::Live, move |send| {
         let started = Instant::now();
@@ -509,7 +509,11 @@ async fn dropping_a_submission_refuses_its_queued_batch(db: devkit::pg::TestData
     queued_submission(db, true).await;
 }
 
-fn materials(blobs: Blobs) -> crate::sealing::Materials {
-    crate::sealing::Materials::new(blobs, Class::Guarded, crate::sealing::Access::default())
-        .unwrap()
+fn materials(blobs: Blobs) -> crate::material_access::MaterialAccess {
+    crate::material_access::MaterialAccess::new(
+        blobs,
+        Class::Guarded,
+        crate::material_access::Access::default(),
+    )
+    .unwrap()
 }

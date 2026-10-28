@@ -1,53 +1,49 @@
-//! Material privacy for capture, replay and stored reads. Readers pass their
-//! operation's access here; encryption and key handling stay behind this seam.
-mod access;
+//! Store and open material bytes for capture, requests and replay.
 mod material;
-mod sink;
-pub(crate) use access::{Access, Unlock, read_limits};
+pub(crate) mod sealing;
 pub(crate) use material::{MaterialOnDemand, open, open_checked};
+use sealing::{SealingSink, Unlock, class_key, read_limits};
 use serde_json::Value;
-use sinex_model::{Batch, BatchKind, Class, MaterialId, RecordOutcome};
-use sinex_source_core::{Source, drivers};
+use sinex_model::{Batch, BatchKind, Class, MaterialId};
+use sinex_source_core::{MaterialSink, Source, drivers};
 use sinex_store::Blobs;
-pub(crate) use sink::{SealingSink, Sink, class_key};
 use sqlx::PgConnection;
 use std::sync::Arc;
 
-pub(crate) fn check(unlock: Option<&Unlock>) -> Result<(), String> {
-    unlock.map_or(Ok(()), Unlock::check)
+/// Capture can use a public recipient; reading stored sealed bytes needs the
+/// operation's unlock.
+#[derive(Clone, Copy, Default)]
+pub(crate) struct Access<'a> {
+    pub recipient: Option<&'a sinex_sealing::Recipient>,
+    pub unlock: Option<&'a Unlock>,
 }
 
-pub(crate) fn prepare_batch(
-    batch: &mut Batch,
-    class: Class,
-    sealing: Option<&SealingSink>,
-    stored: Option<MaterialId>,
-) -> Result<(), String> {
-    for record in &mut batch.records {
-        if let sinex_model::RecordOutcome::Events { events, .. } = record {
-            for event in events {
-                event.class = event.class.max(class);
-            }
-        }
+/// Drivers store a material's bytes through this.
+#[derive(Clone)]
+pub(crate) struct Sink(pub Blobs);
+
+impl MaterialSink for Sink {
+    fn put(&self, bytes: &[u8]) -> Result<String, String> {
+        self.0.put(bytes).map_err(|e| e.to_string())
     }
-    if let Some(sealing) = sealing {
-        sealing.seal(std::slice::from_mut(batch))?;
-        if let (Some(material), BatchKind::Source(progress)) = (stored, &mut batch.kind) {
-            // A stored material's key must not be published after excision.
-            progress.data_keys.retain(|key| key.material != material);
-        }
+
+    /// An export archive is streamed into the store, never kept in memory.
+    fn put_file(&self, path: &std::path::Path) -> Result<String, String> {
+        let file = std::fs::File::open(path).map_err(|e| format!("{}: {e}", path.display()))?;
+        self.0
+            .put_seekable(std::io::BufReader::new(file))
+            .map_err(|e| e.to_string())
     }
-    Ok(())
 }
 
 #[derive(Clone)]
-pub(crate) struct Materials {
+pub(crate) struct MaterialAccess {
     plain: Sink,
     class: Class,
     sealing: Option<Arc<SealingSink>>,
     unlock: Option<Unlock>,
 }
-impl Materials {
+impl MaterialAccess {
     pub(crate) fn new(blobs: Blobs, class: Class, access: Access<'_>) -> Result<Self, String> {
         let sealing = if class == Class::Sealed {
             let recipient = match access.recipient {
@@ -150,23 +146,6 @@ impl Materials {
             ))),
         }
     }
-    pub(crate) async fn shared_carry(
-        &self,
-        conn: &mut PgConnection,
-        binding: &str,
-        carry: serde_json::Value,
-        acquired: &drivers::Acquired,
-    ) -> Result<serde_json::Value, String> {
-        if acquired.starts_over().map_err(|e| e.to_string())? {
-            return Ok(serde_json::Value::Null);
-        }
-        match (&self.sealing, acquired.material.is_some()) {
-            (Some(sealing), true) => {
-                open_carry(conn, binding, &carry, sealing, self.unlock.as_ref()).await
-            }
-            _ => Ok(carry),
-        }
-    }
     pub(crate) fn sink(&self) -> &dyn drivers::MaterialSink {
         match &self.sealing {
             Some(sink) => sink.as_ref(),
@@ -174,7 +153,7 @@ impl Materials {
         }
     }
     pub(crate) fn check(&self) -> Result<(), String> {
-        check(self.unlock.as_ref())
+        self.unlock.as_ref().map_or(Ok(()), Unlock::check)
     }
     pub(crate) fn admission_check(
         &self,
@@ -183,7 +162,7 @@ impl Materials {
         let unlock = self.unlock.clone();
         Arc::new(move || {
             check()?;
-            self::check(unlock.as_ref())
+            unlock.as_ref().map_or(Ok(()), Unlock::check)
         })
     }
     pub(crate) async fn reopen(
@@ -208,8 +187,24 @@ impl Materials {
         batch: &mut Batch,
         stored: Option<MaterialId>,
     ) -> Result<(), String> {
-        prepare_batch(batch, self.class, self.sealing.as_deref(), stored)
+        for record in &mut batch.records {
+            if let sinex_model::RecordOutcome::Events { events, .. } = record {
+                for event in events {
+                    event.class = event.class.max(self.class);
+                }
+            }
+        }
+        if let Some(sealing) = self.sealing.as_deref() {
+            sealing.seal(std::slice::from_mut(batch))?;
+            if let (Some(material), BatchKind::Source(progress)) = (stored, &mut batch.kind) {
+                // A stored material's key must not be published after excision.
+                progress.data_keys.retain(|key| key.material != material);
+            }
+        }
+        Ok(())
     }
+    /// Reset carry for a new revision. Otherwise restore a stored sealed material's
+    /// key when needed and open its carry using this operation's access.
     pub(crate) async fn carry(
         &self,
         conn: &mut PgConnection,
@@ -233,9 +228,12 @@ impl Materials {
             let key = unlock.data_key(conn, material.id).await?;
             sealing.restore_key(name.clone(), key)?;
         }
+        if acquired.starts_over().map_err(|e| e.to_string())? {
+            return Ok(Value::Null);
+        }
         match (&self.sealing, acquired.material.is_some()) {
             (Some(sealing), true) => {
-                open_carry(conn, binding, &carry, sealing, self.unlock.as_ref()).await
+                sealing::open_carry(conn, binding, &carry, sealing, self.unlock.as_ref()).await
             }
             _ => Ok(carry),
         }
@@ -250,8 +248,8 @@ pub(crate) async fn reopen_stored(
     blobs: &sinex_store::Blobs,
     source: &dyn Source,
     acquired: &mut drivers::Acquired,
-    sealing: Option<&crate::sealing::SealingSink>,
-    unlock: Option<&crate::sealing::Unlock>,
+    sealing: Option<&crate::material_access::sealing::SealingSink>,
+    unlock: Option<&crate::material_access::sealing::Unlock>,
 ) -> Result<bool, String> {
     let Some(material) = &mut acquired.material else {
         return Ok(false);
@@ -262,7 +260,7 @@ pub(crate) async fn reopen_stored(
     if registered.is_empty() {
         return Ok(false);
     }
-    let opened = crate::sealing::open(conn, blobs, material.id, unlock).await?;
+    let opened = crate::material_access::open(conn, blobs, material.id, unlock).await?;
     if opened.reference.parser != source.spec().parser
         || opened.reference.parser_version != source.spec().parser_version
     {
@@ -275,141 +273,4 @@ pub(crate) async fn reopen_stored(
     material.bytes.clear();
     material.manifest = opened.reference.manifest.clone();
     Ok(true)
-}
-
-pub(crate) async fn open_carry(
-    conn: &mut PgConnection,
-    binding: &str,
-    carry: &serde_json::Value,
-    sealing: &crate::sealing::SealingSink,
-    unlock: Option<&crate::sealing::Unlock>,
-) -> Result<serde_json::Value, String> {
-    if let Ok(value) = sealing.open_carry(carry) {
-        return Ok(value);
-    }
-    let reference = sinex_sealing::key_ref(carry).ok_or("invalid sealed parser carry")?;
-    let unlock = unlock.ok_or("sealed parser carry requires explicit operator unlock")?;
-    let material = sinex_store::sealed::material_of_key(conn, reference, binding)
-        .await
-        .map_err(|e| e.to_string())?
-        .ok_or("sealed parser carry has no key of this binding")?;
-    let key = unlock.data_key(conn, material).await?;
-    let value = sinex_sealing::unseal_payload(carry, &key.key).map_err(|e| e.to_string())?;
-    unlock.check()?;
-    Ok(value)
-}
-
-pub(crate) fn seal_records(
-    records: &mut [sinex_model::RecordOutcome],
-    key: Option<&sinex_sealing::DataKey>,
-) -> Result<(), String> {
-    if let Some(key) = key {
-        for record in records {
-            match record {
-                RecordOutcome::Events { events, .. } => {
-                    for event in events {
-                        sinex_sealing::seal_event(event, key).map_err(|e| e.to_string())?;
-                    }
-                }
-                RecordOutcome::Failure { reason, .. } => {
-                    *reason = sinex_sealing::seal_value(&Value::String(reason.clone()), key)
-                        .map_err(|e| e.to_string())?
-                        .to_string()
-                }
-            }
-        }
-    }
-    Ok(())
-}
-
-pub(crate) async fn replay_keys(
-    conn: &mut PgConnection,
-    blobs: &Blobs,
-    materials: Vec<(uuid::Uuid, String)>,
-    unlock: Option<&Unlock>,
-) -> Result<std::collections::HashMap<uuid::Uuid, sinex_sealing::DataKey>, String> {
-    let mut keys = std::collections::HashMap::new();
-    for (material, blob) in materials {
-        if blobs.is_sealed(&blob).map_err(|e| e.to_string())? {
-            let unlock = unlock.ok_or_else(|| {
-                format!("material {material}: sealed replay needs an operator unlock and --sealed")
-            })?;
-            keys.insert(material, unlock.data_key(conn, MaterialId(material)).await?);
-        }
-    }
-    Ok(keys)
-}
-
-/// Sealed acquisitions keep their own key and cannot share a stored copy.
-pub(crate) fn can_share(class: Class) -> bool {
-    class != Class::Sealed
-}
-
-pub(crate) async fn history_floor(conn: &mut PgConnection, binding: &str) -> Result<Class, String> {
-    if sinex_store::positions::has_sealed_material(conn, binding)
-        .await
-        .map_err(|e| e.to_string())?
-    {
-        Ok(Class::Sealed)
-    } else {
-        Ok(Class::default())
-    }
-}
-
-pub(crate) fn collect_sealed(value: &Value, out: &mut Vec<String>) {
-    if let Some(r) = sinex_sealing::key_ref(value) {
-        out.push(r.to_string());
-        return;
-    }
-    match value {
-        Value::String(text) => {
-            if let Some(value) = sinex_sealing::sealed_text(text) {
-                collect_sealed(&value, out);
-            }
-        }
-        Value::Array(items) => items.iter().for_each(|v| collect_sealed(v, out)),
-        Value::Object(map) => map.values().for_each(|v| collect_sealed(v, out)),
-        _ => {}
-    }
-}
-
-pub(crate) fn unseal_in(
-    value: &mut Value,
-    keys: &std::collections::HashMap<String, sinex_sealing::Zeroizing<[u8; 32]>>,
-) {
-    if let Some(r) = sinex_sealing::key_ref(value) {
-        if let Some(key) = keys.get(r)
-            && let Ok(plain) = sinex_sealing::unseal_payload(value, key)
-        {
-            *value = plain;
-        }
-        return;
-    }
-    match value {
-        Value::String(text) => {
-            if let Some(mut sealed) = sinex_sealing::sealed_text(text) {
-                unseal_in(&mut sealed, keys);
-                if !sinex_sealing::is_sealed(&sealed) {
-                    *value = sealed;
-                }
-            }
-        }
-        Value::Array(items) => items.iter_mut().for_each(|v| unseal_in(v, keys)),
-        Value::Object(map) => map.values_mut().for_each(|v| unseal_in(v, keys)),
-        _ => {}
-    }
-}
-
-/// A reopened body already has its material and data key registered.
-pub(crate) fn registered(acquired: &drivers::Acquired) -> Option<MaterialId> {
-    acquired.material.as_ref().and_then(|material| {
-        matches!(
-            &material.stored,
-            Some(drivers::StoredBytes::Blob {
-                records: Some(_),
-                ..
-            })
-        )
-        .then_some(material.id)
-    })
 }

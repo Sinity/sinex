@@ -189,7 +189,7 @@ async fn queued_checks_reject_a_revoked_unlock_and_roll_back_before_commit(
         .await
         .unwrap();
     let (handle, queues) = channels();
-    let unlock = crate::sealing::Unlock::new(
+    let unlock = crate::material_access::sealing::Unlock::new(
         sinex_sealing::Identity::generate(),
         std::time::Duration::from_secs(30),
     )

@@ -103,91 +103,69 @@ use sinex_source_core::registry::{Source, SourceSpec};
 /// catalog, backfill, the binding runner, `sinex-session` and replay all
 /// work from.
 pub fn formats() -> &'static [&'static InputFormat] {
-    &[
-        #[cfg(feature = "full")]
+    #[cfg(not(feature = "full"))]
+    const FORMATS: &[&InputFormat] = &[
+        &hyprland::FORMAT,
+        &journald::FORMAT,
+        &file_watch::FORMAT,
+        &kitty_scrollback::FORMAT,
+        &notifications::FORMAT,
+        &mpris::FORMAT,
+        &clipboard::FORMAT,
+        &session_socket::FORMAT,
+        &media_capture::FORMAT,
+    ];
+    // Order selects the default when several formats read the same source name.
+    #[cfg(feature = "full")]
+    const FORMATS: &[&InputFormat] = &[
         &atuin::FORMAT,
-        #[cfg(feature = "full")]
         &zsh::FORMAT,
-        #[cfg(feature = "full")]
         &bash::FORMAT,
-        #[cfg(feature = "full")]
         &fish::FORMAT,
         &hyprland::FORMAT,
         &journald::FORMAT,
         &file_watch::FORMAT,
-        #[cfg(feature = "full")]
         &activitywatch::FORMAT,
-        #[cfg(feature = "full")]
         &repository::FORMAT,
-        #[cfg(feature = "full")]
         &chromium::FORMAT,
-        #[cfg(feature = "full")]
         &takeout_chrome::FORMAT,
-        #[cfg(feature = "full")]
         &spotify::FORMAT,
-        #[cfg(feature = "full")]
         &raindrop::FORMAT,
-        #[cfg(feature = "full")]
         &notes::FORMAT,
-        #[cfg(feature = "full")]
         &mail::MBOX_FORMAT,
-        #[cfg(feature = "full")]
         &mail::MAILDIR_FORMAT,
-        #[cfg(feature = "full")]
         &mail_imap::FORMAT,
-        #[cfg(feature = "full")]
         &outlook::FORMAT,
-        #[cfg(feature = "full")]
         &outlook::CSV_FORMAT,
-        #[cfg(feature = "full")]
         &weechat::FORMAT,
-        #[cfg(feature = "full")]
         &calendar::FORMAT,
-        #[cfg(feature = "full")]
         &google_takeout::FORMAT,
-        #[cfg(feature = "full")]
         &goodreads::FORMAT,
-        #[cfg(feature = "full")]
         &messenger::FORMAT,
-        #[cfg(feature = "full")]
         &sleep_as_android::FORMAT,
-        #[cfg(feature = "full")]
         &wykop::FORMAT,
-        #[cfg(feature = "full")]
         &reddit::FORMAT,
-        #[cfg(feature = "full")]
         &samsung_health::FORMAT,
-        #[cfg(feature = "full")]
         &samsung_sms::FORMAT,
-        #[cfg(feature = "full")]
         &samsung_cloud::FORMAT,
-        #[cfg(feature = "full")]
         &arbtt::FORMAT,
-        #[cfg(feature = "full")]
         &asciinema::FORMAT,
         &kitty_scrollback::FORMAT,
-        #[cfg(feature = "full")]
         &input_log::FORMAT,
-        #[cfg(feature = "full")]
         &operator::RAW_LOG_FORMAT,
-        #[cfg(feature = "full")]
         &operator::STEERING_FORMAT,
-        #[cfg(feature = "full")]
         &sinnix_lake::FORMAT,
         &notifications::FORMAT,
         &mpris::FORMAT,
         &clipboard::FORMAT,
         &session_socket::FORMAT,
         &media_capture::FORMAT,
-        #[cfg(feature = "full")]
         &library::FORMAT,
-        #[cfg(feature = "full")]
         &forecast::FORMAT,
-        #[cfg(feature = "full")]
-        &query::FORMAT,
-        #[cfg(feature = "full")]
+&query::FORMAT,
         &page_crawl::FORMAT,
-    ]
+    ];
+    FORMATS
 }
 
 /// Every source's declaration, each once.

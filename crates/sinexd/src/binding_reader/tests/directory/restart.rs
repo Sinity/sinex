@@ -95,7 +95,7 @@ async fn prefix(
     ctx: &mut ReaderContext,
     b: &mut BindingReader,
     sink: &dyn drivers::MaterialSink,
-    sealing: Option<&crate::sealing::SealingSink>,
+    sealing: Option<&crate::material_access::sealing::SealingSink>,
 ) -> MaterialRef {
     crate::backfill::record(&mut ctx.read_conn, &b.binding)
         .await

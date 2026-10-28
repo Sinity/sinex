@@ -38,7 +38,7 @@ pub(crate) struct Api {
 /// An unlock session: the operator's identity until it expires, and the data
 /// keys it has unwrapped.
 pub(crate) struct Unlocked {
-    unlock: crate::sealing::Unlock,
+    unlock: crate::material_access::sealing::Unlock,
     keys: std::collections::HashMap<String, sinex_sealing::Zeroizing<[u8; 32]>>,
 }
 
@@ -162,7 +162,7 @@ impl Api {
     /// each data key once per session.
     async fn unseal(&self, value: &mut Value) -> Result<(), String> {
         let mut refs = Vec::new();
-        crate::sealing::collect_sealed(value, &mut refs);
+        crate::material_access::sealing::collect_sealed(value, &mut refs);
         if refs.is_empty() {
             return Ok(());
         }
@@ -185,7 +185,7 @@ impl Api {
             }
         }
         s.unlock.check()?;
-        crate::sealing::unseal_in(value, &s.keys);
+        crate::material_access::sealing::unseal_in(value, &s.keys);
         Ok(())
     }
 

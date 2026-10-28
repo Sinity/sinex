@@ -32,53 +32,37 @@ pub fn schema_hash(root: &Path) -> Result<String> {
         return Err(format!("postgres --version failed: {}", version.status));
     }
     let version = String::from_utf8(version.stdout).map_err(|e| e.to_string())?;
-    let status = devkit::cargo_command()
-        .args(["build", "--locked", "-p", "sinex-schema"])
-        .current_dir(root)
-        .status()
-        .map_err(|e| format!("building schema declarations: {e}"))?;
-    if !status.success() {
-        return Err(format!("building schema declarations failed: {status}"));
-    }
-    let output = Command::new(crate::target_dir().join("debug/sinex-schema"))
-        .arg("hash")
-        .output()
-        .map_err(|e| format!("schema declarations: {e}"))?;
-    if !output.status.success() {
-        return Err(format!("schema declarations failed: {}", output.status));
-    }
+    let output = schema_tool(root, &["hash"])?;
     let declarations = String::from_utf8(output.stdout).map_err(|e| e.to_string())?;
     devkit::pg::schema_hash(&[], &[version.trim(), declarations.trim()])
 }
 
-/// Build the query-free schema tool and apply the schema to `database`.
-pub fn bootstrap(server: &Server, database: &str) -> devkit::pg::Result {
-    server.ensure_roles(ROLES)?;
-    let status = devkit::cargo_command()
-        .args(["build", "--locked", "-p", "sinex-schema"])
-        .status()
-        .map_err(|e| format!("cargo build: {e}"))?;
-    if !status.success() {
-        return Err(format!("building sinex-schema failed: {status}"));
-    }
-    let output = Command::new(crate::target_dir().join("debug/sinex-schema"))
-        .arg("apply")
-        .arg(server.url(database, None))
+/// Run the query-free schema tool from this checkout.
+fn schema_tool(root: &Path, args: &[&str]) -> Result<std::process::Output> {
+    let output = devkit::cargo_command()
+        .args(["run", "--locked", "--quiet", "-p", "sinex-schema", "--"])
+        .args(args)
+        .current_dir(root)
         .output()
         .map_err(|e| format!("sinex-schema: {e}"))?;
-    if output.status.success() {
-        Ok(())
-    } else {
-        Err(format!(
-            "sinex-schema apply failed: {}\n{}",
+    if !output.status.success() {
+        return Err(format!(
+            "sinex-schema failed: {}\n{}",
             output.status,
             String::from_utf8_lossy(&output.stderr)
-        ))
+        ));
     }
+    Ok(output)
 }
 
 pub fn schema(root: &Path) -> Result<(String, impl Fn(&Server, &str) -> devkit::pg::Result)> {
-    Ok((schema_hash(root)?, bootstrap))
+    let hash = schema_hash(root)?;
+    let root = root.canonicalize().map_err(|e| e.to_string())?;
+    Ok((hash, move |server: &Server, database: &str| {
+        server.ensure_roles(ROLES)?;
+        schema_tool(&root, &["apply", &server.url(database, None)])?;
+        Ok(())
+    }))
 }
 
 /// The server and this schema version's databases, built if needed.

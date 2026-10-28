@@ -2,7 +2,7 @@
 //! continuously through the writer. An unavailable input is retried independently;
 //! private mode pauses reading.
 use crate::binding_reader::{self, BindingReader};
-use crate::sealing::Sink;
+use crate::material_access::Sink;
 use crate::writer::WriterHandle;
 use sinex_source_core::{Binding, InputFormat, Settings};
 use sinex_sources::sources;
@@ -256,7 +256,7 @@ pub(crate) async fn run(
                 &sink,
                 &mut bindings.readers,
                 stop.clone(),
-                binding_reader::Access::default(),
+                crate::material_access::Access::default(),
                 &mut |binding, result| {
                     let key = format!("binding {binding}");
                     match result {

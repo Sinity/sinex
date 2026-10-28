@@ -2,7 +2,11 @@
 use serde_json::Value;
 use std::path::Path;
 
-pub async fn run(command: &str, database: &str, store: Option<&Path>) -> Result<Value, String> {
+pub(crate) async fn run(
+    command: &str,
+    database: &str,
+    store: Option<&Path>,
+) -> Result<Value, String> {
     let executable = std::env::current_exe()
         .map_err(|e| e.to_string())?
         .with_file_name("sinexd");
@@ -16,7 +20,17 @@ pub async fn run(command: &str, database: &str, store: Option<&Path>) -> Result<
         .await
         .map_err(|e| format!("{}: {e}", executable.display()))?;
     if !output.status.success() {
-        return Err(String::from_utf8_lossy(&output.stderr).trim().to_owned());
+        let error = String::from_utf8_lossy(&output.stderr);
+        let error = error.trim();
+        return Err(if error.is_empty() {
+            format!(
+                "{}: diagnostics {command} failed ({})",
+                executable.display(),
+                output.status
+            )
+        } else {
+            error.to_owned()
+        });
     }
     serde_json::from_slice(&output.stdout).map_err(|e| format!("diagnostics reply: {e}"))
 }
