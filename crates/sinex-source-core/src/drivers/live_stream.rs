@@ -47,11 +47,6 @@ pub struct SpoolWriter {
     written: u64,
     opened: Instant,
     unsynced: usize,
-    /// Private mode, checked at most every quarter second; lines that arrive
-    /// while it is on are dropped, never written.
-    private: sinex_transport::private_mode::Cached,
-    /// Lines dropped because private mode was on.
-    pub dropped: u64,
 }
 
 const SEGMENT_SUFFIX: &str = ".ndjson";
@@ -108,11 +103,6 @@ impl SpoolWriter {
             .append(true)
             .open(segment_path(&dir, index))?;
         Ok(Self {
-            private: sinex_transport::private_mode::Cached::new(
-                sinex_transport::private_mode::PrivateMode::default(),
-                Duration::from_millis(250),
-            ),
-            dropped: 0,
             dir,
             rotation,
             index,
@@ -125,10 +115,6 @@ impl SpoolWriter {
 
     /// Append one received line (without its terminator).
     pub fn append(&mut self, received: Timestamp, line: &[u8]) -> std::io::Result<()> {
-        if self.private.on() {
-            self.dropped += 1;
-            return Ok(());
-        }
         if self.written >= self.rotation.max_bytes || self.opened.elapsed() >= self.rotation.max_age
         {
             self.rotate()?;
@@ -159,12 +145,6 @@ impl SpoolWriter {
         self.written = 0;
         self.opened = Instant::now();
         Ok(())
-    }
-
-    /// Use this switch instead of the default (tests, a configured path).
-    pub fn with_private_mode(mut self, mode: sinex_transport::private_mode::PrivateMode) -> Self {
-        self.private = sinex_transport::private_mode::Cached::new(mode, Duration::from_millis(250));
-        self
     }
 
     pub fn segment(&self) -> u64 {

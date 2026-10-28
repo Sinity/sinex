@@ -5,8 +5,6 @@
 //! present). Each segment is one stored material and one `media.segment` event;
 //! reading text from screens and speech from audio are derivations over those
 //! events (the `screen-text` derivation in `sinexd`).
-//!
-//! Private mode stops capture: nothing is recorded while it is on.
 use serde_json::{Value, json};
 use sinex_model::event_types::session::MediaSegment;
 use sinex_model::{Class, InputRef, Timestamp};
@@ -124,10 +122,6 @@ fn outputs_until(stop: &sinex_source_core::capture::CaptureStop) -> Vec<(String,
         .collect()
 }
 
-fn private_on() -> bool {
-    sinex_transport::private_mode::PrivateMode::default().on()
-}
-
 /// Take a still of every output each `every`, until capture stops. Returns the stills written.
 fn capture_screen(
     spool: &Path,
@@ -138,48 +132,46 @@ fn capture_screen(
     let mut n = 0;
     while !stop.stopped() {
         let tick = Instant::now();
-        if !private_on() {
-            // Without Hyprland to name the outputs, one still of everything.
-            let mut targets: Vec<(Option<String>, u32, u32)> = outputs_until(stop)
-                .into_iter()
-                .map(|(n, w, h)| (Some(n), w, h))
-                .collect();
-            if targets.is_empty() {
-                targets.push((None, 0, 0));
+        // Without Hyprland to name the outputs, one still of everything.
+        let mut targets: Vec<(Option<String>, u32, u32)> = outputs_until(stop)
+            .into_iter()
+            .map(|(n, w, h)| (Some(n), w, h))
+            .collect();
+        if targets.is_empty() {
+            targets.push((None, 0, 0));
+        }
+        for (output, width, height) in targets {
+            let at = Timestamp::now();
+            let kind = format!("screen-{}", output.as_deref().unwrap_or("all"));
+            let st = stem(at, at, &kind);
+            let partial = spool.join(format!("{st}.jpg.partial"));
+            let mut grim = Command::new("grim");
+            if let Some(o) = &output {
+                grim.args(["-o", o]);
             }
-            for (output, width, height) in targets {
-                let at = Timestamp::now();
-                let kind = format!("screen-{}", output.as_deref().unwrap_or("all"));
-                let st = stem(at, at, &kind);
-                let partial = spool.join(format!("{st}.jpg.partial"));
-                let mut grim = Command::new("grim");
-                if let Some(o) = &output {
-                    grim.args(["-o", o]);
-                }
-                grim.args(["-t", "jpeg", "-q", "75"])
-                    .arg(&partial)
-                    .stderr(Stdio::null());
-                let ok = stop
-                    .status(&mut grim)
-                    .is_ok_and(|s| s.is_some_and(|s| s.success()));
-                if !ok {
-                    let _ = std::fs::remove_file(&partial);
-                    continue;
-                }
-                media::publish_segment(
-                    spool,
-                    &partial,
-                    &st,
-                    "jpg",
-                    &json!({
-                        "kind": "screen", "started_ns": at.unix_ns().to_string(), "ended_ns": at.unix_ns().to_string(),
-                        "mime": "image/jpeg", "target": output.as_deref().unwrap_or("all"),
-                        "width": (width > 0).then_some(width), "height": (height > 0).then_some(height),
-                        "media_type": "image/jpeg",
-                    }),
-                )?;
-                n += 1;
+            grim.args(["-t", "jpeg", "-q", "75"])
+                .arg(&partial)
+                .stderr(Stdio::null());
+            let ok = stop
+                .status(&mut grim)
+                .is_ok_and(|s| s.is_some_and(|s| s.success()));
+            if !ok {
+                let _ = std::fs::remove_file(&partial);
+                continue;
             }
+            media::publish_segment(
+                spool,
+                &partial,
+                &st,
+                "jpg",
+                &json!({
+                    "kind": "screen", "started_ns": at.unix_ns().to_string(), "ended_ns": at.unix_ns().to_string(),
+                    "mime": "image/jpeg", "target": output.as_deref().unwrap_or("all"),
+                    "width": (width > 0).then_some(width), "height": (height > 0).then_some(height),
+                    "media_type": "image/jpeg",
+                }),
+            )?;
+            n += 1;
         }
         stop.wait(every.saturating_sub(tick.elapsed()));
     }
@@ -204,10 +196,6 @@ fn capture_audio(
         .is_ok_and(|status| status.is_some_and(|s| s.success()));
     let mut n = 0;
     while !stop.stopped() {
-        if private_on() {
-            stop.wait(Duration::from_secs(1));
-            continue;
-        }
         let start = Timestamp::now();
         let wav = spool.join(format!(".{}.wav.partial", start.unix_ns()));
         let mut command = Command::new("pw-record");

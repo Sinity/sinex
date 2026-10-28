@@ -99,7 +99,7 @@ fn start(k: &'static InputFormat, binding: Binding) -> Result<Live, String> {
 }
 
 /// Produce what every spool holds, every `every`, until `until` (forever
-/// otherwise). Private mode pauses capture and production until it is off.
+/// otherwise).
 /// Recheck source selection without interrupting existing captures or their spools.
 pub async fn run<F>(
     producer: &mut Producer,
@@ -181,7 +181,6 @@ where
     F: FnMut() -> Result<CapturePlan, String>,
 {
     let mut selected_at = Instant::now();
-    let private = sinex_transport::private_mode::PrivateMode::default();
     loop {
         if selected_at.elapsed() >= Duration::from_secs(60) {
             match select() {
@@ -189,10 +188,6 @@ where
                 Err(error) => eprintln!("source discovery: {error}"),
             }
             selected_at = Instant::now();
-        }
-        if private.on() {
-            tokio::time::sleep(Duration::from_secs(1)).await;
-            continue;
         }
         for live in lives.iter_mut() {
             produce_spool(

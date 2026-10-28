@@ -271,31 +271,6 @@ fn public_capture_removes_its_socket_on_stop_and_setup_error() {
 }
 
 #[devkit::test]
-fn private_records_stay_unwritten_and_do_not_count_as_captured() {
-    let dir = std::env::temp_dir().join(format!("sx-private-{}", uuid::Uuid::now_v7()));
-    let mode = sinex_transport::private_mode::PrivateMode::new(dir.join("private"));
-    mode.set(true).unwrap();
-    let writer = Mutex::new(
-        SpoolWriter::open(dir.join("spool"), Rotation::default())
-            .unwrap()
-            .with_private_mode(mode),
-    );
-    let (reader, mut client) = UnixStream::pair().unwrap();
-    client.write_all(b"private record\n").unwrap();
-    drop(client);
-    assert_eq!(capture_connection(reader, &writer).unwrap(), 0);
-    assert_eq!(writer.lock().unwrap().dropped, 1);
-    assert!(
-        driver(dir.join("spool"), "h".into())
-            .poll(&Value::Null)
-            .unwrap()
-            .material
-            .is_none()
-    );
-    let _ = std::fs::remove_dir_all(dir);
-}
-
-#[devkit::test]
 fn stop_is_checked_between_accept_batches_with_more_clients_pending() {
     let dir = std::env::temp_dir().join(format!("sx-sock-{}", uuid::Uuid::now_v7()));
     std::fs::create_dir_all(&dir).unwrap();

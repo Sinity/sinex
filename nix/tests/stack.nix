@@ -100,11 +100,8 @@ self: {
             timeout=120,
         )
 
-    with subtest("the operator's login shell reaches the daemon and its private-mode switch"):
+    with subtest("the operator's login shell reaches the daemon"):
         machine.succeed("su - alice -c 'sinexctl status'")
-        machine.succeed("su - alice -c 'sinexctl private on'")
-        machine.succeed("test -e /run/sinex/private-mode")
-        machine.succeed("su - alice -c 'sinexctl private off'")
 
     with subtest("a declared backfill stops sinexd, imports, and starts it again"):
         machine.succeed("systemctl start sinex-backfill-books.service")

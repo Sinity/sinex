@@ -4371,7 +4371,6 @@ dependencies = [
  "sinex-model",
  "sinex-protocol",
  "sinex-source-core",
- "sinex-transport",
  "tar",
  "tempfile",
  "time",

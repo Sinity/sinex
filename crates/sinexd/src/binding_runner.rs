@@ -1,6 +1,6 @@
 //! Discover source inputs every minute, reuse persisted bindings and read them
 //! continuously through the writer. An unavailable input is retried independently;
-//! private mode pauses reading.
+//! each input is read independently.
 use crate::binding_reader::{self, BindingReader};
 use crate::material_access::Sink;
 use crate::writer::WriterHandle;
@@ -223,11 +223,10 @@ pub(crate) async fn run(
         .await
         .map_err(|e| e.to_string())?;
     let sink = Sink(blobs.clone());
-    let private = sinex_transport::private_mode::PrivateMode::default();
     let mut bindings = Bindings::default();
     let mut planned_at: Option<std::time::Instant> = None;
     loop {
-        if !private.on() {
+        {
             if planned_at.is_none_or(|at| at.elapsed() >= PLAN_EVERY) {
                 let before = bindings.readers.len();
                 match saved(&mut read_conn, &database, &host).await {
@@ -271,10 +270,13 @@ pub(crate) async fn run(
                             said.remove(&key);
                         }
                     }
-                },
-            )
-            .await;
-        }
+                    Ok(_) => {
+                        said.remove(&key);
+                    }
+                }
+            },
+        )
+        .await;
         tokio::select! {
             _ = tokio::time::sleep(interval) => {}
             _ = stop.wait_for(|s| *s) => break,

@@ -50,11 +50,10 @@ impl Drop for Cancel {
 struct InterruptibleReader<R> {
     input: R,
     stop: Arc<AtomicBool>,
-    private: Arc<sinex_transport::private_mode::Cached>,
 }
 impl<R: Read> Read for InterruptibleReader<R> {
     fn read(&mut self, bytes: &mut [u8]) -> std::io::Result<usize> {
-        if self.stop.load(Ordering::Relaxed) || self.private.on() {
+        if self.stop.load(Ordering::Relaxed) {
             return Err(std::io::Error::other("capture cancelled"));
         }
         self.input.read(bytes)
@@ -86,14 +85,6 @@ pub(super) async fn read_shared(
     access: Access<'_>,
 ) -> Result<Vec<Result<Totals, String>>, String> {
     let started = std::time::Instant::now();
-    let private = Arc::new(sinex_transport::private_mode::Cached::new(
-        sinex_transport::private_mode::PrivateMode::default(),
-        std::time::Duration::from_millis(250),
-    ));
-    let check = admission_check(
-        sinex_transport::private_mode::PrivateMode::default(),
-        stop.clone(),
-    );
     let cancel = Cancel(Arc::new(AtomicBool::new(false)));
     let material =
         crate::material_access::MaterialAccess::archive(blobs.clone(), pass.class, access)?;
@@ -149,7 +140,6 @@ pub(super) async fn read_shared(
                 let input = InterruptibleReader {
                     input,
                     stop: Arc::clone(&cancelled),
-                    private: Arc::clone(&private),
                 };
                 let blob = worker_material.store_reader(input)?;
                 let after = drivers::file_facts(&path).map_err(|e| e.to_string())?;
@@ -162,9 +152,8 @@ pub(super) async fn read_shared(
             }
         };
         let verify_stop = Arc::clone(&cancelled);
-        let verify_private = Arc::clone(&private);
         let check = move || {
-            if verify_stop.load(Ordering::Relaxed) || verify_private.on() {
+            if verify_stop.load(Ordering::Relaxed) {
                 return Err(std::io::Error::other("verification cancelled"));
             }
             operation.check().map_err(std::io::Error::other)?;
@@ -175,14 +164,12 @@ pub(super) async fn read_shared(
                 shared_pass::Input::Seekable(Box::new(InterruptibleReader {
                     input,
                     stop: Arc::clone(&cancelled),
-                    private: Arc::clone(&private),
                 }))
             }
             shared_pass::Input::Sequential(input) => {
                 shared_pass::Input::Sequential(Box::new(InterruptibleReader {
                     input,
                     stop: Arc::clone(&cancelled),
-                    private: Arc::clone(&private),
                 }))
             }
         };
@@ -221,7 +208,6 @@ pub(super) async fn read_shared(
         let b = &mut readers[index];
         let result = async {
             let mut acquired = delivery.acquired.map_err(|e| e.to_string())?;
-            check()?;
             material.check()?;
             let (cursor, carry) = positions::load(conn, &b.binding.name)
                 .await
@@ -238,7 +224,13 @@ pub(super) async fn read_shared(
                 source: b.source.clone(),
                 binding: &b.binding.name,
                 material: material.clone(),
-                check: check.clone(),
+                check: Arc::new(move || {
+                    if *checked_stop.borrow() {
+                        Err("capture cancelled; admission stopped".into())
+                    } else {
+                        Ok(())
+                    }
+                }),
                 priority: crate::writer::Priority::Bulk,
                 atomic: false,
                 registered: acquired.material.as_ref().and_then(|material| {

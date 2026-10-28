@@ -211,10 +211,9 @@ fn capture_connection(stream: UnixStream, writer: &Mutex<SpoolWriter>) -> std::i
             let mut writer = writer
                 .lock()
                 .map_err(|_| std::io::Error::other("spool lock poisoned"))?;
-            let dropped = writer.dropped;
             writer.append(Timestamp::now(), body)?;
             writer.sync()?;
-            count += u64::from(writer.dropped == dropped);
+            count += 1;
         }
         line.clear();
         if ended {

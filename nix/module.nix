@@ -16,9 +16,6 @@ let
 
   postgres = cfg.database.package;
   dbUrl = "postgresql:///sinex?host=/run/postgresql";
-  # One private-mode switch for the daemon, the session service and the
-  # operator's sinexctl; the operator reaches it through the sinex group.
-  privateSwitch = "/run/sinex/private-mode";
   natsListen = "${cfg.nats.address}:${toString cfg.nats.port}";
 
   # Producers allowed onto the ingress: those declared, plus the session
@@ -334,13 +331,12 @@ in
       };
       users.groups.${cfg.group} = { };
       environment.systemPackages = [ cfg.package ];
-      # sinexctl in a login shell talks to this daemon with the agent token
-      # and flips the daemon's private-mode switch. The Unix socket is the
-      # daemon user's own; other users reach the API over loopback HTTP.
+      # sinexctl in a login shell talks to this daemon with the agent token.
+      # The Unix socket is the daemon user's own; other users reach the API
+      # over loopback HTTP.
       environment.sessionVariables = {
         SINEX_ENDPOINT = if cfg.api.listen != null then "http://${cfg.api.listen}" else "unix:${cfg.api.socket}";
         SINEX_TOKEN_FILE = "${cfg.stateDir}/tokens/agent.token";
-        SINEX_PRIVATE_MODE = privateSwitch;
       };
 
       # Bindings from the registry-generated options, for the daemon's sources.
@@ -358,9 +354,6 @@ in
 
       systemd.tmpfiles.rules = [
         "d ${cfg.stateDir} 0750 ${cfg.user} ${cfg.group} -"
-        # The private-mode switch's directory exists before sinexd first runs,
-        # so the session service can check it.
-        "d /run/sinex 0770 ${cfg.user} ${cfg.group} -"
         # Group mode 2770 marks the store root as shared with producers on this
         # host; they write only under incoming/producers (frame directories).
         "d ${cfg.storeDir} 2770 ${cfg.user} ${cfg.group} -"
@@ -479,11 +472,7 @@ in
           User = cfg.user;
           Group = cfg.group;
           RuntimeDirectory = "sinex";
-          # It holds the private-mode switch, which the operator sets through
-          # the group and a backfill run while the daemon is stopped checks
-          # too; a missing directory counts as on.
           RuntimeDirectoryMode = "0770";
-          RuntimeDirectoryPreserve = "yes";
           LoadCredential = [ "nats:${cfg.nats.daemonPasswordFile}" ];
           UMask = "0007";
           # A schema upgrade can read every stored event; a start timeout
@@ -493,7 +482,6 @@ in
           AmbientCapabilities = [ "CAP_DAC_READ_SEARCH" ];
           CapabilityBoundingSet = [ "CAP_DAC_READ_SEARCH" ];
         };
-        environment.SINEX_PRIVATE_MODE = privateSwitch;
         preStart = ''
           # Tokens are made once; a missing file disables that level.
           for level in read agent operator; do
@@ -565,7 +553,6 @@ in
         partOf = cfg.session.wantedBy;
         unitConfig = startLimit // { ConditionUser = cfg.session.user; };
         serviceConfig = restartPolicy // { UMask = "0077"; };
-        environment.SINEX_PRIVATE_MODE = privateSwitch;
         # busctl, wl-paste, grim, pw-record and ffmpeg run as capture children.
         path = with pkgs; [ systemd wl-clipboard grim pipewire ffmpeg-headless ];
         script = ''
@@ -630,7 +617,6 @@ in
           requires = [ "sinex-db-setup.service" ];
           restartIfChanged = false;
           path = [ pkgs.tesseract pkgs.coreutils ];
-          environment.SINEX_PRIVATE_MODE = privateSwitch;
           serviceConfig = {
             Type = "oneshot";
             User = cfg.user;
@@ -681,14 +667,8 @@ in
           Group = node.group;
           UMask = "0007";
           StateDirectory = "sinex-capture";
-          # The private-mode switch: a file here turns capture off. The
-          # capture user cannot create the default /run/sinex, and a switch
-          # it cannot check counts as on (the node logs why, once).
-          RuntimeDirectory = "sinex-capture";
-          RuntimeDirectoryPreserve = "yes";
           SupplementaryGroups = optional (cfg.exclude."machine.journald" == null) "systemd-journal";
         };
-        environment.SINEX_PRIVATE_MODE = "/run/sinex-capture/private-mode";
         path = [ config.systemd.package ];
         script = ''
           exec ${node.package}/bin/sinex-capture \

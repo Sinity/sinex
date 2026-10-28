@@ -43,10 +43,7 @@
         '';
         cargoBuildFlags = [ "-p" "sinexd" "-p" "sinexctl" "-p" "xtask" ];
         doCheck = true;
-        # Captures check the private-mode switch under $XDG_RUNTIME_DIR; the
-        # builder has none, and a switch that cannot be checked counts as on.
         preCheck = ''
-          export XDG_RUNTIME_DIR=$(mktemp -d)
           export DEVKIT_PG_SOCKET="$PGHOST"
           export DEVKIT_PG_TEMPLATE=foundation
         '';

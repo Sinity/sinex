@@ -643,16 +643,8 @@ impl Api {
             .iter()
             .filter_map(|(name, exclusion)| exclusion.as_ref().map(|exclusion| (name, exclusion)))
             .collect();
-        // The daemon's own switch, which pauses the binding runner.
-        let private = sinex_transport::private_mode::PrivateMode::default();
-        let switch = private.state();
         Ok(json!({
             "commit_seq": row.commit_seq,
-            "private_mode": {
-                "state": switch.name(),
-                "switch": private.path(),
-                "reason": switch.reason(),
-            },
             "search_index": {
                 "position": row.search_position,
                 "behind": row.commit_seq - row.search_position.unwrap_or(0),

@@ -8,7 +8,6 @@ license.workspace = true
 
 [dependencies]
 sinex-source-core.workspace = true
-sinex-transport.workspace = true
 sinex-model.workspace = true
 serde.workspace = true
 serde_json = { workspace = true, features = ["raw_value"] }
