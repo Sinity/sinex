@@ -1,0 +1,7 @@
+: 1789326300:0;cd ~/src/tidepool
+: 1789326340:0;echo "zaÅ¼Ã³Å‚Äƒ§ gÄƒ¹Åƒ»lÄƒ¥ jaÅºÅƒ¤" > notatki.txt
+: 1789326370:0;git status
+: 1789326420:0;for f in src/*.rs; do\
+  wc -l "$f"\
+done
+: 1789342200:0;cargo fmt --check

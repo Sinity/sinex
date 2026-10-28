@@ -701,3 +701,5 @@ async fn an_unchanged_append_only_file_is_not_polled_again(db: devkit::pg::TestD
 }
 
 mod gmail;
+
+mod kestrel;
