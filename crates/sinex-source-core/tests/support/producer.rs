@@ -43,7 +43,7 @@ pub(crate) async fn standin(
                     None,
                     events.iter().map(|_| sinex_model::EventId::new()).collect(),
                 ),
-                Ingress::Chunk { .. } | Ingress::LargeFrame { .. } => (None, vec![]),
+                Ingress::Chunk { .. } | Ingress::LargeFrame { .. } | Ingress::RegisterKinds { .. } | Ingress::ReplaySequence { .. } => (None, vec![]),
             };
             let refusal = match &frame {
                 Ingress::Chunk { offset, .. } if refuse_offset == Some(*offset) => {

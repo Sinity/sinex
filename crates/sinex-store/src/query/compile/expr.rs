@@ -44,6 +44,12 @@ impl Compiler<'_> {
 
     fn typed_json(raw: SqlFragment, ty: FieldType) -> SqlFragment {
         let mut out = SqlFragment::new();
+        if ty == FieldType::Time {
+            out.push("core.payload_time(")
+                .append(raw)
+                .push(" #>> '{}')");
+            return out;
+        }
         if ty == FieldType::TextList {
             out.push("(CASE WHEN jsonb_typeof(")
                 .append(raw.clone())
@@ -121,10 +127,25 @@ impl Compiler<'_> {
         match o {
             Operand::Field(f) => self.field(cols, f),
             Operand::TimeFn(func, f) => {
-                let (t, _) = self.field(cols, f)?;
+                let (t, kind) = self.field(cols, f)?;
+                let t = if kind == Kind::Typed(FieldType::Json) {
+                    Self::typed_json(t, FieldType::Time)
+                } else {
+                    t
+                };
                 Ok((self.time_fn(*func, t), Kind::Derived))
             }
         }
+    }
+
+    fn json_as(raw: SqlFragment, value: &Value) -> SqlFragment {
+        let ty = match value {
+            Value::Integer(_) | Value::Number(_) => FieldType::Number,
+            Value::Bool(_) => FieldType::Bool,
+            Value::Time(_) => FieldType::Time,
+            _ => FieldType::Text,
+        };
+        Self::typed_json(raw, ty)
     }
 
     pub(super) fn compare(
@@ -172,7 +193,11 @@ impl Compiler<'_> {
                 .push(") END)");
             return Ok(out);
         }
-        let l = lhs;
+        let l = if kind == Kind::Typed(FieldType::Json) {
+            Self::json_as(lhs, v)
+        } else {
+            lhs
+        };
         let mut out = SqlFragment::text("(");
         match (op, v, kind) {
             (Op::Eq | Op::Ne, Value::Glob(g), _) => {
@@ -325,7 +350,12 @@ impl Compiler<'_> {
             }
             Expr::Words(w) => self.words(cols, w)?,
             Expr::Within { lhs, from, to } => {
-                let (l, _) = self.operand(cols, lhs)?;
+                let (l, kind) = self.operand(cols, lhs)?;
+                let l = if kind == Kind::Typed(FieldType::Json) {
+                    Self::typed_json(l, FieldType::Time)
+                } else {
+                    l
+                };
                 let mut f = SqlFragment::text("(");
                 f.append(l.clone())
                     .push(" >= ")
@@ -339,8 +369,18 @@ impl Compiler<'_> {
             }
             Expr::Overlaps { from, to } => self.overlaps(cols, *from, *to)?,
             Expr::TimeDiff { a, b, op, seconds } => {
-                let (a, _) = self.field(cols, a)?;
-                let (b, _) = self.field(cols, b)?;
+                let (a, a_kind) = self.field(cols, a)?;
+                let (b, b_kind) = self.field(cols, b)?;
+                let a = if a_kind == Kind::Typed(FieldType::Json) {
+                    Self::typed_json(a, FieldType::Time)
+                } else {
+                    a
+                };
+                let b = if b_kind == Kind::Typed(FieldType::Json) {
+                    Self::typed_json(b, FieldType::Time)
+                } else {
+                    b
+                };
                 let mut f = SqlFragment::text("(extract(epoch from (");
                 f.append(a)
                     .push(" - ")

@@ -39,10 +39,10 @@ pub(super) async fn insert_admitted(
              FROM core.admission_stage s WHERE s.ord = ANY($1))
            INSERT INTO core.events (id, event_type, source, run_id, material_id, anchor, output_index,
              parents, ts_orig, ts_quality, commit_seq, payload, equivalence_key, reading_order,
-             record_hash, record_state, class)
+             record_hash, record_state, class, kind_version, validation)
            SELECT id, event_type, source, $3, material_id, anchor, output_index, parents, ts_orig,
              ts_quality, seq, payload, equivalence_key, reading_order, record_hash, record_state,
-             class
+             class, kind_version, validation
            FROM a"#,
         admit_ords,
         first,
@@ -139,7 +139,7 @@ pub(super) async fn insert_admitted(
         let event = &events[usize::try_from(*ord).expect("ord is non-negative")];
         outcome.admitted_ids.push(event.id);
         let input = KeyInput {
-            event_type: event.event_type,
+            event_type: &event.event_type,
             ts_orig: event.ts_orig.at.map(|t| t.0),
             payload: &event.payload,
         };

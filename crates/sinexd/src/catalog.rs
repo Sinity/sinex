@@ -23,6 +23,7 @@ pub(crate) fn catalog() -> Value {
         })
     });
     json!({
+        "eventKinds": sinex_model::event_types::declarations(),
         "sources": sources,
         "derivations": keyed.chain(per_event).collect::<Vec<_>>(),
     })

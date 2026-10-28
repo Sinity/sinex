@@ -15,7 +15,7 @@ use serde_json::{Map, Value};
 /// including when the bytes are unchanged. A missing file describes availability;
 /// its earlier scans remain evidence of the item and original rendition.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
-#[event(
+#[event(version = 2,
     type = "library.copy",
     key = ["host", "root", "path", "scan"],
     replace = newer,
@@ -71,7 +71,7 @@ pub struct FileCopy {
 /// original renditions describe its revisions. New bytes at the same item key
 /// make a new revision; equal bytes at an unrelated key are a different item.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
-#[event(
+#[event(version = 2,
     type = "library.item",
     key = ["item"],
     replace = newer,
@@ -109,7 +109,7 @@ pub enum RenditionRole {
 /// Bytes standing for an item revision: its original, or something made
 /// from it. A preview never answers a request for the original.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
-#[event(
+#[event(version = 2,
     type = "library.rendition",
     key = ["rendition"],
     replace = newer,
@@ -201,7 +201,7 @@ pub enum Level {
 /// fallback to lower levels. Withdrawing an assignment is a newer reading of
 /// it with `withdrawn_at` set.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
-#[event(
+#[event(version = 2,
     type = "library.assignment",
     key = ["assignment"],
     replace = newer,
@@ -227,7 +227,7 @@ pub struct Assignment {
 /// offers suggestions. A fixed selection is a collection without a query whose
 /// entries were added from a query's results.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
-#[event(
+#[event(version = 2,
     type = "library.collection",
     key = ["collection"],
     replace = newer,
@@ -249,7 +249,7 @@ pub struct Collection {
 /// One entry in a collection. Each insertion is a new entry, so the same item
 /// can appear twice; removing an entry withdraws it and keeps it inspectable.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
-#[event(
+#[event(version = 2,
     type = "library.entry",
     key = ["entry"],
     replace = newer,
@@ -272,7 +272,7 @@ pub struct Entry {
 
 /// A rating on a named scale (`stars`, `favourite`), one per rater.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
-#[event(
+#[event(version = 2,
     type = "library.rating",
     key = ["item", "scale", "by"],
     replace = newer,
@@ -295,7 +295,7 @@ pub struct Rating {
 /// One pairwise judgement: `winner` is better than `loser` on `scale`. A
 /// ranking is fitted from all of them.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
-#[event(
+#[event(version = 2,
     type = "library.comparison",
     key = ["comparison"],
     replace = newer,
@@ -316,7 +316,7 @@ pub struct Comparison {
 /// One time something was opened for viewing or playing. The target is fixed
 /// when the request is made.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
-#[event(
+#[event(version = 2,
     type = "library.view",
     key = ["view"],
     replace = newer,
@@ -340,7 +340,7 @@ pub struct View {
 /// A collection suggestion the operator dismissed; remembered for that
 /// collection and query revision.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
-#[event(
+#[event(version = 2,
     type = "library.dismissal",
     key = ["collection", "item", "query"],
     replace = newer,

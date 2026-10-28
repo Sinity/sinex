@@ -4241,6 +4241,7 @@ dependencies = [
  "schemars",
  "serde",
  "serde_json",
+ "serde_path_to_error",
  "sinex-macros",
  "thiserror 2.0.21",
  "time",
@@ -4267,6 +4268,7 @@ version = "0.1.0"
 dependencies = [
  "blake3",
  "devkit",
+ "jsonschema",
  "serde_json",
  "sinex-model",
  "sqlx",

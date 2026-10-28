@@ -356,7 +356,11 @@ async fn a_later_material_read_failure_rolls_back_the_entire_replay_sequence(
             .fetch_one(&mut f.ctx.read_conn)
             .await
             .unwrap();
-    assert_eq!((archived, operations), (0, 0));
+    let completed: i64 = sqlx::query_scalar("SELECT count(*) FROM core.replayed_sequences")
+        .fetch_one(&mut f.ctx.read_conn)
+        .await
+        .unwrap();
+    assert_eq!((archived, operations, completed), (0, 1, 0));
 }
 
 #[devkit::test]
@@ -393,4 +397,75 @@ async fn aligned_rewrite_replay_uses_the_same_previous_carry_as_capture(
         after, before,
         "a physical rewrite continues the same parser stream without duplicating or renumbering old occurrences"
     );
+}
+
+#[devkit::test]
+async fn an_unfinished_replay_refuses_changed_builds_before_archiving(
+    db: devkit::pg::TestDatabase,
+) {
+    let mut f = fixture(db).await;
+    let path = history(&f.dir, ": 100:0;one\n");
+    ingest(&mut f.ctx, &path, &mut AppendState::default()).await;
+    let report = run(
+        &mut f.ctx.read_conn,
+        &f.ctx.blobs,
+        &f.ctx.writer,
+        options(whole_binding(), false),
+    )
+    .await
+    .unwrap();
+    let before = live_ids(&mut f.ctx.read_conn).await;
+    sqlx::query("DELETE FROM core.replayed_sequences WHERE operation_id=$1")
+        .bind(report.operation.0)
+        .execute(&mut f.ctx.read_conn)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE core.operations SET scope=jsonb_set(scope,'{identity,build}','\"different-executable\"') WHERE id=$1").bind(report.operation.0).execute(&mut f.ctx.read_conn).await.unwrap();
+    let error = run(
+        &mut f.ctx.read_conn,
+        &f.ctx.blobs,
+        &f.ctx.writer,
+        Options {
+            resume: Some(report.operation),
+            ..options(Scope::default(), false)
+        },
+    )
+    .await
+    .unwrap_err();
+    assert!(error.contains("replay_build_changed"));
+    assert_eq!(live_ids(&mut f.ctx.read_conn).await, before);
+}
+
+#[devkit::test]
+async fn unavailable_parsers_leave_readings_live_and_persist_each_refusal(
+    db: devkit::pg::TestDatabase,
+) {
+    let mut f = fixture(db).await;
+    let path = history(&f.dir, ": 100:0;one\n");
+    ingest(&mut f.ctx, &path, &mut AppendState::default()).await;
+    let before = live_ids(&mut f.ctx.read_conn).await;
+    sqlx::query("UPDATE raw.materials SET parser='removed-parser',parser_version=7")
+        .execute(&mut f.ctx.read_conn)
+        .await
+        .unwrap();
+    let report = run(
+        &mut f.ctx.read_conn,
+        &f.ctx.blobs,
+        &f.ctx.writer,
+        options(whole_binding(), false),
+    )
+    .await
+    .unwrap();
+    assert_eq!(report.sequences, 0);
+    assert_eq!(report.refused.len(), 1);
+    assert_eq!(report.refused[0]["reason"], json!("parser_unavailable"));
+    assert_eq!(live_ids(&mut f.ctx.read_conn).await, before);
+    let count: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM core.replay_refusals WHERE operation_id=$1")
+            .bind(report.operation.0)
+            .fetch_one(&mut f.ctx.read_conn)
+            .await
+            .unwrap();
+    assert_eq!(count, 1);
+    assert_eq!(report.to_json(false, true)["partial"], json!(true));
 }

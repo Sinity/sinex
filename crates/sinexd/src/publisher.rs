@@ -295,13 +295,17 @@ fn confirmed_event(e: &Committed) -> Result<ConfirmedEvent, String> {
         _ => None,
     };
     Ok(ConfirmedEvent {
+        kind_version: u64::try_from(e.kind_version).map_err(|_| "invalid stored kind version")?,
+        validation: serde_json::from_value(serde_json::json!(e.validation))
+            .map_err(|_| "invalid stored validation")?,
         commit_seq: e.commit_seq,
         id: EventId(e.id),
         event_type: e.event_type.clone(),
         source: e.source.clone(),
         run: RunId(e.run_id),
         location,
-        output_index: u16::try_from(e.output_index).unwrap_or(0),
+        output_index: u16::try_from(e.output_index)
+            .map_err(|_| format!("event {} has an invalid output index", e.id))?,
         parents: e.parents.iter().flatten().map(|p| EventId(*p)).collect(),
         ts_orig: e.ts_orig.map(Timestamp),
         ts_quality: e.ts_quality.clone(),

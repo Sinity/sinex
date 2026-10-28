@@ -116,15 +116,13 @@ async fn upgrading_from_version_0_counts_the_stored_events(db: devkit::pg::TestD
         .await
         .unwrap();
 
-    // Remove the declarations added after version 0.
+    crate::test_schema::downgrade(&mut conn).await;
+    // Version 0 is this schema without the counts.
     conn.execute("DROP TABLE core.source_counts").await.unwrap();
     conn.execute("ALTER TABLE core.runs DROP COLUMN events")
         .await
         .unwrap();
     conn.execute("DROP TABLE core.excised_materials")
-        .await
-        .unwrap();
-    conn.execute("DROP VIEW event_types.operator_mark, event_types.query_saved")
         .await
         .unwrap();
     conn.execute("DELETE FROM registry.event_types WHERE name IN ('operator.mark','query.saved')")
@@ -176,9 +174,6 @@ async fn an_upgrade_waits_for_no_writer(db: devkit::pg::TestDatabase) {
     conn.execute("DROP TABLE core.excised_materials")
         .await
         .unwrap();
-    conn.execute("DROP VIEW event_types.operator_mark, event_types.query_saved")
-        .await
-        .unwrap();
     conn.execute("DELETE FROM registry.event_types WHERE name IN ('operator.mark','query.saved')")
         .await
         .unwrap();
@@ -215,9 +210,6 @@ async fn upgrading_from_version_3_registers_query_kinds_and_keeps_events(
     let fresh = sinex_schema::catalog(&mut conn).await.unwrap();
     let before: Vec<Uuid> = sqlx::query_scalar("SELECT id FROM core.events ORDER BY id")
         .fetch_all(&mut conn)
-        .await
-        .unwrap();
-    conn.execute("DROP VIEW event_types.operator_mark, event_types.query_saved")
         .await
         .unwrap();
     conn.execute("DELETE FROM registry.event_types WHERE name IN ('operator.mark','query.saved')")

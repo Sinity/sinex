@@ -31,8 +31,27 @@ pub(crate) enum Priority {
 pub(crate) enum WriteError {
     #[error("admission refused the batch: {0}")]
     Refused(String),
+    #[error("database unavailable: {0}")]
+    Unavailable(String),
     #[error("the writer has stopped")]
     Stopped,
+}
+
+fn database_error(error: sqlx::Error) -> WriteError {
+    if let Some(code) = error.as_database_error().and_then(|e| e.code())
+        && (code.starts_with("22") || code.starts_with("23"))
+    {
+        return WriteError::Refused(format!("database refused invalid data ({code})"));
+    }
+    WriteError::Unavailable(error.to_string())
+}
+
+fn store_error(error: sinex_store::Error) -> WriteError {
+    match error {
+        sinex_store::Error::Database(error) => database_error(error),
+        sinex_store::Error::Schema(sinex_schema::Error::Database(error)) => database_error(error),
+        other => WriteError::Refused(other.to_string()),
+    }
 }
 
 /// One replay sequence: its batches run in one transaction, admitted as they
@@ -47,6 +66,7 @@ pub(crate) struct ReplaySequence {
     /// Roll back after reading the difference: a comparison.
     pub compare: bool,
     pub batches: tokio::sync::mpsc::Receiver<Result<Batch, String>>,
+    pub ingress: Option<crate::ingress::replay::CheckedReplay>,
 }
 
 /// A planned excision.
@@ -70,8 +90,14 @@ pub(crate) struct Excised {
 enum WriterJob {
     Admit(Batch),
     Checked(Batch, AdmissionCheck),
-    Replay(ReplaySequence),
+    Replay(Box<ReplaySequence>),
     Excise(Box<Excision>),
+    RecordReplay {
+        operation: OperationId,
+        actor: String,
+        scope: Value,
+        refusals: Vec<Value>,
+    },
 }
 
 enum Done {
@@ -136,12 +162,32 @@ impl WriterHandle {
         sequence: ReplaySequence,
     ) -> Result<(Vec<Outcome>, Diff), WriteError> {
         match self
-            .send(Priority::Derived, WriterJob::Replay(sequence))
+            .send(Priority::Derived, WriterJob::Replay(Box::new(sequence)))
             .await?
         {
             Done::Replayed(outcomes, diff) => Ok((outcomes, diff)),
             _ => unreachable!("a replay answers with its outcomes"),
         }
+    }
+
+    pub(crate) async fn record_replay(
+        &self,
+        operation: OperationId,
+        actor: String,
+        scope: Value,
+        refusals: Vec<Value>,
+    ) -> Result<(), WriteError> {
+        self.send(
+            Priority::Derived,
+            WriterJob::RecordReplay {
+                operation,
+                actor,
+                scope,
+                refusals,
+            },
+        )
+        .await?;
+        Ok(())
     }
 
     pub(crate) async fn excise(&self, excision: Excision) -> Result<Excised, WriteError> {
@@ -216,6 +262,9 @@ pub(crate) async fn claim(connection: &mut PgConnection) -> Result<(), String> {
             .await
             .map_err(|e| format!("database: {e}"))?;
         if won {
+            sinex_schema::kinds::require_bundled(connection)
+                .await
+                .map_err(|error| error.to_string())?;
             return Ok(());
         }
         if tokio::time::Instant::now() >= deadline {
@@ -282,12 +331,22 @@ pub(crate) async fn run_notifying(
                     .await
                     .map(|(o, d)| Done::Replayed(o, d))
             }
+            WriterJob::RecordReplay {
+                operation,
+                actor,
+                scope,
+                refusals,
+            } => record_replay(&mut connection, operation, &actor, &scope, &refusals)
+                .await
+                .map(Done::Admitted),
             WriterJob::Excise(excision) => excise(&mut connection, &excision, keys.as_ref())
                 .await
                 .map(Done::Excised),
         };
-        if let Err(WriteError::Refused(_)) = &result
-            && connection.ping().await.is_err()
+        if matches!(
+            &result,
+            Err(WriteError::Refused(_) | WriteError::Unavailable(_))
+        ) && connection.ping().await.is_err()
             && let Ok(mut fresh) = PgConnection::connect(&url).await
         {
             // The lock went with the lost connection; without it this
@@ -325,19 +384,19 @@ async fn admit_checked(
             )));
         }
     }
-    let mut tx = connection.begin().await.map_err(|e| refuse(&e))?;
+    let mut tx = connection.begin().await.map_err(database_error)?;
     match sinex_store::admit(&mut tx, batch, keys).await {
         Ok(outcome) => {
             if let Err(error) = check() {
-                tx.rollback().await.map_err(|e| refuse(&e))?;
+                tx.rollback().await.map_err(database_error)?;
                 return Err(WriteError::Refused(error));
             }
-            tx.commit().await.map_err(|e| refuse(&e))?;
+            tx.commit().await.map_err(database_error)?;
             Ok(outcome)
         }
         Err(error) => {
-            tx.rollback().await.map_err(|e| refuse(&e))?;
-            Err(refuse(&error))
+            tx.rollback().await.map_err(database_error)?;
+            Err(store_error(error))
         }
     }
 }
@@ -348,7 +407,45 @@ async fn replay_sequence(
     keys: &dyn DirtyKeys,
 ) -> Result<(Vec<Outcome>, Diff), WriteError> {
     let refuse = |e: &dyn std::fmt::Display| WriteError::Refused(e.to_string());
-    let mut tx = connection.begin().await.map_err(|e| refuse(&e))?;
+    if !sequence.compare
+        && let Some(ingress) = &sequence.ingress
+    {
+        let mut scope_tx = connection.begin().await.map_err(database_error)?;
+        if let Some(recorded) = crate::ingress::replay::recorded(&mut scope_tx, ingress)
+            .await
+            .map_err(crate::ingress::Check::write_error)?
+        {
+            scope_tx.rollback().await.map_err(database_error)?;
+            return Ok((vec![recorded], Diff::default()));
+        }
+        crate::ingress::replay::check_scope(&mut scope_tx, ingress)
+            .await
+            .map_err(crate::ingress::Check::write_error)?;
+        // A refused replacement keeps its authorised scope, so another parse
+        // cannot reuse that operation. Event changes still commit together.
+        replay::begin(
+            &mut scope_tx,
+            sequence.operation,
+            &sequence.actor,
+            &sequence.scope,
+        )
+        .await
+        .map_err(store_error)?;
+        scope_tx.commit().await.map_err(database_error)?;
+    }
+    let mut tx = connection.begin().await.map_err(database_error)?;
+    if let Some(ingress) = &sequence.ingress {
+        if let Some(recorded) = crate::ingress::replay::recorded(&mut tx, ingress)
+            .await
+            .map_err(crate::ingress::Check::write_error)?
+        {
+            tx.rollback().await.map_err(database_error)?;
+            return Ok((vec![recorded], Diff::default()));
+        }
+        crate::ingress::replay::check(&mut tx, ingress)
+            .await
+            .map_err(crate::ingress::Check::write_error)?;
+    }
     replay::begin(
         &mut tx,
         sequence.operation,
@@ -356,14 +453,14 @@ async fn replay_sequence(
         &sequence.scope,
     )
     .await
-    .map_err(|e| refuse(&e))?;
+    .map_err(store_error)?;
     let mut outcomes = Vec::new();
     while let Some(batch) = sequence.batches.recv().await {
         let batch = batch.map_err(|e| refuse(&e))?;
         outcomes.push(
             sinex_store::admit(&mut tx, &batch, keys)
                 .await
-                .map_err(|e| refuse(&e))?,
+                .map_err(store_error)?,
         );
     }
     let admitted: Vec<uuid::Uuid> = outcomes
@@ -372,16 +469,39 @@ async fn replay_sequence(
         .collect();
     let diff = replay::diff(&mut tx, sequence.operation, &admitted)
         .await
-        .map_err(|e| refuse(&e))?;
+        .map_err(store_error)?;
+    if let Some(ingress) = &sequence.ingress {
+        crate::ingress::replay::finish(&mut tx, ingress, &outcomes)
+            .await
+            .map_err(crate::ingress::Check::write_error)?;
+    }
     if sequence.compare {
-        tx.rollback().await.map_err(|e| refuse(&e))?;
+        tx.rollback().await.map_err(database_error)?;
     } else {
         replay::sequence_done(&mut tx, sequence.operation, sequence.root)
             .await
-            .map_err(|e| refuse(&e))?;
-        tx.commit().await.map_err(|e| refuse(&e))?;
+            .map_err(store_error)?;
+        tx.commit().await.map_err(database_error)?;
     }
     Ok((outcomes, diff))
+}
+
+async fn record_replay(
+    connection: &mut PgConnection,
+    operation: OperationId,
+    actor: &str,
+    scope: &Value,
+    refusals: &[Value],
+) -> Result<Outcome, WriteError> {
+    let mut tx = connection.begin().await.map_err(database_error)?;
+    replay::begin(&mut tx, operation, actor, scope)
+        .await
+        .map_err(store_error)?;
+    replay::record_refusals(&mut tx, operation, refusals)
+        .await
+        .map_err(store_error)?;
+    tx.commit().await.map_err(database_error)?;
+    Ok(Outcome::default())
 }
 
 async fn excise(
@@ -390,15 +510,15 @@ async fn excise(
     keys: &dyn DirtyKeys,
 ) -> Result<Excised, WriteError> {
     let refuse = |e: &dyn std::fmt::Display| WriteError::Refused(e.to_string());
-    let mut tx = connection.begin().await.map_err(|e| refuse(&e))?;
+    let mut tx = connection.begin().await.map_err(database_error)?;
     let applied =
         match excision::apply(&mut tx, e.target, &e.plan, e.operation, &e.actor, keys).await {
             Ok(applied) => {
-                tx.commit().await.map_err(|e| refuse(&e))?;
+                tx.commit().await.map_err(database_error)?;
                 applied
             }
             Err(error) => {
-                tx.rollback().await.map_err(|e| refuse(&e))?;
+                tx.rollback().await.map_err(database_error)?;
                 return Err(refuse(&error));
             }
         };

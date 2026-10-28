@@ -1,5 +1,5 @@
 //! Parsing and binding: one pass that reads the tokens, checks every field
-//! against its table's table, and resolves every time against the context. A
+//! against its table, and resolves every time against the context. A
 //! query that cannot mean what it says is refused with the reason; nothing
 //! falls back silently.
 use super::QueryError;
@@ -87,6 +87,13 @@ pub(super) fn bind_tokens(
     ctx: &Context,
     end: usize,
 ) -> Result<Query, QueryError> {
+    let mut query = parse_tokens(toks, ctx, end)?;
+    super::typed::check(&mut query, ctx)?;
+    super::fill::bind(&mut query, ctx)?;
+    Ok(query)
+}
+
+fn parse_tokens(toks: Vec<Token>, ctx: &Context, end: usize) -> Result<Query, QueryError> {
     if toks.is_empty() {
         return Err(QueryError::new("empty query"));
     }
@@ -96,15 +103,13 @@ pub(super) fn bind_tokens(
         ctx,
         end,
     };
-    let mut query = p.query(false)?;
+    let query = p.query(false)?;
     if let Some(t) = p.peek() {
         return Err(QueryError::at(
             t.at,
             format!("unexpected `{}`; expected a clause or the end", t.text),
         ));
     }
-    super::typed::check(&mut query, ctx)?;
-    super::fill::bind(&mut query, ctx)?;
     Ok(query)
 }
 

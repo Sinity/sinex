@@ -10,7 +10,7 @@ use serde_json::{Map, Value};
 
 /// A desktop notification was asked for (`org.freedesktop.Notifications.Notify`).
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
-#[event(type = "notification.shown", key = location, replace = repeat, time = received_at, quality = captured)]
+#[event(version = 2, type = "notification.shown", key = location, replace = repeat, time = received_at, quality = captured)]
 pub struct NotificationShown {
     pub received_at: Timestamp,
     /// The application name the sender gave.
@@ -34,7 +34,7 @@ pub struct NotificationShown {
 
 /// A notification closed (`NotificationClosed`).
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
-#[event(type = "notification.closed", key = location, replace = repeat, time = received_at, quality = captured)]
+#[event(version = 2, type = "notification.closed", key = location, replace = repeat, time = received_at, quality = captured)]
 pub struct NotificationClosed {
     pub received_at: Timestamp,
     pub notification_id: u32,
@@ -44,7 +44,7 @@ pub struct NotificationClosed {
 
 /// The operator picked one of a notification's actions (`ActionInvoked`).
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
-#[event(type = "notification.action", key = location, replace = repeat, time = received_at, quality = captured)]
+#[event(version = 2, type = "notification.action", key = location, replace = repeat, time = received_at, quality = captured)]
 pub struct NotificationAction {
     pub received_at: Timestamp,
     pub notification_id: u32,
@@ -53,7 +53,7 @@ pub struct NotificationAction {
 
 /// The clipboard or the primary selection changed.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
-#[event(type = "clipboard.copied", key = location, replace = repeat, time = received_at, quality = captured)]
+#[event(version = 2, type = "clipboard.copied", key = location, replace = repeat, time = received_at, quality = captured)]
 pub struct ClipboardCopied {
     pub received_at: Timestamp,
     /// `clipboard` or `primary`.
@@ -75,7 +75,7 @@ pub struct ClipboardCopied {
 /// A media player's state changed (MPRIS `PropertiesChanged`), or was read
 /// when capture started.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
-#[event(type = "player.changed", key = location, replace = repeat, time = received_at, quality = captured)]
+#[event(version = 2, type = "player.changed", key = location, replace = repeat, time = received_at, quality = captured)]
 pub struct PlayerChanged {
     pub received_at: Timestamp,
     /// The player's well-known name (`org.mpris.MediaPlayer2.spotify`) when
@@ -97,7 +97,7 @@ pub struct PlayerChanged {
 
 /// Something the editor reported (a Neovim autocommand).
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
-#[event(type = "editor.reported", key = location, replace = repeat, time = received_at, quality = captured)]
+#[event(version = 2, type = "editor.reported", key = location, replace = repeat, time = received_at, quality = captured)]
 pub struct EditorReport {
     pub received_at: Timestamp,
     pub editor: String,
@@ -114,7 +114,7 @@ pub struct EditorReport {
 
 /// Something the terminal reported (a kitty watcher callback).
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
-#[event(type = "terminal.reported", key = location, replace = repeat, time = received_at, quality = captured)]
+#[event(version = 2, type = "terminal.reported", key = location, replace = repeat, time = received_at, quality = captured)]
 pub struct TerminalReport {
     pub received_at: Timestamp,
     pub terminal: String,
@@ -135,7 +135,7 @@ pub struct TerminalReport {
 /// A segment of screen or audio capture: the stored material is the segment
 /// itself (an image or an audio file).
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
-#[event(type = "media.segment", key = location, replace = repeat, time = started_at, quality = captured)]
+#[event(version = 2, type = "media.segment", key = location, replace = repeat, time = started_at, quality = captured)]
 pub struct MediaSegment {
     /// `screen` or `audio`.
     pub kind: String,
@@ -152,7 +152,7 @@ pub struct MediaSegment {
 /// Text read from a screen segment by a local OCR engine. Derived from the
 /// segment's event; recomputed when the engine version changes.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
-#[event(type = "screen.text", key = ["segment"], replace = newer, time = started_at, quality = captured)]
+#[event(version = 2, type = "screen.text", key = ["segment"], replace = newer, time = started_at, quality = captured)]
 pub struct ScreenText {
     /// The `media.segment` event this text was read from.
     pub segment: String,
@@ -165,7 +165,7 @@ pub struct ScreenText {
 /// material is the response body; a later fetch of the same URL is a newer
 /// reading.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
-#[event(type = "page.fetched", key = ["url"], replace = newer, time = fetched_at, quality = captured)]
+#[event(version = 2, type = "page.fetched", key = ["url"], replace = newer, time = fetched_at, quality = captured)]
 pub struct PageFetched {
     pub url: String,
     pub final_url: String,

@@ -3,7 +3,10 @@ use serde_json::json;
 
 fn event(n: usize) -> ProducerEvent {
     ProducerEvent {
-        event_type: "window.focused".into(),
+        kind: sinex_model::KindRef {
+            name: "window.focused".into(),
+            version: 2,
+        },
         payload: json!({"title": "x".repeat(n)}),
         location: None,
         output_index: 0,

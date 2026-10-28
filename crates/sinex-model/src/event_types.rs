@@ -1,10 +1,11 @@
-//! Event types. One Rust type per stored event type; the catalog in `ALL`
+//! Bundled payload validators. One Rust type per bundled event type; `ALL`
 //! is the single list the schema registry, NixOS options and documentation are
 //! generated from.
 use crate::EventPayload;
 
 pub mod account;
 pub mod browser;
+pub mod capture;
 pub mod code;
 pub mod communication;
 pub mod derived;
@@ -20,7 +21,6 @@ pub mod library;
 pub mod machine;
 pub mod media;
 pub mod operator;
-pub mod polylogue;
 pub mod query;
 pub mod session;
 pub mod shell;
@@ -40,6 +40,7 @@ pub struct RegisteredEventType {
     pub replace: crate::ReplaceRule,
     /// See [`crate::EventPayload::KEEP_KNOWN`].
     pub keep_known: &'static [&'static str],
+    pub declaration: fn() -> crate::KindDeclaration,
     pub json_schema: fn() -> Value,
     /// Build an event of this type from a JSON payload, as arriving over the
     /// NATS ingress: the payload is decoded into the Rust type first, so the
@@ -63,6 +64,7 @@ const fn info<P: EventPayload>() -> RegisteredEventType {
         key: P::KEY,
         replace: P::REPLACE,
         keep_known: P::KEEP_KNOWN,
+        declaration: P::declaration,
         json_schema: P::payload_schema,
         build: build_from_json::<P>,
     }
@@ -76,12 +78,43 @@ fn build_from_json<P: EventPayload>(
     record_hash: [u8; 32],
     class: crate::Class,
 ) -> Result<crate::Event, crate::BuildError> {
-    let typed: P = serde_json::from_value(payload.clone())
-        .map_err(|e| crate::BuildError::Payload(P::EVENT_TYPE, e.to_string()))?;
+    use serde::de::IntoDeserializer;
+    let typed: P =
+        serde_path_to_error::deserialize(payload.clone().into_deserializer()).map_err(|error| {
+            let mut pointer = error
+                .path()
+                .iter()
+                .map(|s| s.to_string().replace('~', "~0").replace('/', "~1"))
+                .collect::<Vec<_>>()
+                .join("/");
+            let mut keyword = "decode";
+            let reason = error.inner().to_string();
+            if pointer.is_empty()
+                && let Some(field) = reason
+                    .strip_prefix("missing field `")
+                    .and_then(|s| s.strip_suffix('`'))
+                && P::payload_schema()
+                    .get("properties")
+                    .and_then(Value::as_object)
+                    .is_some_and(|fields| fields.contains_key(field))
+            {
+                pointer = field.replace('~', "~0").replace('/', "~1");
+                keyword = "required";
+            }
+            crate::BuildError::Payload(P::EVENT_TYPE.into(), format!("{keyword} at /{pointer}"))
+        })?;
     crate::Event::build(&typed, source, origin, reading_order, record_hash, class)
 }
 
-/// Every event type Sinex stores.
+/// Bundled metadata is immutable for this executable. Admission compares a
+/// saved declaration with these values once per kind in its batch.
+pub fn declarations() -> &'static [crate::KindDeclaration] {
+    static DECLARATIONS: std::sync::OnceLock<Vec<crate::KindDeclaration>> =
+        std::sync::OnceLock::new();
+    DECLARATIONS.get_or_init(|| ALL.iter().map(|kind| (kind.declaration)()).collect())
+}
+
+/// Every bundled payload validator. Outside kinds are stored declarations.
 pub const ALL: &[RegisteredEventType] = &[
     info::<query::Mark>(),
     info::<query::Saved>(),
@@ -89,6 +122,7 @@ pub const ALL: &[RegisteredEventType] = &[
     info::<library::FilenameHints>(),
     info::<imported_text::TranscriptCue>(),
     info::<imported_text::OcrText>(),
+    info::<capture::Gap>(),
     info::<forecast::Issued>(),
     info::<forecast::Resolved>(),
     info::<CommandExecuted>(),
@@ -160,17 +194,6 @@ pub const ALL: &[RegisteredEventType] = &[
     info::<media::NoteDocument>(),
     info::<communication::ChatMessage>(),
     info::<communication::MailMessage>(),
-    // AI sessions from Polylogue, and what people and agents add to them
-    info::<polylogue::Session>(),
-    info::<polylogue::Message>(),
-    info::<polylogue::ToolCall>(),
-    info::<polylogue::Turn>(),
-    info::<polylogue::Delivery>(),
-    info::<polylogue::DeliveryOutcome>(),
-    info::<polylogue::Note>(),
-    info::<polylogue::Setting>(),
-    info::<polylogue::KeptResult>(),
-    info::<polylogue::Excision>(),
     // Account exports
     info::<account::ActionRecorded>(),
     info::<account::VideoWatched>(),

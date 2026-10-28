@@ -206,15 +206,57 @@ sends `polylogue.session`, `polylogue.message`, `polylogue.tool_call` and
 IDs, so the same message in two files, or read again by a changed parser, is
 one occurrence whose newer reading replaces the older. Notes, settings, kept
 results, deliveries and excisions arrive as small request materials with one
-event each. A type can declare the least class its events are stored
-under (`class = guarded` on `polylogue.message`), whatever class the producer
-asks for. Sinex has no AI-chat parser of its own.
+event each. Polylogue registers its own payload schemas and rules before sending events.
+Its `polylogue` namespace belongs to the configured producer. Sinex ships the
+other bundled declarations from Rust. Each event selects an immutable kind
+version and records whether its validator ran. Bundled kinds keep Rust decoding
+and serialization; outside kinds keep the submitted JSON and use their saved
+schema, when present. A declaration's field hints describe defaults for configurable output rules. They do not set a kind-wide admission class. Sinex has no AI-chat parser of its own.
 
 The outside producers start their capture threads with `sinex-sources::live`,
 which registers signal handlers first and stops every capture before joining
 it. `capture::CaptureStop` owns interruptible waits, socket shutdown and child
 process groups: it interrupts a group, escalates after 250 ms, and reaps its
 children, including descendants adopted through Linux subreaper support.
+
+## Kind declarations
+
+`registry.event_types` stores exact versions, schemas, identity and time rules,
+field class hints and `search: none | words | words_and_trigram`. Registering an identical definition is
+idempotent; changing an existing version is refused. Outside producers register
+only their own namespace, or emit an exact version already registered by its
+owner. An unknown version of a known name is refused. A new permitted name may
+be admitted without a schema and is labeled `unvalidated`.
+
+The schema description owns bundled declarations and views. Schema apply writes
+that description under the writer lock, including on a current schema. The named `kind_declarations` step generates structural additions from the
+deployed and current schema descriptions. Its number is assigned at landing. It gives existing events
+version 1 and `unvalidated` through constant column defaults, preserving their
+payloads and compressed chunks. Bundled declarations begin at version 2.
+`sinexd admin schema --kind-owner polylogue=PRODUCER` records a different
+Polylogue producer identity before it connects; changing a saved owner is refused.
+
+`kinds` and `fields` expose the saved declarations with pagination through the
+CLI and MCP. Ordinary payload field types come from one declaration snapshot;
+continuations keep its exact hashes. Alias fields keep their declared types
+and computations. Missing or incompatible scalar values read as NULL.
+
+A local replay pins the executable bytes and bundled declaration hashes. A
+resume with a different build or declaration is refused before archiving.
+Materials needing an outside parser remain live and are reported as
+`producer_required`; unavailable local parsers are reported per material.
+Outside producers use `ReplayScopeQuery` then submit a complete `ReplaySequence`.
+The writer compares its live-reading hash, archives the selected readings and
+admits all replacements and the acknowledgment in one transaction. A later
+invalid batch rolls the entire sequence back.
+The operation keeps its authorised scope after a refused replacement; a
+different parse or build needs a new operation.
+
+`sinex-source-core::gaps` supplies the shared `capture.gap` payload, material and
+parser; its caller supplies the stream's class floor. The shared sampling rule
+selects continuous sample events by a versioned hash of capture UUID and
+sequence. Discrete changes, gaps and records with typed outputs are always
+selected. Callers parse complete raw records and update carry before selection.
 
 ## Storing and deriving
 

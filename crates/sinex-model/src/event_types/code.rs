@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 /// One commit. A commit never changes once made; its ID is its identity, so
 /// seeing it again (another ref, another clone at the same path) is a repeat.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
-#[event(type = "git.commit", key = ["repository", "commit"], replace = repeat, time = committed_at, quality = intrinsic)]
+#[event(version = 2, type = "git.commit", key = ["repository", "commit"], replace = repeat, time = committed_at, quality = intrinsic)]
 pub struct GitCommit {
     /// The repository's working directory (or git directory, when bare).
     pub repository: String,

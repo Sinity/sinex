@@ -37,3 +37,27 @@ fn tools_come_from_the_command_table() {
         matches!(request, Request::Recall {cwd: Some(ref path), ..} if path == "/src/tide (notes)")
     );
 }
+
+#[devkit::test]
+fn declaration_discovery_exposes_the_same_paginated_requests() {
+    for name in ["kinds", "fields"] {
+        let tools = tools();
+        let tool = tools
+            .iter()
+            .find(|t| t.name == format!("sinex_{name}"))
+            .unwrap();
+        assert_eq!(tool.input_schema["properties"]["page"]["type"], "integer");
+        assert_eq!(tool.input_schema["properties"]["cursor"]["type"], "string");
+        let request = Request::from_args(
+            name,
+            serde_json::from_value(json!({"kind":"example.reading","page":3,"cursor":"saved"}))
+                .unwrap(),
+        )
+        .unwrap();
+        let encoded = serde_json::to_value(request).unwrap();
+        assert_eq!(encoded["method"], name);
+        assert_eq!(encoded["kind"], "example.reading");
+        assert_eq!(encoded["page"], 3);
+        assert_eq!(encoded["cursor"], "saved");
+    }
+}

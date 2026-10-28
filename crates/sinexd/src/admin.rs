@@ -15,6 +15,8 @@ pub(crate) enum Admin {
     Schema {
         #[arg(long)]
         database: String,
+        #[arg(long = "kind-owner")]
+        kind_owners: Vec<String>,
     },
     /// As the database superuser: create the extensions and roles the schema
     /// needs, and give `owner` the roles. The owner then applies the schema.
@@ -62,10 +64,29 @@ pub(crate) async fn run(command: Admin) -> Result<(), String> {
     match command {
         Admin::Diagnostics { command } => crate::diagnostics::run(command).await,
         Admin::Table(args) => admin_table(args).await,
-        Admin::Schema { database } => sinex_schema::apply_url(&database)
-            .await
-            .map(|applied| println!("{applied}"))
-            .map_err(|e| e.to_string()),
+        Admin::Schema {
+            database,
+            kind_owners,
+        } => {
+            use sqlx::Connection;
+            let mut owners = sinex_schema::kinds::Owners::default();
+            for mapping in kind_owners {
+                let (prefix, producer) = mapping
+                    .split_once('=')
+                    .ok_or("--kind-owner needs polylogue=PRODUCER")?;
+                if prefix != "polylogue" || !sinex_protocol::nats::valid_producer(producer) {
+                    return Err("invalid kind owner".into());
+                }
+                owners.prefixes.insert(prefix.into(), producer.into());
+            }
+            let mut connection = sqlx::PgConnection::connect(&database)
+                .await
+                .map_err(|e| e.to_string())?;
+            sinex_schema::apply_with_owners(&mut connection, &owners)
+                .await
+                .map(|applied| println!("{applied}"))
+                .map_err(|e| e.to_string())
+        }
         Admin::PrepareDatabase { database, owner } => {
             use sqlx::Connection;
             let mut connection = sqlx::PgConnection::connect(&database)

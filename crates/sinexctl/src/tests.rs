@@ -114,3 +114,33 @@ fn recall_cwd_can_follow_last_and_preserves_path_text() {
         matches!(request, Request::Recall {around: Some(ref s), cwd: None, ..} if s == "2026-09-14 08:00 ±90s")
     );
 }
+
+#[devkit::test]
+fn schema_field_discovery_uses_the_shared_request_table() {
+    let matches = cli()
+        .try_get_matches_from([
+            "sinexctl",
+            "fields",
+            "--kind",
+            "command.executed",
+            "--page",
+            "3",
+        ])
+        .unwrap();
+    let (name, args) = matches.subcommand().unwrap();
+    let request = Request::from_args(
+        name,
+        arguments(sinex_protocol::command(name).unwrap(), args),
+    )
+    .unwrap();
+    assert_eq!(
+        request,
+        Request::Fields {
+            kind: Some("command.executed".into()),
+            page: Some(3),
+            cursor: None
+        }
+    );
+    assert!(sinex_protocol::command("fields").unwrap().mcp);
+    assert!(sinex_protocol::command("kinds").unwrap().mcp);
+}

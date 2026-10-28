@@ -61,7 +61,7 @@ async fn a_spool_is_produced_once_material_first() {
     let Some(Ingress::Events { events, .. }) = frames.get(1) else {
         panic!("events after the material: {frames:?}")
     };
-    let types: Vec<&str> = events.iter().map(|e| e.event_type.as_str()).collect();
+    let types: Vec<&str> = events.iter().map(|e| e.kind.name.as_str()).collect();
     assert_eq!(types, vec!["window.focused", "window.closed"]);
     assert!(
         events.iter().all(|e| e.location.is_some()),

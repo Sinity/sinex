@@ -326,18 +326,18 @@ async fn follow(
                 let Ok(mut conn) = api.acquire(&caller).await else {
                     return;
                 };
-                let answer = match sinex_store::query::run(&mut conn, &text, &q, &ctx, &page).await
-                {
-                    Ok(a) => a,
-                    Err(e) => {
-                        let _ = tx
-                            .send(Ok(Event::default()
-                                .event("error")
-                                .data(mask::mask_str(&e.to_string()))))
-                            .await;
-                        return;
-                    }
-                };
+                let answer =
+                    match sinex_store::query::run(&mut conn, &text, Some(&q), &ctx, &page).await {
+                        Ok(a) => a,
+                        Err(e) => {
+                            let _ = tx
+                                .send(Ok(Event::default()
+                                    .event("error")
+                                    .data(mask::mask_str(&e.to_string()))))
+                                .await;
+                            return;
+                        }
+                    };
                 let rows = match answer
                     .rows
                     .into_iter()

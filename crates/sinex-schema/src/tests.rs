@@ -11,6 +11,8 @@ fn no_payload_field_shadows_an_event_column() {
         "ts_quality",
         "ts_coided",
         "record_state",
+        "kind_version",
+        "validation",
     ];
     for kind in event_types::ALL {
         let schema = (kind.json_schema)();
@@ -55,34 +57,28 @@ fn each_version_after_0_has_its_upgrade() {
 }
 
 #[devkit::test]
-async fn replacing_registered_kinds_updates_schemas_and_recreates_views(
+async fn query_kinds_keep_their_definitions_when_apply_recreates_a_view(
     db: devkit::pg::TestDatabase,
 ) {
     let mut conn = <PgConnection as Connection>::connect(&db.url(None))
         .await
         .unwrap();
-    let expected: serde_json::Value = sqlx::query_scalar(
-        "SELECT payload_schema FROM registry.event_types WHERE name='query.saved'",
-    )
-    .fetch_one(&mut conn)
-    .await
-    .unwrap();
-    conn.execute(
-        "UPDATE registry.event_types SET payload_schema='{}'::jsonb WHERE name='query.saved'",
-    )
-    .await
-    .unwrap();
-    for statement in upgrades::register_kinds(&["query.saved"], true) {
-        conn.execute(statement.as_str()).await.unwrap();
-    }
-    let actual: serde_json::Value = sqlx::query_scalar(
-        "SELECT payload_schema FROM registry.event_types WHERE name='query.saved'",
-    )
-    .fetch_one(&mut conn)
-    .await
-    .unwrap();
-    assert_eq!(actual, expected);
+    let before = crate::kinds::all(&mut conn).await.unwrap();
+    conn.execute("DROP VIEW event_types.query_saved")
+        .await
+        .unwrap();
+    apply(&mut conn).await.unwrap();
+    assert_eq!(crate::kinds::all(&mut conn).await.unwrap(), before);
     conn.execute("SELECT * FROM event_types.query_saved LIMIT 0")
         .await
         .unwrap();
+    assert!(
+        conn.execute(
+            "UPDATE registry.event_types SET payload_schema='{}'::jsonb WHERE name='query.saved'"
+        )
+        .await
+        .is_err()
+    );
 }
+
+mod kinds;

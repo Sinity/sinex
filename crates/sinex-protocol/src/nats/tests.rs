@@ -30,7 +30,8 @@ fn producer_permissions_name_only_its_own_subjects() {
             "sinex.ingress.phone",
             "sinex.recorded.phone",
             "sinex.materials.phone",
-            "sinex.excise.phone"
+            "sinex.excise.phone",
+            "sinex.replay_scope.phone"
         ]
     );
     assert_eq!(subscribe, ["sinex.ack.phone", "_INBOX.>"]);
@@ -40,7 +41,7 @@ fn producer_permissions_name_only_its_own_subjects() {
         "{config}"
     );
     assert!(config.contains(
-        r#"publish: { allow: ["sinex.ingress.phone", "sinex.recorded.phone", "sinex.materials.phone", "sinex.excise.phone"] }"#
+        r#"publish: { allow: ["sinex.ingress.phone", "sinex.recorded.phone", "sinex.materials.phone", "sinex.excise.phone", "sinex.replay_scope.phone"] }"#
     ));
 }
 
@@ -49,7 +50,7 @@ fn frames_round_trip_with_defaults() {
     let json = serde_json::json!({
         "kind": "events",
         "frame": "f1",
-        "events": [{"event_type": "command.imported", "payload": {"command": "ls"}}]
+        "events": [{"kind": {"name":"command.imported","version":2}, "payload": {"command": "ls"}}]
     });
     let frame: Ingress = serde_json::from_value(json).unwrap();
     let Ingress::Events { frame, events, .. } = frame else {
