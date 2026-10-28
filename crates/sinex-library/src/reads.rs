@@ -20,6 +20,20 @@ pub enum Error {
 
 pub type Result<T> = std::result::Result<T, Error>;
 
+fn latest_copies(rows: Vec<serde_json::Value>) -> Result<Vec<FileCopy>> {
+    let mut latest = std::collections::BTreeMap::new();
+    for copy in decode::<FileCopy>(COPY, rows)? {
+        let key = (copy.host.clone(), copy.root.clone(), copy.path.clone());
+        if latest
+            .get(&key)
+            .is_none_or(|old: &FileCopy| copy.part_index >= old.part_index)
+        {
+            latest.insert(key, copy);
+        }
+    }
+    Ok(latest.into_values().collect())
+}
+
 fn decode<T: DeserializeOwned>(kind: &'static str, rows: Vec<serde_json::Value>) -> Result<Vec<T>> {
     rows.into_iter()
         .map(|v| serde_json::from_value(v).map_err(|e| Error::Decode(kind, e.to_string())))
@@ -41,7 +55,7 @@ pub async fn items_at(conn: &mut Conn, keys: &[String]) -> Result<Vec<Item>> {
 pub async fn copies(conn: &mut Conn, host: &str, root: &str) -> Result<Vec<FileCopy>> {
     let rows =
         payloads::live_where(conn, COPY, &["root"], &[root.to_owned()], RecordStates::Any).await?;
-    Ok(decode::<FileCopy>(COPY, rows)?
+    Ok(latest_copies(rows)?
         .into_iter()
         .filter(|a| a.host == host)
         .collect())
@@ -54,7 +68,7 @@ pub async fn copies_at(conn: &mut Conn, keys: &[String]) -> Result<Vec<FileCopy>
         .filter_map(|k| k.split_once(':').map(|(_, p)| p.to_owned()))
         .collect();
     let rows = payloads::live_where(conn, COPY, &["path"], &paths, RecordStates::Any).await?;
-    Ok(decode::<FileCopy>(COPY, rows)?
+    Ok(latest_copies(rows)?
         .into_iter()
         .filter(|a| keys.contains(&format!("{}:{}", a.host, a.path)))
         .collect())
@@ -70,7 +84,14 @@ pub async fn copies_of(conn: &mut Conn, content: &str) -> Result<Vec<FileCopy>> 
         RecordStates::Any,
     )
     .await?;
-    let mut all: Vec<FileCopy> = decode(COPY, rows)?;
+    let keys: Vec<_> = decode::<FileCopy>(COPY, rows)?
+        .into_iter()
+        .map(|copy| format!("{}:{}", copy.host, copy.path))
+        .collect::<std::collections::BTreeSet<_>>()
+        .into_iter()
+        .collect();
+    let mut all = copies_at(conn, &keys).await?;
+    all.retain(|copy| copy.content == content);
     all.sort_by_key(|a| a.vanished_at.is_some());
     Ok(all)
 }
@@ -95,12 +116,35 @@ pub async fn items_with(conn: &mut Conn, content: &str) -> Result<Vec<Item>> {
     decode(ITEM, rows)
 }
 
-/// Every revision an item ever had, oldest first.
+/// Visible content transitions of an item, oldest first.
 pub async fn revisions(conn: &mut Conn, item: &str) -> Result<Vec<Item>> {
-    let rows = payloads::history(conn, ITEM, &["item"], item).await?;
-    let mut all: Vec<Item> = decode(ITEM, rows)?;
-    all.dedup_by(|a, b| a.revision == b.revision && a.content == b.content);
-    Ok(all)
+    let Some(current) = self::item(conn, item).await? else {
+        return Ok(Vec::new());
+    };
+    let copies: Vec<FileCopy> = about(conn, COPY, &["item"], item).await?;
+    Ok(revision_history(current, copies))
+}
+
+fn revision_history(current: Item, mut copies: Vec<FileCopy>) -> Vec<Item> {
+    copies.sort_by(|a, b| (a.part_index, &a.path).cmp(&(b.part_index, &b.path)));
+    let mut previous = None;
+    let mut all = Vec::new();
+    for copy in copies.into_iter().filter(|copy| copy.vanished_at.is_none()) {
+        if previous.as_ref() == Some(&copy.content) {
+            continue;
+        }
+        let revision = Item {
+            revision: copy.content.clone(),
+            replaces: previous,
+            content: copy.content.clone(),
+            media_type: copy.media_type,
+            at: copy.scanned_at,
+            ..current.clone()
+        };
+        previous = Some(copy.content);
+        all.push(revision);
+    }
+    all
 }
 
 async fn about<T: DeserializeOwned>(
@@ -191,3 +235,6 @@ pub async fn comparisons(conn: &mut Conn, scale: &str) -> Result<Vec<Comparison>
     .await?;
     decode("library.comparison", rows)
 }
+
+#[cfg(test)]
+mod tests;

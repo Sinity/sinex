@@ -32,6 +32,7 @@ pub(crate) struct Api {
     pub unlock: std::sync::Arc<tokio::sync::Mutex<Option<Unlocked>>>,
     /// This machine's name, for library requests and scans.
     pub host: String,
+    pub library_roots: Vec<std::path::PathBuf>,
 }
 
 /// An unlock session: the operator's identity until it expires, and the data
@@ -521,6 +522,7 @@ impl Api {
             self.writer.as_ref(),
             &self.blobs,
             &self.host,
+            &self.library_roots,
             request,
             caller.actor,
         )
