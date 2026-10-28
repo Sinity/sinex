@@ -342,14 +342,9 @@ pub async fn record_published(conn: &mut PgConnection, published: &[(Uuid, i64)]
     pairs.dedup();
     let (ids, seqs): (Vec<Uuid>, Vec<i64>) = pairs.into_iter().unzip();
     sqlx::query!(
-        r#"INSERT INTO core.published (first_event, last_event, event_ids, stream_seqs)
-           SELECT $1, $2, $3, $4
-           WHERE NOT EXISTS (
-             SELECT 1 FROM core.published WHERE first_event = $1 AND last_event = $2
-               AND event_ids = $3 AND stream_seqs = $4
-           )"#,
-        ids[0],
-        ids[ids.len() - 1],
+        r#"INSERT INTO core.published (event_id, stream_seq)
+           SELECT * FROM unnest($1::uuid[], $2::bigint[])
+           ON CONFLICT (event_id, stream_seq) DO NOTHING"#,
         &ids,
         &seqs,
     )
@@ -373,19 +368,17 @@ pub async fn excised_on_stream(
 ) -> Result<Vec<ExcisedOnStream>> {
     Ok(sqlx::query_as!(
         ExcisedOnStream,
-        r#"SELECT DISTINCT m.event_id AS "event_id!", m.stream_seq AS "stream_seq!", t.operation_id
+        r#"SELECT p.event_id, p.stream_seq, t.operation_id
            FROM core.event_tombstones t
-           JOIN core.published p ON t.event_id BETWEEN p.first_event AND p.last_event
-           CROSS JOIN LATERAL unnest(p.event_ids, p.stream_seqs) m(event_id, stream_seq)
-           WHERE m.event_id = t.event_id
-           ORDER BY m.stream_seq, m.event_id LIMIT $1"#,
+           JOIN core.published p ON p.event_id = t.event_id
+           ORDER BY p.stream_seq, p.event_id LIMIT $1"#,
         limit,
     )
     .fetch_all(&mut *conn)
     .await?)
 }
 
-/// Forget only acknowledged erasures, keeping every other pair in each page.
+/// Forget only acknowledged erasures, keeping every other acknowledged copy.
 pub async fn forget_published(conn: &mut PgConnection, erased: &[(Uuid, i64)]) -> Result<()> {
     if erased.is_empty() {
         return Ok(());
@@ -395,26 +388,9 @@ pub async fn forget_published(conn: &mut PgConnection, erased: &[(Uuid, i64)]) -
     pairs.dedup();
     let (ids, seqs): (Vec<Uuid>, Vec<i64>) = pairs.into_iter().unzip();
     sqlx::query!(
-        r#"WITH erased AS MATERIALIZED (
-             SELECT * FROM unnest($1::uuid[], $2::bigint[]) AS e(event_id, stream_seq)
-           ), remaining AS MATERIALIZED (
-             SELECT p.id,
-               array_agg(m.event_id ORDER BY m.event_id, m.stream_seq)
-                 FILTER (WHERE e.event_id IS NULL) AS event_ids,
-               array_agg(m.stream_seq ORDER BY m.event_id, m.stream_seq)
-                 FILTER (WHERE e.event_id IS NULL) AS stream_seqs
-             FROM core.published p
-             CROSS JOIN LATERAL unnest(p.event_ids, p.stream_seqs) m(event_id, stream_seq)
-             LEFT JOIN erased e ON e.event_id = m.event_id AND e.stream_seq = m.stream_seq
-             WHERE EXISTS (SELECT 1 FROM erased e WHERE e.event_id BETWEEN p.first_event AND p.last_event)
-             GROUP BY p.id HAVING bool_or(e.event_id IS NOT NULL)
-           ), removed AS (
-             DELETE FROM core.published p USING remaining r
-             WHERE p.id = r.id AND r.event_ids IS NULL
-           )
-           UPDATE core.published p SET event_ids = r.event_ids, stream_seqs = r.stream_seqs,
-             first_event = r.event_ids[1], last_event = r.event_ids[cardinality(r.event_ids)]
-           FROM remaining r WHERE p.id = r.id AND r.event_ids IS NOT NULL"#,
+        r#"DELETE FROM core.published p
+           USING unnest($1::uuid[], $2::bigint[]) AS e(event_id, stream_seq)
+           WHERE p.event_id = e.event_id AND p.stream_seq = e.stream_seq"#,
         &ids,
         &seqs,
     )

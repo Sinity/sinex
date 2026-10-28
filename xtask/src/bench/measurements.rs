@@ -493,26 +493,12 @@ fn monitor(port: u16) -> Result<Value, String> {
 }
 
 fn published_event_counts(cluster: &Cluster) -> Result<Value, String> {
-    let pages = query(
-        cluster,
-        "SELECT to_jsonb(EXISTS(SELECT 1 FROM information_schema.columns
-         WHERE table_schema='core' AND table_name='published' AND column_name='event_ids'))",
-    )?
-    .as_bool()
-    .ok_or("publication columns were not observed")?;
-    let events = if pages {
-        "SELECT unnest(event_ids) AS event_id FROM core.published"
-    } else {
-        "SELECT event_id FROM core.published"
-    };
     query(
         cluster,
-        &format!(
-            "WITH recorded AS MATERIALIZED ({events})
-        SELECT json_build_object('recorded',(SELECT count(*) FROM recorded),
+        "SELECT json_build_object('recorded',(SELECT count(DISTINCT event_id) FROM core.published),
+        'copies',(SELECT count(*) FROM core.published),
         'missing',(SELECT count(*) FROM core.events event
-          WHERE NOT EXISTS(SELECT 1 FROM recorded WHERE recorded.event_id=event.id)))"
-        ),
+          WHERE NOT EXISTS(SELECT 1 FROM core.published WHERE event_id=event.id)))",
     )
 }
 

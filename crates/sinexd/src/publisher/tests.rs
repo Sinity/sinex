@@ -466,13 +466,11 @@ async fn page_pairs_follow_acknowledgments_through_visibility_and_commit_gaps(
     let last_id = last.id;
     admit(&mut conn, batch(vec![last], vec![])).await;
     publish_pending(&mut conn, &js, &subjects).await.unwrap();
-    let pairs: Vec<(uuid::Uuid, i64)> = sqlx::query_as(
-        "SELECT m.event_id, m.stream_seq FROM core.published p,
-         LATERAL unnest(p.event_ids, p.stream_seqs) m(event_id, stream_seq) ORDER BY m.stream_seq",
-    )
-    .fetch_all(&mut conn)
-    .await
-    .unwrap();
+    let pairs: Vec<(uuid::Uuid, i64)> =
+        sqlx::query_as("SELECT event_id, stream_seq FROM core.published ORDER BY stream_seq")
+            .fetch_all(&mut conn)
+            .await
+            .unwrap();
     assert_eq!(pairs, [(first_id.0, 1), (last_id.0, 3)]);
     let messages = read_all(&js, &subjects).await;
     assert!(matches!(&messages[1], Confirmed::Archived(_)));
@@ -531,13 +529,11 @@ async fn acknowledgment_before_database_rollback_is_recorded_on_retry(
         1
     );
     assert_eq!(read_all(&js, &subjects).await.len(), 1);
-    let pairs: Vec<(uuid::Uuid, i64)> = sqlx::query_as(
-        "SELECT m.event_id, m.stream_seq FROM core.published p,
-         LATERAL unnest(p.event_ids, p.stream_seqs) m(event_id, stream_seq)",
-    )
-    .fetch_all(&mut conn)
-    .await
-    .unwrap();
+    let pairs: Vec<(uuid::Uuid, i64)> =
+        sqlx::query_as("SELECT event_id, stream_seq FROM core.published")
+            .fetch_all(&mut conn)
+            .await
+            .unwrap();
     assert_eq!(pairs, [(id.0, ack.sequence as i64)]);
 }
 

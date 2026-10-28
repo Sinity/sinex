@@ -17,8 +17,6 @@ async fn populated(conn: &mut PgConnection) {
 async fn stored_rows(conn: &mut PgConnection) -> Vec<serde_json::Value> {
     let compact: bool = sqlx::query_scalar("SELECT data_type='bytea' FROM information_schema.columns WHERE table_schema='core' AND table_name='live_equivalence' AND column_name='equivalence_key'")
         .fetch_one(&mut *conn).await.unwrap();
-    let pages: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM information_schema.columns WHERE table_schema='core' AND table_name='published' AND column_name='event_ids')")
-        .fetch_one(&mut *conn).await.unwrap();
     let tables: Vec<(String,String)> = sqlx::query_as("SELECT schemaname,tablename FROM pg_tables WHERE schemaname=ANY($1) AND schemaname<>'sinex_schema' AND tablename<>'admission_stage' ORDER BY 1,2")
         .bind(schemas()).fetch_all(&mut *conn).await.unwrap();
     let mut result = Vec::new();
@@ -27,9 +25,6 @@ async fn stored_rows(conn: &mut PgConnection) -> Vec<serde_json::Value> {
         let query = match table.as_str() {
             "live_equivalence" if compact => format!(
                 "SELECT to_jsonb(t)||jsonb_build_object('equivalence_key',core.decode_equivalence_key(equivalence_key)) FROM {name} t ORDER BY 1"
-            ),
-            "published" if pages => format!(
-                "SELECT to_jsonb(pair) FROM {name} t CROSS JOIN LATERAL unnest(event_ids,stream_seqs) pair(event_id,stream_seq) ORDER BY 1"
             ),
             "event_types" if schema == "registry" => format!(
                 "SELECT to_jsonb(t) FROM {name} t WHERE name NOT IN ('operator.mark', 'query.saved') ORDER BY 1"
@@ -91,11 +86,11 @@ async fn whole_chain_rolls_back_when_its_last_upgrade_fails(db: devkit::pg::Test
     populated(&mut conn).await;
     let expected = stored_rows(&mut conn).await;
     let old_catalog = catalog(&mut conn).await.unwrap();
-    conn.execute("CREATE INDEX published_bounds ON core.consumer_positions(commit_seq)")
+    conn.execute("CREATE INDEX published_pairs_pkey ON core.consumer_positions(commit_seq)")
         .await
         .unwrap();
     assert!(apply(&mut conn).await.is_err());
-    conn.execute("DROP INDEX core.published_bounds")
+    conn.execute("DROP INDEX core.published_pairs_pkey")
         .await
         .unwrap();
     assert_eq!(stored_rows(&mut conn).await, expected);

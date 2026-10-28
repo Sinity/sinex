@@ -51,7 +51,7 @@ async fn other_rows(
 }
 
 #[devkit::test]
-async fn upgrade_packs_every_mapping_including_tombstones_without_commit_rows(
+async fn upgrade_keeps_every_mapping_including_tombstones_without_commit_rows(
     db: devkit::pg::TestDatabase,
 ) {
     let mut conn = crate::AdmissionContext::connect(&db.url(None))
@@ -146,12 +146,9 @@ async fn upgrade_packs_every_mapping_including_tombstones_without_commit_rows(
             .await
             .unwrap();
     assert_eq!(after, tombstones);
-    let lengths: Vec<i32> =
-        sqlx::query_scalar("SELECT cardinality(event_ids) FROM core.published ORDER BY id")
-            .fetch_all(&mut conn)
-            .await
-            .unwrap();
-    assert_eq!(lengths, [1000, 1000, 503]);
+    let constraints: String = sqlx::query_scalar("SELECT pg_get_constraintdef(oid) FROM pg_constraint WHERE conrelid='core.published'::regclass AND contype='p'")
+        .fetch_one(&mut conn).await.unwrap();
+    assert_eq!(constraints, "PRIMARY KEY (event_id, stream_seq)");
     let erased = excised_on_stream(&mut conn, 10).await.unwrap();
     assert_eq!((erased[0].event_id, erased[0].stream_seq), before[1000]);
     sqlx::query("SET ROLE sinex_writer")
@@ -173,12 +170,12 @@ async fn upgrade_packs_every_mapping_including_tombstones_without_commit_rows(
 }
 
 #[devkit::test]
-async fn failed_packing_rolls_back_the_table_rename_and_every_mapping(
+async fn failed_pair_upgrade_rolls_back_the_constraint_and_every_mapping(
     db: devkit::pg::TestDatabase,
 ) {
     let mut conn = PgConnection::connect(&db.url(None)).await.unwrap();
     version_two(&mut conn).await;
-    sqlx::raw_sql("INSERT INTO core.published VALUES ('00000000-0000-0000-0000-000000000001', 99); CREATE INDEX published_bounds ON core.consumer_positions(commit_seq)")
+    sqlx::raw_sql("INSERT INTO core.published VALUES ('00000000-0000-0000-0000-000000000001', 99); CREATE INDEX published_pairs_pkey ON core.consumer_positions(commit_seq)")
         .execute(&mut conn).await.unwrap();
     assert!(sinex_schema::apply(&mut conn).await.is_err());
     let version: i32 = sqlx::query_scalar("SELECT max(version) FROM sinex_schema.applied")
@@ -191,7 +188,7 @@ async fn failed_packing_rolls_back_the_table_rename_and_every_mapping(
         .await
         .unwrap();
     assert_eq!(seq, 99);
-    sqlx::query("DROP INDEX core.published_bounds")
+    sqlx::query("DROP INDEX core.published_pairs_pkey")
         .execute(&mut conn)
         .await
         .unwrap();
@@ -200,13 +197,16 @@ async fn failed_packing_rolls_back_the_table_rename_and_every_mapping(
 }
 
 #[devkit::test]
-async fn empty_publication_table_upgrades_and_accepts_a_page(db: devkit::pg::TestDatabase) {
+async fn empty_publication_table_upgrades_and_accepts_multiple_copies(
+    db: devkit::pg::TestDatabase,
+) {
     let mut conn = PgConnection::connect(&db.url(None)).await.unwrap();
     version_two(&mut conn).await;
     sinex_schema::apply(&mut conn).await.unwrap();
     assert!(pairs(&mut conn).await.is_empty());
-    record_published(&mut conn, &[(Uuid::now_v7(), 8)])
+    let id = Uuid::now_v7();
+    record_published(&mut conn, &[(id, 8), (id, 9), (id, 8)])
         .await
         .unwrap();
-    assert_eq!(pairs(&mut conn).await.len(), 1);
+    assert_eq!(pairs(&mut conn).await, [(id, 8), (id, 9)]);
 }
