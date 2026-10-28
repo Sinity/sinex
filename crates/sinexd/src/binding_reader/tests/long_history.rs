@@ -72,7 +72,7 @@ async fn a_restarted_row_reader_remembers_every_stored_row(db: devkit::pg::TestD
             "CREATE TABLE history (id TEXT PRIMARY KEY, timestamp INTEGER, duration INTEGER, exit INTEGER, command TEXT, cwd TEXT, session TEXT, hostname TEXT, deleted_at INTEGER)",
         )
         .unwrap();
-    let mut ctx = ReaderContext::open(&db.url(None), &dir.path().join("store"))
+    let mut ctx = ReaderContext::open(&db.url(None), &dir.path().join("store"), sinex_model::time_settings::TimeSettings::operator_default())
         .await
         .unwrap();
     let binding = Binding::of(&atuin::SPEC, &path, Settings::new("synthetic"));
@@ -117,7 +117,7 @@ async fn a_restarted_directory_reader_stores_nothing_unchanged_and_sees_old_remo
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path().join("vault");
     std::fs::create_dir_all(&root).unwrap();
-    let mut ctx = ReaderContext::open(&db.url(None), &dir.path().join("store"))
+    let mut ctx = ReaderContext::open(&db.url(None), &dir.path().join("store"), sinex_model::time_settings::TimeSettings::operator_default())
         .await
         .unwrap();
     let binding = Binding::of(&notes::SPEC, &root, Settings::new("synthetic"));

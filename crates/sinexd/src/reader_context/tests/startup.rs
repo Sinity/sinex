@@ -53,7 +53,7 @@ async fn refuse_other_version(db: devkit::pg::TestDatabase, derive: bool) {
             }
         }
     } else {
-        match ReaderContext::open(&url, store.path()).await {
+        match ReaderContext::open(&url, store.path(), sinex_model::time_settings::TimeSettings::operator_default()).await {
             Err(error) => Some(error),
             Ok(ctx) => {
                 ctx.close().await.unwrap();
@@ -148,7 +148,7 @@ async fn empty_database_needs_explicit_initialization_before_ordinary_startup(
     .await
     .unwrap();
     let store = tempfile::tempdir().unwrap();
-    let refused = match ReaderContext::open(&url, store.path()).await {
+    let refused = match ReaderContext::open(&url, store.path(), sinex_model::time_settings::TimeSettings::operator_default()).await {
         Err(_) => true,
         Ok(ctx) => {
             ctx.close().await.unwrap();
@@ -177,6 +177,6 @@ async fn empty_database_needs_explicit_initialization_before_ordinary_startup(
             version: sinex_schema::VERSION
         }
     );
-    let ctx = ReaderContext::open(&url, store.path()).await.unwrap();
+    let ctx = ReaderContext::open(&url, store.path(), sinex_model::time_settings::TimeSettings::operator_default()).await.unwrap();
     ctx.close().await.unwrap();
 }

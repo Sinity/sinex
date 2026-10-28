@@ -174,7 +174,7 @@ async fn admin_table(args: Vec<String>) -> Result<(), String> {
     } else {
         None
     };
-    let ctx = reader_context::ReaderContext::open(database, store).await?;
+    let ctx = reader_context::ReaderContext::open(database, store, sinex_model::time_settings::TimeSettings::from_parts(zone.clone(), day_start)).await?;
     let reads = sqlx::postgres::PgPoolOptions::new()
         .max_connections(4)
         .connect(database)

@@ -17,7 +17,7 @@ async fn staged_directory_resumes_from_actual_admitted_cursor_with_original_byte
     std::fs::create_dir(&root).unwrap();
     std::fs::write(root.join("a.md"), "").unwrap();
     std::fs::write(root.join("b.md"), "beta").unwrap();
-    let mut ctx = ReaderContext::open(&url, &dir.join("store")).await.unwrap();
+    let mut ctx = ReaderContext::open(&url, &dir.join("store"), sinex_model::time_settings::TimeSettings::operator_default()).await.unwrap();
     let sink = Sink(ctx.blobs.clone());
     let source = notes::source();
     let mut reader = binding::walked(notes::driver(root.clone(), "synthetic".into()))

@@ -62,8 +62,13 @@ fn work_acts(inputs: &[Event], env: &Env) -> Vec<Event> {
 }
 fn compute(inputs: &[Event]) -> Vec<Event> {
     let env = Env::at(at(2_000_000));
-    let mut acts = work_acts(inputs,&env);
-    acts.extend(inputs.iter().filter(|event| matches!(event.event_type,"rest.fused" | "state.interval")).cloned());
+    let mut acts = work_acts(inputs, &env);
+    acts.extend(
+        inputs
+            .iter()
+            .filter(|event| matches!(event.event_type, "rest.fused" | "state.interval"))
+            .cloned(),
+    );
     let keys: BTreeSet<_> = acts
         .iter()
         .filter_map(|event| event.payload["episode"].as_str().map(str::to_owned))
@@ -125,7 +130,7 @@ fn branch_objectives_survive_days_and_keep_agent_work_separate() {
         .find_map(|event| event.payload_as::<WorkSuspension>())
         .unwrap();
     assert_eq!(suspension.suspended_at, at(300));
-    assert_eq!(suspension.away_s, Some(5.0 * 86_400.0-300.0));
+    assert_eq!(suspension.away_s, Some(5.0 * 86_400.0 - 300.0));
     assert_eq!(suspension.intervening_episodes.len(), 1);
     let mut reversed = inputs.clone();
     reversed.reverse();
@@ -320,44 +325,116 @@ fn act_instants_without_duration_never_extend_into_later_hour_queries() {
 
 #[test]
 fn a_recorded_objective_switch_stores_an_open_suspension_until_return() {
-    let inputs=vec![session("a",Some("first")),session("b",Some("second")),prompt("a",0),prompt("b",100)];
-    let env=Env::at(at(200));
-    let acts=work_acts(&inputs,&env);
-    let target=acts.iter().find(|event| event.payload["session"]=="a").unwrap().payload["episode"].clone();
-    let key=json!({"episode":target});
-    let initial=Keyed::compute(&WorkEpisodes,&key,&acts,&env);
-    let suspension=initial.outputs.iter().find_map(|event| event.payload_as::<WorkSuspension>()).unwrap();
-    assert_eq!(suspension.suspended_at,at(100));
-    assert_eq!((suspension.returned_at,suspension.away_s),(None,None));
-    assert_eq!(initial.outputs.iter().find_map(|event| event.payload_as::<WorkEpisode>()).unwrap().state,"suspended");
-    assert!(!initial.outputs.iter().any(|event| event.event_type=="work.resumption"));
-    let mut returned=inputs; returned.push(prompt("a",500));
-    let result=Keyed::compute(&WorkEpisodes,&key,&work_acts(&returned,&Env::at(at(600))),&Env::at(at(600)));
-    let closed=result.outputs.iter().find_map(|event| event.payload_as::<WorkSuspension>()).unwrap();
-    assert_eq!(closed.suspension,suspension.suspension,"a return completes the same interruption record");
-    assert_eq!((closed.returned_at,closed.away_s),(Some(at(500)),Some(400.0)));
-    assert_eq!(result.outputs.iter().filter(|event| event.event_type=="work.resumption").count(),1);
+    let inputs = vec![
+        session("a", Some("first")),
+        session("b", Some("second")),
+        prompt("a", 0),
+        prompt("b", 100),
+    ];
+    let env = Env::at(at(200));
+    let acts = work_acts(&inputs, &env);
+    let target = acts
+        .iter()
+        .find(|event| event.payload["session"] == "a")
+        .unwrap()
+        .payload["episode"]
+        .clone();
+    let key = json!({"episode":target});
+    let initial = Keyed::compute(&WorkEpisodes, &key, &acts, &env);
+    let suspension = initial
+        .outputs
+        .iter()
+        .find_map(|event| event.payload_as::<WorkSuspension>())
+        .unwrap();
+    assert_eq!(suspension.suspended_at, at(100));
+    assert_eq!((suspension.returned_at, suspension.away_s), (None, None));
+    assert_eq!(
+        initial
+            .outputs
+            .iter()
+            .find_map(|event| event.payload_as::<WorkEpisode>())
+            .unwrap()
+            .state,
+        "suspended"
+    );
+    assert!(
+        !initial
+            .outputs
+            .iter()
+            .any(|event| event.event_type == "work.resumption")
+    );
+    let mut returned = inputs;
+    returned.push(prompt("a", 500));
+    let result = Keyed::compute(
+        &WorkEpisodes,
+        &key,
+        &work_acts(&returned, &Env::at(at(600))),
+        &Env::at(at(600)),
+    );
+    let closed = result
+        .outputs
+        .iter()
+        .find_map(|event| event.payload_as::<WorkSuspension>())
+        .unwrap();
+    assert_eq!(
+        closed.suspension, suspension.suspension,
+        "a return completes the same interruption record"
+    );
+    assert_eq!(
+        (closed.returned_at, closed.away_s),
+        (Some(at(500)), Some(400.0))
+    );
+    assert_eq!(
+        result
+            .outputs
+            .iter()
+            .filter(|event| event.event_type == "work.resumption")
+            .count(),
+        1
+    );
 }
 
 #[test]
 fn an_act_with_no_objective_does_not_establish_an_objective_switch() {
-    let output=compute(&[session("a",Some("first")),session("unknown",None),prompt("a",0),prompt("unknown",100),prompt("a",500)]);
-    assert!(!output.iter().any(|event| event.event_type=="work.suspension"));
+    let output = compute(&[
+        session("a", Some("first")),
+        session("unknown", None),
+        prompt("a", 0),
+        prompt("unknown", 100),
+        prompt("a", 500),
+    ]);
+    assert!(
+        !output
+            .iter()
+            .any(|event| event.event_type == "work.suspension")
+    );
 }
 
 #[test]
 fn a_recorded_absence_interrupts_work_before_any_return() {
-    let mut metadata=session("a",Some("first"));metadata.payload["machine"]=json!("box");
-    let inputs=vec![metadata,prompt("a",0)];
-    let env=Env::at(at(200));let mut acts=work_acts(&inputs,&env);
-    let episode=acts[0].payload["episode"].clone();
-    let absence=record("state.interval",json!({"interval_id":"sleep","state_kind":"machine.suspend","subject_id":"box","label":"suspended","started_at":at(100),"ended_at":null,"start_event_type":"suspend.started","end_event_type":null,"attributes":{"host":"box"}}),100);
+    let mut metadata = session("a", Some("first"));
+    metadata.payload["machine"] = json!("box");
+    let inputs = vec![metadata, prompt("a", 0)];
+    let env = Env::at(at(200));
+    let mut acts = work_acts(&inputs, &env);
+    let episode = acts[0].payload["episode"].clone();
+    let absence = record(
+        "state.interval",
+        json!({"interval_id":"sleep","state_kind":"machine.suspend","subject_id":"box","label":"suspended","started_at":at(100),"ended_at":null,"start_event_type":"suspend.started","end_event_type":null,"attributes":{"host":"box"}}),
+        100,
+    );
     acts.push(absence.clone());
-    let result=Keyed::compute(&WorkEpisodes,&json!({"episode":episode}),&acts,&env);
-    let interruption=result.outputs.iter().find(|event|event.event_type=="work.suspension").unwrap();
-    let payload=interruption.payload_as::<WorkSuspension>().unwrap();
-    assert_eq!(payload.interruption_source,"absence");
-    assert_eq!(payload.suspended_at,at(100));
-    assert_eq!(payload.returned_at,None);
-    assert!(matches!(&interruption.origin,Origin::Derived {parents} if parents.contains(&absence.id)));
+    let result = Keyed::compute(&WorkEpisodes, &json!({"episode":episode}), &acts, &env);
+    let interruption = result
+        .outputs
+        .iter()
+        .find(|event| event.event_type == "work.suspension")
+        .unwrap();
+    let payload = interruption.payload_as::<WorkSuspension>().unwrap();
+    assert_eq!(payload.interruption_source, "absence");
+    assert_eq!(payload.suspended_at, at(100));
+    assert_eq!(payload.returned_at, None);
+    assert!(
+        matches!(&interruption.origin,Origin::Derived {parents} if parents.contains(&absence.id))
+    );
 }

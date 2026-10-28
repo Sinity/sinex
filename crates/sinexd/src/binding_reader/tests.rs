@@ -112,7 +112,7 @@ async fn archive_acquisition_restart_replay_and_privacy_use_real_admission(
     std::fs::create_dir_all(&dir).unwrap();
     let path = dir.join("export.tgz");
     let decoded = archive(&path);
-    let mut ctx = ReaderContext::open(&url, &dir.join("store")).await.unwrap();
+    let mut ctx = ReaderContext::open(&url, &dir.join("store"), sinex_model::time_settings::TimeSettings::operator_default()).await.unwrap();
     let sink = Sink(ctx.blobs.clone());
     let (_stop, stop) = watch::channel(false);
     let mut bindings = readers(&path);
@@ -208,7 +208,7 @@ async fn archive_acquisition_separates_effective_privacy_classes(db: devkit::pg:
     std::fs::create_dir_all(&dir).unwrap();
     let path = dir.join("export.tgz");
     archive(&path);
-    let mut ctx = ReaderContext::open(&url, &dir.join("store")).await.unwrap();
+    let mut ctx = ReaderContext::open(&url, &dir.join("store"), sinex_model::time_settings::TimeSettings::operator_default()).await.unwrap();
     sqlx::query("INSERT INTO privacy.source_classes(source,class,author) VALUES ('google.tasks','guarded','synthetic')").execute(&mut ctx.read_conn).await.unwrap();
     let sink = Sink(ctx.blobs.clone());
     let (_stop, stop) = watch::channel(false);
@@ -247,7 +247,7 @@ async fn cancelled_archive_worker_joins_and_restart_catches_up(db: devkit::pg::T
     std::fs::create_dir_all(&dir).unwrap();
     let path = dir.join("export.tgz");
     archive(&path);
-    let mut ctx = ReaderContext::open(&url, &dir.join("store")).await.unwrap();
+    let mut ctx = ReaderContext::open(&url, &dir.join("store"), sinex_model::time_settings::TimeSettings::operator_default()).await.unwrap();
     let sink = Sink(ctx.blobs.clone());
     let (_stop, stop) = watch::channel(true);
     let mut bindings = readers(&path);
@@ -334,7 +334,7 @@ async fn sealed_archive_restart_replay_and_class_changes_preserve_exact_material
         } else {
             archive(&path);
         }
-        let mut ctx = ReaderContext::open(&url, &dir.join("store")).await.unwrap();
+        let mut ctx = ReaderContext::open(&url, &dir.join("store"), sinex_model::time_settings::TimeSettings::operator_default()).await.unwrap();
         sqlx::query("INSERT INTO privacy.source_classes(source,class,author) VALUES ('google.fit','sealed','synthetic')").execute(&mut ctx.read_conn).await.unwrap();
         let identity = sinex_sealing::Identity::generate();
         let recipient = identity.to_public();
@@ -590,7 +590,7 @@ async fn sealed_bindings_never_share_data_keys_or_original_blob_names(
     std::fs::create_dir_all(&dir).unwrap();
     let path = dir.join("export.tgz");
     archive(&path);
-    let mut ctx = ReaderContext::open(&url, &dir.join("store")).await.unwrap();
+    let mut ctx = ReaderContext::open(&url, &dir.join("store"), sinex_model::time_settings::TimeSettings::operator_default()).await.unwrap();
     sqlx::query("INSERT INTO privacy.source_classes(source,class,author) VALUES ('google.fit','sealed','synthetic'),('google.tasks','sealed','synthetic')").execute(&mut ctx.read_conn).await.unwrap();
     let identity = sinex_sealing::Identity::generate();
     let recipient = identity.to_public();
@@ -637,7 +637,7 @@ async fn an_unchanged_append_only_file_is_not_polled_again(db: devkit::pg::TestD
     std::fs::create_dir_all(&dir).unwrap();
     let history = dir.join("zsh_history");
     std::fs::write(&history, b": 1700000000:0;echo one\n").unwrap();
-    let mut ctx = ReaderContext::open(&url, &dir.join("store")).await.unwrap();
+    let mut ctx = ReaderContext::open(&url, &dir.join("store"), sinex_model::time_settings::TimeSettings::operator_default()).await.unwrap();
     let sink = Sink(ctx.blobs.clone());
     let (_stop, stop) = watch::channel(false);
     let format = sinex_sources::sources::format_of("terminal.zsh-history").unwrap();

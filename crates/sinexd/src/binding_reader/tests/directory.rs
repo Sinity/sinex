@@ -21,7 +21,7 @@ async fn empty_directory_files_keep_distinct_paths_bytes_and_locations_through_r
     for (name, bytes) in [("a.md", ""), ("b.md", ""), ("c.md", "gamma")] {
         std::fs::write(root.join(name), bytes).unwrap();
     }
-    let mut ctx = ReaderContext::open(&url, &dir.join("store")).await.unwrap();
+    let mut ctx = ReaderContext::open(&url, &dir.join("store"), sinex_model::time_settings::TimeSettings::operator_default()).await.unwrap();
     let sink = Sink(ctx.blobs.clone());
     let binding = Binding::of(&notes::SPEC, &root, Settings::new("synthetic"));
     let name = binding.name.clone();

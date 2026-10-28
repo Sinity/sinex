@@ -14,7 +14,7 @@ async fn restarted_directory_reader_observes_files_removed_after_its_committed_c
     std::fs::create_dir_all(&root).unwrap();
     std::fs::write(root.join("a.md"), "alpha").unwrap();
     std::fs::write(root.join("b.md"), "beta").unwrap();
-    let mut ctx = ReaderContext::open(&url, &dir.path().join("store"))
+    let mut ctx = ReaderContext::open(&url, &dir.path().join("store"), sinex_model::time_settings::TimeSettings::operator_default())
         .await
         .unwrap();
     let sink = Sink(ctx.blobs.clone());
@@ -146,7 +146,7 @@ async fn sealed_history_needs_no_private_key_and_keeps_the_binding_sealed(
     std::fs::write(root.join("a.md"), "synthetic sealed alpha").unwrap();
     let identity = sinex_sealing::Identity::generate();
     let recipient = identity.to_public();
-    let mut ctx = ReaderContext::open(&url, &dir.path().join("store"))
+    let mut ctx = ReaderContext::open(&url, &dir.path().join("store"), sinex_model::time_settings::TimeSettings::operator_default())
         .await
         .unwrap();
     sinex_store::privacy::set_source_class(
@@ -259,7 +259,7 @@ async fn a_restart_remembers_a_file_whose_record_produced_no_event(db: devkit::p
     std::fs::create_dir_all(&root).unwrap();
     std::fs::write(root.join("a.md"), "ignored alpha").unwrap();
     std::fs::write(root.join("b.md"), "beta").unwrap();
-    let mut ctx = ReaderContext::open(&url, &dir.path().join("store"))
+    let mut ctx = ReaderContext::open(&url, &dir.path().join("store"), sinex_model::time_settings::TimeSettings::operator_default())
         .await
         .unwrap();
     let sink = Sink(ctx.blobs.clone());
@@ -297,7 +297,7 @@ async fn stopped_directory_restore_keeps_progress_and_can_be_retried(db: devkit:
     let root = dir.path().join("vault");
     std::fs::create_dir_all(&root).unwrap();
     std::fs::write(root.join("a.md"), "alpha").unwrap();
-    let mut ctx = ReaderContext::open(&url, &dir.path().join("store"))
+    let mut ctx = ReaderContext::open(&url, &dir.path().join("store"), sinex_model::time_settings::TimeSettings::operator_default())
         .await
         .unwrap();
     let sink = Sink(ctx.blobs.clone());
@@ -350,7 +350,7 @@ async fn a_removed_guarded_member_keeps_its_class_after_the_source_floor_is_lowe
     let root = dir.path().join("vault");
     std::fs::create_dir_all(&root).unwrap();
     std::fs::write(root.join("a.md"), "synthetic guarded alpha").unwrap();
-    let mut ctx = ReaderContext::open(&url, &dir.path().join("store"))
+    let mut ctx = ReaderContext::open(&url, &dir.path().join("store"), sinex_model::time_settings::TimeSettings::operator_default())
         .await
         .unwrap();
     sinex_store::privacy::set_source_class(
