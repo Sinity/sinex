@@ -8,7 +8,7 @@ Sinex ships its own NixOS and Home Manager modules in its flake, and a host conf
 
 ### The flake
 
-The flake provides the packages (`sinexd`, `sinexctl`, `sinex-schema`, `sinex-session`, `sinex-capture`, `sinex-diagnostics`), `nixosModules.default`, a Home Manager module, an overlay, and checks that include the NixOS VM tests. Building and testing from a checkout is in [AGENTS.md](../AGENTS.md).
+The flake provides the packages (`sinexd`, `sinexctl`, `sinex-schema`, `sinex-session`, `sinex-capture`), `nixosModules.default`, a Home Manager module, an overlay, and checks that include the NixOS VM tests. Building and testing from a checkout is in [AGENTS.md](../AGENTS.md).
 
 ### The NixOS module
 
