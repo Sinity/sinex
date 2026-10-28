@@ -214,7 +214,6 @@ impl crate::EventPayload for NoteDocument {
                 fields: vec!["modified_at".into()],
                 quality: crate::TimeQuality::FileMtime,
             }),
-            least_class: Self::CLASS,
             removed_rule: Some(crate::kinds::RemovedRule::WhenPresent {
                 field: "removed_at".into(),
             }),

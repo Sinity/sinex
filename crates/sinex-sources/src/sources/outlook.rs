@@ -172,6 +172,8 @@ impl Parser for CsvParser {
             .unwrap_or_default();
         Ok((
             vec![MailMessage {
+                account: None,
+                bcc: vec![],
                 message_id: None,
                 native_id: None,
                 date: None,

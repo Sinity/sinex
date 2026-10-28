@@ -15,6 +15,7 @@ pub mod documents;
 pub mod environment;
 pub mod forecast;
 pub mod fused;
+pub mod gmail;
 pub mod health;
 pub mod imported_text;
 pub mod input;
@@ -247,6 +248,10 @@ pub const ALL: &[RegisteredEventType] = &[
     info::<communication::ChatMessage>(),
     info::<communication::MailMessage>(),
     info::<communication::CallLogged>(),
+    info::<gmail::ProviderMessage>(),
+    info::<gmail::MailChanged>(),
+    info::<gmail::HistoryGap>(),
+    info::<gmail::ProviderMissing>(),
     // Account exports
     info::<account::ActionRecorded>(),
     info::<account::VideoWatched>(),

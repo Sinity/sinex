@@ -691,8 +691,10 @@ fn a_notification_seen_live_and_in_the_lake_is_one_notification() {
 fn mail(source: &str, id: &str, secs: f64) -> Event {
     captured(
         &MailMessage {
-            message_id: Some(id.into()),
+            account: Some("owner@example.test".into()),
             native_id: None,
+            bcc: vec![],
+            message_id: Some(id.into()),
             date: Some(at(secs)),
             from: vec!["a@example.org".into()],
             to: vec![],
@@ -927,3 +929,5 @@ fn equal_mail_without_message_ids_remains_separate() {
     assert_eq!(out.len(), 2, "{out:?}");
     assert!(out.iter().all(|event| event["message_id"].is_null()));
 }
+
+mod gmail;

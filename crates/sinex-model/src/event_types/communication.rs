@@ -42,8 +42,10 @@ pub enum ChatLineKind {
 /// location identifies it; equal bytes alone never identify a message.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct MailMessage {
+    /// Mailbox account, when the input identifies it.
+    pub account: Option<String>,
     pub message_id: Option<String>,
-    /// Maildir filename or IMAP UID, scoped to its mailbox and input.
+    /// Provider ID, scoped to its account or mailbox and input.
     pub native_id: Option<String>,
     /// The `Date` header; `None` when missing or unreadable.
     pub date: Option<Timestamp>,
@@ -128,7 +130,6 @@ impl crate::EventPayload for MailMessage {
                 fields: vec!["date".into()],
                 quality: crate::TimeQuality::Intrinsic,
             }),
-            least_class: Self::CLASS,
             removed_rule: Some(crate::kinds::RemovedRule::Never),
             keep_known: vec![],
             owned_blobs: vec![],

@@ -437,6 +437,7 @@ impl ImapMail {
             })
             .collect();
         let manifest = sinex_model::Manifest::from_json(json!({
+            "account": self.config.username,
             "media_type": "message/rfc822", "members": members,
             "mailbox": self.config.mailbox, "uid_validity": uid_validity, "uids": uids,
             "expunged": expunged,

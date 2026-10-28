@@ -40,8 +40,68 @@ pub enum Normalization {
 #[serde(tag = "rule", rename_all = "snake_case")]
 pub enum KeyRule {
     Location,
-    Fields { fields: Vec<String> },
-    WhenPresent { field: String, fields: Vec<String> },
+    Fields {
+        fields: Vec<String>,
+    },
+    WhenPresent {
+        field: String,
+        fields: Vec<String>,
+    },
+    WhenEqual {
+        field: String,
+        value: Value,
+        then: Box<KeyRule>,
+        otherwise: Box<KeyRule>,
+    },
+    /// Select fields only when identity text is supplied. Empty provider IDs
+    /// never identify two otherwise unrelated records.
+    WhenNonempty {
+        field: String,
+        trim: bool,
+        then: Box<KeyRule>,
+        otherwise: Box<KeyRule>,
+    },
+}
+
+impl KeyRule {
+    fn fields<'a>(&'a self, payload: &Value) -> Option<&'a Vec<String>> {
+        match self {
+            Self::Location => None,
+            Self::Fields { fields } => Some(fields),
+            Self::WhenPresent { field, fields } => payload
+                .get(field)
+                .filter(|value| !value.is_null())
+                .map(|_| fields),
+            Self::WhenEqual {
+                field,
+                value,
+                then,
+                otherwise,
+            } => {
+                if payload.get(field) == Some(value) {
+                    then.fields(payload)
+                } else {
+                    otherwise.fields(payload)
+                }
+            }
+            Self::WhenNonempty {
+                field,
+                trim,
+                then,
+                otherwise,
+            } => {
+                if payload
+                    .get(field)
+                    .and_then(Value::as_str)
+                    .is_some_and(|value| !if *trim { value.trim() } else { value }.is_empty())
+                {
+                    then.fields(payload)
+                } else {
+                    otherwise.fields(payload)
+                }
+            }
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -158,15 +218,7 @@ impl KindDeclaration {
             return Err("payload must be an object".into());
         }
         let present = |field: &str| payload.get(field).filter(|v| !v.is_null());
-        let fields = match self
-            .key_rule
-            .as_ref()
-            .ok_or("historical declaration has no rules")?
-        {
-            KeyRule::Location => None,
-            KeyRule::Fields { fields } => Some(fields),
-            KeyRule::WhenPresent { field, fields } => present(field).map(|_| fields),
-        };
+        let fields = self.key_rule.as_ref().ok_or("historical declaration has no rules")?.fields(payload);
         let equivalence_key = fields.map(|fields| {
             let fields: Vec<&str> = fields.iter().map(String::as_str).collect();
             EquivalenceKey::of(&self.kind.name, &fields, payload)

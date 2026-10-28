@@ -3,11 +3,11 @@
 //! way; an mbox record starts with its `From ` separator line, which is not
 //! part of the message.
 //!
-//! The `Message-ID` header is the identity, so the same message in a later
-//! export of the same source is one record; a message without one uses its
-//! provider coordinates when present, otherwise its record location. An mbox
-//! export and a Maildir are two sources (a Gmail export and a local mail
-//! store); the same message in both is combined
+//! The account and provider ID identify a message when supplied; otherwise
+//! the `Message-ID` header identifies the same message in a later
+//! export of the same source is one record; a message without one is identified
+//! by its provider ID or record location. An mbox export and a Maildir are two sources (a
+//! Gmail export and a local mail store); the same message in both is combined
 //! by fusion, not by admission. Gmail's labels and thread ID are read from its
 //! `X-Gmail-Labels` and `X-GM-THRID` headers. The first plain-text part is kept
 //! as text; attachments are listed with their size, and their bytes stay in the
@@ -88,7 +88,14 @@ impl Parser for MailParser {
                 .and_then(serde_json::Value::as_str)
                 .map(str::to_owned)
         });
+        message.account = context
+            .manifest
+            .details
+            .get("account")
+            .and_then(serde_json::Value::as_str)
+            .map(str::to_owned);
         Ok((vec![message], ()))
+
     }
 }
 
@@ -141,6 +148,8 @@ pub fn parse_message(raw: &[u8]) -> Result<MailMessage, RecordError> {
     let mut attachments = Vec::new();
     walk(&parsed, &mut text, &mut html, &mut attachments)?;
     Ok(MailMessage {
+        account: None,
+        native_id: None,
         message_id,
         native_id: None,
         date,

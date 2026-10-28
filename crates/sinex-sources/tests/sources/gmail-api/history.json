@@ -1,0 +1,1 @@
+{"account":"owner@example.test","kind":"history","response":{"id":"184467440737095516169999","messages":[{"id":"one"}],"messagesAdded":[{"message":{"id":"one"}}],"messagesDeleted":[{"message":{"id":"gone"}},{"message":{"id":"gone"}}],"labelsAdded":[{"message":{"id":"one"},"labelIds":["x","x"]}],"labelsRemoved":[{"message":{"id":"one"},"labelIds":["y"]}]}}
