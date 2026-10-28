@@ -50,11 +50,9 @@ fn batch(events: Vec<Event>, archive: Vec<ArchiveRequest>) -> Batch {
     }
 }
 
-async fn admit(conn: &mut PgConnection, b: Batch) {
+async fn admit(conn: &mut sinex_store::AdmissionContext, b: Batch) {
     let mut tx = conn.begin().await.unwrap();
-    sinex_store::admit(&mut tx, &b, &sinex_store::NoDerivations)
-        .await
-        .unwrap();
+    tx.admit(&b, &sinex_store::NoDerivations).await.unwrap();
     tx.commit().await.unwrap();
 }
 
@@ -85,9 +83,7 @@ async fn publishes_in_commit_order_masked_once(db: devkit::pg::TestDatabase) {
     let js = context(async_nats::connect(nats.url()).await.unwrap());
     ensure_stream(&js, &subjects).await.unwrap();
     let url = db.url(None);
-    let mut conn = <sqlx::PgConnection as sqlx::Connection>::connect(&url)
-        .await
-        .unwrap();
+    let mut conn = sinex_store::AdmissionContext::connect(&url).await.unwrap();
 
     let first = executed("1", "ls", 1, Class::Open);
     let first_id = first.id;
@@ -160,9 +156,7 @@ async fn an_event_larger_than_a_message_goes_out_without_its_payload(db: devkit:
     ensure_stream(&js, &subjects).await.unwrap();
     let limit = js.client().server_info().max_payload as u64;
     let url = db.url(None);
-    let mut conn = <sqlx::PgConnection as sqlx::Connection>::connect(&url)
-        .await
-        .unwrap();
+    let mut conn = sinex_store::AdmissionContext::connect(&url).await.unwrap();
     let huge = "x".repeat(usize::try_from(limit).unwrap() * 2);
     admit(
         &mut conn,
@@ -203,9 +197,7 @@ async fn a_page_published_twice_is_stored_once(db: devkit::pg::TestDatabase) {
     let js = context(async_nats::connect(nats.url()).await.unwrap());
     ensure_stream(&js, &subjects).await.unwrap();
     let url = db.url(None);
-    let mut conn = <sqlx::PgConnection as sqlx::Connection>::connect(&url)
-        .await
-        .unwrap();
+    let mut conn = sinex_store::AdmissionContext::connect(&url).await.unwrap();
     admit(
         &mut conn,
         batch(vec![executed("1", "ls", 1, Class::Open)], vec![]),
@@ -235,9 +227,7 @@ async fn hide_after_publishing_sends_a_notice(db: devkit::pg::TestDatabase) {
     let js = context(async_nats::connect(nats.url()).await.unwrap());
     ensure_stream(&js, &subjects).await.unwrap();
     let url = db.url(None);
-    let mut conn = <sqlx::PgConnection as sqlx::Connection>::connect(&url)
-        .await
-        .unwrap();
+    let mut conn = sinex_store::AdmissionContext::connect(&url).await.unwrap();
     let event = executed("1", "ls", 1, Class::Open);
     let id = event.id;
     admit(&mut conn, batch(vec![event], vec![])).await;
@@ -286,9 +276,7 @@ async fn excision_erases_the_published_message(db: devkit::pg::TestDatabase) {
     let js = context(async_nats::connect(nats.url()).await.unwrap());
     ensure_stream(&js, &subjects).await.unwrap();
     let url = db.url(None);
-    let mut conn = <sqlx::PgConnection as sqlx::Connection>::connect(&url)
-        .await
-        .unwrap();
+    let mut conn = sinex_store::AdmissionContext::connect(&url).await.unwrap();
     let dir = tempfile::tempdir().unwrap();
     let blobs = sinex_store::Blobs::open(dir.path()).unwrap();
     crate::excision::tests::register(
@@ -383,9 +371,7 @@ async fn archive_consumer_observes_hide_restore_hide_without_duplicate_events(
     let js = context(async_nats::connect(nats.url()).await.unwrap());
     ensure_stream(&js, &subjects).await.unwrap();
     let url = db.url(None);
-    let mut conn = <sqlx::PgConnection as sqlx::Connection>::connect(&url)
-        .await
-        .unwrap();
+    let mut conn = sinex_store::AdmissionContext::connect(&url).await.unwrap();
     let event = executed("lifecycle", "pwd", 1, Class::Open);
     let id = event.id;
     admit(&mut conn, batch(vec![event], vec![])).await;
@@ -437,5 +423,169 @@ async fn archive_consumer_observes_hide_restore_hide_without_duplicate_events(
             .await
             .unwrap(),
         Published::default()
+    );
+}
+
+/// Only acknowledged event positions are paired; visibility messages and
+/// erased commit positions can leave gaps in both orders.
+#[devkit::test]
+async fn page_pairs_follow_acknowledgments_through_visibility_and_commit_gaps(
+    db: devkit::pg::TestDatabase,
+) {
+    let nats = devkit::nats::test_nats().unwrap();
+    let subjects = Subjects::new(nats.prefix());
+    let js = context(async_nats::connect(nats.url()).await.unwrap());
+    ensure_stream(&js, &subjects).await.unwrap();
+    let mut conn = sinex_store::AdmissionContext::connect(&db.url(None))
+        .await
+        .unwrap();
+    let first = executed("first", "pwd", 1, Class::Open);
+    let first_id = first.id;
+    let missing = executed("missing", "gone", 2, Class::Open);
+    let missing_id = missing.id;
+    admit(&mut conn, batch(vec![first, missing], vec![])).await;
+    sqlx::query("DELETE FROM core.commit_log WHERE event_id = $1")
+        .bind(missing_id.0)
+        .execute(&mut conn)
+        .await
+        .unwrap();
+    publish_pending(&mut conn, &js, &subjects).await.unwrap();
+    admit(
+        &mut conn,
+        batch(
+            vec![],
+            vec![ArchiveRequest::Hide {
+                target: first_id,
+                operation: OperationId::new(),
+            }],
+        ),
+    )
+    .await;
+    publish_pending(&mut conn, &js, &subjects).await.unwrap();
+    let last = executed("last", "secret", 3, Class::Guarded);
+    let last_id = last.id;
+    admit(&mut conn, batch(vec![last], vec![])).await;
+    publish_pending(&mut conn, &js, &subjects).await.unwrap();
+    let pairs: Vec<(uuid::Uuid, i64)> = sqlx::query_as(
+        "SELECT m.event_id, m.stream_seq FROM core.published p,
+         LATERAL unnest(p.event_ids, p.stream_seqs) m(event_id, stream_seq) ORDER BY m.stream_seq",
+    )
+    .fetch_all(&mut conn)
+    .await
+    .unwrap();
+    assert_eq!(pairs, [(first_id.0, 1), (last_id.0, 3)]);
+    let messages = read_all(&js, &subjects).await;
+    assert!(matches!(&messages[1], Confirmed::Archived(_)));
+    assert!(
+        matches!(&messages[2], Confirmed::Event(e) if e.id == last_id && e.payload.is_none() && e.withheld == Some(Withheld::Class))
+    );
+}
+
+#[devkit::test]
+async fn acknowledgment_before_database_rollback_is_recorded_on_retry(
+    db: devkit::pg::TestDatabase,
+) {
+    let nats = devkit::nats::test_nats().unwrap();
+    let subjects = Subjects::new(nats.prefix());
+    let js = context(async_nats::connect(nats.url()).await.unwrap());
+    ensure_stream(&js, &subjects).await.unwrap();
+    let mut conn = sinex_store::AdmissionContext::connect(&db.url(None))
+        .await
+        .unwrap();
+    let event = executed("first", "pwd", 1, Class::Open);
+    let id = event.id;
+    admit(&mut conn, batch(vec![event], vec![])).await;
+    let page = commit_log::after(&mut conn, 0, PAGE, sinex_store::PAGE_BYTES)
+        .await
+        .unwrap();
+    let committed = &page.events[0];
+    let ack = publish(
+        &js,
+        subjects.confirmed_event(&committed.event_type),
+        format!("event-{}", committed.commit_seq),
+        &Confirmed::Event(Box::new(confirmed_event(committed).unwrap())),
+    )
+    .await
+    .unwrap()
+    .await
+    .unwrap();
+    let mut tx = conn.begin().await.unwrap();
+    commit_log::record_published(&mut tx, &[(id.0, ack.sequence as i64)])
+        .await
+        .unwrap();
+    commit_log::set_consumer_position(&mut tx, CONSUMER, committed.commit_seq, 0)
+        .await
+        .unwrap();
+    tx.rollback().await.unwrap();
+    assert_eq!(
+        commit_log::consumer_position(&mut conn, CONSUMER)
+            .await
+            .unwrap(),
+        (0, 0)
+    );
+    assert_eq!(
+        publish_pending(&mut conn, &js, &subjects)
+            .await
+            .unwrap()
+            .events,
+        1
+    );
+    assert_eq!(read_all(&js, &subjects).await.len(), 1);
+    let pairs: Vec<(uuid::Uuid, i64)> = sqlx::query_as(
+        "SELECT m.event_id, m.stream_seq FROM core.published p,
+         LATERAL unnest(p.event_ids, p.stream_seqs) m(event_id, stream_seq)",
+    )
+    .fetch_all(&mut conn)
+    .await
+    .unwrap();
+    assert_eq!(pairs, [(id.0, ack.sequence as i64)]);
+}
+
+#[devkit::test]
+async fn repeated_erasure_keeps_other_copies_until_their_acknowledgment(
+    db: devkit::pg::TestDatabase,
+) {
+    let nats = devkit::nats::test_nats().unwrap();
+    let subjects = Subjects::new(nats.prefix());
+    let js = context(async_nats::connect(nats.url()).await.unwrap());
+    ensure_stream(&js, &subjects).await.unwrap();
+    let mut conn = sinex_store::AdmissionContext::connect(&db.url(None))
+        .await
+        .unwrap();
+    let event = executed("first", "pwd", 1, Class::Open);
+    let id = event.id;
+    admit(&mut conn, batch(vec![event], vec![])).await;
+    publish_pending(&mut conn, &js, &subjects).await.unwrap();
+    let page = commit_log::after(&mut conn, 0, PAGE, sinex_store::PAGE_BYTES)
+        .await
+        .unwrap();
+    let committed = &page.events[0];
+    // A redelivery after deduplication expired can acknowledge another copy.
+    let ack = publish(
+        &js,
+        subjects.confirmed_event(&committed.event_type),
+        "another-copy".into(),
+        &Confirmed::Event(Box::new(confirmed_event(committed).unwrap())),
+    )
+    .await
+    .unwrap()
+    .await
+    .unwrap();
+    commit_log::record_published(&mut conn, &[(id.0, ack.sequence as i64)])
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO core.event_tombstones (event_id, source, event_type, operation_id) VALUES ($1, 'test.source', 'test.event', $2)")
+        .bind(id.0).bind(uuid::Uuid::now_v7()).execute(&mut conn).await.unwrap();
+    // The message was erased before a stop, while its pair was still stored.
+    let stream = js.get_stream(subjects.confirmed_stream()).await.unwrap();
+    stream.delete_message(1).await.unwrap();
+    assert_eq!(erase_excised(&mut conn, &js, &subjects).await.unwrap(), 2);
+    assert!(stream.get_raw_message(ack.sequence).await.is_err());
+    assert_eq!(erase_excised(&mut conn, &js, &subjects).await.unwrap(), 0);
+    assert!(
+        read_all(&js, &subjects)
+            .await
+            .iter()
+            .all(|m| !matches!(m, Confirmed::Event(_)))
     );
 }

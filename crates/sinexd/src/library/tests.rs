@@ -20,13 +20,13 @@ struct World {
 
 async fn world(db: devkit::pg::TestDatabase) -> World {
     let url = db.url(None);
-    let mut connection = <sqlx::PgConnection as sqlx::Connection>::connect(&url)
+    let connection = <sqlx::PgConnection as sqlx::Connection>::connect(&url)
         .await
         .unwrap();
     let base = std::env::temp_dir().join(format!("sinexd-library-{}", uuid::Uuid::now_v7()));
     let blobs = Blobs::open(&base.join("store")).unwrap();
     let (handle, queues) = writer::channels();
-    writer::claim(&mut connection).await.unwrap();
+    let connection = writer::claim(connection).await.unwrap();
     tokio::spawn(writer::run(
         url.clone(),
         connection,

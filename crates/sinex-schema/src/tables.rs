@@ -41,6 +41,27 @@ pub(crate) const EXCISED_MATERIALS: &str = "CREATE TABLE core.excised_materials 
 pub(crate) const EXCISED_MATERIALS_BLOB: &str =
     "CREATE INDEX excised_materials_blob ON core.excised_materials (blob)";
 
+/// Live keys keep all digest bits and distinguish their logical string forms.
+pub(crate) const ENCODE_EQUIVALENCE_KEY: &str = r#"CREATE FUNCTION core.encode_equivalence_key(key text)
+RETURNS bytea LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE AS $$
+  SELECT CASE
+    WHEN length(key) = 64 AND key COLLATE "C" ~ '^[0-9a-f]{64}$' THEN decode('00' || key, 'hex')
+    WHEN length(key) = 69 AND key COLLATE "C" ~ '^hash:[0-9a-f]{64}$' THEN decode('01' || substr(key, 6), 'hex')
+    WHEN length(key) = 71 AND key COLLATE "C" ~ '^sealed:[0-9a-f]{64}$' THEN decode('02' || substr(key, 8), 'hex')
+    ELSE decode('03', 'hex') || convert_to(key, 'UTF8')
+  END
+$$"#;
+
+pub(crate) const DECODE_EQUIVALENCE_KEY: &str = r#"CREATE FUNCTION core.decode_equivalence_key(key bytea)
+RETURNS text LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE AS $$
+  SELECT CASE get_byte(key, 0)
+    WHEN 0 THEN encode(substring(key FROM 2), 'hex')
+    WHEN 1 THEN 'hash:' || encode(substring(key FROM 2), 'hex')
+    WHEN 2 THEN 'sealed:' || encode(substring(key FROM 2), 'hex')
+    WHEN 3 THEN convert_from(substring(key FROM 2), 'UTF8')
+  END
+$$"#;
+
 /// Coverage probes one source and run for its last recorded time.
 pub(crate) const COVERAGE_RUNS: &str =
     "CREATE INDEX events_coverage ON core.events (source, run_id, ts_orig) INCLUDE (commit_seq)";
@@ -80,6 +101,8 @@ pub(crate) fn tables(c: &Checks) -> Vec<String> {
         class = c.class,
     );
     vec![
+        ENCODE_EQUIVALENCE_KEY.into(),
+        DECODE_EQUIVALENCE_KEY.into(),
         // Events. No foreign key points into a hypertable.
         format!("CREATE TABLE core.events (\n  {event_columns},\n  PRIMARY KEY (id)\n)"),
         format!("CREATE TABLE telemetry.events (\n  {event_columns},\n  PRIMARY KEY (id)\n)"),
@@ -98,7 +121,7 @@ pub(crate) fn tables(c: &Checks) -> Vec<String> {
         "CREATE TABLE core.live_equivalence (
   source text NOT NULL,
   event_type text NOT NULL,
-  equivalence_key text NOT NULL,
+  equivalence_key bytea NOT NULL,
   event_id uuid NOT NULL,
   reading_order bigint NOT NULL,
   record_hash bytea NOT NULL,
@@ -163,13 +186,9 @@ pub(crate) fn tables(c: &Checks) -> Vec<String> {
   change_seq bigint NOT NULL DEFAULT 0,
   updated_at timestamptz NOT NULL DEFAULT now()
 )".into(),
-        // Where each published event sits in the confirmed stream, so an
-        // excision can erase it there too: excision reaches every surface. The
-        // row goes once the message is erased.
-        "CREATE TABLE core.published (
-  event_id uuid PRIMARY KEY,
-  stream_seq bigint NOT NULL
-)".into(),
+        // Exact event/stream pairs per publisher page, kept until erased.
+        PUBLISHED.into(),
+        PUBLISHED_BOUNDS.into(),
         // Frames outside producers sent over the NATS ingress and what Sinex
         // did with each, written by admission with the frame's events, so a
         // producer can ask what Sinex holds and a redelivered frame is answered
@@ -449,10 +468,11 @@ pub(crate) fn tables(c: &Checks) -> Vec<String> {
         "CREATE TABLE core.search_text (
   event_id uuid PRIMARY KEY,
   text text NOT NULL,
-  tsv tsvector GENERATED ALWAYS AS (to_tsvector('simple', text)) STORED
+  tsv tsvector GENERATED ALWAYS AS (to_tsvector('simple', text)) STORED,
+  trigram_indexed boolean NOT NULL DEFAULT true
 )".into(),
         "CREATE INDEX search_text_tsv ON core.search_text USING gin (tsv)".into(),
-        "CREATE INDEX search_text_trigram ON core.search_text USING gin (text gin_trgm_ops)".into(),
+        "CREATE INDEX search_text_trigram ON core.search_text USING gin (text gin_trgm_ops) WHERE trigram_indexed".into(),
         // Admission's staging table. Permanent and unlogged so compile-time
         // checked queries can name it; only the one writer uses it, inside its
         // transaction, and truncates it first.
@@ -577,6 +597,24 @@ fn kind_columns() -> String {
         Validation::check("validation")
     )
 }
+
+/// Exact event/stream pairs; bounds select pages, never individual messages.
+pub(crate) const PUBLISHED: &str = "CREATE TABLE core.published (
+  id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  first_event uuid NOT NULL,
+  last_event uuid NOT NULL,
+  event_ids uuid[] NOT NULL,
+  stream_seqs bigint[] NOT NULL,
+  CHECK (cardinality(event_ids) > 0 AND cardinality(event_ids) = cardinality(stream_seqs)),
+  CHECK (array_ndims(event_ids) = 1 AND array_lower(event_ids, 1) = 1),
+  CHECK (array_ndims(stream_seqs) = 1 AND array_lower(stream_seqs, 1) = 1),
+  CHECK (array_position(event_ids, NULL) IS NULL AND array_position(stream_seqs, NULL) IS NULL),
+  CHECK (first_event = event_ids[1] AND last_event = event_ids[cardinality(event_ids)]),
+  CHECK (first_event <= ALL(event_ids) AND last_event >= ALL(event_ids))
+)";
+
+pub(crate) const PUBLISHED_BOUNDS: &str =
+    "CREATE INDEX published_bounds ON core.published (first_event, last_event)";
 
 /// Blob-only admissions also need a position when pairing a store with a restored database.
 pub(crate) fn blob_changes() -> Vec<String> {

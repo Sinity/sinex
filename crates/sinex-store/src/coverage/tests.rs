@@ -17,19 +17,15 @@ async fn evidence_keeps_visibility_positions_unknown_times_and_archived_run_reco
             .bind(run).bind(seconds.map(|s| s as f64)).bind(if seconds.is_some() { "intrinsic" } else { "unknown" })
             .bind(sequence).execute(&mut conn).await.unwrap();
     }
-    let before = crate::test_schema::catalog(&mut conn).await;
-    conn.execute("DROP INDEX core.events_coverage")
-        .await
-        .unwrap();
-    crate::test_schema::downgrade(&mut conn).await;
-    conn.execute("DELETE FROM registry.event_types WHERE name IN ('operator.mark','query.saved')")
-        .await
-        .unwrap();
-    conn.execute("UPDATE sinex_schema.applied SET version = 2")
-        .await
-        .unwrap();
+    let before = sinex_schema::catalog(&mut conn).await.unwrap();
+    sqlx::raw_sql(include_str!(
+        "../../../sinex-schema/src/tests/version_two.sql"
+    ))
+    .execute(&mut conn)
+    .await
+    .unwrap();
     sinex_schema::apply(&mut conn).await.unwrap();
-    assert_eq!(crate::test_schema::catalog(&mut conn).await, before);
+    assert_eq!(sinex_schema::catalog(&mut conn).await.unwrap(), before);
     let events: i64 = sqlx::query_scalar("SELECT count(*) FROM core.events")
         .fetch_one(&mut conn)
         .await

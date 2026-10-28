@@ -13,6 +13,7 @@ self: {
       services.sinex = {
         enable = true;
         noCow = false;
+        database.sharedBuffers = "128MB";
         nats = {
           address = "0.0.0.0";
           daemonPasswordFile = "/etc/sinex-test/nats-daemon";

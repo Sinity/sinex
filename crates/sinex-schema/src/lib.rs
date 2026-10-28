@@ -169,7 +169,7 @@ $$"
   e.reading_order, e.record_hash, e.record_state, e.class, e.kind_version, e.validation
 FROM core.events e"
             .to_string(),
-        "CREATE VIEW core.visible_search_text AS SELECT s.event_id, s.text, s.tsv
+        "CREATE VIEW core.visible_search_text AS SELECT s.event_id, s.text, s.tsv, s.trigram_indexed
 FROM core.search_text s JOIN core.events e ON e.id = s.event_id
 WHERE core.class_visible(e.class)"
             .to_string(),

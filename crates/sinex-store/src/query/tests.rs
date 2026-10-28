@@ -1,8 +1,8 @@
 //! Queries against a real database: each test admits a few commands (an
 //! observation and the fused command derived from it) and reads them back.
 use super::*;
+use crate::NoDerivations;
 use crate::read_models::tests::catch_up_search_text;
-use crate::{NoDerivations, admit};
 use serde_json::json;
 use sinex_model::event_types::{CommandExecuted, CommandFused};
 use sinex_model::query::{Context, bind};
@@ -19,7 +19,7 @@ const BASE: i64 = 1_789_372_800; // 2026-09-14T08:00:00Z
 /// minute apart from the previous pair. Exit codes alternate 0 and 1; the
 /// third command has none. Returns `(fused, observation)` IDs.
 pub(crate) async fn admit_commands(
-    conn: &mut PgConnection,
+    conn: &mut crate::AdmissionContext,
     commands: &[(&str, &str)],
 ) -> Vec<(Uuid, Uuid)> {
     let mut events = Vec::new();
@@ -93,7 +93,7 @@ pub(crate) async fn admit_commands(
         archive: vec![],
     };
     let mut tx = conn.begin().await.unwrap();
-    admit(&mut tx, &batch, &NoDerivations).await.unwrap();
+    tx.admit(&batch, &NoDerivations).await.unwrap();
     tx.commit().await.unwrap();
     ids
 }
@@ -117,7 +117,7 @@ fn column(a: &Answer, name: &str) -> Vec<serde_json::Value> {
     a.rows.iter().map(|r| r[name].clone()).collect()
 }
 
-async fn world(conn: &mut PgConnection) -> Vec<(Uuid, Uuid)> {
+async fn world(conn: &mut crate::AdmissionContext) -> Vec<(Uuid, Uuid)> {
     let ids = admit_commands(
         conn,
         &[
@@ -135,7 +135,7 @@ async fn world(conn: &mut PgConnection) -> Vec<(Uuid, Uuid)> {
 
 #[devkit::test]
 async fn aliases_filter_on_promoted_fields_with_unknown_kept_unknown(db: devkit::pg::TestDatabase) {
-    let mut conn = <sqlx::PgConnection as sqlx::Connection>::connect(&db.url(None))
+    let mut conn = crate::AdmissionContext::connect(&db.url(None))
         .await
         .unwrap();
     world(&mut conn).await;
@@ -153,7 +153,7 @@ async fn aliases_filter_on_promoted_fields_with_unknown_kept_unknown(db: devkit:
 
 #[devkit::test]
 async fn path_prefix_matches_whole_components(db: devkit::pg::TestDatabase) {
-    let mut conn = <sqlx::PgConnection as sqlx::Connection>::connect(&db.url(None))
+    let mut conn = crate::AdmissionContext::connect(&db.url(None))
         .await
         .unwrap();
     world(&mut conn).await;
@@ -166,7 +166,7 @@ async fn path_prefix_matches_whole_components(db: devkit::pg::TestDatabase) {
 
 #[devkit::test]
 async fn two_conditions_on_one_field_are_both_required(db: devkit::pg::TestDatabase) {
-    let mut conn = <sqlx::PgConnection as sqlx::Connection>::connect(&db.url(None))
+    let mut conn = crate::AdmissionContext::connect(&db.url(None))
         .await
         .unwrap();
     world(&mut conn).await;
@@ -188,7 +188,7 @@ async fn two_conditions_on_one_field_are_both_required(db: devkit::pg::TestDatab
 
 #[devkit::test]
 async fn words_search_ranks_and_marks_snippets(db: devkit::pg::TestDatabase) {
-    let mut conn = <sqlx::PgConnection as sqlx::Connection>::connect(&db.url(None))
+    let mut conn = crate::AdmissionContext::connect(&db.url(None))
         .await
         .unwrap();
     world(&mut conn).await;
@@ -208,7 +208,7 @@ async fn words_search_ranks_and_marks_snippets(db: devkit::pg::TestDatabase) {
 
 #[devkit::test]
 async fn pages_read_one_answer_at_one_commit_position(db: devkit::pg::TestDatabase) {
-    let mut conn = <sqlx::PgConnection as sqlx::Connection>::connect(&db.url(None))
+    let mut conn = crate::AdmissionContext::connect(&db.url(None))
         .await
         .unwrap();
     world(&mut conn).await;
@@ -250,7 +250,7 @@ async fn pages_read_one_answer_at_one_commit_position(db: devkit::pg::TestDataba
 
 #[devkit::test]
 async fn limit_is_part_of_the_answer(db: devkit::pg::TestDatabase) {
-    let mut conn = <sqlx::PgConnection as sqlx::Connection>::connect(&db.url(None))
+    let mut conn = crate::AdmissionContext::connect(&db.url(None))
         .await
         .unwrap();
     world(&mut conn).await;
@@ -267,7 +267,7 @@ async fn limit_is_part_of_the_answer(db: devkit::pg::TestDatabase) {
 
 #[devkit::test]
 async fn grouping_makes_rows_of_groups(db: devkit::pg::TestDatabase) {
-    let mut conn = <sqlx::PgConnection as sqlx::Connection>::connect(&db.url(None))
+    let mut conn = crate::AdmissionContext::connect(&db.url(None))
         .await
         .unwrap();
     world(&mut conn).await;
@@ -297,7 +297,7 @@ async fn grouping_makes_rows_of_groups(db: devkit::pg::TestDatabase) {
 
 #[devkit::test]
 async fn as_of_reads_what_was_live_at_a_commit_position(db: devkit::pg::TestDatabase) {
-    let mut conn = <sqlx::PgConnection as sqlx::Connection>::connect(&db.url(None))
+    let mut conn = crate::AdmissionContext::connect(&db.url(None))
         .await
         .unwrap();
     let ids = world(&mut conn).await;
@@ -314,7 +314,7 @@ async fn as_of_reads_what_was_live_at_a_commit_position(db: devkit::pg::TestData
         }],
     };
     let mut tx = conn.begin().await.unwrap();
-    admit(&mut tx, &hide, &NoDerivations).await.unwrap();
+    tx.admit(&hide, &NoDerivations).await.unwrap();
     tx.commit().await.unwrap();
     // Archiving records the position it happened at; move past it.
     admit_commands(&mut conn, &[("echo after", "/")]).await;
@@ -340,7 +340,7 @@ async fn as_of_reads_what_was_live_at_a_commit_position(db: devkit::pg::TestData
 
 #[devkit::test]
 async fn near_joins_pick_the_nearest_match_once(db: devkit::pg::TestDatabase) {
-    let mut conn = <sqlx::PgConnection as sqlx::Connection>::connect(&db.url(None))
+    let mut conn = crate::AdmissionContext::connect(&db.url(None))
         .await
         .unwrap();
     world(&mut conn).await;
@@ -380,7 +380,7 @@ async fn near_joins_pick_the_nearest_match_once(db: devkit::pg::TestDatabase) {
 
 #[devkit::test]
 async fn walks_follow_provenance(db: devkit::pg::TestDatabase) {
-    let mut conn = <sqlx::PgConnection as sqlx::Connection>::connect(&db.url(None))
+    let mut conn = crate::AdmissionContext::connect(&db.url(None))
         .await
         .unwrap();
     let ids = world(&mut conn).await;
@@ -403,7 +403,7 @@ async fn walks_follow_provenance(db: devkit::pg::TestDatabase) {
 
 #[devkit::test]
 async fn recall_reports_every_source_and_says_no_data(db: devkit::pg::TestDatabase) {
-    let mut conn = <sqlx::PgConnection as sqlx::Connection>::connect(&db.url(None))
+    let mut conn = crate::AdmissionContext::connect(&db.url(None))
         .await
         .unwrap();
     world(&mut conn).await;
@@ -422,7 +422,7 @@ async fn recall_reports_every_source_and_says_no_data(db: devkit::pg::TestDataba
 
 #[devkit::test]
 async fn sources_lists_every_source_with_events(db: devkit::pg::TestDatabase) {
-    let mut conn = <sqlx::PgConnection as sqlx::Connection>::connect(&db.url(None))
+    let mut conn = crate::AdmissionContext::connect(&db.url(None))
         .await
         .unwrap();
     world(&mut conn).await;
@@ -436,7 +436,7 @@ async fn sources_lists_every_source_with_events(db: devkit::pg::TestDatabase) {
 
 #[devkit::test]
 async fn time_functions_bucket_in_the_zone_with_logical_days(db: devkit::pg::TestDatabase) {
-    let mut conn = <sqlx::PgConnection as sqlx::Connection>::connect(&db.url(None))
+    let mut conn = crate::AdmissionContext::connect(&db.url(None))
         .await
         .unwrap();
     world(&mut conn).await;
@@ -459,7 +459,7 @@ async fn time_functions_bucket_in_the_zone_with_logical_days(db: devkit::pg::Tes
 
 #[devkit::test]
 async fn payload_paths_compare_by_the_literal_type(db: devkit::pg::TestDatabase) {
-    let mut conn = <sqlx::PgConnection as sqlx::Connection>::connect(&db.url(None))
+    let mut conn = crate::AdmissionContext::connect(&db.url(None))
         .await
         .unwrap();
     world(&mut conn).await;
@@ -478,7 +478,7 @@ async fn payload_paths_compare_by_the_literal_type(db: devkit::pg::TestDatabase)
 
 #[devkit::test]
 async fn read_only_sql_reads_and_cannot_write(db: devkit::pg::TestDatabase) {
-    let mut conn = <sqlx::PgConnection as sqlx::Connection>::connect(&db.url(None))
+    let mut conn = crate::AdmissionContext::connect(&db.url(None))
         .await
         .unwrap();
     world(&mut conn).await;
@@ -505,7 +505,10 @@ mod cursor;
 
 /// Admit derived events built from `payloads`, each with one fused command as
 /// its parent.
-async fn admit_derived<P: sinex_model::EventPayload>(conn: &mut PgConnection, payloads: &[P]) {
+async fn admit_derived<P: sinex_model::EventPayload>(
+    conn: &mut crate::AdmissionContext,
+    payloads: &[P],
+) {
     let parent = EventId(admit_commands(conn, &[("ls", "/")]).await[0].0);
     let events = payloads
         .iter()
@@ -536,7 +539,7 @@ async fn admit_derived<P: sinex_model::EventPayload>(conn: &mut PgConnection, pa
         archive: vec![],
     };
     let mut tx = conn.begin().await.unwrap();
-    admit(&mut tx, &batch, &NoDerivations).await.unwrap();
+    tx.admit(&batch, &NoDerivations).await.unwrap();
     tx.commit().await.unwrap();
 }
 
@@ -544,7 +547,7 @@ async fn admit_derived<P: sinex_model::EventPayload>(conn: &mut PgConnection, pa
 async fn derived_aliases_read_what_the_derivations_write(db: devkit::pg::TestDatabase) {
     use sinex_model::event_types::fused::FocusFused;
     use sinex_model::event_types::{MetricFigure, StateInterval};
-    let mut conn = <sqlx::PgConnection as sqlx::Connection>::connect(&db.url(None))
+    let mut conn = crate::AdmissionContext::connect(&db.url(None))
         .await
         .unwrap();
     let at = |s: i64| Timestamp::from_unix_secs(BASE + s).unwrap();
@@ -620,6 +623,9 @@ async fn derived_aliases_read_what_the_derivations_write(db: devkit::pg::TestDat
         vec![json!("desktop.hyprland,desktop.activitywatch")]
     );
 }
+
+#[cfg(test)]
+mod search;
 
 mod gaps;
 

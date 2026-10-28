@@ -124,3 +124,14 @@ fn decoder_errors_name_fields_without_echoing_payload_values() {
     missing.as_object_mut().unwrap().remove("hostname");
     assert!(check(missing).contains("required at /hostname"));
 }
+
+#[devkit::test]
+fn search_policy_keeps_full_text_for_high_volume_kinds() {
+    let excluded: Vec<_> = ALL
+        .iter()
+        .filter(|kind| !kind.trigram_indexed)
+        .map(|kind| kind.event_type)
+        .collect();
+    assert_eq!(excluded, ["journal.entry", "lake.observed"]);
+    assert!(find("command.imported").unwrap().trigram_indexed);
+}

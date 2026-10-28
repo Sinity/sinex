@@ -81,7 +81,7 @@ impl World {
         let (handle, queues) = writer::channels();
         let task = tokio::spawn(writer::run(
             url.clone(),
-            connection,
+            writer::claim(connection).await.unwrap(),
             queues,
             Arc::new(Keys::new(sinex_derivations::keyed())),
             None,

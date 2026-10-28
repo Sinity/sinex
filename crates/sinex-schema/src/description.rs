@@ -4,6 +4,7 @@ use sinex_model::KindDeclaration;
 use std::collections::BTreeMap;
 
 pub(super) mod version_four;
+pub(super) mod version_nine;
 
 pub(crate) struct View {
     pub name: String,
@@ -43,6 +44,15 @@ impl Description {
                 .iter()
                 .map(|name| (*name).into())
                 .collect(),
+        }
+    }
+
+    pub(crate) fn before_kind_declarations() -> Self {
+        Self {
+            tables: version_nine::tables(&Checks::from_model()),
+            after_tables: version_nine::after_tables(),
+            visibility: vec![], views: vec![], kinds: vec![],
+            previous_producer_views: version_four::MOVED_VIEWS.iter().map(|name| (*name).into()).collect(),
         }
     }
 

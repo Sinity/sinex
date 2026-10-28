@@ -69,6 +69,21 @@ reads the bindings in `--sources` continuously and also needs NATS and a tokens
 directory; the NixOS module sets it up. A sealed source that was left part-way needs
 `--identity-file KEYFILE` to continue.
 
+### Upgrade a deployed database
+
+Stop the whole daemon before applying the schema so admission, search and the
+confirmed-stream publisher have all stopped. Apply the schema with the new
+binary, then restart the daemon. Schema application refuses an active admission
+writer and applies the numbered upgrades in one transaction.
+
+After version 3, the upgrades convert live equivalence keys, add search-index
+eligibility and pack the exact event-to-stream mappings. In a disposable
+database with 2.48 million live keys, key conversion and its complete
+preservation checks took 522 seconds (about 8.7 minutes). Allow for that
+measured interruption plus the search and stream-mapping upgrades; their total
+duration depends on the stored population and host load. This measurement is
+not a duration guarantee for the deployed database.
+
 ## Run on a host
 
 On NixOS, import `nixosModules.default` from this flake and enable it:
@@ -219,3 +234,67 @@ See [the development guide](docs/development.md) for isolated watched runs, VM s
 inputs and reports source-file bytes, stored bytes per source, database size
 and blob-store size, with timings and sampled memory and load. Estimates for
 the full inputs assume time grows linearly with input bytes.
+
+
+`agentctl job start sinex bench -- synthetic --events 1000000` measures a
+deterministic shell-history import. Add `--mixed` for location-keyed commands
+and keyed journal records with varying text widths. Add `--consumers` to run
+the daemon's search reader and confirmed-stream publisher alongside admission
+against disposable PostgreSQL, JetStream and content storage. Derivations are
+disabled for this comparison. Completion requires the event counts, source
+and run counts, consumer positions, searchable row count and acknowledged
+stream count to agree.
+
+The module and benchmark share `nix/postgres.json`. Host declarations may
+override `services.sinex.database.sharedBuffers`, `effectiveCacheSize`,
+`workMem`, `maintenanceWorkMem`, `maxWalSize`, `checkpointTimeout`,
+`checkpointCompletionTarget` and `jit`, or PostgreSQL settings directly.
+`sharedBuffers` requires a PostgreSQL restart. `effectiveCacheSize` is a
+planner estimate; `workMem` applies per operation and parallel worker;
+`maxWalSize` is a checkpoint target. See PostgreSQL's
+[resource settings](https://www.postgresql.org/docs/18/runtime-config-resource.html)
+and [WAL settings](https://www.postgresql.org/docs/18/runtime-config-wal.html).
+Statement collection and I/O timing are enabled only in benchmark clusters.
+
+Use repeated `--postgres name=value` options for explicit comparisons and
+`--output /realm/path/to/results` to retain each synthetic run under a unique
+directory. The artifacts include all effective PostgreSQL settings, complete
+statement statistics, before/after I/O and WAL counters, relation and index
+sizes, load observations, raw results and correctness counts. Statement time
+per batch uses the actual offered batch count; it stays unknown when the
+producer has not reported that count. Consumer runs also keep daemon and NATS
+logs and sampled consumer positions. Build, setup and execution time are
+reported separately. Each checkout builds its benchmark runner, schema tool and daemon in
+`target/bench`, with query checks against a fresh disposable compiler database; it does not use
+the shared development schema cache. Compiler schema facts are retained with
+the run. Disk runs keep fsync, full-page writes and synchronous
+commit enabled. Memory runs are a separate diagnostic series.
+
+For an unmerged checkout, set `CARGO_TARGET_DIR` on the launch:
+`env CARGO_TARGET_DIR=<worktree>/target/bench agentctl job start sinex bench --workspace <worktree> -- synthetic --events 1000000 --consumers`.
+AgentCTL takes its registered operation from the owning project checkout;
+setting the directory on the launch also isolates the runner before that
+checkout has the updated operation.
+
+For a comparison, freeze both revisions and alternate before/after order for
+at least three matched pairs, one measurement at a time. Keep settings,
+workload and storage equal; compare individual runs and the median paired
+ratio. A failed load check is a loaded observation. Admission-only rates do
+not establish throughput with search and publication, and consumer completion
+includes their later catch-up time. Publication checks require saved mappings
+for every event and retain the additional message count from at-least-once
+redelivery.
+
+Consumer measurements also save protected prefix and regex query plans and three
+read-only execution samples after the timed workload. `--publication-probe`
+adds a separate publication-table probe after those correctness snapshots. It
+compares ordered and overlapping UUID bounds on 3,851,000 synthetic mappings,
+checks every recorded stream pair, and retains lookup, one- and 1,000-pair
+erasure, relation size and host-load observations.
+
+`agentctl job start sinex bench -- cases --events 10000 --output /realm/path`
+measures synthetic source changes separately: new YouTube records, the same
+records in another material, hidden records, replacements that omit known
+titles and channels, and derivations with retained parent links. It checks
+search and publication catch-up, including archive notices, after each phase. These serial scenario
+timings are supplementary to the concurrent pipeline comparison.

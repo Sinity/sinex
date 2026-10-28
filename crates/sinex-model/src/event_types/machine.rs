@@ -9,7 +9,7 @@ use serde_json::{Map, Value};
 /// entry read again (after a capture restart overlaps, or from an export) is
 /// a repeat.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
-#[event(version = 3, type = "journal.entry", key = ["cursor"], replace = repeat, time = logged_at, quality = intrinsic)]
+#[event(version = 3, type = "journal.entry", search = words, key = ["cursor"], replace = repeat, time = logged_at, quality = intrinsic)]
 pub struct JournalEntry {
     /// `__CURSOR`.
     pub cursor: String,
@@ -150,7 +150,7 @@ pub struct ScrollbackWindow {
 
 /// One historical lake record. Stream derivations interpret its unchanged payload.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
-#[event(version = 3, type = "lake.observed", key = location, replace = repeat, time = observed_at, quality = captured)]
+#[event(version = 3, type = "lake.observed", search = words, key = location, replace = repeat, time = observed_at, quality = captured)]
 pub struct LakeObservation {
     pub observed_at: Timestamp,
     pub lane: String,

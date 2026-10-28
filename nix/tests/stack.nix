@@ -26,6 +26,7 @@ self: {
     ];
     services.sinex = {
       enable = true;
+      database.sharedBuffers = "128MB";
       nats.daemonPasswordFile = "/etc/sinex-test/nats-daemon";
       readAnyFile = true;
       sources."terminal.zsh-history" = {
@@ -61,9 +62,16 @@ self: {
     with subtest("PostgreSQL is set up as the module says"):
         machine.succeed("sudo -u postgres psql -tAc 'show wal_compression' | grep -qx lz4")
         machine.succeed("sudo -u postgres psql -tAc 'show full_page_writes' | grep -qx on")
-        for setting, expected in {"shared_buffers": "128MB", "max_wal_size": "1GB", "checkpoint_timeout": "5min", "work_mem": "4MB", "log_temp_files": "16MB"}.items():
+        for setting, expected in {
+            "shared_buffers": "128MB", "effective_cache_size": "12GB",
+            "work_mem": "64MB", "maintenance_work_mem": "512MB",
+            "max_wal_size": "16GB", "checkpoint_timeout": "30min",
+            "checkpoint_completion_target": "0.9", "jit": "off",
+            "synchronous_commit": "on", "fsync": "on",
+            "log_temp_files": "16MB", "max_connections": "64", "shared_preload_libraries": "timescaledb",
+        }.items():
             shown = machine.succeed(f"sudo -u postgres psql -tAc 'show {setting}'").strip()
-            assert shown == expected, f"{setting}: {shown!r}"
+            assert shown == expected, f"{setting}: {shown!r} != {expected!r}"
         # PostgreSQL 18 made log_connections a list; off may show as empty.
         shown = machine.succeed("sudo -u postgres psql -tAc 'show log_connections'").strip()
         assert shown in ("", "off", "false", "no"), f"log_connections is {shown!r}"

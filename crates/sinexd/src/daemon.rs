@@ -75,8 +75,8 @@ pub(crate) async fn run(o: Options) -> Result<(), String> {
     let (handle, queues) = writer::channels();
     let mut tasks: JoinSet<(&'static str, Result<(), String>)> = JoinSet::new();
 
-    let mut writer_conn = connect(&o.database).await?;
-    writer::claim(&mut writer_conn).await?;
+    let writer_conn = connect(&o.database).await?;
+    let mut writer_conn = writer::claim(writer_conn).await?;
     // Blob files an excision committed to deleting but a crash left behind.
     let (deleted, left) = sinex_store::excision::finish_deletions(&mut writer_conn, &blobs)
         .await
@@ -301,13 +301,11 @@ pub(crate) async fn run(o: Options) -> Result<(), String> {
 }
 
 async fn forget_admitted(database: &str, blobs: &Blobs) -> Result<(), String> {
-    let mut conn = connect(database).await?;
-    writer::claim(&mut conn).await?;
+    let mut conn = writer::claim(connect(database).await?).await?;
     let result = sinex_store::blobs::forget_files_with_rows(&mut conn, blobs)
         .await
         .map_err(|e| e.to_string());
     // Closing the session releases its writer claim even when cleanup fails.
-    use sqlx::Connection;
     let closed = conn.close().await.map_err(|e| e.to_string());
     result.and(closed)
 }

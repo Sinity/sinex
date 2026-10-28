@@ -8,7 +8,6 @@ use crate::read_models::tests::catch_up_search_text;
 use sinex_model::event_types::{CommandExecuted, CommandImported};
 use sinex_model::{Class, MaterialId, Origin, ReadingOrder, RecordLocation, RunId};
 use sinex_model::{RecordOutcome, Timestamp};
-use sqlx::Connection;
 
 const SECRET: &str = "hunter2-correct-horse";
 
@@ -55,9 +54,9 @@ fn batch(run: RunId, events: Vec<Event>) -> Batch {
     }
 }
 
-async fn admit_one(conn: &mut PgConnection, b: &Batch) -> Outcome {
+async fn admit_one(conn: &mut crate::AdmissionContext, b: &Batch) -> Outcome {
     let mut tx = conn.begin().await.unwrap();
-    let out = admit(&mut tx, b, &NoDerivations).await.unwrap();
+    let out = tx.admit(b, &NoDerivations).await.unwrap();
     tx.commit().await.unwrap();
     out
 }
@@ -88,7 +87,7 @@ async fn payload_count(conn: &mut PgConnection, needle: &str) -> i64 {
 
 #[devkit::test]
 async fn one_privacy_point_covers_source_and_derived_events(db: devkit::pg::TestDatabase) {
-    let mut conn = <sqlx::PgConnection as sqlx::Connection>::connect(&db.url(None))
+    let mut conn = crate::AdmissionContext::connect(&db.url(None))
         .await
         .unwrap();
     privacy::add_rule(
@@ -185,7 +184,7 @@ async fn one_privacy_point_covers_source_and_derived_events(db: devkit::pg::Test
 
 #[devkit::test]
 async fn guarded_values_leave_only_with_the_grant(db: devkit::pg::TestDatabase) {
-    let mut conn = <sqlx::PgConnection as sqlx::Connection>::connect(&db.url(None))
+    let mut conn = crate::AdmissionContext::connect(&db.url(None))
         .await
         .unwrap();
     privacy::set_source_class(&mut conn, "terminal.zsh-history", Class::Guarded, "test")
@@ -254,7 +253,7 @@ async fn guarded_values_leave_only_with_the_grant(db: devkit::pg::TestDatabase) 
 
 #[devkit::test]
 async fn class_verification_finds_events_below_a_raised_floor(db: devkit::pg::TestDatabase) {
-    let mut conn = <sqlx::PgConnection as sqlx::Connection>::connect(&db.url(None))
+    let mut conn = crate::AdmissionContext::connect(&db.url(None))
         .await
         .unwrap();
     let e = imported("terminal.zsh-history", "ls", record());
@@ -284,7 +283,7 @@ async fn class_verification_finds_events_below_a_raised_floor(db: devkit::pg::Te
 
 #[devkit::test]
 async fn rules_are_insert_only_versions(db: devkit::pg::TestDatabase) {
-    let mut conn = <sqlx::PgConnection as sqlx::Connection>::connect(&db.url(None))
+    let mut conn = crate::AdmissionContext::connect(&db.url(None))
         .await
         .unwrap();
     privacy::add_rule(

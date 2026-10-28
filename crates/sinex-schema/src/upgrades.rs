@@ -1,7 +1,4 @@
-//! Forward upgrades preserve every row. The declarations carry the same
-//! changes, so fresh and upgraded databases have the same schema.
-
-/// The statements of each upgrade, by the version it starts from.
+//! Forward upgrades preserve every row. Named transformations take their order from this composed stack.
 fn landed() -> Vec<Vec<String>> {
     vec![
         // 0 to 1: per-source and per-run counts, filled from the events
@@ -45,20 +42,106 @@ fn landed() -> Vec<Vec<String>> {
     ]
 }
 
-/// Unlanded transformations have names; their position is assigned at landing.
-pub(crate) const NAMED: &[&str] = &["blob_change_tracking", "library_scans", "kind_declarations"];
+
+pub(crate) const LANDED_VERSION: i32 = 4;
+pub(crate) const NAMED: &[&str] = &["blob_change_tracking", "library_scans", "compact_equivalence_keys", "search_text", "publication_pages", "kind_declarations"];
 
 pub(crate) fn upgrades() -> Vec<Vec<String>> {
     let mut steps = landed();
     steps.push(crate::tables::blob_changes());
     steps.push(vec!["DO $$ BEGIN IF EXISTS (SELECT 1 FROM core.events WHERE event_type LIKE 'library.%') THEN RAISE EXCEPTION 'library records use request-created item IDs; decide how their references should follow deterministic item IDs before upgrading'; END IF; END $$".into()]);
-    let before = crate::description::Description::version_four();
+    steps.push(compact_equivalence_keys());
+    steps.push(search_text());
+    steps.push(publication_pages());
+    let before = crate::description::Description::before_kind_declarations();
     let after = crate::description::Description::current();
-    let mut statements =
-        vec!["ALTER TABLE registry.event_types RENAME TO unversioned_event_types".into()];
+    let mut statements = vec!["ALTER TABLE registry.event_types RENAME TO unversioned_event_types".into()];
     statements.extend(after.changes_from(&before, &["registry.event_types"]));
     steps.push(statements);
     steps
 }
 
-pub(crate) const LANDED_VERSION: i32 = 4;
+fn compact_equivalence_keys() -> Vec<String> {
+    vec![
+            crate::tables::ENCODE_EQUIVALENCE_KEY.into(),
+            crate::tables::DECODE_EQUIVALENCE_KEY.into(),
+            "CREATE TEMPORARY TABLE live_keys_before ON COMMIT DROP AS TABLE core.live_equivalence".into(),
+            "DO $$ BEGIN
+               IF EXISTS (SELECT 1 FROM core.live_equivalence
+                 WHERE core.decode_equivalence_key(core.encode_equivalence_key(equivalence_key)) IS DISTINCT FROM equivalence_key)
+               THEN RAISE EXCEPTION 'equivalence key encoding does not round trip'; END IF;
+               IF EXISTS (SELECT 1 FROM core.live_equivalence GROUP BY source, event_type, core.encode_equivalence_key(equivalence_key) HAVING count(*) > 1)
+               THEN RAISE EXCEPTION 'equivalence key encoding changes identity'; END IF;
+             END $$".into(),
+            "ALTER TABLE core.live_equivalence ALTER COLUMN equivalence_key TYPE bytea USING core.encode_equivalence_key(equivalence_key)".into(),
+            "DO $$ BEGIN
+               IF EXISTS (
+                 (SELECT source, event_type, core.decode_equivalence_key(equivalence_key), event_id, reading_order, record_hash FROM core.live_equivalence
+                  EXCEPT ALL SELECT * FROM live_keys_before)
+                 UNION ALL
+                 (SELECT * FROM live_keys_before EXCEPT ALL
+                  SELECT source, event_type, core.decode_equivalence_key(equivalence_key), event_id, reading_order, record_hash FROM core.live_equivalence))
+               THEN RAISE EXCEPTION 'equivalence key conversion changed stored rows'; END IF;
+             END $$".into(),
+        ]
+}
+
+fn publication_pages() -> Vec<String> {
+    vec![
+            "ALTER TABLE core.published RENAME TO published_events".into(),
+            "ALTER TABLE core.published_events RENAME CONSTRAINT published_pkey TO published_events_pkey".into(),
+            crate::tables::PUBLISHED.into(),
+            crate::tables::PUBLISHED_BOUNDS.into(),
+            "INSERT INTO core.published (first_event, last_event, event_ids, stream_seqs)
+             SELECT (array_agg(event_id ORDER BY event_id))[1],
+                    (array_agg(event_id ORDER BY event_id DESC))[1],
+                    array_agg(event_id ORDER BY event_id), array_agg(stream_seq ORDER BY event_id)
+             FROM (SELECT event_id, stream_seq, (row_number() OVER (ORDER BY event_id) - 1) / 1000 AS page
+                   FROM core.published_events) p GROUP BY page ORDER BY page".into(),
+            "DO $$ BEGIN
+               IF EXISTS (
+                 (SELECT event_id, stream_seq FROM core.published_events
+                  EXCEPT ALL
+                  SELECT m.event_id, m.stream_seq FROM core.published p,
+                    LATERAL unnest(p.event_ids, p.stream_seqs) m(event_id, stream_seq))
+                 UNION ALL
+                 (SELECT m.event_id, m.stream_seq FROM core.published p,
+                    LATERAL unnest(p.event_ids, p.stream_seqs) m(event_id, stream_seq)
+                  EXCEPT ALL
+                  SELECT event_id, stream_seq FROM core.published_events)
+               ) THEN RAISE EXCEPTION 'published event/stream pairs changed during upgrade'; END IF;
+             END $$".into(),
+            "GRANT SELECT ON core.published TO sinex_reader, sinex_writer".into(),
+            "GRANT INSERT, UPDATE, DELETE ON core.published TO sinex_writer".into(),
+            "GRANT USAGE ON SEQUENCE core.published_id_seq TO sinex_writer".into(),
+            "DROP TABLE core.published_events".into(),
+        ]
+}
+
+fn search_text() -> Vec<String> {
+    let excluded = sinex_model::event_types::ALL
+        .iter()
+        .filter(|kind| !kind.trigram_indexed)
+        .map(|kind| format!("'{}'", kind.event_type.replace('\'', "''")))
+        .collect::<Vec<_>>()
+        .join(", ");
+    vec![
+        "ALTER TABLE core.search_text ADD COLUMN trigram_indexed boolean NOT NULL DEFAULT true".into(),
+        format!("UPDATE core.search_text s SET trigram_indexed = false
+                 FROM core.events e WHERE e.id = s.event_id AND e.event_type IN ({excluded})"),
+        "DO $$ DECLARE missing bigint; BEGIN
+           SELECT count(*) INTO missing FROM core.search_text s
+           WHERE NOT EXISTS (SELECT 1 FROM core.events e WHERE e.id = s.event_id);
+           IF missing > 0 THEN
+             RAISE NOTICE '% search rows have no event; their trigram eligibility stays true', missing;
+           END IF;
+         END $$".into(),
+        "CREATE OR REPLACE VIEW core.visible_search_text AS
+         SELECT s.event_id, s.text, s.tsv, s.trigram_indexed
+         FROM core.search_text s JOIN core.events e ON e.id = s.event_id
+         WHERE core.class_visible(e.class)".into(),
+        "CREATE INDEX search_text_trigram_partial ON core.search_text USING gin (text gin_trgm_ops) WHERE trigram_indexed".into(),
+        "DROP INDEX core.search_text_trigram".into(),
+        "ALTER INDEX core.search_text_trigram_partial RENAME TO search_text_trigram".into(),
+    ]
+}

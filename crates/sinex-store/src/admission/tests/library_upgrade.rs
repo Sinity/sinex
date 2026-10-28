@@ -5,7 +5,9 @@ use sinex_model::event_types::library::{Assignment, Level, Target};
 async fn a_populated_library_upgrade_keeps_every_record_until_id_continuity_is_decided(
     db: devkit::pg::TestDatabase,
 ) {
-    let mut conn = PgConnection::connect(&db.url(None)).await.unwrap();
+    let mut conn = crate::AdmissionContext::connect(&db.url(None))
+        .await
+        .unwrap();
     let assignment = Assignment {
         assignment: "assignment".into(),
         target: Target {
@@ -36,7 +38,7 @@ async fn a_populated_library_upgrade_keeps_every_record_until_id_continuity_is_d
     )
     .unwrap();
     admit_one(&mut conn, &batch(vec![event.clone()])).await;
-    let previous_version = sinex_schema::VERSION - 1;
+    let previous_version = 5;
     sqlx::query("UPDATE sinex_schema.applied SET version = $1")
         .bind(previous_version)
         .execute(&mut conn)

@@ -122,7 +122,7 @@ async fn world_with_config(
     let (handle, queues) = writer::channels();
     tokio::spawn(writer::run(
         url.clone(),
-        connection,
+        writer::claim(connection).await.unwrap(),
         queues,
         Arc::new(sinex_store::NoDerivations),
         Some(blobs.clone()),
