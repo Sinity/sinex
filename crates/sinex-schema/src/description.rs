@@ -138,6 +138,11 @@ struct Table {
 
 impl Table {
     fn read(statement: &str) -> Option<Self> {
+        let statement = statement
+            .lines()
+            .filter(|line| !line.trim_start().starts_with("--"))
+            .collect::<Vec<_>>()
+            .join("\n");
         let rest = statement
             .strip_prefix("CREATE TABLE ")
             .or_else(|| statement.strip_prefix("CREATE UNLOGGED TABLE "))?;

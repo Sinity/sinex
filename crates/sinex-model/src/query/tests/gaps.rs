@@ -219,14 +219,14 @@ fn recall_last_payload_conditions_use_the_session_schema() {
 #[devkit::test]
 fn text_list_fields_compare_members_without_treating_the_array_as_json_text() {
     for condition in [
-        "payload.cwd ~ tide",
-        "payload.cwd ^ /src",
-        "payload.cwd = [/src/tide, /src/other]",
-        "payload.cwd != /src/tide",
+        "payload.cwds ~ tide",
+        "payload.cwds ^ /src",
+        "payload.cwds = [/src/tide, /src/other]",
+        "payload.cwds != /src/tide",
     ] {
         assert!(
             bind(
-                &format!("events where event_type = polylogue.session and {condition}"),
+                &format!("events where event_type = shell.session and {condition}"),
                 &ctx()
             )
             .is_ok(),
@@ -234,19 +234,19 @@ fn text_list_fields_compare_members_without_treating_the_array_as_json_text() {
         );
     }
     assert!(
-        err("events where event_type = polylogue.session and payload.cwd > x")
+        err("events where event_type = shell.session and payload.cwds > x")
             .message
             .contains("ordered")
     );
-    let choices = complete("events where event_type = polylogue.session and payload.cw");
+    let choices = complete("events where event_type = shell.session and payload.cw");
     assert_eq!(choices[0].field_type, "textlist");
 }
 
 #[devkit::test]
 fn min_and_max_refuse_payload_values_without_an_ordered_scalar_aggregate() {
     for query in [
-        "events where event_type = polylogue.session min(payload.cwd)",
-        "events where event_type = polylogue.session max(payload.cwd)",
+        "events where event_type = shell.session min(payload.cwds)",
+        "events where event_type = shell.session max(payload.cwds)",
     ] {
         assert!(err(query).message.contains("ordered scalar"));
     }

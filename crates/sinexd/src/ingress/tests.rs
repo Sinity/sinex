@@ -310,7 +310,7 @@ async fn materials_then_events_are_admitted_and_acknowledged_once(db: devkit::pg
 #[devkit::test]
 async fn an_ai_session_from_polylogue_is_ordinary_events(db: devkit::pg::TestDatabase) {
     let h = Harness::start(db).await;
-    let declarations = [
+    let declarations: Vec<_> = [
         ("session", "session", "started", false),
         ("message", "message", "at", true),
         ("tool_call", "call", "at", true),
@@ -347,7 +347,7 @@ async fn an_ai_session_from_polylogue_is_ordinary_events(db: devkit::pg::TestDat
             "polylogue",
             &Ingress::RegisterKinds {
                 frame: "kinds".into(),
-                declarations
+                declarations: declarations.clone()
             }
         )
         .await
@@ -458,20 +458,21 @@ async fn an_ai_session_from_polylogue_is_ordinary_events(db: devkit::pg::TestDat
         .await,
         1
     );
-    // The message text is guarded although the frame asked for open.
+    // Field hints are metadata; admission preserves the supplied event class.
     assert_eq!(
-        h.count("SELECT count(*) FROM core.events WHERE event_type = 'polylogue.message' AND class = 'guarded'")
+        h.count("SELECT count(*) FROM core.events WHERE event_type = 'polylogue.message' AND class = 'open'")
             .await,
         2
     );
 
     let mut conn = PgConnection::connect(&h.url).await.unwrap();
     let text = "events where event_type = polylogue.session and payload.origin = claude-code";
-    let ctx = sinex_model::query::Context::new(
+    let mut ctx = sinex_model::query::Context::new(
         jiff::Timestamp::now(),
         jiff::tz::TimeZone::UTC,
         jiff::civil::Time::constant(4, 0, 0, 0),
     );
+    ctx.catalog = Some(sinex_model::query::QueryCatalog::new(declarations));
     let bound = sinex_model::query::bind(text, &ctx).unwrap();
     let answer = sinex_store::query::run(
         &mut conn,

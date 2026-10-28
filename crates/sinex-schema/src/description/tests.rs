@@ -34,3 +34,12 @@ fn kind_upgrade_uses_the_current_column_definitions() {
     }
     assert_eq!(crate::upgrades::NAMED, &["kind_declarations"]);
 }
+
+#[test]
+fn table_columns_ignore_standalone_comments() {
+    let table = Table::read("CREATE TABLE example (\n-- a row's comma, quote and ( are prose\na text,\n-- another row's constraint\nb bigint\n)").unwrap();
+    assert_eq!(
+        table.columns,
+        BTreeMap::from([("a".into(), "text".into()), ("b".into(), "bigint".into())])
+    );
+}

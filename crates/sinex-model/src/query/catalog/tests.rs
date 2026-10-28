@@ -185,7 +185,7 @@ fn integer_and_number_unions_keep_numeric_fields_and_array_items() {
     ctx.catalog = Some(catalog);
     assert!(
         crate::query::bind(
-            "events where event_type = example.reading sum payload.value",
+            "events where event_type = example.reading sum(payload.value)",
             &ctx
         )
         .is_ok()
