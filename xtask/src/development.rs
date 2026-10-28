@@ -271,7 +271,7 @@ fn session_configuration(
     mut configuration: serde_json::Value,
     catalog: &serde_json::Value,
     selected: &[String],
-) -> Result<serde_json::Value, String> {
+) -> Result<serde_json::Value> {
     let root = configuration
         .as_object_mut()
         .ok_or("sources configuration must be an object")?;
