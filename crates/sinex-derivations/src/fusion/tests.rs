@@ -316,18 +316,18 @@ fn observed_by(v: &Value) -> Vec<&str> {
 fn every_rule_reads_and_writes_registered_types() {
     for rule in RULES {
         let mut types: Vec<&str> = Vec::new();
-        for o in rule.readers {
+        for o in rule.fusion_inputs {
             if !types.contains(&o.event_type) {
                 types.push(o.event_type);
             }
         }
-        assert_eq!(rule.event_types, types, "{}", rule.derivation);
+        assert_eq!(rule.inputs, types, "{}", rule.derivation);
         assert!(
             sinex_model::event_types::find(rule.output).is_some(),
             "{}",
             rule.output
         );
-        for o in rule.readers {
+        for o in rule.fusion_inputs {
             assert!(
                 sinex_model::event_types::find(o.event_type).is_some(),
                 "{}",
@@ -692,9 +692,8 @@ fn mail(source: &str, id: &str, secs: f64) -> Event {
     captured(
         &MailMessage {
             account: Some("owner@example.test".into()),
-            native_id: None,
-            bcc: vec![],
             message_id: Some(id.into()),
+            native_id: None,
             date: Some(at(secs)),
             from: vec!["a@example.org".into()],
             to: vec![],

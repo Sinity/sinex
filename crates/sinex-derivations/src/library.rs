@@ -145,6 +145,7 @@ impl Keyed for LibraryItems {
         Computed {
             outputs,
             waiting: false,
+            error: None,
         }
     }
 }

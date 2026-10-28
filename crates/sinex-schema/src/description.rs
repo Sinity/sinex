@@ -3,7 +3,6 @@ use crate::{Checks, event_types, tables};
 use sinex_model::KindDeclaration;
 use std::collections::BTreeMap;
 
-pub(super) mod version_four;
 pub(super) mod version_nine;
 
 pub(crate) struct View {
@@ -33,20 +32,6 @@ impl Description {
         }
     }
 
-    pub(crate) fn version_four() -> Self {
-        Self {
-            tables: version_four::tables(&version_four::checks()),
-            after_tables: version_four::after_tables(),
-            visibility: vec![],
-            views: vec![],
-            kinds: vec![],
-            previous_producer_views: version_four::MOVED_VIEWS
-                .iter()
-                .map(|name| (*name).into())
-                .collect(),
-        }
-    }
-
     pub(crate) fn before_kind_declarations() -> Self {
         Self {
             tables: version_nine::tables(&version_nine::checks()),
@@ -54,7 +39,7 @@ impl Description {
             visibility: vec![],
             views: vec![],
             kinds: vec![],
-            previous_producer_views: version_four::MOVED_VIEWS
+            previous_producer_views: version_nine::MOVED_VIEWS
                 .iter()
                 .map(|name| (*name).into())
                 .collect(),

@@ -8,7 +8,7 @@
 //! made), window samples from arbtt (one record every few seconds, not one
 //! per focus), and the terminal's command reports (they carry no host, which
 //! a command's identity needs).
-use super::{FusionReader, FusionRule, Sighting};
+use super::{FusionInput, FusionRecord, FusionRule};
 use serde_json::{Map, Value, json};
 use sinex_model::Event;
 use sinex_model::Timestamp;
@@ -44,13 +44,13 @@ fn fields<const N: usize>(pairs: [(&str, Option<Value>); N]) -> Map<String, Valu
         .collect()
 }
 
-fn sighting(
+fn fusion_record(
     event: &Event,
     identity: String,
     end: Option<Timestamp>,
     fields: Map<String, Value>,
-) -> Option<Sighting> {
-    Some(Sighting {
+) -> Option<FusionRecord> {
+    Some(FusionRecord {
         identity,
         start: event.ts_orig.at?,
         end,
@@ -65,7 +65,7 @@ fn host_of(hostname: &str) -> &str {
     hostname.split(':').next().unwrap_or(hostname)
 }
 
-fn command(event: &Event, extra: Map<String, Value>) -> Option<Sighting> {
+fn command(event: &Event, extra: Map<String, Value>) -> Option<FusionRecord> {
     let p = &event.payload;
     let command = p.get("command")?.as_str()?.trim();
     let host = host_of(p.get("hostname")?.as_str()?);
@@ -74,15 +74,15 @@ fn command(event: &Event, extra: Map<String, Value>) -> Option<Sighting> {
         ("host", Some(json!(host))),
     ]);
     fields.extend(extra);
-    sighting(event, format!("{host}\0{command}"), None, fields)
+    fusion_record(event, format!("{host}\0{command}"), None, fields)
 }
 
 pub static COMMANDS: FusionRule = FusionRule {
     derivation: "command.fusion",
     version: 2,
     output: "command.fused",
-    readers: &[
-        FusionReader {
+    fusion_inputs: &[
+        FusionInput {
             event_type: "command.executed",
             only: &[],
             source: None,
@@ -100,7 +100,7 @@ pub static COMMANDS: FusionRule = FusionRule {
                 )
             },
         },
-        FusionReader {
+        FusionInput {
             event_type: "command.imported",
             only: &[],
             source: None,
@@ -108,7 +108,7 @@ pub static COMMANDS: FusionRule = FusionRule {
             read: |e| command(e, Map::new()),
         },
     ],
-    event_types: &["command.executed", "command.imported"],
+    inputs: &["command.executed", "command.imported"],
     window_ns: secs(2),
     fallback_ns: secs(60),
     absorb_ns: None,
@@ -125,8 +125,8 @@ fn focus(
     end: Option<Timestamp>,
     app: Option<&str>,
     title: Option<&str>,
-) -> Option<Sighting> {
-    sighting(
+) -> Option<FusionRecord> {
+    fusion_record(
         event,
         String::new(),
         end,
@@ -141,9 +141,9 @@ pub static FOCUS: FusionRule = FusionRule {
     derivation: "focus.fusion",
     version: 1,
     output: "focus.fused",
-    readers: &[
+    fusion_inputs: &[
         // The compositor's focus changes, as intervals cut by going AFK.
-        FusionReader {
+        FusionInput {
             event_type: "state.interval",
             only: &[("state_kind", "desktop.focus")],
             source: None,
@@ -158,7 +158,7 @@ pub static FOCUS: FusionRule = FusionRule {
                 )
             },
         },
-        FusionReader {
+        FusionInput {
             event_type: "window.span",
             only: &[],
             source: None,
@@ -169,7 +169,7 @@ pub static FOCUS: FusionRule = FusionRule {
             },
         },
     ],
-    event_types: &["state.interval", "window.span"],
+    inputs: &["state.interval", "window.span"],
     window_ns: secs(2),
     fallback_ns: secs(30),
     absorb_ns: Some(secs(4 * 3600)),
@@ -179,8 +179,8 @@ pub static FOCUS: FusionRule = FusionRule {
 
 // Page visits.
 
-fn visit(event: &Event, url: &str, title: Option<&str>) -> Option<Sighting> {
-    sighting(
+fn visit(event: &Event, url: &str, title: Option<&str>) -> Option<FusionRecord> {
+    fusion_record(
         event,
         url.to_owned(),
         None,
@@ -195,15 +195,15 @@ pub static VISITS: FusionRule = FusionRule {
     derivation: "visit.fusion",
     version: 2,
     output: "visit.fused",
-    readers: &[
-        FusionReader {
+    fusion_inputs: &[
+        FusionInput {
             event_type: "browser.visit",
             only: &[],
             source: None,
             spans: false,
             read: |e| visit(e, text(&e.payload, "/url")?, text(&e.payload, "/title")),
         },
-        FusionReader {
+        FusionInput {
             event_type: "browser.history_entry",
             only: &[],
             source: None,
@@ -242,13 +242,13 @@ fn play(
     artist: Option<&str>,
     end: Option<Timestamp>,
     extra: [(&str, Option<Value>); 2],
-) -> Option<Sighting> {
+) -> Option<FusionRecord> {
     let mut fields = fields([
         ("title", Some(json!(title))),
         ("artist", artist.map(|a| json!(a))),
     ]);
     fields.extend(self::fields(extra));
-    sighting(
+    fusion_record(
         event,
         format!("{}\0{}", norm(title), artist.map(norm).unwrap_or_default()),
         end,
@@ -294,8 +294,8 @@ pub static PLAYS: FusionRule = FusionRule {
     derivation: "play.fusion",
     version: 3,
     output: "play.fused",
-    readers: &[
-        FusionReader {
+    fusion_inputs: &[
+        FusionInput {
             event_type: "music.played",
             only: &[],
             source: None,
@@ -313,7 +313,7 @@ pub static PLAYS: FusionRule = FusionRule {
                 )
             },
         },
-        FusionReader {
+        FusionInput {
             event_type: "player.changed",
             only: &[("captured_by", "sinex")],
             source: None,
@@ -346,13 +346,13 @@ fn copy(
     text: Option<&str>,
     mime_type: Option<&str>,
     bytes: Option<u64>,
-) -> Option<Sighting> {
+) -> Option<FusionRecord> {
     let content = match (text, mime_type, bytes) {
         (Some(t), _, _) => format!("text\0{t}"),
         (None, Some(m), Some(b)) => format!("{m}\0{b}"),
         _ => return None,
     };
-    sighting(
+    fusion_record(
         event,
         format!("{selection}\0{content}"),
         None,
@@ -382,8 +382,8 @@ pub static CLIPBOARD: FusionRule = FusionRule {
     derivation: "clipboard.fusion",
     version: 2,
     output: "clipboard.fused",
-    readers: &[
-        FusionReader {
+    fusion_inputs: &[
+        FusionInput {
             event_type: "clipboard.copied",
             only: &[("captured_by", "sinex")],
             source: None,
@@ -406,8 +406,13 @@ pub static CLIPBOARD: FusionRule = FusionRule {
     end_field: None,
 };
 
-fn notification(event: &Event, app: &str, summary: &str, body: Option<&str>) -> Option<Sighting> {
-    sighting(
+fn notification(
+    event: &Event,
+    app: &str,
+    summary: &str,
+    body: Option<&str>,
+) -> Option<FusionRecord> {
+    fusion_record(
         event,
         format!("{app}\0{summary}\0{}", body.unwrap_or_default()),
         None,
@@ -428,8 +433,8 @@ pub static NOTIFICATIONS: FusionRule = FusionRule {
     derivation: "notification.fusion",
     version: 2,
     output: "notification.fused",
-    readers: &[
-        FusionReader {
+    fusion_inputs: &[
+        FusionInput {
             event_type: "notification.shown",
             only: &[("captured_by", "sinex")],
             source: None,
@@ -454,30 +459,29 @@ pub static NOTIFICATIONS: FusionRule = FusionRule {
 
 // Mail: one message stored by several mail sources.
 
-fn mail(event: &Event) -> Option<Sighting> {
+fn mail(event: &Event) -> Option<FusionRecord> {
     let p = &event.payload;
-    let message_id = text(p, "/message_id")?;
+    let message_id = text(p, "/message_id").filter(|id| !id.trim().is_empty())?;
     let identity = match text(p, "/account") {
         Some(account) => json!(["account", account, message_id]),
         None => json!(["source", event.source, message_id]),
-    };
+    }
+    .to_string();
     fusion_record(
         event,
-        identity.to_string(),
+        identity,
         None,
         fields([
-            ("account", p.get("account").cloned()),
             ("message_id", Some(json!(message_id))),
             ("subject", p.get("subject").cloned()),
             ("from", p.get("from").cloned()),
             ("thread_id", p.get("thread_id").cloned()),
-            ("labels", p.get("labels").cloned()),
         ]),
     )
 }
 
-const fn mail_from(source: &'static str) -> FusionReader {
-    FusionReader {
+const fn mail_from(source: &'static str) -> FusionInput {
+    FusionInput {
         event_type: "mail.message",
         only: &[],
         source: Some(source),
@@ -498,7 +502,7 @@ pub static MAIL: FusionRule = FusionRule {
         mail_from("communication.outlook"),
         mail_from("communication.outlook-csv"),
     ],
-    event_types: &["mail.message"],
+    inputs: &["mail.message"],
     // The same `Date` header wherever the message is stored.
     window_ns: secs(1),
     fallback_ns: secs(1),

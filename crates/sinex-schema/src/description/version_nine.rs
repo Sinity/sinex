@@ -586,3 +586,17 @@ pub(super) fn checks() -> Checks {
             "CHECK (reason IN ('replay', 'newer_reading', 'hide', 'recomputed', 'unhide'))".into(),
     }
 }
+
+/// Views whose kinds are now declared by their outside producer.
+pub(super) const MOVED_VIEWS: &[&str] = &[
+    "polylogue_session",
+    "polylogue_message",
+    "polylogue_tool_call",
+    "polylogue_turn",
+    "polylogue_delivery",
+    "polylogue_delivery_outcome",
+    "polylogue_note",
+    "polylogue_setting",
+    "polylogue_kept_result",
+    "polylogue_excision",
+];

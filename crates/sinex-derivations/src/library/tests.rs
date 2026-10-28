@@ -37,6 +37,7 @@ fn copy_at(path: &str, content: &str, part_index: u32, seconds: i64, original: &
         inode: None,
         modified_at: None,
         moved_from: None,
+        move_candidates: vec![],
         previous_content: None,
         vanished_at: None,
     };
