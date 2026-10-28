@@ -27,10 +27,7 @@ pub async fn apply_search_text(conn: &mut PgConnection, events: &[Committed]) ->
         if !text.is_empty() {
             ids.push(e.id);
             texts.push(text);
-            trigram_indexed.push(
-                sinex_model::event_types::find(&e.event_type)
-                    .is_none_or(|kind| kind.trigram_indexed),
-            );
+            trigram_indexed.push(e.search == sinex_model::kinds::Search::WordsAndTrigram);
         }
     }
     if ids.is_empty() {

@@ -43,7 +43,7 @@ pub(super) async fn insert_admitted(
            INSERT INTO core.events (id, event_type, source, run_id, material_id, anchor, output_index,
              parents, ts_orig, ts_quality, commit_seq, payload, equivalence_key, reading_order,
              record_hash, record_state, class, kind_version, validation)
-           SELECT id, event_type, source, $3, material_id, anchor, output_index, parents, ts_orig,
+           SELECT id, event_type, source, $2, material_id, anchor, output_index, parents, ts_orig,
              ts_quality, seq, payload, equivalence_key, reading_order, record_hash, record_state,
              class, kind_version, validation
            FROM a"#,

@@ -4431,7 +4431,6 @@ dependencies = [
  "rmcp",
  "serde_json",
  "sinex-protocol",
- "sinex-transport",
  "tempfile",
  "tokio",
 ]

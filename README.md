@@ -76,7 +76,7 @@ confirmed-stream publisher have all stopped. Apply the schema with the new
 binary, then restart the daemon. Schema application refuses an active admission
 writer and applies the numbered upgrades in one transaction.
 
-The admission upgrades the upgrades convert live equivalence keys, add search-index
+The admission upgrades convert live equivalence keys, add search-index
 eligibility and pack the exact event-to-stream mappings. In a disposable
 database with 2.48 million live keys, key conversion and its complete
 preservation checks took 522 seconds (about 8.7 minutes). Allow for that
