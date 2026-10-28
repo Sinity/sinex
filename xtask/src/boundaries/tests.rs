@@ -224,7 +224,12 @@ fn compilation_follows_selected_packages_to_database_dependencies() {
     ]);
     assert!(selection_database_free(&graph, &["sinexctl"], false, false));
     // Bootstrap uses dynamic SQL and compiles before the schema database exists.
-    assert!(selection_database_free(&graph, &["sinex-schema"], false, false));
+    assert!(selection_database_free(
+        &graph,
+        &["sinex-schema"],
+        false,
+        false
+    ));
     for selected in [
         vec!["sinexd"],
         vec!["new-package"],
