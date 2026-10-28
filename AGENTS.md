@@ -372,11 +372,12 @@ measurement is fine; report figures, not contents.
 
 ## Cloud sessions and changes to polylogue-sinex-common
 
-Cloud sessions (Claude Code on the web, Codex cloud) run on a fresh
-VM without AgentCTL, `/realm` or the operator's services; run `cargo xtask`
-commands there directly. The environment's setup script runs
-`bash dev/cloud/setup.sh`, after which every shell is in the development
-shell, with PostgreSQL, TimescaleDB and nats-server on `PATH`.
+Cloud sessions run `cargo xtask` directly without AgentCTL or the operator's
+services. Include polylogue-sinex-common and run `bash dev/cloud/setup.sh`.
+The [shared cloud setup guide](https://github.com/Sinity/polylogue-sinex-common/blob/master/dev/cloud/README.md)
+owns backend selection, pinned tools, shell startup and readiness checks.
+Use `CLOUD_BACKEND=native` for a restricted cloud runtime; the default Nix
+backend uses the repository's development shell.
 
 - A Sinex session must include the polylogue-sinex-common repository: Cargo
   fetches Git dependencies from it, and a session reaches only the
