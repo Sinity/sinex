@@ -27,3 +27,54 @@ async fn a_sample_spools_one_line_per_part(db: devkit::pg::TestDatabase) {
     assert_eq!(parts, ["writer", "publisher", "search index"]);
     assert_eq!(samples[1].measures["behind"], 0.0);
 }
+
+#[devkit::test]
+async fn sampling_reconnects_after_its_database_connection_dies(db: devkit::pg::TestDatabase) {
+    let database = db.url(None);
+    let mut conn = PgConnection::connect(&database).await.unwrap();
+    let pid: i32 = sqlx::query_scalar("SELECT pg_backend_pid()")
+        .fetch_one(&mut conn)
+        .await
+        .unwrap();
+    let mut observer = PgConnection::connect(&database).await.unwrap();
+    let terminated: bool = sqlx::query_scalar("SELECT pg_terminate_backend($1)")
+        .bind(pid)
+        .fetch_one(&mut observer)
+        .await
+        .unwrap();
+    assert!(terminated);
+    assert!(conn.ping().await.is_err());
+    let dir = tempfile::tempdir().unwrap();
+    let mut writer = SpoolWriter::open(dir.path(), Rotation::default()).unwrap();
+    assert_eq!(
+        sample_reconnecting(&mut conn, &database, &mut writer)
+            .await
+            .unwrap(),
+        3
+    );
+    let replacement: i32 = sqlx::query_scalar("SELECT pg_backend_pid()")
+        .fetch_one(&mut conn)
+        .await
+        .unwrap();
+    assert_ne!(replacement, pid);
+    assert_eq!(
+        sample_reconnecting(&mut conn, &database, &mut writer)
+            .await
+            .unwrap(),
+        3
+    );
+    drop(writer);
+    let count: usize = std::fs::read_dir(dir.path())
+        .unwrap()
+        .map(|entry| {
+            std::fs::read_to_string(entry.unwrap().path())
+                .unwrap()
+                .lines()
+                .count()
+        })
+        .sum();
+    assert_eq!(
+        count, 6,
+        "the failed read wrote no partial snapshot or duplicate lines"
+    );
+}

@@ -6,7 +6,7 @@
 use sinex_model::Timestamp;
 use sinex_source_core::drivers::live_stream::{Rotation, SpoolWriter};
 use sinex_sources::sources::telemetry::Sample;
-use sqlx::PgConnection;
+use sqlx::{Connection, PgConnection};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 use tokio::sync::watch;
@@ -20,14 +20,20 @@ pub(crate) fn spool(store: &Path) -> PathBuf {
     store.join("telemetry")
 }
 
+#[derive(Debug, thiserror::Error)]
+pub(crate) enum Error {
+    #[error("telemetry read: {0}")]
+    Read(#[from] sinex_store::Error),
+    #[error("telemetry spool: {0}")]
+    Spool(#[from] std::io::Error),
+}
+
 /// Write one sample of every part to `writer`.
 pub(crate) async fn sample(
     conn: &mut PgConnection,
     writer: &mut SpoolWriter,
-) -> Result<usize, String> {
-    let readings = sinex_store::telemetry::read(conn)
-        .await
-        .map_err(|e| e.to_string())?;
+) -> Result<usize, Error> {
+    let readings = sinex_store::telemetry::read(conn).await?;
     let at = Timestamp::now();
     for r in &readings {
         let line = serde_json::to_vec(&Sample {
@@ -36,24 +42,42 @@ pub(crate) async fn sample(
             measures: r.measures.clone(),
         })
         .expect("samples serialize");
-        writer
-            .append(at, &line)
-            .map_err(|e| format!("telemetry spool: {e}"))?;
+        writer.append(at, &line)?;
     }
     Ok(readings.len())
+}
+
+/// A failed read has written no spool lines. Replace a dead connection before
+/// retrying so a database restart does not disable all later samples.
+async fn sample_reconnecting(
+    conn: &mut PgConnection,
+    database: &str,
+    writer: &mut SpoolWriter,
+) -> Result<usize, Error> {
+    match sample(conn, writer).await {
+        Err(Error::Read(error)) => {
+            eprintln!("sinexd: telemetry read: {error}; reconnecting");
+            *conn = PgConnection::connect(database)
+                .await
+                .map_err(sinex_store::Error::from)?;
+            sample(conn, writer).await
+        }
+        result => result,
+    }
 }
 
 /// Sample every [`EVERY`] until `stop` is set. A failed sample is reported
 /// and the next one tried; telemetry never stops the daemon.
 pub(crate) async fn run(
-    mut conn: PgConnection,
+    connection: (PgConnection, String),
     spool: PathBuf,
     mut stop: watch::Receiver<bool>,
 ) -> Result<(), String> {
+    let (mut conn, database) = connection;
     let mut writer = SpoolWriter::open(&spool, Rotation::default())
         .map_err(|e| format!("{}: {e}", spool.display()))?;
     loop {
-        if let Err(error) = sample(&mut conn, &mut writer).await {
+        if let Err(error) = sample_reconnecting(&mut conn, &database, &mut writer).await {
             eprintln!("sinexd: telemetry: {error}");
         }
         tokio::select! {

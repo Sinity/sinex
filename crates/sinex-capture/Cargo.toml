@@ -16,5 +16,10 @@ sinex-sources = { workspace = true, default-features = false }
 clap.workspace = true
 tokio.workspace = true
 
+[dev-dependencies]
+devkit.workspace = true
+sqlx.workspace = true
+tempfile = "3"
+
 [lints]
 workspace = true

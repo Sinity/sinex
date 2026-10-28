@@ -20,6 +20,46 @@ use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 
+/// Reap an owned command also when an assertion aborts the fault-point wait.
+struct Process(Option<Child>);
+impl Process {
+    fn start(command: &mut Command) -> Self {
+        Self(Some(command.spawn().unwrap()))
+    }
+    fn wait_with_output(mut self) -> std::process::Output {
+        self.0.take().unwrap().wait_with_output().unwrap()
+    }
+}
+impl std::ops::Deref for Process {
+    type Target = Child;
+    fn deref(&self) -> &Child {
+        self.0.as_ref().unwrap()
+    }
+}
+impl std::ops::DerefMut for Process {
+    fn deref_mut(&mut self) -> &mut Child {
+        self.0.as_mut().unwrap()
+    }
+}
+impl Drop for Process {
+    fn drop(&mut self) {
+        if let Some(child) = &mut self.0 {
+            match child.try_wait() {
+                Ok(Some(_)) => {}
+                Ok(None) => {
+                    if let Err(error) = child.kill() {
+                        eprintln!("killing owned test process: {error}");
+                    }
+                    if let Err(error) = child.wait() {
+                        eprintln!("reaping owned test process: {error}");
+                    }
+                }
+                Err(error) => eprintln!("checking owned test process: {error}"),
+            }
+        }
+    }
+}
+
 const HOST: &str = "crash";
 /// One fault-point wait; leave 30 seconds below nextest's two-minute deadline
 /// for reporting and cleanup.
@@ -171,30 +211,28 @@ impl Target {
             "--host",
             HOST,
         ]);
+        let excluded: serde_json::Map<String, serde_json::Value> = sinex_sources::sources::specs()
+            .into_iter()
+            .map(|spec| {
+                (
+                    spec.name.to_owned(),
+                    serde_json::json!({"reason": "publisher fixture has no live sources"}),
+                )
+            })
+            .collect();
+        let config = inputs.dir.join("sources.json");
+        std::fs::write(
+            &config,
+            serde_json::to_vec(&serde_json::json!({"exclude": excluded})).unwrap(),
+        )
+        .unwrap();
         c.arg("--tokens")
             .arg(&tokens)
+            .arg("--sources")
+            .arg(config)
             .arg("--socket")
             .arg(inputs.dir.join("sinexd.sock"));
         c
-    }
-
-    /// The names of the blob files in the content store.
-    fn stored_files(&self) -> std::collections::BTreeSet<String> {
-        let mut names = std::collections::BTreeSet::new();
-        let Ok(shards) = std::fs::read_dir(self.store.join("blobs")) else {
-            return names;
-        };
-        for shard in shards.map(Result::unwrap) {
-            if shard.file_name() == "tmp" {
-                continue;
-            }
-            for file in std::fs::read_dir(shard.path()).unwrap().map(Result::unwrap) {
-                let file_name = file.file_name().into_string().unwrap();
-                let hex = file_name.strip_suffix(".zst").unwrap();
-                names.insert(format!("blake3:{hex}"));
-            }
-        }
-        names
     }
 
     async fn connect(&self) -> PgConnection {
@@ -219,13 +257,15 @@ struct State {
     /// Live readings by (source, type, payload, record hash), counted.
     live: BTreeMap<String, i64>,
     events: i64,
+    /// Committed cursor and carry contents, without acquisition clock and generated IDs.
+    positions: Vec<(String, serde_json::Value, serde_json::Value)>,
 }
 
 async fn state(conn: &mut PgConnection) -> State {
     let rows = sqlx::query(
-        r#"SELECT e.source || ' ' || e.event_type || ' ' || e.payload::text || ' ' || encode(e.record_hash, 'hex') AS k, count(*) AS n
+        r#"SELECT e.source || ' ' || e.event_type || ' ' || e.payload::text || ' ' || coalesce(e.ts_orig::text, '<unknown>') || ' ' || e.ts_quality || ' ' || e.record_state || ' ' || encode(e.record_hash, 'hex') AS k, count(*) AS n
            FROM core.events e
-           WHERE e.id IN (SELECT event_id FROM core.live_equivalence UNION ALL SELECT event_id FROM core.live_locations)
+           WHERE e.event_type <> 'source.coverage' AND e.id IN (SELECT event_id FROM core.live_equivalence UNION ALL SELECT event_id FROM core.live_locations)
            GROUP BY 1"#,
     )
     .fetch_all(&mut *conn)
@@ -235,12 +275,50 @@ async fn state(conn: &mut PgConnection) -> State {
         .iter()
         .map(|r| (r.get::<String, _>("k"), r.get::<i64, _>("n")))
         .collect();
-    let events = scalar(conn, "SELECT count(*) FROM core.events").await;
-    State { live, events }
+    let events = scalar(
+        conn,
+        "SELECT count(*) FROM core.events WHERE event_type <> 'source.coverage'",
+    )
+    .await;
+    let positions: Vec<(String, serde_json::Value, serde_json::Value)> = sqlx::query_as(
+        "SELECT regexp_replace(binding, '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}', '<id>', 'g'), cursor, carry FROM raw.positions WHERE binding NOT LIKE 'source.observation:%' ORDER BY 1"
+    ).fetch_all(&mut *conn).await.unwrap();
+    let positions = positions
+        .into_iter()
+        .map(|(binding, cursor, carry)| (binding, stable_progress(cursor), stable_progress(carry)))
+        .collect();
+    State {
+        live,
+        events,
+        positions,
+    }
 }
 
-/// Compare two states, naming only what differs.
+/// Acquisition instants and generated material IDs differ across independent runs.
+/// The offsets, sequence, row IDs, framing carry and other admitted progress must agree.
+fn stable_progress(value: serde_json::Value) -> serde_json::Value {
+    use serde_json::Value;
+    match value {
+        Value::Object(fields) => Value::Object(
+            fields
+                .into_iter()
+                .filter(|(key, _)| !matches!(key.as_str(), "looked_ns" | "last_full_pass_ns"))
+                .map(|(key, value)| (key, stable_progress(value)))
+                .collect(),
+        ),
+        Value::Array(values) => Value::Array(values.into_iter().map(stable_progress).collect()),
+        Value::String(value) if uuid::Uuid::parse_str(&value).is_ok() => {
+            Value::String("<id>".into())
+        }
+        other => other,
+    }
+}
+
 fn same(actual: &State, expected: &State, what: &str) {
+    assert_eq!(
+        actual.positions, expected.positions,
+        "{what}: committed cursors and carry differ"
+    );
     let only = |a: &State, b: &State| -> Vec<String> {
         a.live
             .iter()
@@ -303,24 +381,22 @@ async fn consistent(target: &Target) {
     )
     .await;
     assert!(max <= seq, "no event beyond the counter");
-    let blobs: Vec<String> = sqlx::query_scalar("SELECT blob FROM raw.materials")
+    let invalid_progress = scalar(&mut c, "SELECT count(*) FROM raw.positions p WHERE p.committed_seq < 0 OR p.committed_seq > (SELECT value FROM core.counters WHERE name='commit_seq')").await;
+    assert_eq!(invalid_progress, 0, "no cursor is beyond committed work");
+    let names: Vec<String> = sqlx::query_scalar("SELECT blob FROM raw.materials")
         .fetch_all(&mut c)
         .await
         .unwrap();
-    for blob in blobs {
-        let hex = blob.trim_start_matches("blake3:");
-        let file = target
-            .store
-            .join("blobs")
-            .join(&hex[..2])
-            .join(format!("{hex}.zst"));
-        assert!(file.exists(), "material bytes {blob} are stored");
-        let rows = sqlx::query_scalar::<_, i64>("SELECT count(*) FROM core.blobs WHERE hash = $1")
-            .bind(&blob)
-            .fetch_one(&mut c)
-            .await
-            .unwrap();
-        assert_eq!(rows, 1, "material bytes {blob} are registered");
+    let blobs = sinex_store::Blobs::open(&target.store).unwrap();
+    blobs.load(&mut c).await.unwrap();
+    for name in names {
+        assert_eq!(
+            blobs.verify(&name).unwrap(),
+            sinex_store::blobs::Verified::Intact,
+            "material {name} has readable stored bytes"
+        );
+        let bytes = blobs.read(&name).unwrap();
+        assert_eq!(format!("blake3:{}", blake3::hash(&bytes).to_hex()), name);
     }
 }
 
@@ -329,9 +405,9 @@ async fn consistent(target: &Target) {
 /// the lock.
 async fn kill_at(target: &Target, command: &mut Command, ready: Option<&str>, lock: &str) {
     let mut harness = target.connect().await;
-    let mut child: Option<Child> = None;
+    let mut child: Option<Process> = None;
     if let Some(ready) = ready {
-        child = Some(command.spawn().unwrap());
+        child = Some(Process::start(command));
         let deadline = Instant::now() + WAIT_LIMIT;
         loop {
             let ok: bool = sqlx::query_scalar(ready)
@@ -351,7 +427,7 @@ async fn kill_at(target: &Target, command: &mut Command, ready: Option<&str>, lo
     }
     sqlx::query("BEGIN").execute(&mut harness).await.unwrap();
     sqlx::query(lock).execute(&mut harness).await.unwrap();
-    let mut child = child.unwrap_or_else(|| command.spawn().unwrap());
+    let mut child = child.unwrap_or_else(|| Process::start(command));
     let me: i32 = sqlx::query_scalar("SELECT pg_backend_pid()")
         .fetch_one(&mut harness)
         .await
@@ -360,9 +436,9 @@ async fn kill_at(target: &Target, command: &mut Command, ready: Option<&str>, lo
     // holder cannot watch for the blocked backend; a second connection can.
     let mut watch = target.connect().await;
     let deadline = Instant::now() + WAIT_LIMIT;
-    let blocked: i32 = loop {
-        let waiting: Option<i32> = sqlx::query_scalar(
-            "SELECT pid FROM pg_stat_activity WHERE datname = current_database() AND pid <> $1 AND wait_event_type = 'Lock' LIMIT 1",
+    let (blocked, blocked_query): (i32, String) = loop {
+        let waiting: Option<(i32, String)> = sqlx::query_as(
+            "SELECT pid, query FROM pg_stat_activity WHERE datname = current_database() AND pid <> $1 AND wait_event_type = 'Lock' LIMIT 1",
         )
         .bind(me)
         .fetch_optional(&mut watch)
@@ -379,6 +455,18 @@ async fn kill_at(target: &Target, command: &mut Command, ready: Option<&str>, lo
     };
     child.kill().unwrap();
     child.wait().unwrap();
+    if lock.contains("core.blob_extents") {
+        assert!(
+            blocked_query.starts_with("INSERT INTO core.blob_extents"),
+            "extent barrier blocked another operation: {blocked_query}"
+        );
+    }
+    if lock.contains("core.blob_segments") {
+        assert!(
+            blocked_query.starts_with("INSERT INTO core.blob_segments"),
+            "segment barrier blocked another operation: {blocked_query}"
+        );
+    }
     // The backend is still queued on the lock; end it so its transaction can
     // never commit, then let go.
     let _: bool = sqlx::query_scalar("SELECT pg_terminate_backend($1)")
@@ -472,6 +560,8 @@ macro_rules! backfill_steps {
 // One test per admission statement, blocked in its first transaction.
 backfill_steps! { Inputs::first_transaction();
     backfill_killed_registering_the_material: None, lock("raw.inputs");
+    backfill_killed_recording_synced_extents: None, lock("core.blob_extents");
+    backfill_killed_recording_synced_segment_end: None, lock("core.blob_segments");
     backfill_killed_loading_privacy_rules: None, read_lock("privacy.rules");
     backfill_killed_staging: None, lock("core.admission_stage");
     backfill_killed_classifying: None, read_lock("core.hidden_records");
@@ -626,17 +716,12 @@ fn clipboard_spool(dir: &Path, copies: usize) -> PathBuf {
 async fn clipboard_bytes(target: &Target, c: &mut PgConnection, nth: i64) -> Vec<u8> {
     let blob: String = sqlx::query_scalar("SELECT blob FROM raw.materials m JOIN raw.inputs i ON i.id = m.input_id WHERE i.binding LIKE 'desktop.clipboard:%' ORDER BY m.part_index OFFSET $1 LIMIT 1")
         .bind(nth)
-        .fetch_one(c)
+        .fetch_one(&mut *c)
         .await
         .unwrap();
-    let hex = blob.trim_start_matches("blake3:");
-    zstd_decode(
-        &target
-            .store
-            .join("blobs")
-            .join(&hex[..2])
-            .join(format!("{hex}.zst")),
-    )
+    let blobs = sinex_store::Blobs::open(&target.store).unwrap();
+    blobs.load(c).await.unwrap();
+    blobs.read(&blob).unwrap()
 }
 
 /// Kill an excision at a step; nothing is removed. Excising again removes the
@@ -692,12 +777,6 @@ async fn excision_survives(lock_sql: &str) {
     );
 }
 
-fn zstd_decode(path: &Path) -> Vec<u8> {
-    let out = Command::new("zstd").arg("-dc").arg(path).output().unwrap();
-    assert!(out.status.success(), "zstd -dc {}", path.display());
-    out.stdout
-}
-
 macro_rules! excision_steps {
     ($($name:ident: $lock:expr;)*) => {$(
         #[devkit::test]
@@ -729,7 +808,7 @@ async fn publisher_survives(ready: Option<&str>, lock_sql: &str) {
     let run = || target.daemon(&inputs, &nats);
     kill_at(&target, &mut run(), ready, lock_sql).await;
 
-    let mut daemon = run().spawn().unwrap();
+    let mut daemon = Process::start(&mut run());
     let mut c = target.connect().await;
     let deadline = Instant::now() + WAIT_LIMIT;
     loop {
@@ -743,7 +822,7 @@ async fn publisher_survives(ready: Option<&str>, lock_sql: &str) {
             }
         }
         if let Some(status) = daemon.try_wait().unwrap() {
-            let output = daemon.wait_with_output().unwrap();
+            let output = daemon.wait_with_output();
             panic!(
                 "the daemon stopped ({status}):\n{}\n{}",
                 String::from_utf8_lossy(&output.stdout),
@@ -823,86 +902,181 @@ publisher_steps! {
         "SELECT 1 FROM core.consumer_positions WHERE consumer = 'publisher' FOR UPDATE";
 }
 
-/// Kill a backfill after it stored a material's bytes but before the
-/// admission that adds their row commits. The next daemon start deletes the
-/// file no row names, and a backfill run afterwards stores the bytes again and
-/// makes the readings an uninterrupted run makes.
+/// Kill after the segment group is synced and before its database boundary
+/// commits. Ordinary startup truncates the uncommitted tail; retry re-admits it.
 #[devkit::test]
-async fn a_daemon_start_deletes_bytes_an_uncommitted_admission_left() {
+async fn synced_uncommitted_segment_tail_is_truncated_on_restart() {
     let inputs = Inputs::first_transaction();
     let expected = {
         let reference = Target::new(&inputs);
         finish(&mut reference.backfill(&inputs));
         state(&mut reference.connect().await).await
     };
-
     let target = Target::new(&inputs);
     kill_at(
         &target,
         &mut target.backfill(&inputs),
         None,
-        &lock("raw.inputs"),
+        &lock("core.blob_segments"),
     )
     .await;
-    let mut c = target.connect().await;
-    let rows: std::collections::BTreeSet<String> =
-        sqlx::query_scalar("SELECT hash FROM core.blobs")
-            .fetch_all(&mut c)
+    let mut conn = target.connect().await;
+    let committed: i64 =
+        sqlx::query_scalar("SELECT coalesce(max(committed_end),0) FROM core.blob_segments")
+            .fetch_one(&mut conn)
             .await
-            .unwrap()
-            .into_iter()
-            .collect();
-    let without_rows: Vec<String> = target.stored_files().difference(&rows).cloned().collect();
+            .unwrap();
+    let segment = target.store.join("segments/current.hb");
     assert!(
-        !without_rows.is_empty(),
-        "the killed backfill stored bytes it never admitted"
+        std::fs::metadata(&segment).unwrap().len() > committed as u64,
+        "the append synced before the database commit was blocked"
     );
-
-    let nats = devkit::nats::test_nats().expect("run through `xtask test`");
-    let mut daemon = target.daemon(&inputs, &nats).spawn().unwrap();
-    let deadline = Instant::now() + WAIT_LIMIT;
-    while without_rows
-        .iter()
-        .any(|name| target.stored_files().contains(name))
-    {
-        if let Some(status) = daemon.try_wait().unwrap() {
-            let output = daemon.wait_with_output().unwrap();
-            panic!(
-                "the daemon stopped ({status}):\n{}\n{}",
-                String::from_utf8_lossy(&output.stdout),
-                String::from_utf8_lossy(&output.stderr),
-            );
-        }
-        assert!(
-            Instant::now() < deadline,
-            "the daemon never deleted {without_rows:?}"
-        );
-        tokio::time::sleep(Duration::from_millis(20)).await;
-    }
-    daemon.kill().unwrap();
-    daemon.wait().unwrap();
-    assert!(
-        rows.iter().all(|name| target.stored_files().contains(name)),
-        "every file a row names stays"
+    assert_eq!(
+        scalar(&mut conn, "SELECT count(*) FROM core.events").await,
+        0
     );
-
-    consistent(&target).await;
+    assert_eq!(
+        scalar(&mut conn, "SELECT count(*) FROM raw.positions").await,
+        0
+    );
+    // Backfill reopens through the same recovery path as ordinary daemon startup.
     finish(&mut target.backfill(&inputs));
     consistent(&target).await;
-    // The daemon's derivations may have added events of their own; every
-    // reading the uninterrupted backfill made is live, once.
-    let actual = state(&mut target.connect().await).await;
-    let missing: Vec<&String> = expected
-        .live
-        .iter()
-        .filter(|(key, count)| actual.live.get(*key) != Some(*count))
-        .map(|(key, _)| key)
-        .take(5)
-        .collect();
-    assert!(
-        missing.is_empty(),
-        "readings differ after the restart: {missing:#?}"
+    same(
+        &state(&mut conn).await,
+        &expected,
+        "after segment tail recovery",
     );
+    let end: i64 = sqlx::query_scalar("SELECT max(committed_end) FROM core.blob_segments")
+        .fetch_one(&mut conn)
+        .await
+        .unwrap();
+    assert_eq!(std::fs::metadata(segment).unwrap().len(), end as u64);
+}
+
+/// Limit the running process only after its first material is prepared, then
+/// let it append. The second group crosses the kernel's file-size limit before
+/// reaching sync, leaving a real partial segment tail and no matching cursor.
+#[devkit::test]
+async fn partial_segment_append_recovers_without_advancing_its_cursor() {
+    use std::os::unix::process::ExitStatusExt;
+    let inputs = Inputs::new(1, 512);
+    let input = |target: &Target, format: &str, path: &Path| {
+        let mut command = target.sinexd(&["backfill", "--host", HOST]);
+        command
+            .arg("--read")
+            .arg(format!("{format}={}", path.display()));
+        command
+    };
+    let (expected, append_bytes, largest_preparation) = {
+        let reference = Target::new(&inputs);
+        finish(&mut input(&reference, "atuin", &inputs.atuin));
+        finish(&mut input(&reference, "zsh", &inputs.zsh));
+        let mut conn = reference.connect().await;
+        let encoded: Vec<Vec<u8>> = sqlx::query_scalar("SELECT x.descriptor FROM core.blob_extents x JOIN raw.materials m ON m.blob=x.hash WHERE m.parser <> 'source-observation'")
+            .fetch_all(&mut conn)
+            .await
+            .unwrap();
+        let mut extents: Vec<_> = encoded
+            .iter()
+            .map(|bytes| hashed_blobs::Extent::decode(bytes).unwrap())
+            .collect();
+        extents.sort_by_key(|extent| extent.offset);
+        assert_eq!(extents.len(), 2, "one material per synthetic input");
+        (
+            state(&mut conn).await,
+            extents[1].len,
+            extents.iter().map(|extent| extent.len).max().unwrap(),
+        )
+    };
+    let target = Target::new(&inputs);
+    finish(&mut input(&target, "atuin", &inputs.atuin));
+    let mut harness = target.connect().await;
+    let initial_end: i64 = sqlx::query_scalar("SELECT max(committed_end) FROM core.blob_segments")
+        .fetch_one(&mut harness)
+        .await
+        .unwrap();
+    let limit = initial_end as u64 + append_bytes / 2;
+    assert!(
+        largest_preparation < limit,
+        "each preparation fits; only the cumulative segment exceeds the limit"
+    );
+    sqlx::query("BEGIN").execute(&mut harness).await.unwrap();
+    sqlx::query(&lock("core.admission_stage"))
+        .execute(&mut harness)
+        .await
+        .unwrap();
+    let harness_pid: i32 = sqlx::query_scalar("SELECT pg_backend_pid()")
+        .fetch_one(&mut harness)
+        .await
+        .unwrap();
+    let mut child = Process::start(&mut input(&target, "zsh", &inputs.zsh));
+    let mut observer = target.connect().await;
+    let deadline = Instant::now() + WAIT_LIMIT;
+    loop {
+        let waiting: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE datname=current_database() AND $1=ANY(pg_blocking_pids(pid)))")
+            .bind(harness_pid).fetch_one(&mut observer).await.unwrap();
+        if waiting {
+            break;
+        }
+        assert!(
+            child.try_wait().unwrap().is_none(),
+            "backfill stopped before material preparation completed"
+        );
+        assert!(
+            Instant::now() < deadline,
+            "backfill never reached admission staging"
+        );
+        tokio::time::sleep(Duration::from_millis(2)).await;
+    }
+    let constrained = Command::new("prlimit")
+        .arg("--pid")
+        .arg(child.id().to_string())
+        .arg(format!("--fsize={limit}"))
+        .status()
+        .unwrap();
+    assert!(constrained.success());
+    sqlx::query("ROLLBACK").execute(&mut harness).await.unwrap();
+    let output = child.wait_with_output();
+    assert_eq!(
+        output.status.signal(),
+        Some(25),
+        "the kernel must interrupt the actual append: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let committed: i64 =
+        sqlx::query_scalar("SELECT coalesce(max(committed_end),0) FROM core.blob_segments")
+            .fetch_one(&mut observer)
+            .await
+            .unwrap();
+    let segment = target.store.join("segments/current.hb");
+    assert!(committed > 0, "the first group committed");
+    assert_eq!(std::fs::metadata(&segment).unwrap().len(), limit);
+    assert!(
+        limit > committed as u64,
+        "the second append left uncommitted bytes"
+    );
+    assert!(
+        scalar(
+            &mut observer,
+            "SELECT count(*) FROM core.events WHERE event_type <> 'source.coverage'"
+        )
+        .await
+            < expected.events,
+        "the interrupted material has no committed readings"
+    );
+    finish(&mut input(&target, "zsh", &inputs.zsh));
+    consistent(&target).await;
+    same(
+        &state(&mut observer).await,
+        &expected,
+        "after a kernel-interrupted segment append",
+    );
+    let end: i64 = sqlx::query_scalar("SELECT max(committed_end) FROM core.blob_segments")
+        .fetch_one(&mut observer)
+        .await
+        .unwrap();
+    assert_eq!(std::fs::metadata(segment).unwrap().len(), end as u64);
 }
 
 impl Target {
@@ -919,7 +1093,7 @@ impl Target {
 /// and event IDs differ between two runs by design.
 async fn derived_state(conn: &mut PgConnection) -> (BTreeMap<String, i64>, i64) {
     let rows = sqlx::query(
-        r#"SELECT e.event_type || ' ' || regexp_replace(e.payload::text,
+        r#"SELECT e.source || ' ' || e.event_type || ' ' || coalesce(e.ts_orig::text, '<unknown>') || ' ' || e.ts_quality || ' ' || e.record_state || ' ' || regexp_replace(e.payload::text,
                   '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}', '<id>', 'g') AS k,
                   count(*) AS n
            FROM core.events e

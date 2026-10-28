@@ -168,7 +168,7 @@ async fn live(conn: &mut PgConnection) -> BTreeMap<String, Reading> {
         r#"SELECT e.id, e.source || ' ' || e.event_type || ' ' || coalesce(e.equivalence_key, e.material_id::text || '@' || e.anchor || '#' || e.output_index) AS k,
                   e.payload::text AS p, e.ts_orig::text AS t, encode(e.record_hash, 'hex') AS h
            FROM core.events e
-           WHERE e.id IN (SELECT event_id FROM core.live_equivalence UNION ALL SELECT event_id FROM core.live_locations)"#,
+           WHERE e.event_type <> 'source.coverage' AND e.id IN (SELECT event_id FROM core.live_equivalence UNION ALL SELECT event_id FROM core.live_locations)"#,
     )
     .fetch_all(&mut *conn)
     .await
@@ -302,7 +302,7 @@ async fn replay_keeps_occurrences_and_one_live_reading() {
         &mut c,
         &format!(
             "SELECT count(*) FROM (SELECT source, event_type, coalesce(equivalence_key, material_id::text || anchor || '#' || output_index) k, count(*) n
-             FROM core.events GROUP BY 1, 2, 3) g WHERE n <> {}",
+             FROM core.events WHERE event_type <> 'source.coverage' GROUP BY 1, 2, 3) g WHERE n <> {}",
             N + 1
         ),
     )
@@ -378,14 +378,23 @@ async fn restaging_the_same_bytes_admits_nothing_new() {
     t.backfill(Some(&dir.file("a/zsh", text.as_bytes())), Some(&atuin));
     let mut c = t.connect().await;
     let before = live(&mut c).await;
-    let materials = scalar(&mut c, "SELECT count(*) FROM raw.materials").await;
+    let materials = scalar(
+        &mut c,
+        "SELECT count(*) FROM raw.materials WHERE parser <> 'source-observation'",
+    )
+    .await;
 
     let atuin2 = dir.0.join("b/history.db");
     std::fs::create_dir_all(atuin2.parent().unwrap()).unwrap();
     std::fs::copy(&atuin, &atuin2).unwrap();
     t.backfill(Some(&dir.file("b/zsh", text.as_bytes())), Some(&atuin2));
     assert!(
-        scalar(&mut c, "SELECT count(*) FROM raw.materials").await > materials,
+        scalar(
+            &mut c,
+            "SELECT count(*) FROM raw.materials WHERE parser <> 'source-observation'"
+        )
+        .await
+            > materials,
         "identical bytes under a new name are new material"
     );
     let after = live(&mut c).await;
@@ -411,6 +420,7 @@ async fn stated_times_are_kept_whatever_their_value() {
     let dir = Dir::new();
     let t = Target::new(&dir);
     let text = [
+        zsh_line(-2_177_452_800, "in 1901"),
         zsh_line(86_400, "in 1970"),
         zsh_line(1_700_000_000, "in 2023"),
         zsh_line(7_258_118_400, "in 2200"),
@@ -422,7 +432,7 @@ async fn stated_times_are_kept_whatever_their_value() {
     let rows = sqlx::query(
         "SELECT payload->>'command' AS c, extract(epoch from ts_orig)::bigint AS t, ts_quality AS q,
                 ts_coided = uuid_extract_timestamp(id) AS minted, ts_coided >= $1::timestamptz AS fresh
-         FROM core.events ORDER BY ts_orig",
+         FROM core.events WHERE event_type = 'command.imported' ORDER BY ts_orig",
     )
     .bind(&started)
     .fetch_all(&mut c)
@@ -443,6 +453,13 @@ async fn stated_times_are_kept_whatever_their_value() {
     assert_eq!(
         got,
         vec![
+            (
+                "in 1901".into(),
+                -2_177_452_800,
+                "intrinsic".into(),
+                true,
+                true
+            ),
             ("in 1970".into(), 86_400, "intrinsic".into(), true, true),
             (
                 "in 2023".into(),
@@ -481,10 +498,18 @@ async fn a_long_history_is_a_few_materials() {
     t.backfill(Some(&dir.file("zsh", text.as_bytes())), None);
     let mut c = t.connect().await;
     assert_eq!(
-        scalar(&mut c, "SELECT count(*) FROM core.events").await,
+        scalar(
+            &mut c,
+            "SELECT count(*) FROM core.events WHERE event_type = 'command.imported'"
+        )
+        .await,
         20_000
     );
-    let materials = scalar(&mut c, "SELECT count(*) FROM raw.materials").await;
+    let materials = scalar(
+        &mut c,
+        "SELECT count(*) FROM raw.materials WHERE parser <> 'source-observation'",
+    )
+    .await;
     assert!(
         materials <= 4,
         "{materials} materials for one 20,000-line file"
@@ -571,7 +596,7 @@ async fn a_bad_record_is_a_failure_and_its_neighbours_are_stored() {
     t.backfill(Some(&dir.file("zsh", &bytes)), None);
     let mut c = t.connect().await;
     let commands: Vec<String> =
-        sqlx::query_scalar("SELECT payload->>'command' FROM core.events ORDER BY ts_orig")
+        sqlx::query_scalar("SELECT payload->>'command' FROM core.events WHERE event_type = 'command.imported' ORDER BY ts_orig")
             .fetch_all(&mut c)
             .await
             .unwrap();
@@ -680,10 +705,12 @@ async fn dry_runs_change_nothing_and_shared_bytes_survive() {
         );
     }
     let mut c = t.connect().await;
-    let shared: Vec<String> = sqlx::query_scalar("SELECT DISTINCT blob FROM raw.materials")
-        .fetch_all(&mut c)
-        .await
-        .unwrap();
+    let shared: Vec<String> = sqlx::query_scalar(
+        "SELECT DISTINCT blob FROM raw.materials WHERE parser <> 'source-observation'",
+    )
+    .fetch_all(&mut c)
+    .await
+    .unwrap();
     assert_eq!(shared.len(), 1, "both spools stored the same bytes once");
     let before = live(&mut c).await;
     let events = scalar(&mut c, "SELECT count(*) FROM core.events").await;
@@ -724,13 +751,12 @@ async fn dry_runs_change_nothing_and_shared_bytes_survive() {
         still, 1,
         "the other spool's material keeps the shared bytes"
     );
-    let hex = shared[0].trim_start_matches("blake3:");
-    let file = t
-        .store
-        .join("blobs")
-        .join(&hex[..2])
-        .join(format!("{hex}.zst"));
-    assert!(file.exists(), "bytes still referenced were deleted");
+    let bytes = sinex_store::Blobs::open(&t.store).unwrap();
+    bytes.load(&mut c).await.unwrap();
+    assert_eq!(
+        bytes.verify(&shared[0]).unwrap(),
+        sinex_store::Verified::Intact
+    );
     assert_eq!(
         scalar(&mut c, "SELECT count(*) FROM core.events").await,
         events - 1
@@ -1089,22 +1115,19 @@ async fn every_revision_reads_back_after_later_ones() {
     t.backfill(Some(&zsh), None);
 
     let mut c = t.connect().await;
-    let materials: Vec<(String, i64)> = sqlx::query_as("SELECT blob, length FROM raw.materials")
-        .fetch_all(&mut c)
-        .await
-        .unwrap();
+    let materials: Vec<(String, i64)> = sqlx::query_as(
+        "SELECT blob, length FROM raw.materials WHERE parser <> 'source-observation'",
+    )
+    .fetch_all(&mut c)
+    .await
+    .unwrap();
     assert!(materials.len() >= 5, "{} materials", materials.len());
+    let bytes = sinex_store::Blobs::open(&t.store).unwrap();
+    bytes.load(&mut c).await.unwrap();
     for (blob, length) in materials {
-        let hex = blob.trim_start_matches("blake3:");
-        let file = t
-            .store
-            .join("blobs")
-            .join(&hex[..2])
-            .join(format!("{hex}.zst"));
-        let out = Command::new("zstd").arg("-dc").arg(&file).output().unwrap();
-        assert!(out.status.success(), "zstd -dc {}", file.display());
-        assert_eq!(blake3::hash(&out.stdout).to_hex().as_str(), hex);
-        assert_eq!(i64::try_from(out.stdout.len()).unwrap(), length, "{blob}");
+        let decoded = bytes.read(&blob).unwrap();
+        assert_eq!(format!("blake3:{}", blake3::hash(&decoded).to_hex()), blob);
+        assert_eq!(i64::try_from(decoded.len()).unwrap(), length);
     }
 }
 
@@ -1280,7 +1303,7 @@ async fn every_lake_line_is_read_once() {
     backfill();
     let mut c = t.connect().await;
     let accounted = "SELECT count(*) FROM (
-        SELECT material_id, anchor FROM core.events WHERE material_id IS NOT NULL
+        SELECT material_id, anchor FROM core.events WHERE material_id IS NOT NULL AND event_type <> 'source.coverage'
         UNION SELECT material_id, anchor FROM raw.failures) a";
     assert_eq!(
         scalar(
