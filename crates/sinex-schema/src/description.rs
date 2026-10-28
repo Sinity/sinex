@@ -49,7 +49,7 @@ impl Description {
 
     pub(crate) fn before_kind_declarations() -> Self {
         Self {
-            tables: version_nine::tables(&Checks::from_model()),
+            tables: version_nine::tables(&version_nine::checks()),
             after_tables: version_nine::after_tables(),
             visibility: vec![],
             views: vec![],

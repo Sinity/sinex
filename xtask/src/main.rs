@@ -168,7 +168,7 @@ fn compile(run: &mut Run, args: &[String]) -> Result {
         .into_iter()
         .chain(args.iter().map(String::as_str))
         .collect();
-    if database_free(args) {
+    if boundaries::database_free(&run.root, args)? {
         run.cargo_with("compile", &selected, &[])?;
     } else {
         let mut prepared = None;
@@ -185,43 +185,6 @@ fn compile(run: &mut Run, args: &[String]) -> Result {
         result?;
     }
     Ok(())
-}
-
-fn database_free(args: &[String]) -> bool {
-    let mut packages = Vec::new();
-    let mut args = args.iter();
-    while let Some(arg) = args.next() {
-        match arg.as_str() {
-            "-p" | "--package" => match args.next() {
-                Some(package) => packages.push(package.as_str()),
-                None => return false,
-            },
-            "--workspace" | "--all" | "--exclude" => return false,
-            value if value.starts_with("--package=") => packages.push(&value[10..]),
-            value if value.starts_with("-p") => packages.push(&value[2..]),
-            _ => {}
-        }
-    }
-    !packages.is_empty()
-        && packages.into_iter().all(|package| {
-            matches!(
-                package,
-                "sinexctl"
-                    | "sinex-session"
-                    | "sinex-capture"
-                    | "sinex-model"
-                    | "sinex-protocol"
-                    | "sinex-transport"
-                    | "sinex-source-core"
-                    | "sinex-sources"
-                    | "sinex-sealing"
-                    | "sinex-macros"
-                    | "sinex-derivations"
-                    | "sinex-analysis"
-                    | "sinex-schema"
-                    | "xtask"
-            )
-        })
 }
 
 fn services(

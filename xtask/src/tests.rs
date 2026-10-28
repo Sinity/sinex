@@ -74,6 +74,15 @@ fn compile_requires_and_preserves_explicit_selection() {
 
 #[devkit::test]
 fn compile_prepares_a_database_only_for_packages_with_checked_queries() {
+    let database_free = |args: &[String]| {
+        boundaries::database_free(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .parent()
+                .unwrap(),
+            args,
+        )
+        .unwrap()
+    };
     for args in [
         vec!["-p", "sinexctl"],
         vec!["--package=sinex-session", "--tests"],
