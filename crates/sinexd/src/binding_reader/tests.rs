@@ -152,10 +152,12 @@ async fn archive_acquisition_restart_replay_and_privacy_use_real_admission(
     assert_eq!(originals.len(), 2);
     assert_ne!(originals[0].0, originals[1].0);
     assert_eq!(originals[0].1, originals[1].1);
-    let materials: i64 = sqlx::query_scalar("SELECT count(*) FROM raw.materials")
-        .fetch_one(&mut ctx.read_conn)
-        .await
-        .unwrap();
+    let materials: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM raw.materials WHERE parser <> 'source-observation'",
+    )
+    .fetch_one(&mut ctx.read_conn)
+    .await
+    .unwrap();
     // Fresh reader objects model a daemon restart. A completed cursor reads nothing.
     let mut restarted = readers(&path);
     let resumed = read(
@@ -179,7 +181,10 @@ async fn archive_acquisition_restart_replay_and_privacy_use_real_admission(
         &ctx.blobs,
         &ctx.writer,
         crate::replay::Options {
-            scope: crate::replay::Scope::default(),
+            scope: crate::replay::Scope {
+                event_types: Some(vec!["health.record".into(), "task.revised".into()]),
+                ..Default::default()
+            },
             compare: false,
             resume: None,
             actor: "synthetic".into(),
@@ -197,10 +202,12 @@ async fn archive_acquisition_restart_replay_and_privacy_use_real_admission(
         assert_eq!(after.iter().filter(|e| *e == event).count(), 2);
     }
     assert_eq!(
-        sqlx::query_scalar::<_, i64>("SELECT count(*) FROM raw.materials")
-            .fetch_one(&mut ctx.read_conn)
-            .await
-            .unwrap(),
+        sqlx::query_scalar::<_, i64>(
+            "SELECT count(*) FROM raw.materials WHERE parser <> 'source-observation'"
+        )
+        .fetch_one(&mut ctx.read_conn)
+        .await
+        .unwrap(),
         materials
     );
     ctx.close().await.unwrap();
@@ -373,7 +380,7 @@ async fn sealed_archive_restart_replay_and_class_changes_preserve_exact_material
             bindings
         };
         // The second batch fails through real admission, leaving a durable partial part.
-        sqlx::raw_sql("CREATE FUNCTION synthetic_stop() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF (SELECT count(*) FROM core.events) >= 2 THEN RAISE EXCEPTION 'synthetic admission stop'; END IF; RETURN NEW; END $$; CREATE TRIGGER synthetic_stop BEFORE INSERT ON core.events FOR EACH ROW EXECUTE FUNCTION synthetic_stop();").execute(&mut ctx.read_conn).await.unwrap();
+        sqlx::raw_sql("CREATE FUNCTION synthetic_stop() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.event_type <> 'source.coverage' AND (SELECT count(*) FROM core.events WHERE event_type <> 'source.coverage') >= 2 THEN RAISE EXCEPTION 'synthetic admission stop'; END IF; RETURN NEW; END $$; CREATE TRIGGER synthetic_stop BEFORE INSERT ON core.events FOR EACH ROW EXECUTE FUNCTION synthetic_stop();").execute(&mut ctx.read_conn).await.unwrap();
         let mut bindings = make_bound();
         let name = bindings[0].binding.name.clone();
         let first = read(
@@ -478,7 +485,7 @@ async fn sealed_archive_restart_replay_and_class_changes_preserve_exact_material
         assert_eq!(final_cursor.original_material, Some(original));
         let before = live_events(&mut ctx.read_conn).await;
         assert_eq!(before.len(), 40);
-        let keys: Vec<String> = sqlx::query_scalar("SELECT key_ref FROM privacy.data_keys")
+        let keys: Vec<String> = sqlx::query_scalar("SELECT k.key_ref FROM privacy.data_keys k JOIN raw.materials m ON m.id=k.material_id WHERE m.parser <> 'source-observation'")
             .fetch_all(&mut ctx.read_conn)
             .await
             .unwrap();
@@ -656,7 +663,7 @@ async fn sealed_bindings_never_share_data_keys_or_original_blob_names(
 }
 
 async fn live_events(conn: &mut PgConnection) -> Vec<EventFields> {
-    sqlx::query_as("SELECT e.source,e.equivalence_key,e.payload,e.material_id,e.anchor FROM core.events e WHERE e.id IN (SELECT event_id FROM core.live_equivalence UNION SELECT event_id FROM core.live_locations) ORDER BY source,equivalence_key,material_id,anchor").fetch_all(conn).await.unwrap()
+    sqlx::query_as("SELECT e.source,e.equivalence_key,e.payload,e.material_id,e.anchor FROM core.events e WHERE e.event_type <> 'source.coverage' AND e.id IN (SELECT event_id FROM core.live_equivalence UNION SELECT event_id FROM core.live_locations) ORDER BY source,equivalence_key,material_id,anchor").fetch_all(conn).await.unwrap()
 }
 
 mod directory;

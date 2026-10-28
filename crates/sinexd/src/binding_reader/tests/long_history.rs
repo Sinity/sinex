@@ -29,7 +29,7 @@ async fn turn(ctx: &mut ReaderContext, readers: &mut [BindingReader]) {
 }
 
 async fn parts(conn: &mut PgConnection) -> i64 {
-    sqlx::query_scalar("SELECT count(*) FROM raw.materials")
+    sqlx::query_scalar("SELECT count(*) FROM raw.materials WHERE parser <> 'source-observation'")
         .fetch_one(conn)
         .await
         .unwrap()
