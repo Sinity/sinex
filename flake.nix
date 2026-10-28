@@ -30,7 +30,7 @@
           cargo run --offline --locked -p xtask -- boundaries
           export PGDATA=$(mktemp -d)
           export PGHOST=$(mktemp -d)
-          export PGPORT=55439
+          export PGPORT=5432
           initdb --no-locale --auth=trust --data-checksums > /dev/null
           pg_ctl -D "$PGDATA" -o "-k $PGHOST -c listen_addresses= -c shared_preload_libraries=timescaledb -c timescaledb.telemetry_level=off -c timescaledb.enable_chunk_skipping=on -p $PGPORT" -w start > /dev/null
           trap 'pg_ctl -D "$PGDATA" -m immediate -w stop >/dev/null || true' EXIT
@@ -47,11 +47,14 @@
         # builder has none, and a switch that cannot be checked counts as on.
         preCheck = ''
           export XDG_RUNTIME_DIR=$(mktemp -d)
+          export DEVKIT_PG_SOCKET="$PGHOST"
+          export DEVKIT_PG_TEMPLATE=foundation
         '';
         # The memory test measures its process's peak RSS, so it needs a
         # process of its own, which nextest gives it and `cargo test` does not.
         checkFlags = [ "--skip" "drivers::tests::backfill_of_a_large_file_peaks_well_under_its_size" ];
-        # Database tests need devkit's server; they run under `xtask test`.
+        # Schema tests clone the builder's prepared database. Store and daemon
+        # database tests run under `xtask test`.
         cargoTestFlags = [ "-p" "sinex-model" "-p" "sinex-protocol" "-p" "sinex-schema" "-p" "sinex-sources" "-p" "sinex-source-core" "-p" "sinex-sealing" "-p" "sinex-derivations" ];
       };
     in {
