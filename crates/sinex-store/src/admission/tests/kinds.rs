@@ -166,7 +166,7 @@ async fn compressed_upgrade_keeps_immutable_rows_and_historical_metadata(
         .unwrap();
     let before:Vec<(uuid::Uuid,Value,Vec<u8>)>=sqlx::query_as("SELECT id,payload,record_hash FROM core.events UNION ALL SELECT id,payload,record_hash FROM telemetry.events ORDER BY id").fetch_all(&mut conn).await.unwrap();
     crate::test_schema::downgrade(&mut conn).await;
-    conn.execute("UPDATE sinex_schema.applied SET version=3")
+    conn.execute("UPDATE sinex_schema.applied SET version=4")
         .await
         .unwrap();
     conn.execute("SELECT compress_chunk(format('%I.%I',chunk_schema,chunk_name)::regclass) FROM timescaledb_information.chunks WHERE hypertable_schema IN ('core','telemetry') AND hypertable_name='events'").await.unwrap();
@@ -175,7 +175,7 @@ async fn compressed_upgrade_keeps_immutable_rows_and_historical_metadata(
     assert_eq!(
         sinex_schema::apply(&mut conn).await.unwrap(),
         sinex_schema::Applied::Upgraded {
-            from: 3,
+            from: 4,
             to: sinex_schema::VERSION
         }
     );
@@ -341,7 +341,7 @@ async fn a_removal_of_a_historical_reading_keeps_its_payload_class_and_exact_ref
     let location = original.location().unwrap().0;
     admit_one(&mut conn, &batch(vec![original.clone()])).await;
     crate::test_schema::downgrade(&mut conn).await;
-    conn.execute("UPDATE sinex_schema.applied SET version=3")
+    conn.execute("UPDATE sinex_schema.applied SET version=4")
         .await
         .unwrap();
     sinex_schema::apply(&mut conn).await.unwrap();
