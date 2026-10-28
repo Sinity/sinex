@@ -354,11 +354,11 @@ No prompts are sent until the operator designs instruments for them; spontaneous
 
 ## Sources beyond the catalog
 
-Family F18. The catalog is a floor: it lists what is known to exist, and Sinex captures beyond it. Ruling, 2026-10-14: "stuff I didn't ever mention but is obviuosly in scope" (chatgpt:6ace15d4-c6d0-83ed-ac53-4a870df45514:2b47b1b6-ada1-44ab-a07d-f0080f34ae97). Applicable local records are discovered automatically; a new paid service, a new credential grant or a new kind of third-party observation needs the operator ([discovery and exclusions](sources.md)). Every added source inherits the rules in [sources](sources.md) and its family's requirements here. No source is left out for lacking an earlier reader. New event names are registered through the kind registry ([kinds](reference/kinds.md)).
+Family F18. The catalog is a floor: it lists what is known to exist, and Sinex captures beyond it. Ruling, 2026-10-14: "stuff I didn't ever mention but is obviuosly in scope" (chatgpt:6ace15d4-c6d0-83ed-ac53-4a870df45514:2b47b1b6-ada1-44ab-a07d-f0080f34ae97). Applicable local records are discovered automatically; a new paid service, a new credential grant or a new kind of third-party observation needs the operator ([discovery and exclusions](sources.md)). Every added source inherits the rules in [sources](sources.md) and its family's requirements here. No source is left out for lacking an earlier reader. New event names are registered through the kind registry ([planned kinds reference](reference/README.md#planned-pages)).
 
 ## Catalog
 
-Each entry names the source, its family, the native format and capture mechanism, the records it yields and their grain, and the check it passes on a synthetic fixture beyond the [common checks](sources.md). Kinds marked "derived" are produced by [derivations](derivations.md) from the source's records. Entries without an identifier are named by their input. Until the generated [sources reference](reference/sources.md) exists, this table is the list.
+Each entry names the source, its family, the native format and capture mechanism, the records it yields and their grain, and the check it passes on a synthetic fixture beyond the [common checks](sources.md). Kinds marked "derived" are produced by [derivations](derivations.md) from the source's records. Entries without an identifier are named by their input. Until the [planned sources reference](reference/README.md#planned-pages) exists, this table is the list.
 
 | Family | Source | Native format and capture | Records and grain | Check |
 | --- | --- | --- | --- | --- |

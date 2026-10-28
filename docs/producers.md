@@ -130,7 +130,7 @@ It then behaves as follows:
 
 A kind declaration has the same shape for an outside producer as for Sinex's own kinds: name, version, payload fields, [field hints](privacy.md#field-hints) per field, keying, and search participation (`none`, `words` or `words_and_trigram`). Admission checks every event against its registered kind, so an outside kind gets the same checks, read models and output rules as a built-in one. The per-kind typed views are generated from the registry over live readings.
 
-**Polylogue registers the `polylogue.*` kinds.** Their declarations live in Polylogue's own code and are listed in Polylogue's [Sinex kinds reference](https://github.com/Sinity/polylogue/blob/master/docs/reference/sinex-kinds.md); Sinex's [kinds reference](reference/kinds.md) lists only Sinex's own kinds. A change to a `polylogue.*` kind ships with Polylogue and registers at its next connect.
+**Polylogue registers the `polylogue.*` kinds.** Their declarations live in Polylogue's own code and will be listed in Polylogue's [planned Sinex kinds reference](https://github.com/Sinity/polylogue/blob/master/docs/reference/README.md#planned-pages); Sinex's [planned kinds reference](reference/README.md#planned-pages) will list only Sinex's own kinds. A change to a `polylogue.*` kind ships with Polylogue and registers at its next connect.
 
 ## Lifecycle requests
 

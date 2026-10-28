@@ -21,9 +21,10 @@ working rules that apply here.
   is the orientation across them. The docs describe Sinex as designed, not
   as built; when code and design differ, the design is the target and
   closing the difference is the work.
-- What exists is shown by the generated pages in
-  [docs/reference/](docs/reference/README.md) and by each module's `//!`
-  documentation, which describes the module as it is.
+- CLI help, MCP tool schemas, the generated catalog and each module's `//!`
+  documentation describe the current build. The
+  [reference index](docs/reference/README.md) separates current artifacts
+  from planned generated pages.
 - Plans, open questions, decisions and acceptance criteria live in Beads, the
   task tracker, outside this repository. A Bead points at the doc section it
   builds; docs never point at Beads.

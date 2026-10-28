@@ -2,9 +2,10 @@
 
 These pages are the design of record: what Sinex does, its model and formats,
 the laws its tests check, and the reasons behind the choices. They describe
-Sinex as designed. What exists today is shown by the generated
-[reference](reference/README.md) and by each module's documentation; the
-work between the two is tracked outside the repository. The current generated
+Sinex as designed. CLI help, MCP tool schemas and module documentation
+describe the current build. The [reference index](reference/README.md)
+distinguishes current artifacts from planned generated pages; the work
+between design and code is tracked outside the repository. The current generated
 [source and derivation catalog](../nix/catalog.json) is also a module and
 discovery input; its generator and test are described in
 [the reference index](reference/README.md).
@@ -33,7 +34,7 @@ discovery input; its generator and test are described in
 | [operations.md](operations.md) | deployment, the NixOS and Home Manager modules, configuration, backup and restore |
 | [testing.md](testing.md) | the test database, the synthetic world, laws and their tests, crash, VM and fuzz tests, benchmarks |
 | [vocabulary.md](vocabulary.md) | each concept and its one name |
-| [reference/](reference/README.md) | generated pages: commands, settings, kinds, sources, query tables, derivations |
+| [reference/](reference/README.md) | current catalog and planned generated pages for commands, settings, kinds, sources, query tables and derivations |
 
 Shared mechanics (the segment container, the query grammar, the operation
 and failure model, the web shell, signal rules, the development tools) are
@@ -56,6 +57,7 @@ How Polylogue uses Sinex is in Polylogue's
 - **Laws.** Every area page ends with `## Laws`: properties with stable keys,
   each checked by tests named after the key
   ([testing.md](testing.md#laws-and-their-tests)).
-- **Generated pages** under [reference/](reference/README.md) are rendered by
-  `cargo xtask docs` from the code's declarations and are never edited by
-  hand.
+- **Planned generated pages** under [reference/](reference/README.md#planned-pages)
+  will be rendered by `cargo xtask docs` from the code's declarations. The
+  generator is not implemented yet; existing generated artifacts are changed
+  through their declarations, not by hand.

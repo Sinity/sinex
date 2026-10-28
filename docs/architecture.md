@@ -64,7 +64,7 @@ source ──► stage ──► material (segment log) ──► parse ──�
 
 **Clients and producers.** `sinexctl` is the CLI and the MCP server, a client of the daemon with no store dependency; offline diagnostics invoke the sibling `sinexd admin diagnostics` command while the daemon is stopped. `sinex-session` captures the desktop session as the operator's user, and `sinex-capture` runs capture on a host or for a stream outside the daemon; both are outside producers with their own spools, built on the one producer client. `sinex-schema` creates and upgrades the schema. CLI, MCP and HTTP are generated from one operation table. See [interfaces.md](interfaces.md) and [producers.md](producers.md).
 
-**Declarations.** Kinds (with field hints and search participation), sources, derivations, consumers and streams are each declared once in Rust; the generated references ([kinds](reference/kinds.md), [sources](reference/sources.md), [derivations](reference/derivations.md), [settings](reference/settings.md), [commands](reference/commands.md), [query tables](reference/query-tables.md)) and the NixOS module are produced from those declarations.
+**Declarations.** Kinds (with field hints and search participation), sources, derivations, consumers and streams are each declared once in Rust; the planned references ([planned kinds](reference/README.md#planned-pages), [planned sources](reference/README.md#planned-pages), [planned derivations](reference/README.md#planned-pages), [planned settings](reference/README.md#planned-pages), [planned commands](reference/README.md#planned-pages), [planned query tables](reference/README.md#planned-pages)) will be rendered from those declarations. The NixOS module already uses the generated catalog.
 
 ## Durability order
 
