@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Text supplied and its evidence</title>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+body{margin:0;background:#F4F5F2}
+a{color:#0F5F59}a:hover{color:#0A403C}
+.bar{display:flex;height:22px;border-radius:4px;overflow:hidden;background:#EEF0EC}
+.a{background:#0F5F59}.p{background:#9FC9C2}.u{background:repeating-linear-gradient(45deg,#D9DDD8 0 4px,#EEF0EC 4px 8px)}
+.row{display:grid;grid-template-columns:110px minmax(0,1fr) 230px;gap:16px;align-items:center;padding:7px 0;font-size:13px}
+.k{display:inline-block;width:12px;height:12px;border-radius:2px;vertical-align:-1px;margin-right:6px}
+</style>
+</helmet>
+<div style="width: 1280px; height: 1120px; box-sizing: border-box; padding: 40px 48px; background: #F4F5F2; color: #1B1D1F; font-family: 'IBM Plex Sans', sans-serif; display: flex; flex-direction: column; gap: 22px">
+
+  <div style="display: flex; justify-content: space-between; align-items: flex-end; gap: 24px">
+    <div style="display: flex; flex-direction: column; gap: 6px">
+      <a href="Main.dc.html" style="font-size: 14px">← The day</a>
+      <h1 style="margin: 0; font-size: 32px; font-weight: 600">What text did I supply?</h1>
+      <div style="font-size: 14px; color: #4A5155; max-width: 880px">Text Iris supplied to agents and chat, with separate provider-reported paste evidence and clipboard content-match candidates. Identical content can be typed independently or loaded another way; a match never establishes insertion or authorship.</div>
+    </div>
+    <div style="font-family: 'IBM Plex Mono', monospace; font-size: 12px; color: #4A5155; text-align: right">synthetic example</div>
+  </div>
+
+  <div style="background:#FFFFFF;border-radius:8px;padding:20px 24px">
+    <h2>Illustrative UTF-8 byte proxies, not typing totals</h2>
+    <p>Synthetic example day: 20,300 operator-supplied bytes; 9,400 provider-unmarked bytes; 10,900 clipboard-matched bytes. The latter two can overlap and are not a partition of text origin.</p>
+    <p>Clipboard observation: full on Monday; gap Tuesday 13:40–16:05. Even full observation covers only clipboard and primary selection. All unmatched text has unknown origin. Unevaluated matching is unknown, never zero.</p>
+  </div>
+
+  <div style="display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 22px">
+    <div style="background: #FFFFFF; border-radius: 8px; padding: 20px 24px; display: flex; flex-direction: column; gap: 10px">
+      <div style="font-size: 13px; color: #4A5155">One message, opened (Wed 09-16 10:12, to an agent in tidepool)</div>
+      <div style="font-family: 'IBM Plex Mono', monospace; font-size: 12.5px; line-height: 1.7; background: #F7F8F6; border-radius: 6px; padding: 12px 14px">
+        <div style="border-left:3px solid #0F5F59;padding-left:8px">why does this fail after the tide offset change?</div>
+        <div style="background:#DCEBE8;border-left:3px solid #9FC9C2;padding:2px 8px;margin:4px 0;color:#2F3A3D">error[E0599]: no method named `tide_offset` found for struct `Harbour`…<br><span style="font-family:'IBM Plex Sans',sans-serif;font-size:11.5px;color:#4A5155">provider-reported paste · 41 lines · marker reference<br>clipboard content candidate · copies 10:11:52 and 10:11:58, revisions pinned</span></div>
+        <div style="border-left:3px solid #0F5F59;padding-left:8px">only on the Morrow table, the others pass</div>
+      </div>
+      <div style="font-size: 12.5px; color: #4A5155; line-height: 1.6">Example proxies: 2,936 operator-supplied bytes, 96 provider-unmarked bytes, 2,840 clipboard-matched bytes. The two matching copies are candidates, with neither preferred. Provider report and candidate ranges retain their own extents. The remainder's origin is unknown. <a href="Trace.dc.html">trace</a></div>
+    </div>
+    <div style="background: #FFFFFF; border-radius: 8px; padding: 20px 24px; display: flex; flex-direction: column; gap: 10px">
+      <div style="font-size: 13px; color: #4A5155">Why it is shown this way</div>
+      <div style="font-size: 13px; line-height: 1.65">
+        <div>· Provider paste reports and clipboard matches are separate evidence classes.</div>
+        <div>· Full clipboard coverage cannot rule out typing, file loading or other routes.</div>
+        <div>· Every qualifying copy is retained. Two matching copies mean ambiguous source candidates.</div>
+        <div>· Evidence applies only to its cited message revision. Late copies trigger a new evaluation; edits invalidate old coordinates.</div>
+      </div>
+    </div>
+  </div>
+</div>
+</x-dc>
+</body>
+</html>

@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Import progress</title>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+body{margin:0;background:#F4F5F2}
+a{color:#0F5F59}a:hover{color:#0A403C}
+</style>
+</helmet>
+<div style="width: 1280px; height: 1120px; box-sizing: border-box; padding: 40px 48px; background: #F4F5F2; color: #1B1D1F; font-family: 'IBM Plex Sans', sans-serif; display: flex; flex-direction: column; gap: 22px">
+
+  <div style="display: flex; justify-content: space-between; align-items: flex-end; gap: 24px">
+    <div style="display: flex; flex-direction: column; gap: 6px">
+      <a href="Status.dc.html" style="font-size: 14px">← Are the sources observing?</a>
+      <h1 style="margin: 0; font-size: 32px; font-weight: 600">Why is the import not moving?</h1>
+      <div style="font-size: 14px; color: #4A5155">A real 1M-event import, replayed from its transaction trace. The line always names what holds it back; an estimate appears only when the rate has been steady.</div>
+    </div>
+    <div style="font-family: 'IBM Plex Mono', monospace; font-size: 12px; color: #4A5155; text-align: right">sinexctl stage list<br>a traced 1M-event import</div>
+  </div>
+
+  <div style="background: #FFFFFF; border-radius: 8px; padding: 20px 24px; display: flex; flex-direction: column; gap: 10px">
+    <div style="font-size: 13px; color: #4A5155">Progress over 144 s</div>
+    <div style="display: grid; grid-template-columns: 7fr 25fr 15fr 15fr 30fr 52fr; height: 28px; border-radius: 4px; overflow: hidden">
+      <div style="background: #0F5F59" title="0-10 s: 210k events"></div>
+      <div style="background: #F1E3D2" title="10-35 s: slow commits"></div>
+      <div style="background: #F3DCDA" title="31-46 s: one commit running 16 s"></div>
+      <div style="background: #0F5F59" title="46-60 s"></div>
+      <div style="background: #DDE1DE" title="60-120 s: writer serving derivations"></div>
+      <div style="background: #0F5F59" title="120-144 s: 532k events"></div>
+    </div>
+    <div style="display: flex; gap: 20px; flex-wrap: wrap; font-size: 13px; color: #4A5155">
+      <div style="display: flex; align-items: center; gap: 6px"><span style="width: 12px; height: 12px; border-radius: 2px; background: #0F5F59"></span>importing</div>
+      <div style="display: flex; align-items: center; gap: 6px"><span style="width: 12px; height: 12px; border-radius: 2px; background: #F1E3D2"></span>paced: slow commits</div>
+      <div style="display: flex; align-items: center; gap: 6px"><span style="width: 12px; height: 12px; border-radius: 2px; background: #F3DCDA"></span>a commit still running</div>
+      <div style="display: flex; align-items: center; gap: 6px"><span style="width: 12px; height: 12px; border-radius: 2px; background: #DDE1DE"></span>waiting: writer serving derivations</div>
+    </div>
+  </div>
+
+  <div style="background: #FFFFFF; border-radius: 8px; padding: 20px 24px; display: flex; flex-direction: column">
+    <div style="display: grid; grid-template-columns: 70px 200px 130px minmax(0, 1fr) 190px; gap: 12px; padding-bottom: 10px; border-bottom: 1px solid #DDE1DE; font-size: 13px; color: #4A5155">
+      <div>At</div><div>Done</div><div>Rate</div><div>What holds it back</div><div>Estimate</div>
+    </div>
+
+    <div style="display: grid; grid-template-columns: 70px 200px 130px minmax(0, 1fr) 190px; gap: 12px; padding: 11px 0; border-bottom: 1px solid #EEF0EC; align-items: center; font-size: 14px">
+      <div style="font-family: 'IBM Plex Mono', monospace">10 s</div><div>210,000 of 1M (21%)</div><div>21,000/s</div>
+      <div><span style="background: #F1E3D2; color: #6E4413; border-radius: 4px; padding: 3px 8px; font-size: 13px">paced: a commit took 1.2 s</span></div><div style="color: #4A5155; font-size: 13px">rate varying</div>
+    </div>
+    <div style="display: grid; grid-template-columns: 70px 200px 130px minmax(0, 1fr) 190px; gap: 12px; padding: 11px 0; border-bottom: 1px solid #EEF0EC; align-items: center; font-size: 14px">
+      <div style="font-family: 'IBM Plex Mono', monospace">30 s</div><div>210,000 (21%)</div><div>0/s</div>
+      <div><span style="background: #F1E3D2; color: #6E4413; border-radius: 4px; padding: 3px 8px; font-size: 13px">paced: a commit took 4.9 s</span></div><div style="color: #4A5155; font-size: 13px">rate varying</div>
+    </div>
+    <div style="display: grid; grid-template-columns: 70px 200px 130px minmax(0, 1fr) 190px; gap: 12px; padding: 11px 0; border-bottom: 1px solid #EEF0EC; align-items: center; font-size: 14px">
+      <div style="font-family: 'IBM Plex Mono', monospace">45 s</div><div>210,000 (21%)</div><div>0/s</div>
+      <div><span style="background: #F3DCDA; color: #7A1F17; border-radius: 4px; padding: 3px 8px; font-size: 13px">paced: a commit has been running 15 s</span></div><div style="color: #4A5155; font-size: 13px">rate varying</div>
+    </div>
+    <div style="display: grid; grid-template-columns: 70px 200px 130px minmax(0, 1fr) 190px; gap: 12px; padding: 11px 0; border-bottom: 1px solid #EEF0EC; align-items: center; font-size: 14px">
+      <div style="font-family: 'IBM Plex Mono', monospace">47 s</div><div>220,000 (22%)</div><div>1,000/s</div>
+      <div><span style="background: #F1E3D2; color: #6E4413; border-radius: 4px; padding: 3px 8px; font-size: 13px">paced: a commit took 16.1 s</span></div><div style="color: #4A5155; font-size: 13px">rate varying</div>
+    </div>
+    <div style="display: grid; grid-template-columns: 70px 200px 130px minmax(0, 1fr) 190px; gap: 12px; padding: 11px 0; border-bottom: 1px solid #EEF0EC; align-items: center; font-size: 14px">
+      <div style="font-family: 'IBM Plex Mono', monospace">90 s</div><div>268,844 (27%)</div><div>491/s</div>
+      <div><span style="background: #EEF0EC; color: #4A5155; border-radius: 4px; padding: 3px 8px; font-size: 13px">waiting: writer busy with derivations 99% of the last 10 s</span></div><div style="color: #4A5155; font-size: 13px">rate varying</div>
+    </div>
+    <div style="display: grid; grid-template-columns: 70px 200px 130px minmax(0, 1fr) 190px; gap: 12px; padding: 11px 0; border-bottom: 1px solid #EEF0EC; align-items: center; font-size: 14px">
+      <div style="font-family: 'IBM Plex Mono', monospace">120 s</div><div>468,033 (47%)</div><div>0/s</div>
+      <div><span style="background: #EEF0EC; color: #4A5155; border-radius: 4px; padding: 3px 8px; font-size: 13px">waiting: writer busy with derivations 100% of the last 10 s</span></div><div style="color: #4A5155; font-size: 13px">rate varying</div>
+    </div>
+    <div style="display: grid; grid-template-columns: 70px 200px 130px minmax(0, 1fr) 190px; gap: 12px; padding: 11px 0; align-items: center; font-size: 14px">
+      <div style="font-family: 'IBM Plex Mono', monospace">144 s</div><div>1,000,000 (100%)</div><div>21,000/s</div>
+      <div><span style="background: #D9EDE9; color: #0A403C; border-radius: 4px; padding: 3px 8px; font-size: 13px">not paced</span></div><div style="color: #0A403C; font-size: 13px; font-weight: 500">done</div>
+    </div>
+  </div>
+
+  <div style="display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px">
+    <div style="background: #FFFFFF; border-radius: 8px; padding: 16px 20px; display: flex; flex-direction: column; gap: 6px">
+      <div style="font-size: 13px; color: #4A5155">A stall in progress shows</div>
+      <div style="font-size: 15px">"has been running 15 s", not 0/s and silence</div>
+      <div style="font-size: 13px; color: #4A5155">finished work alone would read as nothing happening</div>
+    </div>
+    <div style="background: #FFFFFF; border-radius: 8px; padding: 16px 20px; display: flex; flex-direction: column; gap: 6px">
+      <div style="font-size: 13px; color: #4A5155">Waiting is a reason, not a fault</div>
+      <div style="font-size: 15px">Derivations catching up have priority over imports</div>
+      <div style="font-size: 13px; color: #4A5155">the line says so, so a stop is never mistaken for a failure</div>
+    </div>
+    <div style="background: #FFFFFF; border-radius: 8px; padding: 16px 20px; display: flex; flex-direction: column; gap: 6px">
+      <div style="font-size: 13px; color: #4A5155">No estimate here</div>
+      <div style="font-size: 15px">The rate never held steady for 30 s</div>
+      <div style="font-size: 13px; color: #4A5155">every estimator tried was mostly more than 50% off on this run</div>
+    </div>
+  </div>
+</div>
+</x-dc>
+</body>
+</html>

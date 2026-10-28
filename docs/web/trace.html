@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Provenance trace</title>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+body{margin:0;background:#F4F5F2}
+a{color:#0F5F59}a:hover{color:#0A403C}
+</style>
+</helmet>
+<div style="width: 1280px; height: 1120px; box-sizing: border-box; padding: 40px 48px; background: #F4F5F2; color: #1B1D1F; font-family: 'IBM Plex Sans', sans-serif; display: flex; flex-direction: column; gap: 22px">
+
+  <div style="display: flex; justify-content: space-between; align-items: flex-end; gap: 24px">
+    <div style="display: flex; flex-direction: column; gap: 6px">
+      <a href="Main.dc.html" style="font-size: 14px">← Monday 14 September</a>
+      <h1 style="margin: 0; font-size: 32px; font-weight: 600">How Sinex knows "10 commands"</h1>
+      <div style="font-size: 14px; color: #4A5155">Every derived fact names its parents, down to a byte range in a stored file. Each step is one click.</div>
+    </div>
+    <div style="font-family: 'IBM Plex Mono', monospace; font-size: 12px; color: #4A5155; text-align: right">sinexctl trace sinex:eq/activity.summary.daily/2026-09-14</div>
+  </div>
+
+  <div style="display: flex; flex-direction: column; gap: 10px">
+
+    <div style="background: #FFFFFF; border-radius: 8px; padding: 16px 20px; display: grid; grid-template-columns: 220px minmax(0, 1fr) 260px; gap: 16px; align-items: center">
+      <div style="font-size: 13px; color: #4A5155">Daily summary · derived</div>
+      <div style="font-size: 15px"><strong>commands 10</strong>, failed 1, visits 5, active 1,408 s</div>
+      <div style="font-family: 'IBM Plex Mono', monospace; font-size: 12px; color: #4A5155">daily v2 · built from 2 hourly summaries</div>
+    </div>
+    <div style="padding-left: 110px; font-family: 'IBM Plex Mono', monospace; font-size: 13px; color: #6B7378">↓ parents</div>
+
+    <div style="background: #FFFFFF; border-radius: 8px; padding: 16px 20px; display: grid; grid-template-columns: 220px minmax(0, 1fr) 260px; gap: 16px; align-items: center">
+      <div style="font-size: 13px; color: #4A5155">Hourly summaries · derived</div>
+      <div style="font-size: 15px">09:00 to 10:00: 8 commands · 11:00 to 12:00: 2 commands</div>
+      <div style="font-family: 'IBM Plex Mono', monospace; font-size: 12px; color: #4A5155">hourly v2 · logical day 04:00</div>
+    </div>
+    <div style="padding-left: 110px; font-family: 'IBM Plex Mono', monospace; font-size: 13px; color: #6B7378">↓ parents (one of eight shown)</div>
+
+    <div style="background: #FFFFFF; border-radius: 8px; padding: 16px 20px; display: grid; grid-template-columns: 220px minmax(0, 1fr) 260px; gap: 16px; align-items: center">
+      <div style="font-size: 13px; color: #4A5155">Command · fused</div>
+      <div style="font-size: 15px"><span style="font-family: 'IBM Plex Mono', monospace">cargo build</span> in ~/src/tidepool, exit 0, 41 s</div>
+      <div style="font-family: 'IBM Plex Mono', monospace; font-size: 12px; color: #4A5155">fusion rule shell-command v1 · 1 observation</div>
+    </div>
+    <div style="padding-left: 110px; font-family: 'IBM Plex Mono', monospace; font-size: 13px; color: #6B7378">↓ observed by</div>
+
+    <div style="background: #FFFFFF; border-radius: 8px; padding: 16px 20px; display: grid; grid-template-columns: 220px minmax(0, 1fr) 260px; gap: 16px; align-items: start">
+      <div style="font-size: 13px; color: #4A5155">Command executed · Atuin</div>
+      <div style="display: flex; flex-direction: column; gap: 8px">
+        <div style="font-size: 15px"><span style="font-family: 'IBM Plex Mono', monospace">cargo build</span>, read by the Atuin parser (version 1)</div>
+        <div style="display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px">
+          <div style="background: #F5F6F3; border-radius: 6px; padding: 8px 10px"><div style="font-size: 12px; color: #4A5155">When it happened</div><div style="font-family: 'IBM Plex Mono', monospace; font-size: 14px">09:03:05</div><div style="font-size: 12px; color: #4A5155">stated by Atuin</div></div>
+          <div style="background: #F5F6F3; border-radius: 6px; padding: 8px 10px"><div style="font-size: 12px; color: #4A5155">When Sinex read it</div><div style="font-family: 'IBM Plex Mono', monospace; font-size: 14px">23:55:01</div><div style="font-size: 12px; color: #4A5155">from the event ID</div></div>
+          <div style="background: #F5F6F3; border-radius: 6px; padding: 8px 10px"><div style="font-size: 12px; color: #4A5155">When it was written</div><div style="font-family: 'IBM Plex Mono', monospace; font-size: 14px">23:55:01</div><div style="font-size: 12px; color: #4A5155">commit 88,410</div></div>
+        </div>
+      </div>
+      <div style="font-family: 'IBM Plex Mono', monospace; font-size: 12px; color: #4A5155; line-height: 1.6">sinex:occ/M-shell-1/426<br>key (terminal.atuin-history, row id)</div>
+    </div>
+    <div style="padding-left: 110px; font-family: 'IBM Plex Mono', monospace; font-size: 13px; color: #6B7378">↓ bytes 426 to 641 of</div>
+
+    <div style="background: #FFFFFF; border-radius: 8px; padding: 16px 20px; display: grid; grid-template-columns: 220px minmax(0, 1fr) 260px; gap: 16px; align-items: start">
+      <div style="font-size: 13px; color: #4A5155">Material · stored bytes</div>
+      <div style="display: flex; flex-direction: column; gap: 8px">
+        <div style="font-size: 15px">Rows from Atuin's database, polled at 23:55 and appended as one line each</div>
+        <div style="background: #1F2427; color: #D6E3DF; border-radius: 6px; padding: 12px 14px; font-family: 'IBM Plex Mono', monospace; font-size: 12px; line-height: 1.6; white-space: pre-wrap">{"command":"cargo build","cwd":"/home/iris/src/tidepool","deleted_at":null,"duration":41000000000,"exit":0,"id":"…","session":"…","timestamp":"2026-09-14T07:03:05Z"}</div>
+      </div>
+      <div style="font-family: 'IBM Plex Mono', monospace; font-size: 12px; color: #4A5155; line-height: 1.6">M-shell-1 · 2,151 bytes<br>blake3:17951e138bb6…<br>from ~/.local/share/atuin/history.db</div>
+    </div>
+  </div>
+
+  <div style="background: #F7F1E8; border-radius: 8px; padding: 16px 20px; display: grid; grid-template-columns: 220px minmax(0, 1fr); gap: 16px; font-size: 14px; line-height: 1.5; color: #4A3A21">
+    <div style="font-weight: 600">Replayed on Wednesday</div>
+    <div>Parser version 2 reads Atuin's <span style="font-family: 'IBM Plex Mono', monospace">deleted_at</span> column. Replaying this material archived the 10 old readings and admitted 9: <span style="font-family: 'IBM Plex Mono', monospace">rm notes-old.txt</span> was deleted from history at 11:31 and is now remembered as deleted. The command above kept its byte position and its time; it got a new ID and a new read time. The daily summary was recomputed: 9 commands. Both versions stay readable with <span style="font-family: 'IBM Plex Mono', monospace">as of</span>.</div>
+  </div>
+</div>
+</x-dc>
+</body>
+</html>
