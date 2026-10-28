@@ -230,7 +230,9 @@ async fn drain_retries_pending_frames_even_when_the_spool_directory_is_absent() 
             b"activewindow>>kitty,synthetic retry",
         )
         .unwrap();
-    writer.append(sinex_model::Timestamp::now(), b"activewindowv2>>abc").unwrap();
+    writer
+        .append(sinex_model::Timestamp::now(), b"activewindowv2>>abc")
+        .unwrap();
     writer.sync().unwrap();
     drop(writer);
     let context = discovery::DiscoveryContext {

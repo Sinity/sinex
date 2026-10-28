@@ -32,7 +32,10 @@ async fn evidence_keeps_visibility_positions_unknown_times_and_archived_run_reco
         .await
         .unwrap();
     sinex_schema::apply(&mut conn).await.unwrap();
-    assert_eq!(crate::test_schema::without_positions(sinex_schema::catalog(&mut conn).await.unwrap()), crate::test_schema::without_positions(before));
+    assert_eq!(
+        crate::test_schema::without_positions(sinex_schema::catalog(&mut conn).await.unwrap()),
+        crate::test_schema::without_positions(before)
+    );
     let events: i64 = sqlx::query_scalar("SELECT count(*) FROM core.events")
         .fetch_one(&mut conn)
         .await

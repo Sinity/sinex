@@ -4,9 +4,7 @@ use serde_json::Value;
 use sinex_source_core::{Limits, drivers};
 
 #[devkit::test]
-async fn directory_resumes_from_admitted_cursor_with_original_bytes(
-    db: devkit::pg::TestDatabase,
-) {
+async fn directory_resumes_from_admitted_cursor_with_original_bytes(db: devkit::pg::TestDatabase) {
     use sinex_model::{BatchKind, RunId};
     use sinex_source_core::binding;
     use sinex_sources::sources::notes;
@@ -28,7 +26,9 @@ async fn directory_resumes_from_admitted_cursor_with_original_bytes(
     let id = material.id;
     let first_end = material.records[0].1;
     let last_end = material.records.last().unwrap().1;
-    let Some(drivers::StoredBytes::FramedFile(file)) = &material.stored else { panic!() };
+    let Some(drivers::StoredBytes::FramedFile(file)) = &material.stored else {
+        panic!()
+    };
     let mut original = vec![0; file.metadata().unwrap().len() as usize];
     std::os::unix::fs::FileExt::read_exact_at(&**file, &mut original, 0).unwrap();
     let prepared = drivers::prepare(

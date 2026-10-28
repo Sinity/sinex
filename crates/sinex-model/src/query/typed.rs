@@ -420,7 +420,9 @@ fn select_parameter(expression: &mut Expr, name: &str) -> bool {
             }
             Value::List(values) => {
                 let mut changed = false;
-                for item in values { changed |= select_value(item, name); }
+                for item in values {
+                    changed |= select_value(item, name);
+                }
                 changed
             }
             _ => false,
@@ -429,19 +431,30 @@ fn select_parameter(expression: &mut Expr, name: &str) -> bool {
     match expression {
         Expr::And(a, b) | Expr::Or(a, b) => select_parameter(a, name) | select_parameter(b, name),
         Expr::Not(e) => select_parameter(e, name),
-        Expr::Compare { lhs: Operand::Field(FieldRef::Field(f)), rhs, .. } if f.name == "event_type" => select_value(rhs, name),
+        Expr::Compare {
+            lhs: Operand::Field(FieldRef::Field(f)),
+            rhs,
+            ..
+        } if f.name == "event_type" => select_value(rhs, name),
         _ => false,
     }
 }
 
 fn select_query_parameter(query: &mut Query, name: &str) -> bool {
     let mut changed = false;
-    if let Some(filter) = &mut query.filter { changed |= select_parameter(filter, name); }
-    if let Source::RecallLast { filter: Some(filter) } = &mut query.source {
+    if let Some(filter) = &mut query.filter {
+        changed |= select_parameter(filter, name);
+    }
+    if let Source::RecallLast {
+        filter: Some(filter),
+    } = &mut query.source
+    {
         changed |= select_parameter(filter, name);
     }
     for stage in &mut query.stages {
-        if let Stage::Where(filter) = stage { changed |= select_parameter(filter, name); }
+        if let Stage::Where(filter) = stage {
+            changed |= select_parameter(filter, name);
+        }
     }
     changed
 }
@@ -455,8 +468,13 @@ pub(super) fn check(q: &mut Query, ctx: &Context) -> Result<(), QueryError> {
             let mut trial = q.clone();
             select_query_parameter(&mut trial, kind.event_type);
             match check(&mut trial, ctx) {
-                Ok(()) => { *q = trial; return Ok(()); }
-                Err(error) => { first_error.get_or_insert(error); }
+                Ok(()) => {
+                    *q = trial;
+                    return Ok(());
+                }
+                Err(error) => {
+                    first_error.get_or_insert(error);
+                }
             }
         }
         return Err(first_error.unwrap_or_else(|| QueryError::new("no event type is declared")));

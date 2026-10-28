@@ -1,6 +1,6 @@
 use super::*;
-use sqlx::Executor;
 use crate::test_schema::without_positions;
+use sqlx::Executor;
 
 type Time = time::OffsetDateTime;
 type Counts = Vec<(String, i64, Option<Time>, Option<Time>, Time)>;
@@ -49,8 +49,6 @@ async fn under_run(conn: &mut PgConnection, events: Vec<Event>) -> RunId {
     admit_one(conn, &b).await;
     run
 }
-
-
 
 fn change(target: sinex_model::EventId, hide: bool) -> Batch {
     let operation = OperationId::new();
@@ -228,5 +226,8 @@ async fn upgrading_from_version_3_registers_query_kinds_and_keeps_events(
         .await
         .unwrap();
     assert_eq!(before, after);
-    assert_eq!(without_positions(sinex_schema::catalog(&mut conn).await.unwrap()), without_positions(fresh));
+    assert_eq!(
+        without_positions(sinex_schema::catalog(&mut conn).await.unwrap()),
+        without_positions(fresh)
+    );
 }
