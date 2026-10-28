@@ -56,7 +56,9 @@ pub(super) async fn insert_admitted(
            SELECT DISTINCT unnest(s.parents), s.id FROM core.admission_stage s
            WHERE s.ord = ANY($1) AND s.parents IS NOT NULL"#,
         admit_ords,
-    ).execute(&mut *conn).await?;
+    )
+    .execute(&mut *conn)
+    .await?;
 
     sqlx::query!(
         r#"INSERT INTO core.source_counts AS c (source, events, first_event, last_event, last_seen)

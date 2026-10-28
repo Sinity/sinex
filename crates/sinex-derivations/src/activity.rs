@@ -179,7 +179,9 @@ fn hours(input: &KeyView<'_>, env: &Env) -> Vec<Value> {
 
 fn partition(key: &Value, env: &Env) -> Option<(i128, i128)> {
     let start: Timestamp = serde_json::from_value(key.get("hour")?.clone()).ok()?;
-    if env.time_settings.hour_start(start).ok()? != start { return None }
+    if env.time_settings.hour_start(start).ok()? != start {
+        return None;
+    }
     Some((
         start.unix_ns(),
         env.time_settings.hour_end(start).ok()?.unix_ns(),

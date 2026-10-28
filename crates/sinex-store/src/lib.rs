@@ -28,7 +28,8 @@ pub mod telemetry;
 pub mod writer_lock;
 
 pub use admission::{
-    AffectedRange, ComputedKey, DerivedScope, DirtyKeys, KeyInput, NoDerivations, Outcome, ReadMark, admit,
+    AffectedRange, ComputedKey, DerivedScope, DirtyKeys, KeyInput, NoDerivations, Outcome,
+    ReadMark, admit,
 };
 pub use blobs::Blobs;
 pub use hashed_blobs::Verified;

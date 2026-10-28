@@ -26,7 +26,13 @@ impl Default for ActivityProfile {
     }
 }
 fn selection_time(ns: i128) -> Timestamp {
-    Timestamp::from_unix_ns(ns).unwrap_or_else(|_| Timestamp(if ns < 0 { time::OffsetDateTime::MIN } else { time::OffsetDateTime::MAX }))
+    Timestamp::from_unix_ns(ns).unwrap_or_else(|_| {
+        Timestamp(if ns < 0 {
+            time::OffsetDateTime::MIN
+        } else {
+            time::OffsetDateTime::MAX
+        })
+    })
 }
 
 pub struct ActivitySessions(pub ActivityProfile);
@@ -51,26 +57,58 @@ impl Keyed for ActivitySessions {
         1 + (u32::from_le_bytes(bytes) >> 2)
     }
     fn keys_for(&self, input: &KeyView<'_>, _: &Env) -> Vec<Value> {
-        if input.event_type != "activity.window" { return vec![] }
-        let (Some(at), Some(scope)) = (input.payload.get("started_at"), input.payload.get("scope")) else { return vec![] };
+        if input.event_type != "activity.window" {
+            return vec![];
+        }
+        let (Some(at), Some(scope)) = (input.payload.get("started_at"), input.payload.get("scope"))
+        else {
+            return vec![];
+        };
         vec![json!({"at":at,"scope":scope})]
     }
     fn nearby_inputs(&self, input: &KeyView<'_>, _: &Env) -> Option<InputQuery> {
-        if input.event_type != "activity.window" { return None }
+        if input.event_type != "activity.window" {
+            return None;
+        }
         let start = input.ts_orig?;
-        let end = input.payload.get("ended_at").and_then(|value| serde_json::from_value::<Timestamp>(value.clone()).ok()).unwrap_or(start);
+        let end = input
+            .payload
+            .get("ended_at")
+            .and_then(|value| serde_json::from_value::<Timestamp>(value.clone()).ok())
+            .unwrap_or(start);
         let gap = i128::from(self.0.break_seconds) * SECOND;
-        Some(InputQuery::window(&["activity.window"], selection_time(start.unix_ns()-gap), selection_time(end.unix_ns()+gap+1))
-            .only("scope", input.payload.get("scope")?.clone()))
+        Some(
+            InputQuery::window(
+                &["activity.window"],
+                selection_time(start.unix_ns() - gap),
+                selection_time(end.unix_ns() + gap + 1),
+            )
+            .only("scope", input.payload.get("scope")?.clone()),
+        )
     }
     fn affected_ranges(&self, input: &KeyView<'_>, _: &Env) -> Vec<crate::AffectedRange> {
-        if !relevant(input.event_type, input.payload) { return vec![] }
-        input.ts_orig.map(|start| {
-            let gap = i128::from(self.0.break_seconds)*SECOND;
-            let end = input.payload.get("ended_at").and_then(|value| serde_json::from_value::<Timestamp>(value.clone()).ok()).unwrap_or(start);
-            vec![crate::AffectedRange { open_field: None, output_type:"activity.session", start_field:"started_at", end_field:"ended_at",
-                start:selection_time(start.unix_ns()-gap), end:selection_time(end.unix_ns()+gap) }]
-        }).unwrap_or_default()
+        if !relevant(input.event_type, input.payload) {
+            return vec![];
+        }
+        input
+            .ts_orig
+            .map(|start| {
+                let gap = i128::from(self.0.break_seconds) * SECOND;
+                let end = input
+                    .payload
+                    .get("ended_at")
+                    .and_then(|value| serde_json::from_value::<Timestamp>(value.clone()).ok())
+                    .unwrap_or(start);
+                vec![crate::AffectedRange {
+                    open_field: None,
+                    output_type: "activity.session",
+                    start_field: "started_at",
+                    end_field: "ended_at",
+                    start: selection_time(start.unix_ns() - gap),
+                    end: selection_time(end.unix_ns() + gap),
+                }]
+            })
+            .unwrap_or_default()
     }
     fn inputs(&self, key: &Value, _: &Env) -> Option<InputQuery> {
         let at = serde_json::from_value::<Timestamp>(key.get("at")?.clone()).ok()?;
@@ -79,19 +117,38 @@ impl Keyed for ActivitySessions {
         selected.equal.push(("scope", scope.clone()));
         let mut query = InputQuery::all(kinds(Self::INPUTS));
         for kind in &mut query.kinds {
-            if kind.event_type == "activity.window" { kind.equal.push(("scope", scope.clone())); }
+            if kind.event_type == "activity.window" {
+                kind.equal.push(("scope", scope.clone()));
+            }
         }
-        query.range = Some(crate::InputRange::Connected { kinds:vec![selected], at, end_field:"ended_at", gap_ns:i128::from(self.0.break_seconds)*SECOND });
-        query.intervals = Self::INPUTS.iter().filter_map(|kind| interval_end(kind).map(|end| (*kind,end))).collect();
-        query.intervals.extend([("activity.window", IntervalEnd::At("ended_at")), ("activity.span", IntervalEnd::At("ended_at"))]);
+        query.range = Some(crate::InputRange::Connected {
+            kinds: vec![selected],
+            at,
+            end_field: "ended_at",
+            gap_ns: i128::from(self.0.break_seconds) * SECOND,
+        });
+        query.intervals = Self::INPUTS
+            .iter()
+            .filter_map(|kind| interval_end(kind).map(|end| (*kind, end)))
+            .collect();
+        query.intervals.extend([
+            ("activity.window", IntervalEnd::At("ended_at")),
+            ("activity.span", IntervalEnd::At("ended_at")),
+        ]);
         Some(query)
     }
 
     fn refresh_at(&self, outputs: &[Event], _: &Env) -> Option<Timestamp> {
-        outputs.iter().filter(|event| event.payload["provisional"] == true).filter_map(|event| {
-            let end: Timestamp = serde_json::from_value(event.payload.get("ended_at")?.clone()).ok()?;
-            Timestamp::from_unix_ns(end.unix_ns() + i128::from(self.0.break_seconds)*SECOND).ok()
-        }).min()
+        outputs
+            .iter()
+            .filter(|event| event.payload["provisional"] == true)
+            .filter_map(|event| {
+                let end: Timestamp =
+                    serde_json::from_value(event.payload.get("ended_at")?.clone()).ok()?;
+                Timestamp::from_unix_ns(end.unix_ns() + i128::from(self.0.break_seconds) * SECOND)
+                    .ok()
+            })
+            .min()
     }
     fn key_state(&self, _: &Value, _: &Env) -> KeyState {
         KeyState::Open
@@ -138,7 +195,11 @@ impl Keyed for ActivitySessions {
             }
             for group in &groups {
                 let first = &group[0].1;
-                if key.get("at").is_some() && (key["at"] != json!(first.started_at) || key["scope"] != first.scope) { continue }
+                if key.get("at").is_some()
+                    && (key["at"] != json!(first.started_at) || key["scope"] != first.scope)
+                {
+                    continue;
+                }
                 let end = group
                     .iter()
                     .map(|(_, window)| window.ended_at)

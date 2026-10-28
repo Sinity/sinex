@@ -102,12 +102,32 @@ pub(crate) fn to_window(q: &InputQuery, now: Timestamp) -> Window {
     Window {
         unknown_times: q.unknown_times,
         range: q.range.as_ref().map(|range| match range {
-            sinex_derivations::InputRange::Connected { kinds: selected, at, end_field, gap_ns } =>
-                derivations::InputRange::Connected { kinds: kinds(selected), at: at.0, end_field, gap_seconds: *gap_ns as f64 / 1_000_000_000.0 },
-            sinex_derivations::InputRange::Extent { kinds: selected } =>
-                derivations::InputRange::Extent { kinds: kinds(selected) },
-            sinex_derivations::InputRange::UntilNext { start, kinds: selected, field } =>
-                derivations::InputRange::UntilNext { start: start.0, kinds: kinds(selected), field, now: now.0 },
+            sinex_derivations::InputRange::Connected {
+                kinds: selected,
+                at,
+                end_field,
+                gap_ns,
+            } => derivations::InputRange::Connected {
+                kinds: kinds(selected),
+                at: at.0,
+                end_field,
+                gap_seconds: *gap_ns as f64 / 1_000_000_000.0,
+            },
+            sinex_derivations::InputRange::Extent { kinds: selected } => {
+                derivations::InputRange::Extent {
+                    kinds: kinds(selected),
+                }
+            }
+            sinex_derivations::InputRange::UntilNext {
+                start,
+                kinds: selected,
+                field,
+            } => derivations::InputRange::UntilNext {
+                start: start.0,
+                kinds: kinds(selected),
+                field,
+                now: now.0,
+            },
         }),
         kinds: kinds(&q.kinds),
         start: q.window.map(|(start, _)| start.0),
@@ -466,19 +486,27 @@ impl DerivationRunner {
                 entry.1.push((k.key, k.last_dirty_seq));
                 work += 1;
             }
-            let indices: Vec<_> = (0..self.keyed.len()).filter(|index| self.rank_of(self.keyed[*index].name()) == level).collect();
+            let indices: Vec<_> = (0..self.keyed.len())
+                .filter(|index| self.rank_of(self.keyed[*index].name()) == level)
+                .collect();
             for index in indices {
                 let name = self.keyed[index].name();
                 let had_dirty = touched.contains_key(&index);
                 let (done, mut keys) = touched.remove(&index).unwrap_or_default();
-                let waiting = derivations::waiting(&mut self.read, name, (!had_dirty).then_some(env.now.0))
-                    .await.map_err(|e| e.to_string())?;
+                let waiting =
+                    derivations::waiting(&mut self.read, name, (!had_dirty).then_some(env.now.0))
+                        .await
+                        .map_err(|e| e.to_string())?;
                 for (key, _) in waiting {
-                    if done.contains(&key.to_string()) { continue }
+                    if done.contains(&key.to_string()) {
+                        continue;
+                    }
                     keys.push((key, 0));
                     work += 1;
                 }
-                if !keys.is_empty() { self.compute_keys(index, keys, env).await?; }
+                if !keys.is_empty() {
+                    self.compute_keys(index, keys, env).await?;
+                }
             }
         }
         for index in 0..self.per_event.len() {

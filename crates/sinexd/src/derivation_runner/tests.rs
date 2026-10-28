@@ -152,9 +152,16 @@ impl World {
         per_event: Vec<Box<dyn AnyPerEvent>>,
     ) -> DerivationRunner {
         let read = PgConnection::connect(&self.url).await.unwrap();
-        DerivationRunner::start(read, self.handle.clone(), keyed, per_event, "test", TimeSettings::operator_default())
-            .await
-            .unwrap()
+        DerivationRunner::start(
+            read,
+            self.handle.clone(),
+            keyed,
+            per_event,
+            "test",
+            TimeSettings::operator_default(),
+        )
+        .await
+        .unwrap()
     }
 
     async fn live<P: sinex_model::EventPayload>(&self) -> Vec<P> {
@@ -352,9 +359,7 @@ async fn a_waiting_key_remains_eligible_for_late_evidence(db: devkit::pg::TestDa
     assert_eq!(w.count(waiting).await, 2);
 
     // Elapsed time does not supply the missing evidence.
-    d.clock = Some(Timestamp(
-        Timestamp::now().0 + time::Duration::days(30),
-    ));
+    d.clock = Some(Timestamp(Timestamp::now().0 + time::Duration::days(30)));
     w.admit(vec![zsh("c", 20, 3)]).await;
     d.catch_up().await.unwrap();
     assert_eq!(w.count(waiting).await, 3);
@@ -700,9 +705,16 @@ async fn a_recompute_stopped_part_way_is_marked_again_at_the_next_start(
     drop(queues);
     let read = PgConnection::connect(&w.url).await.unwrap();
     assert!(
-        DerivationRunner::start(read, stopped, sinex_derivations::keyed(), vec![], "test", TimeSettings::operator_default())
-            .await
-            .is_err()
+        DerivationRunner::start(
+            read,
+            stopped,
+            sinex_derivations::keyed(),
+            vec![],
+            "test",
+            TimeSettings::operator_default()
+        )
+        .await
+        .is_err()
     );
     assert_eq!(w.count(stored_version).await, version - 1);
     assert_eq!(w.count(fusion_dirty).await, 0);

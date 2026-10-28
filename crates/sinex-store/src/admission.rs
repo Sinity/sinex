@@ -60,8 +60,12 @@ pub struct AffectedRange {
 /// owns the derivation registry. Admission marks every returned key dirty.
 pub trait DirtyKeys: Send + Sync {
     fn keys(&self, event: &KeyInput<'_>) -> Vec<(&'static str, Value)>;
-    fn affected_ranges(&self, _: &KeyInput<'_>) -> Vec<AffectedRange> { Vec::new() }
-    fn nearby_inputs(&self, _: &KeyInput<'_>) -> Vec<crate::derivations::Window> { Vec::new() }
+    fn affected_ranges(&self, _: &KeyInput<'_>) -> Vec<AffectedRange> {
+        Vec::new()
+    }
+    fn nearby_inputs(&self, _: &KeyInput<'_>) -> Vec<crate::derivations::Window> {
+        Vec::new()
+    }
 }
 
 /// No keyed derivations registered.
@@ -205,15 +209,24 @@ async fn apply_privacy(conn: &mut PgConnection, batch: &Batch, events: &mut [Eve
         .await?
         .into_iter()
         .map(|r| {
-            if !r.live { return Err(crate::Error::Invalid(format!("derived parent {} is not live", r.id))) }
+            if !r.live {
+                return Err(crate::Error::Invalid(format!(
+                    "derived parent {} is not live",
+                    r.id
+                )));
+            }
             Ok((r.id, privacy::parse_class(&r.class)?))
         })
         .collect::<Result<_>>()?;
         for event in events.iter_mut() {
             if let Origin::Derived { parents } = &event.origin {
                 for p in parents {
-                    let c = classes.get(&p.0).ok_or_else(|| crate::Error::Invalid(format!(
-                        "derived parent {} is not a committed reading", p.0)))?;
+                    let c = classes.get(&p.0).ok_or_else(|| {
+                        crate::Error::Invalid(format!(
+                            "derived parent {} is not a committed reading",
+                            p.0
+                        ))
+                    })?;
                     event.class = event.class.max(*c);
                 }
             }

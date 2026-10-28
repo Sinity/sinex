@@ -212,7 +212,10 @@ pub(super) async fn apply_derived(
             .await?;
             let (waiting, done): (Vec<&ComputedKey>, Vec<&ComputedKey>) =
                 scoped.iter().partition(|s| s.waiting);
-            let refresh: Vec<_> = waiting.iter().map(|scope| scope.refresh_at.map(|at| at.0)).collect();
+            let refresh: Vec<_> = waiting
+                .iter()
+                .map(|scope| scope.refresh_at.map(|at| at.0))
+                .collect();
             let waiting: Vec<Value> = waiting.into_iter().map(|s| s.key.clone()).collect();
             let done: Vec<Value> = done.into_iter().map(|s| s.key.clone()).collect();
             sqlx::query!(
@@ -411,8 +414,11 @@ pub(super) async fn mark_inputs_dirty(
         ranges.extend(keys.affected_ranges(input));
         for query in keys.nearby_inputs(input) {
             for selected in crate::derivations::read_window(conn, &query).await? {
-                dirty.extend(keys.keys(&KeyInput { event_type: selected.event.event_type,
-                    ts_orig: selected.event.ts_orig.at.map(|at| at.0), payload: &selected.event.payload }));
+                dirty.extend(keys.keys(&KeyInput {
+                    event_type: selected.event.event_type,
+                    ts_orig: selected.event.ts_orig.at.map(|at| at.0),
+                    payload: &selected.event.payload,
+                }));
             }
         }
     }
@@ -423,7 +429,10 @@ pub(super) async fn mark_inputs_dirty(
         let ends: Vec<_> = ranges.iter().map(|r| r.end_field.to_owned()).collect();
         let from: Vec<_> = ranges.iter().map(|r| r.start).collect();
         let until: Vec<_> = ranges.iter().map(|r| r.end).collect();
-        let open: Vec<_> = ranges.iter().map(|r| r.open_field.map(str::to_owned)).collect();
+        let open: Vec<_> = ranges
+            .iter()
+            .map(|r| r.open_field.map(str::to_owned))
+            .collect();
         let selected = sqlx::query!(
             r#"SELECT DISTINCT o.derivation, o.key FROM
                  unnest($1::text[], $2::text[], $3::text[], $4::text[], $5::timestamptz[], $6::timestamptz[], $7::text[])
@@ -435,7 +444,11 @@ pub(super) async fn mark_inputs_dirty(
                  AND NOT EXISTS (SELECT 1 FROM audit.archived a WHERE a.event_id=e.id)"#,
             &names, &types, &starts, &ends, &from, &until, &open as &[Option<String>],
         ).fetch_all(&mut *conn).await?;
-        dirty.extend(selected.into_iter().map(|row| (crate::derivations::static_type(&row.derivation), row.key)));
+        dirty.extend(
+            selected
+                .into_iter()
+                .map(|row| (crate::derivations::static_type(&row.derivation), row.key)),
+        );
     }
     mark_dirty(conn, dirty, seq).await
 }
@@ -462,29 +475,67 @@ pub(crate) async fn mark_archived_dirty(
     ).fetch_all(&mut *conn).await?;
     let all: Vec<Uuid> = ids.iter().chain(&descendants).copied().collect();
     let rows = sqlx::query!(
-        "SELECT event_type, ts_orig, payload FROM core.events WHERE id = ANY($1)", &all,
-    ).fetch_all(&mut *conn).await?;
-    let inputs: Vec<_> = rows.iter().map(|row| KeyInput {
-        event_type: &row.event_type, ts_orig: row.ts_orig, payload: &row.payload,
-    }).collect();
+        "SELECT event_type, ts_orig, payload FROM core.events WHERE id = ANY($1)",
+        &all,
+    )
+    .fetch_all(&mut *conn)
+    .await?;
+    let inputs: Vec<_> = rows
+        .iter()
+        .map(|row| KeyInput {
+            event_type: &row.event_type,
+            ts_orig: row.ts_orig,
+            payload: &row.payload,
+        })
+        .collect();
     let mut marked = mark_inputs_dirty(conn, &inputs, seq, keys).await?;
     // A key may come from a request or a semantic join rather than from the
     // output's fields. Its existing ownership also makes it dirty.
     let owners = sqlx::query!(
-        "SELECT DISTINCT derivation, key FROM derivation.outputs WHERE event_id = ANY($1)", &all,
-    ).fetch_all(&mut *conn).await?;
+        "SELECT DISTINCT derivation, key FROM derivation.outputs WHERE event_id = ANY($1)",
+        &all,
+    )
+    .fetch_all(&mut *conn)
+    .await?;
     let computed = match recomputing.map(|batch| &batch.kind) {
-        Some(BatchKind::Derived { derivation, scope }) => match serde_json::from_value::<DerivedScope>(scope.clone())
-            .map_err(|error| Error::Invalid(format!("derived batch scope: {error}")))? {
-                DerivedScope::Keys { keys, .. } => Some((derivation.as_str(), keys.into_iter().map(|scope| scope.key).collect::<std::collections::HashSet<_>>())),
+        Some(BatchKind::Derived { derivation, scope }) => {
+            match serde_json::from_value::<DerivedScope>(scope.clone())
+                .map_err(|error| Error::Invalid(format!("derived batch scope: {error}")))?
+            {
+                DerivedScope::Keys { keys, .. } => Some((
+                    derivation.as_str(),
+                    keys.into_iter()
+                        .map(|scope| scope.key)
+                        .collect::<std::collections::HashSet<_>>(),
+                )),
                 _ => None,
-            },
+            }
+        }
         _ => None,
     };
-    marked += mark_dirty(conn, owners.into_iter().filter(|row| !computed.as_ref().is_some_and(|(name, keys)|
-        *name == row.derivation && keys.contains(&row.key))).map(|row|
-        (crate::derivations::static_type(&row.derivation), row.key)).collect(), seq).await?;
-    super::archive::archive_at(conn, &descendants, seq, sinex_model::ArchiveReason::Recomputed, None, None).await?;
+    marked += mark_dirty(
+        conn,
+        owners
+            .into_iter()
+            .filter(|row| {
+                !computed
+                    .as_ref()
+                    .is_some_and(|(name, keys)| *name == row.derivation && keys.contains(&row.key))
+            })
+            .map(|row| (crate::derivations::static_type(&row.derivation), row.key))
+            .collect(),
+        seq,
+    )
+    .await?;
+    super::archive::archive_at(
+        conn,
+        &descendants,
+        seq,
+        sinex_model::ArchiveReason::Recomputed,
+        None,
+        None,
+    )
+    .await?;
     remove_live(conn, &descendants).await?;
     Ok(marked)
 }

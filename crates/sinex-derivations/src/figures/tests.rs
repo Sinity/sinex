@@ -355,13 +355,43 @@ fn a_day_adds_up_its_hours() {
 fn activity_seconds_use_supported_presence_and_keep_afk_claims_as_inputs_only() {
     use sinex_model::event_types::desktop::{PresenceInterval, PresenceSpan};
     let parent = parent();
-    let present = derived(&PresenceInterval {
-        scope:"box".into(), day:"2024-06-15".into(), started_at:at(10), ended_at:at(30),
-        state:"present".into(), method:"physical".into(), support:vec![], claims:vec![], contradictions:vec![], profile:"presence/v1".into(),
-    }, "presence.intervals", [&parent]);
-    let claim = Event::build(&PresenceSpan {
-        bucket:"afk_box".into(), row:1, started_at:at(0), ended_at:at(3600), status:"not-afk".into(),
-    }, "desktop.activitywatch", Origin::Record { location:RecordLocation { material:MaterialId::new(), anchor:0 }, output_index:0 }, ReadingOrder(0), [0;32], Class::Open).unwrap();
+    let present = derived(
+        &PresenceInterval {
+            scope: "box".into(),
+            day: "2024-06-15".into(),
+            started_at: at(10),
+            ended_at: at(30),
+            state: "present".into(),
+            method: "physical".into(),
+            support: vec![],
+            claims: vec![],
+            contradictions: vec![],
+            profile: "presence/v1".into(),
+        },
+        "presence.intervals",
+        [&parent],
+    );
+    let claim = Event::build(
+        &PresenceSpan {
+            bucket: "afk_box".into(),
+            row: 1,
+            started_at: at(0),
+            ended_at: at(3600),
+            status: "not-afk".into(),
+        },
+        "desktop.activitywatch",
+        Origin::Record {
+            location: RecordLocation {
+                material: MaterialId::new(),
+                anchor: 0,
+            },
+            output_index: 0,
+        },
+        ReadingOrder(0),
+        [0; 32],
+        Class::Open,
+    )
+    .unwrap();
     let out = hourly("activity.active_seconds", &[present, claim], 100_000);
     assert_eq!(total_at(&out, 0).value, Some(20.0));
 }

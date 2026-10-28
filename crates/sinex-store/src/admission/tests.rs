@@ -658,7 +658,6 @@ mod source_counts;
 
 mod library_upgrade;
 
-
 #[devkit::test]
 async fn derived_outputs_require_committed_live_parents(db: devkit::pg::TestDatabase) {
     use sinex_model::{EventId, Origin};
@@ -669,14 +668,20 @@ async fn derived_outputs_require_committed_live_parents(db: devkit::pg::TestData
     for id in [EventId::new(), parent.id] {
         if id == parent.id {
             let mut archive = batch(vec![]);
-            archive.archive.push(sinex_model::ArchiveRequest::Hide { target:id, operation:sinex_model::OperationId::new() });
+            archive.archive.push(sinex_model::ArchiveRequest::Hide {
+                target: id,
+                operation: sinex_model::OperationId::new(),
+            });
             admit_one(&mut conn, &archive).await;
         }
         let mut child = keyed("derived", 2, 2, 1);
         child.origin = Origin::Derived { parents: vec![id] };
         let mut tx = conn.begin().await.unwrap();
         let result = crate::admit(&mut tx, &batch(vec![child]), &crate::NoDerivations).await;
-        assert!(matches!(result, Err(crate::Error::Invalid(_))), "{result:?}");
+        assert!(
+            matches!(result, Err(crate::Error::Invalid(_))),
+            "{result:?}"
+        );
         tx.rollback().await.unwrap();
     }
 }

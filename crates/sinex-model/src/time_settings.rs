@@ -54,8 +54,15 @@ impl TimeSettings {
     }
 
     pub fn from_parts(zone: TimeZone, day_starts_at: Time) -> Self {
-        let zone_name = zone.iana_name().map(str::to_owned).unwrap_or_else(|| format!("{zone:?}"));
-        Self { zone, zone_name, day_starts_at }
+        let zone_name = zone
+            .iana_name()
+            .map(str::to_owned)
+            .unwrap_or_else(|| format!("{zone:?}"));
+        Self {
+            zone,
+            zone_name,
+            day_starts_at,
+        }
     }
 
     /// The operator's setting today: Europe/Warsaw, days from 04:00.
@@ -69,11 +76,7 @@ impl TimeSettings {
 
     /// The local day start and zone, including any configured seconds.
     pub fn label(&self) -> String {
-        format!(
-            "{} {}",
-            self.day_starts_at,
-            self.zone_name
-        )
+        format!("{} {}", self.day_starts_at, self.zone_name)
     }
 
     fn instant(t: Timestamp) -> Result<jiff::Timestamp, TimeSettingsError> {

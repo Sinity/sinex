@@ -118,7 +118,9 @@ impl Keyed for HourlyFigures {
 
     fn inputs(&self, key: &Value, env: &Env) -> Option<InputQuery> {
         let hour = hour_of(key)?;
-        if env.time_settings.hour_start(hour).ok()? != hour { return None }
+        if env.time_settings.hour_start(hour).ok()? != hour {
+            return None;
+        }
         Some(
             InputQuery::window(
                 &[HealthRecord::EVENT_TYPE],

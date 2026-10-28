@@ -40,18 +40,47 @@ fn prompt(id: &str, at_s: i64) -> Event {
 fn compute(inputs: &[Event]) -> Vec<Event> {
     let env = Env::at(at(2_000_000));
     let mut acts = Vec::new();
-    for session in inputs.iter().filter(|event| event.event_type == "polylogue.session") {
-        let selected: Vec<_> = inputs.iter().filter(|event| event.payload["session"] == session.payload["session"]).cloned().collect();
-        acts.extend(Keyed::compute(&WorkActs, &json!({"session":session.payload["session"]}), &selected, &env).outputs);
+    for session in inputs
+        .iter()
+        .filter(|event| event.event_type == "polylogue.session")
+    {
+        let selected: Vec<_> = inputs
+            .iter()
+            .filter(|event| event.payload["session"] == session.payload["session"])
+            .cloned()
+            .collect();
+        acts.extend(
+            Keyed::compute(
+                &WorkActs,
+                &json!({"session":session.payload["session"]}),
+                &selected,
+                &env,
+            )
+            .outputs,
+        );
     }
-    let keys: BTreeSet<_> = acts.iter().filter_map(|event| event.payload["episode"].as_str().map(str::to_owned)).collect();
+    let keys: BTreeSet<_> = acts
+        .iter()
+        .filter_map(|event| event.payload["episode"].as_str().map(str::to_owned))
+        .collect();
     let mut outputs = Vec::new();
     for episode in keys {
-        let mut result = Keyed::compute(&WorkEpisodes, &json!({"episode":episode}), &acts, &env).outputs;
-        let episode_event = result.iter().find(|event| event.event_type == "work.episode").unwrap().clone();
-        let mut selected: Vec<_> = acts.iter().filter(|event| event.payload["episode"] == episode).cloned().collect();
+        let mut result =
+            Keyed::compute(&WorkEpisodes, &json!({"episode":episode}), &acts, &env).outputs;
+        let episode_event = result
+            .iter()
+            .find(|event| event.event_type == "work.episode")
+            .unwrap()
+            .clone();
+        let mut selected: Vec<_> = acts
+            .iter()
+            .filter(|event| event.payload["episode"] == episode)
+            .cloned()
+            .collect();
         selected.push(episode_event);
-        result.extend(Keyed::compute(&ContextPacks, &json!({"episode":episode}), &selected, &env).outputs);
+        result.extend(
+            Keyed::compute(&ContextPacks, &json!({"episode":episode}), &selected, &env).outputs,
+        );
         outputs.extend(result);
     }
     outputs
@@ -160,9 +189,18 @@ fn wake_days_follow_rest_while_calculation_days_stay_fixed() {
         sleep("first", 0, 8 * 3600),
         sleep("second", 28 * 3600, 36 * 3600),
     ];
-    let output =
-        [8 * 3600, 36 * 3600].into_iter().flat_map(|start|
-            Keyed::compute(&ActivityDays, &json!({"start":at(start)}), &inputs, &Env::at(at(40 * 3600))).outputs).collect::<Vec<_>>();
+    let output = [8 * 3600, 36 * 3600]
+        .into_iter()
+        .flat_map(|start| {
+            Keyed::compute(
+                &ActivityDays,
+                &json!({"start":at(start)}),
+                &inputs,
+                &Env::at(at(40 * 3600)),
+            )
+            .outputs
+        })
+        .collect::<Vec<_>>();
     let days: Vec<_> = output
         .iter()
         .map(|event| event.payload_as::<ActivityDay>().unwrap())
@@ -206,27 +244,70 @@ fn work_queries_select_a_session_then_the_recorded_objective_range() {
     let query = Keyed::inputs(&WorkActs, &json!({"session":"a"}), &env).unwrap();
     assert!(query.admits(&input));
     assert!(!query.admits(&session("b", Some("task"))));
-    let output = Keyed::compute(&WorkActs, &json!({"session":"a"}), &[input, prompt("a", 0)], &env);
-    let key = Keyed::keys_for(&WorkEpisodes, &KeyView { event_type: "work.act", ts_orig: Some(at(0)), payload: &output.outputs[0].payload }, &env).remove(0);
+    let output = Keyed::compute(
+        &WorkActs,
+        &json!({"session":"a"}),
+        &[input, prompt("a", 0)],
+        &env,
+    );
+    let key = Keyed::keys_for(
+        &WorkEpisodes,
+        &KeyView {
+            event_type: "work.act",
+            ts_orig: Some(at(0)),
+            payload: &output.outputs[0].payload,
+        },
+        &env,
+    )
+    .remove(0);
     let query = Keyed::inputs(&WorkEpisodes, &key, &env).unwrap();
-    let Some(InputRange::Extent { kinds }) = query.range else { panic!("objective range") };
+    let Some(InputRange::Extent { kinds }) = query.range else {
+        panic!("objective range")
+    };
     assert_eq!(kinds[0].equal, [("episode", key["episode"].clone())]);
-    assert_eq!(Keyed::compute(&WorkEpisodes, &key, &output.outputs, &env).outputs[0].payload["agent_s"], Value::Null);
+    assert_eq!(
+        Keyed::compute(&WorkEpisodes, &key, &output.outputs, &env).outputs[0].payload["agent_s"],
+        Value::Null
+    );
 }
 
 #[devkit::test]
 fn conflicting_recorded_objectives_do_not_choose_by_arrival_order() {
-    let inputs = [session("a", Some("first")), session("a", Some("second")), prompt("a", 0)];
-    assert!(Keyed::compute(&WorkActs, &json!({"session":"a"}), &inputs, &Env::at(at(100))).outputs.is_empty());
+    let inputs = [
+        session("a", Some("first")),
+        session("a", Some("second")),
+        prompt("a", 0),
+    ];
+    assert!(
+        Keyed::compute(
+            &WorkActs,
+            &json!({"session":"a"}),
+            &inputs,
+            &Env::at(at(100))
+        )
+        .outputs
+        .is_empty()
+    );
 }
 
 #[devkit::test]
 fn act_instants_without_duration_never_extend_into_later_hour_queries() {
     let env = Env::at(at(10_000));
-    let acts = Keyed::compute(&WorkActs, &json!({"session":"a"}), &[session("a", None), prompt("a", 0)], &env).outputs;
-    assert_eq!(acts.len(), 1, "an objective is not needed to establish an act");
+    let acts = Keyed::compute(
+        &WorkActs,
+        &json!({"session":"a"}),
+        &[session("a", None), prompt("a", 0)],
+        &env,
+    )
+    .outputs;
+    assert_eq!(
+        acts.len(),
+        1,
+        "an objective is not needed to establish an act"
+    );
     assert!(acts[0].payload["episode"].is_null());
     let hour = env.time_settings.hour_start(at(7200)).unwrap();
-    let query = Keyed::inputs(&crate::activity::ActivitySpans, &json!({"hour":hour}), &env).unwrap();
+    let query =
+        Keyed::inputs(&crate::activity::ActivitySpans, &json!({"hour":hour}), &env).unwrap();
     assert!(!query.admits(&acts[0]));
 }

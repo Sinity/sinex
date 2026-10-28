@@ -47,7 +47,8 @@ pub(crate) const EVENT_CHILDREN: &str = "CREATE TABLE core.event_children (
   PRIMARY KEY (parent, child),
   CHECK (parent <> child)
 )";
-pub(crate) const EVENT_CHILDREN_CHILD: &str = "CREATE INDEX event_children_child ON core.event_children (child)";
+pub(crate) const EVENT_CHILDREN_CHILD: &str =
+    "CREATE INDEX event_children_child ON core.event_children (child)";
 
 pub(crate) fn tables(c: &Checks) -> Vec<String> {
     let event_columns = format!(

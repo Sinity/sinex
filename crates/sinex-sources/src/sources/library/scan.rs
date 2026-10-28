@@ -220,7 +220,9 @@ pub struct ScanState {
 
 impl ScanState {
     #[cfg(test)]
-    pub(super) fn files_hashed(&self) -> usize { self.files_hashed }
+    pub(super) fn files_hashed(&self) -> usize {
+        self.files_hashed
+    }
     /// What the scan knows, as saved with the cursor.
     fn memory(&self) -> std::sync::Arc<[u8]> {
         let mut files: Vec<(&String, &Known)> = self.files.iter().collect();
@@ -317,7 +319,9 @@ pub struct LibraryReader {
 
 impl LibraryReader {
     #[cfg(test)]
-    pub(super) fn files_hashed(&self) -> usize { self.state.files_hashed }
+    pub(super) fn files_hashed(&self) -> usize {
+        self.state.files_hashed
+    }
     pub fn new(scan: LibraryScan) -> Self {
         Self {
             scan,
@@ -1052,7 +1056,6 @@ struct Prepared {
     height: Option<u32>,
     duration_ms: Option<u64>,
 }
-
 
 #[cfg(test)]
 mod tests;

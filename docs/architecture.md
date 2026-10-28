@@ -237,8 +237,9 @@ inserts events.
 
 `sinex-derivations` holds computations over supplied events. The daemon's
 derivation runner reads their inputs and submits each key's new outputs
-through admission. Derived events are the one store for derived results:
-nothing a derivation or an analysis computes is kept anywhere else.
+through admission. Keyed and per-event outputs are stored derived events.
+Recipe answers, panels and briefs are currently computed on request. Converting
+those results to stored, exact-parent events remains unfinished.
 
 A key reads events of some kinds in a time window: a kind is an event type,
 optionally only the events whose payload fields have given values (Sinnix lake

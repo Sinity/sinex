@@ -110,8 +110,11 @@ impl PerEvent for DocumentText {
             return Err("not a library copy".into());
         };
         let Some(bytes) = input.bytes else {
-            return if self.reads_for(copy_event) == Reads::Nothing { Ok(Vec::new()) }
-                else { Err("the stored document's bytes were not read".into()) };
+            return if self.reads_for(copy_event) == Reads::Nothing {
+                Ok(Vec::new())
+            } else {
+                Err("the stored document's bytes were not read".into())
+            };
         };
         let Some(format) = extract::format(&copy.media_type, &copy.path, bytes) else {
             return Ok(Vec::new());
@@ -148,8 +151,12 @@ impl PerEvent for DocumentText {
             .filter(|(_, _, text)| !text.is_empty())
             .map(|(part, title, text)| {
                 let payload = DocumentTextPayload {
-                    record: serde_json::to_string(&(&copy_event.source, copy_event.event_type,
-                        sinex_derivations::derived_event::record_identity(copy_event))).expect("record identity serializes"),
+                    record: serde_json::to_string(&(
+                        &copy_event.source,
+                        copy_event.event_type,
+                        sinex_derivations::derived_event::record_identity(copy_event),
+                    ))
+                    .expect("record identity serializes"),
                     content: copy.content.clone(),
                     path: copy.path.clone(),
                     format: format.name().to_owned(),

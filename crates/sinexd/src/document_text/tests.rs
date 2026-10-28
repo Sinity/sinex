@@ -114,7 +114,17 @@ fn a_stored_document_requires_its_bytes_and_a_referenced_copy_gives_no_text() {
     let mut referenced = event.clone();
     referenced.payload["stored"] = serde_json::json!(false);
     assert_eq!(d.reads_for(&referenced), Reads::Nothing);
-    assert!(d.derive(Input { event:&referenced, bytes:None }, &Env::at(sinex_model::Timestamp::now())).unwrap().is_empty());
+    assert!(
+        d.derive(
+            Input {
+                event: &referenced,
+                bytes: None
+            },
+            &Env::at(sinex_model::Timestamp::now())
+        )
+        .unwrap()
+        .is_empty()
+    );
 
     let env = Env::at(sinex_model::Timestamp::now());
     let out = d
@@ -136,19 +146,56 @@ fn a_stored_document_requires_its_bytes_and_a_referenced_copy_gives_no_text() {
     assert_eq!(out[0].ts_orig.at, copy.modified_at);
     let mut other_copy = copy.clone();
     other_copy.path = "/lib/other/page.html".into();
-    other_copy.item_key = sinex_model::event_types::library::item_key("h", "/lib", "other/page.html");
+    other_copy.item_key =
+        sinex_model::event_types::library::item_key("h", "/lib", "other/page.html");
     other_copy.item = sinex_model::event_types::library::item_id(&other_copy.item_key);
-    let other = Event::build(&other_copy, "library.scan", Origin::Record {
-        location:sinex_model::RecordLocation { material:sinex_model::MaterialId::new(), anchor:0 }, output_index:0,
-    }, ReadingOrder(0), [1;32], sinex_model::Class::Guarded).unwrap();
-    let other_text = d.derive(Input { event:&other, bytes:Some(b"<title>T</title><p>Body</p>") }, &env).unwrap();
-    assert_ne!(out[0].equivalence_key, other_text[0].equivalence_key, "identical bytes in different copies keep independent parents");
+    let other = Event::build(
+        &other_copy,
+        "library.scan",
+        Origin::Record {
+            location: sinex_model::RecordLocation {
+                material: sinex_model::MaterialId::new(),
+                anchor: 0,
+            },
+            output_index: 0,
+        },
+        ReadingOrder(0),
+        [1; 32],
+        sinex_model::Class::Guarded,
+    )
+    .unwrap();
+    let other_text = d
+        .derive(
+            Input {
+                event: &other,
+                bytes: Some(b"<title>T</title><p>Body</p>"),
+            },
+            &env,
+        )
+        .unwrap();
+    assert_ne!(
+        out[0].equivalence_key, other_text[0].equivalence_key,
+        "identical bytes in different copies keep independent parents"
+    );
     assert_eq!(other_text[0].class, sinex_model::Class::Guarded);
     let mut replayed = event.clone();
     replayed.id = sinex_model::EventId::new();
-    let replayed_text = d.derive(Input { event:&replayed, bytes:Some(b"<title>T</title><p>Body</p>") }, &env).unwrap();
+    let replayed_text = d
+        .derive(
+            Input {
+                event: &replayed,
+                bytes: Some(b"<title>T</title><p>Body</p>"),
+            },
+            &env,
+        )
+        .unwrap();
     assert_eq!(out[0].equivalence_key, replayed_text[0].equivalence_key);
-    assert_eq!(replayed_text[0].origin, Origin::Derived { parents:vec![replayed.id] });
+    assert_eq!(
+        replayed_text[0].origin,
+        Origin::Derived {
+            parents: vec![replayed.id]
+        }
+    );
 
     assert!(
         d.derive(
@@ -225,7 +272,16 @@ fn the_local_pdf_reader_extracts_the_stored_document() {
 
 #[devkit::test]
 fn html_titles_use_the_title_element_and_respect_quoted_attributes() {
-    let (title, _) = text(Format::Html, b"<title-extra>Wrong</title-extra><title data-note='x > y'>Right &amp; complete</title>").unwrap();
+    let (title, _) = text(
+        Format::Html,
+        b"<title-extra>Wrong</title-extra><title data-note='x > y'>Right &amp; complete</title>",
+    )
+    .unwrap();
     assert_eq!(title.as_deref(), Some("Right & complete"));
-    assert_eq!(text(Format::Html, b"<title-extra>Wrong</title-extra>").unwrap().0, None);
+    assert_eq!(
+        text(Format::Html, b"<title-extra>Wrong</title-extra>")
+            .unwrap()
+            .0,
+        None
+    );
 }

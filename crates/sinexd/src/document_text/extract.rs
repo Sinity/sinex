@@ -154,7 +154,11 @@ fn element_text(markup: &str, name: &str) -> Option<String> {
 
 fn element_start(markup: &str, prefix: &str) -> Option<usize> {
     markup.match_indices(prefix).find_map(|(at, _)| {
-        markup.as_bytes().get(at+prefix.len()).filter(|byte| byte.is_ascii_whitespace() || matches!(**byte, b'>' | b'/')).map(|_| at)
+        markup
+            .as_bytes()
+            .get(at + prefix.len())
+            .filter(|byte| byte.is_ascii_whitespace() || matches!(**byte, b'>' | b'/'))
+            .map(|_| at)
     })
 }
 

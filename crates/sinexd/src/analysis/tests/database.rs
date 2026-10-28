@@ -80,7 +80,10 @@ impl World {
             url.clone(),
             connection,
             queues,
-            Arc::new(Keys::new(sinex_derivations::keyed(), sinex_model::time_settings::TimeSettings::operator_default())),
+            Arc::new(Keys::new(
+                sinex_derivations::keyed(),
+                sinex_model::time_settings::TimeSettings::operator_default(),
+            )),
             None,
         ));
         Self {

@@ -1,5 +1,5 @@
 use super::*;
-use crate::sources::library::tests::{png, scan, stored, read, tmp};
+use crate::sources::library::tests::{png, read, scan, stored, tmp};
 use sinex_model::{Class, RecordOutcome};
 use sinex_source_core::{DrainInput, Limits, drain};
 
@@ -73,7 +73,6 @@ fn an_unreadable_directory_reports_partial_coverage_and_other_files_continue() {
     assert!(retry[0].path.ends_with("nested/second.png"));
 }
 
-
 #[devkit::test]
 fn a_scan_records_completion_once_after_all_parts() {
     let root = tmp();
@@ -117,4 +116,3 @@ fn a_scan_records_completion_once_after_all_parts() {
     }
     std::fs::remove_dir_all(root).unwrap();
 }
-

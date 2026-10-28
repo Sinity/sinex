@@ -64,9 +64,21 @@ pub struct Window {
 /// Time bounds resolved from live records within the reader's snapshot.
 #[derive(Clone, Debug, PartialEq)]
 pub enum InputRange {
-    Connected { kinds: Vec<Kind>, at: OffsetDateTime, end_field: &'static str, gap_seconds: f64 },
-    Extent { kinds: Vec<Kind> },
-    UntilNext { start: OffsetDateTime, kinds: Vec<Kind>, field: &'static str, now: OffsetDateTime },
+    Connected {
+        kinds: Vec<Kind>,
+        at: OffsetDateTime,
+        end_field: &'static str,
+        gap_seconds: f64,
+    },
+    Extent {
+        kinds: Vec<Kind>,
+    },
+    UntilNext {
+        start: OffsetDateTime,
+        kinds: Vec<Kind>,
+        field: &'static str,
+        now: OffsetDateTime,
+    },
 }
 
 /// A dirty key: recompute it.
@@ -182,11 +194,18 @@ macro_rules! committed {
 }
 
 async fn resolve_range(conn: &mut PgConnection, w: &Window) -> Result<Option<Window>> {
-    let Some(range) = &w.range else { return Ok(Some(w.clone())) };
+    let Some(range) = &w.range else {
+        return Ok(Some(w.clone()));
+    };
     let mut resolved = w.clone();
     resolved.range = None;
     match range {
-        InputRange::Connected { kinds, at, end_field, gap_seconds } => {
+        InputRange::Connected {
+            kinds,
+            at,
+            end_field,
+            gap_seconds,
+        } => {
             let (types, contains) = kind_arrays(kinds);
             let bounds = sqlx::query!(
                 r#"WITH RECURSIVE chain(id, start, finish) AS (
@@ -216,7 +235,9 @@ async fn resolve_range(conn: &mut PgConnection, w: &Window) -> Result<Option<Win
                    SELECT min(start) AS start, max(finish) + interval '1 second' * $5::double precision AS finish FROM chain"#,
                 &types, &contains, *end_field, at, gap_seconds,
             ).fetch_one(&mut *conn).await?;
-            let (Some(start), Some(end)) = (bounds.start, bounds.finish) else { return Ok(None) };
+            let (Some(start), Some(end)) = (bounds.start, bounds.finish) else {
+                return Ok(None);
+            };
             resolved.start = Some(start);
             resolved.end = Some(end);
         }
@@ -230,11 +251,18 @@ async fn resolve_range(conn: &mut PgConnection, w: &Window) -> Result<Option<Win
                      AND NOT EXISTS (SELECT 1 FROM audit.archived a WHERE a.event_id = e.id)"#,
                 &types, &contains,
             ).fetch_one(&mut *conn).await?;
-            let (Some(start), Some(end)) = (bounds.start, bounds.finish) else { return Ok(None) };
+            let (Some(start), Some(end)) = (bounds.start, bounds.finish) else {
+                return Ok(None);
+            };
             resolved.start = Some(start);
             resolved.end = Some(end);
         }
-        InputRange::UntilNext { start, kinds, field, now } => {
+        InputRange::UntilNext {
+            start,
+            kinds,
+            field,
+            now,
+        } => {
             let (types, contains) = kind_arrays(kinds);
             let end = sqlx::query_scalar!(
                 r#"SELECT min((e.payload->>$3)::timestamptz) AS finish FROM core.events e
@@ -254,7 +282,9 @@ async fn resolve_range(conn: &mut PgConnection, w: &Window) -> Result<Option<Win
 /// Live events in the window, sorted by `ts_orig` then commit order, with the
 /// neighbours appended (also sorted, without repeats).
 pub async fn read_window(conn: &mut PgConnection, w: &Window) -> Result<Vec<Committed>> {
-    let Some(resolved) = resolve_range(conn, w).await? else { return Ok(Vec::new()) };
+    let Some(resolved) = resolve_range(conn, w).await? else {
+        return Ok(Vec::new());
+    };
     let w = &resolved;
     let (types, contains) = kind_arrays(&w.kinds);
     let mut interval_types = Vec::new();
@@ -514,14 +544,19 @@ impl ValueGroup {
 impl Windows {
     pub fn new(windows: Vec<Window>, page: i64, bytes: i64) -> Self {
         let (alone, mut plain): (Vec<usize>, Vec<usize>) = (0..windows.len()).partition(|&i| {
-            windows[i].unknown_times || windows[i].range.is_some() || !windows[i].before.is_empty()
-                || !windows[i].after.is_empty() || !windows[i].intervals.is_empty()
+            windows[i].unknown_times
+                || windows[i].range.is_some()
+                || !windows[i].before.is_empty()
+                || !windows[i].after.is_empty()
+                || !windows[i].intervals.is_empty()
         });
         let mut value_groups: std::collections::BTreeMap<ValueGroupKey, ValueGroup> =
             Default::default();
         plain.retain(|&index| {
             let window = &windows[index];
-            let (Some(start), Some(end)) = (window.start, window.end) else { return true };
+            let (Some(start), Some(end)) = (window.start, window.end) else {
+                return true;
+            };
             let Some((field, value)) = field_value(window) else {
                 return true;
             };
@@ -885,7 +920,11 @@ pub async fn dirty(
 
 /// Keys of `derivation` waiting on evidence outside their window, with when
 /// each started waiting.
-pub async fn waiting(conn: &mut PgConnection, derivation: &str, due: Option<time::OffsetDateTime>) -> Result<Vec<(Value, Timestamp)>> {
+pub async fn waiting(
+    conn: &mut PgConnection,
+    derivation: &str,
+    due: Option<time::OffsetDateTime>,
+) -> Result<Vec<(Value, Timestamp)>> {
     Ok(sqlx::query!(
         "SELECT key, since FROM derivation.waiting WHERE derivation = $1 AND ($2::timestamptz IS NULL OR refresh_at <= $2) ORDER BY since",
         derivation, due,

@@ -17,10 +17,15 @@ impl Keyed for ActivityWindows {
         inputs(key, env)
     }
     fn refresh_at(&self, outputs: &[Event], _: &Env) -> Option<Timestamp> {
-        outputs.iter().filter(|event| event.payload["provisional"] == true).filter_map(|event| {
-            let end: Timestamp = serde_json::from_value(event.payload.get("ended_at")?.clone()).ok()?;
-            Timestamp::from_unix_ns(end.unix_ns() + i128::from(300)*SECOND).ok()
-        }).min()
+        outputs
+            .iter()
+            .filter(|event| event.payload["provisional"] == true)
+            .filter_map(|event| {
+                let end: Timestamp =
+                    serde_json::from_value(event.payload.get("ended_at")?.clone()).ok()?;
+                Timestamp::from_unix_ns(end.unix_ns() + i128::from(300) * SECOND).ok()
+            })
+            .min()
     }
     fn key_state(&self, key: &Value, env: &Env) -> KeyState {
         key_state(key, env)
@@ -111,7 +116,8 @@ impl Keyed for ActivityWindows {
                 } else {
                     None
                 };
-                let continues_after = end > until || (end == until && group.iter().any(|piece| piece.start == until));
+                let continues_after =
+                    end > until || (end == until && group.iter().any(|piece| piece.start == until));
                 let provisional = reason.is_none() && !continues_after;
                 waiting |= provisional;
                 let context: Vec<_> = inputs

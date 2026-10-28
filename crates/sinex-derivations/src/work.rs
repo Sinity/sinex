@@ -4,19 +4,28 @@ use crate::activity::{SECOND, evidence, stable, union_seconds};
 use crate::derived_event::derived;
 use crate::{AffectedRange, Computed, Env, InputQuery, InputRange, KeyState, KeyView, Keyed, Kind};
 use serde_json::{Value, json};
-use sinex_model::{Event, Timestamp};
 use sinex_model::event_types::{activity::Agency, polylogue, work::*};
+use sinex_model::{Event, Timestamp};
 use std::collections::{BTreeMap, BTreeSet};
 
 pub struct WorkActs;
 impl Keyed for WorkActs {
     const NAME: &'static str = "work.acts";
     const VERSION: u32 = 2;
-    const INPUTS: &'static [&'static str] = &["polylogue.session", "polylogue.message", "polylogue.tool_call", "polylogue.turn"];
+    const INPUTS: &'static [&'static str] = &[
+        "polylogue.session",
+        "polylogue.message",
+        "polylogue.tool_call",
+        "polylogue.turn",
+    ];
     const OUTPUTS: &'static [&'static str] = &["work.act"];
     fn keys_for(&self, input: &KeyView<'_>, _: &Env) -> Vec<Value> {
-        input.payload.get("session").filter(|id| id.as_str().is_some_and(|id| !id.is_empty()))
-            .map(|id| vec![json!({"session": id})]).unwrap_or_default()
+        input
+            .payload
+            .get("session")
+            .filter(|id| id.as_str().is_some_and(|id| !id.is_empty()))
+            .map(|id| vec![json!({"session": id})])
+            .unwrap_or_default()
     }
     fn inputs(&self, key: &Value, _: &Env) -> Option<InputQuery> {
         let mut query = InputQuery::all(Self::INPUTS.iter().map(|kind| Kind::all(kind)).collect())
@@ -24,41 +33,100 @@ impl Keyed for WorkActs {
         query.unknown_times = true;
         Some(query)
     }
-    fn key_state(&self, _: &Value, _: &Env) -> KeyState { KeyState::Closed }
+    fn key_state(&self, _: &Value, _: &Env) -> KeyState {
+        KeyState::Closed
+    }
     fn compute(&self, _: &Value, inputs: &[Event], _: &Env) -> Computed {
-        let mut sessions: Vec<_> = inputs.iter().filter(|event| event.event_type == "polylogue.session").collect();
+        let mut sessions: Vec<_> = inputs
+            .iter()
+            .filter(|event| event.event_type == "polylogue.session")
+            .collect();
         sessions.sort_by_cached_key(|event| stable(event));
-        let Some(session) = sessions.first().copied() else { return Computed::default() };
-        let Some(metadata) = session.payload_as::<polylogue::Session>() else { return Computed::default() };
-        if sessions.iter().any(|event| event.payload["repo"] != session.payload["repo"]
-            || event.payload["branch"] != session.payload["branch"] || event.payload["machine"] != session.payload["machine"]
-            || event.payload["kind"] != session.payload["kind"] || event.payload["mode"] != session.payload["mode"]) {
+        let Some(session) = sessions.first().copied() else {
+            return Computed::default();
+        };
+        let Some(metadata) = session.payload_as::<polylogue::Session>() else {
+            return Computed::default();
+        };
+        if sessions.iter().any(|event| {
+            event.payload["repo"] != session.payload["repo"]
+                || event.payload["branch"] != session.payload["branch"]
+                || event.payload["machine"] != session.payload["machine"]
+                || event.payload["kind"] != session.payload["kind"]
+                || event.payload["mode"] != session.payload["mode"]
+        }) {
             return Computed::default();
         }
         let label = metadata.branch.clone().filter(|branch| !branch.is_empty());
-        let objective = metadata.repo.clone().filter(|repo| !repo.is_empty()).zip(label.clone())
-            .map(|(repository, branch)| Objective { kind:"branch".into(), reference:json!([repository,branch]).to_string(), repository });
-        let episode = objective.as_ref().map(|objective| json!([objective.kind,objective.reference]).to_string());
-        let mut ordered: Vec<_> = inputs.iter().filter(|event| event.ts_orig.at.is_some()).collect();
+        let objective = metadata
+            .repo
+            .clone()
+            .filter(|repo| !repo.is_empty())
+            .zip(label.clone())
+            .map(|(repository, branch)| Objective {
+                kind: "branch".into(),
+                reference: json!([repository, branch]).to_string(),
+                repository,
+            });
+        let episode = objective
+            .as_ref()
+            .map(|objective| json!([objective.kind, objective.reference]).to_string());
+        let mut ordered: Vec<_> = inputs
+            .iter()
+            .filter(|event| event.ts_orig.at.is_some())
+            .collect();
         ordered.sort_by_cached_key(|event| (event.ts_orig.at, stable(event)));
-        let outputs = ordered.into_iter().filter_map(|event| {
-            let operator = event.event_type == "polylogue.message" && event.payload["written_by"] == "human"
-                && event.payload["role"] == "user" && event.payload["prompt_kind"] == "prose"
-                && metadata.kind == "main" && metadata.mode.is_none();
-            let delegated = matches!(event.event_type, "polylogue.tool_call" | "polylogue.turn");
-            if !operator && !delegated { return None }
-            Some(derived(&WorkAct {
-                act: stable(event), session: metadata.session.clone(), episode: episode.clone(), objective: objective.clone(),
-                label: label.clone(), label_source: evidence(session), machine: metadata.machine.clone(),
-                at: event.ts_orig.at.unwrap(),
-                ended_at: event.payload_as::<polylogue::Turn>().and_then(|turn| turn.end)
-                    .filter(|end| Some(*end) >= event.ts_orig.at),
-                evidence: evidence(event), agency: if operator { Agency::Operator } else { Agency::Delegated },
-                action: if operator { "prompt".into() } else { event.payload["action"].as_str().unwrap_or("turn").into() },
-                path: event.payload["path"].as_str().map(str::to_owned), failed: event.payload["outcome"] == "error",
-            }, Self::NAME, [event].into_iter().chain(sessions.iter().copied())))
-        }).collect();
-        Computed { outputs, waiting: false }
+        let outputs = ordered
+            .into_iter()
+            .filter_map(|event| {
+                let operator = event.event_type == "polylogue.message"
+                    && event.payload["written_by"] == "human"
+                    && event.payload["role"] == "user"
+                    && event.payload["prompt_kind"] == "prose"
+                    && metadata.kind == "main"
+                    && metadata.mode.is_none();
+                let delegated =
+                    matches!(event.event_type, "polylogue.tool_call" | "polylogue.turn");
+                if !operator && !delegated {
+                    return None;
+                }
+                Some(derived(
+                    &WorkAct {
+                        act: stable(event),
+                        session: metadata.session.clone(),
+                        episode: episode.clone(),
+                        objective: objective.clone(),
+                        label: label.clone(),
+                        label_source: evidence(session),
+                        machine: metadata.machine.clone(),
+                        at: event.ts_orig.at.unwrap(),
+                        ended_at: event
+                            .payload_as::<polylogue::Turn>()
+                            .and_then(|turn| turn.end)
+                            .filter(|end| Some(*end) >= event.ts_orig.at),
+                        evidence: evidence(event),
+                        agency: if operator {
+                            Agency::Operator
+                        } else {
+                            Agency::Delegated
+                        },
+                        action: if operator {
+                            "prompt".into()
+                        } else {
+                            event.payload["action"].as_str().unwrap_or("turn").into()
+                        },
+                        path: event.payload["path"].as_str().map(str::to_owned),
+                        failed: event.payload["outcome"] == "error",
+                    },
+                    Self::NAME,
+                    [event].into_iter().chain(sessions.iter().copied()),
+                ))
+            })
+            .collect();
+        Computed {
+            outputs,
+            waiting: false,
+        }
     }
 }
 
@@ -73,86 +141,236 @@ impl Keyed for WorkEpisodes {
     const NAME: &'static str = "work.episodes";
     const VERSION: u32 = 3;
     const INPUTS: &'static [&'static str] = &["work.act", "state.interval", "rest.fused"];
-    const OUTPUTS: &'static [&'static str] = &["work.episode", "work.suspension", "work.resumption"];
+    const OUTPUTS: &'static [&'static str] =
+        &["work.episode", "work.suspension", "work.resumption"];
     fn keys_for(&self, input: &KeyView<'_>, _: &Env) -> Vec<Value> {
-        if input.event_type != "work.act" { return vec![] }
-        input.payload.get("episode").filter(|id| id.as_str().is_some()).map(|id| vec![json!({"episode":id})]).unwrap_or_default()
+        if input.event_type != "work.act" {
+            return vec![];
+        }
+        input
+            .payload
+            .get("episode")
+            .filter(|id| id.as_str().is_some())
+            .map(|id| vec![json!({"episode":id})])
+            .unwrap_or_default()
     }
     fn affected_ranges(&self, input: &KeyView<'_>, _: &Env) -> Vec<AffectedRange> {
-        input.ts_orig.map(|at| vec![AffectedRange {
-            open_field: None, output_type: "work.episode", start_field: "started_at", end_field: "last_activity", start: at,
-            end: input.payload.get("ended_at").and_then(|value| serde_json::from_value::<Timestamp>(value.clone()).ok()).unwrap_or(at),
-        }]).unwrap_or_default()
+        input
+            .ts_orig
+            .map(|at| {
+                vec![AffectedRange {
+                    open_field: None,
+                    output_type: "work.episode",
+                    start_field: "started_at",
+                    end_field: "last_activity",
+                    start: at,
+                    end: input
+                        .payload
+                        .get("ended_at")
+                        .and_then(|value| serde_json::from_value::<Timestamp>(value.clone()).ok())
+                        .unwrap_or(at),
+                }]
+            })
+            .unwrap_or_default()
     }
     fn inputs(&self, key: &Value, _: &Env) -> Option<InputQuery> {
         let mut query = InputQuery::all(Self::INPUTS.iter().map(|kind| Kind::all(kind)).collect());
-        query.range = Some(InputRange::Extent { kinds: vec![episode_kind(key.get("episode")?)] });
-        query.intervals = vec![("state.interval", sinex_model::clock::IntervalEnd::At("ended_at")), ("rest.fused", sinex_model::clock::IntervalEnd::At("ended_at"))];
+        query.range = Some(InputRange::Extent {
+            kinds: vec![episode_kind(key.get("episode")?)],
+        });
+        query.intervals = vec![
+            (
+                "state.interval",
+                sinex_model::clock::IntervalEnd::At("ended_at"),
+            ),
+            (
+                "rest.fused",
+                sinex_model::clock::IntervalEnd::At("ended_at"),
+            ),
+        ];
         Some(query)
     }
     fn refresh_at(&self, outputs: &[Event], _: &Env) -> Option<Timestamp> {
-        outputs.iter().filter_map(|event| event.payload_as::<WorkEpisode>()).filter(|episode| episode.state == "open")
-            .filter_map(|episode| Timestamp::from_unix_ns(episode.last_activity.unix_ns()+14*86_400*SECOND).ok()).min()
+        outputs
+            .iter()
+            .filter_map(|event| event.payload_as::<WorkEpisode>())
+            .filter(|episode| episode.state == "open")
+            .filter_map(|episode| {
+                Timestamp::from_unix_ns(episode.last_activity.unix_ns() + 14 * 86_400 * SECOND).ok()
+            })
+            .min()
     }
-    fn key_state(&self, _: &Value, _: &Env) -> KeyState { KeyState::Open }
+    fn key_state(&self, _: &Value, _: &Env) -> KeyState {
+        KeyState::Open
+    }
     fn compute(&self, key: &Value, inputs: &[Event], env: &Env) -> Computed {
-        let mut acts: Vec<_> = inputs.iter().filter_map(|event| Some((event, event.payload_as::<WorkAct>()?))).collect();
+        let mut acts: Vec<_> = inputs
+            .iter()
+            .filter_map(|event| Some((event, event.payload_as::<WorkAct>()?)))
+            .collect();
         acts.sort_by_cached_key(|(event, act)| (act.at, stable(event)));
-        let group: Vec<_> = acts.iter().filter(|(_, act)| key["episode"].as_str() == act.episode.as_deref() && act.episode.is_some()).collect();
-        let (Some((_, first)), Some(_)) = (group.first().copied(), group.last().copied()) else { return Computed::default() };
+        let group: Vec<_> = acts
+            .iter()
+            .filter(|(_, act)| {
+                key["episode"].as_str() == act.episode.as_deref() && act.episode.is_some()
+            })
+            .collect();
+        let (Some((_, first)), Some(_)) = (group.first().copied(), group.last().copied()) else {
+            return Computed::default();
+        };
         let episode = first.episode.clone().expect("objective key");
-        let last_activity = group.iter().map(|(_, act)| act.ended_at.unwrap_or(act.at)).max().unwrap();
+        let last_activity = group
+            .iter()
+            .map(|(_, act)| act.ended_at.unwrap_or(act.at))
+            .max()
+            .unwrap();
         let mut parents: Vec<_> = group.iter().map(|(event, _)| *event).collect();
         let mut outputs = Vec::new();
         let mut suspensions = Vec::new();
         let mut resumptions = Vec::new();
         let mut absorbed_excursions = 0;
-        let operator: Vec<_> = group.iter().filter(|(_, act)| act.agency == Agency::Operator).copied().collect();
+        let operator: Vec<_> = group
+            .iter()
+            .filter(|(_, act)| act.agency == Agency::Operator)
+            .copied()
+            .collect();
         for pair in operator.windows(2) {
             let ((before_event, before), (after_event, after)) = (pair[0], pair[1]);
-            let between: Vec<_> = acts.iter().filter(|(_, act)| act.agency == Agency::Operator && act.at > before.at && act.at < after.at && act.episode.as_deref() != Some(episode.as_str())).collect();
-            let absence: Vec<_> = inputs.iter().filter(|event| {
-                let Some(start) = event.ts_orig.at else { return false };
-                let end = event.payload.get("ended_at").and_then(|end| serde_json::from_value::<Timestamp>(end.clone()).ok());
-                start < after.at && end.is_none_or(|end| end > before.at)
-                    && (event.event_type == "rest.fused"
-                        || (event.event_type == "state.interval" && before.machine.as_ref().is_some_and(|host| event.payload.pointer("/attributes/host").and_then(Value::as_str) == Some(host.as_str()))
-                            && matches!(event.payload["label"].as_str(), Some("locked" | "suspended" | "off"))))
-            }).collect();
-            if between.is_empty() && absence.is_empty() { continue }
-            if absence.is_empty() && between.first().is_some_and(|(_, act)| after.at.unix_ns() - act.at.unix_ns() < 30 * SECOND) {
+            let between: Vec<_> = acts
+                .iter()
+                .filter(|(_, act)| {
+                    act.agency == Agency::Operator
+                        && act.at > before.at
+                        && act.at < after.at
+                        && act.episode.as_deref() != Some(episode.as_str())
+                })
+                .collect();
+            let absence: Vec<_> = inputs
+                .iter()
+                .filter(|event| {
+                    let Some(start) = event.ts_orig.at else {
+                        return false;
+                    };
+                    let end = event
+                        .payload
+                        .get("ended_at")
+                        .and_then(|end| serde_json::from_value::<Timestamp>(end.clone()).ok());
+                    start < after.at
+                        && end.is_none_or(|end| end > before.at)
+                        && (event.event_type == "rest.fused"
+                            || (event.event_type == "state.interval"
+                                && before.machine.as_ref().is_some_and(|host| {
+                                    event
+                                        .payload
+                                        .pointer("/attributes/host")
+                                        .and_then(Value::as_str)
+                                        == Some(host.as_str())
+                                })
+                                && matches!(
+                                    event.payload["label"].as_str(),
+                                    Some("locked" | "suspended" | "off")
+                                )))
+                })
+                .collect();
+            if between.is_empty() && absence.is_empty() {
+                continue;
+            }
+            if absence.is_empty()
+                && between
+                    .first()
+                    .is_some_and(|(_, act)| after.at.unix_ns() - act.at.unix_ns() < 30 * SECOND)
+            {
                 absorbed_excursions += 1;
                 continue;
             }
             let suspension = json!([episode, before.act, after.act]).to_string();
-            let boundary: Vec<_> = [*before_event, *after_event].into_iter()
-                .chain(between.iter().map(|(event, _)| *event)).chain(absence.iter().copied()).collect();
-            outputs.push(derived(&WorkSuspension {
-                suspension: suspension.clone(), episode: episode.clone(), suspended_at: before.at, returned_at: after.at,
-                interruption_source: if absence.is_empty() { "self" } else { "absence" }.into(),
-                away_s: (after.at.unix_ns()-before.at.unix_ns()) as f64 / SECOND as f64,
-                intervening_episodes: between.iter().filter_map(|(_, act)| act.episode.clone()).collect::<BTreeSet<_>>().into_iter().collect(),
-                absorbed_excursions: 0,
-            }, Self::NAME, boundary.iter().copied()));
-            outputs.push(derived(&WorkResumption {
-                resumption: suspension.clone(), episode: episode.clone(), suspension: suspension.clone(), resumed_at: after.at,
-                lag_s: None, act: evidence(after_event),
-            }, Self::NAME, boundary.iter().copied()));
+            let boundary: Vec<_> = [*before_event, *after_event]
+                .into_iter()
+                .chain(between.iter().map(|(event, _)| *event))
+                .chain(absence.iter().copied())
+                .collect();
+            outputs.push(derived(
+                &WorkSuspension {
+                    suspension: suspension.clone(),
+                    episode: episode.clone(),
+                    suspended_at: before.at,
+                    returned_at: after.at,
+                    interruption_source: if absence.is_empty() {
+                        "self"
+                    } else {
+                        "absence"
+                    }
+                    .into(),
+                    away_s: (after.at.unix_ns() - before.at.unix_ns()) as f64 / SECOND as f64,
+                    intervening_episodes: between
+                        .iter()
+                        .filter_map(|(_, act)| act.episode.clone())
+                        .collect::<BTreeSet<_>>()
+                        .into_iter()
+                        .collect(),
+                    absorbed_excursions: 0,
+                },
+                Self::NAME,
+                boundary.iter().copied(),
+            ));
+            outputs.push(derived(
+                &WorkResumption {
+                    resumption: suspension.clone(),
+                    episode: episode.clone(),
+                    suspension: suspension.clone(),
+                    resumed_at: after.at,
+                    lag_s: None,
+                    act: evidence(after_event),
+                },
+                Self::NAME,
+                boundary.iter().copied(),
+            ));
             parents.extend(boundary);
             suspensions.push(suspension.clone());
             resumptions.push(suspension);
         }
-        let durations: Vec<_> = group.iter().filter_map(|(_, act)| act.ended_at.map(|end| (act.at.unix_ns(), end.unix_ns()))).collect();
-        let unknown = group.iter().filter(|(_, act)| act.agency == Agency::Delegated && act.ended_at.is_none()).count() as u64;
-        outputs.push(derived(&WorkEpisode {
-            episode, objective: first.objective.clone().expect("objective key"), label: first.label.clone().expect("objective label"), label_source: first.label_source.clone(),
-            state: if env.now.unix_ns()-last_activity.unix_ns() >= 14 * 86_400 * SECOND { "dormant" } else { "open" }.into(),
-            started_at: first.at, last_activity, operator_s: None,
-            agent_s: if durations.is_empty() { None } else { Some(union_seconds(durations)) }, untimed_agent_acts: unknown,
-            trail: group.iter().map(|(event, _)| evidence(event)).collect(), suspensions, resumptions, absorbed_excursions,
-            profile: "work/v1".into(),
-        }, Self::NAME, parents));
-        Computed { outputs, waiting: true }
+        let durations: Vec<_> = group
+            .iter()
+            .filter_map(|(_, act)| act.ended_at.map(|end| (act.at.unix_ns(), end.unix_ns())))
+            .collect();
+        let unknown = group
+            .iter()
+            .filter(|(_, act)| act.agency == Agency::Delegated && act.ended_at.is_none())
+            .count() as u64;
+        outputs.push(derived(
+            &WorkEpisode {
+                episode,
+                objective: first.objective.clone().expect("objective key"),
+                label: first.label.clone().expect("objective label"),
+                label_source: first.label_source.clone(),
+                state: if env.now.unix_ns() - last_activity.unix_ns() >= 14 * 86_400 * SECOND {
+                    "dormant"
+                } else {
+                    "open"
+                }
+                .into(),
+                started_at: first.at,
+                last_activity,
+                operator_s: None,
+                agent_s: if durations.is_empty() {
+                    None
+                } else {
+                    Some(union_seconds(durations))
+                },
+                untimed_agent_acts: unknown,
+                trail: group.iter().map(|(event, _)| evidence(event)).collect(),
+                suspensions,
+                resumptions,
+                absorbed_excursions,
+                profile: "work/v1".into(),
+            },
+            Self::NAME,
+            parents,
+        ));
+        Computed {
+            outputs,
+            waiting: true,
+        }
     }
 }
 
@@ -163,27 +381,70 @@ impl Keyed for ResumeCards {
     const INPUTS: &'static [&'static str] = &["work.episode", "work.act"];
     const OUTPUTS: &'static [&'static str] = &["context.pack"];
     fn keys_for(&self, input: &KeyView<'_>, _: &Env) -> Vec<Value> {
-        input.payload.get("episode").filter(|id| id.as_str().is_some()).map(|episode| vec![json!({"episode":episode})]).unwrap_or_default()
+        input
+            .payload
+            .get("episode")
+            .filter(|id| id.as_str().is_some())
+            .map(|episode| vec![json!({"episode":episode})])
+            .unwrap_or_default()
     }
     fn inputs(&self, key: &Value, _: &Env) -> Option<InputQuery> {
-        Some(InputQuery::all(Self::INPUTS.iter().map(|kind| Kind::all(kind)).collect()).only("episode", key.get("episode")?.clone()))
+        Some(
+            InputQuery::all(Self::INPUTS.iter().map(|kind| Kind::all(kind)).collect())
+                .only("episode", key.get("episode")?.clone()),
+        )
     }
-    fn key_state(&self, _: &Value, _: &Env) -> KeyState { KeyState::Closed }
+    fn key_state(&self, _: &Value, _: &Env) -> KeyState {
+        KeyState::Closed
+    }
     fn compute(&self, _: &Value, inputs: &[Event], _: &Env) -> Computed {
-        let Some((episode_event, episode)) = inputs.iter().find_map(|event| Some((event, event.payload_as::<WorkEpisode>()?))) else { return Computed::default() };
-        let mut acts: Vec<_> = inputs.iter().filter_map(|event| Some((event, event.payload_as::<WorkAct>()?))).collect();
+        let Some((episode_event, episode)) = inputs
+            .iter()
+            .find_map(|event| Some((event, event.payload_as::<WorkEpisode>()?)))
+        else {
+            return Computed::default();
+        };
+        let mut acts: Vec<_> = inputs
+            .iter()
+            .filter_map(|event| Some((event, event.payload_as::<WorkAct>()?)))
+            .collect();
         acts.sort_by_cached_key(|(event, act)| (act.at, stable(event)));
-        let last_edit = acts.iter().rev().find(|(_, act)| matches!(act.action.as_str(), "file_edit" | "file_write"));
-        Computed { outputs: vec![derived(&ContextPack {
-            pack: format!("resume:{}", episode.episode), episode: episode.episode, at: episode.last_activity,
-            stated_goal: acts.iter().find(|(_, act)| act.agency == Agency::Operator).map(|(event, _)| evidence(event)),
-            trail: acts.iter().map(|(event, _)| evidence(event)).collect(),
-            last_edit: last_edit.map(|(event, _)| evidence(event)), last_edit_path: last_edit.and_then(|(_, act)| act.path.clone()),
-            open_failures: acts.iter().filter(|(_, act)| act.failed).map(|(event, _)| evidence(event)).collect(),
-            coverage: vec!["repository and branch anchors only; task and job links unavailable".into(),
-                "operator acts have no recorded duration".into(), "failure resolution needs checks with a recorded revision".into()],
-            profile: "resume/v1".into(),
-        }, Self::NAME, [episode_event].into_iter().chain(acts.iter().map(|(event, _)| *event)))], waiting: false }
+        let last_edit = acts
+            .iter()
+            .rev()
+            .find(|(_, act)| matches!(act.action.as_str(), "file_edit" | "file_write"));
+        Computed {
+            outputs: vec![derived(
+                &ContextPack {
+                    pack: format!("resume:{}", episode.episode),
+                    episode: episode.episode,
+                    at: episode.last_activity,
+                    stated_goal: acts
+                        .iter()
+                        .find(|(_, act)| act.agency == Agency::Operator)
+                        .map(|(event, _)| evidence(event)),
+                    trail: acts.iter().map(|(event, _)| evidence(event)).collect(),
+                    last_edit: last_edit.map(|(event, _)| evidence(event)),
+                    last_edit_path: last_edit.and_then(|(_, act)| act.path.clone()),
+                    open_failures: acts
+                        .iter()
+                        .filter(|(_, act)| act.failed)
+                        .map(|(event, _)| evidence(event))
+                        .collect(),
+                    coverage: vec![
+                        "repository and branch anchors only; task and job links unavailable".into(),
+                        "operator acts have no recorded duration".into(),
+                        "failure resolution needs checks with a recorded revision".into(),
+                    ],
+                    profile: "resume/v1".into(),
+                },
+                Self::NAME,
+                [episode_event]
+                    .into_iter()
+                    .chain(acts.iter().map(|(event, _)| *event)),
+            )],
+            waiting: false,
+        }
     }
 }
 
@@ -194,25 +455,59 @@ impl Keyed for ActivityDays {
     const INPUTS: &'static [&'static str] = &["rest.fused", "activity.span"];
     const OUTPUTS: &'static [&'static str] = &["activity.day"];
     fn keys_for(&self, input: &KeyView<'_>, _: &Env) -> Vec<Value> {
-        if input.event_type != "rest.fused" || input.payload["kind"] != "sleep" { return vec![] }
-        input.payload.get("ended_at").filter(|end| !end.is_null()).map(|end| vec![json!({"start":end})]).unwrap_or_default()
+        if input.event_type != "rest.fused" || input.payload["kind"] != "sleep" {
+            return vec![];
+        }
+        input
+            .payload
+            .get("ended_at")
+            .filter(|end| !end.is_null())
+            .map(|end| vec![json!({"start":end})])
+            .unwrap_or_default()
     }
     fn affected_ranges(&self, input: &KeyView<'_>, _: &Env) -> Vec<AffectedRange> {
-        let end = input.payload.get("ended_at").and_then(|value| serde_json::from_value::<Timestamp>(value.clone()).ok());
-        input.ts_orig.map(|start| vec![AffectedRange { open_field: Some("provisional"), output_type: "activity.day", start_field: "started_at", end_field: "ended_at", start, end: end.unwrap_or(start) }]).unwrap_or_default()
+        let end = input
+            .payload
+            .get("ended_at")
+            .and_then(|value| serde_json::from_value::<Timestamp>(value.clone()).ok());
+        input
+            .ts_orig
+            .map(|start| {
+                vec![AffectedRange {
+                    open_field: Some("provisional"),
+                    output_type: "activity.day",
+                    start_field: "started_at",
+                    end_field: "ended_at",
+                    start,
+                    end: end.unwrap_or(start),
+                }]
+            })
+            .unwrap_or_default()
     }
     fn inputs(&self, key: &Value, _: &Env) -> Option<InputQuery> {
         let start = serde_json::from_value::<Timestamp>(key.get("start")?.clone()).ok()?;
         let mut query = InputQuery::all(Self::INPUTS.iter().map(|kind| Kind::all(kind)).collect());
-        query.range = Some(InputRange::UntilNext { start, kinds: vec![Kind::only("rest.fused", &[("kind", "sleep")])], field: "ended_at" });
-        query.intervals = Self::INPUTS.iter().map(|kind| (*kind, sinex_model::clock::IntervalEnd::At("ended_at"))).collect();
+        query.range = Some(InputRange::UntilNext {
+            start,
+            kinds: vec![Kind::only("rest.fused", &[("kind", "sleep")])],
+            field: "ended_at",
+        });
+        query.intervals = Self::INPUTS
+            .iter()
+            .map(|kind| (*kind, sinex_model::clock::IntervalEnd::At("ended_at")))
+            .collect();
         Some(query)
     }
     fn key_state(&self, _: &Value, _: &Env) -> KeyState {
         KeyState::Open
     }
     fn compute(&self, key: &Value, inputs: &[Event], env: &Env) -> Computed {
-        let Some(start_key) = key.get("start").and_then(|value| serde_json::from_value::<Timestamp>(value.clone()).ok()) else { return Computed::default() };
+        let Some(start_key) = key
+            .get("start")
+            .and_then(|value| serde_json::from_value::<Timestamp>(value.clone()).ok())
+        else {
+            return Computed::default();
+        };
         let mut wakes: Vec<_> = inputs
             .iter()
             .filter(|event| event.event_type == "rest.fused" && event.payload["kind"] == "sleep")
@@ -230,7 +525,11 @@ impl Keyed for ActivityDays {
         wakes.sort_by_cached_key(|(at, event)| (*at, stable(event)));
         wakes.dedup_by_key(|(at, _)| *at);
         let mut outputs = Vec::new();
-        for (index, (start, wake)) in wakes.iter().enumerate().filter(|(_, (start, _))| *start == start_key) {
+        for (index, (start, wake)) in wakes
+            .iter()
+            .enumerate()
+            .filter(|(_, (start, _))| *start == start_key)
+        {
             let end = wakes.get(index + 1).map(|(at, _)| *at).unwrap_or(env.now);
             let spans: Vec<_> = inputs
                 .iter()
@@ -285,17 +584,15 @@ impl Keyed for ActivityDays {
                 }
             }
             let agent_intervals: Vec<_> = spans
-                    .iter()
-                    .filter(|(_, span)| {
-                        span.delegated
-                    })
-                    .map(|(_, span)| {
-                        (
-                            span.started_at.max(*start).unix_ns(),
-                            span.ended_at.min(end).unix_ns(),
-                        )
-                    })
-                    .collect();
+                .iter()
+                .filter(|(_, span)| span.delegated)
+                .map(|(_, span)| {
+                    (
+                        span.started_at.max(*start).unix_ns(),
+                        span.ended_at.min(end).unix_ns(),
+                    )
+                })
+                .collect();
             let agent_s = (!agent_intervals.is_empty()).then(|| union_seconds(agent_intervals));
             outputs.push(derived(
                 &ActivityDay {

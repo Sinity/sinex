@@ -540,13 +540,23 @@ fn human_prompt_activity_cites_the_session_that_establishes_its_agency() {
     let session_id = session.id;
     let prompt_id = prompt.id;
     let events = [session, prompt];
-    let acts = Keyed::compute(&crate::work::WorkActs, &json!({"session":"session"}), &events, &env()).outputs;
+    let acts = Keyed::compute(
+        &crate::work::WorkActs,
+        &json!({"session":"session"}),
+        &events,
+        &env(),
+    )
+    .outputs;
     assert_eq!(acts.len(), 1);
-    let Origin::Derived { parents } = &acts[0].origin else { panic!("an act is derived") };
+    let Origin::Derived { parents } = &acts[0].origin else {
+        panic!("an act is derived")
+    };
     assert!(parents.contains(&session_id) && parents.contains(&prompt_id));
     let out = ActivityWindows.compute(&hour(0), &acts, &env());
     assert_eq!(out.outputs.len(), 1);
-    let Origin::Derived { parents } = &out.outputs[0].origin else { panic!("activity is derived") };
+    let Origin::Derived { parents } = &out.outputs[0].origin else {
+        panic!("activity is derived")
+    };
     assert_eq!(parents, &[acts[0].id]);
     assert_eq!(out.outputs[0].payload["operator_present_s"], 0.0);
 }
@@ -634,8 +644,13 @@ fn capture_lifetimes_require_explicit_physical_provenance_and_a_stop() {
         )
         .unwrap(),
     );
-    let stop = make(3600, "stop", serde_json::from_value(json!({"host":"box","seat":"seat0"})).unwrap());
-    let key = json!({"session":"physical-recorder", "scope": json!(["host","box","seat0"]).to_string()});
+    let stop = make(
+        3600,
+        "stop",
+        serde_json::from_value(json!({"host":"box","seat":"seat0"})).unwrap(),
+    );
+    let key =
+        json!({"session":"physical-recorder", "scope": json!(["host","box","seat0"]).to_string()});
     assert!(
         Keyed::compute(&InputCoverage, &key, std::slice::from_ref(&start), &env())
             .outputs
@@ -659,16 +674,33 @@ fn recorder_lifetimes_keep_hosts_separate_when_session_ids_repeat() {
     let make = |host: Option<&str>, seconds, event: &str| {
         let fields = if let Some(host) = host {
             json!({"host":host,"seat":"seat0","layer":"evdev","virtual":false})
-        } else { json!({}) };
-        captured(&InputLogger {
-            session: "reused-session".into(), logged_at: at(seconds), event: event.into(), n: 0,
-            fields: serde_json::from_value(fields).unwrap(),
-        }, seconds as u64)
+        } else {
+            json!({})
+        };
+        captured(
+            &InputLogger {
+                session: "reused-session".into(),
+                logged_at: at(seconds),
+                event: event.into(),
+                n: 0,
+                fields: serde_json::from_value(fields).unwrap(),
+            },
+            seconds as u64,
+        )
     };
-    let inputs = vec![make(Some("first"), 0, "start"), make(Some("second"), 10, "start"),
-        make(Some("second"), 20, "stop"), make(None, 30, "stop"), make(Some("first"), 40, "stop")];
+    let inputs = vec![
+        make(Some("first"), 0, "start"),
+        make(Some("second"), 10, "start"),
+        make(Some("second"), 20, "stop"),
+        make(None, 30, "stop"),
+        make(Some("first"), 40, "stop"),
+    ];
     fn view(event: &Event) -> KeyView<'_> {
-        KeyView { event_type: event.event_type, ts_orig: event.ts_orig.at, payload: &event.payload }
+        KeyView {
+            event_type: event.event_type,
+            ts_orig: event.ts_orig.at,
+            payload: &event.payload,
+        }
     }
     let first_key = Keyed::keys_for(&InputCoverage, &view(&inputs[0]), &env()).remove(0);
     let second_key = Keyed::keys_for(&InputCoverage, &view(&inputs[1]), &env()).remove(0);
@@ -690,18 +722,49 @@ fn recorder_lifetimes_keep_hosts_separate_when_session_ids_repeat() {
 fn delegated_time_is_retained_when_it_overlaps_operator_presence() {
     let make = |kind: &str, payload: Value| {
         (sinex_model::event_types::find(kind).unwrap().build)(
-            &payload, "polylogue", Origin::Record { location:RecordLocation { material:MaterialId::new(), anchor:0 }, output_index:0 },
-            ReadingOrder(0), [0;32], Class::Open,
-        ).unwrap()
+            &payload,
+            "polylogue",
+            Origin::Record {
+                location: RecordLocation {
+                    material: MaterialId::new(),
+                    anchor: 0,
+                },
+                output_index: 0,
+            },
+            ReadingOrder(0),
+            [0; 32],
+            Class::Open,
+        )
+        .unwrap()
     };
-    let metadata = make("polylogue.session", json!({"session":"a","origin":"synthetic","kind":"main","cwd":[],"machine":"box","links":[]}));
-    let turn = make("polylogue.turn", json!({"turn":"a/0","session":"a","start":at(0),"end":at(100),"prompts":[],"slash_command":false,"tool_calls":0,"errors":0,"abandoned":false}));
-    let acts = Keyed::compute(&crate::work::WorkActs, &json!({"session":"a"}), &[metadata,turn], &env()).outputs;
-    let mut events = vec![physical(0),physical(20)];
-    for event in &mut events { event.payload["extra"].as_object_mut().unwrap().remove("seat"); }
+    let metadata = make(
+        "polylogue.session",
+        json!({"session":"a","origin":"synthetic","kind":"main","cwd":[],"machine":"box","links":[]}),
+    );
+    let turn = make(
+        "polylogue.turn",
+        json!({"turn":"a/0","session":"a","start":at(0),"end":at(100),"prompts":[],"slash_command":false,"tool_calls":0,"errors":0,"abandoned":false}),
+    );
+    let acts = Keyed::compute(
+        &crate::work::WorkActs,
+        &json!({"session":"a"}),
+        &[metadata, turn],
+        &env(),
+    )
+    .outputs;
+    let mut events = vec![physical(0), physical(20)];
+    for event in &mut events {
+        event.payload["extra"]
+            .as_object_mut()
+            .unwrap()
+            .remove("seat");
+    }
     events.extend(acts);
     let output = spans(&events, 0);
-    let overlap = output.iter().find(|span| span.started_at==at(0) && span.ended_at==at(20)).unwrap();
+    let overlap = output
+        .iter()
+        .find(|span| span.started_at == at(0) && span.ended_at == at(20))
+        .unwrap();
     assert_eq!(overlap.agency, Agency::Operator);
     assert!(overlap.delegated);
     assert_eq!(overlap.operator_present_s, 20.0);
@@ -718,6 +781,12 @@ fn changing_civil_time_settings_retires_old_hour_keys() {
     assert!(Keyed::inputs(&ActivitySpans, &key, &env).is_some());
     env.time_settings = TimeSettings::new("Asia/Kolkata", 6, 30).unwrap();
     assert!(Keyed::inputs(&ActivitySpans, &key, &env).is_none());
-    assert_ne!(AnyKeyed::version_for(&ActivitySpans, &old), AnyKeyed::version_for(&ActivitySpans, &env.time_settings));
-    assert_eq!(AnyKeyed::version_for(&crate::library::LibraryItems, &old), AnyKeyed::version_for(&crate::library::LibraryItems, &env.time_settings));
+    assert_ne!(
+        AnyKeyed::version_for(&ActivitySpans, &old),
+        AnyKeyed::version_for(&ActivitySpans, &env.time_settings)
+    );
+    assert_eq!(
+        AnyKeyed::version_for(&crate::library::LibraryItems, &old),
+        AnyKeyed::version_for(&crate::library::LibraryItems, &env.time_settings)
+    );
 }

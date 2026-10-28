@@ -183,7 +183,10 @@ async fn local_runner(
         database.to_owned(),
         writer_conn,
         queues,
-        std::sync::Arc::new(dirty_keys::Registered::new(sinex_derivations::keyed_with(configuration), sinex_model::time_settings::TimeSettings::operator_default())),
+        std::sync::Arc::new(dirty_keys::Registered::new(
+            sinex_derivations::keyed_with(configuration),
+            sinex_model::time_settings::TimeSettings::operator_default(),
+        )),
         blobs.clone(),
     ));
     let read = sqlx::PgConnection::connect(database)

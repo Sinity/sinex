@@ -23,7 +23,9 @@ impl Keyed for Presence {
     }
     fn inputs(&self, key: &Value, env: &Env) -> Option<InputQuery> {
         let start = serde_json::from_value(key.get("hour")?.clone()).ok()?;
-        if env.time_settings.hour_start(start).ok()? != start { return None }
+        if env.time_settings.hour_start(start).ok()? != start {
+            return None;
+        }
         Some(InputQuery::window(
             Self::INPUTS,
             start,

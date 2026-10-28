@@ -102,21 +102,23 @@ impl InputQuery {
     /// Whether `event` is one the window part reads (neighbours aside): what
     /// the store's query selects, for code that filters events in memory.
     pub fn admits(&self, event: &Event) -> bool {
-        ((self.unknown_times && self.window.is_none() && event.ts_orig.at.is_none()) || event.ts_orig.at.is_some_and(|t| {
-            self.window.is_none_or(|(start, end)| {
-                t < end
-                    && (t >= start
-                        || self.intervals.iter().any(|(kind, interval)| {
-                            *kind == event.event_type
-                                && interval
-                                    .at(t, &event.payload)
-                                    .is_none_or(|end| end >= start)
-                        }))
-            })
-        })) && self
-            .kinds
-            .iter()
-            .any(|k| k.admits(event.event_type, &event.payload))
+        ((self.unknown_times && self.window.is_none() && event.ts_orig.at.is_none())
+            || event.ts_orig.at.is_some_and(|t| {
+                self.window.is_none_or(|(start, end)| {
+                    t < end
+                        && (t >= start
+                            || self.intervals.iter().any(|(kind, interval)| {
+                                *kind == event.event_type
+                                    && interval
+                                        .at(t, &event.payload)
+                                        .is_none_or(|end| end >= start)
+                            }))
+                })
+            }))
+            && self
+                .kinds
+                .iter()
+                .any(|k| k.admits(event.event_type, &event.payload))
     }
 
     /// The event types read, without repeats.
@@ -135,11 +137,20 @@ impl InputQuery {
 #[derive(Clone, Debug, PartialEq)]
 pub enum InputRange {
     /// The connected run of ordered, non-overlapping windows containing `at`.
-    Connected { kinds: Vec<Kind>, at: Timestamp, end_field: &'static str, gap_ns: i128 },
+    Connected {
+        kinds: Vec<Kind>,
+        at: Timestamp,
+        end_field: &'static str,
+        gap_ns: i128,
+    },
     /// From the first through the last selected event, including both.
     Extent { kinds: Vec<Kind> },
     /// From `start` until the next selected payload time, or `now` while open.
-    UntilNext { start: Timestamp, kinds: Vec<Kind>, field: &'static str },
+    UntilNext {
+        start: Timestamp,
+        kinds: Vec<Kind>,
+        field: &'static str,
+    },
 }
 
 /// An input can change a key whose existing output overlaps this range.
@@ -257,8 +268,12 @@ pub trait Keyed: Send + Sync {
     fn affected_ranges(&self, _: &KeyView<'_>, _: &Env) -> Vec<AffectedRange> {
         Vec::new()
     }
-    fn nearby_inputs(&self, _: &KeyView<'_>, _: &Env) -> Option<InputQuery> { None }
-    fn refresh_at(&self, _: &[Event], _: &Env) -> Option<Timestamp> { None }
+    fn nearby_inputs(&self, _: &KeyView<'_>, _: &Env) -> Option<InputQuery> {
+        None
+    }
+    fn refresh_at(&self, _: &[Event], _: &Env) -> Option<Timestamp> {
+        None
+    }
 
     /// The key's outputs, as events derived from `inputs` (each names its
     /// parents). `inputs` are sorted by `ts_orig`, then commit order.
@@ -315,14 +330,22 @@ pub trait PerEvent: Send + Sync {
 pub trait AnyKeyed: Send + Sync {
     fn name(&self) -> &'static str;
     fn version(&self) -> u32;
-    fn version_for(&self, _: &TimeSettings) -> u32 { self.version() }
+    fn version_for(&self, _: &TimeSettings) -> u32 {
+        self.version()
+    }
     fn inputs_types(&self) -> &'static [&'static str];
     fn output_types(&self) -> &'static [&'static str];
     fn keys_for(&self, input: &KeyView<'_>, env: &Env) -> Vec<Value>;
     fn inputs(&self, key: &Value, env: &Env) -> Option<InputQuery>;
-    fn affected_ranges(&self, _: &KeyView<'_>, _: &Env) -> Vec<AffectedRange> { Vec::new() }
-    fn nearby_inputs(&self, _: &KeyView<'_>, _: &Env) -> Option<InputQuery> { None }
-    fn refresh_at(&self, _: &[Event], _: &Env) -> Option<Timestamp> { None }
+    fn affected_ranges(&self, _: &KeyView<'_>, _: &Env) -> Vec<AffectedRange> {
+        Vec::new()
+    }
+    fn nearby_inputs(&self, _: &KeyView<'_>, _: &Env) -> Option<InputQuery> {
+        None
+    }
+    fn refresh_at(&self, _: &[Event], _: &Env) -> Option<Timestamp> {
+        None
+    }
     fn compute(&self, key: &Value, inputs: &[Event], env: &Env) -> Computed;
     fn key_state(&self, key: &Value, env: &Env) -> KeyState;
 }
@@ -335,7 +358,9 @@ impl<K: Keyed> AnyKeyed for K {
         Keyed::version(self)
     }
     fn version_for(&self, time_settings: &TimeSettings) -> u32 {
-        if !K::USES_TIME_SETTINGS { return self.version() }
+        if !K::USES_TIME_SETTINGS {
+            return self.version();
+        }
         let mut hash = blake3::Hasher::new();
         hash.update(&self.version().to_le_bytes());
         hash.update(time_settings.label().as_bytes());

@@ -157,29 +157,63 @@ async fn changing_the_activity_break_profile_recomputes_existing_sessions(
 }
 
 #[devkit::test]
-async fn sessions_select_connected_windows_and_create_new_owners_after_removal(db: devkit::pg::TestDatabase) {
+async fn sessions_select_connected_windows_and_create_new_owners_after_removal(
+    db: devkit::pg::TestDatabase,
+) {
     let w = World::new(db).await;
     let middle = physical(800);
-    w.admit(vec![physical(0), middle.clone(), physical(1600), physical(10_000_000)]).await;
+    w.admit(vec![
+        physical(0),
+        middle.clone(),
+        physical(1600),
+        physical(10_000_000),
+    ])
+    .await;
     let mut runner = w.runner().await;
     runner.clock = Some(at(11_000_000));
     runner.catch_up().await.unwrap();
     let sessions = w.live::<ActivitySession>().await;
     assert_eq!(sessions.len(), 2);
     let windows = w.live::<ActivityWindow>().await;
-    let first = windows.iter().find(|window| window.started_at == at(0)).unwrap();
+    let first = windows
+        .iter()
+        .find(|window| window.started_at == at(0))
+        .unwrap();
     let env = Env::at(at(11_000_000));
-    let query = Keyed::inputs(&sinex_derivations::activity::ActivitySessions(Default::default()),
-        &json!({"at":first.started_at,"scope":first.scope}), &env).unwrap();
+    let query = Keyed::inputs(
+        &sinex_derivations::activity::ActivitySessions(Default::default()),
+        &json!({"at":first.started_at,"scope":first.scope}),
+        &env,
+    )
+    .unwrap();
     let mut conn = PgConnection::connect(&w.url).await.unwrap();
-    let selected = derivations::read_window(&mut conn, &to_window(&query, env.now)).await.unwrap();
-    let starts: Vec<_> = selected.iter().filter_map(|row| row.event.payload_as::<ActivityWindow>()).map(|window| window.started_at).collect();
+    let selected = derivations::read_window(&mut conn, &to_window(&query, env.now))
+        .await
+        .unwrap();
+    let starts: Vec<_> = selected
+        .iter()
+        .filter_map(|row| row.event.payload_as::<ActivityWindow>())
+        .map(|window| window.started_at)
+        .collect();
     assert_eq!(starts, [at(0), at(800), at(1600)]);
-    w.batch(vec![], vec![ArchiveRequest::Hide { target:middle.id, operation:OperationId::new() }]).await;
+    w.batch(
+        vec![],
+        vec![ArchiveRequest::Hide {
+            target: middle.id,
+            operation: OperationId::new(),
+        }],
+    )
+    .await;
     runner.catch_up().await.unwrap();
     let sessions = w.live::<ActivitySession>().await;
     assert_eq!(sessions.len(), 3);
-    assert_eq!(sessions.iter().map(|session| session.started_at).collect::<Vec<_>>(), [at(0), at(1600), at(10_000_000)]);
+    assert_eq!(
+        sessions
+            .iter()
+            .map(|session| session.started_at)
+            .collect::<Vec<_>>(),
+        [at(0), at(1600), at(10_000_000)]
+    );
 }
 
 #[devkit::test]

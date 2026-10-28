@@ -72,7 +72,9 @@ pub(super) fn pieces(inputs: &[Event]) -> Vec<Piece<'_>> {
             }
             "operator_log.entry" if event.source == "operator.raw-log" => (Signal::Operator, None),
             "input.coverage" => (Signal::Coverage, None),
-            "work.act" if payload["agency"] == "operator" => (Signal::Operator, Some("recorded_act")),
+            "work.act" if payload["agency"] == "operator" => {
+                (Signal::Operator, Some("recorded_act"))
+            }
             "work.act" if payload["agency"] == "delegated" => (Signal::Delegated, None),
             _ => continue,
         };

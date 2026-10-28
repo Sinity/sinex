@@ -147,12 +147,22 @@ pub(super) async fn request(
             .fetch_optional(&mut *conn)
             .await?;
             let owners = sqlx::query!(
-                "SELECT derivation, key FROM derivation.outputs WHERE event_id = $1", target.0,
-            ).fetch_all(&mut *conn).await?;
+                "SELECT derivation, key FROM derivation.outputs WHERE event_id = $1",
+                target.0,
+            )
+            .fetch_all(&mut *conn)
+            .await?;
             if !owners.is_empty() {
                 let seq = position(conn).await?;
-                return super::derived::mark_dirty(conn, owners.into_iter().map(|row|
-                    (crate::derivations::static_type(&row.derivation), row.key)).collect(), seq).await;
+                return super::derived::mark_dirty(
+                    conn,
+                    owners
+                        .into_iter()
+                        .map(|row| (crate::derivations::static_type(&row.derivation), row.key))
+                        .collect(),
+                    seq,
+                )
+                .await;
             }
             if removed.is_none() {
                 return Ok(0);

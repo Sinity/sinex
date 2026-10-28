@@ -145,8 +145,12 @@ pub(crate) async fn run(o: Options) -> Result<(), String> {
     for (name, _) in sources.derivations.iter().filter(|(_, runs)| !**runs) {
         eprintln!("sinexd: derivation {name} is turned off by the configuration");
     }
-    let time_settings = sinex_model::time_settings::TimeSettings::from_parts(o.api.zone.clone(), o.api.day_start);
-    let writer_derivations = sinex_derivations::keyed_with(&configuration).into_iter().filter(|d| sources.runs(d.name())).collect();
+    let time_settings =
+        sinex_model::time_settings::TimeSettings::from_parts(o.api.zone.clone(), o.api.day_start);
+    let writer_derivations = sinex_derivations::keyed_with(&configuration)
+        .into_iter()
+        .filter(|d| sources.runs(d.name()))
+        .collect();
     let writer_settings = time_settings.clone();
     let url = o.database.clone();
     let writer_store = blobs.clone();

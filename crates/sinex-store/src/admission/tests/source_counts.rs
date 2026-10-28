@@ -250,7 +250,9 @@ async fn upgrade_keeps_activity_and_telemetry(db: devkit::pg::TestDatabase, from
     let parent = keyed("source", 1, 1, 1);
     admit_one(&mut conn, &batch(vec![parent.clone()])).await;
     let mut child = keyed("derived", 2, 2, 1);
-    child.origin = Origin::Derived { parents: vec![parent.id] };
+    child.origin = Origin::Derived {
+        parents: vec![parent.id],
+    };
     admit_one(&mut conn, &batch(vec![child.clone()])).await;
     let telemetry = Event::build(
         &sinex_model::event_types::telemetry::SinexTelemetry {
@@ -304,8 +306,11 @@ async fn upgrade_keeps_activity_and_telemetry(db: devkit::pg::TestDatabase, from
             .await
             .unwrap();
     assert_eq!(before, after);
-    let edges: Vec<(uuid::Uuid, uuid::Uuid)> = sqlx::query_as("SELECT parent, child FROM core.event_children")
-        .fetch_all(&mut conn).await.unwrap();
+    let edges: Vec<(uuid::Uuid, uuid::Uuid)> =
+        sqlx::query_as("SELECT parent, child FROM core.event_children")
+            .fetch_all(&mut conn)
+            .await
+            .unwrap();
     assert_eq!(edges, [(parent.id.0, child.id.0)]);
     let kinds: i64 = sqlx::query_scalar("SELECT count(*) FROM registry.event_types WHERE name IN ('sinex.telemetry', 'tag.applied', 'activity.window', 'activity.session', 'activity.span', 'conversation.day', 'rest.fused', 'document.text')")
         .fetch_one(&mut conn).await.unwrap();
