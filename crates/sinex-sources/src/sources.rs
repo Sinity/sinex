@@ -27,6 +27,8 @@ pub mod forecast;
 pub mod goodreads;
 #[cfg(feature = "full")]
 pub mod google_takeout;
+#[cfg(feature = "full")]
+pub mod hledger;
 pub mod hyprland;
 /// The keyboard and pointer log (scribe-tap).
 #[cfg(feature = "full")]
@@ -89,6 +91,7 @@ pub mod spotify;
 #[cfg(feature = "full")]
 pub mod takeout_chrome;
 pub(crate) mod terminal_text;
+pub mod text_history;
 #[cfg(feature = "full")]
 pub mod weechat;
 #[cfg(feature = "full")]
@@ -118,6 +121,8 @@ pub fn formats() -> &'static [&'static InputFormat] {
     // Order selects the default when several formats read the same source name.
     #[cfg(feature = "full")]
     const FORMATS: &[&InputFormat] = &[
+        &hledger::FORMAT,
+        &text_history::FORMAT,
         &atuin::FORMAT,
         &zsh::FORMAT,
         &bash::FORMAT,

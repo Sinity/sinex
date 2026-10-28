@@ -158,3 +158,11 @@ these names and no others.
 - **submission** (`Submission`): the admission outcome and material of a submitted request.
 - **authored at** (`authored_at`): the author timestamp supplied by a Git commit, distinct from its commit timestamp.
 - **request record**: a forecast or library request submitted as a material and admitted through the writer.
+
+## Explicit imports
+
+- **journal**: an hledger file or archive containing authored transactions and directives.
+- **posting annotation**: written lot cost, lot date, lot note or valuation expression attached to a posting amount, preserved without evaluation.
+- **posting**: one ordered account entry in a transaction, with an optional exact decimal amount and commodity.
+- **journal directive**: an authored journal declaration, rule, include or comment, kept as a record without executing it.
+- **text history**: an appended file with one untimed command per complete line.

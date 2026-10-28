@@ -168,6 +168,84 @@
   ],
   "sources": [
     {
+      "class": "guarded",
+      "discovery": [
+        {
+          "capture": false,
+          "description": {
+            "capabilities": [],
+            "credentials": [],
+            "locations": [
+              {
+                "path": "LEDGER_FILE",
+                "root": "environment"
+              },
+              {
+                "path": ".hledger.journal",
+                "root": "home"
+              },
+              {
+                "path": "finance",
+                "root": "declared"
+              }
+            ],
+            "owner": "system",
+            "request_only": false,
+            "requests": [],
+            "streams": []
+          },
+          "format": "hledger"
+        }
+      ],
+      "drivers": [
+        "export-archive"
+      ],
+      "eventTypes": [
+        "transaction.posted",
+        "journal.directive",
+        "journal.imported"
+      ],
+      "formats": [
+        "hledger"
+      ],
+      "name": "finance.hledger",
+      "purpose": "journal transactions and their postings"
+    },
+    {
+      "class": "guarded",
+      "discovery": [
+        {
+          "capture": false,
+          "description": {
+            "capabilities": [],
+            "credentials": [],
+            "locations": [
+              {
+                "path": "text-history",
+                "root": "input"
+              }
+            ],
+            "owner": "system",
+            "request_only": false,
+            "requests": [],
+            "streams": []
+          },
+          "format": "text-history"
+        }
+      ],
+      "drivers": [
+        "append-file"
+      ],
+      "eventTypes": [
+        "command.imported"
+      ],
+      "formats": [
+        "text-history"
+      ],
+      "name": "terminal.text-history",
+      "purpose": "explicit untimed command history"
+    },
+    {
       "class": "open",
       "discovery": [
         {

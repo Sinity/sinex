@@ -9,6 +9,7 @@ pub mod code;
 pub mod communication;
 pub mod derived;
 pub mod desktop;
+pub mod finance;
 pub mod forecast;
 pub mod fused;
 pub mod health;
@@ -86,6 +87,9 @@ pub const ALL: &[RegisteredEventType] = &[
     info::<forecast::Resolved>(),
     info::<CommandExecuted>(),
     info::<CommandImported>(),
+    info::<finance::TransactionPosted>(),
+    info::<finance::JournalDirective>(),
+    info::<finance::JournalImported>(),
     // Desktop
     info::<desktop::WindowFocused>(),
     info::<desktop::WindowOpened>(),

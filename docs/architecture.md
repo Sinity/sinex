@@ -388,6 +388,11 @@ changes. An excised material is no longer listed on
 `<root>.materials.<producer>`. The operator's excision refuses producers'
 materials.
 
+Journal transactions and untimed command history use the shared export and
+append readers. Discovery follows local journal includes into ordinary file
+bindings. Their syntax, identity and discovery locations are documented in
+[imported records](imported-records.md).
+
 ## Host discovery
 
 `services.sinex.enable` starts discovery. Each input format declares its owner,
