@@ -1,6 +1,5 @@
 use super::*;
 use sinex_model::{ArchiveRequest, Batch, BatchKind, EventId, MaterialId, OperationId, RunId};
-use sqlx::Connection;
 
 #[devkit::test]
 async fn crawl_never_records_history_urls_in_binding_settings(db: devkit::pg::TestDatabase) {

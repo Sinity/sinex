@@ -326,7 +326,7 @@ async fn text_lists_compare_members_and_return_the_declared_array(db: devkit::pg
     }
 }
 
-async fn spanning_session(conn: &mut PgConnection) {
+async fn spanning_session(conn: &mut crate::AdmissionContext) {
     let parent: Uuid = sqlx::query_scalar("SELECT id FROM core.events LIMIT 1")
         .fetch_one(&mut *conn)
         .await

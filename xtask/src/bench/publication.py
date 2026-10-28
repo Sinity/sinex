@@ -41,9 +41,10 @@ def run(psql, output_directory, source_root):
         return {"wall_ms": (time.monotonic() - started) * 1000, "result": result}
 
     mapping = "core.published p CROSS JOIN LATERAL unnest(p.event_ids,p.stream_seqs) m(event_id,stream_seq)" if page_storage else "core.published m"
-    audit = json.loads(query(f"SELECT json_build_object('pairs', count(*), 'event_ids', count(DISTINCT m.event_id), 'stream_seqs', count(DISTINCT m.stream_seq), 'wrong_pairs', count(*) FILTER (WHERE c.event_id IS NULL OR c.commit_seq <> m.stream_seq), 'expected', (SELECT count(*) FROM core.commit_log WHERE event_id IS NOT NULL)) FROM {mapping} LEFT JOIN core.commit_log c ON c.event_id=m.event_id"))
+    # Stream positions are acknowledgment coordinates, distinct from commit positions.
+    audit = json.loads(query(f"SELECT json_build_object('pairs', count(*), 'event_ids', count(DISTINCT m.event_id), 'stream_seqs', count(DISTINCT m.stream_seq), 'invalid_pairs', count(*) FILTER (WHERE c.event_id IS NULL OR m.stream_seq <= 0), 'expected', (SELECT count(*) FROM core.commit_log WHERE event_id IS NOT NULL)) FROM {mapping} LEFT JOIN core.commit_log c ON c.event_id=m.event_id"))
     pathlib.Path(output_directory, 'publication-audit.json').write_text(json.dumps(audit, indent=2))
-    if not (audit['pairs'] == audit['event_ids'] == audit['stream_seqs'] == audit['expected'] and audit['wrong_pairs'] == 0):
+    if not (audit['pairs'] == audit['event_ids'] == audit['stream_seqs'] == audit['expected'] and audit['invalid_pairs'] == 0):
         raise RuntimeError('published pairs differ from the generated stream: ' + json.dumps(audit))
     results = {"page_storage": page_storage, "source": str(root), "cases": []}
     # 3.85 million mappings approximate the inspected confirmed-stream map.

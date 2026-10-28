@@ -94,6 +94,9 @@ impl std::ops::AddAssign<&Outcome> for Outcome {
         self.failures += other.failures;
         self.dirty_keys += other.dirty_keys;
         self.replay_archived += other.replay_archived;
+        for (&stage, &elapsed) in &other.timings {
+            *self.timings.entry(stage).or_default() += elapsed;
+        }
         if let Some((start, end)) = other.commit_seq {
             self.commit_seq = Some(match self.commit_seq {
                 Some((first, last)) => (first.min(start), last.max(end)),
