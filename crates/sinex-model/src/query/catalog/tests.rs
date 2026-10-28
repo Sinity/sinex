@@ -127,11 +127,11 @@ fn declared_fields_bind_sort_projection_and_aggregates_through_the_same_schema()
     )]));
     for text in [
         "events sort payload.value fields payload.value",
-        "events sum payload.value",
+        "events sum(payload.value)",
     ] {
         assert!(crate::query::bind(text, &ctx).is_ok(), "{text}");
     }
-    for text in ["events sum payload.label", "events fields payload.missing"] {
+    for text in ["events sum(payload.label)", "events fields payload.missing"] {
         assert!(crate::query::bind(text, &ctx).is_err(), "{text}");
     }
 }

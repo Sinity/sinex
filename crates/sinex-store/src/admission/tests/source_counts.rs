@@ -1,5 +1,6 @@
 use super::*;
 use sqlx::Executor;
+use crate::test_schema::without_positions;
 
 type Time = time::OffsetDateTime;
 type Counts = Vec<(String, i64, Option<Time>, Option<Time>, Time)>;
@@ -49,21 +50,7 @@ async fn under_run(conn: &mut PgConnection, events: Vec<Event>) -> RunId {
     run
 }
 
-/// The schema description without column positions: the dropped column that
-/// makes this test's version 0 keeps its position, so the column added back
-/// comes after it. Positions are compared by the fresh-schema test.
-fn without_positions(catalog: Vec<String>) -> Vec<String> {
-    catalog
-        .into_iter()
-        .map(|row| match row.split_once(' ') {
-            Some((name, rest)) if name.matches('.').count() == 2 => {
-                let rest = rest.split_once(' ').map_or(rest, |(_, after)| after);
-                format!("{name} {rest}")
-            }
-            _ => row,
-        })
-        .collect()
-}
+
 
 fn change(target: sinex_model::EventId, hide: bool) -> Batch {
     let operation = OperationId::new();
@@ -241,5 +228,5 @@ async fn upgrading_from_version_3_registers_query_kinds_and_keeps_events(
         .await
         .unwrap();
     assert_eq!(before, after);
-    assert_eq!(sinex_schema::catalog(&mut conn).await.unwrap(), fresh);
+    assert_eq!(without_positions(sinex_schema::catalog(&mut conn).await.unwrap()), without_positions(fresh));
 }

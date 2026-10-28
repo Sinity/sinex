@@ -3,6 +3,27 @@ use std::os::unix::ffi::OsStringExt;
 use std::os::unix::fs::{FileExt, MetadataExt, PermissionsExt};
 use std::process::Command;
 
+struct FileHashParser;
+
+impl crate::Parser for FileHashParser {
+    type Record<'a> = &'a [u8];
+    type Carry = ();
+    type Payload = sinex_model::event_types::media::NoteDocument;
+
+    fn parse(
+        &self,
+        bytes: &&[u8],
+        carry: &(),
+        context: &crate::RecordContext<'_>,
+    ) -> Result<(Vec<Self::Payload>, ()), crate::RecordError> {
+        let (mut notes, ()) = crate::Parser::parse(&crate::test_parser::NotesParser, bytes, carry, context)?;
+        for note in &mut notes {
+            note.text = Some(blake3::hash(bytes).to_hex().to_string());
+        }
+        Ok((notes, ()))
+    }
+}
+
 #[devkit::test]
 fn gnu_tar_restores_native_names_sparse_data_attributes_and_access_acl() {
     let root = tempfile::tempdir().unwrap();
@@ -158,7 +179,10 @@ fn gnu_tar_restores_native_names_sparse_data_attributes_and_access_acl() {
     .unwrap();
     assert_eq!(&attribute[..count], acl);
     // The same recorded member expands through the ordinary drain during replay.
-    let source = crate::test_parser::source();
+    let source = crate::DeclaredSource {
+        spec: crate::test_parser::source().spec,
+        parser: FileHashParser,
+    };
     use crate::Source;
     let chunks = source
         .drain(crate::DrainInput {
@@ -174,6 +198,20 @@ fn gnu_tar_restores_native_names_sparse_data_attributes_and_access_acl() {
         })
         .unwrap();
     assert_eq!(chunks[0].events, 3);
+    for event in chunks.iter().flat_map(|chunk| &chunk.outcomes).flat_map(|outcome| {
+        match outcome {
+            sinex_model::RecordOutcome::Events { events, .. } => events.as_slice(),
+            sinex_model::RecordOutcome::Failure { reason, .. } => panic!("{reason}"),
+        }
+    }) {
+        let path = event.payload["path"].as_str().unwrap();
+        let member = material.manifest.members.iter().find(|member| {
+            member.path == path && member.details.get("native_path_bytes").unwrap_or(&serde_json::Value::Null) == &event.payload["native_path_bytes"]
+        }).unwrap();
+        let node = member.node.as_ref().unwrap();
+        assert_eq!(event.payload["size"], node.size);
+        assert_eq!(event.payload["text"], blake3::Hash::from_bytes(node.content_hash).to_hex().to_string());
+    }
 }
 
 #[devkit::test]

@@ -246,7 +246,7 @@ fn equal_records_get_distinct_keys_and_reading_in_pieces_equals_whole() {
     assert_ne!(whole[0][3], whole[1][3]);
     assert_eq!(whole[1][2]["n"], 1);
     assert_eq!(whole[2][1], "key.pressed");
-    assert_eq!(whole[2][4], "sealed");
+    assert_eq!(whole[2][4], "guarded");
     assert_eq!(whole[4][2]["n"], 0);
     assert_eq!(whole[5][2]["n"], 1);
     for cut in 0..=file.len() {

@@ -129,3 +129,18 @@ async fn timestamp_extraction_checks_calendar_dates_and_schemaless_mixed_values(
         assert!(parsed.is_none(), "{text}");
     }
 }
+
+#[devkit::test]
+async fn mixed_version_fields_keep_numeric_comparisons_and_aggregates(db: devkit::pg::TestDatabase) {
+    let mut conn = PgConnection::connect(&db.url(None)).await.unwrap();
+    let integer = register(&mut conn, 9, json!({"type":"integer"})).await;
+    points(&mut conn, &integer).await;
+    register(&mut conn, 10, json!({"type":"string"})).await;
+    let summed = ask(&mut conn, "events where event_type = example.point and payload.value >= 2 sum(payload.value)").await;
+    assert_eq!(summed.total, 1);
+    assert_eq!(summed.rows[0]["sum_payload_value"], json!(5));
+    let counted = ask(&mut conn, "events where event_type = example.point count_distinct(payload.value)").await;
+    assert_eq!(counted.rows[0]["count_distinct_payload_value"], json!(3));
+    let dates = ask(&mut conn, "events where event_type = example.point and day(payload.at) = 2026-10-27 count").await;
+    assert_eq!(dates.rows[0]["count"], json!(3));
+}

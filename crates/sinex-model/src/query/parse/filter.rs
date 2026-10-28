@@ -366,7 +366,7 @@ impl Parser<'_> {
             }
             Operand::Field(FieldRef::Field(f)) => {
                 if placeholder && f.name == "event_type" && op == Op::Eq {
-                    return Ok(Value::Glob("*".into()));
+                    return Ok(Value::PlaceholderText(raw));
                 }
                 let text_like = matches!(
                     f.ty,

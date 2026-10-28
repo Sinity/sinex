@@ -231,6 +231,16 @@ fn extensions(
     let base = output.get_mut().stream_position()? + 512;
     let mut bytes = Vec::new();
     let mut attributes = Vec::new();
+    let mut fields: Vec<_> = fields.into_iter().collect();
+    // Charset and sparse counts precede the values they describe.
+    fields.sort_by_key(|(name, _)| match name.as_slice() {
+        b"hdrcharset" => 0,
+        b"GNU.sparse.size" => 1,
+        b"GNU.sparse.numblocks" => 2,
+        b"GNU.sparse.name" => 3,
+        b"GNU.sparse.map" => 4,
+        _ => 5,
+    });
     for (key, value) in fields {
         let rest = key.len() + value.len() + 3;
         let mut length = rest + 1;

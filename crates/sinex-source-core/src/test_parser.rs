@@ -6,6 +6,9 @@ impl Parser for NotesParser {
     type Record<'a> = &'a [u8];
     type Carry = ();
     type Payload = NoteDocument;
+    fn record_hash(&self, raw: &[u8], context: &RecordContext<'_>) -> [u8; 32] {
+        context.hash_with_path(raw)
+    }
     fn parse(
         &self,
         bytes: &&[u8],
