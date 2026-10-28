@@ -97,3 +97,76 @@ fn compile_prepares_a_database_only_for_packages_with_checked_queries() {
         ));
     }
 }
+
+#[devkit::test]
+fn environment_test_threads_are_recorded_without_changing_selection() {
+    let args = vec!["session_socket".into()];
+    let mut selected = test_options(&args, Vec::new());
+    assert_eq!(
+        test_arguments(&args, Some("1")),
+        ["--test-threads", "1", "session_socket"]
+    );
+    selected.args = test_arguments(&selected.args, Some("1"));
+    assert_eq!(
+        selected.args,
+        [
+            "--test-threads",
+            "1",
+            "--locked",
+            "--workspace",
+            "session_socket"
+        ]
+    );
+    assert!(selected.allow_no_tests);
+    assert_eq!(test_arguments(&args, None), args);
+}
+
+#[devkit::test]
+fn explicit_test_thread_options_take_precedence_over_the_environment() {
+    for args in [
+        vec!["--test-threads", "4"],
+        vec!["--test-threads=4"],
+        vec!["--jobs", "4"],
+        vec!["--jobs=4"],
+        vec!["-j", "4"],
+        vec!["-j4"],
+        vec!["-j=4"],
+    ] {
+        let args = args.into_iter().map(String::from).collect::<Vec<_>>();
+        assert_eq!(test_arguments(&args, Some("1")), args);
+    }
+}
+
+#[devkit::test]
+fn binary_arguments_do_not_hide_inherited_test_threads() {
+    let args = vec!["--".into(), "--test-threads".into(), "8".into()];
+    assert_eq!(
+        test_arguments(&args, Some("num-cpus")),
+        ["--test-threads", "num-cpus", "--", "--test-threads", "8"]
+    );
+    assert_eq!(test_arguments(&[], Some("-2")), ["--test-threads", "-2"]);
+}
+
+#[devkit::test]
+fn concurrency_options_keep_the_full_fuzz_regression_gate() {
+    for args in [
+        vec![],
+        vec!["--test-threads", "1"],
+        vec!["-j4"],
+        vec!["--jobs=4"],
+        vec!["--workspace", "-j", "1"],
+    ] {
+        let args = args.into_iter().map(String::from).collect::<Vec<_>>();
+        assert!(full_test(&args));
+    }
+    assert!(full_test(&test_arguments(&[], Some("1"))));
+    for args in [
+        vec!["-p", "sinex-model"],
+        vec!["--test-threads", "1", "session_socket"],
+        vec!["--", "--test-threads", "1"],
+        vec!["--test-threads"],
+    ] {
+        let args = args.into_iter().map(String::from).collect::<Vec<_>>();
+        assert!(!full_test(&args));
+    }
+}
