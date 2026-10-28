@@ -89,6 +89,7 @@ fn a_stored_document_requires_its_bytes_and_a_referenced_copy_gives_no_text() {
         inode: None,
         modified_at: Some(sinex_model::Timestamp::from_unix_secs(1_800_000_000).unwrap()),
         moved_from: None,
+        move_candidates: vec![],
         previous_content: None,
         vanished_at: None,
     };

@@ -92,6 +92,7 @@ fn world() -> Vec<Event> {
             inode: None,
             modified_at: None,
             moved_from: None,
+            move_candidates: vec![],
             previous_content: None,
             vanished_at: None,
         },
