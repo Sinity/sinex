@@ -202,8 +202,16 @@ async fn compressed_upgrade_keeps_immutable_rows_and_historical_metadata(
             .values()
             .all(|d| d.payload_schema.is_none() && d.key_rule.is_none())
     );
-    let historical_name = KindRef { name: "historic..reading".into(), version: 1 };
-    assert!(sinex_schema::kinds::load(&mut conn, std::slice::from_ref(&historical_name)).await.unwrap().contains_key(&historical_name));
+    let historical_name = KindRef {
+        name: "historic..reading".into(),
+        version: 1,
+    };
+    assert!(
+        sinex_schema::kinds::load(&mut conn, std::slice::from_ref(&historical_name))
+            .await
+            .unwrap()
+            .contains_key(&historical_name)
+    );
     let once = sinex_schema::catalog(&mut conn).await.unwrap();
     sinex_schema::apply(&mut conn).await.unwrap();
     assert_eq!(once, sinex_schema::catalog(&mut conn).await.unwrap());
