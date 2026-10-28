@@ -109,3 +109,14 @@ pub async fn parts_from(
         })
         .collect()
 }
+
+/// Whether the content store holds the blob `name` (a library copy indexed
+/// by reference names bytes that were never stored).
+pub async fn blob_stored(conn: &mut PgConnection, name: &str) -> Result<bool> {
+    Ok(sqlx::query_scalar!(
+        r#"SELECT EXISTS (SELECT 1 FROM core.blobs WHERE hash = $1 AND status = 'present') AS "stored!""#,
+        name
+    )
+    .fetch_one(&mut *conn)
+    .await?)
+}

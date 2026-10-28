@@ -114,28 +114,22 @@ pub struct PresenceSpan {
     pub status: String,
 }
 
-/// Whether the operator was at the machine over an interval, judged from
-/// ActivityWatch's AFK watcher and corroborating input. The watcher misses idle
-/// transitions under load, so a long not-afk stretch with no input is
-/// `uncertain`, never silently `present`. Derived per logical day by the
-/// presence derivation; the reported spans stay as read.
+/// Presence reconciled from physical input, recorded acts and absence boundaries.
+/// AFK reports remain separate observations, including when contradicted.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
-#[event(type = "presence.interval", key = ["day", "started_at"], replace = newer, time = started_at, quality = intrinsic)]
+#[event(type = "presence.interval", key = ["scope", "started_at"], replace = newer, time = started_at, quality = intrinsic)]
 pub struct PresenceInterval {
-    /// The logical day this interval was computed for (intervals are cut at
-    /// day boundaries).
+    pub scope: String,
     pub day: String,
     pub started_at: Timestamp,
     pub ended_at: Timestamp,
-    /// `present`, `absent` or `uncertain`.
+    /// `present`, `absent`, `mixed` or `unknown`.
     pub state: String,
-    /// Present, but with less input than the dense threshold: a real but
-    /// quiet stretch (reading, a call), not an artifact.
-    pub sparse: bool,
-    /// ActivityWatch's status for the span (`afk`, `not-afk`).
-    pub reported: String,
-    /// Corroborating input events inside the interval.
-    pub evidence: u32,
+    pub method: String,
+    pub support: Vec<super::activity::ActivityEvidence>,
+    pub claims: Vec<String>,
+    pub contradictions: Vec<String>,
+    pub profile: String,
 }
 
 /// An ActivityWatch event from a watcher Sinex has no type for yet, kept whole.

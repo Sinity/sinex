@@ -14,7 +14,9 @@
 //! 9. apply hide and unhide requests.
 //!
 //! A replay's request to archive the readings it re-reads runs first, before
-//! staging, so the new readings are classified against what remains.
+//! staging, so the new readings are classified against what remains. A
+//! derived batch first drops the outputs whose inputs stopped being live
+//! after the derivation read them (a replay or excision in between).
 //!
 //! The caller commits; events and progress are then durable together.
 use crate::{Result, privacy};
@@ -32,7 +34,7 @@ mod write;
 
 pub(crate) use archive::remove_live;
 pub(crate) use derived::mark_archived_dirty;
-pub use derived::{ComputedKey, DerivedScope};
+pub use derived::{ComputedKey, DerivedScope, ReadMark};
 
 /// What a keyed derivation's key function sees of an admitted or archived event.
 #[derive(Clone, Debug)]
@@ -42,10 +44,24 @@ pub struct KeyInput<'a> {
     pub payload: &'a Value,
 }
 
+/// A changed input can affect an existing key selected by its output's time range.
+#[derive(Clone, Debug)]
+pub struct AffectedRange {
+    pub open_field: Option<&'static str>,
+    pub derivation: &'static str,
+    pub output_type: &'static str,
+    pub start_field: &'static str,
+    pub end_field: &'static str,
+    pub start: time::OffsetDateTime,
+    pub end: time::OffsetDateTime,
+}
+
 /// The key functions of the keyed derivations, supplied by the daemon, which
 /// owns the derivation registry. Admission marks every returned key dirty.
 pub trait DirtyKeys: Send + Sync {
     fn keys(&self, event: &KeyInput<'_>) -> Vec<(&'static str, Value)>;
+    fn affected_ranges(&self, _: &KeyInput<'_>) -> Vec<AffectedRange> { Vec::new() }
+    fn nearby_inputs(&self, _: &KeyInput<'_>) -> Vec<crate::derivations::Window> { Vec::new() }
 }
 
 /// No keyed derivations registered.
@@ -71,6 +87,9 @@ pub struct Outcome {
     pub hidden: usize,
     /// Superseded by a newer reading of the same record in this batch.
     pub superseded: usize,
+    /// Derived outputs dropped because an input they cite stopped being live
+    /// after the derivation read it; the replacement input gets its own.
+    pub superseded_input: usize,
     pub failures: usize,
     pub dirty_keys: usize,
     /// Live readings a replay archived before admitting its new readings.
@@ -88,6 +107,15 @@ pub async fn admit(
 ) -> Result<Outcome> {
     sinex_schema::require_current(conn).await?;
     let mut outcome = Outcome::default();
+    let kept_batch;
+    let batch = match derived::without_superseded_inputs(conn, batch).await? {
+        Some((kept, dropped)) => {
+            outcome.superseded_input = dropped;
+            kept_batch = kept;
+            &kept_batch
+        }
+        None => batch,
+    };
     // The live reading each offered event ends as: itself when admitted, the
     // reading it repeats when suppressed. A derived batch's keys own these.
     let mut resolved: Vec<Option<Uuid>> = Vec::new();
@@ -167,20 +195,26 @@ async fn apply_privacy(conn: &mut PgConnection, batch: &Batch, events: &mut [Eve
         .collect();
     if !parents.is_empty() {
         let classes: std::collections::HashMap<Uuid, Class> = sqlx::query!(
-            "SELECT id, class FROM core.events WHERE id = ANY($1)",
+            r#"SELECT e.id, e.class,
+                 (EXISTS (SELECT 1 FROM core.live_equivalence l WHERE l.event_id=e.id)
+                   OR EXISTS (SELECT 1 FROM core.live_locations l WHERE l.event_id=e.id)) AS "live!"
+               FROM core.events e WHERE e.id = ANY($1)"#,
             &parents
         )
         .fetch_all(&mut *conn)
         .await?
         .into_iter()
-        .map(|r| Ok((r.id, privacy::parse_class(&r.class)?)))
+        .map(|r| {
+            if !r.live { return Err(crate::Error::Invalid(format!("derived parent {} is not live", r.id))) }
+            Ok((r.id, privacy::parse_class(&r.class)?))
+        })
         .collect::<Result<_>>()?;
         for event in events.iter_mut() {
             if let Origin::Derived { parents } = &event.origin {
                 for p in parents {
-                    if let Some(&c) = classes.get(&p.0) {
-                        event.class = event.class.max(c);
-                    }
+                    let c = classes.get(&p.0).ok_or_else(|| crate::Error::Invalid(format!(
+                        "derived parent {} is not a committed reading", p.0)))?;
+                    event.class = event.class.max(*c);
                 }
             }
         }

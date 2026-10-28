@@ -1,4 +1,4 @@
-use super::rules::{CLIPBOARD, COMMANDS, FOCUS, MAIL, NOTIFICATIONS, PLAYS, RULES, VISITS};
+use super::rules::{CLIPBOARD, COMMANDS, FOCUS, MAIL, NOTIFICATIONS, PLAYS, REST, RULES, VISITS};
 use super::*;
 use sinex_model::event_types::browser::{BrowserHistoryEntry, BrowserVisit};
 use sinex_model::event_types::communication::MailMessage;
@@ -15,7 +15,7 @@ fn at(secs: f64) -> Timestamp {
     Timestamp::from_unix_ns((secs * 1e9) as i128).unwrap()
 }
 
-fn captured<P: EventPayload>(payload: &P, source: &str, class: Class) -> Event {
+pub(crate) fn captured<P: EventPayload>(payload: &P, source: &str, class: Class) -> Event {
     Event::build(
         payload,
         source,
@@ -714,4 +714,66 @@ fn a_message_in_imap_and_an_mbox_is_one_message() {
 fn mail_from_a_source_no_input_names_is_not_fused() {
     let out = fuse(&MAIL, &[mail("communication.elsewhere", "<1@x>", H + 5.0)]);
     assert!(out.is_empty());
+}
+
+// Rest.
+
+fn health(provider: &str, category: &str, from: f64, to: f64) -> Event {
+    captured(
+        &sinex_model::event_types::health::HealthRecord::new(
+            provider.into(),
+            category.into(),
+            format!("{provider}:{from}"),
+            Some(at(from)),
+            Some(at(to)),
+            None,
+            Default::default(),
+            vec![],
+        )
+        .unwrap(),
+        if provider == "sleep-as-android" {
+            "health.sleep-as-android"
+        } else {
+            "health.samsung"
+        },
+        Class::Guarded,
+    )
+}
+
+#[devkit::test]
+fn one_night_two_providers_is_one_rest_and_a_nap_its_own() {
+    let night = H;
+    let out = fuse(
+        &REST,
+        &[
+            health("sleep-as-android", "sleep", night, night + 8.0 * 3600.0),
+            health(
+                "samsung-health",
+                "Sleep",
+                night + 600.0,
+                night + 7.9 * 3600.0,
+            ),
+            health(
+                "samsung-health",
+                "Shealth Vitality Nap Data",
+                night + 15.0 * 3600.0,
+                night + 15.5 * 3600.0,
+            ),
+            // Not rest at all.
+            health("samsung-health", "Heart Rate", night + 60.0, night + 60.0),
+        ],
+    );
+    assert_eq!(out.len(), 2, "{out:#?}");
+    assert_eq!(
+        observed_by(&out[0]),
+        ["health.sleep-as-android", "health.samsung"]
+    );
+    assert_eq!(out[0]["kind"], "sleep");
+    assert_eq!(
+        out[0]["started_at"],
+        serde_json::to_value(at(night)).unwrap(),
+        "times come from the preferred provider"
+    );
+    assert_eq!(out[1]["kind"], "nap");
+    assert_eq!(observed_by(&out[1]), ["health.samsung"]);
 }

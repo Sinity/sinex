@@ -131,6 +131,7 @@ async fn world(db: devkit::pg::TestDatabase) -> World {
         blobs: blobs.clone(),
         zone: jiff::tz::TimeZone::UTC,
         day_start: jiff::civil::Time::constant(4, 0, 0, 0),
+        derivations: Default::default(),
         agent_grants: vec![],
         unlock: Default::default(),
         host: "h".into(),

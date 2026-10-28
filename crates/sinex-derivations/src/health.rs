@@ -100,6 +100,7 @@ fn closed_after(end: Option<Timestamp>, env: &Env) -> KeyState {
 impl Keyed for HourlyFigures {
     const NAME: &'static str = "health.hourly";
     const VERSION: u32 = 1;
+    const USES_TIME_SETTINGS: bool = true;
     const INPUTS: &'static [&'static str] = &[HealthRecord::EVENT_TYPE];
     const OUTPUTS: &'static [&'static str] = &[HealthFigure::EVENT_TYPE];
 
@@ -117,6 +118,7 @@ impl Keyed for HourlyFigures {
 
     fn inputs(&self, key: &Value, env: &Env) -> Option<InputQuery> {
         let hour = hour_of(key)?;
+        if env.time_settings.hour_start(hour).ok()? != hour { return None }
         Some(
             InputQuery::window(
                 &[HealthRecord::EVENT_TYPE],
@@ -184,6 +186,7 @@ impl Keyed for HourlyFigures {
 impl Keyed for DailyFigures {
     const NAME: &'static str = "health.daily";
     const VERSION: u32 = 1;
+    const USES_TIME_SETTINGS: bool = true;
     const INPUTS: &'static [&'static str] = &[HealthFigure::EVENT_TYPE];
     const OUTPUTS: &'static [&'static str] = &[HealthFigure::EVENT_TYPE];
 

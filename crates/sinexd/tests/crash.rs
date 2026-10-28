@@ -10,6 +10,9 @@
 //! dense, every stored material's bytes present.
 mod support;
 
+#[path = "crash/private_history.rs"]
+mod private_history;
+
 use devkit::pg::TestDatabase;
 use sqlx::{Connection, PgConnection, Row};
 use std::collections::BTreeMap;
@@ -18,10 +21,9 @@ use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 
 const HOST: &str = "crash";
-/// How long a step may take to reach its kill point or finish: just under the
-/// suite's own termination of a crash test (`.config/nextest.toml`: 120 s × 5),
-/// so a slow host makes a test slow, never a spurious failure.
-const WAIT_LIMIT: Duration = Duration::from_secs(570);
+/// One fault-point wait; leave 30 seconds below nextest's two-minute deadline
+/// for reporting and cleanup.
+const WAIT_LIMIT: Duration = Duration::from_secs(90);
 /// Inputs generated once per test: a zsh history and an Atuin database.
 struct Inputs {
     dir: PathBuf,
@@ -448,10 +450,10 @@ backfill_steps! { Inputs::multiple_batches();
     // again: its bytes are stored, its readings are not.
     backfill_killed_between_zsh_batches:
         Some("SELECT EXISTS (SELECT 1 FROM raw.positions WHERE binding LIKE 'terminal.zsh-history:%@crash')"),
-        "SELECT 1 FROM raw.positions WHERE binding LIKE 'terminal.zsh-history:%@crash' FOR UPDATE".to_string();
+        "SELECT 1 FROM raw.positions WHERE binding LIKE 'terminal.zsh-history:%@crash' FOR UPDATE";
     backfill_killed_between_atuin_batches:
         Some("SELECT EXISTS (SELECT 1 FROM raw.positions WHERE binding LIKE 'terminal.atuin-history:%@crash')"),
-        "SELECT 1 FROM raw.positions WHERE binding LIKE 'terminal.atuin-history:%@crash' FOR UPDATE".to_string();
+        "SELECT 1 FROM raw.positions WHERE binding LIKE 'terminal.atuin-history:%@crash' FOR UPDATE";
 }
 
 /// Kill a replay at a step; then run it again and compare with an
@@ -770,7 +772,7 @@ publisher_steps! {
     // A later page is on the stream; saving its position is blocked.
     publisher_killed_between_pages:
         Some("SELECT EXISTS (SELECT 1 FROM core.consumer_positions WHERE consumer = 'publisher')"),
-        "SELECT 1 FROM core.consumer_positions WHERE consumer = 'publisher' FOR UPDATE".to_string();
+        "SELECT 1 FROM core.consumer_positions WHERE consumer = 'publisher' FOR UPDATE";
 }
 
 /// Kill a backfill after it stored a material's bytes but before the
@@ -853,4 +855,103 @@ async fn a_daemon_start_deletes_bytes_an_uncommitted_admission_left() {
         missing.is_empty(),
         "readings differ after the restart: {missing:#?}"
     );
+}
+
+impl Target {
+    fn derive(&self) -> Command {
+        let mut c = Command::new(env!("CARGO_BIN_EXE_sinexd"));
+        c.args(["derive", "--database", &self.url, "--host", HOST])
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+        c
+    }
+}
+
+/// The live derived readings by type and payload, IDs left out: material IDs
+/// and event IDs differ between two runs by design.
+async fn derived_state(conn: &mut PgConnection) -> (BTreeMap<String, i64>, i64) {
+    let rows = sqlx::query(
+        r#"SELECT e.event_type || ' ' || regexp_replace(e.payload::text,
+                  '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}', '<id>', 'g') AS k,
+                  count(*) AS n
+           FROM core.events e
+           WHERE e.parents IS NOT NULL
+             AND e.id IN (SELECT event_id FROM core.live_equivalence UNION ALL SELECT event_id FROM core.live_locations)
+           GROUP BY 1"#,
+    )
+    .fetch_all(&mut *conn)
+    .await
+    .unwrap();
+    let live = rows
+        .iter()
+        .map(|r| (r.get::<String, _>("k"), r.get::<i64, _>("n")))
+        .collect();
+    let derived = scalar(
+        conn,
+        "SELECT count(*) FROM core.events WHERE parents IS NOT NULL",
+    )
+    .await;
+    (live, derived)
+}
+
+/// Kill the derivation runner at a step, run it again to the end, and
+/// compare with a run that was never interrupted: the same derived readings,
+/// none stored twice, and no derived event committed without its parents.
+async fn derive_survives(ready: Option<&str>, lock_sql: &str) {
+    let inputs = Inputs::first_transaction();
+    let expected = {
+        let reference = Target::new(&inputs);
+        finish(&mut reference.backfill(&inputs));
+        finish(&mut reference.derive());
+        derived_state(&mut reference.connect().await).await
+    };
+    assert!(expected.1 > 0, "the inputs produce derived events");
+
+    let target = Target::new(&inputs);
+    finish(&mut target.backfill(&inputs));
+    kill_at(&target, &mut target.derive(), ready, lock_sql).await;
+    consistent(&target).await;
+    let mut c = target.connect().await;
+    let orphans = scalar(
+        &mut c,
+        "SELECT count(*) FROM core.events e, unnest(e.parents) p
+         WHERE NOT EXISTS (SELECT 1 FROM core.events x WHERE x.id = p AND x.commit_seq < e.commit_seq)",
+    )
+    .await;
+    assert_eq!(orphans, 0, "a derived event committed without its parents");
+    finish(&mut target.derive());
+    consistent(&target).await;
+    let actual = derived_state(&mut c).await;
+    let differ: Vec<_> = expected
+        .0
+        .iter()
+        .filter(|(k, n)| actual.0.get(*k) != Some(*n))
+        .map(|(k, n)| format!("{n}x {}", &k[..k.len().min(160)]))
+        .take(5)
+        .collect();
+    assert!(
+        actual == expected,
+        "derived readings differ after the restart ({} vs {} events): {differ:#?}",
+        actual.1,
+        expected.1
+    );
+}
+
+macro_rules! derive_steps {
+    ($($name:ident: $ready:expr, $lock:expr;)*) => {$(
+        #[devkit::test]
+        async fn $name() {
+            derive_survives($ready, &$lock).await;
+        }
+    )*};
+}
+
+derive_steps! {
+    derive_killed_admitting_outputs: None, lock("core.events");
+    derive_killed_replacing_a_key_output_set: None, lock("derivation.outputs");
+    // A derivation's batch is committed and a later one, possibly of a
+    // derivation reading it, is blocked.
+    derive_killed_between_derived_batches:
+        Some("SELECT EXISTS (SELECT 1 FROM derivation.outputs)"),
+        "LOCK TABLE derivation.outputs IN SHARE MODE";
 }

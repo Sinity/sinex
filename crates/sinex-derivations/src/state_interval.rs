@@ -327,6 +327,7 @@ fn key_parts(key: &Value) -> Option<(&'static IntervalRule, jiff::civil::Date)> 
 impl Keyed for StateIntervals {
     const NAME: &'static str = "state.intervals";
     const VERSION: u32 = 1;
+    const USES_TIME_SETTINGS: bool = true;
     const INPUTS: &'static [&'static str] = INPUT_TYPES;
     const OUTPUTS: &'static [&'static str] = &[StateInterval::EVENT_TYPE];
 

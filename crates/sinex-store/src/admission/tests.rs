@@ -144,7 +144,7 @@ async fn newer_replaces_older_suppresses_one_live_per_key() {
                     *g += 1;
                     *g
                 };
-                let source = format!("law-{n}");
+                let source = format!("source-{n}");
                 let got = tokio::task::block_in_place(|| {
                     rt.block_on(async {
                         let mut conn = conn.lock().await;
@@ -652,6 +652,31 @@ async fn untimed_zsh_occurrences_coexist_and_only_same_locations_repeat(
 }
 
 mod archive_history;
+mod commit_order;
+mod compressed;
 mod source_counts;
 
 mod library_upgrade;
+
+
+#[devkit::test]
+async fn derived_outputs_require_committed_live_parents(db: devkit::pg::TestDatabase) {
+    use sinex_model::{EventId, Origin};
+    use sqlx::Connection;
+    let mut conn = sqlx::PgConnection::connect(&db.url(None)).await.unwrap();
+    let parent = keyed("source", 1, 1, 1);
+    admit_one(&mut conn, &batch(vec![parent.clone()])).await;
+    for id in [EventId::new(), parent.id] {
+        if id == parent.id {
+            let mut archive = batch(vec![]);
+            archive.archive.push(sinex_model::ArchiveRequest::Hide { target:id, operation:sinex_model::OperationId::new() });
+            admit_one(&mut conn, &archive).await;
+        }
+        let mut child = keyed("derived", 2, 2, 1);
+        child.origin = Origin::Derived { parents: vec![id] };
+        let mut tx = conn.begin().await.unwrap();
+        let result = crate::admit(&mut tx, &batch(vec![child]), &crate::NoDerivations).await;
+        assert!(matches!(result, Err(crate::Error::Invalid(_))), "{result:?}");
+        tx.rollback().await.unwrap();
+    }
+}

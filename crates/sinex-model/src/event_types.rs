@@ -4,6 +4,7 @@
 use crate::EventPayload;
 
 pub mod account;
+pub mod activity;
 pub mod browser;
 pub mod code;
 pub mod communication;
@@ -22,8 +23,13 @@ pub mod query;
 pub mod session;
 pub mod shell;
 pub mod social;
+pub mod telemetry;
+pub mod work;
 
-pub use derived::{FigureValue, HealthFigure, MetricFigure, StateInterval};
+pub use activity::{ActivitySession, ActivitySpan, ActivityWindow};
+pub use derived::{
+    ConversationDay, FigureValue, HealthFigure, MetricFigure, StateInterval, TagApplied,
+};
 pub use fused::CommandFused;
 use serde_json::Value;
 pub use shell::{CommandExecuted, CommandImported, ShellSession};
@@ -129,6 +135,8 @@ pub const ALL: &[RegisteredEventType] = &[
     info::<input::InputLogger>(),
     // Code
     info::<code::GitCommit>(),
+    // Sinex's own state
+    info::<telemetry::SinexTelemetry>(),
     // Derived
     info::<CommandFused>(),
     info::<fused::FocusFused>(),
@@ -137,10 +145,23 @@ pub const ALL: &[RegisteredEventType] = &[
     info::<fused::ClipboardFused>(),
     info::<fused::NotificationFused>(),
     info::<fused::MailFused>(),
+    info::<fused::RestFused>(),
     info::<ShellSession>(),
     info::<StateInterval>(),
     info::<MetricFigure>(),
     info::<HealthFigure>(),
+    info::<ActivitySpan>(),
+    info::<ActivityWindow>(),
+    info::<ActivitySession>(),
+    info::<activity::InputCoverageInterval>(),
+    info::<work::WorkAct>(),
+    info::<work::WorkEpisode>(),
+    info::<work::WorkSuspension>(),
+    info::<work::WorkResumption>(),
+    info::<work::ContextPack>(),
+    info::<work::ActivityDay>(),
+    info::<TagApplied>(),
+    info::<ConversationDay>(),
     // Browsing, listening, reading, notes, communication
     info::<browser::BrowserVisit>(),
     info::<browser::BrowserUrl>(),
@@ -182,6 +203,7 @@ pub const ALL: &[RegisteredEventType] = &[
     info::<operator::SteeringRow>(),
     // Library
     info::<library::FileCopy>(),
+    info::<library::DocumentText>(),
     info::<library::Item>(),
     info::<library::Rendition>(),
     info::<library::Preview>(),
@@ -198,6 +220,11 @@ pub const ALL: &[RegisteredEventType] = &[
 /// read from the database and needs the static one.
 pub fn find(event_type: &str) -> Option<&'static RegisteredEventType> {
     ALL.iter().find(|k| k.event_type == event_type)
+}
+
+/// Whether an event records Sinex's own sampled state.
+pub fn is_telemetry(event_type: &str) -> bool {
+    telemetry::TYPES.contains(&event_type)
 }
 
 #[cfg(test)]

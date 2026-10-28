@@ -4,8 +4,12 @@
 //! directly and matches an upgraded one.
 
 /// The statements of each upgrade, by the version it starts from.
+/// Steps under review receive their schema numbers when they land.
+pub(crate) const LANDED_VERSION: i32 = 4;
+pub(crate) const PENDING_STEPS: &[&str] = &["library_scans", "foundations"];
+
 pub(crate) fn upgrades() -> Vec<Vec<String>> {
-    vec![
+    let mut steps = vec![
         // 0 to 1: per-source and per-run counts, filled from the events
         // already stored in one read of them.
         vec![
@@ -42,10 +46,57 @@ pub(crate) fn upgrades() -> Vec<Vec<String>> {
             "DROP INDEX IF EXISTS core.events_coverage".into(),
             crate::tables::COVERAGE_RUNS.into(),
         ],
+        // 3 to 4: authored marks and saved questions.
         register_kinds(&["operator.mark", "query.saved"], false),
-        // 4 to 5: library scan identities and preview evidence.
-        library_scans(),
-    ]
+    ];
+    for name in PENDING_STEPS {
+        steps.push(match *name {
+            "library_scans" => library_scans(),
+            "foundations" => foundations(),
+            _ => unreachable!("declared schema step"),
+        });
+    }
+    steps
+}
+
+/// Ordinary events replace the daemon's separate telemetry table.
+fn foundations() -> Vec<String> {
+    let mut statements = vec![
+        "DO $$ BEGIN IF EXISTS (SELECT 1 FROM telemetry.events) THEN RAISE EXCEPTION 'the telemetry table holds records; preserve them before upgrading'; END IF; END $$".into(),
+        "DROP TABLE telemetry.events".into(),
+        "DROP SCHEMA telemetry".into(),
+        "ALTER TABLE derivation.waiting ADD COLUMN refresh_at timestamptz".into(),
+        "INSERT INTO core.counters (name, value) SELECT 'excised', count(*) FROM core.event_tombstones".into(),
+    ];
+    statements.extend([
+        crate::tables::EVENT_CHILDREN.into(),
+        crate::tables::EVENT_CHILDREN_CHILD.into(),
+        "INSERT INTO core.event_children (parent, child) SELECT DISTINCT unnest(parents), id FROM core.events WHERE parents IS NOT NULL".into(),
+        "GRANT SELECT ON core.event_children TO sinex_reader, sinex_writer".into(),
+        "GRANT INSERT, UPDATE, DELETE ON core.event_children TO sinex_writer".into(),
+    ]);
+    statements.extend(register_kinds(
+        &[
+            "sinex.telemetry",
+            "tag.applied",
+            "activity.window",
+            "activity.session",
+            "activity.span",
+            "input.coverage",
+            "work.act",
+            "work.episode",
+            "work.suspension",
+            "work.resumption",
+            "context.pack",
+            "activity.day",
+            "conversation.day",
+            "rest.fused",
+            "document.text",
+        ],
+        false,
+    ));
+    statements.extend(register_kinds(&["presence.interval"], true));
+    statements
 }
 
 /// Register payload schemas and views together. Replacing a kind also updates its registry row.

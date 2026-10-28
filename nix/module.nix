@@ -187,11 +187,33 @@ in
         name = d.name;
         value.enable = mkOption {
           type = types.bool;
-          default = true;
+          default = d.enabledByDefault;
           description = "The ${d.kind} derivation ${d.name} (${concatStringsSep ", " d.inputs} → ${concatStringsSep ", " d.outputs}); analytics are on by default.";
         };
       })
       catalog.derivations);
+
+    activity.break_seconds = mkOption {
+      type = types.ints.positive;
+      default = 900;
+      description = "Break threshold in seconds between operator activity windows in one session.";
+    };
+
+    tags = mkOption {
+      type = types.listOf (types.attrsOf types.anything);
+      default = [ ];
+      example = lib.literalExpression ''
+        [ { tag = "editor"; event_type = "focus.fused"; when = [ { field = "/app"; is = "kitty"; } { field = "/title"; contains = "nvim"; } ]; } ]
+      '';
+      description = ''
+        Rules the tag applier attaches tags with: each names a tag, an event
+        type and conditions on payload fields (`is`, `contains`, `starts_with`,
+        `ends_with`, `extension`, `mime`, `exists`), as JSON pointers. A rule may
+        require an exact source and may be disabled with `enabled = false`.
+        An extension matches the final path component; MIME ignores parameters.
+        Removing or disabling rules recomputes their former assignments.
+      '';
+    };
 
     journald.enable = mkOption {
       type = types.bool;
@@ -356,6 +378,7 @@ in
             };
           });
         derivations = mapAttrs (_: d: d.enable) cfg.derivations;
+        inherit (cfg) tags activity;
       };
 
       systemd.tmpfiles.rules = [
@@ -371,6 +394,9 @@ in
         "d ${cfg.stateDir}/tokens 0750 ${cfg.user} ${cfg.group} -"
         "d ${cfg.stateDir}/nats 0750 ${cfg.user} ${cfg.group} -"
         "d ${cfg.stateDir}/spool 0750 ${cfg.user} ${cfg.group} -"
+        # Scratch the daemon writes while reading an input (an Outlook PST
+        # converted to mbox files); /tmp may be a small tmpfs.
+        "d ${cfg.stateDir}/tmp 0750 ${cfg.user} ${cfg.group} -"
         "d ${cfg.backup.dumpDir} 0750 ${cfg.user} ${cfg.group} -"
         "d ${cfg.backup.keysDir} 0700 ${cfg.user} ${cfg.group} -"
         "d ${cfg.database.dataDir} 0700 postgres postgres -"
@@ -480,7 +506,7 @@ in
         # restart on every switch.
         restartIfChanged = false;
         # Tesseract reads text from screen segments (screen.text).
-        path = [ pkgs.tesseract pkgs.coreutils ];
+        path = [ pkgs.tesseract pkgs.poppler-utils pkgs.coreutils ];
         serviceConfig = restartPolicy // {
           User = cfg.user;
           Group = cfg.group;
@@ -500,6 +526,7 @@ in
           CapabilityBoundingSet = [ "CAP_DAC_READ_SEARCH" ];
         };
         environment.SINEX_PRIVATE_MODE = privateSwitch;
+        environment.TMPDIR = "${cfg.stateDir}/tmp";
         preStart = ''
           # Tokens are made once; a missing file disables that level.
           for level in read agent operator; do
@@ -522,6 +549,7 @@ in
             --tokens ${cfg.stateDir}/tokens \
             ${optionalString (cfg.zone != null) "--zone ${escapeShellArg cfg.zone}"} \
             --day-start ${escapeShellArg cfg.dayStart} \
+            --telemetry-spool ${cfg.stateDir}/spool/telemetry \
             --sources /etc/sinex/sources.json
         '';
       };
@@ -624,7 +652,7 @@ in
           after = [ "sinex-db-setup.service" "sinexd.service" ];
           requires = [ "sinex-db-setup.service" ];
           restartIfChanged = false;
-          path = [ pkgs.tesseract pkgs.coreutils ];
+          path = [ pkgs.tesseract pkgs.poppler-utils pkgs.coreutils ];
           environment.SINEX_PRIVATE_MODE = privateSwitch;
           serviceConfig = {
             Type = "oneshot";

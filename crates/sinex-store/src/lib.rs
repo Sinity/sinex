@@ -24,10 +24,11 @@ pub mod replay;
 pub mod runs;
 pub mod sealed;
 mod stage;
+pub mod telemetry;
 pub mod writer_lock;
 
 pub use admission::{
-    ComputedKey, DerivedScope, DirtyKeys, KeyInput, NoDerivations, Outcome, admit,
+    AffectedRange, ComputedKey, DerivedScope, DirtyKeys, KeyInput, NoDerivations, Outcome, ReadMark, admit,
 };
 pub use blobs::Blobs;
 pub use hashed_blobs::Verified;
@@ -61,3 +62,7 @@ pub enum Error {
 }
 
 pub type Result<T, E = Error> = std::result::Result<T, E>;
+
+#[cfg(test)]
+#[path = "tests/schema.rs"]
+mod test_schema;

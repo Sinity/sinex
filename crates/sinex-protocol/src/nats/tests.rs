@@ -60,3 +60,21 @@ fn frames_round_trip_with_defaults() {
     assert_eq!(events[0].class, Class::Open);
     assert!(events[0].location.is_none());
 }
+
+#[devkit::test]
+fn confirmed_readings_require_their_record_hash_and_order() {
+    let event = ConfirmedEvent {
+        commit_seq:1, id:EventId::new(), event_type:"command.executed".into(), source:"synthetic".into(),
+        run:RunId::new(), location:None, output_index:0, parents:vec![EventId::new()], ts_orig:None,
+        ts_quality:"unknown".into(), ts_coided:None, ts_persisted:Timestamp::from_unix_secs(1).unwrap(),
+        record_state:"present".into(), class:Class::Open, equivalence_key:None,
+        reading_order:17, record_hash:"00".repeat(32), payload:Some(serde_json::json!({})), withheld:None,
+    };
+    let value = serde_json::to_value(&event).unwrap();
+    assert_eq!(serde_json::from_value::<ConfirmedEvent>(value.clone()).unwrap(), event);
+    for field in ["reading_order", "record_hash"] {
+        let mut missing = value.clone();
+        missing.as_object_mut().unwrap().remove(field);
+        assert!(serde_json::from_value::<ConfirmedEvent>(missing).is_err());
+    }
+}

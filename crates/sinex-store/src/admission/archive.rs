@@ -32,7 +32,7 @@ pub(super) async fn replay_scope(
            descendants AS (
              SELECT id FROM read_here
              UNION
-             SELECT d.id FROM core.events d JOIN descendants p ON d.parents @> ARRAY[p.id])
+             SELECT edge.child FROM core.event_children edge JOIN descendants p ON edge.parent = p.id)
            SELECT x.id AS "id!" FROM descendants x
            WHERE EXISTS (SELECT 1 FROM core.live_equivalence l WHERE l.event_id = x.id)
               OR EXISTS (SELECT 1 FROM core.live_locations l WHERE l.event_id = x.id)"#,
@@ -44,7 +44,7 @@ pub(super) async fn replay_scope(
     .fetch_all(&mut *conn)
     .await?;
     let seq = position(conn).await?;
-    let dirty = mark_archived_dirty(conn, &live, seq, keys).await?;
+    let dirty = mark_archived_dirty(conn, &live, seq, keys, None).await?;
     archive_at(
         conn,
         &live,
@@ -112,7 +112,7 @@ pub(super) async fn request(
             )
             .await?;
             let seq = position(conn).await?;
-            let dirty = mark_archived_dirty(conn, &live, seq, keys).await?;
+            let dirty = mark_archived_dirty(conn, &live, seq, keys, None).await?;
             archive_at(
                 conn,
                 &live,
@@ -146,6 +146,14 @@ pub(super) async fn request(
             )
             .fetch_optional(&mut *conn)
             .await?;
+            let owners = sqlx::query!(
+                "SELECT derivation, key FROM derivation.outputs WHERE event_id = $1", target.0,
+            ).fetch_all(&mut *conn).await?;
+            if !owners.is_empty() {
+                let seq = position(conn).await?;
+                return super::derived::mark_dirty(conn, owners.into_iter().map(|row|
+                    (crate::derivations::static_type(&row.derivation), row.key)).collect(), seq).await;
+            }
             if removed.is_none() {
                 return Ok(0);
             }
@@ -190,7 +198,7 @@ pub(super) async fn request(
                     .await?;
                 }
             }
-            mark_archived_dirty(conn, &[r.id], seq, keys).await
+            mark_archived_dirty(conn, &[r.id], seq, keys, None).await
         }
     }
 }

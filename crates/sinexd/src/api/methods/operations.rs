@@ -110,6 +110,8 @@ impl Api {
             writer.clone(),
             derivation,
             &self.host,
+            &self.derivations,
+            sinex_model::time_settings::TimeSettings::from_parts(self.zone.clone(), self.day_start),
         )
         .await
         {

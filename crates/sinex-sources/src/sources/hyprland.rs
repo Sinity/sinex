@@ -260,17 +260,9 @@ pub fn driver(spool: PathBuf, host: String) -> LiveStream {
     }
 }
 
-/// Capture the socket into `spool` until the socket closes (Hyprland exited).
-/// Returns the number of lines captured.
-pub fn capture(socket: &Path, spool: &Path) -> std::io::Result<u64> {
-    capture_until(
-        socket,
-        spool,
-        &sinex_source_core::capture::CaptureStop::new(None),
-    )
-}
-
-fn capture_until(
+/// Capture the socket into `spool` until the socket closes (Hyprland exited)
+/// or `stop`. Returns the number of lines captured.
+fn capture(
     socket: &Path,
     spool: &Path,
     stop: &sinex_source_core::capture::CaptureStop,
@@ -300,7 +292,7 @@ pub const FORMAT: sinex_source_core::binding::InputFormat =
             let socket = socket_path().ok_or(
             "no Hyprland instance in this environment (HYPRLAND_INSTANCE_SIGNATURE or XDG_RUNTIME_DIR unset)",
         )?;
-            capture_until(&socket, &b.input, stop).map_err(|e| e.to_string())
+            capture(&socket, &b.input, stop).map_err(|e| e.to_string())
         }),
     };
 

@@ -1,4 +1,4 @@
-//! Excision laws: every reading of the one record and its descendants go, a
+//! Excision: every reading of the one record and its descendants go, a
 //! tombstone stays, each material the record was read from goes whole with
 //! only its digest kept, and nothing that is not the record changes. Every record
 //! here is alone in its material, as the caller requires.
@@ -176,6 +176,7 @@ async fn admit_events(conn: &mut PgConnection, events: Vec<Event>) -> crate::Out
 /// does.
 async fn excise(conn: &mut PgConnection, store: &Store, target: Target) -> Result<Applied> {
     let plan = plan(conn, target).await?;
+    let read_before = crate::ReadMark::now(conn).await?;
     let mut tx = conn.begin().await?;
     let applied = apply(
         &mut tx,
@@ -188,6 +189,11 @@ async fn excise(conn: &mut PgConnection, store: &Store, target: Target) -> Resul
     .await?;
     tx.commit().await?;
     finish_deletions(conn, &store.blobs).await?;
+    let read_after = crate::ReadMark::now(conn).await?;
+    assert_eq!(
+        read_after.excised - read_before.excised,
+        i64::try_from(applied.events).unwrap()
+    );
     Ok(applied)
 }
 

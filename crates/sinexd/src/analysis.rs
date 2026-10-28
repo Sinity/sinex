@@ -3,7 +3,8 @@
 //! in `sinex-analysis` over them. Nothing here is stored: a panel, a method's
 //! answer and the brief are computed when asked for, at one commit position.
 //!
-//! - [`panel`]: figures, coverage and the cells built from them;
+//! - [`panel`]: figures, coverage and the cells built from them, and the
+//!   stretches coverage does not reach;
 //! - [`recipes`]: the shipped recipes;
 //! - [`brief`]: the daily brief and why a cell is what it is.
 use sinex_analysis::Span;
@@ -15,7 +16,7 @@ mod panel;
 mod recipes;
 
 pub(crate) use brief::{brief, why_not};
-pub(crate) use panel::{panel, table};
+pub(crate) use panel::{gaps, panel, table};
 pub(crate) use recipes::{Recipe, run};
 
 /// The day setting the figures are derived under.

@@ -43,8 +43,16 @@ these names and no others.
 - **reading order**: which of two readings of a record is newer.
 - **equivalence key**: the per-type key that recognizes the same thing seen again in another material.
 - **clocks**: `ts_orig` (when it happened, or unknown), `ts_coided` (when Sinex read it, from the UUIDv7 ID), `ts_persisted` (when it was committed).
+- **time suspect**: the query field that labels a stated time that looks wrong (`future`: later than Sinex read it; `epoch zero`); the time is kept as stated, never refused or changed.
+- **producer version**: the version of the producer whose run wrote an event, so outputs of two derivation versions are told apart while a recompute runs.
 - **derived event**: an event computed by a derivation, naming its parents.
+- **telemetry**: Sinex's own state, sampled by the daemon every minute as `sinex.telemetry` events (a **sample** per part: the writer, the publisher, the search index, each derivation and source) and admitted, replayed and queried as ordinary events.
 - **fusion**: joining what several sources observed of one thing into one **fused record**: `command.fused`, `focus.fused`, `visit.fused`, `play.fused`, `clipboard.fused`, `notification.fused`, `mail.fused`. Each fused kind has one **fusion rule**; a **fusion input** (`FusionInput`) reads one source's events for it as **fusion records** (`FusionRecord`) (an identity, a start, maybe an end, the fields it supplies). A **fused command** is a `command.fused` event.
+- **agency**: who the recorded evidence supports as acting: `operator`, `supervising`, `delegated`, `automated`, `passive`, `unknown` or `mixed`. Focus and clipboard changes alone do not establish agency.
+- **activity window**: operator evidence joined while gaps stay below 300 seconds, partitioned by civil hour with continuation flags. Counts belong to the hour of each record's start; measured support excludes the gaps.
+- **activity session**: activity windows joined across breaks shorter than the configured threshold (900 seconds by default), across hours and logical days. Explicit lock, suspend or sleep closes it. A `short_break` member records an internal break of at least 120 seconds.
+- **activity span**: an elementary, non-overlapping segment within one scope and hour, describing agency, presence claims, focus, input, display and playback with its evidence. Unsupported time stays unknown.
+- **activity profile**: the configured break threshold for activity sessions; changing it recomputes the sessions.
 - **shell session**: the `shell.session` derived event: a run of commands in one terminal; `recall last` reads around the latest one.
 - **batch**: what a producer hands the writer: records with their events or failures, and progress.
 - **run**: one execution of a producer; every event names its run.
@@ -56,8 +64,13 @@ these names and no others.
 - **commit log**: committed events in commit order; each entry has a **commit position**.
 - **visibility change**: a reading leaving or rejoining the live set (archived, hidden, unhidden), numbered by its **change position** in `audit.archive_changes`.
 - **derivation**: keyed (recomputes a **dirty key** when its inputs change; a **computed key** is one key's new output set) or per-event.
+- **read mark**: the change position and excision count when a derivation read its inputs, carried with computed outputs so admission can check whether those inputs are still live.
+- **superseded input**: an input a derivation read that stopped being live (a newer reading or a replay archived it, or excision removed it) before the outputs computed from it were stored; those outputs are dropped and computed again from what is live.
+- **interval end**: the payload timestamp ending an interval, or its duration in nanoseconds. An input query reads earlier intervals whose ends overlap its window. An unbounded input query reads every known-time event of its kinds.
 - **kind** (of what a key reads): events of one type, optionally only those whose payload fields have given values.
+- **tag assignment**: a `tag.applied` derived event naming the input record, its tag and the rules that matched.
 - **metric**: a declared count over events (events, seconds of their intervals, or a ratio), with its **dimensions** (payload fields it is broken down by) and the sources that observe it. A **tracked metric** is one the brief compares with its recent level.
+- **calculation**: how a metric counts its inputs: events, seconds or a ratio.
 - **figure**: a metric's number over one civil hour or logical day, total or for one **dimension value**, as a `metric.figure` event; a **health figure** (`health.figure`) is the same for one series of health points.
 - **coverage**: the stretches in which a source could have recorded what it records, computed from its runs and records when asked for.
 - **panel**: logical days by metrics, each **cell** observed, partial, recorded or missing with its reason, from the daily figures and coverage.
@@ -136,6 +149,22 @@ these names and no others.
 | consumer (of a source) | purpose |
 | stage (outside admission) | plan, temporary file, write |
 | physical | name the thing: record ranges, archive pass |
+
+## Work and presence
+
+- **agency**: the operator channel on an elementary activity span: operator, supervising, delegated, automated, passive, unknown or mixed. Delegated work can run concurrently.
+- **input coverage**: the interval between a recorded non-virtual input recorder start and stop. Silence outside known coverage stays unknown.
+- **objective**: an exact recorded reference that joins work across sessions and days. A branch needs its repository as part of its identity.
+- **work episode**: the acts linked to one objective, with separate operator and agent time, interruptions and resumptions.
+- **interruption source**: the recorded cause of leaving an episode, kept separate from the event producer.
+- **suspension**: the last operator act before leaving an episode for another context or absence.
+- **resumption**: the next operator act in that episode. A measured lag also needs its exact return of focus.
+- **resume card**: the stated-goal reference, chronological activity trail, last edit and unresolved failures for one episode.
+- **wake day**: the displayed interval between consecutive recorded wakes. Logical days remain the calculation partition.
+
+- **work act** (`work.act`): a stored reading of an operator prompt or delegated act with its recorded objective and source evidence.
+- **context pack** (`context.pack`): a stored activity trail for one objective, derived from its episode and work acts.
+- **semantic range**: input bounds read from live event keys, such as an objective's extent or the next recorded wake.
 
 ## Reader implementation names
 

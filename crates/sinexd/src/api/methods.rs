@@ -4,8 +4,9 @@
 use super::mask::{mask_json, mask_str};
 use crate::writer::{Priority, WriterHandle};
 use serde_json::{Value, json};
+use sinex_model::event_types::telemetry::SinexTelemetry;
 use sinex_model::query::{self, Context, QueryError};
-use sinex_model::{ArchiveRequest, Batch, BatchKind, EventId, OperationId, RunId};
+use sinex_model::{ArchiveRequest, Batch, BatchKind, EventId, EventPayload, OperationId, RunId};
 use sinex_protocol::{Access, DATA_NOTICE, Reply, Request};
 use sinex_store::query::{Answer, Page};
 use sqlx::PgPool;
@@ -25,6 +26,7 @@ pub(crate) struct Api {
     pub blobs: sinex_store::Blobs,
     pub zone: jiff::tz::TimeZone,
     pub day_start: jiff::civil::Time,
+    pub derivations: sinex_derivations::Configuration,
     /// Classes the agent token is granted besides `open` (`guarded` only by
     /// the operator's explicit grant; never `sealed`).
     pub agent_grants: Vec<sinex_model::Class>,
@@ -476,6 +478,7 @@ impl Api {
             Request::AnalysisCatalog
             | Request::AnalysisRun { .. }
             | Request::AnalysisPanel { .. }
+            | Request::Gaps { .. }
             | Request::AnalysisWhy { .. }
             | Request::Brief { .. } => self.analysis(caller, request).await,
             Request::Follow { .. } => refused("follow streams; use the API's follow stream"),
@@ -603,6 +606,9 @@ impl Api {
         let row = sinex_store::diagnostics::positions(&mut conn)
             .await
             .map_err(|e| e.to_string())?;
+        let telemetry = sinex_store::telemetry::latest(&mut conn, SinexTelemetry::EVENT_TYPE)
+            .await
+            .map_err(|e| e.to_string())?;
         drop(conn);
         let sources = match self
             .query(
@@ -637,6 +643,8 @@ impl Api {
             "zone": self.context().zone_name(),
             "day_start": self.day_start.to_string(),
             "sources": sources,
+            // The daemon's newest sample of each of its parts.
+            "telemetry": telemetry,
         }))
     }
 }

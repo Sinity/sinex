@@ -14,6 +14,7 @@ mod daemon;
 mod derivation_runner;
 mod diagnostics;
 mod dirty_keys;
+mod document_text;
 mod excision;
 mod ingress;
 mod intake;
@@ -24,6 +25,7 @@ mod replay;
 mod screen_text;
 mod sealing;
 mod stored;
+mod telemetry;
 mod writer;
 
 use clap::{Parser, Subcommand};
@@ -77,6 +79,10 @@ enum Command {
         /// `/etc/sinex/sources.json`); none when unset.
         #[arg(long)]
         sources: Option<PathBuf>,
+        /// The spool the daemon writes its telemetry samples to, and reads
+        /// back; `<store>/telemetry` when unset.
+        #[arg(long)]
+        telemetry_spool: Option<PathBuf>,
     },
     /// Publish every committed event not yet on the confirmed stream, then stop
     /// and report the rate. For a first run and measurement; the running daemon
@@ -142,6 +148,10 @@ enum Command {
         /// One JSON object: counts per derivation and peak memory.
         #[arg(long)]
         json: bool,
+        /// The sources configuration the daemon runs with, for the tag
+        /// applier's rules; without it the applier has none.
+        #[arg(long)]
+        sources: Option<PathBuf>,
     },
 }
 
@@ -151,6 +161,7 @@ async fn local_runner(
     database: &str,
     host: &str,
     store: Option<&std::path::Path>,
+    configuration: &sinex_derivations::Configuration,
 ) -> Result<
     (
         derivation_runner::DerivationRunner,
@@ -172,7 +183,7 @@ async fn local_runner(
         database.to_owned(),
         writer_conn,
         queues,
-        std::sync::Arc::new(dirty_keys::Registered::new(sinex_derivations::keyed())),
+        std::sync::Arc::new(dirty_keys::Registered::new(sinex_derivations::keyed_with(configuration), sinex_model::time_settings::TimeSettings::operator_default())),
         blobs.clone(),
     ));
     let read = sqlx::PgConnection::connect(database)
@@ -181,9 +192,14 @@ async fn local_runner(
     let mut runner = derivation_runner::DerivationRunner::start(
         read,
         handle,
-        sinex_derivations::keyed(),
-        derivation_runner::per_event(),
+        sinex_derivations::keyed_with(configuration),
+        if configuration.tags.is_empty() {
+            derivation_runner::per_event()
+        } else {
+            derivation_runner::per_event_with(configuration)?
+        },
         host,
+        sinex_model::time_settings::TimeSettings::operator_default(),
     )
     .await?;
     if let Some(blobs) = blobs {
@@ -197,8 +213,14 @@ async fn run_derive(
     store: Option<PathBuf>,
     host: String,
     json: bool,
+    sources: Option<PathBuf>,
 ) -> Result<(), String> {
-    let (mut runner, writer_task) = local_runner(&database, &host, store.as_deref()).await?;
+    let configuration = match &sources {
+        Some(path) => binding_runner::Config::load(path)?.derivation_configuration(),
+        None => sinex_derivations::Configuration::default(),
+    };
+    let (mut runner, writer_task) =
+        local_runner(&database, &host, store.as_deref(), &configuration).await?;
     let started = std::time::Instant::now();
     runner.catch_up().await?;
     let wall = started.elapsed();
@@ -306,8 +328,10 @@ async fn main() -> std::process::ExitCode {
             zone,
             day_start,
             sources,
+            telemetry_spool,
         } => match api_options(socket, listen, tokens, zone, &day_start) {
             Ok(api) => {
+                let telemetry_spool = telemetry_spool.unwrap_or_else(|| telemetry::spool(&store));
                 daemon::run(daemon::Options {
                     database,
                     store,
@@ -317,6 +341,7 @@ async fn main() -> std::process::ExitCode {
                     host,
                     api,
                     sources,
+                    telemetry_spool,
                 })
                 .await
             }
@@ -364,7 +389,8 @@ async fn main() -> std::process::ExitCode {
             store,
             host,
             json,
-        } => run_derive(database, store, host, json).await,
+            sources,
+        } => run_derive(database, store, host, json, sources).await,
     };
     match result {
         Ok(()) => std::process::ExitCode::SUCCESS,

@@ -60,6 +60,10 @@ pub(crate) fn field(table: Table, name: &str) -> Option<String> {
             "host" => "(SELECT r.host FROM core.runs r WHERE r.id = {t}.run_id)",
             "when" => "{t}.ts_orig",
             "time_quality" => "{t}.ts_quality",
+            "time_suspect" => {
+                "(CASE WHEN {t}.ts_orig > {t}.ts_coided + interval '5 minutes' THEN 'future' \
+                  WHEN {t}.ts_orig = 'epoch'::timestamptz THEN 'epoch zero' END)"
+            }
             "seen" => "{t}.ts_coided",
             "written" => "{t}.ts_persisted",
             "origin" => "(CASE WHEN {t}.material_id IS NULL THEN 'derived' ELSE 'material' END)",
@@ -68,6 +72,10 @@ pub(crate) fn field(table: Table, name: &str) -> Option<String> {
             "output" => "{t}.output_index::bigint",
             "parents" => "{t}.parents",
             "producer" => "(SELECT r.name FROM core.runs r WHERE r.id = {t}.run_id)",
+            "producer_version" => {
+                "(SELECT m.version FROM core.runs r JOIN core.manifests m ON m.id = r.manifest_id \
+                  WHERE r.id = {t}.run_id)"
+            }
             "run" => "{t}.run_id",
             "text" => "(SELECT s.text FROM core.visible_search_text s WHERE s.event_id = {t}.id)",
             "key" => "{t}.equivalence_key",
@@ -205,6 +213,7 @@ fn payload_bool(path: &str) -> String {
 /// A promoted field of an alias.
 pub(crate) fn alias_field(alias: &str, name: &str) -> Option<String> {
     Some(match (alias, name) {
+        ("telemetry", "component" | "name") => payload_text(name),
         ("shell-sessions", "host" | "day") => payload_text(name),
         ("shell-sessions", "commands" | "failed") => payload_number(name),
         ("shell-sessions", "start") => payload_time("started_at"),

@@ -10,6 +10,9 @@ pub(crate) struct Counts {
     pub admitted: usize,
     pub repeats: usize,
     pub replaced: usize,
+    /// Outputs dropped because an input they cite stopped being live before
+    /// they were stored.
+    pub superseded_input: usize,
     /// Inputs a per-event derivation could not derive (their outputs are
     /// missing until a new version reads them again).
     pub failed: usize,
@@ -27,6 +30,7 @@ impl Counts {
             "admitted": self.admitted,
             "repeats": self.repeats,
             "replaced": self.replaced,
+            "superseded_input": self.superseded_input,
             "failed": self.failed,
             "read_s": self.read.as_secs_f64(),
             "compute_s": self.compute.as_secs_f64(),
@@ -40,13 +44,14 @@ impl std::fmt::Display for Counts {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
-            "keys {} | inputs read {} | outputs {} | admitted {} | repeats {} | replaced {} | failed {} | read {:.2}s | compute {:.2}s | write {:.2}s",
+            "keys {} | inputs read {} | outputs {} | admitted {} | repeats {} | replaced {} | superseded input {} | failed {} | read {:.2}s | compute {:.2}s | write {:.2}s",
             self.keys,
             self.inputs,
             self.outputs,
             self.admitted,
             self.repeats,
             self.replaced,
+            self.superseded_input,
             self.failed,
             self.read.as_secs_f64(),
             self.compute.as_secs_f64(),

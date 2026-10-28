@@ -34,7 +34,7 @@ impl ReaderContext {
             database.to_owned(),
             writer_conn,
             queues,
-            Arc::new(Registered::new(sinex_derivations::keyed())),
+            Arc::new(Registered::new(sinex_derivations::keyed(), sinex_model::time_settings::TimeSettings::operator_default())),
             Some(blobs.clone()),
         ));
         Ok(Self {

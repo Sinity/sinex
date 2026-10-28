@@ -1,7 +1,14 @@
+use super::files::sniff;
 use super::*;
+use serde_json::{Map, Value, json};
+use sinex_model::Timestamp;
+use sinex_model::event_types::library::{Assignment, FileCopy, LibraryRecord, Preview};
 use sinex_model::event_types::library::{Level, Target};
 use sinex_model::{RecordOutcome, RecordState};
+use sinex_source_core::Parser;
+use sinex_source_core::drivers::Acquired;
 use sinex_source_core::{DrainInput, Limits, drain};
+use std::path::{Path, PathBuf};
 
 fn tmp() -> PathBuf {
     let d = std::env::temp_dir().join(format!("sinex-library-{}", uuid::Uuid::now_v7()));
@@ -9,7 +16,7 @@ fn tmp() -> PathBuf {
     d
 }
 
-fn png(w: u32, h: u32) -> Vec<u8> {
+pub(super) fn png(w: u32, h: u32) -> Vec<u8> {
     let mut b = b"\x89PNG\r\n\x1a\n\0\0\0\rIHDR".to_vec();
     b.extend_from_slice(&w.to_be_bytes());
     b.extend_from_slice(&h.to_be_bytes());
@@ -43,14 +50,14 @@ fn read_events(a: &Acquired, parser: &ScanParser) -> Vec<sinex_model::Event> {
         .collect()
 }
 
-fn read(a: &Acquired, parser: &ScanParser) -> Vec<FileCopy> {
+pub(super) fn read(a: &Acquired, parser: &ScanParser) -> Vec<FileCopy> {
     read_events(a, parser)
         .into_iter()
         .map(|event| event.payload_as().unwrap())
         .collect()
 }
 
-fn scan(root: &Path) -> LibraryScan {
+pub(super) fn scan(root: &Path) -> LibraryScan {
     LibraryScan {
         root: root.to_path_buf(),
         host: "h".into(),
@@ -188,7 +195,7 @@ impl sinex_source_core::drain::RecordRead for Body {
 
 /// What the store holds for the material `acquired` read, and the cursor
 /// once all of it is admitted.
-fn stored(acquired: &Acquired) -> (sinex_source_core::binding::StoredMaterial, Value) {
+pub(super) fn stored(acquired: &Acquired) -> (sinex_source_core::binding::StoredMaterial, Value) {
     let m = acquired.material.as_ref().unwrap();
     let length = m.records.last().unwrap().1;
     let bytes = m.record_bytes().record(0, length).unwrap().into_owned();
@@ -451,76 +458,6 @@ fn library_format_plans_one_file_without_reading_its_neighbours() {
 }
 
 #[devkit::test]
-fn an_unreadable_directory_reports_partial_coverage_and_other_files_continue() {
-    use std::os::unix::fs::PermissionsExt;
-    let dir = tempfile::tempdir().unwrap();
-    let nested = dir.path().join("nested");
-    std::fs::create_dir(&nested).unwrap();
-    std::fs::write(nested.join("image.png"), png(10, 10)).unwrap();
-    let scanner = scan(dir.path());
-    let mut state = ScanState::default();
-    let acquired = scanner.poll(&Value::Null, &mut state).unwrap();
-    let (_, cursor) = stored(&acquired);
-    let known = state.files["nested/image.png"].clone();
-    std::fs::write(dir.path().join("new.png"), png(20, 20)).unwrap();
-    std::fs::set_permissions(&nested, std::fs::Permissions::from_mode(0o000)).unwrap();
-    let partial = scanner.poll(&cursor, &mut state);
-    std::fs::set_permissions(&nested, std::fs::Permissions::from_mode(0o700)).unwrap();
-    let partial = partial.unwrap();
-    let material = partial.material.as_ref().unwrap();
-    let result = drain(
-        &ScanParser,
-        DrainInput {
-            source: SCAN.name,
-            class: Class::Open,
-            material: material.id,
-            bytes: material.record_bytes(),
-            records: &material.records,
-            carry: Value::Null,
-            reading_order: &*material.reading_order,
-            limits: Limits::default(),
-            manifest: &material.manifest,
-        },
-    )
-    .unwrap();
-    let outcomes: Vec<_> = result
-        .into_iter()
-        .flat_map(|batch| batch.outcomes)
-        .collect();
-    let failures: Vec<_> = outcomes
-        .iter()
-        .filter_map(|outcome| match outcome {
-            RecordOutcome::Failure { reason, .. } => Some(reason),
-            _ => None,
-        })
-        .collect();
-    assert_eq!(failures.len(), 1);
-    assert!(failures[0].contains("partial library scan"));
-    assert!(failures[0].contains("nested"));
-    let copies: Vec<FileCopy> = outcomes
-        .into_iter()
-        .flat_map(|outcome| match outcome {
-            RecordOutcome::Events { events, .. } => events,
-            _ => vec![],
-        })
-        .map(|event| event.payload_as().unwrap())
-        .collect();
-    assert_eq!(copies.len(), 1);
-    assert!(copies[0].path.ends_with("new.png"));
-    assert_eq!(state.files["nested/image.png"], known);
-    let (_, next) = stored(&partial);
-    assert_eq!(
-        next["last_complete_walk_ns"],
-        cursor["last_complete_walk_ns"]
-    );
-    // The successful retry discovers changes under the unreadable directory.
-    std::fs::write(nested.join("second.png"), png(30, 30)).unwrap();
-    let retry = read(&scanner.poll(&next, &mut state).unwrap(), &ScanParser);
-    assert_eq!(retry.len(), 1);
-    assert!(retry[0].path.ends_with("nested/second.png"));
-}
-
-#[devkit::test]
 fn equal_content_moves_prefer_each_files_device_and_inode() {
     let root = tmp();
     std::fs::write(root.join("one.png"), png(10, 10)).unwrap();
@@ -616,7 +553,7 @@ fn three_unchanged_polls_write_zero_copy_events_and_reuse_hashes_after_restart()
     let (_, cursor) = stored(&first);
     let memory = first.material.as_ref().unwrap().memory.clone().unwrap();
     assert_eq!(read(&first, &ScanParser).len(), 2);
-    assert_eq!(reader.state.files_hashed, 2);
+    assert_eq!(reader.state.files_hashed(), 2);
     for _ in 0..3 {
         let unchanged = reader.poll(&cursor).unwrap();
         assert!(
@@ -624,13 +561,13 @@ fn three_unchanged_polls_write_zero_copy_events_and_reuse_hashes_after_restart()
             "an unchanged poll writes zero copies"
         );
     }
-    assert_eq!(reader.state.files_hashed, 2);
+    assert_eq!(reader.state.files_hashed(), 2);
 
     let mut restarted = LibraryReader::new(scan(&root));
     restarted.restore_memory(&memory).unwrap();
     restarted.restored().unwrap();
     assert!(restarted.poll(&cursor).unwrap().material.is_none());
-    assert_eq!(restarted.state.files_hashed, 0);
+    assert_eq!(restarted.state.files_hashed(), 0);
     let mut changed = png(30, 30);
     changed.push(0);
     std::fs::write(root.join("two.png"), changed).unwrap();
@@ -638,7 +575,7 @@ fn three_unchanged_polls_write_zero_copy_events_and_reuse_hashes_after_restart()
         read(&restarted.poll(&cursor).unwrap(), &ScanParser).len(),
         1
     );
-    assert_eq!(restarted.state.files_hashed, 1);
+    assert_eq!(restarted.state.files_hashed(), 1);
     std::fs::remove_dir_all(root).unwrap();
 }
 
@@ -867,5 +804,5 @@ fn one_missing_path_and_several_new_equal_copies_report_ambiguity_across_parts()
         assert_eq!(copy.move_candidates.len(), 3);
         assert!(copy.move_candidates.contains(&old.path));
     }
-    assert_eq!(state.files_hashed, 3, "each new file was hashed once");
+    assert_eq!(state.files_hashed(), 3, "each new file was hashed once");
 }

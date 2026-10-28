@@ -20,9 +20,9 @@ mod upgrades;
 /// The session advisory lock held by the database's one writer.
 pub const WRITER_LOCK: i64 = 0x7369_6e65_7857_5254;
 
-/// The schema version these declarations create: one more than the last
-/// upgrade starts from.
-pub const VERSION: i32 = 5;
+/// The prerequisite schema plus the named steps being reviewed. The lander
+/// assigns the next number to each step when integrating it.
+pub const VERSION: i32 = upgrades::LANDED_VERSION + upgrades::PENDING_STEPS.len() as i32;
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
@@ -240,10 +240,7 @@ fn grants() -> Vec<String> {
         ));
     }
     // Read-only SQL sees events only through the visibility views.
-    out.push(
-        "REVOKE SELECT ON core.events, telemetry.events, core.search_text FROM sinex_reader"
-            .to_string(),
-    );
+    out.push("REVOKE SELECT ON core.events, core.search_text FROM sinex_reader".to_string());
     out
 }
 

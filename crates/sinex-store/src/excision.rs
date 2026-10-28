@@ -281,7 +281,7 @@ pub async fn apply(
     let seq = sqlx::query_scalar!("SELECT value FROM core.counters WHERE name = 'commit_seq'")
         .fetch_one(&mut *conn)
         .await?;
-    applied.dirty_keys = mark_archived_dirty(conn, &live, seq, keys).await?;
+    applied.dirty_keys = mark_archived_dirty(conn, &live, seq, keys, None).await?;
     remove_live(conn, &ids).await?;
 
     sqlx::query!(
@@ -335,6 +335,12 @@ pub async fn apply(
         .execute(&mut *conn)
         .await?;
     applied.events = usize::try_from(deleted.rows_affected()).unwrap_or(usize::MAX);
+    sqlx::query!(
+        "UPDATE core.counters SET value = value + $1 WHERE name = 'excised'",
+        i64::try_from(deleted.rows_affected()).expect("deleted count fits bigint"),
+    )
+    .execute(&mut *conn)
+    .await?;
 
     // Bytes the excised events cited: gone with them unless something else
     // (another event, a material, a revision) still refers to them.

@@ -77,6 +77,8 @@ pub(super) async fn unhide_at(
 
 /// Excision removes the archive state and history of the excised events too.
 pub async fn erase_archive_history(conn: &mut PgConnection, ids: &[Uuid]) -> Result<()> {
+    sqlx::query!("DELETE FROM core.event_children WHERE parent=ANY($1) OR child=ANY($1)", ids)
+        .execute(&mut *conn).await?;
     sqlx::query!("DELETE FROM audit.archived WHERE event_id=ANY($1)", ids)
         .execute(&mut *conn)
         .await?;

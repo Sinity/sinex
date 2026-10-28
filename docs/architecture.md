@@ -75,7 +75,7 @@ computations before reading inputs, so an older read cannot overwrite a
 command's newer outputs. Item keys with the same input range share one paged
 query over all their values, rather than reading the library once per item. Command runs end on both success and failure.
 
-Schema version 5 adds the scan identity fields and the preview evidence type.
+The library scan schema step adds the scan identity fields and preview evidence type.
 It upgrades databases without library records. A database containing library
 records is refused before any schema or data changes: its request-created
 IDs and external references need an explicit migration decision.
@@ -151,6 +151,13 @@ does not know which driver a binding uses.
 
 ### Drivers
 
+- **Append-only files.** An unchanged stat tuple skips the file, unless the
+  last look came within 50 ms of the file's last change, when an edit in the
+  same timestamp tick would not show. Otherwise the bytes before the cursor
+  are hashed in full using a streaming read:
+  unchanged, only the appended records are read; changed, the file is read
+  again as a new revision and aligned against the previous one, so a
+  same-length edit in the middle is a rewrite, never an append.
 - **SQLite rows.** One read transaction covers the schema check and the row
   query, so SQLite's own locking gives a committed view. A locked database is
   unavailable for that poll. The first poll after a start reads every row and
@@ -198,7 +205,10 @@ directories are 2770 and finished files 0640, so a producer running as another
 user in the store's group can hand over bytes without write access to the
 content store. Producer bytes are never stored sealed. A producer pages
 through the materials it registered (`<root>.materials.<producer>`), so one
-that keeps nothing of its own rebuilds from Sinex what it sent.
+that keeps nothing of its own rebuilds from Sinex what it sent. The ingress
+stream keeps a frame until it is admitted: it has no age limit, a full
+stream refuses the next publish rather than dropping an older frame, and the
+daemon's consumer redelivers without a cap.
 
 Polylogue is the producer for AI sessions. Each file an AI tool wrote is a
 material of its real input (origin, path, host), a growing file a chain of
@@ -235,6 +245,19 @@ optionally only the events whose payload fields have given values (Sinnix lake
 observations of one lane, journal entries of one priority), so a key never
 reads a whole type to use a sliver of it.
 
+A semantic range resolves an objective's first and last act, or the next wake,
+before reading that range. Input changes also dirty existing keys whose outputs
+overlap their time range. Unknown-time session metadata is read by its session
+key; it never acquires an invented start time. Waiting keys stay eligible until
+the evidence they need arrives. Time-dependent outputs store their next refresh
+time with the key, so silence can close a window and inactivity can mark an
+episode dormant without another input.
+
+Admission records every parent edge in `core.event_children`. Archiving an input
+archives every live derived descendant in the same transaction, including keyed
+aggregates, and dirties their keys. A restored aggregate requests a new reading
+from the live inputs. The archived reading and its exact parents remain stored.
+
 ### Fusion
 
 Several sources often see the same thing: Atuin and zsh the same command,
@@ -259,6 +282,89 @@ record no other source saw is fused alone, so a fused kind counts each thing
 once whichever sources were running. Metrics and aliases read the fused
 kinds.
 
+### Tag rules
+
+The opt-in `tag.applier` per-event derivation applies the `tags` list in the
+sources configuration. Each rule names an event type, a tag and literal
+comparisons over payload values addressed by JSON pointers, optionally restricted
+to an exact metadata source. `extension` checks the final file component;
+`mime` compares a media type without its parameters. Every matching
+tag becomes a `tag.applied` event naming its record and matching rules, with
+the input reading as its parent and its original time and class. Unknown
+times stay unknown. `services.sinex.derivations."tag.applier".enable = true`
+enables the configured rules. Changing the rule list reprocesses the inputs;
+admission replaces each input's output set and saves progress together, even
+when no rule matches any more. Removing the rules or disabling the tag applier
+runs an empty rule list to remove its former assignments. Hidden or replaced inputs lose their per-event
+outputs; unhiding an input computes them again.
+
+Document text is a per-event derivation over stored library copies. It reads
+the content blob for PDF, HTML, Markdown, plain text, Word (`.docx`) and
+OpenDocument (`.odt`), and writes searchable `document.text` events with their
+input as parent. Text is keyed by its captured copy record and part, so equal
+copies retain independent lineage. PDF text and screen OCR run at idle priority.
+Conversation days group a provider's messages. Mail uses recorded thread IDs;
+without one, each message stays separate, since a shared subject does not
+identify a thread. Rest fusion joins sleep and nap records from health providers.
+
+### Activity
+
+`activity.windows` joins operator evidence across gaps shorter than 300 seconds,
+with civil-hour partitions and continuation flags. Physical keyboard and pointer
+input counts only with recorded `extra.layer = evdev` and `extra.virtual = false`.
+Human prose prompts become work acts only with a recorded main, interactive Polylogue session;
+operator log entries support their own instants. Focus, commands, visits, copies
+and commits alone do not establish operator activity. Unknown device scopes stay
+separate from captured host and seat scopes.
+
+`activity.sessions` joins the windows across gaps shorter than
+`services.sinex.activity.break_seconds` (900 by default), closing on explicit
+lock, suspend or sleep. Sessions cross logical days. Their window and short-break
+members distinguish supported operator time from the session's wall extent.
+Changing the break threshold changes the producer version and replaces sessions.
+The runner follows connected windows to their real boundaries, without a day cutoff. Changes dirty nearby window keys and existing sessions that overlap them.
+
+`activity.spans` sweeps observed signal boundaries into non-overlapping elementary
+segments per scope and civil hour. Its agency, physical support and AFK claims
+remain separate. Conflicting exact input and absence evidence is `mixed`; focus
+without operator evidence is `unknown`. Playback alone is `passive`. Unknown
+physical provenance never establishes operator time. Physical recorder lifetimes produce `input.coverage`; silence becomes absence
+only within their recorded bounds, with matching captured scopes at both ends. Quiet gaps up to 300 seconds require physical
+input on both sides in the same recorded window. `presence.intervals` projects
+this same segmentation with its method, support and contradictory AFK claims.
+It has no separate AFK correction algorithm. Polylogue turns provide measured
+concurrent agent intervals; each span records delegated work independently of its
+operator-channel agency. Prompt and command instants create no duration.
+Exact terminal-to-agent joins needed to classify supervision remain unavailable.
+
+`work.acts` reads one recorded session and stores its qualifying acts with that
+session as a parent. Acts remain available to presence even without an objective. `work.episodes` groups those acts by the recorded repository
+and branch, reading context only within that objective's extent.
+It keeps separate objectives in the same repository separate, spans days and
+marks an episode dormant after 14 days without an act. Suspensions and resumptions
+cite the boundary acts; excursions shorter than 30 seconds are absorbed and
+counted. `context.packs` derives a stored resume card from the episode and its
+work acts. The chronological trail holds references to those acts, with the first
+human prompt, last edited path and failures. Failures remain unresolved when no check
+records their exact revision. Operator acts without duration contribute no
+invented operator seconds. Task/job anchors, branch closure, exact focus-return
+lag and external/agent interruption causes need source records not yet available.
+
+`activity.days` provides wake-to-wake display intervals when sleep ends are
+recorded, with one key and input range per wake. Elementary agency seconds are counted once across device scopes, with
+agent work reported separately. The configured logical day still partitions
+calculations. Unknown wake boundaries produce no invented display day.
+
+The `foundations` schema step registers these kinds and replaces the presence
+view. Its schema number is assigned by the lander after the query and library
+prerequisites. The upgrade refuses a populated former telemetry table.
+
+The daemon samples its state every 60 seconds into the telemetry spool.
+`sinex.telemetry` uses ordinary admission, visibility, source counts and commit
+positions, and is readable through the `telemetry` alias or `events`.
+Read marks use the writer's monotonic excision counter, advanced in the same
+transaction that removes events, rather than scanning tombstones on each batch.
+
 ### Metric figures
 
 A metric (`sinex-derivations/src/figures.rs`) declares the kinds it counts,
@@ -279,12 +385,27 @@ points, deviations) and the brief run over panels when asked for. Their
 answers are not stored: they depend on coverage, which is not an event, and
 asking again at the same commit position gives the same answer.
 
+A derived batch never stores an output that cites an input which stopped
+being live after the derivation read it (a newer reading, a replay or an
+excision in between): a key with such an output keeps its previous outputs
+and is marked dirty again, and a per-event output is dropped, since the
+input's replacement is read in its turn. A full recompute also reaches every
+key the derivation has outputs under, so a version that keys its windows
+differently archives the old keys' outputs instead of counting an input
+twice.
+
+A derived output's record hash includes its producer name and version. A new
+version writes a new reading even when its payload and parents match;
+recomputing unchanged inputs under the same version remains a repeat.
+
 The commit log orders committed events and visibility changes (hide, unhide,
 replacement). Hide and unhide change what is live and append to the visibility
 history in one transaction. Readers move past positions an excision left
 empty. Time lookups use stored events and the visibility history, so pruning
 the commit log loses nothing. The publisher sends committed events on the
-confirmed stream, with `Archived`, `Unhidden` and `Excised` messages.
+confirmed stream, with `Archived`, `Unhidden` and `Excised` messages; each
+event message carries the stored reading order and record hash, so a
+consumer can check its copy against Sinex's.
 
 On shutdown the derivation runner finishes its current pass and releases its
 writer handle; the writer drains queued work once every producer has released
@@ -419,3 +540,5 @@ material another producer or a binding registered is refused, and nothing
 changes. An excised material is no longer listed on
 `<root>.materials.<producer>`. The operator's excision refuses producers'
 materials.
+
+Activity windows and spans read earlier commands, focus intervals and absences that overlap their hour partition. Input queries declare each interval end as a timestamp field or a duration in nanoseconds; the shared store query selects those intervals.

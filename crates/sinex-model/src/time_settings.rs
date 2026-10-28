@@ -53,6 +53,11 @@ impl TimeSettings {
         })
     }
 
+    pub fn from_parts(zone: TimeZone, day_starts_at: Time) -> Self {
+        let zone_name = zone.iana_name().map(str::to_owned).unwrap_or_else(|| format!("{zone:?}"));
+        Self { zone, zone_name, day_starts_at }
+    }
+
     /// The operator's setting today: Europe/Warsaw, days from 04:00.
     pub fn operator_default() -> Self {
         Self::new("Europe/Warsaw", 4, 0).expect("the bundled tz database has Europe/Warsaw")
@@ -62,12 +67,11 @@ impl TimeSettings {
         &self.zone_name
     }
 
-    /// The setting as people write it: `04:00 Europe/Warsaw`.
+    /// The local day start and zone, including any configured seconds.
     pub fn label(&self) -> String {
         format!(
-            "{:02}:{:02} {}",
-            self.day_starts_at.hour(),
-            self.day_starts_at.minute(),
+            "{} {}",
+            self.day_starts_at,
             self.zone_name
         )
     }

@@ -416,8 +416,9 @@ async fn sealed_archive_restart_replay_and_class_changes_preserve_exact_material
                 .unwrap(),
             checkpoint
         );
+        // Keep access valid through the test harness's two-minute deadline.
         let unlock =
-            crate::sealing::Unlock::new(identity, std::time::Duration::from_secs(60)).unwrap();
+            crate::sealing::Unlock::new(identity, std::time::Duration::from_secs(120)).unwrap();
         let mut restarted = make_bound();
         let unlocked = read(
             &mut ctx.read_conn,

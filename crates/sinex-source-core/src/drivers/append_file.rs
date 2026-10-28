@@ -1,8 +1,11 @@
 //! `AppendFile`: a file that grows by appending (shell histories, journal
-//! exports, logs). An unchanged stat tuple skips the file without reading it.
-//! Otherwise the window before the stored offset is hashed: if it still
-//! matches, only the appended complete records are read, as a new part; if it
-//! does not, the file was rewritten and is read again as a new revision.
+//! exports, logs). An unchanged stat tuple skips the file without reading it,
+//! unless the last look came so soon after the file's last change that an edit
+//! within the same timestamp tick would not show. Otherwise the bytes before
+//! the stored offset are hashed in full: if they still match, only the appended
+//! complete records are read, as a new part; if they do not, the file was
+//! rewritten and is read again as a new revision. A same-length edit in the
+//! middle of a history is a rewrite, never an append and never unchanged.
 //!
 //! A rewritten file (zsh expiring duplicates, an editor saving the whole
 //! file) is aligned against the previous revision: records whose bytes the
@@ -19,8 +22,10 @@ use std::collections::HashMap;
 use std::io::{Read, Seek, SeekFrom};
 use std::path::PathBuf;
 
-/// Bytes before the offset whose hash shows the prefix is unchanged.
-const WINDOW: u64 = 4096;
+/// File times move in coarse ticks: a look taken this soon after the file's
+/// last change cannot tell a same-size edit in the same tick from no change,
+/// so the next look hashes instead of trusting the stat tuple.
+const RACY_NS: i128 = 50_000_000;
 /// The most bytes one poll reads past its cursor (more only for a single
 /// record longer than this): a file of any size is read in bounded parts.
 const PART: u64 = 64 << 20;
@@ -40,8 +45,13 @@ pub struct Cursor {
     pub offset: u64,
     pub size: u64,
     pub mtime_ns: i128,
+    pub ctime_ns: i128,
     pub inode: u64,
-    /// BLAKE3 of the up-to-`WINDOW` bytes before `offset`.
+    /// When the look that wrote this cursor began, in nanoseconds since the
+    /// epoch: an unchanged stat tuple counts only if this is well after the
+    /// file's last change ([`RACY_NS`]).
+    pub looked_ns: i128,
+    /// The check of the bytes before `offset` ([`Prefix::digest`]).
     pub window: Option<String>,
     /// A rewrite seen before any of its records was complete; the next material
     /// records it.
@@ -237,11 +247,15 @@ impl AppendFile {
         };
         let size = facts.size.unwrap_or(0);
         let mtime = facts.mtime_ns.unwrap_or(0);
+        let ctime = facts.ctime_ns.unwrap_or(0);
         let inode = facts.inode.unwrap_or(0);
+        let looked = facts.observed_at.map_or(0, |t| t.unix_ns());
         if previous.size == size
             && previous.mtime_ns == mtime
+            && previous.ctime_ns == ctime
             && previous.inode == inode
             && previous.offset <= size
+            && previous.looked_ns >= mtime.max(ctime) + RACY_NS
             && !cursor.is_null()
         {
             return Ok(Acquired {
@@ -257,10 +271,13 @@ impl AppendFile {
         }
         let mut file =
             std::fs::File::open(&self.path).map_err(|e| DriverError::Io(e.to_string()))?;
-        let intact = !cursor.is_null()
-            && previous.inode == inode
-            && previous.offset <= size
-            && Some(window_hash(&mut file, previous.offset)?) == previous.window;
+        let kept = if !cursor.is_null() && previous.inode == inode && previous.offset <= size {
+            let prefix = Prefix::read(&mut file, previous.offset)?;
+            (Some(prefix.digest()) == previous.window).then_some(prefix)
+        } else {
+            None
+        };
+        let intact = kept.is_some();
         let (start, revision) = if cursor.is_null() {
             (0, RevisionChange::Appended)
         } else if intact {
@@ -309,13 +326,49 @@ impl AppendFile {
             }
             want = (want * 2).min(available);
         };
+        if consumed > 0 {
+            let after = file_facts(&self.path).map_err(|e| DriverError::Io(e.to_string()))?;
+            let same_file = after.inode == facts.inode;
+            let changed = after.size != facts.size
+                || after.mtime_ns != facts.mtime_ns
+                || after.ctime_ns != facts.ctime_ns;
+            let racy = looked < mtime.max(ctime) + RACY_NS;
+            let stable = same_file
+                && if changed || racy {
+                    let expected = if start > 0 {
+                        kept.as_ref()
+                            .expect("an appended prefix was checked")
+                            .digest_after(&data[..consumed])
+                    } else {
+                        Prefix::empty().digest_after(&data[..consumed])
+                    };
+                    Prefix::read(&mut file, start + consumed as u64)?.digest() == expected
+                } else {
+                    true
+                };
+            if !stable {
+                return Ok(Acquired {
+                    input: self.input(),
+                    observation: ObservationFacts {
+                        unavailable: Some("the file changed while it was read".into()),
+                        changed: false,
+                        ..facts
+                    },
+                    revision: RevisionChange::Same,
+                    material: None,
+                    cursor_without_material: cursor.clone(),
+                });
+            }
+        }
         let read_to_end = start + consumed as u64 == size || want >= available;
         let restarted = start == 0 && !cursor.is_null();
         let base = Cursor {
             offset: start,
             size,
             mtime_ns: mtime,
+            ctime_ns: ctime,
             inode,
+            looked_ns: looked,
             window: None,
             material: previous.material,
             part_index: previous.part_index,
@@ -338,12 +391,21 @@ impl AppendFile {
             let window = if !cursor.is_null() && start == previous.offset {
                 previous.window.clone()
             } else {
-                Some(blake3::hash(b"").to_hex().to_string())
+                Some(Prefix::empty().digest())
             };
             let unchanged = Cursor { window, ..base };
+            // A look that hashed the prefix because the last one came too
+            // soon after a change, and found the same bytes, found nothing.
+            let same_file = intact
+                && previous.size == size
+                && previous.mtime_ns == mtime
+                && previous.inode == inode;
             return Ok(Acquired {
                 input: self.input(),
-                observation: facts,
+                observation: ObservationFacts {
+                    changed: !same_file,
+                    ..facts
+                },
                 revision: RevisionChange::Same,
                 material: None,
                 cursor_without_material: serde_json::to_value(unchanged)
@@ -381,31 +443,15 @@ impl AppendFile {
         let previous_part = base.material;
         // One copy of the bytes, shared by the material and its cursors.
         let bytes = std::sync::Arc::new(data);
-        // The window for any cursor inside this material: hash the bytes
-        // before that point, taking the tail of the old window when the
-        // material alone is shorter.
-        let mut head = Vec::new();
-        if start > 0 {
-            let from = start.saturating_sub(WINDOW);
-            file.seek(SeekFrom::Start(from))
-                .map_err(|e| DriverError::Io(e.to_string()))?;
-            (&mut file)
-                .take(start - from)
-                .read_to_end(&mut head)
-                .map_err(|e| DriverError::Io(e.to_string()))?;
-        }
-        // Each call hashes only the WINDOW bytes before `end`, never the
-        // whole prefix.
+        // The check for any cursor inside this material: the prefix it
+        // continues, followed by the material's bytes up to that point.
+        let prefix = match kept {
+            Some(prefix) if start > 0 => prefix,
+            _ => Prefix::empty(),
+        };
         let tail_source = std::sync::Arc::clone(&bytes);
         let material_len = bytes.len();
         let cursor_at = move |end: usize| -> Value {
-            let window = WINDOW as usize;
-            let mut w = Vec::with_capacity(window);
-            if end < window {
-                w.extend_from_slice(&head[head.len().saturating_sub(window - end)..]);
-            }
-            w.extend_from_slice(&tail_source[end.saturating_sub(window)..end]);
-            let w = w.as_slice();
             serde_json::to_value(Cursor {
                 offset: start + end as u64,
                 // Only a cursor that covers everything this poll read may
@@ -418,8 +464,10 @@ impl AppendFile {
                     0
                 },
                 mtime_ns: mtime,
+                ctime_ns: ctime,
                 inode,
-                window: Some(blake3::hash(w).to_hex().to_string()),
+                looked_ns: looked,
+                window: Some(prefix.digest_after(&tail_source[..end])),
                 material: Some(id),
                 part_index,
                 through: end,
@@ -460,15 +508,38 @@ impl AppendFile {
     }
 }
 
-fn window_hash(file: &mut std::fs::File, offset: u64) -> Result<String, DriverError> {
-    let from = offset.saturating_sub(WINDOW);
-    file.seek(SeekFrom::Start(from))
-        .map_err(|e| DriverError::Io(e.to_string()))?;
-    let mut buf = Vec::new();
-    file.take(offset - from)
-        .read_to_end(&mut buf)
-        .map_err(|e| DriverError::Io(e.to_string()))?;
-    Ok(blake3::hash(&buf).to_hex().to_string())
+/// What a cursor knows of the bytes before its offset, to tell that a later
+/// look finds them unchanged.
+struct Prefix(blake3::Hasher);
+
+impl Prefix {
+    fn empty() -> Self {
+        Self(blake3::Hasher::new())
+    }
+
+    /// Hash the complete prefix without holding it in memory.
+    fn read(file: &mut std::fs::File, offset: u64) -> Result<Self, DriverError> {
+        let io = |e: std::io::Error| DriverError::Io(e.to_string());
+        file.seek(SeekFrom::Start(0)).map_err(io)?;
+        let mut prefix = Self::empty();
+        let read = std::io::copy(&mut file.take(offset), &mut prefix.0).map_err(io)?;
+        if read != offset {
+            return Err(DriverError::Io(
+                "the file shrank while its prefix was read".into(),
+            ));
+        }
+        Ok(prefix)
+    }
+
+    fn digest(&self) -> String {
+        self.digest_after(&[])
+    }
+
+    fn digest_after(&self, bytes: &[u8]) -> String {
+        let mut hasher = self.0.clone();
+        hasher.update(bytes);
+        hasher.finalize().to_hex().to_string()
+    }
 }
 
 /// Lines ending in `\n`.

@@ -241,8 +241,8 @@ fn a_key_emits_what_starts_in_its_day_and_waits_on_open_states() {
 fn inputs_ask_for_the_transitions_after_the_day() {
     let env = Env::at(at(0));
     let q = StateIntervals.inputs(&key("desktop.focus"), &env).unwrap();
-    assert_eq!(q.window.0, at(-6 * 3600));
-    assert_eq!(q.window.1, at(18 * 3600));
+    assert_eq!(q.window.unwrap().0, at(-6 * 3600));
+    assert_eq!(q.window.unwrap().1, at(18 * 3600));
     assert!(q.event_types().contains(&"window.focused"));
     assert!(
         q.event_types().contains(&"presence.span"),

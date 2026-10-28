@@ -33,6 +33,7 @@ async fn world(db: devkit::pg::TestDatabase) -> World {
         queues,
         Arc::new(crate::dirty_keys::Registered::new(
             sinex_derivations::keyed(),
+            sinex_model::time_settings::TimeSettings::operator_default(),
         )),
         Some(blobs.clone()),
     ));
@@ -649,6 +650,7 @@ async fn hiding_scans_recomputes_items_and_preview_renditions(db: devkit::pg::Te
         vec![Box::new(sinex_derivations::library::LibraryItems)],
         vec![],
         "h",
+        sinex_model::time_settings::TimeSettings::operator_default(),
     )
     .await
     .unwrap();
@@ -853,6 +855,7 @@ async fn hiding_the_latest_change_falls_back_to_the_previous_copy(db: devkit::pg
         vec![Box::new(sinex_derivations::library::LibraryItems)],
         vec![],
         "h",
+        sinex_model::time_settings::TimeSettings::operator_default(),
     )
     .await
     .unwrap();

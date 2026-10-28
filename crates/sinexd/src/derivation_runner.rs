@@ -21,22 +21,17 @@
 //! in [`EVERY_LEVEL_EVERY`] works every rank, so a busy upstream cannot keep a
 //! downstream derivation from running.
 //!
-//! A key waiting on evidence outside its window stops waiting once it has
-//! waited [`WAITING_HORIZON`] (a systemd unit that never stops would otherwise
-//! be recomputed forever); its last outputs stand, and a later input in its
-//! window still dirties it as usual.
-//!
 //! The runner wakes on `wake`, which the daemon signals after every commit, and
 //! also looks for work every so often, for keys that settle with time.
 use crate::writer::{Priority, WriterHandle};
 use serde_json::Value;
-use sinex_derivations::{AnyKeyed, AnyPerEvent, Env, Input, InputQuery, KeyView, Neighbour};
+use sinex_derivations::{AnyKeyed, AnyPerEvent, Env, Input, InputQuery, KeyView, Neighbour, Reads};
 use sinex_model::time_settings::TimeSettings;
 use sinex_model::{Batch, BatchKind, Event, ReadingOrder, RecordOutcome, RunId, Timestamp};
 use sinex_store::blobs::Blobs;
 use sinex_store::derivations::{self, Nearest, Window};
 use sinex_store::registry::{self, Derivation};
-use sinex_store::{ComputedKey, DerivedScope, material_bytes, runs};
+use sinex_store::{ComputedKey, DerivedScope, ReadMark, material_bytes, runs};
 use sqlx::PgConnection;
 use std::collections::{BTreeMap, HashSet};
 use std::sync::Arc;
@@ -55,16 +50,13 @@ const OUTPUTS_PER_BATCH: usize = 20_000;
 /// Input rows read per query: keys are computed as their rows complete, so
 /// memory holds a page and the keys still open, not every key's inputs.
 const ROWS_PER_PAGE: i64 = 10_000;
-/// A key to compute: the key, the dirty mark it was computed for (0 when it
-/// is a waiting key being refreshed), and whether it stops waiting.
-type KeyWork = (Value, i64, bool);
+/// A key and the dirty mark it was computed for (0 when only refreshed).
+type KeyWork = (Value, i64);
 
 /// Keys marked dirty per recompute request.
 const KEYS_PER_REQUEST: usize = 5_000;
 /// One pass in this many works every rank, not only the lowest with work.
 const EVERY_LEVEL_EVERY: u32 = 8;
-/// A key that has waited this long stops waiting.
-const WAITING_HORIZON: time::Duration = time::Duration::days(14);
 
 pub(crate) struct DerivationRunner {
     keyed: Vec<Box<dyn AnyKeyed>>,
@@ -82,10 +74,12 @@ pub(crate) struct DerivationRunner {
     read: PgConnection,
     writer: WriterHandle,
     runs: BTreeMap<&'static str, RunId>,
+    /// Largest stored reading order when each per-event run began.
+    previous_orders: BTreeMap<&'static str, i64>,
     pub counts: BTreeMap<&'static str, Counts>,
 }
 
-fn to_window(q: &InputQuery) -> Window {
+pub(crate) fn to_window(q: &InputQuery, now: Timestamp) -> Window {
     let kinds = |kinds: &[sinex_derivations::Kind]| {
         kinds
             .iter()
@@ -106,10 +100,20 @@ fn to_window(q: &InputQuery) -> Window {
         count: i64::from(n.count),
     };
     Window {
+        unknown_times: q.unknown_times,
+        range: q.range.as_ref().map(|range| match range {
+            sinex_derivations::InputRange::Connected { kinds: selected, at, end_field, gap_ns } =>
+                derivations::InputRange::Connected { kinds: kinds(selected), at: at.0, end_field, gap_seconds: *gap_ns as f64 / 1_000_000_000.0 },
+            sinex_derivations::InputRange::Extent { kinds: selected } =>
+                derivations::InputRange::Extent { kinds: kinds(selected) },
+            sinex_derivations::InputRange::UntilNext { start, kinds: selected, field } =>
+                derivations::InputRange::UntilNext { start: start.0, kinds: kinds(selected), field, now: now.0 },
+        }),
         kinds: kinds(&q.kinds),
-        start: q.window.0.0,
-        end: q.window.1.0,
+        start: q.window.map(|(start, _)| start.0),
+        end: q.window.map(|(_, end)| end.0),
         before: q.before.iter().map(nearest).collect(),
+        intervals: q.intervals.clone(),
         after: q.after.iter().map(nearest).collect(),
     }
 }
@@ -123,13 +127,14 @@ impl DerivationRunner {
         keyed: Vec<Box<dyn AnyKeyed>>,
         per_event: Vec<Box<dyn AnyPerEvent>>,
         host: &str,
+        time_settings: TimeSettings,
     ) -> Result<Self, String> {
         let catalog: Vec<Derivation> = keyed
             .iter()
             .map(|d| Derivation {
                 name: d.name().to_owned(),
                 kind: "keyed",
-                version: i32::try_from(d.version()).unwrap_or(i32::MAX),
+                version: i32::try_from(d.version_for(&time_settings)).unwrap_or(i32::MAX),
                 inputs: d.inputs_types().iter().map(|s| (*s).to_owned()).collect(),
                 outputs: d.output_types().iter().map(|s| (*s).to_owned()).collect(),
             })
@@ -142,6 +147,7 @@ impl DerivationRunner {
             }))
             .collect();
         let mut runs = BTreeMap::new();
+        let mut previous_orders = BTreeMap::new();
         for d in &catalog {
             let name = derivations::static_type(&d.name);
             let version = d.version.to_string();
@@ -157,6 +163,14 @@ impl DerivationRunner {
                 .await
                 .map_err(|e| e.to_string())?;
             runs.insert(name, run);
+            if d.kind == "per_event" {
+                previous_orders.insert(
+                    name,
+                    derivations::latest_reading_order(&mut read, name)
+                        .await
+                        .map_err(|e| e.to_string())?,
+                );
+            }
         }
         let ranks = ranks(&catalog);
         let mut runner = Self {
@@ -166,10 +180,11 @@ impl DerivationRunner {
             ranks,
             passes: 0,
             clock: None,
-            time_settings: TimeSettings::operator_default(),
+            time_settings,
             read,
             writer,
             runs,
+            previous_orders,
             counts: BTreeMap::new(),
         };
         // A changed derivation's version is written once its recompute is
@@ -204,7 +219,10 @@ impl DerivationRunner {
     }
 
     /// Every key the inputs of `name` touch, optionally only for inputs whose
-    /// `ts_orig` is in `range`.
+    /// `ts_orig` is in `range`. Without a range, also every key the
+    /// derivation has outputs under: a version that keys differently
+    /// computes an old key to nothing, so its outputs are archived and no
+    /// input stays counted under both versions.
     async fn all_keys(
         &mut self,
         name: &str,
@@ -251,6 +269,16 @@ impl DerivationRunner {
                 }
             }
         }
+        if range.is_none() {
+            for k in derivations::output_keys(&mut self.read, name)
+                .await
+                .map_err(|e| e.to_string())?
+            {
+                if seen.insert(k.to_string()) {
+                    keys.push(k);
+                }
+            }
+        }
         Ok(keys)
     }
 
@@ -262,12 +290,14 @@ impl DerivationRunner {
         writer: WriterHandle,
         name: &str,
         host: &str,
+        configuration: &sinex_derivations::Configuration,
+        time_settings: TimeSettings,
     ) -> Result<Self, String> {
-        let d = sinex_derivations::keyed()
+        let d = sinex_derivations::keyed_with(configuration)
             .into_iter()
             .find(|d| d.name() == name)
             .ok_or_else(|| format!("no keyed derivation {name}"))?;
-        let version = d.version().to_string();
+        let version = d.version_for(&time_settings).to_string();
         let manifest = runs::Manifest {
             name: d.name(),
             kind: "derivation",
@@ -286,10 +316,11 @@ impl DerivationRunner {
             ranks: BTreeMap::new(),
             passes: 0,
             clock: None,
-            time_settings: TimeSettings::operator_default(),
+            time_settings,
             read,
             writer,
             runs,
+            previous_orders: BTreeMap::new(),
             counts: BTreeMap::new(),
         })
     }
@@ -351,7 +382,7 @@ impl DerivationRunner {
             return Ok(sinex_derivations::Computed::default());
         };
         let t = Instant::now();
-        let inputs: Vec<Event> = derivations::read_window(&mut self.read, &to_window(&q))
+        let inputs: Vec<Event> = derivations::read_window(&mut self.read, &to_window(&q, env.now))
             .await
             .map_err(|e| e.to_string())?
             .into_iter()
@@ -380,6 +411,7 @@ impl DerivationRunner {
             read: &mut self.read,
             writer: &self.writer,
             derivation: self.keyed[index].as_ref(),
+            time_settings: self.time_settings.clone(),
             run,
             counts: self.counts.entry(name).or_default(),
         }
@@ -431,24 +463,22 @@ impl DerivationRunner {
                 };
                 let entry = touched.entry(index).or_default();
                 entry.0.insert(k.key.to_string());
-                entry.1.push((k.key, k.last_dirty_seq, false));
+                entry.1.push((k.key, k.last_dirty_seq));
                 work += 1;
             }
-            for (index, (done, mut keys)) in touched {
+            let indices: Vec<_> = (0..self.keyed.len()).filter(|index| self.rank_of(self.keyed[*index].name()) == level).collect();
+            for index in indices {
                 let name = self.keyed[index].name();
-                let waiting = derivations::waiting(&mut self.read, name)
-                    .await
-                    .map_err(|e| e.to_string())?;
-                for (key, since) in waiting {
-                    if done.contains(&key.to_string()) {
-                        continue;
-                    }
-                    let give_up = since.0 < env.now.0 - WAITING_HORIZON;
-                    // Not a dirty mark: clear nothing, only refresh the outputs.
-                    keys.push((key, 0, give_up));
+                let had_dirty = touched.contains_key(&index);
+                let (done, mut keys) = touched.remove(&index).unwrap_or_default();
+                let waiting = derivations::waiting(&mut self.read, name, (!had_dirty).then_some(env.now.0))
+                    .await.map_err(|e| e.to_string())?;
+                for (key, _) in waiting {
+                    if done.contains(&key.to_string()) { continue }
+                    keys.push((key, 0));
                     work += 1;
                 }
-                self.compute_keys(index, keys, env).await?;
+                if !keys.is_empty() { self.compute_keys(index, keys, env).await?; }
             }
         }
         for index in 0..self.per_event.len() {
@@ -462,9 +492,12 @@ impl DerivationRunner {
     async fn per_event_pass(&mut self, index: usize, env: &Env) -> Result<usize, String> {
         let d = &self.per_event[index];
         let name = d.name();
-        let version = i64::from(d.version());
+        let version = d.version();
         let types: Vec<String> = d.inputs_types().iter().map(|s| (*s).to_owned()).collect();
         let position = derivations::position(&mut self.read, name)
+            .await
+            .map_err(|e| e.to_string())?;
+        let read = ReadMark::now(&mut self.read)
             .await
             .map_err(|e| e.to_string())?;
         let events = derivations::after_seq(
@@ -479,30 +512,38 @@ impl DerivationRunner {
         let Some(last) = events.last().map(|c| c.commit_seq) else {
             return Ok(0);
         };
-        let reads_material = self.per_event[index].reads_material();
+        let head = derivations::head(&mut self.read)
+            .await
+            .map_err(|e| e.to_string())?;
+        let reading_order = self
+            .previous_orders
+            .get(name)
+            .copied()
+            .unwrap_or(0)
+            .checked_add(head)
+            .ok_or("derived reading order exhausted")?;
         let mut outputs = Vec::new();
+        let mut computed_inputs = Vec::new();
         let mut failed = 0;
         for c in &events {
-            let material = if reads_material {
-                match self.material_of(&c.event).await {
-                    Ok(bytes) => Some(bytes),
-                    Err(reason) => {
-                        eprintln!("{name}: event {}: {reason}", c.event.id);
-                        failed += 1;
-                        continue;
-                    }
+            let reads = self.per_event[index].reads(&c.event);
+            let bytes = match self.bytes_of(reads, &c.event).await {
+                Ok(bytes) => bytes,
+                Err(reason) => {
+                    eprintln!("{name}: event {}: {reason}", c.event.id);
+                    failed += 1;
+                    continue;
                 }
-            } else {
-                None
             };
             let input = Input {
                 event: &c.event,
-                material: material.as_deref(),
+                bytes: bytes.as_deref(),
             };
             let d = &self.per_event[index];
-            // A derivation that runs a local tool (OCR) blocks for a while;
-            // keep it off the runtime's other tasks where the runtime allows.
-            let derived = if reads_material
+            // A derivation that reads stored bytes runs a local tool (OCR, PDF
+            // text) and blocks for a while; keep it off the runtime's other
+            // tasks where the runtime allows.
+            let derived = if reads != Reads::Nothing
                 && tokio::runtime::Handle::current().runtime_flavor()
                     == tokio::runtime::RuntimeFlavor::MultiThread
             {
@@ -512,10 +553,12 @@ impl DerivationRunner {
             };
             match derived {
                 Ok(derived) => {
+                    computed_inputs.push(c.event.id.0);
                     for mut e in derived {
                         // A new derivation version reads every input again; its
                         // outputs must be newer readings than the old version's.
-                        e.reading_order = ReadingOrder((version << 40) | c.commit_seq);
+                        hash_version(&mut e, name, version);
+                        e.reading_order = ReadingOrder(reading_order);
                         outputs.push(e);
                     }
                 }
@@ -530,7 +573,12 @@ impl DerivationRunner {
             run: self.run_of(name)?,
             kind: BatchKind::Derived {
                 derivation: name.to_owned(),
-                scope: DerivedScope::Position { position: last }.to_value(),
+                scope: DerivedScope::Position {
+                    inputs: computed_inputs,
+                    position: last,
+                    read,
+                }
+                .to_value(),
             },
             records: vec![RecordOutcome::Events {
                 location: None,
@@ -549,7 +597,32 @@ impl DerivationRunner {
         c.outputs += n;
         c.admitted += out.admitted;
         c.repeats += out.repeats;
+        c.superseded_input += out.superseded_input;
         Ok(events.len())
+    }
+
+    /// The stored bytes a derivation that `reads` them reads for `event`.
+    async fn bytes_of(&mut self, reads: Reads, event: &Event) -> Result<Option<Vec<u8>>, String> {
+        match reads {
+            Reads::Nothing => Ok(None),
+            Reads::Material => self.material_of(event).await.map(Some),
+            Reads::Blob(field) => {
+                let Some(blob) = event.payload.get(field).and_then(Value::as_str) else {
+                    return Ok(None);
+                };
+                let blobs = self
+                    .blobs
+                    .as_ref()
+                    .ok_or("no content store was given to the runner")?;
+                if !material_bytes::blob_stored(&mut self.read, blob)
+                    .await
+                    .map_err(|e| e.to_string())?
+                {
+                    return Ok(None);
+                }
+                blobs.read(blob).map(Some).map_err(|e| e.to_string())
+            }
+        }
     }
 
     /// The stored bytes of the material `event` cites.
@@ -629,7 +702,7 @@ impl DerivationRunner {
             keys: keys.len(),
             ..Comparison::default()
         };
-        let version = self.keyed[index].version();
+        let version = self.keyed[index].version_for(&self.time_settings);
         for key in keys {
             let new = self.compute_key(index, &key, &env).await?.outputs;
             let old = derivations::outputs(&mut self.read, name, &key)
@@ -695,6 +768,17 @@ impl DerivationRunner {
     }
 }
 
+// Equal results from different versions must keep their producer attribution.
+fn hash_version(event: &mut Event, name: &str, version: u32) {
+    let mut hash = blake3::Hasher::new();
+    hash.update(b"sinex.derivation\0");
+    hash.update(name.as_bytes());
+    hash.update(&[0]);
+    hash.update(&version.to_le_bytes());
+    hash.update(&event.record_hash);
+    event.record_hash = *hash.finalize().as_bytes();
+}
+
 /// Each derivation's rank: 0 when no derivation produces any of its inputs,
 /// otherwise one more than the highest rank among those that do. A cycle
 /// (which no catalog should have) settles at the catalog's size.
@@ -734,15 +818,32 @@ pub(crate) use counts::Counts;
 #[cfg(test)]
 mod tests;
 
-/// Every per-event derivation `sinexd` runs: the pure ones, plus screen text
-/// when a local OCR engine is installed (said once when it is not).
-pub(crate) fn per_event() -> Vec<Box<dyn AnyPerEvent>> {
-    let mut all = sinex_derivations::per_event();
+/// Every available per-event derivation with the declared rules.
+pub(crate) fn per_event_with(
+    configuration: &sinex_derivations::Configuration,
+) -> Result<Vec<Box<dyn AnyPerEvent>>, String> {
+    let mut all = sinex_derivations::per_event_with(configuration)?;
+    let pdf_reader = crate::document_text::pdf_reader()
+        .inspect_err(|reason| eprintln!("sinexd: document text reads no PDFs: {reason}"))
+        .ok();
+    all.push(Box::new(crate::document_text::DocumentText { pdf_reader }));
     match crate::screen_text::engine() {
         Ok(engine) => all.push(Box::new(crate::screen_text::ScreenText { engine })),
         Err(reason) => eprintln!("sinexd: screen text off: {reason}"),
     }
-    all
+    Ok(all)
+}
+
+/// Derivations enabled without configuration.
+pub(crate) fn per_event() -> Vec<Box<dyn AnyPerEvent>> {
+    per_event_with(&sinex_derivations::Configuration::default())
+        .expect("empty rules are valid")
+        .into_iter()
+        .filter(|d| {
+            d.name() == sinex_derivations::tags::TagApplier::NAME
+                || sinex_derivations::enabled_by_default(d.name())
+        })
+        .collect()
 }
 
 /// Key computations serialize before reading, so a command and the
@@ -751,6 +852,7 @@ struct KeyComputation<'a> {
     read: &'a mut PgConnection,
     writer: &'a WriterHandle,
     derivation: &'a dyn AnyKeyed,
+    time_settings: TimeSettings,
     run: RunId,
     counts: &'a mut Counts,
 }
@@ -761,15 +863,18 @@ impl KeyComputation<'_> {
         let mut records: Vec<RecordOutcome> = Vec::new();
         let mut outputs = 0usize;
         let _lock = self.writer.lock_derivations().await;
+        let read = ReadMark::now(&mut *self.read)
+            .await
+            .map_err(|e| e.to_string())?;
         // Keys without a query have no inputs; the rest are read page by
         // page and computed as soon as their rows are complete.
         let mut ready: Vec<(usize, Vec<Event>, bool)> = Vec::new();
         let mut windows: Vec<Window> = Vec::new();
         let mut window_keys: Vec<usize> = Vec::new();
-        for (i, (key, _, _)) in work.iter().enumerate() {
+        for (i, (key, _)) in work.iter().enumerate() {
             match self.derivation.inputs(key, env) {
                 Some(q) => {
-                    windows.push(to_window(&q));
+                    windows.push(to_window(&q, env.now));
                     window_keys.push(i);
                 }
                 None => ready.push((i, Vec::new(), false)),
@@ -794,9 +899,9 @@ impl KeyComputation<'_> {
                 }));
             }
             for (i, input, queried) in std::mem::take(&mut ready) {
-                let (key, dirty_seq, give_up) = &work[i];
+                let (key, dirty_seq) = &work[i];
                 let t = Instant::now();
-                let mut computed = if queried {
+                let computed = if queried {
                     self.derivation.compute(key, &input, env)
                 } else {
                     sinex_derivations::Computed::default()
@@ -804,28 +909,30 @@ impl KeyComputation<'_> {
                 let c = &mut *self.counts;
                 c.compute += t.elapsed();
                 c.inputs += input.len();
-                if *give_up {
-                    computed.waiting = false;
-                }
                 outputs += computed.outputs.len();
                 scopes.push(ComputedKey {
                     key: key.clone(),
                     dirty_seq: *dirty_seq,
                     waiting: computed.waiting,
+                    refresh_at: self.derivation.refresh_at(&computed.outputs, env),
                 });
                 records.push(RecordOutcome::Events {
                     location: None,
                     events: computed.outputs,
                 });
                 if scopes.len() >= KEYS_PER_BATCH || outputs >= OUTPUTS_PER_BATCH {
-                    self.submit(std::mem::take(&mut scopes), std::mem::take(&mut records))
-                        .await?;
+                    self.submit(
+                        std::mem::take(&mut scopes),
+                        std::mem::take(&mut records),
+                        read,
+                    )
+                    .await?;
                     outputs = 0;
                 }
             }
         }
         if !scopes.is_empty() {
-            self.submit(scopes, records).await?;
+            self.submit(scopes, records, read).await?;
         }
         Ok(())
     }
@@ -834,6 +941,7 @@ impl KeyComputation<'_> {
         &mut self,
         scopes: Vec<ComputedKey>,
         mut records: Vec<RecordOutcome>,
+        read: ReadMark,
     ) -> Result<(), String> {
         let name = self.derivation.name();
         let head = derivations::head(&mut *self.read)
@@ -845,6 +953,7 @@ impl KeyComputation<'_> {
                 n += events.len();
                 for e in events {
                     // A recompute is a newer reading than any before it.
+                    hash_version(e, name, self.derivation.version_for(&self.time_settings));
                     e.reading_order = ReadingOrder(head);
                 }
             }
@@ -854,7 +963,7 @@ impl KeyComputation<'_> {
             run: self.run,
             kind: BatchKind::Derived {
                 derivation: name.to_owned(),
-                scope: DerivedScope::Keys { keys: scopes }.to_value(),
+                scope: DerivedScope::Keys { keys: scopes, read }.to_value(),
             },
             records,
             archive: vec![],
@@ -872,6 +981,7 @@ impl KeyComputation<'_> {
         c.admitted += out.admitted;
         c.repeats += out.repeats;
         c.replaced += out.replaced;
+        c.superseded_input += out.superseded_input;
         Ok(())
     }
 }
@@ -900,11 +1010,12 @@ pub(crate) async fn compute_now(
         let env = Env::at(Timestamp::now());
         let mut counts = Counts::default();
         let head = derivations::head(conn).await.map_err(|e| e.to_string())?;
-        let work = keys.into_iter().map(|key| (key, head, false)).collect();
+        let work = keys.into_iter().map(|key| (key, head)).collect();
         KeyComputation {
             read: conn,
             writer,
             derivation,
+            time_settings: env.time_settings.clone(),
             run,
             counts: &mut counts,
         }

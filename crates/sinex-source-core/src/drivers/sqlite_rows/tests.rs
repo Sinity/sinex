@@ -286,3 +286,102 @@ fn a_read_stays_on_its_committed_view_and_the_next_read_sees_wal_commits() {
     drop(read);
     assert_eq!(n(&open_for_read(&path).unwrap()), 99);
 }
+
+/// A database a writer commits to continuously, read by polls in between:
+/// every poll reads one committed state (rows changed in one transaction are
+/// read together, at their committed values), and the polls together read
+/// the writer's commits in order, missing no inserted row and taking none
+/// twice.
+#[devkit::test]
+fn polls_read_a_continuously_committing_writer_one_commit_at_a_time() {
+    const COMMITS: i64 = 300;
+    let dir = std::env::temp_dir().join(format!("sinex-sqlite-{}", uuid::Uuid::now_v7()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("h.db");
+    let setup = Connection::open(&path).unwrap();
+    setup
+        .execute_batch(
+            "PRAGMA journal_mode=WAL; CREATE TABLE t (id TEXT, n INTEGER, b BLOB);
+             INSERT INTO t VALUES ('x', 0, NULL), ('y', 0, NULL);",
+        )
+        .unwrap();
+    drop(setup);
+    let writer = std::thread::spawn({
+        let path = path.clone();
+        move || {
+            let c = Connection::open(&path).unwrap();
+            for k in 1..=COMMITS {
+                c.execute_batch(&format!(
+                    "BEGIN IMMEDIATE; UPDATE t SET n = {k} WHERE id IN ('x', 'y');
+                     INSERT INTO t VALUES ('r{k}', {k}, NULL); COMMIT;"
+                ))
+                .unwrap();
+                if k % 7 == 0 {
+                    std::thread::sleep(std::time::Duration::from_millis(1));
+                }
+            }
+        }
+    });
+    let d = SqliteRows {
+        mutable: None,
+        full_pass_secs: 0,
+        ..driver(path)
+    };
+    let mut state = RowState::default();
+    let mut cursor = Value::Null;
+    let mut polls: Vec<Vec<Value>> = Vec::new();
+    let mut poll = |cursor: &mut Value, state: &mut RowState| {
+        let a = d.poll(cursor, state).unwrap();
+        match &a.material {
+            Some(m) => {
+                polls.push(lines(&a));
+                *cursor = (m.cursor_at)(material_bytes(m).len()).unwrap();
+            }
+            None => *cursor = a.cursor_without_material.clone(),
+        }
+    };
+    while !writer.is_finished() {
+        poll(&mut cursor, &mut state);
+    }
+    writer.join().unwrap();
+    poll(&mut cursor, &mut state);
+
+    let mut last_x = -1;
+    let mut inserted = std::collections::BTreeMap::new();
+    for rows in &polls {
+        let n_of = |id: &str| {
+            rows.iter()
+                .find(|r| r["id"] == id)
+                .map(|r| r["n"].as_i64().unwrap())
+        };
+        let (x, y) = (n_of("x"), n_of("y"));
+        assert_eq!(
+            x, y,
+            "rows changed in one commit are read together: {rows:?}"
+        );
+        if let Some(x) = x {
+            assert!(x > last_x, "commits are read in order: {x} after {last_x}");
+            last_x = x;
+            let newest = rows
+                .iter()
+                .filter_map(|r| r["id"].as_str()?.strip_prefix('r')?.parse::<i64>().ok())
+                .max();
+            if let Some(newest) = newest {
+                assert_eq!(newest, x, "the poll saw one commit's state");
+            }
+        }
+        for r in rows {
+            if let Some(k) = r["id"].as_str().and_then(|id| id.strip_prefix('r')) {
+                let k: i64 = k.parse().unwrap();
+                assert_eq!(r["n"], json!(k));
+                assert!(inserted.insert(k, ()).is_none(), "r{k} read twice");
+            }
+        }
+    }
+    assert_eq!(last_x, COMMITS, "the final values are read");
+    assert_eq!(
+        inserted.keys().copied().collect::<Vec<_>>(),
+        (1..=COMMITS).collect::<Vec<_>>(),
+        "every inserted row is read once"
+    );
+}

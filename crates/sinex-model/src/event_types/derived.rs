@@ -106,3 +106,42 @@ pub struct FigureValue {
     pub min: f64,
     pub max: f64,
 }
+
+/// A tag assigned by declared rules. The parent is the reading the rules
+/// matched, and the record identity survives replay. Each rule is recorded
+/// as its JSON declaration; an unknown input time stays unknown.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
+#[event(type = "tag.applied", key = ["tag", "record"], replace = newer, time = at, quality = intrinsic)]
+pub struct TagApplied {
+    pub tag: String,
+    pub record: String,
+    pub event_type: String,
+    pub rules: Vec<String>,
+    pub at: Option<Timestamp>,
+}
+
+/// One conversation's messages on one logical day: a chat buffer, a message
+/// thread (Messenger, SMS) or a mail thread, with who wrote and when. A
+/// thread over many days is its days.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
+#[event(
+    type = "conversation.day",
+    key = ["channel", "conversation", "day"],
+    replace = newer,
+    time = first_at,
+    quality = intrinsic
+)]
+pub struct ConversationDay {
+    /// `chat`, `messages` or `mail`.
+    pub channel: String,
+    /// The buffer, the thread's participants, or a mail identity prefixed
+    /// with `thread:` for a recorded thread ID and `message:` otherwise.
+    pub conversation: String,
+    /// The logical day (`YYYY-MM-DD`).
+    pub day: String,
+    pub messages: u64,
+    /// Who wrote, sorted.
+    pub senders: Vec<String>,
+    pub first_at: Timestamp,
+    pub last_at: Timestamp,
+}

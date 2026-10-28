@@ -2,7 +2,7 @@
 //! the commit log, the live side tables, archived readings, dirty keys and citations; then failures and the
 //! source position.
 use super::classify::Classified;
-use super::derived::{mark_archived_dirty, mark_dirty};
+use super::derived::{mark_archived_dirty, mark_inputs_dirty};
 use super::{DirtyKeys, KeyInput, Outcome};
 use crate::Error;
 use crate::Result;
@@ -50,6 +50,13 @@ pub(super) async fn insert_admitted(
     )
     .execute(&mut *conn)
     .await?;
+
+    sqlx::query!(
+        r#"INSERT INTO core.event_children (parent, child)
+           SELECT DISTINCT unnest(s.parents), s.id FROM core.admission_stage s
+           WHERE s.ord = ANY($1) AND s.parents IS NOT NULL"#,
+        admit_ords,
+    ).execute(&mut *conn).await?;
 
     sqlx::query!(
         r#"INSERT INTO core.source_counts AS c (source, events, first_event, last_event, last_seen)
@@ -130,7 +137,7 @@ pub(super) async fn insert_admitted(
         )
         .await?;
         outcome.replaced = replaced.len();
-        outcome.dirty_keys += mark_archived_dirty(conn, &live, last, keys).await?;
+        outcome.dirty_keys += mark_archived_dirty(conn, &live, last, keys, Some(batch)).await?;
     }
 
     outcome.admitted = admit_ords.len();
@@ -143,9 +150,9 @@ pub(super) async fn insert_admitted(
             ts_orig: event.ts_orig.at.map(|t| t.0),
             payload: &event.payload,
         };
-        dirty.extend(keys.keys(&input));
+        dirty.push(input);
     }
-    outcome.dirty_keys += mark_dirty(conn, dirty, last).await?;
+    outcome.dirty_keys += mark_inputs_dirty(conn, &dirty, last, keys).await?;
     record_citations(conn, events, admit_ords).await?;
     Ok(())
 }

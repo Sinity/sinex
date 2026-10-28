@@ -112,7 +112,7 @@ impl World {
             url.clone(),
             connection,
             queues,
-            Arc::new(Keys::new(keyed)),
+            Arc::new(Keys::new(keyed, TimeSettings::operator_default())),
             None,
         ));
         Self {
@@ -152,7 +152,7 @@ impl World {
         per_event: Vec<Box<dyn AnyPerEvent>>,
     ) -> DerivationRunner {
         let read = PgConnection::connect(&self.url).await.unwrap();
-        DerivationRunner::start(read, self.handle.clone(), keyed, per_event, "test")
+        DerivationRunner::start(read, self.handle.clone(), keyed, per_event, "test", TimeSettings::operator_default())
             .await
             .unwrap()
     }
@@ -277,7 +277,11 @@ async fn an_open_interval_waits_and_closes_on_the_next_transition(db: devkit::pg
     let open: Vec<StateInterval> = w.live().await;
     assert_eq!(open.len(), 1);
     assert_eq!(open[0].ended_at, None);
-    assert_eq!(w.count("SELECT count(*) FROM derivation.waiting").await, 1);
+    assert_eq!(
+        w.count("SELECT count(*) FROM derivation.waiting WHERE derivation = 'state.intervals'")
+            .await,
+        1
+    );
 
     // The next focus arrives three days later: a different day's key, which
     // runs the derivation and so recomputes the waiting one.
@@ -333,7 +337,7 @@ impl Keyed for Waiting {
 }
 
 #[devkit::test]
-async fn a_waiting_key_stops_waiting_past_the_horizon(db: devkit::pg::TestDatabase) {
+async fn a_waiting_key_remains_eligible_for_late_evidence(db: devkit::pg::TestDatabase) {
     let w = World::with_keys(db, vec![Box::new(Waiting)]).await;
     let waiting = "SELECT count(*) FROM derivation.waiting";
     w.admit(vec![zsh("a", 0, 1)]).await;
@@ -347,14 +351,13 @@ async fn a_waiting_key_stops_waiting_past_the_horizon(db: devkit::pg::TestDataba
     d.catch_up().await.unwrap();
     assert_eq!(w.count(waiting).await, 2);
 
-    // Once they have waited past the horizon, the next run leaves their last
-    // outputs standing and stops waiting; the new key waits as usual.
+    // Elapsed time does not supply the missing evidence.
     d.clock = Some(Timestamp(
-        Timestamp::now().0 + WAITING_HORIZON + time::Duration::days(1),
+        Timestamp::now().0 + time::Duration::days(30),
     ));
     w.admit(vec![zsh("c", 20, 3)]).await;
     d.catch_up().await.unwrap();
-    assert_eq!(w.count(waiting).await, 1);
+    assert_eq!(w.count(waiting).await, 3);
     let out: Vec<CommandFused> = w.live().await;
     assert_eq!(out.len(), 3, "{out:?}");
 }
@@ -407,7 +410,9 @@ async fn a_key_dirtied_again_stays_dirty(db: devkit::pg::TestDatabase) {
                     key: key.clone(),
                     dirty_seq: 0,
                     waiting: false,
+                    refresh_at: None,
                 }],
+                read: Default::default(),
             }
             .to_value(),
         },
@@ -562,21 +567,26 @@ async fn windows_read_in_pages_equal_windows_read_alone(db: devkit::pg::TestData
     for (index, command) in ["Z", "a", "Å"].into_iter().enumerate() {
         events.push(zsh(command, 500_000, 1_000 + index as u64 * 100));
     }
+    events.push(atuin("ancient", "ancient", -50_000_000_000, 0, 1));
+    events.push(atuin("future", "future", 200_000_000_000, 0, 1));
     w.admit(events).await;
     let kind = |t: &str, contains: Value| derivations::Kind {
         event_type: t.to_owned(),
         contains,
     };
     let filtered = |h: i64, kinds: Vec<derivations::Kind>| Window {
+        unknown_times: false,
+        range: None,
         kinds,
-        start: at(h * 3_600).0,
-        end: at((h + 1) * 3_600).0,
+        start: Some(at(h * 3_600).0),
+        end: Some(at((h + 1) * 3_600).0),
         before: vec![],
+        intervals: vec![],
         after: vec![],
     };
     let hour =
         |h: i64, types: &[&str]| filtered(h, types.iter().map(|t| kind(t, json!({}))).collect());
-    let windows = vec![
+    let mut windows = vec![
         hour(1, &["command.imported"]),
         hour(0, &["command.imported"]),
         hour(0, &["command.executed"]),
@@ -603,6 +613,10 @@ async fn windows_read_in_pages_equal_windows_read_alone(db: devkit::pg::TestData
             ],
         ),
     ];
+    let mut all = hour(0, &["command.executed"]);
+    all.start = None;
+    all.end = None;
+    windows.push(all);
     let mut conn = PgConnection::connect(&w.url).await.unwrap();
     // The last reads one row per page by size alone, not by count.
     for (page, bytes) in [
@@ -643,10 +657,17 @@ async fn windows_read_in_pages_equal_windows_read_alone(db: devkit::pg::TestData
             .map(|c| c.event.payload["command"].as_str().unwrap())
             .collect();
         assert_eq!(picked, ["a0", "z1", "a1", "a2", "a3", "a4"]);
+        let all = read[8].as_ref().unwrap();
+        assert_eq!(all.len(), 11);
+        assert_eq!(all.first().unwrap().event.payload["command"], "ancient");
+        assert_eq!(all.last().unwrap().event.payload["command"], "future");
     }
 }
 
+mod all_derivations;
 mod shutdown;
+mod superseded_inputs;
+mod versions;
 
 /// A new version's recompute that stops before its keys are marked is marked
 /// again at the next start: the registry keeps the old version until then.
@@ -679,7 +700,7 @@ async fn a_recompute_stopped_part_way_is_marked_again_at_the_next_start(
     drop(queues);
     let read = PgConnection::connect(&w.url).await.unwrap();
     assert!(
-        DerivationRunner::start(read, stopped, sinex_derivations::keyed(), vec![], "test")
+        DerivationRunner::start(read, stopped, sinex_derivations::keyed(), vec![], "test", TimeSettings::operator_default())
             .await
             .is_err()
     );
@@ -693,3 +714,9 @@ async fn a_recompute_stopped_part_way_is_marked_again_at_the_next_start(
 }
 
 mod commands;
+
+mod tags;
+
+mod activity;
+
+mod work;

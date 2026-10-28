@@ -186,6 +186,7 @@ async fn admin_table(args: Vec<String>) -> Result<(), String> {
         blobs: ctx.blobs.clone(),
         zone,
         day_start,
+        derivations: Default::default(),
         agent_grants: Vec::new(),
         unlock: Default::default(),
         host: host.clone(),

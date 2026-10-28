@@ -156,3 +156,29 @@ fn a_derivation_runs_unless_the_configuration_turns_it_off() {
     assert!(config.runs("command.fusion"));
     assert!(config.runs("shell.sessions"), "absent means it runs");
 }
+
+#[devkit::test]
+fn tags_require_an_explicit_choice() {
+    assert!(!Config::default().runs("tag.applier"));
+    assert!(config(serde_json::json!({"derivations": {"tag.applier": true}})).runs("tag.applier"));
+}
+
+#[devkit::test]
+fn disabling_the_tag_applier_supplies_empty_rules_for_cleanup() {
+    let c = config(serde_json::json!({"derivations":{"tag.applier":false},
+        "tags":[{"tag":"x","event_type":"command.imported"}]}));
+    assert!(c.derivation_configuration().tags.is_empty());
+    let c = config(serde_json::json!({"derivations":{"tag.applier":true},
+        "tags":[{"tag":"x","event_type":"command.imported"}]}));
+    assert_eq!(c.derivation_configuration().tags.len(), 1);
+}
+
+#[devkit::test]
+fn activity_break_threshold_is_configured_and_zero_is_refused() {
+    let c = config(serde_json::json!({"activity":{"break_seconds":600}}));
+    assert_eq!(c.derivation_configuration().activity.break_seconds, 600);
+    assert!(
+        serde_json::from_value::<Config>(serde_json::json!({"activity":{"break_seconds":0}}))
+            .is_err()
+    );
+}

@@ -10,7 +10,6 @@ pub(crate) const SCHEMAS: &[&str] = &[
     "registry",
     "derivation",
     "privacy",
-    "telemetry",
     "event_types",
 ];
 
@@ -40,6 +39,15 @@ pub(crate) const EXCISED_MATERIALS_BLOB: &str =
 /// Coverage probes one source and run for its last recorded time.
 pub(crate) const COVERAGE_RUNS: &str =
     "CREATE INDEX events_coverage ON core.events (source, run_id, ts_orig) INCLUDE (commit_seq)";
+
+/// One edge per exact parent. Chain walks do not scan compressed payloads.
+pub(crate) const EVENT_CHILDREN: &str = "CREATE TABLE core.event_children (
+  parent uuid NOT NULL,
+  child uuid NOT NULL,
+  PRIMARY KEY (parent, child),
+  CHECK (parent <> child)
+)";
+pub(crate) const EVENT_CHILDREN_CHILD: &str = "CREATE INDEX event_children_child ON core.event_children (child)";
 
 pub(crate) fn tables(c: &Checks) -> Vec<String> {
     let event_columns = format!(
@@ -76,7 +84,8 @@ pub(crate) fn tables(c: &Checks) -> Vec<String> {
     vec![
         // Events. No foreign key points into a hypertable.
         format!("CREATE TABLE core.events (\n  {event_columns},\n  PRIMARY KEY (id)\n)"),
-        format!("CREATE TABLE telemetry.events (\n  {event_columns},\n  PRIMARY KEY (id)\n)"),
+        EVENT_CHILDREN.into(),
+        EVENT_CHILDREN_CHILD.into(),
         // One live reading per record location, event type and output number.
         "CREATE TABLE core.live_locations (
   material_id uuid NOT NULL,
@@ -144,7 +153,7 @@ pub(crate) fn tables(c: &Checks) -> Vec<String> {
 )".into(),
         // The writer's counters. One writer, so a row update allocates a range.
         "CREATE TABLE core.counters (name text PRIMARY KEY, value bigint NOT NULL)".into(),
-        "INSERT INTO core.counters (name, value) VALUES ('commit_seq', 0)".into(),
+        "INSERT INTO core.counters (name, value) VALUES ('commit_seq', 0), ('excised', 0)".into(),
         SOURCE_COUNTS.into(),
         EXCISED_MATERIALS.into(),
         EXCISED_MATERIALS_BLOB.into(),
@@ -378,6 +387,7 @@ pub(crate) fn tables(c: &Checks) -> Vec<String> {
         "CREATE TABLE derivation.waiting (
   derivation text NOT NULL,
   key jsonb NOT NULL,
+  refresh_at timestamptz,
   since timestamptz NOT NULL DEFAULT now(),
   PRIMARY KEY (derivation, key)
 )".into(),
@@ -480,7 +490,7 @@ pub(crate) fn tables(c: &Checks) -> Vec<String> {
 /// `ts_orig` can be unknown and historical imports put old times in new chunks.
 pub(crate) fn after_tables() -> Vec<String> {
     let mut out = vec![archive_history_function().into(), event_guard().into()];
-    for table in ["core.events", "telemetry.events"] {
+    for table in ["core.events"] {
         for template in [
             "SELECT create_hypertable('$T', by_range('id', INTERVAL '1 day'), create_default_indexes => false)",
             "CREATE INDEX ON $T (ts_orig)",

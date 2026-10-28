@@ -393,3 +393,35 @@ pub fn item_key(host: &str, root: &str, relative: &str) -> String {
 pub fn item_id(key: &str) -> String {
     format!("library:{}", blake3::hash(key.as_bytes()).to_hex())
 }
+
+/// The text of a document in the library: a page of a PDF, or the whole of a
+/// text, HTML, Markdown, Word (`.docx`) or OpenDocument (`.odt`) file, read
+/// from its stored bytes. Each captured copy has its own text and parents,
+/// including when another copy has identical bytes.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
+#[event(
+    type = "document.text",
+    key = ["record", "part"],
+    replace = newer,
+    time = modified_at,
+    quality = file_mtime
+)]
+pub struct DocumentText {
+    /// The captured copy's stable source record.
+    pub record: String,
+    /// The BLAKE3 name of the document's bytes.
+    pub content: String,
+    /// The path of the copy it was read from.
+    pub path: String,
+    /// `pdf`, `html`, `markdown`, `text`, `docx` or `odt`.
+    pub format: String,
+    /// The page, from 1, for a PDF; 0 for a document read whole.
+    pub part: u64,
+    pub title: Option<String>,
+    pub text: String,
+    /// What read it: the PDF reader's version line, or `sinexd` for the
+    /// formats read in Sinex itself.
+    pub reader: String,
+    /// The copy's modification time.
+    pub modified_at: Option<Timestamp>,
+}

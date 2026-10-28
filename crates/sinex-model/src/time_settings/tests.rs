@@ -78,3 +78,12 @@ fn unknown_zone_is_an_error_not_utc() {
         Err(TimeSettingsError::BadDayStart(24, 0))
     ));
 }
+
+#[test]
+fn parsed_settings_keep_the_exact_day_start_and_zone() {
+    let settings = TimeSettings::from_parts(jiff::tz::TimeZone::UTC, jiff::civil::Time::constant(6, 30, 15, 0));
+    let before = Timestamp::from_unix_secs(1_718_433_014).unwrap();
+    let after = Timestamp::from_unix_secs(1_718_433_015).unwrap();
+    assert_ne!(settings.day(before).unwrap(), settings.day(after).unwrap());
+    assert_eq!(settings.day_start(settings.day(after).unwrap()).unwrap(), after);
+}

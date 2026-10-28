@@ -206,6 +206,9 @@ time.
 The [query guide](docs/query.md) covers typed fields, completion, filled time
 buckets, marks, time citations, saved queries and context views.
 
+For the optional acceptance test against an external Atuin snapshot, see
+[private history acceptance](docs/private-history-test.md).
+
 ## Benchmarks
 
 `agentctl job start sinex bench -- run` backfills a fixed sample of real

@@ -503,6 +503,7 @@ async fn read_only_sql_reads_and_cannot_write(db: devkit::pg::TestDatabase) {
 }
 
 mod cursor;
+mod event_labels;
 
 /// Admit derived events built from `payloads`, each with one fused command as
 /// its parent.
