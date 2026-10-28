@@ -12,9 +12,9 @@ mod request;
 pub use commands::{Access, Arg, ArgKind, COMMANDS, Command, command};
 pub use nats::{
     Acknowledgment, Archived, Confirmed, ConfirmedEvent, DeclarationHash, Excise, ExciseReply,
-    Ingress, MaterialFrame, Materials, ProducerEvent, ProducerFailure, ProducerMaterial,
-    ProducerReplay, RecordedQuery, ReplayBatch, ReplayMaterial, ReplayScopeQuery, ReplaySelection,
-    Subjects, Unhidden, Withheld,
+    Ingress, MaterialFrame, Materials, PRODUCER_VERSION, ProducerEvent, ProducerFailure,
+    ProducerHello, ProducerMaterial, ProducerReplay, ProducerWelcome, RecordedQuery, ReplayBatch,
+    ReplayMaterial, ReplayScopeQuery, ReplaySelection, Subjects, Unhidden, Withheld,
 };
 pub use request::{Reply, Request};
 

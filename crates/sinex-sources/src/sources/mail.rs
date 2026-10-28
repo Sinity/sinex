@@ -95,7 +95,6 @@ impl Parser for MailParser {
             .and_then(serde_json::Value::as_str)
             .map(str::to_owned);
         Ok((vec![message], ()))
-
     }
 }
 

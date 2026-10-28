@@ -18,7 +18,9 @@ rusqlite = { workspace = true, optional = true }
 notify.workspace = true
 uuid.workspace = true
 gix = { workspace = true, optional = true }
-tokio.workspace = true
+tokio = { workspace = true, features = ["process"] }
+async-nats.workspace = true
+futures.workspace = true
 csv = "1"
 regex.workspace = true
 serde-saphyr = { version = "2", default-features = false, features = ["deserialize"], optional = true }

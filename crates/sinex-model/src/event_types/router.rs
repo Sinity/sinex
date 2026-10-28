@@ -121,11 +121,11 @@ impl crate::EventPayload for DeviceTrafficSampled {
                 fields: vec!["sampled_at".into()],
                 quality: crate::TimeQuality::Captured,
             }),
-            least_class: Self::CLASS,
             removed_rule: Some(crate::kinds::RemovedRule::Never),
             keep_known: vec![],
             owned_blobs: vec![],
-            index_text: Self::INDEX_TEXT,
+            search: Self::SEARCH,
+            field_hints: vec![],
         }
     }
 

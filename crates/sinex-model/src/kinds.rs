@@ -218,7 +218,11 @@ impl KindDeclaration {
             return Err("payload must be an object".into());
         }
         let present = |field: &str| payload.get(field).filter(|v| !v.is_null());
-        let fields = self.key_rule.as_ref().ok_or("historical declaration has no rules")?.fields(payload);
+        let fields = self
+            .key_rule
+            .as_ref()
+            .ok_or("historical declaration has no rules")?
+            .fields(payload);
         let equivalence_key = fields.map(|fields| {
             let fields: Vec<&str> = fields.iter().map(String::as_str).collect();
             EquivalenceKey::of(&self.kind.name, &fields, payload)

@@ -317,6 +317,23 @@ pub async fn frames(
     .await?)
 }
 
+/// Whether this producer registered the material named by its events frame.
+pub async fn producer_material_registered(
+    conn: &mut PgConnection,
+    producer: &str,
+    material: Uuid,
+) -> Result<bool> {
+    Ok(sqlx::query_scalar!(
+        r#"SELECT EXISTS (
+        SELECT 1 FROM core.ingress_frames WHERE producer = $1 AND material_id = $2
+    ) AS "registered!""#,
+        producer,
+        material
+    )
+    .fetch_one(&mut *conn)
+    .await?)
+}
+
 /// One material a producer registered, as its frame described it.
 #[derive(Clone, Debug, PartialEq)]
 pub struct ProducerMaterial {

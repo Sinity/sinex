@@ -72,7 +72,10 @@ fn cli() -> Command {
     for c in COMMANDS {
         let mut sub = sinex_protocol::cli::subcommand(c);
         if c.name == "status" {
-            sub = sub
+            sub =
+                sub.arg(Arg::new("capture-state").long("capture-state").help(
+                    "local capture state directory (default: $SINEX_CAPTURE_STATE or $XDG_STATE_HOME/sinex-session)",
+                ))
                 .arg(
                     Arg::new("offline")
                         .long("offline")
@@ -184,6 +187,13 @@ fn print_json(v: &Value) {
     println!("{}", serde_json::to_string_pretty(v).expect("JSON prints"));
 }
 
+fn status_error(code: u8, reason: impl std::fmt::Display, state: Option<&str>) -> ExitCode {
+    let mut status = serde_json::json!({"daemon": {"unavailable": reason.to_string()}});
+    capture_health::attach(&mut status, state);
+    print_json(&status);
+    ExitCode::from(code)
+}
+
 #[tokio::main]
 async fn main() -> ExitCode {
     let matches = cli().get_matches();
@@ -193,6 +203,17 @@ async fn main() -> ExitCode {
         // Bare `sinexctl`: the status view until the Today view is built.
         None => ("status".to_string(), matches.clone()),
     };
+    let capture_state = sub
+        .try_get_one::<String>("capture-state")
+        .ok()
+        .flatten()
+        .map(String::as_str);
+    let offline = sub
+        .try_get_one::<bool>("offline")
+        .ok()
+        .flatten()
+        .copied()
+        .unwrap_or(false);
     match name.as_str() {
         "doctor" => {
             let database = sub.get_one::<String>("database").expect("required");
@@ -246,17 +267,19 @@ async fn main() -> ExitCode {
                 return fail(1, "status --offline needs --database");
             };
             return match diagnostics::run("status", database, None).await {
-                Ok(v) => {
+                Ok(mut v) => {
+                    capture_health::attach(&mut v, capture_state);
                     print_json(&v);
                     ExitCode::SUCCESS
                 }
-                Err(e) => fail(1, e),
+                Err(e) => status_error(1, e, capture_state),
             };
         }
         _ => {}
     }
     let client = match client(&matches) {
         Ok(c) => c,
+        Err(e) if name == "status" => return status_error(1, e, capture_state),
         Err(e) => return fail(1, e),
     };
     if name == "mcp" {
@@ -336,18 +359,32 @@ async fn main() -> ExitCode {
         let reply = match client.call(&request).await {
             Ok((_, reply)) => reply,
             Err(ClientError::Unreachable(m)) => {
+                if name == "status" {
+                    return status_error(UNREACHABLE, m, capture_state);
+                }
                 return fail(UNREACHABLE, format!("the daemon is not reachable: {m}"));
             }
+            Err(e) if name == "status" => return status_error(1, e, capture_state),
             Err(e) => return fail(1, e),
         };
-        let result = match reply {
+        let mut result = match reply {
             Reply::Ok { result } => result,
+            Reply::Refused { reason, not_built } if name == "status" => {
+                return status_error(
+                    if not_built { NOT_BUILT } else { REFUSED },
+                    reason,
+                    capture_state,
+                );
+            }
             Reply::Refused {
                 reason,
                 not_built: true,
             } => return fail(NOT_BUILT, format!("not built yet: {reason}")),
             Reply::Refused { reason, .. } => return fail(REFUSED, reason),
         };
+        if name == "status" {
+            capture_health::attach(&mut result, capture_state);
+        }
         let paged = result["page"].is_object() && result["rows"].is_array();
         if !paged {
             if json {
@@ -412,3 +449,5 @@ async fn main() -> ExitCode {
 
 #[cfg(test)]
 mod tests;
+
+mod capture_health;

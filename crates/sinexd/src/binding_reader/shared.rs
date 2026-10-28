@@ -60,19 +60,6 @@ impl<R: Read> Read for InterruptibleReader<R> {
     }
 }
 
-fn admission_check(
-    private: sinex_transport::private_mode::PrivateMode,
-    stop: watch::Receiver<bool>,
-) -> crate::writer::AdmissionCheck {
-    Arc::new(move || {
-        if *stop.borrow() || private.on() {
-            Err("capture cancelled or private mode is on; admission stopped".into())
-        } else {
-            Ok(())
-        }
-    })
-}
-
 #[allow(clippy::too_many_arguments)]
 pub(super) async fn read_shared(
     conn: &mut PgConnection,

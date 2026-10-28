@@ -8,7 +8,7 @@ The `test` operation gives the full suite tmpfs scratch; `exec` uses NVMe scratc
 
 ## VM checks
 
-`agentctl job start /path/to/checkout vm --workspace /path/to/checkout -- --output /path/to/new/results` runs `vm-stack`, `vm-topology` and `vm-restore`. Repeat `--scenario vm-stack` to choose exported checks. Discovery must find every requested scenario. Commit all source files first: VM commands refuse uncommitted changes, including new files, so Nix and the run record refer to the same input. Each scenario writes its original build log and an entry in `results.json`; all selected scenarios run even when one fails. AgentCTL owns cancellation of the job's process tree.
+`agentctl job start /path/to/checkout vm --workspace /path/to/checkout -- --output /path/to/new/results` runs `module`, `vm-stack`, `vm-topology` and `vm-restore`. Repeat `--scenario vm-stack` to choose exported checks. Discovery must find every requested scenario. Commit all source files first: VM commands refuse uncommitted changes, including new files, so Nix and the run record refer to the same input. Each scenario writes its original build log and an entry in `results.json`; all selected scenarios run even when one fails. AgentCTL owns cancellation of the job's process tree.
 
 ## Development stack
 
@@ -16,7 +16,7 @@ The `test` operation gives the full suite tmpfs scratch; `exec` uses NVMe scratc
 
 Readiness requires an HTTP 200 response from the development API. `--watch` hashes source contents, including new and removed files, waits briefly for successive edits, rebuilds, stops the previous process groups and starts the new build. A failed rebuild prints its error and leaves the previous build running; the run records that failed build. Edits arriving during a build trigger another build. It prints change-detected-to-ready time, including the edit debounce, separately from build and service setup stages. Source detection polls every 100 ms. `--seconds SECONDS` bounds a smoke observation; otherwise cancel by the recorded AgentCTL job ID.
 
-There are no default source bindings or session captures. `--sources /path/to/bindings.json` selects daemon bindings. Repeat `--session-source clipboard` (or `hyprland`, `notifications`, `players`, `integrations`) to start those session captures explicitly. Treat resulting captures and tokens as private data. The watcher excludes its output directory.
+There are no default source bindings or session captures. `--sources /path/to/bindings.json` selects daemon bindings. Repeat `--session-source clipboard` (or `hyprland`, `notifications`, `players`, `integrations`) to start those session captures explicitly. The development runner writes a session sources file that preserves configured exclusions and excludes every unselected session capture declared by the catalog, including media and file watches. It passes that file through `--sources`. Treat resulting captures and tokens as private data. The watcher excludes its output directory.
 
 ## History comparisons
 

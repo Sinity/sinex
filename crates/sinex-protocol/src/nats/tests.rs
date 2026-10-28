@@ -28,6 +28,7 @@ fn producer_permissions_name_only_its_own_subjects() {
         publish,
         [
             "sinex.ingress.phone",
+            "sinex.connect.phone",
             "sinex.recorded.phone",
             "sinex.materials.phone",
             "sinex.excise.phone",
@@ -41,7 +42,7 @@ fn producer_permissions_name_only_its_own_subjects() {
         "{config}"
     );
     assert!(config.contains(
-        r#"publish: { allow: ["sinex.ingress.phone", "sinex.recorded.phone", "sinex.materials.phone", "sinex.excise.phone", "sinex.replay_scope.phone"] }"#
+        r#"publish: { allow: ["sinex.ingress.phone", "sinex.connect.phone", "sinex.recorded.phone", "sinex.materials.phone", "sinex.excise.phone", "sinex.replay_scope.phone"] }"#
     ));
 }
 

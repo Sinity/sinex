@@ -49,7 +49,11 @@ enum Cli {
 fn main() -> ExitCode {
     match Cli::parse() {
         Cli::Vm(options) => recorded("vm", &invocation(), |run| {
-            devkit::vm::execute(run, &options, &["vm-stack", "vm-topology", "vm-restore"])
+            devkit::vm::execute(
+                run,
+                &options,
+                &["module", "vm-stack", "vm-topology", "vm-restore"],
+            )
         }),
         Cli::Run(options) => recorded("run", &invocation(), |run| {
             development::execute(run, &options)
@@ -203,7 +207,6 @@ fn database_free(args: &[String]) -> bool {
             matches!(
                 package,
                 "sinexctl"
-                    | "sinex-diagnostics"
                     | "sinex-session"
                     | "sinex-capture"
                     | "sinex-model"

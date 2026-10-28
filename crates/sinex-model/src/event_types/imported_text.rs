@@ -1,10 +1,13 @@
 //! Imported text refers to external inputs and runs without asserting local provenance.
-use crate::{EventPayload, KeyKind, ReplaceRule, TimeQuality, Timestamp, TsOrig};
+use crate::Timestamp;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
-#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[derive(
+    Clone, Debug, Default, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload,
+)]
+#[event(type = "transcript.cue", key = location, replace = newer, time = at, quality = intrinsic)]
 pub struct TranscriptCue {
     pub input: String,
     pub provider_id: Option<String>,
@@ -34,7 +37,10 @@ pub struct BoundingBox {
     pub units: String,
 }
 
-#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[derive(
+    Clone, Debug, Default, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload,
+)]
+#[event(type = "ocr.text", key = location, replace = newer)]
 pub struct OcrText {
     pub input: String,
     pub provider_id: Option<String>,
@@ -53,30 +59,6 @@ pub struct OcrText {
     pub external_run: Option<String>,
     #[serde(default)]
     pub extra: Map<String, Value>,
-}
-
-impl EventPayload for TranscriptCue {
-    const EVENT_TYPE: &'static str = "transcript.cue";
-    const KEY: KeyKind = KeyKind::Location;
-    const REPLACE: ReplaceRule = ReplaceRule::ReplaceWhenNewer;
-    fn ts_orig(&self) -> TsOrig {
-        TsOrig::maybe(self.at, TimeQuality::Intrinsic)
-    }
-    fn payload_schema() -> Value {
-        serde_json::to_value(schemars::schema_for!(Self)).expect("schemas serialize")
-    }
-}
-
-impl EventPayload for OcrText {
-    const EVENT_TYPE: &'static str = "ocr.text";
-    const KEY: KeyKind = KeyKind::Location;
-    const REPLACE: ReplaceRule = ReplaceRule::ReplaceWhenNewer;
-    fn ts_orig(&self) -> TsOrig {
-        TsOrig::unknown()
-    }
-    fn payload_schema() -> Value {
-        serde_json::to_value(schemars::schema_for!(Self)).expect("schemas serialize")
-    }
 }
 
 #[cfg(test)]

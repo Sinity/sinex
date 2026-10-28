@@ -617,6 +617,12 @@ impl Api {
         let row = sinex_store::diagnostics::positions(&mut conn)
             .await
             .map_err(|e| e.to_string())?;
+        let refusals = sinex_store::diagnostics::ingress_refusals(&mut conn)
+            .await
+            .map_err(|e| e.to_string())?;
+        let producer_errors = sinex_store::diagnostics::producer_errors(&mut conn)
+            .await
+            .map_err(|e| e.to_string())?;
         drop(conn);
         let sources = match self
             .query(
@@ -650,6 +656,9 @@ impl Api {
                 "behind": row.commit_seq - row.search_position.unwrap_or(0),
             },
             "schema_version": row.schema_version,
+            "failures_24h": row.failures_24h,
+            "ingress_refusals_24h": refusals,
+            "producer_errors": producer_errors,
             "writer": self.writer.is_some(),
             "zone": self.context().zone_name(),
             "day_start": self.day_start.to_string(),

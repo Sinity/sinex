@@ -296,6 +296,45 @@ pub async fn upgrade_historical(conn: &mut PgConnection, owners: &Owners) -> Res
     Ok(())
 }
 
+fn key_fields<'a>(rule: &'a KeyRule, fields: &mut Vec<&'a str>) -> Result<(), String> {
+    match rule {
+        KeyRule::Location => {}
+        KeyRule::Fields { fields: keys } => {
+            if keys.is_empty() {
+                return Err("field key is empty".into());
+            }
+            fields.extend(keys.iter().map(String::as_str));
+        }
+        KeyRule::WhenPresent {
+            field,
+            fields: keys,
+        } => {
+            if keys.is_empty() {
+                return Err("field key is empty".into());
+            }
+            fields.push(field);
+            fields.extend(keys.iter().map(String::as_str));
+        }
+        KeyRule::WhenNonempty {
+            field,
+            then,
+            otherwise,
+            ..
+        }
+        | KeyRule::WhenEqual {
+            field,
+            then,
+            otherwise,
+            ..
+        } => {
+            fields.push(field);
+            key_fields(then, fields)?;
+            key_fields(otherwise, fields)?;
+        }
+    }
+    Ok(())
+}
+
 pub fn check(d: &KindDeclaration) -> Result<(), String> {
     let mut hints = std::collections::BTreeSet::new();
     for hint in &d.field_hints {
@@ -323,25 +362,7 @@ pub fn check(d: &KindDeclaration) -> Result<(), String> {
     }
     prefix_from_name(&d.kind.name)?;
     let mut fields: Vec<&str> = Vec::new();
-    match d.key_rule.as_ref().expect("checked") {
-        KeyRule::Location => {}
-        KeyRule::Fields { fields: keys } => {
-            if keys.is_empty() {
-                return Err("field key is empty".into());
-            }
-            fields.extend(keys.iter().map(String::as_str));
-        }
-        KeyRule::WhenPresent {
-            field,
-            fields: keys,
-        } => {
-            if keys.is_empty() {
-                return Err("field key is empty".into());
-            }
-            fields.push(field);
-            fields.extend(keys.iter().map(String::as_str));
-        }
-    }
+    key_fields(d.key_rule.as_ref().expect("checked"), &mut fields)?;
     if let Some(TimeRule::FirstPresent {
         fields: times,
         quality,

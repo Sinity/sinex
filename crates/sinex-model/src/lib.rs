@@ -18,9 +18,9 @@ pub mod query;
 pub mod time_settings;
 
 pub use batch::{
-    ArchiveReason, ArchiveRequest, Batch, BatchKind, IngressFrame, InputRef, MaterialRef,
-    ObservationFacts, ReaderMemory, RecordOutcome, ReplayScope, RevisionChange, SourceProgress,
-    WrappedDataKey,
+    ArchiveReason, ArchiveRequest, Batch, BatchKind, FrameRefusal, IngressFrame, InputRef,
+    MaterialRef, ObservationFacts, ReaderMemory, RecordOutcome, ReplayScope, RevisionChange,
+    SourceProgress, WrappedDataKey,
 };
 pub use clock::{TimeQuality, Timestamp, TsOrig};
 pub use event::{BuildError, Event, Origin, ReadingOrder, RecordLocation, RecordState};

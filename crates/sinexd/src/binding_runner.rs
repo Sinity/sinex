@@ -226,48 +226,41 @@ pub(crate) async fn run(
     let mut bindings = Bindings::default();
     let mut planned_at: Option<std::time::Instant> = None;
     loop {
-        {
-            if planned_at.is_none_or(|at| at.elapsed() >= PLAN_EVERY) {
-                let before = bindings.readers.len();
-                match saved(&mut read_conn, &database, &host).await {
-                    Ok(saved) => {
-                        bindings.said.remove("saved");
-                        bindings.extend(&config, &host, &saved);
-                    }
-                    Err(error) => bindings.say(
-                        "saved",
-                        format!("sinexd: saved bindings unavailable: {error}"),
-                    ),
+        if planned_at.is_none_or(|at| at.elapsed() >= PLAN_EVERY) {
+            let before = bindings.readers.len();
+            match saved(&mut read_conn, &database, &host).await {
+                Ok(saved) => {
+                    bindings.said.remove("saved");
+                    bindings.extend(&config, &host, &saved);
                 }
-                if bindings.readers.len() != before {
-                    eprintln!("sinexd: reading {} bindings", bindings.readers.len());
-                }
-                planned_at = Some(std::time::Instant::now());
+                Err(error) => bindings.say(
+                    "saved",
+                    format!("sinexd: saved bindings unavailable: {error}"),
+                ),
             }
-            // Each failure is logged as it happens, once until it changes or
-            // the binding reads again.
-            let said = &mut bindings.said;
-            binding_reader::read(
-                &mut read_conn,
-                &blobs,
-                &writer,
-                run,
-                &sink,
-                &mut bindings.readers,
-                stop.clone(),
-                crate::material_access::Access::default(),
-                &mut |binding, result| {
-                    let key = format!("binding {binding}");
-                    match result {
-                        Err(e) => {
-                            let message = format!("sinexd: binding {binding}: {e}");
-                            if said.get(&key) != Some(&message) {
-                                eprintln!("{message}");
-                                said.insert(key, message);
-                            }
-                        }
-                        Ok(_) => {
-                            said.remove(&key);
+            if bindings.readers.len() != before {
+                eprintln!("sinexd: reading {} bindings", bindings.readers.len());
+            }
+            planned_at = Some(std::time::Instant::now());
+        }
+        let said = &mut bindings.said;
+        binding_reader::read(
+            &mut read_conn,
+            &blobs,
+            &writer,
+            run,
+            &sink,
+            &mut bindings.readers,
+            stop.clone(),
+            crate::material_access::Access::default(),
+            &mut |binding, result| {
+                let key = format!("binding {binding}");
+                match result {
+                    Err(error) => {
+                        let message = format!("sinexd: binding {binding}: {error}");
+                        if said.get(&key) != Some(&message) {
+                            eprintln!("{message}");
+                            said.insert(key, message);
                         }
                     }
                     Ok(_) => {

@@ -38,20 +38,11 @@ pub(crate) enum WriteError {
 }
 
 fn database_error(error: sqlx::Error) -> WriteError {
-    if let Some(code) = error.as_database_error().and_then(|e| e.code())
-        && (code.starts_with("22") || code.starts_with("23"))
-    {
-        return WriteError::Refused(format!("database refused invalid data ({code})"));
-    }
-    WriteError::Unavailable(error.to_string())
+    admission_error(error.into())
 }
 
 fn store_error(error: sinex_store::Error) -> WriteError {
-    match error {
-        sinex_store::Error::Database(error) => database_error(error),
-        sinex_store::Error::Schema(sinex_schema::Error::Database(error)) => database_error(error),
-        other => WriteError::Refused(other.to_string()),
-    }
+    admission_error(error)
 }
 
 /// One replay sequence: its batches run in one transaction, admitted as they
@@ -380,7 +371,7 @@ pub(crate) async fn run_notifying(
             // The lock went with the lost connection; without it this
             // process is no longer the writer.
             if let Err(e) = claim(&mut fresh).await {
-                let _ = job.reply.send(Err(WriteError::Refused(e)));
+                let _ = job.reply.send(Err(WriteError::Unavailable(e)));
                 return;
             }
             connection = fresh;
@@ -400,15 +391,15 @@ async fn admit_checked(
     check: &(dyn Fn() -> Result<(), String> + Send + Sync),
     record_refusals: bool,
 ) -> Result<Outcome, WriteError> {
-    let refuse = |e: &dyn std::fmt::Display| WriteError::Refused(e.to_string());
+    let unavailable = |e: &dyn std::fmt::Display| WriteError::Unavailable(e.to_string());
     check().map_err(WriteError::Refused)?;
     for name in batch.stored_bytes() {
         let present = match store {
-            Some(store) => store.contains(name).map_err(|e| refuse(&e))?,
+            Some(store) => store.contains(name).map_err(|e| unavailable(&e))?,
             None => false,
         };
         if !present {
-            return Err(WriteError::Refused(format!(
+            return Err(WriteError::Unavailable(format!(
                 "the content store does not hold {name}; store the bytes again and resubmit"
             )));
         }
@@ -459,6 +450,35 @@ fn refused_source(batch: &Batch, reason: &str) -> Option<Batch> {
         }
     }
     Some(failed)
+}
+
+/// A transaction that could not run must remain pending at the producer.
+/// Only invalid content can be recorded as a final refusal.
+fn admission_error(error: sinex_store::Error) -> WriteError {
+    let temporary = match &error {
+        sinex_store::Error::Database(sqlx::Error::Database(error)) => {
+            error.code().is_some_and(|code| {
+                ["08", "40", "53", "57", "58"]
+                    .iter()
+                    .any(|class| code.starts_with(class))
+            })
+        }
+        sinex_store::Error::Database(error) => matches!(
+            error,
+            sqlx::Error::Io(_)
+                | sqlx::Error::Tls(_)
+                | sqlx::Error::PoolTimedOut
+                | sqlx::Error::PoolClosed
+                | sqlx::Error::WorkerCrashed
+        ),
+        sinex_store::Error::Blob(_) => true,
+        _ => false,
+    };
+    if temporary {
+        WriteError::Unavailable(error.to_string())
+    } else {
+        WriteError::Refused(error.to_string())
+    }
 }
 
 async fn replay_sequence(

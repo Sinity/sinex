@@ -468,3 +468,80 @@ async fn source_content_refusals_keep_material_failures_and_advance_the_cursor(
     drop(handle);
     writer.await.unwrap();
 }
+
+#[devkit::test]
+async fn temporary_database_errors_remain_retryable(db: devkit::pg::TestDatabase) {
+    let mut conn = PgConnection::connect(&db.url(None)).await.unwrap();
+    sqlx::query("SET statement_timeout = '5ms'")
+        .execute(&mut conn)
+        .await
+        .unwrap();
+    let timeout = sqlx::query("SELECT pg_sleep(1)")
+        .execute(&mut conn)
+        .await
+        .unwrap_err();
+    assert!(matches!(
+        admission_error(timeout.into()),
+        WriteError::Unavailable(_)
+    ));
+    sqlx::query("SET statement_timeout = 0")
+        .execute(&mut conn)
+        .await
+        .unwrap();
+    let invalid = sqlx::query("SELECT 'invalid'::integer")
+        .execute(&mut conn)
+        .await
+        .unwrap_err();
+    assert!(matches!(
+        admission_error(invalid.into()),
+        WriteError::Refused(_)
+    ));
+    let outcome = admit_checked(
+        &mut conn,
+        &batch("after-timeout"),
+        &sinex_store::NoDerivations,
+        None,
+        &|| Ok(()),
+    )
+    .await
+    .unwrap();
+    assert_eq!(outcome.admitted, 1);
+}
+
+#[devkit::test]
+async fn only_transient_sqlstates_are_retryable(db: devkit::pg::TestDatabase) {
+    let mut conn = PgConnection::connect(&db.url(None)).await.unwrap();
+    for (code, temporary) in [
+        ("08006", true),
+        ("40001", true),
+        ("40P01", true),
+        ("53100", true),
+        ("57014", true),
+        ("58030", true),
+        ("22021", false),
+        ("23505", false),
+        ("54000", false),
+        ("42601", false),
+    ] {
+        let query = format!(
+            "DO $$ BEGIN RAISE EXCEPTION USING ERRCODE = '{code}', MESSAGE = 'synthetic admission failure'; END $$"
+        );
+        let error = sqlx::query(&query).execute(&mut conn).await.unwrap_err();
+        assert_eq!(
+            matches!(admission_error(error.into()), WriteError::Unavailable(_)),
+            temporary,
+            "{code}"
+        );
+    }
+    for error in [
+        sqlx::Error::Io(std::io::Error::other("synthetic")),
+        sqlx::Error::PoolClosed,
+        sqlx::Error::PoolTimedOut,
+        sqlx::Error::WorkerCrashed,
+    ] {
+        assert!(matches!(
+            admission_error(error.into()),
+            WriteError::Unavailable(_)
+        ));
+    }
+}

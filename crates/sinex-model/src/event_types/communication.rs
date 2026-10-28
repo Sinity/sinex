@@ -73,10 +73,21 @@ pub struct MailMessage {
 impl crate::EventPayload for MailMessage {
     const VERSION: u64 = 3;
     const EVENT_TYPE: &'static str = "mail.message";
-    const KEY: crate::KeyKind = crate::KeyKind::Fields(&["message_id"]);
+    const KEY: crate::KeyKind = crate::KeyKind::Fields(&["account", "message_id"]);
     const REPLACE: crate::ReplaceRule = crate::ReplaceRule::ReplaceWhenNewer;
 
     fn key_kind(&self) -> crate::KeyKind {
+        if self
+            .account
+            .as_deref()
+            .is_some_and(|value| !value.trim().is_empty())
+            && self
+                .native_id
+                .as_deref()
+                .is_some_and(|value| !value.trim().is_empty())
+        {
+            return crate::KeyKind::Fields(&["account", "native_id"]);
+        }
         if self
             .message_id
             .as_deref()
@@ -109,11 +120,11 @@ impl crate::EventPayload for MailMessage {
             normalization: crate::kinds::Normalization::Rust,
             key_rule: Some({
                 use crate::kinds::KeyRule;
-                KeyRule::WhenNonempty {
+                let fallback = KeyRule::WhenNonempty {
                     field: "message_id".into(),
                     trim: true,
                     then: Box::new(KeyRule::Fields {
-                        fields: vec!["message_id".into()],
+                        fields: vec!["account".into(), "message_id".into()],
                     }),
                     otherwise: Box::new(KeyRule::WhenNonempty {
                         field: "native_id".into(),
@@ -123,6 +134,19 @@ impl crate::EventPayload for MailMessage {
                         }),
                         otherwise: Box::new(KeyRule::Location),
                     }),
+                };
+                KeyRule::WhenNonempty {
+                    field: "account".into(),
+                    trim: true,
+                    then: Box::new(KeyRule::WhenNonempty {
+                        field: "native_id".into(),
+                        trim: true,
+                        then: Box::new(KeyRule::Fields {
+                            fields: vec!["account".into(), "native_id".into()],
+                        }),
+                        otherwise: Box::new(fallback.clone()),
+                    }),
+                    otherwise: Box::new(fallback),
                 }
             }),
             replace_rule: Some(Self::REPLACE),

@@ -69,20 +69,20 @@ fn daemon_and_session_arguments_preserve_explicit_capture_selection() {
         None,
     );
     assert!(!daemon.get_args().any(|arg| arg == "--sources"));
-    for sources in [vec![], vec!["clipboard".to_owned(), "players".to_owned()]] {
+    for _ in 0..2 {
         let mut session = Command::new("sinex-session");
         session_arguments(
             &mut session,
             "nats://synthetic",
             Path::new("store"),
             Path::new("state"),
-            &sources,
+            Path::new("session-sources.json"),
         );
         let args: Vec<_> = session
             .get_args()
             .map(|arg| arg.to_str().unwrap())
             .collect();
-        let mut expected = vec![
+        let expected = vec![
             "run",
             "--nats",
             "nats://synthetic",
@@ -94,11 +94,44 @@ fn daemon_and_session_arguments_preserve_explicit_capture_selection() {
             "store",
             "--state",
             "state",
+            "--sources",
+            "session-sources.json",
         ]
         .into_iter()
         .map(String::from)
         .collect::<Vec<_>>();
-        expected.extend(sources.iter().map(|source| format!("--{source}")));
+
         assert_eq!(args, expected);
     }
+}
+
+#[test]
+fn session_exclusions_cover_every_unselected_catalog_capture() {
+    let catalog: serde_json::Value =
+        serde_json::from_str(include_str!("../../../nix/catalog.json")).unwrap();
+    let generated = session_configuration(
+        serde_json::json!({"exclude":{"desktop.clipboard":{"reason":"operator exclusion"}}}),
+        &catalog,
+        &["clipboard".into(), "integrations".into()],
+    )
+    .unwrap();
+    assert_eq!(
+        generated["exclude"]["desktop.clipboard"]["reason"],
+        "operator exclusion"
+    );
+    assert!(generated["exclude"].get("session.integrations").is_none());
+    for source in [
+        "desktop.hyprland",
+        "desktop.notifications",
+        "media.mpris",
+        "session.media",
+        "machine.file-watch",
+    ] {
+        assert!(
+            generated["exclude"][source]["reason"].is_string(),
+            "{source}"
+        );
+    }
+    let none = session_configuration(serde_json::json!({}), &catalog, &[]).unwrap();
+    assert!(none["exclude"]["desktop.clipboard"]["reason"].is_string());
 }

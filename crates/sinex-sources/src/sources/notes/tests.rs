@@ -366,6 +366,12 @@ fn native_note_paths_stay_distinct_after_reader_memory_and_removal() {
     assert_eq!(events.len(), 2);
     assert_eq!(events[0].payload["path"], events[1].payload["path"]);
     assert_ne!(events[0].equivalence_key, events[1].equivalence_key);
+    for event in &events {
+        let declared = <NoteDocument as sinex_model::EventPayload>::declaration()
+            .evaluate(&event.payload, event.class)
+            .unwrap();
+        assert_eq!(declared.equivalence_key, event.equivalence_key);
+    }
     assert_ne!(events[0].record_hash, events[1].record_hash);
     let raw_member = material
         .manifest

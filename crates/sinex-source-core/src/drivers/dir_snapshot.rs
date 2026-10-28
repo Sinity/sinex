@@ -156,10 +156,26 @@ impl DirSnapshot {
         };
         // Sorted walk: a stable order makes materials and part cuts repeatable.
         let mut found = BTreeMap::new();
+        let boundary = std::fs::canonicalize(&self.root).unwrap_or_else(|_| self.root.clone());
+        let excluded: Vec<_> = excluded
+            .iter()
+            .filter_map(|path| {
+                path.strip_prefix(&self.root)
+                    .or_else(|_| path.strip_prefix(&boundary))
+                    .ok()
+                    .map(|relative| self.root.join(relative))
+            })
+            .collect();
         walk(&self.root, &self.root, self.select, &mut found);
-        self.poll_entries(cursor, state, previous, facts, found)
+        let excluded: Vec<_> = excluded
+            .iter()
+            .filter_map(|path| path.strip_prefix(&self.root).ok().map(Path::to_path_buf))
+            .collect();
+        found.retain(|path, _| !excluded.iter().any(|prefix| path.starts_with(prefix)));
+        self.poll_entries_excluding(cursor, state, previous, facts, found, &excluded)
     }
 
+    #[cfg(test)]
     fn poll_entries(
         &self,
         cursor: &Value,
@@ -167,6 +183,18 @@ impl DirSnapshot {
         previous: Cursor,
         mut facts: ObservationFacts,
         found: BTreeMap<PathBuf, EntryFacts>,
+    ) -> Result<Acquired, DriverError> {
+        self.poll_entries_excluding(cursor, state, previous, facts, found, &[])
+    }
+
+    fn poll_entries_excluding(
+        &self,
+        cursor: &Value,
+        state: &mut DirState,
+        previous: Cursor,
+        mut facts: ObservationFacts,
+        found: BTreeMap<PathBuf, EntryFacts>,
+        excluded: &[PathBuf],
     ) -> Result<Acquired, DriverError> {
         let now = Timestamp::now();
         let mut membership_path = ".sinex-membership".to_owned();
@@ -304,7 +332,9 @@ impl DirSnapshot {
                 .files
                 .keys()
                 .filter(|p| {
-                    !seen.contains(*p) && !failed.iter().any(|prefix| p.starts_with(prefix))
+                    !seen.contains(*p)
+                        && !failed.iter().any(|prefix| p.starts_with(prefix))
+                        && !excluded.iter().any(|prefix| p.starts_with(prefix))
                 })
                 .cloned()
                 .collect();

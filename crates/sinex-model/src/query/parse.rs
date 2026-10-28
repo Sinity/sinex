@@ -93,6 +93,11 @@ pub(super) fn bind_tokens(
     Ok(query)
 }
 
+/// Parse before the stored declaration catalog is selected.
+pub fn parse(text: &str, ctx: &Context) -> Result<Query, QueryError> {
+    parse_tokens(tokens(text)?, ctx, text.len())
+}
+
 fn parse_tokens(toks: Vec<Token>, ctx: &Context, end: usize) -> Result<Query, QueryError> {
     if toks.is_empty() {
         return Err(QueryError::new("empty query"));

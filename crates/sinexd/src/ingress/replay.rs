@@ -326,6 +326,9 @@ impl Ingest {
                     material: None,
                     refusal: None,
                     declarations: vec![],
+                    refusal_kind: None,
+                    source: None,
+                    event_types: vec![],
                 })),
                 records: self
                     .events(&request.producer, &batch.events, &batch.failures)

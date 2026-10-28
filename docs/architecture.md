@@ -38,15 +38,11 @@ Library roots are planned by their format. Crawl commands supply their filtered
 URL list to a reader in memory; only the allow list, limit and pause are binding
 settings. Both are read by the binding runner. A library file selection
 is a scan of that file within its root; files beside it are neither read nor
-reported removed. Each completed scan records every present file, including
-unchanged files, with a key made from the host, resolved root and original
-relative path. The captured material identifies each scan part; its part
-index orders observations even when clocks repeat or move backwards.
-Unchanged size, modification time, device and inode reuse the
-previous hashes and media metadata; the new scan still records that file. A move within the root keeps that key when the old path is
-missing and the bytes match; matching device and inode take precedence over
-another new copy of those bytes. Changed bytes at the same key create a new
-revision, named by the content hash, including replacement by a different inode.
+reported removed. A completed scan records changed files and reuses the facts of
+unchanged files. Each item key names the host, resolved root and original relative
+path. A move within that root keeps the key when the old path is gone and the
+bytes match; ambiguous matches remain move candidates. Changed bytes at the same
+key create a new revision named by the content hash.
 
 `library.items` derives items and original renditions from visible scan
 records. Item IDs are hashes of their keys; original rendition IDs also name
@@ -61,8 +57,8 @@ computation engine as the background runner. A shared lock serializes keyed
 computations before reading inputs, so an older read cannot overwrite a
 command's newer outputs. Command runs end on both success and failure.
 
-The named `library-scans-and-imported-text` schema step adds scan identity fields,
-preview evidence and the document, transcript and OCR kinds.
+The `library_scans` schema step adds scan identity fields and preview evidence.
+The kind declarations step registers the document, transcript and OCR kinds.
 It upgrades databases without library records. A database containing library
 records is refused before any schema or data changes: its request-created
 IDs and external references need an explicit migration decision.
@@ -271,6 +267,78 @@ version and records whether its validator ran. Bundled kinds keep Rust decoding
 and serialization; outside kinds keep the submitted JSON and use their saved
 schema, when present. A declaration's field hints describe defaults for configurable output rules. They do not set a kind-wide admission class. Sinex has no AI-chat parser of its own.
 
+The live producers start capture before connecting to NATS. At connect they
+send their protocol version, maximum class and event type names; the daemon
+refuses an unsupported version, sealed storage or unknown event types before
+any frame is sent. Producer-owned type declarations can be registered at this
+connect check. Each new frame checks the privacy configuration again. A changed
+configuration returns a configuration refusal before storing frame bytes,
+forcing the producer to reconnect and repeat the connect check. A refused
+connection stays in local status and is sent to the
+desktop notifier while capture continues.
+
+Connection and publishing failures retry with exponential delays from one to
+30 seconds while capture keeps writing. Each acknowledged frame is removed
+from the durable batch before another is sent. A content refusal of an events
+frame records ordinary failures on its material in the same transaction as the
+refused acknowledgment. The producer advances, and the existing material
+replay reads those bytes with the corrected parser or declarations. Refused
+frames have no separate local store or replay command.
+
+A byte refusal rebuilds the transfer from the original spool range and the
+saved logical frame, then resends under a new frame name. Three identical
+refusals for the same spool bytes record a capture failure with that range in
+the existing position state and advance past it. Spool cleanup keeps those
+files as failure evidence; they have no automatic retry or cleanup after the
+binding advances. When the material is already registered, the producer sends
+a failures-only events frame for the dropped records before advancing. An
+unregistered material is skipped without making the next part name it.
+Malformed frames are recorded as refusals and report the binding as
+`error: <reason>`, also sent to the notifier. Their transfer directories stay
+as evidence of the code defect and have no reader or automatic cleanup.
+On restart, a saved malformed refusal or content refusal of a material is sent
+under a fresh attempt name, so a corrected producer or daemon can accept it.
+A configuration refusal also gets a fresh attempt after reconnecting.
+Unrecorded content refusals and storage or database failures remain retryable.
+
+Each pass publishes at most one material per binding, in round-robin order.
+A nonempty pass continues immediately; only idle passes wait for the next poll
+or retry. Capture source failures restart independently of publishing.
+Unwritable local storage and undecodable state stop production because
+reconnecting cannot repair them.
+
+The producer counts existing spools once at startup. Capture writes and acknowledged batches then update running counters without rereading spools. Every two seconds a blocking worker writes `health.json` in its state
+directory, independently of publishing. It reports the observation time and
+unpublished captured bytes and records for each spool, plus the number of
+prepared transport frames awaiting acknowledgment. `SINEX_CAPTURE_STATE` supplies the module-configured session state path. Media bytes include the
+completed data file and its sidecar. `sinexctl status` includes
+the local session report, including when the daemon is unreachable or refuses
+the status request;
+`--capture-state PATH` selects another local producer's state directory. The
+local report includes binding errors, the capture failure count and its newest
+reason. `status --offline --database URL` includes the local report even when
+its database query fails. Check the observation time because the last report
+remains on disk after capture stops.
+
+Online status also counts material failures in `failures_24h`.
+`ingress_refusals_24h` counts refused frames by producer, source (named at the
+start of a capture binding), event type and refusal kind (`content`, `bytes`, `malformed`,
+`configuration`). A frame containing several event types counts once for each;
+unknown source and event type stay null. `producer_errors` lists the newest
+recorded malformed refusal for each affected producer, including remote
+capture nodes. This is recorded history and remains visible after a successful
+retry.
+
+Before upgrading a producer, let its old binary drain until its positions
+directory contains no `*.unacknowledged.json`, then stop it and activate the
+new binary. Do this for every session state directory (the configured
+`stateDir`, or `${XDG_STATE_HOME:-~/.local/state}/sinex-session`) and every
+capture node's `<stateDir>/positions`. Older position files open with an empty
+capture-failure list. Older unacknowledged-frame files contain prepared
+transfers rather than logical frames; opening one refuses with its path and
+an instruction to drain the old producer first. No conversion is performed.
+
+
 The outside producers start their capture threads with `sinex-sources::live`,
 which registers signal handlers first and stops every capture before joining
 it. `capture::CaptureStop` owns interruptible waits, socket shutdown and child
@@ -444,7 +512,7 @@ keys by hour.
 public commands and wire types without IO. `sinex-transport` holds the frame
 directories, so the daemon and producers share them without the wire types
 touching the filesystem. CLI, MCP and HTTP
-are generated from the command table. `sinex-diagnostics` is a database-free client of `sinexd admin diagnostics`.
+are generated from the command table. `sinexctl::diagnostics` invokes `sinexd admin diagnostics` without a database dependency.
 Offline commands invoke the sibling daemon executable without starting the
 daemon. The database work lives in the daemon; the CLI has no store or SQLx
 dependency.
@@ -544,7 +612,11 @@ Document discovery reads the declared `documents` and `downloads` roots. Notes
 and library roots own their subtrees; the document walk excludes those subtrees.
 Every other regular file is captured, including hidden and Markdown files.
 Symbolic-link roots report their resolved boundary. Native file names retain
-their raw bytes alongside their display path. Removed documents have unknown
+their raw bytes alongside their display path. Valid UTF-8 names keep their literal
+spelling, including percent characters. For non-UTF-8 notes, version 3 identity
+includes the native root and relative path bytes, so an escaped display such as
+`%FF` cannot collide with a literal `%FF` name. Documents use their material record
+locations as identity. Removed documents have unknown
 size and media type.
 
 Document options are a typed list of excluded roots. Transcript and OCR

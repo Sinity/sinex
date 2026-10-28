@@ -186,24 +186,46 @@ fn requested(run: &Run) -> Result<sinex_sources::discovery::CapturePlan, String>
 
 /// Capture threads write spools; the shared loop produces what they wrote.
 async fn produce(run: Run) -> Result<(), String> {
-    use sinex_source_core::drivers::producer::{Producer, Store};
+    use sinex_source_core::drivers::producer::Store;
 
-    requested(&run)?;
+    let plan = requested(&run)?;
     let store = Store::open(&run.store).map_err(|e| format!("content store: {e}"))?;
-    let mut producer = Producer::connect(
-        &run.nats,
-        run.nats_password_file.as_deref(),
-        sinex_protocol::Subjects::new(run.subject_root.clone()),
-        &run.producer,
-    )
-    .await
-    .map_err(|e| e.to_string())?;
+    let connection = live::Connection {
+        url: run.nats.clone(),
+        password_file: run.nats_password_file.clone(),
+        subjects: sinex_protocol::Subjects::new(run.subject_root.clone()),
+        producer: run.producer.clone(),
+        upload: false,
+    };
     if run.drain {
+        let mut hello = sinex_protocol::ProducerHello::default();
+        for (_, binding) in &plan.bindings {
+            let source = sinex_sources::sources::source_for(binding)?;
+            hello.class = hello.class.max(source.spec().class);
+            hello.event_types.extend(
+                source
+                    .spec()
+                    .event_types
+                    .iter()
+                    .map(|name| (*name).to_owned()),
+            );
+        }
+        hello.event_types.sort();
+        hello.event_types.dedup();
+        let mut producer = sinex_source_core::drivers::producer::Producer::connect(
+            &connection.url,
+            connection.password_file.as_deref(),
+            connection.subjects,
+            &connection.producer,
+            &hello,
+        )
+        .await
+        .map_err(|e| e.to_string())?;
         return live::drain(
             &mut producer,
             &store,
             &run.state.join("positions"),
-            requested(&run)?.bindings,
+            plan.bindings,
         )
         .await;
     }
@@ -211,7 +233,7 @@ async fn produce(run: Run) -> Result<(), String> {
         .seconds
         .map(|s| std::time::Instant::now() + Duration::from_secs(s));
     live::run(
-        &mut producer,
+        connection,
         &store,
         &run.state.join("positions"),
         || requested(&run),

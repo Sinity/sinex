@@ -73,6 +73,33 @@ async fn registration_is_atomic_and_a_reconnect_gets_the_saved_hashes(
     };
     let registered = h.send("example", &frame).await;
     assert_eq!(registered.refusal, None);
+    let hello = ProducerHello {
+        event_types: vec![d.kind.name.clone()],
+        ..ProducerHello::default()
+    };
+    let connected = sinex_source_core::drivers::producer::Producer::connect(
+        h.nats.url(),
+        None,
+        h.subjects.clone(),
+        "example",
+        &hello,
+    )
+    .await;
+    assert!(connected.is_ok());
+    let other = sinex_source_core::drivers::producer::Producer::connect(
+        h.nats.url(),
+        None,
+        h.subjects.clone(),
+        "session",
+        &hello,
+    )
+    .await;
+    assert!(matches!(
+        other,
+        Err(sinex_source_core::drivers::producer::Error::Configuration(
+            _
+        ))
+    ));
     assert_eq!(registered, h.send("example", &frame).await);
     assert_eq!(
         registered.outcome["registered_kinds"],

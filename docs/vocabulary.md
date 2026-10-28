@@ -40,14 +40,12 @@ these names and no others.
 - **reader memory**: what a reader remembers about its input (each row's hash, each file's size, time and hash), saved with the cursor at the end of a part so a restart reads only the parts after it.
 - **appended table**: a SQLite table whose rows are only ever added and never change; its reader keeps only its cursor and reads the rows after it a page at a time.
 - **shared pass**: one read of a stored file for every compatible binding of it (export archives); each binding keeps its own parts and cursor.
-- **input root**: a filesystem location declared by the host to discover inputs, such as projects or notes.
-- **capture plan**: available capture bindings and excluded sources; unavailable inputs keep their existing spool readers.
-- **capture stream**: one live input captured into its own spool, such as the clipboard selection or screen stills.
 - **ref update**: a git ref seen at a new target (`git.ref_updated`); a **rewrite** is one whose new target does not descend from the old one (a force-push, a reset), listing the commits no ref or checkout reaches any more. Those commits are recorded, never removed.
 - **observed tool**: a tool whose records Sinex reads but does not own (Beads, AgentCTL, GitHub); nothing is written back to it.
 - **input root**: a host-declared filesystem location used to discover inputs, such as projects or notes.
 - **capture plan**: available capture bindings and excluded sources; unavailable inputs keep their existing spool readers.
 - **capture stream**: one live input captured into its own spool, such as the clipboard selection or screen stills.
+- **backlog**: captured bytes and records beyond a spool's acknowledged cursor, together with the producer's unacknowledged frames.
 - **spool**: a live capture's directory of segment files, which its binding then reads like a growing file.
 - **capture lake**: the files Sinnix capture writes, one directory per **lane** (a producer's stable name, a **lake lane**) with a **day file** per UTC day of `sinnix-capture-v1` records (`sinnix-lake`, `router`). Stream-owned lanes keep `lake.observed` for their derivations; the other lanes use domain kinds.
 - **machine records**: the files Sinnix keeps about the machine at its machine root (`/realm/device/<host>`): activations, backup checks, restore drills, audits, the usage census, configuration drift and experiment runs (`machine-records`).
@@ -61,11 +59,6 @@ these names and no others.
 - **domain usage**: seconds a provider attributed to one domain on a civil date (`domain.usage`); a date without a zone supplies no instant.
 
 - **event**: one reading of a record, or of parent events: a typed payload, an origin and three clocks.
-- **event type**: the registered name of a payload type, `<thing>.<what>` (`command.executed`, `note.document`). An occurrence is named with a past participle (`window.opened`), a state or record with a noun (`journal.entry`). A **span** is a state a source observed with its end; an **interval** is one a derivation computed.
-- **kind declaration**: the immutable schema and rules of one version of an event type, owned by its declaring producer.
-- **kind version**: the positive integer selecting one exact kind declaration. Historical version 1 has no schema or rules; current bundled declarations start at version 2.
-- **validation**: whether the selected declaration's checks ran at admission (`validated` or `unvalidated`).
-- **sampling rule**: a versioned selection of continuous sample records by the hash of capture UUID and sequence; discrete changes and typed outputs are always selected.
 - **event type**: the registered name of a payload type, `<thing>.<what>` (`command.executed`, `note.document`). A record is named with a past participle (`window.opened`), a state or record with a noun (`journal.entry`). A **span** is a state a source observed with its end; an **interval** is one a derivation computed.
 - **kind declaration**: the immutable schema and rules of one version of an event type, owned by its declaring producer.
 - **kind version**: the positive integer selecting one exact kind declaration. Historical version 1 has no schema or rules; current bundled declarations start at version 2.
@@ -78,7 +71,6 @@ these names and no others.
 - **derived event**: an event computed by a derivation, naming its parents.
 - **fusion**: joining what several sources observed of one thing into one **fused record**: `command.fused`, `focus.fused`, `visit.fused`, `play.fused`, `clipboard.fused`, `notification.fused`, `mail.fused`, `post.fused`, `conversation.fused`. Each fused kind has one **fusion rule**; a **fusion input** (`FusionInput`) reads one source's events for it as **fusion records** (`FusionRecord`) (an identity, a start, maybe an end, the fields it supplies). A **fused command** is a `command.fused` event.
 - **calendar instance**: one dated instance of a calendar event, `calendar.instance`: a start a repeating event's rule gives, with a changed instance's own times, or the one instance of an event that does not repeat; a **series** is a repeating event with its rule and changed instances.
-- **fusion**: joining what several sources observed of one thing into one **fused record**: `command.fused`, `focus.fused`, `visit.fused`, `play.fused`, `clipboard.fused`, `notification.fused`, `mail.fused`. Each fused kind has one **fusion rule**; a **fusion reader** (`FusionReader`) reads one source's events for it as **sightings** (`Sighting`) (an identity, a start, maybe an end, the fields it supplies). A **fused command** is a `command.fused` event.
 - **shell session**: the `shell.session` derived event: a run of commands in one terminal; `recall last` reads around the latest one.
 - **batch**: what a producer hands the writer: records with their events or failures, and progress.
 - **run**: one execution of a producer; every event names its run.
@@ -120,6 +112,9 @@ these names and no others.
 - **frame**: one message from an outside producer: events, a material, a chunk, or a **large frame** that names its own bytes.
 - **frame bytes**: the bytes an outside producer hands over for one frame, in that frame's directory under the content store (`incoming/producers`); removed once the frame is recorded.
 - **unacknowledged frames**: a producer's frames sent but not yet acknowledged, kept with the position after them and sent again after a restart.
+- **frame refusal** (`FrameRefusal`): a content failure stored on a material, a byte failure that rebuilds the transfer, a malformed frame reported as a binding error, or a configuration change requiring reconnect.
+- **capture failure**: a spool range whose bytes could not be delivered after three identical byte refusals; the position records its range and reason and cleanup keeps its spool file.
+- **producer declaration** (`ProducerHello`): the protocol version, maximum class and event types checked when an outside producer connects.
 - **acknowledgment**: the reply that confirms a frame was admitted; a **recorded query** asks Sinex for the acknowledgments of given frames.
 - **publish**: send a NATS message.
 - **confirmed stream**: the NATS stream of committed events in commit order, with `Archived`, `Unhidden` and `Excised` messages.
@@ -207,15 +202,6 @@ these names and no others.
 - **text history**: an appended file with one untimed command per complete line.
 - **transcript cue**: one imported speech-text output with its written offsets; `transcript.cue`.
 - **OCR text**: one imported recognized-text output, with any page coordinates; `ocr.text`.
-
-## Library
-
-- **item key**: the host, resolved library root and original relative path of a file. A move within that root keeps the key when the bytes match and the old path is gone.
-- **scan record**: one file observed in a captured scan part, identified by its material and path, with its item key, content hash and acquisition time. The part index orders observations independently of the wall clock.
-- **item revision**: one content hash of an item. Returning to the same bytes returns to that revision.
-- **preview evidence**: the stored output of rendering an item revision; the library derivation produces its rendition.
-
-- **file node**: a directory tar member's captured filesystem facts, including ownership, times, permissions, attributes and sparse data ranges.
 
 ## Library
 

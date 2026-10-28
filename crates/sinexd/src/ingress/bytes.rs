@@ -20,7 +20,7 @@ impl Ingest {
         };
         let data = base64::engine::general_purpose::STANDARD
             .decode(data)
-            .map_err(|e| Check::Refused(format!("chunk data is not base64: {e}")))?;
+            .map_err(|e| Check::Bytes(format!("chunk data is not base64: {e}")))?;
         let root = self.blobs.root().to_owned();
         let (producer, for_frame, blob, offset, total) = (
             producer.to_owned(),
@@ -35,7 +35,7 @@ impl Ingest {
         .await
         .map_err(|e| Check::Unavailable(e.to_string()))?
         .map(drop)
-        .map_err(Check::Refused)
+        .map_err(check_bytes)
     }
 
     /// The frame a large frame stands for, read from its frame directory.
@@ -57,30 +57,40 @@ impl Ingest {
         let expected_name = name.clone();
         let inner = tokio::task::spawn_blocking(move || {
             let file = frame_bytes::snapshot(&root, &producer, &name, &blob, length)
-                .map_err(Check::Refused)?;
+                .map_err(check_bytes)?;
             serde_json::from_reader::<_, Ingress>(std::io::BufReader::new(file)).map_err(|e| {
-                Check::Refused(format!(
-                    "invalid large frame at line {}, column {}",
-                    e.line(),
-                    e.column()
-                ))
+                if e.is_io() {
+                    Check::Unavailable(e.to_string())
+                } else {
+                    Check::Malformed(format!("large-frame bytes are not a frame: {e}"))
+                }
             })
         })
         .await
         .map_err(|e| Check::Unavailable(e.to_string()))??;
+        if inner.frame().is_empty() {
+            return Err(Check::Malformed(
+                "a large frame's inner frame needs a name".into(),
+            ));
+        }
+        if inner.frame().contains('\0') {
+            return Err(Check::Malformed(
+                "a large frame's inner name contains NUL".into(),
+            ));
+        }
         match inner {
             Ingress::Material { .. }
             | Ingress::Events { .. }
             | Ingress::RegisterKinds { .. }
             | Ingress::ReplaySequence { .. } => {
                 if inner.frame() != expected_name {
-                    return Err(Check::Refused(
+                    return Err(Check::Malformed(
                         "large frame name differs from its contents".into(),
                     ));
                 }
                 Ok(inner)
             }
-            _ => Err(Check::Refused(
+            _ => Err(Check::Malformed(
                 "a large frame stands for a material or events frame".into(),
             )),
         }
@@ -110,16 +120,13 @@ impl Ingest {
             material.length,
         );
         tokio::task::spawn_blocking(move || {
-            let file = frame_bytes::snapshot(&root, &producer, &frame, &blob, length).map_err(|e| {
-                Check::Refused(format!(
-                    "the bytes {blob} are neither in the content store nor in this frame's directory: {e}"
-                ))
-            })?;
+            let file = frame_bytes::snapshot(&root, &producer, &frame, &blob, length)
+                .map_err(check_bytes)?;
             let stored = blobs
                 .put_seekable(std::io::BufReader::new(file))
                 .map_err(|e| Check::Unavailable(e.to_string()))?;
             if stored != blob {
-                return Err(Check::Refused(format!(
+                return Err(Check::Bytes(format!(
                     "the frame bytes are {stored}, not {blob}"
                 )));
             }
@@ -129,25 +136,18 @@ impl Ingest {
         .map_err(|e| Check::Unavailable(e.to_string()))?
     }
 
-    /// Whether the producer's privacy settings ask for sealed storage, which
-    /// producer bytes do not support.
-    pub(super) async fn sealed(&mut self, producer: &str) -> Result<bool, String> {
-        let privacy = sinex_store::privacy::load(&mut self.conn, std::iter::once(producer))
-            .await
-            .map_err(|e| e.to_string())?;
-        Ok(
-            privacy.floors.get(producer) == Some(&sinex_model::Class::Sealed)
-                || privacy
-                    .rules
-                    .iter()
-                    .any(|r| r.class == sinex_model::Class::Sealed),
-        )
-    }
-
     /// Remove the frame directory of a recorded frame.
     pub(super) fn discard(&self, producer: &str, frame: &str) {
         if let Err(error) = frame_bytes::discard(self.blobs.root(), producer, frame) {
             eprintln!("sinexd: removing the directory of frame {frame} from {producer}: {error}");
         }
+    }
+}
+
+fn check_bytes(error: frame_bytes::Error) -> Check {
+    match error {
+        frame_bytes::Error::Invalid(reason) => Check::Malformed(reason),
+        frame_bytes::Error::Mismatch(reason) => Check::Bytes(reason),
+        frame_bytes::Error::Storage(reason) => Check::Unavailable(reason),
     }
 }

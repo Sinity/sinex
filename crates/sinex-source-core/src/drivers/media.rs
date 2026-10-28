@@ -12,6 +12,7 @@ use crate::binding::Reader;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use sinex_model::{InputRef, MaterialId, ObservationFacts, RevisionChange, Timestamp};
+use std::os::unix::ffi::OsStrExt;
 use std::path::{Path, PathBuf};
 
 /// One record, the whole stored file.
@@ -151,7 +152,16 @@ impl Reader for Media {
             };
             let mut n = 0;
             for (stem, path) in complete(&self.spool)? {
-                if stem <= last {
+                let keep = committed
+                    .get("keep_files")
+                    .and_then(Value::as_array)
+                    .is_some_and(|paths| {
+                        paths.iter().any(|p| {
+                            serde_json::from_value::<Vec<u8>>(p.clone())
+                                .is_ok_and(|keep| path.as_os_str().as_bytes() == keep.as_slice())
+                        })
+                    });
+                if stem <= last && !keep {
                     std::fs::remove_file(&path)?;
                     let _ = std::fs::remove_file(self.spool.join(format!("{stem}.json")));
                     n += 1;
@@ -177,7 +187,13 @@ pub fn publish_segment(
     std::fs::write(&tmp, serde_json::to_vec(sidecar).expect("JSON serializes"))?;
     std::fs::rename(&tmp, &side)?;
     let data = dir.join(format!("{stem}.{ext}"));
+    let counter = super::spool_health::counter(dir);
+    let mut health = counter.as_ref().map(|counter| counter.lock().unwrap());
+    let length = std::fs::metadata(partial)?.len() + std::fs::metadata(&side)?.len();
     std::fs::rename(partial, &data)?;
+    if let Some(health) = &mut health {
+        health.captured_media(stem.to_owned(), length);
+    }
     Ok(data)
 }
 

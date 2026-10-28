@@ -8,7 +8,7 @@
 //! with `--upload`, the node keeps its own store and sends each material's
 //! bytes over the link in chunk frames first.
 use clap::Parser;
-use sinex_source_core::drivers::producer::{Producer, Store};
+use sinex_source_core::drivers::producer::Store;
 use sinex_sources::live;
 use std::path::PathBuf;
 use std::process::ExitCode;
@@ -78,19 +78,13 @@ async fn run(cli: Cli) -> Result<(), String> {
     let spools = cli.state.join("spool");
     let positions = cli.state.join("positions");
     let store = Store::open(&cli.store).map_err(|e| format!("content store: {e}"))?;
-    let mut producer = Producer::connect(
-        &cli.nats,
-        cli.nats_password_file.as_deref(),
-        sinex_protocol::Subjects::new(cli.subject_root.clone()),
-        &cli.producer,
-    )
-    .await
-    .map_err(|e| e.to_string())?;
-    if cli.upload {
-        let own = Store::open(&cli.store).map_err(|e| format!("content store: {e}"))?;
-        producer = producer.upload_bytes(own);
-    }
-
+    let connection = live::Connection {
+        url: cli.nats.clone(),
+        password_file: cli.nats_password_file.clone(),
+        subjects: sinex_protocol::Subjects::new(cli.subject_root.clone()),
+        producer: cli.producer.clone(),
+        upload: cli.upload,
+    };
     use sinex_sources::discovery::{self, Configuration, DiscoveryContext, Owner};
     let configuration = cli
         .sources
@@ -104,7 +98,7 @@ async fn run(cli: Cli) -> Result<(), String> {
     context.watch = cli.watch;
     context.watch.extend(configuration.discovery.watch);
     live::run(
-        &mut producer,
+        connection,
         &store,
         &positions,
         || {

@@ -57,6 +57,22 @@ pub fn execute(run: &mut Run, options: &Development) -> Result {
     fs::set_permissions(&options.output, fs::Permissions::from_mode(0o700))
         .map_err(|e| e.to_string())?;
     let output = fs::canonicalize(&options.output).map_err(|e| e.to_string())?;
+    let session_sources = output.join("session-sources.json");
+    let configuration = match &options.sources {
+        Some(path) => serde_json::from_slice(&fs::read(path).map_err(|e| e.to_string())?)
+            .map_err(|e| e.to_string())?,
+        None => serde_json::json!({}),
+    };
+    let catalog = serde_json::from_slice(
+        &fs::read(run.root.join("nix/catalog.json")).map_err(|e| e.to_string())?,
+    )
+    .map_err(|e| e.to_string())?;
+    let configuration = session_configuration(configuration, &catalog, &options.session_source)?;
+    fs::write(
+        &session_sources,
+        serde_json::to_vec_pretty(&configuration).map_err(|e| e.to_string())?,
+    )
+    .map_err(|e| e.to_string())?;
     let mut prepared = None;
     run.step("services", |run| {
         // Always start an owned cluster. A configured host service is never selected.
@@ -138,7 +154,7 @@ pub fn execute(run: &mut Run, options: &Development) -> Result {
                 nats.url(),
                 &store,
                 &output.join("session"),
-                &options.session_source,
+                &session_sources,
             );
             command.env("SINEX_SESSION_SOCKET", server.socket().join("session.sock"));
             children.push(Process::start(&mut command)?);
@@ -231,7 +247,7 @@ fn session_arguments(
     nats: &str,
     store: &std::path::Path,
     state: &std::path::Path,
-    sources: &[String],
+    sources: &std::path::Path,
 ) {
     command
         .args([
@@ -247,9 +263,58 @@ fn session_arguments(
         .arg(store)
         .arg("--state")
         .arg(state);
-    for source in sources {
-        command.arg(format!("--{source}"));
+    command.arg("--sources").arg(sources);
+}
+
+/// Generate exclusions from the same catalog that declares session capture.
+fn session_configuration(
+    mut configuration: serde_json::Value,
+    catalog: &serde_json::Value,
+    selected: &[String],
+) -> Result<serde_json::Value, String> {
+    let root = configuration
+        .as_object_mut()
+        .ok_or("sources configuration must be an object")?;
+    let exclusions = root
+        .entry("exclude")
+        .or_insert_with(|| serde_json::json!({}))
+        .as_object_mut()
+        .ok_or("source exclusions must be an object")?;
+    for source in catalog["sources"]
+        .as_array()
+        .ok_or("catalog sources are missing")?
+    {
+        let discovery = source["discovery"]
+            .as_array()
+            .ok_or("catalog discovery is missing")?;
+        let captures: Vec<_> = discovery
+            .iter()
+            .filter(|d| d["capture"] == true && d["description"]["owner"] == "session")
+            .collect();
+        if captures.is_empty() {
+            continue;
+        }
+        let allowed = captures.iter().any(|d| {
+            selected.iter().any(|name| {
+                let format = if name == "integrations" {
+                    "integration-socket"
+                } else {
+                    name.as_str()
+                };
+                d["format"] == format
+            })
+        });
+        if !allowed {
+            let name = source["name"]
+                .as_str()
+                .ok_or("catalog source name is missing")?;
+            exclusions.insert(
+                name.into(),
+                serde_json::json!({"reason": "not selected for this development session"}),
+            );
+        }
     }
+    Ok(configuration)
 }
 
 #[cfg(test)]

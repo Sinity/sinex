@@ -230,7 +230,7 @@ pub fn formats() -> &'static [&'static InputFormat] {
         &media_capture::FORMAT,
         &library::FORMAT,
         &forecast::FORMAT,
-&query::FORMAT,
+        &query::FORMAT,
         &page_crawl::FORMAT,
     ];
     FORMATS

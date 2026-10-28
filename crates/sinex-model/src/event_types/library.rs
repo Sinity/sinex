@@ -11,9 +11,8 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
-/// One file observed by one scan. Another scan is independent evidence,
-/// including when the bytes are unchanged. A missing file describes availability;
-/// its earlier scans remain evidence of the item and original rendition.
+/// A file whose facts changed in a scan. Earlier visible changes remain
+/// evidence for the item and its original rendition.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
 #[event(version = 2,
     type = "library.copy",

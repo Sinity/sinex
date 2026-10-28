@@ -2,6 +2,12 @@
 # PostgreSQL and NATS, the session service, the system captures (journal,
 # udev), a capture-only node for satellite hosts, and the backups. Source and derivation
 # options come from the registries through the generated `catalog.json`.
+#
+# Before upgrading producers, let the old binaries drain until no
+# positions/*.unacknowledged.json remains, then stop them and activate.
+# Check every user's session stateDir (by default XDG_STATE_HOME/sinex-session)
+# and every capture node's stateDir/positions. Old unacknowledged-frame files
+# are refused with their path and must be drained by the old producer first.
 self:
 { config, lib, pkgs, ... }:
 let
@@ -337,6 +343,8 @@ in
       environment.sessionVariables = {
         SINEX_ENDPOINT = if cfg.api.listen != null then "http://${cfg.api.listen}" else "unix:${cfg.api.socket}";
         SINEX_TOKEN_FILE = "${cfg.stateDir}/tokens/agent.token";
+      } // lib.optionalAttrs (cfg.session.user != "") {
+        SINEX_CAPTURE_STATE = cfg.session.stateDir;
       };
 
       # Bindings from the registry-generated options, for the daemon's sources.
@@ -551,8 +559,8 @@ in
         description = "Sinex session sources";
         wantedBy = cfg.session.wantedBy;
         partOf = cfg.session.wantedBy;
-        unitConfig = startLimit // { ConditionUser = cfg.session.user; };
-        serviceConfig = restartPolicy // { UMask = "0077"; };
+        unitConfig = { ConditionUser = cfg.session.user; StartLimitIntervalSec = 0; };
+        serviceConfig = { Restart = "always"; RestartSec = "2s"; };
         # busctl, wl-paste, grim, pw-record and ffmpeg run as capture children.
         path = with pkgs; [ systemd wl-clipboard grim pipewire ffmpeg-headless ];
         script = ''
@@ -661,8 +669,10 @@ in
         after = [ "network-online.target" "remote-fs.target" ];
         wants = [ "network-online.target" ];
         wantedBy = [ "multi-user.target" ];
-        unitConfig = startLimit;
-        serviceConfig = restartPolicy // {
+        unitConfig.StartLimitIntervalSec = 0;
+        serviceConfig = {
+          Restart = "always";
+          RestartSec = "2s";
           User = node.user;
           Group = node.group;
           UMask = "0007";
