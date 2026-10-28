@@ -453,9 +453,11 @@ async fn admit_checked(
             tx.rollback()
                 .await
                 .map_err(|error| store_error(error.into()))?;
-            if record_refusals
-                && content_error(&error)
-                && let Some(failed) = refused_source(batch, &error.to_string())
+            let recordable = record_refusals && content_error(&error);
+            let error = store_error(error);
+            if recordable
+                && let WriteError::Refused(reason) = &error
+                && let Some(failed) = refused_source(batch, reason)
             {
                 check().map_err(WriteError::Refused)?;
                 let mut tx = connection.begin().await.map_err(store_error)?;
@@ -464,7 +466,7 @@ async fn admit_checked(
                 tx.commit().await.map_err(store_error)?;
                 return Ok(outcome);
             }
-            Err(store_error(error))
+            Err(error)
         }
     }
 }
@@ -526,6 +528,11 @@ fn admission_error(error: sinex_store::Error) -> WriteError {
     };
     if temporary {
         WriteError::Unavailable(error.to_string())
+    } else if let sinex_store::Error::Database(database) = &error {
+        match database.as_database_error().and_then(|error| error.code()) {
+            Some(code) => WriteError::Refused(format!("database refused invalid data ({code})")),
+            None => WriteError::Refused(error.to_string()),
+        }
     } else {
         WriteError::Refused(error.to_string())
     }
