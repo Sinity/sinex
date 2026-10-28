@@ -16,8 +16,7 @@ use serde::{Deserialize, Serialize};
 /// thousand pairs of the same command in the same second on the operator's
 /// machine, which is why the record, not the text and time, identifies it.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
-#[event(
-    type = "command.fused",
+#[event(version = 2, type = "command.fused",
     key = ["record"],
     replace = newer,
     time = started_at,
@@ -43,8 +42,7 @@ pub struct CommandFused {
 /// whatever the sources call the window, two of them seeing focus begin at
 /// the same moment saw the same focus.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
-#[event(
-    type = "focus.fused",
+#[event(version = 2, type = "focus.fused",
     key = ["record"],
     replace = newer,
     time = started_at,
@@ -64,8 +62,7 @@ pub struct FocusFused {
 /// One page visit, from a browser's own history, a Takeout history export
 /// and the browser-navigation capture.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
-#[event(
-    type = "visit.fused",
+#[event(version = 2, type = "visit.fused",
     key = ["record"],
     replace = newer,
     time = visited_at,
@@ -82,8 +79,7 @@ pub struct VisitFused {
 /// One play of a track, from a streaming history export and the media
 /// player's live state (live MPRIS capture and the capture lake).
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
-#[event(
-    type = "play.fused",
+#[event(version = 2, type = "play.fused",
     key = ["record"],
     replace = newer,
     time = started_at,
@@ -105,8 +101,7 @@ pub struct PlayFused {
 /// One clipboard or primary-selection change, from live capture and the
 /// capture lake.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
-#[event(
-    type = "clipboard.fused",
+#[event(version = 2, type = "clipboard.fused",
     key = ["record"],
     replace = newer,
     time = copied_at,
@@ -124,8 +119,7 @@ pub struct ClipboardFused {
 
 /// One desktop notification, from live capture and the capture lake.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
-#[event(
-    type = "notification.fused",
+#[event(version = 2, type = "notification.fused",
     key = ["record"],
     replace = newer,
     time = shown_at,
@@ -144,42 +138,22 @@ pub struct NotificationFused {
 /// mbox, Outlook): its `Message-ID` and `Date` are the same wherever it is
 /// stored.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
-#[event(
-    type = "mail.fused",
+#[event(version = 3, type = "mail.fused",
     key = ["record"],
     replace = newer,
     time = sent_at,
     quality = intrinsic
 )]
 pub struct MailFused {
+    pub account: Option<String>,
     pub record: String,
-    pub message_id: String,
+    pub message_id: Option<String>,
     pub subject: Option<String>,
     pub from: Vec<String>,
     pub thread_id: Option<String>,
+    pub labels: Vec<String>,
     /// The `Date` header.
     pub sent_at: Timestamp,
-    pub observed_by: Vec<String>,
-}
-
-/// A stretch of sleep or a nap, from the health providers that recorded it
-/// (Sleep as Android, Samsung Health). Rest is exclusive, so two providers'
-/// records that begin close together, or one beginning inside another's
-/// span, are the same rest.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
-#[event(
-    type = "rest.fused",
-    key = ["record"],
-    replace = newer,
-    time = started_at,
-    quality = intrinsic
-)]
-pub struct RestFused {
-    pub record: String,
-    pub started_at: Timestamp,
-    pub ended_at: Option<Timestamp>,
-    /// `sleep` or `nap`.
-    pub kind: Option<String>,
     pub observed_by: Vec<String>,
 }
 
@@ -229,5 +203,26 @@ pub struct ConversationFused {
     pub text: Option<String>,
     /// The service's message ID, from a source that has it.
     pub message_id: Option<String>,
+    pub observed_by: Vec<String>,
+}
+
+/// A stretch of sleep or a nap, from the health providers that recorded it
+/// (Sleep as Android, Samsung Health). Rest is exclusive, so two providers'
+/// records that begin close together, or one beginning inside another's
+/// span, are the same rest.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
+#[event(
+    type = "rest.fused",
+    key = ["record"],
+    replace = newer,
+    time = started_at,
+    quality = intrinsic
+)]
+pub struct RestFused {
+    pub record: String,
+    pub started_at: Timestamp,
+    pub ended_at: Option<Timestamp>,
+    /// `sleep` or `nap`.
+    pub kind: Option<String>,
     pub observed_by: Vec<String>,
 }

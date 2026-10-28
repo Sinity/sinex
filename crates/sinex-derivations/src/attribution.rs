@@ -44,7 +44,9 @@ fn effective(root: &Value, at: Timestamp) -> bool {
         root.get(field)
             .and_then(|value| serde_json::from_value::<Timestamp>(value.clone()).ok())
     };
-    time("from").is_some_and(|from| from <= at) && time("until").is_none_or(|until| at < until)
+    let valid_until = root.get("until").is_none_or(|until| until.is_null() || time("until").is_some());
+    valid_until && time("from").is_some_and(|from| from <= at)
+        && time("until").is_none_or(|until| at < until)
 }
 
 /// The highest recorded rung wins. Multiple projects at that rung stay conflicting.
@@ -164,6 +166,11 @@ impl Keyed for ProjectSpans {
                         })
                     })
                     .filter_map(|event| Some((event, event.payload_as::<WorkAct>()?)))
+                    .filter(|(_, act)| match agency {
+                        Agency::Operator => act.agency == Agency::Operator,
+                        Agency::Supervising => act.agency == Agency::Delegated,
+                        _ => false,
+                    })
                     .collect();
                 let resolutions: Vec<_> = acts
                     .iter()

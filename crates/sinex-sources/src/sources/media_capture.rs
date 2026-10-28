@@ -23,7 +23,7 @@ pub const SPEC: SourceSpec = SourceSpec {
     // Whatever was on screen or within the microphone's reach.
     class: Class::Guarded,
     parser: "media-segment",
-    parser_version: 1,
+    parser_version: 2,
     event_types: &["media.segment"],
     framer: sinex_source_core::Framer::export(
         media::whole,

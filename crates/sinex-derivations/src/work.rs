@@ -427,6 +427,7 @@ impl Keyed for WorkEpisodes {
         }
         let durations: Vec<_> = group
             .iter()
+            .filter(|(_, act)| act.agency == Agency::Delegated)
             .filter_map(|(_, act)| act.ended_at.map(|end| (act.at.unix_ns(), end.unix_ns())))
             .collect();
         let unknown = group
