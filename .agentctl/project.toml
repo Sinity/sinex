@@ -190,15 +190,3 @@ scratch = "nvme"
 cache = "none"
 cap = "cargo"
 unit_properties = ["MemoryHigh=8G"]
-
-[operations.fuzz]
-description = "Run xtask fuzz with explicit arguments and recorded results"
-exec = ["cargo", "run", "--locked", "--quiet", "-p", "xtask", "--", "fuzz"]
-arguments = "required"
-pool = "bulk"
-result = "exit"
-timeout_seconds = 7200
-scratch = "nvme"
-cache = "none"
-cap = "cargo"
-unit_properties = ["MemoryHigh=8G"]
