@@ -1,7 +1,7 @@
 //! Work reads stay within one session or objective; stored parent chains move
 //! out of the live set before any recomputation runs.
 use super::*;
-use sinex_derivations::work::{ActivityDays, ResumeCards, WorkActs, WorkEpisodes};
+use sinex_derivations::work::{ActivityDays, ContextPacks, WorkActs, WorkEpisodes};
 use sinex_model::event_types::work::{ContextPack, WorkAct, WorkEpisode};
 
 fn record(kind: &str, payload: Value, anchor: u64) -> Event {
@@ -35,7 +35,7 @@ fn work_derivations() -> Vec<Box<dyn AnyKeyed>> {
     vec![
         Box::new(WorkActs),
         Box::new(WorkEpisodes),
-        Box::new(ResumeCards),
+        Box::new(ContextPacks),
         Box::new(ActivityDays),
     ]
 }
@@ -48,7 +48,7 @@ const LIVE_WITH_ARCHIVED_PARENT: &str = "SELECT count(*) FROM core.events e JOIN
     JOIN audit.archived a ON a.event_id = c.parent WHERE NOT EXISTS (SELECT 1 FROM audit.archived a WHERE a.event_id = e.id)";
 
 #[devkit::test]
-async fn work_reads_the_affected_objective_and_includes_unknown_time_session_metadata(
+async fn work_reads_the_objective_and_next_boundary_with_unknown_time_metadata(
     db: devkit::pg::TestDatabase,
 ) {
     let w = World::with_keys(db, work_derivations()).await;
@@ -59,6 +59,7 @@ async fn work_reads_the_affected_objective_and_includes_unknown_time_session_met
         prompt("b", 300),
         prompt("a", 1000),
         prompt("b", 100_000),
+        prompt("b", 100_001),
     ])
     .await;
     let mut runner = runner(&w).await;
@@ -70,19 +71,19 @@ async fn work_reads_the_affected_objective_and_includes_unknown_time_session_met
         .find(|episode| episode.label == "first")
         .unwrap();
     assert_eq!(first.trail.len(), 2);
-    assert_eq!(first.suspensions.len(), 1);
+    assert_eq!(first.suspensions.len(), 2);
     let env = Env::at(at(2_000_000));
     let query = Keyed::inputs(&WorkEpisodes, &json!({"episode": first.episode}), &env).unwrap();
     let mut conn = PgConnection::connect(&w.url).await.unwrap();
     let selected = derivations::read_window(&mut conn, &to_window(&query, env.now))
         .await
         .unwrap();
-    assert_eq!(selected.len(), 3);
+    assert_eq!(selected.len(), 4);
     assert!(
         selected
             .iter()
             .all(|event| event.event.event_type == "work.act"
-                && event.event.ts_orig.at <= Some(at(1000)))
+                && event.event.ts_orig.at <= Some(at(100_000)))
     );
     let packs = w.live::<ContextPack>().await;
     assert_eq!(packs.len(), 2);
@@ -107,7 +108,7 @@ async fn work_reads_the_affected_objective_and_includes_unknown_time_session_met
             .unwrap()
             .suspensions
             .len(),
-        1
+        2
     );
 }
 

@@ -58,9 +58,9 @@ pub struct WorkSuspension {
     pub suspension: String,
     pub episode: String,
     pub suspended_at: Timestamp,
-    pub returned_at: Timestamp,
+    pub returned_at: Option<Timestamp>,
     pub interruption_source: String,
-    pub away_s: f64,
+    pub away_s: Option<f64>,
     pub intervening_episodes: Vec<String>,
     pub absorbed_excursions: u64,
 }

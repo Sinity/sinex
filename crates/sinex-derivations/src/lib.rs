@@ -463,7 +463,7 @@ fn builtin(configuration: &Configuration) -> Vec<Box<dyn AnyKeyed>> {
         Box::new(figures::DailyMetrics),
         Box::new(presence::Presence),
         Box::new(work::WorkEpisodes),
-        Box::new(work::ResumeCards),
+        Box::new(work::ContextPacks),
         Box::new(work::ActivityDays),
         Box::new(health::HourlyFigures),
         Box::new(health::DailyFigures),

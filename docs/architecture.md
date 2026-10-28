@@ -252,7 +252,11 @@ overlap their time range. Unknown-time session metadata is read by its session
 key; it never acquires an invented start time. Waiting keys stay eligible until
 the evidence they need arrives. Time-dependent outputs store their next refresh
 time with the key, so silence can close a window and inactivity can mark an
-episode dormant without another input.
+episode dormant without another input. The next explicit objective
+switch or absence can store a suspension before any return. Its return time and
+away duration stay unknown until a recorded resumption, and a quick excursion
+that returns within thirty seconds is absorbed. Unknown objective metadata does
+not establish a switch.
 
 Admission records every parent edge in `core.event_children`. Archiving an input
 archives every live derived descendant in the same transaction, including keyed

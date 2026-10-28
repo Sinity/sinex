@@ -139,7 +139,7 @@ fn episode_kind(episode: &Value) -> Kind {
 pub struct WorkEpisodes;
 impl Keyed for WorkEpisodes {
     const NAME: &'static str = "work.episodes";
-    const VERSION: u32 = 3;
+    const VERSION: u32 = 4;
     const INPUTS: &'static [&'static str] = &["work.act", "state.interval", "rest.fused"];
     const OUTPUTS: &'static [&'static str] =
         &["work.episode", "work.suspension", "work.resumption"];
@@ -163,7 +163,7 @@ impl Keyed for WorkEpisodes {
                     output_type: "work.episode",
                     start_field: "started_at",
                     end_field: "last_activity",
-                    start: at,
+                    start: Timestamp::from_unix_ns(at.unix_ns()-14*86_400*SECOND).unwrap_or(Timestamp(time::OffsetDateTime::MIN)),
                     end: input
                         .payload
                         .get("ended_at")
@@ -177,6 +177,16 @@ impl Keyed for WorkEpisodes {
         let mut query = InputQuery::all(Self::INPUTS.iter().map(|kind| Kind::all(kind)).collect());
         query.range = Some(InputRange::Extent {
             kinds: vec![episode_kind(key.get("episode")?)],
+        });
+        query.after.push(crate::Neighbour {
+            kinds: vec![Kind::only("work.act", &[("agency", "operator")])], per:None, count:1,
+        });
+        query.after.push(crate::Neighbour { kinds:vec![Kind::all("rest.fused")], per:None, count:1 });
+        query.after.push(crate::Neighbour {
+            kinds: ["desktop.lock", "desktop.display", "machine.suspend"].into_iter().flat_map(|state|
+                ["locked", "off", "suspended"].into_iter().map(move |label|
+                    Kind::only("state.interval", &[("state_kind",state),("label",label)]))).collect(),
+            per:Some("subject_id"), count:1,
         });
         query.intervals = vec![
             (
@@ -194,7 +204,7 @@ impl Keyed for WorkEpisodes {
         outputs
             .iter()
             .filter_map(|event| event.payload_as::<WorkEpisode>())
-            .filter(|episode| episode.state == "open")
+            .filter(|episode| episode.state != "dormant")
             .filter_map(|episode| {
                 Timestamp::from_unix_ns(episode.last_activity.unix_ns() + 14 * 86_400 * SECOND).ok()
             })
@@ -234,100 +244,50 @@ impl Keyed for WorkEpisodes {
             .filter(|(_, act)| act.agency == Agency::Operator)
             .copied()
             .collect();
-        for pair in operator.windows(2) {
-            let ((before_event, before), (after_event, after)) = (pair[0], pair[1]);
-            let between: Vec<_> = acts
-                .iter()
-                .filter(|(_, act)| {
-                    act.agency == Agency::Operator
-                        && act.at > before.at
-                        && act.at < after.at
-                        && act.episode.as_deref() != Some(episode.as_str())
-                })
-                .collect();
-            let absence: Vec<_> = inputs
-                .iter()
-                .filter(|event| {
-                    let Some(start) = event.ts_orig.at else {
-                        return false;
-                    };
-                    let end = event
-                        .payload
-                        .get("ended_at")
-                        .and_then(|end| serde_json::from_value::<Timestamp>(end.clone()).ok());
-                    start < after.at
-                        && end.is_none_or(|end| end > before.at)
-                        && (event.event_type == "rest.fused"
-                            || (event.event_type == "state.interval"
-                                && before.machine.as_ref().is_some_and(|host| {
-                                    event
-                                        .payload
-                                        .pointer("/attributes/host")
-                                        .and_then(Value::as_str)
-                                        == Some(host.as_str())
-                                })
-                                && matches!(
-                                    event.payload["label"].as_str(),
-                                    Some("locked" | "suspended" | "off")
-                                )))
-                })
-                .collect();
-            if between.is_empty() && absence.is_empty() {
-                continue;
-            }
-            if absence.is_empty()
-                && between
-                    .first()
-                    .is_some_and(|(_, act)| after.at.unix_ns() - act.at.unix_ns() < 30 * SECOND)
-            {
+        let mut pending = false;
+        for (index, (before_event, before)) in operator.iter().enumerate() {
+            let after = operator.get(index + 1).copied();
+            let until = after.map_or_else(|| Timestamp::from_unix_ns(last_activity.unix_ns()+14*86_400*SECOND).unwrap_or(env.now).min(env.now), |(_, act)| act.at);
+            let between: Vec<_> = acts.iter().filter(|(_, act)| {
+                act.agency == Agency::Operator && act.at > before.at && act.at <= until
+                    && act.episode.as_deref().is_some_and(|other| other != episode)
+                    && after.is_none_or(|(_, next)| act.at < next.at)
+            }).collect();
+            let absence: Vec<_> = inputs.iter().filter(|event| {
+                let Some(start) = event.ts_orig.at else { return false };
+                start > before.at && start <= until && after.is_none_or(|(_, next)| start < next.at)
+                    && (event.event_type == "rest.fused" || (event.event_type == "state.interval"
+                        && before.machine.as_ref().is_some_and(|host|
+                            event.payload.pointer("/attributes/host").and_then(Value::as_str) == Some(host.as_str()))
+                        && matches!(event.payload["label"].as_str(),Some("locked" | "suspended" | "off"))))
+            }).collect();
+            let first_switch = between.first().map(|(event, act)| (act.at, *event, "self"));
+            let first_absence = absence.iter().filter_map(|event|
+                Some((event.ts_orig.at?, *event, "absence"))).min_by_key(|(at, event, _)| (*at, stable(event)));
+            let Some((suspended_at, trigger, source)) = first_switch.into_iter().chain(first_absence).min_by_key(|(at,event,_)| (*at,stable(event))) else { continue };
+            if absence.is_empty() && after.is_some_and(|(_, next)| next.at.unix_ns()-suspended_at.unix_ns() < 30*SECOND) {
                 absorbed_excursions += 1;
                 continue;
             }
-            let suspension = json!([episode, before.act, after.act]).to_string();
-            let boundary: Vec<_> = [*before_event, *after_event]
-                .into_iter()
-                .chain(between.iter().map(|(event, _)| *event))
-                .chain(absence.iter().copied())
-                .collect();
-            outputs.push(derived(
-                &WorkSuspension {
-                    suspension: suspension.clone(),
-                    episode: episode.clone(),
-                    suspended_at: before.at,
-                    returned_at: after.at,
-                    interruption_source: if absence.is_empty() {
-                        "self"
-                    } else {
-                        "absence"
-                    }
-                    .into(),
-                    away_s: (after.at.unix_ns() - before.at.unix_ns()) as f64 / SECOND as f64,
-                    intervening_episodes: between
-                        .iter()
-                        .filter_map(|(_, act)| act.episode.clone())
-                        .collect::<BTreeSet<_>>()
-                        .into_iter()
-                        .collect(),
-                    absorbed_excursions: 0,
-                },
-                Self::NAME,
-                boundary.iter().copied(),
-            ));
-            outputs.push(derived(
-                &WorkResumption {
-                    resumption: suspension.clone(),
-                    episode: episode.clone(),
-                    suspension: suspension.clone(),
-                    resumed_at: after.at,
-                    lag_s: None,
-                    act: evidence(after_event),
-                },
-                Self::NAME,
-                boundary.iter().copied(),
-            ));
+            let suspension = json!([episode, before.act, stable(trigger)]).to_string();
+            let boundary: Vec<_> = [*before_event].into_iter().chain(after.map(|(event,_)| *event))
+                .chain(between.iter().map(|(event,_)| *event)).chain(absence.iter().copied()).collect();
+            outputs.push(derived(&WorkSuspension {
+                suspension:suspension.clone(), episode:episode.clone(), suspended_at,
+                returned_at:after.map(|(_, act)| act.at), interruption_source:source.into(),
+                away_s:after.map(|(_, act)| (act.at.unix_ns()-suspended_at.unix_ns()) as f64 / SECOND as f64),
+                intervening_episodes:between.iter().filter_map(|(_, act)| act.episode.clone()).collect::<BTreeSet<_>>().into_iter().collect(),
+                absorbed_excursions:0,
+            },Self::NAME,boundary.iter().copied()));
+            if let Some((event, act)) = after {
+                outputs.push(derived(&WorkResumption {
+                    resumption:suspension.clone(),episode:episode.clone(),suspension:suspension.clone(),
+                    resumed_at:act.at,lag_s:None,act:evidence(event),
+                },Self::NAME,boundary.iter().copied()));
+                resumptions.push(suspension.clone());
+            } else { pending = true; }
             parents.extend(boundary);
-            suspensions.push(suspension.clone());
-            resumptions.push(suspension);
+            suspensions.push(suspension);
         }
         let durations: Vec<_> = group
             .iter()
@@ -345,6 +305,8 @@ impl Keyed for WorkEpisodes {
                 label_source: first.label_source.clone(),
                 state: if env.now.unix_ns() - last_activity.unix_ns() >= 14 * 86_400 * SECOND {
                     "dormant"
+                } else if pending {
+                    "suspended"
                 } else {
                     "open"
                 }
@@ -369,13 +331,13 @@ impl Keyed for WorkEpisodes {
         ));
         Computed {
             outputs,
-            waiting: true,
+            waiting: env.now.unix_ns()-last_activity.unix_ns() < 14*86_400*SECOND,
         }
     }
 }
 
-pub struct ResumeCards;
-impl Keyed for ResumeCards {
+pub struct ContextPacks;
+impl Keyed for ContextPacks {
     const NAME: &'static str = "context.packs";
     const VERSION: u32 = 1;
     const INPUTS: &'static [&'static str] = &["work.episode", "work.act"];

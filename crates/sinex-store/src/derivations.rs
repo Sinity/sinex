@@ -240,7 +240,11 @@ async fn resolve_range(conn: &mut PgConnection, w: &Window) -> Result<Option<Win
                 return Ok(None);
             };
             resolved.start = Some(start);
-            resolved.end = Timestamp(end).unix_ns().checked_add(*gap_ns).and_then(|ns| Timestamp::from_unix_ns(ns).ok()).map(|at| at.0);
+            resolved.end = Timestamp(end)
+                .unix_ns()
+                .checked_add(*gap_ns)
+                .and_then(|ns| Timestamp::from_unix_ns(ns).ok())
+                .map(|at| at.0);
         }
         InputRange::Extent { kinds } => {
             let (types, contains) = kind_arrays(kinds);
@@ -256,7 +260,9 @@ async fn resolve_range(conn: &mut PgConnection, w: &Window) -> Result<Option<Win
                 return Ok(None);
             };
             resolved.start = Some(start);
-            resolved.end = Timestamp::from_unix_ns(Timestamp(end).unix_ns() + 1_000).ok().map(|at| at.0);
+            resolved.end = Timestamp::from_unix_ns(Timestamp(end).unix_ns() + 1_000)
+                .ok()
+                .map(|at| at.0);
         }
         InputRange::UntilNext {
             start,
