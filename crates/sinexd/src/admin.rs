@@ -189,6 +189,7 @@ async fn admin_table(args: Vec<String>) -> Result<(), String> {
         agent_grants: Vec::new(),
         unlock: Default::default(),
         host: host.clone(),
+        library_roots: Vec::new(),
     };
     if let Some(identity) = identity {
         if let sinex_protocol::Reply::Refused { reason, .. } = local

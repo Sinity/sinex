@@ -692,3 +692,5 @@ fn outcomes_add_all_counts_positions_and_ids() {
         }
     );
 }
+
+mod library_upgrade;
