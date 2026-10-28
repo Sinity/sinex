@@ -116,3 +116,45 @@ fn a_scan_records_completion_once_after_all_parts() {
     }
     std::fs::remove_dir_all(root).unwrap();
 }
+
+#[devkit::test]
+fn a_reused_path_gets_a_separate_key_while_the_moved_item_is_present() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("a.png"), png(10, 10)).unwrap();
+    let scanner = scan(dir.path());
+    let mut state = ScanState::default();
+    let first = scanner.poll(&Value::Null, &mut state).unwrap();
+    let old = read(&first, &ScanParser).remove(0);
+    let (_, cursor) = stored(&first);
+    std::fs::rename(dir.path().join("a.png"), dir.path().join("b.png")).unwrap();
+    let moved = scanner.poll(&cursor, &mut state).unwrap();
+    let (_, cursor) = stored(&moved);
+    std::fs::write(dir.path().join("a.png"), png(20, 20)).unwrap();
+    let acquired = scanner.poll(&cursor, &mut state).unwrap();
+    let new = read(&acquired, &ScanParser).remove(0);
+    assert_ne!(new.item, old.item);
+    assert_eq!(state.files["b.png"].item_key, old.item_key);
+    assert!(
+        new.item_key
+            .ends_with(&acquired.material.as_ref().unwrap().id.to_string())
+    );
+    let mut restarted = ScanState::default();
+    let (bytes, cursor) = stored(&acquired);
+    restarted
+        .remember_part(dir.path(), bytes.bytes.as_ref(), bytes.reference.length)
+        .unwrap();
+    let (bytes, _) = stored(&moved);
+    restarted
+        .remember_part(dir.path(), bytes.bytes.as_ref(), bytes.reference.length)
+        .unwrap();
+    restarted.remembered.clear();
+    assert_eq!(restarted.files["a.png"].item_key, new.item_key);
+    assert_eq!(restarted.files["b.png"].item_key, old.item_key);
+    assert!(
+        scanner
+            .poll(&cursor, &mut restarted)
+            .unwrap()
+            .material
+            .is_none()
+    );
+}

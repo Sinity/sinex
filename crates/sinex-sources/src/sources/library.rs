@@ -66,22 +66,24 @@ pub const FORMAT: sinex_source_core::binding::InputFormat =
             let path =
                 std::fs::canonicalize(path).map_err(|e| format!("{}: {e}", path.display()))?;
             let mut settings = settings.clone();
-            let root = if path.is_dir() {
-                path
+            let root = if let Some(root) = settings.option("root") {
+                std::fs::canonicalize(root).map_err(|error| format!("{root}: {error}"))?
+            } else if path.is_dir() {
+                path.clone()
             } else {
-                let name = path
-                    .file_name()
-                    .ok_or("library input has no file name")?
-                    .to_string_lossy()
-                    .into_owned();
-                if !settings.options.is_object() {
-                    settings.options = json!({});
-                }
-                settings.options["only"] = json!(name);
                 path.parent()
                     .ok_or("library input has no parent")?
                     .to_path_buf()
             };
+            let selection = path
+                .strip_prefix(&root)
+                .map_err(|_| "library selection is outside its root")?;
+            if !selection.as_os_str().is_empty() {
+                if !settings.options.is_object() {
+                    settings.options = json!({});
+                }
+                settings.options["only"] = json!(selection.to_string_lossy());
+            }
             Ok(sinex_source_core::binding::single(&SCAN, &root, &settings))
         }),
         source: |b| {

@@ -53,7 +53,7 @@ fn work_acts(inputs: &[Event], env: &Env) -> Vec<Event> {
                 &WorkActs,
                 &json!({"session":session.payload["session"]}),
                 &selected,
-                &env,
+                env,
             )
             .outputs,
         );
