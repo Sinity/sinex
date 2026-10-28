@@ -173,7 +173,6 @@ impl Parser for CsvParser {
         Ok((
             vec![MailMessage {
                 account: None,
-                bcc: vec![],
                 message_id: None,
                 native_id: None,
                 date: None,

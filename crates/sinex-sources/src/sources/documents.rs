@@ -135,6 +135,7 @@ pub fn driver(root: PathBuf, host: String) -> DirSnapshot {
         host,
         select: |_| true,
         part_bytes: 64 << 20,
+        removed_at_source: false,
     }
 }
 

@@ -157,6 +157,7 @@ pub fn formats() -> &'static [&'static InputFormat] {
         &clipboard::FORMAT,
         &session_socket::FORMAT,
         &media_capture::FORMAT,
+        &udev::FORMAT,
     ];
     // Order selects the default when several formats read the same source name.
     #[cfg(feature = "full")]

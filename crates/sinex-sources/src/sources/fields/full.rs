@@ -71,3 +71,136 @@ pub(crate) fn day(raw: &str) -> Result<Option<Timestamp>, RecordError> {
         .map(|date| Some(Timestamp(date.midnight().assume_utc())))
         .map_err(|e| RecordError::new(format!("invalid date {raw:?}: {e}")))
 }
+
+pub(crate) struct FieldReader(Map<String, Value>);
+
+impl FieldReader {
+    pub(crate) fn new(object: Map<String, Value>) -> Self {
+        Self(object)
+    }
+
+    fn take(&mut self, name: &str) -> Option<Value> {
+        match self.0.remove(name) {
+            None | Some(Value::Null) => None,
+            Some(Value::String(s)) if s.is_empty() => None,
+            Some(v) => Some(v),
+        }
+    }
+
+    pub(crate) fn text(&mut self, name: &str) -> Result<Option<String>, RecordError> {
+        match self.take(name) {
+            None => Ok(None),
+            Some(Value::String(s)) => Ok(Some(s)),
+            Some(other) => Err(RecordError::new(format!("{name} is not text: {other}"))),
+        }
+    }
+
+    pub(crate) fn required_text(&mut self, name: &str) -> Result<String, RecordError> {
+        self.text(name)?
+            .ok_or_else(|| RecordError::new(format!("{name} is missing")))
+    }
+
+    pub(crate) fn int(&mut self, name: &str) -> Result<Option<i64>, RecordError> {
+        match self.take(name) {
+            None => Ok(None),
+            Some(Value::Number(n)) if n.as_i64().is_some() => Ok(n.as_i64()),
+            Some(Value::String(s)) if s.trim().parse::<i64>().is_ok() => Ok(s.trim().parse().ok()),
+            Some(other) => Err(RecordError::new(format!(
+                "{name} is not an integer: {other}"
+            ))),
+        }
+    }
+
+    pub(crate) fn unsigned(&mut self, name: &str) -> Result<Option<u64>, RecordError> {
+        match self.int(name)? {
+            None => Ok(None),
+            Some(n) => u64::try_from(n)
+                .map(Some)
+                .map_err(|_| RecordError::new(format!("{name} is negative: {n}"))),
+        }
+    }
+
+    /// Seconds since the Unix epoch, whole or fractional.
+    pub(crate) fn unix_time(&mut self, name: &str) -> Result<Option<Timestamp>, RecordError> {
+        match self.take(name) {
+            None => Ok(None),
+            Some(Value::Number(n)) => n
+                .as_f64()
+                .map(|secs| from_unix_secs_f64(secs, name))
+                .transpose(),
+            Some(Value::String(s)) => match s.trim().parse::<f64>() {
+                Ok(secs) => from_unix_secs_f64(secs, name).map(Some),
+                Err(_) => Err(RecordError::new(format!("{name} is not a time: {s:?}"))),
+            },
+            Some(other) => Err(RecordError::new(format!("{name} is not a time: {other}"))),
+        }
+    }
+
+    /// An RFC 3339 time; a comma before the fraction (`date -Ins`) is read as a
+    /// point.
+    pub(crate) fn time(&mut self, name: &str) -> Result<Option<Timestamp>, RecordError> {
+        self.text(name)?
+            .map(|raw| rfc3339(&raw.replacen(',', ".", 1)))
+            .transpose()
+    }
+
+    pub(crate) fn boolean(&mut self, name: &str) -> Result<Option<bool>, RecordError> {
+        match self.take(name) {
+            None => Ok(None),
+            Some(Value::Bool(b)) => Ok(Some(b)),
+            Some(other) => Err(RecordError::new(format!(
+                "{name} is not true or false: {other}"
+            ))),
+        }
+    }
+
+    /// A list of strings; a missing list is empty.
+    pub(crate) fn texts(&mut self, name: &str) -> Result<Vec<String>, RecordError> {
+        match self.take(name) {
+            None => Ok(Vec::new()),
+            Some(Value::Array(items)) => items
+                .into_iter()
+                .map(|item| match item {
+                    Value::String(s) => Ok(s),
+                    other => Err(RecordError::new(format!(
+                        "{name} holds a value that is not text: {other}"
+                    ))),
+                })
+                .collect(),
+            Some(other) => Err(RecordError::new(format!("{name} is not a list: {other}"))),
+        }
+    }
+
+    /// Any JSON value, kept as written.
+    pub(crate) fn value(&mut self, name: &str) -> Option<Value> {
+        self.take(name)
+    }
+
+    /// An object, for a nested record read the same way.
+    pub(crate) fn object(&mut self, name: &str) -> Result<Option<FieldReader>, RecordError> {
+        match self.take(name) {
+            None => Ok(None),
+            Some(Value::Object(object)) => Ok(Some(FieldReader(object))),
+            Some(other) => Err(RecordError::new(format!(
+                "{name} is not an object: {other}"
+            ))),
+        }
+    }
+
+    /// The fields no read took.
+    pub(crate) fn rest(self) -> Map<String, Value> {
+        self.0
+    }
+}
+
+pub(crate) fn from_unix_secs_f64(secs: f64, name: &str) -> Result<Timestamp, RecordError> {
+    // A float of seconds holds about microseconds at today's epoch; whole
+    // seconds plus rounded microseconds avoid inventing nanoseconds.
+    if !secs.is_finite() {
+        return Err(RecordError::new(format!("{name} is not a time: {secs}")));
+    }
+    let whole = secs.floor();
+    let micros = ((secs - whole) * 1e6).round() as i128;
+    Timestamp::from_unix_ns(whole as i128 * 1_000_000_000 + micros * 1_000)
+        .map_err(|_| RecordError::new(format!("{name} {secs} is out of range")))
+}

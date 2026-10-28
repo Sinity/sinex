@@ -1,4 +1,5 @@
 use super::*;
+use sinex_source_core::Reader;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -344,7 +345,7 @@ fn asks_follow_what_changed() {
         }
         (404, Vec::new(), json!({"message": "Not Found"}).to_string())
     });
-    let d = driver(github(&url));
+    let mut d = driver(github(&url));
 
     let first = d.poll(&Value::Null).unwrap();
     let read = records(&first);
@@ -400,7 +401,7 @@ fn the_interval_holds_asks() {
     let (url, asked) = serve(|_| (500, Vec::new(), String::new()));
     let mut github = github(&url);
     github.interval = Duration::from_secs(3600);
-    let d = driver(github);
+    let mut d = driver(github);
     let position = Position {
         asked_at: Some(Timestamp::now()),
         ..Position::default()
@@ -428,7 +429,7 @@ fn a_rate_limit_holds_asks_until_its_reset() {
             json!({"message": "API rate limit exceeded"}).to_string(),
         )
     });
-    let d = driver(github(&url));
+    let mut d = driver(github(&url));
     let refused = d.poll(&Value::Null).err().expect("refused");
     assert!(refused.to_string().contains("rate limit"), "{refused}");
     assert_eq!(asked.lock().unwrap().len(), 1);

@@ -4373,6 +4373,7 @@ dependencies = [
  "sinex-source-core",
  "tar",
  "tempfile",
+ "thiserror 2.0.21",
  "time",
  "tokio",
  "ureq",

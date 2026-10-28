@@ -150,7 +150,6 @@ pub fn parse_message(raw: &[u8]) -> Result<MailMessage, RecordError> {
         account: None,
         native_id: None,
         message_id,
-        native_id: None,
         date,
         from: addresses("From"),
         to: addresses("To"),

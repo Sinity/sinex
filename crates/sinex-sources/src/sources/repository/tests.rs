@@ -1,4 +1,5 @@
 use super::*;
+use sinex_source_core::Reader;
 use std::path::Path;
 use std::process::Command;
 
@@ -63,7 +64,7 @@ fn cursor(a: &sinex_source_core::drivers::Acquired) -> Value {
 
 /// The ref updates of the poll after `previous`.
 fn updates_after(
-    d: &ApiCursor<Repository>,
+    d: &mut ApiCursor<Repository>,
     previous: &sinex_source_core::drivers::Acquired,
 ) -> Vec<GitRefUpdated> {
     updates(&d.poll(&cursor(previous)).unwrap())
@@ -146,7 +147,7 @@ fn a_force_push_is_a_rewrite_listing_the_commits_left_behind() {
     git(&dir, &["commit", "-q", "--allow-empty", "-m", "three"]);
     let two = rev(&dir, "HEAD~1");
     let three = rev(&dir, "HEAD");
-    let d = driver(dir.clone(), "h".into());
+    let mut d = driver(dir.clone(), "h".into());
     let first = cursor(&d.poll(&Value::Null).unwrap());
 
     git(&dir, &["reset", "-q", "--hard", "HEAD~2"]);
@@ -169,7 +170,7 @@ fn a_force_push_is_a_rewrite_listing_the_commits_left_behind() {
 
     // Moving forward again is a fast-forward and leaves nothing behind.
     git(&dir, &["commit", "-q", "--allow-empty", "-m", "four"]);
-    let forward = updates_after(&d, &next);
+    let forward = updates_after(&mut d, &next);
     assert_eq!(forward.len(), 1);
     assert_eq!(forward[0].change, RefChange::FastForward);
     assert!(forward[0].unreachable.is_empty());
@@ -186,7 +187,7 @@ fn commits_another_ref_still_reaches_are_not_unreachable() {
     git(&dir, &["commit", "-q", "--allow-empty", "-m", "side"]);
     let side = rev(&dir, "HEAD");
     git(&dir, &["checkout", "-q", "main"]);
-    let d = driver(dir.clone(), "h".into());
+    let mut d = driver(dir.clone(), "h".into());
     let first = d.poll(&Value::Null).unwrap();
 
     // main goes back to `keep`; `side` still reaches `two`.
@@ -199,7 +200,7 @@ fn commits_another_ref_still_reaches_are_not_unreachable() {
 
     // Deleting `side` leaves both its commit and `two` behind.
     git(&dir, &["branch", "-q", "-D", "side"]);
-    let deleted = updates_after(&d, &reset);
+    let deleted = updates_after(&mut d, &reset);
     assert_eq!(deleted.len(), 1);
     assert_eq!(deleted[0].ref_name, "refs/heads/side");
     assert_eq!(deleted[0].change, RefChange::Deleted);

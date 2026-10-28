@@ -1,5 +1,6 @@
 use super::*;
 use sinex_model::{EventPayload, RecordState};
+use sinex_source_core::Reader;
 use std::path::Path;
 
 fn line(id: &str, title: &str, status: &str) -> String {
@@ -95,7 +96,7 @@ fn a_changed_issue_is_read_again_and_a_missing_one_is_removed() {
         &path,
         &[line("demo-a", "A", "open"), line("demo-b", "B", "open")],
     );
-    let d = driver(path.clone(), "h".into());
+    let mut d = driver(path.clone(), "h".into());
     let first = d.poll(&Value::Null).unwrap();
     assert_eq!(ids(&records(&first)), ["demo-a", "demo-b"]);
     let at_first = cursor(&first);
@@ -127,7 +128,7 @@ fn after_a_restart_an_unchanged_file_is_only_remembered() {
     let first = driver(path.clone(), "h".into()).poll(&Value::Null).unwrap();
     let at_first = cursor(&first);
 
-    let restarted = driver(path.clone(), "h".into());
+    let mut restarted = driver(path.clone(), "h".into());
     let again = restarted.poll(&at_first).unwrap();
     assert!(records(&again).is_empty());
     export(&path, &[line("demo-a", "A", "open")]);
@@ -142,7 +143,7 @@ fn asked_again_from_an_older_cursor_every_issue_is_read() {
     // it cannot tell what changed since then and reads everything.
     let path = file();
     export(&path, &[line("demo-a", "A", "open")]);
-    let d = driver(path.clone(), "h".into());
+    let mut d = driver(path.clone(), "h".into());
     let at_first = cursor(&d.poll(&Value::Null).unwrap());
     export(
         &path,
@@ -166,7 +167,7 @@ fn removal_survives_a_failed_admission_and_a_restart() {
         &path,
         &[line("demo-a", "A", "open"), line("demo-b", "B", "open")],
     );
-    let reader = driver(path.clone(), "h".into());
+    let mut reader = driver(path.clone(), "h".into());
     let admitted = cursor(&reader.poll(&Value::Null).unwrap());
     assert!(
         !admitted.to_string().contains("what to do"),
@@ -194,7 +195,7 @@ fn a_damaged_export_does_not_claim_missing_issues_were_deleted() {
         &path,
         &[line("demo-a", "A", "open"), line("demo-b", "B", "open")],
     );
-    let reader = driver(path.clone(), "h".into());
+    let mut reader = driver(path.clone(), "h".into());
     let admitted = cursor(&reader.poll(&Value::Null).unwrap());
     export(&path, &[line("demo-a", "A", "open"), "{damaged".into()]);
     let damaged = reader.poll(&admitted).unwrap();

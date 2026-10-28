@@ -9,6 +9,8 @@ license.workspace = true
 [dependencies]
 sinex-source-core.workspace = true
 sinex-model.workspace = true
+sinex-protocol.workspace = true
+thiserror = { workspace = true, optional = true }
 serde.workspace = true
 serde_json = { workspace = true, features = ["raw_value"] }
 base64.workspace = true
@@ -21,7 +23,7 @@ gix = { workspace = true, optional = true }
 tokio = { workspace = true, features = ["process"] }
 async-nats.workspace = true
 futures.workspace = true
-csv = "1"
+csv = { version = "1", optional = true }
 regex.workspace = true
 serde-saphyr = { version = "2", default-features = false, features = ["deserialize"], optional = true }
 tempfile = "3"
@@ -38,7 +40,6 @@ webpki-roots = { version = "1", optional = true }
 [dev-dependencies]
 tar = "0.4"
 flate2 = "1"
-sinex-protocol.workspace = true
 async-nats.workspace = true
 futures.workspace = true
 zip = { version = "2", default-features = false, features = ["deflate", "bzip2"] }
@@ -52,7 +53,7 @@ workspace = true
 
 [features]
 default = ["full"]
-full = ["sinex-source-core/archives", "sinex-source-core/sqlite", "dep:rusqlite", "dep:gix", "dep:serde-saphyr", "dep:mailparse", "dep:encoding_rs", "dep:sha2", "dep:md-5", "dep:ureq", "dep:rustls", "dep:webpki-roots"]
+full = ["dep:csv", "dep:thiserror","sinex-source-core/archives", "sinex-source-core/sqlite", "dep:rusqlite", "dep:gix", "dep:serde-saphyr", "dep:mailparse", "dep:encoding_rs", "dep:sha2", "dep:md-5", "dep:ureq", "dep:rustls", "dep:webpki-roots"]
 
 [[test]]
 name = "golden"
