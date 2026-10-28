@@ -1,5 +1,6 @@
 use super::*;
 use sinex_model::{MaterialId, ReadingOrder, RecordOutcome};
+use sinex_source_core::Reader;
 use sinex_source_core::{DrainInput, Limits, Source};
 
 #[devkit::test]

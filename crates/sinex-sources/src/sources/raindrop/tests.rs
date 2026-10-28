@@ -67,3 +67,39 @@ fn api_lines_and_the_trash() {
         sinex_model::RecordState::Removed
     );
 }
+
+#[devkit::test]
+fn every_export_file_name_is_planned_and_nothing_else() {
+    let dir = tempfile::tempdir().unwrap();
+    for name in [
+        "raindrop_bookmarks_16_04_2025.csv",
+        "raindrop-03-01-2026-00000000-0000-0000-0000-000000000000.csv",
+        "Renamed-by-hand.csv",
+        "raindrops-all.jsonl",
+        "raindrops-trash.jsonl",
+        "highlights.jsonl",
+        "collections-root.json",
+        "tags.json",
+        "EXPORT-MANIFEST.json",
+        "MANIFEST.json",
+    ] {
+        std::fs::write(dir.path().join(name), "").unwrap();
+    }
+    let plan = (FORMAT.plan.unwrap())(dir.path(), &sinex_source_core::binding::Settings::default())
+        .unwrap();
+    let mut names: Vec<String> = plan
+        .iter()
+        .map(|b| b.input.file_name().unwrap().to_string_lossy().into_owned())
+        .collect();
+    names.sort();
+    assert_eq!(
+        names,
+        [
+            "Renamed-by-hand.csv",
+            "raindrop-03-01-2026-00000000-0000-0000-0000-000000000000.csv",
+            "raindrop_bookmarks_16_04_2025.csv",
+            "raindrops-all.jsonl",
+            "raindrops-trash.jsonl",
+        ]
+    );
+}

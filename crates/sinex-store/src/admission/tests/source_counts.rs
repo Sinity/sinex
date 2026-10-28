@@ -36,7 +36,7 @@ async fn run_events(conn: &mut PgConnection, run: RunId) -> i64 {
 }
 
 /// A batch under a run that has its row.
-async fn under_run(conn: &mut PgConnection, events: Vec<Event>) -> RunId {
+async fn under_run(conn: &mut crate::AdmissionContext, events: Vec<Event>) -> RunId {
     let run = RunId::new();
     sqlx::query("INSERT INTO core.runs (id, name, host) VALUES ($1, 'test', 'h')")
         .bind(run.0)
@@ -78,7 +78,7 @@ fn change(target: sinex_model::EventId, hide: bool) -> Batch {
 
 #[devkit::test]
 async fn counts_follow_admission_replacement_hiding_and_unhiding(db: devkit::pg::TestDatabase) {
-    let mut conn = <sqlx::PgConnection as sqlx::Connection>::connect(&db.url(None))
+    let mut conn = crate::AdmissionContext::connect(&db.url(None))
         .await
         .unwrap();
     let first: Vec<Event> = (0..4).map(|key| keyed("a", key, 1, 1)).collect();
@@ -101,7 +101,7 @@ async fn counts_follow_admission_replacement_hiding_and_unhiding(db: devkit::pg:
 /// the schema a fresh database has.
 #[devkit::test]
 async fn upgrading_from_version_0_counts_the_stored_events(db: devkit::pg::TestDatabase) {
-    let mut conn = <sqlx::PgConnection as sqlx::Connection>::connect(&db.url(None))
+    let mut conn = crate::AdmissionContext::connect(&db.url(None))
         .await
         .unwrap();
     let first: Vec<Event> = (0..3).map(|key| keyed("a", key, 1, 1)).collect();
@@ -109,7 +109,7 @@ async fn upgrading_from_version_0_counts_the_stored_events(db: devkit::pg::TestD
     assert_eq!(run_events(&mut conn, run).await, 3);
     admit_one(&mut conn, &batch(vec![keyed("b", 9, 1, 1)])).await;
     admit_one(&mut conn, &change(first[0].id, true)).await;
-    let fresh = without_positions(sinex_schema::catalog(&mut conn).await.unwrap());
+    let fresh = without_positions(crate::test_schema::catalog(&mut conn).await);
     let expected = kept(&mut conn).await;
     let events: i64 = sqlx::query_scalar("SELECT count(*) FROM core.events")
         .fetch_one(&mut conn)
@@ -118,17 +118,13 @@ async fn upgrading_from_version_0_counts_the_stored_events(db: devkit::pg::TestD
 
     crate::test_schema::remove_foundations(&mut conn).await;
     // Version 0 is this schema without the counts.
+    super::equivalence::version_two_keys(&mut conn).await;
+    // Version 0 is this schema without the counts.
     conn.execute("DROP TABLE core.source_counts").await.unwrap();
     conn.execute("ALTER TABLE core.runs DROP COLUMN events")
         .await
         .unwrap();
     conn.execute("DROP TABLE core.excised_materials")
-        .await
-        .unwrap();
-    conn.execute("DROP VIEW event_types.operator_mark, event_types.query_saved")
-        .await
-        .unwrap();
-    conn.execute("DELETE FROM registry.event_types WHERE name IN ('operator.mark','query.saved')")
         .await
         .unwrap();
     conn.execute("UPDATE sinex_schema.applied SET version = 0")
@@ -151,7 +147,7 @@ async fn upgrading_from_version_0_counts_the_stored_events(db: devkit::pg::TestD
         "every stored event of the run"
     );
     assert_eq!(
-        without_positions(sinex_schema::catalog(&mut conn).await.unwrap()),
+        without_positions(crate::test_schema::catalog(&mut conn).await),
         fresh
     );
     let after: i64 = sqlx::query_scalar("SELECT count(*) FROM core.events")
@@ -167,9 +163,8 @@ async fn upgrading_from_version_0_counts_the_stored_events(db: devkit::pg::TestD
 #[devkit::test]
 async fn an_upgrade_waits_for_no_writer(db: devkit::pg::TestDatabase) {
     let url = db.url(None);
-    let mut conn = <sqlx::PgConnection as sqlx::Connection>::connect(&url)
-        .await
-        .unwrap();
+    let mut conn = PgConnection::connect(&url).await.unwrap();
+    super::equivalence::version_two_keys(&mut conn).await;
     conn.execute("DROP TABLE core.source_counts").await.unwrap();
     conn.execute("ALTER TABLE core.runs DROP COLUMN events")
         .await
@@ -177,18 +172,10 @@ async fn an_upgrade_waits_for_no_writer(db: devkit::pg::TestDatabase) {
     conn.execute("DROP TABLE core.excised_materials")
         .await
         .unwrap();
-    conn.execute("DROP VIEW event_types.operator_mark, event_types.query_saved")
-        .await
-        .unwrap();
-    conn.execute("DELETE FROM registry.event_types WHERE name IN ('operator.mark','query.saved')")
-        .await
-        .unwrap();
     conn.execute("UPDATE sinex_schema.applied SET version = 0")
         .await
         .unwrap();
-    let mut writer = <sqlx::PgConnection as sqlx::Connection>::connect(&url)
-        .await
-        .unwrap();
+    let mut writer = PgConnection::connect(&url).await.unwrap();
     sqlx::query("SELECT pg_advisory_lock($1)")
         .bind(sinex_schema::WRITER_LOCK)
         .execute(&mut writer)
@@ -209,11 +196,11 @@ async fn an_upgrade_waits_for_no_writer(db: devkit::pg::TestDatabase) {
 async fn upgrading_from_version_3_registers_query_kinds_and_keeps_events(
     db: devkit::pg::TestDatabase,
 ) {
-    let mut conn = <sqlx::PgConnection as sqlx::Connection>::connect(&db.url(None))
+    let mut conn = crate::AdmissionContext::connect(&db.url(None))
         .await
         .unwrap();
     under_run(&mut conn, vec![keyed("synthetic", 1, 1, 1)]).await;
-    let fresh = sinex_schema::catalog(&mut conn).await.unwrap();
+    let fresh = crate::test_schema::catalog(&mut conn).await;
     let before: Vec<Uuid> = sqlx::query_scalar("SELECT id FROM core.events ORDER BY id")
         .fetch_all(&mut conn)
         .await
@@ -225,6 +212,9 @@ async fn upgrading_from_version_3_registers_query_kinds_and_keeps_events(
     conn.execute("DELETE FROM registry.event_types WHERE name IN ('operator.mark','query.saved')")
         .await
         .unwrap();
+    super::equivalence::version_two_keys(&mut conn).await;
+    conn.execute("CREATE INDEX events_coverage ON core.events (source, run_id, ts_orig) INCLUDE (commit_seq)")
+        .await.unwrap();
     conn.execute("UPDATE sinex_schema.applied SET version=3")
         .await
         .unwrap();
@@ -240,7 +230,7 @@ async fn upgrading_from_version_3_registers_query_kinds_and_keeps_events(
         .await
         .unwrap();
     assert_eq!(before, after);
-    assert_eq!(sinex_schema::catalog(&mut conn).await.unwrap(), fresh);
+    assert_eq!(crate::test_schema::catalog(&mut conn).await, fresh);
 }
 
 async fn upgrade_keeps_activity_and_telemetry(db: devkit::pg::TestDatabase, from: i32) {

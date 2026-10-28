@@ -73,10 +73,10 @@ pub(crate) struct DerivationRunner {
     time_settings: TimeSettings,
     read: PgConnection,
     writer: WriterHandle,
-    runs: BTreeMap<&'static str, RunId>,
+    runs: BTreeMap<String, RunId>,
     /// Largest stored reading order when each per-event run began.
-    previous_orders: BTreeMap<&'static str, i64>,
-    pub counts: BTreeMap<&'static str, Counts>,
+    previous_orders: BTreeMap<String, i64>,
+    pub counts: BTreeMap<String, Counts>,
 }
 
 pub(crate) fn to_window(q: &InputQuery, now: Timestamp) -> Window {
@@ -169,11 +169,11 @@ impl DerivationRunner {
         let mut runs = BTreeMap::new();
         let mut previous_orders = BTreeMap::new();
         for d in &catalog {
-            let name = derivations::static_type(&d.name);
+            let name = d.name.clone();
             let version = d.version.to_string();
             let emits: Vec<&str> = d.outputs.iter().map(String::as_str).collect();
             let manifest = runs::Manifest {
-                name,
+                name: &name,
                 kind: "derivation",
                 version: &version,
                 build: option_env!("SINEX_BUILD").unwrap_or("dev"),
@@ -182,11 +182,11 @@ impl DerivationRunner {
             let run = runs::start(&mut read, &manifest, host)
                 .await
                 .map_err(|e| e.to_string())?;
-            runs.insert(name, run);
+            runs.insert(name.clone(), run);
             if d.kind == "per_event" {
                 previous_orders.insert(
                     name,
-                    derivations::latest_reading_order(&mut read, name)
+                    derivations::latest_reading_order(&mut read, &name)
                         .await
                         .map_err(|e| e.to_string())?,
                 );
@@ -411,7 +411,7 @@ impl DerivationRunner {
         let read = t.elapsed();
         let t = Instant::now();
         let computed = self.keyed[index].compute(key, &inputs, env);
-        let c = self.counts.entry(name).or_default();
+        let c = self.counts.entry(name.to_owned()).or_default();
         c.read += read;
         c.compute += t.elapsed();
         c.inputs += inputs.len();
@@ -433,7 +433,7 @@ impl DerivationRunner {
             derivation: self.keyed[index].as_ref(),
             time_settings: self.time_settings.clone(),
             run,
-            counts: self.counts.entry(name).or_default(),
+            counts: self.counts.entry(name.to_owned()).or_default(),
         }
         .compute(work, env)
         .await
@@ -619,7 +619,7 @@ impl DerivationRunner {
             .submit(Priority::Derived, batch)
             .await
             .map_err(|e| format!("{name}: {e}"))?;
-        let c = self.counts.entry(name).or_default();
+        let c = self.counts.entry(name.to_owned()).or_default();
         c.inputs += events.len();
         c.failed += failed;
         c.outputs += n;
@@ -934,6 +934,9 @@ impl KeyComputation<'_> {
                 } else {
                     sinex_derivations::Computed::default()
                 };
+                if let Some(error) = &computed.error {
+                    return Err(error.to_string());
+                }
                 let c = &mut *self.counts;
                 c.compute += t.elapsed();
                 c.inputs += input.len();

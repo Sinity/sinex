@@ -9,11 +9,13 @@
         "key": null,
         "state": "Present",
         "payload": {
+          "captured_by": "sinex",
           "received_at": "2023-11-14T22:13:20Z",
           "app": "mail",
           "summary": "New mail",
           "body": "from a",
           "icon": null,
+          "notification_id": null,
           "replaces_id": null,
           "actions": [],
           "hints": {
@@ -35,11 +37,13 @@
         "key": null,
         "state": "Present",
         "payload": {
+          "captured_by": "sinex",
           "received_at": "2023-11-14T22:14:20Z",
           "app": "mail",
           "summary": "New mail",
           "body": "from b",
           "icon": null,
+          "notification_id": null,
           "replaces_id": null,
           "actions": [],
           "hints": {

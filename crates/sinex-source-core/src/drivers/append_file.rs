@@ -89,7 +89,7 @@ impl Default for TailBounds {
 }
 
 /// The records of the current revision's tail, by content hash, with where
-/// each occurrence was read: what a rewrite is aligned against. Kept for the
+/// each record was read: what a rewrite is aligned against. Kept for the
 /// life of the source task and rebuilt from the stored materials after a
 /// restart ([`AppendState::rebuild`]); bounded by its [`TailBounds`].
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -163,7 +163,7 @@ impl AppendState {
         }
     }
 
-    /// Whether an equal record was remembered, consuming one occurrence of it.
+    /// Whether an equal record was remembered, consuming one copy of it.
     fn take(&mut self, record: &[u8]) -> bool {
         match self.records.get_mut(blake3::hash(record).as_bytes()) {
             Some(locations) if !locations.is_empty() => {

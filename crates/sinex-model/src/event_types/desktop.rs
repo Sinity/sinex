@@ -117,7 +117,7 @@ pub struct PresenceSpan {
 /// Presence reconciled from physical input, recorded acts and absence boundaries.
 /// AFK reports remain separate observations, including when contradicted.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
-#[event(type = "presence.interval", key = ["scope", "started_at"], replace = newer, time = started_at, quality = intrinsic)]
+#[event(version = 2, type = "presence.interval", key = ["scope", "started_at"], replace = newer, time = started_at, quality = intrinsic)]
 pub struct PresenceInterval {
     pub scope: String,
     pub day: String,

@@ -19,11 +19,11 @@ mod excision;
 mod ingress;
 mod intake;
 mod library;
+mod material_access;
 mod publisher;
 mod reader_context;
 mod replay;
 mod screen_text;
-mod sealing;
 mod stored;
 mod telemetry;
 mod writer;
@@ -170,10 +170,10 @@ async fn local_runner(
     String,
 > {
     use sqlx::Connection;
-    let mut writer_conn = sqlx::PgConnection::connect(database)
+    let writer_conn = sqlx::PgConnection::connect(database)
         .await
         .map_err(|e| e.to_string())?;
-    writer::claim(&mut writer_conn).await?;
+    let writer_conn = writer::claim(writer_conn).await?;
     let blobs = store
         .map(sinex_store::blobs::Blobs::open)
         .transpose()

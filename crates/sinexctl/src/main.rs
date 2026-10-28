@@ -8,6 +8,8 @@ mod client;
 mod mcp;
 mod output;
 
+mod diagnostics;
+
 use clap::{Arg, ArgAction, ArgMatches, Command};
 use client::{Client, ClientError, Endpoint};
 use serde_json::{Map, Value};
@@ -70,7 +72,10 @@ fn cli() -> Command {
     for c in COMMANDS {
         let mut sub = sinex_protocol::cli::subcommand(c);
         if c.name == "status" {
-            sub = sub
+            sub =
+                sub.arg(Arg::new("capture-state").long("capture-state").help(
+                    "local capture state directory (default: $SINEX_CAPTURE_STATE or $XDG_STATE_HOME/sinex-session)",
+                ))
                 .arg(
                     Arg::new("offline")
                         .long("offline")
@@ -86,15 +91,6 @@ fn cli() -> Command {
         app = app.subcommand(sub);
     }
     app.subcommand(Command::new("mcp").about("Serve the MCP tools on stdin and stdout"))
-        .subcommand(
-            Command::new("private")
-                .about("Private mode: while on, no source captures anything")
-                .arg(
-                    Arg::new("state")
-                        .value_parser(["on", "off", "status"])
-                        .default_value("status"),
-                ),
-        )
         .subcommand(
             Command::new("doctor")
                 .about("Diagnose Sinex without the daemon: database, schema, content store, search index")
@@ -191,6 +187,13 @@ fn print_json(v: &Value) {
     println!("{}", serde_json::to_string_pretty(v).expect("JSON prints"));
 }
 
+fn status_error(code: u8, reason: impl std::fmt::Display, state: Option<&str>) -> ExitCode {
+    let mut status = serde_json::json!({"daemon": {"unavailable": reason.to_string()}});
+    capture_health::attach(&mut status, state);
+    print_json(&status);
+    ExitCode::from(code)
+}
+
 #[tokio::main]
 async fn main() -> ExitCode {
     let matches = cli().get_matches();
@@ -200,11 +203,22 @@ async fn main() -> ExitCode {
         // Bare `sinexctl`: the status view until the Today view is built.
         None => ("status".to_string(), matches.clone()),
     };
+    let capture_state = sub
+        .try_get_one::<String>("capture-state")
+        .ok()
+        .flatten()
+        .map(String::as_str);
+    let offline = sub
+        .try_get_one::<bool>("offline")
+        .ok()
+        .flatten()
+        .copied()
+        .unwrap_or(false);
     match name.as_str() {
         "doctor" => {
             let database = sub.get_one::<String>("database").expect("required");
             let store = sub.get_one::<PathBuf>("store").expect("required");
-            let report = match sinex_diagnostics::run("doctor", database, Some(store)).await {
+            let report = match diagnostics::run("doctor", database, Some(store)).await {
                 Ok(report) => report,
                 Err(error) => return fail(1, error),
             };
@@ -236,7 +250,7 @@ async fn main() -> ExitCode {
             };
             let database = v.get_one::<String>("database").expect("required");
             let store = v.get_one::<PathBuf>("store").expect("required");
-            return match sinex_diagnostics::run("verify-store", database, Some(store)).await {
+            return match diagnostics::run("verify-store", database, Some(store)).await {
                 Ok(report) => {
                     print_json(&report);
                     if report["ok"] == Value::Bool(true) {
@@ -248,54 +262,24 @@ async fn main() -> ExitCode {
                 Err(e) => fail(1, e),
             };
         }
-        "private" => {
-            use sinex_transport::private_mode::State;
-            let mode = sinex_transport::private_mode::PrivateMode::default();
-            let state = sub
-                .get_one::<String>("state")
-                .map_or("status", String::as_str);
-            if state != "status"
-                && let Err(e) = mode.set(state == "on")
-            {
-                return fail(1, format!("{}: {e}", mode.path().display()));
-            }
-            let switch = mode.state();
-            if json {
-                print_json(&serde_json::json!({
-                    "private_mode": switch.name(),
-                    "switch": mode.path(),
-                    "reason": switch.reason(),
-                }));
-            } else {
-                let said = match &switch {
-                    State::Off => "off".to_string(),
-                    State::On => "on: nothing is captured".to_string(),
-                    State::Unchecked(reason) => {
-                        format!(
-                            "unknown: the switch cannot be checked ({reason}), so nothing is captured"
-                        )
-                    }
-                };
-                println!("private mode is {said} ({})", mode.path().display());
-            }
-            return ExitCode::SUCCESS;
-        }
-        "status" if sub.get_flag("offline") => {
+        "status" if offline => {
             let Some(database) = sub.get_one::<String>("database") else {
                 return fail(1, "status --offline needs --database");
             };
-            return match sinex_diagnostics::run("status", database, None).await {
-                Ok(v) => {
+            return match diagnostics::run("status", database, None).await {
+                Ok(mut v) => {
+                    capture_health::attach(&mut v, capture_state);
                     print_json(&v);
                     ExitCode::SUCCESS
                 }
-                Err(e) => fail(1, e),
+                Err(e) => status_error(1, e, capture_state),
             };
         }
         _ => {}
     }
     let client = match client(&matches) {
         Ok(c) => c,
+        Err(e) if name == "status" => return status_error(1, e, capture_state),
         Err(e) => return fail(1, e),
     };
     if name == "mcp" {
@@ -375,18 +359,32 @@ async fn main() -> ExitCode {
         let reply = match client.call(&request).await {
             Ok((_, reply)) => reply,
             Err(ClientError::Unreachable(m)) => {
+                if name == "status" {
+                    return status_error(UNREACHABLE, m, capture_state);
+                }
                 return fail(UNREACHABLE, format!("the daemon is not reachable: {m}"));
             }
+            Err(e) if name == "status" => return status_error(1, e, capture_state),
             Err(e) => return fail(1, e),
         };
-        let result = match reply {
+        let mut result = match reply {
             Reply::Ok { result } => result,
+            Reply::Refused { reason, not_built } if name == "status" => {
+                return status_error(
+                    if not_built { NOT_BUILT } else { REFUSED },
+                    reason,
+                    capture_state,
+                );
+            }
             Reply::Refused {
                 reason,
                 not_built: true,
             } => return fail(NOT_BUILT, format!("not built yet: {reason}")),
             Reply::Refused { reason, .. } => return fail(REFUSED, reason),
         };
+        if name == "status" {
+            capture_health::attach(&mut result, capture_state);
+        }
         let paged = result["page"].is_object() && result["rows"].is_array();
         if !paged {
             if json {
@@ -451,3 +449,5 @@ async fn main() -> ExitCode {
 
 #[cfg(test)]
 mod tests;
+
+mod capture_health;

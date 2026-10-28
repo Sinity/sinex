@@ -61,6 +61,19 @@ pub const REQUEST: SourceSpec = SourceSpec {
 pub const FORMAT: sinex_source_core::binding::InputFormat =
     sinex_source_core::binding::InputFormat {
         name: "library",
+        discovery: sinex_source_core::discovery::DiscoverySpec {
+            owner: sinex_source_core::discovery::Owner::System,
+            locations: &[sinex_source_core::discovery::Location {
+                root: "declared",
+                path: "library",
+            }],
+            capabilities: &[],
+            credentials: &[],
+            streams: &[],
+            requests: &["library.request"],
+            request_only: false,
+        },
+        discover: crate::discovery::discover_format,
         specs: || vec![&SCAN, &REQUEST],
         plan: Some(|path, settings| {
             let path =
@@ -101,12 +114,7 @@ pub const FORMAT: sinex_source_core::binding::InputFormat =
                 LibraryScan {
                     root: b.input.clone(),
                     host: b.settings.host.clone(),
-                    keep_bytes: !b
-                        .settings
-                        .options
-                        .get("reference")
-                        .and_then(Value::as_bool)
-                        .unwrap_or(false),
+                    keep_bytes: !b.settings.boolean("reference")?.unwrap_or(false),
                     probe: true,
                     bytes_per_poll: 1 << 30,
                     only: b.settings.option("only").map(str::to_owned),

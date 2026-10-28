@@ -40,6 +40,7 @@ impl Keyed for Presence {
     }
     fn compute(&self, _: &Value, inputs: &[Event], _: &Env) -> Computed {
         Computed {
+            error: None,
             outputs: inputs
                 .iter()
                 .filter_map(|event| {

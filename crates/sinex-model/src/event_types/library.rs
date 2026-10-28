@@ -6,16 +6,15 @@
 //! An item follows its root and original relative path across revisions and
 //! moves. Its opaque ID is deterministic; equal bytes at unrelated paths are
 //! separate items.
-use crate::Timestamp;
+use crate::{EventId, Timestamp};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
-/// A path whose facts changed in a scan. Hiding that change falls back to
-/// the previous visible change at that path. A missing file describes
-/// availability; earlier changes still support the stored original.
+/// A file whose facts changed in a scan. Earlier visible changes remain
+/// evidence for the item and its original rendition.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
-#[event(
+#[event(version = 2,
     type = "library.copy",
     key = ["host", "root", "path", "scan"],
     replace = newer,
@@ -72,7 +71,7 @@ pub struct FileCopy {
 /// original renditions describe its revisions. New bytes at the same item key
 /// make a new revision; equal bytes at an unrelated key are a different item.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
-#[event(
+#[event(version = 2,
     type = "library.item",
     key = ["item"],
     replace = newer,
@@ -110,7 +109,7 @@ pub enum RenditionRole {
 /// Bytes standing for an item revision: its original, or something made
 /// from it. A preview never answers a request for the original.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
-#[event(
+#[event(version = 2,
     type = "library.rendition",
     key = ["rendition"],
     replace = newer,
@@ -142,7 +141,7 @@ pub struct Rendition {
 
 /// A rendered preview submitted as evidence for a rendition.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
-#[event(
+#[event(version = 2,
     type = "library.preview",
     key = ["rendition"],
     replace = newer,
@@ -202,7 +201,7 @@ pub enum Level {
 /// fallback to lower levels. Withdrawing an assignment is a newer reading of
 /// it with `withdrawn_at` set.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
-#[event(
+#[event(version = 2,
     type = "library.assignment",
     key = ["assignment"],
     replace = newer,
@@ -228,7 +227,7 @@ pub struct Assignment {
 /// offers suggestions. A fixed selection is a collection without a query whose
 /// entries were added from a query's results.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
-#[event(
+#[event(version = 2,
     type = "library.collection",
     key = ["collection"],
     replace = newer,
@@ -250,7 +249,7 @@ pub struct Collection {
 /// One entry in a collection. Each insertion is a new entry, so the same item
 /// can appear twice; removing an entry withdraws it and keeps it inspectable.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
-#[event(
+#[event(version = 2,
     type = "library.entry",
     key = ["entry"],
     replace = newer,
@@ -273,7 +272,7 @@ pub struct Entry {
 
 /// A rating on a named scale (`stars`, `favourite`), one per rater.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
-#[event(
+#[event(version = 2,
     type = "library.rating",
     key = ["item", "scale", "by"],
     replace = newer,
@@ -296,7 +295,7 @@ pub struct Rating {
 /// One pairwise judgement: `winner` is better than `loser` on `scale`. A
 /// ranking is fitted from all of them.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
-#[event(
+#[event(version = 2,
     type = "library.comparison",
     key = ["comparison"],
     replace = newer,
@@ -317,7 +316,7 @@ pub struct Comparison {
 /// One time something was opened for viewing or playing. The target is fixed
 /// when the request is made.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
-#[event(
+#[event(version = 2,
     type = "library.view",
     key = ["view"],
     replace = newer,
@@ -341,7 +340,7 @@ pub struct View {
 /// A collection suggestion the operator dismissed; remembered for that
 /// collection and query revision.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
-#[event(
+#[event(version = 2,
     type = "library.dismissal",
     key = ["collection", "item", "query"],
     replace = newer,
@@ -384,6 +383,19 @@ pub const REQUEST_TYPES: &[&str] = &[
     "library.dismissal",
 ];
 
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
+#[event(version = 2, type = "library.filename_hints", key = ["copy"], replace = newer)]
+pub struct FilenameHints {
+    pub copy: EventId,
+    pub path: String,
+    pub content: String,
+    pub author_hint: Option<String>,
+    pub title_hint: Option<String>,
+    pub year_hint: Option<u16>,
+    pub external_id_hint: Option<String>,
+    pub rule_version: u32,
+}
+
 /// A root's identity includes the host and its resolved path.
 pub fn item_key(host: &str, root: &str, relative: &str) -> String {
     serde_json::to_string(&[host, root, relative]).expect("strings serialize")
@@ -392,36 +404,4 @@ pub fn item_key(host: &str, root: &str, relative: &str) -> String {
 /// An item's identity depends on its first key, never its content.
 pub fn item_id(key: &str) -> String {
     format!("library:{}", blake3::hash(key.as_bytes()).to_hex())
-}
-
-/// The text of a document in the library: a page of a PDF, or the whole of a
-/// text, HTML, Markdown, Word (`.docx`) or OpenDocument (`.odt`) file, read
-/// from its stored bytes. Each captured copy has its own text and parents,
-/// including when another copy has identical bytes.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
-#[event(
-    type = "document.text",
-    key = ["record", "part"],
-    replace = newer,
-    time = modified_at,
-    quality = file_mtime
-)]
-pub struct DocumentText {
-    /// The captured copy's stable source record.
-    pub record: String,
-    /// The BLAKE3 name of the document's bytes.
-    pub content: String,
-    /// The path of the copy it was read from.
-    pub path: String,
-    /// `pdf`, `html`, `markdown`, `text`, `docx` or `odt`.
-    pub format: String,
-    /// The page, from 1, for a PDF; 0 for a document read whole.
-    pub part: u64,
-    pub title: Option<String>,
-    pub text: String,
-    /// What read it: the PDF reader's version line, or `sinexd` for the
-    /// formats read in Sinex itself.
-    pub reader: String,
-    /// The copy's modification time.
-    pub modified_at: Option<Timestamp>,
 }

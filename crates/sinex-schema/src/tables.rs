@@ -1,6 +1,10 @@
 //! Table declarations: the whole current schema, which a fresh database is
 //! created with.
 use crate::Checks;
+use sinex_model::{
+    DbCheck, Validation,
+    kinds::{Normalization, Search},
+};
 
 pub(crate) const SCHEMAS: &[&str] = &[
     "sinex_schema",
@@ -36,6 +40,27 @@ pub(crate) const EXCISED_MATERIALS: &str = "CREATE TABLE core.excised_materials 
 pub(crate) const EXCISED_MATERIALS_BLOB: &str =
     "CREATE INDEX excised_materials_blob ON core.excised_materials (blob)";
 
+/// Live keys keep all digest bits and distinguish their logical string forms.
+pub(crate) const ENCODE_EQUIVALENCE_KEY: &str = r#"CREATE FUNCTION core.encode_equivalence_key(key text)
+RETURNS bytea LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE AS $$
+  SELECT CASE
+    WHEN length(key) = 64 AND key COLLATE "C" ~ '^[0-9a-f]{64}$' THEN decode('00' || key, 'hex')
+    WHEN length(key) = 69 AND key COLLATE "C" ~ '^hash:[0-9a-f]{64}$' THEN decode('01' || substr(key, 6), 'hex')
+    WHEN length(key) = 71 AND key COLLATE "C" ~ '^sealed:[0-9a-f]{64}$' THEN decode('02' || substr(key, 8), 'hex')
+    ELSE decode('03', 'hex') || convert_to(key, 'UTF8')
+  END
+$$"#;
+
+pub(crate) const DECODE_EQUIVALENCE_KEY: &str = r#"CREATE FUNCTION core.decode_equivalence_key(key bytea)
+RETURNS text LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE AS $$
+  SELECT CASE get_byte(key, 0)
+    WHEN 0 THEN encode(substring(key FROM 2), 'hex')
+    WHEN 1 THEN 'hash:' || encode(substring(key FROM 2), 'hex')
+    WHEN 2 THEN 'sealed:' || encode(substring(key FROM 2), 'hex')
+    WHEN 3 THEN convert_from(substring(key FROM 2), 'UTF8')
+  END
+$$"#;
+
 /// Coverage probes one source and run for its last recorded time.
 pub(crate) const COVERAGE_RUNS: &str =
     "CREATE INDEX events_coverage ON core.events (source, run_id, ts_orig) INCLUDE (commit_seq)";
@@ -51,6 +76,7 @@ pub(crate) const EVENT_CHILDREN_CHILD: &str =
     "CREATE INDEX event_children_child ON core.event_children (child)";
 
 pub(crate) fn tables(c: &Checks) -> Vec<String> {
+    let kind_columns = kind_columns();
     let event_columns = format!(
         "id uuid NOT NULL,
   event_type text NOT NULL,
@@ -71,6 +97,7 @@ pub(crate) fn tables(c: &Checks) -> Vec<String> {
   record_hash bytea NOT NULL,
   record_state text NOT NULL DEFAULT 'present' {record_state},
   class text NOT NULL DEFAULT 'open' {class},
+  {kind_columns},
   CONSTRAINT one_origin CHECK ((material_id IS NOT NULL AND anchor IS NOT NULL AND parents IS NULL) OR (material_id IS NULL AND anchor IS NULL AND parents IS NOT NULL AND cardinality(parents) > 0)),
   CONSTRAINT id_is_uuidv7 CHECK (uuid_extract_version(id) = 7),
   CONSTRAINT time_pair CHECK ((ts_orig IS NULL) = (ts_quality = 'unknown')),
@@ -83,6 +110,8 @@ pub(crate) fn tables(c: &Checks) -> Vec<String> {
         class = c.class,
     );
     vec![
+        ENCODE_EQUIVALENCE_KEY.into(),
+        DECODE_EQUIVALENCE_KEY.into(),
         // Events. No foreign key points into a hypertable.
         format!("CREATE TABLE core.events (\n  {event_columns},\n  PRIMARY KEY (id)\n)"),
         EVENT_CHILDREN.into(),
@@ -102,7 +131,7 @@ pub(crate) fn tables(c: &Checks) -> Vec<String> {
         "CREATE TABLE core.live_equivalence (
   source text NOT NULL,
   event_type text NOT NULL,
-  equivalence_key text NOT NULL,
+  equivalence_key bytea NOT NULL,
   event_id uuid NOT NULL,
   reading_order bigint NOT NULL,
   record_hash bytea NOT NULL,
@@ -167,13 +196,8 @@ pub(crate) fn tables(c: &Checks) -> Vec<String> {
   change_seq bigint NOT NULL DEFAULT 0,
   updated_at timestamptz NOT NULL DEFAULT now()
 )".into(),
-        // Where each published event sits in the confirmed stream, so an
-        // excision can erase it there too: excision reaches every surface. The
-        // row goes once the message is erased.
-        "CREATE TABLE core.published (
-  event_id uuid PRIMARY KEY,
-  stream_seq bigint NOT NULL
-)".into(),
+        // Every acknowledged event/stream pair is kept until erased.
+        PUBLISHED.into(),
         // Frames outside producers sent over the NATS ingress and what Sinex
         // did with each, written by admission with the frame's events, so a
         // producer can ask what Sinex holds and a redelivered frame is answered
@@ -344,13 +368,10 @@ pub(crate) fn tables(c: &Checks) -> Vec<String> {
   scope jsonb NOT NULL,
   at timestamptz NOT NULL DEFAULT now()
 )".into(),
-        format!("CREATE TABLE registry.event_types (
-  name text PRIMARY KEY,
-  payload_schema jsonb NOT NULL,
-  key_kind text NOT NULL CHECK (key_kind IN ('location', 'fields')),
-  key_fields text[] NOT NULL,
-  replace_rule text NOT NULL {replace}
-)", replace = c.replace_rule),
+        KIND_PREFIXES.into(),
+        kind_declarations(),
+        REPLAY_REFUSALS.into(),
+        KIND_IMMUTABILITY.into(),
         "CREATE TABLE registry.sources (
   name text PRIMARY KEY,
   driver text NOT NULL,
@@ -457,14 +478,15 @@ pub(crate) fn tables(c: &Checks) -> Vec<String> {
         "CREATE TABLE core.search_text (
   event_id uuid PRIMARY KEY,
   text text NOT NULL,
-  tsv tsvector GENERATED ALWAYS AS (to_tsvector('simple', text)) STORED
+  tsv tsvector GENERATED ALWAYS AS (to_tsvector('simple', text)) STORED,
+  trigram_indexed boolean NOT NULL DEFAULT true
 )".into(),
         "CREATE INDEX search_text_tsv ON core.search_text USING gin (tsv)".into(),
-        "CREATE INDEX search_text_trigram ON core.search_text USING gin (text gin_trgm_ops)".into(),
+        "CREATE INDEX search_text_trigram ON core.search_text USING gin (text gin_trgm_ops) WHERE trigram_indexed".into(),
         // Admission's staging table. Permanent and unlogged so compile-time
         // checked queries can name it; only the one writer uses it, inside its
         // transaction, and truncates it first.
-        "CREATE UNLOGGED TABLE core.admission_stage (
+        format!("CREATE UNLOGGED TABLE core.admission_stage (
   ord integer PRIMARY KEY,
   id uuid NOT NULL,
   event_type text NOT NULL,
@@ -481,8 +503,9 @@ pub(crate) fn tables(c: &Checks) -> Vec<String> {
   reading_order bigint NOT NULL,
   record_hash bytea NOT NULL,
   record_state text NOT NULL,
-  class text NOT NULL
-)".into(),
+  class text NOT NULL,
+  {kind_columns}
+)", kind_columns = kind_columns),
     ]
 }
 
@@ -510,6 +533,7 @@ pub(crate) fn after_tables() -> Vec<String> {
             out.push(template.replace("$T", table));
         }
     }
+    out.extend(blob_changes());
     out.push(COVERAGE_RUNS.into());
     out
 }
@@ -532,4 +556,78 @@ BEGIN
   END IF;
   RETURN OLD;
 END $$"
+}
+
+pub(crate) const KIND_PREFIXES: &str = "CREATE TABLE registry.kind_prefixes (
+  prefix text PRIMARY KEY,
+  declaring_producer text NOT NULL
+)";
+
+fn kind_declarations() -> String {
+    format!(
+        "CREATE TABLE registry.event_types (
+  name text NOT NULL,
+  version bigint NOT NULL CHECK (version > 0),
+  declaring_producer text NOT NULL,
+  payload_schema jsonb,
+  normalization text NOT NULL {normalization},
+  key_rule jsonb NOT NULL,
+  replace_rule text,
+  time_rule jsonb NOT NULL,
+  field_hints jsonb NOT NULL,
+  removed_rule jsonb NOT NULL,
+  keep_known text[] NOT NULL,
+  owned_blobs jsonb NOT NULL,
+  search text NOT NULL {search},
+  definition_hash text NOT NULL,
+  registered_at timestamptz NOT NULL DEFAULT now(),
+  PRIMARY KEY (name, version)
+)",
+        normalization = Normalization::check("normalization"),
+        search = Search::check("search")
+    )
+}
+
+pub(crate) const REPLAY_REFUSALS: &str = "CREATE TABLE core.replay_refusals (
+  operation_id uuid NOT NULL REFERENCES core.operations(id),
+  material_id uuid NOT NULL,
+  refusal jsonb NOT NULL,
+  PRIMARY KEY (operation_id, material_id)
+)";
+
+pub(crate) const KIND_IMMUTABILITY: &str = "CREATE FUNCTION registry.keep_definition() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'kind definitions and owners are immutable'; END $$;
+CREATE TRIGGER keep_definition BEFORE UPDATE OR DELETE ON registry.event_types FOR EACH ROW EXECUTE FUNCTION registry.keep_definition();
+CREATE TRIGGER keep_owner BEFORE UPDATE OR DELETE ON registry.kind_prefixes FOR EACH ROW EXECUTE FUNCTION registry.keep_definition()";
+
+fn kind_columns() -> String {
+    format!(
+        "kind_version bigint NOT NULL DEFAULT 1 CHECK (kind_version > 0),
+  validation text NOT NULL DEFAULT '{}' {}",
+        Validation::Unvalidated.as_db(),
+        Validation::check("validation")
+    )
+}
+
+/// Exact event/stream pairs; bounds select pages, never individual messages.
+/// One row per acknowledged copy, including redelivery after deduplication expires.
+pub(crate) const PUBLISHED: &str = "CREATE TABLE core.published (
+  event_id uuid NOT NULL,
+  stream_seq bigint NOT NULL,
+  CONSTRAINT published_pairs_pkey PRIMARY KEY (event_id, stream_seq)
+)";
+
+/// Blob-only admissions also need a position when pairing a store with a restored database.
+pub(crate) fn blob_changes() -> Vec<String> {
+    vec![
+        "INSERT INTO core.counters (name, value) VALUES ('blob_changes', 0)".into(),
+        "CREATE FUNCTION core.note_blob_change() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+  UPDATE core.counters SET value = value + 1 WHERE name = 'blob_changes';
+  RETURN NULL;
+END $$"
+            .into(),
+        "CREATE TRIGGER blob_changes AFTER INSERT OR DELETE OR TRUNCATE ON core.blobs
+         FOR EACH STATEMENT EXECUTE FUNCTION core.note_blob_change()"
+            .into(),
+    ]
 }

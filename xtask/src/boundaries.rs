@@ -62,8 +62,7 @@ fn allowed(name: &str) -> Result<&'static [&'static str], String> {
         // Statistics over derived events read the metric declarations.
         "sinex-analysis" => Ok(&["sinex-model", "sinex-derivations"]),
         "sinex-transport" => Ok(&["sinex-model", "sinex-protocol"]),
-        // Drivers include the producer side of the NATS ingress, which speaks
-        // the protocol's frames.
+        // Source capture uses transport helpers; shared drivers own producer frames.
         "sinex-sources" => Ok(&[
             "sinex-model",
             "sinex-protocol",
@@ -74,7 +73,6 @@ fn allowed(name: &str) -> Result<&'static [&'static str], String> {
         "sinex-sealing" => Ok(&["sinex-model"]),
         "sinex-store" => Ok(&["sinex-model", "sinex-schema", "sinex-sealing"]),
         "sinex-library" => Ok(&["sinex-model", "sinex-store"]),
-        "sinex-diagnostics" => Ok(&[]),
         "sinexd" => Ok(&[
             "sinex-model",
             "sinex-protocol",
@@ -94,22 +92,41 @@ fn allowed(name: &str) -> Result<&'static [&'static str], String> {
             "sinex-sources",
             "sinex-source-core",
         ]),
-        "sinexctl" => Ok(&[
-            "sinex-diagnostics",
-            "sinex-model",
-            "sinex-protocol",
-            "sinex-transport",
-        ]),
+        "sinexctl" => Ok(&["sinex-model", "sinex-protocol", "sinex-transport"]),
         _ => Err(format!("unassigned workspace package: {name}")),
     }
 }
-/// Crates of pure logic over model types: no IO in them or below them.
-fn pure(name: &str) -> bool {
-    matches!(
-        name,
-        "sinex-model" | "sinex-protocol" | "sinex-derivations" | "sinex-analysis"
-    )
+/// Runtime restrictions followed through normal and build dependencies.
+#[derive(Clone, Copy)]
+enum RuntimeRule {
+    NoIo,
+    NoDatabase,
 }
+const RUNTIME_RULES: &[(&str, RuntimeRule)] = &[
+    ("sinex-model", RuntimeRule::NoIo),
+    ("sinex-protocol", RuntimeRule::NoIo),
+    ("sinex-derivations", RuntimeRule::NoIo),
+    ("sinex-analysis", RuntimeRule::NoIo),
+    ("sinexctl", RuntimeRule::NoDatabase),
+];
+impl RuntimeRule {
+    fn forbids(self, name: &str) -> bool {
+        match self {
+            Self::NoIo => impure(name),
+            Self::NoDatabase => database_dependency(name),
+        }
+    }
+}
+fn pure(name: &str) -> bool {
+    RUNTIME_RULES
+        .iter()
+        .any(|(package, rule)| *package == name && matches!(rule, RuntimeRule::NoIo))
+}
+
+fn database_dependency(name: &str) -> bool {
+    name == "sinex-store" || name == "sqlx" || name.starts_with("sqlx-")
+}
+
 fn impure(name: &str) -> bool {
     matches!(
         name,
@@ -186,10 +203,12 @@ fn validate(metadata: Metadata) -> Result<(), String> {
         .iter()
         .map(|n| (n.id.as_str(), n))
         .collect();
-    for package in members
-        .iter()
-        .filter(|p| pure(&p.name) || p.name == "sinexctl")
-    {
+    for (package, forbidden) in members.iter().filter_map(|package| {
+        RUNTIME_RULES
+            .iter()
+            .find(|(name, _)| *name == package.name)
+            .map(|(_, forbidden)| (package, forbidden))
+    }) {
         let mut pending = vec![package.id.as_str()];
         let mut seen = HashSet::new();
         while let Some(id) = pending.pop() {
@@ -216,14 +235,7 @@ fn validate(metadata: Metadata) -> Result<(), String> {
                 if !activated(dependent, node, &dependency.name) {
                     continue;
                 }
-                let forbidden = if pure(&package.name) {
-                    impure(&dependency.name)
-                } else {
-                    dependency.name == "sinex-store"
-                        || dependency.name == "sqlx"
-                        || dependency.name.starts_with("sqlx-")
-                };
-                if forbidden {
+                if forbidden.forbids(&dependency.name) {
                     return Err(format!(
                         "forbidden transitive dependency: {} -> {}",
                         package.name, dependency.name
@@ -372,16 +384,21 @@ fn graph(root: &Path) -> Result<(), String> {
     // The graph for the platform the crates are built for: a dependency that
     // only another platform uses (`log` under wasm32) is not built here.
     let host = host_triple()?;
+    let metadata = metadata(root, &["--all-features".into()], &host)?;
+    validate(metadata)
+}
+
+fn metadata(root: &Path, features: &[String], host: &str) -> Result<Metadata, String> {
     let output = devkit::cargo_command()
         .args([
             "metadata",
             "--format-version",
             "1",
-            "--all-features",
             "--locked",
             "--filter-platform",
-            &host,
+            host,
         ])
+        .args(features)
         .current_dir(root)
         .output()
         .map_err(|e| format!("could not execute cargo metadata: {e}"))?;
@@ -392,10 +409,117 @@ fn graph(root: &Path) -> Result<(), String> {
             String::from_utf8_lossy(&output.stderr)
         ));
     }
-    let metadata = serde_json::from_slice(&output.stdout)
-        .map_err(|e| format!("invalid cargo metadata: {e}"))?;
-    validate(metadata)
+    serde_json::from_slice(&output.stdout).map_err(|e| format!("invalid cargo metadata: {e}"))
 }
 
 #[cfg(test)]
 mod tests;
+
+/// Whether the selected compilation can run without a schema database.
+pub fn database_free(root: &Path, args: &[String]) -> Result<bool, String> {
+    let mut selected = Vec::new();
+    let mut features = Vec::new();
+    let mut workspace = false;
+    let mut development = false;
+    let mut args = args.iter().take_while(|arg| arg.as_str() != "--");
+    while let Some(arg) = args.next() {
+        match arg.as_str() {
+            "-p" | "--package" => match args.next() {
+                Some(name) => selected.push(name.as_str()),
+                None => return Ok(false),
+            },
+            "--workspace" | "--all" | "--exclude" => workspace = true,
+            "--tests" | "--test" | "--benches" | "--bench" | "--all-targets" => development = true,
+            "--no-default-features" | "--all-features" => features.push(arg.clone()),
+            "--features" | "-F" => {
+                features.push(arg.clone());
+                if let Some(value) = args.next() {
+                    features.push(value.clone());
+                }
+            }
+            value if value.starts_with("--features=") || value.starts_with("-F") => {
+                features.push(arg.clone())
+            }
+            value if value.starts_with("--package=") => selected.push(&value[10..]),
+            value if value.starts_with("-p") => selected.push(&value[2..]),
+            value if value.starts_with("--test=") || value.starts_with("--bench=") => {
+                development = true
+            }
+            _ => {}
+        }
+    }
+    let metadata = metadata(root, &features, &host_triple()?)?;
+    Ok(selection_database_free(
+        &metadata,
+        &selected,
+        workspace,
+        development,
+    ))
+}
+
+fn selection_database_free(
+    metadata: &Metadata,
+    selected: &[&str],
+    workspace: bool,
+    development: bool,
+) -> bool {
+    let packages: HashMap<_, _> = metadata
+        .packages
+        .iter()
+        .map(|p| (p.id.as_str(), p))
+        .collect();
+    let nodes: HashMap<_, _> = metadata
+        .resolve
+        .nodes
+        .iter()
+        .map(|n| (n.id.as_str(), n))
+        .collect();
+    let mut pending = Vec::new();
+    if workspace || selected.is_empty() {
+        pending.extend(metadata.workspace_members.iter().map(String::as_str));
+    } else {
+        for name in selected {
+            let Some(package) = metadata
+                .packages
+                .iter()
+                .find(|p| p.name == *name && metadata.workspace_members.contains(&p.id))
+            else {
+                return false;
+            };
+            pending.push(package.id.as_str());
+        }
+    }
+    let mut seen = HashSet::new();
+    while let Some(id) = pending.pop() {
+        if !seen.insert(id) {
+            continue;
+        }
+        let (Some(package), Some(node)) = (packages.get(id), nodes.get(id)) else {
+            return false;
+        };
+        // Schema bootstrap uses SQLx dynamically and must compile before a database exists.
+        if package.name == "sinex-schema" {
+            continue;
+        }
+        if database_dependency(&package.name) {
+            return false;
+        }
+        for edge in &node.deps {
+            if !development
+                && edge
+                    .dep_kinds
+                    .iter()
+                    .all(|k| k.kind.as_deref() == Some("dev"))
+            {
+                continue;
+            }
+            let Some(dependency) = packages.get(edge.pkg.as_str()) else {
+                return false;
+            };
+            if activated(package, node, &dependency.name) {
+                pending.push(edge.pkg.as_str());
+            }
+        }
+    }
+    true
+}

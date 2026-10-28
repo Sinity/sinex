@@ -63,8 +63,37 @@ pub(crate) async fn ensure_stream(
 pub(crate) struct Published {
     pub events: u64,
     pub changes: u64,
-    /// Excised events whose messages were erased from the stream.
+    /// Stream messages of excised events that were erased.
     pub excised: u64,
+}
+
+/// One acknowledged page and the time spent reading, publishing and saving it.
+#[derive(Clone, Debug)]
+pub(crate) struct PageTiming {
+    pub events: usize,
+    pub changes: usize,
+    pub commit_seq: i64,
+    pub read: Duration,
+    pub acknowledge: Duration,
+    pub record: Duration,
+    pub commit: Duration,
+}
+
+fn report_page_timing(page: PageTiming) {
+    eprintln!(
+        "{}",
+        serde_json::json!({
+            "publisher_page": {
+                "events": page.events,
+                "changes": page.changes,
+                "commit_seq": page.commit_seq,
+                "read_ms": page.read.as_secs_f64() * 1000.0,
+                "acknowledge_ms": page.acknowledge.as_secs_f64() * 1000.0,
+                "record_ms": page.record.as_secs_f64() * 1000.0,
+                "commit_ms": page.commit.as_secs_f64() * 1000.0,
+            }
+        })
+    );
 }
 
 /// Publish until `stop` is set, waking when `commits` changes.
@@ -108,8 +137,24 @@ pub(crate) async fn publish_pending(
     js: &jetstream::Context,
     subjects: &Subjects,
 ) -> Result<Published, String> {
+    let timing_enabled = std::env::var_os("SINEX_BENCH_TIMINGS").is_some();
+    publish_pending_measured(conn, js, subjects, |page| {
+        if timing_enabled {
+            report_page_timing(page);
+        }
+    })
+    .await
+}
+
+pub(crate) async fn publish_pending_measured(
+    conn: &mut PgConnection,
+    js: &jetstream::Context,
+    subjects: &Subjects,
+    mut page_done: impl FnMut(PageTiming),
+) -> Result<Published, String> {
     let mut total = Published::default();
     loop {
+        let read_started = Instant::now();
         let (seq, change) = commit_log::consumer_position(conn, CONSUMER)
             .await
             .map_err(|e| e.to_string())?;
@@ -129,6 +174,8 @@ pub(crate) async fn publish_pending(
             total.excised += erase_excised(conn, js, subjects).await?;
             return Ok(total);
         }
+        let read = read_started.elapsed();
+        let acknowledge_started = Instant::now();
         let mut acks = Vec::with_capacity(page.events.len() + changes.len());
         let limit = js.client().server_info().max_payload as u64;
         for event in &page.events {
@@ -174,7 +221,9 @@ pub(crate) async fn publish_pending(
                 placed.push((event.id, seq));
             }
         }
+        let acknowledge = acknowledge_started.elapsed();
         let last_change = changes.last().map_or(change, |n| n.change_seq);
+        let record_started = Instant::now();
         let mut tx = conn.begin().await.map_err(|e| e.to_string())?;
         commit_log::record_published(&mut tx, &placed)
             .await
@@ -182,7 +231,18 @@ pub(crate) async fn publish_pending(
         commit_log::set_consumer_position(&mut tx, CONSUMER, covered, last_change)
             .await
             .map_err(|e| e.to_string())?;
+        let record = record_started.elapsed();
+        let commit_started = Instant::now();
         tx.commit().await.map_err(|e| e.to_string())?;
+        page_done(PageTiming {
+            events: page.events.len(),
+            changes: changes.len(),
+            commit_seq: covered,
+            read,
+            acknowledge,
+            record,
+            commit: commit_started.elapsed(),
+        });
         total.events += page.events.len() as u64;
         total.changes += changes.len() as u64;
     }
@@ -235,11 +295,11 @@ async fn erase_excised(
             ack.await
                 .map_err(|e| format!("confirmed stream did not acknowledge: {e}"))?;
         }
-        let ids: Vec<uuid::Uuid> = pending.iter().map(|e| e.event_id).collect();
-        commit_log::forget_published(conn, &ids)
+        let pairs: Vec<_> = pending.iter().map(|e| (e.event_id, e.stream_seq)).collect();
+        commit_log::forget_published(conn, &pairs)
             .await
             .map_err(|e| e.to_string())?;
-        erased += ids.len() as u64;
+        erased += pairs.len() as u64;
     }
 }
 
@@ -295,13 +355,17 @@ fn confirmed_event(e: &Committed) -> Result<ConfirmedEvent, String> {
         _ => None,
     };
     Ok(ConfirmedEvent {
+        kind_version: u64::try_from(e.kind_version).map_err(|_| "invalid stored kind version")?,
+        validation: serde_json::from_value(serde_json::json!(e.validation))
+            .map_err(|_| "invalid stored validation")?,
         commit_seq: e.commit_seq,
         id: EventId(e.id),
         event_type: e.event_type.clone(),
         source: e.source.clone(),
         run: RunId(e.run_id),
         location,
-        output_index: u16::try_from(e.output_index).unwrap_or(0),
+        output_index: u16::try_from(e.output_index)
+            .map_err(|_| format!("event {} has an invalid output index", e.id))?,
         parents: e.parents.iter().flatten().map(|p| EventId(*p)).collect(),
         ts_orig: e.ts_orig.map(Timestamp),
         ts_quality: e.ts_quality.clone(),

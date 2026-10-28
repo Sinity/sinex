@@ -17,7 +17,6 @@ members = [
     "crates/sinex-session",
     "crates/sinex-capture",
     "crates/sinexctl",
-    "crates/sinex-diagnostics",
     "xtask",
 ]
 
@@ -29,7 +28,7 @@ license = "MIT"
 
 [workspace.dependencies]
 serde = { version = "1", features = ["derive"] }
-serde_json = { version = "1", features = ["preserve_order"] }
+serde_json = { version = "1", features = ["preserve_order", "float_roundtrip"] }
 tokio = { version = "1", features = ["rt-multi-thread", "sync", "time", "macros", "fs", "signal"] }
 uuid = { version = "1", features = ["v7", "serde"] }
 time = { version = "0.3", features = ["serde", "formatting", "parsing", "macros"] }
@@ -61,9 +60,9 @@ hyper-util = { version = "0.1", features = ["tokio"] }
 http-body-util = "0.1"
 rmcp = { version = "3", features = ["server", "transport-io"] }
 schemars = { version = "1", features = ["uuid1"] }
-credential-masking = { git = "https://github.com/Sinity/polylogue-sinex-common", tag = "v0.7.6" }
-hashed-blobs = { git = "https://github.com/Sinity/polylogue-sinex-common", tag = "v0.7.6" }
-devkit = { git = "https://github.com/Sinity/polylogue-sinex-common", tag = "v0.7.6", features = ["pg", "nats"] }
+credential-masking = { git = "https://github.com/Sinity/polylogue-sinex-common", branch = "master" }
+hashed-blobs = { git = "https://github.com/Sinity/polylogue-sinex-common", branch = "master" }
+devkit = { git = "https://github.com/Sinity/polylogue-sinex-common", branch = "master", features = ["pg", "nats"] }
 async-nats = "0.47"
 # The NATS server checks passwords against bcrypt hashes in its config.
 bcrypt = "0.17"
@@ -81,7 +80,6 @@ sinex-sealing = { path = "crates/sinex-sealing" }
 sinex-derivations = { path = "crates/sinex-derivations" }
 sinex-analysis = { path = "crates/sinex-analysis" }
 sinex-library = { path = "crates/sinex-library" }
-sinex-diagnostics = { path = "crates/sinex-diagnostics" }
 
 [workspace.lints.rust]
 unsafe_code = "forbid"

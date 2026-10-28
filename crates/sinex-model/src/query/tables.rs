@@ -49,6 +49,8 @@ macro_rules! event_fields {
         &[
             f("id", FieldType::Id, "event ID"),
             f("event_type", FieldType::Text, "event type"),
+            f("kind_version", FieldType::Integer, "kind version"),
+            f("validation", FieldType::Enum(crate::Validation::VALUES), "validation"),
             f("source", FieldType::Text, "source"),
             f("host", FieldType::Text, "host"),
             f("when", FieldType::Time, "time it happened"),
@@ -274,10 +276,20 @@ impl Table {
     pub fn default_fields(self) -> &'static [&'static str] {
         match self {
             Table::Gaps => &["source", "run", "start", "end", "reason"],
-            Table::Events | Table::Drift => &["id", "event_type", "source", "when", "payload"],
+            Table::Events | Table::Drift => &[
+                "id",
+                "event_type",
+                "kind_version",
+                "validation",
+                "source",
+                "when",
+                "payload",
+            ],
             Table::Archive => &[
                 "id",
                 "event_type",
+                "kind_version",
+                "validation",
                 "source",
                 "when",
                 "archived",

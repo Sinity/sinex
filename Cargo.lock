@@ -152,7 +152,7 @@ version = "1.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "40c48f72fd53cd289104fc64099abca73db4166ad86ea0b4341abe65af83dadc"
 dependencies = [
- "windows-sys 0.61.2",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -163,7 +163,7 @@ checksum = "291e6a250ff86cd4a820112fb8898808a366d8f9f58ce16d1f538353ad55747d"
 dependencies = [
  "anstyle",
  "once_cell_polyfill",
- "windows-sys 0.61.2",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -794,7 +794,7 @@ dependencies = [
 [[package]]
 name = "credential-masking"
 version = "0.1.1"
-source = "git+https://github.com/Sinity/polylogue-sinex-common?tag=v0.7.6#3388417f89868a07d493dee563c7dfa972aa10ad"
+source = "git+https://github.com/Sinity/polylogue-sinex-common?branch=master#db1ee87b8fadfbc616490b509d52d3d0d531c4e7"
 dependencies = [
  "hmac",
  "sha2 0.10.9",
@@ -1006,7 +1006,7 @@ dependencies = [
 [[package]]
 name = "devkit"
 version = "0.1.0"
-source = "git+https://github.com/Sinity/polylogue-sinex-common?tag=v0.7.6#3388417f89868a07d493dee563c7dfa972aa10ad"
+source = "git+https://github.com/Sinity/polylogue-sinex-common?branch=master#db1ee87b8fadfbc616490b509d52d3d0d531c4e7"
 dependencies = [
  "blake3",
  "clap",
@@ -1024,7 +1024,7 @@ dependencies = [
 [[package]]
 name = "devkit-macros"
 version = "0.1.0"
-source = "git+https://github.com/Sinity/polylogue-sinex-common?tag=v0.7.6#3388417f89868a07d493dee563c7dfa972aa10ad"
+source = "git+https://github.com/Sinity/polylogue-sinex-common?branch=master#db1ee87b8fadfbc616490b509d52d3d0d531c4e7"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -1159,7 +1159,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -2212,7 +2212,7 @@ checksum = "ed5909b6e89a2db4456e54cd5f673791d7eca6732202bbf2a9cc504fe2f9b84a"
 [[package]]
 name = "hashed-blobs"
 version = "0.1.1"
-source = "git+https://github.com/Sinity/polylogue-sinex-common?tag=v0.7.6#3388417f89868a07d493dee563c7dfa972aa10ad"
+source = "git+https://github.com/Sinity/polylogue-sinex-common?branch=master#db1ee87b8fadfbc616490b509d52d3d0d531c4e7"
 dependencies = [
  "blake3",
  "chacha20poly1305",
@@ -3745,7 +3745,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -4206,14 +4206,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "sinex-diagnostics"
-version = "0.1.0"
-dependencies = [
- "serde_json",
- "tokio",
-]
-
-[[package]]
 name = "sinex-library"
 version = "0.1.0"
 dependencies = [
@@ -4249,6 +4241,7 @@ dependencies = [
  "schemars",
  "serde",
  "serde_json",
+ "serde_path_to_error",
  "sinex-macros",
  "thiserror 2.0.21",
  "time",
@@ -4275,6 +4268,7 @@ version = "0.1.0"
 dependencies = [
  "blake3",
  "devkit",
+ "jsonschema",
  "serde_json",
  "sinex-model",
  "sqlx",
@@ -4303,8 +4297,10 @@ dependencies = [
 name = "sinex-session"
 version = "0.1.0"
 dependencies = [
+ "async-nats",
  "clap",
  "devkit",
+ "futures",
  "serde_json",
  "sinex-model",
  "sinex-protocol",
@@ -4369,7 +4365,6 @@ dependencies = [
  "proptest",
  "regex",
  "rusqlite",
- "rustix",
  "rustls",
  "serde",
  "serde-saphyr",
@@ -4378,7 +4373,6 @@ dependencies = [
  "sinex-model",
  "sinex-protocol",
  "sinex-source-core",
- "sinex-transport",
  "tar",
  "tempfile",
  "thiserror 2.0.21",
@@ -4424,6 +4418,7 @@ dependencies = [
  "blake3",
  "devkit",
  "tempfile",
+ "thiserror 2.0.21",
 ]
 
 [[package]]
@@ -4438,9 +4433,8 @@ dependencies = [
  "jiff",
  "rmcp",
  "serde_json",
- "sinex-diagnostics",
  "sinex-protocol",
- "sinex-transport",
+ "tempfile",
  "tokio",
 ]
 
@@ -4448,6 +4442,7 @@ dependencies = [
 name = "sinexd"
 version = "0.1.0"
 dependencies = [
+ "age",
  "async-nats",
  "axum",
  "base64 0.22.1",
@@ -4510,7 +4505,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c3d1e2c7f27f8d4cb10542a02c49005dbd6e93095799d6f3be745fae9f8fedd4"
 dependencies = [
  "libc",
- "windows-sys 0.61.2",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -4817,7 +4812,7 @@ dependencies = [
  "getrandom 0.4.3",
  "once_cell",
  "rustix",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -5445,7 +5440,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.61.2",
+ "windows-sys 0.48.0",
 ]
 
 [[package]]
@@ -5776,10 +5771,12 @@ dependencies = [
 name = "xtask"
 version = "0.1.0"
 dependencies = [
+ "blake3",
  "clap",
  "devkit",
  "serde",
  "serde_json",
+ "tempfile",
 ]
 
 [[package]]

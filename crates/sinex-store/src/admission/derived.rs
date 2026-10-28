@@ -94,8 +94,13 @@ pub(super) async fn apply_derived(
                 sqlx::query_scalar!("SELECT value FROM core.counters WHERE name = 'commit_seq'")
                     .fetch_one(&mut *conn)
                     .await?;
-            let name: &'static str = crate::derivations::static_type(derivation);
-            mark_dirty(conn, marked.into_iter().map(|k| (name, k)).collect(), seq).await
+            let name = derivation.to_string();
+            mark_dirty(
+                conn,
+                marked.into_iter().map(|k| (name.clone(), k)).collect(),
+                seq,
+            )
+            .await
         }
         DerivedScope::Position {
             inputs, position, ..
@@ -371,7 +376,7 @@ pub(super) async fn without_superseded_inputs(
 
 pub(super) async fn mark_dirty(
     conn: &mut PgConnection,
-    dirty: Vec<(&'static str, Value)>,
+    dirty: Vec<(String, Value)>,
     seq: i64,
 ) -> Result<usize> {
     if dirty.is_empty() {

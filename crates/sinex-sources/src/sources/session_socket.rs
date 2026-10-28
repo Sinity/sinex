@@ -211,10 +211,9 @@ fn capture_connection(stream: UnixStream, writer: &Mutex<SpoolWriter>) -> std::i
             let mut writer = writer
                 .lock()
                 .map_err(|_| std::io::Error::other("spool lock poisoned"))?;
-            let dropped = writer.dropped;
             writer.append(Timestamp::now(), body)?;
             writer.sync()?;
-            count += u64::from(writer.dropped == dropped);
+            count += 1;
         }
         line.clear();
         if ended {
@@ -350,6 +349,20 @@ pub fn source() -> DeclaredSource<SessionSocketParser> {
 pub const FORMAT: sinex_source_core::binding::InputFormat =
     sinex_source_core::binding::InputFormat {
         name: "integration-socket",
+        discovery: sinex_source_core::discovery::DiscoverySpec {
+            owner: sinex_source_core::discovery::Owner::Session,
+            locations: &[],
+            capabilities: &["runtime"],
+            credentials: &[],
+            streams: &[sinex_source_core::discovery::CaptureStream {
+                spool: "integrations",
+                options: &[],
+                capabilities: &[],
+            }],
+            requests: &[],
+            request_only: false,
+        },
+        discover: crate::discovery::discover_format,
         specs: || vec![&SPEC],
         plan: Some(|spool, settings| {
             Ok(sinex_source_core::binding::single(&SPEC, spool, settings))

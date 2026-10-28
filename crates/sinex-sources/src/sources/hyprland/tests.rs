@@ -1,5 +1,6 @@
 use super::*;
 use sinex_model::{MaterialId, ReadingOrder, RecordOutcome};
+use sinex_source_core::Reader;
 use sinex_source_core::{DrainInput, Limits, Source};
 
 fn rec(line: &str, ns: i128) -> Map<String, Value> {
@@ -128,11 +129,11 @@ fn spooled_capture_drains_to_typed_events() {
             manifest: &m.manifest,
         })
         .unwrap();
-    let mut types: Vec<&str> = Vec::new();
+    let mut types: Vec<String> = Vec::new();
     for outcome in chunks.iter().flat_map(|c| &c.outcomes) {
         match outcome {
             RecordOutcome::Events { events, .. } => {
-                types.extend(events.iter().map(|e| e.event_type))
+                types.extend(events.iter().map(|e| e.event_type.clone()))
             }
             RecordOutcome::Failure { reason, .. } => panic!("{reason}"),
         }

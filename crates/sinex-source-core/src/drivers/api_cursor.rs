@@ -7,6 +7,7 @@
 //! batches of one answer asks again from the old cursor, and what was already
 //! stored comes back as repeats.
 use super::{Acquired, DriverError, NewMaterial};
+use crate::binding::Reader;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 use sinex_model::{InputRef, MaterialId, ObservationFacts, RevisionChange, Timestamp};
@@ -38,8 +39,8 @@ pub struct ApiCursor<A> {
     pub api: A,
 }
 
-impl<A: Api> ApiCursor<A> {
-    pub fn poll(&self, cursor: &Value) -> Result<Acquired, DriverError> {
+impl<A: Api + Send> Reader for ApiCursor<A> {
+    fn poll(&mut self, cursor: &Value) -> Result<Acquired, DriverError> {
         let previous: Cursor = if cursor.is_null() {
             Cursor::default()
         } else {

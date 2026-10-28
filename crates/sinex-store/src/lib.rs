@@ -5,9 +5,12 @@
 //! SQL is checked at compile time against a live development database with
 //! `sqlx::query!`; there is no offline cache.
 pub mod admission;
+mod admission_context;
+pub use admission_context::{AdmissionContext, AdmissionTransaction};
 pub mod bindings;
 pub mod blobs;
 pub mod commit_log;
+pub mod copy_text;
 pub mod coverage;
 pub mod derivations;
 pub mod diagnostics;
@@ -29,7 +32,7 @@ pub mod writer_lock;
 
 pub use admission::{
     AffectedRange, ComputedKey, DerivedScope, DirtyKeys, KeyInput, NoDerivations, Outcome,
-    ReadMark, admit,
+    ReadMark,
 };
 pub use blobs::Blobs;
 pub use hashed_blobs::Verified;
@@ -46,6 +49,8 @@ pub const PAGE_BYTES: i64 = 8 << 20;
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
+    #[error(transparent)]
+    Query(#[from] sinex_model::query::QueryError),
     #[error(transparent)]
     Schema(#[from] sinex_schema::Error),
     #[error(transparent)]
@@ -65,5 +70,4 @@ pub enum Error {
 pub type Result<T, E = Error> = std::result::Result<T, E>;
 
 #[cfg(test)]
-#[path = "tests/schema.rs"]
 mod test_schema;

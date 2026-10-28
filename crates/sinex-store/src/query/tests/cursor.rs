@@ -3,14 +3,14 @@ use super::*;
 async fn ask_at(conn: &mut PgConnection, text: &str, ctx: &Context, page: Page) -> Result<Answer> {
     let fixed = context_for_page(ctx, &page)?;
     let bound = bind(text, &fixed).unwrap();
-    run(conn, text, &bound, &fixed, &page).await
+    run(conn, text, Some(&bound), &fixed, &page).await
 }
 
 #[devkit::test]
 async fn continuation_keeps_relative_time_at_the_original_logical_day(
     db: devkit::pg::TestDatabase,
 ) {
-    let mut conn = <sqlx::PgConnection as sqlx::Connection>::connect(&db.url(None))
+    let mut conn = crate::AdmissionContext::connect(&db.url(None))
         .await
         .unwrap();
     world(&mut conn).await;
@@ -54,7 +54,7 @@ async fn continuation_keeps_relative_time_at_the_original_logical_day(
 async fn continuation_refuses_changed_time_settings_and_a_different_bound_ast(
     db: devkit::pg::TestDatabase,
 ) {
-    let mut conn = <sqlx::PgConnection as sqlx::Connection>::connect(&db.url(None))
+    let mut conn = crate::AdmissionContext::connect(&db.url(None))
         .await
         .unwrap();
     world(&mut conn).await;
@@ -97,7 +97,7 @@ async fn continuation_refuses_changed_time_settings_and_a_different_bound_ast(
     let mut changed = bind(text, &ctx).unwrap();
     changed.stages.push(Stage::Limit(1));
     assert!(
-        run(&mut conn, text, &changed, &ctx, &page)
+        run(&mut conn, text, Some(&changed), &ctx, &page)
             .await
             .unwrap_err()
             .to_string()
@@ -131,7 +131,7 @@ async fn runs(conn: &mut PgConnection) -> Vec<RunId> {
 async fn duplicate_projected_rows_cannot_cancel_the_view_change_check(
     db: devkit::pg::TestDatabase,
 ) {
-    let mut conn = <sqlx::PgConnection as sqlx::Connection>::connect(&db.url(None))
+    let mut conn = crate::AdmissionContext::connect(&db.url(None))
         .await
         .unwrap();
     let ids = runs(&mut conn).await;
@@ -168,7 +168,7 @@ async fn duplicate_projected_rows_cannot_cancel_the_view_change_check(
 
 #[devkit::test]
 async fn walk_pages_use_the_same_question_and_visible_result_checks(db: devkit::pg::TestDatabase) {
-    let mut conn = <sqlx::PgConnection as sqlx::Connection>::connect(&db.url(None))
+    let mut conn = crate::AdmissionContext::connect(&db.url(None))
         .await
         .unwrap();
     let ids = world(&mut conn).await;
@@ -220,8 +220,8 @@ async fn walk_pages_use_the_same_question_and_visible_result_checks(db: devkit::
 async fn cursor_sizes_and_offsets_are_checked_before_integer_conversion(
     db: devkit::pg::TestDatabase,
 ) {
-    use base64::Engine as _;
-    let mut conn = <sqlx::PgConnection as sqlx::Connection>::connect(&db.url(None))
+    use sinex_model::query::cursor as encoding;
+    let mut conn = crate::AdmissionContext::connect(&db.url(None))
         .await
         .unwrap();
     world(&mut conn).await;
@@ -237,15 +237,11 @@ async fn cursor_sizes_and_offsets_are_checked_before_integer_conversion(
     .await
     .unwrap();
     let raw = first.page.cursor.unwrap();
-    let bytes = base64::engine::general_purpose::URL_SAFE_NO_PAD
-        .decode(raw)
-        .unwrap();
-    let value: Json = serde_json::from_slice(&bytes).unwrap();
+    let value: Json = encoding::decode(&raw).unwrap();
     for bad in [0, u64::MAX] {
         let mut changed = value.clone();
         changed["offset"] = json!(bad);
-        let raw = base64::engine::general_purpose::URL_SAFE_NO_PAD
-            .encode(serde_json::to_vec(&changed).unwrap());
+        let raw = encoding::encode(&changed).unwrap();
         assert!(
             ask_at(
                 &mut conn,
@@ -280,7 +276,7 @@ async fn page_count_and_rows_keep_one_snapshot_across_concurrent_run_completion(
     db: devkit::pg::TestDatabase,
 ) {
     use std::time::{Duration, Instant};
-    let mut conn = <sqlx::PgConnection as sqlx::Connection>::connect(&db.url(None))
+    let mut conn = crate::AdmissionContext::connect(&db.url(None))
         .await
         .unwrap();
     world(&mut conn).await;
@@ -301,7 +297,7 @@ async fn page_count_and_rows_keep_one_snapshot_across_concurrent_run_completion(
          ALTER VIEW core.visible_events RENAME TO cursor_original_events;
          CREATE VIEW core.visible_events AS SELECT id,event_type,source,run_id,material_id,anchor,output_index,parents,
          ts_orig,ts_quality,ts_coided,ts_persisted,commit_seq,public.cursor_wait(payload) AS payload,
-         equivalence_key,reading_order,record_hash,record_state,class FROM core.cursor_original_events;"
+         equivalence_key,reading_order,record_hash,record_state,class,kind_version,validation FROM core.cursor_original_events;"
     ).execute(&mut conn).await.unwrap();
     let mut writer = PgConnection::connect(&db.url(None)).await.unwrap();
     let mut block = writer.begin().await.unwrap();
@@ -366,7 +362,7 @@ async fn page_count_and_rows_keep_one_snapshot_across_concurrent_run_completion(
 
 #[devkit::test]
 async fn provenance_walks_refuse_stages_the_reader_does_not_execute(db: devkit::pg::TestDatabase) {
-    let mut conn = <sqlx::PgConnection as sqlx::Connection>::connect(&db.url(None))
+    let mut conn = crate::AdmissionContext::connect(&db.url(None))
         .await
         .unwrap();
     let ids = world(&mut conn).await;
@@ -381,7 +377,7 @@ async fn provenance_walks_refuse_stages_the_reader_does_not_execute(db: devkit::
 /// not yet handed out shows on its page instead of refusing the question.
 #[devkit::test]
 async fn a_change_after_the_rows_handed_out_shows_on_a_later_page(db: devkit::pg::TestDatabase) {
-    let mut conn = <sqlx::PgConnection as sqlx::Connection>::connect(&db.url(None))
+    let mut conn = crate::AdmissionContext::connect(&db.url(None))
         .await
         .unwrap();
     let ids = runs(&mut conn).await;

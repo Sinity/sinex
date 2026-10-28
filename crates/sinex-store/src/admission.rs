@@ -29,6 +29,7 @@ mod archive;
 pub use archive::erase_archive_history;
 mod classify;
 mod derived;
+mod kinds;
 mod register;
 mod write;
 
@@ -59,7 +60,7 @@ pub struct AffectedRange {
 /// The key functions of the keyed derivations, supplied by the daemon, which
 /// owns the derivation registry. Admission marks every returned key dirty.
 pub trait DirtyKeys: Send + Sync {
-    fn keys(&self, event: &KeyInput<'_>) -> Vec<(&'static str, Value)>;
+    fn keys(&self, event: &KeyInput<'_>) -> Vec<(String, Value)>;
     fn affected_ranges(&self, _: &KeyInput<'_>) -> Vec<AffectedRange> {
         Vec::new()
     }
@@ -72,7 +73,7 @@ pub trait DirtyKeys: Send + Sync {
 pub struct NoDerivations;
 
 impl DirtyKeys for NoDerivations {
-    fn keys(&self, _: &KeyInput<'_>) -> Vec<(&'static str, Value)> {
+    fn keys(&self, _: &KeyInput<'_>) -> Vec<(String, Value)> {
         Vec::new()
     }
 }
@@ -101,15 +102,50 @@ pub struct Outcome {
     /// The commit sequence range given to admitted events.
     pub commit_seq: Option<(i64, i64)>,
     pub admitted_ids: Vec<EventId>,
+    pub registered_kinds: Vec<(sinex_model::KindRef, String)>,
+    /// Monotonic stage durations, without payloads or database identities.
+    pub timings: std::collections::BTreeMap<&'static str, std::time::Duration>,
+}
+
+// Borrowed outcomes add counts and positions; callers take request IDs separately.
+impl std::ops::AddAssign<&Outcome> for Outcome {
+    fn add_assign(&mut self, other: &Self) {
+        self.admitted += other.admitted;
+        self.repeats += other.repeats;
+        self.replaced += other.replaced;
+        self.older += other.older;
+        self.hidden += other.hidden;
+        self.superseded += other.superseded;
+        self.failures += other.failures;
+        self.dirty_keys += other.dirty_keys;
+        self.replay_archived += other.replay_archived;
+        for (&stage, &elapsed) in &other.timings {
+            *self.timings.entry(stage).or_default() += elapsed;
+        }
+        if let Some((start, end)) = other.commit_seq {
+            self.commit_seq = Some(match self.commit_seq {
+                Some((first, last)) => (first.min(start), last.max(end)),
+                None => (start, end),
+            });
+        }
+    }
+}
+
+impl std::ops::AddAssign for Outcome {
+    fn add_assign(&mut self, other: Self) {
+        *self += &other;
+        self.admitted_ids.extend(other.admitted_ids);
+        self.registered_kinds.extend(other.registered_kinds);
+    }
 }
 
 /// Admit `batch` inside the caller's open transaction.
-pub async fn admit(
+pub(crate) async fn admit(
     conn: &mut PgConnection,
+    cache: &mut privacy::Cache,
     batch: &Batch,
     keys: &dyn DirtyKeys,
 ) -> Result<Outcome> {
-    sinex_schema::require_current(conn).await?;
     let mut outcome = Outcome::default();
     let kept_batch;
     let batch = match derived::without_superseded_inputs(conn, batch).await? {
@@ -120,6 +156,12 @@ pub async fn admit(
         }
         None => batch,
     };
+    if let BatchKind::Ingress(frame) = &batch.kind
+        && frame.refusal.is_none()
+    {
+        outcome.registered_kinds =
+            sinex_schema::kinds::register(conn, &frame.producer, &frame.declarations).await?;
+    }
     // The live reading each offered event ends as: itself when admitted, the
     // reading it repeats when suppressed. A derived batch's keys own these.
     let mut resolved: Vec<Option<Uuid>> = Vec::new();
@@ -134,6 +176,7 @@ pub async fn admit(
             "producer protocol does not authorize archive-owned source state".into(),
         ));
     }
+    let started = std::time::Instant::now();
     match &batch.kind {
         BatchKind::Source(progress) => register::source(conn, progress).await?,
         BatchKind::Ingress(frame) => {
@@ -143,6 +186,8 @@ pub async fn admit(
         }
         BatchKind::Derived { .. } | BatchKind::Api { .. } | BatchKind::Replay { .. } => {}
     }
+    outcome.timings.insert("registration", started.elapsed());
+    let started = std::time::Instant::now();
     for request in &batch.archive {
         if let ArchiveRequest::Replay { scope, operation } = request {
             let (archived, dirty) = archive::replay_scope(conn, scope, *operation, keys).await?;
@@ -151,23 +196,60 @@ pub async fn admit(
         }
     }
 
+    outcome.timings.insert("replay_archive", started.elapsed());
     let mut events: Vec<Event> = batch.events().cloned().collect();
-    apply_privacy(conn, batch, &mut events).await?;
+    let mut declarations = kinds::prepare(conn, batch, &mut events).await?;
+    let started = std::time::Instant::now();
+    apply_privacy(conn, cache, batch, &mut events).await?;
+    outcome.timings.insert("privacy", started.elapsed());
+    let started = std::time::Instant::now();
     removed_at_source(conn, batch, &mut events).await?;
+    let missing: Vec<_> = events
+        .iter()
+        .map(Event::kind_ref)
+        .filter(|r| !declarations.contains_key(r))
+        .collect::<std::collections::BTreeSet<_>>()
+        .into_iter()
+        .collect();
+    let added = sinex_schema::kinds::load(conn, &missing).await?;
+    if missing.iter().any(|r| !added.contains_key(r)) {
+        return Err(crate::Error::Invalid(
+            "a removal cites an unavailable declaration".into(),
+        ));
+    }
+    declarations.extend(added);
+    outcome
+        .timings
+        .insert("removed_at_source", started.elapsed());
 
     if !events.is_empty() {
         let classified = classify::stage_and_classify(conn, &events, &mut outcome).await?;
-        classify::keep_known(conn, &events, &classified.replaced).await?;
+        let started = std::time::Instant::now();
+        sqlx::query!(
+            "DELETE FROM core.admission_stage AS staged
+             WHERE NOT EXISTS (SELECT 1 FROM unnest($1::integer[]) AS admitted(ord)
+               WHERE admitted.ord = staged.ord)",
+            &classified.admit
+        )
+        .execute(&mut *conn)
+        .await?;
+        outcome.timings.insert("discard", started.elapsed());
+        let started = std::time::Instant::now();
+        classify::keep_known(conn, &mut events, &classified.replaced, &declarations).await?;
+        outcome.timings.insert("keep_known", started.elapsed());
         if !classified.admit.is_empty() {
             write::insert_admitted(conn, batch, &events, &classified, keys, &mut outcome).await?;
         }
         resolved = classified.resolved;
     }
 
+    let started = std::time::Instant::now();
     if let BatchKind::Derived { derivation, scope } = &batch.kind {
         outcome.dirty_keys +=
             derived::apply_derived(conn, derivation, scope, batch, &resolved, keys).await?;
     }
+    outcome.timings.insert("derived", started.elapsed());
+    let started = std::time::Instant::now();
     outcome.failures = write::record_failures(conn, batch).await?;
     if let BatchKind::Source(progress) = &batch.kind {
         write::save_position(conn, progress).await?;
@@ -175,15 +257,23 @@ pub async fn admit(
     for request in &batch.archive {
         outcome.dirty_keys += archive::request(conn, request, keys).await?;
     }
-    if let BatchKind::Ingress(frame) = &batch.kind {
+    if let BatchKind::Ingress(frame) = &batch.kind
+        && !frame.frame.is_empty()
+    {
         register::frame(conn, frame, &outcome).await?;
     }
+    outcome.timings.insert("progress", started.elapsed());
     Ok(outcome)
 }
 
 /// Apply the privacy rules to every event, once: reads never apply a rule
 /// again.
-async fn apply_privacy(conn: &mut PgConnection, batch: &Batch, events: &mut [Event]) -> Result<()> {
+async fn apply_privacy(
+    conn: &mut PgConnection,
+    cache: &mut privacy::Cache,
+    batch: &Batch,
+    events: &mut [Event],
+) -> Result<()> {
     if events.is_empty() {
         return Ok(());
     }
@@ -232,7 +322,7 @@ async fn apply_privacy(conn: &mut PgConnection, batch: &Batch, events: &mut [Eve
             }
         }
     }
-    let rules = privacy::load(conn, events.iter().map(|e| e.source.as_str())).await?;
+    let rules = cache.load(conn).await?;
     for event in events.iter_mut() {
         rules.apply(event)?;
     }
@@ -276,7 +366,7 @@ async fn keep_removed_class(conn: &mut PgConnection, events: &mut [Event]) -> Re
     let live = sqlx::query!(
         r#"SELECT r.ord AS "ord!", e.class AS "class!"
            FROM unnest($1::text[], $2::text[], $3::text[]) WITH ORDINALITY AS r(source, event_type, key, ord)
-           JOIN core.live_equivalence l ON l.source = r.source AND l.event_type = r.event_type AND l.equivalence_key = r.key
+           JOIN core.live_equivalence l ON l.source = r.source AND l.event_type = r.event_type AND l.equivalence_key = core.encode_equivalence_key(r.key)
            JOIN core.events e ON e.id = l.event_id"#,
         &sources,
         &types,
@@ -316,6 +406,8 @@ async fn removed_at_source(
                         *hash.finalize().as_bytes()
                     },
                     record_state: sinex_model::RecordState::Removed,
+                    replace: Some(sinex_model::ReplaceRule::ReplaceWhenNewer),
+                    validation: sinex_model::Validation::Unvalidated,
                     ..live
                 });
             }

@@ -30,6 +30,8 @@ pub fn zone(name: Option<&str>) -> Result<jiff::tz::TimeZone, String> {
 pub struct Settings {
     /// The host the input is on.
     pub host: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub class: Option<sinex_model::Class>,
     /// IANA zone for sources whose records carry local times without one,
     /// resolved when the binding is planned.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -70,6 +72,19 @@ impl Settings {
     /// A string option.
     pub fn option(&self, key: &str) -> Option<&str> {
         self.options.get(key).and_then(Value::as_str)
+    }
+
+    /// A declared boolean option from JSON or a command's key=value pair.
+    pub fn boolean(&self, key: &str) -> Result<Option<bool>, String> {
+        match self.options.get(key) {
+            None => Ok(None),
+            Some(Value::Bool(value)) => Ok(Some(*value)),
+            Some(Value::String(value)) => value
+                .parse::<bool>()
+                .map(Some)
+                .map_err(|_| format!("option {key}: expected true or false")),
+            Some(_) => Err(format!("option {key}: expected true or false")),
+        }
     }
 
     /// An unsigned option.
@@ -199,8 +214,11 @@ pub type Capture = fn(&Binding, &crate::capture::CaptureStop) -> Result<u64, Str
 
 /// An input format and the sources that read it: what `--read FORMAT=PATH`,
 /// `sources.json` and `sinex-session` name.
+#[derive(Debug)]
 pub struct InputFormat {
     pub name: &'static str,
+    pub discovery: crate::discovery::DiscoverySpec,
+    pub discover: crate::discovery::Discover,
     pub specs: fn() -> Vec<&'static SourceSpec>,
     /// `None` for sources written only through another path (the API's
     /// library requests, the crawl command): they are replayable but not
@@ -276,34 +294,6 @@ pub fn polled(driver: impl Reader + 'static) -> Reading {
 #[cfg(feature = "archives")]
 pub fn shared(driver: crate::drivers::export_archive::ExportArchive) -> Reading {
     Reading::Shared(Box::new(driver))
-}
-
-impl Reader for crate::drivers::live_stream::LiveStream {
-    fn poll(&mut self, cursor: &Value) -> Result<Acquired, DriverError> {
-        Self::poll(self, cursor)
-    }
-
-    fn remove_passed(&self, committed: &Value) -> Result<usize, DriverError> {
-        Self::remove_passed(self, committed).map_err(|e| DriverError::Io(e.to_string()))
-    }
-}
-
-impl Reader for crate::drivers::media::Media {
-    fn poll(&mut self, cursor: &Value) -> Result<Acquired, DriverError> {
-        Self::poll(self, cursor)
-    }
-
-    fn remove_passed(&self, committed: &Value) -> Result<usize, DriverError> {
-        Self::remove_passed(self, committed).map_err(|e| DriverError::Io(e.to_string()))
-    }
-}
-
-impl<A: crate::drivers::api_cursor::Api + Send + Sync + 'static> Reader
-    for crate::drivers::api_cursor::ApiCursor<A>
-{
-    fn poll(&mut self, cursor: &Value) -> Result<Acquired, DriverError> {
-        Self::poll(self, cursor)
-    }
 }
 
 /// An append-only file read with state about the records it stored, so a
@@ -408,8 +398,14 @@ pub fn rows(driver: SqliteRows) -> Reading {
 
 #[cfg(feature = "sqlite")]
 impl Reader for Rows {
+    /// An appended table needs only its cursor, so it reads no history.
     fn history_from(&self, cursor: &Value) -> Option<sinex_model::MaterialId> {
-        crate::drivers::cursor_material(cursor).map(|(material, _)| material)
+        match self.driver.changes {
+            crate::drivers::sqlite_rows::Changes::InPlace { .. } => {
+                crate::drivers::cursor_material(cursor).map(|(material, _)| material)
+            }
+            crate::drivers::sqlite_rows::Changes::Appended => None,
+        }
     }
 
     fn restore(&mut self, cursor: &Value, material: StoredMaterial) -> Result<bool, DriverError> {
@@ -448,12 +444,19 @@ impl Reader for Rows {
 struct Walked {
     driver: DirSnapshot,
     state: DirState,
+    excluded: Vec<PathBuf>,
 }
 
 pub fn walked(driver: DirSnapshot) -> Reading {
+    walked_excluding(driver, Vec::new())
+}
+
+/// Subtrees owned by another source are left out of this directory walk.
+pub fn walked_excluding(driver: DirSnapshot, excluded: Vec<PathBuf>) -> Reading {
     Reading::Polled(Box::new(Walked {
         driver,
         state: DirState::default(),
+        excluded,
     }))
 }
 
@@ -471,11 +474,19 @@ impl Reader for Walked {
             _ => reference.length,
         };
         self.state.remember_members(&reference.manifest, admitted)?;
+        if self.driver.removed_at_source {
+            self.state
+                .remember_locations(&reference.manifest, admitted, reference.id)?;
+        }
         Ok(true)
     }
 
     fn restore_memory(&mut self, memory: &[u8]) -> Result<(), DriverError> {
-        self.state.remember_saved(memory)
+        self.state.remember_saved(memory)?;
+        if self.driver.removed_at_source {
+            self.state.check_locations()?;
+        }
+        Ok(())
     }
 
     fn restored(&mut self) -> Result<(), DriverError> {
@@ -484,7 +495,8 @@ impl Reader for Walked {
     }
 
     fn poll(&mut self, cursor: &Value) -> Result<Acquired, DriverError> {
-        self.driver.poll(cursor, &mut self.state)
+        self.driver
+            .poll_excluding(cursor, &mut self.state, &self.excluded)
     }
 }
 

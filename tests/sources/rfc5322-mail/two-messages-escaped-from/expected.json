@@ -6,10 +6,12 @@
         "type": "mail.message",
         "ts": "2024-01-01T10:00:00Z",
         "time": "Intrinsic",
-        "key": "099afb09a62d71cc03eb3485dfae538cd6c0f12e32657c2bca419a1cdb5c2d0c",
+        "key": "684a0d88d8417b05d42c6f220979d8c745a238ab19a8bb0d030ccc175d901c5b",
         "state": "Present",
         "payload": {
+          "account": null,
           "message_id": "one@example.org",
+          "native_id": null,
           "date": "2024-01-01T10:00:00Z",
           "from": [
             "Alice <alice@example.org>"
@@ -18,6 +20,7 @@
             "bob@example.org"
           ],
           "cc": [],
+          "bcc": [],
           "subject": "first",
           "in_reply_to": null,
           "references": [],
@@ -38,10 +41,12 @@
         "type": "mail.message",
         "ts": "2024-01-01T11:00:00Z",
         "time": "Intrinsic",
-        "key": "e4fc6c555cccbc68bba8306aeaf2084bd8681f04cc920b78d0a8a48073503fe0",
+        "key": "909e5cfa95a6962e8e38ec076af5b7390e0faaaf7b425a207cead3405ef1c3a8",
         "state": "Present",
         "payload": {
+          "account": null,
           "message_id": "two@example.org",
+          "native_id": null,
           "date": "2024-01-01T11:00:00Z",
           "from": [
             "Bob <bob@example.org>"
@@ -50,6 +55,7 @@
             "alice@example.org"
           ],
           "cc": [],
+          "bcc": [],
           "subject": "Re: first",
           "in_reply_to": "one@example.org",
           "references": [],

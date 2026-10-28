@@ -30,6 +30,17 @@ pub async fn begin(
     )
     .execute(&mut *conn)
     .await?;
+    let saved = sqlx::query!(
+        "SELECT kind,actor,scope FROM core.operations WHERE id=$1",
+        operation.0
+    )
+    .fetch_one(&mut *conn)
+    .await?;
+    if saved.kind != "replay" || saved.actor != actor || saved.scope != *scope {
+        return Err(crate::Error::Invalid(
+            "replay_build_changed: operation scope differs".into(),
+        ));
+    }
     Ok(())
 }
 
@@ -239,3 +250,84 @@ pub async fn inputs_of(conn: &mut PgConnection, materials: &[Uuid]) -> Result<Ve
 
 #[cfg(test)]
 mod tests;
+
+/// Part links and digests of materials this producer registered.
+pub async fn producer_materials(
+    conn: &mut PgConnection,
+    producer: &str,
+) -> Result<Vec<(Uuid, Option<Uuid>, String)>> {
+    let rows = sqlx::query!("SELECT DISTINCT m.id,m.previous_part_id,m.blob FROM raw.materials m JOIN core.ingress_frames f ON f.material_id=m.id WHERE f.producer=$1 ORDER BY m.id",producer).fetch_all(conn).await?;
+    Ok(rows
+        .into_iter()
+        .map(|row| (row.id, row.previous_part_id, row.blob))
+        .collect())
+}
+
+/// The live readings in the exact producer replay scope, sorted by ID.
+pub async fn producer_live_hash(
+    conn: &mut PgConnection,
+    producer: &str,
+    scope: &sinex_model::ReplayScope,
+) -> Result<(u64, String)> {
+    let ids: Vec<_> = scope.materials.iter().map(|m| m.0).collect();
+    let rows = sqlx::query!(
+        "SELECT e.id,e.record_hash FROM core.events e WHERE e.source=$1 AND e.material_id=ANY($2)
+      AND ($3::text[] IS NULL OR e.event_type=ANY($3))
+      AND ($4::timestamptz IS NULL OR e.ts_orig >= $4)
+      AND ($5::timestamptz IS NULL OR e.ts_orig < $5)
+      AND NOT EXISTS(SELECT 1 FROM audit.archived a WHERE a.event_id=e.id) ORDER BY e.id",
+        producer,
+        &ids,
+        scope.event_types.as_deref(),
+        scope.from.map(|t| t.0),
+        scope.until.map(|t| t.0)
+    )
+    .fetch_all(conn)
+    .await?;
+    let mut hash = blake3::Hasher::new();
+    for row in &rows {
+        hash.update(row.id.as_bytes());
+        hash.update(&row.record_hash);
+    }
+    Ok((rows.len() as u64, hash.finalize().to_hex().to_string()))
+}
+
+/// Verify the committed replacement has no readings outside its fixed scope.
+pub async fn producer_outputs_in_scope(
+    conn: &mut PgConnection,
+    producer: &str,
+    ids: &[Uuid],
+    scope: &sinex_model::ReplayScope,
+) -> Result<bool> {
+    let materials: Vec<_> = scope.materials.iter().map(|m| m.0).collect();
+    let outside = sqlx::query_scalar!(
+        r#"SELECT EXISTS(SELECT 1 FROM core.events e WHERE e.id=ANY($1)
+      AND (e.source<>$2 OR NOT e.material_id=ANY($3)
+        OR ($4::text[] IS NOT NULL AND NOT e.event_type=ANY($4))
+        OR ($5::timestamptz IS NOT NULL AND (e.ts_orig IS NULL OR e.ts_orig<$5))
+        OR ($6::timestamptz IS NOT NULL AND (e.ts_orig IS NULL OR e.ts_orig>=$6)))) AS "outside!""#,
+        ids,
+        producer,
+        &materials,
+        scope.event_types.as_deref(),
+        scope.from.map(|t| t.0),
+        scope.until.map(|t| t.0)
+    )
+    .fetch_one(conn)
+    .await?;
+    Ok(!outside)
+}
+
+/// Refusals are stored even when no sequence can be parsed.
+pub async fn record_refusals(
+    conn: &mut PgConnection,
+    operation: OperationId,
+    refusals: &[Value],
+) -> Result<()> {
+    for refusal in refusals {
+        let material: Uuid = serde_json::from_value(refusal["material"].clone())
+            .map_err(|_| crate::Error::Invalid("replay refusal has no material".into()))?;
+        sqlx::query!("INSERT INTO core.replay_refusals (operation_id,material_id,refusal) VALUES ($1,$2,$3) ON CONFLICT (operation_id,material_id) DO UPDATE SET refusal=EXCLUDED.refusal",operation.0,material,refusal).execute(&mut *conn).await?;
+    }
+    Ok(())
+}

@@ -1,190 +1,135 @@
 # Vocabulary
 
-One name per concept. Code, SQL, wire keys, error text, comments and docs use
-these names and no others.
+Each concept and its one name, with a one-line meaning. Code, SQL, wire keys,
+error text, comments and docs use these names. The values of closed sets
+(kinds, sources, tables, settings) are in the generated
+[reference](reference/README.md); the shared mechanics (blob, segment, extent,
+day setting, operation, failure kind, deadline class) are named in common's
+[vocabulary](https://github.com/Sinity/polylogue-sinex-common/blob/master/docs/vocabulary.md).
 
-## Captured data
+## Capture
 
-- **input**: something Sinex observes repeatedly: a file, a database, a socket, an API collection.
-- **source**: a named kind of record Sinex reads, `<area>.<name>` (`terminal.zsh-history`), with its parser, its event types and its purpose. Events carry the source's name. Several declarations can share one source name: one per table it reads (`operator.steering`) or one per format that reads it (the live clipboard and its lake lane).
-- **format**: how an input is laid out and which sources it feeds (`zsh`, `takeout`, `sinnix-lake`); `--read FORMAT=PATH` plans the bindings for an input in that format.
+- **source**: a named kind of record Sinex reads, `<area>.<name>` (`terminal.atuin-history`), with one declaration holding its parser, its kinds and its settings ([sources](sources.md#one-declaration-per-source)).
+- **source family**: a group of sources about one domain (shell, browsers, mail …) whose fidelity requirements are stated together ([source families](source-families.md)).
+- **input**: something Sinex observes repeatedly: a file, a directory, a database, a socket, an account collection.
+- **input shape**: how an input is read (append-only file, database rows, export archive, directory, live stream, account API, producer).
+- **change model**: how a source learns that its input changed and what a change means.
 - **binding**: one configured instance of a source: the source, its input and its settings.
-- **driver**: shared code that reads one input shape (append-only file, SQLite rows, export archive, directory snapshot, live stream, API cursor, media, producer, API request).
-- **reader**: one binding's driver with what it remembers about its input.
-- **poll**: one look by a reader at its input. It yields an acquisition.
-- **acquire**, **acquisition**: obtaining an input's bytes; an acquisition (`Acquired`) is what one poll produced: the observation's facts, the revision change and any new material.
-- **observation**: the recorded facts of one poll (size, time, whether it changed); unchanged polls only count up.
+- **stage**: to hand bytes to Sinex as material; the one way anything enters, whether once (`stage PATH`) or continuously (a binding) ([staging](materials.md#staging)).
+- **observation**: the recorded facts of one look at an input (size, time, whether it changed).
 - **revision**: an input's content as of an observation that found a change.
-- **material**: immutable stored bytes that events cite, with a manifest.
-- **manifest**: what a material's bytes are and how to read them: where they came from, their media type, the records a driver listed, and the driver's details.
-- **part**: one closed chunk of a growing input; each part is its own material and names the part before it, so an input's parts form a **part sequence**.
-- **blob**: bytes in the content store, named by their BLAKE3 hash.
-- **owned blob**: a blob an event's payload names beyond its material (a library file copy); excising the event deletes it.
-- **stored bytes**: the bytes of a material as kept in the content store; replay reads them.
-- **unadmitted bytes**: blobs written before the admission that will cite them. A failed admission is retried from them while the reader holds them; a file a crash leaves with no `core.blobs` row is deleted when the daemon next starts.
-- **held material**: the newest material a reader keeps in memory until its final cursor is admitted, so a failed admission retries the same bytes.
-- **framing**: splitting a material's bytes into records (lines, delimiters, archive members); a **framer** is a source's framing, used alike by its driver, replay and excision.
-- **record**: one unit a parser reads from a material (a line, a row, a file, a message).
-- **record location**: `(material, anchor)`, where a record starts; the **anchor** is its byte offset. The query language and references call it the offset.
-- **output index**: which of a record's events an event is, when one record yields several.
+- **spool**: a live capture's local directory of segment files, written before anything is sent; binary spools are pcapng ([streams](streams.md#spools)).
+- **gap**: an interval in which a capture may have missed data, recorded as a `capture.gap` event with its reason ([gaps](sources.md#gaps)).
+- **exclusion**: the one per-source setting: a source or input left out, with a recorded reason.
+- **source health**: whether a source is observing as its declaration expects; shown in status.
+
+## Materials and records
+
+- **material**: stored, immutable, source-shaped bytes that events cite: a file revision, a part of a growing file, a capture segment, an export, a set of database rows ([materials](materials.md)).
+- **part**: one closed chunk of a growing input; an input's parts form its **part sequence**.
+- **manifest**: what a material's bytes are and how to read them.
+- **directory capture**: a directory stored as one PAX tar material.
+- **record**: one datapoint inside a material (a line, a row, a file, a message).
+- **record coordinates**: `(material, anchor)`, where a record starts; the **anchor** is its byte offset.
+- **source record key**: the key by which a source recognises the same record seen again in another material ([identity](events.md#identity)).
+- **record hash**: the hash of a record's content, independent of privacy rules.
 - **record failure**: a record the parser could not read, stored with its bytes.
-- **drain**: running a source's parser over a material's records, attaching record locations, hashes, carry and record failures to each batch.
-- **carry**: parser state kept between records of one input.
-- **cursor**: how far a binding's input has been admitted.
-- **reader memory**: what a reader remembers about its input (each row's hash, each file's size, time and hash), saved with the cursor at the end of a part so a restart reads only the parts after it.
-- **shared pass**: one read of a stored file for every compatible binding of it (export archives); each binding keeps its own parts and cursor.
-- **spool**: a live capture's directory of segment files, which its binding then reads like a growing file.
+- **removed at source**: the source no longer has a record; stored as a newer reading saying so.
 
 ## Events
 
-- **event**: one reading of a record, or of parent events: a typed payload, an origin and three clocks.
-- **event type**: the registered name of a payload type, `<thing>.<what>` (`command.executed`, `note.document`). An occurrence is named with a past participle (`window.opened`), a state or record with a noun (`journal.entry`). A **span** is a state a source observed with its end; an **interval** is one a derivation computed.
-- **reading**: the event a record produced on one read; the **live reading** is the current one, older ones are **archived**, each with an archive reason (`replay`, `newer_reading`, `hide`, `recomputed`).
-- **reading order**: which of two readings of a record is newer.
-- **equivalence key**: the per-type key that recognizes the same thing seen again in another material.
+- **event**: a typed payload with one origin (a record, or parent events) and three clocks ([events](events.md)).
+- **kind**: the registered name and declaration of a payload type (`command.executed`), with its fields, field hints, keying and search participation.
+- **reading**: the event one read of a record produced; at most one reading of a record is **live**.
+- **reading order**: which of two readings of a record is newer; assigned or checked by Sinex, never taken from a producer's clock.
 - **clocks**: `ts_orig` (when it happened, or unknown), `ts_coided` (when Sinex read it, from the UUIDv7 ID), `ts_persisted` (when it was committed).
-- **time suspect**: the query field that labels a stated time that looks wrong (`future`: later than Sinex read it; `epoch zero`); the time is kept as stated, never refused or changed.
-- **producer version**: the version of the producer whose run wrote an event, so outputs of two derivation versions are told apart while a recompute runs.
 - **derived event**: an event computed by a derivation, naming its parents.
-- **telemetry**: Sinex's own state, sampled by the daemon every minute as `sinex.telemetry` events (a **sample** per part: the writer, the publisher, the search index, each derivation and source) and admitted, replayed and queried as ordinary events.
-- **fusion**: joining what several sources observed of one thing into one **fused record**: `command.fused`, `focus.fused`, `visit.fused`, `play.fused`, `clipboard.fused`, `notification.fused`, `mail.fused`. Each fused kind has one **fusion rule**; a **fusion input** (`FusionInput`) reads one source's events for it as **fusion records** (`FusionRecord`) (an identity, a start, maybe an end, the fields it supplies). A **fused command** is a `command.fused` event.
-- **agency**: who the recorded evidence supports as acting: `operator`, `supervising`, `delegated`, `automated`, `passive`, `unknown` or `mixed`. Focus and clipboard changes alone do not establish agency.
-- **activity window**: operator evidence joined while gaps stay below 300 seconds, partitioned by civil hour with continuation flags. Counts belong to the hour of each record's start; measured support excludes the gaps.
-- **activity session**: activity windows joined across breaks shorter than the configured threshold (900 seconds by default), across hours and logical days. Explicit lock, suspend or sleep closes it. A `short_break` member records an internal break of at least 120 seconds.
-- **activity span**: an elementary, non-overlapping segment within one scope and hour, describing agency, presence claims, focus, input, display and playback with its evidence. Unsupported time stays unknown.
-- **activity profile**: the configured break threshold for activity sessions; changing it recomputes the sessions.
-- **shell session**: the `shell.session` derived event: a run of commands in one terminal; `recall last` reads around the latest one.
-- **batch**: what a producer hands the writer: records with their events or failures, and progress.
+- **producer version**: the exact version of the parser or derivation that made an event.
 - **run**: one execution of a producer; every event names its run.
+- **citation**: a stable reference to an event, record, key or time window, readable by every surface ([citation forms](query.md#citation-forms)).
 
-## Storing and reading
+## Lifecycle
 
-- **admission**: the one function that stores events and source progress together. **Stage** names only its staging table.
-- **writer**: the daemon task that runs admission, one transaction at a time.
-- **commit log**: committed events in commit order; each entry has a **commit position**.
-- **visibility change**: a reading leaving or rejoining the live set (archived, hidden, unhidden), numbered by its **change position** in `audit.archive_changes`.
-- **derivation**: keyed (recomputes a **dirty key** when its inputs change; a **computed key** is one key's new output set) or per-event.
-- **read mark**: the change position and excision count when a derivation read its inputs, carried with computed outputs so admission can check whether those inputs are still live.
-- **superseded input**: an input a derivation read that stopped being live (a newer reading or a replay archived it, or excision removed it) before the outputs computed from it were stored; those outputs are dropped and computed again from what is live.
-- **interval end**: the payload timestamp ending an interval, or its duration in nanoseconds. An input query reads earlier intervals whose ends overlap its window. An unbounded input query reads every known-time event of its kinds.
-- **kind** (of what a key reads): events of one type, optionally only those whose payload fields have given values.
-- **tag assignment**: a `tag.applied` derived event naming the input record, its tag and the rules that matched.
-- **metric**: a declared count over events (events, seconds of their intervals, or a ratio), with its **dimensions** (payload fields it is broken down by) and the sources that observe it. A **tracked metric** is one the brief compares with its recent level.
-- **calculation**: how a metric counts its inputs: events, seconds or a ratio.
-- **figure**: a metric's number over one civil hour or logical day, total or for one **dimension value**, as a `metric.figure` event; a **health figure** (`health.figure`) is the same for one series of health points.
-- **coverage**: the stretches in which a source could have recorded what it records, computed from its runs and records when asked for.
-- **panel**: logical days by metrics, each **cell** observed, partial, recorded or missing with its reason, from the daily figures and coverage.
-- **finding**: a typed statement in a brief or a recipe's answer, with its caveats and the figures it cites.
-- **recipe**: a shipped analysis (correlations, trends, deviations) run over a panel when asked for.
-- **derivation runner**, **binding runner**: the daemon tasks that run derivations and keep configured bindings read.
-- **comparison**: what a recompute with `--compare` would change, kept in `derivation.comparisons` without writing outputs.
-- **replay**: reading stored bytes again with the current parsers, one part sequence per transaction.
-- **text list**: a field declared as an array of strings; a comparison matches a member, and inequality excludes every matching member.
-- **query table**: what a query reads (`events`, `archive`, `materials`, `runs`, `sources`, `operations`, `failures`, `gaps`, `drift`), each with its fields.
-- **reference**: how a command names one event: an event ID or `sinex:ev/<id>`, `sinex:record/<material>/<offset>[/<event type>[/<output index>]]`, `sinex:key/<source>/<event type>/<equivalence key>`, or a time citation.
-- **moment mark**: an operator-authored moment, note and client-observed context (`operator.mark`); `recall mark` reads around it.
-- **saved query**: a named query definition (`query.saved`) with declared scalar parameters, invoked as `query:NAME` or `query:NAME@AUTHOR`.
-- **parameter**: a named scalar value supplied when running a saved query; never a field or a clause.
-- **filled bucket**: a time group emitted even when it has no records, with its observation coverage.
-- **time citation**: `sinex:at/TIME/TYPE`, the live spanning output containing an absolute instant; `sinex:window/FROM/TO` names a recall window.
-- **operation**: something the operator or an agent did to Sinex, attributed and logged.
-- **purpose**: what a source's events are for (`command fusion and shell recall`).
+- **live**, **archived**, **tombstoned**: the three states of an event or material ([lifecycle](lifecycle.md#states)).
+- **archive**: move to the trash, reversibly, with the whole derived chain; **restore** is its inverse.
+- **replay**: read stored records again; each new reading becomes live and the reading it replaces is archived with its chain.
+- **undo**: archive what an operation made live and restore what it archived.
+- **tombstone**: the one irreversible deletion of an archived chain; a skeleton is kept.
+- **archive reason**: why a reading was archived (replay, a newer reading, the operator's archive, a recompute).
+- **whole chain**: an event with everything derived from it; it moves between states together.
+- **operation**: something the operator or an agent did to Sinex, recorded with its computed **actor**.
+- **as-of read**: a read of what was live at a given commit position.
+
+## Admission and storage
+
+- **admission**: the one function that stores events and source progress together ([admission](admission.md)).
+- **writer**: the daemon task that runs admission, one commit group at a time.
+- **commit log**: committed changes in commit order; each has a **commit position**.
+- **read model**: a table maintained by admission for reading (liveness, detector hits, `duplicates`).
+- **schema upgrade**: a numbered, data-preserving change to the stored schema, applied by `sinex-schema apply`.
 
 ## Producers and transport
 
-- **producer**: anything that hands Sinex events: a binding, a derivation, an outside process.
-- **outside producer**: `sinex-session`, `sinex-capture` or another process sending over NATS.
-- **integration socket**: the session socket the editor and terminal integrations write to (`session.integrations`).
-- **ingress**: the NATS subjects outside producers send frames to, under one **subject root** (`sinex`).
-- **frame**: one message from an outside producer: events, a material, a chunk, or a **large frame** that names its own bytes.
-- **frame bytes**: the bytes an outside producer hands over for one frame, in that frame's directory under the content store (`incoming/producers`); removed once the frame is recorded.
-- **unacknowledged frames**: a producer's frames sent but not yet acknowledged, kept with the position after them and sent again after a restart.
-- **acknowledgment**: the reply that confirms a frame was admitted; a **recorded query** asks Sinex for the acknowledgments of given frames.
-- **publish**: send a NATS message.
-- **confirmed stream**: the NATS stream of committed events in commit order, with `Archived`, `Unhidden` and `Excised` messages.
-- **withheld**: a stream message or view row whose payload is left out, for its class or its size.
-- **capture stop**: a live capture's lifetime (`CaptureStop`): it interrupts waits, shuts sockets and stops child processes when the capture stops.
+- **producer**: anything that hands Sinex events: a binding, a derivation, an outside program.
+- **outside producer**: a program outside the daemon that sends frames over the NATS ingress (`sinex-session`, `sinex-capture`, Polylogue).
+- **ingress**: the NATS subjects outside producers send frames to ([producers](producers.md#the-ingress)).
+- **frame**: one message from an outside producer: kinds, material, events, progress, or a request.
+- **producer client**: the one implementation of the producer side of the contract.
+- **refusal**: a frame Sinex will not admit; a content refusal becomes a record failure and never stalls capture.
+- **confirmed stream**: the NATS stream of committed changes in commit order, the delivery log for everything outside the daemon.
+- **outside consumer**: a declared program that reads the confirmed stream under its own credential; an **outside handler** also sends outputs back.
+- **withheld**: a field left out of a stream message or output, fetched by event ID under the caller's grants.
 
-## Removal and privacy
+## Privacy
 
-- **removed at source**: the source no longer has a record; stored as a newer reading in state removed.
-- **hide / unhide**: take an event out of views, counts and re-imports, and put it back; hidden records are kept in `core.hidden_records`.
-- **excision**: the permanent deletion of one record's events and the material holding it, when nothing else shares that material, keeping only the material's digest so its bytes are refused if registered again; only an **excisable** source, one whose every stored copy of a record is a reading of it, allows it.
-- **class**: a privacy class: `open`, `guarded` or `sealed`.
-- **sealed**: encrypted at rest under a per-material **data key**, wrapped for the operator's **class key**; equivalence keys and record hashes become keyed hashes under a **hash key** derived from the data key; reading needs an **unlock**.
-- **rule**: a privacy rule applied at admission; **masking** hides credentials on output.
+- **field hint**: a kind's declaration that a field may hold a kind of sensitive content ([privacy](privacy.md#field-hints)).
+- **detector**: operator-supplied data that recognises sensitive content; a match is a **detector hit**.
+- **rule**: binds detectors or field paths to a class and an output action.
+- **class**: a named outcome the operator defines, an action plus the grants that lift it; a **grant** is held by a caller's token.
+- **action**: what an output does to a matched field: mask, hash, withhold or seal.
+- **seal**: encrypt at rest so that reading needs the operator's key.
+- **output parity**: every surface shows a caller the same fields for the same grants.
 
-## Words not used
+## Derived data
 
-| Not used | Say instead |
-|---|---|
-| retained, retain, retention | stored, kept |
-| custody, reservation, pending (for bytes) | unadmitted bytes |
-| publication (for bytes) | write, install |
-| frozen, freeze | fixed, saved, or name the thing itself |
-| canonical | fused (records), sorted (JSON) |
-| basis | name the thing itself |
-| candidate | selected |
-| authority, lease | access, grant |
-| legacy, predecessor, old formats | nothing: internal formats have one version until the first deployment |
-| control, proof, witness (in tests) | test, check |
-| backing | storage |
-| interpretation | parsing, reading |
-| retire, retirement, closure, qualify | say what happens: delete, drop, stop |
-| kind (of input) | format |
-| notice | visibility change, message |
-| restore, restored (of visibility) | unhide, unhidden |
-| chain (of parts) | part sequence |
-| occurrence | record |
-| natural key | equivalence key |
-| vanished (at source) | removed |
-| material key | data key |
-| durable bytes | length |
-| ordinal | output index |
-| unit (of a query) | table |
-| shell group | shell session |
-| standing question, analysis result, product | a recipe's answer, a finding |
-| summary (activity) | figure |
-| envelope (of an event) | metadata |
-| consumer (of a source) | purpose |
-| stage (outside admission) | plan, temporary file, write |
-| physical | name the thing: record ranges, archive pass |
+- **derivation**: a declared computation whose outputs are stored events; **per-event** or **keyed** ([derivations](derivations.md)).
+- **dirty key**: a key whose inputs changed and whose output set will be recomputed.
+- **provisional**: the value of a key whose time window is still open.
+- **fusion**: joining readings of one occurrence seen by several sources, for a defined family, into a **fused record** with its **basis**.
+- **judgment**: an authored `same` or `distinct` decision on an ambiguous pair in `duplicates`.
+- **interval**: a state with a start and maybe an end, computed by a derivation.
+- **figure**: a measure over one period, stored as an event with its coverage.
+- **coverage**: which sources could observe, over which interval, in which state (observed, partial, recorded with unknown coverage, missing).
+- **episode**: a stretch of work on one objective, with interruptions and its resume card ([higher layer](higher-layer.md)).
+- **finding**: a typed statement with its caveats and the figures it cites; a **recipe** is a shipped analysis whose result is an **answer**.
+- **forecast**: a probability on a stated outcome with a horizon and an information cutoff.
+- **context pack**: a stored selection of evidence assembled for one purpose; a **narrative** is a written account over a period.
 
-## Work and presence
+## Reading and asking
 
-- **agency**: the operator channel on an elementary activity span: operator, supervising, delegated, automated, passive, unknown or mixed. Delegated work can run concurrently.
-- **input coverage**: the interval between a recorded non-virtual input recorder start and stop. Silence outside known coverage stays unknown.
-- **objective**: an exact recorded reference that joins work across sessions and days. A branch needs its repository as part of its identity.
-- **work episode**: the acts linked to one objective, with separate operator and agent time, interruptions and resumptions.
-- **interruption source**: the recorded cause of leaving an episode, kept separate from the event producer.
-- **suspension**: the last operator act before leaving an episode for another context or absence.
-- **resumption**: the next operator act in that episode. A measured lag also needs its exact return of focus.
-- **resume card**: the stated-goal reference, chronological activity trail, last edit and unresolved failures for one episode.
-- **wake day**: the displayed interval between consecutive recorded wakes. Logical days remain the calculation partition.
-
-- **work act** (`work.act`): a stored reading of an operator prompt or delegated act with its recorded objective and source evidence.
-- **context pack** (`context.pack`): a stored activity trail for one objective, derived from its episode and work acts.
-- **semantic range**: input bounds read from live event keys, such as an objective's extent or the next recorded wake.
-
-## Reader implementation names
-
-- **time settings** (`TimeSettings`): the time zone and local start of a logical day, also used to group local hours.
-- **binding reader** (`BindingReader`): a configured binding together with its source, reader and remembered progress.
-- **reader context** (`ReaderContext`): the open content store, read connection and writer used by readers and commands.
-- **shared file read** (`SharedFileRead`): compatible bindings grouped for one read of their stored file.
-- **shared read start** (`SharedReadStart`): whether a binding has finished a file or needs to read it from a stored file or the input.
-- **stored file** (`StoredFile`): the blob, length and material named by a shared reader's cursor.
-- **interruptible reader** (`InterruptibleReader`): a reader that checks for a stop request before reading.
-- **validated reader** (`ValidatedReader`): a reader that runs the supplied validation before reading.
-- **intake** (`Intake`): the writer, source, settings and access used to submit an acquisition.
-- **submission** (`Submission`): the admission outcome and material of a submitted request.
-- **authored at** (`authored_at`): the author timestamp supplied by a Git commit, distinct from its commit timestamp.
-- **request record**: a forecast or library request submitted as a material and admitted through the writer.
+- **query table**: what a query reads (`events`, `materials`, `runs`, `sources`, `failures` …), with its fields ([query](query.md)).
+- **saved query**: a named query with declared scalar parameters.
+- **kept result**: a query's result stored as an event so it can be cited.
+- **recall**: everything recorded around a time, a day, a mark or the latest shell session ([recall](recall.md)).
+- **mark**: an operator-authored moment with a note.
+- **brief**: the daily summary.
+- **signal**: what a rule surfaces without being asked; **interrupting** signals are few and explicit.
+- **status**: what Sinex holds, what it failed to read and what it has not processed.
+- **follow**: a live, resumable read of new events matching a query.
+- **Today**: the view Sinex opens with ([web](web.md#today)).
 
 ## Library
 
-- **item key**: the host, resolved library root and original relative path of a file. A move within that root keeps the key when the bytes match and the old path is gone. A new file whose initial key is still held by another file also names its first scan material.
-- **move candidates**: the missing and new paths with equal bytes in an ambiguous move. The scan records them without moving curation between items.
-- **scan record**: a file's changed facts or removal in a captured scan part, identified by its material and path, with its item key, content hash and acquisition time. The part index orders changes independently of the wall clock. A completion record closes the scan after its last part.
-- **item revision**: one content hash of an item. Returning to the same bytes returns to that revision.
-- **preview evidence**: the stored output of rendering an item revision; the library derivation produces its rendition.
+- **item key**: the host, resolved root and original relative path identifying an item; an unambiguous equal-byte move within the root keeps it.
+- **move candidates**: missing and new equal-byte paths whose correspondence is ambiguous; curation stays separate.
+- **scan record**: a file's changed facts or removal in a captured scan part; part order is independent of wall-clock order.
+- **item revision**: an item's content hash; returning to the same bytes reuses the revision while preserving the transition history.
+- **preview evidence**: the stored result of rendering a revision, from which the library derives a rendition.
+
+## Development tooling
+
+- **scenario**: one exported NixOS check selected for a VM run.
+- **development stack**: a checkout's owned PostgreSQL and NATS services, daemon and explicitly selected session captures.
+- **development lock**: the exclusive lock held while a checkout's development stack runs.
+- **corpus**: input files replayed by fuzz tests and expanded by longer test runs.
+- **region**: a source span with an execution count in an LLVM coverage report.

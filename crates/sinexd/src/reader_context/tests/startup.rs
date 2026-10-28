@@ -120,7 +120,7 @@ async fn derivation_claims_the_writer_for_its_entire_lifetime(db: devkit::pg::Te
         !acquired,
         "the derivation writer must keep its advisory claim"
     );
-    writer::claim(&mut competing).await.unwrap();
+    let competing = writer::claim(competing).await.unwrap();
     let startup = crate::local_runner(&url, "startup-fixture", None, &configuration);
     tokio::pin!(startup);
     tokio::select! {

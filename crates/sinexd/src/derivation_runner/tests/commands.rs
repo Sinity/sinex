@@ -44,7 +44,7 @@ async fn keyed_computations_wait_before_reading_inputs(db: devkit::pg::TestDatab
         counts: &mut counts,
     };
     let env = Env::at(at(0));
-    let mut computation = Box::pin(work.compute(vec![(json!("item"), 0)], &env));
+    let mut computation = Box::pin(work.compute(vec![(json!("item"), 0, false)], &env));
     assert!(futures::poll!(&mut computation).is_pending());
     assert!(!called.load(Ordering::SeqCst));
     drop(guard);

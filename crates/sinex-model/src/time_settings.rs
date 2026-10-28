@@ -112,7 +112,7 @@ impl TimeSettings {
         Self::back(t)
     }
 
-    /// Start of the civil hour containing `t`.
+    /// Start of the local hour containing `t`.
     pub fn hour_start(&self, t: Timestamp) -> Result<Timestamp, TimeSettingsError> {
         let zoned = Self::instant(t)?.to_zoned(self.zone.clone());
         let floored = zoned
@@ -126,7 +126,7 @@ impl TimeSettings {
         self.resolve(floored, Some(zoned.offset()))
     }
 
-    /// End of the civil hour that starts at `start`.
+    /// End of the local hour that starts at `start`.
     pub fn hour_end(&self, start: Timestamp) -> Result<Timestamp, TimeSettingsError> {
         let next = Self::instant(start)?
             .checked_add(jiff::SignedDuration::from_hours(1))

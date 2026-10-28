@@ -182,3 +182,52 @@ pub struct RestFused {
     pub kind: Option<String>,
     pub observed_by: Vec<String>,
 }
+
+/// One post or comment, from the operator's GDPR export and from a public
+/// archive's copy of it: both carry the service's own ID.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
+#[event(version = 2,
+    type = "post.fused",
+    key = ["record"],
+    replace = newer,
+    time = created_at,
+    quality = intrinsic
+)]
+pub struct PostFused {
+    pub record: String,
+    pub service: String,
+    /// `post` or `comment`.
+    pub kind: String,
+    pub native_id: String,
+    pub created_at: Timestamp,
+    pub title: Option<String>,
+    pub body: Option<String>,
+    pub url: Option<String>,
+    pub community: Option<String>,
+    pub observed_by: Vec<String>,
+}
+
+/// One message of a conversation, from a messaging service's GDPR export
+/// and from a tool that saved the same messages with the service's IDs: the
+/// same text sent at the same millisecond.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
+#[event(version = 2,
+    type = "conversation.fused",
+    key = ["record"],
+    replace = newer,
+    time = sent_at,
+    quality = intrinsic
+)]
+pub struct ConversationFused {
+    pub record: String,
+    pub service: String,
+    /// The thread as the preferred source names it.
+    pub thread: String,
+    pub thread_name: Option<String>,
+    pub sender: String,
+    pub sent_at: Timestamp,
+    pub text: Option<String>,
+    /// The service's message ID, from a source that has it.
+    pub message_id: Option<String>,
+    pub observed_by: Vec<String>,
+}

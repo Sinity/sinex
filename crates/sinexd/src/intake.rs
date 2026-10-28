@@ -19,7 +19,7 @@ pub(crate) struct Intake<'a> {
     pub source: Arc<dyn Source>,
     pub binding: &'a str,
     pub run: RunId,
-    pub material: crate::sealing::Materials,
+    pub material: crate::material_access::MaterialAccess,
     pub check: AdmissionCheck,
     pub priority: Priority,
     /// Requests commit together and refuse parser failures before admission.
@@ -36,10 +36,14 @@ impl Intake<'_> {
         totals: &mut Totals,
     ) -> Result<Submission, String> {
         self.submit_using(acquired, carry, totals, |batch, check| async move {
-            self.writer
-                .submit_checked(self.priority, batch, check)
-                .await
-                .map_err(|e| e.to_string())
+            let result = if self.atomic {
+                self.writer
+                    .submit_checked(self.priority, batch, check)
+                    .await
+            } else {
+                self.writer.submit_source(self.priority, batch, check).await
+            };
+            result.map_err(|e| e.to_string())
         })
         .await
     }
@@ -109,19 +113,7 @@ impl Intake<'_> {
                 totals.writer(queue, elapsed.saturating_sub(queue));
                 totals.batch(events, elapsed);
                 totals.add_outcome(&admitted);
-                outcome.admitted += admitted.admitted;
-                outcome.repeats += admitted.repeats;
-                outcome.replaced += admitted.replaced;
-                outcome.older += admitted.older;
-                outcome.hidden += admitted.hidden;
-                outcome.superseded += admitted.superseded;
-                outcome.failures += admitted.failures;
-                outcome.dirty_keys += admitted.dirty_keys;
-                outcome.replay_archived += admitted.replay_archived;
-                if let Some((start, end)) = admitted.commit_seq {
-                    outcome.commit_seq =
-                        Some((outcome.commit_seq.map_or(start, |(first, _)| first), end));
-                }
+                outcome += &admitted;
                 // Streaming submissions do not keep every committed event ID.
                 if self.atomic {
                     outcome.admitted_ids = admitted.admitted_ids;
@@ -160,8 +152,11 @@ pub(crate) async fn request(
     .await
     .map_err(|e| e.to_string())?;
     let class = request_class(conn, source.as_ref()).await?;
-    let material =
-        crate::sealing::Materials::new(blobs.clone(), class, crate::sealing::Access::default())?;
+    let material = crate::material_access::MaterialAccess::new(
+        blobs.clone(),
+        class,
+        crate::material_access::Access::default(),
+    )?;
     Intake {
         writer,
         source,
@@ -200,7 +195,7 @@ struct Preparation {
     source: Arc<dyn Source>,
     binding: String,
     run: RunId,
-    material: crate::sealing::Materials,
+    material: crate::material_access::MaterialAccess,
     atomic: bool,
     registered: Option<MaterialId>,
     check: AdmissionCheck,

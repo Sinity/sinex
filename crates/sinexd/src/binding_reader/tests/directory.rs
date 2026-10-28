@@ -5,7 +5,12 @@ use super::*;
 type NoteReadings = Vec<(String, Value, i64, Vec<u8>, i64)>;
 
 async fn current_notes(conn: &mut PgConnection) -> NoteReadings {
-    sqlx::query_as("SELECT e.payload->>'path', e.payload->'text', e.anchor, e.record_hash, e.reading_order FROM core.live_equivalence l JOIN core.events e ON e.id=l.event_id WHERE e.event_type='note.document' ORDER BY e.payload->>'path'")
+    sqlx::query_as("SELECT e.payload->>'path', e.payload->'text', e.anchor, e.record_hash, e.reading_order FROM core.live_equivalence l JOIN core.events e ON e.id=l.event_id WHERE e.event_type='note.document' AND e.record_state='present' ORDER BY e.payload->>'path'")
+        .fetch_all(conn).await.unwrap()
+}
+
+async fn note_states(conn: &mut PgConnection) -> Vec<(String, String)> {
+    sqlx::query_as("SELECT e.payload->>'path', e.record_state FROM core.live_equivalence l JOIN core.events e ON e.id=l.event_id WHERE e.event_type='note.document' ORDER BY e.payload->>'path'")
         .fetch_all(conn).await.unwrap()
 }
 
@@ -88,6 +93,7 @@ async fn empty_directory_files_keep_distinct_paths_bytes_and_locations_through_r
         .map(|(_, r)| r.map(|t| t.to_json()))
         .collect();
     let final_notes = current_notes(&mut ctx.read_conn).await;
+    let states = note_states(&mut ctx.read_conn).await;
     ctx.close().await.unwrap();
     std::fs::remove_dir_all(dir).unwrap();
     assert!(
@@ -113,22 +119,27 @@ async fn empty_directory_files_keep_distinct_paths_bytes_and_locations_through_r
     );
     assert_eq!(
         after, before,
-        "replay preserves paths, exact bodies, anchors and raw hashes"
+        "replay preserves paths, exact bodies, anchors and record hashes"
     );
     let anchors: std::collections::BTreeSet<_> = before.iter().map(|r| r.2).collect();
     assert_eq!(anchors.len(), 3);
-    assert_eq!(before[0].3, blake3::hash(b"").as_bytes());
-    assert_eq!(before[1].3, blake3::hash(b"").as_bytes());
-    assert_eq!(before[2].3, blake3::hash(b"gamma").as_bytes());
+    assert_ne!(
+        before[0].3, before[1].3,
+        "equal bytes at distinct paths are distinct readings"
+    );
     assert_eq!(
         final_notes
             .iter()
             .map(|r| (&*r.0, r.1.clone()))
             .collect::<Vec<_>>(),
+        vec![("c.md", json!("gamma"))]
+    );
+    assert_eq!(
+        states,
         vec![
-            ("a.md", Value::Null),
-            ("b.md", Value::Null),
-            ("c.md", json!("gamma"))
+            ("a.md".into(), "removed".into()),
+            ("b.md".into(), "removed".into()),
+            ("c.md".into(), "present".into()),
         ]
     );
 }

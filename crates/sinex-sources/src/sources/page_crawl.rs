@@ -124,6 +124,7 @@ impl Robots {
 
 pub struct Crawl {
     pub urls: Vec<String>,
+    initial_material: Option<Option<MaterialId>>,
     pub allow: Vec<String>,
     /// Pause between two requests to the same host.
     pub pause: Duration,
@@ -151,6 +152,7 @@ impl Crawl {
             .into();
         Self {
             urls,
+            initial_material: None,
             allow,
             pause,
             host,
@@ -203,16 +205,23 @@ impl Crawl {
             .insert(host.to_owned(), robots.clone());
         robots
     }
+}
 
+impl sinex_source_core::Reader for Crawl {
     /// Fetch the next permitted URL after the cursor and store it.
-    pub fn poll(&self, cursor: &Value) -> Result<Acquired, DriverError> {
+    fn poll(&mut self, cursor: &Value) -> Result<Acquired, DriverError> {
         let previous: Cursor = if cursor.is_null() {
             Cursor::default()
         } else {
             serde_json::from_value(cursor.clone())
                 .map_err(|e| DriverError::Cursor(e.to_string()))?
         };
-        let mut index = previous.next;
+        let initial = *self.initial_material.get_or_insert(previous.material);
+        let mut index = if previous.material == initial {
+            0
+        } else {
+            previous.next
+        };
         while let Some(url) = self.urls.get(index) {
             index += 1;
             let Some((scheme, host, path)) = split(url) else {
@@ -375,50 +384,26 @@ pub fn source() -> DeclaredSource<PageParser> {
     }
 }
 
-/// A page crawl over URLs supplied by the command in the binding's settings.
+/// Crawl materials are replayed with the parser; URLs reach the command's reader in memory.
 pub const FORMAT: sinex_source_core::binding::InputFormat =
     sinex_source_core::binding::InputFormat {
         name: "page-crawl",
+        discovery: sinex_source_core::discovery::DiscoverySpec {
+            owner: sinex_source_core::discovery::Owner::System,
+            locations: &[],
+            capabilities: &[],
+            credentials: &[],
+            streams: &[],
+            requests: &[],
+            request_only: true,
+        },
+        discover: crate::discovery::discover_format,
         specs: || vec![&SPEC],
         plan: None,
         source: |_| Ok(Box::new(source())),
-        reader: Some(|b| {
-            let urls: Vec<String> = serde_json::from_value(b.settings.options["urls"].clone())
-                .map_err(|e| format!("crawl URLs: {e}"))?;
-            let allow: Vec<String> = match &b.settings.options["allow"] {
-                Value::String(domain) => vec![domain.clone()],
-                Value::Array(domains) => serde_json::from_value(Value::Array(domains.clone()))
-                    .map_err(|e| format!("crawl allow list: {e}"))?,
-                _ => return Err("nothing is crawled without an allow list (--allow DOMAIN)".into()),
-            };
-            if allow.is_empty() {
-                return Err("nothing is crawled without an allow list (--allow DOMAIN)".into());
-            }
-            let mut urls: Vec<String> = urls
-                .into_iter()
-                .filter(|url| split(url).is_some_and(|(_, host, _)| allowed(&host, &allow)))
-                .collect();
-            if let Some(limit) = b.settings.number("limit") {
-                urls.truncate(usize::try_from(limit).unwrap_or(usize::MAX));
-            }
-            Ok(sinex_source_core::binding::polled(Crawl::new(
-                urls,
-                allow,
-                Duration::from_secs(b.settings.number("pause").unwrap_or(2)),
-                b.settings.host.clone(),
-            )))
-        }),
+        reader: None,
         capture: None,
     };
 
 #[cfg(test)]
 mod tests;
-
-impl sinex_source_core::binding::Reader for Crawl {
-    fn poll(
-        &mut self,
-        cursor: &serde_json::Value,
-    ) -> Result<sinex_source_core::drivers::Acquired, sinex_source_core::drivers::DriverError> {
-        Self::poll(self, cursor)
-    }
-}

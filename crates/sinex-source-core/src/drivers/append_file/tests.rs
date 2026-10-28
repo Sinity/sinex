@@ -17,7 +17,7 @@ fn records(a: &Acquired) -> Vec<String> {
     let m = a.material.as_ref().unwrap();
     m.records
         .iter()
-        .map(|(s, e)| String::from_utf8(m.body()[*s..*e].to_vec()).unwrap())
+        .map(|(s, e)| String::from_utf8(crate::test_support::body(m)[*s..*e].to_vec()).unwrap())
         .collect()
 }
 
@@ -34,7 +34,7 @@ fn a_cursor_between_two_batches_reads_on_though_the_file_is_unchanged() {
     let m = first.material.unwrap();
     // The first batch (one record) committed; the process died before the next.
     let between = (m.cursor_at)(2).unwrap();
-    let after = (m.cursor_at)(m.body().len()).unwrap();
+    let after = (m.cursor_at)(crate::test_support::body(&m).len()).unwrap();
     let again = d.poll(&between, &mut AppendState::default()).unwrap();
     assert_eq!(records(&again), vec!["b\n", "c\n"]);
     assert!(
@@ -59,7 +59,7 @@ fn appends_read_only_new_complete_records() {
     let first = d.poll(&Value::Null, &mut state).unwrap();
     assert_eq!(records(&first), vec!["a\n", "b\n"]);
     let m = first.material.as_ref().unwrap();
-    let cursor = (m.cursor_at)(m.body().len()).unwrap();
+    let cursor = (m.cursor_at)(crate::test_support::body(m).len()).unwrap();
     assert_eq!(cursor["offset"], json!(4));
 
     // Unchanged stat: nothing read.
@@ -94,12 +94,15 @@ fn a_rewrite_reads_only_records_the_previous_revision_did_not_hold() {
     let mut state = AppendState::default();
     let first = d.poll(&Value::Null, &mut state).unwrap();
     let m = first.material.unwrap();
-    let cursor = (m.cursor_at)(m.body().len()).unwrap();
+    let cursor = (m.cursor_at)(crate::test_support::body(&m).len()).unwrap();
 
     // zsh expired the duplicate "b" and appended "dd": a rewrite.
     std::fs::write(&path, b"a\nc\ndd\n").unwrap();
     // A restart in between: the state is rebuilt from the stored bytes.
-    let mut rebuilt = AppendState::rebuild([(m.id, m.body())], crate::Framer::incremental(lines));
+    let mut rebuilt = AppendState::rebuild(
+        [(m.id, crate::test_support::body(&m))],
+        crate::Framer::incremental(lines),
+    );
     assert_eq!(rebuilt, state);
     let again = d.poll(&cursor, &mut rebuilt).unwrap();
     assert_eq!(again.revision, RevisionChange::Rewritten);
@@ -122,11 +125,15 @@ fn a_rewrite_reads_only_records_the_previous_revision_did_not_hold() {
     );
     assert_eq!(n.manifest.records, Some(vec![(4, 7)]));
     assert_eq!(
-        crate::drivers::stored_records(&n.manifest, n.body(), crate::Framer::incremental(lines)),
+        crate::drivers::stored_records(
+            &n.manifest,
+            crate::test_support::body(n),
+            crate::Framer::incremental(lines)
+        ),
         vec![(4, 7)]
     );
     // The cursor covers the whole rewritten file, skipped records included.
-    let after = (n.cursor_at)(n.body().len()).unwrap();
+    let after = (n.cursor_at)(crate::test_support::body(n).len()).unwrap();
     assert_eq!(after["offset"], json!(7));
     assert!(d.poll(&after, &mut rebuilt).unwrap().material.is_none());
 }
@@ -143,7 +150,7 @@ fn rewritten_prefix_is_read_again_as_a_new_revision() {
     let mut state = AppendState::default();
     let first = d.poll(&Value::Null, &mut state).unwrap();
     let m = first.material.unwrap();
-    let cursor = (m.cursor_at)(m.body().len()).unwrap();
+    let cursor = (m.cursor_at)(crate::test_support::body(&m).len()).unwrap();
     std::fs::write(&path, b"x\ny\nz\n").unwrap();
     let again = d.poll(&cursor, &mut state).unwrap();
     assert_eq!(again.revision, RevisionChange::Rewritten);
@@ -192,11 +199,11 @@ fn a_file_larger_than_a_part_is_read_in_bounded_parts_covering_every_record() {
         let Some(m) = &a.material else { break };
         polls += 1;
         assert!(
-            m.body().len() as u64 <= PART_SIZE || m.records.len() == 1,
+            crate::test_support::body(m).len() as u64 <= PART_SIZE || m.records.len() == 1,
             "a part holds at most PART_SIZE bytes unless one record is longer"
         );
         read.extend(records(&a));
-        cursor = (m.cursor_at)(m.body().len()).unwrap();
+        cursor = (m.cursor_at)(crate::test_support::body(m).len()).unwrap();
     }
     assert!(polls > 10, "read in parts, not at once ({polls})");
     assert_eq!(read.concat(), text);
@@ -298,7 +305,7 @@ fn rewrite_replace_and_truncate_keep_the_previous_parser_chain_and_reset_byte_of
         let mut state = AppendState::default();
         let first = driver.poll(&Value::Null, &mut state).unwrap();
         let m = first.material.unwrap();
-        let cursor = (m.cursor_at)(m.body().len()).unwrap();
+        let cursor = (m.cursor_at)(crate::test_support::body(&m).len()).unwrap();
         match change {
             RevisionChange::Rewritten => {
                 std::fs::write(&path, b"two-long-record\none-long-record\nnew\n").unwrap()
@@ -331,14 +338,14 @@ fn incomplete_rewrite_keeps_the_old_parser_cut_and_its_unrecorded_rewrite_kind()
     let mut state = AppendState::default();
     let first = driver.poll(&Value::Null, &mut state).unwrap();
     let m = first.material.unwrap();
-    let cursor = (m.cursor_at)(m.body().len()).unwrap();
+    let cursor = (m.cursor_at)(crate::test_support::body(&m).len()).unwrap();
     std::fs::write(&path, b"part").unwrap();
     let pending = driver.poll(&cursor, &mut state).unwrap();
     assert!(pending.material.is_none());
     let checkpoint: Cursor =
         serde_json::from_value(pending.cursor_without_material.clone()).unwrap();
     assert_eq!(checkpoint.material, Some(m.id));
-    assert_eq!(checkpoint.through, m.body().len());
+    assert_eq!(checkpoint.through, crate::test_support::body(&m).len());
     assert_eq!(
         checkpoint.unrecorded_rewrite,
         Some(RevisionChange::Truncated)
@@ -384,12 +391,15 @@ fn fresh_incomplete_files_emit_reusable_empty_prefix_cursors() {
         let next = driver.poll(&saved, &mut AppendState::default()).unwrap();
         let mut expected = initial.to_vec();
         expected.extend_from_slice(b"-complete\n");
-        assert_eq!(next.material.as_ref().unwrap().body(), expected);
+        assert_eq!(
+            crate::test_support::body(next.material.as_ref().unwrap()),
+            expected
+        );
         assert_eq!(next.revision, RevisionChange::Appended);
         assert_eq!(next.material.as_ref().unwrap().part_index, 0);
         assert!(next.material.as_ref().unwrap().previous_part.is_none());
         let material = next.material.unwrap();
-        let saved = (material.cursor_at)(material.body().len()).unwrap();
+        let saved = (material.cursor_at)(crate::test_support::body(&material).len()).unwrap();
         assert!(
             driver
                 .poll(&saved, &mut AppendState::default())
@@ -414,7 +424,7 @@ fn saved_unknown_prefixes_refuse_even_when_the_offset_is_zero() {
         .poll(&Value::Null, &mut AppendState::default())
         .unwrap();
     let material = first.material.unwrap();
-    let saved = (material.cursor_at)(material.body().len()).unwrap();
+    let saved = (material.cursor_at)(crate::test_support::body(&material).len()).unwrap();
     for offset in [0, 2] {
         for missing in [false, true] {
             let mut unknown = saved.clone();

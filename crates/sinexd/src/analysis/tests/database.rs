@@ -38,6 +38,9 @@ fn commit(id: &str, hours: i64) -> Event {
             committed_at: at(hours),
             message: "m".into(),
             refs: vec![],
+            worktrees: vec![],
+            files: None,
+            original_bytes: Default::default(),
         },
         "code.git",
         Origin::Record {
@@ -78,7 +81,7 @@ impl World {
         let (handle, queues) = writer::channels();
         let task = tokio::spawn(writer::run(
             url.clone(),
-            connection,
+            writer::claim(connection).await.unwrap(),
             queues,
             Arc::new(Keys::new(
                 sinex_derivations::keyed(),

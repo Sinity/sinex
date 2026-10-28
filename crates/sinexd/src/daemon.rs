@@ -78,8 +78,8 @@ pub(crate) async fn run(o: Options) -> Result<(), String> {
     let (handle, queues) = writer::channels();
     let mut tasks: JoinSet<(&'static str, Result<(), String>)> = JoinSet::new();
 
-    let mut writer_conn = connect(&o.database).await?;
-    writer::claim(&mut writer_conn).await?;
+    let writer_conn = connect(&o.database).await?;
+    let mut writer_conn = writer::claim(writer_conn).await?;
     // Blob files an excision committed to deleting but a crash left behind.
     let (deleted, left) = sinex_store::excision::finish_deletions(&mut writer_conn, &blobs)
         .await
@@ -220,6 +220,7 @@ pub(crate) async fn run(o: Options) -> Result<(), String> {
         .await
         .map_err(|e| format!("read pool: {e}"))?;
     let reader_api = Api {
+        source_config: Arc::new(sources.clone()),
         reads: reads.clone(),
         writer: Some(handle.clone()),
         blobs: blobs.clone(),
@@ -230,12 +231,29 @@ pub(crate) async fn run(o: Options) -> Result<(), String> {
             .map_err(|e| format!("{}: {e}", o.api.tokens.display()))?,
         unlock: Default::default(),
         host: o.host.clone(),
-        library_roots: sources
-            .sources
+        library_roots: if sources
+            .exclude
             .get("library.scan")
-            .filter(|source| source.enable)
-            .map(|source| source.paths.iter().map(std::path::PathBuf::from).collect())
-            .unwrap_or_default(),
+            .is_some_and(Option::is_some)
+        {
+            Vec::new()
+        } else {
+            sources
+                .sources
+                .get("library.scan")
+                .into_iter()
+                .flat_map(|source| source.paths.iter().map(std::path::PathBuf::from))
+                .chain(
+                    sources
+                        .discovery
+                        .input_roots
+                        .get("library")
+                        .into_iter()
+                        .flatten()
+                        .cloned(),
+                )
+                .collect()
+        },
     };
     let config = api::Config {
         socket: o.api.socket.clone(),
@@ -267,8 +285,9 @@ pub(crate) async fn run(o: Options) -> Result<(), String> {
     // the binding runner. A configuration naming an unknown source or format
     // stops the daemon here; the runner plans it again as files appear.
     binding_runner::plan(&sources, &o.host)?;
-    let (read_conn, b, w, host, s) = (
+    let (read_conn, database, b, w, host, s) = (
         connect(&o.database).await?,
+        o.database.clone(),
         blobs.clone(),
         handle.clone(),
         o.host.clone(),
@@ -277,7 +296,7 @@ pub(crate) async fn run(o: Options) -> Result<(), String> {
     tasks.spawn(async move {
         (
             "binding runner",
-            binding_runner::run(read_conn, b, w, host, sources, BINDINGS_EVERY, s).await,
+            binding_runner::run((read_conn, database), b, w, host, sources, BINDINGS_EVERY, s).await,
         )
     });
 
@@ -315,14 +334,21 @@ pub(crate) async fn run(o: Options) -> Result<(), String> {
     .await
     .is_ok();
     tasks.abort_all();
-    if drained {
-        let mut conn = connect(&o.database).await?;
-        writer::claim(&mut conn).await?;
-        sinex_store::blobs::forget_files_with_rows(&mut conn, &blobs)
-            .await
-            .map_err(|e| format!("forgetting admitted blob names: {e}"))?;
+    if drained && let Err(error) = forget_admitted(&o.database, &blobs).await {
+        eprintln!("sinexd: forgetting admitted blob names at shutdown: {error}");
     }
+
     outcome
+}
+
+async fn forget_admitted(database: &str, blobs: &Blobs) -> Result<(), String> {
+    let mut conn = writer::claim(connect(database).await?).await?;
+    let result = sinex_store::blobs::forget_files_with_rows(&mut conn, blobs)
+        .await
+        .map_err(|e| e.to_string());
+    // Closing the session releases its writer claim even when cleanup fails.
+    let closed = conn.close().await.map_err(|e| e.to_string());
+    result.and(closed)
 }
 
 async fn shutdown_signal() {
@@ -333,3 +359,6 @@ async fn shutdown_signal() {
         _ = term.recv() => {}
     }
 }
+
+#[cfg(test)]
+mod tests;

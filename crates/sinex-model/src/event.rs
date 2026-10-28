@@ -46,30 +46,34 @@ pub enum Origin {
     },
 }
 
-#[derive(Debug, thiserror::Error, PartialEq, Eq)]
+#[derive(Clone, Debug, thiserror::Error, PartialEq, Eq)]
 pub enum BuildError {
     #[error("payload of {0} did not serialize to a JSON object")]
-    NotAnObject(&'static str),
+    NotAnObject(String),
     #[error("a derived event needs at least one parent")]
     NoParents,
     #[error("a location-keyed type ({0}) cannot be derived; derived events need key fields")]
-    DerivedWithoutKey(&'static str),
+    DerivedWithoutKey(String),
+    #[error("{0}")]
+    Declaration(String),
     #[error("payload is not a valid {0}: {1}")]
-    Payload(&'static str, String),
+    Payload(String, String),
 }
 
 /// An event ready for admission.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Event {
     pub id: EventId,
-    pub event_type: &'static str,
+    pub event_type: String,
+    pub kind_version: u64,
+    pub validation: crate::Validation,
     pub source: String,
     pub origin: Origin,
     pub ts_orig: TsOrig,
     pub payload: Value,
     /// Set when this record has field identity; `None` uses its location.
     pub equivalence_key: Option<EquivalenceKey>,
-    pub replace: ReplaceRule,
+    pub replace: Option<ReplaceRule>,
     pub reading_order: ReadingOrder,
     /// BLAKE3 of the record as read, without declared volatile fields. Two
     /// readings with the same hash are a repeat.
@@ -92,10 +96,10 @@ impl Event {
         record_hash: [u8; 32],
         class: Class,
     ) -> Result<Self, BuildError> {
-        let value =
-            serde_json::to_value(payload).map_err(|_| BuildError::NotAnObject(P::EVENT_TYPE))?;
+        let value = serde_json::to_value(payload)
+            .map_err(|_| BuildError::NotAnObject(P::EVENT_TYPE.into()))?;
         if !value.is_object() {
-            return Err(BuildError::NotAnObject(P::EVENT_TYPE));
+            return Err(BuildError::NotAnObject(P::EVENT_TYPE.into()));
         }
         let equivalence_key = match payload.key_kind() {
             KeyKind::Location => None,
@@ -106,24 +110,62 @@ impl Event {
                 return Err(BuildError::NoParents);
             }
             if equivalence_key.is_none() {
-                return Err(BuildError::DerivedWithoutKey(P::EVENT_TYPE));
+                return Err(BuildError::DerivedWithoutKey(P::EVENT_TYPE.into()));
             }
         }
         Ok(Self {
             id: EventId::new(),
-            event_type: P::EVENT_TYPE,
+            event_type: P::EVENT_TYPE.into(),
+            kind_version: P::VERSION,
+            validation: crate::Validation::Validated,
             source: source.to_owned(),
             origin,
             ts_orig: payload.ts_orig(),
             payload: value,
             equivalence_key,
-            replace: P::REPLACE,
+            replace: Some(P::REPLACE),
             reading_order,
             record_hash,
             record_state: payload.record_state(),
-            class: class.max(P::CLASS),
+            class,
             owned_blobs: payload.owned_blobs(),
         })
+    }
+
+    /// An outside reading awaiting the writer's exact declaration checks.
+    pub fn submitted(
+        kind: crate::KindRef,
+        payload: Value,
+        source: String,
+        origin: Origin,
+        reading_order: ReadingOrder,
+        record_hash: [u8; 32],
+        class: Class,
+    ) -> Self {
+        Self {
+            id: EventId::new(),
+            event_type: kind.name,
+            kind_version: kind.version,
+            validation: crate::Validation::Unvalidated,
+            source,
+            origin,
+            ts_orig: TsOrig::unknown(),
+            payload,
+            equivalence_key: None,
+            replace: None,
+            reading_order,
+            record_hash,
+            record_state: RecordState::Present,
+            class,
+            owned_blobs: Vec::new(),
+        }
+    }
+
+    pub fn kind_ref(&self) -> crate::KindRef {
+        crate::KindRef {
+            name: self.event_type.clone(),
+            version: self.kind_version,
+        }
     }
 
     pub fn location(&self) -> Option<(RecordLocation, u16)> {

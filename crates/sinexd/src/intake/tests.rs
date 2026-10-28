@@ -165,6 +165,8 @@ async fn submission_checks_again_inside_the_writer(db: devkit::pg::TestDatabase)
     ctx.close().await.unwrap();
 }
 
+mod explicit_imports;
+
 struct CountedSource {
     source: Box<dyn Source>,
     parsed: Arc<std::sync::atomic::AtomicUsize>,
@@ -330,7 +332,7 @@ async fn failed_commit_discards_the_batch_ahead_and_joins_the_parser() {
 struct SlowSink {
     entered: std::sync::Mutex<Option<tokio::sync::oneshot::Sender<()>>>,
     release: std::sync::Mutex<std::sync::mpsc::Receiver<()>>,
-    sink: crate::sealing::Sink,
+    sink: crate::material_access::Sink,
 }
 impl SlowSink {
     fn wait(&self) -> Result<(), String> {
@@ -367,7 +369,7 @@ async fn synchronous_storage_does_not_stop_other_runtime_tasks() {
     let sink = SlowSink {
         entered: std::sync::Mutex::new(Some(entered)),
         release: std::sync::Mutex::new(resume),
-        sink: crate::sealing::Sink(blobs),
+        sink: crate::material_access::Sink(blobs),
     };
     let mut batches = blocking::Batches::start(Priority::Live, move |send| {
         let started = Instant::now();
@@ -423,7 +425,7 @@ async fn queued_submission(db: devkit::pg::TestDatabase, cancel: bool) {
     let dir = tempfile::tempdir().unwrap();
     let blobs = Blobs::open(dir.path()).unwrap();
     let url = db.url(None);
-    let connection = sqlx::PgConnection::connect(&url).await.unwrap();
+    let connection = sinex_store::AdmissionContext::connect(&url).await.unwrap();
     let (writer, queues) = crate::writer::channels();
     let worker_writer = writer.clone();
     let worker_blobs = blobs.clone();
@@ -521,7 +523,12 @@ async fn dropping_a_submission_refuses_its_queued_batch(db: devkit::pg::TestData
     queued_submission(db, true).await;
 }
 
-fn materials(blobs: Blobs) -> crate::sealing::Materials {
-    crate::sealing::Materials::new(blobs, Class::Guarded, crate::sealing::Access::default())
-        .unwrap()
+fn materials(blobs: Blobs) -> crate::material_access::MaterialAccess {
+    crate::material_access::MaterialAccess::new(
+        blobs,
+        Class::Guarded,
+        crate::material_access::Access::default(),
+    )
+    .unwrap()
 }
+mod imported_text;

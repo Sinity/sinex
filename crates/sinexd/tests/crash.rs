@@ -387,6 +387,45 @@ async fn kill_at(target: &Target, command: &mut Command, ready: Option<&str>, lo
         .await
         .unwrap();
     sqlx::query("ROLLBACK").execute(&mut harness).await.unwrap();
+    // Termination sends a signal; rollback and session-lock release finish
+    // asynchronously. Recovery starts after that backend has actually exited.
+    let deadline = Instant::now() + WAIT_LIMIT;
+    loop {
+        let present: bool =
+            sqlx::query_scalar("SELECT EXISTS (SELECT 1 FROM pg_stat_activity WHERE pid=$1)")
+                .bind(blocked)
+                .fetch_one(&mut watch)
+                .await
+                .unwrap();
+        if !present {
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "terminated backend {blocked} did not exit"
+        );
+        tokio::time::sleep(Duration::from_millis(2)).await;
+    }
+    loop {
+        let released: bool = sqlx::query_scalar("SELECT pg_try_advisory_lock($1)")
+            .bind(sinex_schema::WRITER_LOCK)
+            .fetch_one(&mut watch)
+            .await
+            .unwrap();
+        if released {
+            sqlx::query("SELECT pg_advisory_unlock($1)")
+                .bind(sinex_schema::WRITER_LOCK)
+                .execute(&mut watch)
+                .await
+                .unwrap();
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "killed writer did not release its session lock"
+        );
+        tokio::time::sleep(Duration::from_millis(2)).await;
+    }
 }
 
 /// Block writes to `table` (reads pass), so the kill lands on the write.
@@ -459,16 +498,22 @@ backfill_steps! { Inputs::multiple_batches();
 /// Kill a replay at a step; then run it again and compare with an
 /// uninterrupted replay: the same live readings, every event once.
 async fn replay_survives(lock_sql: &str) {
+    let started = Instant::now();
+    let note = |phase| eprintln!("replay {phase} after {:?}", started.elapsed());
     let inputs = Inputs::multiple_batches();
+    note("inputs ready");
     let expected = {
         let reference = Target::new(&inputs);
         finish(&mut reference.backfill(&inputs));
+        note("reference backfill complete");
         finish(&mut reference.replay(&["--binding", &inputs.zsh_binding()]));
+        note("reference replay complete");
         state(&mut reference.connect().await).await
     };
 
     let target = Target::new(&inputs);
     finish(&mut target.backfill(&inputs));
+    note("target backfill complete");
     let before = state(&mut target.connect().await).await;
     assert_eq!(before.live, expected.live, "replay changes no content");
     kill_at(
@@ -478,6 +523,7 @@ async fn replay_survives(lock_sql: &str) {
         lock_sql,
     )
     .await;
+    note("target operation finished");
     consistent(&target).await;
     assert_eq!(
         state(&mut target.connect().await).await,
@@ -485,6 +531,8 @@ async fn replay_survives(lock_sql: &str) {
         "a killed sequence changed nothing"
     );
     finish(&mut target.replay(&["--binding", &inputs.zsh_binding()]));
+    note("retried replay complete");
+    note("target operation finished");
     consistent(&target).await;
     assert_eq!(state(&mut target.connect().await).await, expected);
     assert_eq!(

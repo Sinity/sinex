@@ -1,4 +1,5 @@
 use super::*;
+use sinex_source_core::Reader;
 use std::io::{Read, Write};
 
 fn parse(line: &str) -> Result<Produced, RecordError> {
@@ -266,31 +267,6 @@ fn public_capture_removes_its_socket_on_stop_and_setup_error() {
     std::fs::write(&invalid_spool, b"not a directory").unwrap();
     assert!(capture(&socket, &invalid_spool, Some(Duration::ZERO)).is_err());
     assert!(!socket.exists());
-    let _ = std::fs::remove_dir_all(dir);
-}
-
-#[devkit::test]
-fn private_records_stay_unwritten_and_do_not_count_as_captured() {
-    let dir = std::env::temp_dir().join(format!("sx-private-{}", uuid::Uuid::now_v7()));
-    let mode = sinex_transport::private_mode::PrivateMode::new(dir.join("private"));
-    mode.set(true).unwrap();
-    let writer = Mutex::new(
-        SpoolWriter::open(dir.join("spool"), Rotation::default())
-            .unwrap()
-            .with_private_mode(mode),
-    );
-    let (reader, mut client) = UnixStream::pair().unwrap();
-    client.write_all(b"private record\n").unwrap();
-    drop(client);
-    assert_eq!(capture_connection(reader, &writer).unwrap(), 0);
-    assert_eq!(writer.lock().unwrap().dropped, 1);
-    assert!(
-        driver(dir.join("spool"), "h".into())
-            .poll(&Value::Null)
-            .unwrap()
-            .material
-            .is_none()
-    );
     let _ = std::fs::remove_dir_all(dir);
 }
 

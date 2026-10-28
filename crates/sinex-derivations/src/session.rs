@@ -119,6 +119,7 @@ impl Keyed for ShellSessions {
             })
             .collect();
         Computed {
+            error: None,
             outputs,
             waiting: false,
         }

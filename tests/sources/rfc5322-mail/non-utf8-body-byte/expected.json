@@ -6,16 +6,19 @@
         "type": "mail.message",
         "ts": "2024-01-04T10:00:00Z",
         "time": "Intrinsic",
-        "key": "e1d12acb856ef506b90e2a5a2b95a6029f7a3eb15b2bd1b777049380a3ed0a36",
+        "key": "0c6e68fee58519e4432eea2a2950e39c48efdcb1d5253ff47c4f950e17874aeb",
         "state": "Present",
         "payload": {
+          "account": null,
           "message_id": "bin@example.org",
+          "native_id": null,
           "date": "2024-01-04T10:00:00Z",
           "from": [
             "x@example.org"
           ],
           "to": [],
           "cc": [],
+          "bcc": [],
           "subject": "odd byte",
           "in_reply_to": null,
           "references": [],
