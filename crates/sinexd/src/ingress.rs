@@ -145,7 +145,9 @@ impl Ingest {
         let configuration = self.configuration(producer).await?;
         let offered = decoded.as_ref().ok().cloned();
         let decoded = match decoded {
-            Ok(frame) if frame.frame().contains('\0') => Err(Check::Malformed("a frame name contains NUL".into())),
+            Ok(frame) if frame.frame().contains('\0') => {
+                Err(Check::Malformed("a frame name contains NUL".into()))
+            }
             Ok(frame) if !frame.frame().is_empty() => {
                 self.unwrap_large_frame(producer, frame).await
             }
@@ -155,26 +157,28 @@ impl Ingest {
         let details = decoded.as_ref().ok().or(offered.as_ref());
         let checked = if let Some(reason) = configuration {
             Err(Check::Configuration(reason))
-        } else { match &decoded {
-            Err(check) => Err(check.clone()),
-            Ok(Ingress::Material { material, .. }) => {
-                match self.store_material(producer, &name, material).await {
-                    Ok(()) => self.material(producer, material),
-                    Err(check) => Err(check),
+        } else {
+            match &decoded {
+                Err(check) => Err(check.clone()),
+                Ok(Ingress::Material { material, .. }) => {
+                    match self.store_material(producer, &name, material).await {
+                        Ok(()) => self.material(producer, material),
+                        Err(check) => Err(check),
+                    }
                 }
+                Ok(Ingress::Events {
+                    events, failures, ..
+                }) => self
+                    .events(producer, events, failures)
+                    .await
+                    .map(|records| (None, records)),
+                Ok(chunk @ Ingress::Chunk { .. }) => self
+                    .receive_chunk(producer, chunk)
+                    .await
+                    .map(|()| (None, vec![])),
+                Ok(Ingress::LargeFrame { .. }) => unreachable!("large frame was decoded"),
             }
-            Ok(Ingress::Events {
-                events, failures, ..
-            }) => self
-                .events(producer, events, failures)
-                .await
-                .map(|records| (None, records)),
-            Ok(chunk @ Ingress::Chunk { .. }) => self
-                .receive_chunk(producer, chunk)
-                .await
-                .map(|()| (None, vec![])),
-            Ok(Ingress::LargeFrame { .. }) => unreachable!("large frame was decoded"),
-        }};
+        };
         let batch = match checked {
             Ok((progress, records)) => Batch {
                 run,
