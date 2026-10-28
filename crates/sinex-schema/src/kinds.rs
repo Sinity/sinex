@@ -107,21 +107,22 @@ async fn prefix(conn: &mut PgConnection, name: &str, owner: &str) -> Result<(), 
     Ok(())
 }
 
+fn prefix_from_name(name: &str) -> Result<&str, String> {
+    let (prefix, _) = name.split_once('.').ok_or("kind name needs a producer prefix")?;
+    if name.split('.').any(str::is_empty) || name.chars().any(|c| {
+        !(c.is_ascii_lowercase() || c.is_ascii_digit() || c == '.' || c == '_' || c == '-')
+    }) {
+        return Err("invalid kind name".into());
+    }
+    Ok(prefix)
+}
+
 pub async fn check_namespace(
     conn: &mut PgConnection,
     name: &str,
     producer: &str,
 ) -> Result<(), Error> {
-    let (prefix_name, suffix) = name
-        .split_once('.')
-        .ok_or_else(|| invalid("kind name needs a producer prefix"))?;
-    if suffix.is_empty()
-        || name.chars().any(|c| {
-            !(c.is_ascii_lowercase() || c.is_ascii_digit() || c == '.' || c == '_' || c == '-')
-        })
-    {
-        return Err(invalid("invalid kind name"));
-    }
+    let prefix_name = prefix_from_name(name).map_err(invalid)?;
     let owner: Option<String> =
         sqlx::query_scalar("SELECT declaring_producer FROM registry.kind_prefixes WHERE prefix=$1")
             .bind(prefix_name)
@@ -292,6 +293,7 @@ pub async fn upgrade_historical(conn: &mut PgConnection, owners: &Owners) -> Res
 }
 
 pub fn check(d: &KindDeclaration) -> Result<(), String> {
+    prefix_from_name(&d.kind.name)?;
     let mut hints = std::collections::BTreeSet::new();
     for hint in &d.field_hints {
         if !hint.field.starts_with('/') || !hints.insert(&hint.field) {

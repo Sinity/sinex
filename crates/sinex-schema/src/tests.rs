@@ -63,12 +63,12 @@ async fn query_kinds_keep_their_definitions_when_apply_recreates_a_view(
     let mut conn = <PgConnection as Connection>::connect(&db.url(None))
         .await
         .unwrap();
-    let before = kinds::all(&mut conn).await.unwrap();
+    let before = crate::kinds::all(&mut conn).await.unwrap();
     conn.execute("DROP VIEW event_types.query_saved")
         .await
         .unwrap();
     apply(&mut conn).await.unwrap();
-    assert_eq!(kinds::all(&mut conn).await.unwrap(), before);
+    assert_eq!(crate::kinds::all(&mut conn).await.unwrap(), before);
     conn.execute("SELECT * FROM event_types.query_saved LIMIT 0")
         .await
         .unwrap();

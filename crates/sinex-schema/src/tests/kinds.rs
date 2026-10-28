@@ -1,6 +1,6 @@
 use super::*;
 use serde_json::{Value, json};
-use sinex_model::{Class, MaterialId, Origin, ReadingOrder, RecordLocation};
+use sinex_model::{Class, EventPayload, MaterialId, Origin, ReadingOrder, RecordLocation};
 use sqlx::Connection;
 
 fn example(schema: &Value, root: &Value, optional: bool) -> Value {
@@ -125,13 +125,13 @@ fn field_hints_need_distinct_valid_pointers() {
         field: "command".into(),
         class: Class::Guarded,
     }];
-    assert!(kinds::check(&declaration).is_err());
+    assert!(crate::kinds::check(&declaration).is_err());
     declaration.field_hints[0].field = "/command~2".into();
-    assert!(kinds::check(&declaration).is_err());
+    assert!(crate::kinds::check(&declaration).is_err());
     declaration.field_hints[0].field = "/command".into();
-    assert!(kinds::check(&declaration).is_ok());
+    assert!(crate::kinds::check(&declaration).is_ok());
     declaration
         .field_hints
         .push(declaration.field_hints[0].clone());
-    assert!(kinds::check(&declaration).is_err());
+    assert!(crate::kinds::check(&declaration).is_err());
 }
