@@ -116,7 +116,7 @@ pub(super) async fn apply_derived(
                 0
             } else {
                 let seq = super::archive::position(conn).await?;
-                let dirty = mark_archived_dirty(conn, &gone, seq, keys, Some(batch)).await?;
+                let dirty = mark_archived_dirty(conn, &gone, seq, keys, Some(batch), None).await?;
                 super::archive::archive_at(
                     conn,
                     &gone,
@@ -177,7 +177,7 @@ pub(super) async fn apply_derived(
             let mut dirty = 0;
             if !gone.is_empty() {
                 let seq = super::archive::position(conn).await?;
-                dirty += mark_archived_dirty(conn, &gone, seq, keys, Some(batch)).await?;
+                dirty += mark_archived_dirty(conn, &gone, seq, keys, Some(batch), None).await?;
                 super::archive::archive_at(
                     conn,
                     &gone,
@@ -462,6 +462,7 @@ pub(crate) async fn mark_archived_dirty(
     seq: i64,
     keys: &dyn DirtyKeys,
     recomputing: Option<&Batch>,
+    hidden_by: Option<sinex_model::OperationId>,
 ) -> Result<usize> {
     let descendants = sqlx::query_scalar!(
         r#"WITH RECURSIVE descendants(id) AS (
@@ -531,9 +532,9 @@ pub(crate) async fn mark_archived_dirty(
         conn,
         &descendants,
         seq,
-        sinex_model::ArchiveReason::Recomputed,
+        if hidden_by.is_some() { sinex_model::ArchiveReason::Hide } else { sinex_model::ArchiveReason::Recomputed },
         None,
-        None,
+        hidden_by.map(|operation| operation.0),
     )
     .await?;
     remove_live(conn, &descendants).await?;

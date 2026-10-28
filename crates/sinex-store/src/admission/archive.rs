@@ -5,6 +5,7 @@ use crate::Error;
 use sinex_model::{ArchiveReason, OperationId, ReplayScope};
 
 mod history;
+mod restore;
 pub use history::erase_archive_history;
 pub(super) use history::{archive_at, position};
 
@@ -44,7 +45,7 @@ pub(super) async fn replay_scope(
     .fetch_all(&mut *conn)
     .await?;
     let seq = position(conn).await?;
-    let dirty = mark_archived_dirty(conn, &live, seq, keys, None).await?;
+    let dirty = mark_archived_dirty(conn, &live, seq, keys, None, None).await?;
     archive_at(
         conn,
         &live,
@@ -112,7 +113,7 @@ pub(super) async fn request(
             )
             .await?;
             let seq = position(conn).await?;
-            let dirty = mark_archived_dirty(conn, &live, seq, keys, None).await?;
+            let dirty = mark_archived_dirty(conn, &live, seq, keys, None, Some(*operation)).await?;
             archive_at(
                 conn,
                 &live,
@@ -136,7 +137,7 @@ pub(super) async fn request(
             let removed = sqlx::query_scalar!(
                 r#"DELETE FROM core.hidden_records WHERE source = $1 AND event_type = $2
                    AND ((equivalence_key = $3) OR ($3::text IS NULL AND material_id = $4 AND anchor = $5 AND output_index = $6))
-                   RETURNING id"#,
+                   RETURNING operation_id"#,
                 event.source,
                 event.event_type,
                 event.equivalence_key,
@@ -185,30 +186,10 @@ pub(super) async fn request(
             .fetch_optional(&mut *conn)
             .await?;
             let Some(r) = unhidden else { return Ok(0) };
-            if !history::unhide_at(conn, r.id, seq, operation.0).await? {
-                return Err(Error::Invalid(
-                    "hidden reading changed before it was unhidden".into(),
-                ));
-            }
-            match &event.equivalence_key {
-                Some(key) => {
-                    sqlx::query!(
-                        "INSERT INTO core.live_equivalence (source, event_type, equivalence_key, event_id, reading_order, record_hash) VALUES ($1,$2,$3,$4,$5,$6)",
-                        event.source, event.event_type, key, r.id, r.reading_order, r.record_hash,
-                    )
-                    .execute(&mut *conn)
-                    .await?;
-                }
-                None => {
-                    sqlx::query!(
-                        "INSERT INTO core.live_locations (material_id, anchor, event_type, output_index, event_id, reading_order, record_hash) VALUES ($1,$2,$3,$4,$5,$6,$7)",
-                        r.material_id, r.anchor, event.event_type, r.output_index, r.id, r.reading_order, r.record_hash,
-                    )
-                    .execute(&mut *conn)
-                    .await?;
-                }
-            }
-            mark_archived_dirty(conn, &[r.id], seq, keys, None).await
+            restore::reading(conn, r.id, seq, operation.0).await?;
+            let dirty = mark_archived_dirty(conn, &[r.id], seq, keys, None, None).await?;
+            let restored = restore::descendants(conn, r.id, removed.expect("the hidden record was removed"), seq, operation.0, keys).await?;
+            Ok(dirty + restored)
         }
     }
 }

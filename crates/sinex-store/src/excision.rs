@@ -281,7 +281,7 @@ pub async fn apply(
     let seq = sqlx::query_scalar!("SELECT value FROM core.counters WHERE name = 'commit_seq'")
         .fetch_one(&mut *conn)
         .await?;
-    applied.dirty_keys = mark_archived_dirty(conn, &live, seq, keys, None).await?;
+    applied.dirty_keys = mark_archived_dirty(conn, &live, seq, keys, None, None).await?;
     remove_live(conn, &ids).await?;
 
     sqlx::query!(
