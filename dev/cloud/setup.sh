@@ -41,8 +41,10 @@ set -u
 
 # Sinex's Git dependencies come from polylogue-sinex-common; a session
 # without access to it cannot fetch them.
-cargo fetch --locked ||
+if ! cargo fetch --locked; then
     echo "setup: cargo fetch failed; a Sinex session needs the polylogue-sinex-common repository" >&2
+    exit 1
+fi
 
 if [ "${CLOUD_PREBUILD:-0}" = 1 ]; then
     cargo xtask test --no-run
