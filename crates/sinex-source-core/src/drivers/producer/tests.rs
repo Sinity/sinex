@@ -912,3 +912,68 @@ async fn a_saved_invalid_name_restarts_under_a_valid_attempt_name() {
     assert_ne!(frame.frame(), first_name);
     assert_eq!(frame.frame().len(), first_name.len());
 }
+
+#[devkit::test(multi_thread)]
+async fn a_missing_spool_requires_verified_retained_material_bytes() {
+    let nats = devkit::nats::test_nats().unwrap();
+    let subjects = Subjects::new(nats.prefix());
+    standin(&nats, &subjects, "retained").await;
+    let producer = Producer::connect(
+        nats.url(),
+        None,
+        subjects,
+        "retained",
+        &ProducerHello::default(),
+    )
+    .await
+    .unwrap();
+    let root = tempfile::tempdir().unwrap();
+    let store = Store::open(root.path()).unwrap();
+    let bytes = b"synthetic retained bytes";
+    let blob = format!("blake3:{}", blake3::hash(bytes));
+    let frame = Ingress::Material {
+        frame: "retained/material".into(),
+        material: Box::new(MaterialFrame {
+            id: sinex_model::MaterialId::new(),
+            input: sinex_model::InputRef {
+                kind: "file".into(),
+                locator: "/synthetic".into(),
+                host: "fixture".into(),
+            },
+            blob: blob.clone(),
+            length: bytes.len() as u64,
+            parser: "fixture".into(),
+            parser_version: 1,
+            part_index: 0,
+            previous_part: None,
+            manifest: sinex_model::Manifest::from_json(json!({})),
+        }),
+    };
+    let ranges = [CapturedRange {
+        path: root.path().join("missing-spool"),
+        offset: 7,
+        length: bytes.len() as u64,
+        blob: blob.clone(),
+    }];
+    frame_bytes::write(
+        &store.0,
+        "retained",
+        frame.frame(),
+        &blob,
+        bytes.len() as u64,
+        bytes.as_slice(),
+    )
+    .unwrap();
+    assert!(producer.rebuild(&frame, &ranges, &store).is_ok());
+    let retained = frame_bytes::directory(&store.0, "retained", frame.frame())
+        .join(blob.strip_prefix("blake3:").unwrap());
+    // A same-length replacement must fail the hash check; truncation must fail the length check.
+    for replacement in [vec![b'x'; bytes.len()], vec![]] {
+        std::fs::write(&retained, replacement).unwrap();
+        assert!(matches!(
+            producer.rebuild(&frame, &ranges, &store),
+            Err(Error::Local(_))
+        ));
+    }
+    assert!(!ranges[0].path.exists());
+}

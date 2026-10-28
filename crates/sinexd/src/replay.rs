@@ -325,11 +325,9 @@ pub(crate) async fn run(
     Ok(report)
 }
 
-/// Group stored materials into sequences, each first part to last.
-/// Each material's parser, built with the settings its binding was read with
-/// (stored by backfill and the binding runner). A material with no stored
-/// binding (sent by an outside producer) is read by the source whose parser
-/// it names.
+/// Daemon replay uses the saved local binding or its named parser. An `ingress:`
+/// binding belongs to its producer, which supplies replacement readings through
+/// ReplayScopeQuery and ReplaySequence.
 async fn sources_of(
     read_conn: &mut sqlx::PgConnection,
     sequence: &[Stored],

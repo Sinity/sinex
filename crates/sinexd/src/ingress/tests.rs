@@ -547,8 +547,12 @@ async fn invalid_frames_are_refused_and_recorded(db: devkit::pg::TestDatabase) {
     );
 
     let garbage = h.send_raw("kitty", b"{not json".to_vec()).await;
+    assert_eq!(garbage.refusal_kind(), Some(FrameRefusal::Malformed));
     let reason = garbage.refusal.unwrap();
-    assert!(reason.contains("invalid frame"), "{reason}");
+    assert!(
+        reason.starts_with("not a frame:") && reason.contains("at line"),
+        "{reason}"
+    );
 }
 
 #[devkit::test]
@@ -1025,7 +1029,7 @@ async fn a_recorded_refusal_keeps_the_frame_bytes_on_redelivery(db: devkit::pg::
 }
 
 #[devkit::test]
-async fn a_refused_event_between_good_frames_is_a_queryable_material_failure_and_replays(
+async fn a_refused_event_between_good_frames_is_queryable_and_requires_producer_replay(
     db: devkit::pg::TestDatabase,
 ) {
     let h = Harness::start(db).await;
@@ -1089,7 +1093,12 @@ async fn a_refused_event_between_good_frames_is_a_queryable_material_failure_and
     let rows = serde_json::to_value(answer).unwrap()["rows"].clone();
     assert_eq!(rows.as_array().unwrap().len(), 1);
     assert!(rows.to_string().contains("not.declared"));
-    // The current parser emits the corrected declared type from the kept bytes.
+    let before: Vec<Value> =
+        sqlx::query_scalar("SELECT to_jsonb(e) FROM core.events e ORDER BY id")
+            .fetch_all(&mut conn)
+            .await
+            .unwrap();
+    // Outside producers own replacement readings even when a local parser has the same name.
     let report = crate::replay::run(
         &mut conn,
         &h.blobs,
@@ -1107,9 +1116,30 @@ async fn a_refused_event_between_good_frames_is_a_queryable_material_failure_and
     )
     .await
     .unwrap();
-    assert_eq!(report.admitted, 3, "{report:?}");
+    assert_eq!(report.admitted, 0, "{report:?}");
+    assert_eq!(report.archived, 0);
+    assert_eq!(report.events_read, 0);
     assert_eq!(report.failures, 0);
-    assert_eq!(h.count("SELECT count(*) FROM raw.failures").await, 0);
+    assert_eq!(
+        report.refused,
+        [
+            json!({"material": material.0, "parser": sinex_sources::sources::zsh::SPEC.parser, "parser_version": sinex_sources::sources::zsh::SPEC.parser_version, "reason": "producer_required", "detail": "producer_required"})
+        ]
+    );
+    let persisted: Vec<Value> = sqlx::query_scalar(
+        "SELECT refusal FROM core.replay_refusals WHERE operation_id=$1 ORDER BY material_id",
+    )
+    .bind(report.operation.0)
+    .fetch_all(&mut conn)
+    .await
+    .unwrap();
+    assert_eq!(persisted, report.refused);
+    let after: Vec<Value> = sqlx::query_scalar("SELECT to_jsonb(e) FROM core.events e ORDER BY id")
+        .fetch_all(&mut conn)
+        .await
+        .unwrap();
+    assert_eq!(after, before);
+    assert_eq!(h.count("SELECT count(*) FROM raw.failures").await, 1);
     assert_eq!(h.stored(material).await, bytes.as_bytes());
 }
 

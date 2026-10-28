@@ -545,8 +545,18 @@ impl Producer {
     ) -> Result<Ingress, Error> {
         let snapshots = Snapshots::new()?;
         for source in sources.iter().filter(|source| matches!(frame, Ingress::Material { material, .. } if material.blob == source.blob)) {
-            let mut file = std::fs::File::open(&source.path).map_err(|e| Error::Local(e.to_string()))?;
-            std::io::Seek::seek(&mut file, std::io::SeekFrom::Start(source.offset)).map_err(|e| Error::Local(e.to_string()))?;
+            let mut file = match std::fs::File::open(&source.path) {
+                Ok(mut file) => {
+                    std::io::Seek::seek(&mut file, std::io::SeekFrom::Start(source.offset)).map_err(|e| Error::Local(e.to_string()))?;
+                    file
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                    let body = serde_json::to_vec(frame).expect("frame serializes");
+                    let prepared = self.frame_for_message(frame.clone(), &body);
+                    frame_bytes::snapshot(self.frame_root(store), &self.name, prepared.frame(), &source.blob, source.length).map_err(|e| Error::Local(e.to_string()))?
+                }
+                Err(error) => return Err(Error::Local(error.to_string())),
+            };
             let blob = snapshots.put_reader(file.take(source.length)).map_err(Error::Local)?;
             if blob != source.blob {
                 return Err(Error::Refused { frame: frame.frame().into(), reason: "spool bytes differ from the captured range".into(), recorded: false, kind: FrameRefusal::Bytes });

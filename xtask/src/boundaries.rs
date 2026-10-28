@@ -497,6 +497,10 @@ fn selection_database_free(
         let (Some(package), Some(node)) = (packages.get(id), nodes.get(id)) else {
             return false;
         };
+        // Schema bootstrap uses SQLx dynamically and must compile before a database exists.
+        if package.name == "sinex-schema" {
+            continue;
+        }
         if database_dependency(&package.name) {
             return false;
         }
