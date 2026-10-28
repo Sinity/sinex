@@ -49,7 +49,12 @@
         '';
         # The memory test measures its process's peak RSS, so it needs a
         # process of its own, which nextest gives it and `cargo test` does not.
-        checkFlags = [ "--skip" "drivers::tests::backfill_of_a_large_file_peaks_well_under_its_size" ];
+        # Nix's syscall filter prevents setting xattrs and ACLs. The native
+        # xtask suite runs the GNU tar restoration test with those assertions.
+        checkFlags = [
+          "--skip" "drivers::tests::backfill_of_a_large_file_peaks_well_under_its_size"
+          "--skip" "drivers::dir_snapshot::tests::restore_tar::gnu_tar_restores_native_names_sparse_data_attributes_and_access_acl"
+        ];
         # Schema tests clone the builder's prepared database. Store and daemon
         # database tests run under `xtask test`.
         cargoTestFlags = [ "-p" "sinex-model" "-p" "sinex-protocol" "-p" "sinex-schema" "-p" "sinex-sources" "-p" "sinex-source-core" "-p" "sinex-sealing" "-p" "sinex-derivations" ];
