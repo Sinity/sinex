@@ -532,7 +532,11 @@ pub(crate) async fn mark_archived_dirty(
         conn,
         &descendants,
         seq,
-        if hidden_by.is_some() { sinex_model::ArchiveReason::Hide } else { sinex_model::ArchiveReason::Recomputed },
+        if hidden_by.is_some() {
+            sinex_model::ArchiveReason::Hide
+        } else {
+            sinex_model::ArchiveReason::Recomputed
+        },
         None,
         hidden_by.map(|operation| operation.0),
     )

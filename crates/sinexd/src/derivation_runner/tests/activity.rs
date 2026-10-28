@@ -196,6 +196,11 @@ async fn sessions_select_connected_windows_and_create_new_owners_after_removal(
         .map(|window| window.started_at)
         .collect();
     assert_eq!(starts, [at(0), at(800), at(1600)]);
+    let largest_break = sinex_derivations::activity::ActivitySessions(sinex_derivations::activity::ActivityProfile { break_seconds:u64::MAX });
+    let query = Keyed::inputs(&largest_break,&json!({"at":first.started_at,"scope":first.scope}),&env).unwrap();
+    let all = derivations::read_window(&mut conn,&to_window(&query,env.now)).await.unwrap();
+    assert_eq!(all.iter().filter_map(|row| row.event.payload_as::<ActivityWindow>()).count(),4,"a valid large break must not overflow a database interval");
+
     w.batch(
         vec![],
         vec![ArchiveRequest::Hide {

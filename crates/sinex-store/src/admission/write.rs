@@ -139,7 +139,8 @@ pub(super) async fn insert_admitted(
         )
         .await?;
         outcome.replaced = replaced.len();
-        outcome.dirty_keys += mark_archived_dirty(conn, &live, last, keys, Some(batch), None).await?;
+        outcome.dirty_keys +=
+            mark_archived_dirty(conn, &live, last, keys, Some(batch), None).await?;
     }
 
     outcome.admitted = admit_ords.len();

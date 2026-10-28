@@ -68,7 +68,7 @@ pub enum InputRange {
         kinds: Vec<Kind>,
         at: OffsetDateTime,
         end_field: &'static str,
-        gap_seconds: f64,
+        gap_ns: i128,
     },
     Extent {
         kinds: Vec<Kind>,
@@ -204,9 +204,10 @@ async fn resolve_range(conn: &mut PgConnection, w: &Window) -> Result<Option<Win
             kinds,
             at,
             end_field,
-            gap_seconds,
+            gap_ns,
         } => {
             let (types, contains) = kind_arrays(kinds);
+            let gap = gap_ns.to_string();
             let bounds = sqlx::query!(
                 r#"WITH RECURSIVE chain(id, start, finish) AS (
                      SELECT e.id, e.ts_orig, coalesce((e.payload->>$3)::timestamptz, e.ts_orig)
@@ -230,21 +231,21 @@ async fn resolve_range(conn: &mut PgConnection, w: &Window) -> Result<Option<Win
                                       WHERE k.event_type=e.event_type AND e.payload @> k.contains)
                           AND NOT EXISTS (SELECT 1 FROM audit.archived a WHERE a.event_id=e.id)
                         ORDER BY e.ts_orig, e.id LIMIT 1)
-                     ) n WHERE n.ts_orig < c.finish + interval '1 second' * $5::double precision
-                           AND coalesce((n.payload->>$3)::timestamptz, n.ts_orig) > c.start - interval '1 second' * $5::double precision)
-                   SELECT min(start) AS start, max(finish) + interval '1 second' * $5::double precision AS finish FROM chain"#,
-                &types, &contains, *end_field, at, gap_seconds,
+                     ) n WHERE extract(epoch FROM n.ts_orig-c.finish) * 1000000000 < $5::text::numeric
+                           AND extract(epoch FROM c.start-coalesce((n.payload->>$3)::timestamptz, n.ts_orig)) * 1000000000 < $5::text::numeric)
+                   SELECT min(start) AS start, max(finish) AS finish FROM chain"#,
+                &types, &contains, *end_field, at, gap,
             ).fetch_one(&mut *conn).await?;
             let (Some(start), Some(end)) = (bounds.start, bounds.finish) else {
                 return Ok(None);
             };
             resolved.start = Some(start);
-            resolved.end = Some(end);
+            resolved.end = Timestamp(end).unix_ns().checked_add(*gap_ns).and_then(|ns| Timestamp::from_unix_ns(ns).ok()).map(|at| at.0);
         }
         InputRange::Extent { kinds } => {
             let (types, contains) = kind_arrays(kinds);
             let bounds = sqlx::query!(
-                r#"SELECT min(e.ts_orig) AS start, max(e.ts_orig) + interval '1 microsecond' AS finish
+                r#"SELECT min(e.ts_orig) AS start, max(e.ts_orig) AS finish
                    FROM core.events e WHERE e.event_type = ANY($1) AND e.ts_orig IS NOT NULL
                      AND EXISTS (SELECT 1 FROM unnest($1::text[], $2::jsonb[]) AS k(event_type, contains)
                                  WHERE k.event_type = e.event_type AND e.payload @> k.contains)
@@ -255,7 +256,7 @@ async fn resolve_range(conn: &mut PgConnection, w: &Window) -> Result<Option<Win
                 return Ok(None);
             };
             resolved.start = Some(start);
-            resolved.end = Some(end);
+            resolved.end = Timestamp::from_unix_ns(Timestamp(end).unix_ns() + 1_000).ok().map(|at| at.0);
         }
         InputRange::UntilNext {
             start,

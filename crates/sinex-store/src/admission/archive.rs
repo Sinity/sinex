@@ -188,7 +188,15 @@ pub(super) async fn request(
             let Some(r) = unhidden else { return Ok(0) };
             restore::reading(conn, r.id, seq, operation.0).await?;
             let dirty = mark_archived_dirty(conn, &[r.id], seq, keys, None, None).await?;
-            let restored = restore::descendants(conn, r.id, removed.expect("the hidden record was removed"), seq, operation.0, keys).await?;
+            let restored = restore::descendants(
+                conn,
+                r.id,
+                removed.expect("the hidden record was removed"),
+                seq,
+                operation.0,
+                keys,
+            )
+            .await?;
             Ok(dirty + restored)
         }
     }

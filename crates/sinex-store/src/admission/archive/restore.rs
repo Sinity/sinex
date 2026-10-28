@@ -24,10 +24,14 @@ pub(super) async fn reading(
         event,
     ).fetch_optional(&mut *conn).await?.unwrap_or(false);
     if !allowed {
-        return Err(Error::Invalid(format!("cannot restore {event}: a parent is not live or the record is hidden")));
+        return Err(Error::Invalid(format!(
+            "cannot restore {event}: a parent is not live or the record is hidden"
+        )));
     }
     if !super::history::unhide_at(conn, event, seq, operation).await? {
-        return Err(Error::Invalid("hidden reading changed before it was restored".into()));
+        return Err(Error::Invalid(
+            "hidden reading changed before it was restored".into(),
+        ));
     }
     sqlx::query!(
         r#"INSERT INTO core.live_equivalence(source,event_type,equivalence_key,event_id,reading_order,record_hash)
@@ -58,10 +62,20 @@ pub(super) async fn descendants(
            WHERE a.reason='hide' AND a.operation_id=$2"#, root, archived_by,
     ).fetch_all(&mut *conn).await?;
     let owners = sqlx::query!(
-        "SELECT DISTINCT derivation,key FROM derivation.outputs WHERE event_id=ANY($1)", &candidates,
-    ).fetch_all(&mut *conn).await?;
-    let mut dirty = mark_dirty(conn, owners.into_iter().map(|row|
-        (crate::derivations::static_type(&row.derivation), row.key)).collect(), seq).await?;
+        "SELECT DISTINCT derivation,key FROM derivation.outputs WHERE event_id=ANY($1)",
+        &candidates,
+    )
+    .fetch_all(&mut *conn)
+    .await?;
+    let mut dirty = mark_dirty(
+        conn,
+        owners
+            .into_iter()
+            .map(|row| (crate::derivations::static_type(&row.derivation), row.key))
+            .collect(),
+        seq,
+    )
+    .await?;
     // Keyed aggregates and their descendants get new readings from recomputation.
     let blocked = sqlx::query_scalar!(
         r#"WITH RECURSIVE blocked(id) AS (
@@ -69,22 +83,39 @@ pub(super) async fn descendants(
              UNION SELECT edge.child FROM core.event_children edge JOIN blocked b ON edge.parent=b.id)
            SELECT id AS "id!" FROM blocked"#, &candidates,
     ).fetch_all(&mut *conn).await?.into_iter().collect::<std::collections::HashSet<_>>();
-    let mut pending: Vec<_> = candidates.into_iter().filter(|id| !blocked.contains(id)).collect();
+    let mut pending: Vec<_> = candidates
+        .into_iter()
+        .filter(|id| !blocked.contains(id))
+        .collect();
     while !pending.is_empty() {
         let ready = sqlx::query!(
             r#"SELECT e.id,e.event_type,e.ts_orig,e.payload FROM core.events e
                WHERE e.id=ANY($1) AND NOT EXISTS (
                  SELECT 1 FROM unnest(e.parents) p(id)
                  WHERE NOT EXISTS (SELECT 1 FROM core.live_equivalence l WHERE l.event_id=p.id)
-                   AND NOT EXISTS (SELECT 1 FROM core.live_locations l WHERE l.event_id=p.id))"#, &pending,
-        ).fetch_all(&mut *conn).await?;
+                   AND NOT EXISTS (SELECT 1 FROM core.live_locations l WHERE l.event_id=p.id))"#,
+            &pending,
+        )
+        .fetch_all(&mut *conn)
+        .await?;
         if ready.is_empty() {
-            return Err(Error::Invalid("cannot restore the derived chain: a parent is not live".into()));
+            return Err(Error::Invalid(
+                "cannot restore the derived chain: a parent is not live".into(),
+            ));
         }
         for event in ready {
             reading(conn, event.id, seq, operation).await?;
-            dirty += mark_inputs_dirty(conn, &[KeyInput { event_type:&event.event_type,
-                ts_orig:event.ts_orig, payload:&event.payload }], seq, keys).await?;
+            dirty += mark_inputs_dirty(
+                conn,
+                &[KeyInput {
+                    event_type: &event.event_type,
+                    ts_orig: event.ts_orig,
+                    payload: &event.payload,
+                }],
+                seq,
+                keys,
+            )
+            .await?;
             pending.retain(|id| *id != event.id);
         }
     }

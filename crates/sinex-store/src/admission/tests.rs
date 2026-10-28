@@ -687,55 +687,96 @@ async fn derived_outputs_require_committed_live_parents(db: devkit::pg::TestData
 }
 
 #[devkit::test]
-async fn a_hidden_chain_restores_its_per_event_readings_in_parent_order(db: devkit::pg::TestDatabase) {
+async fn a_hidden_chain_restores_its_per_event_readings_in_parent_order(
+    db: devkit::pg::TestDatabase,
+) {
     let mut conn = PgConnection::connect(&db.url(None)).await.unwrap();
-    let root = keyed("chain",1,1,1);
+    let root = keyed("chain", 1, 1, 1);
     admit_one(&mut conn, &batch(vec![root.clone()])).await;
-    let mut child = keyed("chain",2,2,1);
-    child.origin = Origin::Derived { parents: vec![root.id] };
+    let mut child = keyed("chain", 2, 2, 1);
+    child.origin = Origin::Derived {
+        parents: vec![root.id],
+    };
     admit_one(&mut conn, &batch(vec![child.clone()])).await;
-    let mut grandchild = keyed("chain",3,3,1);
-    grandchild.origin = Origin::Derived { parents: vec![child.id] };
+    let mut grandchild = keyed("chain", 3, 3, 1);
+    grandchild.origin = Origin::Derived {
+        parents: vec![child.id],
+    };
     admit_one(&mut conn, &batch(vec![grandchild.clone()])).await;
     let operation = OperationId::new();
     let mut hide = batch(vec![]);
-    hide.archive.push(ArchiveRequest::Hide {target:root.id,operation});
+    hide.archive.push(ArchiveRequest::Hide {
+        target: root.id,
+        operation,
+    });
     admit_one(&mut conn, &hide).await;
-    let ids = [root.id.0,child.id.0,grandchild.id.0];
+    let ids = [root.id.0, child.id.0, grandchild.id.0];
     let archived: i64 = sqlx::query_scalar("SELECT count(*) FROM audit.archived WHERE event_id=ANY($1) AND reason='hide' AND operation_id=$2")
         .bind(ids.as_slice()).bind(operation.0).fetch_one(&mut conn).await.unwrap();
-    assert_eq!(archived,3);
+    assert_eq!(archived, 3);
     let mut restore = batch(vec![]);
-    restore.archive.push(ArchiveRequest::Unhide {target:root.id,operation:OperationId::new()});
+    restore.archive.push(ArchiveRequest::Unhide {
+        target: root.id,
+        operation: OperationId::new(),
+    });
     admit_one(&mut conn, &restore).await;
-    let restored: Vec<Uuid> = sqlx::query_scalar("SELECT event_id FROM core.live_equivalence WHERE source='chain' ORDER BY event_id")
-        .fetch_all(&mut conn).await.unwrap();
-    let mut expected = ids.to_vec(); expected.sort();
-    assert_eq!(restored,expected,"restore moves the same readings, without a runner");
-    let count: i64 = sqlx::query_scalar("SELECT events FROM core.source_counts WHERE source='chain'")
-        .fetch_one(&mut conn).await.unwrap();
-    assert_eq!(count,3);
+    let restored: Vec<Uuid> = sqlx::query_scalar(
+        "SELECT event_id FROM core.live_equivalence WHERE source='chain' ORDER BY event_id",
+    )
+    .fetch_all(&mut conn)
+    .await
+    .unwrap();
+    let mut expected = ids.to_vec();
+    expected.sort();
+    assert_eq!(
+        restored, expected,
+        "restore moves the same readings, without a runner"
+    );
+    let count: i64 =
+        sqlx::query_scalar("SELECT events FROM core.source_counts WHERE source='chain'")
+            .fetch_one(&mut conn)
+            .await
+            .unwrap();
+    assert_eq!(count, 3);
 }
 
 #[devkit::test]
 async fn restoring_a_chain_refuses_an_independently_archived_parent(db: devkit::pg::TestDatabase) {
     let mut conn = PgConnection::connect(&db.url(None)).await.unwrap();
-    let root = keyed("chain",1,1,1);
-    let other = keyed("chain",2,2,1);
-    admit_one(&mut conn, &batch(vec![root.clone(),other.clone()])).await;
-    let mut child = keyed("chain",3,3,1);
-    child.origin = Origin::Derived { parents:vec![root.id,other.id] };
+    let root = keyed("chain", 1, 1, 1);
+    let other = keyed("chain", 2, 2, 1);
+    admit_one(&mut conn, &batch(vec![root.clone(), other.clone()])).await;
+    let mut child = keyed("chain", 3, 3, 1);
+    child.origin = Origin::Derived {
+        parents: vec![root.id, other.id],
+    };
     admit_one(&mut conn, &batch(vec![child])).await;
-    for target in [root.id,other.id] {
-        let mut hide=batch(vec![]);
-        hide.archive.push(ArchiveRequest::Hide {target,operation:OperationId::new()});
-        admit_one(&mut conn,&hide).await;
+    for target in [root.id, other.id] {
+        let mut hide = batch(vec![]);
+        hide.archive.push(ArchiveRequest::Hide {
+            target,
+            operation: OperationId::new(),
+        });
+        admit_one(&mut conn, &hide).await;
     }
-    let mut restore=batch(vec![]);
-    restore.archive.push(ArchiveRequest::Unhide {target:root.id,operation:OperationId::new()});
-    let mut tx=conn.begin().await.unwrap();
-    assert!(matches!(admit(&mut tx,&restore,&NoKeys,None).await,Err(crate::Error::Invalid(_))));
+    let mut restore = batch(vec![]);
+    restore.archive.push(ArchiveRequest::Unhide {
+        target: root.id,
+        operation: OperationId::new(),
+    });
+    let mut tx = conn.begin().await.unwrap();
+    assert!(matches!(
+        admit(&mut tx, &restore, &NoKeys, None).await,
+        Err(crate::Error::Invalid(_))
+    ));
     tx.rollback().await.unwrap();
-    let live: i64=sqlx::query_scalar("SELECT count(*) FROM core.live_equivalence WHERE source='chain'").fetch_one(&mut conn).await.unwrap();
-    assert_eq!(live,0,"a failed restore leaves the complete chain archived");
+    let live: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM core.live_equivalence WHERE source='chain'")
+            .fetch_one(&mut conn)
+            .await
+            .unwrap();
+    assert_eq!(
+        live, 0,
+        "a failed restore leaves the complete chain archived"
+    );
 }

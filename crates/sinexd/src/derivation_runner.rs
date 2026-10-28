@@ -111,7 +111,7 @@ pub(crate) fn to_window(q: &InputQuery, now: Timestamp) -> Window {
                 kinds: kinds(selected),
                 at: at.0,
                 end_field,
-                gap_seconds: *gap_ns as f64 / 1_000_000_000.0,
+                gap_ns: *gap_ns,
             },
             sinex_derivations::InputRange::Extent { kinds: selected } => {
                 derivations::InputRange::Extent {
