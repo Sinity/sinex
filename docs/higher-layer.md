@@ -82,6 +82,18 @@ Attribution is an ordered ladder of exact keys, highest first:
 4. **Window to terminal to session**: a window and terminal identity adapter maps a focused window to a terminal, and the agent session's terminal identity recorded by the session-start hook (parent PID and the terminal's own identifier) completes an exact map from a focused window to cwd and session. Each compositor and terminal is one adapter implementation; Hyprland window addresses and Kitty window IDs are the first. AI terminal windows inherit a project only through this join.
 5. **Browser**: a forge or pull-request URL of a registered repository; a task or job page whose URL form is declared as data.
 
+The exact attribution registry is deployment data under
+`project_attribution.projects`: each entry has `project` and optional
+`repositories`, `common_dirs`, `root_commits`, and `roots`. A root entry has
+`path`, required `from`, and optional exclusive `until`. These are captured
+identities and effective-dated facts; derivation never opens a repository.
+Structured session `objectives` contain `kind` (`task` or `pull_request`),
+`reference` and `repository`. At the highest present tier, competing exact
+references remain unresolved. Work acts retain optional native terminal and git
+identity, and checks retain `revision`, `check_name` and `check_passed`.
+A passing check resolves an earlier failure only for the same repository,
+revision and check name. Missing fields keep the failure open.
+
 **Inferred tiers** are qualified proposals that never displace an exact owner:
 
 - normalised title tokens matched against the project registry;

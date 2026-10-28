@@ -285,6 +285,7 @@ impl Parser for ScrollbackParser {
                 continues,
                 new_lines: (lines.len() - start) as u64,
                 text: lines[start..].join("\n"),
+                extra: Map::new(),
             })],
             next,
         ))

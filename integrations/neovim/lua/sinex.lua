@@ -37,6 +37,23 @@ local function send(line)
   end
 end
 
+local function git_identity(cwd)
+  local function git(args)
+    local cmd = { "git", "--no-optional-locks", "-C", cwd }
+    vim.list_extend(cmd, args)
+    local ok, result = pcall(function() return vim.system(cmd, { text = true }):wait(200) end)
+    if not ok or result.code ~= 0 then return nil end
+    return vim.trim(result.stdout or "")
+  end
+  local common = git({ "rev-parse", "--path-format=absolute", "--git-common-dir" })
+  local roots = git({ "rev-list", "--max-parents=0", "HEAD" })
+  if not common or not roots then return vim.NIL end
+  local commits = vim.split(roots, "\n", { trimempty = true })
+  table.sort(commits)
+  return { common_dir = common, root_commits = commits,
+    head = git({ "rev-parse", "HEAD" }), branch = git({ "symbolic-ref", "--quiet", "--short", "HEAD" }) }
+end
+
 function M.setup(opts)
   opts = opts or {}
   local group = vim.api.nvim_create_augroup("sinex", { clear = true })
@@ -50,6 +67,7 @@ function M.setup(opts)
         path = name ~= "" and name or nil,
         filetype = vim.bo[ev.buf].filetype ~= "" and vim.bo[ev.buf].filetype or nil,
         cwd = vim.fn.getcwd(),
+        git_identity = git_identity(vim.fn.getcwd()),
         pid = vim.fn.getpid(),
         buf = ev.buf,
       }))

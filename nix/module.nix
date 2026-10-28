@@ -250,6 +250,12 @@ in
       description = "Break threshold in seconds between operator activity windows in one session.";
     };
 
+    project_attribution.projects = mkOption {
+      type = types.listOf (types.attrsOf types.anything);
+      default = [ ];
+      description = "Exact project repository/common-dir/root-commit keys and effective-dated path roots.";
+    };
+
     tags = mkOption {
       type = types.listOf (types.attrsOf types.anything);
       default = [ ];
@@ -424,7 +430,7 @@ in
           inputs = discoveryInputs;
         };
         derivations = mapAttrs (_: d: d.enable) cfg.derivations;
-        inherit (cfg) tags activity;
+        inherit (cfg) tags activity project_attribution;
       };
 
       systemd.tmpfiles.rules = [

@@ -64,27 +64,42 @@ fn ocr(image: &[u8]) -> Result<String, String> {
         .map_err(|_| "tesseract returned text that is not UTF-8".into())
 }
 
+fn text_for(
+    segment: &sinex_model::event_types::session::MediaSegment,
+    engine: Option<&str>,
+    read_image: impl FnOnce() -> Result<String, String>,
+) -> Result<(String, String), String> {
+    if let Some(text) = &segment.accessibility_text {
+        return Ok(("accessibility".into(), text.clone()));
+    }
+    let engine = engine.ok_or("accessibility unavailable and no local OCR engine")?;
+    Ok((engine.into(), read_image()?))
+}
+
 /// Screen text, bound to the engine found at start.
 pub(crate) struct ScreenText {
-    pub engine: String,
+    pub engine: Option<String>,
 }
 
 impl PerEvent for ScreenText {
     const NAME: &'static str = "screen-text";
     /// Bump when the reading of a segment changes (engine, languages, options).
-    const VERSION: u32 = 2;
+    const VERSION: u32 = 3;
     const INPUTS: &'static [&'static str] = &["media.segment"];
     const OUTPUTS: &'static [&'static str] = &["screen.text"];
     const READS: Reads = Reads::Material;
 
     fn version(&self) -> u32 {
-        let definition = format!("{}:{}:{}", Self::NAME, Self::VERSION, self.engine);
+        let definition = format!("{}:{}:{:?}", Self::NAME, Self::VERSION, self.engine);
         let hash = blake3::hash(definition.as_bytes());
         (u32::from_le_bytes(hash.as_bytes()[..4].try_into().expect("four bytes")) >> 2) + 1
     }
 
     fn reads_for(&self, event: &Event) -> Reads {
-        if event.payload.get("kind").and_then(|v| v.as_str()) == Some("screen") {
+        if event.payload.get("kind").and_then(|v| v.as_str()) == Some("screen")
+            && event.payload.get("accessibility_text").and_then(|text| text.as_str()).is_none()
+            && self.engine.is_some()
+        {
             Self::READS
         } else {
             Reads::Nothing
@@ -96,18 +111,17 @@ impl PerEvent for ScreenText {
         if segment.payload.get("kind").and_then(|k| k.as_str()) != Some("screen") {
             return Ok(Vec::new());
         }
-        let image = input
-            .bytes
-            .ok_or("the screen still's bytes were not read")?;
-        let text = ocr(image)?;
-        let started_at = segment
+        let metadata = segment
             .payload_as::<sinex_model::event_types::session::MediaSegment>()
-            .ok_or("not a valid media segment")?
-            .started_at;
+            .ok_or("not a valid media segment")?;
+        let (engine, text) = text_for(&metadata, self.engine.as_deref(), || {
+            ocr(input.bytes.ok_or("the screen still's bytes were not read")?)
+        })?;
+        let started_at = metadata.started_at;
         let payload = ScreenTextPayload {
             segment: segment.id.to_string(),
             started_at,
-            engine: self.engine.clone(),
+            engine,
             text,
         };
         let mut hasher = blake3::Hasher::new();
@@ -134,3 +148,6 @@ impl PerEvent for ScreenText {
         Ok(vec![event])
     }
 }
+
+#[cfg(test)]
+mod tests;

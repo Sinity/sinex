@@ -13,6 +13,26 @@ pub struct Objective {
     pub repository: String,
 }
 
+/// Repository facts observed beside a cwd, never resolved during derivation.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct GitIdentity {
+    pub common_dir: String,
+    /// Multiple unrelated roots can be reachable after an unrelated-history merge.
+    pub root_commits: Vec<String>,
+    pub head: Option<String>,
+    pub branch: Option<String>,
+}
+
+/// A terminal adapter's exact identity, scoped to its captured host and process.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct TerminalIdentity {
+    pub host: String,
+    pub adapter: String,
+    pub process_id: u32,
+    pub window_id: String,
+    pub parent_process_id: Option<u32>,
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
 #[event(type = "work.act", key = ["act"], replace = newer, time = at, quality = intrinsic)]
 pub struct WorkAct {
@@ -30,6 +50,18 @@ pub struct WorkAct {
     pub action: String,
     pub path: Option<String>,
     pub failed: bool,
+    #[serde(default)]
+    pub revision: Option<String>,
+    #[serde(default)]
+    pub check_name: Option<String>,
+    #[serde(default)]
+    pub check_passed: Option<bool>,
+    #[serde(default)]
+    pub cwd: Option<String>,
+    #[serde(default)]
+    pub git_identity: Option<GitIdentity>,
+    #[serde(default)]
+    pub terminal: Option<TerminalIdentity>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
@@ -81,6 +113,11 @@ pub struct WorkResumption {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
 #[event(type = "context.pack", key = ["pack"], replace = newer, time = at, quality = intrinsic)]
 pub struct ContextPack {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub read_as: Option<i64>,
+    /// Stored analysis sections and their selected panel at one read context.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub analysis: Option<serde_json::Value>,
     pub pack: String,
     pub episode: String,
     pub at: Timestamp,
@@ -139,4 +176,31 @@ pub struct AgentctlEvent {
     /// manifests of the checkout) are left in the stored line.
     #[serde(default, skip_serializing_if = "Map::is_empty")]
     pub extra: Map<String, Value>,
+}
+
+/// Exact rational allocation; unresolved time is carried separately.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct ProjectShare {
+    pub project: String,
+    pub numerator: u64,
+    pub denominator: u64,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
+#[event(type = "activity.project_span", key = ["project_span"], replace = newer, time = started_at, quality = intrinsic)]
+pub struct ProjectSpan {
+    pub project_span: String,
+    pub scope: String,
+    pub started_at: Timestamp,
+    pub ended_at: Timestamp,
+    pub agency: Agency,
+    pub activity_spans: Vec<ActivityEvidence>,
+    pub shares: Vec<ProjectShare>,
+    pub unallocated_numerator: u64,
+    pub denominator: u64,
+    pub ladder_rung: Option<u8>,
+    pub reason: String,
+    pub conflicting_projects: Vec<String>,
+    pub supported_seconds: f64,
+    pub profile: String,
 }

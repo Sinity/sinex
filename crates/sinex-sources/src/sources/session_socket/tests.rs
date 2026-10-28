@@ -301,3 +301,21 @@ fn stop_is_checked_between_accept_batches_with_more_clients_pending() {
     drop(clients);
     let _ = std::fs::remove_dir_all(dir);
 }
+
+#[devkit::test]
+fn capture_keeps_repository_and_terminal_identity_beside_each_recorded_cwd() {
+    for event in ["cmd_start", "scrollback"] {
+        let line = serde_json::json!({"source":"kitty","event":event,"cwd":"/captured/worktree",
+            "window_id":7,"lines":1,"from_line":0,"text":"example",
+            "git_identity":{"common_dir":"/captured/repo/.git","root_commits":["root"],"head":"sha","branch":"branch"},
+            "terminal_identity":{"host":"box","adapter":"kitty","process_id":9,"window_id":"7","parent_process_id":8}});
+        let parsed = parse(&line.to_string()).unwrap();
+        let extra = match &parsed {
+            Produced::Terminal(event) => &event.extra,
+            Produced::Scrollback(event) => &event.extra,
+            _ => panic!("terminal source"),
+        };
+        assert_eq!(extra["git_identity"]["common_dir"],"/captured/repo/.git");
+        assert_eq!(extra["terminal_identity"]["window_id"],"7");
+    }
+}

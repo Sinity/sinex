@@ -363,6 +363,10 @@ impl Keyed for ActivitySessions {
                 ));
             }
         }
-        Computed { outputs, waiting }
+        Computed {
+            error: None,
+            outputs,
+            waiting,
+        }
     }
 }

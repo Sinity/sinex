@@ -4,8 +4,8 @@
 //! so its presence scenarios are span scenarios here.
 use super::*;
 use sinex_model::{
-    Class, EquivalenceKey, EventId, MaterialId, ReadingOrder, RecordLocation, RecordState,
-    ReplaceRule, TimeQuality, TsOrig,
+    Class, EquivalenceKey, MaterialId, ReadingOrder, RecordLocation, ReplaceRule, TimeQuality,
+    TsOrig,
 };
 
 const T: i64 = 1_718_438_400; // 2024-06-15 10:00 CEST
@@ -20,27 +20,28 @@ fn input(event_type: &str, secs: i64, payload: Value) -> Event {
         .copied()
         .find(|t| *t == event_type)
         .expect("a lift input type");
-    Event {
-        id: EventId::new(),
-        event_type,
-        source: "test".into(),
-        origin: Origin::Record {
+    let mut event = Event::submitted(
+        sinex_model::KindRef {
+            name: event_type.into(),
+            version: 1,
+        },
+        payload,
+        "test".into(),
+        Origin::Record {
             location: RecordLocation {
                 material: MaterialId::new(),
                 anchor: u64::try_from(secs.max(0)).unwrap(),
             },
             output_index: 0,
         },
-        ts_orig: TsOrig::known(at(secs), TimeQuality::Captured),
-        payload,
-        equivalence_key: Some(EquivalenceKey("k".into())),
-        replace: ReplaceRule::SuppressRepeat,
-        reading_order: ReadingOrder(0),
-        record_hash: [0; 32],
-        record_state: RecordState::Present,
-        class: Class::Open,
-        owned_blobs: Vec::new(),
-    }
+        ReadingOrder(0),
+        [0; 32],
+        Class::Open,
+    );
+    event.ts_orig = TsOrig::known(at(secs), TimeQuality::Captured);
+    event.equivalence_key = Some(EquivalenceKey("k".into()));
+    event.replace = Some(ReplaceRule::SuppressRepeat);
+    event
 }
 
 fn focus(secs: i64, window: &str, title: &str) -> Event {
@@ -243,7 +244,7 @@ fn inputs_ask_for_the_transitions_after_the_day() {
     let q = StateIntervals.inputs(&key("desktop.focus"), &env).unwrap();
     assert_eq!(q.window.unwrap().0, at(-6 * 3600));
     assert_eq!(q.window.unwrap().1, at(18 * 3600));
-    assert!(q.event_types().contains(&"window.focused"));
+    assert!(q.event_types().contains(&"window.focused".to_string()));
     assert!(
         q.event_types().contains(&"presence.span"),
         "interruptions are inputs"
@@ -257,7 +258,7 @@ fn keys_cover_the_rules_a_fence_ends() {
     let view = |e: &Event| {
         StateIntervals.keys_for(
             &KeyView {
-                event_type: e.event_type,
+                event_type: &e.event_type,
                 ts_orig: e.ts_orig.at,
                 payload: &e.payload,
             },

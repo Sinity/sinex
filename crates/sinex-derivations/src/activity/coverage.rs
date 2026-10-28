@@ -44,7 +44,7 @@ impl Keyed for InputCoverage {
             .iter()
             .filter(|event| {
                 event.ts_orig.at.is_some()
-                    && scope(&event.payload, event.event_type) == captured_scope
+                    && scope(&event.payload, &event.event_type) == captured_scope
             })
             .collect();
         events.sort_by_cached_key(|event| (event.ts_orig.at, stable(event)));
@@ -85,6 +85,7 @@ impl Keyed for InputCoverage {
             }
         }
         Computed {
+            error: None,
             outputs,
             waiting: false,
         }

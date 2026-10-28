@@ -16,8 +16,9 @@ use sinex_model::time_settings::TimeSettings;
 use sinex_model::{Event, EventId, Timestamp};
 
 pub mod activity;
-pub mod conversation;
+pub mod attribution;
 pub mod calendar;
+pub mod conversation;
 pub mod derived_event;
 pub mod figures;
 pub mod fusion;
@@ -435,6 +436,8 @@ pub struct Configuration {
     pub tags: Vec<tags::TagRule>,
     #[serde(default)]
     pub activity: activity::ActivityProfile,
+    #[serde(default)]
+    pub project_attribution: attribution::AttributionProfile,
 }
 
 /// Every keyed derivation, in dependency order.
@@ -451,12 +454,15 @@ fn builtin(configuration: &Configuration) -> Vec<Box<dyn AnyKeyed>> {
         .iter()
         .map(|rule| Box::new(fusion::Fusion(rule)) as Box<dyn AnyKeyed>)
         .collect();
-    all.extend::<[Box<dyn AnyKeyed>; 18]>([
+    all.extend::<[Box<dyn AnyKeyed>; 19]>([
         Box::new(library::LibraryItems),
         Box::new(session::ShellSessions),
         Box::new(activity::InputCoverage),
         Box::new(work::WorkActs),
         Box::new(activity::ActivitySpans),
+        Box::new(attribution::ProjectSpans(
+            configuration.project_attribution.clone(),
+        )),
         Box::new(activity::ActivityWindows),
         Box::new(activity::ActivitySessions(configuration.activity.clone())),
         Box::new(conversation::ConversationDays),
@@ -482,9 +488,10 @@ pub fn per_event() -> Vec<Box<dyn AnyPerEvent>> {
 
 /// Pure per-event derivations using the declared rules.
 pub fn per_event_with(configuration: &Configuration) -> Result<Vec<Box<dyn AnyPerEvent>>, String> {
-    Ok(vec![Box::new(library::Hints), Box::new(tags::TagApplier::new(
-        configuration.tags.clone(),
-    )?)])
+    Ok(vec![
+        Box::new(library::Hints),
+        Box::new(tags::TagApplier::new(configuration.tags.clone())?),
+    ])
 }
 
 /// The tag applier runs only when explicitly enabled.

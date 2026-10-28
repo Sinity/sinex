@@ -204,7 +204,7 @@ async fn rediscovery_keeps_location_admissions_and_progress(db: devkit::pg::Test
     )
     .await
     .unwrap();
-    let count: i64 = sqlx::query_scalar("SELECT count(*) FROM core.events")
+    let count: i64 = sqlx::query_scalar("SELECT count(*) FROM core.events WHERE event_type = 'command.imported'")
         .fetch_one(&mut context.read_conn)
         .await
         .unwrap();
@@ -351,4 +351,12 @@ fn activity_break_threshold_is_configured_and_zero_is_refused() {
         serde_json::from_value::<Config>(serde_json::json!({"activity":{"break_seconds":0}}))
             .is_err()
     );
+}
+
+#[devkit::test]
+fn project_registry_reaches_the_versioned_derivation() {
+    let c = config(serde_json::json!({"project_attribution":{"projects":[{
+        "project":"example","common_dirs":["/captured/example/.git"]}]}}));
+    let configuration = c.derivation_configuration();
+    assert_eq!(configuration.project_attribution.projects[0]["project"],"example");
 }

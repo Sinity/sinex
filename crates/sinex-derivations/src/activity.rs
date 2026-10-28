@@ -49,7 +49,7 @@ pub(crate) fn timestamp(ns: i128) -> Timestamp {
 pub(crate) fn stable(event: &Event) -> String {
     serde_json::to_string(&(
         &event.source,
-        event.event_type,
+        &event.event_type,
         event
             .equivalence_key
             .as_ref()
@@ -63,7 +63,7 @@ pub(crate) fn evidence(event: &Event) -> ActivityEvidence {
     ActivityEvidence {
         event: event.id,
         record: stable(event),
-        event_type: event.event_type.into(),
+        event_type: event.event_type.clone(),
         source: event.source.clone(),
     }
 }
@@ -226,7 +226,7 @@ fn counts<'a>(
         {
             continue;
         }
-        *counts.records.entry(event.event_type.into()).or_default() += 1;
+        *counts.records.entry(event.event_type.clone()).or_default() += 1;
         *counts.sources.entry(event.source.clone()).or_default() += 1;
         if let Some(observers) = event.payload.get("observed_by").and_then(Value::as_array) {
             let observers: std::collections::BTreeSet<_> =

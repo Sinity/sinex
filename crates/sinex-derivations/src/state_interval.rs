@@ -230,7 +230,7 @@ fn to_event(rule: &IntervalRule, l: PendingInterval<'_>) -> Event {
 }
 
 fn interrupts(rule: &IntervalRule, e: &Event) -> bool {
-    Interruption::of(e.event_type, &e.payload).is_some_and(|f| rule.ended_by.contains(&f))
+    Interruption::of(&e.event_type, &e.payload).is_some_and(|f| rule.ended_by.contains(&f))
 }
 
 /// Fold one rule over time-sorted events. Returns every interval whose start
@@ -247,11 +247,11 @@ fn fold<'a>(rule: &IntervalRule, events: &[&'a Event]) -> Vec<PendingInterval<'a
                 {
                     out.push(PendingInterval {
                         open: o,
-                        end: Some((at, e.event_type)),
+                        end: Some((at, e.event_type.as_str())),
                         closers: vec![e],
                     });
                 }
-                if !rule.event_types.contains(&e.event_type) {
+                if !rule.event_types.contains(&e.event_type.as_str()) {
                     continue;
                 }
                 let current = Open::new(rule, e, at);
@@ -265,7 +265,7 @@ fn fold<'a>(rule: &IntervalRule, events: &[&'a Event]) -> Vec<PendingInterval<'a
                         let o = open.replace(current).expect("matched Some");
                         out.push(PendingInterval {
                             open: o,
-                            end: Some((at, e.event_type)),
+                            end: Some((at, e.event_type.as_str())),
                             closers: vec![e],
                         });
                     }
@@ -286,7 +286,7 @@ fn fold<'a>(rule: &IntervalRule, events: &[&'a Event]) -> Vec<PendingInterval<'a
                 .filter_map(|&e| Some((e, e.ts_orig.at?)))
                 .collect();
             for &e in events {
-                if !rule.event_types.contains(&e.event_type) {
+                if !rule.event_types.contains(&e.event_type.as_str()) {
                     continue;
                 }
                 let Some(at) = e.ts_orig.at else { continue };
@@ -300,10 +300,11 @@ fn fold<'a>(rule: &IntervalRule, events: &[&'a Event]) -> Vec<PendingInterval<'a
                     .iter()
                     .find(|(_, f)| *f > at && observed.is_none_or(|o| *f < o));
                 let (end, closers) = match interrupted {
-                    Some(&(interruption, f)) => {
-                        (Some((f, interruption.event_type)), vec![interruption])
-                    }
-                    None => (observed.map(|o| (o, e.event_type)), vec![]),
+                    Some(&(interruption, f)) => (
+                        Some((f, interruption.event_type.as_str())),
+                        vec![interruption],
+                    ),
+                    None => (observed.map(|o| (o, e.event_type.as_str())), vec![]),
                 };
                 out.push(PendingInterval {
                     open: Open::new(rule, e, at),
@@ -353,14 +354,15 @@ impl Keyed for StateIntervals {
         let (r, day) = key_parts(key)?;
         let start = env.time_settings.day_start(day).ok()?;
         let end = env.time_settings.day_end(day).ok()?;
-        let mut types: Vec<&'static str> = r.event_types.to_vec();
+        let mut types: Vec<String> = r.event_types.iter().map(|kind| (*kind).into()).collect();
         for f in r.ended_by {
-            for k in f.neighbour().kinds {
-                if !types.contains(&k.event_type) {
-                    types.push(k.event_type);
+            for kind in f.neighbour().kinds {
+                if !types.contains(&kind.event_type) {
+                    types.push(kind.event_type);
                 }
             }
         }
+        let types: Vec<&str> = types.iter().map(String::as_str).collect();
         let mut q = InputQuery::window(&types, start, end);
         match r.shape {
             Shape::AdjacentTransitions => q.after.push(Neighbour {
@@ -397,7 +399,11 @@ impl Keyed for StateIntervals {
                 to_event(r, l)
             })
             .collect();
-        Computed { outputs, waiting }
+        Computed {
+            error: None,
+            outputs,
+            waiting,
+        }
     }
 
     fn key_state(&self, _key: &Value, _env: &Env) -> KeyState {

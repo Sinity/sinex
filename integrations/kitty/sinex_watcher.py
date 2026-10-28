@@ -20,6 +20,7 @@ import json
 import os
 import re
 import socket
+import subprocess
 
 _HOST = socket.gethostname()
 _ROW_END = re.compile(r"(\r\n|\r)")
@@ -52,12 +53,41 @@ def _write(line):
         pass
 
 
+def _git_identity(cwd):
+    """Observe repository identity now; failed probes stay explicitly unknown."""
+    if not cwd:
+        return None
+
+    def git(*args):
+        try:
+            result = subprocess.run(
+                ["git", "--no-optional-locks", "-C", cwd, *args],
+                capture_output=True, text=True, timeout=0.2, check=False,
+            )
+            return result.stdout.strip() if result.returncode == 0 else None
+        except (OSError, subprocess.TimeoutExpired, UnicodeError):
+            return None
+
+    common = git("rev-parse", "--path-format=absolute", "--git-common-dir")
+    roots = git("rev-list", "--max-parents=0", "HEAD")
+    if not common or roots is None:
+        return None
+    return {"common_dir": common, "root_commits": sorted(roots.splitlines()),
+            "head": git("rev-parse", "HEAD"),
+            "branch": git("symbolic-ref", "--quiet", "--short", "HEAD")}
+
+
 def _send(event, window, **fields):
     line = {"source": "kitty", "event": event, "window_id": getattr(window, "id", None)}
     try:
         line["cwd"] = window.cwd_of_child
     except Exception:
         pass
+    line["git_identity"] = _git_identity(line.get("cwd"))
+    line["terminal_identity"] = {
+        "host": _HOST, "adapter": "kitty", "process_id": os.getpid(),
+        "parent_process_id": os.getppid(), "window_id": str(window.id),
+    }
     line.update({k: v for k, v in fields.items() if v is not None})
     _write(line)
 

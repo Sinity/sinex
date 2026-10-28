@@ -239,6 +239,7 @@ impl Keyed for ActivitySpans {
             }
         }
         Computed {
+            error: None,
             outputs,
             waiting: false,
         }

@@ -73,6 +73,11 @@ impl Parser for MediaParser {
                 target: s("target"),
                 width: n("width"),
                 height: n("height"),
+                accessibility_text: match m.get("accessibility_text") {
+                    None | Some(Value::Null) => None,
+                    Some(Value::String(text)) => Some(text.clone()),
+                    Some(_) => return Err(RecordError::new("accessibility_text is not text")),
+                },
             }],
             (),
         ))

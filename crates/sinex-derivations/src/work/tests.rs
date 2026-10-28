@@ -5,21 +5,43 @@ fn at(seconds: i64) -> Timestamp {
     Timestamp::from_unix_secs(1_700_000_000 + seconds).unwrap()
 }
 fn record(kind: &str, payload: Value, anchor: u64) -> Event {
-    (sinex_model::event_types::find(kind).unwrap().build)(
-        &payload,
-        "synthetic.work",
-        Origin::Record {
-            location: RecordLocation {
-                material: MaterialId::new(),
-                anchor,
-            },
-            output_index: 0,
+    let origin = Origin::Record {
+        location: RecordLocation {
+            material: MaterialId::new(),
+            anchor,
         },
+        output_index: 0,
+    };
+    if let Some(kind) = sinex_model::event_types::find(kind) {
+        return (kind.build)(
+            &payload,
+            "synthetic.work",
+            origin,
+            ReadingOrder(0),
+            [0; 32],
+            Class::Open,
+        )
+        .unwrap();
+    }
+    let at = ["at", "start", "started"].into_iter().find_map(|key| {
+        payload
+            .get(key)
+            .and_then(|value| serde_json::from_value::<Timestamp>(value.clone()).ok())
+    });
+    let mut event = Event::submitted(
+        sinex_model::KindRef {
+            name: kind.into(),
+            version: 1,
+        },
+        payload,
+        "synthetic.work".into(),
+        origin,
         ReadingOrder(0),
         [0; 32],
         Class::Open,
-    )
-    .unwrap()
+    );
+    event.ts_orig = sinex_model::TsOrig::maybe(at, sinex_model::TimeQuality::Intrinsic);
+    event
 }
 fn session(id: &str, branch: Option<&str>) -> Event {
     record(
@@ -66,7 +88,7 @@ fn compute(inputs: &[Event]) -> Vec<Event> {
     acts.extend(
         inputs
             .iter()
-            .filter(|event| matches!(event.event_type, "rest.fused" | "state.interval"))
+            .filter(|event| matches!(event.event_type.as_str(), "rest.fused" | "state.interval"))
             .cloned(),
     );
     let keys: BTreeSet<_> = acts
@@ -452,5 +474,107 @@ fn a_recorded_absence_interrupts_work_before_any_return() {
     assert_eq!(payload.returned_at, None);
     assert!(
         matches!(&interruption.origin,Origin::Derived {parents} if parents.contains(&absence.id))
+    );
+}
+
+#[devkit::test]
+fn explicit_task_then_pull_request_anchors_outrank_a_branch_without_reading_prose() {
+    let mut metadata = session("a", Some("branch"));
+    metadata.payload["objectives"] = json!([
+        {"kind":"pull_request","repository":"synthetic/repo","reference":"https://forge.example/synthetic/repo/pull/7"},
+        {"kind":"task","repository":"synthetic/repo","reference":"task-7"}]);
+    let inputs = [metadata.clone(), prompt("a", 0)];
+    let acts = work_acts(&inputs, &Env::at(at(10)));
+    assert_eq!(acts[0].payload["objective"]["kind"], "task");
+    assert_eq!(acts[0].payload["objective"]["reference"], "task-7");
+    metadata.payload["objectives"]
+        .as_array_mut()
+        .unwrap()
+        .remove(1);
+    let acts = work_acts(&[metadata, prompt("a", 0)], &Env::at(at(10)));
+    assert_eq!(acts[0].payload["objective"]["kind"], "pull_request");
+    let mut prose = prompt("a", 0);
+    prose.payload["text"] = json!("Task task-99. gh pr checkout 99");
+    let acts = work_acts(&[session("a", None), prose], &Env::at(at(10)));
+    assert!(acts[0].payload["objective"].is_null());
+}
+#[devkit::test]
+fn conflicting_task_links_do_not_fall_back_to_a_lower_priority_branch() {
+    let mut metadata = session("a", Some("branch"));
+    metadata.payload["objectives"] = json!([
+        {"kind":"task","repository":"synthetic/repo","reference":"task-1"},
+        {"kind":"task","repository":"synthetic/repo","reference":"task-2"}]);
+    let acts = work_acts(&[metadata, prompt("a", 0)], &Env::at(at(10)));
+    assert!(acts[0].payload["objective"].is_null());
+}
+#[devkit::test]
+fn work_acts_retain_exact_terminal_repository_and_revision_check_evidence() {
+    let mut metadata = session("a", Some("branch"));
+    metadata.payload["git_identity"] = json!({"common_dir":"/captured/repo/.git","root_commits":["root"],"head":"rev-a","branch":"branch"});
+    metadata.payload["terminal"] = json!({"host":"box","adapter":"test-terminal","process_id":11,"window_id":"native-7","parent_process_id":9});
+    let tool = record(
+        "polylogue.tool_call",
+        json!({"session":"a","at":at(1),"action":"check",
+        "outcome":"error","revision":"rev-a","check_name":"compile","check_passed":false}),
+        1,
+    );
+    let acts = work_acts(&[metadata, tool], &Env::at(at(10)));
+    let act = acts[0].payload_as::<WorkAct>().unwrap();
+    assert_eq!(act.git_identity.unwrap().common_dir, "/captured/repo/.git");
+    assert_eq!(act.terminal.unwrap().window_id, "native-7");
+    assert_eq!(act.revision.as_deref(), Some("rev-a"));
+    assert_eq!(act.check_name.as_deref(), Some("compile"));
+    assert_eq!(act.check_passed, Some(false));
+}
+
+#[devkit::test]
+fn what_was_i_doing_keeps_last_edit_and_only_resolves_checks_on_the_same_revision() {
+    let mut metadata = session("a", Some("repair"));
+    metadata.payload["objectives"] =
+        json!([{"kind":"task","repository":"synthetic/repo","reference":"task-7"}]);
+    let check = |seconds, revision, passed| {
+        record(
+            "polylogue.tool_call",
+            json!({"session":"a","at":at(seconds),
+        "action":"check","revision":revision,"check_name":"compile","check_passed":passed}),
+            seconds as u64,
+        )
+    };
+    let edit = record(
+        "polylogue.tool_call",
+        json!({"session":"a","at":at(1),"action":"file_edit","path":"/synthetic/repo/lib.rs"}),
+        1,
+    );
+    let mut inputs = vec![
+        metadata,
+        prompt("a", 0),
+        edit,
+        check(2, "rev-a", false),
+        check(3, "rev-b", true),
+    ];
+    let card = |inputs: &[Event]| {
+        compute(inputs)
+            .iter()
+            .find_map(|event| event.payload_as::<ContextPack>())
+            .unwrap()
+    };
+    let before = card(&inputs);
+    assert_eq!(
+        before.last_edit_path.as_deref(),
+        Some("/synthetic/repo/lib.rs")
+    );
+    assert_eq!(
+        before.open_failures.len(),
+        1,
+        "a pass on another revision proves nothing about rev-a"
+    );
+    inputs.push(check(4, "rev-a", true));
+    let after = card(&inputs);
+    assert!(after.open_failures.is_empty());
+    assert_eq!(after.trail.len(), 5);
+    assert!(after.stated_goal.is_some());
+    assert_eq!(
+        before.pack, after.pack,
+        "the prepared resume card keeps its identity"
     );
 }

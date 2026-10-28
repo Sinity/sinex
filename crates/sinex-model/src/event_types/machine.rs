@@ -128,6 +128,9 @@ pub struct ScrollbackCaptured {
     /// Lines in `text`.
     pub new_lines: u64,
     pub text: String,
+    /// Adapter metadata captured with this cwd, including repository and terminal identity.
+    #[serde(default, skip_serializing_if = "Map::is_empty")]
+    pub extra: Map<String, Value>,
 }
 
 /// The window a lake scrollback snapshot was taken of, from the snapshot's

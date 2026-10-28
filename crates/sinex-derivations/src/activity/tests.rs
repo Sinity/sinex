@@ -104,6 +104,9 @@ fn agent_focus_and_commits_while_the_operator_is_away_do_not_extend_windows() {
             committed_at: at(1800),
             message: "Build output".into(),
             refs: vec![],
+            worktrees: vec![],
+            files: None,
+            original_bytes: Default::default(),
         },
         4,
     ));
@@ -201,7 +204,7 @@ fn elementary_spans_preserve_afk_claims_and_physical_contradictions_without_over
         },
         10,
     );
-    let shared = scope(&claim.payload, claim.event_type);
+    let shared = scope(&claim.payload, &claim.event_type);
     for input in &mut events {
         input.payload["extra"]["scope"] = json!(shared);
     }
@@ -497,44 +500,15 @@ fn absence_boundaries_are_parents_of_the_windows_and_spans_they_cut() {
 
 #[devkit::test]
 fn human_prompt_activity_cites_the_session_that_establishes_its_agency() {
-    use sinex_model::event_types::polylogue::{Message, Session, Usage};
-    let session = captured(
-        &Session {
-            session: "session".into(),
-            origin: "codex".into(),
-            kind: "main".into(),
-            title: None,
-            cwd: vec![],
-            repo: None,
-            branch: None,
-            tool_version: None,
-            mode: None,
-            machine: Some("box".into()),
-            started: Some(at(0)),
-            last_activity: Some(at(20)),
-            links: vec![],
-        },
-        1,
+    let session = external(
+        "polylogue.session",
+        json!({"session":"session", "origin":"codex",
+        "kind":"main", "machine":"box", "started":at(0)}),
     );
-    let prompt = captured(
-        &Message {
-            message: "message".into(),
-            session: "session".into(),
-            parent: None,
-            role: "user".into(),
-            written_by: "human".into(),
-            prompt_kind: Some("prose".into()),
-            at: Some(at(10)),
-            model: None,
-            text: "A synthetic prompt".into(),
-            usage: Usage::default(),
-            cost_nusd: None,
-            stop_reason: None,
-            duration_ms: None,
-            attachments: vec![],
-            copies: vec![],
-        },
-        2,
+    let prompt = external(
+        "polylogue.message",
+        json!({"message":"message", "session":"session",
+        "role":"user", "written_by":"human", "prompt_kind":"prose", "at":at(10), "text":"A synthetic prompt"}),
     );
     assert!(windows(std::slice::from_ref(&prompt), 0).is_empty());
     let session_id = session.id;
@@ -697,7 +671,7 @@ fn recorder_lifetimes_keep_hosts_separate_when_session_ids_repeat() {
     ];
     fn view(event: &Event) -> KeyView<'_> {
         KeyView {
-            event_type: event.event_type,
+            event_type: &event.event_type,
             ts_orig: event.ts_orig.at,
             payload: &event.payload,
         }
@@ -720,23 +694,7 @@ fn recorder_lifetimes_keep_hosts_separate_when_session_ids_repeat() {
 
 #[devkit::test]
 fn delegated_time_is_retained_when_it_overlaps_operator_presence() {
-    let make = |kind: &str, payload: Value| {
-        (sinex_model::event_types::find(kind).unwrap().build)(
-            &payload,
-            "polylogue",
-            Origin::Record {
-                location: RecordLocation {
-                    material: MaterialId::new(),
-                    anchor: 0,
-                },
-                output_index: 0,
-            },
-            ReadingOrder(0),
-            [0; 32],
-            Class::Open,
-        )
-        .unwrap()
-    };
+    let make = external;
     let metadata = make(
         "polylogue.session",
         json!({"session":"a","origin":"synthetic","kind":"main","cwd":[],"machine":"box","links":[]}),
@@ -789,4 +747,32 @@ fn changing_civil_time_settings_retires_old_hour_keys() {
         AnyKeyed::version_for(&crate::library::LibraryItems, &old),
         AnyKeyed::version_for(&crate::library::LibraryItems, &env.time_settings)
     );
+}
+
+fn external(kind: &str, payload: Value) -> Event {
+    let at = ["at", "start", "started"].into_iter().find_map(|key| {
+        payload
+            .get(key)
+            .and_then(|value| serde_json::from_value::<Timestamp>(value.clone()).ok())
+    });
+    let mut event = Event::submitted(
+        sinex_model::KindRef {
+            name: kind.into(),
+            version: 1,
+        },
+        payload,
+        "synthetic.external".into(),
+        Origin::Record {
+            location: RecordLocation {
+                material: MaterialId::new(),
+                anchor: 0,
+            },
+            output_index: 0,
+        },
+        ReadingOrder(0),
+        [0; 32],
+        Class::Open,
+    );
+    event.ts_orig = sinex_model::TsOrig::maybe(at, sinex_model::TimeQuality::Intrinsic);
+    event
 }

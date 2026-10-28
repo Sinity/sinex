@@ -123,7 +123,7 @@ impl Keyed for ActivityWindows {
                 let context: Vec<_> = inputs
                     .iter()
                     .filter(|event| {
-                        super::scope(&event.payload, event.event_type) == scope
+                        super::scope(&event.payload, &event.event_type) == scope
                             && event.ts_orig.at.is_some_and(|at| {
                                 clipped_start <= at.unix_ns() && at.unix_ns() <= clipped_end
                             })
@@ -209,6 +209,10 @@ impl Keyed for ActivityWindows {
                 outputs.push(derived(&window, Self::NAME, parents));
             }
         }
-        Computed { outputs, waiting }
+        Computed {
+            error: None,
+            outputs,
+            waiting,
+        }
     }
 }

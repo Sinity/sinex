@@ -1,17 +1,49 @@
-//! Work is keyed by recorded repository and branch. Session lifetimes do not
+//! Work is keyed by recorded tasks, pull requests or repository branches. Session lifetimes do not
 //! create operator time; every act, episode and resume pack is a stored event.
 use crate::activity::{SECOND, evidence, stable, union_seconds};
 use crate::derived_event::derived;
 use crate::{AffectedRange, Computed, Env, InputQuery, InputRange, KeyState, KeyView, Keyed, Kind};
 use serde_json::{Value, json};
-use sinex_model::event_types::{activity::Agency, polylogue, work::*};
+use sinex_model::event_types::{activity::Agency, work::*};
 use sinex_model::{Event, Timestamp};
 use std::collections::{BTreeMap, BTreeSet};
+
+/// Structured fields are authoritative. Prose and command strings never supply anchors.
+fn objective(metadata: &Value) -> Option<Objective> {
+    let repository = metadata["repo"]
+        .as_str()
+        .filter(|value| !value.is_empty())?;
+    for kind in ["task", "pull_request"] {
+        let candidates: BTreeSet<_> = metadata["objectives"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter(|link| link["kind"] == kind)
+            .filter(|link| link["repository"].as_str() == Some(repository))
+            .filter_map(|link| link["reference"].as_str().filter(|value| !value.is_empty()))
+            .collect();
+        if !candidates.is_empty() {
+            return (candidates.len() == 1).then(|| Objective {
+                kind: kind.into(),
+                reference: (*candidates.first().unwrap()).into(),
+                repository: repository.into(),
+            });
+        }
+    }
+    Some(Objective {
+        kind: "branch".into(),
+        reference: metadata["branch"]
+            .as_str()
+            .filter(|value| !value.is_empty())?
+            .into(),
+        repository: repository.into(),
+    })
+}
 
 pub struct WorkActs;
 impl Keyed for WorkActs {
     const NAME: &'static str = "work.acts";
-    const VERSION: u32 = 2;
+    const VERSION: u32 = 3;
     const INPUTS: &'static [&'static str] = &[
         "polylogue.session",
         "polylogue.message",
@@ -45,32 +77,30 @@ impl Keyed for WorkActs {
         let Some(session) = sessions.first().copied() else {
             return Computed::default();
         };
-        let Some(metadata) = session.payload_as::<polylogue::Session>() else {
-            return Computed::default();
-        };
+        let metadata = &session.payload;
         if sessions.iter().any(|event| {
-            event.payload["repo"] != session.payload["repo"]
-                || event.payload["branch"] != session.payload["branch"]
-                || event.payload["machine"] != session.payload["machine"]
-                || event.payload["kind"] != session.payload["kind"]
-                || event.payload["mode"] != session.payload["mode"]
+            [
+                "repo",
+                "branch",
+                "machine",
+                "kind",
+                "mode",
+                "objectives",
+                "git_identity",
+                "terminal",
+            ]
+            .iter()
+            .any(|field| event.payload[*field] != metadata[*field])
         }) {
             return Computed::default();
         }
-        let label = metadata.branch.clone().filter(|branch| !branch.is_empty());
-        let objective = metadata
-            .repo
-            .clone()
-            .filter(|repo| !repo.is_empty())
-            .zip(label.clone())
-            .map(|(repository, branch)| Objective {
-                kind: "branch".into(),
-                reference: json!([repository, branch]).to_string(),
-                repository,
-            });
-        let episode = objective
+        let objective = objective(metadata);
+        let label = objective
             .as_ref()
-            .map(|objective| json!([objective.kind, objective.reference]).to_string());
+            .map(|objective| objective.reference.clone());
+        let episode = objective.as_ref().map(|objective| {
+            json!([objective.kind, objective.repository, objective.reference]).to_string()
+        });
         let mut ordered: Vec<_> = inputs
             .iter()
             .filter(|event| event.ts_orig.at.is_some())
@@ -83,26 +113,31 @@ impl Keyed for WorkActs {
                     && event.payload["written_by"] == "human"
                     && event.payload["role"] == "user"
                     && event.payload["prompt_kind"] == "prose"
-                    && metadata.kind == "main"
-                    && metadata.mode.is_none();
-                let delegated =
-                    matches!(event.event_type, "polylogue.tool_call" | "polylogue.turn");
+                    && metadata["kind"] == "main"
+                    && metadata.get("mode").is_none_or(Value::is_null);
+                let delegated = matches!(
+                    event.event_type.as_str(),
+                    "polylogue.tool_call" | "polylogue.turn"
+                );
                 if !operator && !delegated {
                     return None;
                 }
                 Some(derived(
                     &WorkAct {
                         act: stable(event),
-                        session: metadata.session.clone(),
+                        session: metadata["session"].as_str()?.to_owned(),
                         episode: episode.clone(),
                         objective: objective.clone(),
                         label: label.clone(),
                         label_source: evidence(session),
-                        machine: metadata.machine.clone(),
+                        machine: metadata["machine"].as_str().map(str::to_owned),
                         at: event.ts_orig.at.unwrap(),
                         ended_at: event
-                            .payload_as::<polylogue::Turn>()
-                            .and_then(|turn| turn.end)
+                            .payload
+                            .get("end")
+                            .and_then(|value| {
+                                serde_json::from_value::<Timestamp>(value.clone()).ok()
+                            })
                             .filter(|end| Some(*end) >= event.ts_orig.at),
                         evidence: evidence(event),
                         agency: if operator {
@@ -116,7 +151,24 @@ impl Keyed for WorkActs {
                             event.payload["action"].as_str().unwrap_or("turn").into()
                         },
                         path: event.payload["path"].as_str().map(str::to_owned),
-                        failed: event.payload["outcome"] == "error",
+                        failed: event.payload["outcome"] == "error"
+                            || event.payload["check_passed"] == false,
+                        revision: event.payload["revision"].as_str().map(str::to_owned),
+                        check_name: event.payload["check_name"].as_str().map(str::to_owned),
+                        check_passed: event.payload["check_passed"].as_bool(),
+                        cwd: metadata["cwd"]
+                            .as_array()
+                            .and_then(|paths| paths.first())
+                            .and_then(Value::as_str)
+                            .map(str::to_owned),
+                        git_identity: metadata
+                            .get("git_identity")
+                            .cloned()
+                            .and_then(|value| serde_json::from_value(value).ok()),
+                        terminal: metadata
+                            .get("terminal")
+                            .cloned()
+                            .and_then(|value| serde_json::from_value(value).ok()),
                     },
                     Self::NAME,
                     [event].into_iter().chain(sessions.iter().copied()),
@@ -124,6 +176,7 @@ impl Keyed for WorkActs {
             })
             .collect();
         Computed {
+            error: None,
             outputs,
             waiting: false,
         }
@@ -413,6 +466,7 @@ impl Keyed for WorkEpisodes {
             parents,
         ));
         Computed {
+            error: None,
             outputs,
             waiting: env.now.unix_ns() - last_activity.unix_ns() < 14 * 86_400 * SECOND,
         }
@@ -422,7 +476,7 @@ impl Keyed for WorkEpisodes {
 pub struct ContextPacks;
 impl Keyed for ContextPacks {
     const NAME: &'static str = "context.packs";
-    const VERSION: u32 = 1;
+    const VERSION: u32 = 2;
     const INPUTS: &'static [&'static str] = &["work.episode", "work.act"];
     const OUTPUTS: &'static [&'static str] = &["context.pack"];
     fn keys_for(&self, input: &KeyView<'_>, _: &Env) -> Vec<Value> {
@@ -459,8 +513,11 @@ impl Keyed for ContextPacks {
             .rev()
             .find(|(_, act)| matches!(act.action.as_str(), "file_edit" | "file_write"));
         Computed {
+            error: None,
             outputs: vec![derived(
                 &ContextPack {
+                    read_as: None,
+                    analysis: None,
                     pack: format!("resume:{}", episode.episode),
                     episode: episode.episode,
                     at: episode.last_activity,
@@ -473,13 +530,30 @@ impl Keyed for ContextPacks {
                     last_edit_path: last_edit.and_then(|(_, act)| act.path.clone()),
                     open_failures: acts
                         .iter()
-                        .filter(|(_, act)| act.failed)
+                        .filter(|(_, act)| {
+                            act.failed
+                                && !acts.iter().any(|(_, later)| {
+                                    later.at > act.at
+                                        && later.check_passed == Some(true)
+                                        && act.revision.is_some()
+                                        && later.revision == act.revision
+                                        && act.check_name.is_some()
+                                        && later.check_name == act.check_name
+                                        && act.objective.as_ref().is_some_and(|objective| {
+                                            later.objective.as_ref().is_some_and(|other| {
+                                                other.repository == objective.repository
+                                            })
+                                        })
+                                })
+                        })
                         .map(|(event, _)| evidence(event))
                         .collect(),
                     coverage: vec![
-                        "repository and branch anchors only; task and job links unavailable".into(),
+                        "objectives require recorded task, pull-request or repository-branch links"
+                            .into(),
                         "operator acts have no recorded duration".into(),
-                        "failure resolution needs checks with a recorded revision".into(),
+                        "checks without a recorded revision and check identity remain unresolved"
+                            .into(),
                     ],
                     profile: "resume/v1".into(),
                 },
@@ -658,7 +732,11 @@ impl Keyed for ActivityDays {
             ));
         }
         let waiting = !outputs.is_empty() && !wakes.iter().any(|(at, _)| *at > start_key);
-        Computed { outputs, waiting }
+        Computed {
+            error: None,
+            outputs,
+            waiting,
+        }
     }
 }
 

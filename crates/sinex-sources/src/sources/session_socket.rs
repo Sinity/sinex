@@ -333,6 +333,7 @@ fn scrollback(
         continues: from_line > 0,
         new_lines: text.len() as u64,
         text: text.join("\n"),
+        extra: m,
     })
 }
 

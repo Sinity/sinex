@@ -42,11 +42,11 @@ pub(super) fn pieces(inputs: &[Event]) -> Vec<Piece<'_>> {
         let Some(start) = event.ts_orig.at else {
             continue;
         };
-        let Some((start, end)) = geometry(event.event_type, &event.payload, start) else {
+        let Some((start, end)) = geometry(&event.event_type, &event.payload, start) else {
             continue;
         };
         let payload = &event.payload;
-        let (signal, reason) = match event.event_type {
+        let (signal, reason) = match event.event_type.as_str() {
             "key.pressed" | "pointer.button" | "pointer.moved" | "pointer.scrolled"
                 if physical(event) =>
             {
@@ -78,7 +78,7 @@ pub(super) fn pieces(inputs: &[Event]) -> Vec<Piece<'_>> {
             "work.act" if payload["agency"] == "delegated" => (Signal::Delegated, None),
             _ => continue,
         };
-        let event_scope = scope(payload, event.event_type);
+        let event_scope = scope(payload, &event.event_type);
         pieces.push(Piece {
             start,
             end,
