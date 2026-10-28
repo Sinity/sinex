@@ -22,8 +22,38 @@ pub struct Location {
 #[derive(Clone, Copy, Debug, Serialize)]
 pub struct CaptureStream {
     pub spool: &'static str,
-    pub options: &'static str,
+    pub options: &'static [CaptureOption],
     pub capabilities: &'static [&'static str],
+}
+
+/// A capture option declared with its value's type.
+#[derive(Clone, Copy, Debug, Serialize)]
+pub struct CaptureOption {
+    pub name: &'static str,
+    pub value: CaptureValue,
+}
+
+#[derive(Clone, Copy, Debug, Serialize)]
+#[serde(untagged)]
+pub enum CaptureValue {
+    Text(&'static str),
+    Boolean(bool),
+}
+
+impl CaptureStream {
+    pub fn settings(&self) -> Value {
+        Value::Object(
+            self.options
+                .iter()
+                .map(|option| {
+                    (
+                        option.name.to_owned(),
+                        serde_json::to_value(option.value).expect("capture value"),
+                    )
+                })
+                .collect(),
+        )
+    }
 }
 
 #[derive(Clone, Copy, Debug, Serialize)]

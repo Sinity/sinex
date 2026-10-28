@@ -144,6 +144,19 @@ impl WriterHandle {
             _ => unreachable!("checked admission returns its outcome"),
         }
     }
+    /// A source advances past refused content, retaining its bytes and failures.
+    pub(crate) async fn submit_source(
+        &self,
+        priority: Priority,
+        batch: Batch,
+        check: AdmissionCheck,
+    ) -> Result<Outcome, WriteError> {
+        match self.send(priority, WriterJob::Source(batch, check)).await? {
+            Done::Admitted(outcome) => Ok(outcome),
+            _ => unreachable!("source admission returns its outcome"),
+        }
+    }
+
     /// Submit a batch and wait until it is committed (or refused).
     pub(crate) async fn submit(
         &self,
@@ -316,13 +329,28 @@ pub(crate) async fn run_notifying(
             else => return,
         };
         let result = match job.work {
-            WriterJob::Admit(batch) => {
-                admit_checked(&mut connection, &batch, keys.as_ref(), store, &|| Ok(()))
-                    .await
-                    .map(Done::Admitted)
-            }
-            WriterJob::Checked(batch, check) => {
-                admit_checked(&mut connection, &batch, keys.as_ref(), store, &*check)
+            WriterJob::Admit(batch) => admit_checked(
+                &mut connection,
+                &batch,
+                keys.as_ref(),
+                store,
+                &|| Ok(()),
+                false,
+            )
+            .await
+            .map(Done::Admitted),
+            WriterJob::Checked(batch, check) => admit_checked(
+                &mut connection,
+                &batch,
+                keys.as_ref(),
+                store,
+                &*check,
+                false,
+            )
+            .await
+            .map(Done::Admitted),
+            WriterJob::Source(batch, check) => {
+                admit_checked(&mut connection, &batch, keys.as_ref(), store, &*check, true)
                     .await
                     .map(Done::Admitted)
             }
@@ -370,6 +398,7 @@ async fn admit_checked(
     keys: &dyn DirtyKeys,
     store: Option<&Blobs>,
     check: &(dyn Fn() -> Result<(), String> + Send + Sync),
+    record_refusals: bool,
 ) -> Result<Outcome, WriteError> {
     let refuse = |e: &dyn std::fmt::Display| WriteError::Refused(e.to_string());
     check().map_err(WriteError::Refused)?;
@@ -399,6 +428,37 @@ async fn admit_checked(
             Err(store_error(error))
         }
     }
+}
+
+fn content_error(error: &sinex_store::Error) -> bool {
+    match error {
+        sinex_store::Error::Invalid(_)
+        | sinex_store::Error::Schema(sinex_schema::Error::Declaration(_)) => true,
+        sinex_store::Error::Database(error) => error
+            .as_database_error()
+            .and_then(|error| error.code())
+            .is_some_and(|code| code.starts_with("22") || code.starts_with("23")),
+        _ => false,
+    }
+}
+
+fn refused_source(batch: &Batch, reason: &str) -> Option<Batch> {
+    if !matches!(batch.kind, sinex_model::BatchKind::Source(_))
+        || batch.events().any(|event| !event.owned_blobs.is_empty())
+    {
+        // Separately owned files need a material reference before their events can be discarded.
+        return None;
+    }
+    let mut failed = batch.clone();
+    for record in &mut failed.records {
+        if let sinex_model::RecordOutcome::Events { location, .. } = record {
+            *record = sinex_model::RecordOutcome::Failure {
+                location: (*location)?,
+                reason: format!("content refused: {reason}"),
+            };
+        }
+    }
+    Some(failed)
 }
 
 async fn replay_sequence(

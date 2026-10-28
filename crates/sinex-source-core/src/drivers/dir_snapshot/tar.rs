@@ -13,7 +13,6 @@ pub(super) type Archive = tar::Builder<File>;
 pub(super) struct Captured {
     pub offset: usize,
     pub length: usize,
-    pub hash: [u8; 32],
     pub node: FileNode,
 }
 
@@ -39,36 +38,23 @@ pub(super) fn capture(
         }
         let attributes = attributes(&input)?;
         let sparse = extents(&input, size)?;
-        input.rewind()?;
-        let mut hash = blake3::Hasher::new();
-        let mut bytes = [0; 64 * 1024];
-        loop {
-            let count = match input.read(&mut bytes) {
-                Ok(count) => count,
-                Err(error) if error.kind() == std::io::ErrorKind::Interrupted => continue,
-                Err(error) => return Err(error),
-            };
-            if count == 0 {
-                break;
-            }
-            hash.update(&bytes[..count]);
-        }
-        if !same_file(&before, &input.metadata()?) {
-            return Ok(None);
-        }
-        Ok(Some((
-            before,
-            attributes,
-            sparse,
-            *hash.finalize().as_bytes(),
-        )))
+        Ok(Some((before, attributes, sparse)))
     })();
-    let (before, attributes, sparse, hash) = match facts {
+    let (before, attributes, sparse) = match facts {
         Ok(Some(facts)) => facts,
         Ok(None) => return Ok(Ok(None)),
-        Err(error) => return Ok(Err(error.to_string())),
+        Err(error) => {
+            if input
+                .metadata()
+                .ok()
+                .is_some_and(|after| after.len() != size || change_time(&after) != changed)
+            {
+                return Ok(Ok(None));
+            }
+            return Ok(Err(error.to_string()));
+        }
     };
-    let node = FileNode {
+    let mut node = FileNode {
         mode: before.mode(),
         uid: before.uid(),
         gid: before.gid(),
@@ -79,7 +65,8 @@ pub(super) fn capture(
         mtime_ns: metadata_mtime(&before).to_string(),
         atime_ns: nanos(before.atime(), before.atime_nsec()).to_string(),
         ctime_ns: change_time(&before).to_string(),
-        extended_attributes: attributes,
+        content_hash: [0; 32],
+        extended_attributes: Vec::new(),
         sparse,
     };
     let mut fields = BTreeMap::from([
@@ -97,7 +84,7 @@ pub(super) fn capture(
     if relative.to_str().is_none() {
         fields.insert(b"hdrcharset".to_vec(), b"BINARY".to_vec());
     }
-    for attribute in &node.extended_attributes {
+    for attribute in &attributes {
         let mut name = b"SCHILY.xattr.".to_vec();
         name.extend_from_slice(&attribute.name);
         fields.insert(name, attribute.value.clone());
@@ -132,7 +119,7 @@ pub(super) fn capture(
             extents.iter().map(|extent| extent.length).sum()
         }
     };
-    extensions(output, fields).map_err(io)?;
+    node.extended_attributes = extensions(output, fields).map_err(io)?;
     let mut header = header(
         length,
         before.mode(),
@@ -161,19 +148,30 @@ pub(super) fn capture(
             .into_iter(),
         left: 0,
         failure: None,
+        hash: blake3::Hasher::new(),
+        logical: 0,
     };
     if let Err(error) = output.append(&header, &mut ranges) {
         if let Some(reason) = ranges.failure {
+            if ranges
+                .input
+                .metadata()
+                .ok()
+                .is_some_and(|after| !same_file(&before, &after))
+            {
+                return Ok(Ok(None));
+            }
             return Ok(Err(reason));
         }
         return Err(io(error));
     }
-    match input.metadata() {
+    ranges.zeroes(size - ranges.logical);
+    node.content_hash = *ranges.hash.finalize().as_bytes();
+    match ranges.input.metadata() {
         Ok(after) if same_file(&before, &after) => Ok(Ok(Some(Captured {
             offset,
             length: usize::try_from(length)
                 .map_err(|_| DriverError::Io("file exceeds addressable size".into()))?,
-            hash,
             node,
         }))),
         Ok(_) => Ok(Ok(None)),
@@ -181,19 +179,15 @@ pub(super) fn capture(
     }
 }
 
-/// Membership facts create no file when the tar is extracted.
-pub(super) fn marker(output: &mut Archive, bytes: &[u8]) -> Result<usize, DriverError> {
-    let body = pax_record(b"SINEX.membership", bytes).map_err(io)?;
-    let prefix = body.len() - bytes.len() - 1;
-    let offset = position(output)?
-        .checked_add(512 + prefix)
-        .ok_or_else(|| DriverError::Io("tar offset exceeds addressable size".into()))?;
-    let mut header = tar::Header::new_ustar();
-    header.set_path("PaxHeaders/membership").map_err(io)?;
-    header.set_entry_type(tar::EntryType::XGlobalHeader);
-    header.set_size(body.len() as u64);
-    header.set_cksum();
-    output.append(&header, body.as_slice()).map_err(io)?;
+pub(super) fn marker(output: &mut Archive, name: &str, bytes: &[u8]) -> Result<usize, DriverError> {
+    extensions(
+        output,
+        BTreeMap::from([(b"path".to_vec(), name.as_bytes().to_vec())]),
+    )
+    .map_err(io)?;
+    let header = header(bytes.len() as u64, 0o600, 0, 0, 0)?;
+    let offset = position(output)? + 512;
+    output.append(&header, bytes).map_err(io)?;
     Ok(offset)
 }
 
@@ -230,88 +224,76 @@ fn header(
     Ok(header)
 }
 
-fn extensions(output: &mut Archive, mut fields: BTreeMap<Vec<u8>, Vec<u8>>) -> std::io::Result<()> {
+fn extensions(
+    output: &mut Archive,
+    fields: BTreeMap<Vec<u8>, Vec<u8>>,
+) -> std::io::Result<Vec<ExtendedAttribute>> {
+    let base = output.get_mut().stream_position()? + 512;
     let mut bytes = Vec::new();
-    // GNU tar reads the sparse count before allocating its map.
-    for key in [
-        b"GNU.sparse.size".as_slice(),
-        b"GNU.sparse.numblocks",
-        b"GNU.sparse.name",
-        b"GNU.sparse.map",
-    ] {
-        if let Some(value) = fields.remove(key) {
-            bytes.extend(pax_record(key, &value)?);
-        }
-    }
+    let mut attributes = Vec::new();
+    let mut fields: Vec<_> = fields.into_iter().collect();
+    // Charset and sparse counts precede the values they describe.
+    fields.sort_by_key(|(name, _)| match name.as_slice() {
+        b"hdrcharset" => 0,
+        b"GNU.sparse.size" => 1,
+        b"GNU.sparse.numblocks" => 2,
+        b"GNU.sparse.name" => 3,
+        b"GNU.sparse.map" => 4,
+        _ => 5,
+    });
     for (key, value) in fields {
-        bytes.extend(pax_record(&key, &value)?);
+        let rest = key.len() + value.len() + 3;
+        let mut length = rest + 1;
+        loop {
+            let next = rest + length.to_string().len();
+            if next == length {
+                break;
+            }
+            length = next;
+        }
+        write!(bytes, "{length} ")?;
+        bytes.extend(&key);
+        bytes.push(b'=');
+        if let Some(name) = key.strip_prefix(b"SCHILY.xattr.") {
+            attributes.push(ExtendedAttribute {
+                name: name.to_vec(),
+                value_at: base + bytes.len() as u64,
+                length: value.len() as u64,
+                hash: *blake3::hash(&value).as_bytes(),
+            });
+        }
+        bytes.extend(value);
+        bytes.push(b'\n');
     }
     let mut header = tar::Header::new_ustar();
     header.set_path("PaxHeaders/file")?;
     header.set_entry_type(tar::EntryType::XHeader);
     header.set_size(bytes.len() as u64);
     header.set_cksum();
-    output.append(&header, bytes.as_slice())
+    output.append(&header, bytes.as_slice())?;
+    Ok(attributes)
 }
 
-fn pax_record(key: &[u8], value: &[u8]) -> std::io::Result<Vec<u8>> {
-    let rest = key.len() + value.len() + 3;
-    let mut length = rest + 1;
-    loop {
-        let next = rest + length.to_string().len();
-        if next == length {
-            break;
-        }
-        length = next;
-    }
-    let mut bytes = Vec::new();
-    write!(bytes, "{length} ")?;
-    bytes.extend_from_slice(key);
-    bytes.push(b'=');
-    bytes.extend_from_slice(value);
-    bytes.push(b'\n');
-    Ok(bytes)
+struct Attribute {
+    name: Vec<u8>,
+    value: Vec<u8>,
 }
 
-fn attributes(input: &File) -> std::io::Result<Vec<ExtendedAttribute>> {
+fn attributes(input: &File) -> std::io::Result<Vec<Attribute>> {
     use rustix::fs::{fgetxattr, flistxattr};
-    let mut names = Vec::new();
-    loop {
-        let length = match flistxattr(input, &mut [] as &mut [u8]) {
-            Ok(length) => length,
-            Err(rustix::io::Errno::OPNOTSUPP) => return Ok(Vec::new()),
-            Err(error) => return Err(error.into()),
-        };
-        names.resize(length, 0);
-        match flistxattr(input, names.as_mut_slice()) {
-            Ok(length) => {
-                names.truncate(length);
-                break;
-            }
-            Err(rustix::io::Errno::RANGE) => continue,
-            Err(error) => return Err(error.into()),
-        }
-    }
+    let mut names = vec![0; flistxattr(input, &mut [] as &mut [u8])?];
+    let count = flistxattr(input, names.as_mut_slice())?;
+    names.truncate(count);
     let mut attributes = Vec::new();
     for name in names
         .split(|byte| *byte == 0)
         .filter(|name| !name.is_empty())
     {
         let name_arg = std::ffi::OsStr::from_bytes(name);
-        let mut value = Vec::new();
-        loop {
-            let length = fgetxattr(input, name_arg, &mut [] as &mut [u8])?;
-            value.resize(length, 0);
-            match fgetxattr(input, name_arg, value.as_mut_slice()) {
-                Ok(length) => {
-                    value.truncate(length);
-                    break;
-                }
-                Err(rustix::io::Errno::RANGE) => continue,
-                Err(error) => return Err(error.into()),
-            }
-        }
-        attributes.push(ExtendedAttribute {
+        let mut value = vec![0; fgetxattr(input, name_arg, &mut [] as &mut [u8])?];
+        let count = fgetxattr(input, name_arg, value.as_mut_slice())?;
+        value.truncate(count);
+        attributes.push(Attribute {
             name: name.to_vec(),
             value,
         });
@@ -358,6 +340,19 @@ struct Ranges<'a> {
     ranges: std::vec::IntoIter<FileExtent>,
     left: u64,
     failure: Option<String>,
+    hash: blake3::Hasher,
+    logical: u64,
+}
+impl Ranges<'_> {
+    fn zeroes(&mut self, mut length: u64) {
+        let zeroes = [0; 64 * 1024];
+        while length != 0 {
+            let count = length.min(zeroes.len() as u64) as usize;
+            self.hash.update(&zeroes[..count]);
+            self.logical += count as u64;
+            length -= count as u64;
+        }
+    }
 }
 impl Read for Ranges<'_> {
     fn read(&mut self, bytes: &mut [u8]) -> std::io::Result<usize> {
@@ -368,6 +363,7 @@ impl Read for Ranges<'_> {
             let Some(range) = self.ranges.next() else {
                 return Ok(0);
             };
+            self.zeroes(range.offset - self.logical);
             if let Err(error) = self.input.seek(SeekFrom::Start(range.offset)) {
                 self.failure = Some(error.to_string());
                 return Err(error);
@@ -391,6 +387,8 @@ impl Read for Ranges<'_> {
                 return Err(error);
             }
         };
+        self.hash.update(&bytes[..count]);
+        self.logical += count as u64;
         self.left -= count as u64;
         Ok(count)
     }

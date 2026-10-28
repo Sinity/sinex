@@ -70,6 +70,23 @@ fn presence(secs: i64, end: i64, status: &str) -> Event {
     )
 }
 
+fn unit(kind: &str, secs: i64, name: &str, run: &str) -> Event {
+    input(
+        kind,
+        secs,
+        json!({"cursor": format!("c{secs}"), "unit": name, "manager": "system", "uid": 0,
+               "invocation_id": run, "outcome": "stopped"}),
+    )
+}
+
+fn sleep(secs: i64) -> Event {
+    input(
+        "sleep.started",
+        secs,
+        json!({"cursor": format!("c{secs}"), "state": "suspend"}),
+    )
+}
+
 /// Fold `events` (in the given arrival order) for one rule, as intervals.
 fn lift(state: &str, events: &[Event]) -> Vec<StateInterval> {
     let r = rule(state).unwrap();
@@ -197,6 +214,151 @@ fn a_span_ending_before_its_start_is_zero_length() {
 }
 
 #[devkit::test]
+fn a_unit_stop_closes_its_start() {
+    let out = lift(
+        "machine.unit",
+        &[
+            unit("unit.started", 0, "a.service", "r1"),
+            unit("unit.started", 5, "b.service", "r2"),
+            unit("unit.stopped", 30, "a.service", "r1"),
+        ],
+    );
+    assert_eq!(out.len(), 2);
+    assert_eq!(out[0].subject_id.as_deref(), Some("a.service"));
+    assert_eq!(out[0].ended_at, Some(at(30)));
+    assert_eq!(out[0].end_event_type.as_deref(), Some("unit.stopped"));
+    assert_eq!(
+        out[0].attributes.get("outcome").map(String::as_str),
+        Some("stopped")
+    );
+    assert_eq!(out[1].ended_at, None);
+}
+
+#[devkit::test]
+fn a_second_start_closes_the_first() {
+    let out = lift(
+        "machine.unit",
+        &[
+            unit("unit.started", 0, "a.service", "r1"),
+            unit("unit.started", 40, "a.service", "r2"),
+        ],
+    );
+    assert_eq!(out.len(), 2);
+    assert_eq!(out[0].ended_at, Some(at(40)));
+    assert_eq!(out[0].end_event_type.as_deref(), Some("unit.started"));
+}
+
+#[devkit::test]
+fn a_stop_with_no_start_closes_nothing() {
+    assert!(
+        lift(
+            "machine.unit",
+            &[unit("unit.stopped", 0, "a.service", "r1")]
+        )
+        .is_empty()
+    );
+}
+
+#[devkit::test]
+fn a_stop_at_its_start_is_zero_length() {
+    let out = lift(
+        "machine.unit",
+        &[
+            unit("unit.started", 10, "a.service", "r1"),
+            unit("unit.stopped", 10, "a.service", "r1"),
+        ],
+    );
+    assert_eq!(out[0].started_at, out[0].ended_at.unwrap());
+}
+
+#[devkit::test]
+fn a_oneshot_run_that_stopped_before_its_start_finished_opens_nothing() {
+    // systemd logs "Deactivated successfully" before "Finished" for a
+    // oneshot service; the next run's stop must not close it hours later.
+    let out = lift(
+        "machine.unit",
+        &[
+            unit("unit.stopped", 10, "job.service", "r1"),
+            unit("unit.started", 11, "job.service", "r1"),
+            unit("unit.stopped", 7200, "job.service", "r2"),
+            unit("unit.started", 7201, "job.service", "r2"),
+        ],
+    );
+    assert!(out.is_empty(), "{out:?}");
+}
+
+#[devkit::test]
+fn a_stop_of_another_run_leaves_the_open_run_alone() {
+    let out = lift(
+        "machine.unit",
+        &[
+            unit("unit.started", 0, "a.service", "r2"),
+            unit("unit.stopped", 5, "a.service", "r1"),
+            unit("unit.stopped", 60, "a.service", "r2"),
+        ],
+    );
+    assert_eq!(out.len(), 1);
+    assert_eq!(out[0].ended_at, Some(at(60)));
+}
+
+#[devkit::test]
+fn a_user_unit_is_not_the_system_unit_of_the_same_name() {
+    let mut user = unit("unit.started", 0, "a.service", "u1");
+    user.payload["manager"] = json!("user");
+    user.payload["uid"] = json!(1000);
+    let out = lift(
+        "machine.unit",
+        &[
+            unit("unit.started", 0, "a.service", "s1"),
+            user,
+            unit("unit.stopped", 30, "a.service", "s1"),
+        ],
+    );
+    assert_eq!(out.len(), 2);
+    let user = out
+        .iter()
+        .find(|i| i.subject_id.as_deref() == Some("user:1000:a.service"))
+        .unwrap();
+    assert_eq!(user.ended_at, None);
+}
+
+#[devkit::test]
+fn sleep_interrupts_focus() {
+    let out = lift(
+        "desktop.focus",
+        &[
+            focus(0, "0xa", "vim"),
+            sleep(100),
+            focus(9000, "0xb", "web"),
+        ],
+    );
+    assert_eq!(
+        out[0].ended_at,
+        Some(at(100)),
+        "not the 9000 s overnight span"
+    );
+    assert_eq!(out[0].end_event_type.as_deref(), Some("sleep.started"));
+}
+
+#[devkit::test]
+fn sleep_cuts_a_presence_span() {
+    let out = lift(
+        "desktop.activitywatch.afk",
+        &[presence(0, 100, "not-afk"), sleep(15)],
+    );
+    assert_eq!(out[0].ended_at, Some(at(15)));
+}
+
+#[devkit::test]
+fn sleep_does_not_end_units() {
+    let out = lift(
+        "machine.unit",
+        &[unit("unit.started", 0, "a.service", "r1"), sleep(15)],
+    );
+    assert_eq!(out[0].ended_at, None);
+}
+
+#[devkit::test]
 fn going_afk_interrupts_focus_and_is_an_interval_itself() {
     let events = [focus(0, "0xa", "vim"), presence(50, 650, "afk")];
     let f = lift("desktop.focus", &events);
@@ -250,7 +412,13 @@ fn inputs_ask_for_the_transitions_after_the_day() {
         q.event_types().contains(&"presence.span".to_string()),
         "interruptions are inputs"
     );
-    assert_eq!(q.after.len(), 2, "next transitions, next afk");
+    assert!(
+        q.event_types().contains(&"sleep.started".to_string()),
+        "interruptions are inputs"
+    );
+    assert_eq!(q.after.len(), 3, "next transitions, next sleep, next afk");
+    let q = StateIntervals.inputs(&key("machine.unit"), &env).unwrap();
+    assert_eq!(q.after[0].per, Some("unit"));
 }
 
 #[devkit::test]
@@ -266,6 +434,13 @@ fn keys_cover_the_rules_a_fence_ends() {
             &env,
         )
     };
+    // Sleep ends focus, workspace and presence; a unit event is a transition
+    // for units only.
+    assert_eq!(view(&sleep(0)).len(), 3);
+    assert_eq!(
+        view(&unit("unit.started", 0, "cron.service", "r1")),
+        vec![json!({"state": "machine.unit", "day": "2024-06-15"})]
+    );
     // Going AFK ends focus and workspace, and is itself a presence span.
     let afk = presence(0, 10, "afk");
     assert_eq!(view(&afk).len(), 3);

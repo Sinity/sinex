@@ -13,7 +13,7 @@ use serde_json::{Map, Value};
 use sinex_model::Class;
 use sinex_model::event_types::browser::{BrowserUrl, BrowserVisit};
 use sinex_source_core::drain::RecordContext;
-use sinex_source_core::drivers::sqlite_rows::SqliteRows;
+use sinex_source_core::drivers::sqlite_rows::{Changes, SqliteRows};
 use sinex_source_core::registry::{DeclaredSource, Driver, SourceSpec};
 use sinex_source_core::{Parser, RecordError};
 use std::path::{Path, PathBuf};
@@ -190,8 +190,10 @@ pub fn visits_driver(history: PathBuf, host: String) -> SqliteRows {
             "transition",
             "visit_duration",
         ],
-        mutable: Some(RECENT_VISIT),
-        full_pass_secs: 3600,
+        changes: Changes::InPlace {
+            mutable: RECENT_VISIT,
+            full_pass_secs: 3600,
+        },
     }
 }
 
@@ -210,8 +212,10 @@ pub fn urls_driver(history: PathBuf, host: String) -> SqliteRows {
             "last_visit_time",
             "hidden",
         ],
-        mutable: Some(RECENT_URL),
-        full_pass_secs: 3600,
+        changes: Changes::InPlace {
+            mutable: RECENT_URL,
+            full_pass_secs: 3600,
+        },
     }
 }
 

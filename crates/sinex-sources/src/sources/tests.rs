@@ -97,3 +97,34 @@ fn the_six_late_sources_are_registered() {
         assert!(spec(name).is_some(), "{name} is in the registry");
     }
 }
+
+#[devkit::test]
+fn integrated_source_families_are_registered_with_discovery() {
+    for name in [
+        "udev",
+        "machine-telemetry",
+        "freedom",
+        "github",
+        "beads",
+        "agentctl",
+        "taskwarrior",
+        "messenger-sqlite",
+        "reddit-archive",
+        "machine-records",
+        "router",
+    ] {
+        let format = format(name).unwrap_or_else(|| panic!("{name} is unregistered"));
+        assert!(
+            !format.discovery.locations.is_empty(),
+            "{name} has no discovery locations"
+        );
+        assert!(format.plan.is_some(), "{name} has no planner");
+        assert!(format.reader.is_some(), "{name} has no reader");
+    }
+    assert!(format("system-bus").is_none());
+    assert!(
+        (google_takeout::FORMAT.specs)()
+            .iter()
+            .any(|spec| spec.parser == google_takeout::assistant::SPEC.parser)
+    );
+}

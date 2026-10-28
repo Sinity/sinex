@@ -12,6 +12,7 @@ pub mod derived;
 pub mod desktop;
 pub mod finance;
 pub mod documents;
+pub mod environment;
 pub mod forecast;
 pub mod fused;
 pub mod health;
@@ -21,10 +22,16 @@ pub mod library;
 pub mod machine;
 pub mod media;
 pub mod operator;
+pub mod peripheral;
 pub mod query;
+pub mod records;
+pub mod router;
 pub mod session;
 pub mod shell;
 pub mod social;
+pub mod system;
+pub mod telemetry;
+pub mod work;
 
 pub use derived::{FigureValue, HealthFigure, MetricFigure, StateInterval};
 pub use fused::CommandFused;
@@ -148,6 +155,7 @@ pub const ALL: &[RegisteredEventType] = &[
     info::<session::EditorReport>(),
     info::<session::TerminalReport>(),
     info::<session::MediaSegment>(),
+    info::<session::FrameCaptured>(),
     info::<session::ScreenText>(),
     info::<session::PageFetched>(),
     info::<desktop::WindowSpan>(),
@@ -164,6 +172,7 @@ pub const ALL: &[RegisteredEventType] = &[
     info::<machine::TerminalOutput>(),
     info::<machine::ScrollbackCaptured>(),
     info::<machine::ScrollbackWindow>(),
+    info::<desktop::DomainUsage>(),
     // Keyboard and pointer
     info::<input::KeyPressed>(),
     info::<input::KeyReleased>(),
@@ -171,8 +180,47 @@ pub const ALL: &[RegisteredEventType] = &[
     info::<input::PointerMoved>(),
     info::<input::PointerScrolled>(),
     info::<input::InputLogger>(),
-    // Code
+    // Accessibility, audio, devices, network and the room
+    info::<peripheral::DisplaySampled>(),
+    info::<peripheral::BatterySampled>(),
+    info::<peripheral::BluetoothAudioSampled>(),
+    info::<environment::AirSampled>(),
+    info::<system::UnitStarted>(),
+    info::<system::UnitStopped>(),
+    info::<system::UnitReloaded>(),
+    info::<system::BootStarted>(),
+    info::<system::SleepStarted>(),
+    info::<system::SleepEnded>(),
+    info::<system::ShutdownStarted>(),
+    info::<system::DeviceChanged>(),
+    // Machine records and the router
+    info::<records::GenerationActivated>(),
+    info::<records::BackupChecked>(),
+    info::<records::BackupDrilled>(),
+    info::<records::TaskStoreDrilled>(),
+    info::<records::SandboxAuditFinding>(),
+    info::<records::UsageAssessed>(),
+    info::<records::UsageCensusTaken>(),
+    info::<records::ConfigDriftChecked>(),
+    info::<records::ExperimentStarted>(),
+    info::<records::ExperimentRun>(),
+    info::<router::RouterLogLine>(),
+    info::<router::DhcpLeaseSampled>(),
+    info::<router::DeviceTrafficSampled>(),
+    info::<router::WifiClientSampled>(),
+    // Machine telemetry
+    info::<telemetry::ResourceSampled>(),
+    info::<telemetry::ProcessKilled>(),
+    info::<telemetry::HardwareState>(),
+    // Code and the development tools observed
     info::<code::GitCommit>(),
+    info::<code::GitRefUpdated>(),
+    info::<code::GithubPullRequest>(),
+    info::<code::GithubReview>(),
+    info::<code::GithubCheck>(),
+    info::<code::GithubWorkflowRun>(),
+    info::<code::GithubIssue>(),
+    info::<work::AgentctlEvent>(),
     // Derived
     info::<CommandFused>(),
     info::<fused::FocusFused>(),
@@ -181,6 +229,8 @@ pub const ALL: &[RegisteredEventType] = &[
     info::<fused::ClipboardFused>(),
     info::<fused::NotificationFused>(),
     info::<fused::MailFused>(),
+    info::<fused::PostFused>(),
+    info::<fused::ConversationFused>(),
     info::<ShellSession>(),
     info::<StateInterval>(),
     info::<MetricFigure>(),
@@ -189,11 +239,14 @@ pub const ALL: &[RegisteredEventType] = &[
     info::<browser::BrowserVisit>(),
     info::<browser::BrowserUrl>(),
     info::<browser::BrowserHistoryEntry>(),
+    info::<browser::LinkFollowed>(),
+    info::<browser::ReadingStackChanged>(),
     info::<media::MusicPlayed>(),
     info::<media::BookmarkSaved>(),
     info::<media::NoteDocument>(),
     info::<communication::ChatMessage>(),
     info::<communication::MailMessage>(),
+    info::<communication::CallLogged>(),
     // Account exports
     info::<account::ActionRecorded>(),
     info::<account::VideoWatched>(),
@@ -202,6 +255,7 @@ pub const ALL: &[RegisteredEventType] = &[
     info::<account::TaskRevised>(),
     info::<account::PurchaseObserved>(),
     info::<account::CalendarEvent>(),
+    info::<account::CalendarInstance>(),
     info::<account::AccountRow>(),
     info::<account::LocationSample>(),
     info::<communication::ConversationMessage>(),

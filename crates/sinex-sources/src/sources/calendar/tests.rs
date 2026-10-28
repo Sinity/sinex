@@ -80,3 +80,79 @@ fn frames_one_record_per_event() {
     let (records, _) = frame(doc.as_bytes());
     assert_eq!(records.len(), 2);
 }
+
+fn read_in(ics: &str, zone: &str) -> CalendarEvent {
+    let ev = <VEvent as RecordShape>::decode(ics.as_bytes()).unwrap();
+    let parser = CalendarParser {
+        zone: jiff::tz::TimeZone::get(zone).unwrap(),
+    };
+    parser
+        .parse(&ev, &(), &sinex_source_core::RecordContext::none())
+        .unwrap()
+        .0
+        .remove(0)
+}
+
+fn at(text: &str) -> Timestamp {
+    let t: jiff::Timestamp = text.parse().unwrap();
+    Timestamp::from_unix_ns(t.as_nanosecond()).unwrap()
+}
+
+#[devkit::test]
+fn exceptions_are_read_in_their_own_zone() {
+    let ics = "BEGIN:VEVENT\nUID:s\nDTSTART;TZID=Europe/Warsaw:20240301T090000\nRRULE:FREQ=DAILY;COUNT=10\nEXDATE;TZID=Europe/Warsaw:20240303T090000,20240305T090000\nEXDATE:20240307T080000Z\nRDATE;VALUE=DATE:20240320\nRDATE:20240321T120000Z/PT1H\nEND:VEVENT\n";
+    let e = read_in(ics, "America/New_York");
+    assert_eq!(
+        e.excluded_starts,
+        vec![
+            at("2024-03-03T08:00:00Z"),
+            at("2024-03-05T08:00:00Z"),
+            at("2024-03-07T08:00:00Z")
+        ]
+    );
+    assert_eq!(
+        e.exdates,
+        vec!["20240303T090000,20240305T090000", "20240307T080000Z"],
+        "the values stay as written"
+    );
+    assert_eq!(
+        e.added_starts,
+        vec![at("2024-03-20T04:00:00Z"), at("2024-03-21T12:00:00Z")],
+        "a date is read in the configured zone; a period counts by its start"
+    );
+    assert_eq!(e.local_zone.as_deref(), Some("America/New_York"));
+}
+
+#[devkit::test]
+fn a_changed_instance_names_the_start_it_replaces() {
+    let ics = "BEGIN:VEVENT\nUID:s\nRECURRENCE-ID;TZID=Europe/Warsaw:20240331T090000\nDTSTART;TZID=Europe/Warsaw:20240331T113000\nDTEND;TZID=Europe/Warsaw:20240331T123000\nSUMMARY:Moved\nEND:VEVENT\n";
+    let e = read_in(ics, "UTC");
+    assert_eq!(e.recurrence_id.as_deref(), Some("20240331T090000"));
+    // 31 March 2024 is the spring change: 09:00 is already summer time.
+    assert_eq!(e.recurrence_start, Some(at("2024-03-31T07:00:00Z")));
+    assert_eq!(e.start, Some(at("2024-03-31T09:30:00Z")));
+}
+
+#[devkit::test]
+fn a_time_in_the_spring_gap_moves_forward() {
+    let e = read_in(
+        "BEGIN:VEVENT\nUID:g\nDTSTART;TZID=Europe/Warsaw:20240331T023000\nEND:VEVENT\n",
+        "UTC",
+    );
+    assert_eq!(e.start, Some(at("2024-03-31T01:30:00Z")));
+}
+
+#[devkit::test]
+fn an_unknown_zone_is_a_record_failure() {
+    let ev = <VEvent as RecordShape>::decode(
+        b"BEGIN:VEVENT\nUID:z\nDTSTART;TZID=Nowhere/Else:20240301T090000\nEND:VEVENT\n",
+    )
+    .unwrap();
+    let parser = CalendarParser {
+        zone: jiff::tz::TimeZone::UTC,
+    };
+    let error = parser
+        .parse(&ev, &(), &sinex_source_core::RecordContext::none())
+        .unwrap_err();
+    assert!(error.to_string().contains("unknown TZID"), "{error}");
+}

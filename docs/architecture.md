@@ -96,6 +96,13 @@ at shutdown it removes the names that have rows. The first start of an existing
 store checks every file once, then syncs `unadmitted-blobs-ready` so later starts
 check only the recorded names.
 
+A content refusal in a source batch records failures at its member locations
+and commits the cursor and reader memory, leaving the material bytes available.
+Unknown kinds, schema failures and database content errors therefore advance.
+A batch with separately owned files remains refused until those bytes have a
+material reference independent of the refused events. API requests retain their atomic refusal behavior. Missing bytes, cancellation,
+unlock expiry and database availability errors still stop submission.
+
 A failed admission is retried from the material the reader holds: the append,
 directory, SQLite-row and IMAP readers keep their newest material in memory
 until its final cursor is admitted, then read on. After a restart nothing
@@ -145,8 +152,13 @@ does not know which driver a binding uses.
 
 - **SQLite rows.** One read transaction covers the schema check and the row
   query, so SQLite's own locking gives a committed view. A locked database is
-  unavailable for that poll. The first poll after a start reads every row and
-  stores only those whose hash changed.
+  unavailable for that poll. For a table whose rows are updated in place, the
+  first poll after a start reads every row and stores only those whose hash
+  changed. An appended table (rows only added, never changed: the machine
+  telemetry collector's) is read after its cursor only, at most 50,000 rows
+  per part, the next poll continuing; its reader remembers nothing but the
+  cursor, so a table of hundreds of millions of rows costs no memory and a
+  restart reads no history.
 - **IMAP.** An answer records the UIDs it holds and the server's UID window. A
   cursor inside an answer resumes at its first UID, so a restart fetches the
   whole answer again and admission drops the repeats.
@@ -168,18 +180,56 @@ does not know which driver a binding uses.
 
 ### Typed payloads
 
-Notes keep the complete text, the file time and `(vault, path)` identity, and
-add a title, a native note ID, sorted tags and wikilinks. The YAML front matter
+Notes keep the complete text and the file time, and add a title, a native
+note ID, sorted tags and wikilinks. A note with an ID is identified by its
+vault and ID, so a rename is a newer reading of the same note; one without
+by its vault and path. The capturing host and vault root scope this identity;
+the folder name is for display. Notes and Maildir records include their path
+in the record hash so a move updates the live reading even when bytes stay
+equal. Directory removals cite stored locations and preserve sealed history
+without opening parser carry. The YAML front matter
 is parsed into JSON values or reported as absent, invalid or unsupported, with
 only an error kind and position; the text is kept either way.
 
-Steering rows, Sinnix lake observations and health records are decoded into a
-type chosen by their table, lane or category before their fields are read. A
-malformed known field is a record failure with its bytes kept. Fields the type
-does not know are kept, and the event lists their JSON pointers in
-`unknown_fields`; a category with no type at all is marked `untyped: true`.
-Samsung account tables other than health stay generic `account.row` rows,
-always marked `untyped`.
+Steering rows and health records are decoded into a type chosen by their
+table or category before their fields are read. A malformed known field is a
+record failure with its bytes kept. Fields the type does not know are kept,
+and the event lists their JSON pointers in `unknown_fields`; a category with
+no type at all is marked `untyped: true`.
+
+Sinnix lake history for clipboard, accessibility, notifications, players,
+idle inhibitors, screen, audio and netflow stays `lake.observed`. The payload
+and capture coordinates remain available to the stream derivations. Display,
+peripheral, air, navigation and reading-stack lanes produce domain events.
+Samsung calls and reminders become `call.logged` and `task.revised`;
+other account tables outside health stay generic `account.row` rows.
+
+The machine records (activations, backup checks and drills, audits, the usage
+census, configuration drift, experiment runs) and the router's capture lake
+lanes have one type per file or lane; fields the type does not know are kept
+by name in the payload's `extra`. A router sample is one record that yields
+an event per log line, lease, traffic row or Wi-Fi client.
+
+### Code and observed tools
+
+`code.git` reads a repository's commits with the files each changed
+against its first parent, and compares its refs between polls: a ref
+moved to a commit that does not descend from its old target is a rewrite,
+and the update lists the commits no ref or checkout reaches any more. They
+stay recorded. `code.github` reads the GitHub repository of the same
+checkout with a token from a file; `work.beads` reads a Beads store's JSONL
+export and `work.agentctl` AgentCTL's event log. The Beads cursor keeps
+issue IDs and hashes, so deletions survive retries and restarts without
+putting issue text in the cursor. GitHub lists, checks, reviews and labels
+are read to their last page; malformed lists and repeated page cursors fail
+the poll. Sinex never writes to
+these tools. The fields that join them are recorded as they are read: a
+commit's refs and checkouts, a pull request's head branch and commit, a
+job's checkout and its HEAD at start and end.
+
+Freedom's daily domain-seconds export yields one `domain.usage` per domain
+and day. A civil date without its zone stays a date in the payload, with no
+event instant.
 
 ### Outside producers
 
@@ -204,7 +254,7 @@ parts, named with the Polylogue parser that reads it. Polylogue parses it and
 sends `polylogue.session`, `polylogue.message`, `polylogue.tool_call` and
 `polylogue.turn` events anchored at their records and keyed by Polylogue's own
 IDs, so the same message in two files, or read again by a changed parser, is
-one occurrence whose newer reading replaces the older. Notes, settings, kept
+one record whose newer reading replaces the older. Notes, settings, kept
 results, deliveries and excisions arrive as small request materials with one
 event each. Polylogue registers its own payload schemas and rules before sending events.
 Its `polylogue` namespace belongs to the configured producer. Sinex ships the
@@ -271,8 +321,8 @@ through admission. Derived events are the one store for derived results:
 nothing a derivation or an analysis computes is kept anywhere else.
 
 A key reads events of some kinds in a time window: a kind is an event type,
-optionally only the events whose payload fields have given values (Sinnix lake
-observations of one lane, journal entries of one priority), so a key never
+optionally only the events whose payload fields have given values (state
+intervals of one kind, journal entries of one priority), so a key never
 reads a whole type to use a sliver of it.
 
 ### Fusion
@@ -281,7 +331,8 @@ Several sources often see the same thing: Atuin and zsh the same command,
 the compositor and ActivityWatch the same focus, a browser's history and its
 Takeout export the same visit, Sinex's live capture and the Sinnix capture
 lake the same clipboard change, notification or track, IMAP and an mbox the
-same mail. One mechanism joins
+same mail, a Reddit export and a public archive the same comment, a Messenger
+export and a saved Messenger database the same message. One mechanism joins
 them (`sinex-derivations/src/fusion.rs`). Each fused kind is a rule in
 `fusion/rules.rs`: its inputs in preference order, each reading one
 source's events as fusion records of something with an identity, a start and
@@ -292,12 +343,25 @@ repeat (focus, plays), a group whose start falls inside a group led by a more
 preferred source joins it: ActivityWatch's title changes inside a focus the
 compositor reported, a player's reports of a track a streaming export holds.
 The fused event (`command.fused`, `focus.fused`, `visit.fused`, `play.fused`,
-`clipboard.fused`, `notification.fused`, `mail.fused`) takes its times from its most
+`clipboard.fused`, `notification.fused`, `mail.fused`, `post.fused`,
+`conversation.fused`) takes its times from its most
 preferred member and each field from the most preferred member that has it,
 names every member as a parent and lists the sources in `observed_by`. A
 record no other source saw is fused alone, so a fused kind counts each thing
 once whichever sources were running. Metrics and aliases read the fused
 kinds.
+
+### Calendar instances
+
+`calendar.instances` (`sinex-derivations/src/calendar.rs`) expands each
+calendar series into its instances. Its key is one series, and it reads every
+reading of it: the event with its rule and the changed instances. The rule is
+expanded in local time in the series' zone, `EXDATE` starts are left out,
+`RDATE` starts added, and a changed instance replaces the one whose start it
+names. A rule without `COUNT` or `UNTIL` needs a requested expansion range;
+until one is supplied, its recorded instance and explicit additions are
+kept with `rule_not_expanded` explaining the missing range. Each
+`calendar.instance` names the readings it came from.
 
 ### Metric figures
 

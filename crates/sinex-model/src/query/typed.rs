@@ -258,6 +258,9 @@ fn field_type(
         .filter(|f| f.path == path && kinds.as_ref().is_none_or(|ks| ks.contains(&f.event_type)))
         .map(|f| f.ty);
     let Some(mut ty) = types.next() else {
+        if ctx.catalog.as_ref().is_some_and(|c| c.schemaless) {
+            return Ok(FieldType::Json);
+        }
         return Err(QueryError::new(format!(
             "payload.{} is not declared by the selected event schemas",
             path.join(".")
@@ -311,6 +314,7 @@ fn operand(
             }
             if let FieldRef::TypedPayload { ty, .. } = f
                 && *ty != FieldType::Time
+                && !(ctx.catalog.is_some() && *ty == FieldType::Json)
             {
                 return Err(QueryError::new("time functions require a time field"));
             }
@@ -343,6 +347,9 @@ fn validate_value(v: &mut Value, ty: FieldType, ctx: &Context) -> Result<(), Que
             time::instant(ctx, text)
                 .ok_or_else(|| QueryError::new("a payload time requires an absolute timestamp"))?,
         );
+    }
+    if ty == FieldType::Json {
+        return Ok(());
     }
     let valid = matches!(
         (ty, &*v),
@@ -382,11 +389,13 @@ fn expr(e: &mut Expr, kinds: &Option<BTreeSet<String>>, ctx: &Context) -> Result
             if let Operand::Field(FieldRef::TypedPayload { ty, .. }) = lhs {
                 if matches!(op, Op::Contains | Op::Prefix)
                     && !matches!(ty, FieldType::Text | FieldType::TextList)
+                    && !(ctx.catalog.is_some() && *ty == FieldType::Json)
                 {
                     return Err(QueryError::new("~ and ^ require a text payload field"));
                 }
                 if op.ordering()
                     && matches!(ty, FieldType::Bool | FieldType::Json | FieldType::TextList)
+                    && !(ctx.catalog.is_some() && *ty == FieldType::Json)
                 {
                     return Err(QueryError::new("this payload field cannot be ordered"));
                 }
@@ -437,6 +446,7 @@ fn expr(e: &mut Expr, kinds: &Option<BTreeSet<String>>, ctx: &Context) -> Result
             }
             if let Operand::Field(FieldRef::TypedPayload { ty, .. }) = lhs
                 && *ty != FieldType::Time
+                && !(ctx.catalog.is_some() && *ty == FieldType::Json)
             {
                 return Err(QueryError::new("in requires a time field"));
             }
@@ -461,7 +471,74 @@ fn expr(e: &mut Expr, kinds: &Option<BTreeSet<String>>, ctx: &Context) -> Result
     Ok(())
 }
 
+fn select_parameter(expression: &mut Expr, name: &str) -> bool {
+    fn select_value(input: &mut Value, name: &str) -> bool {
+        match input {
+            Value::PlaceholderText(_) => {
+                *input = Value::Text(name.to_owned());
+                true
+            }
+            Value::List(values) => {
+                let mut changed = false;
+                for item in values {
+                    changed |= select_value(item, name);
+                }
+                changed
+            }
+            _ => false,
+        }
+    }
+    match expression {
+        Expr::And(a, b) | Expr::Or(a, b) => select_parameter(a, name) | select_parameter(b, name),
+        Expr::Not(e) => select_parameter(e, name),
+        Expr::Compare {
+            lhs: Operand::Field(FieldRef::Field(f)),
+            rhs,
+            ..
+        } if f.name == "event_type" => select_value(rhs, name),
+        _ => false,
+    }
+}
+
+fn select_query_parameter(query: &mut Query, name: &str) -> bool {
+    let mut changed = false;
+    if let Some(filter) = &mut query.filter {
+        changed |= select_parameter(filter, name);
+    }
+    if let Source::RecallLast {
+        filter: Some(filter),
+    } = &mut query.source
+    {
+        changed |= select_parameter(filter, name);
+    }
+    for stage in &mut query.stages {
+        if let Stage::Where(filter) = stage {
+            changed |= select_parameter(filter, name);
+        }
+    }
+    changed
+}
+
 pub(super) fn check(q: &mut Query, ctx: &Context) -> Result<(), QueryError> {
+    // A template's event-type argument is checked when an invocation supplies it.
+    // Its definition must be valid for at least one declared event type.
+    if ctx.catalog.is_none() && select_query_parameter(&mut q.clone(), "") {
+        let mut first_error = None;
+        for kind in crate::event_types::ALL {
+            let mut trial = q.clone();
+            select_query_parameter(&mut trial, kind.event_type);
+            match check(&mut trial, ctx) {
+                Ok(()) => {
+                    *q = trial;
+                    return Ok(());
+                }
+                Err(error) => {
+                    first_error.get_or_insert(error);
+                }
+            }
+        }
+        return Err(first_error.unwrap_or_else(|| QueryError::new("no event type is declared")));
+    }
     if let Source::RecallLast { filter: Some(e) } = &mut q.source {
         let alias = Alias::from_name("shell-sessions").expect("shell sessions declared");
         let kinds = Some(alias.kinds.iter().map(|s| (*s).into()).collect());
@@ -540,6 +617,7 @@ pub(super) fn check(q: &mut Query, ctx: &Context) -> Result<(), QueryError> {
                         if matches!(a.function, AggFn::Sum | AggFn::Avg)
                             && ty.is_some_and(|ty| {
                                 !matches!(ty, FieldType::Integer | FieldType::Number)
+                                    && !(ctx.catalog.is_some() && ty == FieldType::Json)
                             })
                         {
                             return Err(QueryError::new(format!(

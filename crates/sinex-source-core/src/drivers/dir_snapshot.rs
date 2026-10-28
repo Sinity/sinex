@@ -9,7 +9,11 @@
 //!
 //! When a walk completes without reaching the part size, files read before but
 //! not seen now are recorded as removed: a member holding a short marker line,
-//! so each has its own record location and the parser reads the removal.
+//! so each has its own record location and the parser reads the removal. A
+//! source whose records are not identified by their path (a Maildir message
+//! by its Message-ID) asks the driver to record the removal at the source
+//! instead (`removed_at_source`): the reader remembers where each file was
+//! last stored, and the file's reading there gets a newer reading, removed.
 //!
 //! The admitted cursor confirms cached file facts. Until its final byte commits,
 //! a retry offers the same bundle again. Each member records the file's size,
@@ -21,7 +25,9 @@
 use super::{Acquired, DriverError, NewMaterial, StoredBytes, file_facts};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
-use sinex_model::{InputRef, MaterialId, ObservationFacts, RevisionChange, Timestamp};
+use sinex_model::{
+    InputRef, MaterialId, ObservationFacts, RecordLocation, RevisionChange, Timestamp,
+};
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -33,7 +39,7 @@ mod format;
 mod paths;
 mod restore;
 mod tar;
-pub(crate) use format::{decode as decode_record, validate as validate_records};
+pub(crate) use format::{decode as decode_record, is_directory, validate as validate_records};
 
 pub struct DirSnapshot {
     pub root: PathBuf,
@@ -42,6 +48,9 @@ pub struct DirSnapshot {
     pub select: fn(&str) -> bool,
     /// Bytes per material; a walk that reaches it continues on the next poll.
     pub part_bytes: usize,
+    /// Whether a removed file's last reading is recorded as removed at the
+    /// source, for parsers that cannot read the removal from its marker.
+    pub removed_at_source: bool,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -61,10 +70,11 @@ pub struct Cursor {
     pub changed_since_memory: u64,
 }
 
-/// What was already read, by relative path: size, change time, hash.
+/// What was already read, by relative path: size, change time, content hash.
 #[derive(Default)]
 pub struct DirState {
     files: FileMemory,
+    locations: HashMap<PathBuf, RecordLocation>,
     /// The newest bundle and the file facts it records once admitted.
     held: Option<HeldSnapshot>,
     failures: HashMap<PathBuf, String>,
@@ -72,11 +82,13 @@ pub struct DirState {
     retries: HashSet<PathBuf>,
     /// Paths a restart has already decided from a newer bundle.
     remembered: HashSet<PathBuf>,
+    located: HashSet<PathBuf>,
 }
 
 struct HeldSnapshot {
     material: super::held::HeldMaterial,
     files: FileMemory,
+    locations: HashMap<PathBuf, RecordLocation>,
     failures: HashMap<PathBuf, String>,
     retries: HashSet<PathBuf>,
 }
@@ -118,6 +130,7 @@ impl DirSnapshot {
                 state.files = held.files;
                 state.failures = held.failures;
                 state.retries = held.retries;
+                state.locations = held.locations;
             } else {
                 let acquired = held.material.acquired(cursor)?;
                 state.held = Some(held);
@@ -143,22 +156,8 @@ impl DirSnapshot {
         };
         // Sorted walk: a stable order makes materials and part cuts repeatable.
         let mut found = BTreeMap::new();
-        let boundary = std::fs::canonicalize(&self.root).unwrap_or_else(|_| self.root.clone());
-        let excluded: Vec<_> = excluded
-            .iter()
-            .filter_map(|path| {
-                path.strip_prefix(&self.root)
-                    .or_else(|_| path.strip_prefix(&boundary))
-                    .ok()
-                    .map(|relative| self.root.join(relative))
-            })
-            .collect();
-        walk(&self.root, &self.root, self.select, &excluded, &mut found);
-        let excluded: Vec<_> = excluded
-            .iter()
-            .filter_map(|path| path.strip_prefix(&self.root).ok().map(Path::to_path_buf))
-            .collect();
-        self.poll_entries(cursor, state, previous, facts, found, &excluded)
+        walk(&self.root, &self.root, self.select, &mut found);
+        self.poll_entries(cursor, state, previous, facts, found)
     }
 
     fn poll_entries(
@@ -168,18 +167,28 @@ impl DirSnapshot {
         previous: Cursor,
         mut facts: ObservationFacts,
         found: BTreeMap<PathBuf, EntryFacts>,
-        excluded: &[PathBuf],
     ) -> Result<Acquired, DriverError> {
         let now = Timestamp::now();
+        let mut membership_path = ".sinex-membership".to_owned();
+        while found
+            .keys()
+            .chain(state.files.keys())
+            .any(|path| path.starts_with(&membership_path))
+        {
+            membership_path.push('_');
+        }
         let failed: Vec<_> = found
             .iter()
             .filter(|(_, facts)| facts.is_err())
             .map(|(path, _)| path.clone())
             .collect();
 
+        let id = MaterialId::new();
         let mut bundle = tar::Archive::new(tempfile::tempfile().map_err(io)?);
         let mut length = 0usize;
         let mut next_files = state.files.clone();
+        let mut next_locations = state.locations.clone();
+        let mut removed = Vec::new();
         let mut next_failures = state.failures.clone();
         let mut next_retries = state.retries.clone();
         let mut records = Vec::new();
@@ -204,6 +213,7 @@ impl DirSnapshot {
                         &mut records,
                         relative,
                         reason,
+                        &membership_path,
                     )?;
                     continue;
                 }
@@ -253,13 +263,17 @@ impl DirSnapshot {
                         &mut records,
                         relative,
                         &reason,
+                        &membership_path,
                     )?;
                     continue;
                 }
             };
             next_failures.remove(relative);
             next_retries.remove(relative);
-            next_files.insert(relative.clone(), Some((*size, *changed, captured.hash)));
+            next_files.insert(
+                relative.clone(),
+                Some((*size, *changed, captured.node.content_hash)),
+            );
             let offset = captured.offset;
             let end = offset
                 .checked_add(captured.length)
@@ -269,12 +283,20 @@ impl DirSnapshot {
                 "stream_offset": offset,
                 "length": captured.length,
                 "mtime_ns": captured.node.mtime_ns,
-                "hash": blake3::Hash::from(captured.hash).to_hex().as_str(),
                 "node": captured.node,
             }));
             paths::add_native(members.last_mut().expect("member added"), relative);
             length = tar::position(&mut bundle)?;
             records.push((offset, end));
+            if self.removed_at_source {
+                next_locations.insert(
+                    relative.clone(),
+                    RecordLocation {
+                        material: id,
+                        anchor: offset as u64,
+                    },
+                );
+            }
             files_read = true;
         }
         if complete {
@@ -282,19 +304,24 @@ impl DirSnapshot {
                 .files
                 .keys()
                 .filter(|p| {
-                    !seen.contains(*p)
-                        && !failed.iter().any(|prefix| p.starts_with(prefix))
-                        && !excluded.iter().any(|prefix| p.starts_with(prefix))
+                    !seen.contains(*p) && !failed.iter().any(|prefix| p.starts_with(prefix))
                 })
                 .cloned()
                 .collect();
             gone.sort();
             for relative in gone {
                 next_files.remove(&relative);
+                if let Some(location) = next_locations.remove(&relative) {
+                    removed.push(location);
+                }
                 next_retries.remove(&relative);
                 let display = paths::display(&relative);
                 let marker = removed_marker(&display);
-                let offset = tar::marker(&mut bundle, &marker)?;
+                let offset = tar::marker(
+                    &mut bundle,
+                    &format!("{membership_path}/{}", members.len()),
+                    &marker,
+                )?;
                 members.push(json!({
                     "path": display,
                     "stream_offset": offset,
@@ -307,14 +334,10 @@ impl DirSnapshot {
         }
         if complete {
             next_retries.retain(|path| {
-                seen.contains(path)
-                    || failed.iter().any(|prefix| path.starts_with(prefix))
-                    || excluded.iter().any(|prefix| path.starts_with(prefix))
+                seen.contains(path) || failed.iter().any(|prefix| path.starts_with(prefix))
             });
             next_failures.retain(|path, _| {
-                seen.contains(path)
-                    || failed.iter().any(|prefix| path.starts_with(prefix))
-                    || excluded.iter().any(|prefix| path.starts_with(prefix))
+                seen.contains(path) || failed.iter().any(|prefix| path.starts_with(prefix))
             });
         }
         let mut scanned = Cursor {
@@ -327,6 +350,7 @@ impl DirSnapshot {
         };
         if records.is_empty() {
             state.files = next_files;
+            state.locations = next_locations;
             state.failures = next_failures;
             state.retries = next_retries;
             facts.changed = false;
@@ -340,16 +364,18 @@ impl DirSnapshot {
         }
         // Every file read by one walk is as new as the walk; the records are
         // listed so a replay or an excision finds them in the bundle.
-        let manifest = sinex_model::Manifest::from_json(json!({
+        let mut manifest = json!({
             "path": paths::display(&self.root),
             "host": self.host,
             "media_type": format::MEDIA_TYPE,
             "scan_complete": complete && failed.is_empty(),
+            "membership_path": membership_path,
             "members": members,
             "records": records,
             "read_at_ns": i64::try_from(now.unix_ns()).unwrap_or(i64::MAX),
-        }));
-        let id = MaterialId::new();
+        });
+        paths::add_native(&mut manifest, &self.root);
+        let manifest = sinex_model::Manifest::from_json(manifest);
         let part_index = if previous.material.is_some() {
             previous.part_index + 1
         } else {
@@ -370,7 +396,7 @@ impl DirSnapshot {
             previous.memory_part
         };
         scanned.changed_since_memory = if due { 0 } else { changed };
-        let memory = due.then(|| restore::memory_of(&next_files));
+        let memory = due.then(|| restore::memory_of(&next_files, &next_locations));
         let previous_part = previous.material;
         let record_end = records.last().expect("records present").1;
         let cursor_at = move |end: usize| {
@@ -415,7 +441,7 @@ impl DirSnapshot {
                 manifest,
                 cursor_at: Box::new(move |end| Ok(cursor_at(end))),
                 aligned: false,
-                removed: Vec::new(),
+                removed,
                 memory,
                 owned_files: Vec::new(),
             }),
@@ -426,6 +452,7 @@ impl DirSnapshot {
         state.held = Some(HeldSnapshot {
             material: held,
             files: next_files,
+            locations: next_locations,
             failures: next_failures,
             retries: next_retries,
         });
@@ -444,10 +471,15 @@ fn entry_failure(
     records: &mut Vec<(usize, usize)>,
     path: &Path,
     reason: &str,
+    membership_path: &str,
 ) -> Result<(), DriverError> {
     let display = paths::display(path);
     let marker = json!({"path": display, "read_error": reason}).to_string();
-    let offset = tar::marker(bundle, marker.as_bytes())?;
+    let offset = tar::marker(
+        bundle,
+        &format!("{membership_path}/{}", members.len()),
+        marker.as_bytes(),
+    )?;
     *length = tar::position(bundle)?;
     members.push(json!({
         "path": display,
@@ -480,7 +512,6 @@ fn walk(
     root: &Path,
     dir: &Path,
     select: fn(&str) -> bool,
-    excluded: &[PathBuf],
     found: &mut BTreeMap<PathBuf, EntryFacts>,
 ) {
     let entries = match std::fs::read_dir(dir) {
@@ -505,9 +536,6 @@ fn walk(
             }
         };
         let path = entry.path();
-        if excluded.iter().any(|root| path.starts_with(root)) {
-            continue;
-        }
         let relative = path.strip_prefix(root).expect("within root").to_owned();
         let kind = match entry.file_type() {
             Ok(kind) => kind,
@@ -517,7 +545,7 @@ fn walk(
             }
         };
         if kind.is_dir() {
-            walk(root, &path, select, excluded, found);
+            walk(root, &path, select, found);
         } else if kind.is_file() && select(&paths::display(&relative)) {
             let facts = std::fs::metadata(&path)
                 .map(|facts| (facts.len(), tar::change_time(&facts)))

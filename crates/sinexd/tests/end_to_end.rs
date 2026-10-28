@@ -1018,3 +1018,354 @@ fn zsh_binding(path: &Path) -> String {
 fn atuin_binding(path: &Path) -> String {
     format!("terminal.atuin-history:{}@{HOST}", path.display())
 }
+
+/// One `sinnix-capture-v1` clipboard record.
+fn lake_line(seq: i64, payload: &str) -> String {
+    format!(
+        r#"{{"schema":"sinnix-capture-v1","schema_version":1,"lane":"clipboard","ts":{}.5,"host":"lake-host","seq":{seq},"payload":{payload},"raw_ref":null}}"#,
+        1_760_000_000 + seq
+    ) + "\n"
+}
+
+fn copied(text: &str) -> String {
+    format!(
+        r#"{{"category":"text","mime":"text/plain","text":"{text}","size":{}}}"#,
+        text.len()
+    )
+}
+
+/// Every line of a lake day file is accounted for: its events cite it, or a
+/// failure names its offset. Re-reading the file after it grows admits only
+/// its new lines.
+#[devkit::test]
+async fn every_lake_line_is_read_once() {
+    let dir = Dir::new();
+    let t = Target::new(&dir);
+    let day = "lake/activity/desktop/clipboard/clipboard-20251009.jsonl";
+    let mut text = lake_line(1, &copied("one")) + &lake_line(-1, r#"{"text":4}"#);
+    text += &lake_line(3, &copied("three"));
+    let path = dir.file(day, text.as_bytes());
+    let read = format!("sinnix-lake={}", dir.0.join("lake").display());
+    let backfill = || finish(&mut t.sinexd(&["backfill", "--host", HOST, "--read", &read]));
+    backfill();
+    let mut c = t.connect().await;
+    let accounted = "SELECT count(*) FROM (
+        SELECT material_id, anchor FROM core.events WHERE material_id IS NOT NULL
+        UNION SELECT material_id, anchor FROM raw.failures) a";
+    assert_eq!(
+        scalar(
+            &mut c,
+            "SELECT count(*) FROM core.events WHERE event_type = 'lake.observed'"
+        )
+        .await,
+        2
+    );
+    assert_eq!(scalar(&mut c, "SELECT count(*) FROM raw.failures").await, 1);
+    assert_eq!(scalar(&mut c, accounted).await, 3, "each line once");
+
+    text += &lake_line(4, &copied("four"));
+    text += &lake_line(5, &copied("five"));
+    std::fs::write(&path, &text).unwrap();
+    backfill();
+    let texts: Vec<String> = sqlx::query_scalar(
+        "SELECT payload->'payload'->>'text' FROM core.events WHERE event_type = 'lake.observed' ORDER BY ts_orig",
+    )
+    .fetch_all(&mut c)
+    .await
+    .unwrap();
+    assert_eq!(texts, ["one", "three", "four", "five"]);
+    assert_eq!(
+        scalar(&mut c, accounted).await,
+        5,
+        "new lines have distinct record locations"
+    );
+    assert_eq!(scalar(&mut c, "SELECT count(*) FROM raw.failures").await, 1);
+    assert_eq!(
+        scalar(&mut c, "SELECT count(*) FROM audit.archived").await,
+        0
+    );
+    consistent(&mut c).await;
+}
+
+/// An ActivityWatch database with a window bucket and its events of (start
+/// seconds, end seconds, app, title).
+fn activitywatch_db(path: &Path, events: &[(i64, i64, &str, &str)]) {
+    let _ = std::fs::remove_file(path);
+    let c = rusqlite::Connection::open(path).unwrap();
+    c.execute_batch(
+        "CREATE TABLE buckets (id INTEGER PRIMARY KEY, name TEXT, type TEXT);
+         CREATE TABLE events (id INTEGER PRIMARY KEY, bucketrow INTEGER, starttime INTEGER, endtime INTEGER, data TEXT);
+         INSERT INTO buckets VALUES (1, 'aw-watcher-window_end-to-end', 'currentwindow');",
+    )
+    .unwrap();
+    for (i, (start, end, app, title)) in events.iter().enumerate() {
+        c.execute(
+            "INSERT INTO events VALUES (?1, 1, ?2, ?3, ?4)",
+            rusqlite::params![
+                i as i64 + 1,
+                start * 1_000_000_000,
+                end * 1_000_000_000,
+                serde_json::json!({"app": app, "title": title}).to_string()
+            ],
+        )
+        .unwrap();
+    }
+}
+
+/// A revision supersedes: when ActivityWatch's last window event grows, the
+/// re-read leaves one live span with the new end, the earlier reading
+/// archived, and the fused focus derived from it recomputed to the new end.
+#[devkit::test]
+async fn a_growing_activitywatch_event_replaces_its_reading_downstream() {
+    let dir = Dir::new();
+    let t = Target::new(&dir);
+    let path = dir.0.join("aw.db");
+    let start = 1_760_000_000;
+    let read = format!("activitywatch={}", path.display());
+    let backfill = || finish(&mut t.sinexd(&["backfill", "--host", HOST, "--read", &read]));
+    activitywatch_db(
+        &path,
+        &[
+            (start, start + 60, "kitty", "shell"),
+            (start + 60, start + 120, "browser", "page"),
+        ],
+    );
+    backfill();
+    t.derive();
+    activitywatch_db(
+        &path,
+        &[
+            (start, start + 60, "kitty", "shell"),
+            (start + 60, start + 900, "browser", "page"),
+        ],
+    );
+    backfill();
+    t.derive();
+    let mut c = t.connect().await;
+    let ends = |event_type: &'static str| {
+        format!(
+            "SELECT e.payload->>'ended_at' FROM core.live_equivalence l JOIN core.events e ON e.id = l.event_id
+             WHERE l.event_type = '{event_type}' AND e.payload->>'app' = 'browser'"
+        )
+    };
+    let span_ends: Vec<String> = sqlx::query_scalar(&ends("window.span"))
+        .fetch_all(&mut c)
+        .await
+        .unwrap();
+    let new_end = "2025-10-09T09:08:20Z";
+    assert_eq!(span_ends, [new_end], "one live span, at its new end");
+    assert_eq!(
+        scalar(
+            &mut c,
+            "SELECT count(*) FROM audit.archived a JOIN core.events e ON e.id = a.event_id
+             WHERE e.event_type = 'window.span' AND a.reason = 'newer_reading'"
+        )
+        .await,
+        1
+    );
+    let fused_ends: Vec<String> = sqlx::query_scalar(&ends("focus.fused"))
+        .fetch_all(&mut c)
+        .await
+        .unwrap();
+    assert_eq!(fused_ends, [new_end], "the derived focus follows");
+    consistent(&mut c).await;
+}
+
+#[devkit::test]
+async fn applying_recreates_source_views_and_preserves_kind_declarations() {
+    let dir = Dir::new();
+    let target = Target::new(&dir);
+    let mut connection = target.connect().await;
+    let declaration = sinex_model::KindDeclaration::schemaless(
+        sinex_model::KindRef {
+            name: "fixture.custom".into(),
+            version: 9,
+        },
+        "fixture".into(),
+    );
+    sinex_schema::kinds::register(&mut connection, "fixture", &[declaration])
+        .await
+        .unwrap();
+    let before = sinex_schema::kinds::all(&mut connection).await.unwrap();
+    sqlx::query("DROP VIEW event_types.clipboard_copied")
+        .execute(&mut connection)
+        .await
+        .unwrap();
+    assert_eq!(
+        sinex_schema::apply(&mut connection).await.unwrap(),
+        sinex_schema::Applied::Current {
+            version: sinex_schema::VERSION
+        }
+    );
+    assert_eq!(
+        sinex_schema::kinds::all(&mut connection).await.unwrap(),
+        before
+    );
+    assert_eq!(scalar(&mut connection,
+        "SELECT count(*) FROM pg_views WHERE schemaname='event_types' AND viewname='clipboard_copied'").await, 1);
+}
+
+#[devkit::test]
+async fn source_view_refresh_refuses_a_running_writer() {
+    let dir = Dir::new();
+    let target = Target::new(&dir);
+    let mut writer = target.connect().await;
+    sqlx::query("SELECT pg_advisory_lock($1)")
+        .bind(sinex_schema::WRITER_LOCK)
+        .execute(&mut writer)
+        .await
+        .unwrap();
+    let mut schema = target.connect().await;
+    sqlx::query("DROP VIEW event_types.clipboard_copied")
+        .execute(&mut schema)
+        .await
+        .unwrap();
+    let before = sinex_schema::kinds::all(&mut schema).await.unwrap();
+    assert!(matches!(
+        sinex_schema::apply(&mut schema).await,
+        Err(sinex_schema::Error::WriterRunning)
+    ));
+    assert_eq!(sinex_schema::kinds::all(&mut schema).await.unwrap(), before);
+    assert_eq!(scalar(&mut schema,
+        "SELECT count(*) FROM pg_views WHERE schemaname='event_types' AND viewname='clipboard_copied'").await, 0);
+    sqlx::query("SELECT pg_advisory_unlock($1)")
+        .bind(sinex_schema::WRITER_LOCK)
+        .execute(&mut writer)
+        .await
+        .unwrap();
+    sinex_schema::apply(&mut schema).await.unwrap();
+    assert_eq!(scalar(&mut schema,
+        "SELECT count(*) FROM pg_views WHERE schemaname='event_types' AND viewname='clipboard_copied'").await, 1);
+}
+
+#[devkit::test]
+async fn a_note_keeps_its_identity_when_renamed_between_backfills() {
+    let dir = Dir::new();
+    let target = Target::new(&dir);
+    let first = dir.file("vault/first.md", b"---\nid: synthetic-note\n---\nA note\n");
+    let read = format!("notes={}", dir.0.join("vault").display());
+    let backfill = || finish(&mut target.sinexd(&["backfill", "--host", HOST, "--read", &read]));
+    backfill();
+    std::fs::rename(&first, dir.0.join("vault/renamed.md")).unwrap();
+    backfill();
+    let mut connection = target.connect().await;
+    let notes: Vec<(String, String)> = sqlx::query_as(
+        "SELECT e.payload->>'path', e.record_state FROM core.live_equivalence l
+         JOIN core.events e ON e.id = l.event_id WHERE l.event_type = 'note.document'",
+    )
+    .fetch_all(&mut connection)
+    .await
+    .unwrap();
+    assert_eq!(notes, [("renamed.md".to_string(), "present".to_string())]);
+    std::fs::remove_file(dir.0.join("vault/renamed.md")).unwrap();
+    backfill();
+    let states: Vec<String> = sqlx::query_scalar(
+        "SELECT e.record_state FROM core.live_equivalence l JOIN core.events e ON e.id = l.event_id
+         WHERE l.event_type = 'note.document'",
+    )
+    .fetch_all(&mut connection)
+    .await
+    .unwrap();
+    assert_eq!(states, ["removed"]);
+    consistent(&mut connection).await;
+}
+
+#[devkit::test]
+async fn maildir_flag_renames_keep_messages_present_and_later_deletions_remove_them() {
+    let dir = Dir::new();
+    let target = Target::new(&dir);
+    let mut connection = target.connect().await;
+    for (name, header) in [
+        ("with-id", "Message-ID: <synthetic-mail@example.org>\n"),
+        ("without-id", ""),
+    ] {
+        let subject = format!("synthetic-{name}");
+        let bytes = format!(
+            "{header}Subject: {subject}\nDate: Mon, 18 Mar 2024 08:00:00 +0000\n\nA message\n"
+        );
+        let first = dir.file(&format!("{name}/new/one"), bytes.as_bytes());
+        std::fs::create_dir_all(dir.0.join(name).join("cur")).unwrap();
+        let renamed = dir.0.join(name).join("cur/one:2,S");
+        let read = format!("maildir={}", dir.0.join(name).display());
+        let backfill =
+            || finish(&mut target.sinexd(&["backfill", "--host", HOST, "--read", &read]));
+        backfill();
+        std::fs::rename(&first, &renamed).unwrap();
+        backfill();
+        let state: String = sqlx::query_scalar(
+            "SELECT e.record_state FROM core.live_equivalence l JOIN core.events e ON e.id=l.event_id
+             WHERE l.event_type='mail.message' AND e.payload->>'subject'=$1",
+        ).bind(&subject).fetch_one(&mut connection).await.unwrap();
+        assert_eq!(state, "present", "{name}");
+        std::fs::remove_file(renamed).unwrap();
+        backfill();
+        let state: String = sqlx::query_scalar(
+            "SELECT e.record_state FROM core.live_equivalence l JOIN core.events e ON e.id=l.event_id
+             WHERE l.event_type='mail.message' AND e.payload->>'subject'=$1",
+        ).bind(&subject).fetch_one(&mut connection).await.unwrap();
+        assert_eq!(state, "removed", "{name}");
+    }
+    consistent(&mut connection).await;
+}
+
+#[devkit::test]
+async fn freedom_exports_read_completed_and_rewritten_days() {
+    let dir = Dir::new();
+    let target = Target::new(&dir);
+    let partial = br#"{"stat_2025-02-01":{"example.org":2},"stat_2025-02-02":{"example.org":"#;
+    let path = dir.file("freedom.json", partial);
+    let read = format!("freedom={}", path.display());
+    let backfill = || finish(&mut target.sinexd(&["backfill", "--host", HOST, "--read", &read]));
+    backfill();
+    let mut connection = target.connect().await;
+    assert_eq!(
+        scalar(
+            &mut connection,
+            "SELECT count(*) FROM core.events WHERE event_type='domain.usage'"
+        )
+        .await,
+        1
+    );
+    let complete = [partial.as_slice(), b"4}}"].concat();
+    std::fs::write(&path, complete).unwrap();
+    backfill();
+    assert_eq!(
+        scalar(
+            &mut connection,
+            "SELECT count(*) FROM core.events WHERE event_type='domain.usage'"
+        )
+        .await,
+        2
+    );
+    std::fs::write(
+        &path,
+        br#"{"stat_2025-02-01":{"example.org":30},"stat_2025-02-02":{"example.org":4}}"#,
+    )
+    .unwrap();
+    backfill();
+    let days: Vec<(String, String)> = sqlx::query_as(
+        "SELECT e.payload->>'day', e.payload->>'seconds' FROM core.events e
+         JOIN core.live_equivalence l ON l.event_id=e.id
+         WHERE e.event_type='domain.usage' ORDER BY e.payload->>'day'",
+    )
+    .fetch_all(&mut connection)
+    .await
+    .unwrap();
+    assert_eq!(
+        days,
+        [
+            ("2025-02-01".into(), "30".into()),
+            ("2025-02-02".into(), "4".into())
+        ]
+    );
+    backfill();
+    assert_eq!(
+        scalar(
+            &mut connection,
+            "SELECT count(*) FROM core.events WHERE event_type='domain.usage'"
+        )
+        .await,
+        3
+    );
+    consistent(&mut connection).await;
+}

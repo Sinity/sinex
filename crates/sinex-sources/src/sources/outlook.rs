@@ -8,8 +8,8 @@
 //! PST and the folder it came from. The PST stays where the operator keeps it.
 //!
 //! The CSV export carries no message ID and no date, only the people, subject,
-//! body and a few Outlook fields. Each row is one message identified by a hash
-//! of its decoded cells; the same message in the PST is a separate record,
+//! body and a few Outlook fields. Each row is identified by its record
+//! location; the same message in the PST is a separate record,
 //! combined by fusion if at all.
 use crate::sources::{fields, mail};
 use sinex_model::Class;
@@ -27,7 +27,7 @@ pub const PST: SourceSpec = SourceSpec {
     purpose: "mail recall and correspondence history",
     class: Class::Open,
     parser: "rfc5322-mail",
-    parser_version: 1,
+    parser_version: 3,
     event_types: &["mail.message"],
     framer: sinex_source_core::Framer::export(
         sinex_source_core::drivers::export_archive::frame_mbox,
@@ -42,7 +42,7 @@ pub const CSV: SourceSpec = SourceSpec {
     purpose: "mail recall and correspondence history",
     class: Class::Open,
     parser: "outlook-csv",
-    parser_version: 1,
+    parser_version: 3,
     event_types: &["mail.message"],
     framer: sinex_source_core::Framer::export(
         frame_csv,
@@ -165,21 +165,20 @@ impl Parser for CsvParser {
                 .filter(|p| !p.is_empty())
                 .collect()
         };
-        let mut cc = people("DW");
-        cc.extend(people("UDW"));
+        let cc = people("DW");
+        let bcc = people("UDW");
         let labels = column("Kategorie")
             .map(|c| c.split(';').map(|l| l.trim().to_owned()).collect())
             .unwrap_or_default();
         Ok((
             vec![MailMessage {
-                message_id: format!(
-                    "blake3:{}",
-                    blake3::hash(cells.join("\u{1f}").as_bytes()).to_hex()
-                ),
+                message_id: None,
+                native_id: None,
                 date: None,
                 from: people("Od"),
                 to: people("Do"),
                 cc,
+                bcc,
                 subject: column("Temat").map(str::to_owned),
                 in_reply_to: None,
                 references: vec![],

@@ -7,8 +7,7 @@ use serde::{Deserialize, Serialize};
 /// One entry of the operator's quick-note log. The entry is its place in the
 /// log; an edit to it is a newer reading.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
-#[event(version = 2,
-    type = "operator_log.entry",
+#[event(version = 2, type = "operator_log.entry",
     key = location,
     replace = newer,
     time = written_at,

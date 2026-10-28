@@ -130,7 +130,7 @@ fn time_citations_require_absolute_time_and_marks_have_positive_numbers() {
 fn parameters_do_not_stand_for_fields_and_text_parameters_stay_text() {
     let saved = SavedQuery {
         name: "typed".into(),
-        query: "events where payload.command = $value".into(),
+        query: "commands where payload.command = $value".into(),
         parameters: vec![Parameter {
             name: "value".into(),
             field_type: ParameterType::Text,
@@ -528,4 +528,25 @@ fn typed_saved_arguments_keep_their_type_when_quoted() {
         bind_saved(&invocation, &ctx(), &definitions)
             .unwrap_or_else(|error| panic!("{query}: {error}"));
     }
+}
+
+#[devkit::test]
+fn event_type_parameters_check_each_invocation_and_require_one_coherent_schema() {
+    let saved = SavedQuery {
+        name: "by-kind".into(),
+        query: "events where event_type = $kind and payload.command ~ synthetic".into(),
+        parameters: vec![Parameter {
+            name: "kind".into(),
+            field_type: ParameterType::Text,
+        }],
+    };
+    saved.validate(&ctx()).unwrap();
+    let definitions = BTreeMap::from([("by-kind".into(), saved.clone())]);
+    assert!(bind_saved("query:by-kind(kind=command.executed)", &ctx(), &definitions).is_ok());
+    assert!(bind_saved("query:by-kind(kind=window.focused)", &ctx(), &definitions).is_err());
+    let invalid = SavedQuery {
+        query: "events where event_type = $kind and payload.never_declared exists".into(),
+        ..saved
+    };
+    assert!(invalid.validate(&ctx()).is_err());
 }

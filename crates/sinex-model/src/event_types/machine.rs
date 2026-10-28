@@ -1,4 +1,4 @@
-//! Machine events: journal entries, file changes, capture observations and
+//! Machine events: journal entries, file changes, terminal recordings and
 //! what terminals showed.
 use crate::Timestamp;
 use schemars::JsonSchema;
@@ -9,7 +9,7 @@ use serde_json::{Map, Value};
 /// entry read again (after a capture restart overlaps, or from an export) is
 /// a repeat.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
-#[event(version = 2, type = "journal.entry", key = ["cursor"], replace = repeat, time = logged_at, quality = intrinsic)]
+#[event(version = 3, type = "journal.entry", key = ["cursor"], replace = repeat, time = logged_at, quality = intrinsic)]
 pub struct JournalEntry {
     /// `__CURSOR`.
     pub cursor: String,
@@ -30,6 +30,10 @@ pub struct JournalEntry {
     pub uid: Option<i64>,
     pub command: Option<String>,
     pub transport: Option<String>,
+    /// Written by Sinex itself (its daemon, captures and session service):
+    /// Kept out of figures about the machine's activity.
+    #[serde(default)]
+    pub from_sinex: bool,
     /// Every other field, by its journal name.
     #[serde(default, skip_serializing_if = "Map::is_empty")]
     pub fields: Map<String, Value>,
@@ -54,9 +58,6 @@ pub struct FileChanged {
     /// Why, for an `unwatched` directory.
     pub note: Option<String>,
 }
-
-pub mod capture;
-pub use capture::{CapturePayload, LakeObservation};
 
 /// A terminal recording's session (asciinema): its start, size, command and
 /// environment, from the recording's header. The recording's place is its
@@ -145,4 +146,16 @@ pub struct ScrollbackWindow {
     /// Any other fields the sidecar has.
     #[serde(default, skip_serializing_if = "Map::is_empty")]
     pub extra: Map<String, Value>,
+}
+
+/// One historical lake record. Stream derivations interpret its unchanged payload.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
+#[event(version = 3, type = "lake.observed", key = location, replace = repeat, time = observed_at, quality = captured)]
+pub struct LakeObservation {
+    pub observed_at: Timestamp,
+    pub lane: String,
+    pub host: String,
+    pub seq: u64,
+    pub payload: Value,
+    pub raw_ref: Option<String>,
 }

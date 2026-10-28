@@ -17,7 +17,7 @@ pub mod time;
 mod typed;
 
 pub use ast::*;
-pub use parse::{bind, parse_reference};
+pub use parse::{bind, parse, parse_reference};
 pub use read_as::read_as;
 pub use tables::{ALIASES, Alias, Field, FieldType, Table};
 pub use time::Context;

@@ -141,7 +141,17 @@ Declared backfill paths also enter automatic discovery, so present exports
 are read by the binding runner. The database has one writer. Starting a backfill
 (`systemctl start sinex-backfill-NAME`) stops sinexd, reads the inputs
 read-only to their end, and starts sinexd again; the session service and the
-journald capture keep spooling meanwhile.
+system captures keep spooling meanwhile.
+
+Archived journal files (a copied `/var/log/journal`, a recovered machine's)
+are captured once into a spool of their own and then read like the live
+journal; an entry both hold is one entry, by its cursor:
+
+```sh
+sinex-session capture journald --spool /var/lib/sinex/spool/journal-2026-05 \
+  --option directory=/data/journal-2026-05
+# then declare: backfills.journal-2026-05 = [ "journald=/var/lib/sinex/spool/journal-2026-05" ];
+```
 
 The content store (`storeDir`) and the dumps are what a backup needs; the
 database itself is rebuilt from a dump (`nix/tests/restore.nix` is the drill).

@@ -1,6 +1,6 @@
 # The Sinex NixOS module. It deploys sinexd with its
-# PostgreSQL and NATS, the session service, the journald capture, a
-# capture-only node for satellite hosts, and the backups. Source and derivation
+# PostgreSQL and NATS, the session service, the system captures (journal,
+# udev), a capture-only node for satellite hosts, and the backups. Source and derivation
 # options come from the registries through the generated `catalog.json`.
 self:
 { config, lib, pkgs, ... }:
@@ -344,7 +344,7 @@ in
       };
 
       # Bindings from the registry-generated options, for the daemon's sources.
-      # The journald capture's spool is the journald source's input.
+      # Each system capture's spool is its source's input.
       environment.etc."sinex/sources.json".text = builtins.toJSON {
         sources = cfg.sources;
         exclude = cfg.exclude;
@@ -538,6 +538,21 @@ in
         script = ''
           exec ${cfg.package}/bin/sinex-session capture journald \
             --spool ${cfg.stateDir}/spool/journald --option since=-1d --option follow=true
+        '';
+      };
+
+      systemd.services.sinex-capture-udev = mkIf (cfg.exclude."machine.udev" == null) {
+        description = "Sinex udev capture into its spool";
+        after = [ "systemd-udevd.service" ];
+        wantedBy = [ "multi-user.target" ];
+        unitConfig = startLimit;
+        serviceConfig = restartPolicy // {
+          User = cfg.user;
+          Group = cfg.group;
+        };
+        path = [ config.systemd.package ];
+        script = ''
+          exec ${cfg.package}/bin/sinex-session capture udev --spool ${cfg.stateDir}/spool/udev
         '';
       };
 

@@ -56,13 +56,21 @@ async fn restarted_directory_reader_observes_files_removed_after_its_committed_c
         result.unwrap();
     }
     let notes = current_notes(&mut ctx.read_conn).await;
+    let states = note_states(&mut ctx.read_conn).await;
     ctx.close().await.unwrap();
     assert_eq!(
         notes
             .iter()
             .map(|r| (&*r.0, r.1.clone()))
             .collect::<Vec<_>>(),
-        vec![("a.md", Value::Null), ("b.md", json!("beta"))]
+        vec![("b.md", json!("beta"))]
+    );
+    assert_eq!(
+        states,
+        vec![
+            ("a.md".into(), "removed".into()),
+            ("b.md".into(), "present".into()),
+        ]
     );
 }
 
@@ -227,6 +235,9 @@ impl sinex_source_core::Parser for IgnoreFirst {
     type Record<'a> = &'a [u8];
     type Carry = ();
     type Payload = sinex_model::event_types::media::NoteDocument;
+    fn record_hash(&self, raw: &[u8], context: &sinex_source_core::RecordContext<'_>) -> [u8; 32] {
+        sinex_source_core::Parser::record_hash(&notes::NotesParser, raw, context)
+    }
     fn parse(
         &self,
         record: &&[u8],
@@ -285,7 +296,17 @@ async fn a_restart_remembers_a_file_whose_record_produced_no_event(db: devkit::p
             .iter()
             .map(|r| (&*r.0, r.1.clone()))
             .collect::<Vec<_>>(),
-        vec![("a.md", Value::Null), ("b.md", json!("beta"))]
+        vec![("b.md", json!("beta"))]
+    );
+    let removed: i64 = sqlx::query_scalar("SELECT count(*) FROM raw.materials m, jsonb_array_elements(m.manifest->'members') member WHERE member->>'path'='a.md' AND member ? 'removed_at_ns'")
+        .fetch_one(&mut ctx.read_conn).await.unwrap();
+    assert_eq!(
+        removed, 1,
+        "the reader remembers an ignored member and records its disappearance"
+    );
+    assert_eq!(
+        note_states(&mut ctx.read_conn).await,
+        vec![("b.md".into(), "present".into())]
     );
     ctx.close().await.unwrap();
 }
@@ -337,7 +358,11 @@ async fn stopped_directory_restore_keeps_progress_and_can_be_retried(db: devkit:
     turn(&mut ctx, &mut restarted, Access::default())
         .await
         .unwrap();
-    assert_eq!(current_notes(&mut ctx.read_conn).await[0].1, Value::Null);
+    assert!(current_notes(&mut ctx.read_conn).await.is_empty());
+    assert_eq!(
+        note_states(&mut ctx.read_conn).await,
+        vec![("a.md".into(), "removed".into())]
+    );
     ctx.close().await.unwrap();
 }
 

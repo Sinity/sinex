@@ -4,10 +4,15 @@ use sinex_model::Manifest;
 
 pub(crate) const MEDIA_TYPE: &str = "application/x-tar";
 
-/// Check that the tar's records are distinct, ordered and each exactly one
+pub(crate) fn is_directory(manifest: &Manifest) -> bool {
+    manifest.media_type.as_deref() == Some(MEDIA_TYPE)
+        && manifest.details.contains_key("scan_complete")
+}
+
+/// Check that a tar's records are distinct, ordered and each exactly one
 /// member's range.
 pub(crate) fn validate(manifest: &Manifest, records: &[(usize, usize)]) -> Result<(), RecordError> {
-    if manifest.media_type.as_deref() != Some(MEDIA_TYPE) {
+    if !is_directory(manifest) {
         return Ok(());
     }
     if records.windows(2).any(|pair| pair[0].0 >= pair[1].0) {
@@ -40,7 +45,7 @@ pub(crate) fn decode<'a>(
     start: usize,
     raw: std::borrow::Cow<'a, [u8]>,
 ) -> Result<std::borrow::Cow<'a, [u8]>, RecordError> {
-    if manifest.media_type.as_deref() != Some(MEDIA_TYPE) {
+    if !is_directory(manifest) {
         return Ok(raw);
     }
     let Some(node) = manifest

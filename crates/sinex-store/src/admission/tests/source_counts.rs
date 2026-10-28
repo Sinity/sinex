@@ -1,4 +1,5 @@
 use super::*;
+use crate::test_schema::without_positions;
 use sqlx::Executor;
 
 type Time = time::OffsetDateTime;
@@ -47,22 +48,6 @@ async fn under_run(conn: &mut PgConnection, events: Vec<Event>) -> RunId {
     b.run = run;
     admit_one(conn, &b).await;
     run
-}
-
-/// The schema description without column positions: the dropped column that
-/// makes this test's version 0 keeps its position, so the column added back
-/// comes after it. Positions are compared by the fresh-schema test.
-fn without_positions(catalog: Vec<String>) -> Vec<String> {
-    catalog
-        .into_iter()
-        .map(|row| match row.split_once(' ') {
-            Some((name, rest)) if name.matches('.').count() == 2 => {
-                let rest = rest.split_once(' ').map_or(rest, |(_, after)| after);
-                format!("{name} {rest}")
-            }
-            _ => row,
-        })
-        .collect()
 }
 
 fn change(target: sinex_model::EventId, hide: bool) -> Batch {
@@ -167,6 +152,7 @@ async fn an_upgrade_waits_for_no_writer(db: devkit::pg::TestDatabase) {
     let mut conn = <sqlx::PgConnection as sqlx::Connection>::connect(&url)
         .await
         .unwrap();
+    crate::test_schema::downgrade(&mut conn).await;
     conn.execute("DROP TABLE core.source_counts").await.unwrap();
     conn.execute("ALTER TABLE core.runs DROP COLUMN events")
         .await
@@ -230,5 +216,8 @@ async fn upgrading_from_version_3_registers_query_kinds_and_keeps_events(
         .await
         .unwrap();
     assert_eq!(before, after);
-    assert_eq!(sinex_schema::catalog(&mut conn).await.unwrap(), fresh);
+    assert_eq!(
+        without_positions(sinex_schema::catalog(&mut conn).await.unwrap()),
+        without_positions(fresh)
+    );
 }

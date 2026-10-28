@@ -22,7 +22,7 @@ use sinex_model::event_types::desktop::{
     ActivityWatchOther, BrowserTabActive, PresenceSpan, WindowSpan,
 };
 use sinex_model::{Class, Timestamp};
-use sinex_source_core::drivers::sqlite_rows::SqliteRows;
+use sinex_source_core::drivers::sqlite_rows::{Changes, SqliteRows};
 use sinex_source_core::registry::{DeclaredSource, Driver, SourceSpec};
 use sinex_source_core::{Parser, RecordError};
 use std::collections::BTreeMap;
@@ -280,8 +280,10 @@ pub fn driver(path: PathBuf, host: String) -> SqliteRows {
         ),
         required: &["id", "bucketrow", "starttime", "endtime", "data"],
         // A bucket's latest event grows while the watcher heartbeats.
-        mutable: Some("endtime >= ?1"),
-        full_pass_secs: 86_400,
+        changes: Changes::InPlace {
+            mutable: "endtime >= ?1",
+            full_pass_secs: 86_400,
+        },
     }
 }
 

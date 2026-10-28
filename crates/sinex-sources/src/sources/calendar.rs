@@ -7,6 +7,11 @@
 //! event records which), and a date is a whole day. `DTSTAMP` is when the
 //! export was written, so it is left out of the event and of the record hash,
 //! or every export would revise every event.
+//!
+//! A repeating event keeps its rule (`RRULE`) and its `EXDATE` and `RDATE`
+//! values as written, and also the starts they name, each read in its own
+//! zone, as is the start a changed instance's `RECURRENCE-ID` names; the
+//! `calendar.instances` derivation expands the series from those.
 use serde_json::{Map, Value};
 use sinex_model::event_types::account::CalendarEvent;
 use sinex_model::{Class, Timestamp};
@@ -22,7 +27,7 @@ pub const SPEC: SourceSpec = SourceSpec {
     purpose: "planned events beside what happened",
     class: Class::Open,
     parser: "icalendar",
-    parser_version: 1,
+    parser_version: 2,
     event_types: &["calendar.event"],
     framer: sinex_source_core::Framer::export(
         frame,
@@ -164,7 +169,12 @@ type Moment = (Timestamp, String, bool);
 
 impl CalendarParser {
     fn moment(&self, prop: &Prop) -> Result<Moment, RecordError> {
-        let raw = prop.value.trim();
+        self.value(prop, prop.value.trim())
+    }
+
+    /// One date or date-time value of `prop`, read with its `VALUE` and
+    /// `TZID` parameters.
+    fn value(&self, prop: &Prop, raw: &str) -> Result<Moment, RecordError> {
         let date_only =
             prop.param("VALUE") == Some("DATE") || (raw.len() == 8 && !raw.contains('T'));
         let (civil, zone, label) = if date_only {
@@ -204,6 +214,30 @@ impl CalendarParser {
         Ok((at, label, date_only))
     }
 
+    /// Every start a list property (`EXDATE`, `RDATE`) names: each property
+    /// holds comma-separated values; an `RDATE` period (`start/end`) counts
+    /// by its start.
+    fn starts<'a>(
+        &self,
+        props: impl Iterator<Item = &'a Prop>,
+    ) -> Result<Vec<Timestamp>, RecordError> {
+        let mut out = Vec::new();
+        for prop in props {
+            for raw in prop
+                .value
+                .split(',')
+                .map(str::trim)
+                .filter(|v| !v.is_empty())
+            {
+                let start = raw.split_once('/').map_or(raw, |(start, _)| start);
+                out.push(self.value(prop, start)?.0);
+            }
+        }
+        out.sort_unstable();
+        out.dedup();
+        Ok(out)
+    }
+
     /// A timestamp property, or `None` for Google's year-1 placeholder.
     fn stamp(&self, prop: Option<&Prop>) -> Result<Option<Timestamp>, RecordError> {
         match prop {
@@ -227,6 +261,7 @@ const KNOWN: &[&str] = &[
     "STATUS",
     "RRULE",
     "EXDATE",
+    "RDATE",
     "ORGANIZER",
     "ATTENDEE",
     "CREATED",
@@ -299,9 +334,16 @@ impl Parser for CalendarParser {
                 } else {
                     None
                 },
+                local_zone: self.zone.iana_name().map(str::to_owned),
                 status,
                 rrule: get("RRULE").map(|p| p.value.clone()),
                 exdates: all("EXDATE").map(|p| p.value.clone()).collect(),
+                recurrence_start: get("RECURRENCE-ID")
+                    .map(|p| self.moment(p))
+                    .transpose()?
+                    .map(|(t, _, _)| t),
+                excluded_starts: self.starts(all("EXDATE"))?,
+                added_starts: self.starts(all("RDATE"))?,
                 organizer: get("ORGANIZER").map(|p| p.value.clone()),
                 attendees: all("ATTENDEE").map(|p| p.value.clone()).collect(),
                 created_at: self.stamp(get("CREATED"))?,

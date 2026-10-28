@@ -11,8 +11,7 @@ use serde_json::{Map, Value};
 /// export writes its times in the zone of the export day, and restates titles,
 /// so neither the time text nor the title can be.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
-#[event(version = 2,
-    type = "action.recorded",
+#[event(version = 2, type = "action.recorded",
     key = ["service", "at", "title_url", "unlinked_text"],
     replace = newer,
     time = at,
@@ -44,8 +43,7 @@ pub struct ActionRecorded {
 
 /// A video watched on a video service (YouTube watch history).
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
-#[event(version = 2,
-    type = "video.watched",
+#[event(version = 2, type = "video.watched",
     key = ["service", "video_id", "watched_at"],
     replace = newer,
     time = watched_at,
@@ -71,8 +69,7 @@ pub struct VideoWatched {
 
 /// A search on a video service (YouTube search history).
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
-#[event(version = 2,
-    type = "video.searched",
+#[event(version = 2, type = "video.searched",
     key = ["service", "searched_at", "query"],
     replace = newer,
     time = searched_at,
@@ -90,8 +87,7 @@ pub struct VideoSearched {
 /// names files after titles, so the creation time is the identity; a later
 /// edit is a newer reading.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
-#[event(version = 2,
-    type = "note.observed",
+#[event(version = 2, type = "note.observed",
     key = ["service", "created_at"],
     replace = newer,
     time = created_at,
@@ -125,11 +121,11 @@ pub struct NoteItem {
     pub checked: bool,
 }
 
-/// A task in a task list (Google Tasks); a later export's reading with a newer
-/// `updated` replaces it.
+/// A task in a task list (Google Tasks, Taskwarrior, a Beads store),
+/// identified by the service's own ID; a later reading (a later export, a
+/// changed issue) replaces it.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
-#[event(version = 2,
-    type = "task.revised",
+#[event(version = 3, type = "task.revised",
     key = ["service", "task_id"],
     replace = newer,
     time = created_at,
@@ -150,6 +146,15 @@ pub struct TaskRevised {
     pub due: Option<String>,
     pub completed_at: Option<Timestamp>,
     pub deleted_at: Option<Timestamp>,
+    /// The priority as the service writes it (`0` to `4` in Beads, `H`, `M`
+    /// or `L` in Taskwarrior).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub priority: Option<String>,
+    /// Labels or tags.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub labels: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub assignee: Option<String>,
     #[serde(default, skip_serializing_if = "Map::is_empty")]
     pub extra: Map<String, Value>,
 }
@@ -157,8 +162,7 @@ pub struct TaskRevised {
 /// An order, install, library item or purchase an account store recorded
 /// (Google Play, Purchases). The time is the wrapped item's own field.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
-#[event(version = 2,
-    type = "purchase.observed",
+#[event(version = 2, type = "purchase.observed",
     key = ["service", "record_kind", "native_id"],
     replace = newer,
     time = at,
@@ -177,12 +181,11 @@ pub struct PurchaseObserved {
 }
 
 /// One event of a calendar (RFC 5545 `VEVENT`), from an export or a calendar
-/// API. A recurring series is one event with its rule; a changed occurrence is
-/// its own event with a recurrence ID. Expanding a rule into occurrences is a
-/// derivation.
+/// API. A repeating series is one event with its rule; a changed instance is
+/// its own event with a recurrence ID. Expanding a rule into its instances is
+/// a derivation (`calendar.instance`).
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
-#[event(version = 2,
-    type = "calendar.event",
+#[event(version = 3, type = "calendar.event",
     key = ["calendar", "uid", "recurrence_id"],
     replace = newer,
     time = start,
@@ -193,7 +196,7 @@ pub struct CalendarEvent {
     /// The calendar it belongs to (the export's calendar name).
     pub calendar: String,
     pub uid: String,
-    /// For one changed occurrence of a series, the original start it replaces,
+    /// For one changed instance of a series, the start the series gives it,
     /// as written.
     pub recurrence_id: Option<String>,
     pub summary: Option<String>,
@@ -207,9 +210,23 @@ pub struct CalendarEvent {
     /// `floating` for local times the export ties to no zone, read in the
     /// configured zone.
     pub zone: String,
+    /// The zone floating times and whole days were read in (the binding's
+    /// configured zone); `None` in readings made before it was recorded.
+    #[serde(default)]
+    pub local_zone: Option<String>,
     pub status: Option<String>,
     pub rrule: Option<String>,
+    /// `EXDATE` values, as written.
     pub exdates: Vec<String>,
+    /// The instant `recurrence_id` names, read in its zone.
+    #[serde(default)]
+    pub recurrence_start: Option<Timestamp>,
+    /// The starts `EXDATE` takes out of the series, read in their zone.
+    #[serde(default)]
+    pub excluded_starts: Vec<Timestamp>,
+    /// The starts `RDATE` adds to the series, read in their zone.
+    #[serde(default)]
+    pub added_starts: Vec<Timestamp>,
     pub organizer: Option<String>,
     pub attendees: Vec<String>,
     pub created_at: Option<Timestamp>,
@@ -222,6 +239,38 @@ pub struct CalendarEvent {
     pub extra: Map<String, Value>,
 }
 
+/// One dated instance of a calendar event: each start a repeating event's
+/// rule gives, with a changed instance's own times and text when the calendar
+/// holds one, or the single instance of an event that does not repeat. Derived
+/// from the series' `calendar.event` readings, which it names as parents; a
+/// calendar entry is a plan, not evidence that it happened.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
+#[event(version = 2,
+    type = "calendar.instance",
+    key = ["calendar", "uid", "series_start"],
+    replace = newer,
+    time = start,
+    quality = intrinsic
+)]
+pub struct CalendarInstance {
+    pub calendar: String,
+    pub uid: String,
+    /// The start the series gives this instance (its recurrence ID); for an
+    /// event that does not repeat, its start.
+    pub series_start: Timestamp,
+    pub start: Timestamp,
+    pub end: Option<Timestamp>,
+    pub all_day: bool,
+    pub summary: Option<String>,
+    pub location: Option<String>,
+    pub status: Option<String>,
+    /// Whether the calendar holds a changed version of this instance.
+    pub changed: bool,
+    /// Why the series' rule was not expanded, when it was not; the series
+    /// then gives only its first start and its `RDATE` starts.
+    pub rule_not_expanded: Option<String>,
+}
+
 pub mod record;
 pub use record::AccountRow;
 
@@ -229,8 +278,7 @@ pub use record::AccountRow;
 /// device was, how sure it was, and what it thought the operator was doing.
 /// The device and the instant identify it across exports.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
-#[event(version = 2,
-    type = "location.sample",
+#[event(version = 2, type = "location.sample",
     key = ["provider", "device", "at"],
     replace = newer,
     time = at,

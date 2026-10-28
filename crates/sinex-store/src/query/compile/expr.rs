@@ -58,6 +58,12 @@ impl Compiler<'_> {
                 .push(")) END)");
             return out;
         }
+        if ty == FieldType::Time {
+            out.push("core.payload_time(")
+                .append(raw)
+                .push(" #>> '{}')");
+            return out;
+        }
         let (kind, cast) = match ty {
             FieldType::Integer => ("number", "numeric"),
             FieldType::Number => ("number", "numeric"),
@@ -337,7 +343,7 @@ impl Compiler<'_> {
             Expr::Exists(o) => {
                 let (l, kind) = self.operand(cols, o)?;
                 let mut f = SqlFragment::text("(");
-                if kind == Kind::Typed(FieldType::Json) {
+                if matches!(kind, Kind::Typed(FieldType::Json)) {
                     f.append(l.clone())
                         .push(" IS NOT NULL AND jsonb_typeof(")
                         .append(l)

@@ -138,7 +138,13 @@ impl RecordContext<'_> {
         }
         if let Some(node) = self.member.and_then(|member| member.node.as_ref()) {
             hash.update(b"\0file node\0");
-            hash.update(&serde_json::to_vec(node).expect("file node serializes"));
+            // Reading changes access time; packing chooses attribute offsets.
+            let mut facts = node.clone();
+            facts.atime_ns.clear();
+            for attribute in &mut facts.extended_attributes {
+                attribute.value_at = 0;
+            }
+            hash.update(&serde_json::to_vec(&facts).expect("file node serializes"));
         }
         *hash.finalize().as_bytes()
     }
@@ -246,8 +252,7 @@ impl<'a, P: Parser> Drainer<'a, P> {
         match parse_one(self.parser, raw, &self.carry, &context) {
             Ok((payloads, next)) => {
                 self.carry = next;
-                // A record shape's own hash that panics falls back to the
-                // bytes' hash rather than stopping the run.
+                // A hash panic falls back to bytes rather than stopping the run.
                 let hash = record_hash(self.parser, raw, &context);
                 let order = (input.reading_order)(start);
                 let mut events = Vec::with_capacity(payloads.len());
@@ -299,7 +304,6 @@ impl<'a, P: Parser> Drainer<'a, P> {
     }
 }
 
-/// A parser hash failure must not stop reading later records.
 pub(crate) fn record_hash<P: Parser>(
     parser: &P,
     raw: &[u8],
@@ -371,7 +375,7 @@ impl<P: Parser> Iterator for Drainer<'_, P> {
             };
             // Only spaces and newlines: no record is there, so nothing is
             // read and nothing fails.
-            if !P::READS_BLANK_RECORDS && is_blank(&raw) {
+            if !crate::drivers::dir_snapshot::is_directory(self.input.manifest) && is_blank(&raw) {
                 current.end = end;
                 continue;
             }
@@ -422,7 +426,7 @@ fn parse_one<P: Parser>(
     carry: &P::Carry,
     context: &RecordContext<'_>,
 ) -> Result<(Vec<P::Payload>, P::Carry), RecordError> {
-    if context.manifest.media_type.as_deref() == Some("application/x-tar")
+    if crate::drivers::dir_snapshot::is_directory(context.manifest)
         && let Some(reason) = context
             .member
             .and_then(|member| member.details.get("read_error"))

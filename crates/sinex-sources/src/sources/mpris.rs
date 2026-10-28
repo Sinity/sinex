@@ -24,7 +24,7 @@ pub const SPEC: SourceSpec = SourceSpec {
     // Titles and URLs of what is playing.
     class: Class::Guarded,
     parser: "dbus-mpris",
-    parser_version: 1,
+    parser_version: 2,
     event_types: &["player.changed"],
     framer: sinex_source_core::Framer::incremental(sinex_source_core::drivers::append_file::lines),
 };
@@ -53,6 +53,7 @@ fn changed(
             .map(str::to_owned)
     };
     PlayerChanged {
+        captured_by: sinex_model::event_types::session::CaptureProgram::Sinex,
         received_at,
         player,
         status: props
@@ -76,7 +77,9 @@ fn changed(
         length_us: meta
             .and_then(|m| m.get("mpris:length"))
             .and_then(Value::as_i64),
+        position_us: None,
         snapshot,
+        heartbeat: false,
         properties: props.clone(),
     }
 }
@@ -209,7 +212,7 @@ pub const FORMAT: sinex_source_core::binding::InputFormat =
             credentials: &[],
             streams: &[sinex_source_core::discovery::CaptureStream {
                 spool: "players",
-                options: "{}",
+                options: &[],
                 capabilities: &[],
             }],
             requests: &[],

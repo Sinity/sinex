@@ -236,12 +236,16 @@ pub static METRICS: &[Metric] = &[
     Metric {
         name: "machine.journal_errors",
         description: "Journal entries at error priority or worse",
-        // syslog priorities 0-3: emergency, alert, critical, error.
+        // syslog priorities 0-3: emergency, alert, critical, error. Sinex's
+        // own entries are its reflection, not the machine's activity.
         inputs: || {
             (0..=3)
                 .map(|p| Kind {
                     event_type: "journal.entry".into(),
-                    equal: vec![("priority".into(), json!(p))],
+                    equal: vec![
+                        ("priority".into(), json!(p)),
+                        ("from_sinex".into(), json!(false)),
+                    ],
                 })
                 .collect()
         },

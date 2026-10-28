@@ -1,6 +1,7 @@
 //! Google Takeout products, each its own source over the same archives. Chrome
 //! history is `takeout_chrome`, mail is `mail`, calendars are `calendar`.
 pub mod activity;
+pub mod assistant;
 pub mod cells;
 pub mod fit;
 pub mod keep;
@@ -34,6 +35,11 @@ const PRODUCTS: &[Product] = &[
         activity::youtube_driver,
     ),
     (&keep::SPEC, || Box::new(keep::source()), keep::driver),
+    (
+        &assistant::SPEC,
+        || Box::new(assistant::source()),
+        assistant::driver,
+    ),
     (&tasks::SPEC, || Box::new(tasks::source()), tasks::driver),
     (
         &purchases::PLAY_STORE,

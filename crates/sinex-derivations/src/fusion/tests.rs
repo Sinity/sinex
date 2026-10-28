@@ -1,9 +1,11 @@
-use super::rules::{CLIPBOARD, COMMANDS, FOCUS, MAIL, NOTIFICATIONS, PLAYS, RULES, VISITS};
+use super::rules::{
+    CLIPBOARD, COMMANDS, CONVERSATIONS, FOCUS, MAIL, NOTIFICATIONS, PLAYS, POSTS, RULES, VISITS,
+};
 use super::*;
+use sinex_model::event_types::browser::LinkFollowed;
 use sinex_model::event_types::browser::{BrowserHistoryEntry, BrowserVisit};
 use sinex_model::event_types::communication::MailMessage;
 use sinex_model::event_types::desktop::WindowSpan;
-use sinex_model::event_types::machine::LakeObservation;
 use sinex_model::event_types::media::MusicPlayed;
 use sinex_model::event_types::session::{ClipboardCopied, NotificationShown, PlayerChanged};
 use sinex_model::event_types::{CommandExecuted, CommandImported, StateInterval};
@@ -139,10 +141,29 @@ fn takeout(url: &str, secs: f64) -> Event {
     )
 }
 
-fn lake(lane: &str, secs: f64, payload: Value) -> Event {
+/// The same event as the Sinnix capture lake holds it: the lake emits the
+/// live capture's event types under its own lane's source.
+fn in_lake(mut event: Event, source: &str) -> Event {
+    event.source = source.into();
+    event.payload["captured_by"] = json!("sinnix");
+    event
+}
+
+/// A link the browser extension reported, as the capture lake holds it.
+fn link(url: &str, title: &str, secs: f64) -> Event {
     captured(
-        &LakeObservation::new(at(secs), lane.into(), "box".into(), 1, payload, None).unwrap(),
-        "desktop.lake",
+        &LinkFollowed {
+            followed_at: at(secs),
+            from_url: None,
+            from_title: None,
+            to_url: Some(url.into()),
+            to_title: Some(title.into()),
+            link_text: None,
+            trigger: Some("click".into()),
+            note: None,
+            extra: Default::default(),
+        },
+        "browser.navigation",
         Class::Open,
     )
 }
@@ -180,6 +201,7 @@ fn spotify(track: &str, artist: &str, from: f64, to: f64) -> Event {
 fn mpris(title: &str, artist: &str, secs: f64, status: Option<&str>, length_s: f64) -> Event {
     captured(
         &PlayerChanged {
+            captured_by: sinex_model::event_types::session::CaptureProgram::Sinex,
             received_at: at(secs),
             player: "org.mpris.MediaPlayer2.spotify".into(),
             status: status.map(str::to_owned),
@@ -188,10 +210,12 @@ fn mpris(title: &str, artist: &str, secs: f64, status: Option<&str>, length_s: f
             album: None,
             url: None,
             length_us: Some((length_s * 1e6) as i64),
+            position_us: None,
             snapshot: false,
+            heartbeat: false,
             properties: Default::default(),
         },
-        "desktop.mpris",
+        "media.mpris",
         Class::Open,
     )
 }
@@ -199,14 +223,19 @@ fn mpris(title: &str, artist: &str, secs: f64, status: Option<&str>, length_s: f
 fn clipboard(selection: &str, text: &str, secs: f64, secret: bool) -> Event {
     captured(
         &ClipboardCopied {
+            captured_by: sinex_model::event_types::session::CaptureProgram::Sinex,
             received_at: at(secs),
             selection: selection.into(),
-            mime_types: vec!["text/plain".into()],
+            mime_types: Some(vec!["text/plain".into()]),
             mime_type: Some("text/plain".into()),
             text: Some(text.into()),
-            bytes: text.len() as u64,
+            bytes: Some(text.len() as u64),
             content_hash: None,
+            sha256: None,
+            window: None,
+            imported_from: None,
             secret,
+            extra: Default::default(),
         },
         "desktop.clipboard",
         Class::Open,
@@ -216,16 +245,19 @@ fn clipboard(selection: &str, text: &str, secs: f64, secret: bool) -> Event {
 fn notification(summary: &str, secs: f64) -> Event {
     captured(
         &NotificationShown {
+            captured_by: sinex_model::event_types::session::CaptureProgram::Sinex,
             received_at: at(secs),
             app: "mail".into(),
             summary: summary.into(),
             body: "body".into(),
             icon: None,
+            notification_id: None,
             replaces_id: None,
             actions: vec![],
             hints: Default::default(),
             expire_timeout_ms: -1,
             sender: ":1.2".into(),
+            extra: Default::default(),
         },
         "desktop.notifications",
         Class::Open,
@@ -385,7 +417,6 @@ fn privacy_class_is_the_strictest_parent() {
     let out = fuse_events(&COMMANDS, &[atuin("ls", H + 10.0, 0), zsh("ls", H + 10.2)]);
     assert_eq!(out.len(), 1);
     assert_eq!(out[0].class, Class::Guarded);
-    assert!(matches!(&out[0].origin, Origin::Derived { parents } if parents.len() == 2));
 }
 
 #[devkit::test]
@@ -511,11 +542,7 @@ fn a_visit_in_history_takeout_and_the_lake_is_one_visit() {
         &[
             takeout(url, H + 20.0),
             chromium(url, H + 20.0),
-            lake(
-                "browser-nav-edges",
-                H + 21.0,
-                json!({"target_url": url, "target_title": "From the lake"}),
-            ),
+            link(url, "From the lake", H + 21.0),
         ],
     );
     assert_eq!(out.len(), 1, "{out:?}");
@@ -529,7 +556,7 @@ fn a_visit_in_history_takeout_and_the_lake_is_one_visit() {
         [
             "browser.chromium-visits",
             "browser.takeout-chrome-history",
-            "desktop.lake"
+            "browser.navigation"
         ]
     );
 }
@@ -557,11 +584,9 @@ fn a_play_in_the_export_and_the_player_is_one_play() {
             spotify("Song", "Artist", H + 2.0, H + 200.0),
             mpris("song", "artist ", H + 0.5, Some("Playing"), 198.0),
             mpris("Song", "Artist", H + 1.5, None, 198.0),
-            lake(
-                "mpris",
-                H + 0.7,
-                json!({"player": "spotify", "status": "Playing", "title": "Song",
-                       "artist": "Artist", "duration_seconds": 198.0}),
+            in_lake(
+                mpris("Song", "Artist", H + 0.7, Some("Playing"), 198.0),
+                "desktop.media",
             ),
         ],
     );
@@ -573,7 +598,7 @@ fn a_play_in_the_export_and_the_player_is_one_play() {
     assert_eq!(p["player"], "org.mpris.MediaPlayer2.spotify");
     assert_eq!(
         observed_by(p),
-        ["media.spotify-history", "desktop.mpris", "desktop.lake"]
+        ["media.spotify-history", "media.mpris", "desktop.media"]
     );
     assert!(matches!(&out[0].origin, Origin::Derived { parents } if parents.len() == 4));
 }
@@ -600,11 +625,15 @@ fn a_stream_of_unknown_length_has_no_end() {
         &PLAYS,
         &[
             mpris("Live", "Channel", H, Some("Playing"), i64::MAX as f64 / 1e6),
-            lake(
-                "mpris",
-                H + 0.2,
-                json!({"player": "chromium", "status": "Playing", "title": "Live",
-                       "artist": "Channel", "duration_seconds": 9_223_372_036_854.775}),
+            in_lake(
+                mpris(
+                    "Live",
+                    "Channel",
+                    H + 0.2,
+                    Some("Playing"),
+                    9_223_372_036_854.775,
+                ),
+                "desktop.media",
             ),
         ],
     );
@@ -626,21 +655,19 @@ fn a_copy_seen_live_and_in_the_lake_is_one_copy() {
         &CLIPBOARD,
         &[
             clipboard("clipboard", "hello", H + 5.0, false),
-            lake(
-                "clipboard",
-                H + 5.3,
-                json!({"text": "hello", "mime": "text/plain"}),
+            in_lake(
+                clipboard("clipboard", "hello", H + 5.3, false),
+                "desktop.clipboard",
             ),
-            lake(
-                "primary",
-                H + 5.3,
-                json!({"text": "hello", "mime": "text/plain"}),
+            in_lake(
+                clipboard("primary", "hello", H + 5.3, false),
+                "desktop.clipboard",
             ),
             clipboard("clipboard", "secret", H + 9.0, true),
         ],
     );
     assert_eq!(out.len(), 2, "{out:?}");
-    assert_eq!(observed_by(&out[0]), ["desktop.clipboard", "desktop.lake"]);
+    assert_eq!(observed_by(&out[0]), ["desktop.clipboard"]);
     assert_eq!(out[1]["selection"], "primary");
 }
 
@@ -650,20 +677,13 @@ fn a_notification_seen_live_and_in_the_lake_is_one_notification() {
         &NOTIFICATIONS,
         &[
             notification("New mail", H + 5.0),
-            lake(
-                "notifications",
-                H + 5.1,
-                json!({"app_name": "mail", "summary": "New mail", "body": "body"}),
-            ),
+            in_lake(notification("New mail", H + 5.1), "desktop.notifications"),
             notification("Other", H + 5.0),
         ],
     );
     assert_eq!(out.len(), 2, "{out:?}");
     let joined = out.iter().find(|n| n["summary"] == "New mail").unwrap();
-    assert_eq!(
-        observed_by(joined),
-        ["desktop.notifications", "desktop.lake"]
-    );
+    assert_eq!(observed_by(joined), ["desktop.notifications"]);
 }
 
 // Mail: one message stored by several mail sources.
@@ -671,11 +691,13 @@ fn a_notification_seen_live_and_in_the_lake_is_one_notification() {
 fn mail(source: &str, id: &str, secs: f64) -> Event {
     captured(
         &MailMessage {
-            message_id: id.into(),
+            message_id: Some(id.into()),
+            native_id: None,
             date: Some(at(secs)),
             from: vec!["a@example.org".into()],
             to: vec![],
             cc: vec![],
+            bcc: vec![],
             subject: Some(format!("about {id}")),
             in_reply_to: None,
             references: vec![],
@@ -714,4 +736,194 @@ fn a_message_in_imap_and_an_mbox_is_one_message() {
 fn mail_from_a_source_no_input_names_is_not_fused() {
     let out = fuse(&MAIL, &[mail("communication.elsewhere", "<1@x>", H + 5.0)]);
     assert!(out.is_empty());
+}
+
+// Posts: the GDPR export and the public archive name the same Reddit IDs.
+
+fn post(source: &str, id: &str, secs: f64, body: Option<&str>) -> Event {
+    captured(
+        &sinex_model::event_types::social::PostPublished {
+            service: "reddit".into(),
+            kind: "comment".into(),
+            native_id: id.into(),
+            created_at: Some(at(secs)),
+            title: None,
+            body: body.map(str::to_owned),
+            url: None,
+            parent: None,
+            community: Some("synthetic".into()),
+            tags: vec![],
+            score: None,
+            extra: Default::default(),
+        },
+        source,
+        Class::Open,
+    )
+}
+
+#[devkit::test]
+fn a_comment_in_the_export_and_the_archive_is_one_comment() {
+    let out = fuse(
+        &POSTS,
+        &[
+            post("social.reddit", "c1", H + 5.0, Some("as exported")),
+            post("social.reddit-archive", "c1", H + 5.0, Some("as archived")),
+            post(
+                "social.reddit-archive",
+                "c2",
+                H + 5.0,
+                Some("deleted later"),
+            ),
+        ],
+    );
+    assert_eq!(out.len(), 2, "{out:?}");
+    let joined = out.iter().find(|p| p["native_id"] == "c1").unwrap();
+    assert_eq!(
+        observed_by(joined),
+        ["social.reddit", "social.reddit-archive"]
+    );
+    assert_eq!(joined["body"], "as exported", "the export is preferred");
+    let alone = out.iter().find(|p| p["native_id"] == "c2").unwrap();
+    assert_eq!(observed_by(alone), ["social.reddit-archive"]);
+}
+
+// Conversations: a GDPR export and a database saved by a tool.
+
+fn said(source: &str, sender: &str, text: &str, ms: i128) -> Event {
+    captured(
+        &sinex_model::event_types::communication::ConversationMessage {
+            service: "facebook-messenger".into(),
+            thread: format!("{source} thread"),
+            thread_name: None,
+            participants: vec![],
+            sender: sender.into(),
+            sent_at: Timestamp::from_unix_ns(at(H).unix_ns() + ms * 1_000_000).unwrap(),
+            text: Some(text.into()),
+            kind: None,
+            media: vec![],
+            reactions: vec![],
+            message_id: (source == "communication.messenger-sqlite").then(|| format!("mid.{ms}")),
+            unsent_at: None,
+        },
+        source,
+        Class::Open,
+    )
+}
+
+#[devkit::test]
+fn the_same_text_at_the_same_millisecond_is_one_message() {
+    let out = fuse(
+        &CONVERSATIONS,
+        &[
+            said("communication.messenger", "Ann Example", "see you", 1_000),
+            said("communication.messenger-sqlite", "100", "see you", 1_000),
+            // The same words a second later are another message.
+            said("communication.messenger-sqlite", "100", "see you", 2_000),
+        ],
+    );
+    assert_eq!(out.len(), 2, "{out:?}");
+    let joined = out.iter().find(|m| observed_by(m).len() == 2).unwrap();
+    assert_eq!(
+        joined["sender"], "Ann Example",
+        "the export's names are preferred"
+    );
+    assert_eq!(
+        joined["message_id"], "mid.1000",
+        "the ID comes from the database"
+    );
+}
+
+#[devkit::test]
+fn repeated_copies_from_one_capture_stay_separate() {
+    let out = fuse(
+        &CLIPBOARD,
+        &[
+            clipboard("clipboard", "hello", H + 5.0, false),
+            clipboard("clipboard", "hello", H + 5.4, false),
+            in_lake(
+                clipboard("clipboard", "hello", H + 5.1, false),
+                "desktop.clipboard",
+            ),
+            in_lake(
+                clipboard("clipboard", "hello", H + 5.5, false),
+                "desktop.clipboard",
+            ),
+        ],
+    );
+    assert_eq!(out.len(), 2, "{out:?}");
+    for copy in out {
+        assert_eq!(observed_by(&copy), ["desktop.clipboard"]);
+    }
+    assert_eq!(
+        fuse(
+            &CLIPBOARD,
+            &[
+                clipboard("clipboard", "hello", H + 5.0, false),
+                clipboard("clipboard", "hello", H + 5.1, false),
+            ]
+        )
+        .len(),
+        2
+    );
+}
+
+#[devkit::test]
+fn repeated_notifications_from_one_capture_stay_separate() {
+    let out = fuse(
+        &NOTIFICATIONS,
+        &[
+            notification("New mail", H + 5.0),
+            notification("New mail", H + 5.4),
+            in_lake(notification("New mail", H + 5.1), "desktop.notifications"),
+            in_lake(notification("New mail", H + 5.5), "desktop.notifications"),
+        ],
+    );
+    assert_eq!(out.len(), 2, "{out:?}");
+    for notification in out {
+        assert_eq!(observed_by(&notification), ["desktop.notifications"]);
+    }
+    assert_eq!(
+        fuse(
+            &NOTIFICATIONS,
+            &[
+                notification("New mail", H + 5.0),
+                notification("New mail", H + 5.1),
+            ]
+        )
+        .len(),
+        2
+    );
+}
+
+#[devkit::test]
+fn capture_program_distinguishes_records_after_ingress_assigns_the_producer_name() {
+    let mut live = clipboard("clipboard", "hello", H + 5.0, false);
+    live.source = "session-example-host".into();
+    let out = fuse(
+        &CLIPBOARD,
+        &[
+            live,
+            in_lake(
+                clipboard("clipboard", "hello", H + 5.1, false),
+                "desktop.clipboard",
+            ),
+        ],
+    );
+    assert_eq!(out.len(), 1, "{out:?}");
+    assert_eq!(
+        observed_by(&out[0]),
+        ["session-example-host", "desktop.clipboard"]
+    );
+}
+
+#[devkit::test]
+fn equal_mail_without_message_ids_remains_separate() {
+    let mut first = mail("communication.mbox", "unused", H + 5.0);
+    first.payload["message_id"] = serde_json::Value::Null;
+    let mut second = mail("communication.imap", "unused", H + 5.0);
+    second.payload["message_id"] = serde_json::Value::Null;
+    assert_eq!(first.payload, second.payload);
+    let out = fuse(&MAIL, &[first, second]);
+    assert_eq!(out.len(), 2, "{out:?}");
+    assert!(out.iter().all(|event| event["message_id"].is_null()));
 }

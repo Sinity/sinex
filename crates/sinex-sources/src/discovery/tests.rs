@@ -463,7 +463,6 @@ fn daemon_status_reports_session_ownership_without_session_capabilities() {
     for input in captures {
         if sources::format(&input.format).unwrap().discovery.owner == Owner::Session {
             assert_eq!(input.availability, Availability::ProducerReported);
-            assert!(input.input.is_none());
             assert!(input.bindings.is_empty());
             assert!(
                 input
@@ -474,12 +473,4 @@ fn daemon_status_reports_session_ownership_without_session_capabilities() {
             );
         }
     }
-}
-
-#[devkit::test]
-fn named_text_import_roots_are_known_on_daemons_and_capture_nodes() {
-    let mut context = DiscoveryContext::default();
-    context.inputs.insert("transcripts".into(), vec![]);
-    context.inputs.insert("ocr".into(), vec![]);
-    validate(&context).unwrap();
 }

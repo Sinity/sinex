@@ -47,35 +47,6 @@ fn known_format(name: &str, source: Option<&str>) -> bool {
     false
 }
 
-fn known_input(name: &str) -> bool {
-    if known_format(name, None)
-        || sources::formats().iter().any(|format| {
-            format.discovery.locations.iter().any(|location| {
-                matches!(location.root, "capture" | "input") && location.path == name
-            })
-        })
-    {
-        return true;
-    }
-    #[cfg(not(feature = "full"))]
-    return catalog_sources().iter().any(|source| {
-        source["discovery"].as_array().is_some_and(|descriptions| {
-            descriptions.iter().any(|description| {
-                description["description"]["locations"]
-                    .as_array()
-                    .is_some_and(|locations| {
-                        locations.iter().any(|location| {
-                            (location["root"] == "capture" || location["root"] == "input")
-                                && location["path"] == name
-                        })
-                    })
-            })
-        })
-    });
-    #[cfg(feature = "full")]
-    false
-}
-
 pub fn validate(context: &DiscoveryContext) -> Result<(), String> {
     for (source, settings) in &context.sources {
         if !known_source(source) {
@@ -101,7 +72,15 @@ pub fn validate(context: &DiscoveryContext) -> Result<(), String> {
         }
     }
     for name in context.inputs.keys() {
-        if !known_input(name) {
+        if !known_format(name, None)
+            && !sources::formats().iter().any(|format| {
+                format
+                    .discovery
+                    .locations
+                    .iter()
+                    .any(|location| location.root == "capture" && location.path == name)
+            })
+        {
             return Err(format!("input format {name}: no such format"));
         }
     }
@@ -124,7 +103,7 @@ pub fn discover(context: &DiscoveryContext) -> Result<Vec<DiscoveredInput>, Stri
         .collect())
 }
 
-/// Session inputs and capabilities are known by the producer, not the daemon's account.
+/// Session capabilities are known by the producer, not the daemon's account.
 pub fn status(context: &DiscoveryContext) -> Result<Vec<DiscoveredInput>, String> {
     let mut inputs = discover(context)?;
     for input in &mut inputs {
@@ -134,7 +113,6 @@ pub fn status(context: &DiscoveryContext) -> Result<Vec<DiscoveredInput>, String
             && input.availability != Availability::Excluded
         {
             input.availability = Availability::ProducerReported;
-            input.input = None;
             input.reason = Some(
                 "session capture status is reported by the producer; no status frame received"
                     .into(),
@@ -246,7 +224,7 @@ fn paths(location: &Location, context: &DiscoveryContext) -> Result<Vec<PathBuf>
     })
 }
 
-/// A format owns its locations and planner. Shared source names keep all formats.
+/// A format owns its locations and planner. Shared source names retain all formats.
 pub fn discover_format(format: &InputFormat, context: &DiscoveryContext) -> Vec<DiscoveredInput> {
     let mut out = Vec::new();
     for spec in (format.specs)() {
@@ -488,8 +466,7 @@ fn capture_inputs(
         }
         let configured = context.sources.get(spec.name).cloned().unwrap_or_default();
         for stream in format.discovery.streams {
-            let mut options: serde_json::Value =
-                serde_json::from_str(stream.options).expect("declared capture options");
+            let mut options: serde_json::Value = stream.settings();
             if stream.capabilities.contains(&"watch") {
                 options["roots"] = json!(context.watch);
             }

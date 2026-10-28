@@ -2,9 +2,11 @@
 //! Markdown file is a `note.document` keyed by the vault and its path, and a
 //! file missing from a completed scan is removed at the source.
 //!
-//! The vault's own folders (`.obsidian`, `.trash`, `.git`) are not notes. A
-//! note renamed in the vault is a removal and a new path; following an
-//! native note ID across renames is a separate identity decision.
+//! The vault's own folders (`.obsidian`, `.trash`, `.git`) are not notes.
+//!
+//! A note whose front matter declares an `id` is identified by that ID, so a
+//! renamed or moved note is a newer reading of the same note. Directory
+//! removals cite stored record locations, including when the content is sealed.
 use serde_json::Value;
 use sinex_model::event_types::media::NoteDocument;
 use sinex_model::{Class, Timestamp};
@@ -23,7 +25,7 @@ pub const SPEC: SourceSpec = SourceSpec {
     purpose: "note recall and the library",
     class: Class::Open,
     parser: "notes-vault",
-    parser_version: 3,
+    parser_version: 6,
     event_types: &["note.document"],
     framer: sinex_source_core::Framer::export(
         sinex_source_core::drivers::export_archive::frame_whole,
@@ -49,6 +51,10 @@ impl Parser for NotesParser {
     type Carry = ();
     type Payload = NoteDocument;
 
+    fn record_hash(&self, raw: &[u8], context: &RecordContext<'_>) -> [u8; 32] {
+        context.hash_with_path(raw)
+    }
+
     fn parse(
         &self,
         record: &&[u8],
@@ -58,16 +64,14 @@ impl Parser for NotesParser {
         let member = context
             .member
             .ok_or_else(|| RecordError::new("a note needs its directory snapshot member"))?;
+        if member.details.contains_key("removed_at_ns") {
+            return Ok((Vec::new(), ()));
+        }
         let path = member.path.clone();
-        let removed_at = nanos(member, "removed_at_ns");
-        let text = if removed_at.is_some() {
-            None
-        } else {
-            Some(
-                String::from_utf8(record.to_vec())
-                    .map_err(|_| RecordError::new(format!("{path} is not UTF-8 text")))?,
-            )
-        };
+        let text = Some(
+            String::from_utf8(record.to_vec())
+                .map_err(|_| RecordError::new(format!("{path} is not UTF-8 text")))?,
+        );
         let metadata::Metadata {
             title,
             note_id,
@@ -86,11 +90,23 @@ impl Parser for NotesParser {
                 .and_then(|p| p.rsplit('/').find(|s| !s.is_empty()))
                 .unwrap_or_default()
                 .to_owned(),
+            host: context.manifest.detail("host").as_str().map(str::to_owned),
+            vault_path: context.manifest.path.clone(),
+            native_vault_path_bytes: context
+                .manifest
+                .detail("native_path_bytes")
+                .as_str()
+                .map(str::to_owned),
+            native_path_bytes: member
+                .details
+                .get("native_path_bytes")
+                .and_then(Value::as_str)
+                .map(str::to_owned),
             path,
             size: text.as_ref().map_or(0, |t| t.len() as u64),
             text,
             modified_at: nanos(member, "mtime_ns"),
-            removed_at,
+            removed_at: None,
             title,
             note_id,
             tags,
@@ -117,6 +133,7 @@ pub fn select(path: &str) -> bool {
 
 pub fn driver(root: PathBuf, host: String) -> DirSnapshot {
     DirSnapshot {
+        removed_at_source: true,
         root,
         host,
         select,

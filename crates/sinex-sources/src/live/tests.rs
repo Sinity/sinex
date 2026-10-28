@@ -1,7 +1,7 @@
 use super::*;
 
 #[devkit::test]
-fn options_keep_numbers_and_collect_lists() {
+fn options_keep_numbers_and_flags_and_collect_lists() {
     let o = options(&[
         "every=60".into(),
         "kind=screen".into(),

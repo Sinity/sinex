@@ -12,7 +12,7 @@ use serde_json::{Map, Value};
 use sinex_model::event_types::operator::{LogEntry, SteeringRow};
 use sinex_model::{Class, Timestamp};
 use sinex_source_core::drivers::append_file::AppendFile;
-use sinex_source_core::drivers::sqlite_rows::SqliteRows;
+use sinex_source_core::drivers::sqlite_rows::{Changes, SqliteRows};
 use sinex_source_core::registry::{DeclaredSource, Driver, SourceSpec};
 use sinex_source_core::{Parser, RecordError};
 use std::path::PathBuf;
@@ -202,8 +202,10 @@ pub fn steering_driver(path: PathBuf, host: String, table: &'static str) -> Sqli
         from: None,
         required: &["id"],
         // A small store whose every row can change: all of it, each poll.
-        mutable: Some("1 = 1"),
-        full_pass_secs: 3600,
+        changes: Changes::InPlace {
+            mutable: "1 = 1",
+            full_pass_secs: 3600,
+        },
     }
 }
 

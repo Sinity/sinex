@@ -6,7 +6,7 @@
 //! Running commands store -1 for duration and exit; those are unknown, not -1.
 use serde_json::{Map, Value};
 use sinex_model::{Class, Timestamp, event_types::CommandExecuted};
-use sinex_source_core::drivers::sqlite_rows::SqliteRows;
+use sinex_source_core::drivers::sqlite_rows::{Changes, SqliteRows};
 use sinex_source_core::registry::{DeclaredSource, Driver, SourceSpec};
 use sinex_source_core::{Parser, RecordError};
 use std::path::PathBuf;
@@ -126,8 +126,10 @@ pub fn driver(path: PathBuf, host: String) -> SqliteRows {
             "hostname",
         ],
         // Rows still running, or started in the last day, can still change.
-        mutable: Some("duration = -1 OR timestamp > ?1"),
-        full_pass_secs: 3600,
+        changes: Changes::InPlace {
+            mutable: "duration = -1 OR timestamp > ?1",
+            full_pass_secs: 3600,
+        },
     }
 }
 

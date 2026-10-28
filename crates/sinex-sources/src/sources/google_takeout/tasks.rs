@@ -1,7 +1,8 @@
 //! Google Tasks (`Tasks/Tasks.json`, or `Tasks/<number>.Tasks`, JSON despite
 //! the extension), on `ExportArchive`: one document of task lists, each with
-//! its tasks. A task is identified by its ID; a later export with a newer
-//! `updated` is a newer reading, and a deleted task is removed at the source.
+//! its tasks. A task is identified by its ID across exports; a later export's
+//! reading replaces an earlier one, and a deleted task is removed at the
+//! source.
 use crate::sources::fields;
 use serde_json::{Map, Value};
 use sinex_model::Class;
@@ -104,6 +105,9 @@ impl Parser for TasksParser {
                     } else {
                         None
                     },
+                    priority: None,
+                    labels: Vec::new(),
+                    assignee: None,
                     extra: fields::extra(task, KNOWN),
                 });
             }

@@ -1,5 +1,4 @@
-#[path = "tar/tests.rs"]
-mod tar_tests;
+mod restore_tar;
 
 use super::*;
 
@@ -18,6 +17,7 @@ fn driver(root: PathBuf, part_bytes: usize) -> DirSnapshot {
         host: "h".into(),
         select: |p| p.ends_with(".md"),
         part_bytes,
+        removed_at_source: false,
     }
 }
 
@@ -280,13 +280,13 @@ fn empty_and_nonempty_members_keep_exact_body_ranges_in_every_order() {
     use crate::test_parser as notes;
     use crate::{Limits, drain::drain};
     use sinex_model::{Class, ReadingOrder, RecordOutcome};
-    use std::os::unix::fs::FileExt;
     for bodies in [
         vec!["", "", "gamma"],
         vec!["gamma", "", ""],
         vec!["", "gamma", ""],
         vec![""],
         vec!["", ""],
+        vec![" ", "\n", "  \n"],
     ] {
         let dir = tempfile::tempdir().unwrap();
         for (index, body) in bodies.iter().enumerate() {
@@ -297,14 +297,8 @@ fn empty_and_nonempty_members_keep_exact_body_ranges_in_every_order() {
             .unwrap();
         let m = acquired.material.unwrap();
         assert!(m.records.windows(2).all(|ranges| ranges[0].1 < ranges[1].1));
-        let Some(StoredBytes::FramedFile(file)) = &m.stored else {
-            panic!()
-        };
         for ((start, end), body) in m.records.iter().zip(&bodies) {
             assert_eq!(end - start, body.len());
-            let mut prefix = [1];
-            file.read_exact_at(&mut prefix, (start - 1) as u64).unwrap();
-            assert_eq!(prefix, [0]);
         }
         let chunks = drain(
             &notes::NotesParser,
@@ -326,6 +320,18 @@ fn empty_and_nonempty_members_keep_exact_body_ranges_in_every_order() {
         .unwrap();
         let outcomes: Vec<_> = chunks.into_iter().flat_map(|c| c.outcomes).collect();
         assert_eq!(outcomes.len(), bodies.len());
+        let hashes: std::collections::BTreeSet<_> = outcomes
+            .iter()
+            .filter_map(|outcome| match outcome {
+                RecordOutcome::Events { events, .. } => Some(events[0].record_hash),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            hashes.len(),
+            bodies.len(),
+            "distinct paths keep distinct readings even with equal bytes"
+        );
         for (index, (outcome, body)) in outcomes.iter().zip(&bodies).enumerate() {
             let RecordOutcome::Events { location, events } = outcome else {
                 panic!("{outcome:?}")
@@ -333,10 +339,7 @@ fn empty_and_nonempty_members_keep_exact_body_ranges_in_every_order() {
             assert_eq!(location.unwrap().anchor, m.records[index].0 as u64);
             assert_eq!(events[0].payload["path"], format!("{index}.md"));
             assert_eq!(events[0].payload["text"], *body);
-            assert_eq!(
-                &events[0].record_hash,
-                blake3::hash(body.as_bytes()).as_bytes()
-            );
+            assert_eq!(record(&m, index), body.as_bytes());
         }
     }
 }
@@ -501,7 +504,7 @@ fn saved_memory_round_trips_and_newer_bundles_win() {
         ),
         (PathBuf::from("unknown.md"), None),
     ]);
-    let memory = restore::memory_of(&files);
+    let memory = restore::memory_of(&files, &HashMap::new());
     let mut state = DirState::default();
     // A newer bundle already decided a.md.
     state.remembered.insert(PathBuf::from("a.md"));
@@ -698,7 +701,7 @@ fn open_and_read_errors_belong_to_the_entry() {
             dir.path(),
             Path::new("directory"),
             &mut bundle,
-            0,
+            dir.path().metadata().unwrap().len(),
             tar::change_time(&dir.path().metadata().unwrap())
         )
         .unwrap()
@@ -735,7 +738,6 @@ fn poll_entries(
         previous,
         file_facts(&d.root).unwrap(),
         entries,
-        &[],
     )
     .unwrap()
 }
@@ -988,37 +990,4 @@ fn an_unstable_file_with_unchanged_content_retains_its_new_metadata() {
     let cursor = final_cursor(&retry);
     assert!(d.poll(&cursor, &mut state).unwrap().material.is_none());
     assert!(state.retries.is_empty());
-}
-
-#[devkit::test]
-fn excluded_subtrees_do_not_turn_old_observations_into_removals() {
-    let dir = tempfile::tempdir().unwrap();
-    let real = dir.path().join("real");
-    let alias = dir.path().join("alias");
-    std::fs::create_dir(&real).unwrap();
-    std::os::unix::fs::symlink(&real, &alias).unwrap();
-    let owned = alias.join("owned");
-    std::fs::create_dir(&owned).unwrap();
-    std::fs::write(owned.join("note.md"), b"source").unwrap();
-    let resolved = std::fs::canonicalize(&owned).unwrap();
-    let driver = driver(alias, 1024);
-    let mut state = DirState::default();
-    let acquired = driver.poll(&Value::Null, &mut state).unwrap();
-    let cursor = final_cursor(&acquired);
-    std::fs::remove_file(owned.join("note.md")).unwrap();
-    for excluded in [owned, resolved] {
-        let acquired = driver
-            .poll_excluding(&cursor, &mut state, &[excluded])
-            .unwrap();
-        assert!(
-            acquired.material.is_none(),
-            "unexpected capture: {:?}",
-            acquired
-                .material
-                .as_ref()
-                .map(|material| &material.manifest)
-        );
-    }
-    let removed = driver.poll(&cursor, &mut state).unwrap();
-    assert_eq!(paths(&removed), vec!["owned/note.md"]);
 }

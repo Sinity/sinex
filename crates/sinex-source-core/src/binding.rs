@@ -413,8 +413,14 @@ pub fn rows(driver: SqliteRows) -> Reading {
 
 #[cfg(feature = "sqlite")]
 impl Reader for Rows {
+    /// An appended table needs only its cursor, so it reads no history.
     fn history_from(&self, cursor: &Value) -> Option<sinex_model::MaterialId> {
-        crate::drivers::cursor_material(cursor).map(|(material, _)| material)
+        match self.driver.changes {
+            crate::drivers::sqlite_rows::Changes::InPlace { .. } => {
+                crate::drivers::cursor_material(cursor).map(|(material, _)| material)
+            }
+            crate::drivers::sqlite_rows::Changes::Appended => None,
+        }
     }
 
     fn restore(&mut self, cursor: &Value, material: StoredMaterial) -> Result<bool, DriverError> {
@@ -483,11 +489,19 @@ impl Reader for Walked {
             _ => reference.length,
         };
         self.state.remember_members(&reference.manifest, admitted)?;
+        if self.driver.removed_at_source {
+            self.state
+                .remember_locations(&reference.manifest, admitted, reference.id)?;
+        }
         Ok(true)
     }
 
     fn restore_memory(&mut self, memory: &[u8]) -> Result<(), DriverError> {
-        self.state.remember_saved(memory)
+        self.state.remember_saved(memory)?;
+        if self.driver.removed_at_source {
+            self.state.check_locations()?;
+        }
+        Ok(())
     }
 
     fn restored(&mut self) -> Result<(), DriverError> {

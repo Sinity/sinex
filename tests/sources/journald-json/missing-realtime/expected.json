@@ -21,7 +21,8 @@
           "pid": null,
           "uid": null,
           "command": null,
-          "transport": null
+          "transport": null,
+          "from_sinex": false
         }
       }
     ]

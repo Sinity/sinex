@@ -57,3 +57,45 @@ fn settings_round_trip_and_keep_a_resolved_zone() {
     let resolved = Settings::new("h").with_zone().unwrap();
     assert!(resolved.zone.is_some());
 }
+
+#[devkit::test]
+fn removal_readers_require_record_locations_in_saved_memory() {
+    use crate::drivers::dir_snapshot::DirState;
+    let directory = tempfile::tempdir().unwrap();
+    std::fs::write(directory.path().join("note.md"), "synthetic note").unwrap();
+    let driver = |removed_at_source| DirSnapshot {
+        root: directory.path().to_owned(),
+        host: "fixture".into(),
+        select: |_| true,
+        part_bytes: 4096,
+        removed_at_source,
+    };
+    let facts = driver(false)
+        .poll(&Value::Null, &mut DirState::default())
+        .unwrap()
+        .material
+        .unwrap()
+        .memory
+        .unwrap();
+    let Reading::Polled(mut reader) = walked(driver(true)) else {
+        panic!("directory reader")
+    };
+    assert!(
+        reader
+            .restore_memory(&facts)
+            .unwrap_err()
+            .to_string()
+            .contains("removal locations")
+    );
+    let complete = driver(true)
+        .poll(&Value::Null, &mut DirState::default())
+        .unwrap()
+        .material
+        .unwrap()
+        .memory
+        .unwrap();
+    let Reading::Polled(mut reader) = walked(driver(true)) else {
+        panic!("directory reader")
+    };
+    reader.restore_memory(&complete).unwrap();
+}

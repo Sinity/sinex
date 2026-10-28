@@ -294,6 +294,29 @@ pub async fn run(
     Ok(answer)
 }
 
+fn selected_kinds(query: &Query) -> Option<std::collections::BTreeSet<String>> {
+    fn names(expr: &Expr) -> Option<std::collections::BTreeSet<String>> {
+        match expr {
+            Expr::Compare {
+                lhs: Operand::Field(FieldRef::Field(f)),
+                op: sinex_model::query::Op::Eq,
+                rhs: sinex_model::query::Value::Text(name),
+            } if f.name == "event_type" => Some(std::collections::BTreeSet::from([name.clone()])),
+            Expr::And(a, b) => match (names(a), names(b)) {
+                (Some(a), Some(b)) => Some(a.intersection(&b).cloned().collect()),
+                (a, b) => a.or(b),
+            },
+            Expr::Or(a, b) => Some(names(a)?.union(&names(b)?).cloned().collect()),
+            _ => None,
+        }
+    }
+    let alias = query
+        .source
+        .alias()
+        .map(|a| a.kinds.iter().map(|k| k.to_string()).collect());
+    query.filter.as_ref().and_then(names).or(alias)
+}
+
 /// The validated clock and position shared by every answer shape in this read.
 struct ReadPage {
     question: String,

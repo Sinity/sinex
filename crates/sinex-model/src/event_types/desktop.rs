@@ -189,3 +189,13 @@ pub struct SampledWindow {
     pub title: String,
     pub program: String,
 }
+
+/// Seconds attributed to a domain on one civil day by a usage export. The
+/// source supplies no zone, so the civil day does not identify an instant.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
+#[event(version = 2, type = "domain.usage", key = ["day", "domain"], replace = newer)]
+pub struct DomainUsage {
+    pub day: String,
+    pub domain: String,
+    pub seconds: u64,
+}

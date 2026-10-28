@@ -105,6 +105,38 @@ pub mod wykop;
 #[cfg(feature = "full")]
 pub mod zsh;
 
+#[cfg(feature = "full")]
+pub mod agentctl;
+
+#[cfg(feature = "full")]
+pub mod beads;
+
+#[cfg(feature = "full")]
+pub mod freedom;
+
+#[cfg(feature = "full")]
+pub mod github;
+
+#[cfg(feature = "full")]
+pub mod machine_records;
+
+#[cfg(feature = "full")]
+pub mod machine_telemetry;
+
+#[cfg(feature = "full")]
+pub mod messenger_sqlite;
+
+#[cfg(feature = "full")]
+pub mod reddit_archive;
+
+#[cfg(feature = "full")]
+pub mod router;
+
+#[cfg(feature = "full")]
+pub mod taskwarrior;
+
+pub mod udev;
+
 use sinex_source_core::binding::{Binding, InputFormat, Settings};
 use sinex_source_core::registry::{Source, SourceSpec};
 
@@ -138,6 +170,17 @@ pub fn formats() -> &'static [&'static InputFormat] {
         &ocr_import::JSON_FORMAT,
         &ocr_import::TSV_FORMAT,
         &ocr_import::TEXT_FORMAT,
+        &udev::FORMAT,
+        &taskwarrior::FORMAT,
+        &router::FORMAT,
+        &reddit_archive::FORMAT,
+        &messenger_sqlite::FORMAT,
+        &machine_telemetry::FORMAT,
+        &machine_records::FORMAT,
+        &github::FORMAT,
+        &freedom::FORMAT,
+        &beads::FORMAT,
+        &agentctl::FORMAT,
         &atuin::FORMAT,
         &zsh::FORMAT,
         &bash::FORMAT,

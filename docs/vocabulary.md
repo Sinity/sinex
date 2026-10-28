@@ -28,6 +28,9 @@ these names and no others.
 - **framing**: splitting a material's bytes into records (lines, delimiters, archive members); a **framer** is a source's framing, used alike by its driver, replay and excision.
 - **file node**: captured native file metadata in a PAX tar member index, including ownership, times, extended attributes and sparse extents.
 - **record**: one unit a parser reads from a material (a line, a row, a file, a message).
+- **record hash**: the record bytes, excluding declared volatile fields, hashed together with any source-declared context that changes its reading (a file path).
+- **vault**: one notes root; its capturing host and root path scope note identities. Its folder name is for display.
+- **native path bytes**: the filesystem spelling of a path, stored as base64 when it is not UTF-8. Its displayed text can match another name; identity includes the native bytes.
 - **record location**: `(material, anchor)`, where a record starts; the **anchor** is its byte offset. The query language and references call it the offset.
 - **output index**: which of a record's events an event is, when one record yields several.
 - **record failure**: a record the parser could not read, stored with its bytes.
@@ -35,16 +38,35 @@ these names and no others.
 - **carry**: parser state kept between records of one input.
 - **cursor**: how far a binding's input has been admitted.
 - **reader memory**: what a reader remembers about its input (each row's hash, each file's size, time and hash), saved with the cursor at the end of a part so a restart reads only the parts after it.
+- **appended table**: a SQLite table whose rows are only ever added and never change; its reader keeps only its cursor and reads the rows after it a page at a time.
 - **shared pass**: one read of a stored file for every compatible binding of it (export archives); each binding keeps its own parts and cursor.
 - **input root**: a filesystem location declared by the host to discover inputs, such as projects or notes.
 - **capture plan**: available capture bindings and excluded sources; unavailable inputs keep their existing spool readers.
 - **capture stream**: one live input captured into its own spool, such as the clipboard selection or screen stills.
+- **ref update**: a git ref seen at a new target (`git.ref_updated`); a **rewrite** is one whose new target does not descend from the old one (a force-push, a reset), listing the commits no ref or checkout reaches any more. Those commits are recorded, never removed.
+- **observed tool**: a tool whose records Sinex reads but does not own (Beads, AgentCTL, GitHub); nothing is written back to it.
+- **input root**: a host-declared filesystem location used to discover inputs, such as projects or notes.
+- **capture plan**: available capture bindings and excluded sources; unavailable inputs keep their existing spool readers.
+- **capture stream**: one live input captured into its own spool, such as the clipboard selection or screen stills.
 - **spool**: a live capture's directory of segment files, which its binding then reads like a growing file.
+- **capture lake**: the files Sinnix capture writes, one directory per **lane** (a producer's stable name, a **lake lane**) with a **day file** per UTC day of `sinnix-capture-v1` records (`sinnix-lake`, `router`). Stream-owned lanes keep `lake.observed` for their derivations; the other lanes use domain kinds.
+- **machine records**: the files Sinnix keeps about the machine at its machine root (`/realm/device/<host>`): activations, backup checks, restore drills, audits, the usage census, configuration drift and experiment runs (`machine-records`).
+- **sample**: one look at a state that keeps changing (a lease table, a running traffic total), recorded as `<thing>.sampled` with the time it was taken.
+- **DHCP lease**: an address the router lends a device until it expires; the only sense in which "lease" is used.
 
 ## Events
 
+- **capture program**: the program that observed a record (`captured_by`: `sinex` or `sinnix`), kept independently of the source and ingress producer.
+
+- **domain usage**: seconds a provider attributed to one domain on a civil date (`domain.usage`); a date without a zone supplies no instant.
+
 - **event**: one reading of a record, or of parent events: a typed payload, an origin and three clocks.
 - **event type**: the registered name of a payload type, `<thing>.<what>` (`command.executed`, `note.document`). An occurrence is named with a past participle (`window.opened`), a state or record with a noun (`journal.entry`). A **span** is a state a source observed with its end; an **interval** is one a derivation computed.
+- **kind declaration**: the immutable schema and rules of one version of an event type, owned by its declaring producer.
+- **kind version**: the positive integer selecting one exact kind declaration. Historical version 1 has no schema or rules; current bundled declarations start at version 2.
+- **validation**: whether the selected declaration's checks ran at admission (`validated` or `unvalidated`).
+- **sampling rule**: a versioned selection of continuous sample records by the hash of capture UUID and sequence; discrete changes and typed outputs are always selected.
+- **event type**: the registered name of a payload type, `<thing>.<what>` (`command.executed`, `note.document`). A record is named with a past participle (`window.opened`), a state or record with a noun (`journal.entry`). A **span** is a state a source observed with its end; an **interval** is one a derivation computed.
 - **kind declaration**: the immutable schema and rules of one version of an event type, owned by its declaring producer.
 - **kind version**: the positive integer selecting one exact kind declaration. Historical version 1 has no schema or rules; current bundled declarations start at version 2.
 - **validation**: whether the selected declaration's checks ran at admission (`validated` or `unvalidated`).
@@ -54,7 +76,8 @@ these names and no others.
 - **equivalence key**: the per-type key that recognizes the same thing seen again in another material.
 - **clocks**: `ts_orig` (when it happened, or unknown), `ts_coided` (when Sinex read it, from the UUIDv7 ID), `ts_persisted` (when it was committed).
 - **derived event**: an event computed by a derivation, naming its parents.
-- **fusion**: joining what several sources observed of one thing into one **fused record**: `command.fused`, `focus.fused`, `visit.fused`, `play.fused`, `clipboard.fused`, `notification.fused`, `mail.fused`. Each fused kind has one **fusion rule**; a **fusion input** (`FusionInput`) reads one source's events for it as **fusion records** (`FusionRecord`) (an identity, a start, maybe an end, the fields it supplies). A **fused command** is a `command.fused` event.
+- **fusion**: joining what several sources observed of one thing into one **fused record**: `command.fused`, `focus.fused`, `visit.fused`, `play.fused`, `clipboard.fused`, `notification.fused`, `mail.fused`, `post.fused`, `conversation.fused`. Each fused kind has one **fusion rule**; a **fusion input** (`FusionInput`) reads one source's events for it as **fusion records** (`FusionRecord`) (an identity, a start, maybe an end, the fields it supplies). A **fused command** is a `command.fused` event.
+- **calendar instance**: one dated instance of a calendar event, `calendar.instance`: a start a repeating event's rule gives, with a changed instance's own times, or the one instance of an event that does not repeat; a **series** is a repeating event with its rule and changed instances.
 - **shell session**: the `shell.session` derived event: a run of commands in one terminal; `recall last` reads around the latest one.
 - **batch**: what a producer hands the writer: records with their events or failures, and progress.
 - **run**: one execution of a producer; every event names its run.
@@ -182,3 +205,5 @@ these names and no others.
 - **scan record**: one file observed in a captured scan part, identified by its material and path, with its item key, content hash and acquisition time. The part index orders observations independently of the wall clock.
 - **item revision**: one content hash of an item. Returning to the same bytes returns to that revision.
 - **preview evidence**: the stored output of rendering an item revision; the library derivation produces its rendition.
+
+- **file node**: a directory tar member's captured filesystem facts, including ownership, times, permissions, attributes and sparse data ranges.

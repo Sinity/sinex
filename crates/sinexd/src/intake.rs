@@ -36,10 +36,14 @@ impl Intake<'_> {
         totals: &mut Totals,
     ) -> Result<Submission, String> {
         self.submit_using(acquired, carry, totals, |batch, check| async move {
-            self.writer
-                .submit_checked(self.priority, batch, check)
-                .await
-                .map_err(|e| e.to_string())
+            let result = if self.atomic {
+                self.writer
+                    .submit_checked(self.priority, batch, check)
+                    .await
+            } else {
+                self.writer.submit_source(self.priority, batch, check).await
+            };
+            result.map_err(|e| e.to_string())
         })
         .await
     }

@@ -9,8 +9,7 @@ use serde_json::{Map, Value};
 /// its duration when the page is left, so a newer reading replaces the live
 /// one.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
-#[event(version = 2,
-    type = "browser.visit",
+#[event(version = 2, type = "browser.visit",
     key = ["profile", "visit_id"],
     replace = newer,
     time = visited_at,
@@ -40,8 +39,7 @@ pub struct BrowserVisit {
 /// One row of a Chromium-family browser's `urls` table: a page and its
 /// running counts, updated in place as it is visited again.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
-#[event(version = 2,
-    type = "browser.url",
+#[event(version = 2, type = "browser.url",
     key = ["profile", "url_id"],
     replace = newer,
     time = last_visited_at,
@@ -65,8 +63,7 @@ pub struct BrowserUrl {
 /// One entry of a Google Takeout Chrome history export. It has no ID, so the
 /// URL and time identify it, and a later export of the same entry is a repeat.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
-#[event(version = 2,
-    type = "browser.history_entry",
+#[event(version = 2, type = "browser.history_entry",
     key = ["url", "visited_at"],
     replace = repeat,
     time = visited_at,
@@ -81,6 +78,42 @@ pub struct BrowserHistoryEntry {
     /// The synced device the visit came from.
     pub client_id: Option<String>,
     pub favicon_url: Option<String>,
+    #[serde(default, skip_serializing_if = "Map::is_empty")]
+    pub extra: Map<String, Value>,
+}
+
+/// A link was followed from one page to another, as the browser extension
+/// reported it: the page it was on, the page it led to and the link's text.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
+#[event(version = 2, type = "link.followed", key = location, replace = repeat, time = followed_at, quality = captured)]
+pub struct LinkFollowed {
+    pub followed_at: Timestamp,
+    pub from_url: Option<String>,
+    pub from_title: Option<String>,
+    pub to_url: Option<String>,
+    pub to_title: Option<String>,
+    pub link_text: Option<String>,
+    /// How it was followed (`click`, `middle-click`…).
+    pub trigger: Option<String>,
+    pub note: Option<String>,
+    #[serde(default, skip_serializing_if = "Map::is_empty")]
+    pub extra: Map<String, Value>,
+}
+
+/// A page was put on, or taken off, the reading stack.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
+#[event(version = 2, type = "reading_stack.changed", key = location, replace = repeat, time = changed_at, quality = captured)]
+pub struct ReadingStackChanged {
+    pub changed_at: Timestamp,
+    /// `push` or `pop`.
+    pub action: String,
+    pub url: Option<String>,
+    pub title: Option<String>,
+    /// The page the link to it was found on.
+    pub from_url: Option<String>,
+    pub from_title: Option<String>,
+    pub link_text: Option<String>,
+    pub note: Option<String>,
     #[serde(default, skip_serializing_if = "Map::is_empty")]
     pub extra: Map<String, Value>,
 }

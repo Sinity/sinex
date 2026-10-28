@@ -9,11 +9,13 @@
         "key": null,
         "state": "Present",
         "payload": {
+          "captured_by": "sinex",
           "received_at": "2023-11-14T22:13:20Z",
           "app": "chat",
           "summary": "Alice",
           "body": "hi",
           "icon": null,
+          "notification_id": null,
           "replaces_id": null,
           "actions": [
             "default",
@@ -38,11 +40,13 @@
         "key": null,
         "state": "Present",
         "payload": {
+          "captured_by": "sinex",
           "received_at": "2023-11-14T22:13:21Z",
           "app": "chat",
           "summary": "Alice",
           "body": "hi again",
           "icon": null,
+          "notification_id": null,
           "replaces_id": 12,
           "actions": [
             "default",

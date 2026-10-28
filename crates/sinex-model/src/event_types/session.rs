@@ -8,16 +8,29 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
+/// The program that observed a record, independent of the ingress producer.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum CaptureProgram {
+    Sinex,
+    Sinnix,
+}
+
 /// A desktop notification was asked for (`org.freedesktop.Notifications.Notify`).
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
 #[event(version = 2, type = "notification.shown", key = location, replace = repeat, time = received_at, quality = captured)]
 pub struct NotificationShown {
+    pub captured_by: CaptureProgram,
     pub received_at: Timestamp,
     /// The application name the sender gave.
     pub app: String,
     pub summary: String,
     pub body: String,
     pub icon: Option<String>,
+    /// The id the server gave it, from its reply to the call; `None` when
+    /// no reply was seen.
+    #[serde(default)]
+    pub notification_id: Option<u32>,
     /// The notification this one replaces, when the sender gave one.
     pub replaces_id: Option<u32>,
     /// Action identifiers and labels, in the order sent.
@@ -30,6 +43,9 @@ pub struct NotificationShown {
     pub expire_timeout_ms: i32,
     /// The sender's unique bus name.
     pub sender: String,
+    /// Fields the capture wrote that this type does not name, kept by name.
+    #[serde(default, skip_serializing_if = "Map::is_empty")]
+    pub extra: Map<String, Value>,
 }
 
 /// A notification closed (`NotificationClosed`).
@@ -53,23 +69,45 @@ pub struct NotificationAction {
 
 /// The clipboard or the primary selection changed.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
-#[event(version = 2, type = "clipboard.copied", key = location, replace = repeat, time = received_at, quality = captured)]
+#[event(version = 3, type = "clipboard.copied", key = location, replace = repeat, time = received_at, quality = captured)]
 pub struct ClipboardCopied {
+    pub captured_by: CaptureProgram,
     pub received_at: Timestamp,
     /// `clipboard` or `primary`.
     pub selection: String,
-    /// The types the owner offered, in its order.
-    pub mime_types: Vec<String>,
+    /// The types the owner offered, in its order; `None` when the capture
+    /// did not record them.
+    pub mime_types: Option<Vec<String>>,
     /// The type whose content was read.
     pub mime_type: Option<String>,
     /// The content when it is text; binary content stays in the stored bytes.
     pub text: Option<String>,
-    pub bytes: u64,
+    pub bytes: Option<u64>,
     /// BLAKE3 of the content, so a repeated copy can be recognized.
     pub content_hash: Option<String>,
+    /// SHA-256 of the content, when the capture recorded that hash instead.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sha256: Option<String>,
+    /// The window that held focus when the selection changed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub window: Option<FocusedWindow>,
+    /// Where an imported copy came from (a clipboard manager's history),
+    /// when it was not seen live.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub imported_from: Option<String>,
     /// The owner marked it a secret (a password manager's hint); its content
     /// was not read.
     pub secret: bool,
+    /// Fields the capture wrote that this type does not name, kept by name.
+    #[serde(default, skip_serializing_if = "Map::is_empty")]
+    pub extra: Map<String, Value>,
+}
+
+/// A window by its class and title, as the compositor reported them.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct FocusedWindow {
+    pub class: Option<String>,
+    pub title: Option<String>,
 }
 
 /// A media player's state changed (MPRIS `PropertiesChanged`), or was read
@@ -77,6 +115,7 @@ pub struct ClipboardCopied {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
 #[event(version = 2, type = "player.changed", key = location, replace = repeat, time = received_at, quality = captured)]
 pub struct PlayerChanged {
+    pub captured_by: CaptureProgram,
     pub received_at: Timestamp,
     /// The player's well-known name (`org.mpris.MediaPlayer2.spotify`) when
     /// known, else its unique bus name.
@@ -88,8 +127,14 @@ pub struct PlayerChanged {
     pub album: Option<String>,
     pub url: Option<String>,
     pub length_us: Option<i64>,
+    /// Where playback was, when the player reported it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub position_us: Option<i64>,
     /// `true` when this is the state read at capture start, not a change.
     pub snapshot: bool,
+    /// `true` when this is a periodic report while playing, not a change.
+    #[serde(default)]
+    pub heartbeat: bool,
     /// Every changed property as sent, decoded from D-Bus types.
     #[serde(default, skip_serializing_if = "Map::is_empty")]
     pub properties: Map<String, Value>,
@@ -147,6 +192,32 @@ pub struct MediaSegment {
     pub target: Option<String>,
     pub width: Option<u32>,
     pub height: Option<u32>,
+}
+
+/// A still of the focused window, taken when what it shows changes (a
+/// compositor event, a pause in typing) or at least periodically. The image
+/// is its own file, named by `image` and identified by its hash.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
+#[event(version = 2, type = "frame.captured", key = location, replace = repeat, time = captured_at, quality = captured)]
+pub struct FrameCaptured {
+    pub captured_at: Timestamp,
+    pub window_class: Option<String>,
+    pub window_title: Option<String>,
+    pub workspace: Option<String>,
+    pub monitor: Option<String>,
+    pub x: Option<i64>,
+    pub y: Option<i64>,
+    pub width: Option<i64>,
+    pub height: Option<i64>,
+    /// SHA-256 of the image file.
+    pub sha256: Option<String>,
+    /// What made the capture take it (`hyprland-event`, `idle-pause`,
+    /// `periodic-floor`).
+    pub trigger: Option<String>,
+    /// The image file's path, as the capture wrote it.
+    pub image: Option<String>,
+    #[serde(default, skip_serializing_if = "Map::is_empty")]
+    pub extra: Map<String, Value>,
 }
 
 /// Text read from a screen segment by a local OCR engine. Derived from the
