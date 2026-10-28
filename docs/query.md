@@ -22,8 +22,8 @@ sinexctl find rate limit
 ## Tables
 
 Source and binding are distinct identities in every table; a source's totals join
-through its registered bindings. The generated field list is
-[reference/query-tables](reference/query-tables.md).
+through its registered bindings. The field list will be rendered into
+[planned reference/query-tables.md](reference/README.md#planned-pages).
 
 | Table | One row is |
 |---|---|

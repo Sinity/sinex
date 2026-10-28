@@ -49,7 +49,7 @@ crate's; the signal rule schema and evaluator are common
 - **The write path.** Handlers hold only the read pool. Every write (stage, `record`,
   note, mark, judgment, saved query, signal rule, archive request) goes to the one
   [admission function](admission.md) as a request material plus events.
-- The command list itself is generated into [reference/commands](reference/commands.md).
+- The command list will be rendered into [planned reference/commands.md](reference/README.md#planned-pages).
 
 ## Transports
 

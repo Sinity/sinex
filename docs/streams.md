@@ -337,7 +337,7 @@ Journald is stored in journal export format: every entry with repeated and binar
 
 ## Hyprland
 
-Hyprland's socket2 is stored whole in its own line framing, with `hyprctl -j` snapshots on connection and on relevant changes; the reader subscribes before taking a snapshot and drains events concurrently, and a snapshot is present state, never a fabricated open or start. Its records are the window and workspace kinds ([reference](reference/kinds.md)); unknown event text is kept. Other window managers are ordinary sources ([source families](source-families.md)).
+Hyprland's socket2 is stored whole in its own line framing, with `hyprctl -j` snapshots on connection and on relevant changes; the reader subscribes before taking a snapshot and drains events concurrently, and a snapshot is present state, never a fabricated open or start. Its records are the window and workspace kinds ([planned kinds reference](reference/README.md#planned-pages)); unknown event text is kept. Other window managers are ordinary sources ([source families](source-families.md)).
 
 ## browser
 

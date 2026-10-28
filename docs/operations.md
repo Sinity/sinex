@@ -1,6 +1,6 @@
 # Operations
 
-How Sinex is deployed, configured and backed up: the flake's NixOS and Home Manager modules, the deployment configuration (listen address, authentication, the logical-day setting), and backup and restore with the restore drill. How settings flow through the code is in [architecture.md](architecture.md#configuration-and-clocks); every option, key and environment variable is listed in [reference/settings.md](reference/settings.md); the meaning of the logical day is the `DaySetting` of [query-language](https://github.com/Sinity/polylogue-sinex-common/blob/master/docs/query-language.md).
+How Sinex is deployed, configured and backed up: the flake's NixOS and Home Manager modules, the deployment configuration (listen address, authentication, the logical-day setting), and backup and restore with the restore drill. How settings flow through the code is in [architecture.md](architecture.md#configuration-and-clocks); every option, key and environment variable will be listed in [planned reference/settings.md](reference/README.md#planned-pages); the meaning of the logical day is the `DaySetting` of [query-language](https://github.com/Sinity/polylogue-sinex-common/blob/master/docs/query-language.md).
 
 ## Deployment
 
@@ -44,7 +44,7 @@ The module keeps PostgreSQL's stock memory and checkpoint defaults and sets `log
 
 ## Configuration
 
-Each binary loads one typed configuration ([how it is read](architecture.md#configuration-and-clocks)). The NixOS and Home Manager modules write that file and set those variables; a deployment without Nix sets them directly. Every key is in [reference/settings.md](reference/settings.md).
+Each binary loads one typed configuration ([how it is read](architecture.md#configuration-and-clocks)). The NixOS and Home Manager modules write that file and set those variables; a deployment without Nix sets them directly. Every key will be listed in [planned reference/settings.md](reference/README.md#planned-pages); current flags are described by `sinexd run --help` and Nix options by the [module declarations](../nix/module.nix).
 
 **What deployment configuration holds:** the logical day, the API's listen address and authentication, the optional notification command ([signals](https://github.com/Sinity/polylogue-sinex-common/blob/master/docs/signals.md)), the database and NATS endpoints, the content store location, this host's name, and per-user facts such as account names on each service. Settings any author may change at run time (quiet hours, the interrupt budget, briefing switches) are the changeable catalog of [architecture.md](architecture.md#configuration-and-clocks), not deployment configuration.
 

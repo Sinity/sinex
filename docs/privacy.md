@@ -19,7 +19,7 @@ Each kind declaration names, per payload field, zero or more hints from one voca
 
 - **A hint chooses no policy.** It is a selector that rules can use; with no rule, a hint does nothing.
 - The vocabulary is extended by declaration, never by code branches.
-- Kinds registered by outside producers carry hints the same way ([kind registration](producers.md#kind-registration)); each kind's hints are listed in the [kinds reference](reference/kinds.md).
+- Kinds registered by outside producers carry hints the same way ([kind registration](producers.md#kind-registration)); each kind's hints will be listed in the [planned kinds reference](reference/README.md#planned-pages).
 
 ## Detectors and hits
 

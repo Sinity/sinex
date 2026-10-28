@@ -78,7 +78,7 @@ Deduplication here is of stored bytes only. Whether a second copy of the same co
 
 ## Bulky fields by reference
 
-A kind may declare fields carried by reference to the event's byte range instead of inline: screen frames, audio segments, full accessibility trees, long terminal scrollback. The event carries the typed facts and the anchor; readers fetch the bytes by range under the same output rules as any payload ([privacy](privacy.md)). The kind's declaration says which fields are carried this way ([kinds](reference/kinds.md)).
+A kind may declare fields carried by reference to the event's byte range instead of inline: screen frames, audio segments, full accessibility trees, long terminal scrollback. The event carries the typed facts and the anchor; readers fetch the bytes by range under the same output rules as any payload ([privacy](privacy.md)). The kind's declaration says which fields are carried this way ([planned kinds](reference/README.md#planned-pages)).
 
 ## Re-chunking
 

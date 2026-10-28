@@ -25,10 +25,11 @@ sinexctl stage ~/.local/share/atuin/history.db  # read an input into Sinex
 sinexctl stage list                             # what has been staged and how far it has been read
 ```
 
-The daemon reads one configuration file (database and NATS endpoints, the
-content store, the time zone and logical-day start, exclusions); every key is
-in [docs/reference/settings.md](docs/reference/settings.md). Sources whose
-inputs exist at their usual locations are captured without further setup. On
+Deployment configuration covers database and NATS endpoints, the content
+store, the time zone and logical-day start, and exclusions. Every key
+will be listed in [planned docs/reference/settings.md](docs/reference/README.md#planned-pages).
+For options shipped today, use `sinexd run --help` and the
+[Nix module declarations](nix/module.nix). Sources whose inputs exist at their usual locations are captured without further setup. On
 NixOS, the flake's module sets all of this up
 ([docs/operations.md](docs/operations.md#deployment)).
 
@@ -45,8 +46,9 @@ sinexctl trace sinex:ev/EVENT_ID
 `query` runs the query language over events, materials, sources, runs and
 failures; `recall` reads around a time, a day or the latest shell session;
 `brief` is the daily summary; `show` and `trace` read one event and follow it
-down to its bytes. `sinexctl --help`, the MCP tool list and
-[docs/reference/commands.md](docs/reference/commands.md) list every operation.
+down to its bytes. `sinexctl --help` and the MCP tool list describe current
+operations; [planned docs/reference/commands.md](docs/reference/README.md#planned-pages)
+will render the operation declarations as a committed page.
 
 ## Read next
 

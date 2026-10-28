@@ -250,7 +250,7 @@ The library is private. Ruling, 2026-10-11: "a media stashbox is not supposed to
 
 ## Records
 
-Kind fields are listed in [the kinds reference](reference/kinds.md) once it is generated; until then this table is the record model.
+Kind fields will be listed in [the planned kinds reference](reference/README.md#planned-pages); until then this table is the record model.
 
 | Record | Holds |
 |---|---|

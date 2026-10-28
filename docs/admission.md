@@ -74,7 +74,7 @@ PostgreSQL with TimescaleDB is the one transactional store.
 
 Every read model is declared, rebuilt from events, and kept current through its own consumer position, following every lifecycle change (archive, restore, replay, tombstone).
 
-- **Search.** Each kind declares `search: none | words | words_and_trigram` ([reference/kinds.md](reference/kinds.md)); no copy of the text is stored. The index covers live readings only, so a replayed or newly withheld reading never leaves old text searchable. The engine (a GIN variant, `pg_textsearch`, or tantivy as a consumer) is chosen by measurement on real-shaped data. `polylogue.message` and `polylogue.tool_call` are `none`.
+- **Search.** Each kind declares `search: none | words | words_and_trigram` ([planned reference/kinds.md](reference/README.md#planned-pages)); no copy of the text is stored. The index covers live readings only, so a replayed or newly withheld reading never leaves old text searchable. The engine (a GIN variant, `pg_textsearch`, or tantivy as a consumer) is chosen by measurement on real-shaped data. `polylogue.message` and `polylogue.tool_call` are `none`.
 - **Detector hits.** A consumer with its own position records which detector versions matched each field, follows every lifecycle change, and catches up from the start of the affected kinds when a detector is added or edited. Their use is [privacy.md](privacy.md).
 - **Typed views.** Per-kind typed views are generated from the kind registry over live readings.
 - **The SQL reader is an access boundary:** a database role that cannot read raw payloads, keys or hits, and sees withheld fields only as [privacy.md](privacy.md) allows.

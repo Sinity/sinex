@@ -3,12 +3,18 @@
 The designed `cargo xtask docs` generator will render the pages below from
 the declarations served at run time. They will be committed and compared
 with their rendered declarations by the ordinary test suite. That generator
-is not implemented yet.
+is not implemented yet. For shipped commands and options, use
+`sinexctl --help`, `sinexd run --help` and the MCP tool schemas; Nix option
+descriptions live in the [module declarations](../../nix/module.nix).
 
 The current generated source and derivation catalog is
 [`nix/catalog.json`](../../nix/catalog.json), emitted by `sinexd admin catalog`
 and checked by a golden test. The Nix module and discovery code read it;
 change the declarations and regenerate it rather than editing it by hand.
+
+## Planned pages
+
+These filenames are planned destinations, not existing pages.
 
 | Page | Rendered from |
 |---|---|
@@ -22,4 +28,4 @@ change the declarations and regenerate it rather than editing it by hand.
 Until a page's generator exists, the hand-written table it replaces stays in
 the area page that owns the subject; the change that adds the generator
 deletes that table. Kinds that other products register (Polylogue's
-`polylogue.*` kinds) are listed in that product's own reference.
+`polylogue.*` kinds) will be listed in that product's own planned reference.

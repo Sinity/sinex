@@ -35,7 +35,7 @@ Everything enters Sinex by being staged ([materials](materials.md#staging) defin
 
 ## One declaration per source
 
-Each source has one declaration in Rust, with its parser and event kinds beside it. Everything else that names sources is generated from the declarations or checked against them at build time: the NixOS options (exclusions and real settings), the session capture's stream list, the [generated source reference](reference/sources.md), and tooling. Registration rejects duplicate names and bindings with no implementation, so a build fails on either.
+Each source has one declaration in Rust, with its parser and event kinds beside it. The NixOS options (exclusions and real settings), session capture's stream list and tooling are generated from the declarations or checked against them at build time. The [planned source reference](reference/README.md#planned-pages) will be rendered from those same declarations. Registration rejects duplicate names and bindings with no implementation, so a build fails on either.
 
 | Field | Meaning |
 |---|---|
@@ -211,7 +211,7 @@ Every implemented source passes the common checks: acquire two records including
 - **default-on**: with `services.sinex.enable` and a fixture host layout, every source whose canonical input exists is captured, and the generated module has no per-source enable option.
 - **exclusion-with-reason**: `exclude.<source>.reason` stops that source and status lists it with the reason; nothing else narrows capture.
 - **discovery-without-restart**: an input created during operation (a new browser profile, a new journal namespace) is captured without a restart.
-- **one-declaration**: the Nix options, the session stream list and the source reference are generated from the declarations, and a build fails on a duplicate name or a binding with no implementation.
+- **one-declaration**: the Nix options and session stream list are generated from the declarations, the planned source reference uses those same declarations, and a build fails on a duplicate name or a binding with no implementation.
 - **bad-source-isolated**: a binding that fails its start-up check is disabled with its reason in status while the rest of the daemon runs.
 - **unknown-source-option-refused**: an unknown field in a source's options is refused at start.
 - **staging-without-parser**: staging unknown bytes stores them as material with no parser and lists the candidates; a later replay with `--parser` reads them.
