@@ -139,11 +139,11 @@ fn startup_counts_an_unacknowledged_batch_once_and_then_counts_new_capture() {
         .unwrap()
         .path()
         .with_extension("unacknowledged.json");
-    std::fs::write(
-        path,
-        serde_json::to_vec(&json!({"frames":[],"position":{"cursor":after,"carry":null,"capture_failures":[]},"sources":[],"mismatch":null,"skip_position":null,"records":0})).unwrap(),
-    )
-    .unwrap();
+    let bytes = serde_json::to_vec(&json!({"frames":[],"position":{"cursor":after,"carry":null,"capture_failures":[]},"sources":[],"mismatch":null,"skip_position":null,"records":0})).unwrap();
+    hashed_blobs::Preparation::new(&positions)
+        .unwrap()
+        .plain_into(std::fs::File::create(path).unwrap(), bytes.as_slice(), 3)
+        .unwrap();
     let counter = initialize(&positions, &binding).unwrap();
     let mut counter = counter.lock().unwrap();
     assert_eq!((counter.counts.bytes, counter.counts.records), (11, 1));

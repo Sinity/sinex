@@ -76,7 +76,13 @@ async fn a_spool_is_produced_once_material_first() {
         "the position advanced; nothing is sent twice"
     );
 
-    let frames = received.lock().unwrap().clone();
+    let frames: Vec<_> = received
+        .lock()
+        .unwrap()
+        .iter()
+        .filter(|frame| !matches!(frame, Ingress::Chunk { .. }))
+        .cloned()
+        .collect();
     assert!(
         matches!(frames.first(), Some(Ingress::Material { .. })),
         "material first"
@@ -181,7 +187,7 @@ async fn drain_retries_pending_frames_then_requires_the_missing_spool() {
     use sinex_sources::{discovery, live};
     let nats = devkit::nats::test_nats().unwrap();
     let subjects = Subjects::new(nats.prefix());
-    hello::hello(&nats, &subjects, "session-test").await;
+    let hello = hello::hello(&nats, &subjects, "session-test").await;
     let root = tempfile::tempdir().unwrap();
     let spool_root = root.path().join("spool");
     let spool = spool_root.join("hyprland");
@@ -224,6 +230,8 @@ async fn drain_retries_pending_frames_then_requires_the_missing_spool() {
     );
     drop(producer);
     std::fs::rename(&spool, root.path().join("kept-spool")).unwrap();
+    hello.abort();
+    let _ = hello.await;
     let received = standin(&nats, &subjects, "session-test").await;
     let mut producer = Producer::connect(
         nats.url(),

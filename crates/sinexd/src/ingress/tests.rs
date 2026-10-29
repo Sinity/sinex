@@ -126,6 +126,16 @@ impl Harness {
         mut grants: crate::ingress::fetch::ProducerGrants,
         policy: Option<crate::public_context::Provider>,
     ) -> Self {
+        let configured_sources: std::collections::BTreeSet<_> = grants
+            .values()
+            .filter_map(|grant| grant.write.as_ref())
+            .flat_map(|write| {
+                write
+                    .source_declarations
+                    .iter()
+                    .map(|declaration| declaration.source.clone())
+            })
+            .collect();
         for producer in [
             "kitty",
             "phone",
@@ -136,6 +146,11 @@ impl Harness {
             "other-node",
             "unknown-node",
         ] {
+            // Explicit immutable artifacts own their source identity; a generic
+            // fixture producer must not invent a second definition of it.
+            if configured_sources.contains(&test_source(producer)) {
+                continue;
+            }
             grants
                 .entry(producer.into())
                 .or_default()
@@ -313,6 +328,7 @@ impl Harness {
         let expected = serde_json::from_slice::<Ingress>(&body)
             .ok()
             .map(|frame| frame.frame().to_owned())
+            .filter(|name| !name.is_empty() && !name.contains('\0'))
             .unwrap_or_else(|| format!("malformed/{}", blake3::hash(&body).to_hex()));
         let expected_hash = blake3::hash(expected.as_bytes()).to_hex().to_string();
         let mut acks = self
@@ -676,7 +692,7 @@ async fn an_ai_session_from_polylogue_is_ordinary_events(db: devkit::pg::TestDat
     );
 
     let mut conn = PgConnection::connect(&h.url).await.unwrap();
-    let text = "events where event_type = polylogue.session and payload.origin = claude-code";
+    let text = "events where event_type = polylogue.session AND payload.origin = claude-code";
     let mut ctx = sinex_model::query::Context::new(
         jiff::Timestamp::now(),
         jiff::tz::TimeZone::get("UTC").unwrap(),
@@ -719,7 +735,7 @@ async fn invalid_frames_are_refused_and_recorded(db: devkit::pg::TestDatabase) {
     h.send("kitty", &frame).await;
 
     let mut wrong_type = imported(material, 0, "ls");
-    wrong_type.kind.name = "no.such.type".into();
+    wrong_type.kind.name = "not.declared".into();
     let mut missing_field = imported(material, 0, "ls");
     missing_field.payload = json!({"command": "ls"});
     let mut no_origin = imported(material, 0, "ls");
@@ -1206,10 +1222,20 @@ async fn frames_flow_while_a_request_waits(db: devkit::pg::TestDatabase) {
     );
 
     let (_, frame) = h.material_frame("m1", b"ls\n");
-    assert_eq!(h.send("kitty", &frame).await.refusal, None);
+    let mut hints = h.client.subscribe(h.subjects.ack("kitty")).await.unwrap();
+    h.client.flush().await.unwrap();
+    let sending = h.send("kitty", &frame);
+    tokio::pin!(sending);
+    let hint = tokio::select! {
+        hint = tokio::time::timeout(Duration::from_secs(10), hints.next()) => hint.unwrap().unwrap(),
+        receipt = &mut sending => panic!("full receipt resolved while its read connection was held: {receipt:?}"),
+    };
+    let hint: sinex_protocol::ReceiptHint = serde_json::from_slice(&hint.payload).unwrap();
+    assert_eq!(hint.frame_hash, blake3::hash(b"m1").to_hex().to_string());
     assert!(!request.is_finished());
 
     drop(read_permit);
+    assert_eq!(sending.await.refusal, None);
     let reply = tokio::time::timeout(Duration::from_secs(10), request)
         .await
         .unwrap()
@@ -1764,7 +1790,7 @@ async fn daemon_status_counts_refusals_by_producer_source_and_event_type(
         Some(FrameRefusal::Bytes)
     );
     let malformed = Ingress::Events {
-        source: Some(test_source("node")),
+        source: Some(test_source("other-node")),
         coverage: None,
         frame: "c/events/invalid".into(),
         events: vec![ProducerEvent {

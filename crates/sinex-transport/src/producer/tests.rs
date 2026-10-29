@@ -67,3 +67,39 @@ fn foreign_frame_or_missing_durable_identity_never_exposes_a_prior_receipt_as_co
         Err(SubmitError::NoReceipt(_))
     ));
 }
+
+#[devkit::test]
+fn malformed_receipt_binds_the_exact_offered_envelope_and_logical_body() {
+    for frame in [
+        Ingress::RegisterKinds {
+            frame: "".into(),
+            declarations: vec![],
+        },
+        Ingress::LargeFrame {
+            frame: "broken\0name".into(),
+            blob: "blake3:logical-body".into(),
+            length: 42,
+        },
+    ] {
+        let mut saved = receipt(&frame);
+        saved.frame = format!(
+            "malformed/{}",
+            blake3::hash(&serde_json::to_vec(&frame).unwrap()).to_hex()
+        );
+        saved.refusal = Some("invalid frame name".into());
+        saved.outcome["refusal_kind"] = serde_json::json!("malformed");
+        assert_eq!(check_receipt(&frame, saved.clone()).unwrap(), saved);
+        let mut foreign = saved.clone();
+        foreign.frame.push('x');
+        assert!(check_receipt(&frame, foreign).is_err());
+        let mut wrong_body = saved.clone();
+        wrong_body.outcome["frame_content_hash"] = serde_json::json!("blake3:different");
+        assert!(check_receipt(&frame, wrong_body).is_err());
+        let mut not_refused = saved.clone();
+        not_refused.refusal = None;
+        assert!(check_receipt(&frame, not_refused).is_err());
+        let mut undurable = saved;
+        undurable.number = None;
+        assert!(check_receipt(&frame, undurable).is_err());
+    }
+}

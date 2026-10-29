@@ -2,7 +2,11 @@ use futures::StreamExt;
 use sinex_protocol::{ProducerHello, ProducerWelcome, Subjects};
 
 /// Accept only the configuration handshake; leave ingress publishing unavailable.
-pub(crate) async fn hello(nats: &devkit::nats::TestNats, subjects: &Subjects, producer: &str) {
+pub(crate) async fn hello(
+    nats: &devkit::nats::TestNats,
+    subjects: &Subjects,
+    producer: &str,
+) -> tokio::task::JoinHandle<()> {
     let client = async_nats::connect(nats.url()).await.unwrap();
     let mut requests = client.subscribe(subjects.connect(producer)).await.unwrap();
     client.flush().await.unwrap();
@@ -22,5 +26,5 @@ pub(crate) async fn hello(nats: &devkit::nats::TestNats, subjects: &Subjects, pr
             .await
             .unwrap();
         }
-    });
+    })
 }

@@ -123,7 +123,13 @@ async fn registration_is_atomic_and_a_reconnect_gets_the_saved_hashes(
             },
         )
         .await;
-    assert!(refused.refusal.unwrap().contains("definition_conflict"));
+    assert_eq!(refused.refusal_kind(), Some(FrameRefusal::Configuration));
+    assert!(
+        refused
+            .refusal
+            .unwrap()
+            .contains("outside the configured logical family")
+    );
     assert_eq!(
         h.count(
             "SELECT count(*) FROM registry.event_types WHERE name='example.reading' AND version=10"
@@ -144,7 +150,7 @@ async fn registration_is_atomic_and_a_reconnect_gets_the_saved_hashes(
         .await
         .refusal
         .unwrap()
-        .contains("namespace_refused")
+        .contains("outside the configured logical family")
     );
     for name in ["example..reading", "example.reading.", "example."] {
         let mut invalid = d.clone();
@@ -158,7 +164,20 @@ async fn registration_is_atomic_and_a_reconnect_gets_the_saved_hashes(
                 },
             )
             .await;
-        assert!(refused.refusal.unwrap().contains("invalid kind name"));
+        assert_eq!(refused.refusal_kind(), Some(FrameRefusal::Configuration));
+        assert!(
+            refused
+                .refusal
+                .unwrap()
+                .contains("outside the configured logical family")
+        );
+        assert_eq!(
+            h.count(&format!(
+                "SELECT count(*) FROM registry.event_types WHERE name='{name}'"
+            ))
+            .await,
+            0
+        );
     }
     let (material, frame) = h.material_for("example", "bytes", b"one\n");
     assert_eq!(h.send("example", &frame).await.refusal, None);
@@ -679,7 +698,8 @@ async fn readings_outside_the_selected_kind_do_not_invalidate_replay(db: devkit:
 async fn writer_assigned_orders_preserve_a_b_a_and_exact_frame_retries(
     db: devkit::pg::TestDatabase,
 ) {
-    let d = declaration("example.assigned");
+    let mut d = declaration("example.assigned");
+    d.replace_rule = Some(sinex_model::ReplaceRule::ReplaceWhenNewer);
     let h = Harness::start_with_source(db, "example", vec![d.clone()]).await;
     assert_eq!(
         h.send(

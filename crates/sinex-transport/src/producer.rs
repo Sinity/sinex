@@ -144,7 +144,20 @@ pub fn check_receipt(
     receipt: Acknowledgment,
 ) -> Result<Acknowledgment, SubmitError> {
     let expected = content_hash(frame)?;
-    if receipt.frame != frame.frame() {
+    let malformed = format!(
+        "malformed/{}",
+        blake3::hash(
+            &serde_json::to_vec(frame)
+                .map_err(|error| SubmitError::Transport(error.to_string()))?
+        )
+        .to_hex()
+    );
+    let correlated_malformed = receipt.frame == malformed
+        && receipt.refusal.is_some()
+        && receipt.refusal_kind() == Some(sinex_model::FrameRefusal::Malformed)
+        && receipt.number.is_some_and(|number| number > 0)
+        && receipt.content_hash() == Some(expected.as_str());
+    if receipt.frame != frame.frame() && !correlated_malformed {
         return Err(SubmitError::Refused {
             frame: frame.frame().into(),
             reason: "receipt_frame_identity_mismatch".into(),

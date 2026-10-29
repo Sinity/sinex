@@ -177,7 +177,7 @@ async fn fake_ingress_with_configuration(
                                 _ => (None, vec![]),
                             };
                             let commit_seq = if admitted.is_empty() { None } else { Some(1) };
-                            if connections.is_some() && !configuration_refused {
+                            if connections.is_some() && !configuration_refused && !matches!(frame, Ingress::Chunk { .. }) {
                                 configuration_refused = true;
                                 return Acknowledgment {
                                     number: Some(next_number),
@@ -185,7 +185,7 @@ async fn fake_ingress_with_configuration(
                                     frame: id.clone(),
                                     material: None,
                                     admitted: vec![],
-                                    outcome: json!({"refusal_kind":"configuration"}),
+                                    outcome: json!({"refusal_kind":"configuration", "frame_content_hash":sinex_transport::producer::content_hash(&frame).unwrap()}),
                                     refusal: Some(
                                         "privacy configuration changed; reconnect".into(),
                                     ),
@@ -198,7 +198,7 @@ async fn fake_ingress_with_configuration(
                                 frame: id.clone(),
                                 material,
                                 admitted,
-                                outcome: json!({}),
+                                outcome: json!({"frame_content_hash":sinex_transport::producer::content_hash(&frame).unwrap()}),
                                 refusal: None,
                                 commit_seq,
                             }

@@ -276,6 +276,67 @@ fn assert_chunks(frames: &[Ingress], expected: &[u8]) {
     assert_eq!(decoded, expected);
 }
 
+fn assert_large_frame_transfers(wire: &[Ingress]) {
+    for frame in wire {
+        if let Ingress::LargeFrame {
+            frame,
+            blob,
+            length,
+        } = frame
+        {
+            let chunks: Vec<_> = wire.iter().filter(|item| matches!(item, Ingress::Chunk { for_frame, blob: name, .. } if for_frame == frame && name == blob)).cloned().collect();
+            assert!(
+                !chunks.is_empty(),
+                "large logical frame must transfer encoded custody"
+            );
+            let mut encoded = Vec::new();
+            let mut descriptor = None;
+            for chunk in chunks {
+                let Ingress::Chunk {
+                    offset,
+                    total,
+                    data,
+                    descriptor: raw,
+                    ..
+                } = chunk
+                else {
+                    unreachable!()
+                };
+                let found = hashed_blobs::EncodedBlob::decode(&raw).unwrap();
+                assert_eq!(offset, encoded.len() as u64);
+                assert_eq!(total, found.stored_len);
+                assert_eq!(found.hash.to_string(), *blob);
+                assert_eq!(found.decoded_len, *length);
+                if let Some(previous) = &descriptor {
+                    assert_eq!(previous, &found);
+                }
+                descriptor = Some(found);
+                encoded.extend(
+                    base64::engine::general_purpose::STANDARD
+                        .decode(data)
+                        .unwrap(),
+                );
+            }
+            let mut file = tempfile::tempfile().unwrap();
+            std::io::Write::write_all(&mut file, &encoded).unwrap();
+            let prepared = hashed_blobs::Prepared::from_encoded(
+                file,
+                descriptor.unwrap(),
+                None,
+                hashed_blobs::ReadLimits::default(),
+            )
+            .unwrap();
+            let decoded: Ingress = serde_json::from_reader(
+                prepared
+                    .reader(None, hashed_blobs::ReadLimits::default())
+                    .unwrap(),
+            )
+            .unwrap();
+            assert_eq!(decoded.frame(), frame);
+        }
+    }
+}
+
 #[devkit::test(multi_thread)]
 async fn streamed_upload_preserves_empty_and_chunk_boundary_materials() {
     let nats = devkit::nats::test_nats().unwrap();
@@ -457,6 +518,7 @@ async fn a_recorded_invalid_frame_is_skipped_and_the_next_frame_is_sent() {
             .lock()
             .unwrap()
             .iter()
+            .filter(|frame| !matches!(frame, Ingress::Chunk { .. }))
             .map(Ingress::frame)
             .collect::<Vec<_>>(),
         vec!["first", "invalid", "valid"]
@@ -529,14 +591,19 @@ frame: "dependent".into(), events: vec![event(1)], failures: vec![] }],
     assert!(position.cursor["inner"]["material"].is_null());
     assert!(position.cursor["last_material"].is_null());
     assert_eq!(std::fs::read(&path).unwrap(), bytes);
-    assert_eq!(received.lock().unwrap().len(), 3);
+    let received = received.lock().unwrap();
+    let logical: Vec<_> = received
+        .iter()
+        .filter(|frame| !matches!(frame, Ingress::Chunk { .. }))
+        .collect();
+    assert_eq!(logical.len(), 3);
     assert!(
-        received
-            .lock()
-            .unwrap()
+        logical
             .iter()
             .all(|frame| matches!(frame, Ingress::LargeFrame { .. }))
     );
+    assert_large_frame_transfers(&received);
+    drop(received);
     assert!(
         UnacknowledgedFrames::load(&state, "binding")
             .unwrap()
@@ -595,7 +662,12 @@ async fn a_byte_refusal_rebuilds_a_large_frame_and_succeeds_on_the_next_attempt(
     .unwrap();
     let position = producer.position("binding", &state, &store).await.unwrap();
     assert!(position.capture_failures.is_empty());
-    let received = received.lock().unwrap();
+    let wire = received.lock().unwrap();
+    assert_large_frame_transfers(&wire);
+    let received: Vec<_> = wire
+        .iter()
+        .filter(|frame| !matches!(frame, Ingress::Chunk { .. }))
+        .collect();
     assert_eq!(received.len(), 2);
     assert_ne!(received[0].frame(), received[1].frame());
     let json_bytes = |frame: &Ingress| {
@@ -724,7 +796,12 @@ async fn a_restart_after_a_fix_retries_malformed_and_material_content_refusals()
                 .unwrap()
                 .is_none()
         );
-        let received = received.lock().unwrap();
+        let wire = received.lock().unwrap();
+        assert_large_frame_transfers(&wire);
+        let received: Vec<_> = wire
+            .iter()
+            .filter(|frame| !matches!(frame, Ingress::Chunk { .. }))
+            .collect();
         assert_eq!(received.len(), 2);
         assert!(received[1].frame().contains("/retry/"));
         assert_ne!(received[0].frame(), received[1].frame());
@@ -732,16 +809,22 @@ async fn a_restart_after_a_fix_retries_malformed_and_material_content_refusals()
 }
 
 #[devkit::test]
-fn old_positions_open_and_old_unacknowledged_frames_require_draining() {
+fn plaintext_positions_and_unacknowledged_frames_require_draining() {
     let dir = tempfile::tempdir().unwrap();
     let position = Position::path(dir.path(), "binding");
     let bytes = br#"{"cursor":{"segment":4},"carry":{"partial":"synthetic"}}"#;
     std::fs::write(&position, bytes).unwrap();
+    let error = Position::load(dir.path(), "binding")
+        .unwrap_err()
+        .to_string();
+    assert!(error.contains("invalid encoded producer state"), "{error}");
+    assert_eq!(std::fs::read(&position).unwrap(), bytes);
+    // Missing optional fields still default inside the current encoded format.
+    write_durably(&position, &serde_json::from_slice::<Value>(bytes).unwrap()).unwrap();
     let loaded = Position::load(dir.path(), "binding").unwrap();
     assert_eq!(loaded.cursor, json!({"segment":4}));
     assert_eq!(loaded.carry, json!({"partial":"synthetic"}));
     assert!(loaded.capture_failures.is_empty());
-    assert_eq!(std::fs::read(position).unwrap(), bytes);
     let path = UnacknowledgedFrames::path(dir.path(), "binding");
     let bytes = br#"{"frames":[{"kind":"large_frame","frame":"saved","blob":"synthetic","length":12}],"position":{"cursor":{},"carry":null}}"#;
     std::fs::write(&path, bytes).unwrap();

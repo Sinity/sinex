@@ -458,7 +458,10 @@ async fn queued_submission(db: devkit::pg::TestDatabase, cancel: bool) {
     let dir = tempfile::tempdir().unwrap();
     let blobs = Blobs::open(dir.path()).unwrap();
     let url = db.url(None);
-    let connection = sinex_store::AdmissionContext::connect(&url).await.unwrap();
+    let mut connection = sinex_store::AdmissionContext::connect(&url).await.unwrap();
+    crate::catalog::install_native_sources(&mut connection)
+        .await
+        .unwrap();
     let (writer, queues) = crate::writer::channels();
     let worker_writer = writer.clone();
     let worker_blobs = blobs.clone();

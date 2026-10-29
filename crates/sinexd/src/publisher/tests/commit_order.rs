@@ -380,6 +380,7 @@ async fn references_expose_no_source_key_and_route_by_current_policy_class(
     .await
     .unwrap();
     let event = executed("route-secret", "ordinary command", 1, Class::Open);
+    let original_key = event.equivalence_key.clone().unwrap().0;
     let id = event.id;
     admit(&mut conn, batch(vec![event], vec![])).await;
     assert!(
@@ -421,9 +422,19 @@ async fn references_expose_no_source_key_and_route_by_current_policy_class(
         .fetch_one(&mut *conn)
         .await
         .unwrap();
-    assert!(
-        key.contains("route-secret"),
+    let original: serde_json::Value =
+        sqlx::query_scalar("SELECT payload FROM core.events WHERE id=$1")
+            .bind(id.0)
+            .fetch_one(&mut *conn)
+            .await
+            .unwrap();
+    assert_eq!(
+        original["native_id"], "route-secret",
         "the exact original remains private"
+    );
+    assert_eq!(
+        key, original_key,
+        "output policy preserves exact source identity"
     );
 }
 

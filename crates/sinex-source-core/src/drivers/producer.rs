@@ -3,11 +3,10 @@
 //!
 //! A poll goes through the same driver and drain `sinexd` uses. Then:
 //!
-//! 1. the material's bytes are written to the material frame's
-//!    directory under the content store this host shares with `sinexd`
-//!    (`sinex_transport::frame_bytes`); Sinex stores them and registers the
-//!    material, and the producer waits for the acknowledgment before sending
-//!    anything that cites it;
+//! 1. the material's encoded bytes are staged under the producer's local
+//!    frame directory (`sinex_transport::frame_bytes`) and transferred to
+//!    Sinex; the producer waits for the verified durable material receipt
+//!    before sending anything that cites it;
 //! 2. the events go in frames that each fit one NATS message;
 //! 3. only when every frame of a batch is acknowledged does the binding's
 //!    cursor (and parser carry) advance, in a state file next to the spool.
@@ -18,10 +17,9 @@
 //! ([`Producer::position`]), and Sinex answers frames it already recorded from
 //! the record, so nothing is read into a second material or admitted twice.
 //!
-//! A producer on another host, which does not share `sinexd`'s content store,
-//! sends a material's bytes in [`Ingress::Chunk`] frames first
-//! ([`Producer::upload_bytes`]). A frame too large for one message is written
-//! to its frame directory as its JSON, and an [`Ingress::LargeFrame`] frame names it.
+//! Encoded custody travels in [`Ingress::Chunk`] frames on every host. A
+//! frame too large for one message is encoded in the same local custody
+//! format, and an [`Ingress::LargeFrame`] names its logical JSON identity.
 use sinex_transport::frame_bytes;
 mod staging;
 use staging::Snapshots;
@@ -91,9 +89,8 @@ fn submit_error(error: sinex_transport::producer::SubmitError) -> Error {
     }
 }
 
-/// The content store root shared with Sinex, whose frame directories receive the bytes;
-/// or, for a producer on another host, a local root whose frame directories hold them
-/// until they are sent in chunks.
+/// The producer's local encoded custody root. Its frame directories retain
+/// bytes until an authenticated owner receipt confirms the logical submission.
 #[derive(Clone)]
 pub struct Store(PathBuf);
 impl Store {
@@ -694,8 +691,7 @@ impl Producer {
         Ok(frame)
     }
 
-    /// Send `frame`, after uploading its frame bytes in chunks when Sinex
-    /// does not share this host's content store.
+    /// Transfer the encoded frame custody, then submit its logical envelope.
     async fn deliver(&mut self, frame: Ingress, shared: &Store) -> Result<Acknowledgment, Error> {
         let root = self.frame_root(shared).to_owned();
         sinex_transport::producer::transfer_frame(
