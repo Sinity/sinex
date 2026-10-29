@@ -338,7 +338,7 @@ async fn upgrade_keeps_activity_and_telemetry(db: devkit::pg::TestDatabase, from
     for definition in expected {
         assert_eq!(
             stored.get(&definition.kind),
-            Some(&definition),
+            Some(definition),
             "current typed definition remains immutable beside historical unknown version one"
         );
     }
