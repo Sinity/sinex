@@ -57,6 +57,10 @@ Aliases are payload projections over registered, produced event types: `commands
 its producer, so an alias never answers from nothing. Every duration projection states
 its unit. `kinds [KIND]` lists which aliases expand to which event types.
 
+### Supplied-vector ranking
+
+Use `similar:sinex:ev/<embedding-id>` with a stored `text.embedding` reference. It ranks the filtered event relation in that exact vector space and retains rows without a vector at unknown rank. It is a positive ranking directive in the root AND conditions; OR, NOT and conflicting references are explicit refusals. The reference obeys grants and the selected read position. This supplied-vector path enables no model provider.
+
 ### Typed payload fields
 
 Payload paths come from the kind registry, including nested objects, optional fields and

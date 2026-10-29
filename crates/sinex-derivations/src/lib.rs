@@ -20,6 +20,7 @@ pub mod attribution;
 pub mod calendar;
 pub mod conversation;
 pub mod derived_event;
+pub mod embedding;
 pub mod figures;
 pub mod fusion;
 pub mod health;
@@ -489,6 +490,7 @@ pub fn per_event() -> Vec<Box<dyn AnyPerEvent>> {
 /// Pure per-event derivations using the declared rules.
 pub fn per_event_with(configuration: &Configuration) -> Result<Vec<Box<dyn AnyPerEvent>>, String> {
     Ok(vec![
+        Box::new(embedding::Embeddings),
         Box::new(library::Hints),
         Box::new(tags::TagApplier::new(configuration.tags.clone())?),
     ])

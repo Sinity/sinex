@@ -239,6 +239,13 @@ Local OCR runs. It calls no provider and spends nothing, so the off switch above
 
 **Embeddings rank; they never filter.** Once embeddings are on, Sinex search may combine a stored similarity as a ranking term over the filtered set (`similar:`); it never removes a row the filters selected.
 
+Supplied `embedding.supplied` receipts cite their target reading as a parent. The deterministic `text.embeddings` derivation validates the receipt's identity fields, BLAKE3 digest encoding, provider/model/revision/settings/dimension space, finite components and exact count, then stores a complete `text.embedding` with the supplied receipt as its parent. This path constructs no provider and rereads no purchased embedding. Source replacement archives the old embedding before recomputation.
+
+The `read.embeddings` consumer builds a pgvector projection and an HNSW index for each supported space and dimension. Original f64 components remain in the stored event. Projection rows state indexed, exact, fallback or unavailable coverage and its reason. Extension type/index limits and precision range choose a fallback; they never truncate the stored vector. Initial projection and rebuild read retained events in bounded pages, including after commit-log pruning, and commit the projection with its position. Tombstoning removes projected copies in the same transaction.
+
+`similar:sinex:ev/<embedding-id>` reuses that exact supplied embedding under the reader's grants and read position. Similarity scores every filtered row, using the best compatible chunk where several are present. Rows without a compatible vector retain unknown rank. The approximate index supplies candidates for optimization, while query membership and exact fallback remain independent of its recall. Model-driven text-to-vector requests remain disabled.
+
+
 ## Performance
 
 Targets are stated as hardware-independent figures (rows read per key, invalidated keys per input, outputs and parents per input, WAL bytes per derived event, peak memory per key, lag per stage) plus absolute rates on the machine that runs them. They are measured as paired runs of the devkit bench ([benchmarks](testing.md#benchmarks)); no test asserts elapsed time.

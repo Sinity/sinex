@@ -15,6 +15,7 @@ pub mod derived;
 pub mod desktop;
 pub mod documents;
 pub mod environment;
+pub mod embedding;
 pub mod finance;
 pub mod forecast;
 pub mod fused;
@@ -278,6 +279,8 @@ pub const ALL: &[RegisteredEventType] = &[
     info::<portfolio::MarkLink>(),
     info::<work::WorkAct>(),
     info::<work::WorkCoverage>(),
+    info::<embedding::SuppliedEmbedding>(),
+    info::<embedding::TextEmbedding>(),
     info::<work::WorkEpisode>(),
     info::<work::WorkSuspension>(),
     info::<work::WorkResumption>(),

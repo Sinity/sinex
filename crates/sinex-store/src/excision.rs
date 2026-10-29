@@ -300,6 +300,9 @@ pub async fn apply(
     )
     .execute(&mut *conn)
     .await?;
+    sqlx::query("LOCK TABLE core.embedding_vectors IN SHARE ROW EXCLUSIVE MODE").execute(&mut *conn).await?;
+    sqlx::query!("DELETE FROM core.embedding_vectors WHERE embedding_id=ANY($1) OR target_id=ANY($1)",&ids)
+        .execute(&mut *conn).await?;
     // Every one leaves its run's count; the live ones leave their source's
     // count too, archived ones already did.
     sqlx::query!(

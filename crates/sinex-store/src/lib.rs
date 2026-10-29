@@ -28,6 +28,7 @@ pub mod runs;
 pub mod sealed;
 mod stage;
 pub mod telemetry;
+pub mod vectors;
 pub mod writer_lock;
 
 pub use admission::{

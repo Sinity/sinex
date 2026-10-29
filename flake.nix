@@ -12,7 +12,7 @@
       # The Rust toolchain comes from a pinned nixpkgs that matches the released shared crates.
       rustPkgs = import rust-nixpkgs { inherit system; };
       compilerTools = rustPkgs.rustc.llvmPackages;
-      postgres = pkgs.postgresql_18.withPackages (p: [ p.timescaledb ]);
+      postgres = pkgs.postgresql_18.withPackages (p: [ p.timescaledb p.pgvector ]);
       server = rustPkgs.rustPlatform.buildRustPackage {
         pname = "sinex";
         version = "0.1.0";
