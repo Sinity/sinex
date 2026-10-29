@@ -563,20 +563,15 @@ async fn rows_that_change_are_read_to_their_final_values() {
     )];
     rows.extend((1..=5_000).map(atuin_row));
     atuin_db(&path, &rows);
-    eprintln!("mutable rows: initial backfill (5001 rows)");
     t.backfill(None, Some(&path));
-    eprintln!("mutable rows: initial backfill committed");
 
     rows[0].2 = 7_000_000_000;
     rows[0].3 = 2;
     rows[5].5 = Some(1_700_000_000_000_000_000);
     rows.extend((5_001..=5_100).map(atuin_row));
     atuin_db(&path, &rows);
-    eprintln!("mutable rows: revised backfill (5101 rows)");
     t.backfill(None, Some(&path));
-    eprintln!("mutable rows: revised backfill committed; replay starts");
     t.admin(&["replay", "--binding", &atuin_binding(&path)]);
-    eprintln!("mutable rows: replay committed; checking final readings");
 
     let mut c = t.connect().await;
     let running = sqlx::query(
