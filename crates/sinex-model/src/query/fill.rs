@@ -99,7 +99,7 @@ pub(super) fn bind(q: &mut Query, ctx: &Context) -> Result<(), QueryError> {
 
 /// Bounds that hold for every row at this phase. OR and later groups never
 /// supply a narrowing bound; callers can use the result as a safe candidate range.
-pub fn finite_time_bounds(
+pub(super) fn finite_time_bounds(
     q: &Query,
     field: &FieldRef,
 ) -> Option<(jiff::Timestamp, jiff::Timestamp)> {
