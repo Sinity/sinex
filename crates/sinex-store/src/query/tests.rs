@@ -83,12 +83,23 @@ pub(crate) async fn admit_commands(
     }
     // Derived inputs are committed readings, including in fixtures.
     for derived in [false, true] {
-        let selected: Vec<_> = events.iter().filter(|event| matches!(&event.origin, Origin::Derived { .. }) == derived).cloned().collect();
-        if selected.is_empty() { continue; }
+        let selected: Vec<_> = events
+            .iter()
+            .filter(|event| matches!(&event.origin, Origin::Derived { .. }) == derived)
+            .cloned()
+            .collect();
+        if selected.is_empty() {
+            continue;
+        }
         let batch = Batch {
             run: RunId::new(),
-            kind: BatchKind::Api { actor: "test".into() },
-            records: vec![RecordOutcome::Events { location: None, events: selected }],
+            kind: BatchKind::Api {
+                actor: "test".into(),
+            },
+            records: vec![RecordOutcome::Events {
+                location: None,
+                events: selected,
+            }],
             archive: vec![],
         };
         let mut tx = conn.begin().await.unwrap();
