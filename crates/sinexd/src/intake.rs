@@ -193,7 +193,9 @@ pub(crate) async fn request(
         .map_err(|error| format!("ending request run {run}: {error}"));
     match (result, ended) {
         (result, Ok(())) => result,
-        (Ok(_), Err(error)) => Err(error),
+        (Ok(_), Err(error)) => Err(format!(
+            "request records committed for run {run}, but finalization failed: {error}"
+        )),
         (Err(error), Err(ending)) => Err(format!("{error}; {ending}")),
     }
 }
