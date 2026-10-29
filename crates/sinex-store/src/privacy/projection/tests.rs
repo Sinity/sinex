@@ -650,3 +650,151 @@ async fn missing_retained_kind_keeps_epoch_stale_but_explicit_no_search_kind_pro
             .unwrap();
     assert!(progress.is_none(), "failed page progress rolled back");
 }
+
+fn policy_lock_sqlstate(error: Error) -> String {
+    let Error::Database(error) = error else {
+        panic!("policy lock failed outside the database error class");
+    };
+    error
+        .as_database_error()
+        .and_then(|error| error.code())
+        .expect("policy lock database error must carry its actual SQLSTATE")
+        .into_owned()
+}
+
+#[devkit::test]
+async fn same_epoch_projection_catchup_preserves_a_repeatable_read_policy_lock(
+    db: devkit::pg::TestDatabase,
+) {
+    let mut writer = AdmissionContext::connect(&db.url(None)).await.unwrap();
+    let first = document("fixture.policy", "first retained original");
+    admit(&mut writer, vec![first.clone()]).await;
+    ensure_current(&mut writer).await.unwrap();
+    let before = epoch(&mut writer).await.unwrap();
+    assert!(before.ready());
+    let row_version: String =
+        sqlx::query_scalar("SELECT xmin::text FROM privacy.policy_state WHERE id")
+            .fetch_one(&mut *writer)
+            .await
+            .unwrap();
+
+    let mut reader = PgConnection::connect(&db.url(None)).await.unwrap();
+    let mut snapshot = reader.begin().await.unwrap();
+    crate::signals::effect_snapshot(&mut snapshot)
+        .await
+        .unwrap();
+    // A plain read establishes the old snapshot without locking the policy row.
+    assert_eq!(epoch(&mut snapshot).await.unwrap(), before);
+
+    let second = document("fixture.policy", "second retained original");
+    admit(&mut writer, vec![second.clone()]).await;
+    let head = crate::query::current_seq(&mut writer).await.unwrap();
+    let prior: i64 =
+        sqlx::query_scalar("SELECT after_seq FROM privacy.output_builds WHERE epoch=$1")
+            .bind(before.desired)
+            .fetch_one(&mut *writer)
+            .await
+            .unwrap();
+    assert!(
+        prior < head,
+        "the real new input requires projection catch-up"
+    );
+    ensure_current(&mut writer).await.unwrap();
+
+    // On the predecessor, this reports the actual database code for the
+    // same-value activation update that invalidated the reader's snapshot.
+    let locked = match lock_epoch(&mut snapshot).await {
+        Ok(epoch) => epoch,
+        Err(error) => panic!(
+            "same-epoch activation invalidated a policy snapshot: SQLSTATE={}",
+            policy_lock_sqlstate(error)
+        ),
+    };
+    assert_eq!(locked, before);
+    snapshot.rollback().await.unwrap();
+    let after_version: String =
+        sqlx::query_scalar("SELECT xmin::text FROM privacy.policy_state WHERE id")
+            .fetch_one(&mut *writer)
+            .await
+            .unwrap();
+    assert_eq!(
+        after_version, row_version,
+        "unchanged policy has no new row version"
+    );
+    let coverage: (i64, Option<Uuid>) =
+        sqlx::query_as("SELECT after_seq,after_id FROM privacy.output_builds WHERE epoch=$1")
+            .bind(before.desired)
+            .fetch_one(&mut *writer)
+            .await
+            .unwrap();
+    assert_eq!(
+        coverage,
+        (head, None),
+        "catch-up completed its whole-position fence"
+    );
+    let ids = [first.id.0, second.id.0];
+    let outputs: (i64, i64) = sqlx::query_as(
+        "SELECT count(*),count(*) FILTER(WHERE o.epoch=$2 AND o.state='complete') FROM core.events e LEFT JOIN privacy.event_outputs o ON o.event_id=e.id WHERE e.id=ANY($1)",
+    ).bind(ids.as_slice()).bind(before.active).fetch_one(&mut *writer).await.unwrap();
+    assert_eq!(outputs, (2, 2));
+    for original in [first, second] {
+        let retained: Value = sqlx::query_scalar("SELECT payload FROM core.events WHERE id=$1")
+            .bind(original.id.0)
+            .fetch_one(&mut *writer)
+            .await
+            .unwrap();
+        assert_eq!(retained, original.payload);
+        assert_eq!(visible(&mut writer, original.id.0).await, original.payload);
+    }
+}
+
+#[devkit::test]
+async fn a_real_epoch_activation_still_invalidates_an_older_policy_snapshot(
+    db: devkit::pg::TestDatabase,
+) {
+    let mut writer = AdmissionContext::connect(&db.url(None)).await.unwrap();
+    let original = document("fixture.policy", "leafsecret");
+    admit(&mut writer, vec![original.clone()]).await;
+    ensure_current(&mut writer).await.unwrap();
+    let before = epoch(&mut writer).await.unwrap();
+    assert!(before.ready());
+    let mut reader = PgConnection::connect(&db.url(None)).await.unwrap();
+    let mut snapshot = reader.begin().await.unwrap();
+    crate::signals::effect_snapshot(&mut snapshot)
+        .await
+        .unwrap();
+    assert_eq!(epoch(&mut snapshot).await.unwrap(), before);
+
+    privacy::add_rule(&mut writer, &rule()).await.unwrap();
+    let pending = epoch(&mut writer).await.unwrap();
+    assert_eq!(pending.desired, before.desired + 1);
+    assert_eq!(pending.active, before.active);
+    assert!(!pending.ready());
+    ensure_current(&mut writer).await.unwrap();
+    let current = epoch(&mut writer).await.unwrap();
+    assert_eq!(
+        current,
+        Epoch {
+            desired: pending.desired,
+            active: pending.desired
+        }
+    );
+    let error = lock_epoch(&mut snapshot).await.unwrap_err();
+    let code = policy_lock_sqlstate(error);
+    assert_eq!(code, "40001", "actual stale-snapshot database SQLSTATE");
+    snapshot.rollback().await.unwrap();
+    let retained: Value = sqlx::query_scalar("SELECT payload FROM core.events WHERE id=$1")
+        .bind(original.id.0)
+        .fetch_one(&mut *writer)
+        .await
+        .unwrap();
+    assert_eq!(retained, original.payload);
+    assert_ne!(visible(&mut writer, original.id.0).await, original.payload);
+    let output: (i64, String) =
+        sqlx::query_as("SELECT epoch,state FROM privacy.event_outputs WHERE event_id=$1")
+            .bind(original.id.0)
+            .fetch_one(&mut *writer)
+            .await
+            .unwrap();
+    assert_eq!(output, (current.active, "complete".into()));
+}
