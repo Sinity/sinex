@@ -6,6 +6,7 @@ use crate::client::Client;
 use rmcp::model::{
     CallToolRequestParams, CallToolResponse, CallToolResult, ContentBlock, Implementation,
     ListToolsResult, PaginatedRequestParams, ServerCapabilities, ServerConfig, Tool,
+    ToolAnnotations,
 };
 use rmcp::service::RequestContext;
 use rmcp::{ErrorData as McpError, RoleServer, ServerHandler, ServiceExt};
@@ -59,8 +60,17 @@ pub(crate) fn tools() -> Vec<Tool> {
                 c.summary,
                 Arc::new(schema(c)),
             )
+            .annotate(ToolAnnotations::new().read_only(c.access == sinex_protocol::Access::Read))
         })
         .collect()
+}
+
+fn success_result(result: Value) -> CallToolResult {
+    let text = serde_json::to_string_pretty(&result).unwrap_or_default();
+    let mut reply =
+        CallToolResult::success(vec![ContentBlock::text(format!("{DATA_NOTICE}\n{text}"))]);
+    reply.structured_content = Some(result);
+    reply
 }
 
 impl ServerHandler for Sinex {
@@ -106,10 +116,7 @@ impl ServerHandler for Sinex {
             Err(e) => return Ok(CallToolResult::error(vec![ContentBlock::text(e)]).into()),
         };
         Ok(match self.client.call(&call).await {
-            Ok((_, Reply::Ok { result })) => {
-                let text = serde_json::to_string_pretty(&result).unwrap_or_default();
-                CallToolResult::success(vec![ContentBlock::text(format!("{DATA_NOTICE}\n{text}"))])
-            }
+            Ok((_, Reply::Ok { result })) => success_result(result),
             Ok((_, Reply::Refused { reason, not_built })) => {
                 let prefix = if not_built {
                     "not built yet: "
