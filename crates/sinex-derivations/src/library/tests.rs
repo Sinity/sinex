@@ -66,7 +66,7 @@ fn compute(inputs: &[Event]) -> Vec<Event> {
             .map(|event| event.payload["item"].clone())
             .unwrap_or(Value::Null),
         inputs,
-        &Env::at(Timestamp::from_unix_secs(100).unwrap()),
+        &Env::at(Timestamp::from_unix_secs(100).unwrap(), sinex_model::time_settings::TimeSettings::new("Europe/Warsaw", 4, 0).expect("fixture day setting")),
     )
     .outputs
 }

@@ -26,7 +26,7 @@ fn acquisition(id: &str) -> drivers::Acquired {
 
 async fn request_run(conn: &mut PgConnection, expected_events: i64) {
     let rows: Vec<(String, String, String, Vec<String>, String, i64, bool)> = sqlx::query_as(
-        "SELECT m.name,m.version,m.build,m.emits,r.host,r.events,r.ended_at IS NOT NULL FROM core.runs r JOIN core.manifests m ON m.id=r.manifest_id WHERE m.name='forecast-request'"
+        "SELECT m.name,m.version,m.build,m.emits,r.host,r.events,r.ended_at IS NOT NULL FROM core.runs r JOIN core.manifests m ON m.id=r.manifest_id WHERE m.name='forecast.request'"
     ).fetch_all(&mut *conn).await.unwrap();
     assert_eq!(
         rows.len(),
@@ -34,14 +34,14 @@ async fn request_run(conn: &mut PgConnection, expected_events: i64) {
         "every request attempt has one real source run"
     );
     let (name, version, build, emits, host, events, ended) = &rows[0];
-    assert_eq!(name, forecast::REQUEST.parser);
+    assert_eq!(name, forecast::REQUEST.name);
     assert_eq!(version, &forecast::REQUEST.parser_version.to_string());
     assert_eq!(build, crate::build_identity::current().unwrap());
     assert_eq!(emits, forecast::REQUEST.event_types);
     assert_eq!(host, "synthetic");
     assert_eq!(*events, expected_events);
     assert!(*ended, "the request run is finalized on its exit path");
-    let linked: i64 = sqlx::query_scalar("SELECT count(*) FROM core.events e JOIN core.runs r ON r.id=e.run_id JOIN core.manifests m ON m.id=r.manifest_id WHERE m.name='forecast-request'").fetch_one(conn).await.unwrap();
+    let linked: i64 = sqlx::query_scalar("SELECT count(*) FROM core.events e JOIN core.runs r ON r.id=e.run_id JOIN core.manifests m ON m.id=r.manifest_id WHERE m.name='forecast.request'").fetch_one(conn).await.unwrap();
     assert_eq!(
         linked, expected_events,
         "stored request events name their actual producer manifest"
@@ -72,6 +72,7 @@ async fn request_refuses_all_records_when_one_does_not_parse(db: devkit::pg::Tes
         &ctx.blobs,
         Arc::new(forecast::request_source()),
         "synthetic-request",
+        "synthetic",
         acquired,
     )
     .await
@@ -116,6 +117,7 @@ async fn request_commits_its_records_together_with_the_source_class(db: devkit::
         &ctx.blobs,
         Arc::new(forecast::request_source()),
         "synthetic-request",
+        "synthetic",
         acquired,
     )
     .await
@@ -151,7 +153,8 @@ async fn submission_checks_again_inside_the_writer(db: devkit::pg::TestDatabase)
     let stopped = Arc::new(AtomicBool::new(false));
     let checked_stop = stopped.clone();
     let result = Intake {
-        writer: &ctx.writer,
+        host:None,
+writer: &ctx.writer,
         source: Arc::new(forecast::request_source()),
         binding: "synthetic-check",
         run: RunId::new(),
@@ -289,7 +292,8 @@ async fn overlap(fail_first: bool) {
     let blobs = Blobs::open(dir.path()).unwrap();
     let (writer, _queues) = crate::writer::channels();
     let intake = Intake {
-        writer: &writer,
+        host:None,
+writer: &writer,
         source: Arc::new(source),
         binding: "synthetic-overlap",
         run: RunId::new(),
@@ -469,7 +473,8 @@ async fn queued_submission(db: devkit::pg::TestDatabase, cancel: bool) {
     };
     let mut submission = tokio::spawn(async move {
         let intake = Intake {
-            writer: &worker_writer,
+            host:None,
+writer: &worker_writer,
             source: Arc::new(source),
             binding: "synthetic-queued",
             run: RunId::new(),
@@ -580,6 +585,7 @@ async fn an_unavailable_request_finalizes_its_observed_source_run(db: devkit::pg
         &ctx.blobs,
         Arc::new(forecast::request_source()),
         "synthetic-request",
+        "synthetic",
         acquired,
     )
     .await

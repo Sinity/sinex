@@ -4,7 +4,7 @@
 //! materials they were read from, and nothing else:
 //!
 //! - each material goes whole: its row, its failures, the reader memory saved
-//!   at it and the producer frames that registered it or its events; its
+//!   at it; negative producer receipts retain only their idempotency identity; its
 //!   blob is deleted once nothing refers to it, and kept while another
 //!   material shares it; an input left with no material goes with its
 //!   observations and revisions;
@@ -256,6 +256,9 @@ pub async fn apply(
     }
     removable(conn, plan).await?;
     let ids: Vec<Uuid> = plan.events.iter().copied().collect();
+    let material_ids=plan.materials.iter().map(|material|material.id.0).collect::<Vec<_>>();
+    let affected_frames:Vec<i64>=sqlx::query_scalar("SELECT DISTINCT f.number FROM core.ingress_frames f WHERE f.material_id=ANY($1) OR f.admitted && $2 OR EXISTS(SELECT 1 FROM core.events e WHERE e.id=ANY($2) AND e.producer_frame=f.number)")
+        .bind(&material_ids).bind(&ids).fetch_all(&mut *conn).await?;
     let mut applied = Applied::default();
 
     let mut scope = match target {
@@ -365,7 +368,7 @@ pub async fn apply(
         }
     }
 
-    remove_materials(conn, plan, &ids, operation, &mut applied).await?;
+    remove_materials(conn, plan, &affected_frames, operation, &mut applied).await?;
     sqlx::query!("SELECT set_config('sinex.excise_operation', '', true)")
         .fetch_one(&mut *conn)
         .await?;
@@ -377,7 +380,7 @@ pub async fn apply(
 async fn remove_materials(
     conn: &mut PgConnection,
     plan: &Plan,
-    events: &[Uuid],
+    frames: &[i64],
     operation: OperationId,
     applied: &mut Applied,
 ) -> Result<()> {
@@ -395,17 +398,15 @@ async fn remove_materials(
     )
     .execute(&mut *conn)
     .await?;
-    sqlx::query!(
-        "DELETE FROM core.ingress_frames WHERE material_id = ANY($1) OR admitted && $2",
-        &materials,
-        events,
-    )
-    .execute(&mut *conn)
-    .await?;
-    // Empty bytes hold nothing to keep out.
+    // The same owner table retains a negative idempotency receipt, including
+    // when immutable sibling events still cite its reserved number.
+    sqlx::query("UPDATE core.ingress_frames f SET material_id=NULL,admitted='{}',commit_seq=NULL,family=NULL,write_kind_prefixes=NULL,source_name=NULL,source_version=NULL,source_fingerprint=NULL,producer_host=NULL,outcome=jsonb_strip_nulls(jsonb_build_object('frame_content_hash',f.outcome->'frame_content_hash','refusal_kind',CASE WHEN EXISTS(SELECT 1 FROM core.events e WHERE e.producer_frame=f.number) THEN 'partially_excised' ELSE 'excised' END)),refusal=CASE WHEN EXISTS(SELECT 1 FROM core.events e WHERE e.producer_frame=f.number) THEN 'frame partially excised; frozen admission cannot be replayed' ELSE 'frame excised; frozen admission cannot be replayed' END WHERE f.number=ANY($1)")
+        .bind(frames).execute(&mut *conn).await?;
+    // Empty bodies do not ban their shared digest; their removed identity
+    // still cannot be registered again.
     sqlx::query!(
         r#"INSERT INTO core.excised_materials (material_id, blob, operation_id)
-           SELECT id, blob, $2 FROM raw.materials WHERE id = ANY($1) AND length > 0
+           SELECT id, blob, $2 FROM raw.materials WHERE id = ANY($1)
            ON CONFLICT DO NOTHING"#,
         &materials,
         operation.0,

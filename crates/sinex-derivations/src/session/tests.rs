@@ -24,7 +24,7 @@ fn fused(secs: i64, duration_s: Option<i64>, exit: i64) -> Event {
 const T: i64 = 1_718_438_400;
 
 fn sessions(inputs: &[Event]) -> Vec<ShellSession> {
-    let env = Env::at(Timestamp::from_unix_secs(T + 86_400 * 3).unwrap());
+    let env = Env::at(Timestamp::from_unix_secs(T + 86_400 * 3).unwrap(), sinex_model::time_settings::TimeSettings::new("Europe/Warsaw", 4, 0).expect("fixture day setting"));
     let key = json!({"host": "box", "day": "2024-06-15"});
     ShellSessions
         .compute(&key, inputs, &env)
@@ -55,7 +55,7 @@ fn gap_after_the_latest_end_splits_sessions() {
 
 #[devkit::test]
 fn key_is_host_and_logical_day() {
-    let env = Env::at(Timestamp::now());
+    let env = Env::at(Timestamp::now(), sinex_model::time_settings::TimeSettings::new("Europe/Warsaw", 4, 0).expect("fixture day setting"));
     let e = fused(T, None, 0);
     let keys = ShellSessions.keys_for(
         &KeyView {
@@ -81,7 +81,7 @@ fn key_is_host_and_logical_day() {
 
 #[devkit::test]
 fn every_member_is_a_parent() {
-    let env = Env::at(Timestamp::now());
+    let env = Env::at(Timestamp::now(), sinex_model::time_settings::TimeSettings::new("Europe/Warsaw", 4, 0).expect("fixture day setting"));
     let inputs = [fused(T, None, 0), fused(T + 10, None, 0)];
     let out = ShellSessions.compute(&json!({"host": "box", "day": "2024-06-15"}), &inputs, &env);
     match &out.outputs[0].origin {

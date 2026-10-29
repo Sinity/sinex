@@ -189,28 +189,13 @@ pub(super) async fn frame(
     conn: &mut PgConnection,
     frame: &sinex_model::IngressFrame,
     outcome: &Outcome,
+    number: i64,
 ) -> Result<()> {
     let admitted: Vec<Uuid> = outcome.admitted_ids.iter().map(|id| id.0).collect();
-    let counts = serde_json::json!({
-        "registered_kinds": outcome.registered_kinds,
-        "commit_range": outcome.commit_seq,
-        "superseded_input": outcome.superseded_input,
-        "replay_archived": outcome.replay_archived,
-        "dirty_keys": outcome.dirty_keys,
-        "admitted": outcome.admitted,
-        "repeats": outcome.repeats,
-        "replaced": outcome.replaced,
-        "older": outcome.older,
-        "hidden": outcome.hidden,
-        "superseded": outcome.superseded,
-        "failures": outcome.failures,
-        "refusal_kind": frame.refusal_kind,
-        "source": frame.source,
-        "event_types": frame.event_types,
-    });
+    let counts = outcome.frame_counts(frame);
     sqlx::query!(
-        r#"INSERT INTO core.ingress_frames (producer, frame, material_id, admitted, outcome, refusal, commit_seq, family, write_kind_prefixes)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)"#,
+        r#"INSERT INTO core.ingress_frames (producer, frame, material_id, admitted, outcome, refusal, commit_seq, family, write_kind_prefixes, number, source_name, source_version, source_fingerprint, producer_host)
+           OVERRIDING SYSTEM VALUE VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)"#,
         frame.producer,
         frame.frame,
         frame
@@ -224,6 +209,11 @@ pub(super) async fn frame(
         outcome.commit_seq.map(|(_, last)| last),
         frame.family,
         &frame.write_kind_prefixes,
+        number,
+        frame.native_source.as_ref().map(|source|source.name.as_str()),
+        frame.native_source.as_ref().map(|source|i64::from(source.version)),
+        frame.source_fingerprint,
+        frame.host,
     )
     .execute(&mut *conn)
     .await?;
@@ -231,20 +221,232 @@ pub(super) async fn frame(
 }
 
 /// Exact frame retries return the committed result before advancing any order.
-pub(super) async fn recorded(conn:&mut PgConnection,frame:&sinex_model::IngressFrame)->Result<Option<Outcome>> {
-    let row=sqlx::query!("SELECT admitted,outcome FROM core.ingress_frames WHERE producer=$1 AND frame=$2",frame.producer,frame.frame).fetch_optional(conn).await?;
-    let Some(row)=row else {return Ok(None);};
-    let count=|name:&str|->Result<usize> {
+pub(crate) async fn recorded(
+    conn: &mut PgConnection,
+    frame: &sinex_model::IngressFrame,
+) -> Result<Option<Outcome>> {
+    let row = sqlx::query!(
+        "SELECT admitted,outcome,refusal FROM core.ingress_frames WHERE producer=$1 AND frame=$2",
+        frame.producer,
+        frame.frame
+    )
+    .fetch_optional(conn)
+    .await?;
+    let Some(row) = row else {
+        return Ok(None);
+    };
+    if let (Some(offered),Some(saved))=(&frame.content_hash,row.outcome.get("frame_content_hash").and_then(Value::as_str)) && offered!=saved {
+        return Err(Error::Invalid("frame_body_conflict".into()));
+    }
+    if let Some(refusal)=row.refusal{return Err(Error::Invalid(format!("recorded_frame_refused: {refusal}")));}
+    let count = |name: &str| -> Result<usize> {
         match row.outcome.get(name) {
-            None=>Ok(0),
-            Some(value)=>value.as_u64().and_then(|v|usize::try_from(v).ok()).ok_or_else(||Error::Invalid(format!("stored frame has invalid {name} count"))),
+            None => Ok(0),
+            Some(value) => value
+                .as_u64()
+                .and_then(|v| usize::try_from(v).ok())
+                .ok_or_else(|| Error::Invalid(format!("stored frame has invalid {name} count"))),
         }
     };
     Ok(Some(Outcome {
-        admitted:count("admitted")?,repeats:count("repeats")?,replaced:count("replaced")?,older:count("older")?,hidden:count("hidden")?,superseded:count("superseded")?,superseded_input:count("superseded_input")?,failures:count("failures")?,dirty_keys:count("dirty_keys")?,replay_archived:count("replay_archived")?,
-        commit_seq:row.outcome.get("commit_range").filter(|v|!v.is_null()).map(|v|serde_json::from_value(v.clone())).transpose().map_err(|e|Error::Invalid(format!("stored frame has invalid commit range: {e}")))?,
-        admitted_ids:row.admitted.into_iter().map(EventId).collect(),
-        registered_kinds:row.outcome.get("registered_kinds").map(|v|serde_json::from_value(v.clone())).transpose().map_err(|e|Error::Invalid(format!("stored frame has invalid kind registrations: {e}")))?.unwrap_or_default(),
-        timings:Default::default(),
+        admitted: count("admitted")?,
+        repeats: count("repeats")?,
+        replaced: count("replaced")?,
+        older: count("older")?,
+        hidden: count("hidden")?,
+        superseded: count("superseded")?,
+        superseded_input: count("superseded_input")?,
+        failures: count("failures")?,
+        dirty_keys: count("dirty_keys")?,
+        replay_archived: count("replay_archived")?,
+        commit_seq: row
+            .outcome
+            .get("commit_range")
+            .filter(|v| !v.is_null())
+            .map(|v| serde_json::from_value(v.clone()))
+            .transpose()
+            .map_err(|e| Error::Invalid(format!("stored frame has invalid commit range: {e}")))?,
+        admitted_ids: row.admitted.into_iter().map(EventId).collect(),
+        registered_kinds: row
+            .outcome
+            .get("registered_kinds")
+            .map(|v| serde_json::from_value(v.clone()))
+            .transpose()
+            .map_err(|e| {
+                Error::Invalid(format!("stored frame has invalid kind registrations: {e}"))
+            })?
+            .unwrap_or_default(),
+        timings: Default::default(),
     }))
+}
+
+#[derive(Default)]
+pub(super) struct Provenance {
+    pub family: Option<String>,
+    pub identity: Option<String>,
+    pub host: Option<String>,
+    pub frame: Option<i64>,
+    pub source_version: Option<i64>,
+    pub source_fingerprint: Option<String>,
+}
+
+pub(super) async fn provenance(
+    conn: &mut PgConnection,
+    batch: &Batch,
+    number: Option<i64>,
+) -> Result<Provenance> {
+    let (source, mut provenance) = match &batch.kind {
+        BatchKind::Ingress(frame) => (
+            frame.native_source.as_ref(),
+            Provenance {
+                family: frame.family.clone(),
+                identity: Some(frame.producer.clone()),
+                host: frame.host.clone(),
+                frame: number,
+                source_version: None,
+                source_fingerprint: frame.source_fingerprint.clone(),
+            },
+        ),
+        BatchKind::Source(progress) => (
+            progress.source.as_ref(),
+            Provenance {
+                host: progress.host.clone(),
+                ..Default::default()
+            },
+        ),
+        BatchKind::Replay { source, host, .. } => (
+            source.as_ref(),
+            Provenance {
+                host: host.clone(),
+                ..Default::default()
+            },
+        ),
+        BatchKind::Derived { .. } | BatchKind::Api { .. } => {
+            return Ok(Provenance::default());
+        }
+    };
+    let Some(source) = source else {
+        return Ok(provenance);
+    };
+    let declaration = crate::source_declarations::load(conn, source)
+        .await?
+        .ok_or_else(|| {
+            Error::Invalid(format!(
+                "native source {} version {} is not registered",
+                source.name, source.version
+            ))
+        })?;
+    if provenance
+        .family
+        .as_ref()
+        .is_some_and(|family| family != &declaration.family)
+    {
+        return Err(Error::Invalid(
+            "native source belongs to another configured family".into(),
+        ));
+    }
+    let fingerprint = declaration.fingerprint();
+    if provenance
+        .source_fingerprint
+        .as_ref()
+        .is_some_and(|known| known != &fingerprint)
+    {
+        return Err(Error::Invalid(
+            "native source fingerprint differs from the owner catalog".into(),
+        ));
+    }
+    let refs = batch.events().map(Event::kind_ref).collect::<Vec<_>>();
+    let kinds = sinex_schema::kinds::load(conn, &refs).await?;
+    for event in batch.events() {
+        if event.source != source.name
+            || kinds
+                .get(&event.kind_ref())
+                .is_none_or(|kind| !declaration.allows(&kind.kind, &kind.definition_hash()))
+        {
+            return Err(Error::Invalid(
+                "event is outside its exact native source declaration".into(),
+            ));
+        }
+    }
+    provenance.family = Some(declaration.family);
+    if matches!(batch.kind, BatchKind::Source(_) | BatchKind::Replay { .. }) {
+        provenance.identity = Some("sinexd".into());
+    }
+    provenance.source_version = Some(i64::from(source.version));
+    provenance.source_fingerprint = Some(fingerprint);
+    Ok(provenance)
+}
+
+impl Outcome {
+    pub(crate) fn frame_counts(&self, frame: &sinex_model::IngressFrame) -> Value {
+        serde_json::json!({
+            "frame_content_hash": frame.content_hash,
+            "registered_kinds": self.registered_kinds,
+            "commit_range": self.commit_seq,
+            "superseded_input": self.superseded_input,
+            "replay_archived": self.replay_archived,
+            "dirty_keys": self.dirty_keys,
+            "admitted": self.admitted,
+            "repeats": self.repeats,
+            "replaced": self.replaced,
+            "older": self.older,
+            "hidden": self.hidden,
+            "superseded": self.superseded,
+            "failures": self.failures,
+            "refusal_kind": frame.refusal_kind,
+            "source": frame.source,
+            "event_types": frame.event_types,
+        })
+    }
+}
+
+/// A native field key names one immutable input copy. Neither a declared host
+/// nor a caller-selected input UUID can join another copy's reading history.
+pub(super) async fn native_keys(
+    conn: &mut PgConnection,
+    batch: &Batch,
+    events: &mut [Event],
+) -> Result<()> {
+    let native = match &batch.kind {
+        BatchKind::Source(progress) => progress.source.as_ref(),
+        BatchKind::Ingress(frame) => frame.native_source.as_ref(),
+        BatchKind::Replay { source, .. } => source.as_ref(),
+        _ => None,
+    };
+    if native.is_none() {
+        return Ok(());
+    }
+    let ids = events
+        .iter()
+        .filter_map(|event| match &event.origin {
+            Origin::Record { location, .. } if event.equivalence_key.is_some() => {
+                Some(location.material.0)
+            }
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    let rows: Vec<(Uuid, Uuid)> =
+        sqlx::query_as("SELECT id,input_id FROM raw.materials WHERE id=ANY($1)")
+            .bind(&ids)
+            .fetch_all(conn)
+            .await?;
+    let inputs = rows
+        .into_iter()
+        .collect::<std::collections::HashMap<_, _>>();
+    for event in events {
+        if let Origin::Record { location, .. } = &event.origin
+            && let Some(key) = &mut event.equivalence_key
+        {
+            let input = inputs.get(&location.material.0).ok_or_else(|| {
+                Error::Invalid("native reading has no owner-registered immutable input".into())
+            })?;
+            let encoded = serde_json::to_vec(&(input, key.0.as_str()))
+                .map_err(|error| Error::Invalid(error.to_string()))?;
+            key.0 = blake3::derive_key("sinex.native_input_key.v1", &encoded)
+                .iter()
+                .map(|byte| format!("{byte:02x}"))
+                .collect();
+        }
+    }
+    Ok(())
 }

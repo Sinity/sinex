@@ -33,7 +33,11 @@ impl ReaderContext {
             .await
             .map_err(|e| e.to_string())?;
         let mut writer_conn = writer::claim(writer_conn).await?;
-        sinex_store::blobs::delete_files_without_rows(&mut writer_conn, &blobs)
+        blobs
+            .recover(&mut writer_conn)
+            .await
+            .map_err(|error| error.to_string())?;
+        sinex_store::blobs::delete_unreferenced_extents(&mut writer_conn, &blobs)
             .await
             .map_err(|e| e.to_string())?;
         let (writer, queues) = writer::channels();
@@ -41,7 +45,7 @@ impl ReaderContext {
             database.to_owned(),
             writer_conn,
             queues,
-            Arc::new(Registered::new(sinex_derivations::keyed(), time_settings)),
+            Arc::new(Registered::new(crate::analysis::keyed(), time_settings)),
             Some(blobs.clone()),
         ));
         Ok(Self {
@@ -57,7 +61,7 @@ impl ReaderContext {
         drop(self.writer);
         self.task.await.map_err(|e| e.to_string())?;
         let mut conn = writer::claim(self.read_conn).await?;
-        sinex_store::blobs::forget_files_with_rows(&mut conn, &self.blobs)
+        sinex_store::blobs::commit_pending_extents(&mut conn, &self.blobs)
             .await
             .map_err(|e| e.to_string())
     }

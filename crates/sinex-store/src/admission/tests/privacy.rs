@@ -158,7 +158,7 @@ async fn one_privacy_point_covers_source_and_derived_events(db: devkit::pg::Test
         "no current output holds the secret"
     );
     let classes: Vec<String> =
-        sqlx::query_scalar!("SELECT class FROM core.visible_events ORDER BY commit_seq")
+        sqlx::query_scalar!(r#"SELECT class AS "class!" FROM core.visible_events ORDER BY commit_seq"#)
             .fetch_all(&mut conn)
             .await
             .unwrap();

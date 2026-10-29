@@ -88,7 +88,7 @@ pub(super) async fn request(
                    VALUES ($1, $2, $3,
                      CASE WHEN $3::text IS NULL THEN $4::uuid END,
                      CASE WHEN $3::text IS NULL THEN $5::bigint END,
-                     CASE WHEN $3::text IS NULL THEN $6::smallint END, $7)
+                     CASE WHEN $3::text IS NULL THEN $6::bigint END, $7)
                    ON CONFLICT DO NOTHING"#,
                 event.source,
                 event.event_type,
@@ -158,7 +158,7 @@ pub(super) async fn request(
                     conn,
                     owners
                         .into_iter()
-                        .map(|row| (crate::derivations::static_type(&row.derivation), row.key))
+                        .map(|row| (row.derivation, row.key))
                         .collect(),
                     seq,
                 )
@@ -209,7 +209,7 @@ async fn live_reading(
     key: Option<&str>,
     material: Option<Uuid>,
     anchor: Option<i64>,
-    output_index: i16,
+    output_index: i64,
 ) -> Result<Vec<Uuid>> {
     Ok(match key {
         Some(key) => sqlx::query_scalar!(

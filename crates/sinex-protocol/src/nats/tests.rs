@@ -33,13 +33,21 @@ fn producer_permissions_name_only_its_own_subjects() {
             "sinex.materials.phone",
             "sinex.excise.phone",
             "sinex.replay_scope.phone",
+            "sinex.public_context.phone",
             "sinex.fetch_event.phone",
             "sinex.fetch_material.phone",
             "sinex.confirmed_consumer.phone",
             "_INBOX.phone.>"
         ]
     );
-    assert_eq!(subscribe, ["sinex.ack.phone", "_INBOX.phone.>"]);
+    assert_eq!(
+        subscribe,
+        [
+            "sinex.ack.phone",
+            "sinex.signal_condition.phone",
+            "_INBOX.phone.>"
+        ]
+    );
     let config = s.authorization(("sinexd", "pw"), &[("phone", "p\"w")], &[]);
     assert!(
         config.contains(r#"user: "phone", password: "p\"w""#),
@@ -69,6 +77,7 @@ fn frames_round_trip_with_defaults() {
 #[devkit::test]
 fn confirmed_readings_require_their_record_hash_and_order() {
     let event = ConfirmedEvent {
+        source_ref:None,source_fingerprint:None,producer_family:None,producer_identity:None,
         kind_version: 1,
         validation: sinex_model::Validation::Validated,
         commit_seq: 1,
@@ -88,8 +97,8 @@ fn confirmed_readings_require_their_record_hash_and_order() {
         equivalence_key: None,
         reading_order: 17,
         record_hash: "00".repeat(32),
-        payload:serde_json::json!({}),
-        projection:crate::ProjectionIdentity::for_payload(0,&serde_json::json!({})),
+        payload: serde_json::json!({}),
+        projection: crate::ProjectionIdentity::for_payload(0, &serde_json::json!({})),
     };
     let value = serde_json::to_value(&event).unwrap();
     assert_eq!(
@@ -181,5 +190,25 @@ fn confirmed_consumer_permissions_are_exact_and_never_allow_admin_or_raw_reads()
         || subject.contains("DELETE")
         || subject.contains("MSG.GET")
         || subject.contains("sinex-other")));
-    assert_eq!(subscribe, vec!["sinex.ack.replica", "_INBOX.replica.>"]);
+    assert_eq!(
+        subscribe,
+        vec![
+            "sinex.ack.replica",
+            "sinex.signal_condition.replica",
+            "_INBOX.replica.>"
+        ]
+    );
+}
+
+#[devkit::test]
+fn condition_callbacks_are_scoped_to_the_authenticated_producer_only() {
+    let subjects = Subjects::sinex();
+    let (publish, subscribe) = subjects.producer_permissions("first", None);
+    assert!(subscribe.contains(&subjects.signal_condition("first")));
+    assert!(!subscribe.contains(&subjects.signal_condition("second")));
+    assert!(
+        !publish
+            .iter()
+            .any(|subject| subject.starts_with("sinex.signal_condition."))
+    );
 }

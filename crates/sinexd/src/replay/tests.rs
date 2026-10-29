@@ -46,7 +46,7 @@ async fn fixture(db: devkit::pg::TestDatabase) -> Fixture {
     let ctx = ReaderContext::open(
         &url,
         &dir.join("store"),
-        sinex_model::time_settings::TimeSettings::operator_default(),
+        sinex_model::time_settings::TimeSettings::new("Europe/Warsaw", 4, 0).expect("fixture day setting"),
     )
     .await
     .unwrap();

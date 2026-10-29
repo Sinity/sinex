@@ -102,9 +102,7 @@ async fn external_validation_and_rules_apply_on_every_writer_route(db: devkit::p
         BatchKind::Api {
             actor: "test".into(),
         },
-        BatchKind::Replay {
-            operation: OperationId::new(),
-        },
+        BatchKind::Replay {operation: OperationId::new(),source:None,host:None},
         BatchKind::Derived {
             derivation: "test".into(),
             scope: json!({}),

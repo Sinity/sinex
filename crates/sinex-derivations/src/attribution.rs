@@ -44,8 +44,11 @@ fn effective(root: &Value, at: Timestamp) -> bool {
         root.get(field)
             .and_then(|value| serde_json::from_value::<Timestamp>(value.clone()).ok())
     };
-    let valid_until = root.get("until").is_none_or(|until| until.is_null() || time("until").is_some());
-    valid_until && time("from").is_some_and(|from| from <= at)
+    let valid_until = root
+        .get("until")
+        .is_none_or(|until| until.is_null() || time("until").is_some());
+    valid_until
+        && time("from").is_some_and(|from| from <= at)
         && time("until").is_none_or(|until| at < until)
 }
 

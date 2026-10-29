@@ -134,6 +134,7 @@ async fn read_models_get_every_event_once_across_restarts(db: devkit::pg::TestDa
                 PgConnection::connect(&url).await.unwrap(),
                 consumers,
                 commits,
+                watch::channel(()).0,
                 stop,
             )
             .await
@@ -317,6 +318,7 @@ async fn maintenance_batches_immediate_backlog_and_flushes_small_tail(
         conn,
         vec![Box::new(ReadModelRunner(Box::new(BatchSizes(sender))))],
         commits,
+        watch::channel(()).0,
         stop,
     ));
     assert_eq!(

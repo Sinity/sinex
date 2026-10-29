@@ -315,7 +315,7 @@ fn capture_keeps_repository_and_terminal_identity_beside_each_recorded_cwd() {
             Produced::Scrollback(event) => &event.extra,
             _ => panic!("terminal source"),
         };
-        assert_eq!(extra["git_identity"]["common_dir"],"/captured/repo/.git");
-        assert_eq!(extra["terminal_identity"]["window_id"],"7");
+        assert_eq!(extra["git_identity"]["common_dir"], "/captured/repo/.git");
+        assert_eq!(extra["terminal_identity"]["window_id"], "7");
     }
 }

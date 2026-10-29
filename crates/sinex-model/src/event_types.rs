@@ -34,6 +34,7 @@ pub mod records;
 pub mod router;
 pub mod session;
 pub mod shell;
+pub mod signal;
 pub mod social;
 pub mod system;
 pub mod telemetry;
@@ -148,6 +149,16 @@ pub fn declarations() -> &'static [crate::KindDeclaration] {
 
 /// Every bundled payload validator. Outside kinds are stored declarations.
 pub const ALL: &[RegisteredEventType] = &[
+    info::<signal::RuleWritten>(),
+    info::<signal::CheckpointRecorded>(),
+    info::<signal::EvaluationRecorded>(),
+    info::<signal::IntentRecorded>(),
+    info::<signal::EmergencyCompleted>(),
+    info::<signal::DeliveryRecorded>(),
+    info::<signal::HandoffRecorded>(),
+    info::<signal::ReceivedRecorded>(),
+    info::<signal::ReceiptRecorded>(),
+    info::<signal::DesktopReceiptRecorded>(),
     info::<analysis::AnalysisRequest>(),
     info::<analysis::AnalysisPanel>(),
     info::<analysis::RecipeAnswer>(),

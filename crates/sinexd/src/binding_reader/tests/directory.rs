@@ -29,7 +29,8 @@ async fn empty_directory_files_keep_distinct_paths_bytes_and_locations_through_r
     let mut ctx = ReaderContext::open(
         &url,
         &dir.join("store"),
-        sinex_model::time_settings::TimeSettings::operator_default(),
+        sinex_model::time_settings::TimeSettings::new("Europe/Warsaw", 4, 0)
+            .expect("fixture day setting"),
     )
     .await
     .unwrap();
@@ -44,7 +45,6 @@ async fn empty_directory_files_keep_distinct_paths_bytes_and_locations_through_r
         &mut ctx.read_conn,
         &ctx.blobs,
         &ctx.writer,
-        RunId::new(),
         &sink,
         &mut bindings,
         stop.clone(),
@@ -80,7 +80,6 @@ async fn empty_directory_files_keep_distinct_paths_bytes_and_locations_through_r
         &mut ctx.read_conn,
         &ctx.blobs,
         &ctx.writer,
-        RunId::new(),
         &sink,
         &mut bindings,
         stop,

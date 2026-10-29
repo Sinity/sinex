@@ -159,3 +159,9 @@ A tombstoned record loses its payload, ciphertext included ([tombstone](lifecycl
 - **range-read-refused-by-rule**: a raw range containing a field a rule hides from the caller is refused, naming the rule.
 - **sealing-scope**: sealing one field leaves the material's other records readable without a key.
 - **locked-replay-deferred**: replay of sealed records while locked is deferred and listed.
+
+### SQL reader privileges and owner capabilities
+
+The SQL reader role receives the public event views and explicit registry and counter relations. It has no table or column access to raw payloads, configured rules, source cursors, wrapping keys, hashes used as keys, continuation signing material, host checkpoints or owner protocol signing material. Database preparation removes inherited public access to `pg_catalog.set_config` and grants execution to the writer and configured owner. Startup and upgrade refuse a database whose SQL reader can execute that function. This prevents a wrapped `SELECT` from changing its grant or role context through direct, dependent or materialized expressions.
+
+The owner protocol signing key is private storage, separate from the query continuation key and data-encryption keys. Each capability uses its own signing domain. Public context tokens authenticate a snapshot for one producer and physical host; coverage proofs authenticate the exact owner-required input scope and completed position. Neither token widens ordinary class, kind, material or output ownership grants.

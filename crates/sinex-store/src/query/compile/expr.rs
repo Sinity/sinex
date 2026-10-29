@@ -58,12 +58,6 @@ impl Compiler<'_> {
                 .push(")) END)");
             return out;
         }
-        if ty == FieldType::Time {
-            out.push("core.payload_time(")
-                .append(raw)
-                .push(" #>> '{}')");
-            return out;
-        }
         let (kind, cast) = match ty {
             FieldType::Integer => ("number", "numeric"),
             FieldType::Number => ("number", "numeric"),
@@ -84,49 +78,18 @@ impl Compiler<'_> {
         out
     }
 
-    pub(super) fn time_fn(&self, func: TimeFn, t: SqlFragment) -> SqlFragment {
-        let mut local = SqlFragment::text("(");
-        local
-            .append(t)
-            .push(" AT TIME ZONE ")
-            .param(V::String(Some(self.ctx.zone_name())))
-            .push(")");
-        let mut shifted = SqlFragment::text("(");
-        shifted
-            .append(local.clone())
-            .push(" - ")
-            .param(V::String(Some(format!(
-                "{} hours {} minutes",
-                self.ctx.day_start.hour(),
-                self.ctx.day_start.minute()
-            ))))
-            .push("::interval)");
-        let mut out = SqlFragment::new();
-        match func {
-            TimeFn::Hour => {
-                out.push("extract(hour from ")
-                    .append(local)
-                    .push(")::bigint");
-            }
-            TimeFn::Day => {
-                out.push("to_char(").append(shifted).push(", 'YYYY-MM-DD')");
-            }
-            TimeFn::Week => {
-                out.push("to_char(date_trunc('week', ")
-                    .append(shifted)
-                    .push("), 'YYYY-MM-DD')");
-            }
-            TimeFn::Weekday => {
-                out.push("lower(to_char(").append(shifted).push(", 'Dy'))");
-            }
-            TimeFn::Month => {
-                out.push("to_char(").append(shifted).push(", 'YYYY-MM')");
-            }
-            TimeFn::MonthDay => {
-                out.push("to_char(").append(shifted).push(", 'MM-DD')");
-            }
+    pub(super) fn time_fn(&self,func:TimeFn,t:SqlFragment)->Result<SqlFragment> {
+        if func==TimeFn::Hour {
+            let mut out=SqlFragment::text("extract(hour from (");
+            out.append(t).push(" AT TIME ZONE ").param(V::String(Some(self.ctx.zone_name()))).push("))::bigint");
+            return Ok(out);
         }
-        out
+        let setting=self.calendar.as_ref().ok_or_else(||invalid("logical-day SQL requires shared boundary preparation"))?;
+        let column=match func {TimeFn::Day=>"day",TimeFn::Week=>"week",TimeFn::Weekday=>"weekday",TimeFn::Month=>"month",TimeFn::MonthDay=>"month_day",TimeFn::Hour=>unreachable!()};
+        let mut ns=SqlFragment::text("(extract(epoch from ");ns.append(t).push(")*1000000000)");
+        let mut out=SqlFragment::text(format!("(SELECT d.{column} FROM pg_temp.sinex_query_days d WHERE d.setting="));
+        out.param(V::String(Some(setting.clone()))).push(" AND d.from_ns<=").append(ns.clone()).push(" AND ").append(ns).push("<d.until_ns ORDER BY d.from_ns DESC LIMIT 1)");
+        Ok(out)
     }
 
     pub(super) fn operand(&self, cols: &Cols, o: &Operand) -> Result<(SqlFragment, Kind)> {
@@ -139,7 +102,7 @@ impl Compiler<'_> {
                 } else {
                     t
                 };
-                Ok((self.time_fn(*func, t), Kind::Derived))
+                Ok((self.time_fn(*func, t)?, Kind::Derived))
             }
         }
     }
@@ -161,6 +124,7 @@ impl Compiler<'_> {
         op: Op,
         v: &Value,
     ) -> Result<SqlFragment> {
+        if matches!(v,Value::Unknown){return Ok(SqlFragment::text("NULL::boolean"));}
         if let Value::List(items) = v {
             let parts = items
                 .iter()
@@ -346,6 +310,10 @@ impl Compiler<'_> {
                 f.append(self.expr(cols, a)?).push(")");
                 f
             }
+            Expr::Truth{value,operand}=>{
+                self.operand(cols,operand)?;
+                SqlFragment::text(match value {query_language::semantics::Truth::True=>"true",query_language::semantics::Truth::False=>"false",query_language::semantics::Truth::Unknown=>"NULL::boolean"})
+            }
             Expr::Compare { lhs, op, rhs } => {
                 let (l, kind) = self.operand(cols, lhs)?;
                 self.compare(l, kind, *op, rhs)?
@@ -383,6 +351,7 @@ impl Compiler<'_> {
                     .push(")");
                 f
             }
+            Expr::Similar{..}=>return Err(invalid("rank directive reached predicate compiler")),
             Expr::Overlaps { from, to } => self.overlaps(cols, *from, *to)?,
             Expr::TimeDiff { a, b, op, seconds } => {
                 let (a, a_kind) = self.field(cols, a)?;

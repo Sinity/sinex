@@ -49,6 +49,11 @@ pub(super) async fn assign(conn:&mut PgConnection,batch:&Batch,events:&mut[Event
     }
     for (event,key) in events.iter_mut().zip(offered) {
         let previous=highwaters.get_mut(&key).ok_or_else(||crate::Error::Invalid("producer order seed is missing".into()))?;
+        if let Some(coverage)=&frame.coverage
+            && frame.native_source.is_none() && matches!(event.origin,Origin::Derived{..})
+            && (assigned.contains(&event.id)||event.reading_order.0!=coverage.position||previous.is_some_and(|previous|event.reading_order.0<previous)) {
+                return Err(crate::Error::Invalid("canonical completed position is older than its authoritative highwater or differs from its proof".into()));
+        }
         if assigned.contains(&event.id){event.reading_order=ReadingOrder(previous.unwrap_or(-1).checked_add(1).ok_or_else(||crate::Error::Invalid("producer reading order exhausted its stored integer range".into()))?);}
         *previous=Some(previous.map_or(event.reading_order.0,|previous|previous.max(event.reading_order.0)));
     }

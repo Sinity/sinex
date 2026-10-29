@@ -1,148 +1,58 @@
-//! A continuation describes one question, clock, the answer's size and the
-//! rows already handed out.
+//! Query read positions and declaration availability around shared sealed cursors.
 use super::*;
-use sinex_model::query::cursor as encoding;
+use query_language::{cursor::{CursorSeal, OrderPosition},identity::QuestionId};
+use std::collections::BTreeMap;
 
-const VERSION: u8 = 3;
-
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize,Deserialize)]
 #[serde(deny_unknown_fields)]
+struct Metadata {
+    declarations:Vec<(sinex_model::KindRef,String)>,
+    bound:String,
+    seq:i64,
+    total:i64,
+    key_types:Vec<String>,
+    availability:Json,
+}
 pub(super) struct Cursor {
-    version: u8,
-    pub declarations: Vec<(sinex_model::KindRef, String)>,
-    question: String,
-    now: String,
-    zone: String,
-    day_start: String,
-    pub seq: i64,
-    pub offset: u64,
-    /// Rows in the answer, counted on the first page.
-    pub total: i64,
-    view: String,
+    pub declarations:Vec<(sinex_model::KindRef,String)>,
+    bound:String,
+    pub seq:i64,
+    pub total:i64,
+    pub key_types:Vec<String>,
+    pub after:OrderPosition,
+    pub availability:Json,
+    pub ctx:Context,
 }
-
-fn invalid() -> Error {
-    Error::Invalid("invalid or obsolete query cursor; start the query again".into())
-}
-
-fn zone(ctx: &Context) -> Result<String> {
-    if let Some(name) = ctx.zone.iana_name() {
-        return Ok(format!("iana:{name}"));
-    }
-    ctx.zone
-        .to_fixed_offset()
-        .map(|offset| format!("offset:{offset}"))
-        .map_err(|_| {
-            Error::Invalid("query paging requires a named or fixed-offset time zone".into())
-        })
-}
-
+fn invalid()->Error {Error::Invalid("invalid or obsolete query cursor; start the query again".into())}
 impl Cursor {
-    pub(crate) fn decode(raw: &str) -> Result<Self> {
-        let cursor: Self = encoding::decode(raw).map_err(|_| invalid())?;
-        if cursor.version != VERSION
-            || cursor.seq < 0
-            || cursor.offset == 0
-            || cursor.offset > i64::MAX as u64
-            || cursor.total < 0
-            || cursor.question.len() != 64
-            || cursor.view.len() != 64
-        {
-            return Err(invalid());
-        }
-        Ok(cursor)
+    pub(super) fn decode(seal:&CursorSeal,raw:&str,question:QuestionId,ctx:&Context)->Result<Self> {
+        let c=continuation::open(seal,raw,question,ctx)?;
+        let m:Metadata=serde_json::from_str(c.context.versions.get("sinex.query").ok_or_else(invalid)?).map_err(|_|invalid())?;
+        if m.seq<0 || m.total<0 || m.bound.len()!=64 || m.key_types.len()!=c.after.values.len() {return Err(invalid());}
+        Ok(Self{declarations:m.declarations,bound:m.bound,seq:m.seq,total:m.total,key_types:m.key_types,after:c.after,availability:m.availability,
+            ctx:Context::new(c.context.clock.now,ctx.zone.clone(),ctx.day_start)})
     }
-
-    fn context(&self, ctx: &Context) -> Result<Context> {
-        if self.zone != zone(ctx)? || self.day_start != ctx.day_start.to_string() {
-            return Err(Error::Invalid(
-                "query cursor does not match the time zone or day start".into(),
-            ));
-        }
-        let now: jiff::Timestamp = self.now.parse().map_err(|_| invalid())?;
-        if now > ctx.now {
-            return Err(invalid());
-        }
-        Ok(Context::new(now, ctx.zone.clone(), ctx.day_start))
+    pub(super) fn check_question(&self,bound:&str)->Result<()> {
+        if self.bound!=bound {return Err(Error::Invalid("query cursor belongs to a different question or caller context".into()));} Ok(())
     }
-
-    pub(crate) fn check_question(&self, question: &str) -> Result<()> {
-        if self.question != question {
-            return Err(Error::Invalid(
-                "query cursor belongs to a different question or caller context".into(),
-            ));
-        }
-        Ok(())
-    }
-
-    /// The rows handed out so far are unchanged and more remain.
-    pub(crate) fn check_view(&self, view: &str) -> Result<()> {
-        if self.view != view || self.offset >= self.total as u64 {
-            return Err(Error::StaleCursor);
-        }
-        Ok(())
-    }
-
-    pub(crate) fn encode(
-        question: &str,
-        ctx: &Context,
-        seq: i64,
-        offset: u64,
-        total: i64,
-        view: &str,
-    ) -> Result<String> {
-        let cursor = Self {
-            version: VERSION,
-            declarations: ctx
-                .catalog
-                .as_ref()
-                .map(|c| c.declarations.clone())
-                .unwrap_or_default(),
-            question: question.into(),
-            now: ctx.now.to_string(),
-            zone: zone(ctx)?,
-            day_start: ctx.day_start.to_string(),
-            seq,
-            offset,
-            total,
-            view: view.into(),
-        };
-        encoding::encode(&cursor).map_err(|_| invalid())
+    #[allow(clippy::too_many_arguments)]
+    pub(super) fn encode(seal:&CursorSeal,question:QuestionId,bound:&str,ctx:&Context,seq:i64,total:i64,key_types:Vec<String>,after:OrderPosition,availability:Json)->Result<String> {
+        let m=Metadata{declarations:ctx.catalog.as_ref().map(|c|c.declarations.clone()).unwrap_or_default(),bound:bound.into(),seq,total,key_types,availability};
+        continuation::encode(seal,question,ctx,BTreeMap::from([("events".into(),seq.to_string())]),BTreeMap::from([("sinex.query".into(),serde_json::to_string(&m).map_err(|_|invalid())?)]),after)
     }
 }
-
-/// Restore the first page's clock before binding relative expressions. The
-/// current zone and logical day still have to match the original context.
-pub fn context_for_page(ctx: &Context, page: &Page) -> Result<Context> {
-    match &page.cursor {
-        Some(raw) => Cursor::decode(raw)?.context(ctx),
-        None => Ok(ctx.clone()),
-    }
+pub async fn context_for_page(conn:&mut PgConnection,ctx:&Context,page:&Page,text:&str)->Result<Context> {
+    if page.cursor.is_none() {ctx.clock()?;return Ok(ctx.clone());}
+    let mut ctx=ctx.clone();
+    if ctx.catalog.is_none(){ctx.catalog=Some(sinex_model::query::QueryCatalog::new(sinex_schema::kinds::all(conn).await?.into_values()));}
+    let grants=current_grants(conn).await?;
+    let question=continuation::identity("query",&continuation::query_identity(text,&ctx)?,&grants)?;
+    let seal=continuation::seal_key(conn).await?;
+    Ok(Cursor::decode(&seal,page.cursor.as_deref().expect("cursor present"),question,&ctx)?.ctx)
 }
-
-pub(super) fn question(
-    text: &str,
-    query: &Query,
-    ctx: &Context,
-    scope: &(String, String),
-) -> Result<String> {
-    // Include the actual AST: follow adds its commit filter and ordering after
-    // parsing. The raw text alone does not describe that question.
-    digest(&serde_json::json!([
-        text,
-        format!("{query:?}"),
-        ctx.now.to_string(),
-        zone(ctx)?,
-        ctx.day_start.to_string(),
-        scope
-    ]))
+pub(super) fn question(text:&str,programmatic:Option<String>,definitions:Option<&std::collections::BTreeMap<String,sinex_model::query::saved::SavedQuery>>,ctx:&Context,scope:&(String,String))->Result<String> {
+    digest(&serde_json::json!([continuation::query_identity(text,ctx)?,programmatic,definitions,ctx.now.to_string(),ctx.zone_name(),ctx.day_start.to_string(),scope]))
 }
-
-pub(super) fn digest(value: &Json) -> Result<String> {
-    Ok(blake3::hash(
-        &serde_json::to_vec(value)
-            .map_err(|_| Error::Invalid("query context cannot be encoded".into()))?,
-    )
-    .to_hex()
-    .to_string())
+pub(super) fn digest(value:&Json)->Result<String> {
+    Ok(blake3::hash(&serde_json::to_vec(value).map_err(|_|invalid())?).to_hex().to_string())
 }

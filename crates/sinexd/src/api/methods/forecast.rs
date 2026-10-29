@@ -200,6 +200,7 @@ impl Api {
             &self.blobs,
             std::sync::Arc::new(sinex_sources::sources::forecast::request_source()),
             &binding,
+            &self.host,
             acquired,
         )
         .await?;

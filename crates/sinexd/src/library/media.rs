@@ -171,6 +171,7 @@ impl Library<'_> {
             &sinex_derivations::library::LibraryItems,
             vec![json!(item)],
             self.host,
+            self.time_settings.clone(),
         )
         .await?;
         Ok(json!({ "item": item, "rendition": id, "content": content, "width": w, "height": h }))
