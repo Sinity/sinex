@@ -5,6 +5,7 @@
 mod daemon;
 
 use serde_json::{Value, json};
+use sqlx::Connection;
 use std::io::{Read, Write};
 use std::os::unix::net::UnixStream;
 use std::path::Path;
@@ -122,9 +123,10 @@ fn fixtures() -> Vec<Fixture> {
     ]
 }
 
-fn assert_provenance(
+async fn assert_provenance(
     socket: &Path,
     store: &Path,
+    committed: &mut sqlx::PgConnection,
     row: &Value,
     fixture: &Fixture,
     part: u64,
@@ -159,6 +161,7 @@ fn assert_provenance(
         .unwrap();
     assert_eq!(child["parents"], json!([copy["id"].clone()]));
     let blobs = sinex_store::Blobs::open(store).unwrap();
+    blobs.load(committed).await.unwrap();
     assert_eq!(
         blobs.read(&content).unwrap(),
         fixture.bytes,
@@ -231,15 +234,25 @@ async fn documents_are_searchable_with_exact_ranges_across_replay_and_revision()
         tokio::time::sleep(Duration::from_millis(20)).await;
     }
     call(&socket, json!({"method":"library-add","path":library}));
+    let mut committed = sqlx::PgConnection::connect(&db.url(None)).await.unwrap();
     let mut originals = Vec::new();
     let mut materials = std::collections::BTreeSet::new();
     for fixture in &fixtures {
         for (part, text) in &fixture.parts {
             let word = text.split_whitespace().find(|word| word.len() > 8).unwrap();
             let rows = wait_rows(&socket, word, 1).await;
-            materials.insert(assert_provenance(
-                &socket, &store, &rows[0], fixture, *part, text,
-            ));
+            materials.insert(
+                assert_provenance(
+                    &socket,
+                    &store,
+                    &mut committed,
+                    &rows[0],
+                    fixture,
+                    *part,
+                    text,
+                )
+                .await,
+            );
             originals.push((fixture.name, *part, word.to_owned(), rows[0].clone()));
         }
     }
@@ -267,7 +280,16 @@ async fn documents_are_searchable_with_exact_ranges_across_replay_and_revision()
             let rows = wait_rows(&socket, word, 1).await;
             if rows[0]["id"] != old["id"] {
                 let text = fixture.parts.iter().find(|(p, _)| p == part).unwrap().1;
-                assert_provenance(&socket, &store, &rows[0], fixture, *part, text);
+                assert_provenance(
+                    &socket,
+                    &store,
+                    &mut committed,
+                    &rows[0],
+                    fixture,
+                    *part,
+                    text,
+                )
+                .await;
                 break;
             }
             assert!(
@@ -287,7 +309,16 @@ async fn documents_are_searchable_with_exact_ranges_across_replay_and_revision()
     std::fs::write(library.join(revised.name), &revised.bytes).unwrap();
     call(&socket, json!({"method":"library-add","path":library}));
     let rows = wait_rows(&socket, "goldennotes", 1).await;
-    assert_provenance(&socket, &store, &rows[0], &revised, 0, revised.parts[0].1);
+    assert_provenance(
+        &socket,
+        &store,
+        &mut committed,
+        &rows[0],
+        &revised,
+        0,
+        revised.parts[0].1,
+    )
+    .await;
     let original = fixtures
         .iter()
         .find(|fixture| fixture.name == "notes.md")
@@ -297,6 +328,7 @@ async fn documents_are_searchable_with_exact_ranges_across_replay_and_revision()
         format!("blake3:{}", blake3::hash(&original.bytes))
     );
     let blobs = sinex_store::Blobs::open(&store).unwrap();
+    blobs.load(&mut committed).await.unwrap();
     assert_eq!(
         blobs
             .read(&format!("blake3:{}", blake3::hash(&original.bytes)))
