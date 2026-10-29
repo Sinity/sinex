@@ -9,13 +9,15 @@ use serde_json::{Map, Value};
 /// its duration when the page is left, so a newer reading replaces the live
 /// one.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
-#[event(version = 2, type = "browser.visit",
-    key = ["profile", "visit_id"],
+#[event(version = 3, type = "browser.visit",
+    key = ["profile", "database_generation", "visit_id"],
     replace = newer,
     time = visited_at,
     quality = intrinsic
 )]
 pub struct BrowserVisit {
+    /// Native file generation scoped by the event's host and profile.
+    pub database_generation: String,
     /// The profile directory, such as `google-chrome/Default`.
     pub profile: String,
     /// Chromium's `visits.id`.
@@ -39,13 +41,15 @@ pub struct BrowserVisit {
 /// One row of a Chromium-family browser's `urls` table: a page and its
 /// running counts, updated in place as it is visited again.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
-#[event(version = 2, type = "browser.url",
-    key = ["profile", "url_id"],
+#[event(version = 3, type = "browser.url",
+    key = ["profile", "database_generation", "url_id"],
     replace = newer,
     time = last_visited_at,
     quality = intrinsic
 )]
 pub struct BrowserUrl {
+    /// Native file generation scoped by the event's host and profile.
+    pub database_generation: String,
     pub profile: String,
     /// Chromium's `urls.id`.
     pub url_id: i64,

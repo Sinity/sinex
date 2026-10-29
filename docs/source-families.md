@@ -51,6 +51,11 @@ Family F03.
 - Chromium: every History table and column, downloads and ordered URL chains, searches, favicons, bookmarks, sessions and tabs, preferences, permissions, extension state, cookies and local storage, each in its native rows or files. JSON, LevelDB, cache and session files each have their own consistent record reader.
 - Firefox-family `places.sqlite`, Safari `History.db`, qutebrowser and extension CSV or JSON exports each have an explicit format.
 - The database generation and profile identity, WebKit microseconds since 1601, redirect transition bits, opener and referrer, and the mutable visit duration are kept.
+
+The Chromium row reader accepts a browser user-data root or an explicit `History` file. A roster that cannot be enumerated reports unavailable, rather than an empty profile set. Its observed database generation is the input host plus the filesystem device and inode. Ordinary updates and SQLite `VACUUM` keep that generation. Replacing the database file, including replacing it with an equal copy, creates a new generation and starts a new row-material chain, so reused visit and URL IDs do not overwrite earlier generations. A copy at another profile path is a distinct profile; a cross-host copy has no claimed native identity continuity. An in-place rewrite that preserves the file identity requires an explicit new source identity; Chromium exposes no database UUID that could prove otherwise.
+
+Materials acquired before the generation was recorded retain unknown generation. They are preserved, and the new Chromium parser refuses to invent an identity for them. Before upgrading a deployed source, retain its materials and establish a reviewed original-generation mapping or replay it through an independently preserved original database. No automatic deletion, key coalescing or reinterpretation of those materials is part of opening the source.
+
 - Encrypted values are kept as captured. Sinex does not decrypt them or add key access, and never reports a decryption that did not happen.
 - Native tables without known semantics still produce raw row events and an unread-category status.
 
