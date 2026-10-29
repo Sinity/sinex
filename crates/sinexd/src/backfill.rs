@@ -222,8 +222,6 @@ pub(crate) async fn drive(
 ) -> Result<Totals, String> {
     let mut totals = Totals::default();
     let started = Instant::now();
-    let measure = std::env::var_os("SINEX_BENCH_TIMINGS").is_some();
-    let mut poll = 0u64;
     // The source's class: its declaration, raised by the operator's floor.
     // A sealed source seals each material and its events as they are read.
     let floor = sinex_store::privacy::load(read_conn, std::iter::once(source.spec().name))
@@ -249,31 +247,13 @@ pub(crate) async fn drive(
         if *stop.borrow() {
             return Err("capture cancelled".into());
         }
-        poll = poll.saturating_add(1);
-        let poll_started = Instant::now();
-        // Temporary diagnosis on the existing benchmark switch. Bound the
-        // trace even if a reader repeatedly offers an unchanged cursor.
-        let report = |phase: &str, has_material: Option<bool>| {
-            if measure && (poll <= 4 || poll.is_power_of_two()) {
-                eprintln!(
-                    "{}",
-                    serde_json::json!({"native_backfill": {
-                        "poll":poll, "phase":phase,
-                        "elapsed_ms":poll_started.elapsed().as_secs_f64()*1000.0,
-                        "has_material":has_material,
-                    }})
-                );
-            }
-        };
-        report("poll_start", None);
         let (cursor, carry) = positions::load(read_conn, binding)
             .await
             .map_err(|e| e.to_string())?
             .unwrap_or((serde_json::Value::Null, serde_json::Value::Null));
-        let acquisition_started = Instant::now();
+        let poll_started = Instant::now();
         let mut acquired = reader.acquire(cursor.clone()).await?;
-        totals.poll_time += acquisition_started.elapsed();
-        report("poll_end", Some(acquired.material.is_some()));
+        totals.poll_time += poll_started.elapsed();
         drivers::note_previous_through(&cursor, &mut acquired);
         let carry = material.carry(read_conn, binding, carry, &acquired).await?;
         if let Some(reason) = &acquired.observation.unavailable {
@@ -284,7 +264,6 @@ pub(crate) async fn drive(
         let registered = material
             .reopen(read_conn, source.as_ref(), &mut acquired)
             .await?;
-        report("intake_start", Some(had_material));
         crate::intake::Intake {
             host: Some(host),
             writer: handle,
@@ -299,7 +278,6 @@ pub(crate) async fn drive(
         }
         .submit(acquired, carry, &mut totals)
         .await?;
-        report("intake_end", Some(had_material));
         if !had_material {
             break;
         }
