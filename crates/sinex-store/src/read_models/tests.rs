@@ -182,8 +182,8 @@ async fn sealed_and_empty_text_still_advance_search_position(db: devkit::pg::Tes
     sinex_schema::kinds::register(&mut conn, "synthetic", std::slice::from_ref(&declaration))
         .await
         .unwrap();
-    let key=sinex_sealing::new_key().unwrap();
-    let events:Vec<sinex_model::Event> = [
+    let key = sinex_sealing::new_key().unwrap();
+    let events: Vec<sinex_model::Event> = [
         (
             serde_json::json!({"text":"private"}),
             sinex_model::Class::Sealed,
@@ -196,7 +196,7 @@ async fn sealed_and_empty_text_still_advance_search_position(db: devkit::pg::Tes
     ]
     .into_iter()
     .map(|(payload, class)| {
-        let mut event=sinex_model::Event::submitted(
+        let mut event = sinex_model::Event::submitted(
             declaration.kind.clone(),
             payload,
             "synthetic".into(),
@@ -211,11 +211,17 @@ async fn sealed_and_empty_text_still_advance_search_position(db: devkit::pg::Tes
             [1; 32],
             class,
         );
-        if class==sinex_model::Class::Sealed {sinex_sealing::seal_event(&mut event,&key).unwrap();}
+        if class == sinex_model::Class::Sealed {
+            sinex_sealing::seal_event(&mut event, &key).unwrap();
+        }
         event
     })
     .collect();
-    let sealed_id=events.iter().find(|event|event.class==sinex_model::Class::Sealed).unwrap().id;
+    let sealed_id = events
+        .iter()
+        .find(|event| event.class == sinex_model::Class::Sealed)
+        .unwrap()
+        .id;
     let mut tx = conn.begin().await.unwrap();
     tx.admit(
         &sinex_model::Batch {
@@ -234,10 +240,18 @@ async fn sealed_and_empty_text_still_advance_search_position(db: devkit::pg::Tes
     .await
     .unwrap();
     tx.commit().await.unwrap();
-    let sealed_payload:serde_json::Value=sqlx::query_scalar("SELECT payload FROM core.events WHERE id=$1").bind(sealed_id.0).fetch_one(&mut conn).await.unwrap();
-    assert_eq!(sinex_sealing::unseal_payload(&sealed_payload,&key.key).unwrap(),serde_json::json!({"text":"private"}));
-    let wrong_key=sinex_sealing::new_key().unwrap();
-    assert!(sinex_sealing::unseal_payload(&sealed_payload,&wrong_key.key).is_err());
+    let sealed_payload: serde_json::Value =
+        sqlx::query_scalar("SELECT payload FROM core.events WHERE id=$1")
+            .bind(sealed_id.0)
+            .fetch_one(&mut conn)
+            .await
+            .unwrap();
+    assert_eq!(
+        sinex_sealing::unseal_payload(&sealed_payload, &key.key).unwrap(),
+        serde_json::json!({"text":"private"})
+    );
+    let wrong_key = sinex_sealing::new_key().unwrap();
+    assert!(sinex_sealing::unseal_payload(&sealed_payload, &wrong_key.key).is_err());
     // Rebuilding the read model starts empty, while canonical policy outputs
     // retain the actual sealed class and payload with no searchable text.
     sqlx::query("DELETE FROM core.search_text")

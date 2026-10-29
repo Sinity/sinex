@@ -187,7 +187,10 @@ async fn upgrade_keeps_every_mapping_including_tombstones_without_commit_rows(
     assert_eq!(after, tombstones);
     let constraints: String = sqlx::query_scalar("SELECT pg_get_constraintdef(oid) FROM pg_constraint WHERE conrelid='core.published'::regclass AND contype='p'")
         .fetch_one(&mut conn).await.unwrap();
-    assert_eq!(constraints, "PRIMARY KEY (event_id, stream_seq, stream_instance)");
+    assert_eq!(
+        constraints,
+        "PRIMARY KEY (event_id, stream_seq, stream_instance)"
+    );
     let erased = excised_on_stream(&mut conn, 10).await.unwrap();
     assert_eq!((erased[0].event_id, erased[0].stream_seq), before[1000]);
     sqlx::query("SET ROLE sinex_writer")
@@ -200,20 +203,53 @@ async fn upgrade_keeps_every_mapping_including_tombstones_without_commit_rows(
     forget_published(&mut conn, &[before[1000]]).await.unwrap();
     sqlx::query("RESET ROLE").execute(&mut conn).await.unwrap();
     assert_eq!(pairs(&mut conn).await.len(), before.len());
-    let retained_pairs=pairs(&mut conn).await;
-    let erased_pair=before[1000];
-    record_published_in(&mut conn,"synthetic-native-a",&[erased_pair,erased_pair]).await.unwrap();
-    record_published_in(&mut conn,"synthetic-native-b",&[erased_pair]).await.unwrap();
-    for instance in ["synthetic-native-a","synthetic-native-b"] {
-        let copies=excised_on_stream_in(&mut conn,instance,10).await.unwrap();
-        assert_eq!(copies.iter().map(|copy|(copy.event_id,copy.stream_seq)).collect::<Vec<_>>(),[erased_pair],"the same event and sequence are distinct placements in each native incarnation");
+    let retained_pairs = pairs(&mut conn).await;
+    let erased_pair = before[1000];
+    record_published_in(&mut conn, "synthetic-native-a", &[erased_pair, erased_pair])
+        .await
+        .unwrap();
+    record_published_in(&mut conn, "synthetic-native-b", &[erased_pair])
+        .await
+        .unwrap();
+    for instance in ["synthetic-native-a", "synthetic-native-b"] {
+        let copies = excised_on_stream_in(&mut conn, instance, 10).await.unwrap();
+        assert_eq!(
+            copies
+                .iter()
+                .map(|copy| (copy.event_id, copy.stream_seq))
+                .collect::<Vec<_>>(),
+            [erased_pair],
+            "the same event and sequence are distinct placements in each native incarnation"
+        );
     }
-    forget_published_in(&mut conn,"synthetic-native-a",&[erased_pair]).await.unwrap();
-    assert!(excised_on_stream_in(&mut conn,"synthetic-native-a",10).await.unwrap().is_empty());
-    let other=excised_on_stream_in(&mut conn,"synthetic-native-b",10).await.unwrap();
-    assert_eq!(other.iter().map(|copy|(copy.event_id,copy.stream_seq)).collect::<Vec<_>>(),[erased_pair],"erasing one incarnation never forgets another's physical copy");
-    forget_published_in(&mut conn,"synthetic-native-b",&[erased_pair]).await.unwrap();
-    assert_eq!(pairs(&mut conn).await,retained_pairs,"scoped native erasures preserve every unrelated publication mapping");
+    forget_published_in(&mut conn, "synthetic-native-a", &[erased_pair])
+        .await
+        .unwrap();
+    assert!(
+        excised_on_stream_in(&mut conn, "synthetic-native-a", 10)
+            .await
+            .unwrap()
+            .is_empty()
+    );
+    let other = excised_on_stream_in(&mut conn, "synthetic-native-b", 10)
+        .await
+        .unwrap();
+    assert_eq!(
+        other
+            .iter()
+            .map(|copy| (copy.event_id, copy.stream_seq))
+            .collect::<Vec<_>>(),
+        [erased_pair],
+        "erasing one incarnation never forgets another's physical copy"
+    );
+    forget_published_in(&mut conn, "synthetic-native-b", &[erased_pair])
+        .await
+        .unwrap();
+    assert_eq!(
+        pairs(&mut conn).await,
+        retained_pairs,
+        "scoped native erasures preserve every unrelated publication mapping"
+    );
     assert_eq!(
         sinex_schema::apply(&mut conn).await.unwrap(),
         sinex_schema::Applied::Current {
