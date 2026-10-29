@@ -8,7 +8,7 @@ async fn provision(h:&Harness,producer:&str,after:i64)->ConfirmedConsumerReply {
 
 #[devkit::test]
 async fn confirmed_consumers_filter_metadata_and_replay_a_restored_index(db:devkit::pg::TestDatabase) {
-    let grant=crate::ingress::fetch::Grants{kind_prefixes:vec!["command".into()],classes:vec![sinex_model::Class::Open]};
+    let grant=crate::ingress::fetch::Grants{write:None,kind_prefixes:vec!["command".into()],classes:vec![sinex_model::Class::Open]};
     let h=Harness::start_with_grants(db,std::collections::BTreeMap::from([("replica".into(),grant)])).await;
     let (open,frame)=h.material_frame("open",b"open source\n");assert_eq!(h.send("kitty",&frame).await.refusal,None);
     let ack=h.send("kitty",&Ingress::Events{frame:"open-event".into(),events:vec![imported(open,0,"open")],failures:vec![]}).await;assert_eq!(ack.refusal,None);let open_id=ack.admitted[0];

@@ -4,10 +4,10 @@ use sinex_protocol::{FetchEvent,FetchEventReply,FetchMaterial,FetchMaterialReply
 #[devkit::test]
 async fn authenticated_fetch_uses_configured_kind_and_class_grants(db:devkit::pg::TestDatabase) {
     let grants=std::collections::BTreeMap::from([
-        ("kitty".into(),crate::ingress::fetch::Grants{kind_prefixes:vec!["command".into()],classes:vec![sinex_model::Class::Open,sinex_model::Class::Guarded]}),
-        ("replica".into(),crate::ingress::fetch::Grants{kind_prefixes:vec!["command.".into()],classes:vec![sinex_model::Class::Open,sinex_model::Class::Guarded]}),
-        ("near-prefix".into(),crate::ingress::fetch::Grants{kind_prefixes:vec!["command.import".into()],classes:vec![sinex_model::Class::Guarded]}),
-        ("open-only".into(),crate::ingress::fetch::Grants{kind_prefixes:vec!["command".into()],classes:vec![sinex_model::Class::Open]}),
+        ("kitty".into(),crate::ingress::fetch::Grants{write:None,kind_prefixes:vec!["command".into()],classes:vec![sinex_model::Class::Open,sinex_model::Class::Guarded]}),
+        ("replica".into(),crate::ingress::fetch::Grants{write:None,kind_prefixes:vec!["command.".into()],classes:vec![sinex_model::Class::Open,sinex_model::Class::Guarded]}),
+        ("near-prefix".into(),crate::ingress::fetch::Grants{write:None,kind_prefixes:vec!["command.import".into()],classes:vec![sinex_model::Class::Guarded]}),
+        ("open-only".into(),crate::ingress::fetch::Grants{write:None,kind_prefixes:vec!["command".into()],classes:vec![sinex_model::Class::Open]}),
     ]);
     let h=Harness::start_with_grants(db,grants).await;
     let (material,frame)=h.material_frame("fetch-material",b"retained command\n");
@@ -31,7 +31,7 @@ async fn authenticated_fetch_uses_configured_kind_and_class_grants(db:devkit::pg
 #[devkit::test]
 async fn oversized_fetched_payloads_use_verified_bounded_transfers(db:devkit::pg::TestDatabase) {
     use sinex_protocol::{FetchPayload,FetchPayloadReply};
-    let grant=||crate::ingress::fetch::Grants{kind_prefixes:vec!["command".into()],classes:vec![sinex_model::Class::Open,sinex_model::Class::Guarded]};
+    let grant=||crate::ingress::fetch::Grants{write:None,kind_prefixes:vec!["command".into()],classes:vec![sinex_model::Class::Open,sinex_model::Class::Guarded]};
     let h=Harness::start_with_grants(db,std::collections::BTreeMap::from([("kitty".into(),grant()),("replica".into(),grant())])).await;
     let (material,frame)=h.material_frame("large-fetch-material",b"retained source\n");assert_eq!(h.send("kitty",&frame).await.refusal,None);
     let command="x ".repeat(h.client.server_info().max_payload);
@@ -58,7 +58,7 @@ async fn oversized_fetched_payloads_use_verified_bounded_transfers(db:devkit::pg
 #[devkit::test]
 async fn oversized_material_metadata_has_verified_range_transfers(db:devkit::pg::TestDatabase) {
     use sinex_protocol::{FetchRange,MaterialFrame};
-    let grant=||crate::ingress::fetch::Grants{kind_prefixes:vec!["command".into()],classes:vec![sinex_model::Class::Open,sinex_model::Class::Guarded]};
+    let grant=||crate::ingress::fetch::Grants{write:None,kind_prefixes:vec!["command".into()],classes:vec![sinex_model::Class::Open,sinex_model::Class::Guarded]};
     let h=Harness::start_with_grants(db,std::collections::BTreeMap::from([("kitty".into(),grant()),("replica".into(),grant())])).await;
     let (material,mut frame)=h.material_frame("large-manifest",b"retained source\n");
     let manifest=sinex_model::Manifest::from_json(json!({"description":"x ".repeat(h.client.server_info().max_payload)}));

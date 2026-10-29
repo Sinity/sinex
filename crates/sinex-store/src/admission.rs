@@ -30,6 +30,7 @@ mod classify;
 mod derived;
 mod kinds;
 mod register;
+mod orders;
 mod write;
 
 pub(crate) use archive::remove_live;
@@ -145,6 +146,11 @@ pub(crate) async fn admit(
     batch: &Batch,
     keys: &dyn DirtyKeys,
 ) -> Result<Outcome> {
+    if let BatchKind::Ingress(frame)=&batch.kind
+        && !frame.frame.is_empty()
+        && let Some(outcome)=register::recorded(conn,frame).await? {
+        return Ok(outcome);
+    }
     let mut outcome = Outcome::default();
     let kept_batch;
     let batch = match derived::without_superseded_inputs(conn, batch).await? {
@@ -156,10 +162,11 @@ pub(crate) async fn admit(
         None => batch,
     };
     if let BatchKind::Ingress(frame) = &batch.kind
-        && frame.refusal.is_none()
+        && frame.refusal.is_none() && !frame.declarations.is_empty()
     {
+        let family=frame.family.as_deref().ok_or_else(||crate::Error::Invalid("producer declaration has no configured family".into()))?;
         outcome.registered_kinds =
-            sinex_schema::kinds::register(conn, &frame.producer, &frame.declarations).await?;
+            sinex_schema::kinds::register(conn, family, &frame.declarations).await?;
     }
     // The live reading each offered event ends as: itself when admitted, the
     // reading it repeats when suppressed. A derived batch's keys own these.
@@ -200,6 +207,7 @@ pub(crate) async fn admit(
     let mut declarations = kinds::prepare(conn, batch, &mut events).await?;
     let started = std::time::Instant::now();
     apply_privacy(conn, cache, batch, &mut events).await?;
+    orders::assign(conn,batch,&mut events).await?;
     outcome.timings.insert("privacy", started.elapsed());
     let started = std::time::Instant::now();
     removed_at_source(conn, batch, &mut events).await?;
@@ -226,7 +234,7 @@ pub(crate) async fn admit(
         let started = std::time::Instant::now();
         sqlx::query!(
             "DELETE FROM core.admission_stage AS staged
-             WHERE NOT EXISTS (SELECT 1 FROM unnest($1::integer[]) AS admitted(ord)
+             WHERE NOT EXISTS (SELECT 1 FROM unnest($1::bigint[]) AS admitted(ord)
                WHERE admitted.ord = staged.ord)",
             &classified.admit
         )

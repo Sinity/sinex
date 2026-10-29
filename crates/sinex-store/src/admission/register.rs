@@ -209,8 +209,8 @@ pub(super) async fn frame(
         "event_types": frame.event_types,
     });
     sqlx::query!(
-        r#"INSERT INTO core.ingress_frames (producer, frame, material_id, admitted, outcome, refusal, commit_seq)
-           VALUES ($1, $2, $3, $4, $5, $6, $7)"#,
+        r#"INSERT INTO core.ingress_frames (producer, frame, material_id, admitted, outcome, refusal, commit_seq, family, write_kind_prefixes)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)"#,
         frame.producer,
         frame.frame,
         frame
@@ -222,6 +222,8 @@ pub(super) async fn frame(
         counts,
         frame.refusal,
         outcome.commit_seq.map(|(_, last)| last),
+        frame.family,
+        &frame.write_kind_prefixes,
     )
     .execute(&mut *conn)
     .await?;

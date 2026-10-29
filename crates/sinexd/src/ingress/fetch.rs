@@ -9,6 +9,8 @@ use sqlx::Connection;
 #[derive(Clone, Debug, Default, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct Grants {
+    #[serde(default)]
+    pub write:Option<super::authority::WriteGrant>,
     pub kind_prefixes:Vec<String>,
     pub classes:Vec<Class>,
 }
@@ -56,6 +58,7 @@ pub(crate) fn load(path:Option<&std::path::Path>)->Result<ProducerGrants,String>
             }
         }
     }
+    super::authority::validate(&grants)?;
     Ok(grants)
 }
 pub(super) struct Refusal {kind:FetchRefusalKind,reason:String}
@@ -136,9 +139,10 @@ impl Requests {
             let mut connection=self.reads.acquire().await.map_err(unavailable)?;
         let mut conn=connection.begin().await.map_err(unavailable)?;
         sqlx::query!("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY").execute(&mut *conn).await.map_err(unavailable)?;
-            let owner=sqlx::query_scalar!("SELECT producer FROM core.ingress_frames WHERE material_id=$1 AND refusal IS NULL ORDER BY number LIMIT 1",request.material.0).fetch_optional(&mut *conn).await.map_err(unavailable)?.ok_or_else(missing)?;
-            let owner_grant=self.read_grants.get(&owner).ok_or_else(denied)?;
-            if !grant.intersects(owner_grant) {return Err(denied());}
+            let ownership=sqlx::query!("SELECT family,write_kind_prefixes FROM core.ingress_frames WHERE material_id=$1 AND refusal IS NULL ORDER BY number LIMIT 1",request.material.0).fetch_optional(&mut *conn).await.map_err(unavailable)?.ok_or_else(missing)?;
+            let (Some(_family),Some(prefixes))=(ownership.family,ownership.write_kind_prefixes) else {return Err(unavailable("historical material family ownership is unknown"));};
+            let owner_scope=Grants{write:None,kind_prefixes:prefixes,classes:vec![]};
+            if !grant.intersects(&owner_scope) {return Err(denied());}
             let classes=grant.classes.iter().map(|class|serde_json::to_value(class).unwrap().as_str().unwrap().to_owned()).collect::<Vec<_>>().join(",");
             sinex_store::query::set_grants(&mut conn,&classes).await.map_err(unavailable)?;
             let events=sqlx::query!(r#"SELECT event_type AS "event_type!",class AS "class!" FROM core.events WHERE material_id=$1"#,request.material.0).fetch_all(&mut *conn).await.map_err(unavailable)?;

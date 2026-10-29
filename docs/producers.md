@@ -155,7 +155,7 @@ Producer replay frames are described under [the ingress](#producer-replay).
 - **events-wait-for-material-acknowledgment**: no admitted event from the ingress cites material bytes that were not acknowledged before it.
 - **mismatch-refused-at-connect**: a producer with a mismatched protocol version or configuration is refused at connect with a typed reply, and no frame of it is admitted.
 - **reader-and-stream-sequences-identical**: for any filter, the in-daemon commit-order reader and the confirmed stream deliver identical `(commit position, event ID, change)` sequences.
-- **consumer-credential-scope**: a registered outside consumer can subscribe to `confirmed.>`; a producer credential cannot read another producer's subjects.
+- **consumer-credential-scope**: a configured reader pulls only its provisioned kind-and-class-scoped durable and global position controls; it cannot subscribe to unfiltered confirmed subjects, pull a foreign or revoked-scope consumer, or read another identity's reply inbox.
 - **rebuilt-stream-keeps-positions**: a stream rebuilt from PostgreSQL carries the same commit positions, tombstoned events as skeleton notices, and a consumer resumes from its saved position on it.
 - **stream-withholds-and-fetch-matches**: with a rule in force, the field is marked withheld on the confirmed stream, and the fetch by event ID under the consumer's grants returns what every other surface returns for those grants.
 - **handler-one-effective-output**: an outside handler crashed before processing, after its output was admitted, and after acknowledgment yields one effective output per input and version; an archived input archives the handler's outputs.
@@ -176,3 +176,11 @@ A configured reader requests its native durable on its own `confirmed_consumer.<
 Clients may pull, acknowledge and inspect only their exact durable. They cannot create or delete consumers or fetch raw stream messages. Authenticated RPC inboxes are restricted to `_INBOX.<producer>.>`. Shared-stream payloads require an authenticated fetch even for open events.
 
 A native durable resumes only when its exact acknowledged position-complete barrier proves the requested local scalar and its cache and scope still match. An older restored index, a new cache, an initial position or missing proof replays retained scoped history from its beginning. Requests beyond durable commit history return a named gap. `status_only: true` reads the current owner commit position without provisioning or resetting a consumer; the optional `position` field never substitutes an invented zero for unavailable evidence.
+
+### Explicit write families
+
+An authenticated credential has no write authority until the operator configures its logical family, write kind prefixes and offered classes. Read grants confer no registration or write rights. Kind declarations name the configured family, so two hosts can register the same immutable definition idempotently; conflicting same-version definitions refuse. The welcome returns the authoritative family and whether the credential is the configured canonical publisher.
+
+Canonical summary prefixes belong to one explicitly configured publisher credential in each family. Other hosts may capture their allowed raw facts and register identical declarations, but cannot publish those summaries. No election is performed. Host and frame identity remain in the ingress history and run; material input hosts, part chains and record locations retain source copies when `Event.source` uses the logical family. Raw reading keys include their source-copy identity; canonical tool-call and turn keys converge under the configured publisher.
+
+New ingress frames retain their configured family and capture kind prefixes in the admission transaction. Historical frames without that evidence remain unknown and require an explicit mapping decision before family-based replay or material access. Current credential configuration does not retroactively assign their ownership.

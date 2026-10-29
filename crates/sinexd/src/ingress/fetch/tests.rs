@@ -2,11 +2,11 @@ use super::*;
 #[devkit::test]
 fn consumer_scope_is_canonical_and_narrowing_or_changing_identity_revokes_the_old_name() {
     let subjects=Subjects::sinex();
-    let broad=Grants{kind_prefixes:vec!["polylogue.".into()],classes:vec![Class::Open,Class::Guarded]};
-    let equivalent=Grants{kind_prefixes:vec!["polylogue.message".into(),"polylogue".into(),"polylogue".into()],classes:vec![Class::Guarded,Class::Open,Class::Open]};
+    let broad=Grants{write:None,kind_prefixes:vec!["polylogue.".into()],classes:vec![Class::Open,Class::Guarded]};
+    let equivalent=Grants{write:None,kind_prefixes:vec!["polylogue.message".into(),"polylogue".into(),"polylogue".into()],classes:vec![Class::Guarded,Class::Open,Class::Open]};
     let (filters,scope)=broad.consumer_scope("host-a",&subjects);
     assert_eq!(equivalent.consumer_scope("host-a",&subjects),(filters,scope.clone()));
-    let narrow=Grants{kind_prefixes:vec!["polylogue.message".into()],classes:vec![Class::Open]};
+    let narrow=Grants{write:None,kind_prefixes:vec!["polylogue.message".into()],classes:vec![Class::Open]};
     let (_,narrow_scope)=narrow.consumer_scope("host-a",&subjects);
     assert_ne!(scope,narrow_scope);
     assert_ne!(scope,broad.consumer_scope("host-b",&subjects).1);

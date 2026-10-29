@@ -664,7 +664,6 @@ mod library_upgrade;
 #[devkit::test]
 async fn derived_outputs_require_committed_live_parents(db: devkit::pg::TestDatabase) {
     use sinex_model::{EventId, Origin};
-    use sqlx::Connection;
     let mut conn = crate::AdmissionContext::connect(&db.url(None)).await.unwrap();
     let parent = keyed("source", 1, 1, 1);
     admit_one(&mut conn, &batch(vec![parent.clone()])).await;
@@ -842,7 +841,7 @@ async fn assigned_order_retry_and_rollback_share_the_admission_transaction(db:de
         let event=keyed("atuin",1,content,0);
         let mut batch=batch(vec![event.clone()]);
         batch.kind=BatchKind::Ingress(Box::new(sinex_model::IngressFrame {
-            assign_orders:vec![event.id],producer:"atuin".into(),frame:name.into(),material:None,refusal:None,declarations:vec![],refusal_kind:None,source:None,event_types:vec![],
+            family:None,write_kind_prefixes:vec![],assign_orders:vec![event.id],producer:"atuin".into(),frame:name.into(),material:None,refusal:None,declarations:vec![],refusal_kind:None,source:None,event_types:vec![],
         }));batch
     };
     let first=ingress("first",1);

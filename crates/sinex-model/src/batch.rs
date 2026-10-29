@@ -68,6 +68,11 @@ pub enum BatchKind {
 
 #[derive(Clone, Debug)]
 pub struct IngressFrame {
+    /// Transport-configured ownership captured with this frame; historical ownership stays unknown.
+    pub family:Option<String>,
+    pub write_kind_prefixes:Vec<String>,
+    /// Offered events whose source did not supply a reading order.
+    pub assign_orders:Vec<crate::EventId>,
     pub producer: String,
     /// The producer's own name for the frame, unique per producer.
     pub frame: String,

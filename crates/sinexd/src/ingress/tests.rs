@@ -26,7 +26,12 @@ impl Harness {
     async fn start(db: devkit::pg::TestDatabase) -> Self {
         Self::start_with_grants(db,Default::default()).await
     }
-    async fn start_with_grants(db:devkit::pg::TestDatabase,grants:crate::ingress::fetch::ProducerGrants)->Self {
+    async fn start_with_grants(db:devkit::pg::TestDatabase,mut grants:crate::ingress::fetch::ProducerGrants)->Self {
+        for producer in ["kitty","phone","polylogue","example","session","node","other-node","unknown-node"] {
+            let mut prefixes=sinex_model::event_types::declarations().iter().filter_map(|declaration|declaration.kind.name.split_once('.').map(|(prefix,_)|prefix.to_owned())).collect::<Vec<_>>();prefixes.push(producer.to_owned());prefixes.push("not".into());prefixes.sort();prefixes.dedup();
+            grants.entry(producer.into()).or_default().write.get_or_insert_with(||crate::ingress::authority::WriteGrant{family:producer.into(),kind_prefixes:prefixes,classes:vec![sinex_model::Class::Open,sinex_model::Class::Guarded],canonical_prefixes:vec![]});
+        }
+        let grants=Arc::new(grants);
         let nats = devkit::nats::test_nats().unwrap();
         let subjects = Subjects::new(nats.prefix());
         let client = async_nats::connect(nats.url()).await.unwrap();
@@ -53,7 +58,7 @@ impl Harness {
             .unwrap();
         let requests = Requests {
             client:client.clone(),consumer_admin:std::sync::Arc::new(tokio::sync::Mutex::new(())),
-            read_grants:Arc::new(grants),
+            read_grants:grants.clone(),
             max_payload:client.server_info().max_payload as u64,
             subjects: subjects.clone(),
             writer: handle.clone(),
@@ -66,6 +71,7 @@ impl Harness {
             PgConnection::connect(&url).await.unwrap(),
             blobs.clone(),
             "test-host".into(),
+            grants,
         )
         .unwrap();
         let (stop, stopped) = watch::channel(false);
@@ -947,6 +953,7 @@ async fn storage_faults_stay_unavailable_and_invalid_bytes_are_refused(
         PgConnection::connect(&db.url(None)).await.unwrap(),
         blobs,
         "synthetic".into(),
+        Arc::new(Default::default()),
     )
     .unwrap();
     let bytes = b"synthetic";
@@ -1478,6 +1485,7 @@ async fn daemon_status_counts_refusals_by_producer_source_and_event_type(
         Some(FrameRefusal::Malformed)
     );
     let api = crate::api::Api {
+        derivations:Default::default(),
         source_config: Default::default(),
         library_roots: Vec::new(),
         reads: h.reads.clone(),
@@ -1565,3 +1573,5 @@ async fn a_configuration_refusal_removes_the_partial_chunk_transfer(db: devkit::
 mod fetch_reads;
 
 mod consumer_reads;
+
+mod families;
