@@ -360,7 +360,7 @@ impl Ingest {
             Ok(write) => write.family.clone(),
             Err(reason) => return Ok(Some(reason)),
         };
-        let privacy = sinex_store::privacy::load(&mut self.conn, [producer, family.as_str()])
+        let privacy = sinex_store::privacy::load(&mut self.conn, [producer, family.as_str()].into_iter())
             .await
             .map_err(|e| e.to_string())?;
         let version = (privacy.seq, privacy.floors.get(producer).copied());
@@ -769,7 +769,7 @@ impl Requests {
         let write = authority::write(&self.read_grants, producer).ok();
         let mut conn = self.reads.acquire().await.map_err(|e| e.to_string())?;
         let family = write.map(|write| write.family.as_str()).unwrap_or(producer);
-        let privacy = sinex_store::privacy::load(&mut conn, [producer, family])
+        let privacy = sinex_store::privacy::load(&mut conn, [producer, family].into_iter())
             .await
             .map_err(|e| e.to_string())?;
         let refusal = if hello.version != sinex_protocol::PRODUCER_VERSION {
