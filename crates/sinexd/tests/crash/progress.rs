@@ -104,6 +104,7 @@ pub(super) async fn positions(target: &Target, inputs: &Inputs) -> Vec<(String, 
     ];
     let mut out = Vec::new();
     for (binding, source, parser, version, path, fixture) in fixtures {
+        let started = Instant::now();
         let reference = sinex_model::SourceRef {
             name: source.into(),
             version,
@@ -113,6 +114,14 @@ pub(super) async fn positions(target: &Target, inputs: &Inputs) -> Vec<(String, 
             .unwrap()
             .expect("native declaration");
         let fingerprint = declaration.fingerprint();
+        // Definitions are immutable for this proof snapshot; every event below
+        // still validates its exact kind, hash and native provenance.
+        let mut allowed = BTreeMap::new();
+        for kind in &declaration.kinds {
+            let hash = kind.definition_hash();
+            let previous = allowed.insert(kind.kind.clone(), hash.clone());
+            assert!(previous.is_none_or(|previous| previous == hash));
+        }
         let saved_binding = sinex_store::bindings::load(&mut conn, &binding)
             .await
             .unwrap()
@@ -197,6 +206,7 @@ pub(super) async fn positions(target: &Target, inputs: &Inputs) -> Vec<(String, 
         }
         let events = sqlx::query("SELECT e.material_id,e.anchor,e.output_index,e.reading_order,e.producer_host,e.record_hash,e.payload,e.source,e.source_version,e.source_fingerprint,k.definition_hash,e.event_type,e.kind_version FROM core.events e JOIN raw.materials m ON m.id=e.material_id JOIN registry.event_types k ON k.name=e.event_type AND k.version=e.kind_version WHERE m.input_id=$1")
             .bind(input).fetch_all(&mut conn).await.unwrap();
+        eprintln!("native proof {source} loaded after {:?}", started.elapsed());
         let mut facts = Vec::new();
         for event in events {
             assert_eq!(event.get::<String, _>("source"), source);
@@ -217,8 +227,9 @@ pub(super) async fn positions(target: &Target, inputs: &Inputs) -> Vec<(String, 
                 name: event.get("event_type"),
                 version: u64::try_from(event.get::<i64, _>("kind_version")).unwrap(),
             };
-            assert!(
-                declaration.allows(&kind, &event.get::<String, _>("definition_hash")),
+            assert_eq!(
+                allowed.get(&kind),
+                Some(&event.get::<String, _>("definition_hash")),
                 "exact native kind schema"
             );
             let hash: Vec<u8> = event.get("record_hash");
@@ -246,9 +257,17 @@ pub(super) async fn positions(target: &Target, inputs: &Inputs) -> Vec<(String, 
             failures,
             memory,
         };
+        eprintln!(
+            "native proof {source} event identities after {:?}",
+            started.elapsed()
+        );
         let logical = validate(&snapshot, &fixture).unwrap_or_else(|reason| {
             panic!("native progress custody failed for {source}: {reason}")
         });
+        eprintln!(
+            "native proof {source} complete after {:?}",
+            started.elapsed()
+        );
         out.push((binding, logical, snapshot.carry));
     }
     out.sort_by(|a, b| a.0.cmp(&b.0));

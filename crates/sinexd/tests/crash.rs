@@ -624,15 +624,21 @@ async fn checked_unchanged_coverage(target: &Target, bindings: &[String], before
         assert_eq!(kind, "source.coverage");
         assert_eq!(payload["binding"], native);
         assert_eq!(payload["host"], HOST);
-        assert_eq!(payload["observed_source"], native.split_once(':').unwrap().0);
+        assert_eq!(
+            payload["observed_source"],
+            native.split_once(':').unwrap().0
+        );
         assert_eq!(payload["events"], 0);
         assert_eq!(payload["failures"], 0);
     }
 }
 
 async fn backfill_survives(inputs: Inputs, ready: Option<&str>, lock_sql: &str) {
+    let started = Instant::now();
+    let note = |phase| eprintln!("native crash {phase} after {:?}", started.elapsed());
     let reference = Target::new(&inputs);
     finish(&mut reference.backfill(&inputs));
+    note("reference backfill");
     let verify = ready.is_some();
     let expected = if verify {
         consistent(&reference).await;
@@ -640,18 +646,22 @@ async fn backfill_survives(inputs: Inputs, ready: Option<&str>, lock_sql: &str) 
     } else {
         state(&mut reference.connect().await).await
     };
+    note("reference proof");
     assert_eq!(expected.events as usize, inputs.expected_events);
 
     let target = Target::new(&inputs);
     kill_at(&target, &mut target.backfill(&inputs), ready, lock_sql).await;
+    note("killed target");
     consistent(&target).await;
     finish(&mut target.backfill(&inputs));
+    note("restarted backfill");
     consistent(&target).await;
     let actual = if verify {
         verified_backfill_state(&target, &inputs).await
     } else {
         state(&mut target.connect().await).await
     };
+    note("restart proof");
     same(&actual, &expected, "after the restart");
     if verify {
         let bindings = [
@@ -662,6 +672,7 @@ async fn backfill_survives(inputs: Inputs, ready: Option<&str>, lock_sql: &str) 
             let native_materials = material_ids(owner, Some(&bindings)).await;
             let all_materials = material_ids(owner, None).await;
             finish(&mut owner.backfill(&inputs));
+            note("unchanged backfill");
             consistent(owner).await;
             same(
                 &verified_backfill_state(owner, &inputs).await,
@@ -674,6 +685,7 @@ async fn backfill_survives(inputs: Inputs, ready: Option<&str>, lock_sql: &str) 
                 "unchanged native inputs preserve every actual material identity"
             );
             checked_unchanged_coverage(owner, &bindings, &all_materials).await;
+            note("unchanged proof");
         }
         // Both stores replay their own captured bytes and explicit predecessor
         // cuts. No cursor coordinate is borrowed from the other store.
@@ -684,11 +696,14 @@ async fn backfill_survives(inputs: Inputs, ready: Option<&str>, lock_sql: &str) 
             "command.executed",
         ];
         finish(&mut reference.replay(&scope));
+        note("reference replay");
         finish(&mut target.replay(&scope));
+        note("restarted replay");
         consistent(&reference).await;
         consistent(&target).await;
         let replayed_reference = verified_backfill_state(&reference, &inputs).await;
         let replayed_target = verified_backfill_state(&target, &inputs).await;
+        note("replay proofs");
         for (label, replayed, before) in [
             ("reference", &replayed_reference, &expected),
             ("restarted", &replayed_target, &actual),
