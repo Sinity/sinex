@@ -42,9 +42,8 @@ fn work_derivations() -> Vec<Box<dyn AnyKeyed>> {
     ]
 }
 async fn world(db: devkit::pg::TestDatabase) -> World {
-    let world = World::with_keys(db, work_derivations()).await;
-    external::register(&world.url).await;
-    world
+    external::register(&db.url(None)).await;
+    World::with_keys(db, work_derivations()).await
 }
 async fn runner(w: &World) -> DerivationRunner {
     let mut runner = w.driver_with(work_derivations(), vec![]).await;

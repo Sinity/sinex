@@ -46,9 +46,8 @@ fn polylogue(kind: &str, payload: Value, anchor: u64) -> Event {
 }
 
 async fn declared_world(db: devkit::pg::TestDatabase) -> World {
-    let world = World::new(db).await;
-    external::register(&world.url).await;
-    world
+    external::register(&db.url(None)).await;
+    World::new(db).await
 }
 
 /// Two days of a person at the machine: shells, windows, the browser, music,

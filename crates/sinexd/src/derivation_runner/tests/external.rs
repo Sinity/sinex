@@ -2,6 +2,8 @@
 //! normal admission validation. No bundled outside payload types are restored.
 use super::*;
 
+/// Register before claiming the writer: declaration registration takes the
+/// same exclusive advisory lock as the production writer session.
 pub(super) async fn register(url: &str) {
     let mut declaration = sinex_model::KindDeclaration::schemaless(
         sinex_model::KindRef {

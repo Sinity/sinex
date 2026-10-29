@@ -26,8 +26,8 @@ fn rule(name: &str, field: &str) -> NewRule {
 async fn required_snapshot_mask_retires_acts_while_unrelated_mask_and_loosening_preserve_them(
     db: devkit::pg::TestDatabase,
 ) {
+    external::register(&db.url(None)).await;
     let w = World::with_keys(db, keys()).await;
-    external::register(&w.url).await;
     let mut payload = external::snapshot("codex:required", "main", &[at(0)], 1);
     payload["objectives"] =
         json!([{"kind":"task","repository":"synthetic/repo","reference":"[masked]"}]);
