@@ -454,7 +454,31 @@ async fn saved_recall_and_context_continuations_keep_their_stored_selection(
         json!({"method":"context","since":"2026-09-14T00:00:00Z","page":1}),
     )
     .await;
-    assert_eq!(context["outcome"], "ok", "{context}");
+    let graph = if context["outcome"] != "ok" {
+        sqlx::query_scalar::<_, Value>(
+            "SELECT jsonb_build_object('id',e.id,'kind',e.event_type,'class',e.class,
+              'commit',e.commit_seq,'archived',EXISTS(SELECT 1 FROM audit.archived a WHERE a.event_id=e.id),
+              'live',EXISTS(SELECT 1 FROM core.live_equivalence l WHERE l.event_id=e.id)
+                  OR EXISTS(SELECT 1 FROM core.live_locations l WHERE l.event_id=e.id),
+              'effective_class',(SELECT o.class FROM privacy.event_outputs o WHERE o.event_id=e.id),
+              'pack',e.payload->'pack','request',e.payload->'request',
+              'selection',e.payload#>'{selection,selected}',
+              'parents',coalesce((SELECT jsonb_agg(jsonb_build_object('id',p.id,'kind',p.event_type,
+                  'class',p.class,'archived',EXISTS(SELECT 1 FROM audit.archived a WHERE a.event_id=p.id)))
+                  FROM core.events p WHERE p.id=ANY(e.parents)),'[]'::jsonb))
+             FROM core.events e WHERE e.event_type IN ('query.saved','analysis.request','context.pack')
+             ORDER BY e.commit_seq",
+        )
+        .fetch_all(&mut *w.reads.acquire().await.unwrap())
+        .await
+        .unwrap()
+    } else {
+        vec![]
+    };
+    assert_eq!(
+        context["outcome"], "ok",
+        "{context}; stored graph {graph:?}"
+    );
     let cursor = context["result"]["page"]["cursor"].as_str().unwrap();
     let (_, next) = call(
         &w,
