@@ -8,7 +8,7 @@
 //! The key is the logical day: one read of the day's messages gives every
 //! conversation's day, so a thread of any length costs one key per day it was
 //! active.
-use crate::derived_event::derived;
+use crate::derived_event::{derived};
 use crate::{Computed, Env, InputQuery, KeyState, KeyView, Keyed, Kind};
 use serde_json::{Value, json};
 use sinex_model::event_types::ConversationDay;
@@ -23,7 +23,7 @@ type Messages<'a> = Vec<(&'a Event, String, Timestamp)>;
 
 /// The channel, conversation, sender and time of one message.
 fn message(e: &Event) -> Option<(&'static str, String, String, Timestamp)> {
-    match e.event_type {
+    match e.event_type.as_str() {
         t if t == ChatMessage::EVENT_TYPE => {
             let m: ChatMessage = e.payload_as()?;
             matches!(m.kind, ChatLineKind::Message | ChatLineKind::Action)
@@ -40,11 +40,11 @@ fn message(e: &Event) -> Option<(&'static str, String, String, Timestamp)> {
         }
         t if t == MailFused::EVENT_TYPE => {
             let m: MailFused = e.payload_as()?;
-            let thread = m
-                .thread_id
-                .filter(|t| !t.trim().is_empty())
-                .map(|thread| format!("thread:{thread}"))
-                .unwrap_or_else(|| format!("message:{}", m.message_id));
+            let thread = match (m.account.as_deref(),m.thread_id.as_deref().filter(|thread|!thread.trim().is_empty())) {
+                (Some(account),Some(thread)) => json!([account,format!("thread:{thread}")]).to_string(),
+                (Some(account),None) => json!([account,format!("message:{}",m.message_id.as_deref().unwrap_or(&m.record))]).to_string(),
+                (None,_) => json!([null,format!("record:{}",m.record)]).to_string(),
+            };
             Some((
                 "mail",
                 thread,
@@ -62,7 +62,7 @@ fn day_of(key: &Value) -> Option<jiff::civil::Date> {
 
 impl Keyed for ConversationDays {
     const NAME: &'static str = "conversation.days";
-    const VERSION: u32 = 2;
+    const VERSION: u32 = 3;
     const USES_TIME_SETTINGS: bool = true;
     const INPUTS: &'static [&'static str] = &[
         ChatMessage::EVENT_TYPE,
@@ -139,6 +139,7 @@ impl Keyed for ConversationDays {
             })
             .collect();
         Computed {
+            error: None,
             outputs,
             waiting: false,
         }

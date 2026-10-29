@@ -185,7 +185,7 @@ impl Keyed for WorkActs {
 
 fn episode_kind(episode: &Value) -> Kind {
     let mut kind = Kind::all("work.act");
-    kind.equal.push(("episode", episode.clone()));
+    kind.equal.push(("episode".into(), episode.clone()));
     kind
 }
 
@@ -517,6 +517,7 @@ impl Keyed for ContextPacks {
             error: None,
             outputs: vec![derived(
                 &ContextPack {
+                    producer_versions: None,
                     read_as: None,
                     analysis: None,
                     pack: format!("resume:{}", episode.episode),
@@ -609,6 +610,7 @@ impl Keyed for ActivityDays {
         let mut query = InputQuery::all(Self::INPUTS.iter().map(|kind| Kind::all(kind)).collect());
         query.range = Some(InputRange::UntilNext {
             start,
+            after: None,
             kinds: vec![Kind::only("rest.fused", &[("kind", "sleep")])],
             field: "ended_at",
         });

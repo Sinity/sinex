@@ -114,11 +114,11 @@ impl Keyed for ActivitySessions {
         let at = serde_json::from_value::<Timestamp>(key.get("at")?.clone()).ok()?;
         let scope = key.get("scope")?;
         let mut selected = crate::Kind::all("activity.window");
-        selected.equal.push(("scope", scope.clone()));
+        selected.equal.push(("scope".into(), scope.clone()));
         let mut query = InputQuery::all(kinds(Self::INPUTS));
         for kind in &mut query.kinds {
             if kind.event_type == "activity.window" {
-                kind.equal.push(("scope", scope.clone()));
+                kind.equal.push(("scope".into(), scope.clone()));
             }
         }
         query.range = Some(crate::InputRange::Connected {

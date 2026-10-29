@@ -247,7 +247,7 @@ impl AnyPerEvent for TagApplier {
                         tag: tag.to_owned(),
                         record: serde_json::to_string(&(
                             &event.source,
-                            event.event_type,
+                            &event.event_type,
                             record_identity(event),
                         ))
                         .expect("record identity serializes"),

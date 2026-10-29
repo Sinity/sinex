@@ -83,7 +83,7 @@ fn work_acts(inputs: &[Event], env: &Env) -> Vec<Event> {
     acts
 }
 fn compute(inputs: &[Event]) -> Vec<Event> {
-    let env = Env::at(at(2_000_000));
+    let env = Env::at(at(2_000_000), sinex_model::time_settings::TimeSettings::new("Europe/Warsaw", 4, 0).expect("fixture day setting"));
     let mut acts = work_acts(inputs, &env);
     acts.extend(
         inputs
@@ -245,7 +245,7 @@ fn wake_days_follow_rest_while_calculation_days_stay_fixed() {
                 &ActivityDays,
                 &json!({"start":at(start)}),
                 &inputs,
-                &Env::at(at(40 * 3600)),
+                &Env::at(at(40 * 3600), sinex_model::time_settings::TimeSettings::new("Europe/Warsaw", 4, 0).expect("fixture day setting")),
             )
             .outputs
         })
@@ -262,7 +262,7 @@ fn wake_days_follow_rest_while_calculation_days_stay_fixed() {
     assert!(!days[0].provisional);
     assert!(days[1].provisional);
     assert!(
-        Keyed::compute(&ActivityDays, &json!({}), &[], &Env::at(at(40 * 3600)))
+        Keyed::compute(&ActivityDays, &json!({}), &[], &Env::at(at(40 * 3600), sinex_model::time_settings::TimeSettings::new("Europe/Warsaw", 4, 0).expect("fixture day setting")))
             .outputs
             .is_empty()
     );
@@ -288,7 +288,7 @@ fn brief_excursions_are_counted_without_splitting_the_episode() {
 
 #[devkit::test]
 fn work_queries_select_a_session_then_the_recorded_objective_range() {
-    let env = Env::at(at(1000));
+    let env = Env::at(at(1000), sinex_model::time_settings::TimeSettings::new("Europe/Warsaw", 4, 0).expect("fixture day setting"));
     let input = session("a", Some("task"));
     let query = Keyed::inputs(&WorkActs, &json!({"session":"a"}), &env).unwrap();
     assert!(query.admits(&input));
@@ -313,7 +313,7 @@ fn work_queries_select_a_session_then_the_recorded_objective_range() {
     let Some(InputRange::Extent { kinds }) = query.range else {
         panic!("objective range")
     };
-    assert_eq!(kinds[0].equal, [("episode", key["episode"].clone())]);
+    assert_eq!(kinds[0].equal, [("episode".into(), key["episode"].clone())]);
     assert_eq!(
         Keyed::compute(&WorkEpisodes, &key, &output.outputs, &env).outputs[0].payload["agent_s"],
         Value::Null
@@ -332,7 +332,7 @@ fn conflicting_recorded_objectives_do_not_choose_by_arrival_order() {
             &WorkActs,
             &json!({"session":"a"}),
             &inputs,
-            &Env::at(at(100))
+            &Env::at(at(100), sinex_model::time_settings::TimeSettings::new("Europe/Warsaw", 4, 0).expect("fixture day setting"))
         )
         .outputs
         .is_empty()
@@ -341,7 +341,7 @@ fn conflicting_recorded_objectives_do_not_choose_by_arrival_order() {
 
 #[devkit::test]
 fn act_instants_without_duration_never_extend_into_later_hour_queries() {
-    let env = Env::at(at(10_000));
+    let env = Env::at(at(10_000), sinex_model::time_settings::TimeSettings::new("Europe/Warsaw", 4, 0).expect("fixture day setting"));
     let acts = Keyed::compute(
         &WorkActs,
         &json!({"session":"a"}),
@@ -369,7 +369,7 @@ fn a_recorded_objective_switch_stores_an_open_suspension_until_return() {
         prompt("a", 0),
         prompt("b", 100),
     ];
-    let env = Env::at(at(200));
+    let env = Env::at(at(200), sinex_model::time_settings::TimeSettings::new("Europe/Warsaw", 4, 0).expect("fixture day setting"));
     let acts = work_acts(&inputs, &env);
     let target = acts
         .iter()
@@ -406,8 +406,8 @@ fn a_recorded_objective_switch_stores_an_open_suspension_until_return() {
     let result = Keyed::compute(
         &WorkEpisodes,
         &key,
-        &work_acts(&returned, &Env::at(at(600))),
-        &Env::at(at(600)),
+        &work_acts(&returned, &Env::at(at(600), sinex_model::time_settings::TimeSettings::new("Europe/Warsaw", 4, 0).expect("fixture day setting"))),
+        &Env::at(at(600), sinex_model::time_settings::TimeSettings::new("Europe/Warsaw", 4, 0).expect("fixture day setting")),
     );
     let closed = result
         .outputs
@@ -453,7 +453,7 @@ fn a_recorded_absence_interrupts_work_before_any_return() {
     let mut metadata = session("a", Some("first"));
     metadata.payload["machine"] = json!("box");
     let inputs = vec![metadata, prompt("a", 0)];
-    let env = Env::at(at(200));
+    let env = Env::at(at(200), sinex_model::time_settings::TimeSettings::new("Europe/Warsaw", 4, 0).expect("fixture day setting"));
     let mut acts = work_acts(&inputs, &env);
     let episode = acts[0].payload["episode"].clone();
     let absence = record(
@@ -484,18 +484,18 @@ fn explicit_task_then_pull_request_anchors_outrank_a_branch_without_reading_pros
         {"kind":"pull_request","repository":"synthetic/repo","reference":"https://forge.example/synthetic/repo/pull/7"},
         {"kind":"task","repository":"synthetic/repo","reference":"task-7"}]);
     let inputs = [metadata.clone(), prompt("a", 0)];
-    let acts = work_acts(&inputs, &Env::at(at(10)));
+    let acts = work_acts(&inputs, &Env::at(at(10), sinex_model::time_settings::TimeSettings::new("Europe/Warsaw", 4, 0).expect("fixture day setting")));
     assert_eq!(acts[0].payload["objective"]["kind"], "task");
     assert_eq!(acts[0].payload["objective"]["reference"], "task-7");
     metadata.payload["objectives"]
         .as_array_mut()
         .unwrap()
         .remove(1);
-    let acts = work_acts(&[metadata, prompt("a", 0)], &Env::at(at(10)));
+    let acts = work_acts(&[metadata, prompt("a", 0)], &Env::at(at(10), sinex_model::time_settings::TimeSettings::new("Europe/Warsaw", 4, 0).expect("fixture day setting")));
     assert_eq!(acts[0].payload["objective"]["kind"], "pull_request");
     let mut prose = prompt("a", 0);
     prose.payload["text"] = json!("Task task-99. gh pr checkout 99");
-    let acts = work_acts(&[session("a", None), prose], &Env::at(at(10)));
+    let acts = work_acts(&[session("a", None), prose], &Env::at(at(10), sinex_model::time_settings::TimeSettings::new("Europe/Warsaw", 4, 0).expect("fixture day setting")));
     assert!(acts[0].payload["objective"].is_null());
 }
 #[devkit::test]
@@ -504,7 +504,7 @@ fn conflicting_task_links_do_not_fall_back_to_a_lower_priority_branch() {
     metadata.payload["objectives"] = json!([
         {"kind":"task","repository":"synthetic/repo","reference":"task-1"},
         {"kind":"task","repository":"synthetic/repo","reference":"task-2"}]);
-    let acts = work_acts(&[metadata, prompt("a", 0)], &Env::at(at(10)));
+    let acts = work_acts(&[metadata, prompt("a", 0)], &Env::at(at(10), sinex_model::time_settings::TimeSettings::new("Europe/Warsaw", 4, 0).expect("fixture day setting")));
     assert!(acts[0].payload["objective"].is_null());
 }
 #[devkit::test]
@@ -518,7 +518,7 @@ fn work_acts_retain_exact_terminal_repository_and_revision_check_evidence() {
         "outcome":"error","revision":"rev-a","check_name":"compile","check_passed":false}),
         1,
     );
-    let acts = work_acts(&[metadata, tool], &Env::at(at(10)));
+    let acts = work_acts(&[metadata, tool], &Env::at(at(10), sinex_model::time_settings::TimeSettings::new("Europe/Warsaw", 4, 0).expect("fixture day setting")));
     let act = acts[0].payload_as::<WorkAct>().unwrap();
     assert_eq!(act.git_identity.unwrap().common_dir, "/captured/repo/.git");
     assert_eq!(act.terminal.unwrap().window_id, "native-7");
