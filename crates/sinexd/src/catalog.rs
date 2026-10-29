@@ -4,6 +4,25 @@
 //! test keeps the file current.
 use serde_json::{Value, json};
 use sinex_derivations::AnyPerEvent;
+use sqlx::{Connection, PgConnection};
+
+/// Install only the build's trusted native catalog while the owner holds the
+/// writer claim. Request payloads cannot register their own source authority.
+pub(crate) async fn install_native_sources(conn: &mut PgConnection) -> Result<(), String> {
+    let mut tx = conn
+        .begin()
+        .await
+        .map_err(|error| format!("starting source catalog install: {error}"))?;
+    sinex_store::registry::write_sources(&mut tx, &registry_sources())
+        .await
+        .map_err(|error| format!("writing the source registry: {error}"))?;
+    sinex_store::source_declarations::register(&mut tx, &source_declarations())
+        .await
+        .map_err(|error| format!("registering native sources: {error}"))?;
+    tx.commit()
+        .await
+        .map_err(|error| format!("committing source catalog: {error}"))
+}
 
 pub(crate) fn catalog() -> Value {
     let sources: Vec<Value> = sources().into_iter().map(|s| s.to_json()).collect();

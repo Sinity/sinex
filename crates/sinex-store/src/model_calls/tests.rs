@@ -543,8 +543,10 @@ async fn recorded_cost_overruns_are_truth_and_reconciliation_never_charges_twice
             }
         )
         .await,
-        refused(Refusal::ContradictoryResponse {
-            request: next_request.request_id
+        refused(Refusal::ContradictoryReceipt {
+            receipt: response
+                .receipt_identity()
+                .expect("fixture has native receipt identity")
         })
     );
     assert_eq!(
@@ -553,6 +555,20 @@ async fn recorded_cost_overruns_are_truth_and_reconciliation_never_charges_twice
             .await
             .unwrap(),
         Some(1)
+    );
+    assert!(
+        super::decision(&mut conn, &next_request.request_id)
+            .await
+            .unwrap()
+            .is_none(),
+        "the aliased receipt cannot create a second request charge"
+    );
+    assert_eq!(
+        super::decision(&mut conn, &request.request_id)
+            .await
+            .unwrap(),
+        Some(persisted),
+        "receipt conflict preserves the original amount, effect and frozen account"
     );
 }
 

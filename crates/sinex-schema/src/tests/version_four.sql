@@ -3,6 +3,7 @@ DROP TABLE registry.source_declarations;
 DROP FUNCTION registry.keep_source_declaration();
 DROP VIEW core.derivation_events;
 DROP TABLE core.owner_protocol_key;
+DROP TABLE derivation.model_calls,derivation.model_policies;
 DROP TRIGGER rules_policy_epoch ON privacy.rules;
 DROP TRIGGER floors_policy_epoch ON privacy.source_classes;
 DROP TABLE core.signal_checkpoints;

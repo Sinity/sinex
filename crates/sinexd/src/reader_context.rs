@@ -33,6 +33,7 @@ impl ReaderContext {
             .await
             .map_err(|e| e.to_string())?;
         let mut writer_conn = writer::claim(writer_conn).await?;
+        crate::catalog::install_native_sources(&mut writer_conn).await?;
         blobs
             .recover(&mut writer_conn)
             .await

@@ -238,6 +238,10 @@ async fn public_actual_unbound_receipt_later_binds_once_without_creating_a_fake_
     )
     .await;
     assert_eq!(status, StatusCode::OK, "{policy_reply}");
+    assert_eq!(
+        policy_reply["result"]["model_call"]["outcome"], "authorized",
+        "{policy_reply}"
+    );
     let reference = policy_reply["result"]["policy"].as_str().unwrap();
     let route = &configured.routes[0];
     let receipt = sinex_model::model_calls::ReceiptOnly {
@@ -385,6 +389,10 @@ async fn public_incurred_response_records_actual_with_an_absent_overflowing_quot
     )
     .await;
     assert_eq!(status, StatusCode::OK, "{configured_reply}");
+    assert_eq!(
+        configured_reply["result"]["model_call"]["outcome"], "authorized",
+        "{configured_reply}"
+    );
     let reference = configured_reply["result"]["policy"].as_str().unwrap();
     let route = &configured.routes[0];
     let request = InputRequest {

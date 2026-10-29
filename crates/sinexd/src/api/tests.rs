@@ -129,10 +129,14 @@ async fn world_with_config(
         .unwrap();
     let store = std::env::temp_dir().join(format!("sinexd-api-{}", uuid::Uuid::now_v7()));
     let blobs = sinex_store::Blobs::open(&store).unwrap();
+    let mut connection = writer::claim(connection).await.unwrap();
+    crate::catalog::install_native_sources(&mut connection)
+        .await
+        .unwrap();
     let (handle, queues) = writer::channels();
     tokio::spawn(writer::run(
         url.clone(),
-        writer::claim(connection).await.unwrap(),
+        connection,
         queues,
         Arc::new(sinex_store::NoDerivations),
         Some(blobs.clone()),

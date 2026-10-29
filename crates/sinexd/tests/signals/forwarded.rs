@@ -118,6 +118,35 @@ async fn context(client: &async_nats::Client, subjects: &Subjects) -> PublicCont
     .await
     .unwrap()
 }
+async fn wait_deliveries(conn: &mut PgConnection, process: &mut daemon::Process, minimum: i64) {
+    let deadline = Instant::now() + Duration::from_secs(30);
+    loop {
+        process.running();
+        let count: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM core.events WHERE event_type='signal.delivery'",
+        )
+        .fetch_one(&mut *conn)
+        .await
+        .unwrap();
+        if count >= minimum {
+            return;
+        }
+        if Instant::now() >= deadline {
+            let evaluations:Value=sqlx::query_scalar("SELECT coalesce(jsonb_agg(jsonb_build_object('event',e.id,'payload',e.payload,'projection',o.state,'archived',a.event_id IS NOT NULL) ORDER BY e.commit_seq),'[]'::jsonb) FROM core.events e LEFT JOIN privacy.event_outputs o ON o.event_id=e.id LEFT JOIN audit.archived a ON a.event_id=e.id WHERE e.event_type='signal.evaluation'").fetch_one(&mut *conn).await.unwrap();
+            let checkpoints: Value = sqlx::query_scalar(
+                "SELECT coalesce(jsonb_agg(state),'[]'::jsonb) FROM core.signal_checkpoints",
+            )
+            .fetch_one(&mut *conn)
+            .await
+            .unwrap();
+            panic!(
+                "expected {minimum} signal deliveries, got {count}; evaluations={evaluations}; checkpoints={checkpoints}; daemon log:\n{}",
+                process.log()
+            );
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+}
 #[devkit::test]
 async fn authenticated_forwarded_and_local_rules_consume_one_shared_budget_and_retry_once() {
     let db = devkit::pg::test_database().unwrap();
@@ -410,12 +439,7 @@ async fn authenticated_forwarded_and_local_rules_consume_one_shared_budget_and_r
         &socket,
         json!({"method":"mark","text":"synthetic common host decision"}),
     );
-    wait_scalar(
-        &mut conn,
-        "SELECT count(*) FROM core.events WHERE event_type='signal.delivery'",
-        2,
-    )
-    .await;
+    wait_deliveries(&mut conn, &mut process, 2).await;
     wait_scalar(&mut conn,"SELECT count(*) FROM core.events WHERE event_type='signal.desktop_receipt' AND payload->'receipt'->'outcome'->>'outcome'='delivered'",2).await;
     let channels:Vec<String>=sqlx::query_scalar("SELECT payload->'delivery'->>'channel' FROM core.events WHERE event_type='signal.delivery' ORDER BY payload->'delivery'->>'channel'").fetch_all(&mut conn).await.unwrap();
     assert_eq!(channels, ["interrupt", "notice"]);

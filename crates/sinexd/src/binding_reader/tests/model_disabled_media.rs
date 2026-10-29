@@ -80,12 +80,16 @@ async fn model_disabled_capture_keeps_exact_screen_and_audio_materials_after_res
         &mut |_, _| {},
     )
     .await;
-    assert_eq!(results.len(), 2);
-    for (name, result) in results {
+    for (name, result) in &results {
         if let Err(reason) = result {
             panic!("{name}: {reason}")
         }
     }
+    assert_eq!(
+        results.len(),
+        2,
+        "one successful result for each actual media binding"
+    );
     let rows=sqlx::query!(r#"SELECT e.id,e.payload,e.material_id,e.anchor,e.output_index,m.blob,m.length
       FROM core.events e JOIN raw.materials m ON m.id=e.material_id JOIN core.live_locations l ON l.event_id=e.id
       WHERE e.event_type='media.segment' ORDER BY e.payload->>'kind'"#).fetch_all(&mut ctx.read_conn).await.unwrap();

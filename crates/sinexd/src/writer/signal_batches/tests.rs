@@ -213,8 +213,17 @@ async fn copied_delivery_follows_input_policy_while_physical_handoff_remains(
         .unwrap();
     assert_eq!(
         visible(&mut conn, decision).await["unavailable"],
-        "privacy_dependency_changed"
+        "unavailable_dependency"
     );
+    let (state, changed, payload): (String, bool, serde_json::Value) =
+        sqlx::query_as("SELECT state,changed,payload FROM privacy.event_outputs WHERE event_id=$1")
+            .bind(decision.0)
+            .fetch_one(&mut *conn)
+            .await
+            .unwrap();
+    assert_eq!(state, "unavailable_dependency");
+    assert!(changed);
+    assert_eq!(payload, json!({"unavailable":"privacy_dependency_changed"}));
     let actual = visible(&mut conn, handoff).await;
     assert_eq!(
         actual.as_object().unwrap().len(),
@@ -230,7 +239,7 @@ async fn copied_delivery_follows_input_policy_while_physical_handoff_remains(
     );
     assert_eq!(
         visible(&mut conn, decision).await["unavailable"],
-        "privacy_dependency_changed"
+        "unavailable_dependency"
     );
 }
 #[devkit::test]

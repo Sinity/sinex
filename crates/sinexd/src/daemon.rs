@@ -107,15 +107,7 @@ pub(crate) async fn run(o: Options) -> Result<(), String> {
             without_rows.len()
         );
     }
-    sinex_store::registry::write_sources(&mut writer_conn, &crate::catalog::registry_sources())
-        .await
-        .map_err(|e| format!("writing the source registry: {e}"))?;
-    sinex_store::source_declarations::register(
-        &mut writer_conn,
-        &crate::catalog::source_declarations(),
-    )
-    .await
-    .map_err(|error| format!("registering native sources: {error}"))?;
+    crate::catalog::install_native_sources(&mut writer_conn).await?;
     for grant in o
         .producer_grants
         .values()
