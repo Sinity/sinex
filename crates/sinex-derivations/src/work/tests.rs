@@ -708,6 +708,7 @@ fn transformed_required_snapshot_emits_unavailable_without_estimated_acts(){
     assert!(!output.waiting);assert_eq!(output.outputs.len(),1);
     assert_eq!(output.outputs[0].event_type,"work.coverage");
     assert_eq!(output.outputs[0].payload["state"],"unavailable");
+    assert_eq!(output.outputs[0].payload["reasons"]["required_path_transformed"],1);
     assert!(output.outputs[0].payload["eligible_entries"].is_null());
     assert_eq!(output.outputs[0].origin,sinex_model::Origin::Derived{parents:vec![snapshot.id]});
     let requirements=Keyed::input_requirements(&WorkActs).unwrap();

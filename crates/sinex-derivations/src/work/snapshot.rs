@@ -208,8 +208,18 @@ pub(super) fn requirements()->Vec<sinex_model::InputRequirement>{
 }
 pub(super) fn required_unavailable(key:&Value,inputs:&[Event],issues:&[sinex_model::UnavailableInput])->Computed {
     let session=key["session"].as_str().unwrap_or("");
-    let outputs=inputs.iter().find(|event|issues.iter().any(|issue|issue.event==event.id)).map(|parent|
-        coverage(parent,session,parent.payload["reducer_version"].as_u64().and_then(|v|u32::try_from(v).ok()),WorkCoverageState::Unavailable,None,None,None,
-            [("required_input_transformed".into(),issues.len()as u64)].into())).into_iter().collect();
+    let mut reasons=BTreeMap::new();
+    for issue in issues {
+        let reason=match &issue.reason {
+            sinex_model::InputUnavailableReason::RequiredPathTransformed=>"required_path_transformed",
+            sinex_model::InputUnavailableReason::UndeclaredAffectedInput=>"undeclared_affected_input",
+            sinex_model::InputUnavailableReason::ProjectionUnavailable=>"projection_unavailable",
+        };
+        *reasons.entry(reason.into()).or_insert(0)+=1;
+    }
+    let affected:Vec<_>=inputs.iter().filter(|event|issues.iter().any(|issue|issue.event==event.id)).collect();
+    let outputs=affected.first().map(|parent|
+        derived(&WorkCoverage{session:session.into(),snapshot:evidence(parent),reducer_version:parent.payload["reducer_version"].as_u64().and_then(|v|u32::try_from(v).ok()),
+            state:WorkCoverageState::Unavailable,eligible_entries:None,timed_entries:None,untimed_entries:None,reasons},WorkActs::NAME,affected.iter().copied())).into_iter().collect();
     Computed{outputs,waiting:false,..Default::default()}
 }
