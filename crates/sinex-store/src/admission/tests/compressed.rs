@@ -35,7 +35,9 @@ async fn total(conn: &mut PgConnection, text: &str) -> i64 {
 
 #[devkit::test]
 async fn operations_on_compressed_history_decompress_nothing(db: devkit::pg::TestDatabase) {
-    let mut conn = crate::AdmissionContext::connect(&db.url(None)).await.unwrap();
+    let mut conn = crate::AdmissionContext::connect(&db.url(None))
+        .await
+        .unwrap();
     let history: Vec<Event> = (0..20).map(|k| old(k, 30)).collect();
     admit_one(&mut conn, &batch(history.clone())).await;
     let compressed: i64 =

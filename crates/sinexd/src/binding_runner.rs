@@ -23,6 +23,9 @@ pub(crate) struct Config {
     pub derivations: BTreeMap<String, bool>,
     pub tags: Vec<sinex_derivations::tags::TagRule>,
     pub activity: sinex_derivations::activity::ActivityProfile,
+    #[serde(default)]
+    pub project_attribution: sinex_derivations::attribution::AttributionProfile,
+    pub rhythm: sinex_derivations::portfolio::rhythm::RhythmProfile,
 }
 impl Config {
     pub(crate) fn load(path: &std::path::Path) -> Result<Self, String> {
@@ -30,7 +33,10 @@ impl Config {
         serde_json::from_slice(&bytes).map_err(|error| format!("{}: {error}", path.display()))
     }
     pub(crate) fn runs(&self, name: &str) -> bool {
-        self.derivations.get(name).copied().unwrap_or_else(|| sinex_derivations::enabled_by_default(name))
+        self.derivations
+            .get(name)
+            .copied()
+            .unwrap_or_else(|| sinex_derivations::enabled_by_default(name))
     }
     pub(crate) fn context(&self, host: &str) -> sinex_sources::discovery::DiscoveryContext {
         let mut context = self.discovery.clone();
@@ -41,13 +47,18 @@ impl Config {
     }
     pub(crate) fn derivation_configuration(&self) -> sinex_derivations::Configuration {
         sinex_derivations::Configuration {
-            tags: if self.runs(sinex_derivations::tags::TagApplier::NAME) { self.tags.clone() } else { vec![] },
+            tags: if self.runs(sinex_derivations::tags::TagApplier::NAME) {
+                self.tags.clone()
+            } else {
+                vec![]
+            },
             activity: self.activity.clone(),
+            project_attribution: self.project_attribution.clone(),
+            rhythm: self.rhythm.clone(),
         }
     }
 }
 use sinex_sources::discovery::{self, Availability};
-
 
 pub(crate) fn plan(
     config: &Config,
@@ -172,15 +183,24 @@ impl Bindings {
                 Availability::Unavailable | Availability::WaitingForInput
             ) {
                 let at = sinex_model::Timestamp::now();
-                self.coverage.push(sinex_model::event_types::coverage::SourceCoverage {
-                    observation: uuid::Uuid::now_v7().to_string(),
-                    source: input.source.clone(), binding: key.clone(), host: host.into(),
-                    started_at: at, ended_at: at,
-                    state: sinex_model::event_types::coverage::CoverageState::Missing,
-                    reason: Some(input.reason.clone().unwrap_or_else(|| "no input".into())),
-                    completeness: sinex_model::event_types::coverage::CoverageCompleteness::Unknown,
-                    bounded_by: "discovery found no readable input".into(), records: 0, failures: 0,
-                });
+                self.coverage
+                    .push(sinex_model::event_types::coverage::SourceCoverage {
+                        observed_run: None,
+                        observed_class: input.settings.class,
+                        observation: uuid::Uuid::now_v7().to_string(),
+                        observed_source: input.source.clone(),
+                        binding: key.clone(),
+                        host: host.into(),
+                        started_at: at,
+                        ended_at: at,
+                        state: sinex_model::event_types::coverage::CoverageState::Missing,
+                        reason: Some(input.reason.clone().unwrap_or_else(|| "no input".into())),
+                        completeness:
+                            sinex_model::event_types::coverage::CoverageCompleteness::Unknown,
+                        bounded_by: "discovery found no readable input".into(),
+                        events: 0,
+                        failures: 0,
+                    });
                 self.say(
                     &key,
                     format!(
@@ -262,7 +282,7 @@ pub(crate) async fn run(
         name: "sinexd bindings",
         kind: "source",
         version: env!("CARGO_PKG_VERSION"),
-        build: option_env!("SINEX_BUILD").unwrap_or("dev"),
+        build: crate::build_identity::current()?,
         emits: &emits,
     };
     let run = runs::start(&mut read_conn, &manifest, &host)
@@ -291,9 +311,15 @@ pub(crate) async fn run(
         }
         let mut evidence_errors = Vec::new();
         binding_reader::coverage::flush(
-            &mut read_conn, &blobs, &writer, run, crate::material_access::Access::default(),
-            &mut bindings.coverage, &mut evidence_errors,
-        ).await;
+            &mut read_conn,
+            &blobs,
+            &writer,
+            run,
+            crate::material_access::Access::default(),
+            &mut bindings.coverage,
+            &mut evidence_errors,
+        )
+        .await;
         for (_, error) in evidence_errors {
             if let Err(error) = error {
                 eprintln!("sinexd: {error}");

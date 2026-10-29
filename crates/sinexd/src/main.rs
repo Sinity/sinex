@@ -7,6 +7,7 @@ mod api;
 mod backfill;
 mod binding_reader;
 mod binding_runner;
+mod build_identity;
 mod catalog;
 mod commit_reader;
 mod crawl;
@@ -54,6 +55,9 @@ enum Command {
         /// The NATS user's password, read from this file.
         #[arg(long)]
         nats_password_file: Option<PathBuf>,
+        /// Operator-configured producer read grants, keyed by authenticated NATS producer name.
+        #[arg(long)]
+        producer_grants: Option<PathBuf>,
         /// Subject root on the NATS server.
         #[arg(long, default_value = "sinex")]
         subject_root: String,
@@ -120,6 +124,8 @@ enum Command {
         /// the system zone when unset. Recorded with each binding.
         #[arg(long)]
         zone: Option<String>,
+        #[arg(long, default_value = "04:00")]
+        day_start: String,
         /// A source option as `key=value` (a clipboard spool's
         /// `selection=primary`); repeatable.
         #[arg(long = "option")]
@@ -152,6 +158,10 @@ enum Command {
         /// applier's rules; without it the applier has none.
         #[arg(long)]
         sources: Option<PathBuf>,
+        #[arg(long)]
+        zone: Option<String>,
+        #[arg(long, default_value = "04:00")]
+        day_start: String,
     },
 }
 
@@ -162,6 +172,7 @@ async fn local_runner(
     host: &str,
     store: Option<&std::path::Path>,
     configuration: &sinex_derivations::Configuration,
+    time_settings: sinex_model::time_settings::TimeSettings,
 ) -> Result<
     (
         derivation_runner::DerivationRunner,
@@ -173,19 +184,25 @@ async fn local_runner(
     let writer_conn = sqlx::PgConnection::connect(database)
         .await
         .map_err(|e| e.to_string())?;
-    let writer_conn = writer::claim(writer_conn).await?;
+    let mut writer_conn = writer::claim(writer_conn).await?;
     let blobs = store
         .map(sinex_store::blobs::Blobs::open)
         .transpose()
         .map_err(|e| e.to_string())?;
+    if let Some(blobs) = &blobs {
+        blobs
+            .recover(&mut writer_conn)
+            .await
+            .map_err(|error| error.to_string())?;
+    }
     let (handle, queues) = writer::channels();
     let task = tokio::spawn(writer::run(
         database.to_owned(),
         writer_conn,
         queues,
         std::sync::Arc::new(dirty_keys::Registered::new(
-            sinex_derivations::keyed_with(configuration),
-            sinex_model::time_settings::TimeSettings::operator_default(),
+            crate::analysis::keyed_with(configuration),
+            time_settings.clone(),
         )),
         blobs.clone(),
     ));
@@ -195,14 +212,14 @@ async fn local_runner(
     let mut runner = derivation_runner::DerivationRunner::start(
         read,
         handle,
-        sinex_derivations::keyed_with(configuration),
+        crate::analysis::keyed_with(configuration),
         if configuration.tags.is_empty() {
             derivation_runner::per_event()
         } else {
             derivation_runner::per_event_with(configuration)?
         },
         host,
-        sinex_model::time_settings::TimeSettings::operator_default(),
+        time_settings.clone(),
     )
     .await?;
     if let Some(blobs) = blobs {
@@ -217,13 +234,21 @@ async fn run_derive(
     host: String,
     json: bool,
     sources: Option<PathBuf>,
+    zone: Option<String>,
+    day_start: String,
 ) -> Result<(), String> {
     let configuration = match &sources {
         Some(path) => binding_runner::Config::load(path)?.derivation_configuration(),
         None => sinex_derivations::Configuration::default(),
     };
-    let (mut runner, writer_task) =
-        local_runner(&database, &host, store.as_deref(), &configuration).await?;
+    let (mut runner, writer_task) = local_runner(
+        &database,
+        &host,
+        store.as_deref(),
+        &configuration,
+        effective_time_settings(zone.as_deref(), &day_start)?,
+    )
+    .await?;
     let started = std::time::Instant::now();
     runner.catch_up().await?;
     let wall = started.elapsed();
@@ -292,6 +317,26 @@ fn default_socket() -> PathBuf {
         .unwrap_or_else(|| PathBuf::from("/run/sinex/sinexd.sock"))
 }
 
+fn effective_time_settings(
+    zone: Option<&str>,
+    day_start: &str,
+) -> Result<sinex_model::time_settings::TimeSettings, String> {
+    let zone = match zone {
+        Some(name) => {
+            jiff::tz::TimeZone::get(name).map_err(|error| format!("zone {name}: {error}"))?
+        }
+        None => jiff::tz::TimeZone::system(),
+    };
+    if zone.iana_name().is_none() {
+        return Err("system time zone has no IANA name; pass --zone".into());
+    }
+    let start = sinex_model::query::time::clock(day_start)
+        .ok_or_else(|| format!("day start `{day_start}` is not a clock time"))?;
+    Ok(sinex_model::time_settings::TimeSettings::from_parts(
+        zone, start,
+    ))
+}
+
 fn api_options(
     socket: Option<PathBuf>,
     listen: Option<std::net::SocketAddr>,
@@ -319,6 +364,7 @@ async fn main() -> std::process::ExitCode {
     let cli = Cli::parse();
     let result = match cli.command {
         Command::Run {
+            producer_grants,
             database,
             store,
             nats,
@@ -334,18 +380,24 @@ async fn main() -> std::process::ExitCode {
             telemetry_spool,
         } => match api_options(socket, listen, tokens, zone, &day_start) {
             Ok(api) => {
-                let telemetry_spool = telemetry_spool.unwrap_or_else(|| telemetry::spool(&store));
-                daemon::run(daemon::Options {
-                    database,
-                    store,
-                    nats,
-                    nats_password_file,
-                    subject_root,
-                    host,
-                    api,
-                    sources,
-                    telemetry_spool,
-                })
+                async {
+                    let telemetry_spool =
+                        telemetry_spool.unwrap_or_else(|| telemetry::spool(&store));
+                    let producer_grants = ingress::fetch::load(producer_grants.as_deref())?;
+                    daemon::run(daemon::Options {
+                        producer_grants,
+                        database,
+                        store,
+                        nats,
+                        nats_password_file,
+                        subject_root,
+                        host,
+                        api,
+                        sources,
+                        telemetry_spool,
+                    })
+                    .await
+                }
                 .await
             }
             Err(e) => Err(e),
@@ -370,12 +422,20 @@ async fn main() -> std::process::ExitCode {
             store,
             reads,
             zone,
+            day_start,
             options,
             host,
             json,
             identity_file,
         } => {
             backfill::run(backfill::Options {
+                time_settings: match effective_time_settings(zone.as_deref(), &day_start) {
+                    Ok(settings) => settings,
+                    Err(error) => {
+                        eprintln!("sinexd: {error}");
+                        return std::process::ExitCode::FAILURE;
+                    }
+                },
                 database,
                 store,
                 reads,
@@ -393,7 +453,9 @@ async fn main() -> std::process::ExitCode {
             host,
             json,
             sources,
-        } => run_derive(database, store, host, json, sources).await,
+            zone,
+            day_start,
+        } => run_derive(database, store, host, json, sources, zone, day_start).await,
     };
     match result {
         Ok(()) => std::process::ExitCode::SUCCESS,

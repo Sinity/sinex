@@ -60,6 +60,8 @@ pub struct Window {
     pub after: Vec<Nearest>,
 }
 
+mod state_transitions;
+
 /// Time bounds resolved from live records within the reader's snapshot.
 #[derive(Clone, Debug, PartialEq)]
 pub enum InputRange {
@@ -72,8 +74,17 @@ pub enum InputRange {
     Extent {
         kinds: Vec<Kind>,
     },
+    StateTransitions {
+        start: OffsetDateTime,
+        end: OffsetDateTime,
+        kinds: Vec<Kind>,
+        scope_field: &'static str,
+        subject_fields: Vec<&'static str>,
+        now: OffsetDateTime,
+    },
     UntilNext {
         start: OffsetDateTime,
+        after: Option<OffsetDateTime>,
         kinds: Vec<Kind>,
         field: &'static str,
         now: OffsetDateTime,
@@ -103,7 +114,7 @@ fn event_from_row(
     source: String,
     material_id: Option<Uuid>,
     anchor: Option<i64>,
-    output_index: i16,
+    output_index: i64,
     parents: Option<Vec<Uuid>>,
     ts_orig: Option<OffsetDateTime>,
     ts_quality: &str,
@@ -121,7 +132,7 @@ fn event_from_row(
                 anchor: u64::try_from(anchor)
                     .map_err(|_| crate::Error::Invalid("negative anchor".into()))?,
             },
-            output_index: u16::try_from(output_index)
+            output_index: u64::try_from(output_index)
                 .map_err(|_| crate::Error::Invalid("negative output_index".into()))?,
         },
         (_, _, Some(parents)) => Origin::Derived {
@@ -253,8 +264,30 @@ async fn resolve_range(conn: &mut PgConnection, w: &Window) -> Result<Option<Win
                 .ok()
                 .map(|at| at.0);
         }
+        InputRange::StateTransitions {
+            start,
+            end,
+            kinds,
+            scope_field,
+            subject_fields,
+            now,
+        } => {
+            let (from, until) = state_transitions::bounds(
+                conn,
+                kinds,
+                *start,
+                *end,
+                scope_field,
+                subject_fields,
+                *now,
+            )
+            .await?;
+            resolved.start = Some(from);
+            resolved.end = Some(until);
+        }
         InputRange::UntilNext {
             start,
+            after,
             kinds,
             field,
             now,
@@ -266,7 +299,7 @@ async fn resolve_range(conn: &mut PgConnection, w: &Window) -> Result<Option<Win
                      AND EXISTS (SELECT 1 FROM unnest($1::text[], $2::jsonb[]) AS k(event_type, contains)
                                  WHERE k.event_type = e.event_type AND e.payload @> k.contains)
                      AND NOT EXISTS (SELECT 1 FROM audit.archived a WHERE a.event_id = e.id)"#,
-                &types, &contains, *field, start,
+                &types, &contains, *field, after.unwrap_or(*start),
             ).fetch_one(&mut *conn).await?;
             resolved.start = Some(*start);
             resolved.end = Some(end.unwrap_or(*now).min(*now));
@@ -814,7 +847,6 @@ pub async fn after_seq(
         r#"SELECT e.id, e.event_type, e.source, e.material_id, e.anchor, e.output_index, e.parents,
              e.ts_orig, e.ts_quality, e.payload, e.equivalence_key, e.reading_order, e.record_hash,
              e.record_state, e.class, page.seq AS "commit_seq!", e.kind_version, e.validation,
-             (SELECT replace_rule FROM registry.event_types k WHERE k.name=e.event_type AND k.version=e.kind_version) AS replace_rule, e.kind_version, e.validation,
              (SELECT replace_rule FROM registry.event_types k WHERE k.name=e.event_type AND k.version=e.kind_version) AS replace_rule
            FROM core.events e JOIN (
              SELECT p.id, p.seq FROM (
@@ -975,6 +1007,62 @@ pub async fn outputs(conn: &mut PgConnection, derivation: &str, key: &Value) -> 
     Ok(out)
 }
 
+/// The current outputs citing one per-event input.
+pub async fn children_outputs(
+    conn: &mut PgConnection,
+    derivation: &str,
+    input: sinex_model::EventId,
+) -> Result<Vec<Event>> {
+    let rows = sqlx::query!(
+        r#"SELECT e.id, e.event_type, e.source, e.material_id, e.anchor, e.output_index, e.parents,
+             e.ts_orig, e.ts_quality, e.payload, e.equivalence_key, e.reading_order, e.record_hash,
+             e.record_state, e.class, e.commit_seq, e.kind_version, e.validation,
+             (SELECT replace_rule FROM registry.event_types k WHERE k.name=e.event_type AND k.version=e.kind_version) AS replace_rule
+           FROM core.events e
+           WHERE e.source=$1 AND $2=ANY(e.parents)
+             AND NOT EXISTS (SELECT 1 FROM audit.archived a WHERE a.event_id=e.id)
+           ORDER BY e.ts_orig,e.commit_seq"#, derivation,input.0)
+        .fetch_all(conn).await?;
+    let mut out = Vec::with_capacity(rows.len());
+    for row in rows {
+        out.push(committed!(row).event);
+    }
+    Ok(out)
+}
+
+/// The producer versions that actually made the selected inputs, including mixed histories.
+pub async fn producer_versions(
+    conn: &mut PgConnection,
+    inputs: &[sinex_model::EventId],
+) -> Result<Value> {
+    let ids: Vec<uuid::Uuid> = inputs.iter().map(|input| input.0).collect();
+    let rows = sqlx::query!(
+        r#"WITH RECURSIVE selected(id) AS (
+               SELECT unnest($1::uuid[])
+               UNION SELECT links.parent FROM core.event_children links JOIN selected s ON s.id=links.child
+           )
+           SELECT e.source AS producer,m.name AS "manifest?",m.version AS "version?",
+                  m.build AS "build?",material.parser AS "parser?",
+                  material.parser_version AS "parser_version?",count(*)::bigint AS "events!"
+           FROM selected s JOIN core.events e ON e.id=s.id
+           LEFT JOIN core.runs r ON r.id=e.run_id
+           LEFT JOIN core.manifests m ON m.id=r.manifest_id
+           LEFT JOIN raw.materials material ON material.id=e.material_id
+           GROUP BY e.source,m.name,m.version,m.build,material.parser,material.parser_version
+           ORDER BY e.source,m.name,m.version,m.build,material.parser,material.parser_version"#,
+        &ids
+    ).fetch_all(conn).await?;
+    Ok(serde_json::json!(
+        rows.into_iter()
+            .map(
+                |row| serde_json::json!({"producer":row.producer,"manifest":row.manifest,
+            "version":row.version,"build":row.build,"parser":row.parser,
+            "parser_version":row.parser_version,"events":row.events})
+            )
+            .collect::<Vec<_>>()
+    ))
+}
+
 /// Where a per-event derivation has read to.
 pub async fn position(conn: &mut PgConnection, derivation: &str) -> Result<i64> {
     Ok(sqlx::query_scalar!(
@@ -986,8 +1074,7 @@ pub async fn position(conn: &mut PgConnection, derivation: &str) -> Result<i64> 
     .unwrap_or(0))
 }
 
-/// Start a per-event derivation over from the first committed event (its
-/// version changed). Written at daemon start, before the runner runs.
+/// Reset a per-event producer only as part of an explicit version switch.
 pub async fn reset_position(conn: &mut PgConnection, derivation: &str) -> Result<()> {
     sqlx::query!(
         "DELETE FROM derivation.positions WHERE derivation = $1",
@@ -1004,7 +1091,7 @@ pub async fn reset_position(conn: &mut PgConnection, derivation: &str) -> Result
 pub struct StoredComparison {
     pub id: i64,
     pub derivation: String,
-    pub version: i32,
+    pub version: i64,
     pub range: Option<(Option<Timestamp>, Option<Timestamp>)>,
     pub made_at: Timestamp,
     pub keys: i64,
@@ -1013,6 +1100,7 @@ pub struct StoredComparison {
     pub changed: i64,
     pub removed: i64,
     pub examples: Value,
+    pub context: Value,
 }
 
 /// Keep a comparison. Comparisons are operations records, not events; they are
@@ -1021,8 +1109,8 @@ pub async fn store_comparison(conn: &mut PgConnection, c: &StoredComparison) -> 
     let (from, until) = c.range.unwrap_or((None, None));
     Ok(sqlx::query_scalar!(
         r#"INSERT INTO derivation.comparisons
-             (derivation, version, range_from, range_until, keys, unchanged, added, changed, removed, examples)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING id"#,
+             (derivation, version, range_from, range_until, keys, unchanged, added, changed, removed, examples, context)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) RETURNING id"#,
         c.derivation,
         c.version,
         from.map(|t| t.0),
@@ -1033,6 +1121,7 @@ pub async fn store_comparison(conn: &mut PgConnection, c: &StoredComparison) -> 
         c.changed,
         c.removed,
         c.examples,
+        c.context,
     )
     .fetch_one(&mut *conn)
     .await?)
@@ -1046,7 +1135,7 @@ pub async fn comparisons(
 ) -> Result<Vec<StoredComparison>> {
     let rows = sqlx::query!(
         r#"SELECT id, derivation, version, range_from, range_until, made_at, keys, unchanged,
-             added, changed, removed, examples
+             added, changed, removed, examples, context
            FROM derivation.comparisons
            WHERE $1::text IS NULL OR derivation = $1
            ORDER BY id DESC LIMIT $2"#,
@@ -1070,9 +1159,12 @@ pub async fn comparisons(
             changed: r.changed,
             removed: r.removed,
             examples: r.examples,
+            context: r.context,
         })
         .collect())
 }
+
+pub mod selection;
 
 #[cfg(test)]
 mod tests;

@@ -189,6 +189,16 @@ pub const COMMANDS: &[Command] = &[
                 ArgKind::Text,
                 "focused window title observed by the client",
             ),
+            opt(
+                "command_record",
+                ArgKind::Text,
+                "native command record key observed by the client",
+            ),
+            opt(
+                "focus_record",
+                ArgKind::Text,
+                "native focus record key observed by the client",
+            ),
         ],
         access: Access::Operator,
         mcp: false,
@@ -390,6 +400,11 @@ pub const COMMANDS: &[Command] = &[
                 "show old against new without writing outputs",
             ),
             opt(
+                "switch",
+                ArgKind::Integer,
+                "select the producer version using a full comparison ID",
+            ),
+            opt(
                 "from",
                 ArgKind::Text,
                 "only keys touched by inputs at or after this time (RFC 3339)",
@@ -587,7 +602,7 @@ pub const COMMANDS: &[Command] = &[
     },
     Command {
         name: "analysis-run",
-        summary: "Run an analysis recipe (correlations, trends, deviations) over the daily metric figures of some logical days; the answer is computed when asked, at one commit position.",
+        summary: "Read the maintained answer of a canonical analysis question (correlations, trends, deviations), with its stored coverage, evidence and selected commit position.",
         args: &[
             pos(
                 "recipe",
@@ -654,7 +669,11 @@ pub const COMMANDS: &[Command] = &[
         name: "brief",
         summary: "The brief for one logical day: data quality first, the day's metrics, departures from the recent level, associations over the days before, the machine.",
         args: &[
-            opt("day", ArgKind::Text, "YYYY-MM-DD; default today"),
+            opt(
+                "day",
+                ArgKind::Text,
+                "YYYY-MM-DD or a stored context-pack citation; default today",
+            ),
             opt(
                 "budget",
                 ArgKind::Integer,

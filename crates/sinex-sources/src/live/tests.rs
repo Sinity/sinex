@@ -99,9 +99,12 @@ async fn fake_ingress_with_configuration(
             declarer
                 .publish(
                     message.reply.unwrap(),
-                    serde_json::to_vec(&sinex_protocol::ProducerWelcome { refusal: None,..Default::default() })
-                        .unwrap()
-                        .into(),
+                    serde_json::to_vec(&sinex_protocol::ProducerWelcome {
+                        refusal: None,
+                        ..Default::default()
+                    })
+                    .unwrap()
+                    .into(),
                 )
                 .await
                 .unwrap();

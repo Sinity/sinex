@@ -437,7 +437,10 @@ fn polls_read_a_continuously_committing_writer_one_commit_at_a_time() {
         }
     });
     let d = SqliteRows {
-        changes: Changes::InPlace { mutable: "0", full_pass_secs: 0 },
+        changes: Changes::InPlace {
+            mutable: "0",
+            full_pass_secs: 0,
+        },
         ..driver(path)
     };
     let mut state = RowState::default();

@@ -65,11 +65,6 @@ impl TimeSettings {
         }
     }
 
-    /// The operator's setting today: Europe/Warsaw, days from 04:00.
-    pub fn operator_default() -> Self {
-        Self::new("Europe/Warsaw", 4, 0).expect("the bundled tz database has Europe/Warsaw")
-    }
-
     pub fn zone_name(&self) -> &str {
         &self.zone_name
     }

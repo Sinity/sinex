@@ -7,7 +7,7 @@
 //! transaction around more than one admission: a replay sequence (archive what
 //! is re-read, admit the new readings; in compare mode, read the difference
 //! and roll back), and an excision (rewrite bytes, remove readings; delete the
-//! freed blob files after commit).
+//! freed blob extents after commit).
 use serde_json::Value;
 use sinex_model::{Batch, OperationId};
 use sinex_store::excision::{self, Applied, Plan, Target};
@@ -62,16 +62,16 @@ pub(crate) struct Excision {
     pub plan: Plan,
     pub operation: OperationId,
     pub actor: String,
-    /// Where the freed blob files are deleted after commit.
+    /// Where the freed blob extents are punched after commit.
     pub blobs: Blobs,
 }
 
-/// What an excision did, and blob files it could not delete after commit
+/// What an excision did, and blob extents it could not punch after commit
 /// (no row refers to them; a later excision of the same bytes retries).
 #[derive(Debug)]
 pub(crate) struct Excised {
     pub applied: Applied,
-    pub files_left: Vec<String>,
+    pub blobs_left: Vec<String>,
 }
 
 enum WriterJob {
@@ -297,6 +297,7 @@ pub(crate) async fn run_notifying(
     store: Option<Blobs>,
     commits: watch::Sender<u64>,
 ) {
+    connection = connection.with_blobs(store.clone());
     let store = store.as_ref();
     loop {
         let job = tokio::select! {
@@ -366,7 +367,7 @@ pub(crate) async fn run_notifying(
             // The lock went with the lost connection; without it this
             // process is no longer the writer.
             match claim(fresh).await {
-                Ok(fresh) => connection = fresh,
+                Ok(fresh) => connection = fresh.with_blobs(store.cloned()),
                 Err(error) => {
                     let _ = job.reply.send(Err(WriteError::Refused(error)));
                     return;
@@ -685,12 +686,12 @@ async fn excise(
                 return Err(refuse(&error));
             }
         };
-    let (_, files_left) = excision::finish_deletions(connection, &e.blobs)
+    let (_, blobs_left) = excision::finish_deletions(connection, &e.blobs)
         .await
         .map_err(|e| refuse(&e))?;
     Ok(Excised {
         applied,
-        files_left,
+        blobs_left,
     })
 }
 

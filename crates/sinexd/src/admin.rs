@@ -42,7 +42,7 @@ pub(crate) enum Admin {
     /// block holds only their bcrypt hashes.
     NatsAuthorization {
         #[arg(long)]
-        producer_grants:Option<PathBuf>,
+        producer_grants: Option<PathBuf>,
         #[arg(long, default_value = "sinex")]
         subject_root: String,
         #[arg(long, default_value = "sinexd")]
@@ -142,10 +142,22 @@ pub(crate) async fn run(command: Admin) -> Result<(), String> {
                 .iter()
                 .map(|(name, hash)| (name.as_str(), hash.as_str()))
                 .collect();
-            let grants=crate::ingress::fetch::load(producer_grants.as_deref())?;
-            let subjects=sinex_protocol::Subjects::new(subject_root);
-            let consumers=grants.iter().filter(|(_,grant)|!grant.kind_prefixes.is_empty()&&!grant.classes.is_empty()).map(|(producer,grant)|(producer.as_str(),grant.consumer_scope(producer,&subjects).1)).collect::<Vec<_>>();
-            println!("{}",subjects.authorization((&daemon_user,&daemon_hash),&users,&consumers));
+            let grants = crate::ingress::fetch::load(producer_grants.as_deref())?;
+            let subjects = sinex_protocol::Subjects::new(subject_root);
+            let consumers = grants
+                .iter()
+                .filter(|(_, grant)| !grant.kind_prefixes.is_empty() && !grant.classes.is_empty())
+                .map(|(producer, grant)| {
+                    (
+                        producer.as_str(),
+                        grant.consumer_scope(producer, &subjects).1,
+                    )
+                })
+                .collect::<Vec<_>>();
+            println!(
+                "{}",
+                subjects.authorization((&daemon_user, &daemon_hash), &users, &consumers)
+            );
             Ok(())
         }
     }

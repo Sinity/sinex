@@ -31,33 +31,63 @@ pub(crate) fn context(client: async_nats::Client) -> jetstream::Context {
 const CONTRACT: &str = "2";
 const CONTRACT_KEY: &str = "sinex_confirmed_contract";
 
-async fn confirmed_stream(js:&jetstream::Context,subjects:&Subjects)->Result<stream::Stream,String>{
-    let mut config=stream::Config {
-        name:subjects.confirmed_stream(), subjects:vec![subjects.confirmed_all()],
-        storage:stream::StorageType::File,retention:stream::RetentionPolicy::Limits,
-        duplicate_window:Duration::from_secs(120),..Default::default()
+async fn confirmed_stream(
+    js: &jetstream::Context,
+    subjects: &Subjects,
+) -> Result<stream::Stream, String> {
+    let mut config = stream::Config {
+        name: subjects.confirmed_stream(),
+        subjects: vec![subjects.confirmed_all()],
+        storage: stream::StorageType::File,
+        retention: stream::RetentionPolicy::Limits,
+        duplicate_window: Duration::from_secs(120),
+        ..Default::default()
     };
-    config.metadata.insert(CONTRACT_KEY.into(),CONTRACT.into());
-    let found=js.get_or_create_stream(config.clone()).await.map_err(|error|format!("confirmed stream: {error}"))?;
-    if found.cached_info().config.metadata.get(CONTRACT_KEY).map(String::as_str)!=Some(CONTRACT){
-        if found.cached_info().state.last_sequence>0 {
+    config.metadata.insert(CONTRACT_KEY.into(), CONTRACT.into());
+    let found = js
+        .get_or_create_stream(config.clone())
+        .await
+        .map_err(|error| format!("confirmed stream: {error}"))?;
+    if found
+        .cached_info()
+        .config
+        .metadata
+        .get(CONTRACT_KEY)
+        .map(String::as_str)
+        != Some(CONTRACT)
+    {
+        if found.cached_info().state.last_sequence > 0 {
             return Err("confirmed_stream_contract_mismatch: existing stream requires an explicit version-2 conversion or parallel-stream decision".into());
         }
-        js.update_stream(config).await.map_err(|error|format!("confirmed stream contract: {error}"))?;
-        return js.get_stream(subjects.confirmed_stream()).await.map_err(|error|error.to_string());
+        js.update_stream(config)
+            .await
+            .map_err(|error| format!("confirmed stream contract: {error}"))?;
+        return js
+            .get_stream(subjects.confirmed_stream())
+            .await
+            .map_err(|error| error.to_string());
     }
     Ok(found)
 }
 
 /// Create a fresh version-2 stream, or verify the existing stream's contract.
-pub(crate) async fn ensure_stream(js:&jetstream::Context,subjects:&Subjects)->Result<(),String>{
-    confirmed_stream(js,subjects).await.map(drop)
+pub(crate) async fn ensure_stream(
+    js: &jetstream::Context,
+    subjects: &Subjects,
+) -> Result<(), String> {
+    confirmed_stream(js, subjects).await.map(drop)
 }
 
-fn stream_instance(stream:&stream::Stream)->String {
-    format!("{}/{}",stream.cached_info().config.name,stream.cached_info().created.unix_timestamp_nanos())
+fn stream_instance(stream: &stream::Stream) -> String {
+    format!(
+        "{}/{}",
+        stream.cached_info().config.name,
+        stream.cached_info().created.unix_timestamp_nanos()
+    )
 }
-fn consumer_for(instance:&str)->String {format!("{CONSUMER}/{instance}")}
+fn consumer_for(instance: &str) -> String {
+    format!("{CONSUMER}/{instance}")
+}
 
 /// Counts for one publishing pass, for status and measurement.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -149,43 +179,137 @@ pub(crate) async fn publish_pending(
 }
 
 pub(crate) async fn publish_pending_measured(
-    conn:&mut PgConnection,js:&jetstream::Context,subjects:&Subjects,mut page_done:impl FnMut(PageTiming),
-)->Result<Published,String>{
-    let stream=confirmed_stream(js,subjects).await?;
-    let instance=stream_instance(&stream);let consumer=consumer_for(&instance);
-    let (position,_)=commit_log::consumer_position(conn,&consumer).await.map_err(|error|error.to_string())?;
-    let mut cursor=commit_log::ChangeCursor::after(position);
-    let mut settled=position;
-    let mut total=Published::default();
-    total.excised+=erase_excised_in(conn,js,subjects,&instance).await?;
+    conn: &mut PgConnection,
+    js: &jetstream::Context,
+    subjects: &Subjects,
+    mut page_done: impl FnMut(PageTiming),
+) -> Result<Published, String> {
+    let stream = confirmed_stream(js, subjects).await?;
+    let instance = stream_instance(&stream);
+    let consumer = consumer_for(&instance);
+    let (position, _) = commit_log::consumer_position(conn, &consumer)
+        .await
+        .map_err(|error| error.to_string())?;
+    let mut cursor = commit_log::ChangeCursor::after(position);
+    let mut settled = position;
+    let mut total = Published::default();
+    total.excised += erase_excised_in(conn, js, subjects, &instance).await?;
     loop {
-        let started=Instant::now();
-        let page=commit_log::changes_page(conn,cursor,PAGE,sinex_store::PAGE_BYTES).await.map_err(|error|error.to_string())?;
-        let read=started.elapsed();
-        if let Some(gap)=page.gap {
-            publish(js,subjects.confirmed_control(),format!("gap-{}",blake3::hash(gap.reason.as_bytes()).to_hex()),&Confirmed::Gap{reason:gap.reason.split(':').next().unwrap_or("commit_history_gap").to_owned()})
-                .await?.await.map_err(|error|error.to_string())?;
+        let started = Instant::now();
+        let page = commit_log::changes_page(conn, cursor, PAGE, sinex_store::PAGE_BYTES)
+            .await
+            .map_err(|error| error.to_string())?;
+        let read = started.elapsed();
+        if let Some(gap) = page.gap {
+            publish(
+                js,
+                subjects.confirmed_control(),
+                format!("gap-{}", blake3::hash(gap.reason.as_bytes()).to_hex()),
+                &Confirmed::Gap {
+                    reason: gap
+                        .reason
+                        .split(':')
+                        .next()
+                        .unwrap_or("commit_history_gap")
+                        .to_owned(),
+                },
+            )
+            .await?
+            .await
+            .map_err(|error| error.to_string())?;
             return Err(gap.reason);
         }
-        if page.entries.is_empty(){
-            if position==0 && !commit_log::consumer_exists(conn,&consumer).await.map_err(|error|error.to_string())? {
-                publish_chunk(conn,js,subjects,&instance,&consumer,&[],Some(0),&mut total).await?;
+        if page.entries.is_empty() {
+            if position == 0
+                && !commit_log::consumer_exists(conn, &consumer)
+                    .await
+                    .map_err(|error| error.to_string())?
+            {
+                publish_chunk(
+                    conn,
+                    js,
+                    subjects,
+                    &instance,
+                    &consumer,
+                    &[],
+                    Some(0),
+                    &mut total,
+                )
+                .await?;
             }
-            return Ok(total)
+            return Ok(total);
         }
-        let mut complete=None;let mut split=0;
-        for (index,entry) in page.entries.iter().enumerate(){
-            if matches!(entry.change,commit_log::Change::PositionComplete){complete=Some(entry.position);split=index+1;}
+        let mut complete = None;
+        let mut split = 0;
+        for (index, entry) in page.entries.iter().enumerate() {
+            if matches!(entry.change, commit_log::Change::PositionComplete) {
+                complete = Some(entry.position);
+                split = index + 1;
+            }
         }
-        let mut acknowledge=Duration::ZERO;let mut record=Duration::ZERO;let mut commit=Duration::ZERO;
-        if split>0{let timing=publish_chunk(conn,js,subjects,&instance,&consumer,&page.entries[..split],complete,&mut total).await?;
-            acknowledge+=timing.0;record+=timing.1;commit+=timing.2;settled=complete.unwrap();}
-        if split<page.entries.len(){let timing=publish_chunk(conn,js,subjects,&instance,&consumer,&page.entries[split..],None,&mut total).await?;
-            acknowledge+=timing.0;record+=timing.1;commit+=timing.2;}
-        let events=page.entries.iter().filter(|entry|matches!(entry.change,commit_log::Change::Event(_))).count();
-        let changes=page.entries.iter().filter(|entry|matches!(entry.change,commit_log::Change::Archive(_)|commit_log::Change::Excised(_))).count();
-        page_done(PageTiming{events,changes,commit_seq:settled,read,acknowledge,record,commit});
-        cursor=page.next.expect("a nonempty page has a private continuation");
+        let mut acknowledge = Duration::ZERO;
+        let mut record = Duration::ZERO;
+        let mut commit = Duration::ZERO;
+        if split > 0 {
+            let timing = publish_chunk(
+                conn,
+                js,
+                subjects,
+                &instance,
+                &consumer,
+                &page.entries[..split],
+                complete,
+                &mut total,
+            )
+            .await?;
+            acknowledge += timing.0;
+            record += timing.1;
+            commit += timing.2;
+            settled = complete.unwrap();
+        }
+        if split < page.entries.len() {
+            let timing = publish_chunk(
+                conn,
+                js,
+                subjects,
+                &instance,
+                &consumer,
+                &page.entries[split..],
+                None,
+                &mut total,
+            )
+            .await?;
+            acknowledge += timing.0;
+            record += timing.1;
+            commit += timing.2;
+        }
+        let events = page
+            .entries
+            .iter()
+            .filter(|entry| matches!(entry.change, commit_log::Change::Event(_)))
+            .count();
+        let changes = page
+            .entries
+            .iter()
+            .filter(|entry| {
+                matches!(
+                    entry.change,
+                    commit_log::Change::Archive(_) | commit_log::Change::Excised(_)
+                )
+            })
+            .count();
+        page_done(PageTiming {
+            events,
+            changes,
+            commit_seq: settled,
+            read,
+            acknowledge,
+            record,
+            commit,
+        });
+        cursor = page
+            .next
+            .expect("a nonempty page has a private continuation");
     }
 }
 
@@ -193,78 +317,155 @@ pub(crate) async fn publish_pending_measured(
 /// barrier. Partial-position ack pairs are durable without a scalar checkpoint.
 #[allow(clippy::too_many_arguments)]
 async fn publish_chunk(
-    conn:&mut PgConnection,js:&jetstream::Context,subjects:&Subjects,instance:&str,consumer:&str,
-    entries:&[commit_log::CommittedChange],complete:Option<i64>,total:&mut Published,
-)->Result<(Duration,Duration,Duration),String>{
-    let acknowledge_started=Instant::now();
-    let mut acks=Vec::new();
-    let limit=js.client().server_info().max_payload as u64;
+    conn: &mut PgConnection,
+    js: &jetstream::Context,
+    subjects: &Subjects,
+    instance: &str,
+    consumer: &str,
+    entries: &[commit_log::CommittedChange],
+    complete: Option<i64>,
+    total: &mut Published,
+) -> Result<(Duration, Duration, Duration), String> {
+    let acknowledge_started = Instant::now();
+    let mut acks = Vec::new();
+    let limit = js.client().server_info().max_payload as u64;
     for entry in entries {
-        let (message,subject,id,event)=match &entry.change {
-            commit_log::Change::Event(event)=>(event_message(event,limit)?,
-                subjects.confirmed_event(&event.class,&event.event_type),format!("event-{}",entry.position),Some(event.id)),
-            commit_log::Change::Archive(lifecycle)=>{
-                let change=&lifecycle.archive;
-                let message=if change.archived {Confirmed::Archived(archived_message(change)?)}else{
-                    Confirmed::Unhidden(Unhidden{change_seq:change.change_seq,event:EventId(change.event_id),
-                        unhidden_seq:entry.position,operation:change.operation_id.map(OperationId)})};
-                (message,subjects.confirmed_lifecycle(&lifecycle.class,&lifecycle.event_type),format!("archive-{}",change.change_seq),None)
-            },
-            commit_log::Change::Excised(change)=>(Confirmed::Excised{commit_seq:Some(entry.position),
-                original_commit_seq:Some(change.original_commit_seq),event:EventId(change.event_id),operation:OperationId(change.operation_id)},
-                subjects.confirmed_lifecycle(&change.class,&change.event_type),format!("excised-{}-{}",entry.position,change.event_id),None),
-            commit_log::Change::PositionComplete=>continue,
+        let (message, subject, id, event) = match &entry.change {
+            commit_log::Change::Event(event) => (
+                event_message(event, limit)?,
+                subjects.confirmed_event(&event.class, &event.event_type),
+                format!("event-{}", entry.position),
+                Some(event.id),
+            ),
+            commit_log::Change::Archive(lifecycle) => {
+                let change = &lifecycle.archive;
+                let message = if change.archived {
+                    Confirmed::Archived(archived_message(change)?)
+                } else {
+                    Confirmed::Unhidden(Unhidden {
+                        change_seq: change.change_seq,
+                        event: EventId(change.event_id),
+                        unhidden_seq: entry.position,
+                        operation: change.operation_id.map(OperationId),
+                    })
+                };
+                (
+                    message,
+                    subjects.confirmed_lifecycle(&lifecycle.class, &lifecycle.event_type),
+                    format!("archive-{}", change.change_seq),
+                    None,
+                )
+            }
+            commit_log::Change::Excised(change) => (
+                Confirmed::Excised {
+                    commit_seq: Some(entry.position),
+                    original_commit_seq: Some(change.original_commit_seq),
+                    event: EventId(change.event_id),
+                    operation: OperationId(change.operation_id),
+                },
+                subjects.confirmed_lifecycle(&change.class, &change.event_type),
+                format!("excised-{}-{}", entry.position, change.event_id),
+                None,
+            ),
+            commit_log::Change::PositionComplete => continue,
         };
-        acks.push((event,publish(js,subject,id,&message).await?));
+        acks.push((event, publish(js, subject, id, &message).await?));
     }
-    let mut placed=Vec::new();
-    for (event,ack) in acks {let ack=ack.await.map_err(|error|format!("confirmed stream did not acknowledge: {error}"))?;
-        if let Some(event)=event {placed.push((event,i64::try_from(ack.sequence).map_err(|error|error.to_string())?));total.events+=1;}
-        else {total.changes+=1;}}
-    let mut acknowledge=acknowledge_started.elapsed();
-    let record_started=Instant::now();
-    let mut tx=conn.begin().await.map_err(|error|error.to_string())?;
-    commit_log::record_published_in(&mut tx,instance,&placed).await.map_err(|error|error.to_string())?;
-    total.excised+=erase_excised_in(&mut tx,js,subjects,instance).await?;
-    let mut record=record_started.elapsed();
-    if let Some(position)=complete {
-        let barrier_started=Instant::now();
-        publish(js,subjects.confirmed_control(),format!("position-{position}"),&Confirmed::PositionComplete{commit_seq:position})
-            .await?.await.map_err(|error|format!("confirmed position did not acknowledge: {error}"))?;
-        acknowledge+=barrier_started.elapsed();
-        let record_started=Instant::now();
-        commit_log::set_consumer_position(&mut tx,consumer,position,0).await.map_err(|error|error.to_string())?;
-        record+=record_started.elapsed();
+    let mut placed = Vec::new();
+    for (event, ack) in acks {
+        let ack = ack
+            .await
+            .map_err(|error| format!("confirmed stream did not acknowledge: {error}"))?;
+        if let Some(event) = event {
+            placed.push((
+                event,
+                i64::try_from(ack.sequence).map_err(|error| error.to_string())?,
+            ));
+            total.events += 1;
+        } else {
+            total.changes += 1;
+        }
     }
-    let commit_started=Instant::now();
-    tx.commit().await.map_err(|error|error.to_string())?;
-    Ok((acknowledge,record,commit_started.elapsed()))
+    let mut acknowledge = acknowledge_started.elapsed();
+    let record_started = Instant::now();
+    let mut tx = conn.begin().await.map_err(|error| error.to_string())?;
+    commit_log::record_published_in(&mut tx, instance, &placed)
+        .await
+        .map_err(|error| error.to_string())?;
+    total.excised += erase_excised_in(&mut tx, js, subjects, instance).await?;
+    let mut record = record_started.elapsed();
+    if let Some(position) = complete {
+        let barrier_started = Instant::now();
+        publish(
+            js,
+            subjects.confirmed_control(),
+            format!("position-{position}"),
+            &Confirmed::PositionComplete {
+                commit_seq: position,
+            },
+        )
+        .await?
+        .await
+        .map_err(|error| format!("confirmed position did not acknowledge: {error}"))?;
+        acknowledge += barrier_started.elapsed();
+        let record_started = Instant::now();
+        commit_log::set_consumer_position(&mut tx, consumer, position, 0)
+            .await
+            .map_err(|error| error.to_string())?;
+        record += record_started.elapsed();
+    }
+    let commit_started = Instant::now();
+    tx.commit().await.map_err(|error| error.to_string())?;
+    Ok((acknowledge, record, commit_started.elapsed()))
 }
 
 /// Erasure is an idempotent physical action. Ordered tombstone notices come
 /// from the canonical change feed, never from this cleanup pass.
-async fn erase_excised_in(conn:&mut PgConnection,js:&jetstream::Context,subjects:&Subjects,instance:&str)->Result<u64,String>{
-    let mut erased=0;
+async fn erase_excised_in(
+    conn: &mut PgConnection,
+    js: &jetstream::Context,
+    subjects: &Subjects,
+    instance: &str,
+) -> Result<u64, String> {
+    let mut erased = 0;
     loop {
-        let pending=commit_log::excised_on_stream_in(conn,instance,PAGE).await.map_err(|error|error.to_string())?;
-        if pending.is_empty(){return Ok(erased)}
-        let stream=js.get_stream(subjects.confirmed_stream()).await.map_err(|error|error.to_string())?;
+        let pending = commit_log::excised_on_stream_in(conn, instance, PAGE)
+            .await
+            .map_err(|error| error.to_string())?;
+        if pending.is_empty() {
+            return Ok(erased);
+        }
+        let stream = js
+            .get_stream(subjects.confirmed_stream())
+            .await
+            .map_err(|error| error.to_string())?;
         for item in &pending {
-            let seq=u64::try_from(item.stream_seq).map_err(|error|error.to_string())?;
-            if let Err(error)=stream.delete_message(seq).await {
-                if !error.to_string().contains("no message found"){return Err(format!("erase stream message {seq}: {error}"))}
+            let seq = u64::try_from(item.stream_seq).map_err(|error| error.to_string())?;
+            if let Err(error) = stream.delete_message(seq).await {
+                if !error.to_string().contains("no message found") {
+                    return Err(format!("erase stream message {seq}: {error}"));
+                }
             }
         }
-        let pairs:Vec<_>=pending.iter().map(|item|(item.event_id,item.stream_seq)).collect();
-        commit_log::forget_published_in(conn,instance,&pairs).await.map_err(|error|error.to_string())?;
-        erased+=pairs.len()as u64;
+        let pairs: Vec<_> = pending
+            .iter()
+            .map(|item| (item.event_id, item.stream_seq))
+            .collect();
+        commit_log::forget_published_in(conn, instance, &pairs)
+            .await
+            .map_err(|error| error.to_string())?;
+        erased += pairs.len() as u64;
     }
 }
 
 #[cfg(test)]
-async fn erase_excised(conn:&mut PgConnection,js:&jetstream::Context,subjects:&Subjects)->Result<u64,String>{
-    let stream=confirmed_stream(js,subjects).await?;
-    erase_excised_in(conn,js,subjects,&stream_instance(&stream)).await
+async fn erase_excised(
+    conn: &mut PgConnection,
+    js: &jetstream::Context,
+    subjects: &Subjects,
+) -> Result<u64, String> {
+    let stream = confirmed_stream(js, subjects).await?;
+    erase_excised_in(conn, js, subjects, &stream_instance(&stream)).await
 }
 
 async fn publish(
@@ -283,13 +484,21 @@ async fn publish(
 
 /// Metadata can be larger than a broker message too. Carry the same logical
 /// event by reference and let the authorized fetch path transfer it in chunks.
-fn event_message(event:&Committed,limit:u64)->Result<Confirmed,String>{
-    let message=Confirmed::Event(Box::new(confirmed_event(event)?));
-    let body=serde_json::to_vec(&message).map_err(|error|error.to_string())?;
-    let headers=format!("NATS/1.0\r\nNats-Msg-Id: event-{}\r\n\r\n",event.commit_seq);
-    if body.len() as u64+headers.len() as u64>limit {
-        Ok(Confirmed::EventReference{commit_seq:event.commit_seq,event:EventId(event.id)})
-    }else{Ok(message)}
+fn event_message(event: &Committed, limit: u64) -> Result<Confirmed, String> {
+    let message = Confirmed::Event(Box::new(confirmed_event(event)?));
+    let body = serde_json::to_vec(&message).map_err(|error| error.to_string())?;
+    let headers = format!(
+        "NATS/1.0\r\nNats-Msg-Id: event-{}\r\n\r\n",
+        event.commit_seq
+    );
+    if body.len() as u64 + headers.len() as u64 > limit {
+        Ok(Confirmed::EventReference {
+            commit_seq: event.commit_seq,
+            event: EventId(event.id),
+        })
+    } else {
+        Ok(message)
+    }
 }
 
 fn confirmed_event(e: &Committed) -> Result<ConfirmedEvent, String> {

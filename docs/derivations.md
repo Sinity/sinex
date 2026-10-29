@@ -26,6 +26,15 @@ Every computation from admitted evidence upward runs as a derivation: a declared
 - A key whose time window is still open (an hour or day in progress) is **provisional**. Its value is held as one current row per key in the derivation's provisional table, overwritten at each recompute, and readable and citable as provisional. It is admitted as an event only at window close, and again whenever a later input dirties the closed key. Superseded provisional values are not kept (default; open operator question).
 - Keys dirtied by a lifecycle operation in progress recompute after its last batch.
 
+The `analysis.products` derivation reads admitted `analysis.request` questions,
+selected daily figures and `source.coverage` observations. It stores panels,
+recipe answers, findings and daily context packs. An empty or not-estimable answer
+retains its request as a parent. Questions reuse their canonical identity; changed
+inputs replace the complete output set. The selected coverage retains the latest
+read status per source binding and host, including failure reasons, alongside the
+declared intervals that overlap the question. A running process or a successful
+read without declared temporal bounds does not establish observed coverage.
+
 ## Declarations
 
 Each derivation declares:
@@ -54,6 +63,14 @@ Every event records the producer version of the parser or derivation that made i
 - **Each derivation declares what a switch does to history.** `recompute` replays its whole history through the dirty-key path, archiving the old outputs as a set with their chains; `keep_history` keeps outputs made by the old version and applies the new one from the switch onward. Readers see the producer version on every output, and an answer spanning outputs of several versions says so.
 - **Nothing recomputes at daemon start.** A build carrying a new version computes only new and dirty keys with it, and answers spanning both versions disclose the mix. History is recomputed, for `recompute` derivations, only by the switch, after its compare. Status shows each derivation's pending switch and its compare result.
 - **A changed setting is a new version.** A change to anything a derivation reads as configuration (a profile parameter, the logical-day boundary, a fusion rule file) is a version change of that derivation and follows the same rules.
+
+`recompute DERIVATION --compare` stores a comparison ID tied to the installed build, its logical-day settings, and the input and lifecycle positions used throughout the comparison. A comparison that covered only a time range cannot select a version. `recompute DERIVATION --switch ID` consumes a full comparison of that same declaration and build; changed inputs refuse the switch and require another comparison. The writer records the caller and comparison in `producer_switch`, selects the version and, for `recompute`, archives its live output chains before scheduling the complete new output set. A `keep_history` declaration preserves those chains and its read position. Startup records available producers and leaves stored keys and positions unchanged. `status` lists selected and available versions. Runs record the full source commit and dirty flag; a build lacking that identity refuses producer execution.
+
+Stored products disclose the producers that actually made their selected inputs and ancestors,
+grouped by source, run manifest and build, and material parser version. A shared
+daemon run does not replace a source parser's version. Missing historical run or
+manifest metadata remains an explicit null entry with its event count.
+
 
 ## Identity of derived records
 
@@ -176,7 +193,7 @@ One `state.interval` derivation, with declared rules for adjacent transitions, o
 
 - An interval carries a stable start-record key, state kind, subject, start, optional end, labels and attributes, and **every transition whose fields affect it as a parent**, including same-state refreshes that changed a label.
 - Scope is the observation's original host and session; systemd units add boot, manager and unit. The host that ran the derivation never supplies missing observation scope.
-- A next different focus or workspace closes the previous interval in its scope. A matching unit stop closes only that unit; a repeated start closes the previous run as a restart; a stop without a start invents no interval; a boot boundary stops a stop from closing a previous boot's unit.
+- A next different focus or workspace closes the previous interval in its scope. A matching unit stop closes only that unit; a repeated start closes the previous run as a restart; a stop without a start invents no interval; a boot boundary stops a stop from closing a previous boot's unit. A boot fence records `fenced_at` while leaving `ended_at` unknown, so it bounds the earlier state without claiming uptime until the new boot. Fenced intervals are absent from `now`; their unknown duration remains null.
 - Genuine suspend or hibernate cuts open desktop intervals; resume alone does not establish a new focus. Transitions come from the source's typed journal and logind events, never from log text containing "Started".
 - Equal-time transitions order by recorded sequence, then stable record identity.
 - The `intervals` and `now` query aliases show an open end as unknown and the evidence's age separately.

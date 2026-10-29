@@ -10,67 +10,16 @@ fn error(e: impl std::fmt::Display) -> String {
 }
 
 pub(super) async fn list(conn: &mut sqlx::PgConnection) -> Result<Vec<Saved>, String> {
-    let mut records = Vec::new();
-    for row in sinex_store::live::of_types(conn, &["query.saved".into()])
-        .await
-        .map_err(error)?
-    {
-        let Some(payload) = row
-            .payload
-            .filter(|p| p.is_object() && p.get("withheld").is_none())
-        else {
-            continue;
-        };
-        records.push(serde_json::from_value::<Saved>(payload).map_err(error)?);
-    }
-    records.sort_by(|a, b| (&a.name, &a.by).cmp(&(&b.name, &b.by)));
-    Ok(records)
+    sinex_store::query::saved_records(conn).await.map_err(error)
 }
 
 pub(super) async fn definitions(
     conn: &mut sqlx::PgConnection,
     requested: &str,
 ) -> Result<BTreeMap<String, SavedQuery>, String> {
-    let mut all: BTreeMap<String, Vec<(String, SavedQuery)>> = BTreeMap::new();
-    for record in list(conn).await? {
-        all.entry(record.name.clone()).or_default().push((
-            record.by,
-            SavedQuery {
-                name: record.name,
-                query: record.query,
-                parameters: record.parameters,
-            },
-        ));
-    }
-    let mut out = BTreeMap::new();
-    let mut next = Some(requested.to_owned());
-    while let Some(name) = next {
-        if out.contains_key(&name) {
-            break;
-        }
-        let (query_name, author) = name
-            .split_once('@')
-            .map_or((name.as_str(), None), |(name, author)| (name, Some(author)));
-        let Some(definitions) = all.get(query_name) else {
-            break;
-        };
-        let matches: Vec<_> = definitions
-            .iter()
-            .filter(|(by, _)| author.is_none_or(|author| by == author))
-            .collect();
-        let [(_, definition)] = matches.as_slice() else {
-            return Err(if matches.is_empty() {
-                format!("no saved query named {name}")
-            } else {
-                format!(
-                    "several authors have saved query {name}; invoke query:{query_name}@AUTHOR using the by value from query-list"
-                )
-            });
-        };
-        next = query::saved::reference_name(&definition.query);
-        out.insert(name, (*definition).clone());
-    }
-    Ok(out)
+    sinex_store::query::saved_definitions(conn, requested)
+        .await
+        .map_err(error)
 }
 
 impl Api {
@@ -92,7 +41,11 @@ impl Api {
                 command,
                 app,
                 title,
+                command_record,
+                focus_record,
             } => QueryRecord::Mark(Mark {
+                command_record,
+                focus_record,
                 host: self.host.clone(),
                 at: at.as_deref().map(timestamp).transpose()?.unwrap_or(now),
                 text,
@@ -179,7 +132,7 @@ impl Api {
         until: Option<String>,
         page: Page,
     ) -> Reply {
-        let ctx = match sinex_store::query::context_for_page(&self.context(), &page) {
+        let ctx = match super::recall::context_for_page(&self.context(), &page) {
             Ok(ctx) => ctx,
             Err(e) => return refused(error(e)),
         };

@@ -6,7 +6,16 @@
 mod compile;
 mod cursor;
 mod fields;
+mod products;
 mod recall;
+mod saved;
+mod selected;
+pub use products::{current_grants, event_payload, key_dirty, live_payload};
+pub use saved::{saved_definitions, saved_records};
+pub use selected::{
+    SelectedAnswer, check_selected_question, resolve_recall, selected_page, selected_query,
+    selected_query_in_snapshot,
+};
 mod source_views;
 mod sql;
 mod walk;
@@ -108,8 +117,26 @@ pub async fn run(
     ctx: &Context,
     page: &Page,
 ) -> Result<Answer> {
+    run_inner(conn, text, query, ctx, page, None, false, false)
+        .await
+        .map(|selected| selected.answer)
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn run_inner(
+    conn: &mut PgConnection,
+    text: &str,
+    query: Option<&Query>,
+    ctx: &Context,
+    page: &Page,
+    retained: Option<&sinex_model::event_types::analysis::QuerySelection>,
+    capture_selection: bool,
+    in_snapshot: bool,
+) -> Result<selected::SelectedPage> {
     let mut tx = conn.begin().await?;
-    read_one_snapshot(&mut tx).await?;
+    if !in_snapshot {
+        read_one_snapshot(&mut tx).await?;
+    }
     sqlx::query!("SET LOCAL TimeZone = 'UTC'")
         .execute(&mut *tx)
         .await?;
@@ -138,14 +165,51 @@ pub async fn run(
             }
             declarations
         }
+        None if retained.is_some() => {
+            let expected: Vec<(sinex_model::KindRef, String)> =
+                serde_json::from_value(retained.expect("retained context").declarations.clone())
+                    .map_err(|error| Error::Invalid(error.to_string()))?;
+            let refs: Vec<_> = expected
+                .iter()
+                .map(|(reference, _)| reference.clone())
+                .collect();
+            let declarations = sinex_schema::kinds::load(&mut tx, &refs).await?;
+            if expected.iter().any(|(reference, hash)| {
+                declarations
+                    .get(reference)
+                    .is_none_or(|declaration| declaration.definition_hash() != *hash)
+            }) {
+                return Err(Error::Invalid(
+                    "query declaration snapshot is unavailable".into(),
+                ));
+            }
+            declarations
+        }
         None => sinex_schema::kinds::all(&mut tx).await?,
     };
     ctx.catalog = Some(sinex_model::query::QueryCatalog::new(
         declarations.into_values(),
     ));
+    let mut saved_context = None;
     let mut bound = match query {
         Some(query) => query.clone(),
-        None => sinex_model::query::bind(text, &ctx)?,
+        None => {
+            if let Some(name) = sinex_model::query::saved::reference_name(text) {
+                let definitions = if let Some(snapshot) =
+                    retained.and_then(|retained| retained.selected.get("_saved"))
+                {
+                    serde_json::from_value(snapshot.clone())
+                        .map_err(|error| Error::Invalid(error.to_string()))?
+                } else {
+                    saved::saved_definitions(&mut tx, &name).await?
+                };
+                let bound = sinex_model::query::saved::bind_saved(text, &ctx, &definitions)?;
+                saved_context = Some(definitions);
+                bound
+            } else {
+                sinex_model::query::bind(text, &ctx)?
+            }
+        }
     };
     ctx.catalog
         .as_ref()
@@ -187,6 +251,11 @@ pub async fn run(
             }
         }
     }
+    if page.cursor.is_none()
+        && let Some(position) = retained.and_then(|retained| retained.read_as)
+    {
+        seq = position;
+    }
     if seq < 0 || seq > current {
         return Err(Error::Invalid(
             "as-of position is outside the known archive".into(),
@@ -215,6 +284,9 @@ pub async fn run(
             "recall".to_string()
         }
     };
+    let mut captured = None;
+    let mut selected_parents = Vec::new();
+    let mut selected_class = sinex_model::Class::Open;
     let mut answer = match &query.source {
         Source::Walk { walk, reference } => {
             let rows = walk::walk(&mut tx, *walk, reference).await?;
@@ -267,13 +339,19 @@ pub async fn run(
             page_of(&mut tx, rendered, table, text, query, &read, None).await?
         }
         Source::Recall { .. } | Source::RecallLast { .. } | Source::RecallMark { .. } => {
-            let selection = recall::select(&mut tx, &query.source, &read.ctx, read.seq).await?;
+            let selection = match retained {
+                Some(retained) => recall::retained(&mut tx, retained, &read.ctx, read.seq).await?,
+                None => recall::select(&mut tx, &query.source, &read.ctx, read.seq).await?,
+            };
             let as_events = Query {
                 source: Source::Table {
                     table: Table::Events,
                     alias: None,
                 },
-                filter: Some(selection.filter()),
+                filter: Some(Expr::And(
+                    Box::new(selection.filter()),
+                    Box::new(recall::input_filter()),
+                )),
                 stages: query.stages.clone(),
                 ranked: query.ranked,
             };
@@ -286,12 +364,32 @@ pub async fn run(
             let account = selection
                 .account(&mut tx, read.seq, &as_events, &read.ctx)
                 .await?;
+            if capture_selection {
+                let (context, parents, class) = selected::capture(
+                    &mut tx, text, query, &read.ctx, read.seq, &scope.1, &selection, &as_events,
+                    &account,
+                )
+                .await?;
+                let mut context = context;
+                if let Some(definitions) = &saved_context {
+                    context.selected["_saved"] = serde_json::to_value(definitions)
+                        .map_err(|error| Error::Invalid(error.to_string()))?;
+                }
+                captured = Some(context);
+                selected_parents = parents;
+                selected_class = class;
+            }
             page_of(&mut tx, rendered, table, text, query, &read, Some(account)).await?
         }
     };
     answer.read_as = read_as(query);
     tx.commit().await?;
-    Ok(answer)
+    Ok(selected::SelectedPage {
+        answer,
+        selection: captured,
+        parents: selected_parents,
+        class: selected_class,
+    })
 }
 
 /// The validated clock and position shared by every answer shape in this read.

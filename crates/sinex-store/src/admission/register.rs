@@ -231,20 +231,57 @@ pub(super) async fn frame(
 }
 
 /// Exact frame retries return the committed result before advancing any order.
-pub(super) async fn recorded(conn:&mut PgConnection,frame:&sinex_model::IngressFrame)->Result<Option<Outcome>> {
-    let row=sqlx::query!("SELECT admitted,outcome FROM core.ingress_frames WHERE producer=$1 AND frame=$2",frame.producer,frame.frame).fetch_optional(conn).await?;
-    let Some(row)=row else {return Ok(None);};
-    let count=|name:&str|->Result<usize> {
+pub(super) async fn recorded(
+    conn: &mut PgConnection,
+    frame: &sinex_model::IngressFrame,
+) -> Result<Option<Outcome>> {
+    let row = sqlx::query!(
+        "SELECT admitted,outcome FROM core.ingress_frames WHERE producer=$1 AND frame=$2",
+        frame.producer,
+        frame.frame
+    )
+    .fetch_optional(conn)
+    .await?;
+    let Some(row) = row else {
+        return Ok(None);
+    };
+    let count = |name: &str| -> Result<usize> {
         match row.outcome.get(name) {
-            None=>Ok(0),
-            Some(value)=>value.as_u64().and_then(|v|usize::try_from(v).ok()).ok_or_else(||Error::Invalid(format!("stored frame has invalid {name} count"))),
+            None => Ok(0),
+            Some(value) => value
+                .as_u64()
+                .and_then(|v| usize::try_from(v).ok())
+                .ok_or_else(|| Error::Invalid(format!("stored frame has invalid {name} count"))),
         }
     };
     Ok(Some(Outcome {
-        admitted:count("admitted")?,repeats:count("repeats")?,replaced:count("replaced")?,older:count("older")?,hidden:count("hidden")?,superseded:count("superseded")?,superseded_input:count("superseded_input")?,failures:count("failures")?,dirty_keys:count("dirty_keys")?,replay_archived:count("replay_archived")?,
-        commit_seq:row.outcome.get("commit_range").filter(|v|!v.is_null()).map(|v|serde_json::from_value(v.clone())).transpose().map_err(|e|Error::Invalid(format!("stored frame has invalid commit range: {e}")))?,
-        admitted_ids:row.admitted.into_iter().map(EventId).collect(),
-        registered_kinds:row.outcome.get("registered_kinds").map(|v|serde_json::from_value(v.clone())).transpose().map_err(|e|Error::Invalid(format!("stored frame has invalid kind registrations: {e}")))?.unwrap_or_default(),
-        timings:Default::default(),
+        admitted: count("admitted")?,
+        repeats: count("repeats")?,
+        replaced: count("replaced")?,
+        older: count("older")?,
+        hidden: count("hidden")?,
+        superseded: count("superseded")?,
+        superseded_input: count("superseded_input")?,
+        failures: count("failures")?,
+        dirty_keys: count("dirty_keys")?,
+        replay_archived: count("replay_archived")?,
+        commit_seq: row
+            .outcome
+            .get("commit_range")
+            .filter(|v| !v.is_null())
+            .map(|v| serde_json::from_value(v.clone()))
+            .transpose()
+            .map_err(|e| Error::Invalid(format!("stored frame has invalid commit range: {e}")))?,
+        admitted_ids: row.admitted.into_iter().map(EventId).collect(),
+        registered_kinds: row
+            .outcome
+            .get("registered_kinds")
+            .map(|v| serde_json::from_value(v.clone()))
+            .transpose()
+            .map_err(|e| {
+                Error::Invalid(format!("stored frame has invalid kind registrations: {e}"))
+            })?
+            .unwrap_or_default(),
+        timings: Default::default(),
     }))
 }

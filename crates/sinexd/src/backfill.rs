@@ -25,6 +25,7 @@ pub(crate) struct Options {
     /// The zone sources with local times were written in (IANA name); the
     /// system zone when unset. Recorded with each binding.
     pub zone: Option<String>,
+    pub time_settings: sinex_model::time_settings::TimeSettings,
     /// A source option as `key=value` (a clipboard spool's `selection`).
     pub options: Vec<String>,
     pub host: String,
@@ -56,7 +57,7 @@ pub(crate) struct Totals {
     older: usize,
     hidden: usize,
     superseded: usize,
-    failures: usize,
+    pub(crate) failures: usize,
     dirty_keys: usize,
     admit_time: Duration,
     poll_time: Duration,
@@ -134,12 +135,7 @@ pub(crate) async fn run(o: Options) -> Result<(), String> {
             planned.push((format, b));
         }
     }
-    let mut ctx = ReaderContext::open(
-        &o.database,
-        &o.store,
-        sinex_model::time_settings::TimeSettings::operator_default(),
-    )
-    .await?;
+    let mut ctx = ReaderContext::open(&o.database, &o.store, o.time_settings.clone()).await?;
     let sink = Sink(ctx.blobs.clone());
     let emits: Vec<&'static str> = {
         let mut types: Vec<&'static str> = planned
@@ -155,7 +151,7 @@ pub(crate) async fn run(o: Options) -> Result<(), String> {
         name: "sinexd backfill",
         kind: "source",
         version: env!("CARGO_PKG_VERSION"),
-        build: option_env!("SINEX_BUILD").unwrap_or("dev"),
+        build: crate::build_identity::current()?,
         emits: &emits,
     };
     let run = runs::start(&mut ctx.read_conn, &manifest, &o.host)

@@ -27,6 +27,8 @@ pub struct GitIdentity {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct TerminalIdentity {
     pub host: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub boot_id: Option<String>,
     pub adapter: String,
     pub process_id: u32,
     pub window_id: String,
@@ -34,7 +36,7 @@ pub struct TerminalIdentity {
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
-#[event(type = "work.act", key = ["act"], replace = newer, time = at, quality = intrinsic)]
+#[event(version = 2, type = "work.act", key = ["act"], replace = newer, time = at, quality = intrinsic)]
 pub struct WorkAct {
     pub act: String,
     pub session: String,
@@ -65,7 +67,7 @@ pub struct WorkAct {
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
-#[event(type = "work.episode", key = ["episode"], replace = newer, time = started_at, quality = intrinsic)]
+#[event(version = 2, type = "work.episode", key = ["episode"], replace = newer, time = started_at, quality = intrinsic)]
 pub struct WorkEpisode {
     pub episode: String,
     pub objective: Objective,
@@ -86,7 +88,7 @@ pub struct WorkEpisode {
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
-#[event(type = "work.suspension", key = ["suspension"], replace = newer, time = suspended_at, quality = intrinsic)]
+#[event(version = 2, type = "work.suspension", key = ["suspension"], replace = newer, time = suspended_at, quality = intrinsic)]
 pub struct WorkSuspension {
     pub suspension: String,
     pub episode: String,
@@ -99,7 +101,7 @@ pub struct WorkSuspension {
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
-#[event(type = "work.resumption", key = ["resumption"], replace = newer, time = resumed_at, quality = intrinsic)]
+#[event(version = 2, type = "work.resumption", key = ["resumption"], replace = newer, time = resumed_at, quality = intrinsic)]
 pub struct WorkResumption {
     pub resumption: String,
     pub episode: String,
@@ -111,8 +113,14 @@ pub struct WorkResumption {
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
-#[event(type = "context.pack", key = ["pack"], replace = newer, time = at, quality = intrinsic)]
+#[event(version = 2, type = "context.pack", key = ["pack"], replace = newer, time = at, quality = intrinsic)]
 pub struct ContextPack {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub evaluated_at: Option<Timestamp>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub day_setting: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub producer_versions: Option<serde_json::Value>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub read_as: Option<i64>,
     /// Stored analysis sections and their selected panel at one read context.
@@ -131,7 +139,7 @@ pub struct ContextPack {
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
-#[event(type = "activity.day", key = ["day_id"], replace = newer, time = started_at, quality = intrinsic)]
+#[event(version = 2, type = "activity.day", key = ["day_id"], replace = newer, time = started_at, quality = intrinsic)]
 pub struct ActivityDay {
     pub day_id: String,
     pub started_at: Timestamp,
@@ -187,7 +195,7 @@ pub struct ProjectShare {
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
-#[event(type = "activity.project_span", key = ["project_span"], replace = newer, time = started_at, quality = intrinsic)]
+#[event(version = 2, type = "activity.project_span", key = ["project_span"], replace = newer, time = started_at, quality = intrinsic)]
 pub struct ProjectSpan {
     pub project_span: String,
     pub scope: String,

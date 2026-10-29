@@ -1,21 +1,21 @@
-//! Analysis in the daemon: reads the daily metric figures through the query
-//! language and the coverage evidence from the store, and runs the pure code
-//! in `sinex-analysis` over them. Nothing here is stored: a panel, a method's
-//! answer and the brief are computed when asked for, at one commit position.
-//!
-//! - [`panel`]: figures, coverage and the cells built from them, and the
-//!   stretches coverage does not reach;
-//! - [`recipes`]: the shipped recipes;
-//! - [`brief`]: the daily brief and why a cell is what it is.
+//! Stored analysis products and their presentation. Requests retain their
+//! source bytes; the keyed product derivation maintains panels, answers,
+//! findings and context packs through the ordinary admission lifecycle.
 use sinex_analysis::Span;
 use sinex_model::Timestamp;
 use sinex_model::time_settings::TimeSettings;
 
+mod access;
+use sinex_sources::sources::analysis as request;
 mod brief;
 mod panel;
+pub(crate) mod recall;
 mod recipes;
+pub(crate) mod stored;
 
-pub(crate) use brief::{brief, why_not};
+pub(crate) use access::question;
+pub(crate) use access::{load_pack, materialize};
+pub(crate) use brief::{brief, render_pack, why_not};
 pub(crate) use panel::{gaps, panel, table};
 pub(crate) use recipes::{Recipe, run};
 
@@ -23,13 +23,14 @@ pub(crate) use recipes::{Recipe, run};
 #[derive(Clone)]
 pub(crate) struct Settings {
     pub time_settings: TimeSettings,
-    /// `04:00 Europe/Warsaw`: reported with every answer.
+    /// The effective logical-day boundary and named zone, reported with every answer.
     pub label: String,
 }
 
 impl Settings {
+    #[cfg(test)]
     pub(crate) fn operator_default() -> Self {
-        let time_settings = TimeSettings::operator_default();
+        let time_settings = TimeSettings::new("Europe/Warsaw", 4, 0).expect("fixture day setting");
         Self {
             label: time_settings.label(),
             time_settings,
@@ -50,12 +51,6 @@ impl Settings {
             .day_end(to_inclusive)
             .map_err(|e| e.to_string())?;
         Ok(Span::new(micros(start), micros(end)))
-    }
-
-    pub(crate) fn today(&self) -> Result<jiff::civil::Date, String> {
-        self.time_settings
-            .day(Timestamp::now())
-            .map_err(|e| e.to_string())
     }
 }
 
@@ -80,3 +75,16 @@ fn rfc3339(us: i64) -> String {
 
 #[cfg(test)]
 mod tests;
+
+/// The daemon's complete keyed catalog, including analyses over derived figures.
+pub(crate) fn keyed_with(
+    configuration: &sinex_derivations::Configuration,
+) -> Vec<Box<dyn sinex_derivations::AnyKeyed>> {
+    let mut all = sinex_derivations::keyed_with(configuration);
+    all.push(Box::new(stored::StoredProducts));
+    all.push(Box::new(recall::RecallProducts));
+    all
+}
+pub(crate) fn keyed() -> Vec<Box<dyn sinex_derivations::AnyKeyed>> {
+    keyed_with(&sinex_derivations::Configuration::default())
+}

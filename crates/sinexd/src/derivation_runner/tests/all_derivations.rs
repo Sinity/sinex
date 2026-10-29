@@ -32,10 +32,17 @@ fn captured<P: EventPayload>(payload: &P, source: &str, anchor: u64) -> Event {
 }
 
 fn polylogue(kind: &str, payload: Value, anchor: u64) -> Event {
-    external::record(&format!("polylogue.{kind}"), payload, Origin::Record {
-        location: RecordLocation { material: MaterialId(uuid::Uuid::from_u128(u128::from(anchor) + 1)), anchor },
-        output_index: 0,
-    })
+    external::record(
+        &format!("polylogue.{kind}"),
+        payload,
+        Origin::Record {
+            location: RecordLocation {
+                material: MaterialId(uuid::Uuid::from_u128(u128::from(anchor) + 1)),
+                anchor,
+            },
+            output_index: 0,
+        },
+    )
 }
 
 async fn declared_world(db: devkit::pg::TestDatabase) -> World {
@@ -69,11 +76,15 @@ fn world() -> Vec<Event> {
             next(),
         ));
     }
-    out.push(polylogue("session", json!({
-        "session":"test-session","origin":"synthetic","kind":"main","cwd":["/synthetic/repo"],
-        "repo":"synthetic/repo","branch":"task","machine":"box","started":at(0),
-        "last_activity":at(2 * 86_400),"links":[]
-    }), next()));
+    out.push(polylogue(
+        "session",
+        json!({
+            "session":"test-session","origin":"synthetic","kind":"main","cwd":["/synthetic/repo"],
+            "repo":"synthetic/repo","branch":"task","machine":"box","started":at(0),
+            "last_activity":at(2 * 86_400),"links":[]
+        }),
+        next(),
+    ));
     out.push(polylogue("message", json!({
         "message":"test-prompt","session":"test-session","role":"user","written_by":"human","prompt_kind":"prose",
         "at":at(100),"text":"Resume the recorded task","usage":{},"attachments":[],"copies":[]
@@ -140,8 +151,8 @@ fn world() -> Vec<Event> {
             out.push(zsh(&command, s, next()));
             out.push(captured(
                 &WindowFocused {
-            scope: Some("synthetic-compositor".into()),
-            host: Some("box".into()),
+                    scope: Some("synthetic-compositor".into()),
+                    host: Some("box".into()),
                     received_at: at(s + 30),
                     window: Some(format!("w{i}")),
                     class: Some(if i % 2 == 0 { "kitty" } else { "firefox" }.into()),
@@ -152,8 +163,8 @@ fn world() -> Vec<Event> {
             ));
             out.push(captured(
                 &WindowSpan {
-            scope: None,
-            host: None,
+                    scope: None,
+                    host: None,
                     bucket: "aw-watcher-window_box".into(),
                     span_id: base + i,
                     started_at: at(s + 30),
@@ -241,8 +252,8 @@ fn world() -> Vec<Event> {
         }
         out.push(captured(
             &PresenceSpan {
-            scope: None,
-            host: None,
+                scope: None,
+                host: None,
                 bucket: "aw-watcher-afk_box".into(),
                 row: base,
                 started_at: at(base),
@@ -254,8 +265,8 @@ fn world() -> Vec<Event> {
         ));
         out.push(captured(
             &PresenceSpan {
-            scope: None,
-            host: None,
+                scope: None,
+                host: None,
                 bucket: "aw-watcher-afk_box".into(),
                 row: base + 1,
                 started_at: at(base + 7_200),

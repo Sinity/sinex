@@ -23,6 +23,7 @@ pub(crate) struct Library<'a> {
     pub blobs: &'a Blobs,
     pub host: &'a str,
     pub roots: &'a [std::path::PathBuf],
+    pub time_settings: sinex_model::time_settings::TimeSettings,
 }
 
 type R<T> = Result<T, String>;
@@ -138,6 +139,7 @@ pub(crate) async fn dispatch(
     blobs: &Blobs,
     host: &str,
     roots: &[std::path::PathBuf],
+    time_settings: sinex_model::time_settings::TimeSettings,
     request: Request,
     actor: &str,
 ) -> R<Value> {
@@ -170,6 +172,7 @@ pub(crate) async fn dispatch(
         blobs,
         host,
         roots,
+        time_settings,
     };
     let number = |s: &str, what: &str| {
         s.trim()

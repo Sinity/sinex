@@ -16,7 +16,8 @@ async fn sealed_material_encrypts_every_chunk_in_the_actual_admission_pipeline(
     let mut ctx = ReaderContext::open(
         &url,
         &dir.join("store"),
-        sinex_model::time_settings::TimeSettings::operator_default(),
+        sinex_model::time_settings::TimeSettings::new("Europe/Warsaw", 4, 0)
+            .expect("fixture day setting"),
     )
     .await
     .unwrap();
@@ -113,7 +114,8 @@ async fn sealed_failure_details_are_encrypted_and_exactly_recoverable(
     let mut ctx = ReaderContext::open(
         &url,
         &dir.join("store"),
-        sinex_model::time_settings::TimeSettings::operator_default(),
+        sinex_model::time_settings::TimeSettings::new("Europe/Warsaw", 4, 0)
+            .expect("fixture day setting"),
     )
     .await
     .unwrap();

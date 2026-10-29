@@ -56,9 +56,12 @@ pub(crate) async fn refusing(
             declarer
                 .publish(
                     message.reply.unwrap(),
-                    serde_json::to_vec(&sinex_protocol::ProducerWelcome { refusal: None,..Default::default() })
-                        .unwrap()
-                        .into(),
+                    serde_json::to_vec(&sinex_protocol::ProducerWelcome {
+                        refusal: None,
+                        ..Default::default()
+                    })
+                    .unwrap()
+                    .into(),
                 )
                 .await
                 .unwrap();

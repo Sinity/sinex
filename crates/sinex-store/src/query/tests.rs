@@ -553,6 +553,7 @@ async fn derived_aliases_read_what_the_derivations_write(db: devkit::pg::TestDat
         .unwrap();
     let at = |s: i64| Timestamp::from_unix_secs(BASE + s).unwrap();
     let interval = |id: &str, ended: Option<i64>| StateInterval {
+        fenced_at: None,
         interval_id: id.into(),
         state_kind: "desktop.focus".into(),
         subject_id: Some(id.into()),

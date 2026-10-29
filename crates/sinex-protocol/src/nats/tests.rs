@@ -5,7 +5,7 @@ fn subjects_and_streams_follow_the_root() {
     let s = Subjects::sinex();
     assert_eq!(s.ingress("kitty"), "sinex.ingress.kitty");
     assert_eq!(
-        s.confirmed_event("open","command.executed"),
+        s.confirmed_event("open", "command.executed"),
         "sinex.confirmed.event.open.command.executed"
     );
     assert_eq!(s.confirmed_stream(), "SINEX_CONFIRMED");
@@ -23,7 +23,7 @@ fn subjects_and_streams_follow_the_root() {
 #[devkit::test]
 fn producer_permissions_name_only_its_own_subjects() {
     let s = Subjects::sinex();
-    let (publish, subscribe) = s.producer_permissions("phone",None);
+    let (publish, subscribe) = s.producer_permissions("phone", None);
     assert_eq!(
         publish,
         [
@@ -40,7 +40,7 @@ fn producer_permissions_name_only_its_own_subjects() {
         ]
     );
     assert_eq!(subscribe, ["sinex.ack.phone", "_INBOX.phone.>"]);
-    let config = s.authorization(("sinexd", "pw"), &[("phone", "p\"w")],&[]);
+    let config = s.authorization(("sinexd", "pw"), &[("phone", "p\"w")], &[]);
     assert!(
         config.contains(r#"user: "phone", password: "p\"w""#),
         "{config}"
@@ -168,8 +168,18 @@ fn producer_output_ordinals_round_trip_without_narrowing() {
 
 #[devkit::test]
 fn confirmed_consumer_permissions_are_exact_and_never_allow_admin_or_raw_reads() {
-    let subjects=Subjects::sinex();let (publish,subscribe)=subjects.producer_permissions("replica",Some("replica-scope"));
-    for allowed in ["$JS.API.CONSUMER.INFO.SINEX_CONFIRMED.sinex-replica-scope","$JS.API.CONSUMER.MSG.NEXT.SINEX_CONFIRMED.sinex-replica-scope","$JS.ACK.SINEX_CONFIRMED.sinex-replica-scope.>"] {assert!(publish.iter().any(|subject|subject==allowed));}
-    assert!(!publish.iter().any(|subject|subject.contains("CREATE")||subject.contains("DELETE")||subject.contains("MSG.GET")||subject.contains("sinex-other")));
-    assert_eq!(subscribe,vec!["sinex.ack.replica","_INBOX.replica.>"]);
+    let subjects = Subjects::sinex();
+    let (publish, subscribe) = subjects.producer_permissions("replica", Some("replica-scope"));
+    for allowed in [
+        "$JS.API.CONSUMER.INFO.SINEX_CONFIRMED.sinex-replica-scope",
+        "$JS.API.CONSUMER.MSG.NEXT.SINEX_CONFIRMED.sinex-replica-scope",
+        "$JS.ACK.SINEX_CONFIRMED.sinex-replica-scope.>",
+    ] {
+        assert!(publish.iter().any(|subject| subject == allowed));
+    }
+    assert!(!publish.iter().any(|subject| subject.contains("CREATE")
+        || subject.contains("DELETE")
+        || subject.contains("MSG.GET")
+        || subject.contains("sinex-other")));
+    assert_eq!(subscribe, vec!["sinex.ack.replica", "_INBOX.replica.>"]);
 }

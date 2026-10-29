@@ -66,13 +66,27 @@ impl Subjects {
         self.stream("INGRESS")
     }
 
-    pub fn confirmed_event(&self,class:&str,event_type:&str)->String {format!("{}.confirmed.event.{class}.{event_type}",self.root)}
-    pub fn confirmed_lifecycle(&self,class:&str,event_type:&str)->String {format!("{}.confirmed.lifecycle.{class}.{event_type}",self.root)}
-    pub fn confirmed_control(&self)->String {format!("{}.confirmed.control",self.root)}
-    pub fn confirmed_consumer(&self,producer:&str)->String {format!("{}.confirmed_consumer.{producer}",self.root)}
-    pub fn confirmed_consumer_all(&self)->String {format!("{}.confirmed_consumer.*",self.root)}
-    pub fn consumer_name(&self,scope:&str)->String {format!("sinex-{scope}")}
-    pub fn inbox_prefix(&self,producer:&str)->String {format!("_INBOX.{producer}")}
+    pub fn confirmed_event(&self, class: &str, event_type: &str) -> String {
+        format!("{}.confirmed.event.{class}.{event_type}", self.root)
+    }
+    pub fn confirmed_lifecycle(&self, class: &str, event_type: &str) -> String {
+        format!("{}.confirmed.lifecycle.{class}.{event_type}", self.root)
+    }
+    pub fn confirmed_control(&self) -> String {
+        format!("{}.confirmed.control", self.root)
+    }
+    pub fn confirmed_consumer(&self, producer: &str) -> String {
+        format!("{}.confirmed_consumer.{producer}", self.root)
+    }
+    pub fn confirmed_consumer_all(&self) -> String {
+        format!("{}.confirmed_consumer.*", self.root)
+    }
+    pub fn consumer_name(&self, scope: &str) -> String {
+        format!("sinex-{scope}")
+    }
+    pub fn inbox_prefix(&self, producer: &str) -> String {
+        format!("_INBOX.{producer}")
+    }
 
     /// Every confirmed-stream subject.
     pub fn confirmed_all(&self) -> String {
@@ -175,21 +189,26 @@ impl Subjects {
     /// What a producer's NATS user may publish and subscribe to: its own
     /// ingress, have, materials and excise subjects, its acknowledgments, and
     /// reply inboxes.
-    pub fn producer_permissions(&self, producer: &str, scope:Option<&str>) -> (Vec<String>, Vec<String>) {
-        let mut publish=vec![
-                self.ingress(producer),
-                self.connect(producer),
-                self.recorded(producer),
-                self.materials(producer),
-                self.excise(producer),
-                self.replay_scope(producer),
-                self.fetch_event(producer),
-                self.fetch_payload(producer),
-                self.fetch_material(producer),
-                self.confirmed_consumer(producer),
-            ];
-        if let Some(scope)=scope {
-            let stream=self.confirmed_stream();let consumer=self.consumer_name(scope);
+    pub fn producer_permissions(
+        &self,
+        producer: &str,
+        scope: Option<&str>,
+    ) -> (Vec<String>, Vec<String>) {
+        let mut publish = vec![
+            self.ingress(producer),
+            self.connect(producer),
+            self.recorded(producer),
+            self.materials(producer),
+            self.excise(producer),
+            self.replay_scope(producer),
+            self.fetch_event(producer),
+            self.fetch_payload(producer),
+            self.fetch_material(producer),
+            self.confirmed_consumer(producer),
+        ];
+        if let Some(scope) = scope {
+            let stream = self.confirmed_stream();
+            let consumer = self.consumer_name(scope);
             publish.extend([
                 format!("$JS.API.STREAM.INFO.{stream}"),
                 format!("$JS.API.CONSUMER.INFO.{stream}.{consumer}"),
@@ -197,14 +216,25 @@ impl Subjects {
                 format!("$JS.ACK.{stream}.{consumer}.>"),
             ]);
         }
-        (publish,vec![self.ack(producer),format!("{}.>",self.inbox_prefix(producer))])
+        (
+            publish,
+            vec![
+                self.ack(producer),
+                format!("{}.>", self.inbox_prefix(producer)),
+            ],
+        )
     }
 
     /// A NATS server `authorization` block: the daemon user with full access,
     /// and one user per producer limited to its own subjects, each given as
     /// its name and the bcrypt hash of its password, which the server checks
     /// passwords against.
-    pub fn authorization(&self, daemon: (&str, &str), producers: &[(&str, &str)],consumers:&[(&str,String)]) -> String {
+    pub fn authorization(
+        &self,
+        daemon: (&str, &str),
+        producers: &[(&str, &str)],
+        consumers: &[(&str, String)],
+    ) -> String {
         let quote = |s: &str| serde_json::to_string(s).expect("strings serialize");
         let list = |items: &[String]| {
             items
@@ -219,7 +249,13 @@ impl Subjects {
             quote(daemon.1)
         )];
         for (producer, password) in producers {
-            let (publish, subscribe) = self.producer_permissions(producer,consumers.iter().find(|(identity,_)|identity==producer).map(|(_,scope)|scope.as_str()));
+            let (publish, subscribe) = self.producer_permissions(
+                producer,
+                consumers
+                    .iter()
+                    .find(|(identity, _)| identity == producer)
+                    .map(|(_, scope)| scope.as_str()),
+            );
             users.push(format!(
                 "{{ user: {}, password: {}, permissions: {{ publish: {{ allow: [{}] }}, subscribe: {{ allow: [{}] }} }} }}",
                 quote(producer),
@@ -503,27 +539,27 @@ pub struct FetchPayloadReply {
 pub struct FetchMaterial {
     pub material: MaterialId,
     #[serde(default)]
-    pub range:Option<FetchRange>,
+    pub range: Option<FetchRange>,
 }
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct FetchRange {
-    pub offset:u64,
-    pub length:u64,
-    pub hash:String,
+    pub offset: u64,
+    pub length: u64,
+    pub hash: String,
 }
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct MaterialReference {
-    pub material:MaterialId,
-    pub length:u64,
-    pub hash:String,
+    pub material: MaterialId,
+    pub length: u64,
+    pub hash: String,
 }
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
 pub struct FetchMaterialReply {
     #[serde(default)]
-    pub material_ref:Option<MaterialReference>,
+    pub material_ref: Option<MaterialReference>,
     #[serde(default)]
-    pub transfer:Option<FetchPayloadReply>,
+    pub transfer: Option<FetchPayloadReply>,
     pub material: Option<MaterialFrame>,
     pub extents: Vec<Vec<u8>>,
     pub refusal: Option<String>,
@@ -555,9 +591,9 @@ impl Default for ProducerHello {
 pub struct ProducerWelcome {
     pub refusal: Option<String>,
     #[serde(default)]
-    pub family:Option<String>,
+    pub family: Option<String>,
     #[serde(default)]
-    pub canonical_publisher:bool,
+    pub canonical_publisher: bool,
 }
 
 /// A request on `<root>.recorded.<producer>`: which of these frames Sinex has
@@ -626,7 +662,10 @@ pub enum Confirmed {
     },
     Event(Box<ConfirmedEvent>),
     /// Metadata exceeding a transfer unit is fetched under the same scoped grants.
-    EventReference {commit_seq:i64,event:EventId},
+    EventReference {
+        commit_seq: i64,
+        event: EventId,
+    },
     Archived(Archived),
     /// A previously hidden reading is live again at a new position.
     Unhidden(Unhidden),
@@ -638,7 +677,7 @@ pub enum Confirmed {
         commit_seq: Option<i64>,
         /// The removed reading's original position, when retained historical evidence establishes it.
         #[serde(default)]
-        original_commit_seq:Option<i64>,
+        original_commit_seq: Option<i64>,
         event: EventId,
         operation: sinex_model::OperationId,
     },
@@ -715,8 +754,21 @@ pub struct Unhidden {
 mod tests;
 
 /// The daemon selects and provisions the authenticated identity's scoped consumer.
-#[derive(Clone,Debug,Serialize,Deserialize,PartialEq,Eq)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
-pub struct ConfirmedConsumer {pub after:i64,pub cache:String,#[serde(default)]pub status_only:bool}
-#[derive(Clone,Debug,Default,Serialize,Deserialize,PartialEq,Eq)]
-pub struct ConfirmedConsumerReply {#[serde(default)]pub position:Option<i64>,pub stream:String,pub consumer:String,pub scope:String,pub refusal:Option<String>,pub gap:Option<String>}
+pub struct ConfirmedConsumer {
+    pub after: i64,
+    pub cache: String,
+    #[serde(default)]
+    pub status_only: bool,
+}
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ConfirmedConsumerReply {
+    #[serde(default)]
+    pub position: Option<i64>,
+    pub stream: String,
+    pub consumer: String,
+    pub scope: String,
+    pub refusal: Option<String>,
+    pub gap: Option<String>,
+}

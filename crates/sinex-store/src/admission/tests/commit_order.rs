@@ -10,18 +10,28 @@ async fn a_second_transaction_waits_for_the_first_to_commit(db: devkit::pg::Test
     let mut second = PgConnection::connect(&url).await.unwrap();
     let mut observer = PgConnection::connect(&url).await.unwrap();
 
-    let key=crate::privacy::hash_key(&mut first).await.unwrap();
-    let mut early_cache=crate::privacy::Cache::new(key);
-    let mut late_cache=crate::privacy::Cache::new(key);
+    let key = crate::privacy::hash_key(&mut first).await.unwrap();
+    let mut early_cache = crate::privacy::Cache::new(key);
+    let mut late_cache = crate::privacy::Cache::new(key);
     let mut held = first.begin().await.unwrap();
-    let early = admit(&mut held, &mut early_cache, &batch(vec![keyed("s", 1, 1, 1)]), &NoDerivations)
-        .await
-        .unwrap();
+    let early = admit(
+        &mut held,
+        &mut early_cache,
+        &batch(vec![keyed("s", 1, 1, 1)]),
+        &NoDerivations,
+    )
+    .await
+    .unwrap();
     let late = tokio::spawn(async move {
         let mut tx = second.begin().await.unwrap();
-        let out = admit(&mut tx, &mut late_cache, &batch(vec![keyed("s", 2, 1, 1)]), &NoDerivations)
-            .await
-            .unwrap();
+        let out = admit(
+            &mut tx,
+            &mut late_cache,
+            &batch(vec![keyed("s", 2, 1, 1)]),
+            &NoDerivations,
+        )
+        .await
+        .unwrap();
         tx.commit().await.unwrap();
         out
     });

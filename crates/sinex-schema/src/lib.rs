@@ -240,7 +240,10 @@ fn grants() -> Vec<String> {
         ));
     }
     // Read-only SQL sees events only through the visibility views.
-    out.push("REVOKE SELECT ON core.events, core.search_text FROM sinex_reader".to_string());
+    out.push(
+        "REVOKE SELECT ON core.events, core.search_text, core.producer_orders FROM sinex_reader"
+            .to_string(),
+    );
     out
 }
 

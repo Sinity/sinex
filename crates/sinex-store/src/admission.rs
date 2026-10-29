@@ -29,8 +29,8 @@ mod archive;
 mod classify;
 mod derived;
 mod kinds;
-mod register;
 mod orders;
+mod register;
 mod write;
 
 pub(crate) use archive::remove_live;
@@ -146,9 +146,10 @@ pub(crate) async fn admit(
     batch: &Batch,
     keys: &dyn DirtyKeys,
 ) -> Result<Outcome> {
-    if let BatchKind::Ingress(frame)=&batch.kind
+    if let BatchKind::Ingress(frame) = &batch.kind
         && !frame.frame.is_empty()
-        && let Some(outcome)=register::recorded(conn,frame).await? {
+        && let Some(outcome) = register::recorded(conn, frame).await?
+    {
         return Ok(outcome);
     }
     let mut outcome = Outcome::default();
@@ -162,9 +163,12 @@ pub(crate) async fn admit(
         None => batch,
     };
     if let BatchKind::Ingress(frame) = &batch.kind
-        && frame.refusal.is_none() && !frame.declarations.is_empty()
+        && frame.refusal.is_none()
+        && !frame.declarations.is_empty()
     {
-        let family=frame.family.as_deref().ok_or_else(||crate::Error::Invalid("producer declaration has no configured family".into()))?;
+        let family = frame.family.as_deref().ok_or_else(|| {
+            crate::Error::Invalid("producer declaration has no configured family".into())
+        })?;
         outcome.registered_kinds =
             sinex_schema::kinds::register(conn, family, &frame.declarations).await?;
     }
@@ -207,7 +211,7 @@ pub(crate) async fn admit(
     let mut declarations = kinds::prepare(conn, batch, &mut events).await?;
     let started = std::time::Instant::now();
     apply_privacy(conn, cache, batch, &mut events).await?;
-    orders::assign(conn,batch,&mut events).await?;
+    orders::assign(conn, batch, &mut events).await?;
     outcome.timings.insert("privacy", started.elapsed());
     let started = std::time::Instant::now();
     removed_at_source(conn, batch, &mut events).await?;

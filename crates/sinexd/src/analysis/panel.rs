@@ -1,121 +1,50 @@
 //! Panels: the daily figures of some metrics, read through the query language
 //! with the caller's grants, the coverage of their sources at the same commit
 //! position, and the cells built from the two.
-use super::{Settings, micros, rfc3339};
+use super::{Settings, rfc3339};
 use serde_json::Value;
-use sinex_analysis::coverage::{self, Coverage, CoverageEvidence};
+use sinex_analysis::coverage::{self, Coverage};
 use sinex_analysis::methods::Point;
-use sinex_analysis::panel::{self, DayFigure, PanelCell, Unit};
+use sinex_analysis::panel::{PanelCell, Unit};
 use sinex_analysis::{Cell, Span};
 use sinex_derivations::figures::Metric;
-use sinex_model::Timestamp;
 use sinex_model::query::Context;
-use sinex_store::query::Page;
 use sqlx::PgConnection;
 
-/// Rows per query page while reading figures.
-const FIGURES_PER_PAGE: u64 = 5_000;
-
-/// The coverage of `sources`, as of a commit position.
+/// Coverage reads use the admitted source observations that can parent products.
 async fn coverage(
     conn: &mut PgConnection,
     sources: &[&str],
-    as_of: i64,
+    _as_of: i64,
 ) -> Result<Vec<Coverage>, String> {
-    let ns = |t: time::OffsetDateTime| micros(Timestamp(t));
+    let events = sinex_store::live::of_types(conn, &["source.coverage".into()])
+        .await
+        .map_err(|e| e.to_string())?;
     let mut out = Vec::new();
-    for source in sources {
-        let e = sinex_store::coverage::source_evidence(conn, source, as_of)
-            .await
-            .map_err(|e| e.to_string())?;
-        let run_end = |r: &sinex_store::coverage::RunSpan| {
-            ns(r.ended_at.or(r.last_record).unwrap_or(r.started_at))
+    for event in events {
+        let Some(payload) = event.payload else {
+            continue;
         };
-        let evidence = CoverageEvidence {
-            records: e.records.map(|(a, b)| Span::new(ns(a), ns(b))),
-            last_read: e.runs.iter().map(run_end).max(),
-            runs: e
-                .runs
-                .iter()
-                .map(|r| Span::new(ns(r.started_at), run_end(r)))
-                .collect(),
+        let Ok(row) =
+            serde_json::from_value::<sinex_model::event_types::coverage::SourceCoverage>(payload)
+        else {
+            continue;
         };
-        out.extend(coverage::coverage(
-            source,
-            coverage::capture_mode(source),
-            coverage::completeness(source),
-            &evidence,
-        ));
-    }
-    Ok(out)
-}
-
-/// The query that reads the daily figures of `metrics` on `days`.
-fn figures_query(metrics: &[&Metric], days: &[Unit]) -> String {
-    let list = |items: Vec<String>| items.join(", ");
-    format!(
-        "figures where grain = \"day\" and metric = [{}] and day = [{}] \
-         fields id, metric, day, dimension, dimension_value, value, numerator, denominator, rows",
-        list(
-            metrics
-                .iter()
-                .map(|m| serde_json::to_string(m.name).expect("strings serialize"))
-                .collect()
-        ),
-        list(
-            days.iter()
-                .map(|d| serde_json::to_string(&d.label).expect("strings serialize"))
-                .collect()
-        ),
-    )
-}
-
-fn figure(row: &Value) -> Option<DayFigure> {
-    let text = |f: &str| row.get(f).and_then(Value::as_str).map(str::to_owned);
-    let number = |f: &str| row.get(f).and_then(Value::as_f64);
-    Some(DayFigure {
-        metric: text("metric")?,
-        day: text("day")?,
-        dimension: text("dimension")?,
-        dimension_value: text("dimension_value")?,
-        value: number("value"),
-        numerator: number("numerator"),
-        denominator: number("denominator"),
-        rows: number("rows").map_or(0, |r| r as u64),
-        reference: format!("sinex:ev/{}", text("id")?),
-    })
-}
-
-/// The daily figures of `metrics` on `days`, and the commit position they
-/// were read at.
-async fn figures(
-    conn: &mut PgConnection,
-    ctx: &Context,
-    metrics: &[&Metric],
-    days: &[Unit],
-) -> Result<(Vec<DayFigure>, i64), String> {
-    let text = figures_query(metrics, days);
-    let query = sinex_model::query::bind(&text, ctx).map_err(|e| e.to_string())?;
-    let mut page = Page {
-        size: Some(FIGURES_PER_PAGE),
-        cursor: None,
-    };
-    let mut out = Vec::new();
-    loop {
-        let answer = sinex_store::query::run(conn, &text, Some(&query), ctx, &page)
-            .await
-            .map_err(|e| e.to_string())?;
-        out.extend(answer.rows.iter().filter_map(figure));
-        match answer.page.cursor {
-            Some(cursor) => page.cursor = Some(cursor),
-            None => return Ok((out, answer.resolved.commit_seq)),
+        if sources.contains(&row.observed_source.as_str())
+            && let Some(coverage) = coverage::from_observation(&row)
+        {
+            out.push(coverage);
         }
     }
+    Ok(out)
 }
 
 /// A computed panel: its days, its cells, the coverage behind them and the
 /// commit position everything was read at.
 pub(crate) struct Panel {
+    pub citation: Option<String>,
+    pub producer_versions: Option<Value>,
+    pub evidence: Vec<Value>,
     pub units: Vec<Unit>,
     pub cells: Vec<PanelCell>,
     pub coverage: Vec<Coverage>,
@@ -145,24 +74,79 @@ pub(crate) async fn panel(
     from: jiff::civil::Date,
     to: jiff::civil::Date,
 ) -> Result<Panel, String> {
-    let units = panel::days(&settings.time_settings, from, to).map_err(|e| e.to_string())?;
-    let (figures, as_of) = figures(conn, ctx, metrics, &units).await?;
-    let mut sources: Vec<&str> = metrics
-        .iter()
-        .flat_map(|m| m.sources.iter().copied())
-        .collect();
-    sources.sort_unstable();
-    sources.dedup();
-    let coverage = coverage(conn, &sources, as_of).await?;
-    let cells = metrics
-        .iter()
-        .flat_map(|m| panel::cells(m, &units, &figures, &coverage))
-        .collect();
+    let question = super::access::question(
+        conn,
+        ctx,
+        settings,
+        "panel",
+        None,
+        metrics,
+        from,
+        to,
+        Default::default(),
+    )
+    .await?;
+    let payload = super::access::find(conn, "analysis.panel", &question.request)
+        .await?
+        .ok_or("analysis panel is not materialized; submit its canonical request first")?;
+    from_payload(&payload)
+}
+
+pub(super) fn from_payload(payload: &Value) -> Result<Panel, String> {
+    let decode = |field: &str| {
+        payload
+            .get(field)
+            .cloned()
+            .ok_or_else(|| format!("stored panel has no {field}"))
+    };
+    let units: Vec<Unit> = serde_json::from_value(decode("units")?).map_err(|e| e.to_string())?;
+    let coverage: Vec<Coverage> =
+        serde_json::from_value(decode("coverage")?).map_err(|e| e.to_string())?;
+    let mut cells = Vec::new();
+    for row in payload["cells"]
+        .as_array()
+        .ok_or("stored panel cells are not an array")?
+    {
+        let metric = row["metric"]
+            .as_str()
+            .and_then(sinex_derivations::figures::metric)
+            .ok_or("stored panel has an unknown metric")?;
+        cells.push(PanelCell {
+            metric: metric.name,
+            unit: serde_json::from_value(row["unit"].clone()).map_err(|e| e.to_string())?,
+            dimension: row["dimension"]
+                .as_str()
+                .ok_or("stored panel dimension is absent")?
+                .into(),
+            dimension_value: row["dimension_value"]
+                .as_str()
+                .ok_or("stored panel dimension value is absent")?
+                .into(),
+            cell: serde_json::from_value(row["cell"].clone()).map_err(|e| e.to_string())?,
+            numerator: row["numerator"].as_f64(),
+            denominator: row["denominator"].as_f64(),
+            rows: row["rows"]
+                .as_u64()
+                .ok_or("stored panel row count is absent")?,
+            observed_seconds: row["observed_seconds"]
+                .as_f64()
+                .ok_or("stored panel observed seconds are absent")?,
+            reference: row["reference"].as_str().map(str::to_owned),
+        });
+    }
     Ok(Panel {
+        citation: payload["_citation"].as_str().map(str::to_owned),
+        producer_versions: payload.get("producer_versions").cloned(),
+        evidence: payload["coverage_evidence"]
+            .as_array()
+            .cloned()
+            .unwrap_or_default(),
         units,
-        cells,
         coverage,
-        as_of,
+        cells,
+        as_of: payload["read_as"]
+            .as_i64()
+            .ok_or("stored panel has no selected read context")?,
     })
 }
 
@@ -172,7 +156,11 @@ fn cell_text(c: &Cell<f64>) -> String {
         Cell::Partial {
             value,
             observed_fraction,
-        } => format!("{}~{:.0}%", number(*value), observed_fraction * 100.0),
+        } => format!(
+            "{}~{}",
+            number(*value),
+            coverage::percent_label(*observed_fraction)
+        ),
         Cell::Recorded { value } => format!(">={}", number(*value)),
         Cell::Missing { reason } => format!(
             "({})",
@@ -187,7 +175,9 @@ fn cell_text(c: &Cell<f64>) -> String {
 /// A panel as a table: one row per day, one column per metric, or one line
 /// per breakdown value.
 pub(crate) fn table(p: &Panel, metrics: &[&Metric], by: Option<&str>) -> String {
-    let mut out = String::new();
+    let mut out = p.citation.as_ref().map_or_else(String::new, |citation| {
+        format!("Panel {citation}, as of commit {}.\n", p.as_of)
+    });
     match by {
         None => {
             out.push_str(&format!("{:<12}", "day"));
@@ -275,7 +265,12 @@ pub(crate) async fn gaps(
         let (uncovered, state) = if covered.is_empty() {
             (vec![range], "unknown")
         } else {
-            let covered = sinex_analysis::SpanSet::from_spans(covered.iter().map(|c| c.span));
+            let covered = sinex_analysis::SpanSet::from_spans(
+                covered
+                    .iter()
+                    .filter(|c| c.completeness != coverage::Completeness::Unknown)
+                    .map(|c| c.span),
+            );
             let all = sinex_analysis::SpanSet::from_spans([range]);
             (all.subtract(&covered).spans().to_vec(), "gap")
         };

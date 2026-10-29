@@ -263,14 +263,14 @@ pub(crate) fn alias_field(alias: &str, name: &str) -> Option<String> {
         ("intervals" | "now", "start") => payload_time("started_at"),
         ("intervals" | "now", "end") => payload_time("ended_at"),
         ("intervals" | "now", "duration") => format!(
-            "extract(epoch from (coalesce({}, now()) - {}))",
+            "extract(epoch from ({} - {}))",
             payload_time("ended_at"),
             payload_time("started_at")
         ),
         ("intervals" | "now", "state") => payload_text("state_kind"),
         ("intervals" | "now", "subject") => payload_text("label"),
         ("intervals" | "now", "open") => {
-            "(coalesce(jsonb_typeof({t}.payload -> 'ended_at'), 'null') = 'null')".to_string()
+            "(coalesce(jsonb_typeof({t}.payload -> 'ended_at'), 'null') = 'null' AND coalesce(jsonb_typeof({t}.payload -> 'fenced_at'), 'null') = 'null')".to_string()
         }
         _ => return None,
     })
@@ -280,6 +280,11 @@ pub(crate) fn alias_field(alias: &str, name: &str) -> Option<String> {
 /// that is unknown is an open span. The boolean marks an included upper bound.
 pub(crate) fn span(table: Table, alias: Option<&str>) -> Option<(String, String, bool)> {
     match (table, alias) {
+        (Table::Events, Some(a @ ("intervals" | "now"))) => Some((
+            alias_field(a,"start")?,
+            "coalesce((({t}.payload ->> 'ended_at')::timestamptz), (({t}.payload ->> 'fenced_at')::timestamptz))".into(),
+            false,
+        )),
         (Table::Events, Some(a)) => Some((
             alias_field(a, "start")?,
             alias_field(

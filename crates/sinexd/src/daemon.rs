@@ -39,6 +39,7 @@ pub(crate) struct Options {
     pub nats: String,
     /// That user's password.
     pub nats_password_file: Option<PathBuf>,
+    pub producer_grants: ingress::fetch::ProducerGrants,
     /// Subject root: `sinex` unless several deployments share a server.
     pub subject_root: String,
     pub host: String,
@@ -80,7 +81,11 @@ pub(crate) async fn run(o: Options) -> Result<(), String> {
 
     let writer_conn = connect(&o.database).await?;
     let mut writer_conn = writer::claim(writer_conn).await?;
-    // Blob files an excision committed to deleting but a crash left behind.
+    blobs
+        .recover(&mut writer_conn)
+        .await
+        .map_err(|error| error.to_string())?;
+    // Finish durable excision punches before sources resume.
     let (deleted, left) = sinex_store::excision::finish_deletions(&mut writer_conn, &blobs)
         .await
         .map_err(|e| format!("finishing blob deletions: {e}"))?;
@@ -91,18 +96,15 @@ pub(crate) async fn run(o: Options) -> Result<(), String> {
             left.len()
         );
     }
-    // Bytes written before an admission that never committed.
-    let without_rows = sinex_store::blobs::delete_files_without_rows(&mut writer_conn, &blobs)
+    // Remove committed extents whose admission left no catalog row.
+    let without_rows = sinex_store::blobs::delete_unreferenced_extents(&mut writer_conn, &blobs)
         .await
-        .map_err(|e| format!("deleting blob files without a row: {e}"))?;
-    if !without_rows.deleted.is_empty() {
+        .map_err(|e| format!("deleting extents without a row: {e}"))?;
+    if !without_rows.is_empty() {
         eprintln!(
-            "sinexd: deleted {} blob files no row names, written before an admission that never committed",
-            without_rows.deleted.len()
+            "sinexd: deleted {} unreferenced byte extents",
+            without_rows.len()
         );
-    }
-    for entry in &without_rows.not_blobs {
-        eprintln!("sinexd: content store: {entry}");
     }
     sinex_store::registry::write_sources(&mut writer_conn, &crate::catalog::registry_sources())
         .await
@@ -115,17 +117,19 @@ pub(crate) async fn run(o: Options) -> Result<(), String> {
     };
     // The daemon reads its own telemetry spool, whatever is configured.
     let telemetry_spool = o.telemetry_spool.clone();
+    // Discovery must see the configured spool before its first planning turn.
+    std::fs::create_dir_all(&telemetry_spool)
+        .map_err(|error| format!("telemetry spool: {error}"))?;
     sources.sources.insert(
         sinex_sources::sources::telemetry::SPEC.name.to_owned(),
         binding_runner::SourceConfig {
-            enable: true,
             paths: vec![telemetry_spool.display().to_string()],
             ..Default::default()
         },
     );
     let configuration = sources.derivation_configuration();
     let (keyed, per_event) = (
-        sinex_derivations::keyed_with(&configuration),
+        crate::analysis::keyed_with(&configuration),
         derivation_runner::per_event_with(&configuration)?,
     );
     if let Some(name) = sources.derivations.keys().find(|name| {
@@ -147,7 +151,7 @@ pub(crate) async fn run(o: Options) -> Result<(), String> {
     }
     let time_settings =
         sinex_model::time_settings::TimeSettings::from_parts(o.api.zone.clone(), o.api.day_start);
-    let writer_derivations = sinex_derivations::keyed_with(&configuration)
+    let writer_derivations = crate::analysis::keyed_with(&configuration)
         .into_iter()
         .filter(|d| sources.runs(d.name()))
         .collect();
@@ -273,11 +277,15 @@ pub(crate) async fn run(o: Options) -> Result<(), String> {
     });
 
     // The daemon's own state, sampled into its telemetry spool.
-    let (sample_conn, s) = (connect(&o.database).await?, stop.clone());
+    let (sample_conn, sample_database, s) = (
+        connect(&o.database).await?,
+        o.database.clone(),
+        stop.clone(),
+    );
     tasks.spawn(async move {
         (
             "telemetry",
-            telemetry::run(sample_conn, telemetry_spool, s).await,
+            telemetry::run((sample_conn, sample_database), telemetry_spool, s).await,
         )
     });
 
@@ -296,11 +304,25 @@ pub(crate) async fn run(o: Options) -> Result<(), String> {
     tasks.spawn(async move {
         (
             "binding runner",
-            binding_runner::run((read_conn, database), b, w, host, sources, BINDINGS_EVERY, s).await,
+            binding_runner::run(
+                (read_conn, database),
+                b,
+                w,
+                host,
+                sources,
+                BINDINGS_EVERY,
+                s,
+            )
+            .await,
         )
     });
 
+    let producer_grants = Arc::new(o.producer_grants);
     let requests = ingress::Requests {
+        client: client.clone(),
+        consumer_admin: std::sync::Arc::new(tokio::sync::Mutex::new(())),
+        read_grants: producer_grants.clone(),
+        max_payload: client.server_info().max_payload as u64,
         subjects: subjects.clone(),
         writer: handle.clone(),
         reads,
@@ -312,6 +334,7 @@ pub(crate) async fn run(o: Options) -> Result<(), String> {
         connect(&o.database).await?,
         blobs.clone(),
         o.host.clone(),
+        producer_grants,
     )?;
     let s = stop.clone();
     tasks.spawn(async move { ("ingress", ingress::run(client, ingest, requests, s).await) });
@@ -343,7 +366,7 @@ pub(crate) async fn run(o: Options) -> Result<(), String> {
 
 async fn forget_admitted(database: &str, blobs: &Blobs) -> Result<(), String> {
     let mut conn = writer::claim(connect(database).await?).await?;
-    let result = sinex_store::blobs::forget_files_with_rows(&mut conn, blobs)
+    let result = sinex_store::blobs::commit_pending_extents(&mut conn, blobs)
         .await
         .map_err(|e| e.to_string());
     // Closing the session releases its writer claim even when cleanup fails.

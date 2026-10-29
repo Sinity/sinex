@@ -794,7 +794,6 @@ dependencies = [
 [[package]]
 name = "credential-masking"
 version = "0.1.1"
-source = "git+https://github.com/Sinity/polylogue-sinex-common?branch=master#db1ee87b8fadfbc616490b509d52d3d0d531c4e7"
 dependencies = [
  "hmac",
  "sha2 0.10.9",
@@ -1006,7 +1005,6 @@ dependencies = [
 [[package]]
 name = "devkit"
 version = "0.1.0"
-source = "git+https://github.com/Sinity/polylogue-sinex-common?branch=master#db1ee87b8fadfbc616490b509d52d3d0d531c4e7"
 dependencies = [
  "blake3",
  "clap",
@@ -1024,7 +1022,6 @@ dependencies = [
 [[package]]
 name = "devkit-macros"
 version = "0.1.0"
-source = "git+https://github.com/Sinity/polylogue-sinex-common?branch=master#db1ee87b8fadfbc616490b509d52d3d0d531c4e7"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -2212,13 +2209,13 @@ checksum = "ed5909b6e89a2db4456e54cd5f673791d7eca6732202bbf2a9cc504fe2f9b84a"
 [[package]]
 name = "hashed-blobs"
 version = "0.1.1"
-source = "git+https://github.com/Sinity/polylogue-sinex-common?branch=master#db1ee87b8fadfbc616490b509d52d3d0d531c4e7"
 dependencies = [
  "blake3",
  "chacha20poly1305",
  "hkdf",
  "libc",
  "sha2 0.10.9",
+ "tempfile",
  "zstd",
 ]
 
@@ -4184,11 +4181,14 @@ name = "sinex-capture"
 version = "0.1.0"
 dependencies = [
  "clap",
+ "devkit",
  "serde_json",
  "sinex-model",
  "sinex-protocol",
  "sinex-source-core",
  "sinex-sources",
+ "sqlx",
+ "tempfile",
  "tokio",
 ]
 
@@ -4403,6 +4403,7 @@ dependencies = [
  "sinex-model",
  "sinex-schema",
  "sinex-sealing",
+ "sinex-source-core",
  "sqlx",
  "tempfile",
  "thiserror 2.0.21",

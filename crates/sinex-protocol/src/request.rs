@@ -142,6 +142,8 @@ pub enum Request {
         #[serde(default)]
         compare: Option<bool>,
         #[serde(default)]
+        switch: Option<i64>,
+        #[serde(default)]
         from: Option<String>,
         #[serde(default)]
         until: Option<String>,
@@ -199,6 +201,10 @@ pub enum Request {
         app: Option<String>,
         #[serde(default)]
         title: Option<String>,
+        #[serde(default)]
+        command_record: Option<String>,
+        #[serde(default)]
+        focus_record: Option<String>,
     },
     #[serde(rename = "privacy-rules")]
     PrivacyRules {

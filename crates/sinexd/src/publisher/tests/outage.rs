@@ -272,7 +272,10 @@ async fn the_stream_equals_the_commit_log_across_an_outage(db: devkit::pg::TestD
         vec!["command.executed"],
         vec!["command.imported", "command.executed"],
     ] {
-        let filters = types.iter().map(|t| subjects.confirmed_event("open",t)).collect();
+        let filters = types
+            .iter()
+            .map(|t| subjects.confirmed_event("open", t))
+            .collect();
         let published: Vec<(i64, uuid::Uuid)> = read_filtered(&direct, &stream, filters)
             .await
             .into_iter()
@@ -292,15 +295,18 @@ async fn the_stream_equals_the_commit_log_across_an_outage(db: devkit::pg::TestD
         assert_eq!(published, committed, "{types:?}");
     }
     // Archive changes, once each, in the order they were made.
-    let changes: Vec<(uuid::Uuid, sinex_model::ArchiveReason)> =
-        read_filtered(&direct, &stream, vec![subjects.confirmed_lifecycle("*",">")])
-            .await
-            .into_iter()
-            .filter_map(|m| match m {
-                Confirmed::Archived(a) => Some((a.event.0, a.reason)),
-                _ => None,
-            })
-            .collect();
+    let changes: Vec<(uuid::Uuid, sinex_model::ArchiveReason)> = read_filtered(
+        &direct,
+        &stream,
+        vec![subjects.confirmed_lifecycle("*", ">")],
+    )
+    .await
+    .into_iter()
+    .filter_map(|m| match m {
+        Confirmed::Archived(a) => Some((a.event.0, a.reason)),
+        _ => None,
+    })
+    .collect();
     assert_eq!(changes.len(), 2, "{changes:?}");
     assert_eq!(
         changes[0],

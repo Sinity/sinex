@@ -10,7 +10,11 @@ fn at(seconds: i64) -> Timestamp {
     Timestamp::from_unix_secs(T + seconds).unwrap()
 }
 fn env() -> Env {
-    Env::at(at(100 * 86_400))
+    Env::at(
+        at(100 * 86_400),
+        sinex_model::time_settings::TimeSettings::new("Europe/Warsaw", 4, 0)
+            .expect("fixture day setting"),
+    )
 }
 fn captured<P: EventPayload>(payload: &P, anchor: u64) -> Event {
     Event::build(
@@ -196,6 +200,8 @@ fn elementary_spans_preserve_afk_claims_and_physical_contradictions_without_over
     let mut events = vec![physical(0), physical(20), physical(40)];
     let claim = captured(
         &PresenceSpan {
+            scope: None,
+            host: None,
             bucket: "afk-box".into(),
             row: 1,
             started_at: at(0),
@@ -288,6 +294,7 @@ fn lock_suspend_and_sleep_close_sessions_even_when_the_break_is_short() {
     ] {
         let mut boundary = captured(
             &sinex_model::event_types::StateInterval {
+                fenced_at: None,
                 interval_id: kind.into(),
                 state_kind: kind.into(),
                 subject_id: None,
@@ -370,8 +377,18 @@ fn exact_absence_conflicting_with_physical_support_is_mixed_and_not_counted() {
 #[devkit::test]
 fn trailing_windows_close_on_quiet_without_a_future_event() {
     let events = vec![physical(0), physical(20)];
-    let compute =
-        |seconds| Keyed::compute(&ActivityWindows, &hour(0), &events, &Env::at(at(seconds)));
+    let compute = |seconds| {
+        Keyed::compute(
+            &ActivityWindows,
+            &hour(0),
+            &events,
+            &Env::at(
+                at(seconds),
+                sinex_model::time_settings::TimeSettings::new("Europe/Warsaw", 4, 0)
+                    .expect("fixture day setting"),
+            ),
+        )
+    };
     assert!(compute(319).waiting);
     let closed = compute(320);
     assert!(!closed.waiting);
@@ -732,7 +749,11 @@ fn delegated_time_is_retained_when_it_overlaps_operator_presence() {
 fn changing_civil_time_settings_retires_old_hour_keys() {
     use crate::AnyKeyed;
     use sinex_model::time_settings::TimeSettings;
-    let mut env = Env::at(timestamp(1_718_438_400 * SECOND));
+    let mut env = Env::at(
+        timestamp(1_718_438_400 * SECOND),
+        sinex_model::time_settings::TimeSettings::new("Europe/Warsaw", 4, 0)
+            .expect("fixture day setting"),
+    );
     let old = env.time_settings.clone();
     let start = old.hour_start(env.now).unwrap();
     let key = json!({"hour":start});

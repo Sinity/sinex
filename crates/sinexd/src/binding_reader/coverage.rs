@@ -35,8 +35,10 @@ pub(super) fn outcome(
         Err(error) => (CoverageState::Missing, Some(error.clone()), 0, 1),
     };
     SourceCoverage {
+        observed_run: None,
+        observed_class: binding.settings.class,
         observation: uuid::Uuid::now_v7().to_string(),
-        source: binding.source.clone(),
+        observed_source: binding.source.clone(),
         binding: binding.name.clone(),
         host: binding.settings.host.clone(),
         started_at,
@@ -60,9 +62,10 @@ pub(crate) async fn flush(
     pending: &mut Vec<SourceCoverage>,
     results: &mut Vec<(String, Result<Totals, String>)>,
 ) {
-    for observation in pending.drain(..) {
-        let source = observation.source.clone();
-        if let Err(error) = record(conn, blobs, writer, run, access, observation).await {
+    for mut observation in pending.drain(..) {
+        observation.observed_run = Some(run);
+        let source = observation.observed_source.clone();
+        if let Err(error) = record(conn, blobs, writer, access, observation).await {
             eprintln!("sinexd: source coverage evidence for {source}: {error}");
             results.push((source, Err(format!("source coverage evidence: {error}"))));
         }
@@ -73,33 +76,95 @@ async fn record(
     conn: &mut PgConnection,
     blobs: &Blobs,
     writer: &WriterHandle,
-    run: RunId,
     access: Access<'_>,
     observation: SourceCoverage,
 ) -> Result<(), String> {
     let binding = format!("source.observation:{}", observation.binding);
     let acquired = coverage::observation_material(observation.clone());
-    bindings::save(conn, &bindings::Stored {
-        binding: binding.clone(), source: coverage::OBSERVATION.name.into(),
-        input: acquired.input.locator.clone(),
-        settings: serde_json::json!({"host": acquired.input.host}),
-    }).await.map_err(|error| error.to_string())?;
-    let floor = sinex_store::privacy::load(conn, [observation.source.as_str(), coverage::OBSERVATION.name].into_iter())
-        .await.map_err(|error| error.to_string())?
-        .floors.values().copied().max().unwrap_or_default();
-    let declared = sinex_sources::sources::specs().into_iter()
-        .filter(|spec| spec.name == observation.source)
-        .map(|spec| spec.class).max().unwrap_or_default();
-    let settings = bindings::load(conn, &observation.binding).await.map_err(|error| error.to_string())?
-        .and_then(|saved| serde_json::from_value::<sinex_source_core::Settings>(saved.settings).ok())
-        .and_then(|settings| settings.class).unwrap_or_default();
-    let class = Class::Open.max(floor).max(declared).max(settings);
+    bindings::save(
+        conn,
+        &bindings::Stored {
+            binding: binding.clone(),
+            source: coverage::OBSERVATION.name.into(),
+            input: acquired.input.locator.clone(),
+            settings: serde_json::json!({"host": acquired.input.host}),
+        },
+    )
+    .await
+    .map_err(|error| error.to_string())?;
+    let floor = sinex_store::privacy::load(
+        conn,
+        [
+            observation.observed_source.as_str(),
+            coverage::OBSERVATION.name,
+        ]
+        .into_iter(),
+    )
+    .await
+    .map_err(|error| error.to_string())?
+    .floors
+    .values()
+    .copied()
+    .max()
+    .unwrap_or_default();
+    let declared = sinex_sources::sources::specs()
+        .into_iter()
+        .filter(|spec| spec.name == observation.observed_source)
+        .map(|spec| spec.class)
+        .max()
+        .unwrap_or_default();
+    let settings = bindings::load(conn, &observation.binding)
+        .await
+        .map_err(|error| error.to_string())?
+        .map(|saved| {
+            serde_json::from_value::<sinex_source_core::Settings>(saved.settings).map_err(|error| {
+                format!(
+                    "binding {} has invalid settings: {error}",
+                    observation.binding
+                )
+            })
+        })
+        .transpose()?
+        .and_then(|settings| settings.class)
+        .unwrap_or_default();
+    let class = Class::Open
+        .max(floor)
+        .max(declared)
+        .max(settings)
+        .max(observation.observed_class.unwrap_or_default());
     let material = crate::material_access::MaterialAccess::new(blobs.clone(), class, access)?;
-    let admitted = crate::intake::Intake {
-        writer, source: Arc::new(coverage::observation_source()), binding: &binding, run,
-        material, check: Arc::new(|| Ok(())), priority: Priority::Live, atomic: true,
+    let version = coverage::OBSERVATION.parser_version.to_string();
+    let run = sinex_store::runs::start(
+        conn,
+        &sinex_store::runs::Manifest {
+            name: coverage::OBSERVATION.name,
+            kind: "source",
+            version: &version,
+            build: crate::build_identity::current()?,
+            emits: coverage::OBSERVATION.event_types,
+        },
+        &observation.host,
+    )
+    .await
+    .map_err(|error| error.to_string())?;
+    let result = crate::intake::Intake {
+        writer,
+        source: Arc::new(coverage::observation_source()),
+        binding: &binding,
+        run,
+        material,
+        check: Arc::new(|| Ok(())),
+        priority: Priority::Live,
+        atomic: true,
         registered: None,
-    }.submit(acquired, serde_json::Value::Null, &mut Totals::default()).await?;
+    }
+    .submit(acquired, serde_json::Value::Null, &mut Totals::default())
+    .await;
+    let ended = sinex_store::runs::end(conn, run)
+        .await
+        .map_err(|error| error.to_string());
+    let admitted = result?;
+    ended?;
     if admitted.outcome.failures != 0 || admitted.outcome.admitted != 1 {
         return Err("read outcome was not admitted as one coverage event".into());
     }

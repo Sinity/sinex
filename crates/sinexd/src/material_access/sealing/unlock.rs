@@ -77,7 +77,7 @@ pub(crate) fn read_limits(length: u64) -> Result<sinex_store::blobs::SealedReadL
     let frame = sinex_store::blobs::BLOB_FRAME_BYTES;
     let frames = length.div_ceil(frame as u64).max(1);
     let index = frames
-        .checked_mul(8)
+        .checked_mul(128)
         .and_then(|n| n.checked_add(65536))
         .ok_or("sealed index budget overflow")?;
     Ok(sinex_store::blobs::SealedReadLimits {

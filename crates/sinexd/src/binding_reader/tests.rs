@@ -115,7 +115,8 @@ async fn archive_acquisition_restart_replay_and_privacy_use_real_admission(
     let mut ctx = ReaderContext::open(
         &url,
         &dir.join("store"),
-        sinex_model::time_settings::TimeSettings::operator_default(),
+        sinex_model::time_settings::TimeSettings::new("Europe/Warsaw", 4, 0)
+            .expect("fixture day setting"),
     )
     .await
     .unwrap();
@@ -224,7 +225,8 @@ async fn archive_acquisition_separates_effective_privacy_classes(db: devkit::pg:
     let mut ctx = ReaderContext::open(
         &url,
         &dir.join("store"),
-        sinex_model::time_settings::TimeSettings::operator_default(),
+        sinex_model::time_settings::TimeSettings::new("Europe/Warsaw", 4, 0)
+            .expect("fixture day setting"),
     )
     .await
     .unwrap();
@@ -269,7 +271,8 @@ async fn cancelled_archive_worker_joins_and_restart_catches_up(db: devkit::pg::T
     let mut ctx = ReaderContext::open(
         &url,
         &dir.join("store"),
-        sinex_model::time_settings::TimeSettings::operator_default(),
+        sinex_model::time_settings::TimeSettings::new("Europe/Warsaw", 4, 0)
+            .expect("fixture day setting"),
     )
     .await
     .unwrap();
@@ -362,7 +365,8 @@ async fn sealed_archive_restart_replay_and_class_changes_preserve_exact_material
         let mut ctx = ReaderContext::open(
             &url,
             &dir.join("store"),
-            sinex_model::time_settings::TimeSettings::operator_default(),
+            sinex_model::time_settings::TimeSettings::new("Europe/Warsaw", 4, 0)
+                .expect("fixture day setting"),
         )
         .await
         .unwrap();
@@ -626,7 +630,8 @@ async fn sealed_bindings_never_share_data_keys_or_original_blob_names(
     let mut ctx = ReaderContext::open(
         &url,
         &dir.join("store"),
-        sinex_model::time_settings::TimeSettings::operator_default(),
+        sinex_model::time_settings::TimeSettings::new("Europe/Warsaw", 4, 0)
+            .expect("fixture day setting"),
     )
     .await
     .unwrap();
@@ -679,7 +684,8 @@ async fn an_unchanged_append_only_file_is_not_polled_again(db: devkit::pg::TestD
     let mut ctx = ReaderContext::open(
         &url,
         &dir.join("store"),
-        sinex_model::time_settings::TimeSettings::operator_default(),
+        sinex_model::time_settings::TimeSettings::new("Europe/Warsaw", 4, 0)
+            .expect("fixture day setting"),
     )
     .await
     .unwrap();

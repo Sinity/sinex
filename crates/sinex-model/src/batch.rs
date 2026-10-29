@@ -69,10 +69,10 @@ pub enum BatchKind {
 #[derive(Clone, Debug)]
 pub struct IngressFrame {
     /// Transport-configured ownership captured with this frame; historical ownership stays unknown.
-    pub family:Option<String>,
-    pub write_kind_prefixes:Vec<String>,
+    pub family: Option<String>,
+    pub write_kind_prefixes: Vec<String>,
     /// Offered events whose source did not supply a reading order.
-    pub assign_orders:Vec<crate::EventId>,
+    pub assign_orders: Vec<crate::EventId>,
     pub producer: String,
     /// The producer's own name for the frame, unique per producer.
     pub frame: String,
@@ -278,4 +278,12 @@ impl ReplayScope {
             (Some(at), from, until) => from.is_none_or(|f| at >= f) && until.is_none_or(|u| at < u),
         }
     }
+}
+
+/// How selecting a producer version treats its already stored outputs.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DerivationHistory {
+    Recompute,
+    KeepHistory,
 }

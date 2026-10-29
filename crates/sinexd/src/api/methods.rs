@@ -5,7 +5,7 @@ use super::mask::{mask_json, mask_str};
 use crate::writer::{Priority, WriterHandle};
 use serde_json::{Value, json};
 use sinex_model::event_types::telemetry::SinexTelemetry;
-use sinex_model::query::{self, Context, QueryError};
+use sinex_model::query::{self, Context, QueryError, Source};
 use sinex_model::{ArchiveRequest, Batch, BatchKind, EventId, EventPayload, OperationId, RunId};
 use sinex_protocol::{Access, DATA_NOTICE, Reply, Request};
 use sinex_store::query::{Answer, Page};
@@ -17,6 +17,7 @@ mod kinds;
 mod operations;
 mod privacy;
 mod queries;
+mod recall;
 
 /// The daemon's read side and its handle on the writer.
 #[derive(Clone)]
@@ -283,7 +284,8 @@ impl Api {
                     text.push_str(" where cwds ^ ");
                     text.push_str(&serde_json::to_string(&cwd).expect("strings serialize"));
                 }
-                self.query(caller, &text, Page { size: page, cursor }).await
+                self.recall(caller, &text, Page { size: page, cursor })
+                    .await
             }
             Request::Trace {
                 reference,
@@ -408,6 +410,7 @@ impl Api {
             Request::Recompute {
                 derivation,
                 compare,
+                switch,
                 from,
                 until,
                 examples,
@@ -427,6 +430,7 @@ impl Api {
                     caller,
                     &derivation,
                     compare.unwrap_or(false),
+                    switch,
                     range,
                     usize::try_from(examples.unwrap_or(5)).unwrap_or(usize::MAX),
                 )
@@ -449,6 +453,7 @@ impl Api {
                                     "id": c.id,
                                     "derivation": c.derivation,
                                     "version": c.version,
+                                    "context": c.context,
                                     "from": c.range.and_then(|r| r.0),
                                     "until": c.range.and_then(|r| r.1),
                                     "made_at": c.made_at,
@@ -534,6 +539,7 @@ impl Api {
             &self.blobs,
             &self.host,
             &self.library_roots,
+            sinex_model::time_settings::TimeSettings::from_parts(self.zone.clone(), self.day_start),
             request,
             caller.actor,
         )
@@ -541,6 +547,23 @@ impl Api {
     }
 
     async fn query(&self, caller: &Caller, text: &str, page: Page) -> Reply {
+        if text
+            .trim()
+            .split_whitespace()
+            .next()
+            .is_some_and(|word| word.eq_ignore_ascii_case("recall"))
+        {
+            return self.recall(caller, text, page).await;
+        }
+
+        if query::saved::reference_name(text).is_some()
+            && page
+                .cursor
+                .as_ref()
+                .is_some_and(|cursor| query::cursor::decode::<recall::PackCursor>(cursor).is_ok())
+        {
+            return self.recall(caller, text, page).await;
+        }
         let mut ctx = match sinex_store::query::context_for_page(&self.context(), &page) {
             Ok(ctx) => ctx,
             Err(e) => return refused(e.to_string()),
@@ -566,6 +589,15 @@ impl Api {
         } else {
             None
         };
+        if bound.as_ref().is_some_and(|bound| {
+            matches!(
+                bound.source,
+                Source::Recall { .. } | Source::RecallLast { .. } | Source::RecallMark { .. }
+            )
+        }) {
+            drop(conn);
+            return self.recall(caller, text, page).await;
+        }
         match sinex_store::query::run(&mut conn, text, bound.as_ref(), &ctx, &page).await {
             Ok(answer) => data(answer_json(answer)),
             Err(sinex_store::Error::Query(error)) => query_refusal(text, error),
@@ -629,6 +661,44 @@ impl Api {
         let producer_errors = sinex_store::diagnostics::producer_errors(&mut conn)
             .await
             .map_err(|e| e.to_string())?;
+        let selected = sinex_store::registry::selected_derivations(&mut conn)
+            .await
+            .map_err(|error| error.to_string())?;
+        let time_settings =
+            sinex_model::time_settings::TimeSettings::from_parts(self.zone.clone(), self.day_start);
+        let mut available: Vec<(String, u32, sinex_model::DerivationHistory)> =
+            crate::analysis::keyed_with(&self.derivations)
+                .iter()
+                .map(|d| {
+                    (
+                        d.name().to_owned(),
+                        d.version_for(&time_settings),
+                        d.history_policy(),
+                    )
+                })
+                .collect();
+        available.extend(
+            crate::derivation_runner::per_event_with(&self.derivations)?
+                .iter()
+                .map(|d| (d.name().to_owned(), d.version(), d.history_policy())),
+        );
+        let build = crate::build_identity::current()?;
+        let names: Vec<_> = available.iter().map(|(name, _, _)| name.clone()).collect();
+        let versions: Vec<_> = available
+            .iter()
+            .map(|(_, version, _)| i64::from(*version))
+            .collect();
+        let comparisons =
+            sinex_store::registry::latest_comparisons(&mut conn, &names, &versions, build)
+                .await
+                .map_err(|error| error.to_string())?;
+        let producer_versions: Vec<_> = available.into_iter().map(|(name, version, history)| {
+            let current = selected.iter().find(|(selected_name, _, _)| selected_name == &name);
+            let compared = comparisons.iter().find(|(producer,..)| producer == &name);
+            json!({"name": name, "selected": current.map(|(_,version,_)| version), "selected_build": current.map(|(_,_,build)|build), "available": version,
+                "state": if current.is_some_and(|(_,selected_version,selected_build)| *selected_version == i64::from(version) && selected_build == build) { "selected" } else { "pending_history_switch" },
+                "history": history, "build": build, "last_comparison": compared.map(|(_,id,made_at,keys,changed,complete)| json!({"id":id,"made_at":made_at,"keys":keys,"changed":changed,"complete":complete}))})
+        }).collect();
         drop(conn);
         let sources = match self
             .query(
@@ -671,6 +741,7 @@ impl Api {
             "sources": sources,
             // The daemon's newest sample of each of its parts.
             "telemetry": telemetry,
+            "producer_versions": producer_versions,
             "discovery": discovery,
             "exclusions": exclusions,
         }))

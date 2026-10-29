@@ -1,4 +1,24 @@
+ALTER TABLE core.ingress_frames DROP COLUMN family, DROP COLUMN write_kind_prefixes;
+-- Reconstruct the deployed predecessor before exercising the forward chain.
+CREATE SCHEMA telemetry;
+CREATE TABLE telemetry.events (LIKE core.events INCLUDING ALL);
+DROP TABLE core.event_children;
+ALTER TABLE core.event_tombstones DROP COLUMN commit_seq, DROP COLUMN original_commit_seq, DROP COLUMN class;
+DROP TABLE core.producer_orders;
+DROP INDEX core.events_feed, audit.archive_changes_feed;
+ALTER TABLE derivation.waiting DROP COLUMN refresh_at;
+ALTER TABLE registry.derivations ALTER COLUMN version TYPE integer, DROP COLUMN build;
+ALTER TABLE derivation.comparisons ALTER COLUMN version TYPE integer;
+ALTER TABLE derivation.comparisons DROP COLUMN context;
+DROP TABLE core.blob_extents, core.blob_segments;
+DELETE FROM core.counters WHERE name='excised';
 DROP VIEW core.visible_events CASCADE;
+ALTER TABLE core.events ALTER COLUMN output_index TYPE smallint;
+ALTER TABLE telemetry.events ALTER COLUMN output_index TYPE smallint;
+ALTER TABLE core.live_locations ALTER COLUMN output_index TYPE smallint, DROP CONSTRAINT output_index_in_range;
+ALTER TABLE core.hidden_records ALTER COLUMN output_index TYPE smallint, DROP CONSTRAINT output_index_in_range;
+ALTER TABLE core.admission_stage ALTER COLUMN output_index TYPE smallint, ALTER COLUMN ord TYPE integer,
+  DROP CONSTRAINT admission_stage_output_index_check, DROP CONSTRAINT admission_stage_ord_check;
 ALTER TABLE core.events DROP COLUMN kind_version, DROP COLUMN validation;
 ALTER TABLE telemetry.events DROP COLUMN kind_version, DROP COLUMN validation;
 ALTER TABLE core.admission_stage DROP COLUMN kind_version, DROP COLUMN validation;
@@ -30,6 +50,7 @@ CREATE VIEW core.visible_search_text AS SELECT s.event_id, s.text, s.tsv FROM co
 GRANT SELECT ON core.visible_search_text TO sinex_reader, sinex_writer;
 GRANT INSERT, UPDATE, DELETE ON core.visible_search_text TO sinex_writer;
 ALTER TABLE core.published DROP CONSTRAINT published_pairs_pkey;
+ALTER TABLE core.published DROP COLUMN stream_instance;
 ALTER TABLE core.published ADD CONSTRAINT published_pkey PRIMARY KEY (event_id);
 DROP TRIGGER blob_changes ON core.blobs;
 DROP FUNCTION core.note_blob_change();

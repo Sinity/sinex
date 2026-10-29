@@ -51,7 +51,7 @@ fn late_evening_stays_in_its_local_day() {
 
 #[devkit::test]
 fn logical_day_starts_at_four() {
-    let c = TimeSettings::operator_default();
+    let c = TimeSettings::new("Europe/Warsaw", 4, 0).expect("fixture day setting");
     // 2024-06-15 03:59 CEST belongs to the 14th; 04:00 to the 15th.
     assert_eq!(
         c.day(ts(1_718_416_740)).unwrap(),

@@ -28,7 +28,9 @@ pub(super) async fn prepare(
                 "unknown kind reference {reference:?}"
             )));
         };
-        let family=frame.family.as_ref().ok_or_else(||Error::Invalid("producer declaration has no configured family".into()))?;
+        let family = frame.family.as_ref().ok_or_else(|| {
+            Error::Invalid("producer declaration has no configured family".into())
+        })?;
         sinex_schema::kinds::check_namespace(conn, &reference.name, family).await?;
         let exists: bool = sqlx::query_scalar!(
             r#"SELECT EXISTS(SELECT 1 FROM registry.event_types WHERE name=$1) AS "exists!""#,

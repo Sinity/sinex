@@ -1,4 +1,5 @@
 //! The API against a real database and the real writer.
+mod versions;
 use super::*;
 use crate::writer;
 use axum::body::Body;
@@ -764,7 +765,7 @@ async fn analysis_calls_run_and_brief_through_the_api(db: devkit::pg::TestDataba
     assert_eq!(status, StatusCode::OK, "{body}");
     let text = body["result"]["text"].as_str().unwrap();
     assert!(
-        text.contains("## Data quality") && text.contains("days 04:00 Europe/Warsaw"),
+        text.contains("## Data quality") && text.contains("days 04:00:00 UTC"),
         "{text}"
     );
 

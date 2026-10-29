@@ -22,6 +22,8 @@ pub enum Cell<T> {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Missing {
+    /// Stored figures were cut under a different period boundary.
+    IncomparablePeriod,
     /// No source feeding the metric was running or exported for the unit.
     NoCoverage,
     /// Coverage cannot be established and nothing was recorded.
@@ -34,6 +36,7 @@ pub enum Missing {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Exclusion {
+    IncomparablePeriod,
     NoCoverage,
     CoverageUnknown,
     Recorded,
@@ -44,6 +47,7 @@ pub enum Exclusion {
 impl Exclusion {
     fn severity(self) -> u8 {
         match self {
+            Exclusion::IncomparablePeriod => 6,
             Exclusion::NoCoverage => 5,
             Exclusion::CoverageUnknown => 4,
             Exclusion::Recorded => 3,
@@ -65,6 +69,7 @@ impl Exclusion {
 impl From<Missing> for Exclusion {
     fn from(m: Missing) -> Self {
         match m {
+            Missing::IncomparablePeriod => Exclusion::IncomparablePeriod,
             Missing::NoCoverage => Exclusion::NoCoverage,
             Missing::CoverageUnknown => Exclusion::CoverageUnknown,
             Missing::NotApplicable => Exclusion::NotApplicable,

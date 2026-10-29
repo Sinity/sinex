@@ -53,6 +53,13 @@ async fn a_per_event_version_removes_outputs_whose_rules_no_longer_match(
     assert_eq!(w.live::<TagApplied>().await.len(), 1);
     old.end_runs().await.unwrap();
     let mut new = w.driver_with(vec![], vec![Box::new(NoTags)]).await;
+    assert_eq!(new.pass().await.unwrap(), 0);
+    assert_eq!(w.live::<TagApplied>().await.len(), 1);
+    let compared = new.compare("tag.applier", None, 5).await.unwrap();
+    assert_eq!(compared.removed, 1);
+    new.switch("tag.applier", compared.id.unwrap(), "test")
+        .await
+        .unwrap();
     new.catch_up().await.unwrap();
     assert!(w.live::<TagApplied>().await.is_empty());
     assert_eq!(
@@ -163,6 +170,11 @@ async fn changed_rules_replace_even_a_large_previous_reading_order(db: devkit::p
         {"tag": "sys.source.terminal", "event_type": "command.imported", "when": [{"field": "/command", "is": "make"}]}
     ])).unwrap()).unwrap();
     let mut current = w.driver_with(vec![], vec![Box::new(changed)]).await;
+    let compared = current.compare("tag.applier", None, 5).await.unwrap();
+    current
+        .switch("tag.applier", compared.id.unwrap(), "test")
+        .await
+        .unwrap();
     current.catch_up().await.unwrap();
     let live = w.live::<TagApplied>().await;
     assert_eq!(live.len(), 1);

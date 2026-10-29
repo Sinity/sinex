@@ -90,7 +90,11 @@ fn key(metric: &str) -> Value {
 }
 
 fn env(now: i64) -> Env {
-    Env::at(Timestamp::from_unix_secs(T + now).unwrap())
+    Env::at(
+        Timestamp::from_unix_secs(T + now).unwrap(),
+        sinex_model::time_settings::TimeSettings::new("Europe/Warsaw", 4, 0)
+            .expect("fixture day setting"),
+    )
 }
 
 /// The hourly figures of `metric` from `inputs`, as the runner reads them.
@@ -383,6 +387,8 @@ fn activity_seconds_use_supported_presence_and_keep_afk_claims_as_inputs_only() 
     );
     let claim = Event::build(
         &PresenceSpan {
+            scope: None,
+            host: None,
             bucket: "afk_box".into(),
             row: 1,
             started_at: at(0),

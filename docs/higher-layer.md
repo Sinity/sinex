@@ -168,7 +168,7 @@ Cards are recomputed on suspension and on new evidence. The session-start hook r
 - Reusing an answer requires the same normalized question, method, grant-sensitive selection and evidence snapshot. Changed evidence marks it dirty, and an exact historical answer stays readable. A computation racing a change either produces a correctly bound historical answer or leaves the key dirty.
 - **A finding** declares its evidence class (authorship class, epistemic role, claim status), period, unit, denominator, method and settings, estimability, estimate and uncertainty, caveats, and supporting and contradicting references. Association is never presented as causation.
 - **Methods** (correlation, trend, change-point with false-discovery control, effective sample size and refusals) are pure code in `sinex-analysis`; their results are stored events.
-- **`rhythm.deviation`** is a stored event per day and measure, computed from a prior-only window (default 28 calendar days with at least 14 observed days, in settings). Too little evidence is not estimable, never a zero deviation. Retrospective baselines are not stored.
+- **`rhythm.deviation`** is a stored event per day and measure, computed from a prior-only window (default 28 calendar days with at least 14 observed days, in settings). Too little evidence is not estimable, never a zero deviation. Retrospective baselines are not stored. Rhythm's default input measures are daily physical key presses and typing seconds from `input.workload`; only days with complete recorded input coverage enter the baseline, and fewer than 200 presses leaves typing seconds not estimable. `rhythm.window_days` and `rhythm.minimum_days` configure the window and required sample.
 - **`pattern.match`** finds configured sequences: kinds, ordered predicates, maximum gap and scope. It stores the template version, ordered parents and actual gaps, labelled as co-occurrence. Build, fix and test cycles, AI work followed by file overlap and a commit, and deep work followed by a commit are templates. Every valid match is stored; a top N is presentation.
 - **Relationships are typed reference events and joins**, not a stored graph: mention, about, same resource, explicit task or commit closure, membership; each endpoint is checked at admission. Time, project and containment relations are ordinary joins. Corroboration lists its sources, never a weighted score.
 - Agent annotations keep author, session, target, rubric and check state; an unchecked claim is never promoted into a measured fact.
@@ -179,6 +179,12 @@ Cards are recomputed on suspension and on new evidence. The session-start hook r
 - **`forecast.resolved`** records the outcome (`true`, `false` or `unknown`), the live evidence that resolves it, and when the outcome happened; without that time, it stays unknown.
 - **Scoring is a stored `recipe.answer`**: the Brier score over known outcomes and calibration in ten bins. Two conflicting known resolutions of one forecast make the score not estimable until one is archived; an archived forecast leaves the score.
 - **An experiment** is a set of authored records: protocol, assignment, exposure and outcomes. A causal estimand is reported only when assignment was recorded; otherwise results are associations. Planning and running benchmarks belong to the devkit; Sinex analyses their manifests.
+
+An **estimand** is the quantity the experiment asks to estimate, fixed by its
+protocol: the target population, intervention and comparison, outcome, and time
+horizon. It is distinct from the estimator used to calculate a value. A reported
+association is not a causal estimand merely because its inputs share a time
+window; missing assignment leaves causal interpretation unavailable.
 
 ## Context packs and narratives
 

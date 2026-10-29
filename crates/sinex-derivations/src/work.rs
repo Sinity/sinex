@@ -477,7 +477,8 @@ impl Keyed for WorkEpisodes {
 pub struct ContextPacks;
 impl Keyed for ContextPacks {
     const NAME: &'static str = "context.packs";
-    const VERSION: u32 = 2;
+    const VERSION: u32 = 3;
+    const USES_TIME_SETTINGS: bool = true;
     const INPUTS: &'static [&'static str] = &["work.episode", "work.act"];
     const OUTPUTS: &'static [&'static str] = &["context.pack"];
     fn keys_for(&self, input: &KeyView<'_>, _: &Env) -> Vec<Value> {
@@ -497,7 +498,7 @@ impl Keyed for ContextPacks {
     fn key_state(&self, _: &Value, _: &Env) -> KeyState {
         KeyState::Closed
     }
-    fn compute(&self, _: &Value, inputs: &[Event], _: &Env) -> Computed {
+    fn compute(&self, _: &Value, inputs: &[Event], env: &Env) -> Computed {
         let Some((episode_event, episode)) = inputs
             .iter()
             .find_map(|event| Some((event, event.payload_as::<WorkEpisode>()?)))
@@ -517,6 +518,8 @@ impl Keyed for ContextPacks {
             error: None,
             outputs: vec![derived(
                 &ContextPack {
+                    evaluated_at: Some(env.now),
+                    day_setting: Some(env.time_settings.label()),
                     producer_versions: None,
                     read_as: None,
                     analysis: None,

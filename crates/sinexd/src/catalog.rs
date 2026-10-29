@@ -7,11 +7,12 @@ use sinex_derivations::AnyPerEvent;
 
 pub(crate) fn catalog() -> Value {
     let sources: Vec<Value> = sources().into_iter().map(|s| s.to_json()).collect();
-    let keyed = sinex_derivations::keyed().into_iter().map(|d| {
+    let keyed = crate::analysis::keyed().into_iter().map(|d| {
         json!({
             "name": d.name(),
             "enabledByDefault": sinex_derivations::enabled_by_default(d.name()),
             "kind": "keyed",
+            "history": d.history_policy(),
             "inputs": d.inputs_types(),
             "outputs": d.output_types(),
         })
@@ -20,11 +21,14 @@ pub(crate) fn catalog() -> Value {
     per_event.push(
         Box::new(crate::document_text::DocumentText { pdf_reader: None }) as Box<dyn AnyPerEvent>,
     );
+    per_event
+        .push(Box::new(crate::screen_text::ScreenText { engine: None }) as Box<dyn AnyPerEvent>);
     let per_event = per_event.into_iter().map(|d| {
         json!({
             "name": d.name(),
             "enabledByDefault": sinex_derivations::enabled_by_default(d.name()),
             "kind": "per-event",
+            "history": d.history_policy(),
             "inputs": d.inputs_types(),
             "outputs": d.output_types(),
         })

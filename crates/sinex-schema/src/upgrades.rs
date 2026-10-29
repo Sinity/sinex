@@ -1,4 +1,6 @@
 //! Forward upgrades preserve every row. Named transformations take their order from this composed stack.
+mod output_ordinals;
+
 fn landed() -> Vec<Vec<String>> {
     vec![
         // 0 to 1: per-source and per-run counts, filled from the events
@@ -51,6 +53,11 @@ pub(crate) const NAMED: &[&str] = &[
     "publication_pairs",
     "kind_declarations",
     "foundations",
+    "segments",
+    "confirmed_lifecycle_positions",
+    "producer_reading_orders",
+    "output_ordinals",
+    "producer_families",
 ];
 
 pub(crate) fn upgrades() -> Vec<Vec<String>> {
@@ -61,7 +68,7 @@ pub(crate) fn upgrades() -> Vec<Vec<String>> {
     steps.push(search_text());
     steps.push(publication_pairs());
     let before = crate::description::Description::before_kind_declarations();
-    let after = crate::description::Description::current();
+    let after = crate::description::Description::before_foundations();
     let mut statements = vec![
         "ALTER TABLE registry.event_types RENAME TO unversioned_event_types".into(),
         "DO $$ DECLARE c record; BEGIN
@@ -73,6 +80,28 @@ pub(crate) fn upgrades() -> Vec<Vec<String>> {
     statements.extend(after.changes_from(&before, &["registry.event_types"]));
     steps.push(statements);
     steps.push(foundations());
+    steps.push(segments());
+    steps.push(vec![
+        "ALTER TABLE core.event_tombstones ADD COLUMN commit_seq bigint".into(),
+        "ALTER TABLE core.event_tombstones ADD COLUMN original_commit_seq bigint".into(),
+        "ALTER TABLE core.event_tombstones ADD COLUMN class text".into(),
+        "CREATE INDEX events_feed ON core.events (commit_seq,id)".into(),
+        "CREATE INDEX archive_changes_feed ON audit.archive_changes (commit_seq,change_seq,event_id)".into(),
+        "CREATE INDEX tombstones_feed ON core.event_tombstones (commit_seq,event_id)".into(),
+        "CREATE INDEX tombstones_original_position ON core.event_tombstones (original_commit_seq)".into(),
+        "ALTER TABLE core.published ADD COLUMN stream_instance text NOT NULL DEFAULT ''".into(),
+        "ALTER TABLE core.published DROP CONSTRAINT published_pairs_pkey".into(),
+        "ALTER TABLE core.published ADD CONSTRAINT published_pairs_pkey PRIMARY KEY (event_id,stream_seq,stream_instance)".into(),
+    ]);
+    steps.push(vec![
+        crate::tables::PRODUCER_ORDERS.into(),
+        "GRANT SELECT, INSERT, UPDATE, DELETE ON core.producer_orders TO sinex_writer".into(),
+    ]);
+    steps.push(output_ordinals::statements());
+    steps.push(vec![
+        "ALTER TABLE core.ingress_frames ADD COLUMN family text".into(),
+        "ALTER TABLE core.ingress_frames ADD COLUMN write_kind_prefixes text[]".into(),
+    ]);
     steps
 }
 
@@ -138,11 +167,24 @@ fn search_text() -> Vec<String> {
 
 /// Move archive edges and counters into ordinary store tables without dropping captured telemetry.
 fn foundations() -> Vec<String> {
-    vec![
+    let mut steps = vec![
         "DO $$ BEGIN IF EXISTS (SELECT 1 FROM telemetry.events) THEN RAISE EXCEPTION 'the telemetry table holds records; preserve them before upgrading'; END IF; END $$".into(),
         "DROP TABLE telemetry.events".into(),
         "DROP SCHEMA telemetry".into(),
         "INSERT INTO core.counters (name, value) SELECT 'excised', count(*) FROM core.event_tombstones ON CONFLICT DO NOTHING".into(),
         "INSERT INTO core.event_children (parent, child) SELECT DISTINCT unnest(parents), id FROM core.events WHERE parents IS NOT NULL ON CONFLICT DO NOTHING".into(),
+    ];
+    steps.extend(crate::description::Description::producer_metadata_changes());
+    steps
+}
+
+fn segments() -> Vec<String> {
+    vec![
+        crate::tables::BLOB_SEGMENTS.into(),
+        crate::tables::BLOB_EXTENTS.into(),
+        "GRANT SELECT ON core.blob_segments, core.blob_extents TO sinex_reader, sinex_writer"
+            .into(),
+        "GRANT INSERT, UPDATE, DELETE ON core.blob_segments, core.blob_extents TO sinex_writer"
+            .into(),
     ]
 }

@@ -60,8 +60,8 @@ fn commit(id: &str, hours: i64) -> Event {
 fn context() -> Context {
     Context::new(
         jiff::Timestamp::now(),
-        jiff::tz::TimeZone::UTC,
-        jiff::civil::Time::midnight(),
+        jiff::tz::TimeZone::get("Europe/Warsaw").unwrap(),
+        jiff::civil::Time::new(4, 0, 0, 0).unwrap(),
     )
 }
 
@@ -69,6 +69,8 @@ struct World {
     _db: devkit::pg::TestDatabase,
     url: String,
     handle: writer::WriterHandle,
+    blobs: sinex_store::Blobs,
+    _store: tempfile::TempDir,
     _writer: tokio::task::JoinHandle<()>,
 }
 
@@ -78,21 +80,26 @@ impl World {
         let connection = <sqlx::PgConnection as sqlx::Connection>::connect(&url)
             .await
             .unwrap();
+        let store = tempfile::tempdir().unwrap();
+        let blobs = sinex_store::Blobs::open(store.path()).unwrap();
         let (handle, queues) = writer::channels();
         let task = tokio::spawn(writer::run(
             url.clone(),
             writer::claim(connection).await.unwrap(),
             queues,
             Arc::new(Keys::new(
-                sinex_derivations::keyed(),
-                sinex_model::time_settings::TimeSettings::operator_default(),
+                crate::analysis::keyed(),
+                sinex_model::time_settings::TimeSettings::new("Europe/Warsaw", 4, 0)
+                    .expect("fixture day setting"),
             )),
-            None,
+            Some(blobs.clone()),
         ));
         Self {
             _db: db,
             url,
             handle,
+            blobs,
+            _store: store,
             _writer: task,
         }
     }
@@ -125,10 +132,11 @@ impl World {
         let mut runner = DerivationRunner::start(
             read,
             self.handle.clone(),
-            sinex_derivations::keyed(),
+            crate::analysis::keyed(),
             Vec::new(),
             "test",
-            sinex_model::time_settings::TimeSettings::operator_default(),
+            sinex_model::time_settings::TimeSettings::new("Europe/Warsaw", 4, 0)
+                .expect("fixture day setting"),
         )
         .await
         .unwrap();
@@ -139,10 +147,24 @@ impl World {
 #[devkit::test]
 async fn a_panel_reads_the_derived_figures_with_their_coverage(db: devkit::pg::TestDatabase) {
     let w = World::new(db).await;
-    w.derive(vec![commit("a", 0), commit("b", 2), commit("c", 24)])
-        .await;
+    w.derive(vec![
+        commit("a", 0),
+        commit("b", 2),
+        commit("c", 24),
+        observed(0, 24),
+    ])
+    .await;
     let mut conn = w.conn().await;
     let commits = sinex_derivations::figures::metric("git.commits").unwrap();
+    w.prepare(
+        &mut conn,
+        "panel",
+        None,
+        &[commits],
+        parse_day("2026-09-14").unwrap(),
+        parse_day("2026-09-15").unwrap(),
+    )
+    .await;
     let p = panel(
         &mut conn,
         &context(),
@@ -175,7 +197,7 @@ async fn a_panel_reads_the_derived_figures_with_their_coverage(db: devkit::pg::T
                 "2026-09-15",
                 &Cell::Partial {
                     value: 1.0,
-                    observed_fraction: 0.25
+                    observed_fraction: 21_600_000_001.0 / 86_400_000_000.0
                 }
             )
         ]
@@ -198,6 +220,15 @@ async fn a_recipe_answers_from_the_figures_and_refuses_when_it_must(db: devkit::
         parse_day("2026-09-01").unwrap(),
         parse_day("2026-09-14").unwrap(),
     );
+    w.prepare(
+        &mut conn,
+        "recipe",
+        Some("trends"),
+        &super::super::recipes::tracked(),
+        from,
+        to,
+    )
+    .await;
     let first = run(
         &mut conn,
         &context(),
@@ -236,8 +267,22 @@ async fn the_brief_reports_coverage_first_and_never_shows_missing_as_zero(
     db: devkit::pg::TestDatabase,
 ) {
     let w = World::new(db).await;
-    w.derive(vec![commit("a", 0), commit("b", 2)]).await;
+    w.derive(vec![commit("a", 0), commit("b", 2), observed(0, 2)])
+        .await;
     let mut conn = w.conn().await;
+    let to = parse_day("2026-09-14").unwrap();
+    let from = to.checked_sub(jiff::Span::new().days(56)).unwrap();
+    w.prepare(
+        &mut conn,
+        "brief",
+        None,
+        &sinex_derivations::figures::METRICS
+            .iter()
+            .collect::<Vec<_>>(),
+        from,
+        to,
+    )
+    .await;
     let p = brief(
         &mut conn,
         &context(),
@@ -270,7 +315,8 @@ async fn the_brief_reports_coverage_first_and_never_shows_missing_as_zero(
 #[devkit::test]
 async fn gaps_are_where_coverage_does_not_reach(db: devkit::pg::TestDatabase) {
     let w = World::new(db).await;
-    w.admit(vec![commit("a", 0), commit("b", 24)]).await;
+    w.admit(vec![commit("a", 0), commit("b", 24), observed(0, 24)])
+        .await;
     let mut conn = w.conn().await;
     let settings = Settings::operator_default();
     let day = |d: &str| parse_day(d).unwrap();
@@ -308,4 +354,118 @@ async fn gaps_are_where_coverage_does_not_reach(db: devkit::pg::TestDatabase) {
     .unwrap();
     assert_eq!(unknown.len(), 1);
     assert_eq!(unknown[0].state, "unknown");
+}
+
+fn observed(from: i64, to: i64) -> Event {
+    use sinex_model::event_types::coverage::*;
+    Event::build(
+        &SourceCoverage {
+            observed_run: None,
+            observed_class: None,
+            observation: format!("synthetic:{from}:{to}"),
+            observed_source: "code.git".into(),
+            binding: "test".into(),
+            host: "test".into(),
+            started_at: at(from),
+            ended_at: Timestamp::from_unix_ns(at(to).unix_ns() + 1000).unwrap(),
+            state: CoverageState::Observed,
+            reason: None,
+            completeness: CoverageCompleteness::Sample,
+            bounded_by: "synthetic declared source interval".into(),
+            events: 0,
+            failures: 0,
+        },
+        "source.observation",
+        Origin::Record {
+            location: RecordLocation {
+                material: MaterialId::new(),
+                anchor: 0,
+            },
+            output_index: 0,
+        },
+        ReadingOrder(0),
+        *blake3::hash(format!("{from}:{to}").as_bytes()).as_bytes(),
+        Class::Open,
+    )
+    .unwrap()
+}
+
+impl World {
+    async fn prepare(
+        &self,
+        conn: &mut PgConnection,
+        operation: &str,
+        recipe: Option<&str>,
+        metrics: &[&sinex_derivations::figures::Metric],
+        from: jiff::civil::Date,
+        to: jiff::civil::Date,
+    ) -> String {
+        let question = super::super::access::question(
+            conn,
+            &context(),
+            &Settings::operator_default(),
+            operation,
+            recipe,
+            metrics,
+            from,
+            to,
+            Default::default(),
+        )
+        .await
+        .unwrap();
+        super::super::access::materialize(conn, &self.handle, &self.blobs, question, "test", "test")
+            .await
+            .unwrap()
+    }
+}
+
+#[devkit::test]
+async fn stored_questions_rederive_after_late_inputs_and_reuse_their_request_material(
+    db: devkit::pg::TestDatabase,
+) {
+    let w = World::new(db).await;
+    w.derive(vec![commit("first", 0), observed(0, 24)]).await;
+    let mut conn = w.conn().await;
+    let day = parse_day("2026-09-14").unwrap();
+    let metric = sinex_derivations::figures::metric("git.commits").unwrap();
+    let request = w
+        .prepare(&mut conn, "panel", None, &[metric], day, day)
+        .await;
+    let first = super::super::access::find(&mut conn, "analysis.panel", &request)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(first["cells"][0]["cell"]["value"], 1.0);
+    let repeated = w
+        .prepare(&mut conn, "panel", None, &[metric], day, day)
+        .await;
+    assert_eq!(repeated, request);
+    assert_eq!(
+        super::super::access::find(&mut conn, "analysis.panel", &request)
+            .await
+            .unwrap()
+            .unwrap(),
+        first
+    );
+    let requests: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM core.events WHERE event_type='analysis.request'")
+            .fetch_one(&mut conn)
+            .await
+            .unwrap();
+    assert_eq!(requests, 1, "repeated reads reuse the retained request");
+    let material: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM raw.materials WHERE parser='analysis-request'")
+            .fetch_one(&mut conn)
+            .await
+            .unwrap();
+    assert_eq!(material, 1);
+    w.derive(vec![commit("late", 2)]).await;
+    let revised = super::super::access::find(&mut conn, "analysis.panel", &request)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(revised["cells"][0]["cell"]["value"], 2.0);
+    assert!(revised["read_as"].as_i64().unwrap() > first["read_as"].as_i64().unwrap());
+    let live: i64 = sqlx::query_scalar("SELECT count(*) FROM core.events e WHERE event_type='analysis.panel' AND NOT EXISTS(SELECT 1 FROM audit.archived a WHERE a.event_id=e.id)").fetch_one(&mut conn).await.unwrap();
+    assert_eq!(live, 1);
 }

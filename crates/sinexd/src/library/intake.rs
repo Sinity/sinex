@@ -79,6 +79,7 @@ impl Library<'_> {
             &sinex_derivations::library::LibraryItems,
             keys.into_iter().map(Value::String).collect(),
             self.host,
+            self.time_settings.clone(),
         )
         .await?;
         let mut new_items = 0;

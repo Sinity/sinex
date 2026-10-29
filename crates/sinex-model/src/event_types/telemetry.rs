@@ -112,3 +112,5 @@ pub struct SinexTelemetry {
     pub measures: BTreeMap<String, f64>,
 }
 
+/// Daemon self-observation events, separate from machine resource samples.
+pub const TYPES: &[&str] = &["sinex.telemetry"];

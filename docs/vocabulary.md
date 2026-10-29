@@ -101,7 +101,9 @@ day setting, operation, failure kind, deadline class) are named in common's
 - **figure**: a measure over one period, stored as an event with its coverage.
 - **coverage**: which sources could observe, over which interval, in which state (observed, partial, recorded with unknown coverage, missing).
 - **episode**: a stretch of work on one objective, with interruptions and its resume card ([higher layer](higher-layer.md)).
-- **finding**: a typed statement with its caveats and the figures it cites; a **recipe** is a shipped analysis whose result is an **answer**.
+- **panel** (`analysis.panel`): the stored cells and selected source coverage for a canonical analysis question.
+- **analysis request** (`analysis.request`): an authenticated question retained as source material; its canonical identity includes the operation, dates, metrics, day setting and grants.
+- **finding** (`analysis.finding`): a stored typed statement with its caveats and the figures it cites; a **recipe** is a shipped analysis whose result is an **answer** (`recipe.answer`).
 - **forecast**: a probability on a stated outcome with a horizon and an information cutoff.
 - **context pack**: a stored selection of evidence assembled for one purpose; a **narrative** is a written account over a period.
 

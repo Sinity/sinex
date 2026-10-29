@@ -42,6 +42,13 @@ through its registered bindings. The field list will be rendered into
 | `queries` | one saved query definition |
 | `result:<id>` | a kept result, read as a relation |
 
+Archived visibility is a relation and read-context choice: `events` excludes
+readings archived at the selected position; `archive` exposes archive history.
+`as of POSITION` selects historical visibility at that exact commit. It does
+not make every archived reading part of ordinary `events`, and current privacy
+and tombstone policy still applies. There is no separate `archived` table name
+or global include-archived switch.
+
 ```sh
 sinexctl 'gaps where binding = desktop.clipboard sort from'
 sinexctl 'shapes where source = health.samsung'

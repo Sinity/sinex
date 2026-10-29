@@ -16,7 +16,8 @@ use uuid::Uuid;
 
 mod changes;
 pub use changes::{
-    Change, ChangeCursor, ChangePage, CommittedChange, HistoryGap, Tombstone, LifecycleChange, changes_page,
+    Change, ChangeCursor, ChangePage, CommittedChange, HistoryGap, LifecycleChange, Tombstone,
+    changes_page,
 };
 
 /// Take a lifecycle position while holding the same counter lock as admission.
@@ -272,9 +273,14 @@ pub async fn latest(conn: &mut PgConnection) -> Result<i64> {
     )
 }
 
-pub async fn consumer_exists(conn:&mut PgConnection,consumer:&str)->Result<bool>{
-    Ok(sqlx::query_scalar!("SELECT EXISTS(SELECT 1 FROM core.consumer_positions WHERE consumer=$1)",consumer)
-        .fetch_one(conn).await?.unwrap_or(false))
+pub async fn consumer_exists(conn: &mut PgConnection, consumer: &str) -> Result<bool> {
+    Ok(sqlx::query_scalar!(
+        "SELECT EXISTS(SELECT 1 FROM core.consumer_positions WHERE consumer=$1)",
+        consumer
+    )
+    .fetch_one(conn)
+    .await?
+    .unwrap_or(false))
 }
 
 /// A non-derivation consumer's saved position: (commit_seq, change_seq).
@@ -412,10 +418,14 @@ pub async fn producer_materials(
 /// Record where published events sit in the confirmed stream.
 #[cfg(test)]
 pub async fn record_published(conn: &mut PgConnection, published: &[(Uuid, i64)]) -> Result<()> {
-    record_published_in(conn,"",published).await
+    record_published_in(conn, "", published).await
 }
 
-pub async fn record_published_in(conn:&mut PgConnection,stream_instance:&str,published:&[(Uuid,i64)])->Result<()> {
+pub async fn record_published_in(
+    conn: &mut PgConnection,
+    stream_instance: &str,
+    published: &[(Uuid, i64)],
+) -> Result<()> {
     if published.is_empty() {
         return Ok(());
     }
@@ -451,10 +461,14 @@ pub async fn excised_on_stream(
     conn: &mut PgConnection,
     limit: i64,
 ) -> Result<Vec<ExcisedOnStream>> {
-    excised_on_stream_in(conn,"",limit).await
+    excised_on_stream_in(conn, "", limit).await
 }
 
-pub async fn excised_on_stream_in(conn:&mut PgConnection,stream_instance:&str,limit:i64)->Result<Vec<ExcisedOnStream>> {
+pub async fn excised_on_stream_in(
+    conn: &mut PgConnection,
+    stream_instance: &str,
+    limit: i64,
+) -> Result<Vec<ExcisedOnStream>> {
     Ok(sqlx::query_as!(
         ExcisedOnStream,
         r#"SELECT p.event_id, p.stream_seq, t.operation_id,t.commit_seq
@@ -472,10 +486,14 @@ pub async fn excised_on_stream_in(conn:&mut PgConnection,stream_instance:&str,li
 /// Forget only acknowledged erasures, keeping every other acknowledged copy.
 #[cfg(test)]
 pub async fn forget_published(conn: &mut PgConnection, erased: &[(Uuid, i64)]) -> Result<()> {
-    forget_published_in(conn,"",erased).await
+    forget_published_in(conn, "", erased).await
 }
 
-pub async fn forget_published_in(conn:&mut PgConnection,stream_instance:&str,erased:&[(Uuid,i64)])->Result<()> {
+pub async fn forget_published_in(
+    conn: &mut PgConnection,
+    stream_instance: &str,
+    erased: &[(Uuid, i64)],
+) -> Result<()> {
     if erased.is_empty() {
         return Ok(());
     }
@@ -501,8 +519,8 @@ pub async fn record_replay_frame(
     conn: &mut PgConnection,
     producer: &str,
     frame: &str,
-    family:&str,
-    write_kind_prefixes:&[String],
+    family: &str,
+    write_kind_prefixes: &[String],
     operation: sinex_model::OperationId,
     ids: &[Uuid],
     last: Option<i64>,

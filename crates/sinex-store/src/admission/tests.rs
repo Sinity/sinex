@@ -664,7 +664,9 @@ mod library_upgrade;
 #[devkit::test]
 async fn derived_outputs_require_committed_live_parents(db: devkit::pg::TestDatabase) {
     use sinex_model::{EventId, Origin};
-    let mut conn = crate::AdmissionContext::connect(&db.url(None)).await.unwrap();
+    let mut conn = crate::AdmissionContext::connect(&db.url(None))
+        .await
+        .unwrap();
     let parent = keyed("source", 1, 1, 1);
     admit_one(&mut conn, &batch(vec![parent.clone()])).await;
     for id in [EventId::new(), parent.id] {
@@ -692,7 +694,9 @@ async fn derived_outputs_require_committed_live_parents(db: devkit::pg::TestData
 async fn a_hidden_chain_restores_its_per_event_readings_in_parent_order(
     db: devkit::pg::TestDatabase,
 ) {
-    let mut conn = crate::AdmissionContext::connect(&db.url(None)).await.unwrap();
+    let mut conn = crate::AdmissionContext::connect(&db.url(None))
+        .await
+        .unwrap();
     let root = keyed("chain", 1, 1, 1);
     admit_one(&mut conn, &batch(vec![root.clone()])).await;
     let mut child = keyed("chain", 2, 2, 1);
@@ -744,7 +748,9 @@ async fn a_hidden_chain_restores_its_per_event_readings_in_parent_order(
 
 #[devkit::test]
 async fn restoring_a_chain_refuses_an_independently_archived_parent(db: devkit::pg::TestDatabase) {
-    let mut conn = crate::AdmissionContext::connect(&db.url(None)).await.unwrap();
+    let mut conn = crate::AdmissionContext::connect(&db.url(None))
+        .await
+        .unwrap();
     let root = keyed("chain", 1, 1, 1);
     let other = keyed("chain", 2, 2, 1);
     admit_one(&mut conn, &batch(vec![root.clone(), other.clone()])).await;
@@ -835,27 +841,57 @@ fn outcomes_add_all_counts_positions_and_ids() {
 }
 
 #[devkit::test]
-async fn assigned_order_retry_and_rollback_share_the_admission_transaction(db:devkit::pg::TestDatabase) {
-    let mut conn=crate::AdmissionContext::connect(&db.url(None)).await.unwrap();
-    let ingress=|name:&str,content:u8| {
-        let event=keyed("atuin",1,content,0);
-        let mut batch=batch(vec![event.clone()]);
-        batch.kind=BatchKind::Ingress(Box::new(sinex_model::IngressFrame {
-            family:None,write_kind_prefixes:vec![],assign_orders:vec![event.id],producer:"atuin".into(),frame:name.into(),material:None,refusal:None,declarations:vec![],refusal_kind:None,source:None,event_types:vec![],
-        }));batch
+async fn assigned_order_retry_and_rollback_share_the_admission_transaction(
+    db: devkit::pg::TestDatabase,
+) {
+    let mut conn = crate::AdmissionContext::connect(&db.url(None))
+        .await
+        .unwrap();
+    let ingress = |name: &str, content: u8| {
+        let event = keyed("atuin", 1, content, 0);
+        let mut batch = batch(vec![event.clone()]);
+        batch.kind = BatchKind::Ingress(Box::new(sinex_model::IngressFrame {
+            family: None,
+            write_kind_prefixes: vec![],
+            assign_orders: vec![event.id],
+            producer: "atuin".into(),
+            frame: name.into(),
+            material: None,
+            refusal: None,
+            declarations: vec![],
+            refusal_kind: None,
+            source: None,
+            event_types: vec![],
+        }));
+        batch
     };
-    let first=ingress("first",1);
-    let mut tx=conn.begin().await.unwrap();
-    let admitted=tx.admit(&first,&NoDerivations).await.unwrap();
-    let duplicate=tx.admit(&first,&NoDerivations).await.unwrap();
-    assert_eq!(admitted.admitted_ids,duplicate.admitted_ids);assert_eq!(admitted.commit_seq,duplicate.commit_seq);
+    let first = ingress("first", 1);
+    let mut tx = conn.begin().await.unwrap();
+    let admitted = tx.admit(&first, &NoDerivations).await.unwrap();
+    let duplicate = tx.admit(&first, &NoDerivations).await.unwrap();
+    assert_eq!(admitted.admitted_ids, duplicate.admitted_ids);
+    assert_eq!(admitted.commit_seq, duplicate.commit_seq);
     tx.commit().await.unwrap();
-    let rolled_back=ingress("rolled-back",2);
-    let mut tx=conn.begin().await.unwrap();tx.admit(&rolled_back,&NoDerivations).await.unwrap();drop(tx);
-    let final_batch=ingress("final",3);admit_one(&mut conn,&final_batch).await;
-    let mut read=PgConnection::connect(&db.url(None)).await.unwrap();
-    let orders=sqlx::query_scalar!("SELECT reading_order FROM core.events WHERE source='atuin' ORDER BY commit_seq").fetch_all(&mut read).await.unwrap();assert_eq!(orders,vec![0,1]);
-    let frames=sqlx::query_scalar!("SELECT count(*) FROM core.ingress_frames WHERE frame='rolled-back'").fetch_one(&mut read).await.unwrap();assert_eq!(frames,Some(0));
+    let rolled_back = ingress("rolled-back", 2);
+    let mut tx = conn.begin().await.unwrap();
+    tx.admit(&rolled_back, &NoDerivations).await.unwrap();
+    drop(tx);
+    let final_batch = ingress("final", 3);
+    admit_one(&mut conn, &final_batch).await;
+    let mut read = PgConnection::connect(&db.url(None)).await.unwrap();
+    let orders = sqlx::query_scalar!(
+        "SELECT reading_order FROM core.events WHERE source='atuin' ORDER BY commit_seq"
+    )
+    .fetch_all(&mut read)
+    .await
+    .unwrap();
+    assert_eq!(orders, vec![0, 1]);
+    let frames =
+        sqlx::query_scalar!("SELECT count(*) FROM core.ingress_frames WHERE frame='rolled-back'")
+            .fetch_one(&mut read)
+            .await
+            .unwrap();
+    assert_eq!(frames, Some(0));
 }
 
 mod output_ordinals;

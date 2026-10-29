@@ -38,3 +38,11 @@ fn every_field_in_the_model_has_sql() {
         }
     }
 }
+
+#[test]
+fn unknown_interval_ends_do_not_gain_durations_and_boot_fences_are_not_open() {
+    let duration = super::alias_field("intervals", "duration").unwrap();
+    assert!(!duration.contains("now()"));
+    let open = super::alias_field("now", "open").unwrap();
+    assert!(open.contains("fenced_at"));
+}

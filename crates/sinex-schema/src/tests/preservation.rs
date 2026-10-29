@@ -25,7 +25,7 @@ async fn stored_rows(conn: &mut PgConnection) -> Vec<serde_json::Value> {
         .bind(schemas()).fetch_all(&mut *conn).await.unwrap();
     let mut result = Vec::new();
     for (schema, table) in tables {
-        if schema == "registry" {
+        if table == "event_children" || schema == "registry" {
             continue;
         }
         if schema == "core" && table == "replay_refusals" {
@@ -45,18 +45,30 @@ async fn stored_rows(conn: &mut PgConnection) -> Vec<serde_json::Value> {
                 format!("SELECT to_jsonb(t)-'kind_version'-'validation' FROM {name} t ORDER BY 1")
             }
             "counters" => {
-                format!("SELECT to_jsonb(t) FROM {name} t WHERE name <> 'blob_changes' ORDER BY 1")
+                format!(
+                    "SELECT to_jsonb(t) FROM {name} t WHERE name NOT IN ('blob_changes','excised') ORDER BY 1"
+                )
             }
             "search_text" => {
                 format!("SELECT to_jsonb(t)-'trigram_indexed' FROM {name} t ORDER BY 1")
             }
+            "event_tombstones" => format!(
+                "SELECT to_jsonb(t)-'commit_seq'-'original_commit_seq'-'class' FROM {name} t ORDER BY 1"
+            ),
+            "ingress_frames" => format!(
+                "SELECT to_jsonb(t)-'family'-'write_kind_prefixes' FROM {name} t ORDER BY 1"
+            ),
+            "published" => format!("SELECT to_jsonb(t)-'stream_instance' FROM {name} t ORDER BY 1"),
+            "comparisons" => format!("SELECT to_jsonb(t)-'context' FROM {name} t ORDER BY 1"),
             _ => format!("SELECT to_jsonb(t) FROM {name} t ORDER BY 1"),
         };
         let rows: Vec<serde_json::Value> = sqlx::query_scalar(&query)
             .fetch_all(&mut *conn)
             .await
             .unwrap();
-        result.push(serde_json::json!({"table": name,"rows": rows}));
+        if !rows.is_empty() {
+            result.push(serde_json::json!({"table": name,"rows": rows}));
+        }
     }
     result
 }
@@ -204,3 +216,5 @@ async fn chain_refuses_writer_and_newer_schema_before_changing_rows(db: devkit::
     assert!(matches!(apply(&mut conn).await, Err(Error::Version {found}) if found==VERSION+1));
     assert_eq!(stored_rows(&mut conn).await, expected);
 }
+
+mod output_ordinals;

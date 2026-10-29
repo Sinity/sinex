@@ -208,7 +208,11 @@ impl Parser for ActivityWatchParser {
             };
             let event = Activity::Window(WindowSpan {
                 host: _context.manifest.detail("host").as_str().map(str::to_owned),
-                scope: _context.manifest.detail("host").as_str().map(|host| serde_json::json!([host, null]).to_string()),
+                scope: _context
+                    .manifest
+                    .detail("host")
+                    .as_str()
+                    .map(|host| serde_json::json!([host, null]).to_string()),
                 bucket: bucket.clone(),
                 span_id: span.span_id,
                 started_at: ts(span.started_ns)?,
@@ -222,7 +226,11 @@ impl Parser for ActivityWatchParser {
         } else if is("afkstatus", "aw-watcher-afk") {
             Activity::Presence(PresenceSpan {
                 host: _context.manifest.detail("host").as_str().map(str::to_owned),
-                scope: _context.manifest.detail("host").as_str().map(|host| serde_json::json!([host, null]).to_string()),
+                scope: _context
+                    .manifest
+                    .detail("host")
+                    .as_str()
+                    .map(|host| serde_json::json!([host, null]).to_string()),
                 bucket,
                 row: id,
                 started_at: ts(started_ns)?,

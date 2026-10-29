@@ -20,7 +20,9 @@
 //! identified by its start evidence's record location: its end moves as later
 //! evidence arrives, its start does not.
 use crate::derived_event::derived;
-use crate::{AffectedRange, Computed, Env, InputQuery, InputRange, KeyState, KeyView, Keyed, Kind, Neighbour};
+use crate::{
+    AffectedRange, Computed, Env, InputQuery, InputRange, KeyState, KeyView, Keyed, Kind, Neighbour,
+};
 use serde_json::{Value, json};
 use sinex_model::event_types::StateInterval;
 use sinex_model::{Event, EventPayload, Origin, Timestamp};
@@ -144,7 +146,16 @@ pub fn rule(state_kind: &str) -> Option<&'static IntervalRule> {
 }
 
 /// Every event type any rule reads, as transitions, spans or interruptions.
-const INPUT_TYPES: &[&str] = &["window.focused", "workspace.switched", "presence.span", "unit.started", "unit.stopped", "boot.started", "sleep.started", "sleep.ended"];
+const INPUT_TYPES: &[&str] = &[
+    "window.focused",
+    "workspace.switched",
+    "presence.span",
+    "unit.started",
+    "unit.stopped",
+    "boot.started",
+    "sleep.started",
+    "sleep.ended",
+];
 
 /// An open state during the fold.
 #[derive(Clone, Debug)]
@@ -182,7 +193,11 @@ impl<'a> Open<'a> {
     /// label and attributes.
     fn refresh(&mut self, other: &Self) {
         if (other.label.is_some() && other.label != self.label)
-            || other.attributes.iter().any(|(key,value)| self.attributes.get(key) != Some(value)) {
+            || other
+                .attributes
+                .iter()
+                .any(|(key, value)| self.attributes.get(key) != Some(value))
+        {
             self.refreshes.push(other.start);
         }
         if other.label.is_some() {
@@ -229,7 +244,9 @@ fn to_event(rule: &IntervalRule, l: PendingInterval<'_>) -> Event {
     derived(
         &payload,
         StateIntervals::NAME,
-        std::iter::once(l.open.start).chain(l.open.refreshes).chain(l.closers),
+        std::iter::once(l.open.start)
+            .chain(l.open.refreshes)
+            .chain(l.closers),
     )
 }
 
@@ -326,22 +343,39 @@ fn captured_scope(event: &Event) -> String {
 }
 
 fn scope_key(event: &Event) -> String {
-    event.payload.get("scope").and_then(Value::as_str)
+    event
+        .payload
+        .get("scope")
+        .and_then(Value::as_str)
         .or_else(|| event.payload.get("bucket").and_then(Value::as_str))
         .map(str::to_owned)
         .unwrap_or_else(|| captured_scope(event))
 }
 
 fn fold<'a>(rule: &IntervalRule, events: &[&'a Event]) -> Vec<PendingInterval<'a>> {
-    let mut scopes = BTreeMap::<String,Vec<&Event>>::new();
-    for event in events.iter().filter(|event| rule.event_types.contains(&event.event_type.as_str())) {
+    let mut scopes = BTreeMap::<String, Vec<&Event>>::new();
+    for event in events
+        .iter()
+        .filter(|event| rule.event_types.contains(&event.event_type.as_str()))
+    {
         scopes.entry(scope_key(event)).or_default().push(*event);
     }
     let mut result = Vec::new();
-    for (scope,mut scoped) in scopes {
-        scoped.extend(events.iter().filter(|event| interrupts(rule,event) && scope_key(event)==scope).copied());
-        scoped.sort_by_cached_key(|event| (event.ts_orig.at,event.reading_order,crate::activity::stable(event)));
-        result.extend(fold_one(rule,&scoped));
+    for (scope, mut scoped) in scopes {
+        scoped.extend(
+            events
+                .iter()
+                .filter(|event| interrupts(rule, event) && scope_key(event) == scope)
+                .copied(),
+        );
+        scoped.sort_by_cached_key(|event| {
+            (
+                event.ts_orig.at,
+                event.reading_order,
+                crate::activity::stable(event),
+            )
+        });
+        result.extend(fold_one(rule, &scoped));
     }
     result
 }
@@ -364,7 +398,7 @@ impl Keyed for StateIntervals {
     const OUTPUTS: &'static [&'static str] = &[StateInterval::EVENT_TYPE];
 
     fn keys_for(&self, input: &KeyView<'_>, env: &Env) -> Vec<Value> {
-        let mut machine = machine::keys(input,env);
+        let mut machine = machine::keys(input, env);
         let Some(t) = input.ts_orig else {
             return vec![];
         };
@@ -372,20 +406,25 @@ impl Keyed for StateIntervals {
             return vec![];
         };
         let interruption = Interruption::of(input.event_type, input.payload);
-        machine.extend(RULES
-            .iter()
-            .filter(|r| {
-                r.event_types.contains(&input.event_type)
-                    || interruption.is_some_and(|f| r.ended_by.contains(&f))
-            })
-            .map(|r| json!({"state": r.state_kind, "day": day.to_string()}))
-            .collect::<Vec<_>>());
+        machine.extend(
+            RULES
+                .iter()
+                .filter(|r| {
+                    r.event_types.contains(&input.event_type)
+                        || interruption.is_some_and(|f| r.ended_by.contains(&f))
+                })
+                .map(|r| json!({"state": r.state_kind, "day": day.to_string()}))
+                .collect::<Vec<_>>(),
+        );
         machine
     }
 
     fn inputs(&self, key: &Value, env: &Env) -> Option<InputQuery> {
-        if key["state"].as_str().is_some_and(|state| state.starts_with("machine.")) {
-            return machine::inputs(key,env);
+        if key["state"]
+            .as_str()
+            .is_some_and(|state| state.starts_with("machine."))
+        {
+            return machine::inputs(key, env);
         }
         let (r, day) = key_parts(key)?;
         let start = env.time_settings.day_start(day).ok()?;
@@ -401,12 +440,19 @@ impl Keyed for StateIntervals {
         let types: Vec<&str> = types.iter().map(String::as_str).collect();
         let mut q = InputQuery::window(&types, start, end);
         match r.shape {
-            Shape::AdjacentTransitions => q.range = Some(InputRange::StateTransitions {
-                start, end, kinds: r.event_types.iter().map(|kind| Kind::all(kind)).collect(),
-                scope_field: "scope", subject_fields: if r.state_kind == "desktop.focus" {
-                    vec!["window","class"]
-                } else { vec!["workspace_id","workspace_name"] },
-            }),
+            Shape::AdjacentTransitions => {
+                q.range = Some(InputRange::StateTransitions {
+                    start,
+                    end,
+                    kinds: r.event_types.iter().map(|kind| Kind::all(kind)).collect(),
+                    scope_field: "scope",
+                    subject_fields: if r.state_kind == "desktop.focus" {
+                        vec!["window", "class"]
+                    } else {
+                        vec!["workspace_id", "workspace_name"]
+                    },
+                })
+            }
             Shape::Span { .. } => {}
         }
         for f in r.ended_by {
@@ -416,8 +462,11 @@ impl Keyed for StateIntervals {
     }
 
     fn compute(&self, key: &Value, inputs: &[Event], env: &Env) -> Computed {
-        if key["state"].as_str().is_some_and(|state| state.starts_with("machine.")) {
-            return machine::compute(key,inputs,env);
+        if key["state"]
+            .as_str()
+            .is_some_and(|state| state.starts_with("machine."))
+        {
+            return machine::compute(key, inputs, env);
         }
         let Some((r, day)) = key_parts(key) else {
             return Computed::default();
@@ -446,9 +495,20 @@ impl Keyed for StateIntervals {
         }
     }
 
-    fn affected_ranges(&self,input:&KeyView<'_>,_:&Env)->Vec<AffectedRange> {
-        input.ts_orig.map(|at| vec![AffectedRange { open_field:None, output_type:"state.interval",
-            start_field:"started_at",end_field:"ended_at",start:at,end:at }]).unwrap_or_default()
+    fn affected_ranges(&self, input: &KeyView<'_>, _: &Env) -> Vec<AffectedRange> {
+        input
+            .ts_orig
+            .map(|at| {
+                vec![AffectedRange {
+                    open_field: None,
+                    output_type: "state.interval",
+                    start_field: "started_at",
+                    end_field: "ended_at",
+                    start: at,
+                    end: at,
+                }]
+            })
+            .unwrap_or_default()
     }
 
     fn key_state(&self, _key: &Value, _env: &Env) -> KeyState {

@@ -80,7 +80,11 @@ async fn work_reads_the_objective_and_next_boundary_with_unknown_time_metadata(
         .unwrap();
     assert_eq!(first.trail.len(), 2);
     assert_eq!(first.suspensions.len(), 2);
-    let env = Env::at(at(2_000_000), sinex_model::time_settings::TimeSettings::new("Europe/Warsaw", 4, 0).expect("fixture day setting"));
+    let env = Env::at(
+        at(2_000_000),
+        sinex_model::time_settings::TimeSettings::new("Europe/Warsaw", 4, 0)
+            .expect("fixture day setting"),
+    );
     let query = Keyed::inputs(&WorkEpisodes, &json!({"episode": first.episode}), &env).unwrap();
     let mut conn = PgConnection::connect(&w.url).await.unwrap();
     let selected = derivations::read_window(&mut conn, &to_window(&query, env.now))
@@ -208,7 +212,11 @@ async fn wake_day_reads_stop_at_the_next_recorded_wake(db: devkit::pg::TestDatab
     };
     w.admit(vec![sleep(0, 100), sleep(900, 1000), sleep(1900, 2000)])
         .await;
-    let env = Env::at(at(3000), sinex_model::time_settings::TimeSettings::new("Europe/Warsaw", 4, 0).expect("fixture day setting"));
+    let env = Env::at(
+        at(3000),
+        sinex_model::time_settings::TimeSettings::new("Europe/Warsaw", 4, 0)
+            .expect("fixture day setting"),
+    );
     let query = Keyed::inputs(&ActivityDays, &json!({"start":at(100)}), &env).unwrap();
     let mut conn = PgConnection::connect(&w.url).await.unwrap();
     let selected = derivations::read_window(&mut conn, &to_window(&query, env.now))

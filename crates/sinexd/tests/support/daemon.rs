@@ -3,13 +3,13 @@ use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 
-pub struct Process {
+pub(crate) struct Process {
     child: Child,
     log: PathBuf,
 }
 
 impl Process {
-    pub fn start(command: &mut Command, log: PathBuf) -> Self {
+    pub(crate) fn start(command: &mut Command, log: PathBuf) -> Self {
         Self {
             child: command
                 .stdout(Stdio::null())
@@ -20,11 +20,11 @@ impl Process {
         }
     }
 
-    pub fn id(&self) -> u32 {
+    pub(crate) fn id(&self) -> u32 {
         self.child.id()
     }
 
-    pub fn running(&mut self) {
+    pub(crate) fn running(&mut self) {
         assert!(
             self.child.try_wait().unwrap().is_none(),
             "process stopped: {}",
@@ -32,11 +32,11 @@ impl Process {
         );
     }
 
-    pub fn log(&self) -> String {
+    pub(crate) fn log(&self) -> String {
         std::fs::read_to_string(&self.log).unwrap()
     }
 
-    pub async fn stop(mut self) {
+    pub(crate) async fn stop(mut self) {
         assert!(
             Command::new("kill")
                 .args(["-TERM", &self.child.id().to_string()])
@@ -73,7 +73,7 @@ impl Drop for Process {
     }
 }
 
-pub fn run(binary: &Path, database: &str, store: &Path, args: &[&str]) -> Command {
+pub(crate) fn run(binary: &Path, database: &str, store: &Path, args: &[&str]) -> Command {
     let mut command = Command::new(binary);
     command
         .args(args)
@@ -82,7 +82,7 @@ pub fn run(binary: &Path, database: &str, store: &Path, args: &[&str]) -> Comman
     command
 }
 
-pub fn finish(command: &mut Command) -> String {
+pub(crate) fn finish(command: &mut Command) -> String {
     let out = command.output().unwrap();
     assert!(
         out.status.success(),
@@ -93,14 +93,14 @@ pub fn finish(command: &mut Command) -> String {
     String::from_utf8(out.stdout).unwrap()
 }
 
-pub fn query(binary: &Path, database: &str, store: &Path, text: &str) -> Value {
+pub(crate) fn query(binary: &Path, database: &str, store: &Path, text: &str) -> Value {
     serde_json::from_str(&finish(
         run(binary, database, store, &["admin", "query"]).args(["--page", "1000", text]),
     ))
     .unwrap()
 }
 
-pub fn sources(path: &Path, allowed: &[&str]) {
+pub(crate) fn sources(path: &Path, allowed: &[&str]) {
     let excluded: serde_json::Map<String, Value> = sinex_sources::sources::specs()
         .iter()
         .filter(|spec| !allowed.contains(&spec.name))
@@ -118,7 +118,7 @@ pub fn sources(path: &Path, allowed: &[&str]) {
     .unwrap();
 }
 
-pub fn daemon(
+pub(crate) fn daemon(
     binary: &Path,
     database: &str,
     store: &Path,
