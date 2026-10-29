@@ -69,7 +69,7 @@ async fn admit(w: &World, texts: &[&str], from: i64) {
     admit_events(w, events).await;
 }
 
-async fn admit_events(w: &World, events: Vec<Event>) {
+async fn submit_events(w: &World, events: Vec<Event>) -> i64 {
     w.writer
         .submit(
             writer::Priority::Live,
@@ -91,6 +91,11 @@ async fn admit_events(w: &World, events: Vec<Event>) {
         .await
         .unwrap();
     w.commits.send_replace(seq as u64);
+    seq
+}
+
+async fn admit_events(w: &World, events: Vec<Event>) {
+    let seq = submit_events(w, events).await;
     // The commit reader indexes the new events' text.
     loop {
         let (indexed, _) = sinex_store::commit_log::consumer_position(
@@ -146,6 +151,7 @@ async fn world_with_config(
         library_roots: Vec::new(),
     };
     let (commits, rx) = watch::channel(0u64);
+    let (read_models_tx, read_models) = watch::channel(());
     let (stop, stopped) = watch::channel(false);
     tokio::spawn(crate::commit_reader::run(
         <sqlx::PgConnection as sqlx::Connection>::connect(&url)
@@ -159,12 +165,13 @@ async fn world_with_config(
             })
             .collect(),
         rx.clone(),
+        read_models_tx,
         stopped,
     ));
     let tokens = Tokens::new(Some(READ.into()), Some(AGENT.into()), Some(OPERATOR.into()));
     World {
         _db: db,
-        app: router(api, tokens, rx),
+        app: router(api, tokens, rx, read_models),
         commits,
         _stop: stop,
         writer: handle,
@@ -650,6 +657,84 @@ async fn follow_notice_waits_for_the_initial_cursor(db: devkit::pg::TestDatabase
     read_until(&mut body, &mut seen, "cargo build").await;
     assert!(!seen.contains("\"before\""));
     assert_eq!(seen.matches("cargo build").count(), 1);
+    drop(body);
+    drop(w);
+}
+
+#[devkit::test]
+async fn follow_wakes_when_a_delayed_search_projection_commits(db: devkit::pg::TestDatabase) {
+    let w = world(db).await;
+    admit(&w, &["before"], 0).await;
+    let req = HttpRequest::get("/v1/follow?query=events%20where%20cargo")
+        .header("authorization", format!("Bearer {READ}"))
+        .body(Body::empty())
+        .unwrap();
+    let mut body = w.app.clone().oneshot(req).await.unwrap().into_body();
+    let mut seen = String::new();
+    read_until(&mut body, &mut seen, "event: notice").await;
+
+    let mut projection = w.reads.acquire().await.unwrap();
+    let mut projection_lock = sqlx::Connection::begin(&mut *projection).await.unwrap();
+    sqlx::query("LOCK TABLE core.search_text IN ACCESS EXCLUSIVE MODE")
+        .execute(&mut *projection_lock)
+        .await
+        .unwrap();
+    let mut positions = w.reads.acquire().await.unwrap();
+    let positions_pid: i32 = sqlx::query_scalar("SELECT pg_backend_pid()")
+        .fetch_one(&mut *positions)
+        .await
+        .unwrap();
+    let mut positions_lock = sqlx::Connection::begin(&mut *positions).await.unwrap();
+    sqlx::query("LOCK TABLE core.consumer_positions IN ACCESS EXCLUSIVE MODE")
+        .execute(&mut *positions_lock)
+        .await
+        .unwrap();
+    submit_events(&w, vec![command("cargo build", 1)]).await;
+    let mut monitor = w.reads.acquire().await.unwrap();
+    // The writer wake has been consumed when follow reaches its blocked
+    // materialization watermark query. The search maintainer is still held.
+    let follow_pid = tokio::time::timeout(std::time::Duration::from_secs(10), async {
+        loop {
+            let pid: Option<i32> = sqlx::query_scalar(
+                "SELECT pid FROM pg_stat_activity WHERE $1 = ANY(pg_blocking_pids(pid)) LIMIT 1",
+            )
+            .bind(positions_pid)
+            .fetch_optional(&mut *monitor)
+            .await
+            .unwrap();
+            if let Some(pid) = pid {
+                break pid;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("follow did not inspect the delayed projection watermark");
+    positions_lock.rollback().await.unwrap();
+    drop(positions);
+    tokio::time::timeout(std::time::Duration::from_secs(10), async {
+        loop {
+            let idle: bool =
+                sqlx::query_scalar("SELECT state = 'idle' FROM pg_stat_activity WHERE pid = $1")
+                    .bind(follow_pid)
+                    .fetch_one(&mut *monitor)
+                    .await
+                    .unwrap();
+            if idle {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("follow did not finish inspecting the old projection watermark");
+    projection_lock.rollback().await.unwrap();
+    drop((projection, monitor));
+
+    // No second writer commit occurs: only durable read-model progress can wake it.
+    read_until(&mut body, &mut seen, "cargo build").await;
+    assert_eq!(seen.matches("cargo build").count(), 1);
+    assert!(!seen.contains("\"before\""));
     drop(body);
     drop(w);
 }

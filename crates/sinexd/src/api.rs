@@ -15,7 +15,7 @@ use axum::routing::{get, post};
 use axum::{Json, Router};
 use serde::Deserialize;
 use serde_json::{Value, json};
-use sinex_model::query::{self, Expr, FieldRef, Op, Operand, Source, Stage, Table};
+use sinex_model::query::{self, Source, Stage, Table};
 use sinex_protocol::{Access, COMMANDS, DATA_NOTICE, Reply, Request};
 use sinex_store::query::Page;
 use std::net::SocketAddr;
@@ -126,6 +126,7 @@ struct AppState {
     api: Api,
     tokens: Arc<Tokens>,
     commits: watch::Receiver<u64>,
+    read_models: watch::Receiver<()>,
 }
 
 fn actor(access: Access) -> &'static str {
@@ -174,7 +175,12 @@ fn authorize(state: &AppState, headers: &HeaderMap, needs: Access) -> Result<Acc
     Ok(granted)
 }
 
-pub(crate) fn router(api: Api, tokens: Tokens, commits: watch::Receiver<u64>) -> Router {
+pub(crate) fn router(
+    api: Api,
+    tokens: Tokens,
+    commits: watch::Receiver<u64>,
+    read_models: watch::Receiver<()>,
+) -> Router {
     Router::new()
         .route("/v1", post(call))
         .route("/v1/commands", get(commands))
@@ -183,6 +189,7 @@ pub(crate) fn router(api: Api, tokens: Tokens, commits: watch::Receiver<u64>) ->
             api,
             tokens: Arc::new(tokens),
             commits,
+            read_models,
         })
 }
 
@@ -273,6 +280,7 @@ async fn follow(
     }
     let (tx, rx) = mpsc::channel::<Result<Event, std::convert::Infallible>>(64);
     let mut commits = state.commits.clone();
+    let mut read_models = state.read_models.clone();
     let api = state.api.clone();
     let text = params.query.clone();
     tokio::spawn(async move {
@@ -282,6 +290,7 @@ async fn follow(
             sinex_store::query::current_seq(&mut conn).await.ok()
         };
         commits.borrow_and_update();
+        read_models.borrow_and_update();
         let Some(mut last) = position(api.clone()).await else {
             return;
         };
@@ -293,36 +302,27 @@ async fn follow(
         {
             return;
         }
-        while commits.changed().await.is_ok() {
+        loop {
+            tokio::select! {
+                changed = commits.changed() => if changed.is_err() { return; },
+                changed = read_models.changed() => if changed.is_err() { return; },
+                _ = tx.closed() => return,
+            }
             commits.borrow_and_update();
-            let Some(now) = position(api.clone()).await else {
-                return;
+            read_models.borrow_and_update();
+            let now = {
+                let Ok(mut conn) = api.reads.acquire().await else {
+                    return;
+                };
+                let Ok(now) = sinex_store::query::follow_position(&mut conn).await else {
+                    return;
+                };
+                now
             };
-            if now == last {
+            if now <= last {
                 continue;
             }
-            let mut q = bound.clone();
-            let after = Expr::Compare {
-                lhs: Operand::Field(FieldRef::Field(
-                    Table::Events
-                        .field("commit_seq")
-                        .expect("events have commit_seq"),
-                )),
-                op: Op::Gt,
-                rhs: query::Value::Integer(last),
-            };
-            q.filter = Some(match q.filter.take() {
-                Some(f) => Expr::And(Box::new(f), Box::new(after)),
-                None => after,
-            });
-            q.stages.push(Stage::Sort(vec![query::SortKey {
-                key: query::SortBy::Operand(Operand::Field(FieldRef::Field(
-                    Table::Events
-                        .field("commit_seq")
-                        .expect("events have commit_seq"),
-                ))),
-                descending: false,
-            }]));
+            let q = sinex_store::query::follow_query(&bound, last, now);
             let mut page = Page {
                 size: Some(1000),
                 cursor: None,
@@ -384,9 +384,10 @@ pub(crate) async fn serve(
     config: Config,
     api: Api,
     commits: watch::Receiver<u64>,
+    read_models: watch::Receiver<()>,
     shutdown: impl std::future::Future<Output = ()> + Send + 'static,
 ) -> Result<(), String> {
-    let app = router(api, config.tokens, commits);
+    let app = router(api, config.tokens, commits, read_models);
     if let Some(parent) = config.socket.parent() {
         std::fs::create_dir_all(parent).map_err(|e| format!("{}: {e}", parent.display()))?;
     }

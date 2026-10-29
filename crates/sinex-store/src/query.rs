@@ -6,6 +6,7 @@
 mod compile;
 mod cursor;
 mod fields;
+mod follow;
 mod recall;
 mod source_views;
 mod sql;
@@ -24,6 +25,7 @@ use sql::SqlFragment;
 use sqlx::{Connection, PgConnection};
 
 pub use cursor::context_for_page;
+pub use follow::{follow_position, follow_query};
 pub use walk::{resolve, show};
 
 /// Which page of an answer to return.

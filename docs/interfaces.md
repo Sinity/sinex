@@ -462,6 +462,10 @@ start or resume an agent, because a run would spend quota with no one acting.
 - The initial data notice follows initialization of the subscription's watch and
   commit cursor. A matching commit admitted after that notice is beyond the initial
   cursor floor and is delivered once.
+- Event follows wait for the search read model's durable position, including queries
+  without an explicit text predicate. Projection lag delays delivery. Read-model
+  completion wakes subscriptions, and each captured batch stays within its lower
+  exclusive and upper inclusive commit positions across every page.
 - Each message carries its commit or stream position as the SSE `id`. A reconnect with
   `Last-Event-ID` receives everything after it, from the confirmed stream or
   PostgreSQL, including lifecycle changes (archive, restore, replay, tombstone) that

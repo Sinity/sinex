@@ -72,6 +72,7 @@ pub(crate) async fn run(o: Options) -> Result<(), String> {
 
     let (stop_tx, stop) = watch::channel(false);
     let (commits_tx, commits) = watch::channel(0u64);
+    let (read_models_tx, read_models) = watch::channel(());
     let (handle, queues) = writer::channels();
     let mut tasks: JoinSet<(&'static str, Result<(), String>)> = JoinSet::new();
 
@@ -175,7 +176,7 @@ pub(crate) async fn run(o: Options) -> Result<(), String> {
     tasks.spawn(async move {
         (
             "commit-log reader",
-            commit_reader::run(reader_conn, consumers, c, s).await,
+            commit_reader::run(reader_conn, consumers, c, read_models_tx, s).await,
         )
     });
 
@@ -239,7 +240,7 @@ pub(crate) async fn run(o: Options) -> Result<(), String> {
     tasks.spawn(async move {
         (
             "API",
-            api::serve(config, reader_api, c, async move {
+            api::serve(config, reader_api, c, read_models, async move {
                 let _ = s.wait_for(|s| *s).await;
             })
             .await,
