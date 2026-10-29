@@ -198,9 +198,10 @@ async fn publish_chunk(
 )->Result<(Duration,Duration,Duration),String>{
     let acknowledge_started=Instant::now();
     let mut acks=Vec::new();
+    let limit=js.client().server_info().max_payload as u64;
     for entry in entries {
         let (message,subject,id,event)=match &entry.change {
-            commit_log::Change::Event(event)=>(Confirmed::Event(Box::new(confirmed_event(event)?)),
+            commit_log::Change::Event(event)=>(event_message(event,limit)?,
                 subjects.confirmed_event(&event.class,&event.event_type),format!("event-{}",entry.position),Some(event.id)),
             commit_log::Change::Archive(lifecycle)=>{
                 let change=&lifecycle.archive;
@@ -278,6 +279,17 @@ async fn publish(
     js.publish_with_headers(subject, headers, body.into())
         .await
         .map_err(|e| format!("publish {id}: {e}"))
+}
+
+/// Metadata can be larger than a broker message too. Carry the same logical
+/// event by reference and let the authorized fetch path transfer it in chunks.
+fn event_message(event:&Committed,limit:u64)->Result<Confirmed,String>{
+    let message=Confirmed::Event(Box::new(confirmed_event(event)?));
+    let body=serde_json::to_vec(&message).map_err(|error|error.to_string())?;
+    let headers=format!("NATS/1.0\r\nNats-Msg-Id: event-{}\r\n\r\n",event.commit_seq);
+    if body.len() as u64+headers.len() as u64>limit {
+        Ok(Confirmed::EventReference{commit_seq:event.commit_seq,event:EventId(event.id)})
+    }else{Ok(message)}
 }
 
 fn confirmed_event(e: &Committed) -> Result<ConfirmedEvent, String> {

@@ -5,6 +5,7 @@ type Tuple = (i64, EventId, &'static str);
 pub(super) fn tuple(message: &Confirmed) -> Option<Tuple> {
     match message {
         Confirmed::Event(e) => Some((e.commit_seq, e.id, "event")),
+        Confirmed::EventReference { commit_seq, event } => Some((*commit_seq, *event, "event")),
         Confirmed::Archived(a) => Some((a.archived_seq, a.event, "archived")),
         Confirmed::Unhidden(a) => Some((a.unhidden_seq, a.event, "unhidden")),
         Confirmed::Excised { commit_seq: Some(position), event, .. } => Some((*position, *event, "excised")),
@@ -116,4 +117,29 @@ async fn empty_database_is_ready_at_zero_and_nonempty_old_contract_is_refused(db
     js.publish(subjects.confirmed_control(), "legacy".into()).await.unwrap().await.unwrap();
     assert!(ensure_stream(&js, &subjects).await.unwrap_err().starts_with("confirmed_stream_contract_mismatch:"));
     assert_eq!(js.get_stream(subjects.confirmed_stream()).await.unwrap().cached_info().state.messages, 1);
+}
+
+#[devkit::test]
+async fn giant_event_metadata_uses_compact_reference_and_completes(db:devkit::pg::TestDatabase){
+    let nats=devkit::nats::test_nats().unwrap();
+    let subjects=Subjects::new(nats.prefix());
+    let js=context(async_nats::connect(nats.url()).await.unwrap());
+    let mut conn=sinex_store::AdmissionContext::connect(&db.url(None)).await.unwrap();
+    let parent=executed("metadata-parent","pwd",1,Class::Open);let parent_id=parent.id;
+    admit(&mut conn,batch(vec![parent],vec![])).await;
+    // This valid stored parent list exceeds the broker's actual message budget.
+    let count=js.client().server_info().max_payload/36+1;
+    let parents=vec![parent_id;count];
+    let mut event=executed("giant-metadata","ls",2,Class::Open);let id=event.id;
+    event.origin=Origin::Derived{parents:parents.clone()};
+    admit(&mut conn,batch(vec![event],vec![])).await;
+    let page=commit_log::after(&mut conn,1,1,i64::MAX).await.unwrap();
+    let full=Confirmed::Event(Box::new(confirmed_event(&page.events[0]).unwrap()));
+    assert!(serde_json::to_vec(&full).unwrap().len()>js.client().server_info().max_payload);
+    publish_pending(&mut conn,&js,&subjects).await.unwrap();
+    let messages=read_wire_all(&js,&subjects).await;
+    assert!(matches!(&messages[0],Confirmed::Event(event) if event.id==parent_id));
+    assert_eq!(messages[1..],[Confirmed::EventReference{commit_seq:2,event:id},Confirmed::PositionComplete{commit_seq:2}]);
+    let stored:Vec<uuid::Uuid>=sqlx::query_scalar("SELECT parents FROM core.events WHERE id=$1").bind(id.0).fetch_one(&mut conn).await.unwrap();
+    assert_eq!(stored,parents.iter().map(|id|id.0).collect::<Vec<_>>(),"the transport fallback preserves complete stored metadata");
 }

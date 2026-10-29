@@ -131,6 +131,7 @@ async fn publishes_in_commit_order_masked_once(db: devkit::pg::TestDatabase) {
         .iter()
         .filter_map(|m| match m {
             Confirmed::Event(e) => Some(e.commit_seq),
+            Confirmed::EventReference { commit_seq, .. } => Some(*commit_seq),
             Confirmed::Archived(_) | Confirmed::Unhidden(_) | Confirmed::Excised { .. } | Confirmed::PositionComplete{..} | Confirmed::Gap{..} => None,
         })
         .collect();
@@ -429,6 +430,7 @@ async fn archive_consumer_observes_hide_restore_hide_without_duplicate_events(
                 visibility.push((n.unhidden_seq, live.contains(&id)));
             }
             Confirmed::Excised { .. } => panic!("no excision requested"),
+            Confirmed::EventReference { .. } => panic!("fixture metadata fits in a message"),
             Confirmed::PositionComplete{..}=>{},Confirmed::Gap{reason}=>panic!("unexpected gap: {reason}"),
         }
     }
