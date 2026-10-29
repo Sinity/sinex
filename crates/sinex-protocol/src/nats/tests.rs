@@ -33,6 +33,7 @@ fn producer_permissions_name_only_its_own_subjects() {
             "sinex.materials.phone",
             "sinex.excise.phone",
             "sinex.replay_scope.phone",
+            "sinex.public_context.phone",
             "sinex.fetch_event.phone",
             "sinex.fetch_material.phone",
             "sinex.confirmed_consumer.phone",
