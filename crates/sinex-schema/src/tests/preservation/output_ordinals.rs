@@ -6,8 +6,26 @@ async fn wide_ordinals_upgrade_preserves_compressed_records_views_and_grants(
 ) {
     let mut conn = PgConnection::connect(&db.url(None)).await.unwrap();
     version_two(&mut conn).await;
-    populated(&mut conn).await;
-    for from in 2..VERSION - 1 {
+    let fixture = include_str!("../preserved_rows.sql")
+        .replace(
+            "anchor,ts_quality,commit_seq",
+            "anchor,output_index,ts_quality,commit_seq",
+        )
+        .replace(
+            "000000000013',i,'unknown',i,",
+            "000000000013',i,32767,'unknown',i,",
+        );
+    assert!(fixture.contains("i,32767,'unknown'"));
+    sqlx::raw_sql(&fixture).execute(&mut conn).await.unwrap();
+    let before_ordinal = upgrades::LANDED_VERSION
+        + i32::try_from(
+            upgrades::NAMED
+                .iter()
+                .position(|name| *name == "output_ordinals")
+                .unwrap(),
+        )
+        .unwrap();
+    for from in 2..before_ordinal {
         let mut tx = conn.begin().await.unwrap();
         for statement in &upgrades::upgrades()[usize::try_from(from).unwrap()] {
             tx.execute(statement.as_str()).await.unwrap();
@@ -40,6 +58,22 @@ async fn wide_ordinals_upgrade_preserves_compressed_records_views_and_grants(
         .await
         .unwrap();
     let views:Vec<serde_json::Value>=sqlx::query_scalar("SELECT to_jsonb(v) FROM (SELECT schemaname,viewname,viewowner,definition FROM pg_views WHERE schemaname IN ('core','event_types','public') ORDER BY 1,2) v").fetch_all(&mut conn).await.unwrap();
+    let legacy_max: i16 = sqlx::query_scalar("SELECT max(output_index) FROM core.events")
+        .fetch_one(&mut conn)
+        .await
+        .unwrap();
+    assert_eq!(legacy_max, i16::MAX);
+    let citation_sql = "SELECT 'sinex:record/'||material_id||'/'||anchor||'/'||event_type||'/'||output_index FROM core.events WHERE material_id IS NOT NULL ORDER BY id";
+    let old_citations: Vec<String> = sqlx::query_scalar(citation_sql)
+        .fetch_all(&mut conn)
+        .await
+        .unwrap();
+    assert_eq!(old_citations.len(), 3);
+    assert!(
+        old_citations
+            .iter()
+            .all(|citation| citation.ends_with("/32767"))
+    );
     let expected = stored_rows(&mut conn).await;
     let compressed: i64 =
         sqlx::query_scalar("SELECT count(compress_chunk(c)) FROM show_chunks('core.events') c")
@@ -50,11 +84,16 @@ async fn wide_ordinals_upgrade_preserves_compressed_records_views_and_grants(
     assert_eq!(
         apply(&mut conn).await.unwrap(),
         Applied::Upgraded {
-            from: VERSION - 1,
+            from: before_ordinal,
             to: VERSION
         }
     );
     assert_eq!(stored_rows(&mut conn).await, expected);
+    let current_citations: Vec<String> = sqlx::query_scalar(citation_sql)
+        .fetch_all(&mut conn)
+        .await
+        .unwrap();
+    assert_eq!(current_citations, old_citations);
     let after:Vec<serde_json::Value>=sqlx::query_scalar("SELECT to_jsonb(v) FROM (SELECT schemaname,viewname,viewowner,definition FROM pg_views WHERE schemaname IN ('core','event_types','public') ORDER BY 1,2) v").fetch_all(&mut conn).await.unwrap();
     assert_eq!(after, views);
     let still_compressed:i64=sqlx::query_scalar("SELECT count(*) FROM timescaledb_information.chunks WHERE hypertable_schema='core' AND hypertable_name='events' AND is_compressed").fetch_one(&mut conn).await.unwrap();
