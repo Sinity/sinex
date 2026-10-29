@@ -61,3 +61,61 @@ fn declaration_discovery_exposes_the_same_paginated_requests() {
         assert_eq!(encoded["cursor"], "saved");
     }
 }
+
+#[devkit::test]
+fn tool_effects_match_backend_command_access() {
+    let tools = tools();
+    for (name, read_only) in [
+        ("sinex_status", true),
+        ("sinex_query", true),
+        ("sinex_sql", true),
+        ("sinex_hide", false),
+        ("sinex_forecast-issue", false),
+        ("sinex_library-tag", false),
+    ] {
+        let tool = tools.iter().find(|tool| tool.name == name).unwrap();
+        assert_eq!(
+            tool.annotations.as_ref().and_then(|a| a.read_only_hint),
+            Some(read_only),
+            "{name}",
+        );
+    }
+    for spec in COMMANDS.iter().filter(|spec| spec.mcp) {
+        let tool = tools
+            .iter()
+            .find(|tool| tool.name == format!("sinex_{}", spec.name))
+            .unwrap();
+        assert_eq!(
+            tool.annotations.as_ref().unwrap().read_only_hint,
+            Some(spec.access == sinex_protocol::Access::Read)
+        );
+    }
+}
+
+#[devkit::test]
+fn status_data_is_structured_without_losing_the_data_notice() {
+    let data = json!({"commit_seq": 42, "search_index": {"position": 40, "behind": 2}});
+    let reply = success_result(data.clone());
+    assert_eq!(reply.structured_content, Some(data));
+    let encoded = serde_json::to_value(reply).unwrap();
+    assert!(
+        encoded["content"][0]["text"]
+            .as_str()
+            .unwrap()
+            .starts_with(DATA_NOTICE)
+    );
+    assert_eq!(encoded["isError"], false);
+}
+
+#[devkit::test]
+fn array_results_keep_their_text_without_invalid_structured_content() {
+    let data = json!([{ "n": 2 }]);
+    let reply = success_result(data.clone());
+    assert!(reply.structured_content.is_none());
+    let encoded = serde_json::to_value(reply).unwrap();
+    let text = encoded["content"][0]["text"].as_str().unwrap();
+    assert_eq!(
+        text.strip_prefix(DATA_NOTICE).unwrap().trim(),
+        serde_json::to_string_pretty(&data).unwrap()
+    );
+}
