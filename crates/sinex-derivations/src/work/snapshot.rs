@@ -127,8 +127,8 @@ pub(super) fn compute(key:&Value,inputs:&[Event])->Computed {
     }
     for call in snapshot.calls {
         if call.session!=session{return unavailable(parent,session,Some(REDUCER_VERSION),"entry_session_mismatch")}
-        uncertain_outcomes+=u64::from(matches!(call.outcome,Outcome::Unknown{..}));
-        let failed=matches!(call.outcome,Outcome::Error{..})||call.check_passed==Some(false);
+        uncertain_outcomes+=u64::from(matches!(&call.outcome,Outcome::Unknown{..}));
+        let failed=matches!(&call.outcome,Outcome::Error{..})||call.check_passed==Some(false);
         entries.push(Entry{kind:"call",id:call.call,at:call.at,at_evidence:call.at_evidence,end:call.result_at,end_evidence:Some(call.result_at_evidence),agency:Agency::Delegated,
             action:call.action,path:call.path,failed,revision:call.revision,check_name:call.check_name,check_passed:call.check_passed});
     }
