@@ -44,6 +44,7 @@ async fn wide_ordinals_upgrade_preserves_compressed_records_views_and_grants(
         .apply(&mut conn, &crate::kinds::Owners::default())
         .await
         .unwrap();
+    crate::kinds::version_tests::assert_historical_and_current(&mut conn).await;
     conn.execute("CREATE VIEW public.ordinal_citations WITH (security_barrier=true) AS SELECT id,output_index FROM core.visible_events").await.unwrap();
     conn.execute("GRANT SELECT ON public.ordinal_citations TO sinex_reader WITH GRANT OPTION")
         .await
@@ -89,6 +90,7 @@ async fn wide_ordinals_upgrade_preserves_compressed_records_views_and_grants(
         }
     );
     assert_eq!(stored_rows(&mut conn).await, expected);
+    crate::kinds::version_tests::assert_historical_and_current(&mut conn).await;
     let current_citations: Vec<String> = sqlx::query_scalar(citation_sql)
         .fetch_all(&mut conn)
         .await
