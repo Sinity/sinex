@@ -639,7 +639,10 @@ async fn follow_notice_waits_for_the_initial_cursor(db: devkit::pg::TestDatabase
     // Release owned database resources before reporting an ordering failure.
     locked.rollback().await.unwrap();
     drop((locker, monitor, connections));
-    assert!(!premature_notice, "follow notice preceded its initial cursor");
+    assert!(
+        !premature_notice,
+        "follow notice preceded its initial cursor"
+    );
 
     let mut seen = String::new();
     read_until(&mut body, &mut seen, "event: notice").await;

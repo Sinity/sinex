@@ -276,9 +276,6 @@ async fn follow(
     let api = state.api.clone();
     let text = params.query.clone();
     tokio::spawn(async move {
-        let _ = tx
-            .send(Ok(Event::default().event("notice").data(DATA_NOTICE)))
-            .await;
         // `commits` counts committed batches; the commit position is read here.
         let position = |api: Api| async move {
             let mut conn = api.reads.acquire().await.ok()?;
@@ -288,6 +285,14 @@ async fn follow(
         let Some(mut last) = position(api.clone()).await else {
             return;
         };
+        // A commit after the notice must stay beyond the initial cursor floor.
+        if tx
+            .send(Ok(Event::default().event("notice").data(DATA_NOTICE)))
+            .await
+            .is_err()
+        {
+            return;
+        }
         while commits.changed().await.is_ok() {
             commits.borrow_and_update();
             let Some(now) = position(api.clone()).await else {
