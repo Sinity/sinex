@@ -632,7 +632,7 @@ async fn reconnect_reclaims_and_reloads_privacy(db: devkit::pg::TestDatabase) {
     sinex_store::query::set_grants(&mut changes, "guarded")
         .await
         .unwrap();
-    let visible: String = sqlx::query_scalar("SELECT class FROM visible_events WHERE id=$1")
+    let visible: String = sqlx::query_scalar("SELECT class FROM core.visible_events WHERE id=$1")
         .bind(outcome.admitted_ids[0].0)
         .fetch_one(&mut changes)
         .await
