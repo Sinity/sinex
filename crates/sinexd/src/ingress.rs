@@ -25,6 +25,7 @@
 //! whole materials the producer registered.
 mod bytes;
 pub(crate) mod fetch;
+mod consumer;
 pub(crate) mod replay;
 
 use crate::writer::{Priority, WriteError, WriterHandle};
@@ -663,6 +664,8 @@ const REQUESTS_AT_ONCE: usize = 4;
 /// consumer from reading its stream.
 #[derive(Clone)]
 pub(crate) struct Requests {
+    pub client:async_nats::Client,
+    pub consumer_admin:std::sync::Arc<tokio::sync::Mutex<()>>,
     pub read_grants:std::sync::Arc<fetch::ProducerGrants>,
     pub max_payload:u64,
     pub subjects: Subjects,
@@ -800,6 +803,11 @@ impl Requests {
                 },
             };
             serde_json::json!(welcome)
+        } else if subject == self.subjects.confirmed_consumer(&producer) {
+            match serde_json::from_slice::<sinex_protocol::ConfirmedConsumer>(payload) {
+                Ok(request)=>serde_json::json!(self.confirmed_consumer(&producer,&request).await),
+                Err(error)=>serde_json::json!(sinex_protocol::ConfirmedConsumerReply{refusal:Some(error.to_string()),..Default::default()}),
+            }
         } else if subject == self.subjects.fetch_event(&producer) {
             match serde_json::from_slice::<sinex_protocol::FetchEvent>(payload) {
                 Ok(request)=>serde_json::json!(self.fetch_event(&producer,&request).await),
@@ -961,6 +969,7 @@ async fn serve(client: async_nats::Client, requests: Requests) -> Result<(), Str
     };
     let mut incoming = futures::stream::select_all([
         subscribe(requests.subjects.connect_all()).await?,
+        subscribe(requests.subjects.confirmed_consumer_all()).await?,
         subscribe(requests.subjects.recorded_all()).await?,
         subscribe(requests.subjects.materials_all()).await?,
         subscribe(requests.subjects.excise_all()).await?,

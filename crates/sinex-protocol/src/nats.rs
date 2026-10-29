@@ -66,13 +66,13 @@ impl Subjects {
         self.stream("INGRESS")
     }
 
-    pub fn confirmed_event(&self, event_type: &str) -> String {
-        format!("{}.confirmed.event.{event_type}", self.root)
-    }
-
-    pub fn confirmed_archive(&self) -> String {
-        format!("{}.confirmed.archive", self.root)
-    }
+    pub fn confirmed_event(&self,class:&str,event_type:&str)->String {format!("{}.confirmed.event.{class}.{event_type}",self.root)}
+    pub fn confirmed_lifecycle(&self,class:&str,event_type:&str)->String {format!("{}.confirmed.lifecycle.{class}.{event_type}",self.root)}
+    pub fn confirmed_control(&self)->String {format!("{}.confirmed.control",self.root)}
+    pub fn confirmed_consumer(&self,producer:&str)->String {format!("{}.confirmed_consumer.{producer}",self.root)}
+    pub fn confirmed_consumer_all(&self)->String {format!("{}.confirmed_consumer.*",self.root)}
+    pub fn consumer_name(&self,producer:&str)->String {format!("sinex-{producer}")}
+    pub fn inbox_prefix(&self,producer:&str)->String {format!("_INBOX.{producer}")}
 
     /// Every confirmed-stream subject.
     pub fn confirmed_all(&self) -> String {
@@ -146,7 +146,8 @@ impl Subjects {
             .or_else(|| rest.strip_prefix("replay_scope."))
             .or_else(|| rest.strip_prefix("fetch_event."))
             .or_else(|| rest.strip_prefix("fetch_payload."))
-            .or_else(|| rest.strip_prefix("fetch_material."))?;
+            .or_else(|| rest.strip_prefix("fetch_material."))
+            .or_else(|| rest.strip_prefix("confirmed_consumer."))?;
         valid_producer(producer).then_some(producer)
     }
 
@@ -174,9 +175,8 @@ impl Subjects {
     /// What a producer's NATS user may publish and subscribe to: its own
     /// ingress, have, materials and excise subjects, its acknowledgments, and
     /// reply inboxes.
-    pub fn producer_permissions(&self, producer: &str) -> (Vec<String>, Vec<String>) {
-        (
-            vec![
+    pub fn producer_permissions(&self, producer: &str, confirmed:bool) -> (Vec<String>, Vec<String>) {
+        let mut publish=vec![
                 self.ingress(producer),
                 self.connect(producer),
                 self.recorded(producer),
@@ -186,16 +186,25 @@ impl Subjects {
                 self.fetch_event(producer),
                 self.fetch_payload(producer),
                 self.fetch_material(producer),
-            ],
-            vec![self.ack(producer), "_INBOX.>".into()],
-        )
+                self.confirmed_consumer(producer),
+            ];
+        if confirmed {
+            let stream=self.confirmed_stream();let consumer=self.consumer_name(producer);
+            publish.extend([
+                format!("$JS.API.STREAM.INFO.{stream}"),
+                format!("$JS.API.CONSUMER.INFO.{stream}.{consumer}"),
+                format!("$JS.API.CONSUMER.MSG.NEXT.{stream}.{consumer}"),
+                format!("$JS.ACK.{stream}.{consumer}.>"),
+            ]);
+        }
+        (publish,vec![self.ack(producer),format!("{}.>",self.inbox_prefix(producer))])
     }
 
     /// A NATS server `authorization` block: the daemon user with full access,
     /// and one user per producer limited to its own subjects, each given as
     /// its name and the bcrypt hash of its password, which the server checks
     /// passwords against.
-    pub fn authorization(&self, daemon: (&str, &str), producers: &[(&str, &str)]) -> String {
+    pub fn authorization(&self, daemon: (&str, &str), producers: &[(&str, &str)],consumers:&[&str]) -> String {
         let quote = |s: &str| serde_json::to_string(s).expect("strings serialize");
         let list = |items: &[String]| {
             items
@@ -210,7 +219,7 @@ impl Subjects {
             quote(daemon.1)
         )];
         for (producer, password) in producers {
-            let (publish, subscribe) = self.producer_permissions(producer);
+            let (publish, subscribe) = self.producer_permissions(producer,consumers.contains(producer));
             users.push(format!(
                 "{{ user: {}, password: {}, permissions: {{ publish: {{ allow: [{}] }}, subscribe: {{ allow: [{}] }} }} }}",
                 quote(producer),
@@ -666,6 +675,8 @@ pub struct ConfirmedEvent {
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(tag = "reason", rename_all = "snake_case")]
 pub enum Withheld {
+    /// Shared stream payloads are fetched under the authenticated consumer grants.
+    Grants,
     /// The event's class is `guarded` or `sealed`.
     Class,
     /// The message with the payload would exceed the NATS server's message
@@ -696,3 +707,10 @@ pub struct Unhidden {
 
 #[cfg(test)]
 mod tests;
+
+/// The daemon selects and provisions the authenticated identity's scoped consumer.
+#[derive(Clone,Debug,Serialize,Deserialize,PartialEq,Eq)]
+#[serde(deny_unknown_fields)]
+pub struct ConfirmedConsumer {pub after:i64,pub cache:String}
+#[derive(Clone,Debug,Default,Serialize,Deserialize,PartialEq,Eq)]
+pub struct ConfirmedConsumerReply {pub stream:String,pub consumer:String,pub scope:String,pub refusal:Option<String>,pub gap:Option<String>}

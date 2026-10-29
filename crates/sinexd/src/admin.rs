@@ -41,6 +41,8 @@ pub(crate) enum Admin {
     /// are read from files, so they never pass through the Nix store, and the
     /// block holds only their bcrypt hashes.
     NatsAuthorization {
+        #[arg(long)]
+        producer_grants:Option<PathBuf>,
         #[arg(long, default_value = "sinex")]
         subject_root: String,
         #[arg(long, default_value = "sinexd")]
@@ -114,6 +116,7 @@ pub(crate) async fn run(command: Admin) -> Result<(), String> {
             Ok(())
         }
         Admin::NatsAuthorization {
+            producer_grants,
             subject_root,
             daemon_user,
             daemon_password_file,
@@ -139,11 +142,9 @@ pub(crate) async fn run(command: Admin) -> Result<(), String> {
                 .iter()
                 .map(|(name, hash)| (name.as_str(), hash.as_str()))
                 .collect();
-            println!(
-                "{}",
-                sinex_protocol::Subjects::new(subject_root)
-                    .authorization((&daemon_user, &daemon_hash), &users)
-            );
+            let grants=crate::ingress::fetch::load(producer_grants.as_deref())?;
+            let consumers=grants.iter().filter(|(_,grant)|!grant.kind_prefixes.is_empty()&&!grant.classes.is_empty()).map(|(producer,_)|producer.as_str()).collect::<Vec<_>>();
+            println!("{}",sinex_protocol::Subjects::new(subject_root).authorization((&daemon_user,&daemon_hash),&users,&consumers));
             Ok(())
         }
     }

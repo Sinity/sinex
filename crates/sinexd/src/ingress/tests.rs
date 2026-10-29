@@ -52,6 +52,7 @@ impl Harness {
             .await
             .unwrap();
         let requests = Requests {
+            client:client.clone(),consumer_admin:std::sync::Arc::new(tokio::sync::Mutex::new(())),
             read_grants:Arc::new(grants),
             max_payload:client.server_info().max_payload as u64,
             subjects: subjects.clone(),
@@ -568,12 +569,14 @@ async fn producers_are_limited_to_their_own_subjects() {
     let config = subjects.authorization(
         ("daemon", &hash("dpw")),
         &[("kitty", &hash("kpw")), ("phone", &hash("ppw"))],
+        &["kitty"],
     );
     assert!(!config.contains("dpw") && !config.contains("kpw"));
     let server = devkit::nats::Server::start_with(&devkit::nats::Options { config }).unwrap();
     let address = server.url().trim_start_matches("nats://").to_owned();
     let connect = |user: &str, password: &str| {
         async_nats::ConnectOptions::with_user_and_password(user.into(), password.into())
+            .custom_inbox_prefix(subjects.inbox_prefix(user))
             .connect(address.clone())
     };
     assert!(connect("daemon", "wrong").await.is_err());
@@ -604,6 +607,14 @@ async fn producers_are_limited_to_their_own_subjects() {
             .is_err(),
         "the forged message on another producer's subject was not delivered"
     );
+    let mut api=daemon.subscribe("$JS.API.>").await.unwrap();daemon.flush().await.unwrap();
+    for subject in ["$JS.API.CONSUMER.CREATE.SX_CONFIRMED.foreign","$JS.API.CONSUMER.DELETE.SX_CONFIRMED.sinex-kitty","$JS.API.CONSUMER.MSG.NEXT.SX_CONFIRMED.sinex-phone","$JS.API.STREAM.MSG.GET.SX_CONFIRMED","$JS.API.CONSUMER.MSG.NEXT.SX_CONFIRMED.sinex-kitty"] {kitty.publish(subject,"{}".into()).await.unwrap();}
+    kitty.flush().await.unwrap();
+    let allowed=tokio::time::timeout(Duration::from_secs(5),api.next()).await.unwrap().unwrap();assert_eq!(allowed.subject.as_str(),"$JS.API.CONSUMER.MSG.NEXT.SX_CONFIRMED.sinex-kitty");
+    assert!(tokio::time::timeout(Duration::from_millis(300),api.next()).await.is_err(),"foreign/admin/raw-message API requests must not reach the daemon");
+    let mut foreign_inbox=kitty.subscribe("_INBOX.phone.>").await.unwrap();kitty.flush().await.unwrap();
+    daemon.publish("_INBOX.phone.synthetic","private response".into()).await.unwrap();daemon.flush().await.unwrap();
+    assert!(tokio::time::timeout(Duration::from_millis(300),foreign_inbox.next()).await.map_or(true,|message|message.is_none()),"producer must not eavesdrop another identity's RPC reply inbox");
     // Nor can a producer read another producer's acknowledgments.
     assert!(kitty.subscribe("sx.ack.phone").await.is_ok());
     let mut probe = kitty.subscribe("sx.ack.phone").await.unwrap();
@@ -644,7 +655,7 @@ async fn ingress_events_reach_the_confirmed_stream(db: devkit::pg::TestDatabase)
         .unwrap();
     let stream = js.get_stream(h.subjects.confirmed_stream()).await.unwrap();
     let message = stream
-        .get_last_raw_message_by_subject(&h.subjects.confirmed_event("command.imported"))
+        .get_last_raw_message_by_subject(&h.subjects.confirmed_event("open","command.imported"))
         .await
         .unwrap();
     let confirmed: Confirmed = serde_json::from_slice(&message.payload).unwrap();
@@ -652,7 +663,8 @@ async fn ingress_events_reach_the_confirmed_stream(db: devkit::pg::TestDatabase)
         panic!("event")
     };
     assert_eq!(event.source, "kitty");
-    assert_eq!(event.payload.unwrap()["command"], "ls");
+    assert!(event.payload.is_none());
+    assert_eq!(event.withheld,Some(sinex_protocol::Withheld::Grants));
     let _ = &h.nats;
 }
 
@@ -1548,3 +1560,5 @@ async fn a_configuration_refusal_removes_the_partial_chunk_transfer(db: devkit::
 }
 
 mod fetch_reads;
+
+mod consumer_reads;

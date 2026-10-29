@@ -41,14 +41,14 @@ pub(crate) fn load(path:Option<&std::path::Path>)->Result<ProducerGrants,String>
     }
     Ok(grants)
 }
-struct Refusal {kind:FetchRefusalKind,reason:String}
+pub(super) struct Refusal {kind:FetchRefusalKind,reason:String}
 type ReadResult<T>=Result<T,Refusal>;
 fn denied()->Refusal {Refusal{kind:FetchRefusalKind::Denied,reason:"producer grants do not allow this read".into()}}
 fn missing()->Refusal {Refusal{kind:FetchRefusalKind::Missing,reason:"requested retained data is unavailable".into()}}
 fn unavailable(error:impl std::fmt::Display)->Refusal {Refusal{kind:FetchRefusalKind::Unavailable,reason:error.to_string()}}
 fn field<T:DeserializeOwned>(value:&Value,name:&str)->ReadResult<T> {serde_json::from_value(value[name].clone()).map_err(unavailable)}
 impl Requests {
-    fn grants(&self,producer:&str)->ReadResult<&Grants> {
+    pub(super) fn grants(&self,producer:&str)->ReadResult<&Grants> {
         self.read_grants.get(producer).filter(|grant|!grant.kind_prefixes.is_empty()&&!grant.classes.is_empty()).ok_or_else(denied)
     }
     async fn event_for(&self,producer:&str,id:EventId)->ReadResult<ConfirmedEvent> {

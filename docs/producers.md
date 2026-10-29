@@ -167,3 +167,11 @@ Producer replay frames are described under [the ingress](#producer-replay).
 `PositionComplete { commit_seq }` closes a global commit position after its events and lifecycle changes have been published. Consumers advance their durable scalar position only on this control message. `Gap { reason }` reports historical evidence that cannot establish an exact position and never advances it.
 
 Producer read grants are operator-configured kind prefixes and classes, with no access granted by registration alone. Fetch subjects use the authenticated producer identity. Event fetches apply the public visibility and redaction rules and return exact kind, version, record hash and commit position. Oversized payloads or complete events carry a BLAKE3-bound reference; bounded range replies repeat the reference hash and reject changed output. Material fetches return authoritative encoded segment descriptors after checking the same grants and producer-family ownership. Oversized material metadata returns `material_ref`; requests on the same subject with `range` reauthorize each transfer, which carries a stable hash, total length and offset. Sealed bytes require an explicit unlocked access path.
+
+### Provisioned consumers
+
+A configured reader requests its native durable on its own `confirmed_consumer.<producer>` subject with `{after, cache}`. `cache` identifies the persistent local index. The daemon chooses the consumer identity and filters event and lifecycle subjects by configured kind prefixes and classes; global position-complete and gap controls remain visible. The reply names the stream, consumer and scope hash. A changed scope is explicit in that hash.
+
+Clients may pull, acknowledge and inspect only their exact durable. They cannot create or delete consumers or fetch raw stream messages. Authenticated RPC inboxes are restricted to `_INBOX.<producer>.>`. Shared-stream payloads require an authenticated fetch even for open events.
+
+A native durable resumes only when its exact acknowledged position-complete barrier proves the requested local scalar and its cache and scope still match. An older restored index, a new cache, an initial position or missing proof replays retained scoped history from its beginning. Requests beyond durable commit history return a named gap.
