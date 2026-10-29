@@ -525,6 +525,58 @@ async fn derived_set(w: &World) -> BTreeMap<String, i64> {
     rows.into_iter().collect()
 }
 
+/// Keep the equality oracle intact while naming exact payload differences.
+/// In particular, snapshot positions and producer provenance are compared.
+fn pack_differences(expected: &BTreeMap<String, i64>, got: &BTreeMap<String, i64>) -> Vec<Value> {
+    fn packs(rows: &BTreeMap<String, i64>) -> BTreeMap<String, (Value, i64)> {
+        rows.iter()
+            .filter_map(|(row, count)| {
+                let payload = row.strip_prefix("context.pack ")?;
+                let payload: Value = serde_json::from_str(payload).unwrap();
+                Some((
+                    payload["pack"].as_str().unwrap().to_owned(),
+                    (payload, *count),
+                ))
+            })
+            .collect()
+    }
+    fn compare(path: &str, expected: Option<&Value>, got: Option<&Value>, out: &mut Vec<Value>) {
+        if expected == got {
+            return;
+        }
+        match (expected, got) {
+            (Some(Value::Object(a)), Some(Value::Object(b))) => {
+                let fields: std::collections::BTreeSet<_> = a.keys().chain(b.keys()).collect();
+                for field in fields {
+                    let field_path =
+                        format!("{path}/{}", field.replace('~', "~0").replace('/', "~1"));
+                    compare(&field_path, a.get(field), b.get(field), out);
+                }
+            }
+            (Some(Value::Array(a)), Some(Value::Array(b))) => {
+                for i in 0..a.len().max(b.len()) {
+                    compare(&format!("{path}/{i}"), a.get(i), b.get(i), out);
+                }
+            }
+            _ => out.push(json!({"path":path,"at_once":expected,"piece_by_piece":got,
+                "at_once_present":expected.is_some(),"piece_by_piece_present":got.is_some()})),
+        }
+    }
+    let (expected, got) = (packs(expected), packs(got));
+    let identities: std::collections::BTreeSet<_> = expected.keys().chain(got.keys()).collect();
+    let mut out = vec![];
+    for identity in identities {
+        let (a, b) = (expected.get(identity), got.get(identity));
+        let mut fields = vec![];
+        compare("", a.map(|v| &v.0), b.map(|v| &v.0), &mut fields);
+        if !fields.is_empty() || a.map(|v| v.1) != b.map(|v| v.1) {
+            out.push(json!({"pack":identity,"at_once_count":a.map(|v|v.1),
+                "piece_by_piece_count":b.map(|v|v.1),"fields":fields}));
+        }
+    }
+    out
+}
+
 /// The derivations with one tag rule, so the tag applier has work too.
 fn configuration() -> sinex_derivations::Configuration {
     let configuration: sinex_derivations::Configuration = serde_json::from_value(json!({
@@ -593,7 +645,8 @@ async fn every_derivation_gives_the_same_outputs_at_once_and_piece_by_piece(
         .collect();
     assert!(
         got == expected,
-        "at once only: {only_once:#?}\npiece by piece only: {only_pieces:#?}"
+        "at once only: {only_once:#?}\npiece by piece only: {only_pieces:#?}\ncontext pack paths: {}",
+        serde_json::to_string_pretty(&pack_differences(&expected, &got)).unwrap()
     );
 }
 
