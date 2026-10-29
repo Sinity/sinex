@@ -1,6 +1,7 @@
 //! Recall through the public API, real writer and actual shell derivation.
 use super::*;
 use sinex_derivations::{Env, Keyed, derived_event::derived, session::ShellSessions};
+use sinex_model::EventId;
 use sinex_model::event_types::{CommandFused, CommandImported};
 
 fn facts(host: &str, rows: &[(i64, &str, Option<i64>)], class: Class) -> Vec<Event> {
@@ -409,15 +410,13 @@ async fn saved_recall_and_context_continuations_keep_their_stored_selection(
     db: devkit::pg::TestDatabase,
 ) {
     let w = world(db).await;
-    admit_events(
-        &w,
-        facts(
-            "synthetic",
-            &[(0, "/src/tide", None), (1, "/src/tide", None)],
-            Class::Open,
-        ),
-    )
-    .await;
+    let activity = facts(
+        "synthetic",
+        &[(0, "/src/tide", None), (1, "/src/tide", None)],
+        Class::Open,
+    );
+    let activity_ids = activity.iter().map(|event| event.id).collect::<Vec<_>>();
+    admit_events(&w, activity).await;
     let (_,saved) = call(&w,Some(OPERATOR),json!({"method":"query-save","name":"remember-tide","query":"recall last where cwds ^ /src/tide"})).await;
     assert_eq!(saved["outcome"], "ok", "{saved}");
     let (_, first) = call(
@@ -454,31 +453,8 @@ async fn saved_recall_and_context_continuations_keep_their_stored_selection(
         json!({"method":"context","since":"2026-09-14T00:00:00Z","page":1}),
     )
     .await;
-    let graph = if context["outcome"] != "ok" {
-        sqlx::query_scalar::<_, Value>(
-            "SELECT jsonb_build_object('id',e.id,'kind',e.event_type,'class',e.class,
-              'commit',e.commit_seq,'archived',EXISTS(SELECT 1 FROM audit.archived a WHERE a.event_id=e.id),
-              'live',EXISTS(SELECT 1 FROM core.live_equivalence l WHERE l.event_id=e.id)
-                  OR EXISTS(SELECT 1 FROM core.live_locations l WHERE l.event_id=e.id),
-              'effective_class',(SELECT o.class FROM privacy.event_outputs o WHERE o.event_id=e.id),
-              'pack',e.payload->'pack','request',e.payload->'request',
-              'selection',e.payload#>'{selection,selected}',
-              'parents',coalesce((SELECT jsonb_agg(jsonb_build_object('id',p.id,'kind',p.event_type,
-                  'class',p.class,'archived',EXISTS(SELECT 1 FROM audit.archived a WHERE a.event_id=p.id)))
-                  FROM core.events p WHERE p.id=ANY(e.parents)),'[]'::jsonb))
-             FROM core.events e WHERE e.event_type IN ('query.saved','analysis.request','context.pack')
-             ORDER BY e.commit_seq",
-        )
-        .fetch_all(&mut *w.reads.acquire().await.unwrap())
-        .await
-        .unwrap()
-    } else {
-        vec![]
-    };
-    assert_eq!(
-        context["outcome"], "ok",
-        "{context}; stored graph {graph:?}"
-    );
+    assert_eq!(context["outcome"], "ok", "{context}");
+    assert_activity_context(&w, &context, &activity_ids).await;
     let cursor = context["result"]["page"]["cursor"].as_str().unwrap();
     let (_, next) = call(
         &w,
@@ -492,6 +468,180 @@ async fn saved_recall_and_context_continuations_keep_their_stored_selection(
         context["result"]["context_pack"]
     );
     assert_eq!(next["result"]["resolved"], context["result"]["resolved"]);
+}
+
+async fn assert_activity_context(w: &World, answer: &Value, expected: &[EventId]) {
+    let citation = answer["result"]["context_pack"].as_str().unwrap();
+    let id = uuid::Uuid::parse_str(citation.strip_prefix("sinex:ev/").unwrap()).unwrap();
+    let (class, parents, stored): (String, Vec<uuid::Uuid>, Value) =
+        sqlx::query_as("SELECT class,parents,payload FROM core.events WHERE id=$1")
+            .bind(id)
+            .fetch_one(&mut *w.reads.acquire().await.unwrap())
+            .await
+            .unwrap();
+    assert_eq!(class, "open");
+    let rows = stored["analysis"]["answer"]["rows"].as_array().unwrap();
+    let mut actual = rows
+        .iter()
+        .map(|row| EventId(uuid::Uuid::parse_str(row["id"].as_str().unwrap()).unwrap()))
+        .collect::<Vec<_>>();
+    actual.sort_unstable();
+    let mut expected = expected.to_vec();
+    expected.sort_unstable();
+    assert_eq!(
+        actual, expected,
+        "activity rows exclude definitions and presentation bookkeeping"
+    );
+    let parent_kinds: Vec<(uuid::Uuid, String)> =
+        sqlx::query_as("SELECT id,event_type FROM core.events WHERE id=ANY($1)")
+            .bind(&parents)
+            .fetch_all(&mut *w.reads.acquire().await.unwrap())
+            .await
+            .unwrap();
+    let mut activity_parents = parent_kinds
+        .iter()
+        .filter(|(_, kind)| kind != "analysis.request")
+        .map(|(id, _)| EventId(*id))
+        .collect::<Vec<_>>();
+    activity_parents.sort_unstable();
+    assert_eq!(activity_parents, expected);
+    assert_eq!(
+        parent_kinds.len(),
+        expected.len() + 1,
+        "the pack also cites its own admitted question"
+    );
+    let digest = &stored["analysis"]["answer"]["recall"];
+    assert!(
+        digest["by_source"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|row| row["source"] != "query.request"
+                && row["source"] != "synthetic.query-definitions")
+    );
+    assert!(
+        digest["latest_by_source"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|row| row["event_type"] != "query.saved")
+    );
+}
+
+#[devkit::test]
+async fn recall_context_excludes_saved_definitions_but_inherits_selected_activity_classes(
+    db: devkit::pg::TestDatabase,
+) {
+    let w = world(db).await;
+    let activity = facts(
+        "public",
+        &[(0, "/src/public", None), (1, "/src/public", None)],
+        Class::Open,
+    );
+    let activity_ids = activity.iter().map(|event| event.id).collect::<Vec<_>>();
+    admit_events(&w, activity).await;
+    let mut definitions = vec![];
+    for (index, class) in [Class::Open, Class::Guarded].into_iter().enumerate() {
+        let definition = sinex_model::event_types::query::Saved {
+            name: format!("synthetic-definition-{index}"),
+            query: "events fields id".into(),
+            parameters: vec![],
+            by: "synthetic".into(),
+            written_at: Timestamp::from_unix_secs(1_789_372_800 + 120 + index as i64).unwrap(),
+        };
+        definitions.push(
+            Event::build(
+                &definition,
+                "synthetic.query-definitions",
+                Origin::Record {
+                    location: RecordLocation {
+                        material: MaterialId::new(),
+                        anchor: 0,
+                    },
+                    output_index: 0,
+                },
+                ReadingOrder(1),
+                *blake3::hash(&serde_json::to_vec(&definition).unwrap()).as_bytes(),
+                class,
+            )
+            .unwrap(),
+        );
+    }
+    let definition_ids = definitions
+        .iter()
+        .map(|event| event.id.to_string())
+        .collect::<std::collections::BTreeSet<_>>();
+    admit_events(&w, definitions).await;
+    let (_, ordinary) = call(
+        &w,
+        Some(READ),
+        json!({"method":"query","query":"events where event_type = query.saved"}),
+    )
+    .await;
+    assert_eq!(ordinary["outcome"], "ok", "{ordinary}");
+    let ordinary = ordinary["result"]["rows"].as_array().unwrap();
+    assert_eq!(
+        ordinary
+            .iter()
+            .map(|row| row["id"].as_str().unwrap().to_owned())
+            .collect::<std::collections::BTreeSet<_>>(),
+        definition_ids
+    );
+    assert!(
+        ordinary
+            .iter()
+            .any(|row| row["payload"]["withheld"] == "guarded")
+    );
+    assert!(
+        ordinary
+            .iter()
+            .any(|row| row["payload"]["query"] == "events fields id")
+    );
+    let request = json!({"method":"context","since":"2026-09-14T00:00:00Z","until":"2026-09-14T09:00:00Z","page":1});
+    let (_, public) = call(&w, Some(READ), request.clone()).await;
+    assert_eq!(public["outcome"], "ok", "{public}");
+    assert_activity_context(&w, &public, &activity_ids).await;
+    let cursor = public["result"]["page"]["cursor"].as_str().unwrap();
+    let mut continuation = request.clone();
+    continuation["cursor"] = json!(cursor);
+    let (_, next) = call(&w, Some(READ), continuation).await;
+    assert_eq!(next["outcome"], "ok", "{next}");
+    assert_eq!(
+        next["result"]["context_pack"],
+        public["result"]["context_pack"]
+    );
+    assert_eq!(next["result"]["resolved"], public["result"]["resolved"]);
+
+    let private = facts(
+        "private",
+        &[(2, "/src/private-activity", None)],
+        Class::Guarded,
+    );
+    let private_ids = private.iter().map(|event| event.id.0).collect::<Vec<_>>();
+    admit_events(&w, private).await;
+    let (_, hidden) = call(&w, Some(READ), request.clone()).await;
+    assert_eq!(hidden["outcome"], "refused", "{hidden}");
+    assert!(!hidden.to_string().contains("/src/private-activity"));
+    let (_, permitted) = call(&w, Some(OPERATOR), request).await;
+    assert_eq!(permitted["outcome"], "ok", "{permitted}");
+    let citation = permitted["result"]["context_pack"].as_str().unwrap();
+    let id = uuid::Uuid::parse_str(citation.strip_prefix("sinex:ev/").unwrap()).unwrap();
+    let (class, parents): (String, Vec<uuid::Uuid>) =
+        sqlx::query_as("SELECT class,parents FROM core.events WHERE id=$1")
+            .bind(id)
+            .fetch_one(&mut *w.reads.acquire().await.unwrap())
+            .await
+            .unwrap();
+    assert_eq!(class, "guarded");
+    assert!(
+        private_ids.iter().all(|id| parents.contains(id)),
+        "selected Guarded activity remains exact parent evidence"
+    );
+    assert!(
+        definition_ids
+            .iter()
+            .all(|id| !parents.contains(&uuid::Uuid::parse_str(id).unwrap()))
+    );
 }
 
 #[devkit::test]

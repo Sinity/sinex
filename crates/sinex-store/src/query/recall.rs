@@ -311,9 +311,10 @@ async fn mark_links(
     Ok(Json::Object(links))
 }
 
-/// Presentation products are outputs of recall, never inputs to themselves.
-pub(super) fn presentation_types() -> &'static [&'static str] {
+/// Questions, definitions and presentation products are not activity evidence.
+pub(super) fn bookkeeping_types() -> &'static [&'static str] {
     &[
+        <sinex_model::event_types::query::Saved as sinex_model::EventPayload>::EVENT_TYPE,
         <sinex_model::event_types::analysis::AnalysisRequest as sinex_model::EventPayload>::EVENT_TYPE,
         <sinex_model::event_types::analysis::AnalysisPanel as sinex_model::EventPayload>::EVENT_TYPE,
         <sinex_model::event_types::analysis::RecipeAnswer as sinex_model::EventPayload>::EVENT_TYPE,
@@ -331,7 +332,7 @@ pub(super) fn input_filter() -> Expr {
         )),
         op: Op::Eq,
         rhs: Value::List(
-            presentation_types()
+            bookkeeping_types()
                 .iter()
                 .map(|kind| Value::Text((*kind).into()))
                 .collect(),

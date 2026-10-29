@@ -319,7 +319,7 @@ pub(crate) async fn recall_summary(
             .fetch_all(&mut *conn)
             .await?
     };
-    let presentation_types: Vec<String> = super::recall::presentation_types()
+    let bookkeeping_types: Vec<String> = super::recall::bookkeeping_types()
         .iter()
         .map(|kind| (*kind).into())
         .collect();
@@ -330,7 +330,7 @@ pub(crate) async fn recall_summary(
            UNION SELECT name FROM registry.sources
            WHERE NOT event_types <@ $1::text[]
            ORDER BY 1"#,
-        &presentation_types,
+        &bookkeeping_types,
     )
     .fetch_all(&mut *conn)
     .await?;

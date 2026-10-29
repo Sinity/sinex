@@ -45,7 +45,12 @@ answers what was happening, grouped by session.
 
 `context --since T --until T | --around REF | --episode REF | --project P` returns the
 activity around a span, grouped by family (commands, focus, pages, files, git, agent
-sessions, source health), each group with its coverage. With an episode or a project it
+sessions, source health), each group with its coverage. Saved query definitions,
+analysis questions and their presentation products are bookkeeping: they remain
+available through ordinary event queries but do not become activity rows, source
+counts or evidence parents of a recall. Moment marks remain activity evidence.
+This membership is independent of privacy class; selected activity retains its
+classes and the caller's current visibility rules. With an episode or a project it
 returns that episode's resume card; with no argument, the top three candidate episodes,
 the first with its full card ([the resume card](higher-layer.md)).
 
