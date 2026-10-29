@@ -7,13 +7,22 @@ fn facts(host: &str, rows: &[(i64, &str, Option<i64>)], class: Class) -> Vec<Eve
     let mut events = Vec::new();
     let mut fused = Vec::new();
     for &(i, cwd, duration) in rows {
-        let mut raw = command(&format!("synthetic {host} command {i}"), i);
-        raw.payload["native_id"] = json!(format!("{host}-{i}"));
-        raw.payload["cwd"] = json!(cwd);
-        raw.payload["hostname"] = json!(host);
-        raw.payload["duration_ns"] = json!(duration);
-        raw.class = class;
-        let c = raw.payload_as::<CommandExecuted>().unwrap();
+        let template = command(&format!("synthetic {host} command {i}"), i);
+        let mut c = template.payload_as::<CommandExecuted>().unwrap();
+        c.native_id = format!("{host}-{i}");
+        c.cwd = cwd.into();
+        c.hostname = host.into();
+        c.duration_ns = duration;
+        let hash = *blake3::hash(&serde_json::to_vec(&c).unwrap()).as_bytes();
+        let raw = Event::build(
+            &c,
+            &template.source,
+            template.origin,
+            template.reading_order,
+            hash,
+            class,
+        )
+        .unwrap();
         let command = derived(
             &CommandFused {
                 record: c.native_id,
